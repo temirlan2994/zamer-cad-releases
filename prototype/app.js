@@ -969,23 +969,32 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
   if (!inlineEditors) return;
   inlineEditors.hidden = false;
   state.inlineEdit = { start, end, metrics, angleInfo };
-  positionInlineEditor(lengthEditor, m.x, m.y - 28);
   if (document.activeElement !== lengthInput) {
     lengthInput.value = metrics.length;
   }
+  syncInlineEditorWidth(lengthInput);
+  positionInlineEditor(lengthEditor, m.x, m.y - 28);
   if (state.tool === "dimension") {
     const anglePoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 + 28 };
     positionAngleEditor(anglePoint.x, anglePoint.y, metrics.angle);
   } else if (document.activeElement !== angleInput) {
     angleInput.value = angleInfo.degrees;
+    syncInlineEditorWidth(angleInput);
   }
 }
 
 function positionAngleEditor(x, y, value) {
-  positionInlineEditor(angleEditor, x, y, lengthEditor);
   if (document.activeElement !== angleInput) {
     angleInput.value = value;
   }
+  syncInlineEditorWidth(angleInput);
+  positionInlineEditor(angleEditor, x, y, lengthEditor);
+}
+
+function syncInlineEditorWidth(input) {
+  if (!input) return;
+  const length = String(input.value || input.placeholder || "").length;
+  input.style.setProperty("--value-width", `${Math.max(2, Math.min(7, length + 0.5))}ch`);
 }
 
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
@@ -2194,6 +2203,8 @@ angleInput.addEventListener("keydown", (event) => {
   applyInlineValue("angle");
   angleInput.blur();
 });
+lengthInput.addEventListener("input", () => syncInlineEditorWidth(lengthInput));
+angleInput.addEventListener("input", () => syncInlineEditorWidth(angleInput));
 lengthInput.addEventListener("blur", () => applyInlineValue("length"));
 angleInput.addEventListener("blur", () => applyInlineValue("angle"));
 

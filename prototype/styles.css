@@ -289,12 +289,13 @@ input {
   color: var(--accent);
   display: grid;
   gap: 4px;
-  grid-template-columns: minmax(38px, auto) auto;
-  min-width: 74px;
-  padding: 3px 7px;
+  grid-template-columns: auto auto;
+  min-width: 0;
+  padding: 3px 6px;
   pointer-events: auto;
   position: absolute;
   transform: translate(-50%, -50%);
+  width: max-content;
 }
 
 .inline-editor span {
@@ -310,11 +311,12 @@ input {
   font-size: 0.78rem;
   font-weight: 800;
   line-height: 1;
-  max-width: 72px;
+  max-width: 86px;
+  min-width: 2ch;
   outline: none;
   padding: 2px 0;
   text-align: center;
-  width: 100%;
+  width: var(--value-width, 4ch);
 }
 
 .inline-editor:focus-within {
