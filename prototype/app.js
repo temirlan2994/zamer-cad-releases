@@ -1187,7 +1187,7 @@ function applySelectionAction(action) {
     };
     state.selectedEndpoint = null;
     hideInlineEditors();
-    statusChip.textContent = "Переместить: укажите базовую точку";
+    statusChip.textContent = "Переместить: наведите курсор на базовую точку и тапните";
     draw();
     return;
   }
@@ -2032,6 +2032,9 @@ canvas.addEventListener("pointerdown", (event) => {
       targetId: state.moveCommand.entityId,
       before: null,
     };
+    statusChip.textContent = state.moveCommand.base
+      ? "Переместить: наведите курсор на вторую точку и тапните"
+      : "Переместить: наведите курсор на базовую точку и тапните";
     return;
   }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
@@ -2144,10 +2147,6 @@ canvas.addEventListener("pointermove", (event) => {
     setSelectedEndpointPosition(currentWorld);
     updateSelectedEndpointEditors();
     statusChip.textContent = "Редактирование конца линии";
-  } else if (state.pointer.mode === "move-command" && state.moveCommand?.base) {
-    state.moveCommand.end = screenToWorld(screen);
-    state.moveCommand.lockedEnd = true;
-    statusChip.textContent = "Переместить: укажите вторую точку";
   } else {
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
@@ -2177,10 +2176,12 @@ function finishCanvasPointer(event, canceled = false) {
     }
     return;
   }
-  if (state.pointer && !state.pointer.moved) {
-    if (state.moveCommand) {
+  if (state.pointer?.mode === "move-command") {
+    if (!canceled) {
       commitCursorPoint();
-    } else if (state.pointer.mode === "line-endpoint") {
+    }
+  } else if (state.pointer && !state.pointer.moved) {
+    if (state.pointer.mode === "line-endpoint") {
       updateSelectedEndpointEditors();
       statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
       draw();
@@ -2215,11 +2216,7 @@ function finishCanvasPointer(event, canceled = false) {
       commitCursorPoint();
     }
   } else {
-    if (state.pointer.mode === "move-command") {
-      commitCursorPoint();
-    } else {
-      finishPointerMoveUndo();
-    }
+    finishPointerMoveUndo();
   }
   state.pointer = null;
   if (state.activePointers.size === 0) {
