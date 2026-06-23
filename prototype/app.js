@@ -1547,7 +1547,11 @@ function snapPolar(point, start) {
 function setTool(tool) {
   state.tool = tool;
   state.drawing = null;
-  if (tool !== "line") {
+  if (tool === "line" || tool === "wall" || tool === "dimension") {
+    state.selectedId = null;
+    state.selectedEndpoint = null;
+    hideInlineEditors();
+  } else if (tool !== "line") {
     state.selectedEndpoint = null;
   }
   if (tool !== "select" && tool !== "furniture") {
