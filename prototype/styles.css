@@ -306,6 +306,11 @@ input {
   visibility: hidden;
 }
 
+.app-shell[data-command="move"] .center-cursor {
+  opacity: 1;
+  visibility: visible;
+}
+
 .cursor-line,
 .cursor-ring {
   left: 50%;

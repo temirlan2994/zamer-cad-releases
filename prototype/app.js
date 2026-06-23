@@ -239,6 +239,7 @@ function css(name) {
 }
 
 function draw() {
+  syncCommandState();
   const rect = canvas.getBoundingClientRect();
   const c = colors();
   ctx.clearRect(0, 0, rect.width, rect.height);
@@ -272,6 +273,10 @@ function draw() {
   }
   syncSelectionActions();
   drawCursorSnap(c);
+}
+
+function syncCommandState() {
+  shell.dataset.command = state.moveCommand ? "move" : "";
 }
 
 function drawMoveCommand(c) {
