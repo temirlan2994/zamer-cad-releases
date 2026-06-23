@@ -1620,8 +1620,6 @@ function commitCursorPoint() {
   if (state.tool === "line" || state.tool === "wall" || state.tool === "dimension") {
     if (!state.drawing) {
       if (state.tool === "line") {
-        const endpoint = pickLineEndpoint(centerScreen());
-        if (endpoint && selectLineEndpoint(endpoint)) return;
         state.selectedEndpoint = null;
       }
       state.drawing = { start: world, end: world, lockedEnd: false };
@@ -1802,7 +1800,11 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   const lineEndpoint = state.tool === "line" ? pickLineEndpoint(screen) : null;
-  if (lineEndpoint) {
+  const editingSelectedEndpoint =
+    lineEndpoint &&
+    state.selectedEndpoint?.entityId === lineEndpoint.entityId &&
+    state.selectedEndpoint?.point === lineEndpoint.point;
+  if (editingSelectedEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === lineEndpoint.entityId);
     state.selectedId = lineEndpoint.entityId;
     state.selectedEndpoint = lineEndpoint;
