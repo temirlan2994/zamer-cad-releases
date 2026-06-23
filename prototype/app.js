@@ -1510,15 +1510,19 @@ function commitCursorPoint() {
       statusChip.textContent = "Начало поставлено. Подведите курсор дальше и тапните холст";
     } else {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
+      const finishedTool = state.tool;
       state.drawing.end = end;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
       if (metrics.length > 0) {
         pushEntity(createEntityFromDrawing());
-        statusChip.textContent = `${state.tool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`;
+        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`;
       }
-      if (state.tool === "line" || state.tool === "dimension") {
+      if (finishedTool === "line" || finishedTool === "wall" || finishedTool === "dimension") {
         state.drawing = null;
-        statusChip.textContent = `Линия ${metrics.length} мм · ${metrics.angle}° завершена`;
+        if (finishedTool === "line" || finishedTool === "wall") {
+          setTool("select");
+        }
+        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}° завершена`;
       } else {
         state.drawing = { start: end, end, lockedEnd: false };
       }
@@ -1546,9 +1550,15 @@ function applyExactInput() {
     y: base.y + Math.sin(radians) * length,
   };
   if (state.drawing) {
+    const finishedTool = state.tool;
     state.drawing.end = end;
     pushEntity(createEntityFromDrawing());
-    state.drawing = { start: end, end, lockedEnd: false };
+    if (finishedTool === "line" || finishedTool === "wall") {
+      state.drawing = null;
+      setTool("select");
+    } else {
+      state.drawing = { start: end, end, lockedEnd: false };
+    }
   } else {
     const id = `line-${Date.now()}`;
     pushEntity(line(id, base.x, base.y, end.x, end.y));
