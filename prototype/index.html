@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=26" />
+    <link rel="stylesheet" href="./styles.css?v=27" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
@@ -46,6 +46,17 @@
         </div>
 
         <div class="status-chip" id="statusChip">Выберите Линия и тяните отрезок</div>
+        <div class="draw-metrics" id="drawMetrics" hidden>
+          <label>
+            <span>L</span>
+            <input id="topLengthInput" inputmode="decimal" value="3240" aria-label="Длина" />
+            <em>мм</em>
+          </label>
+          <label>
+            <span>°</span>
+            <input id="topAngleInput" inputmode="decimal" value="90" aria-label="Угол" />
+          </label>
+        </div>
         <div class="inline-editors" id="inlineEditors" hidden>
           <label class="inline-editor length-editor" id="lengthEditor">
             <input id="lengthInput" inputmode="decimal" value="3240" aria-label="Длина линии" />
@@ -214,6 +225,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=34"></script>
+    <script src="./app.js?v=35"></script>
   </body>
 </html>

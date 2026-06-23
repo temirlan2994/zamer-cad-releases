@@ -7,6 +7,9 @@ const blocks = [...document.querySelectorAll(".block")];
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
+const drawMetrics = document.getElementById("drawMetrics");
+const topLengthInput = document.getElementById("topLengthInput");
+const topAngleInput = document.getElementById("topAngleInput");
 const lengthEditor = document.getElementById("lengthEditor");
 const angleEditor = document.getElementById("angleEditor");
 const themeButton = document.getElementById("themeButton");
@@ -53,7 +56,7 @@ const furnitureCategoriesByTab = {
   bath: [{ id: "bath", label: "Санузел" }],
   decor: [{ id: "decor", label: "Декор" }],
 };
-const keyboardInputs = [lengthInput, angleInput];
+const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 
 const layerMeta = {
@@ -999,6 +1002,7 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
     angleInput.value = angleInfo.degrees;
     syncInlineEditorWidth(angleInput);
   }
+  updateTopMetricInputs(metrics.length, state.tool === "dimension" ? metrics.angle : angleInfo.degrees);
 }
 
 function positionAngleEditor(x, y, value) {
@@ -1007,6 +1011,19 @@ function positionAngleEditor(x, y, value) {
   }
   syncInlineEditorWidth(angleInput);
   positionInlineEditor(angleEditor, x, y, lengthEditor);
+}
+
+function updateTopMetricInputs(length, angle) {
+  if (!drawMetrics || !topLengthInput || !topAngleInput) return;
+  drawMetrics.hidden = false;
+  if (document.activeElement !== topLengthInput) {
+    topLengthInput.value = length;
+  }
+  if (document.activeElement !== topAngleInput) {
+    topAngleInput.value = angle;
+  }
+  syncInlineEditorWidth(topLengthInput);
+  syncInlineEditorWidth(topAngleInput);
 }
 
 function updateSelectedEndpointEditors() {
@@ -1025,6 +1042,7 @@ function updateSelectedEndpointEditors() {
   if (document.activeElement !== angleInput) {
     angleInput.value = metrics.angle;
   }
+  updateTopMetricInputs(metrics.length, metrics.angle);
   syncInlineEditorWidth(lengthInput);
   syncInlineEditorWidth(angleInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
@@ -1066,6 +1084,17 @@ function selectInlineValue(input) {
   window.setTimeout(() => input.select(), 0);
 }
 
+function applyTopMetricValue(kind) {
+  if (!topLengthInput || !topAngleInput) return;
+  lengthInput.value = topLengthInput.value;
+  angleInput.value = topAngleInput.value;
+  syncInlineEditorWidth(lengthInput);
+  syncInlineEditorWidth(angleInput);
+  syncInlineEditorWidth(topLengthInput);
+  syncInlineEditorWidth(topAngleInput);
+  applyInlineValue(kind);
+}
+
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
   if (!editor) return;
   const rect = canvas.getBoundingClientRect();
@@ -1097,6 +1126,9 @@ function positionInlineEditor(editor, x, y, avoidEditor = null) {
 function hideInlineEditors() {
   if (inlineEditors) {
     inlineEditors.hidden = true;
+  }
+  if (drawMetrics) {
+    drawMetrics.hidden = true;
   }
   state.inlineEdit = null;
 }
@@ -2392,6 +2424,26 @@ lengthInput.addEventListener("input", () => syncInlineEditorWidth(lengthInput));
 angleInput.addEventListener("input", () => syncInlineEditorWidth(angleInput));
 lengthInput.addEventListener("blur", () => applyInlineValue("length"));
 angleInput.addEventListener("blur", () => applyInlineValue("angle"));
+topLengthInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  applyTopMetricValue("length");
+  topLengthInput.blur();
+});
+topAngleInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  applyTopMetricValue("angle");
+  topAngleInput.blur();
+});
+topLengthInput?.addEventListener("input", () => {
+  syncInlineEditorWidth(topLengthInput);
+  applyTopMetricValue("length");
+});
+topAngleInput?.addEventListener("input", () => {
+  syncInlineEditorWidth(topAngleInput);
+  applyTopMetricValue("angle");
+});
+topLengthInput?.addEventListener("blur", () => applyTopMetricValue("length"));
+topAngleInput?.addEventListener("blur", () => applyTopMetricValue("angle"));
 
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {

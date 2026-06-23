@@ -218,6 +218,66 @@ input {
   z-index: 3;
 }
 
+.draw-metrics[hidden] {
+  display: none;
+}
+
+.draw-metrics {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px color-mix(in srgb, #000000 10%, transparent);
+  display: flex;
+  gap: 6px;
+  left: 72px;
+  padding: 5px;
+  position: absolute;
+  top: 42px;
+  z-index: 5;
+}
+
+.draw-metrics label {
+  align-items: center;
+  background: color-mix(in srgb, var(--canvas) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: auto minmax(42px, auto) auto;
+  height: 30px;
+  padding: 0 6px;
+}
+
+.draw-metrics span,
+.draw-metrics em {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.draw-metrics input {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1;
+  max-width: 76px;
+  min-width: 2ch;
+  outline: none;
+  padding: 0;
+  text-align: center;
+  width: var(--value-width, 4ch);
+}
+
+.draw-metrics label:focus-within {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
 .center-cursor {
   height: 72px;
   left: 50%;
