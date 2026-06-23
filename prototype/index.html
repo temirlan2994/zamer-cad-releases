@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=27" />
+    <link rel="stylesheet" href="./styles.css?v=28" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
@@ -66,6 +66,14 @@
             <input id="angleInput" inputmode="decimal" value="90" aria-label="Угол линии" />
             <span>°</span>
           </label>
+        </div>
+        <div class="selection-actions" id="selectionActions" hidden>
+          <button data-action="move">↕<span>Переместить</span></button>
+          <button data-action="copy">⧉<span>Копия</span></button>
+          <button data-action="rotate">↻<span>Поворот</span></button>
+          <button data-action="mirror">⇆<span>Зеркало</span></button>
+          <button data-action="offset">∥<span>Смещение</span></button>
+          <button data-action="delete">⌫<span>Удалить</span></button>
         </div>
       </section>
 
@@ -225,6 +233,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=36"></script>
+    <script src="./app.js?v=37"></script>
   </body>
 </html>

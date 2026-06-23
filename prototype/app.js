@@ -10,6 +10,7 @@ const inlineEditors = document.getElementById("inlineEditors");
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
+const selectionActions = document.getElementById("selectionActions");
 const lengthEditor = document.getElementById("lengthEditor");
 const angleEditor = document.getElementById("angleEditor");
 const themeButton = document.getElementById("themeButton");
@@ -261,10 +262,27 @@ function draw() {
 
   if (state.drawing) {
     drawActiveSegment(c);
+  } else if (state.selectedEndpoint) {
+    updateSelectedEndpointEditors();
   } else {
     hideInlineEditors();
   }
+  syncSelectionActions();
   drawCursorSnap(c);
+}
+
+function syncSelectionActions() {
+  if (!selectionActions) return;
+  const selected = state.entities.find((entity) => entity.id === state.selectedId);
+  const show = Boolean(
+    selected &&
+      !state.drawing &&
+      state.tool === "select" &&
+      selected.type !== "block" &&
+      selected.layer !== "dimensions" &&
+      isLayerVisible(selected.layer)
+  );
+  selectionActions.hidden = !show;
 }
 
 function drawGrid(rect, c) {
@@ -1093,6 +1111,69 @@ function applyTopMetricValue(kind) {
   syncInlineEditorWidth(topLengthInput);
   syncInlineEditorWidth(topAngleInput);
   applyInlineValue(kind);
+}
+
+function applySelectionAction(action) {
+  const entity = state.entities.find((item) => item.id === state.selectedId);
+  if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
+
+  if (action === "move") {
+    statusChip.textContent = "Переместить: тяните выбранную линию пальцем";
+    return;
+  }
+
+  if (action === "copy") {
+    const copy = cloneLinearEntity(entity);
+    state.entities.push(copy);
+    state.undo.push({ type: "add", entity: copy });
+    state.redo.length = 0;
+    state.selectedId = copy.id;
+    state.selectedEndpoint = null;
+    statusChip.textContent = "Копия создана";
+    draw();
+    return;
+  }
+
+  if (action === "offset") {
+    const copy = offsetLinearEntity(entity);
+    state.entities.push(copy);
+    state.undo.push({ type: "add", entity: copy });
+    state.redo.length = 0;
+    state.selectedId = copy.id;
+    state.selectedEndpoint = null;
+    statusChip.textContent = "Смещение 300 мм создано";
+    draw();
+    return;
+  }
+
+  if (action === "delete") {
+    const index = state.entities.findIndex((item) => item.id === entity.id);
+    if (index < 0) return;
+    state.entities.splice(index, 1);
+    state.undo.push({ type: "delete", entity, index });
+    state.redo.length = 0;
+    state.selectedId = null;
+    state.selectedEndpoint = null;
+    statusChip.textContent = "Линия удалена";
+    draw();
+    return;
+  }
+
+  const before = entityGeometry(entity);
+  if (action === "rotate") {
+    rotateLinearEntity90(entity);
+    statusChip.textContent = "Поворот 90°";
+  } else if (action === "mirror") {
+    mirrorLinearEntity(entity);
+    statusChip.textContent = "Отзеркалено";
+  }
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+  }
+  state.selectedEndpoint = null;
+  draw();
 }
 
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
@@ -2060,6 +2141,53 @@ function moveEntityBy(entity, dx, dy) {
   entity.y2 += dy;
 }
 
+function cloneLinearEntity(entity, dx = 260, dy = 260) {
+  const id = `${entity.type || "line"}-${Date.now()}`;
+  if (entity.type === "wall") {
+    return wall(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy);
+  }
+  return line(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer || "measure");
+}
+
+function rotateLinearEntity90(entity) {
+  const cx = (entity.x1 + entity.x2) / 2;
+  const cy = (entity.y1 + entity.y2) / 2;
+  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, { x: cx, y: cy }, Math.PI / 2);
+  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, { x: cx, y: cy }, Math.PI / 2);
+  entity.x1 = p1.x;
+  entity.y1 = p1.y;
+  entity.x2 = p2.x;
+  entity.y2 = p2.y;
+}
+
+function mirrorLinearEntity(entity) {
+  const cx = (entity.x1 + entity.x2) / 2;
+  entity.x1 = cx - (entity.x1 - cx);
+  entity.x2 = cx - (entity.x2 - cx);
+}
+
+function offsetLinearEntity(entity, distance = 300) {
+  const dx = entity.x2 - entity.x1;
+  const dy = entity.y2 - entity.y1;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / length) * distance;
+  const ny = (dx / length) * distance;
+  const copy = cloneLinearEntity(entity, 0, 0);
+  moveEntityBy(copy, nx, ny);
+  return copy;
+}
+
+function rotatePointAround(point, center, radians) {
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
 function entityGeometry(entity) {
   if (!entity) return null;
   if (entity.type === "block") {
@@ -2485,6 +2613,12 @@ topAngleInput?.addEventListener("input", () => {
 topLengthInput?.addEventListener("blur", () => applyTopMetricValue("length"));
 topAngleInput?.addEventListener("blur", () => applyTopMetricValue("angle"));
 
+selectionActions?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  applySelectionAction(button.dataset.action);
+});
+
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {
     shell.classList.add("input-focused");
@@ -2520,6 +2654,11 @@ document.getElementById("undoButton").addEventListener("click", () => {
     state.redo.push(action);
     state.selectedId = action.entityId;
     draw();
+  } else if (action.type === "delete") {
+    state.entities.splice(action.index, 0, action.entity);
+    state.redo.push(action);
+    state.selectedId = action.entity.id;
+    draw();
   }
 });
 
@@ -2536,6 +2675,11 @@ document.getElementById("redoButton").addEventListener("click", () => {
     applyEntityGeometry(entity, action.after);
     state.undo.push(action);
     state.selectedId = action.entityId;
+    draw();
+  } else if (action.type === "delete") {
+    state.entities = state.entities.filter((entity) => entity !== action.entity);
+    state.undo.push(action);
+    state.selectedId = null;
     draw();
   }
 });
