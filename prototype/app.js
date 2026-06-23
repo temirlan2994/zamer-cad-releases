@@ -1831,6 +1831,26 @@ canvas.addEventListener("pointerdown", (event) => {
   if (furnitureControl && beginFurnitureControl(furnitureControl, event, screen)) {
     return;
   }
+  const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
+  if (selectedLineEndpoint) {
+    const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
+    state.selectedEndpoint = selectedLineEndpoint;
+    state.furnitureEditId = null;
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "line-endpoint",
+      targetId: selectedLineEndpoint.entityId,
+      before: hitEntity ? entityGeometry(hitEntity) : null,
+    };
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+    draw();
+    return;
+  }
   const lineEndpoint = state.tool === "line" ? pickLineEndpoint(screen) : null;
   const editingSelectedEndpoint =
     lineEndpoint &&
@@ -1962,6 +1982,7 @@ function finishCanvasPointer(event, canceled = false) {
         statusChip.textContent = "Нажмите галочку, чтобы закончить редактирование мебели";
       } else {
         state.selectedId = hitId;
+        state.selectedEndpoint = null;
         if (hitEntity?.type === "block") {
           if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
           statusChip.textContent = "Мебель выбрана. Нажмите «Редактировать»";
@@ -2094,6 +2115,25 @@ function pickLineEndpoint(screen) {
         bestDistance = distance;
         best = { entityId: entity.id, point: endpoint.point };
       }
+    }
+  }
+  return best;
+}
+
+function pickSelectedLineEndpoint(screen) {
+  const entity = state.entities.find((item) => item.id === state.selectedId);
+  if (!entity || entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
+  let best = null;
+  let bestDistance = 20;
+  const endpoints = [
+    { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
+    { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
+  ];
+  for (const endpoint of endpoints) {
+    const distance = Math.hypot(screen.x - endpoint.screen.x, screen.y - endpoint.screen.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { entityId: entity.id, point: endpoint.point };
     }
   }
   return best;
