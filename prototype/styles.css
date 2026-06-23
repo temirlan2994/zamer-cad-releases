@@ -155,23 +155,31 @@ input {
 }
 
 .tool-rail {
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px 10px 0 0;
+  bottom: 0;
+  box-shadow: 0 -10px 26px color-mix(in srgb, #000000 12%, transparent);
   display: grid;
-  gap: 8px;
-  left: 8px;
+  gap: 4px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  left: 0;
+  padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
   position: absolute;
-  top: 10px;
-  z-index: 3;
+  right: 0;
+  z-index: 7;
 }
 
 .tool {
   align-items: center;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  background: transparent;
+  border-color: transparent;
   border-radius: 8px;
   display: grid;
-  height: 48px;
+  height: 50px;
   justify-items: center;
   padding: 4px;
-  width: 52px;
+  width: 100%;
 }
 
 .tool span {
@@ -208,8 +216,8 @@ input {
   top: 10px;
   color: var(--muted);
   font-size: 0.73rem;
-  left: 72px;
-  max-width: calc(100% - 88px);
+  left: 10px;
+  max-width: calc(100% - 20px);
   overflow: hidden;
   padding: 7px 9px;
   position: absolute;
@@ -230,7 +238,7 @@ input {
   box-shadow: 0 8px 22px color-mix(in srgb, #000000 10%, transparent);
   display: flex;
   gap: 6px;
-  left: 72px;
+  left: 10px;
   padding: 5px;
   position: absolute;
   top: 42px;
@@ -394,12 +402,12 @@ input {
   background: color-mix(in srgb, var(--surface) 96%, transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
-  bottom: calc(10px + var(--keyboard-inset, 0px));
+  bottom: calc(68px + var(--keyboard-inset, 0px) + env(safe-area-inset-bottom));
   box-shadow: 0 12px 32px color-mix(in srgb, #000000 14%, transparent);
   display: flex;
   gap: 4px;
-  left: 72px;
-  max-width: calc(100% - 84px);
+  left: 10px;
+  max-width: calc(100% - 20px);
   overflow-x: auto;
   padding: 5px;
   position: absolute;
@@ -905,7 +913,10 @@ input {
   }
 
   .tool {
-    height: 42px;
+    height: 44px;
   }
 
+  .selection-actions {
+    bottom: calc(62px + var(--keyboard-inset, 0px) + env(safe-area-inset-bottom));
+  }
 }
