@@ -80,6 +80,7 @@ const state = {
     panY: 84,
   },
   drawing: null,
+  moveCommand: null,
   pointer: null,
   activePointers: new Map(),
   pinch: null,
@@ -262,6 +263,8 @@ function draw() {
 
   if (state.drawing) {
     drawActiveSegment(c);
+  } else if (state.moveCommand) {
+    drawMoveCommand(c);
   } else if (state.selectedEndpoint) {
     updateSelectedEndpointEditors();
   } else {
@@ -271,12 +274,42 @@ function draw() {
   drawCursorSnap(c);
 }
 
+function drawMoveCommand(c) {
+  const command = state.moveCommand;
+  if (!command?.base) {
+    hideInlineEditors();
+    return;
+  }
+  const start = command.base;
+  const end = command.lockedEnd ? command.end : cursorWorld();
+  command.end = end;
+  const p1 = worldToScreen(start);
+  const p2 = worldToScreen(end);
+  const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
+  const m = midpoint(p1, p2);
+
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([8, 6]);
+  linePath(p1.x, p1.y, p2.x, p2.y);
+  ctx.setLineDash([]);
+  drawHandle(p1.x, p1.y, c);
+  drawHandle(p2.x, p2.y, c);
+  drawBadge(`${metrics.length} мм  ${metrics.angle}°`, m.x, m.y - 22, c);
+  ctx.restore();
+
+  updateTopMetricInputs(metrics.length, metrics.angle);
+}
+
 function syncSelectionActions() {
   if (!selectionActions) return;
   const selected = state.entities.find((entity) => entity.id === state.selectedId);
   const show = Boolean(
     selected &&
       !state.drawing &&
+      !state.moveCommand &&
       state.tool === "select" &&
       selected.type !== "block" &&
       selected.layer !== "dimensions" &&
@@ -1110,7 +1143,29 @@ function applyTopMetricValue(kind) {
   syncInlineEditorWidth(angleInput);
   syncInlineEditorWidth(topLengthInput);
   syncInlineEditorWidth(topAngleInput);
+  if (state.moveCommand) {
+    applyMoveCommandInlineValue(kind);
+    return;
+  }
   applyInlineValue(kind);
+}
+
+function applyMoveCommandInlineValue(kind) {
+  const command = state.moveCommand;
+  if (!command?.base) return;
+  const end = command.end || command.base;
+  const currentLength = Math.max(1, Math.hypot(end.x - command.base.x, end.y - command.base.y));
+  const currentRad = Math.atan2(end.y - command.base.y, end.x - command.base.x);
+  const typedLength = Number(topLengthInput.value.replace(",", "."));
+  const typedAngle = Number(topAngleInput.value.replace(",", "."));
+  const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
+  const nextRad = kind === "angle" && Number.isFinite(typedAngle) ? (typedAngle * Math.PI) / 180 : currentRad;
+  command.end = {
+    x: command.base.x + Math.cos(nextRad) * nextLength,
+    y: command.base.y + Math.sin(nextRad) * nextLength,
+  };
+  command.lockedEnd = true;
+  draw();
 }
 
 function applySelectionAction(action) {
@@ -1118,7 +1173,17 @@ function applySelectionAction(action) {
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
 
   if (action === "move") {
-    statusChip.textContent = "Переместить: тяните выбранную линию пальцем";
+    state.moveCommand = {
+      entityId: entity.id,
+      base: null,
+      end: null,
+      lockedEnd: false,
+      before: entityGeometry(entity),
+    };
+    state.selectedEndpoint = null;
+    hideInlineEditors();
+    statusChip.textContent = "Переместить: укажите базовую точку";
+    draw();
     return;
   }
 
@@ -1660,6 +1725,7 @@ function snapPolar(point, start) {
 function setTool(tool) {
   state.tool = tool;
   state.drawing = null;
+  state.moveCommand = null;
   if (tool === "line" || tool === "wall" || tool === "dimension") {
     state.selectedId = null;
     state.selectedEndpoint = null;
@@ -1730,6 +1796,10 @@ function selectLineEndpoint(endpoint) {
 
 function commitCursorPoint() {
   const world = cursorWorld();
+  if (state.moveCommand) {
+    commitMoveCommandPoint(world);
+    return;
+  }
   if (state.tool === "line" || state.tool === "wall" || state.tool === "dimension") {
     if (!state.drawing) {
       if (state.tool === "line") {
@@ -1764,6 +1834,40 @@ function commitCursorPoint() {
     const length = Number(lengthInput.value) || 0;
     statusChip.textContent = `Размер ${length} мм завершен`;
   }
+  draw();
+}
+
+function commitMoveCommandPoint(world) {
+  const command = state.moveCommand;
+  if (!command) return;
+  if (!command.base) {
+    command.base = world;
+    command.end = world;
+    command.lockedEnd = false;
+    statusChip.textContent = "Переместить: укажите вторую точку";
+    draw();
+    return;
+  }
+
+  const end = command.lockedEnd ? command.end : world;
+  const entity = state.entities.find((item) => item.id === command.entityId);
+  if (!entity) {
+    state.moveCommand = null;
+    hideInlineEditors();
+    draw();
+    return;
+  }
+  const dx = end.x - command.base.x;
+  const dy = end.y - command.base.y;
+  moveEntityBy(entity, dx, dy);
+  const after = entityGeometry(entity);
+  if (geometryChanged(command.before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+    state.redo.length = 0;
+  }
+  state.moveCommand = null;
+  hideInlineEditors();
+  statusChip.textContent = "Элемент перемещен";
   draw();
 }
 
@@ -1912,6 +2016,19 @@ canvas.addEventListener("pointerdown", (event) => {
   if (furnitureControl && beginFurnitureControl(furnitureControl, event, screen)) {
     return;
   }
+  if (state.moveCommand) {
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "move-command",
+      targetId: state.moveCommand.entityId,
+      before: null,
+    };
+    return;
+  }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
   if (selectedLineEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
@@ -2022,6 +2139,10 @@ canvas.addEventListener("pointermove", (event) => {
     setSelectedEndpointPosition(currentWorld);
     updateSelectedEndpointEditors();
     statusChip.textContent = "Редактирование конца линии";
+  } else if (state.pointer.mode === "move-command" && state.moveCommand?.base) {
+    state.moveCommand.end = screenToWorld(screen);
+    state.moveCommand.lockedEnd = true;
+    statusChip.textContent = "Переместить: укажите вторую точку";
   } else {
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
@@ -2052,7 +2173,9 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   if (state.pointer && !state.pointer.moved) {
-    if (state.pointer.mode === "line-endpoint") {
+    if (state.moveCommand) {
+      commitCursorPoint();
+    } else if (state.pointer.mode === "line-endpoint") {
       updateSelectedEndpointEditors();
       statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
       draw();
@@ -2087,7 +2210,11 @@ function finishCanvasPointer(event, canceled = false) {
       commitCursorPoint();
     }
   } else {
-    finishPointerMoveUndo();
+    if (state.pointer.mode === "move-command") {
+      commitCursorPoint();
+    } else {
+      finishPointerMoveUndo();
+    }
   }
   state.pointer = null;
   if (state.activePointers.size === 0) {
