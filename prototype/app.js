@@ -997,6 +997,10 @@ function syncInlineEditorWidth(input) {
   input.style.setProperty("--value-width", `${Math.max(2, Math.min(7, length + 0.5))}ch`);
 }
 
+function selectInlineValue(input) {
+  window.setTimeout(() => input.select(), 0);
+}
+
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
   if (!editor) return;
   const rect = canvas.getBoundingClientRect();
@@ -2211,9 +2215,11 @@ angleInput.addEventListener("blur", () => applyInlineValue("angle"));
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {
     shell.classList.add("input-focused");
+    selectInlineValue(input);
     window.setTimeout(updateViewportLock, 40);
     window.setTimeout(updateViewportLock, 260);
   });
+  input.addEventListener("pointerup", () => selectInlineValue(input));
   input.addEventListener("blur", () => {
     shell.classList.remove("input-focused");
     window.setTimeout(updateViewportLock, 80);
