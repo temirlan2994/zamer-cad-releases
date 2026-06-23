@@ -86,6 +86,7 @@ const state = {
   sheetDrag: null,
   suppressFurnitureClick: false,
   selectedId: "wall-3",
+  selectedEndpoint: null,
   furnitureEditId: null,
   undo: [],
   redo: [],
@@ -428,9 +429,26 @@ function drawLineEntity(entity, c) {
   }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-  ctx.strokeStyle = c.line;
-  ctx.lineWidth = 1.4;
+  const selected = entity.id === state.selectedId;
+  ctx.strokeStyle = selected ? c.accent : c.line;
+  ctx.lineWidth = selected ? 2 : 1.4;
   linePath(p1.x, p1.y, p2.x, p2.y);
+  if (selected) {
+    drawEndpointHandle(p1, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
+    drawEndpointHandle(p2, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "end", c);
+  }
+}
+
+function drawEndpointHandle(point, active, c) {
+  ctx.save();
+  ctx.fillStyle = active ? c.accent : c.surface;
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = active ? 2.2 : 1.6;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, active ? 7 : 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawDimensionEntity(entity, c, options = {}) {
@@ -991,6 +1009,53 @@ function positionAngleEditor(x, y, value) {
   positionInlineEditor(angleEditor, x, y, lengthEditor);
 }
 
+function updateSelectedEndpointEditors() {
+  const geometry = selectedEndpointGeometry();
+  if (!geometry || !inlineEditors) return;
+  const { fixed, moving } = geometry;
+  const metrics = segmentMetrics(fixed.x, fixed.y, moving.x, moving.y);
+  const p1 = worldToScreen(fixed);
+  const p2 = worldToScreen(moving);
+  const m = midpoint(p1, p2);
+  inlineEditors.hidden = false;
+  state.inlineEdit = { start: fixed, end: moving, metrics, angleInfo: null };
+  if (document.activeElement !== lengthInput) {
+    lengthInput.value = metrics.length;
+  }
+  if (document.activeElement !== angleInput) {
+    angleInput.value = metrics.angle;
+  }
+  syncInlineEditorWidth(lengthInput);
+  syncInlineEditorWidth(angleInput);
+  positionInlineEditor(lengthEditor, m.x, m.y - 28);
+  positionAngleEditor(m.x, m.y + 28, metrics.angle);
+}
+
+function selectedEndpointGeometry() {
+  const endpoint = state.selectedEndpoint;
+  if (!endpoint) return null;
+  const entity = state.entities.find((item) => item.id === endpoint.entityId);
+  if (!entity || entity.type === "block") return null;
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  return endpoint.point === "start"
+    ? { entity, fixed: end, moving: start }
+    : { entity, fixed: start, moving: end };
+}
+
+function setSelectedEndpointPosition(point) {
+  const endpoint = state.selectedEndpoint;
+  const entity = endpoint ? state.entities.find((item) => item.id === endpoint.entityId) : null;
+  if (!entity || entity.type === "block") return;
+  if (endpoint.point === "start") {
+    entity.x1 = point.x;
+    entity.y1 = point.y;
+  } else {
+    entity.x2 = point.x;
+    entity.y2 = point.y;
+  }
+}
+
 function syncInlineEditorWidth(input) {
   if (!input) return;
   const length = String(input.value || input.placeholder || "").length;
@@ -1037,6 +1102,10 @@ function hideInlineEditors() {
 }
 
 function applyInlineValue(kind) {
+  if (state.selectedEndpoint) {
+    applySelectedEndpointInlineValue(kind);
+    return;
+  }
   if (!state.drawing || !state.inlineEdit) return;
   const start = state.drawing.start;
   const end = state.drawing.end;
@@ -1065,6 +1134,30 @@ function applyInlineValue(kind) {
     y: start.y + Math.sin(nextRad) * nextLength,
   };
   state.drawing.lockedEnd = true;
+  draw();
+}
+
+function applySelectedEndpointInlineValue(kind) {
+  const geometry = selectedEndpointGeometry();
+  if (!geometry) return;
+  const { entity, fixed, moving } = geometry;
+  const currentLength = Math.max(1, Math.hypot(moving.x - fixed.x, moving.y - fixed.y));
+  const currentRad = Math.atan2(moving.y - fixed.y, moving.x - fixed.x);
+  const typedLength = Number(lengthInput.value.replace(",", "."));
+  const typedAngle = Number(angleInput.value.replace(",", "."));
+  const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
+  const nextRad = kind === "angle" && Number.isFinite(typedAngle) ? (typedAngle * Math.PI) / 180 : currentRad;
+  const before = entityGeometry(entity);
+  setSelectedEndpointPosition({
+    x: fixed.x + Math.cos(nextRad) * nextLength,
+    y: fixed.y + Math.sin(nextRad) * nextLength,
+  });
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+  }
+  updateSelectedEndpointEditors();
   draw();
 }
 
@@ -1454,6 +1547,9 @@ function snapPolar(point, start) {
 function setTool(tool) {
   state.tool = tool;
   state.drawing = null;
+  if (tool !== "line") {
+    state.selectedEndpoint = null;
+  }
   if (tool !== "select" && tool !== "furniture") {
     state.furnitureEditId = null;
   }
@@ -1502,10 +1598,28 @@ function createEntityFromDrawing() {
   return line(id, start.x, start.y, end.x, end.y);
 }
 
+function selectLineEndpoint(endpoint) {
+  const entity = state.entities.find((item) => item.id === endpoint?.entityId);
+  if (!entity || entity.type === "block") return false;
+  state.selectedId = entity.id;
+  state.selectedEndpoint = { entityId: entity.id, point: endpoint.point };
+  state.drawing = null;
+  state.furnitureEditId = null;
+  updateSelectedEndpointEditors();
+  statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+  draw();
+  return true;
+}
+
 function commitCursorPoint() {
   const world = cursorWorld();
   if (state.tool === "line" || state.tool === "wall" || state.tool === "dimension") {
     if (!state.drawing) {
+      if (state.tool === "line") {
+        const endpoint = pickLineEndpoint(centerScreen());
+        if (endpoint && selectLineEndpoint(endpoint)) return;
+        state.selectedEndpoint = null;
+      }
       state.drawing = { start: world, end: world, lockedEnd: false };
       statusChip.textContent = "Начало поставлено. Подведите курсор дальше и тапните холст";
     } else {
@@ -1683,6 +1797,27 @@ canvas.addEventListener("pointerdown", (event) => {
   if (furnitureControl && beginFurnitureControl(furnitureControl, event, screen)) {
     return;
   }
+  const lineEndpoint = state.tool === "line" ? pickLineEndpoint(screen) : null;
+  if (lineEndpoint) {
+    const hitEntity = state.entities.find((entity) => entity.id === lineEndpoint.entityId);
+    state.selectedId = lineEndpoint.entityId;
+    state.selectedEndpoint = lineEndpoint;
+    state.furnitureEditId = null;
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "line-endpoint",
+      targetId: lineEndpoint.entityId,
+      before: hitEntity ? entityGeometry(hitEntity) : null,
+    };
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Конец линии выбран. Тяните точку или введите длину";
+    draw();
+    return;
+  }
   const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
   const canMoveFurniture = hitEntity?.type === "block" && state.furnitureEditId === hitId;
@@ -1743,6 +1878,11 @@ canvas.addEventListener("pointermove", (event) => {
       state.pointer.world = currentWorld;
       statusChip.textContent = "Перемещение объекта";
     }
+  } else if (state.pointer.mode === "line-endpoint" && state.pointer.targetId) {
+    const currentWorld = screenToWorld(screen);
+    setSelectedEndpointPosition(currentWorld);
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Редактирование конца линии";
   } else {
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
@@ -1773,7 +1913,11 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   if (state.pointer && !state.pointer.moved) {
-    if (state.tool === "select") {
+    if (state.pointer.mode === "line-endpoint") {
+      updateSelectedEndpointEditors();
+      statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+      draw();
+    } else if (state.tool === "select") {
       const hitId = state.pointer.targetId || pickEntity(state.pointer.startScreen);
       const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
       if (!hitId && state.furnitureEditId) {
@@ -1812,7 +1956,7 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishPointerMoveUndo() {
-  const trackedModes = new Set(["move", "furniture-resize", "furniture-rotate"]);
+  const trackedModes = new Set(["move", "furniture-resize", "furniture-rotate", "line-endpoint"]);
   if (!trackedModes.has(state.pointer?.mode) || !state.pointer.targetId) return;
   const entity = state.entities.find((item) => item.id === state.pointer.targetId);
   if (entity && state.pointer.before) {
@@ -1891,6 +2035,27 @@ function pickEntity(screen) {
     if (distance < bestDistance) {
       best = entity.id;
       bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function pickLineEndpoint(screen) {
+  let best = null;
+  let bestDistance = 18;
+  for (let i = state.entities.length - 1; i >= 0; i -= 1) {
+    const entity = state.entities[i];
+    if (entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
+    const endpoints = [
+      { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
+      { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
+    ];
+    for (const endpoint of endpoints) {
+      const distance = Math.hypot(screen.x - endpoint.screen.x, screen.y - endpoint.screen.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { entityId: entity.id, point: endpoint.point };
+      }
     }
   }
   return best;
