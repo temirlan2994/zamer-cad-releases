@@ -314,11 +314,15 @@ function drawMoveCommand(c) {
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
+  const displayAngle =
+    command.mode === "rotate" && command.reference
+      ? Math.round(Math.abs((signedAngleDelta(angleBetweenPoints(start, command.reference), angleBetweenPoints(start, end)) * 180) / Math.PI))
+      : metrics.angle;
   const m = midpoint(p1, p2);
   const entity = state.entities.find((item) => item.id === command.entityId);
   if (entity) {
     if (command.mode === "rotate") {
-      drawRotatePreview(entity, start, end, c);
+      drawRotatePreview(entity, command, end, c);
     } else {
       drawMovePreview(entity, end.x - start.x, end.y - start.y, c);
     }
@@ -334,41 +338,43 @@ function drawMoveCommand(c) {
   drawHandle(p1.x, p1.y, c);
   drawHandle(p2.x, p2.y, c);
   drawBadge(`${metrics.length} мм  ${metrics.angle}°`, m.x, m.y - 22, c);
-  drawCommandAngleArc(p1, p2, c);
+  drawCommandAngleArc(p1, p2, c, command.mode === "rotate" ? command.reference : null);
   ctx.restore();
 
-  updateTopMetricInputs(metrics.length, metrics.angle);
+  updateTopMetricInputs(command.mode === "rotate" ? 0 : metrics.length, displayAngle);
 }
 
-function drawCommandAngleArc(origin, target, c) {
+function drawCommandAngleArc(origin, target, c, reference = null) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
   if (screenLength < 34) return;
   const angle = Math.atan2(dy, dx);
+  const startAngle = reference ? angleBetweenPoints(origin, worldToScreen(reference)) : 0;
+  const delta = signedAngleDelta(startAngle, angle);
   const radius = Math.min(48, Math.max(28, screenLength * 0.24));
   const arcEnd = {
     x: origin.x + Math.cos(angle) * radius,
     y: origin.y + Math.sin(angle) * radius,
   };
-  const labelRad = angle / 2;
+  const labelRad = startAngle + delta / 2;
   const label = {
     x: origin.x + Math.cos(labelRad) * (radius + 14),
     y: origin.y + Math.sin(labelRad) * (radius + 14),
   };
-  const degrees = Math.round(((angle * 180) / Math.PI + 360) % 360);
+  const degrees = Math.round(Math.abs((delta * 180) / Math.PI));
 
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
   ctx.lineWidth = 1.35;
   ctx.setLineDash([4, 4]);
-  linePath(origin.x, origin.y, origin.x + radius + 14, origin.y);
+  linePath(origin.x, origin.y, origin.x + Math.cos(startAngle) * (radius + 14), origin.y + Math.sin(startAngle) * (radius + 14));
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.arc(origin.x, origin.y, radius, 0, angle, angle < 0);
+  ctx.arc(origin.x, origin.y, radius, startAngle, startAngle + delta, delta < 0);
   ctx.stroke();
-  drawArcArrow(arcEnd, angle, angle >= 0 ? 1 : -1, c);
+  drawArcArrow(arcEnd, angle, delta >= 0 ? 1 : -1, c);
   drawBadge(`${degrees}°`, label.x, label.y, c, true);
   ctx.restore();
 }
@@ -389,10 +395,13 @@ function drawMovePreview(entity, dx, dy, c) {
   ctx.restore();
 }
 
-function drawRotatePreview(entity, base, end, c) {
-  const angle = angleBetweenPoints(base, end);
-  const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, angle);
-  const p2World = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, angle);
+function drawRotatePreview(entity, command, end, c) {
+  if (!command.reference) return;
+  const startAngle = angleBetweenPoints(command.base, command.reference);
+  const endAngle = angleBetweenPoints(command.base, end);
+  const delta = signedAngleDelta(startAngle, endAngle);
+  const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, command.base, delta);
+  const p2World = rotatePointAround({ x: entity.x2, y: entity.y2 }, command.base, delta);
   const p1 = worldToScreen(p1World);
   const p2 = worldToScreen(p2World);
   ctx.save();
@@ -1280,7 +1289,8 @@ function applyMoveCommandInlineValue(kind) {
     const typedAngle = Number(topAngleInput.value.replace(",", "."));
     if (!Number.isFinite(typedAngle)) return;
     const length = Math.max(500, Math.hypot((command.end?.x || command.base.x) - command.base.x, (command.end?.y || command.base.y) - command.base.y));
-    const radians = (typedAngle * Math.PI) / 180;
+    const referenceRad = command.reference ? angleBetweenPoints(command.base, command.reference) : 0;
+    const radians = referenceRad + (typedAngle * Math.PI) / 180;
     command.end = {
       x: command.base.x + Math.cos(radians) * length,
       y: command.base.y + Math.sin(radians) * length,
@@ -2020,6 +2030,9 @@ function commitMoveCommandPoint(world) {
     statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
     statusChip.textContent = `${command.mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на вторую точку и тапните`;
     statusChip.textContent = `${command.mode === "copy" ? "Копия" : command.mode === "rotate" ? "Поворот" : "Переместить"}: наведите курсор на угол и тапните`;
+    if (command.mode === "rotate") {
+      statusChip.textContent = "Поворот: наведите курсор на исходный угол и тапните";
+    }
     draw();
     forceMoveCursorVisible();
     return;
@@ -2033,10 +2046,20 @@ function commitMoveCommandPoint(world) {
     draw();
     return;
   }
+  if (command.mode === "rotate" && !command.reference) {
+    command.reference = end;
+    command.lockedEnd = false;
+    statusChip.textContent = "Поворот: наведите курсор на новый угол и тапните";
+    draw();
+    forceMoveCursorVisible();
+    return;
+  }
   const dx = end.x - command.base.x;
   const dy = end.y - command.base.y;
   if (command.mode === "rotate") {
-    rotateLinearEntityAround(entity, command.base, angleBetweenPoints(command.base, end));
+    const startAngle = angleBetweenPoints(command.base, command.reference);
+    const endAngle = angleBetweenPoints(command.base, end);
+    rotateLinearEntityAround(entity, command.base, signedAngleDelta(startAngle, endAngle));
     const after = entityGeometry(entity);
     if (geometryChanged(command.before, after)) {
       state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
