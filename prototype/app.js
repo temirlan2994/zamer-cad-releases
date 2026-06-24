@@ -8,7 +8,7 @@ const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const selectToolMenu = document.getElementById("selectToolMenu");
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll(".snap")];
-const blocks = [...document.querySelectorAll(".block")];
+let blocks = [...document.querySelectorAll(".block")];
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
@@ -18,6 +18,10 @@ const topAngleInput = document.getElementById("topAngleInput");
 const selectionActions = document.getElementById("selectionActions");
 const lengthEditor = document.getElementById("lengthEditor");
 const angleEditor = document.getElementById("angleEditor");
+const furnitureSizePanel = document.getElementById("furnitureSizePanel");
+const furnitureWidthInput = document.getElementById("furnitureWidthInput");
+const furnitureDepthInput = document.getElementById("furnitureDepthInput");
+const furnitureRotationInput = document.getElementById("furnitureRotationInput");
 const themeButton = document.getElementById("themeButton");
 const statusChip = document.getElementById("statusChip");
 const layersSheet = document.getElementById("layersSheet");
@@ -27,8 +31,11 @@ const layerList = document.getElementById("layerList");
 const exportCards = [...document.querySelectorAll(".export-card")];
 const furnitureTabs = [...document.querySelectorAll(".furniture-tab")];
 const furnitureCatsNav = document.querySelector(".furniture-cats");
+const furnitureGrid = document.getElementById("furnitureGrid");
 const furnitureSheetHandle = furnitureSheet.querySelector(".sheet-handle");
+const furniturePeekButton = furnitureSheet.querySelector(".furniture-peek-button");
 const symbolBasePath = "./assets/floor-symbols/";
+const libraryCatalogPath = "./assets/library/catalog.json";
 const blockSymbolSources = {
   bed: "QueenBed.svg",
   table: "Table.svg",
@@ -62,7 +69,7 @@ const furnitureCategoriesByTab = {
   bath: [{ id: "bath", label: "Санузел" }],
   decor: [{ id: "decor", label: "Декор" }],
 };
-const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
+const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].filter(Boolean);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 const trackingHoverDelayMs = 520;
 const trackingMaxPoints = 6;
@@ -167,6 +174,87 @@ function loadSymbolImage(source) {
   image.onload = () => draw();
   image.src = `${symbolBasePath}${source}`;
   return image;
+}
+
+function symbolImageMarkup(source) {
+  return `<img src="${symbolBasePath}${source}" alt="" />`;
+}
+
+function furnitureThumbMarkup(item) {
+  const thumb = item.thumb || {};
+  if (thumb.type === "sofa" || thumb.type === "sectional") {
+    const className = thumb.type === "sectional" ? "sectional-thumb" : `sofa-thumb${(thumb.parts || []).length <= 2 ? " compact" : ""}`;
+    return `<span class="furniture-thumb svg-thumb ${className}">${(thumb.parts || []).map(symbolImageMarkup).join("")}</span>`;
+  }
+  return `<span class="furniture-thumb svg-thumb single-symbol">${symbolImageMarkup(thumb.src || blockSymbolSources[item.kind] || "Table.svg")}</span>`;
+}
+
+function createFurnitureCard(item, index) {
+  const button = document.createElement("button");
+  button.className = `block furniture-card${index === 0 ? " active" : ""}`;
+  button.type = "button";
+  button.dataset.tab = item.tab;
+  button.dataset.category = item.category;
+  button.dataset.block = item.kind;
+  button.dataset.w = String(item.width);
+  button.dataset.h = String(item.height);
+  button.dataset.libraryId = item.id;
+  button.innerHTML = `${furnitureThumbMarkup(item)}<strong>${item.title}</strong><small>${item.width} × ${item.height}</small><b>✓</b>`;
+  return button;
+}
+
+function attachFurnitureCardEvents(button) {
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    beginFurnitureDrag(button, event);
+  });
+
+  button.addEventListener("pointermove", (event) => {
+    updateFurnitureDrag(event);
+  });
+
+  button.addEventListener("pointerup", (event) => {
+    finishFurnitureDrag(event);
+  });
+
+  button.addEventListener("pointercancel", (event) => {
+    finishFurnitureDrag(event);
+  });
+
+  button.addEventListener("click", () => {
+    if (state.suppressFurnitureClick) return;
+    setActiveFurnitureCard(button);
+    statusChip.textContent = `${furnitureCardData(button).title}: перетащите карточку на план`;
+  });
+}
+
+function hydrateFurnitureLibrary(items) {
+  furnitureGrid.textContent = "";
+  const cards = items.map(createFurnitureCard);
+  cards.forEach((card) => {
+    furnitureGrid.append(card);
+    attachFurnitureCardEvents(card);
+  });
+  blocks = cards;
+  const firstCard = cards[0];
+  if (firstCard) {
+    setActiveFurnitureCard(firstCard);
+  } else {
+    furnitureGrid.innerHTML = `<div class="library-empty">В этой библиотеке пока нет объектов</div>`;
+  }
+  renderFurnitureLibrary();
+}
+
+async function loadFurnitureLibrary() {
+  try {
+    const response = await fetch(libraryCatalogPath);
+    if (!response.ok) throw new Error(`Library request failed: ${response.status}`);
+    const catalog = await response.json();
+    hydrateFurnitureLibrary(catalog.items || []);
+  } catch (error) {
+    console.error(error);
+    furnitureGrid.innerHTML = `<div class="library-empty">Не удалось загрузить библиотеку</div>`;
+  }
 }
 
 function defaultBlockSize(kind) {
@@ -307,6 +395,7 @@ function draw() {
       drawSelection(entity, c);
     }
   }
+  updateFurnitureSizePanel(selected);
 
   if (state.drawing) {
     drawActiveSegment(c);
@@ -1242,32 +1331,62 @@ function drawLibraryBlockSymbol(kind, w, h) {
   if (kind === "sectional") {
     return drawSectionalLibrarySymbol(w, h);
   }
-  const image = blockSymbolImages[kind];
-  if (!isSymbolReady(image)) return false;
-  drawSymbolImage(image, 0, 0, w * 0.92, h * 0.88);
-  return true;
+  return false;
 }
 
 function drawSofaLibrarySymbol(w, h) {
-  if (!couchSymbolImages.every(isSymbolReady)) return false;
-  const padding = w * 0.04;
-  const partWidth = (w - padding * 2) / couchSymbolImages.length;
-  couchSymbolImages.forEach((image, index) => {
-    const x = -w / 2 + padding + partWidth * index + partWidth / 2;
-    drawSymbolImage(image, x, 0, partWidth * 1.1, h * 0.92);
-  });
+  drawParametricSofa(w, h);
   return true;
 }
 
 function drawSectionalLibrarySymbol(w, h) {
-  if (!couchSymbolImages.every(isSymbolReady) || !isSymbolReady(blockSymbolImages.chair)) return false;
-  const topY = -h * 0.23;
-  const partWidth = w * 0.28;
-  couchSymbolImages.forEach((image, index) => {
-    drawSymbolImage(image, -w * 0.3 + partWidth * index, topY, partWidth * 1.05, h * 0.44);
-  });
-  drawSymbolImage(blockSymbolImages.chair, -w * 0.34, h * 0.18, w * 0.36, h * 0.48, Math.PI / 2);
+  drawParametricSectional(w, h);
   return true;
+}
+
+function drawParametricSofa(w, h) {
+  const arm = Math.min(260, Math.max(150, h * 0.22));
+  const back = Math.min(180, Math.max(95, h * 0.16));
+  const pad = Math.min(95, Math.max(42, h * 0.07));
+  const radius = Math.min(90, h * 0.12);
+  const seatTop = -h / 2 + back + pad * 0.35;
+  const seatBottom = h / 2 - pad;
+  const seatHeight = Math.max(160, seatBottom - seatTop);
+  const innerX = -w / 2 + arm;
+  const innerW = Math.max(240, w - arm * 2);
+  const seats = Math.max(2, Math.min(8, Math.round(innerW / 760)));
+  const seatW = innerW / seats;
+
+  ctx.save();
+  roundedRect(-w / 2, -h / 2, w, h, radius, true);
+  ctx.stroke();
+  roundedRect(-w / 2 + pad * 0.35, -h / 2 + pad * 0.35, w - pad * 0.7, back, Math.min(45, back * 0.35), true);
+  ctx.stroke();
+  roundedRect(-w / 2 + pad * 0.35, -h / 2 + back * 0.35, arm - pad * 0.5, h - back * 0.35 - pad * 0.7, radius * 0.75, true);
+  ctx.stroke();
+  roundedRect(w / 2 - arm + pad * 0.15, -h / 2 + back * 0.35, arm - pad * 0.5, h - back * 0.35 - pad * 0.7, radius * 0.75, true);
+  ctx.stroke();
+  for (let i = 0; i < seats; i += 1) {
+    const x = innerX + i * seatW + pad * 0.18;
+    roundedRect(x, seatTop, seatW - pad * 0.36, seatHeight, Math.min(38, seatHeight * 0.14), true);
+    ctx.stroke();
+    if (i > 0) {
+      linePath(innerX + i * seatW, seatTop + pad * 0.2, innerX + i * seatW, seatBottom - pad * 0.2);
+    }
+  }
+  ctx.restore();
+}
+
+function drawParametricSectional(w, h) {
+  const chaiseW = Math.min(w * 0.42, Math.max(760, h * 0.62));
+  const sofaH = Math.max(520, h * 0.48);
+  ctx.save();
+  drawParametricSofa(w, sofaH);
+  ctx.translate(-w / 2 + chaiseW / 2, h * 0.13);
+  const oldLineWidth = ctx.lineWidth;
+  ctx.lineWidth = oldLineWidth;
+  drawParametricSofa(chaiseW, Math.max(sofaH, h * 0.74));
+  ctx.restore();
 }
 
 function isSymbolReady(image) {
@@ -1669,12 +1788,11 @@ function drawFurnitureSelection(entity, c) {
     for (const handle of layout.handles) {
       drawFurnitureCornerHandle(handle, c);
     }
-    drawFurnitureRotateHandle(layout.rotate, c);
-    drawFurnitureDoneButton(layout.done, c);
+    drawFurnitureActionButton(layout.more, "...", c);
+    drawFurnitureActionButton(layout.duplicate, "+", c);
+    drawFurnitureActionButton(layout.rotate, "↻", c);
     const size = entitySize(entity);
     drawBadge(`${Math.round(size.width)} × ${Math.round(size.height)}`, layout.bbox.centerX, layout.bbox.maxY + 24, c, true);
-  } else {
-    drawCanvasButton(layout.editButton, "Редактировать", c);
   }
   ctx.restore();
 }
@@ -1688,7 +1806,7 @@ function drawFurnitureCornerHandle(handle, c) {
   ctx.restore();
 }
 
-function drawFurnitureRotateHandle(control, c) {
+function drawFurnitureActionButton(control, label, c) {
   ctx.save();
   ctx.fillStyle = c.surface;
   ctx.strokeStyle = c.accent;
@@ -1698,10 +1816,10 @@ function drawFurnitureRotateHandle(control, c) {
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = c.accent;
-  ctx.font = "800 19px Inter, Segoe UI, sans-serif";
+  ctx.font = `800 ${label === "..." ? 18 : 19}px Inter, Segoe UI, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("↻", control.x, control.y + 1);
+  ctx.fillText(label, control.x, control.y + (label === "..." ? -3 : 1));
   ctx.restore();
 }
 
@@ -1742,34 +1860,30 @@ function furnitureControlLayout(entity) {
   bbox.centerX = (bbox.minX + bbox.maxX) / 2;
   bbox.centerY = (bbox.minY + bbox.maxY) / 2;
 
-  const rect = canvas.getBoundingClientRect();
-  const editing = state.furnitureEditId === entity.id;
-  const buttonWidth = 118;
-  const buttonHeight = 32;
-  const buttonY = clampScreenY(bbox.minY - buttonHeight - 12, buttonHeight, rect.height);
-  const editButton = {
-    x: clampScreenX(bbox.centerX - buttonWidth / 2, buttonWidth, rect.width),
-    y: buttonY,
-    width: buttonWidth,
-    height: buttonHeight,
-  };
-  const done = {
-    x: clampScreenX(bbox.minX, 44, rect.width),
-    y: clampScreenY(bbox.minY - 42, 34, rect.height),
-    width: 44,
-    height: 34,
-  };
+  const editing = entity.id === state.selectedId && (state.tool === "select" || state.tool === "furniture");
+  const topLeft = corners[0];
   const topRight = corners[1];
-  const dx = topRight.x - center.x;
-  const dy = topRight.y - center.y;
-  const distance = Math.hypot(dx, dy) || 1;
-  const rotate = {
-    x: Math.max(22, Math.min(rect.width - 22, topRight.x + (dx / distance) * 34)),
-    y: Math.max(22, Math.min(rect.height - 22, topRight.y + (dy / distance) * 34)),
+  const topMid = midpoint(topLeft, topRight);
+  const edgeLength = Math.max(1, pointDistance(topLeft, topRight));
+  const tangent = { x: (topRight.x - topLeft.x) / edgeLength, y: (topRight.y - topLeft.y) / edgeLength };
+  const normalLength = Math.max(1, pointDistance(topMid, center));
+  const normal = { x: (topMid.x - center.x) / normalLength, y: (topMid.y - center.y) / normalLength };
+  const actionAnchor = {
+    x: topRight.x + normal.x * 34 - tangent.x * 18,
+    y: topRight.y + normal.y * 34 - tangent.y * 18,
+  };
+  const rotate = actionAnchor;
+  const duplicate = {
+    x: actionAnchor.x - tangent.x * 42,
+    y: actionAnchor.y - tangent.y * 42,
+  };
+  const more = {
+    x: actionAnchor.x - tangent.x * 84,
+    y: actionAnchor.y - tangent.y * 84,
   };
   const names = ["nw", "ne", "se", "sw"];
   const handles = corners.map((corner, index) => ({ ...corner, corner: names[index] }));
-  return { corners, center, bbox, editing, editButton, done, rotate, handles };
+  return { corners, center, bbox, editing, rotate, duplicate, more, handles };
 }
 
 function clampScreenX(x, width, canvasWidth) {
@@ -2283,6 +2397,54 @@ function hideInlineEditors() {
     updateTopMetricLabels();
   }
   state.inlineEdit = null;
+}
+
+function updateFurnitureSizePanel(entity) {
+  const visible = entity?.type === "block" && (state.tool === "furniture" || state.furnitureEditId === entity.id);
+  if (!furnitureSizePanel) return;
+  furnitureSizePanel.hidden = !visible;
+  shell.classList.toggle("furniture-panel-open", visible);
+  if (!visible) return;
+  const size = entitySize(entity);
+  if (document.activeElement !== furnitureWidthInput) {
+    furnitureWidthInput.value = Math.round(size.width);
+  }
+  if (document.activeElement !== furnitureDepthInput) {
+    furnitureDepthInput.value = Math.round(size.height);
+  }
+  if (document.activeElement !== furnitureRotationInput) {
+    furnitureRotationInput.value = Math.round(entity.rotation || 0);
+  }
+}
+
+function selectedFurnitureEntity() {
+  const entity = state.entities.find((item) => item.id === state.selectedId);
+  return entity?.type === "block" ? entity : null;
+}
+
+function applyFurnitureSizeInput() {
+  const entity = selectedFurnitureEntity();
+  if (!entity) return;
+  const width = Number(furnitureWidthInput.value.replace(",", "."));
+  const height = Number(furnitureDepthInput.value.replace(",", "."));
+  const rotation = Number(furnitureRotationInput.value.replace(",", "."));
+  const before = entityGeometry(entity);
+  if (Number.isFinite(width) && width >= 100) {
+    entity.width = width;
+  }
+  if (Number.isFinite(height) && height >= 100) {
+    entity.height = height;
+  }
+  if (Number.isFinite(rotation)) {
+    entity.rotation = normalizeDegrees(rotation);
+  }
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+  }
+  statusChip.textContent = `Мебель ${Math.round(entity.width)} × ${Math.round(entity.height)} мм · ${Math.round(entity.rotation || 0)}°`;
+  draw();
 }
 
 function applyInlineValue(kind) {
@@ -3179,7 +3341,7 @@ function setTool(tool) {
     button.classList.toggle("active", active);
   });
   const copy = {
-    select: "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»",
+    select: "Выбор: тапните объект. Мебель двигается только когда она выбрана",
     line: "Линия: подведите курсор и тапните холст",
     polyline: "Полилиния: каждый тап добавляет следующий сегмент",
     circle: "Круг: укажите центр, затем радиус",
@@ -3191,7 +3353,7 @@ function setTool(tool) {
   };
   statusChip.textContent = copy[tool];
   if (tool === "select") {
-    statusChip.textContent = "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»";
+    statusChip.textContent = "Выбор: тапните объект. Мебель двигается только когда она выбрана";
   }
   if (tool === "select") {
     statusChip.textContent = selectionStatusText();
@@ -3317,6 +3479,17 @@ function pushEntity(entity) {
   state.selectedId = entity.id;
   state.selectedIds = [entity.id];
   state.furnitureEditId = null;
+}
+
+function duplicateFurnitureEntity(entity) {
+  if (!entity || entity.type !== "block") return;
+  const size = entitySize(entity);
+  const offset = Math.max(420, Math.min(900, Math.max(size.width, size.height) * 0.18));
+  const copy = block(`${entity.kind}-${Date.now()}`, entity.kind, entity.x + offset, entity.y + offset, entity.rotation || 0, size);
+  copy.scale = entity.scale || 1;
+  pushEntity(copy);
+  state.furnitureEditId = state.tool === "furniture" ? copy.id : null;
+  statusChip.textContent = "Мебель дублирована";
 }
 
 function createEntityFromDrawing() {
@@ -3577,15 +3750,14 @@ function hitFurnitureControl(screen) {
   if (!layout) return null;
 
   if (layout.editing) {
-    if (rectContainsPoint(screen, layout.done)) return { type: "done", entity, layout };
+    if (pointDistance(screen, layout.more) <= 24) return { type: "more", entity, layout };
     if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
+    if (pointDistance(screen, layout.duplicate) <= 24) return { type: "duplicate", entity, layout };
     for (const handle of layout.handles) {
       if (pointDistance(screen, handle) <= 20) {
         return { type: "resize", corner: handle.corner, entity, layout };
       }
     }
-  } else if (rectContainsPoint(screen, layout.editButton)) {
-    return { type: "edit", entity, layout };
   }
   return null;
 }
@@ -3600,14 +3772,18 @@ function beginFurnitureControl(control, event, screen) {
   if (control.type === "edit") {
     state.furnitureEditId = control.entity.id;
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
-    statusChip.textContent = "Редактирование мебели: двигайте, тяните углы или крутите ручку";
     draw();
     return true;
   }
-  if (control.type === "done") {
-    state.furnitureEditId = null;
+  if (control.type === "duplicate") {
+    duplicateFurnitureEntity(control.entity);
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
-    statusChip.textContent = "Редактирование мебели завершено";
+    draw();
+    return true;
+  }
+  if (control.type === "more") {
+    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
+    statusChip.textContent = "Действия мебели";
     draw();
     return true;
   }
@@ -3633,8 +3809,14 @@ function beginFurnitureControl(control, event, screen) {
 
 function resizeFurnitureByPointer(entity, screen) {
   const local = worldToBlockLocal(entity, screenToWorld(screen));
-  entity.width = Math.max(300, Math.abs(local.x) * 2);
-  entity.height = Math.max(300, Math.abs(local.y) * 2);
+  const start = state.pointer?.before || entityGeometry(entity);
+  const startWidth = Math.max(1, start?.width || entity.width || defaultBlockSize(entity.kind).width);
+  const startHeight = Math.max(1, start?.height || entity.height || defaultBlockSize(entity.kind).height);
+  const pointerWidth = Math.abs(local.x) * 2;
+  const pointerHeight = Math.abs(local.y) * 2;
+  const scale = Math.max(pointerWidth / startWidth, pointerHeight / startHeight, 300 / startWidth, 300 / startHeight);
+  entity.width = startWidth * scale;
+  entity.height = startHeight * scale;
   statusChip.textContent = `${Math.round(entity.width)} × ${Math.round(entity.height)} мм`;
 }
 
@@ -3788,7 +3970,7 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
-  const canMoveFurniture = hitEntity?.type === "block" && state.furnitureEditId === hitId;
+  const canMoveFurniture = hitEntity?.type === "block" && hitId === state.selectedId && (state.tool === "select" || state.tool === "furniture");
   const pointerMode =
     hitEntity?.type === "block" && !canMoveFurniture
       ? "pan"
@@ -3797,6 +3979,7 @@ canvas.addEventListener("pointerdown", (event) => {
         : hitId
           ? "move"
           : "pan";
+  const pointerTargetId = hitEntity?.type === "block" && !canMoveFurniture ? null : hitId;
   state.pointer = {
     id: event.pointerId,
     screen,
@@ -3804,8 +3987,8 @@ canvas.addEventListener("pointerdown", (event) => {
     world: screenToWorld(screen),
     moved: false,
     mode: pointerMode,
-    targetId: hitId,
-    before: hitEntity ? entityGeometry(hitEntity) : null,
+    targetId: pointerTargetId,
+    before: pointerTargetId && hitEntity ? entityGeometry(hitEntity) : null,
   };
   if (hitId) {
     state.dimensionPickCycle = null;
@@ -3813,7 +3996,7 @@ canvas.addEventListener("pointerdown", (event) => {
     if (state.tool === "select" && state.selectTool !== "multi") state.selectedIds = [hitId];
     if (hitEntity?.type === "block") {
       if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
-      statusChip.textContent = canMoveFurniture ? "Редактирование мебели" : "Мебель выбрана. Нажмите «Редактировать»";
+      statusChip.textContent = "Мебель выбрана: двигайте пальцем, тяните углы или крутите";
       draw();
       return;
     }
@@ -3944,18 +4127,13 @@ function finishCanvasPointer(event, canceled = false) {
     } else if (state.tool === "select") {
       const hitId = state.pointer.targetId || pickEntity(state.pointer.startScreen);
       const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
-      if (!hitId && state.furnitureEditId) {
-        statusChip.textContent = "Нажмите галочку, чтобы закончить редактирование мебели";
+      state.selectedId = hitId;
+      state.furnitureEditId = null;
+      if (hitEntity?.type === "block") {
+        statusChip.textContent = "Мебель выбрана: двигайте пальцем, тяните углы или крутите";
       } else {
-        state.selectedId = hitId;
         state.selectedEndpoint = null;
-        if (hitEntity?.type === "block") {
-          if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
-          statusChip.textContent = "Мебель выбрана. Нажмите «Редактировать»";
-        } else {
-          state.furnitureEditId = null;
-          statusChip.textContent = hitId ? "Элемент выбран" : "Выбор: коснитесь объекта или тяните пустое место для панорамы";
-        }
+        statusChip.textContent = hitId ? "Элемент выбран" : "Выбор: коснитесь объекта или тяните пустое место для панорамы";
       }
       if (!(!hitId && state.furnitureEditId)) {
         applyTapSelection(hitId);
@@ -3963,13 +4141,9 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
     } else if (state.tool === "furniture") {
       const hitId = state.pointer.targetId || pickFurnitureEntity(state.pointer.startScreen);
-      if (!hitId && state.furnitureEditId) {
-        statusChip.textContent = "Нажмите галочку, чтобы закончить редактирование мебели";
-      } else {
-        if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
-        state.selectedId = hitId;
-        statusChip.textContent = hitId ? "Мебель выбрана. Нажмите «Редактировать»" : "Перетащите блок из библиотеки на план";
-      }
+      state.furnitureEditId = null;
+      state.selectedId = hitId;
+      statusChip.textContent = hitId ? "Мебель выбрана: двигайте пальцем, тяните углы или крутите" : "Перетащите блок из библиотеки на план";
       draw();
     } else {
       commitCursorPoint();
@@ -4480,6 +4654,7 @@ function finishFurnitureDrag(event) {
   const droppedOnCanvas = drag.moved && isClientPointInCanvas(event.clientX, event.clientY);
   if (droppedOnCanvas) {
     addFurnitureBlock(drag.data, clientToCanvas(event.clientX, event.clientY));
+    setFurnitureSheetPosition("peek");
     state.suppressFurnitureClick = true;
     window.setTimeout(() => {
       state.suppressFurnitureClick = false;
@@ -4504,31 +4679,6 @@ function finishFurnitureDrag(event) {
   drag.preview.remove();
   state.furnitureDrag = null;
 }
-
-blocks.forEach((button) => {
-  button.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    beginFurnitureDrag(button, event);
-  });
-
-  button.addEventListener("pointermove", (event) => {
-    updateFurnitureDrag(event);
-  });
-
-  button.addEventListener("pointerup", (event) => {
-    finishFurnitureDrag(event);
-  });
-
-  button.addEventListener("pointercancel", (event) => {
-    finishFurnitureDrag(event);
-  });
-
-  button.addEventListener("click", () => {
-    if (state.suppressFurnitureClick) return;
-    setActiveFurnitureCard(button);
-    statusChip.textContent = `${furnitureCardData(button).title}: перетащите карточку на план`;
-  });
-});
 
 window.addEventListener("pointermove", updateFurnitureDrag);
 window.addEventListener("pointerup", finishFurnitureDrag);
@@ -4624,6 +4774,9 @@ furnitureSheetHandle.addEventListener("keydown", (event) => {
   event.preventDefault();
   cycleFurnitureSheetPosition();
 });
+furniturePeekButton?.addEventListener("click", () => {
+  setFurnitureSheetPosition("half");
+});
 
 window.addEventListener("pointermove", updateFurnitureSheetDrag);
 window.addEventListener("pointerup", finishFurnitureSheetDrag);
@@ -4687,6 +4840,15 @@ selectionActions?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
   applySelectionAction(button.dataset.action);
+});
+
+[furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].forEach((input) => {
+  input?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    applyFurnitureSizeInput();
+    input.blur();
+  });
+  input?.addEventListener("blur", applyFurnitureSizeInput);
 });
 
 keyboardInputs.forEach((input) => {
@@ -4898,6 +5060,7 @@ window.addEventListener("scroll", lockDocumentScroll, { passive: true });
 window.visualViewport?.addEventListener("resize", updateViewportLock);
 window.visualViewport?.addEventListener("scroll", updateViewportLock);
 updateViewportLock();
+loadFurnitureLibrary();
 setTool("line");
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
