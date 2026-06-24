@@ -1222,6 +1222,9 @@ function applySelectionAction(action) {
     };
     state.selectedEndpoint = null;
     hideInlineEditors();
+    state.snaps.add("end");
+    state.snaps.add("polar");
+    syncSnapButtons();
     syncCommandState();
     updateTopMetricInputs(0, 0);
     statusChip.textContent = "Переместить: наведите курсор на базовую точку и тапните";
@@ -1678,8 +1681,11 @@ function resolveSnapWorld(point) {
     result.x = Math.round(result.x / 50) * 50;
     result.y = Math.round(result.y / 50) * 50;
   }
-  if (!snap && state.drawing && state.snaps.has("polar")) {
-    result = snapPolar(result, state.drawing.start);
+  if (!snap && state.snaps.has("polar")) {
+    const polarStart = state.drawing?.start || state.moveCommand?.base;
+    if (polarStart) {
+      result = snapPolar(result, polarStart);
+    }
   }
   return { point: result, snap };
 }
