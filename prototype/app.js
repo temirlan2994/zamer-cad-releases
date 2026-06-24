@@ -252,7 +252,6 @@ function draw() {
   drawWalls(visible, c);
   for (const entity of visible) {
     if (entity.type === "wall") continue;
-    if (shouldHideEntityForCommand(entity)) continue;
     drawEntity(entity, c);
   }
 
@@ -277,8 +276,12 @@ function draw() {
   drawCursorSnap(c);
 }
 
-function shouldHideEntityForCommand(entity) {
-  return Boolean((state.moveCommand?.mode === "move" || state.moveCommand?.mode === "rotate") && entity.id === state.moveCommand.entityId);
+function shouldGhostEntityForCommand(entity) {
+  return Boolean(
+    state.moveCommand?.base &&
+      (state.moveCommand.mode === "move" || state.moveCommand.mode === "rotate") &&
+      entity.id === state.moveCommand.entityId
+  );
 }
 
 function syncCommandState() {
@@ -470,8 +473,22 @@ function drawEntity(entity, c) {
 }
 
 function drawWalls(visible, c) {
-  const walls = visible.filter((entity) => entity.type === "wall" && !shouldHideEntityForCommand(entity));
+  const walls = visible.filter((entity) => entity.type === "wall");
   if (!walls.length) return;
+  const normalWalls = walls.filter((entity) => !shouldGhostEntityForCommand(entity));
+  const ghostWalls = walls.filter((entity) => shouldGhostEntityForCommand(entity));
+  if (normalWalls.length) {
+    drawWallSet(normalWalls, c);
+  }
+  if (ghostWalls.length) {
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    drawWallSet(ghostWalls, c);
+    ctx.restore();
+  }
+}
+
+function drawWallSet(walls, c) {
   const wallGroups = groupWallsByWidth(walls);
 
   ctx.save();
@@ -585,6 +602,10 @@ function drawLineEntity(entity, c) {
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
   const selected = entity.id === state.selectedId && !state.moveCommand;
+  ctx.save();
+  if (shouldGhostEntityForCommand(entity)) {
+    ctx.globalAlpha = 0.28;
+  }
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   linePath(p1.x, p1.y, p2.x, p2.y);
@@ -592,6 +613,7 @@ function drawLineEntity(entity, c) {
     drawEndpointHandle(p1, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
     drawEndpointHandle(p2, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "end", c);
   }
+  ctx.restore();
 }
 
 function drawEndpointHandle(point, active, c) {
