@@ -247,49 +247,7 @@
       </section>
     </main>
 
-    <script src="./app.js?v=57"></script>
-    <script>
-      (() => {
-        const selectButton = document.querySelector('[data-tool="select"]');
-        const selectMenu = document.getElementById("selectToolMenu");
-        const drawMenu = document.getElementById("drawToolMenu");
-        const status = document.getElementById("statusChip");
-        const labels = { select: "Выбор", window: "Выделение", lasso: "Лассо", multi: "Мульти", filter: "Фильтр" };
-        const hints = {
-          select: "коснитесь объекта или тяните пустое место для панорамы",
-          window: "рамкой можно будет выбрать сразу несколько объектов",
-          lasso: "свободное выделение добавим после рамки",
-          multi: "выбор нескольких объектов без сброса",
-          filter: "выбор только стен, линий, размеров или мебели",
-        };
+    <script src="./app.js?v=61"></script>
 
-        function setSelectMode(mode) {
-          selectMenu?.querySelectorAll("[data-select-tool]").forEach((button) => {
-            button.classList.toggle("active", button.dataset.selectTool === mode);
-          });
-          if (status) status.textContent = `${labels[mode] || "Выбор"}: ${hints[mode] || "выберите объект"}`;
-        }
-
-        selectButton?.addEventListener("click", () => {
-          drawMenu.hidden = true;
-          setSelectMode("select");
-          selectMenu.hidden = false;
-        });
-
-        document.querySelectorAll(".tool").forEach((button) => {
-          if (button === selectButton) return;
-          button.addEventListener("click", () => {
-            if (selectMenu) selectMenu.hidden = true;
-          });
-        });
-
-        selectMenu?.addEventListener("click", (event) => {
-          const button = event.target.closest("[data-select-tool]");
-          if (!button) return;
-          setSelectMode(button.dataset.selectTool);
-          selectMenu.hidden = true;
-        });
-      })();
-    </script>
   </body>
 </html>

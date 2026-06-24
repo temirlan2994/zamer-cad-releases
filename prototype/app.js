@@ -5,6 +5,8 @@ const centerCursor = document.querySelector(".center-cursor");
 const tools = [...document.querySelectorAll(".tool")];
 const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
+const selectToolMenu = document.getElementById("selectToolMenu");
+const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll(".snap")];
 const blocks = [...document.querySelectorAll(".block")];
 const lengthInput = document.getElementById("lengthInput");
@@ -75,6 +77,8 @@ const state = {
   tool: "select",
   block: "sofa",
   drawTool: "line",
+  selectTool: "select",
+  selectionFilter: "all",
   blockSize: { width: 2200, height: 950 },
   furnitureTab: "furniture",
   furnitureCategory: "sofas",
@@ -96,7 +100,9 @@ const state = {
   sheetDrag: null,
   suppressFurnitureClick: false,
   selectedId: "wall-3",
+  selectedIds: ["wall-3"],
   selectedEndpoint: null,
+  selectionDrag: null,
   furnitureEditId: null,
   undo: [],
   redo: [],
@@ -278,9 +284,10 @@ function draw() {
   drawDimensions(c);
   drawWallDimensionLabels(visible, c, rect);
 
-  const selected = state.entities.find((entity) => entity.id === state.selectedId);
-  if (selected && !state.drawing && !state.moveCommand && !state.offsetCommand) {
-    drawSelection(selected, c);
+  if (!state.drawing && !state.moveCommand && !state.offsetCommand) {
+    for (const entity of selectedEntities()) {
+      drawSelection(entity, c);
+    }
   }
 
   if (state.drawing) {
@@ -295,6 +302,7 @@ function draw() {
     hideInlineEditors();
   }
   syncSelectionActions();
+  drawSelectionDrag(c);
   drawCursorSnap(c);
 }
 
@@ -333,9 +341,6 @@ function drawMoveCommand(c) {
   const start = command.base;
   const end = command.lockedEnd ? command.end : cursorWorld();
   command.end = end;
-  if (state.tool === "circle") { drawActiveCircle(start, end, c); return; }
-  if (state.tool === "rectangle") { drawActiveRectangle(start, end, c); return; }
-  if (state.tool === "arc") { drawActiveArc(c); return; }
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
@@ -478,18 +483,261 @@ function drawRotatePreview(entity, command, end, c) {
 
 function syncSelectionActions() {
   if (!selectionActions) return;
-  const selected = state.entities.find((entity) => entity.id === state.selectedId);
+  const selected = selectedEntities();
+  const primary = selected.length === 1 ? selected[0] : null;
   const show = Boolean(
-    selected &&
+    primary &&
       !state.drawing &&
       !state.moveCommand &&
       !state.offsetCommand &&
       state.tool === "select" &&
-      selected.type !== "block" &&
-      selected.layer !== "dimensions" &&
-      isLayerVisible(selected.layer)
+      primary.type !== "block" &&
+      primary.layer !== "dimensions" &&
+      isLayerVisible(primary.layer)
   );
   selectionActions.hidden = !show;
+}
+
+function selectedEntities() {
+  const ids = state.selectedIds?.length ? state.selectedIds : state.selectedId ? [state.selectedId] : [];
+  const seen = new Set();
+  return ids
+    .filter((id) => {
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((id) => state.entities.find((entity) => entity.id === id))
+    .filter(Boolean);
+}
+
+function setSelection(ids, options = {}) {
+  const nextIds = Array.isArray(ids) ? ids.filter(Boolean) : ids ? [ids] : [];
+  if (options.toggle) {
+    const current = new Set(state.selectedIds || []);
+    for (const id of nextIds) {
+      if (current.has(id)) current.delete(id);
+      else current.add(id);
+    }
+    state.selectedIds = [...current];
+  } else if (options.add) {
+    state.selectedIds = [...new Set([...(state.selectedIds || []), ...nextIds])];
+  } else {
+    state.selectedIds = [...new Set(nextIds)];
+  }
+  state.selectedId = state.selectedIds.at(-1) || null;
+  state.selectedEndpoint = null;
+}
+
+function entityMatchesSelectionFilter(entity) {
+  if (!entity || !isLayerVisible(entity.layer)) return false;
+  if (state.selectionFilter === "walls") return entity.type === "wall";
+  if (state.selectionFilter === "lines") return entity.type === "line" && entity.layer !== "dimensions";
+  if (state.selectionFilter === "furniture") return entity.type === "block";
+  if (state.selectionFilter === "dimensions") return entity.layer === "dimensions";
+  return true;
+}
+
+function selectableEntities() {
+  return state.entities.filter(entityMatchesSelectionFilter);
+}
+
+function selectionEntityPoints(entity) {
+  if (!entity) return [];
+  if (entity.type === "block") return blockCorners(entity);
+  if (entity.type === "circle") {
+    const r = Math.abs(entity.radius || 0);
+    return [
+      { x: entity.cx, y: entity.cy },
+      { x: entity.cx + r, y: entity.cy },
+      { x: entity.cx - r, y: entity.cy },
+      { x: entity.cx, y: entity.cy + r },
+      { x: entity.cx, y: entity.cy - r },
+    ];
+  }
+  if (entity.type === "rectangle") return rectangleCorners(entity);
+  if (entity.type === "arc") return [entity.start, entity.through, entity.end].filter(Boolean);
+  return [
+    { x: entity.x1, y: entity.y1 },
+    { x: entity.x2, y: entity.y2 },
+  ];
+}
+
+function selectionEntitySegments(entity) {
+  const points = selectionEntityPoints(entity);
+  if (entity?.type === "circle") {
+    const center = { x: entity.cx, y: entity.cy };
+    const radius = Math.abs(entity.radius || 0);
+    const samples = Array.from({ length: 16 }, (_, index) => ({
+      x: center.x + Math.cos((index / 16) * Math.PI * 2) * radius,
+      y: center.y + Math.sin((index / 16) * Math.PI * 2) * radius,
+    }));
+    return samples.map((point, index) => [point, samples[(index + 1) % samples.length]]);
+  }
+  if (entity?.type === "arc") {
+    const arc = arcGeometry(entity.start, entity.through, entity.end);
+    if (!arc) return [];
+    const span = arc.counterClockwise
+      ? normalizeAnglePositive(arc.endAngle - arc.startAngle)
+      : normalizeAnglePositive(arc.startAngle - arc.endAngle);
+    const steps = Math.max(6, Math.ceil(span / (Math.PI / 12)));
+    const samples = Array.from({ length: steps + 1 }, (_, index) => {
+      const t = index / steps;
+      const angle = arc.counterClockwise ? arc.startAngle + span * t : arc.startAngle - span * t;
+      return {
+        x: arc.center.x + Math.cos(angle) * arc.radius,
+        y: arc.center.y + Math.sin(angle) * arc.radius,
+      };
+    });
+    return samples.slice(1).map((point, index) => [samples[index], point]);
+  }
+  if (entity?.type === "rectangle" || entity?.type === "block") {
+    return points.map((point, index) => [point, points[(index + 1) % points.length]]);
+  }
+  return points.length >= 2 ? [[points[0], points[1]]] : [];
+}
+
+function screenRectFromDrag(start, current) {
+  return {
+    minX: Math.min(start.x, current.x),
+    maxX: Math.max(start.x, current.x),
+    minY: Math.min(start.y, current.y),
+    maxY: Math.max(start.y, current.y),
+  };
+}
+
+function pointInSelectionRect(point, rect) {
+  return point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY;
+}
+
+function rectEdges(rect) {
+  const a = { x: rect.minX, y: rect.minY };
+  const b = { x: rect.maxX, y: rect.minY };
+  const c = { x: rect.maxX, y: rect.maxY };
+  const d = { x: rect.minX, y: rect.maxY };
+  return [[a, b], [b, c], [c, d], [d, a]];
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const direction = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const onSegment = (p, q, r) =>
+    Math.min(p.x, q.x) <= r.x + 0.001 &&
+    r.x <= Math.max(p.x, q.x) + 0.001 &&
+    Math.min(p.y, q.y) <= r.y + 0.001 &&
+    r.y <= Math.max(p.y, q.y) + 0.001;
+  const d1 = direction(a, b, c);
+  const d2 = direction(a, b, d);
+  const d3 = direction(c, d, a);
+  const d4 = direction(c, d, b);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  return (
+    (Math.abs(d1) < 0.001 && onSegment(a, b, c)) ||
+    (Math.abs(d2) < 0.001 && onSegment(a, b, d)) ||
+    (Math.abs(d3) < 0.001 && onSegment(c, d, a)) ||
+    (Math.abs(d4) < 0.001 && onSegment(c, d, b))
+  );
+}
+
+function selectionRectHitsEntity(entity, rect, mode) {
+  const points = selectionEntityPoints(entity).map(worldToScreen);
+  const segments = selectionEntitySegments(entity).map(([a, b]) => [worldToScreen(a), worldToScreen(b)]);
+  if (!points.length) return false;
+  if (mode === "window") return points.every((point) => pointInSelectionRect(point, rect));
+  if (points.some((point) => pointInSelectionRect(point, rect))) return true;
+  const edges = rectEdges(rect);
+  return segments.some(([a, b]) => edges.some(([c, d]) => segmentsIntersect(a, b, c, d)));
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const crosses = a.y > point.y !== b.y > point.y;
+    if (crosses && point.x < ((b.x - a.x) * (point.y - a.y)) / ((b.y - a.y) || 1) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function selectionLassoHitsEntity(entity, polygon) {
+  if (polygon.length < 3) return false;
+  const points = selectionEntityPoints(entity).map(worldToScreen);
+  if (points.some((point) => pointInPolygon(point, polygon))) return true;
+  const entitySegments = selectionEntitySegments(entity).map(([a, b]) => [worldToScreen(a), worldToScreen(b)]);
+  const lassoSegments = polygon.map((point, index) => [point, polygon[(index + 1) % polygon.length]]);
+  return entitySegments.some(([a, b]) => lassoSegments.some(([c, d]) => segmentsIntersect(a, b, c, d)));
+}
+
+function idsFromSelectionWindow(start, current) {
+  const rect = screenRectFromDrag(start, current);
+  const mode = current.x >= start.x ? "window" : "crossing";
+  return selectableEntities()
+    .filter((entity) => selectionRectHitsEntity(entity, rect, mode))
+    .map((entity) => entity.id);
+}
+
+function idsFromSelectionLasso(points) {
+  return selectableEntities()
+    .filter((entity) => selectionLassoHitsEntity(entity, points))
+    .map((entity) => entity.id);
+}
+
+function startSelectionDrag(type, event, screen) {
+  state.selectionDrag = type === "lasso"
+    ? { type, points: [screen], start: screen, current: screen }
+    : { type, start: screen, current: screen };
+  state.pointer = {
+    id: event.pointerId,
+    screen,
+    startScreen: screen,
+    world: screenToWorld(screen),
+    moved: false,
+    mode: type === "lasso" ? "selection-lasso" : "selection-window",
+    targetId: null,
+    before: null,
+  };
+  statusChip.textContent = type === "lasso" ? "Лассо: обведите объекты" : "Выделение: тяните рамку";
+  draw();
+}
+
+function updateSelectionDrag(screen) {
+  const drag = state.selectionDrag;
+  if (!drag) return;
+  drag.current = screen;
+  if (drag.type === "lasso") {
+    const last = drag.points.at(-1);
+    if (!last || Math.hypot(screen.x - last.x, screen.y - last.y) > 6) drag.points.push(screen);
+  }
+}
+
+function finishSelectionDrag() {
+  const drag = state.selectionDrag;
+  if (!drag) return;
+  const ids = drag.type === "lasso" ? idsFromSelectionLasso(drag.points) : idsFromSelectionWindow(drag.start, drag.current);
+  const add = state.selectTool === "multi";
+  setSelection(ids, { add });
+  state.furnitureEditId = null;
+  state.selectionDrag = null;
+  const count = selectedEntities().length;
+  statusChip.textContent = count ? `Выбрано: ${count}` : selectionStatusText();
+  draw();
+}
+
+function applyTapSelection(hitId) {
+  if (state.selectTool === "multi") {
+    setSelection(hitId, { toggle: true });
+  } else {
+    setSelection(hitId);
+  }
+  const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
+  if (hitEntity?.type === "block") {
+    if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
+    statusChip.textContent = "Мебель выбрана. Нажмите «Редактировать»";
+  } else {
+    state.furnitureEditId = null;
+    const count = selectedEntities().length;
+    statusChip.textContent = count > 1 ? `Выбрано: ${count}` : hitId ? "Элемент выбран" : selectionStatusText();
+  }
 }
 
 function drawGrid(rect, c) {
@@ -1052,6 +1300,53 @@ function drawSelection(entity, c) {
     drawFurnitureSelection(entity, c);
     return;
   }
+  if (entity.type === "circle") {
+    const center = worldToScreen({ x: entity.cx, y: entity.cy });
+    const radius = Math.abs(entity.radius) * state.view.scale;
+    ctx.save();
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    drawHandle(center.x + radius, center.y, c);
+    drawBadge(`R ${Math.round(Math.abs(entity.radius))} мм`, center.x, center.y - radius - 18, c);
+    ctx.restore();
+    return;
+  }
+  if (entity.type === "rectangle") {
+    const corners = rectangleCorners(entity).map(worldToScreen);
+    ctx.save();
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    corners.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+    corners.forEach((point) => drawHandle(point.x, point.y, c));
+    ctx.restore();
+    return;
+  }
+  if (entity.type === "arc") {
+    const arc = arcGeometry(entity.start, entity.through, entity.end);
+    if (!arc) return;
+    const center = worldToScreen(arc.center);
+    const radius = arc.radius * state.view.scale;
+    ctx.save();
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, arc.startAngle, arc.endAngle, arc.counterClockwise);
+    ctx.stroke();
+    [entity.start, entity.through, entity.end].map(worldToScreen).forEach((point) => drawHandle(point.x, point.y, c));
+    const label = worldToScreen(entity.through);
+    drawBadge("Дуга", label.x, label.y - 24, c);
+    ctx.restore();
+    return;
+  }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
   ctx.strokeStyle = c.accent;
@@ -1062,6 +1357,38 @@ function drawSelection(entity, c) {
   const m = midpoint(p1, p2);
   const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
   drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
+}
+
+function drawSelectionDrag(c) {
+  const drag = state.selectionDrag;
+  if (!drag) return;
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([7, 5]);
+  if (drag.type === "window") {
+    const x = Math.min(drag.start.x, drag.current.x);
+    const y = Math.min(drag.start.y, drag.current.y);
+    const width = Math.abs(drag.current.x - drag.start.x);
+    const height = Math.abs(drag.current.y - drag.start.y);
+    ctx.globalAlpha = 0.18;
+    ctx.fillRect(x, y, width, height);
+    ctx.globalAlpha = 1;
+    ctx.strokeRect(x, y, width, height);
+    const mode = drag.current.x >= drag.start.x ? "Window" : "Crossing";
+    drawBadge(mode, x + width / 2, y - 18, c, true);
+  } else if (drag.type === "lasso" && drag.points.length > 1) {
+    ctx.beginPath();
+    drag.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+    const last = drag.points.at(-1);
+    drawBadge("Lasso", last.x, last.y - 18, c, true);
+  }
+  ctx.restore();
 }
 
 function drawFurnitureSelection(entity, c) {
@@ -1203,6 +1530,18 @@ function drawActiveSegment(c) {
   const { start } = state.drawing;
   const end = state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
   state.drawing.end = end;
+  if (state.tool === "circle") {
+    drawActiveCircle(start, end, c);
+    return;
+  }
+  if (state.tool === "rectangle") {
+    drawActiveRectangle(start, end, c);
+    return;
+  }
+  if (state.tool === "arc") {
+    drawActiveArc(c);
+    return;
+  }
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
@@ -1245,11 +1584,28 @@ function drawActiveRectangle(start, end, c) {
 }
 
 function drawActiveArc(c) {
-  const drawing = state.drawing; const current = drawing.lockedEnd ? drawing.end : cursorWorld(); const p1 = worldToScreen(drawing.start); const pCurrent = worldToScreen(current);
-  ctx.save(); ctx.strokeStyle = c.accent; ctx.fillStyle = c.accent; ctx.lineWidth = 1.8; ctx.setLineDash([8, 6]);
-  if (!drawing.through) { linePath(p1.x, p1.y, pCurrent.x, pCurrent.y); drawBadge("2-я точка дуги", pCurrent.x, pCurrent.y - 22, c); }
-  else { drawArcEntity(arcEntity("preview", drawing.start, drawing.through, current), { ...c, line: c.accent }); }
-  ctx.setLineDash([]); drawHandle(p1.x, p1.y, c); if (drawing.through) { const p2 = worldToScreen(drawing.through); drawHandle(p2.x, p2.y, c); } drawHandle(pCurrent.x, pCurrent.y, c); ctx.restore();
+  const drawing = state.drawing;
+  const current = drawing.lockedEnd ? drawing.end : cursorWorld();
+  const pStart = worldToScreen(drawing.start);
+  const pCurrent = worldToScreen(current);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([8, 6]);
+  if (!drawing.arcEnd) {
+    linePath(pStart.x, pStart.y, pCurrent.x, pCurrent.y);
+    drawBadge("Конец дуги", pCurrent.x, pCurrent.y - 22, c);
+  } else {
+    drawArcEntity(arcEntity("preview", drawing.start, current, drawing.arcEnd), { ...c, line: c.accent });
+    const pEnd = worldToScreen(drawing.arcEnd);
+    drawHandle(pEnd.x, pEnd.y, c);
+    drawBadge("Изгиб", pCurrent.x, pCurrent.y - 22, c);
+  }
+  ctx.setLineDash([]);
+  drawHandle(pStart.x, pStart.y, c);
+  drawHandle(pCurrent.x, pCurrent.y, c);
+  ctx.restore();
 }
 
 function drawAngleArc(origin, target, angleInfo, c) {
@@ -1339,6 +1695,7 @@ function positionAngleEditor(x, y, value) {
 function updateTopMetricInputs(length, angle) {
   if (!drawMetrics || !topLengthInput || !topAngleInput) return;
   drawMetrics.hidden = false;
+  updateTopMetricLabels();
   if (document.activeElement !== topLengthInput) {
     topLengthInput.value = length;
   }
@@ -1347,6 +1704,29 @@ function updateTopMetricInputs(length, angle) {
   }
   syncInlineEditorWidth(topLengthInput);
   syncInlineEditorWidth(topAngleInput);
+}
+
+function updateTopMetricLabels() {
+  if (!drawMetrics || !topLengthInput || !topAngleInput) return;
+  const labels = drawMetrics.querySelectorAll("label");
+  const firstText = labels[0]?.querySelector("span");
+  const firstUnit = labels[0]?.querySelector("em");
+  const secondText = labels[1]?.querySelector("span");
+  let secondUnit = labels[1]?.querySelector("em");
+  if (!secondUnit && labels[1]) {
+    secondUnit = document.createElement("em");
+    labels[1].append(secondUnit);
+  }
+  const rectangleMode = !drawMetrics.hidden && state.tool === "rectangle" && state.drawing;
+  if (firstText) firstText.textContent = rectangleMode ? "Д" : "L";
+  if (firstUnit) firstUnit.textContent = "мм";
+  if (secondText) secondText.textContent = rectangleMode ? "Ш" : "°";
+  if (secondUnit) {
+    secondUnit.textContent = rectangleMode ? "мм" : "";
+    secondUnit.hidden = !rectangleMode;
+  }
+  topLengthInput.setAttribute("aria-label", rectangleMode ? "Длина прямоугольника" : "Длина");
+  topAngleInput.setAttribute("aria-label", rectangleMode ? "Ширина прямоугольника" : "Угол");
 }
 
 function updateSelectedEndpointEditors() {
@@ -1423,7 +1803,29 @@ function applyTopMetricValue(kind) {
     applyOffsetCommandInlineValue();
     return;
   }
+  if (state.tool === "rectangle" && state.drawing) {
+    applyRectangleMetricValue();
+    return;
+  }
   applyInlineValue(kind);
+}
+
+function applyRectangleMetricValue() {
+  const drawing = state.drawing;
+  if (!drawing) return;
+  const typedLength = Number(topLengthInput.value.replace(",", "."));
+  const typedWidth = Number(topAngleInput.value.replace(",", "."));
+  const current = drawing.end || cursorWorld();
+  const signX = current.x >= drawing.start.x ? 1 : -1;
+  const signY = current.y >= drawing.start.y ? 1 : -1;
+  const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : Math.abs(current.x - drawing.start.x);
+  const nextWidth = Number.isFinite(typedWidth) && typedWidth > 0 ? typedWidth : Math.abs(current.y - drawing.start.y);
+  drawing.end = {
+    x: drawing.start.x + nextLength * signX,
+    y: drawing.start.y + nextWidth * signY,
+  };
+  drawing.lockedEnd = true;
+  draw();
 }
 
 function applyOffsetCommandInlineValue() {
@@ -1539,6 +1941,7 @@ function applySelectionAction(action) {
     state.undo.push({ type: "add", entity: copy });
     state.redo.length = 0;
     state.selectedId = copy.id;
+    state.selectedIds = [copy.id];
     state.selectedEndpoint = null;
     statusChip.textContent = "Копия создана";
     draw();
@@ -1557,6 +1960,7 @@ function applySelectionAction(action) {
     state.undo.push({ type: "delete", entity, index });
     state.redo.length = 0;
     state.selectedId = null;
+    state.selectedIds = [];
     state.selectedEndpoint = null;
     statusChip.textContent = "Линия удалена";
     draw();
@@ -1616,6 +2020,7 @@ function hideInlineEditors() {
   }
   if (drawMetrics) {
     drawMetrics.hidden = true;
+    updateTopMetricLabels();
   }
   state.inlineEdit = null;
 }
@@ -2104,9 +2509,11 @@ function setTool(tool) {
   state.drawing = null;
   state.moveCommand = null;
   state.offsetCommand = null;
+  state.selectionDrag = null;
   syncCommandState();
   if (["line", "polyline", "circle", "arc", "rectangle", "wall", "dimension"].includes(tool)) {
     state.selectedId = null;
+    state.selectedIds = [];
     state.selectedEndpoint = null;
     hideInlineEditors();
   } else if (tool !== "line" && tool !== "polyline") {
@@ -2136,6 +2543,9 @@ function setTool(tool) {
   if (tool === "select") {
     statusChip.textContent = "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»";
   }
+  if (tool === "select") {
+    statusChip.textContent = selectionStatusText();
+  }
   if (tool === "dimension") {
     state.snaps.add("end");
     syncSnapButtons();
@@ -2152,14 +2562,38 @@ function syncDrawToolMenu() {
   drawToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.drawTool === state.drawTool));
 }
 
+function syncSelectToolMenu() {
+  selectToolButtons.forEach((button) => {
+    const mode = button.dataset.selectTool;
+    if (mode === "filter") {
+      const label = button.querySelector("small");
+      if (label) label.textContent = state.selectionFilter === "all" ? "Фильтр" : selectionFilterLabel();
+      button.title = `Фильтр: ${selectionFilterLabel()}`;
+    }
+    button.classList.toggle("active", mode === "filter" ? state.selectionFilter !== "all" : mode === state.selectTool);
+  });
+}
+
 function showDrawToolMenu() {
   if (!drawToolMenu) return;
   syncDrawToolMenu();
+  hideSelectToolMenu();
   drawToolMenu.hidden = false;
 }
 
 function hideDrawToolMenu() {
   if (drawToolMenu) drawToolMenu.hidden = true;
+}
+
+function showSelectToolMenu() {
+  if (!selectToolMenu) return;
+  syncSelectToolMenu();
+  hideDrawToolMenu();
+  selectToolMenu.hidden = false;
+}
+
+function hideSelectToolMenu() {
+  if (selectToolMenu) selectToolMenu.hidden = true;
 }
 
 function selectDrawTool(tool) {
@@ -2171,6 +2605,47 @@ function selectDrawTool(tool) {
     return;
   }
   setTool("select");
+}
+
+function selectSelectionTool(tool) {
+  if (tool === "filter") {
+    state.selectionFilter = nextSelectionFilter();
+  } else {
+    state.selectTool = tool;
+  }
+  syncSelectToolMenu();
+  hideSelectToolMenu();
+  setTool("select");
+  statusChip.textContent = selectionStatusText();
+}
+
+function nextSelectionFilter() {
+  const filters = ["all", "walls", "lines", "furniture", "dimensions"];
+  const index = filters.indexOf(state.selectionFilter);
+  return filters[(index + 1) % filters.length];
+}
+
+function selectionStatusText() {
+  const labels = { select: "Выбор", window: "Выделение", lasso: "Лассо", multi: "Мульти", filter: "Фильтр" };
+  const filter = selectionFilterLabel();
+  const hints = {
+    select: `тап по объекту. Фильтр: ${filter}`,
+    window: `тяните рамку: вправо - внутри, влево - пересечение. Фильтр: ${filter}`,
+    lasso: `обведите область пальцем. Фильтр: ${filter}`,
+    multi: `тап добавляет или снимает объект. Фильтр: ${filter}`,
+    filter: `сейчас выбираются: ${filter}`,
+  };
+  return `${labels[state.selectTool] || "Выбор"}: ${hints[state.selectTool] || hints.select}`;
+}
+
+function selectionFilterLabel() {
+  return {
+    all: "все",
+    walls: "стены",
+    lines: "линии",
+    furniture: "мебель",
+    dimensions: "размеры",
+  }[state.selectionFilter] || "все";
 }
 
 function drawToolLabel(tool) {
@@ -2188,6 +2663,7 @@ function pushEntity(entity) {
   state.undo.push({ type: "add", entity });
   state.redo.length = 0;
   state.selectedId = entity.id;
+  state.selectedIds = [entity.id];
   state.furnitureEditId = null;
 }
 
@@ -2196,7 +2672,7 @@ function createEntityFromDrawing() {
   const id = `${state.tool}-${Date.now()}`;
   if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
-  if (state.tool === "arc") return arcEntity(id, state.drawing.start, state.drawing.through, end);
+  if (state.tool === "arc") return arcEntity(id, state.drawing.start, end, state.drawing.arcEnd);
   if (state.tool === "wall") {
     return wall(id, start.x, start.y, end.x, end.y);
   }
@@ -2210,6 +2686,7 @@ function selectLineEndpoint(endpoint) {
   const entity = state.entities.find((item) => item.id === endpoint?.entityId);
   if (!entity || entity.type === "block") return false;
   state.selectedId = entity.id;
+  state.selectedIds = [entity.id];
   state.selectedEndpoint = { entityId: entity.id, point: endpoint.point };
   state.drawing = null;
   state.furnitureEditId = null;
@@ -2233,14 +2710,14 @@ function commitCursorPoint() {
     if (!state.drawing) {
       if (state.tool === "line" || state.tool === "polyline") state.selectedEndpoint = null;
       state.drawing = { start: world, end: world, lockedEnd: false };
-      statusChip.textContent = state.tool === "arc" ? "Дуга: укажите вторую точку на дуге" : "Начало поставлено. Подведите курсор дальше и тапните холст";
+      statusChip.textContent = state.tool === "arc" ? "Дуга: укажите конечную точку" : "Начало поставлено. Подведите курсор дальше и тапните холст";
     } else {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
       const finishedTool = state.tool;
-      if (finishedTool === "arc" && !state.drawing.through) { state.drawing.through = end; state.drawing.end = end; state.drawing.lockedEnd = false; statusChip.textContent = "Дуга: укажите конечную точку"; draw(); return; }
+      if (finishedTool === "arc" && !state.drawing.arcEnd) { state.drawing.arcEnd = end; state.drawing.end = end; state.drawing.lockedEnd = false; statusChip.textContent = "Дуга: укажите изгиб"; draw(); return; }
       state.drawing.end = end;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
-      const validShape = metrics.length > 0 && (finishedTool !== "arc" || arcGeometry(state.drawing.start, state.drawing.through, end)) && (finishedTool !== "rectangle" || (Math.abs(end.x - state.drawing.start.x) > 0 && Math.abs(end.y - state.drawing.start.y) > 0));
+      const validShape = metrics.length > 0 && (finishedTool !== "arc" || arcGeometry(state.drawing.start, end, state.drawing.arcEnd)) && (finishedTool !== "rectangle" || (Math.abs(end.x - state.drawing.start.x) > 0 && Math.abs(end.y - state.drawing.start.y) > 0));
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
@@ -2248,7 +2725,7 @@ function commitCursorPoint() {
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
-    state.selectedId = pickEntity(centerScreen()) || state.selectedId;
+    setSelection(pickEntity(centerScreen()) || state.selectedId);
     statusChip.textContent = state.selectedId ? "Элемент выбран курсором" : "Подведите курсор к элементу";
   }
   if (!state.drawing && state.tool === "dimension") {
@@ -2270,6 +2747,7 @@ function commitOffsetCommandPoint(sidePoint) {
   state.undo.push({ type: "add", entity: copy });
   state.redo.length = 0;
   state.selectedId = copy.id;
+  state.selectedIds = [copy.id];
   state.selectedEndpoint = null;
   state.offsetCommand = null;
   syncCommandState();
@@ -2337,6 +2815,7 @@ function commitMoveCommandPoint(world) {
     state.undo.push({ type: "add", entity: copy });
     state.redo.length = 0;
     state.selectedId = copy.id;
+    state.selectedIds = [copy.id];
     state.selectedEndpoint = null;
     state.moveCommand = null;
     syncCommandState();
@@ -2422,6 +2901,7 @@ function rectContainsPoint(point, rect) {
 
 function beginFurnitureControl(control, event, screen) {
   state.selectedId = control.entity.id;
+  state.selectedIds = [control.entity.id];
   if (control.type === "edit") {
     state.furnitureEditId = control.entity.id;
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
@@ -2536,9 +3016,15 @@ canvas.addEventListener("pointerdown", (event) => {
     statusChip.textContent = "Смещение: наведите курсор на сторону и тапните";
     return;
   }
+  if (state.tool === "select" && (state.selectTool === "window" || state.selectTool === "lasso")) {
+    startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event, screen);
+    return;
+  }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
   if (selectedLineEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
+    state.selectedId = selectedLineEndpoint.entityId;
+    state.selectedIds = [selectedLineEndpoint.entityId];
     state.selectedEndpoint = selectedLineEndpoint;
     state.furnitureEditId = null;
     state.pointer = {
@@ -2564,6 +3050,7 @@ canvas.addEventListener("pointerdown", (event) => {
   if (editingSelectedEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === lineEndpoint.entityId);
     state.selectedId = lineEndpoint.entityId;
+    state.selectedIds = [lineEndpoint.entityId];
     state.selectedEndpoint = lineEndpoint;
     state.furnitureEditId = null;
     state.pointer = {
@@ -2597,6 +3084,7 @@ canvas.addEventListener("pointerdown", (event) => {
   };
   if (hitId) {
     state.selectedId = hitId;
+    if (state.tool === "select" && state.selectTool !== "multi") state.selectedIds = [hitId];
     if (hitEntity?.type === "block") {
       if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
       statusChip.textContent = canMoveFurniture ? "Редактирование мебели" : "Мебель выбрана. Нажмите «Редактировать»";
@@ -2623,6 +3111,13 @@ canvas.addEventListener("pointermove", (event) => {
   const screen = getPointer(event);
   const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
   if (travel > 3) state.pointer.moved = true;
+  if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
+    updateSelectionDrag(screen);
+    state.pointer.screen = screen;
+    statusChip.textContent = state.pointer.mode === "selection-lasso" ? "Лассо: отпустите палец для выбора" : "Выделение: отпустите палец для выбора";
+    draw();
+    return;
+  }
   if (state.pointer.mode === "furniture-resize" && state.pointer.targetId) {
     const entity = state.entities.find((item) => item.id === state.pointer.targetId);
     if (entity?.type === "block") {
@@ -2675,7 +3170,17 @@ function finishCanvasPointer(event, canceled = false) {
     }
     return;
   }
-  if (state.pointer?.mode === "move-command") {
+  if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
+    if (!canceled) {
+      if (state.pointer.moved) {
+        finishSelectionDrag();
+      } else {
+        state.selectionDrag = null;
+        applyTapSelection(pickEntity(state.pointer.startScreen));
+        draw();
+      }
+    }
+  } else if (state.pointer?.mode === "move-command") {
     if (!canceled && !state.pointer.moved) {
       commitCursorPoint();
     } else {
@@ -2709,6 +3214,9 @@ function finishCanvasPointer(event, canceled = false) {
           state.furnitureEditId = null;
           statusChip.textContent = hitId ? "Элемент выбран" : "Выбор: коснитесь объекта или тяните пустое место для панорамы";
         }
+      }
+      if (!(!hitId && state.furnitureEditId)) {
+        applyTapSelection(hitId);
       }
       draw();
     } else if (state.tool === "furniture") {
@@ -2861,14 +3369,12 @@ function pickEntity(screen) {
   let bestDistance = 18;
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
-    if (!isLayerVisible(entity.layer)) continue;
+    if (!entityMatchesSelectionFilter(entity)) continue;
     if (entity.type === "block") {
       if (pointInsideBlock(screen, entity)) return entity.id;
       continue;
     }
-    const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
-    const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-    const distance = pointToSegmentDistance(screen, p1, p2);
+    const distance = distanceToEntityScreen(screen, entity);
     if (distance < bestDistance) {
       best = entity.id;
       bestDistance = distance;
@@ -2965,7 +3471,14 @@ tools.forEach((button) => {
       showDrawToolMenu();
       return;
     }
+    if (tool === "select") {
+      setTool("select");
+      showSelectToolMenu();
+      hideSheet(furnitureSheet);
+      return;
+    }
     hideDrawToolMenu();
+    hideSelectToolMenu();
     setTool(tool);
     if (tool === "furniture") {
       openFurnitureSheet();
@@ -2979,6 +3492,12 @@ drawToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-draw-tool]");
   if (!button) return;
   selectDrawTool(button.dataset.drawTool);
+});
+
+selectToolMenu?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-select-tool]");
+  if (!button) return;
+  selectSelectionTool(button.dataset.selectTool);
 });
 
 snaps.forEach((button) => {
@@ -3315,18 +3834,18 @@ document.getElementById("undoButton").addEventListener("click", () => {
   if (action.type === "add") {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
     state.redo.push(action);
-    state.selectedId = state.entities.at(-1)?.id || null;
+    setSelection(state.entities.at(-1)?.id || null);
     draw();
   } else if (action.type === "move") {
     const entity = state.entities.find((item) => item.id === action.entityId);
     applyEntityGeometry(entity, action.before);
     state.redo.push(action);
-    state.selectedId = action.entityId;
+    setSelection(action.entityId);
     draw();
   } else if (action.type === "delete") {
     state.entities.splice(action.index, 0, action.entity);
     state.redo.push(action);
-    state.selectedId = action.entity.id;
+    setSelection(action.entity.id);
     draw();
   }
 });
@@ -3337,18 +3856,18 @@ document.getElementById("redoButton").addEventListener("click", () => {
   if (action.type === "add") {
     state.entities.push(action.entity);
     state.undo.push(action);
-    state.selectedId = action.entity.id;
+    setSelection(action.entity.id);
     draw();
   } else if (action.type === "move") {
     const entity = state.entities.find((item) => item.id === action.entityId);
     applyEntityGeometry(entity, action.after);
     state.undo.push(action);
-    state.selectedId = action.entityId;
+    setSelection(action.entityId);
     draw();
   } else if (action.type === "delete") {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
     state.undo.push(action);
-    state.selectedId = null;
+    setSelection(null);
     draw();
   }
 });
@@ -3478,7 +3997,7 @@ function renderLayerList() {
       }
       if (state.selectedId) {
         const selected = state.entities.find((entity) => entity.id === state.selectedId);
-        if (selected && !isLayerVisible(selected.layer)) state.selectedId = null;
+        if (selected && !isLayerVisible(selected.layer)) setSelection(null);
       }
       draw();
       renderLayerList();
