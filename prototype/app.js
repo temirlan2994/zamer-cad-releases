@@ -1035,7 +1035,7 @@ function drawLineEntity(entity, c) {
   }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-  const selected = entity.id === state.selectedId && !state.moveCommand;
+  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
   if (shouldGhostEntityForCommand(entity)) {
     ctx.globalAlpha = 0.28;
@@ -1538,11 +1538,13 @@ function drawSelection(entity, c) {
   }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
+  const startActive = state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start";
+  const endActive = state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "end";
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = 2;
   linePath(p1.x, p1.y, p2.x, p2.y);
-  drawHandle(p1.x, p1.y, c);
-  drawHandle(p2.x, p2.y, c);
+  drawEndpointHandle(p1, startActive, c);
+  drawEndpointHandle(p2, endActive, c);
   const m = midpoint(p1, p2);
   const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
   drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
@@ -3942,7 +3944,7 @@ canvas.addEventListener("pointerdown", (event) => {
     draw();
     return;
   }
-  const lineEndpoint = state.tool === "line" ? pickLineEndpoint(screen) : null;
+  const lineEndpoint = state.tool === "line" || state.tool === "wall" ? pickLineEndpoint(screen) : null;
   const editingSelectedEndpoint =
     lineEndpoint &&
     state.selectedEndpoint?.entityId === lineEndpoint.entityId &&
@@ -4209,7 +4211,9 @@ function moveEntityBy(entity, dx, dy) {
 function cloneLinearEntity(entity, dx = 260, dy = 260) {
   const id = `${entity.type || "line"}-${Date.now()}`;
   if (entity.type === "wall") {
-    return wall(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy);
+    const copy = wall(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy);
+    copy.width = entity.width || copy.width;
+    return copy;
   }
   return line(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer || "measure");
 }
