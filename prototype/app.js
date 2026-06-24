@@ -944,7 +944,7 @@ function drawSelection(entity, c) {
   drawHandle(p2.x, p2.y, c);
   const m = midpoint(p1, p2);
   const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
-  drawBadge(`${metrics.length} мм  ${metrics.angle}°`, m.x, m.y - 24, c);
+  drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
 }
 
 function drawFurnitureSelection(entity, c) {
