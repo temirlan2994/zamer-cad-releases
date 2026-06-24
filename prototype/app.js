@@ -281,6 +281,7 @@ function syncCommandState() {
   shell.dataset.command = active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
+    centerCursor.classList.toggle("force-visible", active);
     centerCursor.style.opacity = active ? "1" : "";
     centerCursor.style.visibility = active ? "visible" : "";
   }
@@ -288,6 +289,7 @@ function syncCommandState() {
 
 function forceMoveCursorVisible() {
   if (!state.moveCommand || !centerCursor) return;
+  centerCursor.classList.add("force-visible");
   centerCursor.style.opacity = "1";
   centerCursor.style.visibility = "visible";
 }
@@ -305,6 +307,10 @@ function drawMoveCommand(c) {
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
   const m = midpoint(p1, p2);
+  const entity = state.entities.find((item) => item.id === command.entityId);
+  if (entity) {
+    drawMovePreview(entity, end.x - start.x, end.y - start.y, c);
+  }
 
   ctx.save();
   ctx.strokeStyle = c.accent;
@@ -319,6 +325,22 @@ function drawMoveCommand(c) {
   ctx.restore();
 
   updateTopMetricInputs(metrics.length, metrics.angle);
+}
+
+function drawMovePreview(entity, dx, dy, c) {
+  if (!dx && !dy) return;
+  const p1 = worldToScreen({ x: entity.x1 + dx, y: entity.y1 + dy });
+  const p2 = worldToScreen({ x: entity.x2 + dx, y: entity.y2 + dy });
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = entity.type === "wall" ? 5 : 2.2;
+  ctx.setLineDash([10, 6]);
+  linePath(p1.x, p1.y, p2.x, p2.y);
+  ctx.setLineDash([]);
+  drawHandle(p1.x, p1.y, c);
+  drawHandle(p2.x, p2.y, c);
+  ctx.restore();
 }
 
 function syncSelectionActions() {
@@ -1745,6 +1767,7 @@ function setTool(tool) {
   state.tool = tool;
   state.drawing = null;
   state.moveCommand = null;
+  syncCommandState();
   if (tool === "line" || tool === "wall" || tool === "dimension") {
     state.selectedId = null;
     state.selectedEndpoint = null;
