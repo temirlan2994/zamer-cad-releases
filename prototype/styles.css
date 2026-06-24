@@ -267,13 +267,13 @@ input {
   top: 10px;
   color: var(--muted);
   font-size: 0.73rem;
+  line-height: 1.25;
   left: 10px;
   max-width: calc(100% - 20px);
   overflow: hidden;
   padding: 7px 9px;
   position: absolute;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-wrap: balance;
   z-index: 3;
 }
 
@@ -649,12 +649,16 @@ input {
 }
 
 .furniture-sheet[data-position="peek"] {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  height: 58px;
-  padding: 0;
-  pointer-events: none;
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  box-shadow: 0 10px 28px color-mix(in srgb, #000000 16%, transparent);
+  height: 76px;
+  left: 8px;
+  padding: 6px 10px 0;
+  pointer-events: auto;
+  right: 8px;
 }
 
 .furniture-sheet[data-position="half"] {
@@ -702,14 +706,20 @@ input {
   line-height: 1;
 }
 
-.furniture-sheet[data-position="peek"] .sheet-handle,
-.furniture-sheet[data-position="peek"] .furniture-tabs,
+.furniture-sheet[data-position="peek"] .furniture-peek-button,
 .furniture-sheet[data-position="peek"] .furniture-browser {
   display: none;
 }
 
-.furniture-sheet[data-position="peek"] .furniture-peek-button {
-  display: inline-flex;
+.furniture-sheet[data-position="peek"] .furniture-tabs {
+  border-bottom: 0;
+  gap: 12px;
+  padding: 6px 4px 0;
+}
+
+.furniture-sheet[data-position="peek"] .furniture-tab {
+  font-size: 0.8rem;
+  padding-bottom: 8px;
 }
 
 .furniture-tabs {
@@ -762,6 +772,7 @@ input {
   gap: 6px;
   grid-auto-rows: min-content;
   overflow-y: auto;
+  scrollbar-width: none;
 }
 
 .furniture-cats button {
@@ -788,6 +799,12 @@ input {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   overflow-y: auto;
   padding-right: 2px;
+  scrollbar-width: none;
+}
+
+.furniture-cats::-webkit-scrollbar,
+.furniture-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .library-empty {

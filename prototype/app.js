@@ -252,7 +252,7 @@ function hydrateFurnitureLibrary(items) {
   blocks = cards;
   const firstCard = cards[0];
   if (firstCard) {
-    setActiveFurnitureCard(firstCard);
+    setActiveFurnitureCard(firstCard, { activateTool: false });
   } else {
     furnitureGrid.innerHTML = `<div class="library-empty">В этой библиотеке пока нет объектов</div>`;
   }
@@ -2306,37 +2306,10 @@ function applySelectionAction(action) {
   if (action === "move") {
     startMoveLikeCommand(entity, "move");
     return;
-    state.moveCommand = {
-      entityId: entity.id,
-      base: null,
-      end: null,
-      lockedEnd: false,
-      before: entityGeometry(entity),
-    };
-    state.selectedEndpoint = null;
-    hideInlineEditors();
-    state.snaps.add("end");
-    state.snaps.add("polar");
-    syncSnapButtons();
-    syncCommandState();
-    updateTopMetricInputs(0, 0);
-    statusChip.textContent = "Переместить: наведите курсор на базовую точку и тапните";
-    draw();
-    return;
   }
 
   if (action === "copy") {
     startMoveLikeCommand(entity, "copy");
-    return;
-    const copy = cloneLinearEntity(entity);
-    state.entities.push(copy);
-    state.undo.push({ type: "add", entity: copy });
-    state.redo.length = 0;
-    state.selectedId = copy.id;
-    state.selectedIds = [copy.id];
-    state.selectedEndpoint = null;
-    statusChip.textContent = "Копия создана";
-    draw();
     return;
   }
 
@@ -2572,7 +2545,7 @@ function drawDimensionSnapHint(c) {
     ctx.setLineDash([]);
     drawBadge("Параллель ножке", point.x, point.y - 28, c, true);
   } else {
-    drawBadge("Точка", point.x, point.y - 28, c, true);
+    drawBadge("Конец", point.x, point.y - 28, c, true);
   }
   ctx.beginPath();
   ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
@@ -3686,7 +3659,7 @@ function commitCursorPoint() {
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
-      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
+      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
@@ -3701,6 +3674,7 @@ function commitCursorPoint() {
 }
 
 function drawingToolName(tool) { return { line: "Линия", polyline: "Полилиния", wall: "Стена", dimension: "Размер", circle: "Круг", rectangle: "Прямоугольник", arc: "Дуга" }[tool] || "Объект"; }
+function drawingFinishedStatus(tool) { return `${drawingToolName(tool)} ${["line", "wall", "arc"].includes(tool) ? "завершена" : "завершен"}`; }
 function drawingDoneLabel(tool, metrics) { if (tool === "circle") return `Круг R ${metrics.length} мм`; if (tool === "rectangle") return "Прямоугольник создан"; if (tool === "arc") return "Дуга создана"; return `${tool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`; }
 
 function commitOffsetCommandPoint(sidePoint) {
@@ -4696,12 +4670,12 @@ function furnitureCardData(card) {
   };
 }
 
-function setActiveFurnitureCard(card) {
+function setActiveFurnitureCard(card, { activateTool = true } = {}) {
   const data = furnitureCardData(card);
   state.block = data.kind;
   state.blockSize = { width: data.width, height: data.height };
   blocks.forEach((blockButton) => blockButton.classList.toggle("active", blockButton === card));
-  setTool("furniture");
+  if (activateTool) setTool("furniture");
 }
 
 function addFurnitureBlock(data, screen) {
@@ -4798,7 +4772,7 @@ const furnitureSheetPositions = ["peek", "half", "full"];
 
 function furnitureSheetHeightFor(position) {
   const shellHeight = shell.getBoundingClientRect().height || window.innerHeight || 844;
-  const peek = 92;
+  const peek = 76;
   const full = Math.max(peek, shellHeight - 112);
   const half = Math.min(full, Math.max(260, Math.min(360, shellHeight * 0.46)));
   return { peek, half, full }[position] || half;
