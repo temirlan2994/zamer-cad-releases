@@ -252,6 +252,7 @@ function draw() {
   drawWalls(visible, c);
   for (const entity of visible) {
     if (entity.type === "wall") continue;
+    if (shouldHideEntityForCommand(entity)) continue;
     drawEntity(entity, c);
   }
 
@@ -259,7 +260,7 @@ function draw() {
   drawWallDimensionLabels(visible, c, rect);
 
   const selected = state.entities.find((entity) => entity.id === state.selectedId);
-  if (selected && !state.drawing) {
+  if (selected && !state.drawing && !state.moveCommand) {
     drawSelection(selected, c);
   }
 
@@ -274,6 +275,10 @@ function draw() {
   }
   syncSelectionActions();
   drawCursorSnap(c);
+}
+
+function shouldHideEntityForCommand(entity) {
+  return Boolean(state.moveCommand?.mode === "move" && entity.id === state.moveCommand.entityId);
 }
 
 function syncCommandState() {
@@ -322,9 +327,43 @@ function drawMoveCommand(c) {
   drawHandle(p1.x, p1.y, c);
   drawHandle(p2.x, p2.y, c);
   drawBadge(`${metrics.length} мм  ${metrics.angle}°`, m.x, m.y - 22, c);
+  drawCommandAngleArc(p1, p2, c);
   ctx.restore();
 
   updateTopMetricInputs(metrics.length, metrics.angle);
+}
+
+function drawCommandAngleArc(origin, target, c) {
+  const dx = target.x - origin.x;
+  const dy = target.y - origin.y;
+  const screenLength = Math.hypot(dx, dy);
+  if (screenLength < 34) return;
+  const angle = Math.atan2(dy, dx);
+  const radius = Math.min(48, Math.max(28, screenLength * 0.24));
+  const arcEnd = {
+    x: origin.x + Math.cos(angle) * radius,
+    y: origin.y + Math.sin(angle) * radius,
+  };
+  const labelRad = angle / 2;
+  const label = {
+    x: origin.x + Math.cos(labelRad) * (radius + 14),
+    y: origin.y + Math.sin(labelRad) * (radius + 14),
+  };
+  const degrees = Math.round(((angle * 180) / Math.PI + 360) % 360);
+
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.35;
+  ctx.setLineDash([4, 4]);
+  linePath(origin.x, origin.y, origin.x + radius + 14, origin.y);
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(origin.x, origin.y, radius, 0, angle, angle < 0);
+  ctx.stroke();
+  drawArcArrow(arcEnd, angle, angle >= 0 ? 1 : -1, c);
+  drawBadge(`${degrees}°`, label.x, label.y, c, true);
+  ctx.restore();
 }
 
 function drawMovePreview(entity, dx, dy, c) {
@@ -409,7 +448,7 @@ function drawEntity(entity, c) {
 }
 
 function drawWalls(visible, c) {
-  const walls = visible.filter((entity) => entity.type === "wall");
+  const walls = visible.filter((entity) => entity.type === "wall" && !shouldHideEntityForCommand(entity));
   if (!walls.length) return;
   const wallGroups = groupWallsByWidth(walls);
 
@@ -523,7 +562,7 @@ function drawLineEntity(entity, c) {
   }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-  const selected = entity.id === state.selectedId;
+  const selected = entity.id === state.selectedId && !state.moveCommand;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   linePath(p1.x, p1.y, p2.x, p2.y);
