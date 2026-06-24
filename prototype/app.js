@@ -82,6 +82,7 @@ const state = {
   },
   drawing: null,
   moveCommand: null,
+  offsetCommand: null,
   pointer: null,
   activePointers: new Map(),
   pinch: null,
@@ -217,6 +218,10 @@ function cursorWorld() {
   return resolveSnapWorld(screenToWorld(centerScreen())).point;
 }
 
+function rawCursorWorld() {
+  return screenToWorld(centerScreen());
+}
+
 function colors() {
   const dark = state.theme === "dark";
   return {
@@ -259,7 +264,7 @@ function draw() {
   drawWallDimensionLabels(visible, c, rect);
 
   const selected = state.entities.find((entity) => entity.id === state.selectedId);
-  if (selected && !state.drawing && !state.moveCommand) {
+  if (selected && !state.drawing && !state.moveCommand && !state.offsetCommand) {
     drawSelection(selected, c);
   }
 
@@ -267,6 +272,8 @@ function draw() {
     drawActiveSegment(c);
   } else if (state.moveCommand) {
     drawMoveCommand(c);
+  } else if (state.offsetCommand) {
+    drawOffsetCommand(c);
   } else if (state.selectedEndpoint) {
     updateSelectedEndpointEditors();
   } else {
@@ -285,8 +292,8 @@ function shouldGhostEntityForCommand(entity) {
 }
 
 function syncCommandState() {
-  const active = Boolean(state.moveCommand);
-  shell.dataset.command = active ? "move" : "";
+  const active = Boolean(state.moveCommand || state.offsetCommand);
+  shell.dataset.command = state.offsetCommand ? "offset" : active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
     centerCursor.classList.toggle("force-visible", active);
@@ -380,6 +387,40 @@ function drawCommandAngleArc(origin, target, c, reference = null, angleInfo = nu
   ctx.restore();
 }
 
+function drawOffsetCommand(c) {
+  const command = state.offsetCommand;
+  const entity = command ? state.entities.find((item) => item.id === command.entityId) : null;
+  if (!command || !entity) {
+    hideInlineEditors();
+    return;
+  }
+  const sidePoint = rawCursorWorld();
+  const preview = offsetLinearEntity(entity, command.distance, sidePoint);
+  const p1 = worldToScreen({ x: preview.x1, y: preview.y1 });
+  const p2 = worldToScreen({ x: preview.x2, y: preview.y2 });
+  const source1 = worldToScreen({ x: entity.x1, y: entity.y1 });
+  const source2 = worldToScreen({ x: entity.x2, y: entity.y2 });
+  const sourceMid = midpoint(source1, source2);
+  const previewMid = midpoint(p1, p2);
+
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = entity.type === "wall" ? 5 : 2.2;
+  ctx.setLineDash([9, 6]);
+  linePath(p1.x, p1.y, p2.x, p2.y);
+  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 1.2;
+  linePath(sourceMid.x, sourceMid.y, previewMid.x, previewMid.y);
+  ctx.setLineDash([]);
+  drawHandle(p1.x, p1.y, c);
+  drawHandle(p2.x, p2.y, c);
+  drawBadge(`${Math.round(command.distance)} мм`, previewMid.x, previewMid.y - 22, c);
+  ctx.restore();
+
+  updateTopMetricInputs(Math.round(command.distance), 0);
+}
+
 function drawMovePreview(entity, dx, dy, c) {
   if (!dx && !dy) return;
   const p1 = worldToScreen({ x: entity.x1 + dx, y: entity.y1 + dy });
@@ -424,6 +465,7 @@ function syncSelectionActions() {
     selected &&
       !state.drawing &&
       !state.moveCommand &&
+      !state.offsetCommand &&
       state.tool === "select" &&
       selected.type !== "block" &&
       selected.layer !== "dimensions" &&
@@ -1280,7 +1322,20 @@ function applyTopMetricValue(kind) {
     applyMoveCommandInlineValue(kind);
     return;
   }
+  if (state.offsetCommand) {
+    applyOffsetCommandInlineValue();
+    return;
+  }
   applyInlineValue(kind);
+}
+
+function applyOffsetCommandInlineValue() {
+  const command = state.offsetCommand;
+  if (!command) return;
+  const typedLength = Number(topLengthInput.value.replace(",", "."));
+  if (!Number.isFinite(typedLength) || typedLength <= 0) return;
+  command.distance = typedLength;
+  draw();
 }
 
 function applyMoveCommandInlineValue(kind) {
@@ -1316,6 +1371,7 @@ function applyMoveCommandInlineValue(kind) {
 }
 
 function startMoveLikeCommand(entity, mode) {
+  state.offsetCommand = null;
   state.moveCommand = {
     entityId: entity.id,
     mode,
@@ -1333,6 +1389,22 @@ function startMoveLikeCommand(entity, mode) {
   updateTopMetricInputs(0, 0);
   const label = mode === "copy" ? "Копия" : mode === "rotate" ? "Поворот" : "Переместить";
   statusChip.textContent = `${label}: наведите курсор на базовую точку и тапните`;
+  draw();
+}
+
+function startOffsetCommand(entity) {
+  state.moveCommand = null;
+  state.offsetCommand = {
+    entityId: entity.id,
+    distance: 300,
+  };
+  state.selectedEndpoint = null;
+  hideInlineEditors();
+  state.snaps.add("end");
+  syncSnapButtons();
+  syncCommandState();
+  updateTopMetricInputs(300, 0);
+  statusChip.textContent = "Смещение: введите расстояние сверху и тапните с нужной стороны";
   draw();
 }
 
@@ -1377,14 +1449,7 @@ function applySelectionAction(action) {
   }
 
   if (action === "offset") {
-    const copy = offsetLinearEntity(entity);
-    state.entities.push(copy);
-    state.undo.push({ type: "add", entity: copy });
-    state.redo.length = 0;
-    state.selectedId = copy.id;
-    state.selectedEndpoint = null;
-    statusChip.textContent = "Смещение 300 мм создано";
-    draw();
+    startOffsetCommand(entity);
     return;
   }
 
@@ -1909,6 +1974,7 @@ function setTool(tool) {
   state.tool = tool;
   state.drawing = null;
   state.moveCommand = null;
+  state.offsetCommand = null;
   syncCommandState();
   if (tool === "line" || tool === "wall" || tool === "dimension") {
     state.selectedId = null;
@@ -1980,6 +2046,10 @@ function selectLineEndpoint(endpoint) {
 
 function commitCursorPoint() {
   const world = cursorWorld();
+  if (state.offsetCommand) {
+    commitOffsetCommandPoint(rawCursorWorld());
+    return;
+  }
   if (state.moveCommand) {
     commitMoveCommandPoint(world);
     return;
@@ -2018,6 +2088,23 @@ function commitCursorPoint() {
     const length = Number(lengthInput.value) || 0;
     statusChip.textContent = `Размер ${length} мм завершен`;
   }
+  draw();
+}
+
+function commitOffsetCommandPoint(sidePoint) {
+  const command = state.offsetCommand;
+  const entity = command ? state.entities.find((item) => item.id === command.entityId) : null;
+  if (!command || !entity) return;
+  const copy = offsetLinearEntity(entity, command.distance, sidePoint);
+  state.entities.push(copy);
+  state.undo.push({ type: "add", entity: copy });
+  state.redo.length = 0;
+  state.selectedId = copy.id;
+  state.selectedEndpoint = null;
+  state.offsetCommand = null;
+  syncCommandState();
+  hideInlineEditors();
+  statusChip.textContent = `Смещение ${Math.round(command.distance)} мм создано`;
   draw();
 }
 
@@ -2262,6 +2349,20 @@ canvas.addEventListener("pointerdown", (event) => {
       : "Переместить: наведите курсор на базовую точку и тапните";
     return;
   }
+  if (state.offsetCommand) {
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "offset-command",
+      targetId: state.offsetCommand.entityId,
+      before: null,
+    };
+    statusChip.textContent = "Смещение: наведите курсор на сторону и тапните";
+    return;
+  }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
   if (selectedLineEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
@@ -2408,6 +2509,13 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
       forceMoveCursorVisible();
     }
+  } else if (state.pointer?.mode === "offset-command") {
+    if (!canceled && !state.pointer.moved) {
+      commitOffsetCommandPoint(rawCursorWorld());
+    } else {
+      draw();
+      forceMoveCursorVisible();
+    }
   } else if (state.pointer && !state.pointer.moved) {
     if (state.pointer.mode === "line-endpoint") {
       updateSelectedEndpointEditors();
@@ -2533,12 +2641,14 @@ function mirrorLinearEntity(entity) {
   entity.x2 = cx - (entity.x2 - cx);
 }
 
-function offsetLinearEntity(entity, distance = 300) {
+function offsetLinearEntity(entity, distance = 300, sidePoint = null) {
   const dx = entity.x2 - entity.x1;
   const dy = entity.y2 - entity.y1;
   const length = Math.hypot(dx, dy) || 1;
-  const nx = (-dy / length) * distance;
-  const ny = (dx / length) * distance;
+  const cross = sidePoint ? dx * (sidePoint.y - entity.y1) - dy * (sidePoint.x - entity.x1) : 1;
+  const side = cross < 0 ? -1 : 1;
+  const nx = (-dy / length) * distance * side;
+  const ny = (dx / length) * distance * side;
   const copy = cloneLinearEntity(entity, 0, 0);
   moveEntityBy(copy, nx, ny);
   return copy;
