@@ -2007,6 +2007,832 @@ function setTool(tool) {
     furniture: "Мебель: тапните мебель на плане или перетащите блок из библиотеки",
   };
   statusChip.textContent = copy[tool];
+  if (tool === "select") {
+    statusChip.textContent = "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»";
+  }
+  if (tool === "dimension") {
+    state.snaps.add("end");
+    syncSnapButtons();
+    statusChip.textContent = "Размер: курсор липнет к ближайшим углам и объектам. Поставьте две точки";
+  }
+  draw();
+}
+
+function syncSnapButtons() {
+  snaps.forEach((button) => button.classList.toggle("active", state.snaps.has(button.dataset.snap)));
+}
+
+function syncDrawToolMenu() {
+  drawToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.drawTool === state.drawTool));
+}
+
+function showDrawToolMenu() {
+  if (!drawToolMenu) return;
+  syncDrawToolMenu();
+  drawToolMenu.hidden = false;
+}
+
+function hideDrawToolMenu() {
+  if (drawToolMenu) drawToolMenu.hidden = true;
+}
+
+function selectDrawTool(tool) {
+  state.drawTool = tool;
+  syncDrawToolMenu();
+  hideDrawToolMenu();
+  if (tool === "line" || tool === "polyline") {
+    setTool(tool);
+    return;
+  }
+  setTool("select");
+  statusChip.textContent = `${drawToolLabel(tool)}: следующий инструмент добавим в этом меню`;
+}
+
+function drawToolLabel(tool) {
+  return {
+    line: "Линия",
+    polyline: "Полилиния",
+    circle: "Круг",
+    arc: "Дуга",
+    rectangle: "Прямоугольник",
+  }[tool] || "Инструмент";
+}
+
+function pushEntity(entity) {
+  state.entities.push(entity);
+  state.undo.push({ type: "add", entity });
+  state.redo.length = 0;
+  state.selectedId = entity.id;
+  state.furnitureEditId = null;
+}
+
+function createEntityFromDrawing() {
+  const { start, end } = state.drawing;
+  const id = `${state.tool}-${Date.now()}`;
+  if (state.tool === "wall") {
+    return wall(id, start.x, start.y, end.x, end.y);
+  }
+  if (state.tool === "dimension") {
+    return line(id, start.x, start.y, end.x, end.y, "dimensions");
+  }
+  return line(id, start.x, start.y, end.x, end.y);
+}
+
+function selectLineEndpoint(endpoint) {
+  const entity = state.entities.find((item) => item.id === endpoint?.entityId);
+  if (!entity || entity.type === "block") return false;
+  state.selectedId = entity.id;
+  state.selectedEndpoint = { entityId: entity.id, point: endpoint.point };
+  state.drawing = null;
+  state.furnitureEditId = null;
+  updateSelectedEndpointEditors();
+  statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+  draw();
+  return true;
+}
+
+function commitCursorPoint() {
+  const world = cursorWorld();
+  if (state.offsetCommand) {
+    commitOffsetCommandPoint(rawCursorWorld());
+    return;
+  }
+  if (state.moveCommand) {
+    commitMoveCommandPoint(world);
+    return;
+  }
+  if (state.tool === "line" || state.tool === "polyline" || state.tool === "wall" || state.tool === "dimension") {
+    if (!state.drawing) {
+      if (state.tool === "line" || state.tool === "polyline") {
+        state.selectedEndpoint = null;
+      }
+      state.drawing = { start: world, end: world, lockedEnd: false };
+      statusChip.textContent = "Начало поставлено. Подведите курсор дальше и тапните холст";
+    } else {
+      const end = state.drawing.lockedEnd ? state.drawing.end : world;
+      const finishedTool = state.tool;
+      state.drawing.end = end;
+      const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
+      if (metrics.length > 0) {
+        pushEntity(createEntityFromDrawing());
+        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`;
+      }
+      if (finishedTool === "line" || finishedTool === "wall" || finishedTool === "dimension") {
+        state.drawing = null;
+        if (finishedTool === "line" || finishedTool === "wall") {
+          setTool("select");
+        }
+        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}° завершена`;
+      } else if (finishedTool === "polyline") {
+        state.drawing = { start: end, end, lockedEnd: false };
+        statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`;
+      } else {
+        state.drawing = { start: end, end, lockedEnd: false };
+      }
+    }
+  } else {
+    state.selectedId = pickEntity(centerScreen()) || state.selectedId;
+    statusChip.textContent = state.selectedId ? "Элемент выбран курсором" : "Подведите курсор к элементу";
+  }
+  if (!state.drawing && state.tool === "dimension") {
+    const length = Number(lengthInput.value) || 0;
+    statusChip.textContent = `Размер ${length} мм завершен`;
+  }
+  draw();
+}
+
+function commitOffsetCommandPoint(sidePoint) {
+  const command = state.offsetCommand;
+  const entity = command ? state.entities.find((item) => item.id === command.entityId) : null;
+  if (!command || !entity) return;
+  const copy = offsetLinearEntity(entity, command.distance, sidePoint);
+  state.entities.push(copy);
+  state.undo.push({ type: "add", entity: copy });
+  state.redo.length = 0;
+  state.selectedId = copy.id;
+  state.selectedEndpoint = null;
+  state.offsetCommand = null;
+  syncCommandState();
+  hideInlineEditors();
+  statusChip.textContent = `Смещение ${Math.round(command.distance)} мм создано`;
+  draw();
+}
+
+function commitMoveCommandPoint(world) {
+  const command = state.moveCommand;
+  if (!command) return;
+  if (!command.base) {
+    command.base = world;
+    command.end = world;
+    command.lockedEnd = false;
+    syncCommandState();
+    statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
+    statusChip.textContent = `${command.mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на вторую точку и тапните`;
+    statusChip.textContent = `${command.mode === "copy" ? "Копия" : command.mode === "rotate" ? "Поворот" : "Переместить"}: наведите курсор на угол и тапните`;
+    if (command.mode === "rotate") {
+      statusChip.textContent = "Поворот: наведите курсор на исходный угол и тапните";
+    }
+    draw();
+    forceMoveCursorVisible();
+    return;
+  }
+
+  const end = command.lockedEnd ? command.end : world;
+  const entity = state.entities.find((item) => item.id === command.entityId);
+  if (!entity) {
+    state.moveCommand = null;
+    hideInlineEditors();
+    draw();
+    return;
+  }
+  if (command.mode === "rotate" && !command.reference) {
+    command.reference = end;
+    command.lockedEnd = false;
+    statusChip.textContent = "Поворот: наведите курсор на новый угол и тапните";
+    draw();
+    forceMoveCursorVisible();
+    return;
+  }
+  const dx = end.x - command.base.x;
+  const dy = end.y - command.base.y;
+  if (command.mode === "rotate") {
+    const startAngle = angleBetweenPoints(command.base, command.reference);
+    const endAngle = angleBetweenPoints(command.base, end);
+    rotateLinearEntityAround(entity, command.base, signedAngleDelta(startAngle, endAngle));
+    const after = entityGeometry(entity);
+    if (geometryChanged(command.before, after)) {
+      state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+      state.redo.length = 0;
+    }
+    state.moveCommand = null;
+    syncCommandState();
+    hideInlineEditors();
+    statusChip.textContent = "Поворот применен";
+    draw();
+    return;
+  }
+  if (command.mode === "copy") {
+    const copy = cloneLinearEntity(entity, dx, dy);
+    state.entities.push(copy);
+    state.undo.push({ type: "add", entity: copy });
+    state.redo.length = 0;
+    state.selectedId = copy.id;
+    state.selectedEndpoint = null;
+    state.moveCommand = null;
+    syncCommandState();
+    hideInlineEditors();
+    statusChip.textContent = "Копия создана";
+    draw();
+    return;
+  }
+  moveEntityBy(entity, dx, dy);
+  const after = entityGeometry(entity);
+  if (geometryChanged(command.before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+    state.redo.length = 0;
+  }
+  state.moveCommand = null;
+  syncCommandState();
+  hideInlineEditors();
+  statusChip.textContent = "Элемент перемещен";
+  draw();
+}
+
+function applyExactInput() {
+  const base = state.drawing?.start || selectedEndPoint();
+  if (!base) return;
+  const length = Number(lengthInput.value.replace(",", "."));
+  const angle = Number(angleInput.value.replace(",", "."));
+  if (!Number.isFinite(length) || !Number.isFinite(angle)) return;
+  const radians = (angle * Math.PI) / 180;
+  const end = {
+    x: base.x + Math.cos(radians) * length,
+    y: base.y + Math.sin(radians) * length,
+  };
+  if (state.drawing) {
+    const finishedTool = state.tool;
+    state.drawing.end = end;
+    pushEntity(createEntityFromDrawing());
+    if (finishedTool === "line" || finishedTool === "wall") {
+      state.drawing = null;
+      setTool("select");
+    } else if (finishedTool === "polyline") {
+      state.drawing = { start: end, end, lockedEnd: false };
+      statusChip.textContent = "Полилиния: следующий сегмент";
+    } else {
+      state.drawing = { start: end, end, lockedEnd: false };
+    }
+  } else {
+    const id = `line-${Date.now()}`;
+    pushEntity(line(id, base.x, base.y, end.x, end.y));
+  }
+  draw();
+}
+
+function selectedEndPoint() {
+  const selected = state.entities.find((entity) => entity.id === state.selectedId);
+  if (!selected || selected.type === "block") return { x: 0, y: 0 };
+  return { x: selected.x2, y: selected.y2 };
+}
+
+function hitFurnitureControl(screen) {
+  if (state.tool !== "select" && state.tool !== "furniture") return null;
+  const entity = state.entities.find((item) => item.id === state.selectedId && item.type === "block");
+  if (!entity || !isLayerVisible(entity.layer)) return null;
+  const layout = furnitureControlLayout(entity);
+  if (!layout) return null;
+
+  if (layout.editing) {
+    if (rectContainsPoint(screen, layout.done)) return { type: "done", entity, layout };
+    if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
+    for (const handle of layout.handles) {
+      if (pointDistance(screen, handle) <= 20) {
+        return { type: "resize", corner: handle.corner, entity, layout };
+      }
+    }
+  } else if (rectContainsPoint(screen, layout.editButton)) {
+    return { type: "edit", entity, layout };
+  }
+  return null;
+}
+
+function rectContainsPoint(point, rect) {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+}
+
+function beginFurnitureControl(control, event, screen) {
+  state.selectedId = control.entity.id;
+  if (control.type === "edit") {
+    state.furnitureEditId = control.entity.id;
+    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
+    statusChip.textContent = "Редактирование мебели: двигайте, тяните углы или крутите ручку";
+    draw();
+    return true;
+  }
+  if (control.type === "done") {
+    state.furnitureEditId = null;
+    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
+    statusChip.textContent = "Редактирование мебели завершено";
+    draw();
+    return true;
+  }
+
+  const entity = control.entity;
+  const centerScreenPoint = worldToScreen({ x: entity.x, y: entity.y });
+  state.pointer = {
+    id: event.pointerId,
+    screen,
+    startScreen: screen,
+    world: screenToWorld(screen),
+    moved: true,
+    mode: control.type === "rotate" ? "furniture-rotate" : "furniture-resize",
+    targetId: entity.id,
+    before: entityGeometry(entity),
+    corner: control.corner,
+    startRotation: entity.rotation || 0,
+    startAngle: Math.atan2(screen.y - centerScreenPoint.y, screen.x - centerScreenPoint.x),
+  };
+  statusChip.textContent = control.type === "rotate" ? "Поворот мебели" : "Изменение размера мебели";
+  return true;
+}
+
+function resizeFurnitureByPointer(entity, screen) {
+  const local = worldToBlockLocal(entity, screenToWorld(screen));
+  entity.width = Math.max(300, Math.abs(local.x) * 2);
+  entity.height = Math.max(300, Math.abs(local.y) * 2);
+  statusChip.textContent = `${Math.round(entity.width)} × ${Math.round(entity.height)} мм`;
+}
+
+function rotateFurnitureByPointer(entity, screen) {
+  const center = worldToScreen({ x: entity.x, y: entity.y });
+  const angle = Math.atan2(screen.y - center.y, screen.x - center.x);
+  const delta = radToDeg(angle - state.pointer.startAngle);
+  const rawRotation = normalizeDegrees(state.pointer.startRotation + delta);
+  entity.rotation = state.snaps.has("polar") ? Math.round(rawRotation / 15) * 15 : Math.round(rawRotation);
+  statusChip.textContent = `Поворот ${Math.round(entity.rotation)}°`;
+}
+
+function worldToBlockLocal(entity, point) {
+  const radians = -((entity.rotation || 0) * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const dx = point.x - entity.x;
+  const dy = point.y - entity.y;
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos,
+  };
+}
+
+function normalizeDegrees(degrees) {
+  return ((degrees % 360) + 360) % 360;
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    // Synthetic or interrupted pointer streams can be missing capture state.
+  }
+  rememberPointer(event);
+  if (state.activePointers.size >= 2) {
+    beginPinchGesture();
+    return;
+  }
+  state.gestureSuppressTap = false;
+  const screen = getPointer(event);
+  const furnitureControl = hitFurnitureControl(screen);
+  if (furnitureControl && beginFurnitureControl(furnitureControl, event, screen)) {
+    return;
+  }
+  if (state.moveCommand) {
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "move-command",
+      targetId: state.moveCommand.entityId,
+      before: null,
+    };
+    statusChip.textContent = state.moveCommand.base
+      ? "Переместить: наведите курсор на вторую точку и тапните"
+      : "Переместить: наведите курсор на базовую точку и тапните";
+    return;
+  }
+  if (state.offsetCommand) {
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "offset-command",
+      targetId: state.offsetCommand.entityId,
+      before: null,
+    };
+    statusChip.textContent = "Смещение: наведите курсор на сторону и тапните";
+    return;
+  }
+  const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
+  if (selectedLineEndpoint) {
+    const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
+    state.selectedEndpoint = selectedLineEndpoint;
+    state.furnitureEditId = null;
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "line-endpoint",
+      targetId: selectedLineEndpoint.entityId,
+      before: hitEntity ? entityGeometry(hitEntity) : null,
+    };
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+    draw();
+    return;
+  }
+  const lineEndpoint = state.tool === "line" ? pickLineEndpoint(screen) : null;
+  const editingSelectedEndpoint =
+    lineEndpoint &&
+    state.selectedEndpoint?.entityId === lineEndpoint.entityId &&
+    state.selectedEndpoint?.point === lineEndpoint.point;
+  if (editingSelectedEndpoint) {
+    const hitEntity = state.entities.find((entity) => entity.id === lineEndpoint.entityId);
+    state.selectedId = lineEndpoint.entityId;
+    state.selectedEndpoint = lineEndpoint;
+    state.furnitureEditId = null;
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "line-endpoint",
+      targetId: lineEndpoint.entityId,
+      before: hitEntity ? entityGeometry(hitEntity) : null,
+    };
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Конец линии выбран. Тяните точку или введите длину";
+    draw();
+    return;
+  }
+  const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
+  const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
+  const canMoveFurniture = hitEntity?.type === "block" && state.furnitureEditId === hitId;
+  const pointerMode = hitEntity?.type === "block" && !canMoveFurniture ? "pan" : hitId ? "move" : "pan";
+  state.pointer = {
+    id: event.pointerId,
+    screen,
+    startScreen: screen,
+    world: screenToWorld(screen),
+    moved: false,
+    mode: pointerMode,
+    targetId: hitId,
+    before: hitEntity ? entityGeometry(hitEntity) : null,
+  };
+  if (hitId) {
+    state.selectedId = hitId;
+    if (hitEntity?.type === "block") {
+      if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
+      statusChip.textContent = canMoveFurniture ? "Редактирование мебели" : "Мебель выбрана. Нажмите «Редактировать»";
+      draw();
+      return;
+    }
+    state.furnitureEditId = null;
+    statusChip.textContent = "Элемент выбран. Тяните пальцем для перемещения";
+    draw();
+  }
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.activePointers.has(event.pointerId)) return;
+  rememberPointer(event);
+  if (state.activePointers.size >= 2) {
+    if (!state.pinch) beginPinchGesture();
+    updatePinchGesture();
+    return;
+  }
+  if (state.pinch || state.gestureSuppressTap || !state.pointer || state.pointer.id !== event.pointerId) return;
+  const isDragging = event.buttons === 1 || event.pointerType === "touch";
+  if (!isDragging) return;
+  const screen = getPointer(event);
+  const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
+  if (travel > 3) state.pointer.moved = true;
+  if (state.pointer.mode === "furniture-resize" && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity?.type === "block") {
+      resizeFurnitureByPointer(entity, screen);
+    }
+  } else if (state.pointer.mode === "furniture-rotate" && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity?.type === "block") {
+      rotateFurnitureByPointer(entity, screen);
+    }
+  } else if (state.pointer.mode === "move" && state.pointer.targetId) {
+    const currentWorld = screenToWorld(screen);
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity) {
+      moveEntityBy(entity, currentWorld.x - state.pointer.world.x, currentWorld.y - state.pointer.world.y);
+      state.pointer.world = currentWorld;
+      statusChip.textContent = "Перемещение объекта";
+    }
+  } else if (state.pointer.mode === "line-endpoint" && state.pointer.targetId) {
+    const currentWorld = screenToWorld(screen);
+    setSelectedEndpointPosition(currentWorld);
+    updateSelectedEndpointEditors();
+    statusChip.textContent = "Редактирование конца линии";
+  } else {
+    state.view.panX += screen.x - state.pointer.screen.x;
+    state.view.panY += screen.y - state.pointer.screen.y;
+  }
+  state.pointer.screen = screen;
+  draw();
+});
+
+canvas.addEventListener("pointerup", finishCanvasPointer);
+canvas.addEventListener("pointercancel", (event) => finishCanvasPointer(event, true));
+
+function finishCanvasPointer(event, canceled = false) {
+  const wasPinching = Boolean(state.pinch) || state.activePointers.size > 1 || state.gestureSuppressTap;
+  forgetPointer(event);
+  releaseCanvasPointer(event);
+  if (wasPinching) {
+    endPinchGestureIfNeeded();
+    if (state.activePointers.size === 0) {
+      state.gestureSuppressTap = false;
+    }
+    return;
+  }
+  if (canceled || !state.pointer || state.pointer.id !== event.pointerId) {
+    if (state.activePointers.size === 0) {
+      state.gestureSuppressTap = false;
+      state.pointer = null;
+    }
+    return;
+  }
+  if (state.pointer?.mode === "move-command") {
+    if (!canceled && !state.pointer.moved) {
+      commitCursorPoint();
+    } else {
+      draw();
+      forceMoveCursorVisible();
+    }
+  } else if (state.pointer?.mode === "offset-command") {
+    if (!canceled && !state.pointer.moved) {
+      commitOffsetCommandPoint(rawCursorWorld());
+    } else {
+      draw();
+      forceMoveCursorVisible();
+    }
+  } else if (state.pointer && !state.pointer.moved) {
+    if (state.pointer.mode === "line-endpoint") {
+      updateSelectedEndpointEditors();
+      statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+      draw();
+    } else if (state.tool === "select") {
+      const hitId = state.pointer.targetId || pickEntity(state.pointer.startScreen);
+      const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
+      if (!hitId && state.furnitureEditId) {
+        statusChip.textContent = "Нажмите галочку, чтобы закончить редактирование мебели";
+      } else {
+        state.selectedId = hitId;
+        state.selectedEndpoint = null;
+        if (hitEntity?.type === "block") {
+          if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
+          statusChip.textContent = "Мебель выбрана. Нажмите «Редактировать»";
+        } else {
+          state.furnitureEditId = null;
+          statusChip.textContent = hitId ? "Элемент выбран" : "Выбор: коснитесь объекта или тяните пустое место для панорамы";
+        }
+      }
+      draw();
+    } else if (state.tool === "furniture") {
+      const hitId = state.pointer.targetId || pickFurnitureEntity(state.pointer.startScreen);
+      if (!hitId && state.furnitureEditId) {
+        statusChip.textContent = "Нажмите галочку, чтобы закончить редактирование мебели";
+      } else {
+        if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
+        state.selectedId = hitId;
+        statusChip.textContent = hitId ? "Мебель выбрана. Нажмите «Редактировать»" : "Перетащите блок из библиотеки на план";
+      }
+      draw();
+    } else {
+      commitCursorPoint();
+    }
+  } else {
+    finishPointerMoveUndo();
+  }
+  state.pointer = null;
+  if (state.activePointers.size === 0) {
+    state.gestureSuppressTap = false;
+  }
+  forceMoveCursorVisible();
+}
+
+function finishPointerMoveUndo() {
+  const trackedModes = new Set(["move", "furniture-resize", "furniture-rotate", "line-endpoint"]);
+  if (!trackedModes.has(state.pointer?.mode) || !state.pointer.targetId) return;
+  const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+  if (entity && state.pointer.before) {
+    const after = entityGeometry(entity);
+    if (geometryChanged(state.pointer.before, after)) {
+      state.undo.push({ type: "move", entityId: entity.id, before: state.pointer.before, after });
+      state.redo.length = 0;
+      statusChip.textContent = "Элемент перемещен";
+    }
+  }
+  state.pointer.before = null;
+}
+
+function releaseCanvasPointer(event) {
+  try {
+    if (canvas.hasPointerCapture?.(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+  } catch {
+    // Pointer capture can already be released by the browser.
+  }
+}
+
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const screen = getPointer(event);
+  const zoom = event.deltaY < 0 ? 1.08 : 0.92;
+  zoomAtScreen(screen, state.view.scale * zoom);
+  draw();
+}, { passive: false });
+
+function moveEntityBy(entity, dx, dy) {
+  if (!entity) return;
+  if (entity.type === "block") {
+    entity.x += dx;
+    entity.y += dy;
+    return;
+  }
+  entity.x1 += dx;
+  entity.y1 += dy;
+  entity.x2 += dx;
+  entity.y2 += dy;
+}
+
+function cloneLinearEntity(entity, dx = 260, dy = 260) {
+  const id = `${entity.type || "line"}-${Date.now()}`;
+  if (entity.type === "wall") {
+    return wall(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy);
+  }
+  return line(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer || "measure");
+}
+
+function rotateLinearEntity90(entity) {
+  const cx = (entity.x1 + entity.x2) / 2;
+  const cy = (entity.y1 + entity.y2) / 2;
+  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, { x: cx, y: cy }, Math.PI / 2);
+  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, { x: cx, y: cy }, Math.PI / 2);
+  entity.x1 = p1.x;
+  entity.y1 = p1.y;
+  entity.x2 = p2.x;
+  entity.y2 = p2.y;
+}
+
+function rotateLinearEntityAround(entity, base, radians) {
+  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, radians);
+  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, radians);
+  entity.x1 = p1.x;
+  entity.y1 = p1.y;
+  entity.x2 = p2.x;
+  entity.y2 = p2.y;
+}
+
+function mirrorLinearEntity(entity) {
+  const cx = (entity.x1 + entity.x2) / 2;
+  entity.x1 = cx - (entity.x1 - cx);
+  entity.x2 = cx - (entity.x2 - cx);
+}
+
+function offsetLinearEntity(entity, distance = 300, sidePoint = null) {
+  const dx = entity.x2 - entity.x1;
+  const dy = entity.y2 - entity.y1;
+  const length = Math.hypot(dx, dy) || 1;
+  const cross = sidePoint ? dx * (sidePoint.y - entity.y1) - dy * (sidePoint.x - entity.x1) : 1;
+  const side = cross < 0 ? -1 : 1;
+  const nx = (-dy / length) * distance * side;
+  const ny = (dx / length) * distance * side;
+  const copy = cloneLinearEntity(entity, 0, 0);
+  moveEntityBy(copy, nx, ny);
+  return copy;
+}
+
+function rotatePointAround(point, center, radians) {
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
+}
+
+function entityGeometry(entity) {
+  if (!entity) return null;
+  if (entity.type === "block") {
+    return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0 };
+  }
+  return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+}
+
+function applyEntityGeometry(entity, geometry) {
+  if (!entity || !geometry) return;
+  Object.assign(entity, geometry);
+}
+
+function geometryChanged(before, after) {
+  if (!before || !after) return false;
+  return Object.keys(after).some((key) => Math.abs((after[key] || 0) - (before[key] || 0)) > 0.01);
+}
+
+function pickEntity(screen) {
+  let best = null;
+  let bestDistance = 18;
+  for (let i = state.entities.length - 1; i >= 0; i -= 1) {
+    const entity = state.entities[i];
+    if (!isLayerVisible(entity.layer)) continue;
+    if (entity.type === "block") {
+      if (pointInsideBlock(screen, entity)) return entity.id;
+      continue;
+    }
+    const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
+    const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
+    const distance = pointToSegmentDistance(screen, p1, p2);
+    if (distance < bestDistance) {
+      best = entity.id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function pickLineEndpoint(screen) {
+  let best = null;
+  let bestDistance = 18;
+  for (let i = state.entities.length - 1; i >= 0; i -= 1) {
+    const entity = state.entities[i];
+    if (entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
+    const endpoints = [
+      { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
+      { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
+    ];
+    for (const endpoint of endpoints) {
+      const distance = Math.hypot(screen.x - endpoint.screen.x, screen.y - endpoint.screen.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { entityId: entity.id, point: endpoint.point };
+      }
+    }
+  }
+  return best;
+}
+
+function pickSelectedLineEndpoint(screen) {
+  const entity = state.entities.find((item) => item.id === state.selectedId);
+  if (!entity || entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
+  let best = null;
+  let bestDistance = 20;
+  const endpoints = [
+    { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
+    { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
+  ];
+  for (const endpoint of endpoints) {
+    const distance = Math.hypot(screen.x - endpoint.screen.x, screen.y - endpoint.screen.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { entityId: entity.id, point: endpoint.point };
+    }
+  }
+  return best;
+}
+
+function pickFurnitureEntity(screen) {
+  for (let i = state.entities.length - 1; i >= 0; i -= 1) {
+    const entity = state.entities[i];
+    if (entity.type !== "block" || !isLayerVisible(entity.layer)) continue;
+    if (pointInsideBlock(screen, entity)) return entity.id;
+  }
+  return null;
+}
+
+function pointInsideBlock(screen, entity) {
+  const world = screenToWorld(screen);
+  const size = entitySize(entity);
+  const radians = -((entity.rotation || 0) * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const dx = world.x - entity.x;
+  const dy = world.y - entity.y;
+  const localX = dx * cos - dy * sin;
+  const localY = dx * sin + dy * cos;
+  const hitPadding = 220;
+  return Math.abs(localX) <= size.width / 2 + hitPadding && Math.abs(localY) <= size.height / 2 + hitPadding;
+}
+
+function pointToSegmentDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
+  const x = a.x + t * dx;
+  const y = a.y + t * dy;
+  return Math.hypot(p.x - x, p.y - y);
+}
+
+tools.forEach((button) => {
+  button.addEventListener("click", () => {
+    const tool = button.dataset.tool;
     if (tool === "line") {
       showDrawToolMenu();
       return;
@@ -2020,7 +2846,6 @@ function setTool(tool) {
     }
   });
 });
-
 
 drawToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-draw-tool]");
