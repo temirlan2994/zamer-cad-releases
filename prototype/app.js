@@ -3341,7 +3341,12 @@ function setTool(tool) {
   shell.dataset.tool = tool;
   tools.forEach((button) => {
     const buttonTool = button.dataset.tool;
-    const active = buttonTool === tool || (buttonTool === "line" && ["polyline", "circle", "arc", "rectangle"].includes(tool));
+    const active =
+      buttonTool === "selection"
+        ? tool === "select" && state.selectTool !== "select"
+        : buttonTool === "select"
+          ? tool === "select" && state.selectTool === "select"
+          : buttonTool === tool || (buttonTool === "line" && ["polyline", "circle", "arc", "rectangle"].includes(tool));
     button.classList.toggle("active", active);
   });
   const copy = {
@@ -3353,7 +3358,7 @@ function setTool(tool) {
     rectangle: "Прямоугольник: укажите два противоположных угла",
     wall: "Стена: подведите курсор к началу и тапните холст",
     dimension: "Размер: подведите курсор к отрезку",
-    furniture: "Мебель: тапните мебель на плане или перетащите блок из библиотеки",
+    furniture: "Объект: тапните объект на плане или перетащите блок из библиотеки",
   };
   statusChip.textContent = copy[tool];
   if (tool === "select") {
@@ -3419,6 +3424,42 @@ function showSelectToolMenuAfterLayout() {
 
 function hideSelectToolMenu() {
   if (selectToolMenu) selectToolMenu.hidden = true;
+}
+
+function activatePlainSelect() {
+  state.selectTool = "select";
+  state.selectionDrag = null;
+  state.drawing = null;
+  state.moveCommand = null;
+  state.offsetCommand = null;
+  state.pointer = null;
+  state.selectedEndpoint = null;
+  state.dimensionSnapHint = null;
+  state.dimensionPickCycle = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  hideDrawToolMenu();
+  hideSelectToolMenu();
+  hideSheet(furnitureSheet);
+  setTool("select");
+  statusChip.textContent = "Выбор: команда отменена, можно выбирать и редактировать объект";
+}
+
+function activateSelectionTool() {
+  if (state.selectTool === "select") {
+    state.selectTool = "window";
+  }
+  state.drawing = null;
+  state.moveCommand = null;
+  state.offsetCommand = null;
+  state.selectedEndpoint = null;
+  state.dimensionSnapHint = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  hideSheet(furnitureSheet);
+  setTool("select");
+  showSelectToolMenuAfterLayout();
+  statusChip.textContent = selectionStatusText();
 }
 
 function selectDrawTool(tool) {
@@ -3593,7 +3634,7 @@ function commitCursorPoint() {
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
-      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; if (finishedTool !== "dimension") setTool("select"); statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
+      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
@@ -3733,6 +3774,7 @@ function applyExactInput() {
     pushEntity(createEntityFromDrawing());
     if (finishedTool === "line" || finishedTool === "wall") {
       state.drawing = null;
+      state.selectTool = "select";
       setTool("select");
     } else if (finishedTool === "polyline") {
       state.drawing = { start: end, end, lockedEnd: false };
@@ -4541,9 +4583,11 @@ tools.forEach((button) => {
       return;
     }
     if (tool === "select") {
-      setTool("select");
-      showSelectToolMenuAfterLayout();
-      hideSheet(furnitureSheet);
+      activatePlainSelect();
+      return;
+    }
+    if (tool === "selection") {
+      activateSelectionTool();
       return;
     }
     hideDrawToolMenu();

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=62" />
+    <link rel="stylesheet" href="./styles.css?v=63" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
@@ -32,10 +32,11 @@
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
           <button class="tool active" data-tool="select"><span>↖</span><small>Выбор</small></button>
+          <button class="tool" data-tool="selection"><span>▣</span><small>Выдел.</small></button>
           <button class="tool" data-tool="line"><span>╱</span><small>Линия</small></button>
           <button class="tool" data-tool="wall"><span>▌</span><small>Стена</small></button>
           <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
-          <button class="tool" data-tool="furniture"><span>□</span><small>Мебель</small></button>
+          <button class="tool" data-tool="furniture"><span>🪑</span><small>Объект</small></button>
         </nav>
 
         <canvas id="cadCanvas" aria-label="Чертежный холст"></canvas>
@@ -92,8 +93,7 @@
           <button data-action="delete">⌫<span>Удалить</span></button>
         </div>
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" hidden>
-          <button data-select-tool="select"><span>↖</span><small>Выбор</small></button>
-          <button data-select-tool="window"><span>▣</span><small>Выдел.</small></button>
+          <button data-select-tool="window"><span>▣</span><small>Рамка</small></button>
           <button data-select-tool="lasso"><span>⌁</span><small>Лассо</small></button>
           <button data-select-tool="multi"><span>＋</span><small>Мульти</small></button>
           <button data-select-tool="filter"><span>⛃</span><small>Фильтр</small></button>
@@ -166,7 +166,7 @@
       </section>
     </main>
 
-    <script src="./app.js?v=64"></script>
+    <script src="./app.js?v=65"></script>
 
   </body>
 </html>

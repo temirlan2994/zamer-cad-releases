@@ -161,10 +161,10 @@ input {
   bottom: 0;
   box-shadow: 0 -10px 26px color-mix(in srgb, #000000 12%, transparent);
   display: grid;
-  gap: 4px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   left: 0;
-  padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
+  padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
   position: absolute;
   right: 0;
   z-index: 7;
@@ -183,13 +183,13 @@ input {
 }
 
 .tool span {
-  font-size: 1rem;
+  font-size: 0.98rem;
   line-height: 1;
 }
 
 .tool small {
   color: var(--muted);
-  font-size: 0.57rem;
+  font-size: 0.52rem;
   line-height: 1;
 }
 
@@ -357,6 +357,10 @@ input {
   right: 10px;
   top: 10px;
   z-index: 9;
+}
+
+.select-tool-menu {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .furniture-size-panel[hidden] {
