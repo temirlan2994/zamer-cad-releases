@@ -1223,6 +1223,7 @@ function applySelectionAction(action) {
     state.selectedEndpoint = null;
     hideInlineEditors();
     syncCommandState();
+    updateTopMetricInputs(0, 0);
     statusChip.textContent = "Переместить: наведите курсор на базовую точку и тапните";
     draw();
     return;
@@ -2217,8 +2218,11 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   if (state.pointer?.mode === "move-command") {
-    if (!canceled) {
+    if (!canceled && !state.pointer.moved) {
       commitCursorPoint();
+    } else {
+      draw();
+      forceMoveCursorVisible();
     }
   } else if (state.pointer && !state.pointer.moved) {
     if (state.pointer.mode === "line-endpoint") {
