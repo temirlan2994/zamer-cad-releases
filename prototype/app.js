@@ -127,6 +127,18 @@ function line(id, x1, y1, x2, y2, layer = "measure") {
   return { id, type: "line", layer, x1, y1, x2, y2 };
 }
 
+function circleEntity(id, cx, cy, radius, layer = "measure") {
+  return { id, type: "circle", layer, cx, cy, radius };
+}
+
+function rectangleEntity(id, x1, y1, x2, y2, layer = "measure") {
+  return { id, type: "rectangle", layer, x1, y1, x2, y2 };
+}
+
+function arcEntity(id, start, through, end, layer = "measure") {
+  return { id, type: "arc", layer, start, through, end };
+}
+
 function block(id, kind, x, y, rotation = 0, size = defaultBlockSize(kind)) {
   return { id, type: "block", layer: "furniture", kind, x, y, rotation, scale: 1, width: size.width, height: size.height };
 }
@@ -321,6 +333,9 @@ function drawMoveCommand(c) {
   const start = command.base;
   const end = command.lockedEnd ? command.end : cursorWorld();
   command.end = end;
+  if (state.tool === "circle") { drawActiveCircle(start, end, c); return; }
+  if (state.tool === "rectangle") { drawActiveRectangle(start, end, c); return; }
+  if (state.tool === "arc") { drawActiveArc(c); return; }
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
@@ -668,6 +683,55 @@ function drawLineEntity(entity, c) {
     drawEndpointHandle(p1, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
     drawEndpointHandle(p2, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "end", c);
   }
+  ctx.restore();
+}
+
+function drawCircleEntity(entity, c) {
+  const center = worldToScreen({ x: entity.cx, y: entity.cy });
+  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  ctx.save();
+  ctx.strokeStyle = selected ? c.accent : c.line;
+  ctx.lineWidth = selected ? 2 : 1.4;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, Math.abs(entity.radius) * state.view.scale, 0, Math.PI * 2);
+  ctx.stroke();
+  if (selected) {
+    drawHandle(center.x, center.y, c);
+    drawBadge(`R ${Math.round(Math.abs(entity.radius))} мм`, center.x, center.y - Math.abs(entity.radius) * state.view.scale - 18, c);
+  }
+  ctx.restore();
+}
+
+function drawRectangleEntity(entity, c) {
+  const corners = rectangleCorners(entity);
+  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  ctx.save();
+  ctx.strokeStyle = selected ? c.accent : c.line;
+  ctx.lineWidth = selected ? 2 : 1.4;
+  ctx.beginPath();
+  corners.forEach((corner, index) => { const pt = worldToScreen(corner); if (index === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); });
+  ctx.closePath();
+  ctx.stroke();
+  if (selected) {
+    corners.forEach((corner) => { const pt = worldToScreen(corner); drawHandle(pt.x, pt.y, c); });
+    const center = worldToScreen({ x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2 });
+    drawBadge(`${Math.round(Math.abs(entity.x2 - entity.x1))} × ${Math.round(Math.abs(entity.y2 - entity.y1))}`, center.x, center.y - 18, c);
+  }
+  ctx.restore();
+}
+
+function drawArcEntity(entity, c) {
+  const arc = arcGeometry(entity.start, entity.through, entity.end);
+  if (!arc) return;
+  const center = worldToScreen(arc.center);
+  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  ctx.save();
+  ctx.strokeStyle = selected ? c.accent : c.line;
+  ctx.lineWidth = selected ? 2 : 1.4;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, arc.counterClockwise);
+  ctx.stroke();
+  if (selected) [entity.start, entity.through, entity.end].forEach((point) => { const pt = worldToScreen(point); drawHandle(pt.x, pt.y, c); });
   ctx.restore();
 }
 
@@ -1156,6 +1220,29 @@ function drawActiveSegment(c) {
 
   updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
   drawAngleArc(p1, p2, angleInfo, c);
+}
+
+function drawActiveCircle(centerWorld, edgeWorld, c) {
+  const center = worldToScreen(centerWorld), edge = worldToScreen(edgeWorld);
+  const radius = distanceWorld(centerWorld, edgeWorld);
+  ctx.save(); ctx.strokeStyle = c.accent; ctx.fillStyle = c.accent; ctx.lineWidth = 1.8; ctx.setLineDash([8, 6]);
+  ctx.beginPath(); ctx.arc(center.x, center.y, radius * state.view.scale, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  drawHandle(center.x, center.y, c); drawHandle(edge.x, edge.y, c); drawBadge(`R ${Math.round(radius)} мм`, (center.x + edge.x) / 2, (center.y + edge.y) / 2 - 18, c); updateTopMetricInputs(Math.round(radius), 0); ctx.restore();
+}
+
+function drawActiveRectangle(start, end, c) {
+  drawRectangleEntity(rectangleEntity("preview", start.x, start.y, end.x, end.y), { ...c, line: c.accent });
+  const center = worldToScreen({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 });
+  drawBadge(`${Math.round(Math.abs(end.x - start.x))} × ${Math.round(Math.abs(end.y - start.y))}`, center.x, center.y - 18, c);
+  updateTopMetricInputs(Math.round(Math.abs(end.x - start.x)), Math.round(Math.abs(end.y - start.y)));
+}
+
+function drawActiveArc(c) {
+  const drawing = state.drawing; const current = drawing.lockedEnd ? drawing.end : cursorWorld(); const p1 = worldToScreen(drawing.start); const pCurrent = worldToScreen(current);
+  ctx.save(); ctx.strokeStyle = c.accent; ctx.fillStyle = c.accent; ctx.lineWidth = 1.8; ctx.setLineDash([8, 6]);
+  if (!drawing.through) { linePath(p1.x, p1.y, pCurrent.x, pCurrent.y); drawBadge("2-я точка дуги", pCurrent.x, pCurrent.y - 22, c); }
+  else { drawArcEntity(arcEntity("preview", drawing.start, drawing.through, current), { ...c, line: c.accent }); }
+  ctx.setLineDash([]); drawHandle(p1.x, p1.y, c); if (drawing.through) { const p2 = worldToScreen(drawing.through); drawHandle(p2.x, p2.y, c); } drawHandle(pCurrent.x, pCurrent.y, c); ctx.restore();
 }
 
 function drawAngleArc(origin, target, angleInfo, c) {
@@ -1671,6 +1758,38 @@ function midpoint(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+function rectangleCorners(entity) {
+  return [{ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y1 }, { x: entity.x2, y: entity.y2 }, { x: entity.x1, y: entity.y2 }];
+}
+
+function entityBounds(entity) {
+  if (entity.type === "circle") return { minX: entity.cx - entity.radius, maxX: entity.cx + entity.radius, minY: entity.cy - entity.radius, maxY: entity.cy + entity.radius };
+  if (entity.type === "rectangle") return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };
+  if (entity.type === "arc") { const pts = [entity.start, entity.through, entity.end]; return { minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)), minY: Math.min(...pts.map((p) => p.y)), maxY: Math.max(...pts.map((p) => p.y)) }; }
+  return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };
+}
+
+function arcGeometry(start, through, end) {
+  const d = 2 * (start.x * (through.y - end.y) + through.x * (end.y - start.y) + end.x * (start.y - through.y));
+  if (Math.abs(d) < 0.001) return null;
+  const startSq = start.x * start.x + start.y * start.y;
+  const throughSq = through.x * through.x + through.y * through.y;
+  const endSq = end.x * end.x + end.y * end.y;
+  const center = { x: (startSq * (through.y - end.y) + throughSq * (end.y - start.y) + endSq * (start.y - through.y)) / d, y: (startSq * (end.x - through.x) + throughSq * (start.x - end.x) + endSq * (through.x - start.x)) / d };
+  const radius = distanceWorld(center, start);
+  const startAngle = angleBetweenPoints(center, start);
+  const throughAngle = angleBetweenPoints(center, through);
+  const endAngle = angleBetweenPoints(center, end);
+  const ccwSpan = normalizeAnglePositive(endAngle - startAngle);
+  const ccwThrough = normalizeAnglePositive(throughAngle - startAngle);
+  return { center, radius, startAngle, endAngle, counterClockwise: ccwThrough <= ccwSpan };
+}
+
+function normalizeAnglePositive(angleRad) {
+  const full = Math.PI * 2;
+  return ((angleRad % full) + full) % full;
+}
+
 function segmentMetrics(x1, y1, x2, y2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -1979,7 +2098,7 @@ function setTool(tool) {
   state.moveCommand = null;
   state.offsetCommand = null;
   syncCommandState();
-  if (tool === "line" || tool === "polyline" || tool === "wall" || tool === "dimension") {
+  if (["line", "polyline", "circle", "arc", "rectangle", "wall", "dimension"].includes(tool)) {
     state.selectedId = null;
     state.selectedEndpoint = null;
     hideInlineEditors();
@@ -1999,9 +2118,9 @@ function setTool(tool) {
     select: "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»",
     line: "Линия: подведите курсор и тапните холст",
     polyline: "Полилиния: каждый тап добавляет следующий сегмент",
-    circle: "Круг: скоро добавим центр и радиус",
-    arc: "Дуга: скоро добавим 3 точки дуги",
-    rectangle: "Прямоугольник: скоро добавим два угла",
+    circle: "Круг: укажите центр, затем радиус",
+    arc: "Дуга: старт, точка на дуге, конец",
+    rectangle: "Прямоугольник: укажите два противоположных угла",
     wall: "Стена: подведите курсор к началу и тапните холст",
     dimension: "Размер: подведите курсор к отрезку",
     furniture: "Мебель: тапните мебель на плане или перетащите блок из библиотеки",
@@ -2040,12 +2159,11 @@ function selectDrawTool(tool) {
   state.drawTool = tool;
   syncDrawToolMenu();
   hideDrawToolMenu();
-  if (tool === "line" || tool === "polyline") {
+  if (["line", "polyline", "circle", "arc", "rectangle"].includes(tool)) {
     setTool(tool);
     return;
   }
   setTool("select");
-  statusChip.textContent = `${drawToolLabel(tool)}: следующий инструмент добавим в этом меню`;
 }
 
 function drawToolLabel(tool) {
@@ -2069,6 +2187,9 @@ function pushEntity(entity) {
 function createEntityFromDrawing() {
   const { start, end } = state.drawing;
   const id = `${state.tool}-${Date.now()}`;
+  if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
+  if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
+  if (state.tool === "arc") return arcEntity(id, state.drawing.start, state.drawing.through, end);
   if (state.tool === "wall") {
     return wall(id, start.x, start.y, end.x, end.y);
   }
@@ -2101,34 +2222,23 @@ function commitCursorPoint() {
     commitMoveCommandPoint(world);
     return;
   }
-  if (state.tool === "line" || state.tool === "polyline" || state.tool === "wall" || state.tool === "dimension") {
+  if (["line", "polyline", "wall", "dimension", "circle", "rectangle", "arc"].includes(state.tool)) {
     if (!state.drawing) {
-      if (state.tool === "line" || state.tool === "polyline") {
-        state.selectedEndpoint = null;
-      }
+      if (state.tool === "line" || state.tool === "polyline") state.selectedEndpoint = null;
       state.drawing = { start: world, end: world, lockedEnd: false };
-      statusChip.textContent = "Начало поставлено. Подведите курсор дальше и тапните холст";
+      statusChip.textContent = state.tool === "arc" ? "Дуга: укажите вторую точку на дуге" : "Начало поставлено. Подведите курсор дальше и тапните холст";
     } else {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
       const finishedTool = state.tool;
+      if (finishedTool === "arc" && !state.drawing.through) { state.drawing.through = end; state.drawing.end = end; state.drawing.lockedEnd = false; statusChip.textContent = "Дуга: укажите конечную точку"; draw(); return; }
       state.drawing.end = end;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
-      if (metrics.length > 0) {
-        pushEntity(createEntityFromDrawing());
-        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`;
-      }
-      if (finishedTool === "line" || finishedTool === "wall" || finishedTool === "dimension") {
-        state.drawing = null;
-        if (finishedTool === "line" || finishedTool === "wall") {
-          setTool("select");
-        }
-        statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}° завершена`;
-      } else if (finishedTool === "polyline") {
-        state.drawing = { start: end, end, lockedEnd: false };
-        statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`;
-      } else {
-        state.drawing = { start: end, end, lockedEnd: false };
-      }
+      const validShape = metrics.length > 0 && (finishedTool !== "arc" || arcGeometry(state.drawing.start, state.drawing.through, end)) && (finishedTool !== "rectangle" || (Math.abs(end.x - state.drawing.start.x) > 0 && Math.abs(end.y - state.drawing.start.y) > 0));
+      if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
+      pushEntity(createEntityFromDrawing());
+      statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
+      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; if (finishedTool !== "dimension") setTool("select"); statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
+      else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
     state.selectedId = pickEntity(centerScreen()) || state.selectedId;
@@ -2140,6 +2250,9 @@ function commitCursorPoint() {
   }
   draw();
 }
+
+function drawingToolName(tool) { return { line: "Линия", polyline: "Полилиния", wall: "Стена", dimension: "Размер", circle: "Круг", rectangle: "Прямоугольник", arc: "Дуга" }[tool] || "Объект"; }
+function drawingDoneLabel(tool, metrics) { if (tool === "circle") return `Круг R ${metrics.length} мм`; if (tool === "rectangle") return "Прямоугольник создан"; if (tool === "arc") return "Дуга создана"; return `${tool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}°`; }
 
 function commitOffsetCommandPoint(sidePoint) {
   const command = state.offsetCommand;
@@ -2762,7 +2875,7 @@ function pickLineEndpoint(screen) {
   let bestDistance = 18;
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
-    if (entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
+    if ((entity.type !== "line" && entity.type !== "wall") || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
     const endpoints = [
       { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
       { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
@@ -2780,7 +2893,7 @@ function pickLineEndpoint(screen) {
 
 function pickSelectedLineEndpoint(screen) {
   const entity = state.entities.find((item) => item.id === state.selectedId);
-  if (!entity || entity.type === "block" || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
+  if (!entity || (entity.type !== "line" && entity.type !== "wall") || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
   let best = null;
   let bestDistance = 20;
   const endpoints = [
@@ -2819,6 +2932,14 @@ function pointInsideBlock(screen, entity) {
   const hitPadding = 220;
   return Math.abs(localX) <= size.width / 2 + hitPadding && Math.abs(localY) <= size.height / 2 + hitPadding;
 }
+
+function distanceToEntityScreen(screen, entity) {
+  if (entity.type === "circle") { const center = worldToScreen({ x: entity.cx, y: entity.cy }); return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - Math.abs(entity.radius) * state.view.scale); }
+  if (entity.type === "rectangle") { const corners = rectangleCorners(entity).map(worldToScreen); return Math.min(pointToSegmentDistance(screen, corners[0], corners[1]), pointToSegmentDistance(screen, corners[1], corners[2]), pointToSegmentDistance(screen, corners[2], corners[3]), pointToSegmentDistance(screen, corners[3], corners[0])); }
+  if (entity.type === "arc") { const arc = arcGeometry(entity.start, entity.through, entity.end); if (!arc) return Infinity; const center = worldToScreen(arc.center); const radius = arc.radius * state.view.scale; const angle = Math.atan2(screen.y - center.y, screen.x - center.x); if (!angleOnArc(angle, arc.startAngle, arc.endAngle, arc.counterClockwise)) return Infinity; return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - radius); }
+  const p1 = worldToScreen({ x: entity.x1, y: entity.y1 }); const p2 = worldToScreen({ x: entity.x2, y: entity.y2 }); return pointToSegmentDistance(screen, p1, p2);
+}
+function angleOnArc(angle, startAngle, endAngle, counterClockwise) { const span = counterClockwise ? normalizeAnglePositive(endAngle - startAngle) : normalizeAnglePositive(startAngle - endAngle); const delta = counterClockwise ? normalizeAnglePositive(angle - startAngle) : normalizeAnglePositive(startAngle - angle); return delta <= span + 0.05; }
 
 function pointToSegmentDistance(p, a, b) {
   const dx = b.x - a.x;
@@ -3432,6 +3553,9 @@ function dxfLine(x1, y1, x2, y2, layer) {
     "31", "0",
   ];
 }
+
+function dxfCircle(cx, cy, radius, layer) { return ["0", "CIRCLE", "8", layer || "measure", "10", roundDxf(cx), "20", roundDxf(-cy), "30", "0", "40", roundDxf(Math.abs(radius))]; }
+function dxfArc(arc, layer) { let startDeg = normalizeDegrees(radToDeg(-arc.startAngle)); let endDeg = normalizeDegrees(radToDeg(-arc.endAngle)); if (arc.counterClockwise) [startDeg, endDeg] = [endDeg, startDeg]; return ["0", "ARC", "8", layer || "measure", "10", roundDxf(arc.center.x), "20", roundDxf(-arc.center.y), "30", "0", "40", roundDxf(arc.radius), "50", roundDxf(startDeg), "51", roundDxf(endDeg)]; }
 
 function roundDxf(value) {
   return String(Math.round(value * 1000) / 1000);
