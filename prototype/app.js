@@ -74,6 +74,20 @@ let stableViewportHeight = Math.round(window.visualViewport?.height || window.in
 const trackingHoverDelayMs = 520;
 const trackingMaxPoints = 6;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
+const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
+const drawToolButtonVisuals = {
+  line: { icon: "╱", label: "Линия" },
+  polyline: { icon: "⌁", label: "Полилин." },
+  circle: { icon: "○", label: "Круг" },
+  arc: { icon: "⌒", label: "Дуга" },
+  rectangle: { icon: "▭", label: "Прямоуг." },
+};
+const selectionToolButtonVisuals = {
+  select: { icon: "▣", label: "Выдел." },
+  window: { icon: "▣", label: "Рамка" },
+  lasso: { icon: "⌁", label: "Лассо" },
+  multi: { icon: "＋", label: "Мульти" },
+};
 
 const layerMeta = {
   walls: { name: "Стены", color: "#26313d", description: "основные стены и перегородки" },
@@ -3317,8 +3331,48 @@ function snapPolar(point, start) {
   };
 }
 
+function isGroupedDrawTool(tool) {
+  return groupedDrawTools.has(tool);
+}
+
+function setToolButtonVisual(button, visual) {
+  const icon = button?.querySelector("span");
+  const label = button?.querySelector("small");
+  if (icon && visual?.icon) icon.textContent = visual.icon;
+  if (label && visual?.label) label.textContent = visual.label;
+}
+
+function syncToolButtonVisuals() {
+  const lineButton = tools.find((button) => button.dataset.tool === "line");
+  const selectionButton = tools.find((button) => button.dataset.tool === "selection");
+  setToolButtonVisual(lineButton, isGroupedDrawTool(state.tool) ? drawToolButtonVisuals[state.tool] : drawToolButtonVisuals.line);
+  setToolButtonVisual(
+    selectionButton,
+    state.tool === "select" && state.selectTool !== "select"
+      ? selectionToolButtonVisuals[state.selectTool] || selectionToolButtonVisuals.select
+      : selectionToolButtonVisuals.select
+  );
+}
+
+function syncToolButtons() {
+  syncToolButtonVisuals();
+  tools.forEach((button) => {
+    const buttonTool = button.dataset.tool;
+    const active =
+      buttonTool === "selection"
+        ? state.tool === "select" && state.selectTool !== "select"
+        : buttonTool === "select"
+          ? state.tool === "select" && state.selectTool === "select"
+          : buttonTool === state.tool || (buttonTool === "line" && isGroupedDrawTool(state.tool));
+    button.classList.toggle("active", active);
+  });
+}
+
 function setTool(tool) {
   state.tool = tool;
+  if (tool !== "select") {
+    state.selectTool = "select";
+  }
   state.drawing = null;
   state.moveCommand = null;
   state.offsetCommand = null;
@@ -3339,16 +3393,7 @@ function setTool(tool) {
     state.furnitureEditId = null;
   }
   shell.dataset.tool = tool;
-  tools.forEach((button) => {
-    const buttonTool = button.dataset.tool;
-    const active =
-      buttonTool === "selection"
-        ? tool === "select" && state.selectTool !== "select"
-        : buttonTool === "select"
-          ? tool === "select" && state.selectTool === "select"
-          : buttonTool === tool || (buttonTool === "line" && ["polyline", "circle", "arc", "rectangle"].includes(tool));
-    button.classList.toggle("active", active);
-  });
+  syncToolButtons();
   const copy = {
     select: "Выбор: тапните объект. Мебель двигается только когда она выбрана",
     line: "Линия: подведите курсор и тапните холст",
@@ -3426,6 +3471,12 @@ function hideSelectToolMenu() {
   if (selectToolMenu) selectToolMenu.hidden = true;
 }
 
+function activateDrawToolMenu() {
+  state.drawTool = "line";
+  setTool("line");
+  showDrawToolMenu();
+}
+
 function activatePlainSelect() {
   state.selectTool = "select";
   state.selectionDrag = null;
@@ -3466,7 +3517,7 @@ function selectDrawTool(tool) {
   state.drawTool = tool;
   syncDrawToolMenu();
   hideDrawToolMenu();
-  if (["line", "polyline", "circle", "arc", "rectangle"].includes(tool)) {
+  if (isGroupedDrawTool(tool)) {
     setTool(tool);
     return;
   }
@@ -4579,7 +4630,7 @@ tools.forEach((button) => {
   button.addEventListener("click", () => {
     const tool = button.dataset.tool;
     if (tool === "line") {
-      showDrawToolMenu();
+      activateDrawToolMenu();
       return;
     }
     if (tool === "select") {
