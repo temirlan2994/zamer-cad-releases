@@ -1208,11 +1208,33 @@ function applyMoveCommandInlineValue(kind) {
   draw();
 }
 
+function startMoveLikeCommand(entity, mode) {
+  state.moveCommand = {
+    entityId: entity.id,
+    mode,
+    base: null,
+    end: null,
+    lockedEnd: false,
+    before: entityGeometry(entity),
+  };
+  state.selectedEndpoint = null;
+  hideInlineEditors();
+  state.snaps.add("end");
+  state.snaps.add("polar");
+  syncSnapButtons();
+  syncCommandState();
+  updateTopMetricInputs(0, 0);
+  statusChip.textContent = `${mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на базовую точку и тапните`;
+  draw();
+}
+
 function applySelectionAction(action) {
   const entity = state.entities.find((item) => item.id === state.selectedId);
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
 
   if (action === "move") {
+    startMoveLikeCommand(entity, "move");
+    return;
     state.moveCommand = {
       entityId: entity.id,
       base: null,
@@ -1233,6 +1255,8 @@ function applySelectionAction(action) {
   }
 
   if (action === "copy") {
+    startMoveLikeCommand(entity, "copy");
+    return;
     const copy = cloneLinearEntity(entity);
     state.entities.push(copy);
     state.undo.push({ type: "add", entity: copy });
@@ -1895,6 +1919,7 @@ function commitMoveCommandPoint(world) {
     command.lockedEnd = false;
     syncCommandState();
     statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
+    statusChip.textContent = `${command.mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на вторую точку и тапните`;
     draw();
     forceMoveCursorVisible();
     return;
@@ -1910,6 +1935,20 @@ function commitMoveCommandPoint(world) {
   }
   const dx = end.x - command.base.x;
   const dy = end.y - command.base.y;
+  if (command.mode === "copy") {
+    const copy = cloneLinearEntity(entity, dx, dy);
+    state.entities.push(copy);
+    state.undo.push({ type: "add", entity: copy });
+    state.redo.length = 0;
+    state.selectedId = copy.id;
+    state.selectedEndpoint = null;
+    state.moveCommand = null;
+    syncCommandState();
+    hideInlineEditors();
+    statusChip.textContent = "Копия создана";
+    draw();
+    return;
+  }
   moveEntityBy(entity, dx, dy);
   const after = entityGeometry(entity);
   if (geometryChanged(command.before, after)) {
