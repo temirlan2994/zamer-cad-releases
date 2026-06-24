@@ -3,6 +3,8 @@ const ctx = canvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const centerCursor = document.querySelector(".center-cursor");
 const tools = [...document.querySelectorAll(".tool")];
+const drawToolMenu = document.getElementById("drawToolMenu");
+const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const snaps = [...document.querySelectorAll(".snap")];
 const blocks = [...document.querySelectorAll(".block")];
 const lengthInput = document.getElementById("lengthInput");
@@ -72,6 +74,7 @@ const state = {
   theme: "light",
   tool: "select",
   block: "sofa",
+  drawTool: "line",
   blockSize: { width: 2200, height: 950 },
   furnitureTab: "furniture",
   furnitureCategory: "sofas",
@@ -1976,21 +1979,29 @@ function setTool(tool) {
   state.moveCommand = null;
   state.offsetCommand = null;
   syncCommandState();
-  if (tool === "line" || tool === "wall" || tool === "dimension") {
+  if (tool === "line" || tool === "polyline" || tool === "wall" || tool === "dimension") {
     state.selectedId = null;
     state.selectedEndpoint = null;
     hideInlineEditors();
-  } else if (tool !== "line") {
+  } else if (tool !== "line" && tool !== "polyline") {
     state.selectedEndpoint = null;
   }
   if (tool !== "select" && tool !== "furniture") {
     state.furnitureEditId = null;
   }
   shell.dataset.tool = tool;
-  tools.forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
+  tools.forEach((button) => {
+    const buttonTool = button.dataset.tool;
+    const active = buttonTool === tool || (buttonTool === "line" && ["polyline", "circle", "arc", "rectangle"].includes(tool));
+    button.classList.toggle("active", active);
+  });
   const copy = {
     select: "Выбор: коснитесь объекта. Мебель двигается только через «Редактировать»",
     line: "Линия: подведите курсор и тапните холст",
+    polyline: "Полилиния: каждый тап добавляет следующий сегмент",
+    circle: "Круг: скоро добавим центр и радиус",
+    arc: "Дуга: скоро добавим 3 точки дуги",
+    rectangle: "Прямоугольник: скоро добавим два угла",
     wall: "Стена: подведите курсор к началу и тапните холст",
     dimension: "Размер: подведите курсор к отрезку",
     furniture: "Мебель: тапните мебель на плане или перетащите блок из библиотеки",
@@ -2009,6 +2020,42 @@ function setTool(tool) {
 
 function syncSnapButtons() {
   snaps.forEach((button) => button.classList.toggle("active", state.snaps.has(button.dataset.snap)));
+}
+
+function syncDrawToolMenu() {
+  drawToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.drawTool === state.drawTool));
+}
+
+function showDrawToolMenu() {
+  if (!drawToolMenu) return;
+  syncDrawToolMenu();
+  drawToolMenu.hidden = false;
+}
+
+function hideDrawToolMenu() {
+  if (drawToolMenu) drawToolMenu.hidden = true;
+}
+
+function selectDrawTool(tool) {
+  state.drawTool = tool;
+  syncDrawToolMenu();
+  hideDrawToolMenu();
+  if (tool === "line" || tool === "polyline") {
+    setTool(tool);
+    return;
+  }
+  setTool("select");
+  statusChip.textContent = `${drawToolLabel(tool)}: следующий инструмент добавим в этом меню`;
+}
+
+function drawToolLabel(tool) {
+  return {
+    line: "Линия",
+    polyline: "Полилиния",
+    circle: "Круг",
+    arc: "Дуга",
+    rectangle: "Прямоугольник",
+  }[tool] || "Инструмент";
 }
 
 function pushEntity(entity) {
@@ -2054,9 +2101,9 @@ function commitCursorPoint() {
     commitMoveCommandPoint(world);
     return;
   }
-  if (state.tool === "line" || state.tool === "wall" || state.tool === "dimension") {
+  if (state.tool === "line" || state.tool === "polyline" || state.tool === "wall" || state.tool === "dimension") {
     if (!state.drawing) {
-      if (state.tool === "line") {
+      if (state.tool === "line" || state.tool === "polyline") {
         state.selectedEndpoint = null;
       }
       state.drawing = { start: world, end: world, lockedEnd: false };
@@ -2076,6 +2123,9 @@ function commitCursorPoint() {
           setTool("select");
         }
         statusChip.textContent = `${finishedTool === "wall" ? "Стена" : "Линия"} ${metrics.length} мм · ${metrics.angle}° завершена`;
+      } else if (finishedTool === "polyline") {
+        state.drawing = { start: end, end, lockedEnd: false };
+        statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`;
       } else {
         state.drawing = { start: end, end, lockedEnd: false };
       }
@@ -2206,6 +2256,9 @@ function applyExactInput() {
     if (finishedTool === "line" || finishedTool === "wall") {
       state.drawing = null;
       setTool("select");
+    } else if (finishedTool === "polyline") {
+      state.drawing = { start: end, end, lockedEnd: false };
+      statusChip.textContent = "Полилиния: следующий сегмент";
     } else {
       state.drawing = { start: end, end, lockedEnd: false };
     }
@@ -2780,6 +2833,11 @@ function pointToSegmentDistance(p, a, b) {
 tools.forEach((button) => {
   button.addEventListener("click", () => {
     const tool = button.dataset.tool;
+    if (tool === "line") {
+      showDrawToolMenu();
+      return;
+    }
+    hideDrawToolMenu();
     setTool(tool);
     if (tool === "furniture") {
       openFurnitureSheet();
@@ -2787,6 +2845,12 @@ tools.forEach((button) => {
       hideSheet(furnitureSheet);
     }
   });
+});
+
+drawToolMenu?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-draw-tool]");
+  if (!button) return;
+  selectDrawTool(button.dataset.drawTool);
 });
 
 snaps.forEach((button) => {

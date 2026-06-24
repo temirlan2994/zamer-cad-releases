@@ -202,6 +202,53 @@ input {
   color: var(--accent);
 }
 
+.draw-tool-menu[hidden] {
+  display: none;
+}
+
+.draw-tool-menu {
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  box-shadow: 0 10px 30px color-mix(in srgb, #000000 18%, transparent);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  left: 8px;
+  padding: 7px;
+  position: absolute;
+  right: 8px;
+  z-index: 9;
+}
+
+.draw-tool-menu button {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent) 4%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  height: 52px;
+  justify-items: center;
+  padding: 4px;
+}
+
+.draw-tool-menu button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.draw-tool-menu span {
+  font-size: 1.06rem;
+  line-height: 1;
+}
+
+.draw-tool-menu small {
+  color: var(--muted);
+  font-size: 0.56rem;
+  line-height: 1;
+}
+
 .panel-kicker {
   color: var(--accent);
   font-size: 0.68rem;
