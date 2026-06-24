@@ -276,7 +276,9 @@ function draw() {
 }
 
 function syncCommandState() {
-  shell.dataset.command = state.moveCommand ? "move" : "";
+  const active = Boolean(state.moveCommand);
+  shell.dataset.command = active ? "move" : "";
+  shell.classList.toggle("command-active", active);
 }
 
 function drawMoveCommand(c) {
@@ -1187,6 +1189,7 @@ function applySelectionAction(action) {
     };
     state.selectedEndpoint = null;
     hideInlineEditors();
+    syncCommandState();
     statusChip.textContent = "Переместить: наведите курсор на базовую точку и тапните";
     draw();
     return;
@@ -1849,7 +1852,8 @@ function commitMoveCommandPoint(world) {
     command.base = world;
     command.end = world;
     command.lockedEnd = false;
-    statusChip.textContent = "Переместить: укажите вторую точку";
+    syncCommandState();
+    statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
     draw();
     return;
   }
@@ -1871,6 +1875,7 @@ function commitMoveCommandPoint(world) {
     state.redo.length = 0;
   }
   state.moveCommand = null;
+  syncCommandState();
   hideInlineEditors();
   statusChip.textContent = "Элемент перемещен";
   draw();

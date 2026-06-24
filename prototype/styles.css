@@ -306,6 +306,7 @@ input {
   visibility: hidden;
 }
 
+.app-shell.command-active .center-cursor,
 .app-shell[data-command="move"] .center-cursor {
   opacity: 1;
   visibility: visible;
