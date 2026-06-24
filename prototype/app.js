@@ -3408,6 +3408,13 @@ function showSelectToolMenu() {
   selectToolMenu.hidden = false;
 }
 
+function showSelectToolMenuAfterLayout() {
+  showSelectToolMenu();
+  requestAnimationFrame(() => {
+    if (state.tool === "select") showSelectToolMenu();
+  });
+}
+
 function hideSelectToolMenu() {
   if (selectToolMenu) selectToolMenu.hidden = true;
 }
@@ -4533,7 +4540,7 @@ tools.forEach((button) => {
     }
     if (tool === "select") {
       setTool("select");
-      showSelectToolMenu();
+      showSelectToolMenuAfterLayout();
       hideSheet(furnitureSheet);
       return;
     }
