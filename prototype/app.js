@@ -64,6 +64,9 @@ const furnitureCategoriesByTab = {
 };
 const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
+const trackingHoverDelayMs = 520;
+const trackingMaxPoints = 6;
+const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 
 const layerMeta = {
   walls: { name: "Стены", color: "#26313d", description: "основные стены и перегородки" },
@@ -96,6 +99,15 @@ const state = {
   gestureSuppressTap: false,
   inlineEdit: null,
   furnitureDrag: null,
+  dimensionSnapHint: null,
+  dimensionPickCycle: null,
+  snapTracking: {
+    points: [],
+    hoverKey: null,
+    hoverPoint: null,
+    hoverTimer: null,
+    active: null,
+  },
   furnitureSheetPosition: "half",
   sheetDrag: null,
   suppressFurnitureClick: false,
@@ -243,6 +255,10 @@ function rawCursorWorld() {
   return screenToWorld(centerScreen());
 }
 
+function cursorSnapResolved() {
+  return resolveSnapWorld(screenToWorld(centerScreen()));
+}
+
 function colors() {
   const dark = state.theme === "dark";
   return {
@@ -269,6 +285,8 @@ function draw() {
   syncCommandState();
   const rect = canvas.getBoundingClientRect();
   const c = colors();
+  updateLinkedDimensions();
+  updateSnapTrackingHover();
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, rect.width, rect.height);
@@ -303,6 +321,8 @@ function draw() {
   }
   syncSelectionActions();
   drawSelectionDrag(c);
+  drawDimensionSnapHint(c);
+  drawSnapTracking(c);
   drawCursorSnap(c);
 }
 
@@ -1005,7 +1025,13 @@ function drawEndpointHandle(point, active, c) {
 function drawDimensionEntity(entity, c, options = {}) {
   const start = { x: entity.x1, y: entity.y1 };
   const end = { x: entity.x2, y: entity.y2 };
-  drawDimensionGeometry(start, end, c, options);
+  const geometry = dimensionWorldGeometry(entity);
+  drawDimensionGeometry(start, end, c, {
+    ...options,
+    lineStart: geometry.lineStart,
+    lineEnd: geometry.lineEnd,
+    offset: entity.offset == null ? undefined : entity.offset * state.view.scale,
+  });
 }
 
 function drawDimensionGeometry(start, end, c, options = {}) {
@@ -1022,13 +1048,36 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const ny = ux;
   const offset = options.offset ?? Math.min(42, Math.max(24, 520 * state.view.scale));
   const extension = options.extension ?? 12;
+  const extensionSign = offset < 0 ? -1 : 1;
   const arrowSize = Math.min(9, Math.max(5, length * 0.08));
-  const a = { x: p1.x + nx * offset, y: p1.y + ny * offset };
-  const b = { x: p2.x + nx * offset, y: p2.y + ny * offset };
+  const a = options.lineStart ? worldToScreen(options.lineStart) : { x: p1.x + nx * offset, y: p1.y + ny * offset };
+  const b = options.lineEnd ? worldToScreen(options.lineEnd) : { x: p2.x + nx * offset, y: p2.y + ny * offset };
+  const lineDx = b.x - a.x;
+  const lineDy = b.y - a.y;
+  const lineLength = Math.hypot(lineDx, lineDy);
+  if (lineLength < 8) return;
+  const lineUx = lineDx / lineLength;
+  const lineUy = lineDy / lineLength;
+  const lineNx = -lineUy;
+  const lineNy = lineUx;
+  const aLeg = normalizeScreenVector(a.x - p1.x, a.y - p1.y, nx * extensionSign, ny * extensionSign);
+  const bLeg = normalizeScreenVector(b.x - p2.x, b.y - p2.y, nx * extensionSign, ny * extensionSign);
+  const aExtension = { x: a.x + aLeg.x * extension, y: a.y + aLeg.y * extension };
+  const bExtension = { x: b.x + bLeg.x * extension, y: b.y + bLeg.y * extension };
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
   const text = `${metrics.length} мм`;
-  const label = midpoint(a, b);
-  const angle = Math.atan2(dy, dx);
+  const displayLength =
+    options.lineStart && options.lineEnd
+      ? Math.round(distanceWorld(options.lineStart, options.lineEnd))
+      : metrics.length;
+  const displayText = `${displayLength} мм`;
+  const labelSide = offset < 0 ? -1 : 1;
+  const labelGap = 15;
+  const label = {
+    x: (a.x + b.x) / 2 + lineNx * labelSide * labelGap,
+    y: (a.y + b.y) / 2 + lineNy * labelSide * labelGap,
+  };
+  const angle = Math.atan2(lineDy, lineDx);
 
   ctx.save();
   ctx.strokeStyle = c.dimension;
@@ -1036,29 +1085,46 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   ctx.lineWidth = options.active ? 1.8 : 1.45;
   ctx.setLineDash(options.active ? [7, 5] : []);
 
-  linePath(p1.x, p1.y, a.x + nx * extension, a.y + ny * extension);
-  linePath(p2.x, p2.y, b.x + nx * extension, b.y + ny * extension);
+  linePath(p1.x, p1.y, aExtension.x, aExtension.y);
+  linePath(p2.x, p2.y, bExtension.x, bExtension.y);
   ctx.setLineDash([]);
   linePath(a.x, a.y, b.x, b.y);
-  drawDimensionArrow(a, ux, uy, arrowSize, c);
-  drawDimensionArrow(b, -ux, -uy, arrowSize, c);
+  drawDimensionArrow(a, lineUx, lineUy, arrowSize, c);
+  drawDimensionArrow(b, -lineUx, -lineUy, arrowSize, c);
 
   ctx.translate(label.x, label.y);
   let textAngle = angle;
   if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
   ctx.rotate(textAngle);
   ctx.font = "700 12px Inter, Segoe UI, sans-serif";
-  const width = Math.max(50, ctx.measureText(text).width + 16);
-  const height = 22;
-  ctx.fillStyle = colorMixSurface(c.surface);
-  ctx.strokeStyle = c.dimension;
-  ctx.lineWidth = 1;
-  roundedRect(-width / 2, -height / 2, width, height, 6);
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = c.bg;
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeText(displayText, 0, 1);
   ctx.fillStyle = c.dimension;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text, 0, 1);
+  ctx.fillText(displayText, 0, 1);
   ctx.restore();
+}
+
+function normalizeScreenVector(dx, dy, fallbackX, fallbackY) {
+  const length = Math.hypot(dx, dy);
+  if (length < 0.5) return { x: fallbackX, y: fallbackY };
+  return { x: dx / length, y: dy / length };
+}
+
+function dimensionOffsetFromPoint(start, end, point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return 0;
+  const nx = -dy / length;
+  const ny = dx / length;
+  return (point.x - start.x) * nx + (point.y - start.y) * ny;
 }
 
 function drawDimensionArrow(point, ux, uy, size, c) {
@@ -1347,6 +1413,10 @@ function drawSelection(entity, c) {
     ctx.restore();
     return;
   }
+  if (entity.layer === "dimensions") {
+    drawDimensionSelection(entity, c);
+    return;
+  }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
   ctx.strokeStyle = c.accent;
@@ -1389,6 +1459,191 @@ function drawSelectionDrag(c) {
     drawBadge("Lasso", last.x, last.y - 18, c, true);
   }
   ctx.restore();
+}
+
+function drawDimensionSelection(entity, c) {
+  const geometry = dimensionScreenGeometry(entity);
+  if (!geometry) return;
+  const { a, b, label } = geometry;
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  drawHandle(a.x, a.y, c);
+  drawHandle(b.x, b.y, c);
+  ctx.restore();
+  return;
+
+  const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
+  drawBadge(`${metrics.length} мм  ${metrics.angle}°`, label.x, label.y - 24, c);
+}
+
+function hitDimensionControl(screen) {
+  if (state.tool !== "select") return null;
+  const hits = [];
+  for (let i = state.entities.length - 1; i >= 0; i -= 1) {
+    const entity = state.entities[i];
+    if (entity.layer !== "dimensions" || !isLayerVisible(entity.layer)) continue;
+    const geometry = dimensionScreenGeometry(entity);
+    if (!geometry) continue;
+    const startDistance = pointDistance(screen, geometry.a);
+    const endDistance = pointDistance(screen, geometry.b);
+    const lineDistance = pointToSegmentDistance(screen, geometry.a, geometry.b);
+    const legStartDistance = pointToSegmentDistance(screen, geometry.legStart.p1, geometry.legStart.p2);
+    const legEndDistance = pointToSegmentDistance(screen, geometry.legEnd.p1, geometry.legEnd.p2);
+    if (startDistance <= 20) hits.push({ type: "dimension-start", entity, score: startDistance, order: i });
+    if (endDistance <= 20) hits.push({ type: "dimension-end", entity, score: endDistance, order: i });
+    if (lineDistance <= 18) hits.push({ type: "dimension-offset", entity, score: lineDistance + 12, order: i });
+    if (legStartDistance <= 16) hits.push({ type: "dimension-start", entity, score: legStartDistance + 18, order: i });
+    if (legEndDistance <= 16) hits.push({ type: "dimension-end", entity, score: legEndDistance + 18, order: i });
+  }
+  if (!hits.length) {
+    state.dimensionPickCycle = null;
+    return null;
+  }
+  hits.sort((a, b) => a.score - b.score || b.order - a.order);
+  const uniqueHits = [];
+  for (const hit of hits) {
+    if (!uniqueHits.some((item) => item.entity.id === hit.entity.id && item.type === hit.type)) uniqueHits.push(hit);
+  }
+  const cycle = state.dimensionPickCycle;
+  const sameSpot = cycle && pointDistance(screen, cycle.screen) <= 14;
+  let index = 0;
+  if (sameSpot) index = (cycle.index + 1) % uniqueHits.length;
+  state.dimensionPickCycle = { screen, index };
+  const picked = uniqueHits[index];
+  return { type: picked.type, entity: picked.entity };
+}
+
+function dimensionScreenGeometry(entity) {
+  const geometry = dimensionWorldGeometry(entity);
+  const a = worldToScreen(geometry.lineStart);
+  const b = worldToScreen(geometry.lineEnd);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 8) return null;
+  const nx = -(dy / length);
+  const ny = dx / length;
+  const labelSide = geometry.offset < 0 ? -1 : 1;
+  const labelGap = 15;
+  return {
+    a,
+    b,
+    legStart: { p1: worldToScreen(geometry.start), p2: a },
+    legEnd: { p1: worldToScreen(geometry.end), p2: b },
+    label: {
+      x: (a.x + b.x) / 2 + nx * labelSide * labelGap,
+      y: (a.y + b.y) / 2 + ny * labelSide * labelGap,
+    },
+  };
+}
+
+function dimensionWorldGeometry(entity) {
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  if (Number.isFinite(entity.dimX1) && Number.isFinite(entity.dimY1) && Number.isFinite(entity.dimX2) && Number.isFinite(entity.dimY2)) {
+    return {
+      start,
+      end,
+      lineStart: { x: entity.dimX1, y: entity.dimY1 },
+      lineEnd: { x: entity.dimX2, y: entity.dimY2 },
+      offset: dimensionOffsetFromPoint(start, end, { x: entity.dimX1, y: entity.dimY1 }),
+    };
+  }
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  const offset = entity.offset ?? 360;
+  return {
+    start,
+    end,
+    lineStart: { x: start.x + nx * offset, y: start.y + ny * offset },
+    lineEnd: { x: end.x + nx * offset, y: end.y + ny * offset },
+    offset,
+  };
+}
+
+function dimensionDisplayLength(entity) {
+  const geometry = dimensionWorldGeometry(entity);
+  return Math.round(distanceWorld(geometry.lineStart, geometry.lineEnd));
+}
+
+function ensureDimensionLineGeometry(entity) {
+  const geometry = dimensionWorldGeometry(entity);
+  entity.dimX1 = geometry.lineStart.x;
+  entity.dimY1 = geometry.lineStart.y;
+  entity.dimX2 = geometry.lineEnd.x;
+  entity.dimY2 = geometry.lineEnd.y;
+  entity.offset = geometry.offset;
+  return geometry;
+}
+
+function setDimensionLineOffset(entity, offset) {
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length;
+  const ny = dx / length;
+  entity.offset = offset;
+  entity.dimX1 = start.x + nx * offset;
+  entity.dimY1 = start.y + ny * offset;
+  entity.dimX2 = end.x + nx * offset;
+  entity.dimY2 = end.y + ny * offset;
+}
+
+function moveDimensionLineOffset(entity, pointerPoint) {
+  const geometry = ensureDimensionLineGeometry(entity);
+  const axis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
+  if (!axis) return;
+  const normal = { x: -axis.y, y: axis.x };
+  const snapped = snapDimensionLineToOtherDimension(entity, pointerPoint, axis);
+  const referencePoint = snapped || pointerPoint;
+  const offset = (referencePoint.x - entity.x1) * normal.x + (referencePoint.y - entity.y1) * normal.y;
+  setDimensionLineAlongAxis(entity, axis, offset);
+}
+
+function setDimensionLineAlongAxis(entity, axis, offset) {
+  const normal = { x: -axis.y, y: axis.x };
+  const origin = { x: entity.x1, y: entity.y1 };
+  const startProjection = (entity.x1 - origin.x) * axis.x + (entity.y1 - origin.y) * axis.y;
+  const endProjection = (entity.x2 - origin.x) * axis.x + (entity.y2 - origin.y) * axis.y;
+  entity.offset = offset;
+  entity.dimX1 = origin.x + axis.x * startProjection + normal.x * offset;
+  entity.dimY1 = origin.y + axis.y * startProjection + normal.y * offset;
+  entity.dimX2 = origin.x + axis.x * endProjection + normal.x * offset;
+  entity.dimY2 = origin.y + axis.y * endProjection + normal.y * offset;
+}
+
+function snapDimensionLineToOtherDimension(entity, point, axis) {
+  state.dimensionSnapHint = null;
+  if (!state.snaps.has("end")) return null;
+  const threshold = 34 / state.view.scale;
+  let best = null;
+  for (const candidate of state.entities) {
+    if (candidate === entity || candidate.layer !== "dimensions" || !isLayerVisible(candidate.layer)) continue;
+    const geometry = dimensionWorldGeometry(candidate);
+    const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
+    if (!candidateAxis) continue;
+    const parallelScore = Math.abs(axis.x * candidateAxis.y - axis.y * candidateAxis.x);
+    if (parallelScore > 0.12) continue;
+    const hit = projectPointToSegmentWorld(point, geometry.lineStart, geometry.lineEnd);
+    if (hit.distance > threshold) continue;
+    const score = hit.distance + parallelScore * 240;
+    if (!best || score < best.score) {
+      best = { x: hit.x, y: hit.y, score, segment: { p1: geometry.lineStart, p2: geometry.lineEnd } };
+    }
+  }
+  if (!best) return null;
+  state.dimensionSnapHint = {
+    type: "line",
+    point: { x: best.x, y: best.y },
+    segment: best.segment,
+  };
+  return { x: best.x, y: best.y };
 }
 
 function drawFurnitureSelection(entity, c) {
@@ -1549,10 +1804,14 @@ function drawActiveSegment(c) {
   const m = midpoint(p1, p2);
 
   if (state.tool === "dimension") {
-    drawDimensionGeometry(start, end, c, { active: true });
+    const offset =
+      state.drawing.phase === "offset"
+        ? dimensionOffsetFromPoint(start, end, cursorWorld()) * state.view.scale
+        : undefined;
+    drawDimensionGeometry(start, end, c, { active: true, offset });
     drawHandle(p1.x, p1.y, c);
     drawHandle(p2.x, p2.y, c);
-    updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
+    hideInlineEditors();
     return;
   }
 
@@ -1667,6 +1926,10 @@ function drawArcArrow(point, angleRad, direction, c) {
 
 function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo }) {
   if (!inlineEditors) return;
+  if (state.tool === "dimension") {
+    hideInlineEditors();
+    return;
+  }
   inlineEditors.hidden = false;
   state.inlineEdit = { start, end, metrics, angleInfo };
   if (document.activeElement !== lengthInput) {
@@ -1674,10 +1937,7 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
   }
   syncInlineEditorWidth(lengthInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
-  if (state.tool === "dimension") {
-    const anglePoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 + 28 };
-    positionAngleEditor(anglePoint.x, anglePoint.y, metrics.angle);
-  } else if (document.activeElement !== angleInput) {
+  if (document.activeElement !== angleInput) {
     angleInput.value = angleInfo.degrees;
     syncInlineEditorWidth(angleInput);
   }
@@ -2086,6 +2346,7 @@ function applySelectedEndpointInlineValue(kind) {
 }
 
 function drawBadge(text, x, y, c, secondary = false) {
+  if (/Параллель|Точка|РџР°СЂР°|РўРѕС‡/.test(text)) return;
   ctx.save();
   ctx.font = "700 12px Inter, Segoe UI, sans-serif";
   const padX = 8;
@@ -2114,6 +2375,293 @@ function drawHandle(x, y, c) {
   ctx.stroke();
 }
 
+function drawDimensionSnapHint(c) {
+  const hint = state.dimensionSnapHint;
+  if (!hint) return;
+  const point = worldToScreen(hint.point);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.85;
+  if (hint.type === "line" && hint.segment) {
+    const a = worldToScreen(hint.segment.p1);
+    const b = worldToScreen(hint.segment.p2);
+    ctx.setLineDash([9, 6]);
+    linePath(a.x, a.y, b.x, b.y);
+    ctx.setLineDash([]);
+    drawBadge("Параллель ножке", point.x, point.y - 28, c, true);
+  } else {
+    drawBadge("Точка", point.x, point.y - 28, c, true);
+  }
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = c.bg;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function canUseSnapTracking() {
+  return state.tool === "dimension" && state.snaps.has("polar") && !state.pointer && !state.pinch;
+}
+
+function updateSnapTrackingHover() {
+  if (!canUseSnapTracking()) {
+    clearSnapTrackingHover();
+    state.snapTracking.active = null;
+    return;
+  }
+  const candidate = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
+  if (!candidate) {
+    clearSnapTrackingHover();
+    return;
+  }
+  const key = trackingPointKey(candidate);
+  if (isSnapTrackingPoint(key)) {
+    clearSnapTrackingHover();
+    return;
+  }
+  if (state.snapTracking.hoverKey === key) return;
+  clearSnapTrackingHover();
+  state.snapTracking.hoverKey = key;
+  state.snapTracking.hoverPoint = candidate;
+  state.snapTracking.hoverTimer = window.setTimeout(() => {
+    commitSnapTrackingHover(key);
+  }, trackingHoverDelayMs);
+}
+
+function clearSnapTrackingHover() {
+  if (state.snapTracking.hoverTimer) {
+    window.clearTimeout(state.snapTracking.hoverTimer);
+  }
+  state.snapTracking.hoverKey = null;
+  state.snapTracking.hoverPoint = null;
+  state.snapTracking.hoverTimer = null;
+}
+
+function commitSnapTrackingHover(key) {
+  const point = state.snapTracking.hoverPoint;
+  if (!point || state.snapTracking.hoverKey !== key || !canUseSnapTracking()) return;
+  const current = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
+  if (!current || trackingPointKey(current) !== key) return;
+  addSnapTrackingPoint(current);
+  clearSnapTrackingHover();
+  draw();
+}
+
+function nearestTrackingAnchorCandidate(point) {
+  const threshold = (state.tool === "dimension" ? 30 : 22) / state.view.scale;
+  const candidates = snapCandidates({
+    includeCorners: true,
+    includeMidpoints: state.snaps.has("mid"),
+    includeCenters: state.snaps.has("mid"),
+  });
+  return nearestSnapCandidate(point, candidates, threshold);
+}
+
+function addSnapTrackingPoint(point) {
+  const key = trackingPointKey(point);
+  const existing = state.snapTracking.points.find((item) => item.key === key);
+  if (existing) {
+    existing.x = point.x;
+    existing.y = point.y;
+    existing.createdAt = performance.now();
+    return;
+  }
+  state.snapTracking.points.push({
+    key,
+    x: point.x,
+    y: point.y,
+    label: point.label,
+    createdAt: performance.now(),
+  });
+  while (state.snapTracking.points.length > trackingMaxPoints) {
+    state.snapTracking.points.shift();
+  }
+}
+
+function isSnapTrackingPoint(key) {
+  return state.snapTracking.points.some((point) => point.key === key);
+}
+
+function trackingPointKey(point) {
+  if (point.entityId && point.pointKey) return `${point.entityId}:${point.pointKey}`;
+  return `${Math.round(point.x)}:${Math.round(point.y)}`;
+}
+
+function snapTrackingGuides() {
+  const guides = [];
+  for (const point of state.snapTracking.points) {
+    for (const angle of trackingAngles) {
+      guides.push({
+        point,
+        angle,
+        ux: Math.cos(angle),
+        uy: Math.sin(angle),
+      });
+    }
+  }
+  return guides;
+}
+
+function nearestSnapTrackingPoint(point, threshold) {
+  const guides = snapTrackingGuides();
+  if (guides.length === 0) return null;
+  let bestIntersection = null;
+  for (let i = 0; i < guides.length; i += 1) {
+    for (let j = i + 1; j < guides.length; j += 1) {
+      const a = guides[i];
+      const b = guides[j];
+      if (a.point.key === b.point.key) continue;
+      const intersection = trackingGuideIntersection(a, b);
+      if (!intersection) continue;
+      const distance = distanceWorld(point, intersection);
+      if (distance > threshold) continue;
+      if (!bestIntersection || distance < bestIntersection.distance) {
+        bestIntersection = { ...intersection, distance, guides: [a, b] };
+      }
+    }
+  }
+  if (bestIntersection) {
+    return {
+      x: bestIntersection.x,
+      y: bestIntersection.y,
+      label: "Tracking",
+      type: "tracking",
+      trackingType: "intersection",
+      guides: bestIntersection.guides,
+    };
+  }
+
+  let bestLine = null;
+  for (const guide of guides) {
+    const projection = projectPointToTrackingGuide(point, guide);
+    if (projection.distance > threshold) continue;
+    if (!bestLine || projection.distance < bestLine.distance) {
+      bestLine = { ...projection, guide };
+    }
+  }
+  if (!bestLine) return null;
+  return {
+    x: bestLine.x,
+    y: bestLine.y,
+    label: "Tracking",
+    type: "tracking",
+    trackingType: "line",
+    guide: bestLine.guide,
+  };
+}
+
+function projectPointToTrackingGuide(point, guide) {
+  const t = (point.x - guide.point.x) * guide.ux + (point.y - guide.point.y) * guide.uy;
+  const projection = {
+    x: guide.point.x + guide.ux * t,
+    y: guide.point.y + guide.uy * t,
+  };
+  return { ...projection, distance: distanceWorld(point, projection) };
+}
+
+function trackingGuideIntersection(a, b) {
+  const cross = a.ux * b.uy - a.uy * b.ux;
+  if (Math.abs(cross) < 0.0001) return null;
+  const dx = b.point.x - a.point.x;
+  const dy = b.point.y - a.point.y;
+  const t = (dx * b.uy - dy * b.ux) / cross;
+  return {
+    x: a.point.x + a.ux * t,
+    y: a.point.y + a.uy * t,
+  };
+}
+
+function drawSnapTracking(c) {
+  if (!canUseSnapTracking() || state.snapTracking.points.length === 0) return;
+  resolveSnapWorld(screenToWorld(centerScreen()));
+  const rect = canvas.getBoundingClientRect();
+  const guides = snapTrackingGuides();
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.24;
+  ctx.setLineDash([8, 7]);
+  for (const guide of guides) {
+    drawTrackingGuideLine(guide, rect);
+  }
+  ctx.setLineDash([]);
+
+  const activeGuides = activeTrackingGuides();
+  if (activeGuides.length) {
+    ctx.globalAlpha = 0.78;
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([10, 6]);
+    for (const guide of activeGuides) {
+      drawTrackingGuideLine(guide, rect);
+    }
+    ctx.setLineDash([]);
+  }
+
+  ctx.globalAlpha = 0.95;
+  for (const point of state.snapTracking.points) {
+    drawTrackingAnchor(point, c);
+  }
+  if (state.snapTracking.active?.trackingType === "intersection") {
+    const p = worldToScreen(state.snapTracking.active);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 9, p.y);
+    ctx.lineTo(p.x + 9, p.y);
+    ctx.moveTo(p.x, p.y - 9);
+    ctx.lineTo(p.x, p.y + 9);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function activeTrackingGuides() {
+  const active = state.snapTracking.active;
+  if (!active) return [];
+  if (active.trackingType === "intersection") return active.guides || [];
+  if (active.trackingType === "line" && active.guide) return [active.guide];
+  return [];
+}
+
+function drawTrackingGuideLine(guide, rect) {
+  const p = worldToScreen(guide.point);
+  const length = Math.max(rect.width, rect.height) * 1.6;
+  const dx = guide.ux * length;
+  const dy = guide.uy * length;
+  linePath(p.x - dx, p.y - dy, p.x + dx, p.y + dy);
+}
+
+function drawTrackingAnchor(point, c) {
+  const p = worldToScreen(point);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(p.x - 12, p.y);
+  ctx.lineTo(p.x + 12, p.y);
+  ctx.moveTo(p.x, p.y - 12);
+  ctx.lineTo(p.x, p.y + 12);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function resetSnapTracking() {
+  clearSnapTrackingHover();
+  state.snapTracking.points = [];
+  state.snapTracking.active = null;
+}
+
 function drawCursorSnap(c) {
   if ((state.tool === "select" && !state.moveCommand) || state.tool === "furniture") return;
   const snap = resolveSnapWorld(screenToWorld(centerScreen())).snap;
@@ -2134,7 +2682,9 @@ function drawCursorSnap(c) {
   ctx.moveTo(p.x, p.y - 14);
   ctx.lineTo(p.x, p.y + 14);
   ctx.stroke();
-  drawBadge(snap.label || "Snap", p.x, p.y - 26, c, true);
+  if (snap.type !== "tracking") {
+    drawBadge(snap.label || "Snap", p.x, p.y - 26, c, true);
+  }
   ctx.restore();
 }
 
@@ -2399,9 +2949,11 @@ function snapWorld(point) {
 function resolveSnapWorld(point) {
   const objectThreshold = (state.tool === "dimension" ? 34 : 24) / state.view.scale;
   const midpointThreshold = 22 / state.view.scale;
+  const trackingThreshold = 18 / state.view.scale;
   const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
   let result = { ...point };
   let snap = null;
+  state.snapTracking.active = null;
 
   if (useObjectSnap) {
     snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
@@ -2411,13 +2963,19 @@ function resolveSnapWorld(point) {
   }
   if (snap) {
     result = { x: snap.x, y: snap.y };
+  } else if (canUseSnapTracking()) {
+    snap = nearestSnapTrackingPoint(point, trackingThreshold);
+    if (snap) {
+      result = { x: snap.x, y: snap.y };
+      state.snapTracking.active = snap;
+    }
   } else if (state.snaps.has("grid")) {
     result.x = Math.round(result.x / 50) * 50;
     result.y = Math.round(result.y / 50) * 50;
   }
   if (!snap && state.snaps.has("polar")) {
     const polarStart = state.drawing?.start || state.moveCommand?.base;
-    if (polarStart) {
+    if (polarStart && state.drawing?.phase !== "offset") {
       result = snapPolar(result, polarStart);
     }
   }
@@ -2472,7 +3030,96 @@ function snapCandidates({ includeCorners = false, includeMidpoints = false, incl
       });
     }
   }
-  return candidates;
+  return candidates.map((candidate) => attachSnapReference(candidate));
+}
+
+function attachSnapReference(candidate) {
+  if (candidate.entityId) return candidate;
+  const ref = nearestObjectPointRef(candidate);
+  return ref ? { ...candidate, ...ref } : candidate;
+}
+
+function dimensionRefFromSnap(snap) {
+  if (!snap?.entityId || !snap?.pointKey) return null;
+  return { entityId: snap.entityId, pointKey: snap.pointKey };
+}
+
+function updateLinkedDimensions() {
+  for (const entity of state.entities) {
+    if (entity.layer !== "dimensions") continue;
+    const nextStart = dimensionLinkedPoint(entity.refStart);
+    const nextEnd = dimensionLinkedPoint(entity.refEnd);
+    if (!nextStart && !nextEnd) continue;
+    const previous = dimensionWorldGeometry(entity);
+    if (nextStart) {
+      entity.x1 = nextStart.x;
+      entity.y1 = nextStart.y;
+    }
+    if (nextEnd) {
+      entity.x2 = nextEnd.x;
+      entity.y2 = nextEnd.y;
+    }
+    preserveDimensionLineOffset(entity, previous);
+  }
+}
+
+function dimensionLinkedPoint(ref) {
+  if (!ref) return null;
+  const entity = state.entities.find((item) => item.id === ref.entityId);
+  if (!entity) return null;
+  return objectPointRefs(entity).find((point) => point.pointKey === ref.pointKey) || null;
+}
+
+function preserveDimensionLineOffset(entity, previous) {
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  const axis = normalizeWorldVector(previous.lineEnd.x - previous.lineStart.x, previous.lineEnd.y - previous.lineStart.y);
+  if (!axis) return;
+  const normal = { x: -axis.y, y: axis.x };
+  const offsetStart = (previous.lineStart.x - start.x) * normal.x + (previous.lineStart.y - start.y) * normal.y;
+  const offsetEnd = (previous.lineEnd.x - end.x) * normal.x + (previous.lineEnd.y - end.y) * normal.y;
+  const startAnchor = {
+    x: start.x + normal.x * offsetStart,
+    y: start.y + normal.y * offsetStart,
+  };
+  const endAnchor = {
+    x: end.x + normal.x * offsetEnd,
+    y: end.y + normal.y * offsetEnd,
+  };
+  entity.dimX1 = startAnchor.x;
+  entity.dimY1 = startAnchor.y;
+  entity.dimX2 = endAnchor.x;
+  entity.dimY2 = endAnchor.y;
+  entity.offset = dimensionOffsetFromPoint(start, end, startAnchor);
+}
+
+function nearestObjectPointRef(point) {
+  let best = null;
+  for (const entity of state.entities) {
+    if (!isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
+    for (const candidate of objectPointRefs(entity)) {
+      const distance = distanceWorld(point, candidate);
+      if (distance > 2) continue;
+      if (!best || distance < best.distance) {
+        best = { entityId: entity.id, pointKey: candidate.pointKey, distance };
+      }
+    }
+  }
+  return best ? { entityId: best.entityId, pointKey: best.pointKey } : null;
+}
+
+function objectPointRefs(entity) {
+  if (entity.type === "block") {
+    return [
+      ...blockCorners(entity).map((corner, index) => ({ ...corner, pointKey: `corner-${index}` })),
+      { x: entity.x, y: entity.y, pointKey: "center" },
+    ];
+  }
+  return [
+    { x: entity.x1, y: entity.y1, pointKey: "start" },
+    { x: entity.x2, y: entity.y2, pointKey: "end" },
+    { x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2, pointKey: "mid" },
+  ];
 }
 
 function blockCorners(entity) {
@@ -2519,6 +3166,9 @@ function setTool(tool) {
   } else if (tool !== "line" && tool !== "polyline") {
     state.selectedEndpoint = null;
   }
+  if (tool !== "dimension") {
+    resetSnapTracking();
+  }
   if (tool !== "select" && tool !== "furniture") {
     state.furnitureEditId = null;
   }
@@ -2549,7 +3199,9 @@ function setTool(tool) {
   if (tool === "dimension") {
     state.snaps.add("end");
     syncSnapButtons();
-    statusChip.textContent = "Размер: курсор липнет к ближайшим углам и объектам. Поставьте две точки";
+  }
+  if (tool === "dimension") {
+    statusChip.textContent = "Размер: 1 начало, 2 конец, 3 положение размерной линии";
   }
   draw();
 }
@@ -2677,7 +3329,12 @@ function createEntityFromDrawing() {
     return wall(id, start.x, start.y, end.x, end.y);
   }
   if (state.tool === "dimension") {
-    return line(id, start.x, start.y, end.x, end.y, "dimensions");
+    const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
+    entity.offset = state.drawing.offset ?? 360;
+    if (state.drawing.refStart) entity.refStart = state.drawing.refStart;
+    if (state.drawing.refEnd) entity.refEnd = state.drawing.refEnd;
+    ensureDimensionLineGeometry(entity);
+    return entity;
   }
   return line(id, start.x, start.y, end.x, end.y);
 }
@@ -2697,7 +3354,8 @@ function selectLineEndpoint(endpoint) {
 }
 
 function commitCursorPoint() {
-  const world = cursorWorld();
+  const resolved = cursorSnapResolved();
+  const world = resolved.point;
   if (state.offsetCommand) {
     commitOffsetCommandPoint(rawCursorWorld());
     return;
@@ -2706,7 +3364,37 @@ function commitCursorPoint() {
     commitMoveCommandPoint(world);
     return;
   }
-  if (["line", "polyline", "wall", "dimension", "circle", "rectangle", "arc"].includes(state.tool)) {
+  if (state.tool === "dimension") {
+    if (!state.drawing) {
+      state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap) };
+      statusChip.textContent = "Размер: начало поставлено. Поставьте вторую точку";
+    } else if (state.drawing.phase === "end") {
+      const end = state.drawing.lockedEnd ? state.drawing.end : world;
+      state.drawing.end = end;
+      state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
+      state.drawing.lockedEnd = true;
+      state.drawing.phase = "offset";
+      const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
+      if (metrics.length <= 0) {
+        state.drawing = null;
+        resetSnapTracking();
+        statusChip.textContent = "Размер: точки совпали, начните заново";
+      } else {
+        statusChip.textContent = "Размер: поставьте третью точку для положения размерной линии";
+      }
+    } else if (state.drawing.phase === "offset") {
+      const offset = dimensionOffsetFromPoint(state.drawing.start, state.drawing.end, world);
+      state.drawing.offset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
+      const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, state.drawing.end.x, state.drawing.end.y);
+      pushEntity(createEntityFromDrawing());
+      state.drawing = null;
+      resetSnapTracking();
+      statusChip.textContent = `Размер ${metrics.length} мм завершен`;
+    }
+    draw();
+    return;
+  }
+  if (["line", "polyline", "wall", "circle", "rectangle", "arc"].includes(state.tool)) {
     if (!state.drawing) {
       if (state.tool === "line" || state.tool === "polyline") state.selectedEndpoint = null;
       state.drawing = { start: world, end: world, lockedEnd: false };
@@ -2851,6 +3539,13 @@ function applyExactInput() {
   if (state.drawing) {
     const finishedTool = state.tool;
     state.drawing.end = end;
+    if (state.tool === "dimension") {
+      state.drawing.lockedEnd = true;
+      state.drawing.phase = "offset";
+      statusChip.textContent = "Размер: поставьте третью точку для положения размерной линии";
+      draw();
+      return;
+    }
     pushEntity(createEntityFromDrawing());
     if (finishedTool === "line" || finishedTool === "wall") {
       state.drawing = null;
@@ -3020,6 +3715,29 @@ canvas.addEventListener("pointerdown", (event) => {
     startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event, screen);
     return;
   }
+  const dimensionControl = hitDimensionControl(screen);
+  if (dimensionControl) {
+    const hitEntity = dimensionControl.entity;
+    state.selectedId = hitEntity.id;
+    state.selectedIds = [hitEntity.id];
+    state.furnitureEditId = null;
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: dimensionControl.type,
+      targetId: hitEntity.id,
+      before: entityGeometry(hitEntity),
+    };
+    statusChip.textContent =
+      dimensionControl.type === "dimension-offset"
+        ? "Размер: меняйте только расстояние размерной линии от объекта"
+        : "Размер: тяните конец только вдоль оси размера";
+    draw();
+    return;
+  }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
   if (selectedLineEndpoint) {
     const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
@@ -3071,7 +3789,14 @@ canvas.addEventListener("pointerdown", (event) => {
   const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
   const canMoveFurniture = hitEntity?.type === "block" && state.furnitureEditId === hitId;
-  const pointerMode = hitEntity?.type === "block" && !canMoveFurniture ? "pan" : hitId ? "move" : "pan";
+  const pointerMode =
+    hitEntity?.type === "block" && !canMoveFurniture
+      ? "pan"
+      : hitEntity?.layer === "dimensions"
+        ? "dimension-offset"
+        : hitId
+          ? "move"
+          : "pan";
   state.pointer = {
     id: event.pointerId,
     screen,
@@ -3083,6 +3808,7 @@ canvas.addEventListener("pointerdown", (event) => {
     before: hitEntity ? entityGeometry(hitEntity) : null,
   };
   if (hitId) {
+    state.dimensionPickCycle = null;
     state.selectedId = hitId;
     if (state.tool === "select" && state.selectTool !== "multi") state.selectedIds = [hitId];
     if (hitEntity?.type === "block") {
@@ -3141,7 +3867,22 @@ canvas.addEventListener("pointermove", (event) => {
     setSelectedEndpointPosition(currentWorld);
     updateSelectedEndpointEditors();
     statusChip.textContent = "Редактирование конца линии";
+  } else if (state.pointer.mode === "dimension-offset" && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity) {
+      moveDimensionLineOffset(entity, screenToWorld(screen));
+      statusChip.textContent = `Вынос размера ${Math.round(Math.abs(entity.offset))} мм`;
+    }
+  } else if ((state.pointer.mode === "dimension-start" || state.pointer.mode === "dimension-end") && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity) {
+      const endpoint = state.pointer.mode === "dimension-start" ? "start" : "end";
+      moveDimensionHandle(entity, endpoint, screenToWorld(screen));
+      const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
+      statusChip.textContent = `Размер ${dimensionDisplayLength(entity)} мм`;
+    }
   } else {
+    state.dimensionSnapHint = null;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
   }
@@ -3167,6 +3908,7 @@ function finishCanvasPointer(event, canceled = false) {
     if (state.activePointers.size === 0) {
       state.gestureSuppressTap = false;
       state.pointer = null;
+      state.dimensionSnapHint = null;
     }
     return;
   }
@@ -3236,14 +3978,16 @@ function finishCanvasPointer(event, canceled = false) {
     finishPointerMoveUndo();
   }
   state.pointer = null;
+  state.dimensionSnapHint = null;
   if (state.activePointers.size === 0) {
     state.gestureSuppressTap = false;
   }
   forceMoveCursorVisible();
+  draw();
 }
 
 function finishPointerMoveUndo() {
-  const trackedModes = new Set(["move", "furniture-resize", "furniture-rotate", "line-endpoint"]);
+  const trackedModes = new Set(["move", "furniture-resize", "furniture-rotate", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]);
   if (!trackedModes.has(state.pointer?.mode) || !state.pointer.targetId) return;
   const entity = state.entities.find((item) => item.id === state.pointer.targetId);
   if (entity && state.pointer.before) {
@@ -3346,12 +4090,144 @@ function rotatePointAround(point, center, radians) {
   };
 }
 
+function moveDimensionEndpointOnAxis(entity, endpoint, point) {
+  const fixed =
+    endpoint === "start"
+      ? { x: entity.x2, y: entity.y2 }
+      : { x: entity.x1, y: entity.y1 };
+  const moving =
+    endpoint === "start"
+      ? { x: entity.x1, y: entity.y1 }
+      : { x: entity.x2, y: entity.y2 };
+  const dx = moving.x - fixed.x;
+  const dy = moving.y - fixed.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return;
+  const ux = dx / length;
+  const uy = dy / length;
+  const rawProjected = (point.x - fixed.x) * ux + (point.y - fixed.y) * uy;
+  const projected = Math.abs(rawProjected) < 50 ? (rawProjected < 0 ? -50 : 50) : rawProjected;
+  const next = { x: fixed.x + ux * projected, y: fixed.y + uy * projected };
+  if (endpoint === "start") {
+    entity.x1 = next.x;
+    entity.y1 = next.y;
+  } else {
+    entity.x2 = next.x;
+    entity.y2 = next.y;
+  }
+}
+
+function moveDimensionHandle(entity, endpoint, handlePoint) {
+  const geometry = ensureDimensionLineGeometry(entity);
+  const fixedLine = endpoint === "start" ? geometry.lineEnd : geometry.lineStart;
+  const movingLine = endpoint === "start" ? geometry.lineStart : geometry.lineEnd;
+  const axis = normalizeWorldVector(movingLine.x - fixedLine.x, movingLine.y - fixedLine.y);
+  if (!axis) return;
+  const currentBase = endpoint === "start" ? geometry.start : geometry.end;
+  const legAxis =
+    normalizeWorldVector(movingLine.x - currentBase.x, movingLine.y - currentBase.y) ||
+    normalizeWorldVector(-axis.y, axis.x);
+  const nextBase = snapDimensionHandleToParallel(entity, handlePoint, legAxis || axis) || handlePoint;
+  const nextRef = dimensionRefFromSnap(nearestSnapCandidate(nextBase, snapCandidates({ includeCorners: true, includeMidpoints: true, includeCenters: true }), 3));
+  const projected = (nextBase.x - fixedLine.x) * axis.x + (nextBase.y - fixedLine.y) * axis.y;
+  const minProjection = Math.abs(projected) < 50 ? (projected < 0 ? -50 : 50) : projected;
+  const nextLine = {
+    x: fixedLine.x + axis.x * minProjection,
+    y: fixedLine.y + axis.y * minProjection,
+  };
+  if (endpoint === "start") {
+    entity.dimX1 = nextLine.x;
+    entity.dimY1 = nextLine.y;
+    entity.x1 = nextBase.x;
+    entity.y1 = nextBase.y;
+    entity.refStart = nextRef;
+  } else {
+    entity.dimX2 = nextLine.x;
+    entity.dimY2 = nextLine.y;
+    entity.x2 = nextBase.x;
+    entity.y2 = nextBase.y;
+    entity.refEnd = nextRef;
+  }
+  entity.offset = dimensionOffsetFromPoint(
+    { x: entity.x1, y: entity.y1 },
+    { x: entity.x2, y: entity.y2 },
+    endpoint === "start" ? { x: entity.dimX1, y: entity.dimY1 } : { x: entity.dimX2, y: entity.dimY2 },
+  );
+}
+
+function snapDimensionHandleToParallel(entity, point, axis) {
+  state.dimensionSnapHint = null;
+  if (!state.snaps.has("end")) return null;
+  const threshold = 34 / state.view.scale;
+  let best = null;
+  const pointSnap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), threshold * 0.85);
+  if (pointSnap) {
+    best = {
+      x: pointSnap.x,
+      y: pointSnap.y,
+      score: distanceWorld(point, pointSnap) - 12,
+      type: "point",
+    };
+  }
+  for (const segment of angleReferenceSegments()) {
+    const segmentAxis = normalizeWorldVector(segment.p2.x - segment.p1.x, segment.p2.y - segment.p1.y);
+    if (!segmentAxis) continue;
+    const parallelScore = Math.abs(axis.x * segmentAxis.y - axis.y * segmentAxis.x);
+    if (parallelScore > 0.12) continue;
+    const hit = projectPointToSegmentWorld(point, segment.p1, segment.p2);
+    if (hit.distance > threshold) continue;
+    const score = hit.distance + parallelScore * 240;
+    if (!best || score < best.score) {
+      best = { x: hit.x, y: hit.y, score, segment, type: "line" };
+    }
+  }
+  if (!best) return null;
+  state.dimensionSnapHint = {
+    type: best.type,
+    point: { x: best.x, y: best.y },
+    segment: best.segment,
+  };
+  return { x: best.x, y: best.y };
+}
+
+function dimensionBasePointFromHandle(entity, handlePoint) {
+  const dx = entity.x2 - entity.x1;
+  const dy = entity.y2 - entity.y1;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return handlePoint;
+  const nx = -dy / length;
+  const ny = dx / length;
+  const offset = entity.offset ?? 360;
+  return {
+    x: handlePoint.x - nx * offset,
+    y: handlePoint.y - ny * offset,
+  };
+}
+
+function normalizeWorldVector(dx, dy) {
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return null;
+  return { x: dx / length, y: dy / length };
+}
+
 function entityGeometry(entity) {
   if (!entity) return null;
   if (entity.type === "block") {
     return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0 };
   }
-  return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+  const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+  if (entity.layer === "dimensions") {
+    geometry.offset = entity.offset ?? 360;
+    if (Number.isFinite(entity.dimX1)) {
+      geometry.dimX1 = entity.dimX1;
+      geometry.dimY1 = entity.dimY1;
+      geometry.dimX2 = entity.dimX2;
+      geometry.dimY2 = entity.dimY2;
+    }
+    if (entity.refStart) geometry.refStart = entity.refStart;
+    if (entity.refEnd) geometry.refEnd = entity.refEnd;
+  }
+  return geometry;
 }
 
 function applyEntityGeometry(entity, geometry) {
@@ -3447,6 +4323,12 @@ function pointInsideBlock(screen, entity) {
 }
 
 function distanceToEntityScreen(screen, entity) {
+  if (entity.layer === "dimensions") {
+    const dimensionGeometry = dimensionScreenGeometry(entity);
+    const p1 = dimensionGeometry?.a || worldToScreen({ x: entity.x1, y: entity.y1 });
+    const p2 = dimensionGeometry?.b || worldToScreen({ x: entity.x2, y: entity.y2 });
+    return pointToSegmentDistance(screen, p1, p2);
+  }
   if (entity.type === "circle") { const center = worldToScreen({ x: entity.cx, y: entity.cy }); return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - Math.abs(entity.radius) * state.view.scale); }
   if (entity.type === "rectangle") { const corners = rectangleCorners(entity).map(worldToScreen); return Math.min(pointToSegmentDistance(screen, corners[0], corners[1]), pointToSegmentDistance(screen, corners[1], corners[2]), pointToSegmentDistance(screen, corners[2], corners[3]), pointToSegmentDistance(screen, corners[3], corners[0])); }
   if (entity.type === "arc") { const arc = arcGeometry(entity.start, entity.through, entity.end); if (!arc) return Infinity; const center = worldToScreen(arc.center); const radius = arc.radius * state.view.scale; const angle = Math.atan2(screen.y - center.y, screen.x - center.x); if (!angleOnArc(angle, arc.startAngle, arc.endAngle, arc.counterClockwise)) return Infinity; return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - radius); }
