@@ -520,10 +520,11 @@ function visibleEntities(rect) {
     if (entity.type === "block") {
       return entity.x >= min.x - margin && entity.x <= max.x + margin && entity.y >= min.y - margin && entity.y <= max.y + margin;
     }
-    const entityMinX = Math.min(entity.x1, entity.x2);
-    const entityMaxX = Math.max(entity.x1, entity.x2);
-    const entityMinY = Math.min(entity.y1, entity.y2);
-    const entityMaxY = Math.max(entity.y1, entity.y2);
+    const bounds = entityBounds(entity);
+    const entityMinX = bounds.minX;
+    const entityMaxX = bounds.maxX;
+    const entityMinY = bounds.minY;
+    const entityMaxY = bounds.maxY;
     return entityMaxX >= min.x - margin && entityMinX <= max.x + margin && entityMaxY >= min.y - margin && entityMinY <= max.y + margin;
   });
 }
@@ -537,6 +538,12 @@ function drawEntity(entity, c) {
     drawWall(entity, c);
   } else if (entity.type === "line") {
     drawLineEntity(entity, c);
+  } else if (entity.type === "circle") {
+    drawCircleEntity(entity, c);
+  } else if (entity.type === "rectangle") {
+    drawRectangleEntity(entity, c);
+  } else if (entity.type === "arc") {
+    drawArcEntity(entity, c);
   } else if (entity.type === "block") {
     drawBlock(entity, c);
   }
