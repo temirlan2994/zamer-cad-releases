@@ -314,10 +314,11 @@ function drawMoveCommand(c) {
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
+  const angleInfo = activeAngleInfo(start, end);
   const displayAngle =
     command.mode === "rotate" && command.reference
       ? Math.round(Math.abs((signedAngleDelta(angleBetweenPoints(start, command.reference), angleBetweenPoints(start, end)) * 180) / Math.PI))
-      : metrics.angle;
+      : angleInfo.degrees;
   const m = midpoint(p1, p2);
   const entity = state.entities.find((item) => item.id === command.entityId);
   if (entity) {
@@ -337,21 +338,21 @@ function drawMoveCommand(c) {
   ctx.setLineDash([]);
   drawHandle(p1.x, p1.y, c);
   drawHandle(p2.x, p2.y, c);
-  drawBadge(`${metrics.length} мм  ${metrics.angle}°`, m.x, m.y - 22, c);
-  drawCommandAngleArc(p1, p2, c, command.mode === "rotate" ? command.reference : null);
+  drawBadge(`${metrics.length} мм`, m.x, m.y - 22, c);
+  drawCommandAngleArc(p1, p2, c, command.mode === "rotate" ? command.reference : null, angleInfo);
   ctx.restore();
 
   updateTopMetricInputs(command.mode === "rotate" ? 0 : metrics.length, displayAngle);
 }
 
-function drawCommandAngleArc(origin, target, c, reference = null) {
+function drawCommandAngleArc(origin, target, c, reference = null, angleInfo = null) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
   if (screenLength < 34) return;
   const angle = Math.atan2(dy, dx);
-  const startAngle = reference ? angleBetweenPoints(origin, worldToScreen(reference)) : 0;
-  const delta = signedAngleDelta(startAngle, angle);
+  const startAngle = reference ? angleBetweenPoints(origin, worldToScreen(reference)) : angleInfo?.referenceRad ?? nearestCardinalReferenceRad(angle);
+  const delta = reference ? signedAngleDelta(startAngle, angle) : angleInfo?.deltaRad ?? signedAngleDelta(startAngle, angle);
   const radius = Math.min(48, Math.max(28, screenLength * 0.24));
   const arcEnd = {
     x: origin.x + Math.cos(angle) * radius,
@@ -1615,11 +1616,12 @@ function activeAngleInfo(start, end) {
   const currentRad = angleBetweenPoints(start, end);
   const reference = nearestAngleReference(start, currentRad);
   if (!reference) {
-    const deltaRad = normalizePositiveRad(currentRad);
+    const referenceRad = nearestCardinalReferenceRad(currentRad);
+    const deltaRad = signedAngleDelta(referenceRad, currentRad);
     return {
-      referenceRad: 0,
+      referenceRad,
       deltaRad,
-      degrees: Math.round(radToDeg(deltaRad)),
+      degrees: Math.round(Math.abs(radToDeg(deltaRad))),
       hasReference: false,
     };
   }
@@ -1630,6 +1632,11 @@ function activeAngleInfo(start, end) {
     degrees: Math.round(Math.abs(radToDeg(deltaRad))),
     hasReference: true,
   };
+}
+
+function nearestCardinalReferenceRad(angleRad) {
+  const step = Math.PI / 2;
+  return Math.round(angleRad / step) * step;
 }
 
 function nearestAngleReference(origin, currentRad) {
@@ -1688,11 +1695,6 @@ function segmentAngle(a, b) {
 
 function signedAngleDelta(fromRad, toRad) {
   return Math.atan2(Math.sin(toRad - fromRad), Math.cos(toRad - fromRad));
-}
-
-function normalizePositiveRad(angleRad) {
-  const full = Math.PI * 2;
-  return ((angleRad % full) + full) % full;
 }
 
 function radToDeg(angleRad) {
