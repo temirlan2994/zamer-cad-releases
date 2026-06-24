@@ -3674,6 +3674,7 @@ function commitCursorPoint() {
     if (!state.drawing) {
       if (state.tool === "line" || state.tool === "polyline") state.selectedEndpoint = null;
       state.drawing = { start: world, end: world, lockedEnd: false };
+      hideDrawToolMenu();
       statusChip.textContent = state.tool === "arc" ? "Дуга: укажите конечную точку" : "Начало поставлено. Подведите курсор дальше и тапните холст";
     } else {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
@@ -3685,7 +3686,7 @@ function commitCursorPoint() {
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
-      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
+      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = `${drawingToolName(finishedTool)} завершен`; }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
@@ -3825,6 +3826,7 @@ function applyExactInput() {
     pushEntity(createEntityFromDrawing());
     if (finishedTool === "line" || finishedTool === "wall") {
       state.drawing = null;
+      hideDrawToolMenu();
       state.selectTool = "select";
       setTool("select");
     } else if (finishedTool === "polyline") {
