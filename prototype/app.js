@@ -390,8 +390,10 @@ function draw() {
   drawDimensions(c);
   drawWallDimensionLabels(visible, c, rect);
 
+  const selectedItems = selectedEntities();
+  const selected = selectedItems.at(-1) || null;
   if (!state.drawing && !state.moveCommand && !state.offsetCommand) {
-    for (const entity of selectedEntities()) {
+    for (const entity of selectedItems) {
       drawSelection(entity, c);
     }
   }
