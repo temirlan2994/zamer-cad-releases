@@ -1,6 +1,7 @@
 const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
+const centerCursor = document.querySelector(".center-cursor");
 const tools = [...document.querySelectorAll(".tool")];
 const snaps = [...document.querySelectorAll(".snap")];
 const blocks = [...document.querySelectorAll(".block")];
@@ -279,6 +280,16 @@ function syncCommandState() {
   const active = Boolean(state.moveCommand);
   shell.dataset.command = active ? "move" : "";
   shell.classList.toggle("command-active", active);
+  if (centerCursor) {
+    centerCursor.style.opacity = active ? "1" : "";
+    centerCursor.style.visibility = active ? "visible" : "";
+  }
+}
+
+function forceMoveCursorVisible() {
+  if (!state.moveCommand || !centerCursor) return;
+  centerCursor.style.opacity = "1";
+  centerCursor.style.visibility = "visible";
 }
 
 function drawMoveCommand(c) {
@@ -1855,6 +1866,7 @@ function commitMoveCommandPoint(world) {
     syncCommandState();
     statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
     draw();
+    forceMoveCursorVisible();
     return;
   }
 
@@ -2227,6 +2239,7 @@ function finishCanvasPointer(event, canceled = false) {
   if (state.activePointers.size === 0) {
     state.gestureSuppressTap = false;
   }
+  forceMoveCursorVisible();
 }
 
 function finishPointerMoveUndo() {
