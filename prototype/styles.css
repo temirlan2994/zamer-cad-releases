@@ -224,9 +224,10 @@ input {
 
 .draw-tool-menu button {
   align-items: center;
-  background: color-mix(in srgb, var(--surface) 90%, var(--accent) 4%);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
+  color: var(--text);
   display: grid;
   height: 52px;
   justify-items: center;
@@ -239,13 +240,16 @@ input {
 }
 
 .draw-tool-menu span {
+  color: currentColor;
   font-size: 1.06rem;
+  font-weight: 700;
   line-height: 1;
 }
 
 .draw-tool-menu small {
-  color: var(--muted);
+  color: currentColor;
   font-size: 0.56rem;
+  font-weight: 600;
   line-height: 1;
 }
 
