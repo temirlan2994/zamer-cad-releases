@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=25" />
+    <link rel="stylesheet" href="./styles.css?v=27" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
@@ -46,6 +46,22 @@
         </div>
 
         <div class="status-chip" id="statusChip">Выберите Линия и тяните отрезок</div>
+        <div class="furniture-size-panel" id="furnitureSizePanel" hidden>
+          <label>
+            <span>Ш</span>
+            <input id="furnitureWidthInput" inputmode="decimal" aria-label="Ширина мебели" />
+            <small>мм</small>
+          </label>
+          <label>
+            <span>Г</span>
+            <input id="furnitureDepthInput" inputmode="decimal" aria-label="Глубина мебели" />
+            <small>мм</small>
+          </label>
+          <label>
+            <span>°</span>
+            <input id="furnitureRotationInput" inputmode="decimal" aria-label="Угол мебели" />
+          </label>
+        </div>
         <div class="inline-editors" id="inlineEditors" hidden>
           <label class="inline-editor length-editor" id="lengthEditor">
             <input id="lengthInput" inputmode="decimal" value="3240" aria-label="Длина линии" />
@@ -60,6 +76,10 @@
 
       <section class="furniture-sheet" id="furnitureSheet" hidden data-position="half" aria-label="Библиотека мебели">
         <div class="sheet-handle" role="button" tabindex="0"></div>
+        <button class="furniture-peek-button" type="button" aria-label="Открыть библиотеку мебели">
+          <span>□</span>
+          <strong>↑</strong>
+        </button>
         <div class="furniture-tabs" aria-label="Категории библиотеки">
           <button class="furniture-tab active" data-tab="furniture">Мебель</button>
           <button class="furniture-tab" data-tab="doors">Двери</button>
@@ -77,109 +97,8 @@
             <button data-category="storage">Шкафы</button>
             <button data-category="cabinets">Тумбы</button>
           </nav>
-          <div class="furniture-grid">
-            <button class="block furniture-card active" data-tab="furniture" data-category="sofas" data-block="sofa" data-w="2200" data-h="950">
-              <span class="furniture-thumb svg-thumb sofa-thumb">
-                <img src="./assets/floor-symbols/CouchLeft.svg" alt="" />
-                <img src="./assets/floor-symbols/CouchMiddle.svg" alt="" />
-                <img src="./assets/floor-symbols/CouchRight.svg" alt="" />
-              </span>
-              <strong>Диван 3 места</strong>
-              <small>2200 × 950</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="sofas" data-block="sofa" data-w="2000" data-h="900">
-              <span class="furniture-thumb svg-thumb sofa-thumb compact">
-                <img src="./assets/floor-symbols/CouchLeft.svg" alt="" />
-                <img src="./assets/floor-symbols/CouchRight.svg" alt="" />
-              </span>
-              <strong>Диван прямой</strong>
-              <small>2000 × 900</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="sofas" data-block="sectional" data-w="2600" data-h="1600">
-              <span class="furniture-thumb svg-thumb sectional-thumb">
-                <img src="./assets/floor-symbols/CouchLeft.svg" alt="" />
-                <img src="./assets/floor-symbols/CouchMiddle.svg" alt="" />
-                <img src="./assets/floor-symbols/CouchRight.svg" alt="" />
-                <img src="./assets/floor-symbols/LoungeChair.svg" alt="" />
-              </span>
-              <strong>Угловой диван</strong>
-              <small>2600 × 1600</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="beds" data-block="bed" data-w="1800" data-h="2000">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/QueenBed.svg" alt="" /></span>
-              <strong>Кровать</strong>
-              <small>1800 × 2000</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="tables" data-block="table" data-w="1400" data-h="800">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Table.svg" alt="" /></span>
-              <strong>Обеденный стол</strong>
-              <small>1400 × 800</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="chairs" data-block="chair" data-w="550" data-h="550">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/LoungeChair.svg" alt="" /></span>
-              <strong>Кресло</strong>
-              <small>550 × 550</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="storage" data-block="cabinet" data-w="1200" data-h="550">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Cabinet.svg" alt="" /></span>
-              <strong>Шкаф</strong>
-              <small>1200 × 550</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="furniture" data-category="cabinets" data-block="tv" data-w="1600" data-h="420">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/TV.svg" alt="" /></span>
-              <strong>ТВ тумба</strong>
-              <small>1600 × 420</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="doors" data-category="swing" data-block="door" data-w="900" data-h="900">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/SingleDoor-NoWall.svg" alt="" /></span>
-              <strong>Дверь</strong>
-              <small>900 × 900</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="windows" data-category="windows" data-block="window" data-w="1800" data-h="180">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/SlidingWindow.svg" alt="" /></span>
-              <strong>Окно</strong>
-              <small>1800 × 180</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="kitchen" data-category="kitchen" data-block="table" data-w="600" data-h="600">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Stove.svg" alt="" /></span>
-              <strong>Модуль кухни</strong>
-              <small>600 × 600</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="kitchen" data-category="kitchen" data-block="sink" data-w="600" data-h="500">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Sink.svg" alt="" /></span>
-              <strong>Мойка</strong>
-              <small>600 × 500</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="bath" data-category="bath" data-block="toilet" data-w="700" data-h="450">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Toilet.svg" alt="" /></span>
-              <strong>Унитаз</strong>
-              <small>700 × 450</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="bath" data-category="bath" data-block="tub" data-w="1700" data-h="750">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Tub.svg" alt="" /></span>
-              <strong>Ванна</strong>
-              <small>1700 × 750</small>
-              <b>✓</b>
-            </button>
-            <button class="block furniture-card" data-tab="decor" data-category="decor" data-block="lamp" data-w="450" data-h="450">
-              <span class="furniture-thumb svg-thumb single-symbol"><img src="./assets/floor-symbols/Lamp.svg" alt="" /></span>
-              <strong>Светильник</strong>
-              <small>450 × 450</small>
-              <b>✓</b>
-            </button>
+          <div class="furniture-grid" id="furnitureGrid" aria-live="polite">
+            <div class="library-empty">Загрузка библиотеки...</div>
           </div>
         </div>
       </section>
@@ -214,6 +133,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=28"></script>
+    <script src="./app.js?v=43"></script>
   </body>
 </html>
