@@ -278,7 +278,7 @@ function draw() {
 }
 
 function shouldHideEntityForCommand(entity) {
-  return Boolean(state.moveCommand?.mode === "move" && entity.id === state.moveCommand.entityId);
+  return Boolean((state.moveCommand?.mode === "move" || state.moveCommand?.mode === "rotate") && entity.id === state.moveCommand.entityId);
 }
 
 function syncCommandState() {
@@ -314,7 +314,11 @@ function drawMoveCommand(c) {
   const m = midpoint(p1, p2);
   const entity = state.entities.find((item) => item.id === command.entityId);
   if (entity) {
-    drawMovePreview(entity, end.x - start.x, end.y - start.y, c);
+    if (command.mode === "rotate") {
+      drawRotatePreview(entity, start, end, c);
+    } else {
+      drawMovePreview(entity, end.x - start.x, end.y - start.y, c);
+    }
   }
 
   ctx.save();
@@ -372,6 +376,24 @@ function drawMovePreview(entity, dx, dy, c) {
   const p2 = worldToScreen({ x: entity.x2 + dx, y: entity.y2 + dy });
   ctx.save();
   ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = entity.type === "wall" ? 5 : 2.2;
+  ctx.setLineDash([10, 6]);
+  linePath(p1.x, p1.y, p2.x, p2.y);
+  ctx.setLineDash([]);
+  drawHandle(p1.x, p1.y, c);
+  drawHandle(p2.x, p2.y, c);
+  ctx.restore();
+}
+
+function drawRotatePreview(entity, base, end, c) {
+  const angle = angleBetweenPoints(base, end);
+  const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, angle);
+  const p2World = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, angle);
+  const p1 = worldToScreen(p1World);
+  const p2 = worldToScreen(p2World);
+  ctx.save();
+  ctx.globalAlpha = 0.6;
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = entity.type === "wall" ? 5 : 2.2;
   ctx.setLineDash([10, 6]);
@@ -1232,6 +1254,19 @@ function applyTopMetricValue(kind) {
 function applyMoveCommandInlineValue(kind) {
   const command = state.moveCommand;
   if (!command?.base) return;
+  if (command.mode === "rotate") {
+    const typedAngle = Number(topAngleInput.value.replace(",", "."));
+    if (!Number.isFinite(typedAngle)) return;
+    const length = Math.max(500, Math.hypot((command.end?.x || command.base.x) - command.base.x, (command.end?.y || command.base.y) - command.base.y));
+    const radians = (typedAngle * Math.PI) / 180;
+    command.end = {
+      x: command.base.x + Math.cos(radians) * length,
+      y: command.base.y + Math.sin(radians) * length,
+    };
+    command.lockedEnd = true;
+    draw();
+    return;
+  }
   const end = command.end || command.base;
   const currentLength = Math.max(1, Math.hypot(end.x - command.base.x, end.y - command.base.y));
   const currentRad = Math.atan2(end.y - command.base.y, end.x - command.base.x);
@@ -1263,7 +1298,8 @@ function startMoveLikeCommand(entity, mode) {
   syncSnapButtons();
   syncCommandState();
   updateTopMetricInputs(0, 0);
-  statusChip.textContent = `${mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на базовую точку и тапните`;
+  const label = mode === "copy" ? "Копия" : mode === "rotate" ? "Поворот" : "Переместить";
+  statusChip.textContent = `${label}: наведите курсор на базовую точку и тапните`;
   draw();
 }
 
@@ -1334,6 +1370,8 @@ function applySelectionAction(action) {
 
   const before = entityGeometry(entity);
   if (action === "rotate") {
+    startMoveLikeCommand(entity, "rotate");
+    return;
     rotateLinearEntity90(entity);
     statusChip.textContent = "Поворот 90°";
   } else if (action === "mirror") {
@@ -1959,6 +1997,7 @@ function commitMoveCommandPoint(world) {
     syncCommandState();
     statusChip.textContent = "Переместить: наведите курсор на вторую точку и тапните";
     statusChip.textContent = `${command.mode === "copy" ? "Копия" : "Переместить"}: наведите курсор на вторую точку и тапните`;
+    statusChip.textContent = `${command.mode === "copy" ? "Копия" : command.mode === "rotate" ? "Поворот" : "Переместить"}: наведите курсор на угол и тапните`;
     draw();
     forceMoveCursorVisible();
     return;
@@ -1974,6 +2013,20 @@ function commitMoveCommandPoint(world) {
   }
   const dx = end.x - command.base.x;
   const dy = end.y - command.base.y;
+  if (command.mode === "rotate") {
+    rotateLinearEntityAround(entity, command.base, angleBetweenPoints(command.base, end));
+    const after = entityGeometry(entity);
+    if (geometryChanged(command.before, after)) {
+      state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+      state.redo.length = 0;
+    }
+    state.moveCommand = null;
+    syncCommandState();
+    hideInlineEditors();
+    statusChip.textContent = "Поворот применен";
+    draw();
+    return;
+  }
   if (command.mode === "copy") {
     const copy = cloneLinearEntity(entity, dx, dy);
     state.entities.push(copy);
@@ -2412,6 +2465,15 @@ function rotateLinearEntity90(entity) {
   const cy = (entity.y1 + entity.y2) / 2;
   const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, { x: cx, y: cy }, Math.PI / 2);
   const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, { x: cx, y: cy }, Math.PI / 2);
+  entity.x1 = p1.x;
+  entity.y1 = p1.y;
+  entity.x2 = p2.x;
+  entity.y2 = p2.y;
+}
+
+function rotateLinearEntityAround(entity, base, radians) {
+  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, radians);
+  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, radians);
   entity.x1 = p1.x;
   entity.y1 = p1.y;
   entity.x2 = p2.x;
