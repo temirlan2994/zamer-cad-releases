@@ -1414,7 +1414,7 @@ function drawHandle(x, y, c) {
 }
 
 function drawCursorSnap(c) {
-  if (state.tool === "select" || state.tool === "furniture") return;
+  if ((state.tool === "select" && !state.moveCommand) || state.tool === "furniture") return;
   const snap = resolveSnapWorld(screenToWorld(centerScreen())).snap;
   if (!snap) return;
   const p = worldToScreen(snap);
