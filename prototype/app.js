@@ -1,11 +1,19 @@
+import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js";
+import { defaultBlockSize, entitySize, blockSegments } from "./core/blocks.js";
+import { buildDxf } from "./core/dxf.js";
+
 const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const centerCursor = document.querySelector(".center-cursor");
+const projectScaleCaption = document.querySelector(".project-title span");
 const tools = [...document.querySelectorAll(".tool")];
 const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
+const dimensionToolMenu = createDimensionToolMenu();
+const dimensionToolButtons = [...dimensionToolMenu.querySelectorAll("[data-dimension-tool]")];
 const selectToolMenu = document.getElementById("selectToolMenu");
+const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll(".snap")];
 let blocks = [...document.querySelectorAll(".block")];
@@ -15,14 +23,16 @@ const inlineEditors = document.getElementById("inlineEditors");
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
-const selectionActions = document.getElementById("selectionActions");
+const selectionActions = selectToolMenu;
 const lengthEditor = document.getElementById("lengthEditor");
 const angleEditor = document.getElementById("angleEditor");
 const furnitureSizePanel = document.getElementById("furnitureSizePanel");
 const furnitureWidthInput = document.getElementById("furnitureWidthInput");
 const furnitureDepthInput = document.getElementById("furnitureDepthInput");
 const furnitureRotationInput = document.getElementById("furnitureRotationInput");
+const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
 const themeButton = document.getElementById("themeButton");
+const annotationScaleSelect = document.getElementById("annotationScaleSelect");
 const statusChip = document.getElementById("statusChip");
 const layersSheet = document.getElementById("layersSheet");
 const exportSheet = document.getElementById("exportSheet");
@@ -71,23 +81,80 @@ const furnitureCategoriesByTab = {
 };
 const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].filter(Boolean);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
+const cp1251Chars =
+  "\u0402\u0403\u201A\u0453\u201E\u2026\u2020\u2021\u20AC\u2030\u0409\u2039\u040A\u040C\u040B\u040F" +
+  "\u0452\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u0098\u2122\u0459\u203A\u045A\u045C\u045B\u045F" +
+  "\u00A0\u040E\u045E\u0408\u00A4\u0490\u00A6\u00A7\u0401\u00A9\u0404\u00AB\u00AC\u00AD\u00AE\u0407" +
+  "\u00B0\u00B1\u0406\u0456\u0491\u00B5\u00B6\u00B7\u0451\u2116\u0454\u00BB\u0458\u0405\u0455\u0457" +
+  "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" +
+  "абвгдежзийклмнопрстуфхцчшщъыьэюя";
+const cp1251ByteByChar = new Map([...cp1251Chars].map((char, index) => [char, index + 0x80]));
 const trackingHoverDelayMs = 520;
-const trackingMaxPoints = 6;
+const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
+const trackingDrawingTools = new Set(["line", "polyline", "wall", "dimension", "circle", "arc", "rectangle"]);
 const drawToolButtonVisuals = {
   line: { icon: "╱", label: "Линия" },
-  polyline: { icon: "⌁", label: "Полилин." },
+  polyline: { icon: "⌁", label: "Полилиния" },
   circle: { icon: "○", label: "Круг" },
   arc: { icon: "⌒", label: "Дуга" },
   rectangle: { icon: "▭", label: "Прямоуг." },
 };
-const selectionToolButtonVisuals = {
-  select: { icon: "▣", label: "Выдел." },
+const dimensionToolButtonVisuals = {
+  aligned: { icon: "↔", label: "По линии" },
+  linear: { icon: "⟷", label: "Линейный" },
+  angular: { icon: "∠", label: "Угол" },
+  chain: { icon: "⛓", label: "Цепочка" },
+  baseline: { icon: "⊥", label: "База" },
+};
+const selectModeButtonVisuals = {
+  select: { icon: "↖", label: "Выбор" },
   window: { icon: "▣", label: "Рамка" },
   lasso: { icon: "⌁", label: "Лассо" },
-  multi: { icon: "＋", label: "Мульти" },
+  multi: { icon: "+", label: "Мульти" },
+  filter: { icon: "⛃", label: "Фильтр" },
 };
+const selectionToolButtonVisuals = {
+  select: { icon: "✎", label: "Правка" },
+  window: { icon: "▣", label: "Рамка" },
+  lasso: { icon: "⌁", label: "Лассо" },
+  multi: { icon: "+", label: "Мульти" },
+};
+const selectionToolCycle = ["window", "lasso", "multi"];
+const furnitureResizeStepMm = 50;
+
+function createSelectModeMenu() {
+  const menu = document.createElement("div");
+  menu.className = "draw-tool-menu select-mode-menu";
+  menu.id = "selectModeMenu";
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button data-select-mode="select"><span>↖</span><small>Выбор</small></button>
+    <button data-select-mode="window"><span>▣</span><small>Рамка</small></button>
+    <button data-select-mode="lasso"><span>⌁</span><small>Лассо</small></button>
+    <button data-select-mode="multi"><span>+</span><small>Мульти</small></button>
+    <button data-select-mode="filter"><span>⛃</span><small>Фильтр</small></button>
+  `;
+  document.querySelector(".workspace")?.append(menu);
+  return menu;
+}
+
+function createDimensionToolMenu() {
+  const menu = document.createElement("div");
+  menu.className = "draw-tool-menu dimension-tool-menu";
+  menu.id = "dimensionToolMenu";
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button data-dimension-tool="aligned"><span>&#8596;</span><small>По линии</small></button>
+    <button data-dimension-tool="linear"><span>&#10231;</span><small>Линейный</small></button>
+    <button data-dimension-tool="angular"><span>&#8736;</span><small>Угол</small></button>
+    <button data-dimension-tool="chain"><span>&#9939;</span><small>Цепочка</small></button>
+    <button data-dimension-tool="baseline"><span>&#8869;</span><small>База</small></button>
+  `;
+  document.querySelector(".workspace")?.append(menu);
+  return menu;
+}
 
 const layerMeta = {
   walls: { name: "Стены", color: "#26313d", description: "основные стены и перегородки" },
@@ -101,6 +168,8 @@ const state = {
   tool: "select",
   block: "sofa",
   drawTool: "line",
+  dimensionTool: "aligned",
+  annotationScale: 1,
   selectTool: "select",
   selectionFilter: "all",
   blockSize: { width: 2200, height: 950 },
@@ -121,6 +190,7 @@ const state = {
   inlineEdit: null,
   furnitureDrag: null,
   dimensionSnapHint: null,
+  polarSnapGuide: null,
   dimensionPickCycle: null,
   snapTracking: {
     points: [],
@@ -132,11 +202,15 @@ const state = {
   furnitureSheetPosition: "half",
   sheetDrag: null,
   suppressFurnitureClick: false,
+  numericEdit: null,
   selectedId: "wall-3",
   selectedIds: ["wall-3"],
   selectedEndpoint: null,
+  endpointEditBefore: null,
   selectionDrag: null,
+  openEditMenuAfterPointer: false,
   furnitureEditId: null,
+  furnitureResizeHandlesId: null,
   undo: [],
   redo: [],
   snaps: new Set(["grid", "end", "polar"]),
@@ -157,6 +231,46 @@ const state = {
     block("door-1", "door", 2360, 3600, 90),
   ],
 };
+
+const TAP_MOVE_TOLERANCE = 8;
+const LONG_PRESS_SELECT_MS = 430;
+
+function decodeMojibakeText(value) {
+  if (typeof value !== "string" || !/[РС][\u0400-\u04ff]|Г[—°]|В[°·]/.test(value)) return value;
+  try {
+    const bytes = [];
+    for (const char of value) {
+      const code = char.charCodeAt(0);
+      if (code <= 0x7f) {
+        bytes.push(code);
+      } else if (cp1251ByteByChar.has(char)) {
+        bytes.push(cp1251ByteByChar.get(char));
+      } else {
+        return value;
+      }
+    }
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+    return decoded.includes("\uFFFD") ? value : decoded;
+  } catch {
+    return value;
+  }
+}
+
+function normalizeTextNode(node) {
+  if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue) return;
+  const next = decodeMojibakeText(node.nodeValue);
+  if (next !== node.nodeValue) node.nodeValue = next;
+}
+
+function normalizeDynamicText(root = document.body) {
+  if (!root) return;
+  if (root.nodeType === Node.TEXT_NODE) {
+    normalizeTextNode(root);
+    return;
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) normalizeTextNode(walker.currentNode);
+}
 
 function wall(id, x1, y1, x2, y2) {
   return { id, type: "wall", layer: "walls", x1, y1, x2, y2, width: 180 };
@@ -180,6 +294,211 @@ function arcEntity(id, start, through, end, layer = "measure") {
 
 function block(id, kind, x, y, rotation = 0, size = defaultBlockSize(kind)) {
   return { id, type: "block", layer: "furniture", kind, x, y, rotation, scale: 1, width: size.width, height: size.height };
+}
+
+const persistence = {
+  clientId: getProjectClientId(),
+  endpoint: "",
+  debounceMs: 250,
+  retryMs: 1600,
+  ready: false,
+  dirty: false,
+  saving: false,
+  pending: false,
+  restoring: false,
+  timer: null,
+  lastHash: "",
+};
+persistence.endpoint = `/api/project?client=${encodeURIComponent(persistence.clientId)}`;
+
+function getProjectClientId() {
+  const storageKey = "zamer.clientId";
+  try {
+    const existing = localStorage.getItem(storageKey);
+    if (/^[a-zA-Z0-9_-]{8,80}$/.test(existing || "")) return existing;
+    const next = crypto.randomUUID ? crypto.randomUUID() : `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const normalized = next.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
+    localStorage.setItem(storageKey, normalized);
+    return normalized;
+  } catch {
+    return `session-${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
+
+function serializableProjectState() {
+  return {
+    version: 1,
+    clientId: persistence.clientId,
+    theme: state.theme,
+    view: {
+      scale: state.view.scale,
+      panX: state.view.panX,
+      panY: state.view.panY,
+    },
+    snaps: [...state.snaps],
+    visibleLayers: [...state.visibleLayers],
+    annotationScale: state.annotationScale,
+    selectionFilter: state.selectionFilter,
+    furnitureTab: state.furnitureTab,
+    furnitureCategory: state.furnitureCategory,
+    furnitureSheetPosition: state.furnitureSheetPosition,
+    entities: JSON.parse(JSON.stringify(state.entities)),
+  };
+}
+
+function serializeProject() {
+  return {
+    ...serializableProjectState(),
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function projectSnapshotKey() {
+  return JSON.stringify(serializableProjectState());
+}
+
+function isValidProjectEntity(entity) {
+  return Boolean(entity && typeof entity === "object" && typeof entity.id === "string" && typeof entity.type === "string");
+}
+
+function cloneProjectEntity(entity) {
+  try {
+    const copy = JSON.parse(JSON.stringify(entity));
+    return isValidProjectEntity(copy) ? copy : null;
+  } catch {
+    return null;
+  }
+}
+
+function restoreProject(project) {
+  if (!project || !Array.isArray(project.entities)) return false;
+  const restoredEntities = project.entities.map(cloneProjectEntity).filter(Boolean);
+  persistence.restoring = true;
+  try {
+    state.entities = restoredEntities;
+    if (project.view && Number.isFinite(project.view.scale)) {
+      state.view.scale = clampScale(project.view.scale);
+      state.view.panX = Number.isFinite(project.view.panX) ? project.view.panX : state.view.panX;
+      state.view.panY = Number.isFinite(project.view.panY) ? project.view.panY : state.view.panY;
+    }
+    if (Array.isArray(project.snaps)) {
+      state.snaps = new Set(project.snaps.filter(Boolean));
+    }
+    if (Array.isArray(project.visibleLayers)) {
+      state.visibleLayers = new Set(project.visibleLayers.filter((id) => layerMeta[id]));
+    }
+    if (Number.isFinite(project.annotationScale)) {
+      setAnnotationScale(project.annotationScale, { save: false });
+    }
+    if (project.theme === "light" || project.theme === "dark") {
+      state.theme = project.theme;
+      shell.dataset.theme = state.theme;
+      themeButton.textContent = state.theme === "light" ? "☾" : "☼";
+    }
+    if (typeof project.selectionFilter === "string") state.selectionFilter = project.selectionFilter;
+    if (typeof project.furnitureTab === "string") state.furnitureTab = project.furnitureTab;
+    if (typeof project.furnitureCategory === "string") state.furnitureCategory = project.furnitureCategory;
+    if (typeof project.furnitureSheetPosition === "string") setFurnitureSheetPosition(project.furnitureSheetPosition);
+
+    state.drawing = null;
+    state.moveCommand = null;
+    state.offsetCommand = null;
+    state.pointer = null;
+    state.pinch = null;
+    state.inlineEdit = null;
+    state.numericEdit = null;
+    state.selectionDrag = null;
+    state.selectedEndpoint = null;
+    state.endpointEditBefore = null;
+    state.furnitureEditId = null;
+    state.undo = [];
+    state.redo = [];
+    state.selectedId = null;
+    state.selectedIds = [];
+
+    syncSnapButtons();
+    syncToolButtons();
+    renderLayerList();
+    draw();
+    return true;
+  } finally {
+    persistence.restoring = false;
+  }
+}
+
+function markProjectDirty(reason = "change") {
+  if (!persistence.ready || persistence.restoring) return;
+  const snapshot = projectSnapshotKey();
+  if (!persistence.dirty && snapshot === persistence.lastHash) return;
+  persistence.dirty = true;
+  persistence.lastReason = reason;
+  window.clearTimeout(persistence.timer);
+  persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
+}
+
+async function saveProjectNow() {
+  if (!persistence.ready || persistence.restoring) return;
+  if (persistence.saving) {
+    persistence.pending = true;
+    return;
+  }
+  const snapshot = projectSnapshotKey();
+  if (!persistence.dirty && snapshot === persistence.lastHash) return;
+  persistence.saving = true;
+  let retryScheduled = false;
+  window.clearTimeout(persistence.timer);
+  try {
+    const response = await fetch(persistence.endpoint, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(serializeProject()),
+    });
+    if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    persistence.lastHash = snapshot;
+    persistence.dirty = projectSnapshotKey() !== snapshot;
+  } catch (error) {
+    console.warn("Project autosave failed", error);
+    persistence.dirty = true;
+    persistence.timer = window.setTimeout(saveProjectNow, persistence.retryMs);
+    retryScheduled = true;
+  } finally {
+    persistence.saving = false;
+    if (!retryScheduled && (persistence.pending || persistence.dirty)) {
+      persistence.pending = false;
+      markProjectDirty("pending");
+    }
+  }
+}
+
+async function loadProjectFromServer() {
+  try {
+    const response = await fetch(persistence.endpoint, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+    const payload = await response.json();
+    if (payload?.project) {
+      restoreProject(payload.project);
+      statusChip.textContent = "Проект загружен с сервера";
+    }
+  } catch (error) {
+    console.warn("Project restore failed", error);
+  } finally {
+    persistence.ready = true;
+    persistence.lastHash = projectSnapshotKey();
+  }
+}
+
+function flushProjectBeforeUnload() {
+  if (!persistence.ready || persistence.restoring) return;
+  if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
+  const body = JSON.stringify(serializeProject());
+  const blob = new Blob([body], { type: "application/json" });
+  if (navigator.sendBeacon?.(persistence.endpoint, blob)) return;
+  fetch(persistence.endpoint, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
 }
 
 function loadSymbolImage(source) {
@@ -271,25 +590,6 @@ async function loadFurnitureLibrary() {
   }
 }
 
-function defaultBlockSize(kind) {
-  const size = {
-    sofa: { width: 2200, height: 950 },
-    sectional: { width: 2600, height: 1600 },
-    bed: { width: 1800, height: 2000 },
-    table: { width: 1400, height: 800 },
-    chair: { width: 550, height: 550 },
-    cabinet: { width: 1200, height: 550 },
-    tv: { width: 1600, height: 420 },
-    door: { width: 900, height: 900 },
-    window: { width: 1800, height: 180 },
-    sink: { width: 600, height: 500 },
-    toilet: { width: 700, height: 450 },
-    tub: { width: 1700, height: 750 },
-    lamp: { width: 450, height: 450 },
-  }[kind];
-  return size || { width: 900, height: 900 };
-}
-
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -325,9 +625,30 @@ function updateViewportLock() {
 
   document.documentElement.style.setProperty("--app-height", `${stableViewportHeight}px`);
   document.documentElement.style.setProperty("--keyboard-inset", `${Math.round(keyboardInset)}px`);
+  const confirmKeyboardInset = inputFocused ? keyboardInset || Math.round(Math.min(360, Math.max(260, stableViewportHeight * 0.42))) : 0;
+  document.documentElement.style.setProperty("--confirm-keyboard-inset", `${confirmKeyboardInset}px`);
   shell.classList.toggle("keyboard-open", keyboardInset > 0);
+  if (keyboardConfirmButton) {
+    keyboardConfirmButton.hidden = !inputFocused;
+    positionKeyboardConfirmButton();
+  }
   lockDocumentScroll();
   resizeCanvas();
+}
+
+function positionKeyboardConfirmButton() {
+  if (!keyboardConfirmButton) return;
+  const input = document.activeElement;
+  if (!keyboardInputs.includes(input)) {
+    keyboardConfirmButton.classList.remove("near-input");
+    keyboardConfirmButton.style.left = "";
+    keyboardConfirmButton.style.top = "";
+    return;
+  }
+  keyboardConfirmButton.classList.remove("near-input");
+  keyboardConfirmButton.style.left = "";
+  keyboardConfirmButton.style.top = "";
+  keyboardConfirmButton.style.right = "12px";
 }
 
 function worldToScreen(point) {
@@ -349,8 +670,19 @@ function centerScreen() {
   return { x: rect.width / 2, y: rect.height / 2 };
 }
 
+function centerViewOnWorldPoint(point) {
+  const center = centerScreen();
+  state.view.panX = center.x - point.x * state.view.scale;
+  state.view.panY = center.y - point.y * state.view.scale;
+  markProjectDirty("view-center");
+}
+
 function cursorWorld() {
-  return resolveSnapWorld(screenToWorld(centerScreen())).point;
+  const raw = screenToWorld(centerScreen());
+  const start = state.drawing?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
+  if (start) return resolveLineLikeSnap(raw, start).point;
+  if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw).point;
+  return resolveSnapWorld(raw).point;
 }
 
 function rawCursorWorld() {
@@ -358,7 +690,11 @@ function rawCursorWorld() {
 }
 
 function cursorSnapResolved() {
-  return resolveSnapWorld(screenToWorld(centerScreen()));
+  const raw = screenToWorld(centerScreen());
+  const start = state.drawing?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
+  if (start) return resolveLineLikeSnap(raw, start);
+  if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
+  return resolveSnapWorld(raw);
 }
 
 function colors() {
@@ -383,16 +719,79 @@ function css(name) {
   return getComputedStyle(shell).getPropertyValue(name).trim();
 }
 
+function annotationScale() {
+  return Math.min(1.8, Math.max(0.65, Number(state.annotationScale) || 1));
+}
+
+function annotationZoomScale() {
+  return Math.min(3.6, Math.max(0.28, state.view.scale / 0.085));
+}
+
+function annotationPx(value) {
+  return value * annotationScale() * annotationZoomScale();
+}
+
+function annotationFont(weight, size) {
+  return `${weight} ${annotationPx(size).toFixed(1)}px Inter, Segoe UI, sans-serif`;
+}
+
+function screenUiPx(value) {
+  return value;
+}
+
+function screenUiFont(weight, size) {
+  return `${weight} ${screenUiPx(size).toFixed(1)}px Inter, Segoe UI, sans-serif`;
+}
+
+function setAnnotationScale(value, options = {}) {
+  const next = Math.min(1.8, Math.max(0.65, Number(value) || 1));
+  state.annotationScale = next;
+  let label = "1:100";
+  if (annotationScaleSelect) {
+    const option = [...annotationScaleSelect.options].find((item) => Math.abs(Number(item.value) - next) < 0.001);
+    annotationScaleSelect.value = option ? option.value : String(next);
+    label = option?.textContent || annotationScaleSelect.selectedOptions[0]?.textContent || label;
+  }
+  if (projectScaleCaption) projectScaleCaption.textContent = `MM - ${label}`;
+  draw();
+  if (options.save !== false) markProjectDirty("annotation-scale");
+}
+
+let drawScheduled = false;
+
+// Coalesces bursts of state mutations into a single repaint on the next
+// animation frame. The prototype previously called draw() synchronously from
+// ~40 sites, doing a full-canvas clear+redraw on every pointer move; routing
+// every draw() through one rAF removes that redundant work.
+function requestDraw() {
+  if (drawScheduled) return;
+  drawScheduled = true;
+  requestAnimationFrame(() => {
+    drawScheduled = false;
+    renderFrame();
+  });
+}
+
+// Public entry point used everywhere in the app. Kept as draw() so existing
+// call sites stay unchanged; the heavy work lives in renderFrame().
 function draw() {
+  requestDraw();
+}
+
+function renderFrame() {
   syncCommandState();
   const rect = canvas.getBoundingClientRect();
   const c = colors();
   updateLinkedDimensions();
   updateSnapTrackingHover();
+  shell.dataset.debugTool = state.tool;
+  shell.dataset.debugDrawing = state.drawing ? "1" : "0";
+  shell.dataset.debugEntityCount = String(state.entities.length);
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, rect.width, rect.height);
   drawGrid(rect, c);
+  drawCanvasCenterCursor(rect, c);
 
   const visible = visibleEntities(rect);
   drawWalls(visible, c);
@@ -401,8 +800,6 @@ function draw() {
     drawEntity(entity, c);
   }
 
-  drawDimensions(c);
-  drawWallDimensionLabels(visible, c, rect);
 
   const selectedItems = selectedEntities();
   const selected = selectedItems.at(-1) || null;
@@ -420,15 +817,23 @@ function draw() {
   } else if (state.offsetCommand) {
     drawOffsetCommand(c);
   } else if (state.selectedEndpoint) {
-    updateSelectedEndpointEditors();
+    const geometry = selectedEndpointGeometry();
+    if (geometry) {
+      const previewMoving = cursorWorld();
+      drawEditableSegment(geometry.fixed, previewMoving, c, { dashed: true });
+      updateSelectedEndpointEditors(previewMoving);
+    } else {
+      hideInlineEditors();
+    }
   } else {
     hideInlineEditors();
   }
   syncSelectionActions();
   drawSelectionDrag(c);
   drawDimensionSnapHint(c);
-  drawSnapTracking(c);
+  if (state.tool !== "dimension") drawSnapTracking(c);
   drawCursorSnap(c);
+  normalizeDynamicText();
 }
 
 function shouldGhostEntityForCommand(entity) {
@@ -440,7 +845,7 @@ function shouldGhostEntityForCommand(entity) {
 }
 
 function syncCommandState() {
-  const active = Boolean(state.moveCommand || state.offsetCommand);
+  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint);
   shell.dataset.command = state.offsetCommand ? "offset" : active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
@@ -571,6 +976,10 @@ function drawOffsetCommand(c) {
 
 function drawMovePreview(entity, dx, dy, c) {
   if (!dx && !dy) return;
+  if (entity.type === "block") {
+    drawBlockPreview({ ...entity, x: entity.x + dx, y: entity.y + dy }, c);
+    return;
+  }
   const p1 = worldToScreen({ x: entity.x1 + dx, y: entity.y1 + dy });
   const p2 = worldToScreen({ x: entity.x2 + dx, y: entity.y2 + dy });
   ctx.save();
@@ -590,6 +999,11 @@ function drawRotatePreview(entity, command, end, c) {
   const startAngle = angleBetweenPoints(command.base, command.reference);
   const endAngle = angleBetweenPoints(command.base, end);
   const delta = signedAngleDelta(startAngle, endAngle);
+  if (entity.type === "block") {
+    const center = rotatePointAround({ x: entity.x, y: entity.y }, command.base, delta);
+    drawBlockPreview({ ...entity, x: center.x, y: center.y, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(delta)) }, c);
+    return;
+  }
   const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, command.base, delta);
   const p2World = rotatePointAround({ x: entity.x2, y: entity.y2 }, command.base, delta);
   const p1 = worldToScreen(p1World);
@@ -608,19 +1022,42 @@ function drawRotatePreview(entity, command, end, c) {
 
 function syncSelectionActions() {
   if (!selectionActions) return;
+  const editable = editableSelectionEntity();
+  const furnitureSelected = state.tool === "furniture" && selectedEntities().some((entity) => entity.type === "block");
+  const show = (state.tool === "select" && Boolean(editable)) || furnitureSelected;
+  if (show) syncSelectToolMenu();
+  selectionActions.hidden = !show;
+  syncToolButtons();
+}
+
+function editableSelectionEntity() {
   const selected = selectedEntities();
   const primary = selected.length === 1 ? selected[0] : null;
-  const show = Boolean(
-    primary &&
-      !state.drawing &&
-      !state.moveCommand &&
-      !state.offsetCommand &&
-      state.tool === "select" &&
-      primary.type !== "block" &&
-      primary.layer !== "dimensions" &&
-      isLayerVisible(primary.layer)
-  );
-  selectionActions.hidden = !show;
+  return primary &&
+    !state.drawing &&
+    !state.moveCommand &&
+    !state.offsetCommand &&
+    state.tool === "select" &&
+    isLayerVisible(primary.layer)
+    ? primary
+    : null;
+}
+
+function linearEditableEntity(entity) {
+  return entity && entity.type !== "block" && entity.layer !== "dimensions";
+}
+
+function canApplySelectionAction(action) {
+  const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
+  if (!selected.length || !["select", "furniture"].includes(state.tool) || state.drawing || state.moveCommand || state.offsetCommand) return false;
+  if (action === "delete") return true;
+  if (selected.length !== 1) return false;
+  const entity = selected[0];
+  if (action === "move") return true;
+  if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
+  if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
+  if (action === "mirror" || action === "offset") return linearEditableEntity(entity);
+  return false;
 }
 
 function selectedEntities() {
@@ -652,6 +1089,9 @@ function setSelection(ids, options = {}) {
   }
   state.selectedId = state.selectedIds.at(-1) || null;
   state.selectedEndpoint = null;
+  if (state.furnitureResizeHandlesId && !state.selectedIds.includes(state.furnitureResizeHandlesId)) {
+    state.furnitureResizeHandlesId = null;
+  }
 }
 
 function entityMatchesSelectionFilter(entity) {
@@ -731,38 +1171,6 @@ function screenRectFromDrag(start, current) {
   };
 }
 
-function pointInSelectionRect(point, rect) {
-  return point.x >= rect.minX && point.x <= rect.maxX && point.y >= rect.minY && point.y <= rect.maxY;
-}
-
-function rectEdges(rect) {
-  const a = { x: rect.minX, y: rect.minY };
-  const b = { x: rect.maxX, y: rect.minY };
-  const c = { x: rect.maxX, y: rect.maxY };
-  const d = { x: rect.minX, y: rect.maxY };
-  return [[a, b], [b, c], [c, d], [d, a]];
-}
-
-function segmentsIntersect(a, b, c, d) {
-  const direction = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
-  const onSegment = (p, q, r) =>
-    Math.min(p.x, q.x) <= r.x + 0.001 &&
-    r.x <= Math.max(p.x, q.x) + 0.001 &&
-    Math.min(p.y, q.y) <= r.y + 0.001 &&
-    r.y <= Math.max(p.y, q.y) + 0.001;
-  const d1 = direction(a, b, c);
-  const d2 = direction(a, b, d);
-  const d3 = direction(c, d, a);
-  const d4 = direction(c, d, b);
-  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
-  return (
-    (Math.abs(d1) < 0.001 && onSegment(a, b, c)) ||
-    (Math.abs(d2) < 0.001 && onSegment(a, b, d)) ||
-    (Math.abs(d3) < 0.001 && onSegment(c, d, a)) ||
-    (Math.abs(d4) < 0.001 && onSegment(c, d, b))
-  );
-}
-
 function selectionRectHitsEntity(entity, rect, mode) {
   const points = selectionEntityPoints(entity).map(worldToScreen);
   const segments = selectionEntitySegments(entity).map(([a, b]) => [worldToScreen(a), worldToScreen(b)]);
@@ -771,17 +1179,6 @@ function selectionRectHitsEntity(entity, rect, mode) {
   if (points.some((point) => pointInSelectionRect(point, rect))) return true;
   const edges = rectEdges(rect);
   return segments.some(([a, b]) => edges.some(([c, d]) => segmentsIntersect(a, b, c, d)));
-}
-
-function pointInPolygon(point, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const a = polygon[i];
-    const b = polygon[j];
-    const crosses = a.y > point.y !== b.y > point.y;
-    if (crosses && point.x < ((b.x - a.x) * (point.y - a.y)) / ((b.y - a.y) || 1) + a.x) inside = !inside;
-  }
-  return inside;
 }
 
 function selectionLassoHitsEntity(entity, polygon) {
@@ -808,6 +1205,7 @@ function idsFromSelectionLasso(points) {
 }
 
 function startSelectionDrag(type, event, screen) {
+  clearPointerLongPress();
   state.selectionDrag = type === "lasso"
     ? { type, points: [screen], start: screen, current: screen }
     : { type, start: screen, current: screen };
@@ -823,6 +1221,25 @@ function startSelectionDrag(type, event, screen) {
   };
   statusChip.textContent = type === "lasso" ? "Лассо: обведите объекты" : "Выделение: тяните рамку";
   draw();
+}
+
+function clearPointerLongPress(pointer = state.pointer) {
+  if (!pointer?.longPressTimer) return;
+  window.clearTimeout(pointer.longPressTimer);
+  pointer.longPressTimer = null;
+}
+
+function scheduleSelectionLongPress(pointer) {
+  if (!pointer || pointer.mode !== "pan" || state.tool !== "select" || state.selectTool !== "select" || pointer.tapCandidateId) return;
+  pointer.longPressTimer = window.setTimeout(() => {
+    if (state.pointer !== pointer || pointer.moved || pointer.mode !== "pan" || !state.activePointers.has(pointer.id)) return;
+    state.selectTool = "window";
+    syncSelectToolMenu();
+    hideSelectModeMenu();
+    hideSelectToolMenu();
+    startSelectionDrag("window", { pointerId: pointer.id }, pointer.startScreen);
+    statusChip.textContent = "Выделение: тяните рамку";
+  }, LONG_PRESS_SELECT_MS);
 }
 
 function updateSelectionDrag(screen) {
@@ -845,6 +1262,9 @@ function finishSelectionDrag() {
   state.selectionDrag = null;
   const count = selectedEntities().length;
   statusChip.textContent = count ? `Выбрано: ${count}` : selectionStatusText();
+  state.openEditMenuAfterPointer = count > 0;
+  if (count) syncSelectToolMenu();
+  else hideSelectToolMenu();
   draw();
 }
 
@@ -855,13 +1275,19 @@ function applyTapSelection(hitId) {
     setSelection(hitId);
   }
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
+  const count = selectedEntities().length;
   if (hitEntity?.type === "block") {
     if (state.furnitureEditId && state.furnitureEditId !== hitId) state.furnitureEditId = null;
-    statusChip.textContent = "Мебель выбрана. Нажмите «Редактировать»";
+    statusChip.textContent = "Мебель выбрана";
   } else {
     state.furnitureEditId = null;
-    const count = selectedEntities().length;
     statusChip.textContent = count > 1 ? `Выбрано: ${count}` : hitId ? "Элемент выбран" : selectionStatusText();
+  }
+  if (count) {
+    state.openEditMenuAfterPointer = true;
+    showSelectToolMenuAfterLayout();
+  } else {
+    hideSelectToolMenu();
   }
 }
 
@@ -880,6 +1306,32 @@ function drawGrid(rect, c) {
     ctx.strokeStyle = Math.abs((y - state.view.panY) % major) < 0.5 ? c.majorGrid : c.grid;
     linePath(0, y, rect.width, y);
   }
+}
+
+function drawCanvasCenterCursor(rect, c) {
+  const visible =
+    (state.tool !== "select" && state.tool !== "furniture") ||
+    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint);
+  if (!visible) return;
+  const center = { x: rect.width / 2, y: rect.height / 2 };
+  const red = state.theme === "dark" ? "rgba(224, 104, 104, 0.48)" : "rgba(194, 73, 73, 0.42)";
+  const ringFill = state.theme === "dark" ? "rgba(21, 27, 36, 0.55)" : "rgba(255, 255, 255, 0.56)";
+  ctx.save();
+  ctx.strokeStyle = red;
+  ctx.fillStyle = ringFill;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(center.x - 36, center.y);
+  ctx.lineTo(center.x + 36, center.y);
+  ctx.moveTo(center.x, center.y - 36);
+  ctx.lineTo(center.x, center.y + 36);
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function visibleEntities(rect) {
@@ -1128,6 +1580,10 @@ function drawEndpointHandle(point, active, c) {
 }
 
 function drawDimensionEntity(entity, c, options = {}) {
+  if (entity.dimensionKind === "angular") {
+    drawAngularDimensionEntity(entity, c, options);
+    return;
+  }
   const start = { x: entity.x1, y: entity.y1 };
   const end = { x: entity.x2, y: entity.y2 };
   const geometry = dimensionWorldGeometry(entity);
@@ -1152,9 +1608,9 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const nx = -uy;
   const ny = ux;
   const offset = options.offset ?? Math.min(42, Math.max(24, 520 * state.view.scale));
-  const extension = options.extension ?? 12;
+  const extension = options.extension ?? annotationPx(12);
   const extensionSign = offset < 0 ? -1 : 1;
-  const arrowSize = Math.min(9, Math.max(5, length * 0.08));
+  const arrowSize = annotationPx(Math.min(9, Math.max(5, length * 0.08)));
   const a = options.lineStart ? worldToScreen(options.lineStart) : { x: p1.x + nx * offset, y: p1.y + ny * offset };
   const b = options.lineEnd ? worldToScreen(options.lineEnd) : { x: p2.x + nx * offset, y: p2.y + ny * offset };
   const lineDx = b.x - a.x;
@@ -1170,14 +1626,13 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const aExtension = { x: a.x + aLeg.x * extension, y: a.y + aLeg.y * extension };
   const bExtension = { x: b.x + bLeg.x * extension, y: b.y + bLeg.y * extension };
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
-  const text = `${metrics.length} мм`;
   const displayLength =
     options.lineStart && options.lineEnd
       ? Math.round(distanceWorld(options.lineStart, options.lineEnd))
       : metrics.length;
-  const displayText = `${displayLength} мм`;
+  const displayText = decodeMojibakeText(`${displayLength} мм`);
   const labelSide = offset < 0 ? -1 : 1;
-  const labelGap = 15;
+  const labelGap = annotationPx(15);
   const label = {
     x: (a.x + b.x) / 2 + lineNx * labelSide * labelGap,
     y: (a.y + b.y) / 2 + lineNy * labelSide * labelGap,
@@ -1187,7 +1642,7 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   ctx.save();
   ctx.strokeStyle = c.dimension;
   ctx.fillStyle = c.dimension;
-  ctx.lineWidth = options.active ? 1.8 : 1.45;
+  ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.45);
   ctx.setLineDash(options.active ? [7, 5] : []);
 
   linePath(p1.x, p1.y, aExtension.x, aExtension.y);
@@ -1201,8 +1656,8 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   let textAngle = angle;
   if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
   ctx.rotate(textAngle);
-  ctx.font = "700 12px Inter, Segoe UI, sans-serif";
-  ctx.lineWidth = 4;
+  ctx.font = annotationFont(700, 12);
+  ctx.lineWidth = annotationPx(4);
   ctx.strokeStyle = c.bg;
   ctx.lineJoin = "round";
   ctx.miterLimit = 2;
@@ -1214,12 +1669,6 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   ctx.textBaseline = "middle";
   ctx.fillText(displayText, 0, 1);
   ctx.restore();
-}
-
-function normalizeScreenVector(dx, dy, fallbackX, fallbackY) {
-  const length = Math.hypot(dx, dy);
-  if (length < 0.5) return { x: fallbackX, y: fallbackY };
-  return { x: dx / length, y: dy / length };
 }
 
 function dimensionOffsetFromPoint(start, end, point) {
@@ -1426,14 +1875,6 @@ function drawSymbolImage(image, x, y, boxW, boxH, rotation = 0) {
   ctx.restore();
 }
 
-function entitySize(entity) {
-  const fallback = defaultBlockSize(entity.kind);
-  return {
-    width: entity.width || fallback.width,
-    height: entity.height || fallback.height,
-  };
-}
-
 function drawDimensions(c) {
   if (!isLayerVisible("dimensions")) return;
   const labels = [
@@ -1449,7 +1890,7 @@ function drawDimensions(c) {
     ctx.translate(p.x, p.y);
     ctx.rotate(((label.rotate || 0) * Math.PI) / 180);
     ctx.fillStyle = label.text.includes("м²") ? c.muted : c.dimension;
-    ctx.font = "600 12px Inter, Segoe UI, sans-serif";
+    ctx.font = annotationFont(600, 12);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(label.text, 0, 0);
@@ -1478,13 +1919,13 @@ function drawMiniLabel(text, x, y, c, vertical = false) {
   ctx.save();
   ctx.translate(x, y);
   if (vertical) ctx.rotate(-Math.PI / 2);
-  ctx.font = "700 10px Inter, Segoe UI, sans-serif";
-  const width = ctx.measureText(text).width + 12;
-  const height = 18;
+  ctx.font = annotationFont(700, 10);
+  const width = ctx.measureText(text).width + annotationPx(12);
+  const height = annotationPx(18);
   ctx.fillStyle = colorMixSurface(c.surface);
   ctx.strokeStyle = c.border;
   ctx.lineWidth = 1;
-  roundedRect(-width / 2, -height / 2, width, height, 6);
+  roundedRect(-width / 2, -height / 2, width, height, annotationPx(6));
   ctx.fillStyle = c.dimension;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -1561,9 +2002,38 @@ function drawSelection(entity, c) {
   linePath(p1.x, p1.y, p2.x, p2.y);
   drawEndpointHandle(p1, startActive, c);
   drawEndpointHandle(p2, endActive, c);
-  const m = midpoint(p1, p2);
-  const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
-  drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
+  if (!startActive && !endActive) {
+    const m = midpoint(p1, p2);
+    const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
+    drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
+  }
+}
+
+function drawAngularDimensionEntity(entity, c, options = {}) {
+  const vertex = entity.vertex;
+  const p1World = entity.arm1;
+  const p2World = entity.arm2;
+  if (!vertex || !p1World || !p2World) return;
+  const v = worldToScreen(vertex);
+  const p1 = worldToScreen(p1World);
+  const p2 = worldToScreen(p2World);
+  const a1 = Math.atan2(p1.y - v.y, p1.x - v.x);
+  const a2 = Math.atan2(p2.y - v.y, p2.x - v.x);
+  const delta = signedAngleDelta(a1, a2);
+  const radius = Math.max(annotationPx(28), Math.min(annotationPx(84), Math.min(pointDistance(v, p1), pointDistance(v, p2)) * 0.52));
+  const mid = a1 + delta / 2;
+  const degrees = Math.round(Math.abs(radToDeg(delta)));
+  ctx.save();
+  ctx.strokeStyle = c.dimension;
+  ctx.fillStyle = c.dimension;
+  ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.45);
+  linePath(v.x, v.y, p1.x, p1.y);
+  linePath(v.x, v.y, p2.x, p2.y);
+  ctx.beginPath();
+  ctx.arc(v.x, v.y, radius, a1, a1 + delta, delta < 0);
+  ctx.stroke();
+  drawBadge(`${degrees}°`, v.x + Math.cos(mid) * (radius + annotationPx(18)), v.y + Math.sin(mid) * (radius + annotationPx(18)), c, true);
+  ctx.restore();
 }
 
 function drawSelectionDrag(c) {
@@ -1616,10 +2086,13 @@ function drawDimensionSelection(entity, c) {
 
 function hitDimensionControl(screen) {
   if (state.tool !== "select") return null;
+  const selectedDimensionIds = new Set(selectedEntities().filter((entity) => entity.layer === "dimensions").map((entity) => entity.id));
+  if (!selectedDimensionIds.size) return null;
   const hits = [];
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
     if (entity.layer !== "dimensions" || !isLayerVisible(entity.layer)) continue;
+    if (!selectedDimensionIds.has(entity.id)) continue;
     const geometry = dimensionScreenGeometry(entity);
     if (!geometry) continue;
     const startDistance = pointDistance(screen, geometry.a);
@@ -1741,6 +2214,7 @@ function moveDimensionLineOffset(entity, pointerPoint) {
   const referencePoint = snapped || pointerPoint;
   const offset = (referencePoint.x - entity.x1) * normal.x + (referencePoint.y - entity.y1) * normal.y;
   setDimensionLineAlongAxis(entity, axis, offset);
+  markProjectDirty("dimension-offset");
 }
 
 function setDimensionLineAlongAxis(entity, axis, offset) {
@@ -1757,7 +2231,6 @@ function setDimensionLineAlongAxis(entity, axis, offset) {
 
 function snapDimensionLineToOtherDimension(entity, point, axis) {
   state.dimensionSnapHint = null;
-  if (!state.snaps.has("end")) return null;
   const threshold = 34 / state.view.scale;
   let best = null;
   for (const candidate of state.entities) {
@@ -1777,6 +2250,7 @@ function snapDimensionLineToOtherDimension(entity, point, axis) {
   if (!best) return null;
   state.dimensionSnapHint = {
     type: "line",
+    label: "Размерная линия",
     point: { x: best.x, y: best.y },
     segment: best.segment,
   };
@@ -1803,41 +2277,80 @@ function drawFurnitureSelection(entity, c) {
   ctx.setLineDash([]);
 
   if (layout.editing) {
-    for (const handle of layout.handles) {
-      drawFurnitureCornerHandle(handle, c);
+    if (state.furnitureResizeHandlesId === entity.id) {
+      drawFurnitureResizeHandle(layout.resizeHandles.left, "↔", c);
+      drawFurnitureResizeHandle(layout.resizeHandles.right, "↔", c);
+      drawFurnitureResizeHandle(layout.resizeHandles.top, "↕", c);
+      drawFurnitureResizeHandle(layout.resizeHandles.bottom, "↕", c);
+    } else {
+      drawFurnitureActionButton(layout.duplicate, "+", c);
+      drawFurnitureActionButton(layout.resizeToggle, "↔", c);
+      drawFurnitureActionButton(layout.rotate, "↻", c);
+      drawFurnitureActionButton(layout.scale, "⤢", c);
     }
-    drawFurnitureActionButton(layout.more, "...", c);
-    drawFurnitureActionButton(layout.duplicate, "+", c);
-    drawFurnitureActionButton(layout.rotate, "↻", c);
     const size = entitySize(entity);
     drawBadge(`${Math.round(size.width)} × ${Math.round(size.height)}`, layout.bbox.centerX, layout.bbox.maxY + 24, c, true);
   }
   ctx.restore();
 }
 
-function drawFurnitureCornerHandle(handle, c) {
+function drawBlockPreview(entity, c) {
+  const corners = blockCorners(entity).map(worldToScreen);
   ctx.save();
-  ctx.fillStyle = c.surface;
+  ctx.globalAlpha = 0.6;
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = 2;
-  roundedRect(handle.x - 8, handle.y - 8, 16, 16, 4);
+  ctx.setLineDash([10, 6]);
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < corners.length; i += 1) ctx.lineTo(corners[i].x, corners[i].y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
   ctx.restore();
 }
 
 function drawFurnitureActionButton(control, label, c) {
+  label = decodeMojibakeText(String(label));
   ctx.save();
   ctx.fillStyle = c.surface;
   ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = screenUiPx(2);
   ctx.beginPath();
-  ctx.arc(control.x, control.y, 17, 0, Math.PI * 2);
+  ctx.arc(control.x, control.y, screenUiPx(17), 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = c.accent;
-  ctx.font = `800 ${label === "..." ? 18 : 19}px Inter, Segoe UI, sans-serif`;
+  ctx.font = screenUiFont(800, label === "..." ? 18 : 19);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, control.x, control.y + (label === "..." ? -3 : 1));
+  ctx.restore();
+}
+
+function drawFurnitureResizeHandle(control, label, c) {
+  if (!control) return;
+  const width = screenUiPx(control.axis === "height" ? 30 : 44);
+  const height = screenUiPx(control.axis === "height" ? 44 : 30);
+  const rect = {
+    x: control.x - width / 2,
+    y: control.y - height / 2,
+    width,
+    height,
+  };
+  ctx.save();
+  ctx.translate(control.x, control.y);
+  ctx.rotate(control.angle || 0);
+  ctx.translate(-control.x, -control.y);
+  ctx.fillStyle = c.surface;
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = screenUiPx(2);
+  roundedRect(rect.x, rect.y, rect.width, rect.height, screenUiPx(8), true);
+  ctx.fillStyle = c.accent;
+  ctx.font = screenUiFont(800, 18);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, control.x, control.y + 1);
   ctx.restore();
 }
 
@@ -1846,17 +2359,18 @@ function drawFurnitureDoneButton(rect, c) {
 }
 
 function drawCanvasButton(rect, text, c, solid = false) {
+  text = decodeMojibakeText(String(text));
   ctx.save();
   ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 4;
   ctx.fillStyle = solid ? c.accent : c.surface;
   ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 1.4;
-  roundedRect(rect.x, rect.y, rect.width, rect.height, 9);
+  ctx.lineWidth = screenUiPx(1.4);
+  roundedRect(rect.x, rect.y, rect.width, rect.height, screenUiPx(9));
   ctx.shadowColor = "transparent";
   ctx.fillStyle = solid ? "#ffffff" : c.accent;
-  ctx.font = `800 ${rect.width < 60 ? 17 : 12}px Inter, Segoe UI, sans-serif`;
+  ctx.font = screenUiFont(800, rect.width < 60 ? 17 : 12);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, rect.x + rect.width / 2, rect.y + rect.height / 2 + 1);
@@ -1881,27 +2395,71 @@ function furnitureControlLayout(entity) {
   const editing = entity.id === state.selectedId && (state.tool === "select" || state.tool === "furniture");
   const topLeft = corners[0];
   const topRight = corners[1];
+  const bottomRight = corners[2];
+  const bottomLeft = corners[3];
   const topMid = midpoint(topLeft, topRight);
+  const rightMid = midpoint(topRight, bottomRight);
+  const bottomMid = midpoint(bottomRight, bottomLeft);
+  const leftMid = midpoint(bottomLeft, topLeft);
   const edgeLength = Math.max(1, pointDistance(topLeft, topRight));
   const tangent = { x: (topRight.x - topLeft.x) / edgeLength, y: (topRight.y - topLeft.y) / edgeLength };
   const normalLength = Math.max(1, pointDistance(topMid, center));
   const normal = { x: (topMid.x - center.x) / normalLength, y: (topMid.y - center.y) / normalLength };
-  const actionAnchor = {
-    x: topRight.x + normal.x * 34 - tangent.x * 18,
-    y: topRight.y + normal.y * 34 - tangent.y * 18,
-  };
-  const rotate = actionAnchor;
+  const rightLength = Math.max(1, pointDistance(rightMid, center));
+  const rightNormal = { x: (rightMid.x - center.x) / rightLength, y: (rightMid.y - center.y) / rightLength };
+  const bottomLength = Math.max(1, pointDistance(bottomMid, center));
+  const bottomNormal = { x: (bottomMid.x - center.x) / bottomLength, y: (bottomMid.y - center.y) / bottomLength };
+  const leftLength = Math.max(1, pointDistance(leftMid, center));
+  const leftNormal = { x: (leftMid.x - center.x) / leftLength, y: (leftMid.y - center.y) / leftLength };
+  const cornerOffset = 18;
+  const handleOffset = 18;
   const duplicate = {
-    x: actionAnchor.x - tangent.x * 42,
-    y: actionAnchor.y - tangent.y * 42,
+    x: topLeft.x + normal.x * cornerOffset - tangent.x * cornerOffset,
+    y: topLeft.y + normal.y * cornerOffset - tangent.y * cornerOffset,
   };
-  const more = {
-    x: actionAnchor.x - tangent.x * 84,
-    y: actionAnchor.y - tangent.y * 84,
+  const resizeToggle = {
+    x: topRight.x + normal.x * cornerOffset + tangent.x * cornerOffset,
+    y: topRight.y + normal.y * cornerOffset + tangent.y * cornerOffset,
   };
-  const names = ["nw", "ne", "se", "sw"];
-  const handles = corners.map((corner, index) => ({ ...corner, corner: names[index] }));
-  return { corners, center, bbox, editing, rotate, duplicate, more, handles };
+  const rotate = {
+    x: bottomLeft.x - normal.x * cornerOffset - tangent.x * cornerOffset,
+    y: bottomLeft.y - normal.y * cornerOffset - tangent.y * cornerOffset,
+  };
+  const scale = {
+    x: bottomRight.x - normal.x * cornerOffset + tangent.x * cornerOffset,
+    y: bottomRight.y - normal.y * cornerOffset + tangent.y * cornerOffset,
+  };
+  const resizeHandles = {
+    left: {
+      x: leftMid.x + leftNormal.x * handleOffset,
+      y: leftMid.y + leftNormal.y * handleOffset,
+      axis: "width",
+      side: "left",
+      angle: Math.atan2(tangent.y, tangent.x),
+    },
+    right: {
+      x: rightMid.x + rightNormal.x * handleOffset,
+      y: rightMid.y + rightNormal.y * handleOffset,
+      axis: "width",
+      side: "right",
+      angle: Math.atan2(tangent.y, tangent.x),
+    },
+    top: {
+      x: topMid.x + normal.x * handleOffset,
+      y: topMid.y + normal.y * handleOffset,
+      axis: "height",
+      side: "top",
+      angle: Math.atan2(normal.y, normal.x) + Math.PI / 2,
+    },
+    bottom: {
+      x: bottomMid.x + bottomNormal.x * handleOffset,
+      y: bottomMid.y + bottomNormal.y * handleOffset,
+      axis: "height",
+      side: "bottom",
+      angle: Math.atan2(normal.y, normal.x) + Math.PI / 2,
+    },
+  };
+  return { corners, center, bbox, editing, resizeToggle, rotate, scale, duplicate, resizeHandles };
 }
 
 function clampScreenX(x, width, canvasWidth) {
@@ -1915,7 +2473,8 @@ function clampScreenY(y, height, canvasHeight) {
 
 function drawActiveSegment(c) {
   const { start } = state.drawing;
-  const end = state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
+  let end = state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
+  end = dimensionAdjustedEnd(start, end);
   state.drawing.end = end;
   if (state.tool === "circle") {
     drawActiveCircle(start, end, c);
@@ -1936,27 +2495,67 @@ function drawActiveSegment(c) {
   const m = midpoint(p1, p2);
 
   if (state.tool === "dimension") {
+    if (state.dimensionTool === "angular") {
+      drawActiveAngularDimension(c);
+      return;
+    }
     const offset =
       state.drawing.phase === "offset"
         ? dimensionOffsetFromPoint(start, end, cursorWorld()) * state.view.scale
         : undefined;
-    drawDimensionGeometry(start, end, c, { active: true, offset });
+    drawDimensionGeometry(start, end, c, { active: false, offset });
     drawHandle(p1.x, p1.y, c);
     drawHandle(p2.x, p2.y, c);
     hideInlineEditors();
     return;
   }
 
-  ctx.strokeStyle = state.tool === "dimension" ? c.dimension : c.accent;
-  ctx.lineWidth = state.tool === "wall" ? 5 : 2.2;
-  ctx.setLineDash([8, 6]);
+  drawEditableSegment(start, end, c, { dashed: true, lineWidth: state.tool === "wall" ? 5 : 2.2 });
+  updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
+}
+
+function drawEditableSegment(start, end, c, options = {}) {
+  const p1 = worldToScreen(start);
+  const p2 = worldToScreen(end);
+  const angleInfo = activeAngleInfo(start, end);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = options.lineWidth || 2.2;
+  if (options.dashed) ctx.setLineDash([8, 6]);
   linePath(p1.x, p1.y, p2.x, p2.y);
   ctx.setLineDash([]);
   drawHandle(p1.x, p1.y, c);
   drawHandle(p2.x, p2.y, c);
-
-  updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
+  ctx.restore();
   drawAngleArc(p1, p2, angleInfo, c);
+}
+
+function drawActiveAngularDimension(c) {
+  const drawing = state.drawing;
+  if (!drawing?.start) return;
+  const current = cursorWorld();
+  const vertex = drawing.start;
+  const arm1 = drawing.arm1 || current;
+  const arm2 = drawing.arm1 ? current : null;
+  const v = worldToScreen(vertex);
+  const p1 = worldToScreen(arm1);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.8;
+  drawHandle(v.x, v.y, c);
+  drawHandle(p1.x, p1.y, c);
+  linePath(v.x, v.y, p1.x, p1.y);
+  if (arm2) {
+    const p2 = worldToScreen(arm2);
+    drawHandle(p2.x, p2.y, c);
+    drawAngularDimensionEntity(angularDimensionEntity("preview", vertex, arm1, arm2), c, { active: true });
+  } else {
+    drawBadge("Угол: вторая сторона", p1.x, p1.y - 22, c, true);
+  }
+  ctx.restore();
+  hideInlineEditors();
 }
 
 function drawActiveCircle(centerWorld, edgeWorld, c) {
@@ -2005,7 +2604,7 @@ function drawAngleArc(origin, target, angleInfo, c) {
   const screenLength = Math.hypot(dx, dy);
   if (screenLength < 34) return;
 
-  const radius = Math.min(54, Math.max(32, screenLength * 0.32));
+  const radius = Math.min(annotationPx(54), Math.max(annotationPx(32), screenLength * 0.32));
   const startRad = angleInfo.referenceRad;
   const endRad = angleInfo.referenceRad + angleInfo.deltaRad;
   const labelRad = angleInfo.referenceRad + angleInfo.deltaRad / 2;
@@ -2014,20 +2613,20 @@ function drawAngleArc(origin, target, angleInfo, c) {
     y: origin.y + Math.sin(endRad) * radius,
   };
   const label = {
-    x: origin.x + Math.cos(labelRad) * (radius + 16),
-    y: origin.y + Math.sin(labelRad) * (radius + 16),
+    x: origin.x + Math.cos(labelRad) * (radius + annotationPx(16)),
+    y: origin.y + Math.sin(labelRad) * (radius + annotationPx(16)),
   };
 
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = annotationPx(1.4);
   ctx.setLineDash([4, 4]);
   linePath(
     origin.x,
     origin.y,
-    origin.x + Math.cos(startRad) * (radius + 14),
-    origin.y + Math.sin(startRad) * (radius + 14),
+    origin.x + Math.cos(startRad) * (radius + annotationPx(14)),
+    origin.y + Math.sin(startRad) * (radius + annotationPx(14)),
   );
   ctx.setLineDash([]);
   ctx.globalAlpha = 0.95;
@@ -2036,13 +2635,13 @@ function drawAngleArc(origin, target, angleInfo, c) {
   ctx.stroke();
 
   drawArcArrow(arcEnd, endRad, angleInfo.deltaRad >= 0 ? 1 : -1, c);
-  positionAngleEditor(label.x, label.y, angleInfo.degrees);
+  drawBadge(`${angleInfo.degrees}°`, label.x, label.y, c, true);
   ctx.restore();
 }
 
 function drawArcArrow(point, angleRad, direction, c) {
   const tangent = angleRad + (direction >= 0 ? Math.PI / 2 : -Math.PI / 2);
-  const size = 7;
+  const size = annotationPx(7);
   ctx.save();
   ctx.translate(point.x, point.y);
   ctx.rotate(tangent);
@@ -2073,10 +2672,13 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
     angleInput.value = angleInfo.degrees;
     syncInlineEditorWidth(angleInput);
   }
+  if (angleEditor) angleEditor.hidden = true;
   updateTopMetricInputs(metrics.length, state.tool === "dimension" ? metrics.angle : angleInfo.degrees);
+  if (drawMetrics) drawMetrics.hidden = true;
 }
 
 function positionAngleEditor(x, y, value) {
+  if (angleEditor) angleEditor.hidden = false;
   if (document.activeElement !== angleInput) {
     angleInput.value = value;
   }
@@ -2121,27 +2723,30 @@ function updateTopMetricLabels() {
   topAngleInput.setAttribute("aria-label", rectangleMode ? "Ширина прямоугольника" : "Угол");
 }
 
-function updateSelectedEndpointEditors() {
+function updateSelectedEndpointEditors(previewMoving = null) {
   const geometry = selectedEndpointGeometry();
   if (!geometry || !inlineEditors) return;
   const { fixed, moving } = geometry;
-  const metrics = segmentMetrics(fixed.x, fixed.y, moving.x, moving.y);
+  const displayMoving = previewMoving || moving;
+  const metrics = segmentMetrics(fixed.x, fixed.y, displayMoving.x, displayMoving.y);
+  const angleInfo = activeAngleInfo(fixed, displayMoving);
   const p1 = worldToScreen(fixed);
-  const p2 = worldToScreen(moving);
+  const p2 = worldToScreen(displayMoving);
   const m = midpoint(p1, p2);
   inlineEditors.hidden = false;
-  state.inlineEdit = { start: fixed, end: moving, metrics, angleInfo: null };
+  state.inlineEdit = { start: fixed, end: displayMoving, metrics, angleInfo };
   if (document.activeElement !== lengthInput) {
     lengthInput.value = metrics.length;
   }
   if (document.activeElement !== angleInput) {
-    angleInput.value = metrics.angle;
+    angleInput.value = angleInfo.degrees;
   }
-  updateTopMetricInputs(metrics.length, metrics.angle);
+  updateTopMetricInputs(metrics.length, angleInfo.degrees);
+  if (drawMetrics) drawMetrics.hidden = true;
   syncInlineEditorWidth(lengthInput);
   syncInlineEditorWidth(angleInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
-  positionAngleEditor(m.x, m.y + 28, metrics.angle);
+  if (angleEditor) angleEditor.hidden = true;
 }
 
 function selectedEndpointGeometry() {
@@ -2167,6 +2772,29 @@ function setSelectedEndpointPosition(point) {
     entity.x2 = point.x;
     entity.y2 = point.y;
   }
+  markProjectDirty("endpoint");
+}
+
+function commitSelectedEndpointCursorPoint(beforeOverride = null) {
+  const geometry = selectedEndpointGeometry();
+  if (!geometry) return false;
+  const { entity } = geometry;
+  const before = beforeOverride || state.endpointEditBefore || entityGeometry(entity);
+  const point = cursorWorld();
+  setSelectedEndpointPosition(point);
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    markProjectDirty("endpoint-place");
+  }
+  state.endpointEditBefore = null;
+  state.selectedEndpoint = null;
+  hideInlineEditors();
+  resetSnapTracking();
+  statusChip.textContent = "Конец линии обновлен";
+  draw();
+  return true;
 }
 
 function syncInlineEditorWidth(input) {
@@ -2179,7 +2807,81 @@ function selectInlineValue(input) {
   window.setTimeout(() => input.select(), 0);
 }
 
-function applyTopMetricValue(kind) {
+function editableEntityForNumericInput() {
+  if (state.selectedEndpoint) return selectedEndpointGeometry()?.entity || null;
+  return selectedFurnitureEntity();
+}
+
+function beginNumericInputEdit() {
+  const entity = editableEntityForNumericInput();
+  if (state.numericEdit && state.numericEdit.entityId !== entity?.id) {
+    commitNumericInputEdit();
+  }
+  if (!entity || state.numericEdit?.entityId === entity.id) return;
+  state.numericEdit = {
+    entityId: entity.id,
+    before: entityGeometry(entity),
+  };
+}
+
+function commitNumericInputEdit() {
+  const edit = state.numericEdit;
+  if (!edit) return;
+  const entity = state.entities.find((item) => item.id === edit.entityId);
+  const after = entityGeometry(entity);
+  if (geometryChanged(edit.before, after)) {
+    state.undo.push({ type: "move", entityId: edit.entityId, before: edit.before, after });
+    state.redo.length = 0;
+    markProjectDirty("numeric");
+  }
+  state.numericEdit = null;
+}
+
+function finishSelectedEndpointNumericEdit() {
+  if (!state.selectedEndpoint) return false;
+  state.endpointEditBefore = null;
+  state.selectedEndpoint = null;
+  hideInlineEditors();
+  resetSnapTracking();
+  statusChip.textContent = "Размер применен";
+  draw();
+  return true;
+}
+
+function confirmKeyboardInput() {
+  const input = document.activeElement;
+  if (!keyboardInputs.includes(input)) return;
+  const shouldFinishEndpoint = Boolean(
+    state.selectedEndpoint && [lengthInput, angleInput, topLengthInput, topAngleInput].includes(input)
+  );
+  if (input === lengthInput) {
+    applyInlineValue("length", { recordUndo: false });
+  } else if (input === angleInput) {
+    applyInlineValue("angle", { recordUndo: false });
+  } else if (input === topLengthInput) {
+    applyTopMetricValue("length", { recordUndo: false });
+  } else if (input === topAngleInput) {
+    applyTopMetricValue("angle", { recordUndo: false });
+  } else if ([furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].includes(input)) {
+    applyFurnitureSizeInput({ recordUndo: false });
+  }
+  const shouldFinishDrawing = Boolean(
+    state.drawing?.lockedEnd &&
+      ["line", "wall", "circle", "rectangle"].includes(state.tool) &&
+      [lengthInput, angleInput, topLengthInput, topAngleInput].includes(input)
+  );
+  commitNumericInputEdit();
+  if (shouldFinishEndpoint) {
+    finishSelectedEndpointNumericEdit();
+  }
+  input.blur();
+  if (keyboardConfirmButton) keyboardConfirmButton.hidden = true;
+  if (shouldFinishDrawing && !shouldFinishEndpoint) {
+    window.setTimeout(() => commitCursorPoint(), 0);
+  }
+}
+
+function applyTopMetricValue(kind, options = {}) {
   if (!topLengthInput || !topAngleInput) return;
   lengthInput.value = topLengthInput.value;
   angleInput.value = topAngleInput.value;
@@ -2199,7 +2901,7 @@ function applyTopMetricValue(kind) {
     applyRectangleMetricValue();
     return;
   }
-  applyInlineValue(kind);
+  applyInlineValue(kind, options);
 }
 
 function applyRectangleMetricValue() {
@@ -2262,6 +2964,7 @@ function applyMoveCommandInlineValue(kind) {
 }
 
 function startMoveLikeCommand(entity, mode) {
+  resetSnapTracking();
   state.offsetCommand = null;
   state.moveCommand = {
     entityId: entity.id,
@@ -2272,6 +2975,7 @@ function startMoveLikeCommand(entity, mode) {
     before: entityGeometry(entity),
   };
   state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
   hideInlineEditors();
   state.snaps.add("end");
   state.snaps.add("polar");
@@ -2290,6 +2994,7 @@ function startOffsetCommand(entity) {
     distance: 300,
   };
   state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
   hideInlineEditors();
   state.snaps.add("end");
   syncSnapButtons();
@@ -2300,6 +3005,56 @@ function startOffsetCommand(entity) {
 }
 
 function applySelectionAction(action) {
+  const selected = selectedEntities().filter((item) => isLayerVisible(item.layer));
+  const actionEntity = selected.length === 1 ? selected[0] : null;
+  if (!canApplySelectionAction(action)) return;
+
+  if (action === "delete") {
+    const deleted = selected
+      .map((item) => ({ entity: item, index: state.entities.findIndex((candidate) => candidate.id === item.id) }))
+      .filter((item) => item.index >= 0)
+      .sort((a, b) => b.index - a.index);
+    if (!deleted.length) return;
+    for (const item of deleted) state.entities.splice(item.index, 1);
+    state.undo.push({ type: "delete-many", items: deleted.map((item) => ({ entity: item.entity, index: item.index })).reverse() });
+    state.redo.length = 0;
+    markProjectDirty("delete");
+    state.selectedId = null;
+    state.selectedIds = [];
+    state.selectedEndpoint = null;
+    state.endpointEditBefore = null;
+    statusChip.textContent = deleted.length > 1 ? `Удалено: ${deleted.length}` : "Объект удален";
+    hideInlineEditors();
+    syncSelectToolMenu();
+    draw();
+    return;
+  }
+
+  if (!actionEntity) return;
+  if (action === "move") {
+    if (actionEntity.type === "block") {
+      state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === actionEntity.id ? null : actionEntity.id;
+      state.furnitureEditId = actionEntity.id;
+      statusChip.textContent = state.furnitureResizeHandlesId ? "Размер мебели: тяните боковые ручки ширины или глубины" : "Ручки размера скрыты";
+      syncSelectToolMenu();
+      draw();
+      return;
+    }
+    startMoveLikeCommand(actionEntity, "move");
+    return;
+  }
+  if (action === "copy") {
+    startMoveLikeCommand(actionEntity, "copy");
+    return;
+  }
+  if (action === "offset") {
+    startOffsetCommand(actionEntity);
+    return;
+  }
+  if (action === "rotate" && actionEntity.type === "block") {
+    startMoveLikeCommand(actionEntity, "rotate");
+    return;
+  }
   const entity = state.entities.find((item) => item.id === state.selectedId);
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
 
@@ -2324,6 +3079,7 @@ function applySelectionAction(action) {
     state.entities.splice(index, 1);
     state.undo.push({ type: "delete", entity, index });
     state.redo.length = 0;
+    markProjectDirty("delete");
     state.selectedId = null;
     state.selectedIds = [];
     state.selectedEndpoint = null;
@@ -2346,6 +3102,7 @@ function applySelectionAction(action) {
   if (geometryChanged(before, after)) {
     state.undo.push({ type: "move", entityId: entity.id, before, after });
     state.redo.length = 0;
+    markProjectDirty("selection-action");
   }
   state.selectedEndpoint = null;
   draw();
@@ -2353,6 +3110,7 @@ function applySelectionAction(action) {
 
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
   if (!editor) return;
+  if (editor.contains(document.activeElement) && editor.style.left && editor.style.top) return;
   const rect = canvas.getBoundingClientRect();
   const editorWidth = editor.offsetWidth || 84;
   const editorHeight = editor.offsetHeight || 28;
@@ -2413,7 +3171,12 @@ function selectedFurnitureEntity() {
   return entity?.type === "block" ? entity : null;
 }
 
-function applyFurnitureSizeInput() {
+function snapFurnitureSize(value) {
+  return Math.max(300, Math.round(value / furnitureResizeStepMm) * furnitureResizeStepMm);
+}
+
+function applyFurnitureSizeInput(options = {}) {
+  const { recordUndo = true } = options;
   const entity = selectedFurnitureEntity();
   if (!entity) return;
   const width = Number(furnitureWidthInput.value.replace(",", "."));
@@ -2430,17 +3193,19 @@ function applyFurnitureSizeInput() {
     entity.rotation = normalizeDegrees(rotation);
   }
   const after = entityGeometry(entity);
-  if (geometryChanged(before, after)) {
+  const changed = geometryChanged(before, after);
+  if (recordUndo && changed) {
     state.undo.push({ type: "move", entityId: entity.id, before, after });
     state.redo.length = 0;
   }
+  if (changed) markProjectDirty("furniture-input");
   statusChip.textContent = `Мебель ${Math.round(entity.width)} × ${Math.round(entity.height)} мм · ${Math.round(entity.rotation || 0)}°`;
   draw();
 }
 
-function applyInlineValue(kind) {
+function applyInlineValue(kind, options = {}) {
   if (state.selectedEndpoint) {
-    applySelectedEndpointInlineValue(kind);
+    applySelectedEndpointInlineValue(kind, options);
     return;
   }
   if (!state.drawing || !state.inlineEdit) return;
@@ -2474,7 +3239,8 @@ function applyInlineValue(kind) {
   draw();
 }
 
-function applySelectedEndpointInlineValue(kind) {
+function applySelectedEndpointInlineValue(kind, options = {}) {
+  const { recordUndo = true } = options;
   const geometry = selectedEndpointGeometry();
   if (!geometry) return;
   const { entity, fixed, moving } = geometry;
@@ -2483,34 +3249,46 @@ function applySelectedEndpointInlineValue(kind) {
   const typedLength = Number(lengthInput.value.replace(",", "."));
   const typedAngle = Number(angleInput.value.replace(",", "."));
   const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
-  const nextRad = kind === "angle" && Number.isFinite(typedAngle) ? (typedAngle * Math.PI) / 180 : currentRad;
+  let nextRad = currentRad;
+  if (kind === "angle" && Number.isFinite(typedAngle)) {
+    const angleInfo = state.inlineEdit?.angleInfo || activeAngleInfo(fixed, moving);
+    if (angleInfo?.hasReference) {
+      const sign = angleInfo.deltaRad < 0 ? -1 : 1;
+      nextRad = angleInfo.referenceRad + sign * (typedAngle * Math.PI) / 180;
+    } else {
+      nextRad = (typedAngle * Math.PI) / 180;
+    }
+  }
   const before = entityGeometry(entity);
   setSelectedEndpointPosition({
     x: fixed.x + Math.cos(nextRad) * nextLength,
     y: fixed.y + Math.sin(nextRad) * nextLength,
   });
   const after = entityGeometry(entity);
-  if (geometryChanged(before, after)) {
+  const changed = geometryChanged(before, after);
+  if (recordUndo && changed) {
     state.undo.push({ type: "move", entityId: entity.id, before, after });
     state.redo.length = 0;
   }
+  if (changed) markProjectDirty("endpoint-input");
   updateSelectedEndpointEditors();
   draw();
 }
 
 function drawBadge(text, x, y, c, secondary = false) {
-  if (/Параллель|Точка|РџР°СЂР°|РўРѕС‡/.test(text)) return;
+  text = decodeMojibakeText(String(text));
+  if (/Параллель|Точка|Пара|Точ/.test(text)) return;
   ctx.save();
-  ctx.font = "700 12px Inter, Segoe UI, sans-serif";
-  const padX = 8;
+  ctx.font = annotationFont(700, 12);
+  const padX = annotationPx(8);
   const width = ctx.measureText(text).width + padX * 2;
-  const height = 24;
+  const height = annotationPx(24);
   const rx = x - width / 2;
   const ry = y - height / 2;
   ctx.fillStyle = secondary ? c.surface : c.accent;
   ctx.strokeStyle = secondary ? c.accent : c.accent;
-  ctx.lineWidth = 1;
-  roundedRect(rx, ry, width, height, 7, true);
+  ctx.lineWidth = annotationPx(1);
+  roundedRect(rx, ry, width, height, annotationPx(7), true);
   ctx.fillStyle = secondary ? c.accent : "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -2543,7 +3321,7 @@ function drawDimensionSnapHint(c) {
     ctx.setLineDash([9, 6]);
     linePath(a.x, a.y, b.x, b.y);
     ctx.setLineDash([]);
-    drawBadge("Параллель ножке", point.x, point.y - 28, c, true);
+    drawBadge(hint.label || "Размерная линия", point.x, point.y - 28, c, true);
   } else {
     drawBadge("Конец", point.x, point.y - 28, c, true);
   }
@@ -2559,7 +3337,27 @@ function drawDimensionSnapHint(c) {
 }
 
 function canUseSnapTracking() {
-  return state.tool === "dimension" && state.snaps.has("polar") && !state.pointer && !state.pinch;
+  return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && state.snaps.has("polar") && state.snaps.has("end") && !state.pointer && !state.pinch;
+}
+
+function canSnapToTrackingGuides() {
+  return Boolean(trackingBasePoint()) && state.snaps.has("polar") && state.snapTracking.points.length > 0 && !state.pinch;
+}
+
+function canUsePrePointTracking() {
+  if (state.drawing || state.moveCommand || state.offsetCommand || state.pointer || state.pinch) return false;
+  return trackingDrawingTools.has(state.tool);
+}
+
+function canSnapToPrePointTrackingGuides() {
+  return canUsePrePointTracking() && state.snaps.has("polar") && state.snapTracking.points.length > 0;
+}
+
+function trackingBasePoint() {
+  if (state.drawing?.phase === "offset") return null;
+  if (state.drawing?.start) return state.drawing.start;
+  if (state.moveCommand?.base) return state.moveCommand.base;
+  return selectedEndpointGeometry()?.fixed || null;
 }
 
 function updateSnapTrackingHover() {
@@ -2568,7 +3366,16 @@ function updateSnapTrackingHover() {
     state.snapTracking.active = null;
     return;
   }
-  const candidate = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
+  const raw = screenToWorld(centerScreen());
+  const candidate = nearestTrackingAnchorCandidate(raw);
+  const holdThreshold = trackingActivationThreshold() * 1.15;
+  if (
+    state.snapTracking.hoverPoint &&
+    state.snapTracking.hoverTimer != null &&
+    distanceWorld(raw, state.snapTracking.hoverPoint) <= holdThreshold
+  ) {
+    return;
+  }
   if (!candidate) {
     clearSnapTrackingHover();
     return;
@@ -2585,6 +3392,7 @@ function updateSnapTrackingHover() {
   state.snapTracking.hoverTimer = window.setTimeout(() => {
     commitSnapTrackingHover(key);
   }, trackingHoverDelayMs);
+  draw();
 }
 
 function clearSnapTrackingHover() {
@@ -2600,20 +3408,27 @@ function commitSnapTrackingHover(key) {
   const point = state.snapTracking.hoverPoint;
   if (!point || state.snapTracking.hoverKey !== key || !canUseSnapTracking()) return;
   const current = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
-  if (!current || trackingPointKey(current) !== key) return;
-  addSnapTrackingPoint(current);
+  const currentKey = current ? trackingPointKey(current) : null;
+  const stillNearOriginal = distanceWorld(screenToWorld(centerScreen()), point) <= trackingActivationThreshold() * 1.15;
+  if ((!current || currentKey !== key) && !stillNearOriginal) return;
+  addSnapTrackingPoint(currentKey === key ? current : point);
   clearSnapTrackingHover();
+  statusChip.textContent = "Точка отслеживания: ведите курсор по направляющей";
   draw();
 }
 
 function nearestTrackingAnchorCandidate(point) {
-  const threshold = (state.tool === "dimension" ? 30 : 22) / state.view.scale;
+  const threshold = trackingActivationThreshold();
   const candidates = snapCandidates({
     includeCorners: true,
     includeMidpoints: state.snaps.has("mid"),
     includeCenters: state.snaps.has("mid"),
   });
   return nearestSnapCandidate(point, candidates, threshold);
+}
+
+function trackingActivationThreshold() {
+  return (state.tool === "dimension" || state.tool === "circle" || state.tool === "arc" || state.tool === "rectangle" ? 48 : 42) / state.view.scale;
 }
 
 function addSnapTrackingPoint(point) {
@@ -2661,21 +3476,40 @@ function snapTrackingGuides() {
   return guides;
 }
 
-function nearestSnapTrackingPoint(point, threshold) {
+function nearestSnapTrackingPoint(point, threshold, base = null) {
   const guides = snapTrackingGuides();
   if (guides.length === 0) return null;
   let bestIntersection = null;
+  const testIntersection = (a, b) => {
+    const intersection = trackingGuideIntersection(a, b);
+    if (!intersection) return;
+    const distance = distanceWorld(point, intersection);
+    if (distance > threshold) return;
+    if (!bestIntersection || distance < bestIntersection.distance) {
+      bestIntersection = { ...intersection, distance, guides: [a, b] };
+    }
+  };
+
   for (let i = 0; i < guides.length; i += 1) {
     for (let j = i + 1; j < guides.length; j += 1) {
       const a = guides[i];
       const b = guides[j];
       if (a.point.key === b.point.key) continue;
-      const intersection = trackingGuideIntersection(a, b);
-      if (!intersection) continue;
-      const distance = distanceWorld(point, intersection);
-      if (distance > threshold) continue;
-      if (!bestIntersection || distance < bestIntersection.distance) {
-        bestIntersection = { ...intersection, distance, guides: [a, b] };
+      testIntersection(a, b);
+    }
+  }
+
+  if (base) {
+    const baseGuides = trackingAngles.map((angle) => ({
+      point: { ...base, key: "__base__", label: "Base" },
+      angle,
+      ux: Math.cos(angle),
+      uy: Math.sin(angle),
+      isBase: true,
+    }));
+    for (const baseGuide of baseGuides) {
+      for (const guide of guides) {
+        testIntersection(baseGuide, guide);
       }
     }
   }
@@ -2731,8 +3565,13 @@ function trackingGuideIntersection(a, b) {
 }
 
 function drawSnapTracking(c) {
-  if (!canUseSnapTracking() || state.snapTracking.points.length === 0) return;
-  resolveSnapWorld(screenToWorld(centerScreen()));
+  if ((!canUseSnapTracking() && !canSnapToTrackingGuides()) || state.snapTracking.points.length === 0) {
+    drawSnapTrackingHover(c);
+    return;
+  }
+  const base = trackingBasePoint();
+  if (base) resolveLineLikeSnap(screenToWorld(centerScreen()), base);
+  else if (canSnapToPrePointTrackingGuides()) resolvePrePointTrackingSnap(screenToWorld(centerScreen()));
   const rect = canvas.getBoundingClientRect();
   const guides = snapTrackingGuides();
   ctx.save();
@@ -2771,6 +3610,46 @@ function drawSnapTracking(c) {
     ctx.lineTo(p.x, p.y + 9);
     ctx.stroke();
   }
+  ctx.restore();
+  drawSnapTrackingHover(c);
+}
+
+function drawSnapTrackingHover(c) {
+  if (!state.snapTracking.hoverPoint || state.snapTracking.hoverTimer == null) return;
+  const p = worldToScreen(state.snapTracking.hoverPoint);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.92;
+  ctx.beginPath();
+  ctx.rect(p.x - 7, p.y - 7, 14, 14);
+  ctx.fill();
+  ctx.stroke();
+  drawBadge(state.snapTracking.hoverPoint.label || "Точка", p.x, p.y - 27, c, true);
+  ctx.restore();
+}
+
+function drawPolarSnapGuide(c) {
+  const guide = state.polarSnapGuide;
+  if (!guide || !state.snaps.has("polar")) return;
+  const rect = canvas.getBoundingClientRect();
+  const start = worldToScreen(guide.point);
+  const length = Math.max(rect.width, rect.height) * 1.45;
+  const dx = Math.cos(guide.angle) * length;
+  const dy = Math.sin(guide.angle) * length;
+  const labelX = start.x + Math.cos(guide.angle) * Math.min(120, length * 0.28);
+  const labelY = start.y + Math.sin(guide.angle) * Math.min(120, length * 0.28);
+  const degrees = ((guide.degrees % 360) + 360) % 360;
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.6;
+  ctx.globalAlpha = 0.82;
+  ctx.setLineDash([12, 7]);
+  linePath(start.x - dx, start.y - dy, start.x + dx, start.y + dy);
+  ctx.setLineDash([]);
+  drawBadge(`${degrees}° ось`, labelX, labelY - 18, c, true);
   ctx.restore();
 }
 
@@ -2813,11 +3692,12 @@ function resetSnapTracking() {
   clearSnapTrackingHover();
   state.snapTracking.points = [];
   state.snapTracking.active = null;
+  state.polarSnapGuide = null;
 }
 
 function drawCursorSnap(c) {
-  if ((state.tool === "select" && !state.moveCommand) || state.tool === "furniture") return;
-  const snap = resolveSnapWorld(screenToWorld(centerScreen())).snap;
+  if ((state.tool === "select" && !state.moveCommand && !state.selectedEndpoint) || state.tool === "furniture") return;
+  const snap = cursorSnapResolved().snap;
   if (!snap) return;
   const p = worldToScreen(snap);
   ctx.save();
@@ -2835,7 +3715,7 @@ function drawCursorSnap(c) {
   ctx.moveTo(p.x, p.y - 14);
   ctx.lineTo(p.x, p.y + 14);
   ctx.stroke();
-  if (snap.type !== "tracking") {
+  if (snap.type !== "tracking" && snap.type !== "direction") {
     drawBadge(snap.label || "Snap", p.x, p.y - 26, c, true);
   }
   ctx.restore();
@@ -2875,43 +3755,6 @@ function midpoint(a, b) {
 
 function rectangleCorners(entity) {
   return [{ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y1 }, { x: entity.x2, y: entity.y2 }, { x: entity.x1, y: entity.y2 }];
-}
-
-function entityBounds(entity) {
-  if (entity.type === "circle") return { minX: entity.cx - entity.radius, maxX: entity.cx + entity.radius, minY: entity.cy - entity.radius, maxY: entity.cy + entity.radius };
-  if (entity.type === "rectangle") return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };
-  if (entity.type === "arc") { const pts = [entity.start, entity.through, entity.end]; return { minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)), minY: Math.min(...pts.map((p) => p.y)), maxY: Math.max(...pts.map((p) => p.y)) }; }
-  return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };
-}
-
-function arcGeometry(start, through, end) {
-  const d = 2 * (start.x * (through.y - end.y) + through.x * (end.y - start.y) + end.x * (start.y - through.y));
-  if (Math.abs(d) < 0.001) return null;
-  const startSq = start.x * start.x + start.y * start.y;
-  const throughSq = through.x * through.x + through.y * through.y;
-  const endSq = end.x * end.x + end.y * end.y;
-  const center = { x: (startSq * (through.y - end.y) + throughSq * (end.y - start.y) + endSq * (start.y - through.y)) / d, y: (startSq * (end.x - through.x) + throughSq * (start.x - end.x) + endSq * (through.x - start.x)) / d };
-  const radius = distanceWorld(center, start);
-  const startAngle = angleBetweenPoints(center, start);
-  const throughAngle = angleBetweenPoints(center, through);
-  const endAngle = angleBetweenPoints(center, end);
-  const ccwSpan = normalizeAnglePositive(endAngle - startAngle);
-  const ccwThrough = normalizeAnglePositive(throughAngle - startAngle);
-  return { center, radius, startAngle, endAngle, counterClockwise: ccwThrough <= ccwSpan };
-}
-
-function normalizeAnglePositive(angleRad) {
-  const full = Math.PI * 2;
-  return ((angleRad % full) + full) % full;
-}
-
-function segmentMetrics(x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.round(Math.hypot(dx, dy));
-  let angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
-  if (angle < 0) angle += 360;
-  return { length, angle };
 }
 
 function activeAngleInfo(start, end) {
@@ -2982,13 +3825,14 @@ function angleReferenceSegments() {
     }
     if (entity.type === "line" || entity.type === "wall") {
       segments.push({ p1: { x: entity.x1, y: entity.y1 }, p2: { x: entity.x2, y: entity.y2 } });
+    } else if (entity.type === "rectangle") {
+      const corners = rectangleCorners(entity);
+      for (let i = 0; i < corners.length; i += 1) {
+        segments.push({ p1: corners[i], p2: corners[(i + 1) % corners.length] });
+      }
     }
   }
   return segments.filter((segment) => distanceWorld(segment.p1, segment.p2) > 1);
-}
-
-function angleBetweenPoints(a, b) {
-  return Math.atan2(b.y - a.y, b.x - a.x);
 }
 
 function segmentAngle(a, b) {
@@ -2997,14 +3841,6 @@ function segmentAngle(a, b) {
 
 function signedAngleDelta(fromRad, toRad) {
   return Math.atan2(Math.sin(toRad - fromRad), Math.cos(toRad - fromRad));
-}
-
-function radToDeg(angleRad) {
-  return (angleRad * 180) / Math.PI;
-}
-
-function distanceWorld(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function projectPointToSegmentWorld(point, a, b) {
@@ -3044,7 +3880,24 @@ function pointDistance(a, b) {
 }
 
 function clampScale(scale) {
-  return Math.min(0.28, Math.max(0.035, scale));
+  return Math.min(0.7, Math.max(0.005, scale));
+}
+
+function adaptiveGridStep() {
+  const scale = state.view.scale;
+  if (scale >= 0.45) return 10;
+  if (scale >= 0.3) return 20;
+  if (scale >= 0.18) return 25;
+  if (scale >= 0.11) return 50;
+  if (scale >= 0.06) return 100;
+  if (scale >= 0.02) return 250;
+  if (scale >= 0.01) return 500;
+  return 1000;
+}
+
+function snapValueToGrid(value) {
+  const step = adaptiveGridStep();
+  return Math.round(value / step) * step;
 }
 
 function zoomAtScreen(screen, nextScale) {
@@ -3053,6 +3906,7 @@ function zoomAtScreen(screen, nextScale) {
   const after = worldToScreen(before);
   state.view.panX += screen.x - after.x;
   state.view.panY += screen.y - after.y;
+  markProjectDirty("view");
 }
 
 function beginPinchGesture() {
@@ -3082,6 +3936,7 @@ function updatePinchGesture() {
   state.view.scale = nextScale;
   state.view.panX = midpoint.x - state.pinch.worldAtMidpoint.x * nextScale;
   state.view.panY = midpoint.y - state.pinch.worldAtMidpoint.y * nextScale;
+  markProjectDirty("pinch");
   const percent = Math.round((state.view.scale / 0.085) * 100);
   statusChip.textContent = `Масштаб ${percent}%`;
   draw();
@@ -3103,10 +3958,12 @@ function resolveSnapWorld(point) {
   const objectThreshold = (state.tool === "dimension" ? 34 : 24) / state.view.scale;
   const midpointThreshold = 22 / state.view.scale;
   const trackingThreshold = 18 / state.view.scale;
+  const nearestThreshold = 14 / state.view.scale;
   const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
   let result = { ...point };
   let snap = null;
   state.snapTracking.active = null;
+  state.polarSnapGuide = null;
 
   if (useObjectSnap) {
     snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
@@ -3129,10 +3986,119 @@ function resolveSnapWorld(point) {
   if (!snap && state.snaps.has("polar")) {
     const polarStart = state.drawing?.start || state.moveCommand?.base;
     if (polarStart && state.drawing?.phase !== "offset") {
-      result = snapPolar(result, polarStart);
+      const polar = snapPolar(result, polarStart);
+      result = polar.point;
+      if (polar.snapped) {
+        state.polarSnapGuide = {
+          point: polarStart,
+          angle: polar.angle,
+          degrees: polar.degrees,
+        };
+      }
     }
   }
   return { point: result, snap };
+}
+
+function resolveLineLikeSnap(point, start) {
+  const objectThreshold = 24 / state.view.scale;
+  const midpointThreshold = 22 / state.view.scale;
+  const directionThreshold = 18 / state.view.scale;
+  const nearestThreshold = 14 / state.view.scale;
+  const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
+  let result = { ...point };
+  let snap = null;
+  state.snapTracking.active = null;
+  state.polarSnapGuide = null;
+
+  if (useObjectSnap) {
+    snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
+  }
+  if (!snap && state.snaps.has("mid")) {
+    snap = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+  }
+  if (!snap && useObjectSnap && trackingDrawingTools.has(state.tool)) {
+    snap = nearestPointOnDrawableSegment(point, nearestThreshold);
+  }
+  if (snap) {
+    result = { x: snap.x, y: snap.y };
+  } else {
+    const tracking = canSnapToTrackingGuides() ? nearestSnapTrackingPoint(point, directionThreshold, start) : null;
+    if (tracking) {
+      result = { x: tracking.x, y: tracking.y };
+      snap = tracking;
+      state.snapTracking.active = tracking;
+      const baseGuide = tracking.guides?.find((guide) => guide.isBase);
+      if (baseGuide) {
+        state.polarSnapGuide = {
+          point: start,
+          angle: baseGuide.angle,
+          degrees: Math.round((baseGuide.angle * 180) / Math.PI),
+        };
+      }
+    } else {
+      const directional = snapLineDirection(point, start, directionThreshold);
+      if (directional) {
+        result = { x: directional.x, y: directional.y };
+        snap = directional;
+        state.polarSnapGuide = {
+          point: start,
+          angle: directional.angle,
+          degrees: directional.degrees,
+        };
+      } else if (canSnapToTrackingGuides()) {
+        const guideTracking = nearestSnapTrackingPoint(point, directionThreshold);
+        if (guideTracking) {
+          result = { x: guideTracking.x, y: guideTracking.y };
+          snap = guideTracking;
+          state.snapTracking.active = guideTracking;
+        } else {
+          const nearest = state.snaps.has("end") ? nearestPointOnDrawableSegment(point, nearestThreshold) : null;
+          if (nearest) {
+            result = { x: nearest.x, y: nearest.y };
+            snap = nearest;
+          } else if (state.snaps.has("grid")) {
+            result.x = Math.round(result.x / 50) * 50;
+            result.y = Math.round(result.y / 50) * 50;
+          }
+        }
+      } else {
+        const nearest = state.snaps.has("end") ? nearestPointOnDrawableSegment(point, nearestThreshold) : null;
+        if (nearest) {
+          result = { x: nearest.x, y: nearest.y };
+          snap = nearest;
+        } else if (state.snaps.has("grid")) {
+          result.x = Math.round(result.x / 50) * 50;
+          result.y = Math.round(result.y / 50) * 50;
+        }
+      }
+    }
+  }
+
+  if (!snap && state.snaps.has("polar")) {
+    const polar = snapPolar(result, start);
+    result = polar.point;
+    if (polar.snapped) {
+      state.polarSnapGuide = {
+        point: start,
+        angle: polar.angle,
+        degrees: polar.degrees,
+      };
+    }
+  }
+  return { point: result, snap };
+}
+
+function resolvePrePointTrackingSnap(point) {
+  const trackingThreshold = 18 / state.view.scale;
+  state.snapTracking.active = null;
+  state.polarSnapGuide = null;
+  const tracking = nearestSnapTrackingPoint(point, trackingThreshold);
+  if (tracking) {
+    state.snapTracking.active = tracking;
+    return { point: { x: tracking.x, y: tracking.y }, snap: tracking };
+  }
+  return resolveSnapWorld(point);
 }
 
 function nearestEndpoint(point, threshold) {
@@ -3143,10 +4109,63 @@ function nearestMidpoint(point, threshold) {
   return nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), threshold);
 }
 
+function snapLineDirection(point, start, threshold) {
+  if (!state.snaps.has("polar")) return null;
+  const currentAngle = angleBetweenPoints(start, point);
+  const currentLength = Math.max(1, distanceWorld(start, point));
+  let best = null;
+  const addCandidate = (angle, label, segment) => {
+    const projected = projectPointToInfiniteLine(point, start, angle);
+    if (projected.distance > threshold) return;
+    const angleDelta = Math.abs(signedAngleDelta(angle, currentAngle));
+    const score = projected.distance + angleDelta * currentLength * 0.08;
+    if (!best || score < best.score) {
+      best = {
+        ...projected,
+        score,
+        angle,
+        degrees: Math.round(normalizeAnglePositive(angle) * 180 / Math.PI),
+        label,
+        type: "direction",
+        segment,
+      };
+    }
+  };
+  for (const segment of drawableSnapSegments()) {
+    const baseAngle = segmentAngle(segment.p1, segment.p2);
+    addCandidate(baseAngle, "Параллельно", segment);
+    addCandidate(baseAngle + Math.PI / 2, "Перпендикуляр", segment);
+  }
+  return best;
+}
+
+function projectPointToInfiniteLine(point, origin, angle) {
+  const ux = Math.cos(angle);
+  const uy = Math.sin(angle);
+  const t = (point.x - origin.x) * ux + (point.y - origin.y) * uy;
+  const x = origin.x + ux * t;
+  const y = origin.y + uy * t;
+  return { x, y, distance: Math.hypot(point.x - x, point.y - y) };
+}
+
+function nearestPointOnDrawableSegment(point, threshold) {
+  let best = null;
+  for (const segment of drawableSnapSegments()) {
+    const hit = projectPointToSegmentWorld(point, segment.p1, segment.p2);
+    if (hit.distance > threshold) continue;
+    const score = hit.distance;
+    if (!best || score < best.score) {
+      best = { x: hit.x, y: hit.y, score, label: "Ближайшая", type: "nearest", segment };
+    }
+  }
+  return best;
+}
+
 function nearestSnapCandidate(point, candidates, threshold) {
   let best = null;
   let bestDistance = threshold;
   for (const candidate of candidates) {
+    if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
     const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
     if (distance < bestDistance) {
       best = candidate;
@@ -3160,30 +4179,26 @@ function snapCandidates({ includeCorners = false, includeMidpoints = false, incl
   const candidates = [];
   for (const entity of state.entities) {
     if (!isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
-    if (entity.type === "block") {
-      if (includeCorners) {
-        for (const corner of blockCorners(entity)) {
-          candidates.push({ ...corner, label: "Угол" });
-        }
+    for (const point of objectPointRefs(entity)) {
+      const role = point.snapRole || point.pointKey;
+      const allowed =
+        (includeCorners && ["start", "end", "corner", "quadrant", "arc-point"].includes(role)) ||
+        (includeMidpoints && role === "mid") ||
+        (includeCenters && role === "center");
+      if (allowed) {
+        candidates.push({ ...point, label: point.label || snapPointLabel(role) });
       }
-      if (includeCenters) {
-        candidates.push({ x: entity.x, y: entity.y, label: "Центр" });
-      }
-      continue;
-    }
-    if (includeCorners) {
-      candidates.push({ x: entity.x1, y: entity.y1, label: entity.type === "wall" ? "Угол" : "Конец" });
-      candidates.push({ x: entity.x2, y: entity.y2, label: entity.type === "wall" ? "Угол" : "Конец" });
-    }
-    if (includeMidpoints) {
-      candidates.push({
-        x: (entity.x1 + entity.x2) / 2,
-        y: (entity.y1 + entity.y2) / 2,
-        label: "Середина",
-      });
     }
   }
   return candidates.map((candidate) => attachSnapReference(candidate));
+}
+
+function snapPointLabel(role) {
+  if (role === "center") return "Центр";
+  if (role === "mid") return "Середина";
+  if (role === "corner") return "Угол";
+  if (role === "quadrant") return "Квадрант";
+  return "Конец";
 }
 
 function attachSnapReference(candidate) {
@@ -3264,14 +4279,45 @@ function nearestObjectPointRef(point) {
 function objectPointRefs(entity) {
   if (entity.type === "block") {
     return [
-      ...blockCorners(entity).map((corner, index) => ({ ...corner, pointKey: `corner-${index}` })),
-      { x: entity.x, y: entity.y, pointKey: "center" },
+      ...blockCorners(entity).map((corner, index) => ({ ...corner, pointKey: `corner-${index}`, snapRole: "corner" })),
+      { x: entity.x, y: entity.y, pointKey: "center", snapRole: "center" },
     ];
   }
+  if (entity.type === "rectangle") {
+    const corners = rectangleCorners(entity);
+    return [
+      ...corners.map((corner, index) => ({ ...corner, pointKey: `corner-${index}`, snapRole: "corner" })),
+      ...corners.map((corner, index) => ({ ...midpoint(corner, corners[(index + 1) % corners.length]), pointKey: `mid-${index}`, snapRole: "mid" })),
+      { x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2, pointKey: "center", snapRole: "center" },
+    ];
+  }
+  if (entity.type === "circle") {
+    const r = Math.abs(entity.radius || 0);
+    return [
+      { x: entity.cx, y: entity.cy, pointKey: "center", snapRole: "center" },
+      { x: entity.cx + r, y: entity.cy, pointKey: "quadrant-0", snapRole: "quadrant" },
+      { x: entity.cx, y: entity.cy + r, pointKey: "quadrant-1", snapRole: "quadrant" },
+      { x: entity.cx - r, y: entity.cy, pointKey: "quadrant-2", snapRole: "quadrant" },
+      { x: entity.cx, y: entity.cy - r, pointKey: "quadrant-3", snapRole: "quadrant" },
+    ];
+  }
+  if (entity.type === "arc") {
+    const refs = [
+      entity.start ? { ...entity.start, pointKey: "start", snapRole: "arc-point" } : null,
+      entity.through ? { ...entity.through, pointKey: "through", snapRole: "mid" } : null,
+      entity.end ? { ...entity.end, pointKey: "end", snapRole: "arc-point" } : null,
+    ].filter(Boolean);
+    const arc = arcGeometry(entity.start, entity.through, entity.end);
+    if (arc) refs.push({ x: arc.center.x, y: arc.center.y, pointKey: "center", snapRole: "center" });
+    return refs;
+  }
+  if (!Number.isFinite(entity.x1) || !Number.isFinite(entity.y1) || !Number.isFinite(entity.x2) || !Number.isFinite(entity.y2)) {
+    return [];
+  }
   return [
-    { x: entity.x1, y: entity.y1, pointKey: "start" },
-    { x: entity.x2, y: entity.y2, pointKey: "end" },
-    { x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2, pointKey: "mid" },
+    { x: entity.x1, y: entity.y1, pointKey: "start", snapRole: "start" },
+    { x: entity.x2, y: entity.y2, pointKey: "end", snapRole: "end" },
+    { x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2, pointKey: "mid", snapRole: "mid" },
   ];
 }
 
@@ -3291,16 +4337,22 @@ function snapPolar(point, start) {
   const dx = point.x - start.x;
   const dy = point.y - start.y;
   const length = Math.hypot(dx, dy);
-  if (length < 1) return point;
+  if (length < 1) return { point, snapped: false };
   const step = Math.PI / 4;
-  const threshold = (7 * Math.PI) / 180;
+  const threshold = (12 * Math.PI) / 180;
   const angle = Math.atan2(dy, dx);
   const snappedAngle = Math.round(angle / step) * step;
   const delta = Math.abs(Math.atan2(Math.sin(angle - snappedAngle), Math.cos(angle - snappedAngle)));
-  if (delta > threshold) return point;
+  if (delta > threshold) return { point, snapped: false };
+  const degrees = Math.round(normalizeAnglePositive(snappedAngle) * 180 / Math.PI);
   return {
+    snapped: true,
+    angle: snappedAngle,
+    degrees,
+    point: {
     x: start.x + Math.cos(snappedAngle) * length,
     y: start.y + Math.sin(snappedAngle) * length,
+    },
   };
 }
 
@@ -3316,26 +4368,42 @@ function setToolButtonVisual(button, visual) {
 }
 
 function syncToolButtonVisuals() {
+  const selectButton = tools.find((button) => button.dataset.tool === "select");
   const lineButton = tools.find((button) => button.dataset.tool === "line");
+  const dimensionButton = tools.find((button) => button.dataset.tool === "dimension");
   const selectionButton = tools.find((button) => button.dataset.tool === "selection");
+  setToolButtonVisual(selectButton, selectModeButtonVisuals[state.selectTool] || selectModeButtonVisuals.select);
   setToolButtonVisual(lineButton, isGroupedDrawTool(state.tool) ? drawToolButtonVisuals[state.tool] : drawToolButtonVisuals.line);
-  setToolButtonVisual(
-    selectionButton,
-    state.tool === "select" && state.selectTool !== "select"
-      ? selectionToolButtonVisuals[state.selectTool] || selectionToolButtonVisuals.select
-      : selectionToolButtonVisuals.select
-  );
+  setToolButtonVisual(dimensionButton, dimensionToolButtonVisuals[state.dimensionTool] || dimensionToolButtonVisuals.aligned);
+  setToolButtonVisual(selectionButton, selectionToolButtonVisuals.select);
+}
+
+function drawableSnapSegments() {
+  const segments = [];
+  for (const entity of state.entities) {
+    if (!isLayerVisible(entity.layer) || entity.layer === "dimensions" || entity.type === "block") continue;
+    if (entity.type === "line" || entity.type === "wall") {
+      segments.push({ p1: { x: entity.x1, y: entity.y1 }, p2: { x: entity.x2, y: entity.y2 }, entity });
+    } else if (entity.type === "rectangle") {
+      const corners = rectangleCorners(entity);
+      for (let i = 0; i < corners.length; i += 1) {
+        segments.push({ p1: corners[i], p2: corners[(i + 1) % corners.length], entity });
+      }
+    }
+  }
+  return segments;
 }
 
 function syncToolButtons() {
   syncToolButtonVisuals();
+  const editModeActive = state.tool === "select" && (Boolean(editableSelectionEntity()) || !selectToolMenu.hidden);
   tools.forEach((button) => {
     const buttonTool = button.dataset.tool;
     const active =
       buttonTool === "selection"
-        ? state.tool === "select" && state.selectTool !== "select"
+        ? editModeActive
         : buttonTool === "select"
-          ? state.tool === "select" && state.selectTool === "select"
+          ? state.tool === "select"
           : buttonTool === state.tool || (buttonTool === "line" && isGroupedDrawTool(state.tool));
     button.classList.toggle("active", active);
   });
@@ -3355,9 +4423,11 @@ function setTool(tool) {
     state.selectedId = null;
     state.selectedIds = [];
     state.selectedEndpoint = null;
+    state.endpointEditBefore = null;
     hideInlineEditors();
   } else if (tool !== "line" && tool !== "polyline") {
     state.selectedEndpoint = null;
+    state.endpointEditBefore = null;
   }
   if (tool !== "dimension") {
     resetSnapTracking();
@@ -3390,7 +4460,7 @@ function setTool(tool) {
     syncSnapButtons();
   }
   if (tool === "dimension") {
-    statusChip.textContent = "Размер: 1 начало, 2 конец, 3 положение размерной линии";
+    statusChip.textContent = dimensionToolStatusText();
   }
   draw();
 }
@@ -3403,15 +4473,26 @@ function syncDrawToolMenu() {
   drawToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.drawTool === state.drawTool));
 }
 
+function syncDimensionToolMenu() {
+  dimensionToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.dimensionTool === state.dimensionTool));
+}
+
 function syncSelectToolMenu() {
-  selectToolButtons.forEach((button) => {
-    const mode = button.dataset.selectTool;
-    if (mode === "filter") {
-      const label = button.querySelector("small");
-      if (label) label.textContent = state.selectionFilter === "all" ? "Фильтр" : selectionFilterLabel();
-      button.title = `Фильтр: ${selectionFilterLabel()}`;
-    }
-    button.classList.toggle("active", mode === "filter" ? state.selectionFilter !== "all" : mode === state.selectTool);
+  const selected = selectedEntities();
+  const furnitureOnly = selected.length === 1 && selected[0]?.type === "block";
+  selectToolMenu?.querySelectorAll("[data-select-tool]").forEach((button) => {
+    button.hidden = true;
+  });
+  const moveButton = selectToolMenu?.querySelector('button[data-action="move"]');
+  if (moveButton) {
+    const icon = moveButton.querySelector("span");
+    const label = moveButton.querySelector("small");
+    if (icon) icon.textContent = furnitureOnly ? "↔" : "↕";
+    if (label) label.textContent = furnitureOnly ? "Размер" : "Переместить";
+    moveButton.title = furnitureOnly ? "Показать ручки ширины и глубины" : "Переместить";
+  }
+  selectToolMenu?.querySelectorAll("button[data-action]").forEach((button) => {
+    button.disabled = !canApplySelectionAction(button.dataset.action);
   });
 }
 
@@ -3419,6 +4500,8 @@ function showDrawToolMenu() {
   if (!drawToolMenu) return;
   syncDrawToolMenu();
   hideSelectToolMenu();
+  hideSelectModeMenu();
+  hideDimensionToolMenu();
   drawToolMenu.hidden = false;
 }
 
@@ -3426,11 +4509,27 @@ function hideDrawToolMenu() {
   if (drawToolMenu) drawToolMenu.hidden = true;
 }
 
+function showDimensionToolMenu() {
+  if (!dimensionToolMenu) return;
+  syncDimensionToolMenu();
+  hideDrawToolMenu();
+  hideSelectToolMenu();
+  hideSelectModeMenu();
+  dimensionToolMenu.hidden = false;
+}
+
+function hideDimensionToolMenu() {
+  if (dimensionToolMenu) dimensionToolMenu.hidden = true;
+}
+
 function showSelectToolMenu() {
   if (!selectToolMenu) return;
   syncSelectToolMenu();
   hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideSelectModeMenu();
   selectToolMenu.hidden = false;
+  syncToolButtons();
 }
 
 function showSelectToolMenuAfterLayout() {
@@ -3442,12 +4541,61 @@ function showSelectToolMenuAfterLayout() {
 
 function hideSelectToolMenu() {
   if (selectToolMenu) selectToolMenu.hidden = true;
+  syncToolButtons();
+}
+
+function showSelectModeMenu() {
+  if (!selectModeMenu) return;
+  syncSelectModeMenu();
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideSelectToolMenu();
+  selectModeMenu.hidden = false;
+}
+
+function showSelectModeMenuAfterLayout() {
+  showSelectModeMenu();
+  requestAnimationFrame(() => {
+    if (state.tool === "select") showSelectModeMenu();
+  });
+}
+
+function hideSelectModeMenu() {
+  if (selectModeMenu) selectModeMenu.hidden = true;
+}
+
+function syncSelectModeMenu() {
+  selectModeMenu?.querySelectorAll("[data-select-mode]").forEach((button) => {
+    const mode = button.dataset.selectMode;
+    if (mode === "filter") {
+      const label = button.querySelector("small");
+      if (label) label.textContent = state.selectionFilter === "all" ? "Фильтр" : selectionFilterLabel();
+      button.classList.toggle("active", state.selectionFilter !== "all");
+      return;
+    }
+    button.classList.toggle("active", mode === "select" ? state.selectTool === "select" : state.selectTool === mode);
+  });
+}
+
+function prepareSelectMenuStructure() {
+  const selectionRailButton = tools.find((button) => button.dataset.tool === "selection");
+  if (selectionRailButton) selectionRailButton.hidden = false;
+  if (!selectToolMenu) return;
+  selectToolMenu.querySelectorAll("[data-select-tool]").forEach((button) => {
+    button.hidden = true;
+  });
 }
 
 function activateDrawToolMenu() {
   state.drawTool = "line";
   setTool("line");
   showDrawToolMenu();
+}
+
+function activateDimensionToolMenu() {
+  setTool("dimension");
+  showDimensionToolMenu();
+  statusChip.textContent = dimensionToolStatusText();
 }
 
 function activatePlainSelect() {
@@ -3458,32 +4606,63 @@ function activatePlainSelect() {
   state.offsetCommand = null;
   state.pointer = null;
   state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
   state.dimensionSnapHint = null;
   state.dimensionPickCycle = null;
   resetSnapTracking();
   hideInlineEditors();
   hideDrawToolMenu();
+  hideDimensionToolMenu();
   hideSelectToolMenu();
+  hideSelectModeMenu();
   hideSheet(furnitureSheet);
   setTool("select");
   statusChip.textContent = "Выбор: команда отменена, можно выбирать и редактировать объект";
 }
 
 function activateSelectionTool() {
-  if (state.selectTool === "select") {
-    state.selectTool = "window";
+  if (!selectionToolCycle.includes(state.selectTool)) {
+    state.selectTool = selectionToolCycle[0];
   }
   state.drawing = null;
   state.moveCommand = null;
   state.offsetCommand = null;
+  state.selectionDrag = null;
+  state.pointer = null;
   state.selectedEndpoint = null;
   state.dimensionSnapHint = null;
   resetSnapTracking();
   hideInlineEditors();
   hideSheet(furnitureSheet);
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideSelectToolMenu();
+  hideSelectModeMenu();
   setTool("select");
-  showSelectToolMenuAfterLayout();
+  syncSelectionActions();
   statusChip.textContent = selectionStatusText();
+}
+
+function toggleMainSelectTool() {
+  state.selectTool = "select";
+  state.selectionDrag = null;
+  state.drawing = null;
+  state.moveCommand = null;
+  state.offsetCommand = null;
+  state.pointer = null;
+  state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
+  state.dimensionSnapHint = null;
+  state.dimensionPickCycle = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideSelectToolMenu();
+  hideSheet(furnitureSheet);
+  setTool("select");
+  showSelectModeMenuAfterLayout();
+  statusChip.textContent = "Выбор: тапните объект или выберите режим выделения";
 }
 
 function selectDrawTool(tool) {
@@ -3497,15 +4676,46 @@ function selectDrawTool(tool) {
   setTool("select");
 }
 
+function selectDimensionTool(tool) {
+  state.dimensionTool = tool;
+  state.drawing = null;
+  state.dimensionSnapHint = null;
+  resetSnapTracking();
+  syncDimensionToolMenu();
+  hideDimensionToolMenu();
+  setTool("dimension");
+  statusChip.textContent = dimensionToolStatusText();
+}
+
+function dimensionToolStatusText() {
+  const text = {
+    aligned: "Размер по линии: 1 начало, 2 конец, 3 положение размерной линии",
+    linear: "Линейный размер: выберите две точки, размер будет по горизонтали/вертикали",
+    angular: "Угол: выберите две линии или две стороны угла",
+    chain: "Цепочка: продолжение размеров от предыдущей точки",
+    baseline: "База: несколько размеров от общей базовой точки",
+  };
+  return text[state.dimensionTool] || text.aligned;
+}
+
 function selectSelectionTool(tool) {
-  if (tool === "filter") {
+  if (tool === "select") {
+    activatePlainSelect();
+    return;
+  }
+  if (tool === "cycle") {
+    const currentIndex = selectionToolCycle.indexOf(state.selectTool);
+    state.selectTool = currentIndex >= 0 ? selectionToolCycle[(currentIndex + 1) % selectionToolCycle.length] : selectionToolCycle[0];
+  } else if (tool === "filter") {
     state.selectionFilter = nextSelectionFilter();
   } else {
     state.selectTool = tool;
   }
   syncSelectToolMenu();
-  hideSelectToolMenu();
   setTool("select");
+  hideSelectModeMenu();
+  syncToolButtons();
+  syncSelectionActions();
   statusChip.textContent = selectionStatusText();
 }
 
@@ -3555,6 +4765,7 @@ function pushEntity(entity) {
   state.selectedId = entity.id;
   state.selectedIds = [entity.id];
   state.furnitureEditId = null;
+  markProjectDirty("add");
 }
 
 function duplicateFurnitureEntity(entity) {
@@ -3569,7 +4780,8 @@ function duplicateFurnitureEntity(entity) {
 }
 
 function createEntityFromDrawing() {
-  const { start, end } = state.drawing;
+  const { start } = state.drawing;
+  const end = dimensionAdjustedEnd(start, state.drawing.end);
   const id = `${state.tool}-${Date.now()}`;
   if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
@@ -3588,16 +4800,64 @@ function createEntityFromDrawing() {
   return line(id, start.x, start.y, end.x, end.y);
 }
 
+function angularDimensionEntity(id, vertex, arm1, arm2) {
+  return { id, type: "line", layer: "dimensions", dimensionKind: "angular", vertex, arm1, arm2 };
+}
+
+function dimensionAdjustedEnd(start, end) {
+  if (state.tool !== "dimension" || state.dimensionTool !== "linear") return end;
+  return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
+    ? { x: end.x, y: start.y }
+    : { x: start.x, y: end.y };
+}
+
+function continueDimensionAfterCreate(metrics) {
+  const previous = state.drawing;
+  if (state.dimensionTool === "chain") {
+    state.drawing = {
+      start: previous.end,
+      end: previous.end,
+      lockedEnd: false,
+      phase: "end",
+      refStart: previous.refEnd,
+      baseStart: previous.baseStart || previous.start,
+      baseRefStart: previous.baseRefStart || previous.refStart,
+    };
+    statusChip.textContent = `Цепочка ${metrics.length} мм. Поставьте следующую точку`;
+    return;
+  }
+  if (state.dimensionTool === "baseline") {
+    const baseStart = previous.baseStart || previous.start;
+    const baseRefStart = previous.baseRefStart || previous.refStart;
+    state.drawing = {
+      start: baseStart,
+      end: baseStart,
+      lockedEnd: false,
+      phase: "end",
+      refStart: baseRefStart,
+      baseStart,
+      baseRefStart,
+    };
+    statusChip.textContent = `База ${metrics.length} мм. Поставьте следующую точку`;
+    return;
+  }
+  state.drawing = null;
+}
+
 function selectLineEndpoint(endpoint) {
   const entity = state.entities.find((item) => item.id === endpoint?.entityId);
   if (!entity || entity.type === "block") return false;
   state.selectedId = entity.id;
   state.selectedIds = [entity.id];
   state.selectedEndpoint = { entityId: entity.id, point: endpoint.point };
+  state.endpointEditBefore = entityGeometry(entity);
   state.drawing = null;
   state.furnitureEditId = null;
-  updateSelectedEndpointEditors();
-  statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
+  const geometry = selectedEndpointGeometry();
+  if (geometry) centerViewOnWorldPoint(geometry.moving);
+  resetSnapTracking();
+  updateSelectedEndpointEditors(cursorWorld());
+  statusChip.textContent = "Конец линии выбран. Подведите центр к новой точке и тапните";
   draw();
   return true;
 }
@@ -3605,6 +4865,10 @@ function selectLineEndpoint(endpoint) {
 function commitCursorPoint() {
   const resolved = cursorSnapResolved();
   const world = resolved.point;
+  if (state.selectedEndpoint) {
+    commitSelectedEndpointCursorPoint();
+    return;
+  }
   if (state.offsetCommand) {
     commitOffsetCommandPoint(rawCursorWorld());
     return;
@@ -3614,11 +4878,32 @@ function commitCursorPoint() {
     return;
   }
   if (state.tool === "dimension") {
+    if (state.dimensionTool === "angular") {
+      if (!state.drawing) {
+        resetSnapTracking();
+        state.drawing = { start: world, end: world, lockedEnd: false, phase: "angular-arm1" };
+        statusChip.textContent = "Угол: поставьте точку на первой стороне";
+      } else if (state.drawing.phase === "angular-arm1") {
+        state.drawing.arm1 = world;
+        state.drawing.end = world;
+        state.drawing.phase = "angular-arm2";
+        statusChip.textContent = "Угол: поставьте точку на второй стороне";
+      } else if (state.drawing.phase === "angular-arm2") {
+        const entity = angularDimensionEntity(`dimension-${Date.now()}`, state.drawing.start, state.drawing.arm1, world);
+        pushEntity(entity);
+        state.drawing = null;
+        resetSnapTracking();
+        statusChip.textContent = "Угловой размер создан";
+      }
+      draw();
+      return;
+    }
     if (!state.drawing) {
-      state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap) };
+      resetSnapTracking();
+      state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap), baseStart: world, baseRefStart: dimensionRefFromSnap(resolved.snap) };
       statusChip.textContent = "Размер: начало поставлено. Поставьте вторую точку";
     } else if (state.drawing.phase === "end") {
-      const end = state.drawing.lockedEnd ? state.drawing.end : world;
+      const end = dimensionAdjustedEnd(state.drawing.start, state.drawing.lockedEnd ? state.drawing.end : world);
       state.drawing.end = end;
       state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
       state.drawing.lockedEnd = true;
@@ -3636,16 +4921,20 @@ function commitCursorPoint() {
       state.drawing.offset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, state.drawing.end.x, state.drawing.end.y);
       pushEntity(createEntityFromDrawing());
-      state.drawing = null;
+      continueDimensionAfterCreate(metrics);
       resetSnapTracking();
-      statusChip.textContent = `Размер ${metrics.length} мм завершен`;
+      if (!state.drawing) statusChip.textContent = `Размер ${metrics.length} мм завершен`;
     }
     draw();
     return;
   }
   if (["line", "polyline", "wall", "circle", "rectangle", "arc"].includes(state.tool)) {
     if (!state.drawing) {
-      if (state.tool === "line" || state.tool === "polyline") state.selectedEndpoint = null;
+      resetSnapTracking();
+      if (state.tool === "line" || state.tool === "polyline") {
+        state.selectedEndpoint = null;
+        state.endpointEditBefore = null;
+      }
       state.drawing = { start: world, end: world, lockedEnd: false };
       hideDrawToolMenu();
       statusChip.textContent = state.tool === "arc" ? "Дуга: укажите конечную точку" : "Начало поставлено. Подведите курсор дальше и тапните холст";
@@ -3659,7 +4948,16 @@ function commitCursorPoint() {
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
-      if (["line", "wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
+      if (finishedTool === "line") {
+        state.drawing = null;
+        state.selectedEndpoint = null;
+        state.endpointEditBefore = null;
+        resetSnapTracking();
+        hideDrawToolMenu();
+        syncToolButtons();
+        statusChip.textContent = "Линия завершена. Укажите первую точку новой линии";
+      }
+      else if (["wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
@@ -3685,6 +4983,7 @@ function commitOffsetCommandPoint(sidePoint) {
   state.entities.push(copy);
   state.undo.push({ type: "add", entity: copy });
   state.redo.length = 0;
+  markProjectDirty("offset");
   state.selectedId = copy.id;
   state.selectedIds = [copy.id];
   state.selectedEndpoint = null;
@@ -3735,13 +5034,15 @@ function commitMoveCommandPoint(world) {
   if (command.mode === "rotate") {
     const startAngle = angleBetweenPoints(command.base, command.reference);
     const endAngle = angleBetweenPoints(command.base, end);
-    rotateLinearEntityAround(entity, command.base, signedAngleDelta(startAngle, endAngle));
+    rotateEntityAround(entity, command.base, signedAngleDelta(startAngle, endAngle));
     const after = entityGeometry(entity);
     if (geometryChanged(command.before, after)) {
       state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
       state.redo.length = 0;
+      markProjectDirty("rotate");
     }
     state.moveCommand = null;
+    resetSnapTracking();
     syncCommandState();
     hideInlineEditors();
     statusChip.textContent = "Поворот применен";
@@ -3749,14 +5050,16 @@ function commitMoveCommandPoint(world) {
     return;
   }
   if (command.mode === "copy") {
-    const copy = cloneLinearEntity(entity, dx, dy);
+    const copy = cloneEntityForCommand(entity, dx, dy);
     state.entities.push(copy);
     state.undo.push({ type: "add", entity: copy });
     state.redo.length = 0;
+    markProjectDirty("copy");
     state.selectedId = copy.id;
     state.selectedIds = [copy.id];
     state.selectedEndpoint = null;
     state.moveCommand = null;
+    resetSnapTracking();
     syncCommandState();
     hideInlineEditors();
     statusChip.textContent = "Копия создана";
@@ -3768,8 +5071,10 @@ function commitMoveCommandPoint(world) {
   if (geometryChanged(command.before, after)) {
     state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
     state.redo.length = 0;
+    markProjectDirty("move-command");
   }
   state.moveCommand = null;
+  resetSnapTracking();
   syncCommandState();
   hideInlineEditors();
   statusChip.textContent = "Элемент перемещен";
@@ -3830,14 +5135,18 @@ function hitFurnitureControl(screen) {
   if (!layout) return null;
 
   if (layout.editing) {
-    if (pointDistance(screen, layout.more) <= 24) return { type: "more", entity, layout };
-    if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
-    if (pointDistance(screen, layout.duplicate) <= 24) return { type: "duplicate", entity, layout };
-    for (const handle of layout.handles) {
-      if (pointDistance(screen, handle) <= 20) {
-        return { type: "resize", corner: handle.corner, entity, layout };
+    if (state.furnitureResizeHandlesId === entity.id) {
+      for (const handle of Object.values(layout.resizeHandles)) {
+        if (pointDistance(screen, handle) <= 28) {
+          return { type: "resize-handle", axis: handle.axis, side: handle.side, entity, layout };
+        }
       }
+      return null;
     }
+    if (pointDistance(screen, layout.resizeToggle) <= 24) return { type: "resize-toggle", entity, layout };
+    if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
+    if (pointDistance(screen, layout.scale) <= 24) return { type: "scale", entity, layout };
+    if (pointDistance(screen, layout.duplicate) <= 24) return { type: "duplicate", entity, layout };
   }
   return null;
 }
@@ -3861,13 +5170,13 @@ function beginFurnitureControl(control, event, screen) {
     draw();
     return true;
   }
-  if (control.type === "more") {
+  if (control.type === "resize-toggle") {
+    state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === control.entity.id ? null : control.entity.id;
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
-    statusChip.textContent = "Действия мебели";
+    statusChip.textContent = state.furnitureResizeHandlesId ? "Размер мебели: тяните боковые ручки ширины или глубины" : "Ручки размера скрыты";
     draw();
     return true;
   }
-
   const entity = control.entity;
   const centerScreenPoint = worldToScreen({ x: entity.x, y: entity.y });
   state.pointer = {
@@ -3879,7 +5188,8 @@ function beginFurnitureControl(control, event, screen) {
     mode: control.type === "rotate" ? "furniture-rotate" : "furniture-resize",
     targetId: entity.id,
     before: entityGeometry(entity),
-    corner: control.corner,
+    resizeAxis: control.type === "scale" ? "both" : control.axis,
+    resizeSide: control.side,
     startRotation: entity.rotation || 0,
     startAngle: Math.atan2(screen.y - centerScreenPoint.y, screen.x - centerScreenPoint.x),
   };
@@ -3888,16 +5198,55 @@ function beginFurnitureControl(control, event, screen) {
 }
 
 function resizeFurnitureByPointer(entity, screen) {
-  const local = worldToBlockLocal(entity, screenToWorld(screen));
   const start = state.pointer?.before || entityGeometry(entity);
+  const local = worldToBlockLocalGeometry(start, screenToWorld(screen));
   const startWidth = Math.max(1, start?.width || entity.width || defaultBlockSize(entity.kind).width);
   const startHeight = Math.max(1, start?.height || entity.height || defaultBlockSize(entity.kind).height);
   const pointerWidth = Math.abs(local.x) * 2;
   const pointerHeight = Math.abs(local.y) * 2;
-  const scale = Math.max(pointerWidth / startWidth, pointerHeight / startHeight, 300 / startWidth, 300 / startHeight);
-  entity.width = startWidth * scale;
-  entity.height = startHeight * scale;
+  const axis = state.pointer?.resizeAxis || "both";
+  const side = state.pointer?.resizeSide || "";
+  if (axis === "width") {
+    const rawWidth = side === "left" ? startWidth / 2 - local.x : startWidth / 2 + local.x;
+    const nextWidth = snapFurnitureSize(rawWidth);
+    const delta = (nextWidth - startWidth) / 2;
+    entity.width = nextWidth;
+    entity.height = startHeight;
+    setBlockCenterFromLocalDelta(entity, start, side === "left" ? -delta : delta, 0);
+  } else if (axis === "height") {
+    const rawHeight = side === "top" ? startHeight / 2 - local.y : startHeight / 2 + local.y;
+    const nextHeight = snapFurnitureSize(rawHeight);
+    const delta = (nextHeight - startHeight) / 2;
+    entity.width = startWidth;
+    entity.height = nextHeight;
+    setBlockCenterFromLocalDelta(entity, start, 0, side === "top" ? -delta : delta);
+  } else {
+    const scale = Math.max(pointerWidth / startWidth, pointerHeight / startHeight, 300 / startWidth, 300 / startHeight);
+    entity.width = snapFurnitureSize(startWidth * scale);
+    entity.height = snapFurnitureSize(startHeight * scale);
+  }
+  markProjectDirty("furniture-resize");
   statusChip.textContent = `${Math.round(entity.width)} × ${Math.round(entity.height)} мм`;
+}
+
+function worldToBlockLocalGeometry(geometry, point) {
+  const radians = -(((geometry?.rotation || 0) * Math.PI) / 180);
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const dx = point.x - (geometry?.x || 0);
+  const dy = point.y - (geometry?.y || 0);
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos,
+  };
+}
+
+function setBlockCenterFromLocalDelta(entity, geometry, dxLocal, dyLocal) {
+  const radians = (((geometry?.rotation || entity.rotation || 0) * Math.PI) / 180);
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  entity.x = (geometry?.x || entity.x) + dxLocal * cos - dyLocal * sin;
+  entity.y = (geometry?.y || entity.y) + dxLocal * sin + dyLocal * cos;
 }
 
 function rotateFurnitureByPointer(entity, screen) {
@@ -3906,6 +5255,7 @@ function rotateFurnitureByPointer(entity, screen) {
   const delta = radToDeg(angle - state.pointer.startAngle);
   const rawRotation = normalizeDegrees(state.pointer.startRotation + delta);
   entity.rotation = state.snaps.has("polar") ? Math.round(rawRotation / 15) * 15 : Math.round(rawRotation);
+  markProjectDirty("furniture-rotate");
   statusChip.textContent = `Поворот ${Math.round(entity.rotation)}°`;
 }
 
@@ -3919,10 +5269,6 @@ function worldToBlockLocal(entity, point) {
     x: dx * cos - dy * sin,
     y: dx * sin + dy * cos,
   };
-}
-
-function normalizeDegrees(degrees) {
-  return ((degrees % 360) + 360) % 360;
 }
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -4002,24 +5348,16 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
   if (selectedLineEndpoint) {
-    const hitEntity = state.entities.find((entity) => entity.id === selectedLineEndpoint.entityId);
-    state.selectedId = selectedLineEndpoint.entityId;
-    state.selectedIds = [selectedLineEndpoint.entityId];
-    state.selectedEndpoint = selectedLineEndpoint;
-    state.furnitureEditId = null;
+    selectLineEndpoint(selectedLineEndpoint);
     state.pointer = {
       id: event.pointerId,
       screen,
       startScreen: screen,
       world: screenToWorld(screen),
-      moved: false,
-      mode: "line-endpoint",
-      targetId: selectedLineEndpoint.entityId,
-      before: hitEntity ? entityGeometry(hitEntity) : null,
+      moved: true,
+      mode: "ui",
+      targetId: null,
     };
-    updateSelectedEndpointEditors();
-    statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
-    draw();
     return;
   }
   const lineEndpoint = state.tool === "line" || state.tool === "wall" ? pickLineEndpoint(screen) : null;
@@ -4028,38 +5366,53 @@ canvas.addEventListener("pointerdown", (event) => {
     state.selectedEndpoint?.entityId === lineEndpoint.entityId &&
     state.selectedEndpoint?.point === lineEndpoint.point;
   if (editingSelectedEndpoint) {
-    const hitEntity = state.entities.find((entity) => entity.id === lineEndpoint.entityId);
-    state.selectedId = lineEndpoint.entityId;
-    state.selectedIds = [lineEndpoint.entityId];
-    state.selectedEndpoint = lineEndpoint;
-    state.furnitureEditId = null;
+    selectLineEndpoint(lineEndpoint);
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: true,
+      mode: "ui",
+      targetId: null,
+    };
+    return;
+  }
+  if (state.selectedEndpoint && state.tool === "select") {
+    const endpointGeometry = selectedEndpointGeometry();
+    if (!endpointGeometry) {
+      state.selectedEndpoint = null;
+      state.endpointEditBefore = null;
+      hideInlineEditors();
+      draw();
+      return;
+    }
     state.pointer = {
       id: event.pointerId,
       screen,
       startScreen: screen,
       world: screenToWorld(screen),
       moved: false,
-      mode: "line-endpoint",
-      targetId: lineEndpoint.entityId,
-      before: hitEntity ? entityGeometry(hitEntity) : null,
+      mode: "endpoint-place",
+      targetId: state.selectedEndpoint.entityId,
+      before: state.endpointEditBefore || entityGeometry(endpointGeometry.entity),
     };
-    updateSelectedEndpointEditors();
-    statusChip.textContent = "Конец линии выбран. Тяните точку или введите длину";
-    draw();
+    statusChip.textContent = "Конец линии: тапните, чтобы поставить новую точку";
     return;
   }
   const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
-  const canMoveFurniture = hitEntity?.type === "block" && hitId === state.selectedId && (state.tool === "select" || state.tool === "furniture");
-  const pointerMode =
-    hitEntity?.type === "block" && !canMoveFurniture
-      ? "pan"
-      : hitEntity?.layer === "dimensions"
-        ? "dimension-offset"
-        : hitId
-          ? "move"
-          : "pan";
-  const pointerTargetId = hitEntity?.type === "block" && !canMoveFurniture ? null : hitId;
+  const hitIsSelected = hitId && (state.selectedId === hitId || (state.selectedIds || []).includes(hitId));
+  const canMoveHit = Boolean(hitEntity && hitIsSelected && (state.tool === "select" || state.tool === "furniture"));
+  const pointerMode = canMoveHit
+    ? hitEntity.layer === "dimensions"
+      ? "dimension-offset"
+      : "move"
+    : "pan";
+  const pointerTargetId = canMoveHit ? hitId : null;
+  const grabOffset = hitEntity?.type === "block"
+    ? { x: screenToWorld(screen).x - hitEntity.x, y: screenToWorld(screen).y - hitEntity.y }
+    : null;
   state.pointer = {
     id: event.pointerId,
     screen,
@@ -4068,9 +5421,12 @@ canvas.addEventListener("pointerdown", (event) => {
     moved: false,
     mode: pointerMode,
     targetId: pointerTargetId,
+    tapCandidateId: hitId,
     before: pointerTargetId && hitEntity ? entityGeometry(hitEntity) : null,
+    grabOffset,
   };
-  if (hitId) {
+  scheduleSelectionLongPress(state.pointer);
+  if (canMoveHit) {
     state.dimensionPickCycle = null;
     state.selectedId = hitId;
     if (state.tool === "select" && state.selectTool !== "multi") state.selectedIds = [hitId];
@@ -4099,7 +5455,10 @@ canvas.addEventListener("pointermove", (event) => {
   if (!isDragging) return;
   const screen = getPointer(event);
   const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
-  if (travel > 3) state.pointer.moved = true;
+  if (travel > TAP_MOVE_TOLERANCE) {
+    state.pointer.moved = true;
+    clearPointerLongPress();
+  }
   if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
     updateSelectionDrag(screen);
     state.pointer.screen = screen;
@@ -4121,13 +5480,24 @@ canvas.addEventListener("pointermove", (event) => {
     const currentWorld = screenToWorld(screen);
     const entity = state.entities.find((item) => item.id === state.pointer.targetId);
     if (entity) {
-      moveEntityBy(entity, currentWorld.x - state.pointer.world.x, currentWorld.y - state.pointer.world.y);
+      const dx = currentWorld.x - state.pointer.world.x;
+      const dy = currentWorld.y - state.pointer.world.y;
+      if (entity.type === "block" && state.snaps.has("grid")) {
+        const grabOffset = state.pointer.grabOffset || { x: 0, y: 0 };
+        const nextX = snapValueToGrid(currentWorld.x - grabOffset.x);
+        const nextY = snapValueToGrid(currentWorld.y - grabOffset.y);
+        moveEntityBy(entity, nextX - entity.x, nextY - entity.y);
+      } else {
+        moveEntityBy(entity, dx, dy);
+      }
       state.pointer.world = currentWorld;
       statusChip.textContent = "Перемещение объекта";
     }
   } else if (state.pointer.mode === "line-endpoint" && state.pointer.targetId) {
     const currentWorld = screenToWorld(screen);
-    setSelectedEndpointPosition(currentWorld);
+    const geometry = selectedEndpointGeometry();
+    const snappedWorld = geometry ? resolveLineLikeSnap(currentWorld, geometry.fixed).point : currentWorld;
+    setSelectedEndpointPosition(snappedWorld);
     updateSelectedEndpointEditors();
     statusChip.textContent = "Редактирование конца линии";
   } else if (state.pointer.mode === "dimension-offset" && state.pointer.targetId) {
@@ -4148,6 +5518,7 @@ canvas.addEventListener("pointermove", (event) => {
     state.dimensionSnapHint = null;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
+    markProjectDirty("pan");
   }
   state.pointer.screen = screen;
   draw();
@@ -4158,6 +5529,7 @@ canvas.addEventListener("pointercancel", (event) => finishCanvasPointer(event, t
 
 function finishCanvasPointer(event, canceled = false) {
   const wasPinching = Boolean(state.pinch) || state.activePointers.size > 1 || state.gestureSuppressTap;
+  clearPointerLongPress();
   forgetPointer(event);
   releaseCanvasPointer(event);
   if (wasPinching) {
@@ -4199,13 +5571,20 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
       forceMoveCursorVisible();
     }
+  } else if (state.pointer?.mode === "endpoint-place") {
+    if (!canceled && !state.pointer.moved) {
+      commitSelectedEndpointCursorPoint(state.pointer.before);
+    } else {
+      draw();
+      forceMoveCursorVisible();
+    }
   } else if (state.pointer && !state.pointer.moved) {
     if (state.pointer.mode === "line-endpoint") {
       updateSelectedEndpointEditors();
       statusChip.textContent = "Конец линии выбран. Введите длину или тяните точку";
       draw();
     } else if (state.tool === "select") {
-      const hitId = state.pointer.targetId || pickEntity(state.pointer.startScreen);
+      const hitId = state.pointer.tapCandidateId || state.pointer.targetId || pickEntity(state.pointer.startScreen);
       const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
       state.selectedId = hitId;
       state.furnitureEditId = null;
@@ -4220,9 +5599,9 @@ function finishCanvasPointer(event, canceled = false) {
       }
       draw();
     } else if (state.tool === "furniture") {
-      const hitId = state.pointer.targetId || pickFurnitureEntity(state.pointer.startScreen);
+      const hitId = state.pointer.tapCandidateId || state.pointer.targetId || pickFurnitureEntity(state.pointer.startScreen);
       state.furnitureEditId = null;
-      state.selectedId = hitId;
+      setSelection(hitId);
       statusChip.textContent = hitId ? "Мебель выбрана: двигайте пальцем, тяните углы или крутите" : "Перетащите блок из библиотеки на план";
       draw();
     } else {
@@ -4233,6 +5612,12 @@ function finishCanvasPointer(event, canceled = false) {
   }
   state.pointer = null;
   state.dimensionSnapHint = null;
+  if (state.openEditMenuAfterPointer) {
+    state.openEditMenuAfterPointer = false;
+    if (selectedEntities().length) {
+      showSelectToolMenuAfterLayout();
+    }
+  }
   if (state.activePointers.size === 0) {
     state.gestureSuppressTap = false;
   }
@@ -4249,6 +5634,7 @@ function finishPointerMoveUndo() {
     if (geometryChanged(state.pointer.before, after)) {
       state.undo.push({ type: "move", entityId: entity.id, before: state.pointer.before, after });
       state.redo.length = 0;
+      markProjectDirty("pointer-move");
       statusChip.textContent = "Элемент перемещен";
     }
   }
@@ -4278,12 +5664,14 @@ function moveEntityBy(entity, dx, dy) {
   if (entity.type === "block") {
     entity.x += dx;
     entity.y += dy;
+    markProjectDirty("move");
     return;
   }
   entity.x1 += dx;
   entity.y1 += dy;
   entity.x2 += dx;
   entity.y2 += dy;
+  markProjectDirty("move");
 }
 
 function cloneLinearEntity(entity, dx = 260, dy = 260) {
@@ -4294,6 +5682,16 @@ function cloneLinearEntity(entity, dx = 260, dy = 260) {
     return copy;
   }
   return line(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer || "measure");
+}
+
+function cloneEntityForCommand(entity, dx = 260, dy = 260) {
+  if (entity.type === "block") {
+    const size = entitySize(entity);
+    const copy = block(`${entity.kind}-${Date.now()}`, entity.kind, entity.x + dx, entity.y + dy, entity.rotation || 0, size);
+    copy.scale = entity.scale || 1;
+    return copy;
+  }
+  return cloneLinearEntity(entity, dx, dy);
 }
 
 function rotateLinearEntity90(entity) {
@@ -4314,6 +5712,17 @@ function rotateLinearEntityAround(entity, base, radians) {
   entity.y1 = p1.y;
   entity.x2 = p2.x;
   entity.y2 = p2.y;
+}
+
+function rotateEntityAround(entity, base, radians) {
+  if (entity.type === "block") {
+    const center = rotatePointAround({ x: entity.x, y: entity.y }, base, radians);
+    entity.x = center.x;
+    entity.y = center.y;
+    entity.rotation = normalizeDegrees((entity.rotation || 0) + radToDeg(radians));
+    return;
+  }
+  rotateLinearEntityAround(entity, base, radians);
 }
 
 function mirrorLinearEntity(entity) {
@@ -4409,6 +5818,7 @@ function moveDimensionHandle(entity, endpoint, handlePoint) {
     { x: entity.x2, y: entity.y2 },
     endpoint === "start" ? { x: entity.dimX1, y: entity.dimY1 } : { x: entity.dimX2, y: entity.dimY2 },
   );
+  markProjectDirty("dimension-handle");
 }
 
 function snapDimensionHandleToParallel(entity, point, axis) {
@@ -4489,6 +5899,7 @@ function entityGeometry(entity) {
 function applyEntityGeometry(entity, geometry) {
   if (!entity || !geometry) return;
   Object.assign(entity, geometry);
+  markProjectDirty("geometry");
 }
 
 function geometryChanged(before, after) {
@@ -4592,16 +6003,6 @@ function distanceToEntityScreen(screen, entity) {
 }
 function angleOnArc(angle, startAngle, endAngle, counterClockwise) { const span = counterClockwise ? normalizeAnglePositive(endAngle - startAngle) : normalizeAnglePositive(startAngle - endAngle); const delta = counterClockwise ? normalizeAnglePositive(angle - startAngle) : normalizeAnglePositive(startAngle - angle); return delta <= span + 0.05; }
 
-function pointToSegmentDistance(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const lengthSq = dx * dx + dy * dy || 1;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
-  const x = a.x + t * dx;
-  const y = a.y + t * dy;
-  return Math.hypot(p.x - x, p.y - y);
-}
-
 tools.forEach((button) => {
   button.addEventListener("click", () => {
     const tool = button.dataset.tool;
@@ -4609,8 +6010,12 @@ tools.forEach((button) => {
       activateDrawToolMenu();
       return;
     }
+    if (tool === "dimension") {
+      activateDimensionToolMenu();
+      return;
+    }
     if (tool === "select") {
-      activatePlainSelect();
+      toggleMainSelectTool();
       return;
     }
     if (tool === "selection") {
@@ -4618,6 +6023,7 @@ tools.forEach((button) => {
       return;
     }
     hideDrawToolMenu();
+    hideDimensionToolMenu();
     hideSelectToolMenu();
     setTool(tool);
     if (tool === "furniture") {
@@ -4632,6 +6038,25 @@ drawToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-draw-tool]");
   if (!button) return;
   selectDrawTool(button.dataset.drawTool);
+});
+
+dimensionToolMenu?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-dimension-tool]");
+  if (!button) return;
+  selectDimensionTool(button.dataset.dimensionTool);
+});
+
+selectModeMenu?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-select-mode]");
+  if (!button) return;
+  const mode = button.dataset.selectMode;
+  if (mode === "select") {
+    activatePlainSelect();
+  } else if (mode === "filter") {
+    selectSelectionTool("filter");
+  } else {
+    selectSelectionTool(mode);
+  }
 });
 
 selectToolMenu?.addEventListener("click", (event) => {
@@ -4649,6 +6074,7 @@ snaps.forEach((button) => {
       state.snaps.add(snap);
     }
     button.classList.toggle("active", state.snaps.has(snap));
+    markProjectDirty("snaps");
     const names = {
       grid: "Сетка",
       end: "Конец",
@@ -4873,6 +6299,7 @@ furnitureTabs.forEach((button) => {
     state.furnitureCategory = firstFurnitureCategoryForTab(state.furnitureTab);
     renderFurnitureCategories();
     renderFurnitureLibrary();
+    markProjectDirty("furniture-tab");
   });
 });
 
@@ -4882,43 +6309,66 @@ furnitureCatsNav.addEventListener("click", (event) => {
     state.furnitureCategory = button.dataset.category;
     renderFurnitureCategories();
     renderFurnitureLibrary();
+    markProjectDirty("furniture-category");
   }
 });
 
 lengthInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
-  applyInlineValue("length");
+  applyInlineValue("length", { recordUndo: false });
   lengthInput.blur();
 });
 angleInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
-  applyInlineValue("angle");
+  applyInlineValue("angle", { recordUndo: false });
   angleInput.blur();
 });
-lengthInput.addEventListener("input", () => syncInlineEditorWidth(lengthInput));
-angleInput.addEventListener("input", () => syncInlineEditorWidth(angleInput));
-lengthInput.addEventListener("blur", () => applyInlineValue("length"));
-angleInput.addEventListener("blur", () => applyInlineValue("angle"));
+lengthInput.addEventListener("input", () => {
+  syncInlineEditorWidth(lengthInput);
+  applyInlineValue("length", { recordUndo: false });
+  positionKeyboardConfirmButton();
+});
+angleInput.addEventListener("input", () => {
+  syncInlineEditorWidth(angleInput);
+  applyInlineValue("angle", { recordUndo: false });
+  positionKeyboardConfirmButton();
+});
+lengthInput.addEventListener("blur", () => {
+  applyInlineValue("length", { recordUndo: false });
+  commitNumericInputEdit();
+});
+angleInput.addEventListener("blur", () => {
+  applyInlineValue("angle", { recordUndo: false });
+  commitNumericInputEdit();
+});
 topLengthInput?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
-  applyTopMetricValue("length");
+  applyTopMetricValue("length", { recordUndo: false });
   topLengthInput.blur();
 });
 topAngleInput?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
-  applyTopMetricValue("angle");
+  applyTopMetricValue("angle", { recordUndo: false });
   topAngleInput.blur();
 });
 topLengthInput?.addEventListener("input", () => {
   syncInlineEditorWidth(topLengthInput);
-  applyTopMetricValue("length");
+  applyTopMetricValue("length", { recordUndo: false });
+  positionKeyboardConfirmButton();
 });
 topAngleInput?.addEventListener("input", () => {
   syncInlineEditorWidth(topAngleInput);
-  applyTopMetricValue("angle");
+  applyTopMetricValue("angle", { recordUndo: false });
+  positionKeyboardConfirmButton();
 });
-topLengthInput?.addEventListener("blur", () => applyTopMetricValue("length"));
-topAngleInput?.addEventListener("blur", () => applyTopMetricValue("angle"));
+topLengthInput?.addEventListener("blur", () => {
+  applyTopMetricValue("length", { recordUndo: false });
+  commitNumericInputEdit();
+});
+topAngleInput?.addEventListener("blur", () => {
+  applyTopMetricValue("angle", { recordUndo: false });
+  commitNumericInputEdit();
+});
 
 selectionActions?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
@@ -4926,19 +6376,39 @@ selectionActions?.addEventListener("click", (event) => {
   applySelectionAction(button.dataset.action);
 });
 
+keyboardConfirmButton?.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  confirmKeyboardInput();
+});
+
+keyboardConfirmButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+});
+
 [furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].forEach((input) => {
   input?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
-    applyFurnitureSizeInput();
+    applyFurnitureSizeInput({ recordUndo: false });
     input.blur();
   });
-  input?.addEventListener("blur", applyFurnitureSizeInput);
+  input?.addEventListener("input", () => {
+    applyFurnitureSizeInput({ recordUndo: false });
+    positionKeyboardConfirmButton();
+  });
+  input?.addEventListener("blur", () => {
+    applyFurnitureSizeInput({ recordUndo: false });
+    commitNumericInputEdit();
+  });
 });
 
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {
     shell.classList.add("input-focused");
+    beginNumericInputEdit();
     selectInlineValue(input);
+    if (keyboardConfirmButton) keyboardConfirmButton.hidden = false;
+    positionKeyboardConfirmButton();
     window.setTimeout(updateViewportLock, 40);
     window.setTimeout(updateViewportLock, 260);
   });
@@ -4956,6 +6426,11 @@ themeButton.addEventListener("click", () => {
   draw();
 });
 
+annotationScaleSelect?.addEventListener("change", () => {
+  setAnnotationScale(annotationScaleSelect.value);
+  statusChip.textContent = `Масштаб аннотаций ${annotationScaleSelect.selectedOptions[0]?.textContent || "1:100"}`;
+});
+
 document.getElementById("undoButton").addEventListener("click", () => {
   const action = state.undo.pop();
   if (!action) return;
@@ -4963,6 +6438,7 @@ document.getElementById("undoButton").addEventListener("click", () => {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
     state.redo.push(action);
     setSelection(state.entities.at(-1)?.id || null);
+    markProjectDirty("undo-add");
     draw();
   } else if (action.type === "move") {
     const entity = state.entities.find((item) => item.id === action.entityId);
@@ -4974,8 +6450,24 @@ document.getElementById("undoButton").addEventListener("click", () => {
     state.entities.splice(action.index, 0, action.entity);
     state.redo.push(action);
     setSelection(action.entity.id);
+    markProjectDirty("undo-delete");
+    draw();
+  } else if (action.type === "delete-many") {
+    for (const item of action.items) {
+      state.entities.splice(item.index, 0, item.entity);
+    }
+    state.redo.push(action);
+    setSelection(action.items.map((item) => item.entity.id));
+    markProjectDirty("undo-delete-many");
     draw();
   }
+});
+
+document.addEventListener("focusin", (event) => {
+  if (!keyboardInputs.includes(event.target)) return;
+  shell.classList.add("input-focused");
+  if (keyboardConfirmButton) keyboardConfirmButton.hidden = false;
+  positionKeyboardConfirmButton();
 });
 
 document.getElementById("redoButton").addEventListener("click", () => {
@@ -4985,6 +6477,7 @@ document.getElementById("redoButton").addEventListener("click", () => {
     state.entities.push(action.entity);
     state.undo.push(action);
     setSelection(action.entity.id);
+    markProjectDirty("redo-add");
     draw();
   } else if (action.type === "move") {
     const entity = state.entities.find((item) => item.id === action.entityId);
@@ -4996,6 +6489,14 @@ document.getElementById("redoButton").addEventListener("click", () => {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
     state.undo.push(action);
     setSelection(null);
+    markProjectDirty("redo-delete");
+    draw();
+  } else if (action.type === "delete-many") {
+    const ids = new Set(action.items.map((item) => item.entity.id));
+    state.entities = state.entities.filter((entity) => !ids.has(entity.id));
+    state.undo.push(action);
+    setSelection(null);
+    markProjectDirty("redo-delete-many");
     draw();
   }
 });
@@ -5129,6 +6630,7 @@ function renderLayerList() {
       }
       draw();
       renderLayerList();
+      markProjectDirty("layers");
       statusChip.textContent = `${meta.name}: ${input.checked ? "включен" : "скрыт"}`;
     });
     layerList.appendChild(item);
@@ -5143,118 +6645,31 @@ window.addEventListener("orientationchange", () => {
 window.addEventListener("scroll", lockDocumentScroll, { passive: true });
 window.visualViewport?.addEventListener("resize", updateViewportLock);
 window.visualViewport?.addEventListener("scroll", updateViewportLock);
+window.addEventListener("beforeunload", flushProjectBeforeUnload);
+new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) normalizeDynamicText(node);
+    normalizeTextNode(mutation.target);
+  }
+}).observe(document.body, { childList: true, characterData: true, subtree: true });
 updateViewportLock();
+setAnnotationScale(state.annotationScale, { save: false });
 loadFurnitureLibrary();
-setTool("line");
+prepareSelectMenuStructure();
+setTool("select");
+loadProjectFromServer();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
   entityCount: () => state.entities.length,
+  tool: () => state.tool,
+  drawing: () => Boolean(state.drawing),
+  recentEntities: (limit = 5) => state.entities.slice(-limit).map((entity) => ({
+    id: entity.id,
+    type: entity.type,
+    layer: entity.layer,
+  })),
+  saveNow: saveProjectNow,
 };
-
-function buildDxf(entities) {
-  const lines = [
-    "0", "SECTION",
-    "2", "HEADER",
-    "9", "$INSUNITS",
-    "70", "4",
-    "0", "ENDSEC",
-    "0", "SECTION",
-    "2", "TABLES",
-    "0", "TABLE",
-    "2", "LAYER",
-    "70", "4",
-    ...dxfLayer("walls", 7),
-    ...dxfLayer("dimensions", 5),
-    ...dxfLayer("furniture", 3),
-    ...dxfLayer("measure", 4),
-    "0", "ENDTAB",
-    "0", "ENDSEC",
-    "0", "SECTION",
-    "2", "ENTITIES",
-  ];
-
-  for (const entity of entities) {
-    if (entity.type === "wall") {
-      const offset = offsetWall(entity, entity.width / 2);
-      lines.push(...dxfLine(offset.a.x1, offset.a.y1, offset.a.x2, offset.a.y2, "walls"));
-      lines.push(...dxfLine(offset.b.x1, offset.b.y1, offset.b.x2, offset.b.y2, "walls"));
-      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, "walls"));
-    } else if (entity.type === "line") {
-      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, entity.layer));
-    } else if (entity.type === "block") {
-      for (const segment of blockSegments(entity)) {
-        lines.push(...dxfLine(segment.x1, segment.y1, segment.x2, segment.y2, "furniture"));
-      }
-    }
-  }
-
-  lines.push("0", "ENDSEC", "0", "EOF");
-  return `${lines.join("\n")}\n`;
-}
-
-function dxfLayer(name, color) {
-  return ["0", "LAYER", "2", name, "70", "0", "62", String(color), "6", "CONTINUOUS"];
-}
-
-function dxfLine(x1, y1, x2, y2, layer) {
-  return [
-    "0", "LINE",
-    "8", layer || "measure",
-    "10", roundDxf(x1),
-    "20", roundDxf(-y1),
-    "30", "0",
-    "11", roundDxf(x2),
-    "21", roundDxf(-y2),
-    "31", "0",
-  ];
-}
-
-function dxfCircle(cx, cy, radius, layer) { return ["0", "CIRCLE", "8", layer || "measure", "10", roundDxf(cx), "20", roundDxf(-cy), "30", "0", "40", roundDxf(Math.abs(radius))]; }
-function dxfArc(arc, layer) { let startDeg = normalizeDegrees(radToDeg(-arc.startAngle)); let endDeg = normalizeDegrees(radToDeg(-arc.endAngle)); if (arc.counterClockwise) [startDeg, endDeg] = [endDeg, startDeg]; return ["0", "ARC", "8", layer || "measure", "10", roundDxf(arc.center.x), "20", roundDxf(-arc.center.y), "30", "0", "40", roundDxf(arc.radius), "50", roundDxf(startDeg), "51", roundDxf(endDeg)]; }
-
-function roundDxf(value) {
-  return String(Math.round(value * 1000) / 1000);
-}
-
-function offsetWall(entity, distance) {
-  const dx = entity.x2 - entity.x1;
-  const dy = entity.y2 - entity.y1;
-  const length = Math.hypot(dx, dy) || 1;
-  const nx = (-dy / length) * distance;
-  const ny = (dx / length) * distance;
-  return {
-    a: { x1: entity.x1 + nx, y1: entity.y1 + ny, x2: entity.x2 + nx, y2: entity.y2 + ny },
-    b: { x1: entity.x1 - nx, y1: entity.y1 - ny, x2: entity.x2 - nx, y2: entity.y2 - ny },
-  };
-}
-
-function blockSegments(entity) {
-  const size = entitySize(entity);
-  const w = size.width;
-  const h = size.height;
-  const corners = [
-    transformBlockPoint(entity, -w / 2, -h / 2),
-    transformBlockPoint(entity, w / 2, -h / 2),
-    transformBlockPoint(entity, w / 2, h / 2),
-    transformBlockPoint(entity, -w / 2, h / 2),
-  ];
-  return [
-    { x1: corners[0].x, y1: corners[0].y, x2: corners[1].x, y2: corners[1].y },
-    { x1: corners[1].x, y1: corners[1].y, x2: corners[2].x, y2: corners[2].y },
-    { x1: corners[2].x, y1: corners[2].y, x2: corners[3].x, y2: corners[3].y },
-    { x1: corners[3].x, y1: corners[3].y, x2: corners[0].x, y2: corners[0].y },
-  ];
-}
-
-function transformBlockPoint(entity, x, y) {
-  const radians = (entity.rotation * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  return {
-    x: entity.x + x * cos - y * sin,
-    y: entity.y + x * sin + y * cos,
-  };
-}
 
 function downloadFile(filename, content, mimeType) {
   const blob = new Blob([content], { type: mimeType });

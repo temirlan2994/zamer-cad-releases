@@ -4,7 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=66" />
+    <link rel="stylesheet" href="./styles.css?v=83" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Замер" />
+    <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
   </head>
   <body>
     <main class="app-shell" data-theme="light">
@@ -13,6 +21,15 @@
           <strong>Замер квартиры</strong>
           <span>ММ • 1:50</span>
         </div>
+        <label class="annotation-scale-control" title="Annotation scale">
+          <span>A</span>
+          <select id="annotationScaleSelect" aria-label="Annotation scale">
+            <option value="0.85">1:50</option>
+            <option value="1" selected>1:100</option>
+            <option value="1.15">1:150</option>
+            <option value="1.3">1:200</option>
+          </select>
+        </label>
         <button class="icon-button" id="undoButton" title="Отмена" aria-label="Отмена">↶</button>
         <button class="icon-button" id="redoButton" title="Повтор" aria-label="Повтор">↷</button>
         <button class="icon-button" id="layersButton" title="Слои" aria-label="Слои">▤</button>
@@ -22,17 +39,16 @@
 
       <section class="snap-panel" aria-label="Привязки черчения">
         <div class="snap-row" aria-label="Привязки">
-          <button class="snap active" data-snap="grid">Сетка</button>
-          <button class="snap active" data-snap="end">Конец</button>
-          <button class="snap" data-snap="mid">Середина</button>
-          <button class="snap icon-snap active" data-snap="polar" title="Оси и углы 0/45/90°" aria-label="Оси и углы">Оси</button>
+          <button class="snap icon-snap active" data-snap="grid" title="Сетка" aria-label="Сетка">⊞</button>
+          <button class="snap icon-snap active" data-snap="end" title="Конец" aria-label="Конец"><span class="snap-symbol snap-end-symbol" aria-hidden="true"></span></button>
+          <button class="snap icon-snap" data-snap="mid" title="Середина" aria-label="Середина"><span class="snap-symbol snap-mid-symbol" aria-hidden="true"></span></button>
+          <button class="snap icon-snap active" data-snap="polar" title="Оси и углы 0/45/90°" aria-label="Оси и углы">∠</button>
         </div>
       </section>
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
           <button class="tool active" data-tool="select"><span>↖</span><small>Выбор</small></button>
-          <button class="tool" data-tool="selection"><span>▣</span><small>Выдел.</small></button>
           <button class="tool" data-tool="line"><span>╱</span><small>Линия</small></button>
           <button class="tool" data-tool="wall"><span>▌</span><small>Стена</small></button>
           <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
@@ -84,18 +100,15 @@
             <span>°</span>
           </label>
         </div>
-        <div class="selection-actions" id="selectionActions" hidden>
-          <button data-action="move">↕<span>Переместить</span></button>
-          <button data-action="copy">⧉<span>Копия</span></button>
-          <button data-action="rotate">↻<span>Поворот</span></button>
-          <button data-action="mirror">⇆<span>Зеркало</span></button>
-          <button data-action="offset">∥<span>Смещение</span></button>
-          <button data-action="delete">⌫<span>Удалить</span></button>
-        </div>
+        <button class="keyboard-confirm" id="keyboardConfirmButton" type="button" title="Подтвердить ввод" aria-label="Подтвердить ввод" hidden>✓</button>
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" hidden>
-          <button data-select-tool="window"><span>▣</span><small>Рамка</small></button>
-          <button data-select-tool="lasso"><span>⌁</span><small>Лассо</small></button>
-          <button data-select-tool="multi"><span>＋</span><small>Мульти</small></button>
+          <button data-select-tool="cycle"><span>▣</span><small>Рамка</small></button>
+          <button data-action="move"><span>↕</span><small>Переместить</small></button>
+          <button data-action="delete"><span>⌫</span><small>Удалить</small></button>
+          <button data-action="copy"><span>⧉</span><small>Копия</small></button>
+          <button data-action="rotate"><span>↻</span><small>Поворот</small></button>
+          <button data-action="mirror"><span>⇆</span><small>Зеркало</small></button>
+          <button data-action="offset"><span>∥</span><small>Смещение</small></button>
           <button data-select-tool="filter"><span>⛃</span><small>Фильтр</small></button>
         </div>
         <div class="draw-tool-menu" id="drawToolMenu" hidden>
@@ -166,7 +179,16 @@
       </section>
     </main>
 
-    <script src="./app.js?v=74"></script>
+    <script type="module" src="./app.js?v=154"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("./sw.js").catch(function (error) {
+            console.warn("Service worker registration failed", error);
+          });
+        });
+      }
+    </script>
 
   </body>
 </html>

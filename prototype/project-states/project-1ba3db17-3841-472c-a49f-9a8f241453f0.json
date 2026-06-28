@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "clientId": "1ba3db17-3841-472c-a49f-9a8f241453f0",
+  "theme": "dark",
+  "view": {
+    "scale": 0.03756153927643707,
+    "panX": -212.73164787237255,
+    "panY": 1262.242711976934
+  },
+  "snaps": [
+    "grid",
+    "end",
+    "polar"
+  ],
+  "visibleLayers": [
+    "walls",
+    "dimensions",
+    "furniture",
+    "measure"
+  ],
+  "selectionFilter": "lines",
+  "furnitureTab": "furniture",
+  "furnitureCategory": "sofas",
+  "furnitureSheetPosition": "half",
+  "entities": [
+    {
+      "id": "sofa-1782402184072",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 23150,
+      "y": -1250,
+      "rotation": 0,
+      "scale": 1,
+      "width": 3800,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782402191347",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": -18075,
+      "y": -1249.999999999993,
+      "rotation": 360,
+      "scale": 1,
+      "width": 2900,
+      "height": 1150
+    },
+    {
+      "id": "wall-1782402479932",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 1900,
+      "y1": 1350,
+      "x2": 1900.0000000000005,
+      "y2": -6807.5118755659805,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402484492",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 1900,
+      "y1": 1350,
+      "x2": 5881.519810323691,
+      "y2": 1350,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402493878",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 5881.519810323691,
+      "y1": 1350,
+      "x2": 5881.519810323692,
+      "y2": -6674.887368108743,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402497390",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 5881.519810323692,
+      "y1": -6674.887368108743,
+      "x2": 1900.0000000000005,
+      "y2": -6807.5118755659805,
+      "width": 180
+    },
+    {
+      "id": "sofa-1782402501909",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 4100,
+      "y": 800,
+      "rotation": 180,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782402515257",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 2500,
+      "y": -800,
+      "rotation": 270,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "door-1782402581731",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "door",
+      "x": 7000,
+      "y": -3000,
+      "rotation": 0,
+      "scale": 1,
+      "width": 700,
+      "height": 700
+    },
+    {
+      "id": "sofa-1782402670528",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 4200,
+      "y": -2000,
+      "rotation": 90,
+      "scale": 1,
+      "width": 3200,
+      "height": 1400
+    },
+    {
+      "id": "sofa-1782402725836",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 2500,
+      "y": -4000,
+      "rotation": 270,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "dimension-1782402769383",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 5200,
+      "y1": 1275,
+      "x2": 3000,
+      "y2": 1275,
+      "offset": -675,
+      "refStart": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-0"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-1"
+      },
+      "dimX1": 5200,
+      "dimY1": 1950,
+      "dimX2": 3000,
+      "dimY2": 1950
+    },
+    {
+      "id": "dimension-1782402783513",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 3300,
+      "y1": 2350,
+      "x2": 1324.1166133284064,
+      "y2": 2517.4995473374756,
+      "offset": -2474.4696551789407,
+      "refEnd": null,
+      "dimX1": 4029.9981563549363,
+      "dimY1": 4234.504702130038,
+      "dimX2": 2255.5018706216706,
+      "dimY2": 4921.8890400835435
+    },
+    {
+      "id": "dimension-1782402789596",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 3000,
+      "y1": 325.0000000000001,
+      "x2": 2975,
+      "y2": -1900,
+      "offset": -1581.0799753770357,
+      "refStart": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-2"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402515257",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1419.0198182277204,
+      "dimY1": 342.7638222671044,
+      "dimX2": 1394.0198182277204,
+      "dimY2": -1882.2361777328958
+    },
+    {
+      "id": "dimension-1782402793880",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 2975,
+      "y1": -2900,
+      "x2": 2975,
+      "y2": -1900,
+      "offset": 1575,
+      "refStart": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-3"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402515257",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1400,
+      "dimY1": -2900,
+      "dimX2": 1400,
+      "dimY2": -1900
+    },
+    {
+      "id": "dimension-1782402811847",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 2975,
+      "y1": -2900,
+      "x2": 2975,
+      "y2": -5100,
+      "offset": -1525,
+      "refStart": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-3"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1450,
+      "dimY1": -2900,
+      "dimX2": 1450,
+      "dimY2": -5100
+    },
+    {
+      "id": "dimension-1782402814918",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 1450,
+      "y1": 50,
+      "x2": 1900,
+      "y2": 1350,
+      "offset": 1253.9238282188057,
+      "refEnd": {
+        "entityId": "wall-1782402479932",
+        "pointKey": "start"
+      },
+      "dimX1": 265.05944517833404,
+      "dimY1": 460.17173051519205,
+      "dimX2": 715.059445178334,
+      "dimY2": 1760.171730515192
+    },
+    {
+      "id": "sofa-1782403500147",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 9200,
+      "y": -3300,
+      "rotation": 360,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782404959692",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 10800,
+      "y": -1700,
+      "rotation": 90,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782404967558",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 9200,
+      "y": -100,
+      "rotation": 180,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "polyline-1782410065073",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7300,
+      "y1": -19450,
+      "x2": 7300,
+      "y2": -23650
+    },
+    {
+      "id": "polyline-1782410123182",
+      "type": "line",
+      "layer": "measure",
+      "x1": 6100.000000000074,
+      "y1": 1176850,
+      "x2": 6100.000000000143,
+      "y2": 42499.681535725715
+    },
+    {
+      "id": "polyline-1782410426310",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7300,
+      "y1": -19450,
+      "x2": 8500,
+      "y2": -19450
+    },
+    {
+      "id": "polyline-1782410799339",
+      "type": "line",
+      "layer": "measure",
+      "x1": 8500,
+      "y1": -19450,
+      "x2": 8500,
+      "y2": -24550
+    }
+  ],
+  "savedAt": "2026-06-25T18:06:42.342Z"
+}

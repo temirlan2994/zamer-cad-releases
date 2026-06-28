@@ -74,7 +74,7 @@ input {
   border-bottom: 1px solid var(--border);
   display: grid;
   gap: 6px;
-  grid-template-columns: 1fr 38px 38px 38px 38px 38px;
+  grid-template-columns: 1fr 72px 38px 38px 38px 38px 38px;
   padding: 8px 10px;
 }
 
@@ -127,6 +127,38 @@ input {
   color: white;
 }
 
+.annotation-scale-control {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  display: inline-flex;
+  gap: 3px;
+  height: 38px;
+  min-width: 0;
+  padding: 0 5px;
+}
+
+.annotation-scale-control span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.annotation-scale-control select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+  width: 48px;
+}
+
 .snap-panel {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -136,6 +168,7 @@ input {
 }
 
 .snap-panel .snap-row {
+  justify-content: center;
   min-width: 0;
   width: 100%;
 }
@@ -150,8 +183,10 @@ input {
 #cadCanvas {
   display: block;
   height: 100%;
+  position: relative;
   touch-action: none;
   width: 100%;
+  z-index: 2;
 }
 
 .tool-rail {
@@ -162,7 +197,7 @@ input {
   box-shadow: 0 -10px 26px color-mix(in srgb, #000000 12%, transparent);
   display: grid;
   gap: 3px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   left: 0;
   padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
   position: absolute;
@@ -180,6 +215,10 @@ input {
   justify-items: center;
   padding: 4px;
   width: 100%;
+}
+
+.tool[hidden] {
+  display: none;
 }
 
 .tool span {
@@ -234,9 +273,18 @@ input {
   padding: 4px;
 }
 
+.draw-tool-menu button[hidden] {
+  display: none;
+}
+
 .draw-tool-menu button.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.draw-tool-menu button:disabled {
+  color: var(--muted);
+  opacity: 0.42;
 }
 
 .draw-tool-menu span {
@@ -360,7 +408,28 @@ input {
 }
 
 .select-tool-menu {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.select-tool-menu::-webkit-scrollbar {
+  display: none;
+}
+
+.select-tool-menu button {
+  flex: 0 0 76px;
+  min-width: 76px;
+}
+
+.select-mode-menu {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  left: 8px;
+  max-width: none;
+  right: 8px;
+  width: calc(100% - 16px);
 }
 
 .furniture-size-panel[hidden] {
@@ -404,6 +473,7 @@ input {
 }
 
 .center-cursor {
+  display: none;
   height: 72px;
   left: 50%;
   opacity: 1;
@@ -414,7 +484,7 @@ input {
   transition: opacity 120ms ease, visibility 120ms ease;
   visibility: visible;
   width: 72px;
-  z-index: 4;
+  z-index: 1;
 }
 
 .app-shell[data-tool="select"] .center-cursor,
@@ -439,8 +509,8 @@ input {
 }
 
 .cursor-line {
-  background: var(--accent);
-  opacity: 0.9;
+  background: color-mix(in srgb, #d45a5a 62%, var(--muted));
+  opacity: 0.52;
 }
 
 .cursor-line.horizontal {
@@ -455,9 +525,10 @@ input {
 
 .cursor-ring {
   background: color-mix(in srgb, var(--surface) 80%, transparent);
-  border: 2px solid var(--accent);
+  border: 2px solid color-mix(in srgb, #d45a5a 62%, var(--muted));
   border-radius: 50%;
   height: 14px;
+  opacity: 0.62;
   width: 14px;
 }
 
@@ -515,6 +586,40 @@ input {
   background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 10px 26px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.keyboard-confirm[hidden] {
+  display: none;
+}
+
+.keyboard-confirm {
+  align-items: center;
+  background: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 80%, #ffffff 20%);
+  border-radius: 999px;
+  bottom: calc(var(--confirm-keyboard-inset, var(--keyboard-inset, 0px)) + 10px + env(safe-area-inset-bottom));
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 28%, #000000 20%);
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 1.32rem;
+  font-weight: 900;
+  height: 46px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 12px;
+  touch-action: manipulation;
+  width: 46px;
+  z-index: 80;
+}
+
+.keyboard-confirm.near-input {
+  bottom: auto;
+  right: auto;
+}
+
+.keyboard-confirm:active {
+  transform: translateY(1px) scale(0.98);
 }
 
 .selection-actions[hidden] {
@@ -594,11 +699,57 @@ input {
 .snap.icon-snap {
   align-items: center;
   display: inline-flex;
-  font-size: 1rem;
+  font-size: 1.08rem;
   font-weight: 900;
+  height: 34px;
   justify-content: center;
-  min-width: 38px;
-  padding-inline: 10px;
+  min-width: 42px;
+  padding: 0;
+}
+
+.snap-symbol {
+  color: currentColor;
+  display: block;
+  height: 20px;
+  position: relative;
+  width: 28px;
+}
+
+.snap-symbol::before {
+  background: currentColor;
+  content: "";
+  height: 2px;
+  left: 4px;
+  position: absolute;
+  top: 9px;
+}
+
+.snap-symbol::after {
+  background: var(--surface-2);
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  box-sizing: border-box;
+  content: "";
+  height: 9px;
+  position: absolute;
+  top: 5.5px;
+  width: 9px;
+}
+
+.snap-end-symbol::before {
+  width: 10px;
+}
+
+.snap-end-symbol::after {
+  left: 13px;
+}
+
+.snap-mid-symbol::before {
+  width: 20px;
+}
+
+.snap-mid-symbol::after {
+  left: 9.5px;
 }
 
 .snap.active,
