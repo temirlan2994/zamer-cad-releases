@@ -89,7 +89,7 @@ const cp1251Chars =
   "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" +
   "абвгдежзийклмнопрстуфхцчшщъыьэюя";
 const cp1251ByteByChar = new Map([...cp1251Chars].map((char, index) => [char, index + 0x80]));
-const trackingHoverDelayMs = 520;
+const trackingHoverDelayMs = 2000;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
@@ -1073,6 +1073,10 @@ function selectedEntities() {
     .filter(Boolean);
 }
 
+function canShowEntitySelection() {
+  return state.tool === "select" || state.tool === "furniture";
+}
+
 function setSelection(ids, options = {}) {
   const nextIds = Array.isArray(ids) ? ids.filter(Boolean) : ids ? [ids] : [];
   if (options.toggle) {
@@ -1503,7 +1507,7 @@ function drawLineEntity(entity, c) {
   }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
   const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
   if (shouldGhostEntityForCommand(entity)) {
     ctx.globalAlpha = 0.28;
@@ -1520,7 +1524,7 @@ function drawLineEntity(entity, c) {
 
 function drawCircleEntity(entity, c) {
   const center = worldToScreen({ x: entity.cx, y: entity.cy });
-  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
@@ -1536,7 +1540,7 @@ function drawCircleEntity(entity, c) {
 
 function drawRectangleEntity(entity, c) {
   const corners = rectangleCorners(entity);
-  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
@@ -1556,7 +1560,7 @@ function drawArcEntity(entity, c) {
   const arc = arcGeometry(entity.start, entity.through, entity.end);
   if (!arc) return;
   const center = worldToScreen(arc.center);
-  const selected = entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
@@ -1699,7 +1703,7 @@ function drawBlock(entity, c) {
   const size = entitySize(entity);
   const w = size.width;
   const h = size.height;
-  const selected = entity.id === state.selectedId;
+  const selected = canShowEntitySelection() && entity.id === state.selectedId;
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate((entity.rotation * Math.PI) / 180);
@@ -2005,7 +2009,7 @@ function drawSelection(entity, c) {
   if (!startActive && !endActive) {
     const m = midpoint(p1, p2);
     const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
-    drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c);
+    drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c, false, true);
   }
 }
 
@@ -2510,7 +2514,7 @@ function drawActiveSegment(c) {
     return;
   }
 
-  drawEditableSegment(start, end, c, { dashed: true, lineWidth: state.tool === "wall" ? 5 : 2.2 });
+  drawEditableSegment(start, end, c, { lineWidth: state.tool === "wall" ? 5 : 2.2 });
   updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
 }
 
@@ -2528,7 +2532,10 @@ function drawEditableSegment(start, end, c, options = {}) {
   drawHandle(p1.x, p1.y, c);
   drawHandle(p2.x, p2.y, c);
   ctx.restore();
-  drawAngleArc(p1, p2, angleInfo, c);
+  const angleLabelPoint = drawAngleArc(p1, p2, angleInfo, c, { label: false });
+  if (angleLabelPoint) {
+    positionAngleEditor(angleLabelPoint.x, angleLabelPoint.y, angleInfo.degrees);
+  }
 }
 
 function drawActiveAngularDimension(c) {
@@ -2598,45 +2605,54 @@ function drawActiveArc(c) {
   ctx.restore();
 }
 
-function drawAngleArc(origin, target, angleInfo, c) {
+function drawAngleArc(origin, target, angleInfo, c, options = {}) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
-  if (screenLength < 34) return;
+  if (screenLength < 34) return null;
 
+  const ux = dx / screenLength;
+  const uy = dy / screenLength;
+  const followsCursor = screenLength > annotationPx(150);
+  const centerOffset = followsCursor ? Math.min(screenLength * 0.42, annotationPx(118)) : 0;
+  const arcOrigin = followsCursor
+    ? { x: target.x - ux * centerOffset, y: target.y - uy * centerOffset }
+    : origin;
   const radius = Math.min(annotationPx(54), Math.max(annotationPx(32), screenLength * 0.32));
   const startRad = angleInfo.referenceRad;
   const endRad = angleInfo.referenceRad + angleInfo.deltaRad;
   const labelRad = angleInfo.referenceRad + angleInfo.deltaRad / 2;
-  const arcEnd = {
-    x: origin.x + Math.cos(endRad) * radius,
-    y: origin.y + Math.sin(endRad) * radius,
-  };
   const label = {
-    x: origin.x + Math.cos(labelRad) * (radius + annotationPx(16)),
-    y: origin.y + Math.sin(labelRad) * (radius + annotationPx(16)),
+    x: arcOrigin.x + Math.cos(labelRad) * radius,
+    y: arcOrigin.y + Math.sin(labelRad) * radius,
   };
 
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
-  ctx.lineWidth = annotationPx(1.4);
-  ctx.setLineDash([4, 4]);
+  ctx.lineCap = "round";
+  ctx.globalAlpha = 0.28;
+  ctx.lineWidth = annotationPx(0.65);
+  ctx.setLineDash([1, 6]);
   linePath(
-    origin.x,
-    origin.y,
-    origin.x + Math.cos(startRad) * (radius + annotationPx(14)),
-    origin.y + Math.sin(startRad) * (radius + annotationPx(14)),
+    arcOrigin.x,
+    arcOrigin.y,
+    arcOrigin.x + Math.cos(startRad) * (radius + annotationPx(14)),
+    arcOrigin.y + Math.sin(startRad) * (radius + annotationPx(14)),
   );
-  ctx.setLineDash([]);
-  ctx.globalAlpha = 0.95;
+  ctx.globalAlpha = 0.34;
+  ctx.lineWidth = annotationPx(0.65);
+  ctx.setLineDash([1, 5]);
   ctx.beginPath();
-  ctx.arc(origin.x, origin.y, radius, startRad, endRad, angleInfo.deltaRad < 0);
+  ctx.arc(arcOrigin.x, arcOrigin.y, radius, startRad, endRad, angleInfo.deltaRad < 0);
   ctx.stroke();
+  ctx.setLineDash([]);
 
-  drawArcArrow(arcEnd, endRad, angleInfo.deltaRad >= 0 ? 1 : -1, c);
-  drawBadge(`${angleInfo.degrees}°`, label.x, label.y, c, true);
+  if (options.label !== false) {
+    drawBadge(`${angleInfo.degrees}°`, label.x, label.y, c, true);
+  }
   ctx.restore();
+  return label;
 }
 
 function drawArcArrow(point, angleRad, direction, c) {
@@ -2672,7 +2688,6 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
     angleInput.value = angleInfo.degrees;
     syncInlineEditorWidth(angleInput);
   }
-  if (angleEditor) angleEditor.hidden = true;
   updateTopMetricInputs(metrics.length, state.tool === "dimension" ? metrics.angle : angleInfo.degrees);
   if (drawMetrics) drawMetrics.hidden = true;
 }
@@ -2683,7 +2698,33 @@ function positionAngleEditor(x, y, value) {
     angleInput.value = value;
   }
   syncInlineEditorWidth(angleInput);
-  positionInlineEditor(angleEditor, x, y, lengthEditor);
+  const adjusted = avoidEditorOverlapPoint(angleEditor, x, y, lengthEditor);
+  positionInlineEditor(angleEditor, adjusted.x, adjusted.y);
+}
+
+function avoidEditorOverlapPoint(editor, x, y, avoidEditor) {
+  if (!editor || !avoidEditor || avoidEditor.hidden || !avoidEditor.style.left || !avoidEditor.style.top) {
+    return { x, y };
+  }
+  const editorWidth = editor.offsetWidth || 54;
+  const editorHeight = editor.offsetHeight || 28;
+  const avoidWidth = avoidEditor.offsetWidth || 84;
+  const avoidHeight = avoidEditor.offsetHeight || 28;
+  const avoidX = parseFloat(avoidEditor.style.left);
+  const avoidY = parseFloat(avoidEditor.style.top);
+  const overlapX = Math.abs(x - avoidX) < (editorWidth + avoidWidth) / 2 + 6;
+  const overlapY = Math.abs(y - avoidY) < (editorHeight + avoidHeight) / 2 + 4;
+  if (!overlapX || !overlapY) return { x, y };
+  const rect = canvas.getBoundingClientRect();
+  const offset = Math.max(18, Math.min(24, editorHeight * 0.75));
+  const upY = y - offset;
+  const downY = y + offset;
+  const canMoveUp = upY > editorHeight / 2 + 8;
+  const canMoveDown = downY < rect.height - editorHeight / 2 - 8;
+  if (canMoveUp && Math.abs(upY - avoidY) >= Math.abs(downY - avoidY)) return { x, y: upY };
+  if (canMoveDown) return { x, y: downY };
+  if (canMoveUp) return { x, y: upY };
+  return { x, y };
 }
 
 function updateTopMetricInputs(length, angle) {
@@ -3275,20 +3316,21 @@ function applySelectedEndpointInlineValue(kind, options = {}) {
   draw();
 }
 
-function drawBadge(text, x, y, c, secondary = false) {
+function drawBadge(text, x, y, c, secondary = false, fixedScreenSize = false) {
   text = decodeMojibakeText(String(text));
-  if (/Параллель|Точка|Пара|Точ/.test(text)) return;
+  if (/\u041f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c|\u0422\u043e\u0447\u043a\u0430|\u041a\u043e\u043d\u0435\u0446|\u0421\u0435\u0440\u0435\u0434\u0438\u043d\u0430|\u041f\u0430\u0440\u0430|\u0422\u043e\u0447|\u0421\u0435\u0440\u0435\u0434/.test(text)) return;
+  const px = fixedScreenSize ? screenUiPx : annotationPx;
   ctx.save();
-  ctx.font = annotationFont(700, 12);
-  const padX = annotationPx(8);
+  ctx.font = fixedScreenSize ? screenUiFont(700, 12) : annotationFont(700, 12);
+  const padX = px(8);
   const width = ctx.measureText(text).width + padX * 2;
-  const height = annotationPx(24);
+  const height = px(24);
   const rx = x - width / 2;
   const ry = y - height / 2;
   ctx.fillStyle = secondary ? c.surface : c.accent;
   ctx.strokeStyle = secondary ? c.accent : c.accent;
-  ctx.lineWidth = annotationPx(1);
-  roundedRect(rx, ry, width, height, annotationPx(7), true);
+  ctx.lineWidth = px(1);
+  roundedRect(rx, ry, width, height, px(7), true);
   ctx.fillStyle = secondary ? c.accent : "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -3321,9 +3363,7 @@ function drawDimensionSnapHint(c) {
     ctx.setLineDash([9, 6]);
     linePath(a.x, a.y, b.x, b.y);
     ctx.setLineDash([]);
-    drawBadge(hint.label || "Размерная линия", point.x, point.y - 28, c, true);
   } else {
-    drawBadge("Конец", point.x, point.y - 28, c, true);
   }
   ctx.beginPath();
   ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
@@ -3337,7 +3377,7 @@ function drawDimensionSnapHint(c) {
 }
 
 function canUseSnapTracking() {
-  return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && state.snaps.has("polar") && state.snaps.has("end") && !state.pointer && !state.pinch;
+  return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && state.snaps.has("polar") && state.snaps.has("end") && canCaptureSnapTrackingNow();
 }
 
 function canSnapToTrackingGuides() {
@@ -3345,8 +3385,15 @@ function canSnapToTrackingGuides() {
 }
 
 function canUsePrePointTracking() {
-  if (state.drawing || state.moveCommand || state.offsetCommand || state.pointer || state.pinch) return false;
+  if (state.drawing || state.moveCommand || state.offsetCommand || state.pinch) return false;
+  if (state.pointer && state.pointer.mode !== "pan") return false;
   return trackingDrawingTools.has(state.tool);
+}
+
+function canCaptureSnapTrackingNow() {
+  if (state.pinch) return false;
+  if (!state.pointer) return true;
+  return state.pointer.mode === "pan" || state.pointer.mode === "move-command" || state.pointer.mode === "endpoint-place";
 }
 
 function canSnapToPrePointTrackingGuides() {
@@ -3368,14 +3415,6 @@ function updateSnapTrackingHover() {
   }
   const raw = screenToWorld(centerScreen());
   const candidate = nearestTrackingAnchorCandidate(raw);
-  const holdThreshold = trackingActivationThreshold() * 1.15;
-  if (
-    state.snapTracking.hoverPoint &&
-    state.snapTracking.hoverTimer != null &&
-    distanceWorld(raw, state.snapTracking.hoverPoint) <= holdThreshold
-  ) {
-    return;
-  }
   if (!candidate) {
     clearSnapTrackingHover();
     return;
@@ -3416,6 +3455,7 @@ function commitSnapTrackingHover(key) {
   statusChip.textContent = "Точка отслеживания: ведите курсор по направляющей";
   draw();
 }
+
 
 function nearestTrackingAnchorCandidate(point) {
   const threshold = trackingActivationThreshold();
@@ -3697,28 +3737,74 @@ function resetSnapTracking() {
 
 function drawCursorSnap(c) {
   if ((state.tool === "select" && !state.moveCommand && !state.selectedEndpoint) || state.tool === "furniture") return;
-  const snap = cursorSnapResolved().snap;
-  if (!snap) return;
-  const p = worldToScreen(snap);
+  const resolved = cursorSnapResolved();
+  const objectSnap = cursorObjectSnapMarker();
+  const points = [];
+  if (objectSnap) points.push(objectSnap);
+  if (resolved.snap && (!objectSnap || distanceWorld(resolved.snap, objectSnap) > 0.5)) points.push(resolved.snap);
+  if (!points.length) return;
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = colorMixSurface(c.surface);
   ctx.lineWidth = 2;
   ctx.setLineDash([]);
-  ctx.beginPath();
-  ctx.rect(p.x - 6, p.y - 6, 12, 12);
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(p.x - 14, p.y);
-  ctx.lineTo(p.x + 14, p.y);
-  ctx.moveTo(p.x, p.y - 14);
-  ctx.lineTo(p.x, p.y + 14);
-  ctx.stroke();
-  if (snap.type !== "tracking" && snap.type !== "direction") {
-    drawBadge(snap.label || "Snap", p.x, p.y - 26, c, true);
+  for (const snap of points) {
+    const p = worldToScreen(snap);
+    if (isMidSnap(snap)) {
+      drawMidSnapMarker(p, c);
+    } else {
+      ctx.beginPath();
+      ctx.rect(p.x - 6, p.y - 6, 12, 12);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(p.x - 14, p.y);
+    ctx.lineTo(p.x + 14, p.y);
+    ctx.moveTo(p.x, p.y - 14);
+    ctx.lineTo(p.x, p.y + 14);
+    ctx.stroke();
   }
   ctx.restore();
+}
+
+function isMidSnap(snap) {
+  return snap?.snapRole === "mid" || String(snap?.pointKey || "").startsWith("mid") || snap?.label === "Середина";
+}
+
+function drawMidSnapMarker(point, c) {
+  ctx.save();
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(point.x, point.y - 8);
+  ctx.lineTo(point.x + 8, point.y + 6);
+  ctx.lineTo(point.x - 8, point.y + 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function cursorObjectSnapMarker() {
+  const raw = screenToWorld(centerScreen());
+  const objectThreshold = (state.tool === "dimension" ? 34 : 24) / state.view.scale;
+  const midpointThreshold = 22 / state.view.scale;
+  const nearestThreshold = 14 / state.view.scale;
+  const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
+  if (useObjectSnap) {
+    const corner = nearestSnapCandidate(raw, snapCandidates({ includeCorners: true }), objectThreshold);
+    if (corner) return corner;
+  }
+  if (state.snaps.has("mid")) {
+    const mid = nearestSnapCandidate(raw, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+    if (mid) return mid;
+  }
+  if (useObjectSnap && trackingDrawingTools.has(state.tool)) {
+    return nearestPointOnDrawableSegment(raw, nearestThreshold);
+  }
+  return null;
 }
 
 function linePath(x1, y1, x2, y2) {
@@ -3766,7 +3852,7 @@ function activeAngleInfo(start, end) {
     return {
       referenceRad,
       deltaRad,
-      degrees: Math.round(Math.abs(radToDeg(deltaRad))),
+      degrees: displayAngleDegrees(deltaRad),
       hasReference: false,
     };
   }
@@ -3774,9 +3860,16 @@ function activeAngleInfo(start, end) {
   return {
     referenceRad: reference.angleRad,
     deltaRad,
-    degrees: Math.round(Math.abs(radToDeg(deltaRad))),
+    degrees: displayAngleDegrees(deltaRad),
     hasReference: true,
   };
+}
+
+function displayAngleDegrees(deltaRad) {
+  const raw = Math.abs(radToDeg(deltaRad));
+  const rounded = Math.round(raw);
+  const five = Math.round(raw / 5) * 5;
+  return Math.abs(raw - five) <= 1.25 ? five : rounded;
 }
 
 function nearestCardinalReferenceRad(angleRad) {
@@ -3980,8 +4073,8 @@ function resolveSnapWorld(point) {
       state.snapTracking.active = snap;
     }
   } else if (state.snaps.has("grid")) {
-    result.x = Math.round(result.x / 50) * 50;
-    result.y = Math.round(result.y / 50) * 50;
+    result.x = snapValueToGrid(result.x);
+    result.y = snapValueToGrid(result.y);
   }
   if (!snap && state.snaps.has("polar")) {
     const polarStart = state.drawing?.start || state.moveCommand?.base;
@@ -4037,7 +4130,7 @@ function resolveLineLikeSnap(point, start) {
         };
       }
     } else {
-      const directional = snapLineDirection(point, start, directionThreshold);
+      const directional = canSnapToObjectDirections() ? snapLineDirection(point, start, directionThreshold) : null;
       if (directional) {
         result = { x: directional.x, y: directional.y };
         snap = directional;
@@ -4058,8 +4151,8 @@ function resolveLineLikeSnap(point, start) {
             result = { x: nearest.x, y: nearest.y };
             snap = nearest;
           } else if (state.snaps.has("grid")) {
-            result.x = Math.round(result.x / 50) * 50;
-            result.y = Math.round(result.y / 50) * 50;
+            result.x = snapValueToGrid(result.x);
+            result.y = snapValueToGrid(result.y);
           }
         }
       } else {
@@ -4068,8 +4161,8 @@ function resolveLineLikeSnap(point, start) {
           result = { x: nearest.x, y: nearest.y };
           snap = nearest;
         } else if (state.snaps.has("grid")) {
-          result.x = Math.round(result.x / 50) * 50;
-          result.y = Math.round(result.y / 50) * 50;
+          result.x = snapValueToGrid(result.x);
+          result.y = snapValueToGrid(result.y);
         }
       }
     }
@@ -4099,6 +4192,10 @@ function resolvePrePointTrackingSnap(point) {
     return { point: { x: tracking.x, y: tracking.y }, snap: tracking };
   }
   return resolveSnapWorld(point);
+}
+
+function canSnapToObjectDirections() {
+  return false;
 }
 
 function nearestEndpoint(point, threshold) {
@@ -4338,8 +4435,8 @@ function snapPolar(point, start) {
   const dy = point.y - start.y;
   const length = Math.hypot(dx, dy);
   if (length < 1) return { point, snapped: false };
-  const step = Math.PI / 4;
-  const threshold = (12 * Math.PI) / 180;
+  const step = (5 * Math.PI) / 180;
+  const threshold = (2.5 * Math.PI) / 180;
   const angle = Math.atan2(dy, dx);
   const snappedAngle = Math.round(angle / step) * step;
   const delta = Math.abs(Math.atan2(Math.sin(angle - snappedAngle), Math.cos(angle - snappedAngle)));
@@ -4930,6 +5027,9 @@ function commitCursorPoint() {
   }
   if (["line", "polyline", "wall", "circle", "rectangle", "arc"].includes(state.tool)) {
     if (!state.drawing) {
+      setSelection(null);
+      state.endpointEditBefore = null;
+      hideInlineEditors();
       resetSnapTracking();
       if (state.tool === "line" || state.tool === "polyline") {
         state.selectedEndpoint = null;
@@ -6079,7 +6179,7 @@ snaps.forEach((button) => {
       grid: "Сетка",
       end: "Конец",
       mid: "Середина",
-      polar: "Траектория 0/45/90°",
+      polar: "Углы 5°",
     };
     statusChip.textContent = `${names[snap]}: ${state.snaps.has(snap) ? "включено" : "выключено"}`;
     draw();
