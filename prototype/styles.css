@@ -47,7 +47,7 @@ input {
   background: var(--bg);
   color: var(--text);
   display: grid;
-  grid-template-rows: 56px 46px 1fr;
+  grid-template-rows: 56px 52px 1fr;
   height: min(var(--app-height), 844px);
   max-height: var(--app-height);
   overflow: hidden;
@@ -160,15 +160,16 @@ input {
 }
 
 .snap-panel {
+  align-items: center;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   min-width: 0;
-  padding: 6px 10px 7px;
+  padding: 7px 10px;
 }
 
 .snap-panel .snap-row {
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 0;
   width: 100%;
 }
@@ -428,11 +429,25 @@ input {
 }
 
 .select-mode-menu {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
   left: 8px;
   max-width: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
   right: 8px;
+  scrollbar-width: none;
   width: calc(100% - 16px);
+}
+
+.select-mode-menu::-webkit-scrollbar {
+  display: none;
+}
+
+.select-mode-menu button {
+  flex: 0 0 52px;
+  min-width: 52px;
 }
 
 .furniture-size-panel[hidden] {
