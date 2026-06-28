@@ -299,6 +299,9 @@ input {
   font-size: 0.56rem;
   font-weight: 600;
   line-height: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .panel-kicker {
@@ -491,6 +494,11 @@ input {
 .app-shell[data-tool="furniture"] .center-cursor {
   opacity: 0;
   visibility: hidden;
+}
+
+.app-shell[data-tool="dimension"][data-debug-drawing="1"] .center-cursor {
+  opacity: 0 !important;
+  visibility: hidden !important;
 }
 
 .center-cursor.force-visible,

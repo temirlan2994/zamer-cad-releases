@@ -93,7 +93,7 @@ const trackingHoverDelayMs = 520;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
-const trackingDrawingTools = new Set(["line", "polyline", "wall", "dimension", "circle", "arc", "rectangle"]);
+const trackingDrawingTools = new Set(["line", "polyline", "wall", "circle", "arc", "rectangle"]);
 const drawToolButtonVisuals = {
   line: { icon: "╱", label: "Линия" },
   polyline: { icon: "⌁", label: "Полилиния" },
@@ -102,10 +102,10 @@ const drawToolButtonVisuals = {
   rectangle: { icon: "▭", label: "Прямоуг." },
 };
 const dimensionToolButtonVisuals = {
-  aligned: { icon: "↔", label: "По линии" },
+  aligned: { icon: "↔", label: "Параллельный" },
   linear: { icon: "⟷", label: "Линейный" },
   angular: { icon: "∠", label: "Угол" },
-  chain: { icon: "⛓", label: "Цепочка" },
+  chain: { icon: "⛓", label: "Мульти" },
   baseline: { icon: "⊥", label: "База" },
 };
 const selectModeButtonVisuals = {
@@ -146,10 +146,10 @@ function createDimensionToolMenu() {
   menu.id = "dimensionToolMenu";
   menu.hidden = true;
   menu.innerHTML = `
-    <button data-dimension-tool="aligned"><span>&#8596;</span><small>По линии</small></button>
+    <button data-dimension-tool="aligned"><span>&#8596;</span><small>Параллельный</small></button>
     <button data-dimension-tool="linear"><span>&#10231;</span><small>Линейный</small></button>
     <button data-dimension-tool="angular"><span>&#8736;</span><small>Угол</small></button>
-    <button data-dimension-tool="chain"><span>&#9939;</span><small>Цепочка</small></button>
+    <button data-dimension-tool="chain"><span>&#9939;</span><small>Мульти</small></button>
     <button data-dimension-tool="baseline"><span>&#8869;</span><small>База</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
@@ -679,6 +679,8 @@ function centerViewOnWorldPoint(point) {
 
 function cursorWorld() {
   const raw = screenToWorld(centerScreen());
+  if (state.tool === "dimension" && state.drawing?.phase === "offset") return raw;
+  if (state.tool === "dimension") return resolveDimensionPointSnap(raw).point;
   const start = state.drawing?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   if (start) return resolveLineLikeSnap(raw, start).point;
   if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw).point;
@@ -691,6 +693,8 @@ function rawCursorWorld() {
 
 function cursorSnapResolved() {
   const raw = screenToWorld(centerScreen());
+  if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
+  if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
   const start = state.drawing?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   if (start) return resolveLineLikeSnap(raw, start);
   if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
@@ -1309,6 +1313,7 @@ function drawGrid(rect, c) {
 }
 
 function drawCanvasCenterCursor(rect, c) {
+  if (state.tool === "dimension" && state.drawing) return;
   const visible =
     (state.tool !== "select" && state.tool !== "furniture") ||
     Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint);
@@ -1611,8 +1616,20 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const extension = options.extension ?? annotationPx(12);
   const extensionSign = offset < 0 ? -1 : 1;
   const arrowSize = annotationPx(Math.min(9, Math.max(5, length * 0.08)));
-  const a = options.lineStart ? worldToScreen(options.lineStart) : { x: p1.x + nx * offset, y: p1.y + ny * offset };
-  const b = options.lineEnd ? worldToScreen(options.lineEnd) : { x: p2.x + nx * offset, y: p2.y + ny * offset };
+  let a = options.lineStart ? worldToScreen(options.lineStart) : { x: p1.x + nx * offset, y: p1.y + ny * offset };
+  let b = options.lineEnd ? worldToScreen(options.lineEnd) : { x: p2.x + nx * offset, y: p2.y + ny * offset };
+  let legStartPoint = p1;
+  let legEndPoint = p2;
+  const rawLineDx = b.x - a.x;
+  const rawLineDy = b.y - a.y;
+  const shouldSwap =
+    Math.abs(rawLineDx) >= Math.abs(rawLineDy)
+      ? rawLineDx < 0
+      : rawLineDy < 0;
+  if (shouldSwap) {
+    [a, b] = [b, a];
+    [legStartPoint, legEndPoint] = [legEndPoint, legStartPoint];
+  }
   const lineDx = b.x - a.x;
   const lineDy = b.y - a.y;
   const lineLength = Math.hypot(lineDx, lineDy);
@@ -1621,8 +1638,8 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const lineUy = lineDy / lineLength;
   const lineNx = -lineUy;
   const lineNy = lineUx;
-  const aLeg = normalizeScreenVector(a.x - p1.x, a.y - p1.y, nx * extensionSign, ny * extensionSign);
-  const bLeg = normalizeScreenVector(b.x - p2.x, b.y - p2.y, nx * extensionSign, ny * extensionSign);
+  const aLeg = normalizeScreenVector(a.x - legStartPoint.x, a.y - legStartPoint.y, nx * extensionSign, ny * extensionSign);
+  const bLeg = normalizeScreenVector(b.x - legEndPoint.x, b.y - legEndPoint.y, nx * extensionSign, ny * extensionSign);
   const aExtension = { x: a.x + aLeg.x * extension, y: a.y + aLeg.y * extension };
   const bExtension = { x: b.x + bLeg.x * extension, y: b.y + bLeg.y * extension };
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
@@ -1631,12 +1648,18 @@ function drawDimensionGeometry(start, end, c, options = {}) {
       ? Math.round(distanceWorld(options.lineStart, options.lineEnd))
       : metrics.length;
   const displayText = decodeMojibakeText(`${displayLength} мм`);
-  const labelSide = offset < 0 ? -1 : 1;
   const labelGap = annotationPx(15);
-  const label = {
-    x: (a.x + b.x) / 2 + lineNx * labelSide * labelGap,
-    y: (a.y + b.y) / 2 + lineNy * labelSide * labelGap,
-  };
+  const isVerticalDimension = Math.abs(lineDx) <= Math.max(2, lineLength * 0.08);
+  const labelSide = lineNy > 0 ? -1 : 1;
+  const label = isVerticalDimension
+    ? {
+        x: (a.x + b.x) / 2 - labelGap,
+        y: (a.y + b.y) / 2,
+      }
+    : {
+        x: (a.x + b.x) / 2 + lineNx * labelSide * labelGap,
+        y: (a.y + b.y) / 2 + lineNy * labelSide * labelGap,
+      };
   const angle = Math.atan2(lineDy, lineDx);
 
   ctx.save();
@@ -1645,15 +1668,15 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.45);
   ctx.setLineDash(options.active ? [7, 5] : []);
 
-  linePath(p1.x, p1.y, aExtension.x, aExtension.y);
-  linePath(p2.x, p2.y, bExtension.x, bExtension.y);
+  linePath(legStartPoint.x, legStartPoint.y, aExtension.x, aExtension.y);
+  linePath(legEndPoint.x, legEndPoint.y, bExtension.x, bExtension.y);
   ctx.setLineDash([]);
   linePath(a.x, a.y, b.x, b.y);
   drawDimensionArrow(a, lineUx, lineUy, arrowSize, c);
   drawDimensionArrow(b, -lineUx, -lineUy, arrowSize, c);
 
   ctx.translate(label.x, label.y);
-  let textAngle = angle;
+  let textAngle = isVerticalDimension ? -Math.PI / 2 : angle;
   if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
   ctx.rotate(textAngle);
   ctx.font = annotationFont(700, 12);
@@ -2100,11 +2123,11 @@ function hitDimensionControl(screen) {
     const lineDistance = pointToSegmentDistance(screen, geometry.a, geometry.b);
     const legStartDistance = pointToSegmentDistance(screen, geometry.legStart.p1, geometry.legStart.p2);
     const legEndDistance = pointToSegmentDistance(screen, geometry.legEnd.p1, geometry.legEnd.p2);
-    if (startDistance <= 20) hits.push({ type: "dimension-start", entity, score: startDistance, order: i });
-    if (endDistance <= 20) hits.push({ type: "dimension-end", entity, score: endDistance, order: i });
+    if (startDistance <= 20) hits.push({ type: `dimension-${geometry.aEndpoint}`, entity, score: startDistance, order: i });
+    if (endDistance <= 20) hits.push({ type: `dimension-${geometry.bEndpoint}`, entity, score: endDistance, order: i });
     if (lineDistance <= 18) hits.push({ type: "dimension-offset", entity, score: lineDistance + 12, order: i });
-    if (legStartDistance <= 16) hits.push({ type: "dimension-start", entity, score: legStartDistance + 18, order: i });
-    if (legEndDistance <= 16) hits.push({ type: "dimension-end", entity, score: legEndDistance + 18, order: i });
+    if (legStartDistance <= 16) hits.push({ type: `dimension-${geometry.legStart.endpoint}`, entity, score: legStartDistance + 18, order: i });
+    if (legEndDistance <= 16) hits.push({ type: `dimension-${geometry.legEnd.endpoint}`, entity, score: legEndDistance + 18, order: i });
   }
   if (!hits.length) {
     state.dimensionPickCycle = null;
@@ -2126,21 +2149,37 @@ function hitDimensionControl(screen) {
 
 function dimensionScreenGeometry(entity) {
   const geometry = dimensionWorldGeometry(entity);
-  const a = worldToScreen(geometry.lineStart);
-  const b = worldToScreen(geometry.lineEnd);
+  let a = worldToScreen(geometry.lineStart);
+  let b = worldToScreen(geometry.lineEnd);
+  let legStartPoint = worldToScreen(geometry.start);
+  let legEndPoint = worldToScreen(geometry.end);
+  let aEndpoint = "start";
+  let bEndpoint = "end";
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const length = Math.hypot(dx, dy);
   if (length < 8) return null;
-  const nx = -(dy / length);
-  const ny = dx / length;
+  const shouldSwap = Math.abs(dx) >= Math.abs(dy) ? dx < 0 : dy < 0;
+  if (shouldSwap) {
+    [a, b] = [b, a];
+    [legStartPoint, legEndPoint] = [legEndPoint, legStartPoint];
+    [aEndpoint, bEndpoint] = [bEndpoint, aEndpoint];
+  }
+  const lineDx = b.x - a.x;
+  const lineDy = b.y - a.y;
+  const lineLength = Math.hypot(lineDx, lineDy);
+  if (lineLength < 8) return null;
+  const nx = -(lineDy / lineLength);
+  const ny = lineDx / lineLength;
   const labelSide = geometry.offset < 0 ? -1 : 1;
   const labelGap = 15;
   return {
     a,
     b,
-    legStart: { p1: worldToScreen(geometry.start), p2: a },
-    legEnd: { p1: worldToScreen(geometry.end), p2: b },
+    aEndpoint,
+    bEndpoint,
+    legStart: { p1: legStartPoint, p2: a, endpoint: aEndpoint },
+    legEnd: { p1: legEndPoint, p2: b, endpoint: bEndpoint },
     label: {
       x: (a.x + b.x) / 2 + nx * labelSide * labelGap,
       y: (a.y + b.y) / 2 + ny * labelSide * labelGap,
@@ -2255,6 +2294,50 @@ function snapDimensionLineToOtherDimension(entity, point, axis) {
     segment: best.segment,
   };
   return { x: best.x, y: best.y };
+}
+
+function dimensionOffsetWithAlignmentSnap(start, end, point) {
+  state.dimensionSnapHint = null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return dimensionOffsetFromPoint(start, end, point);
+  const axis = { x: dx / length, y: dy / length };
+  const normal = { x: -axis.y, y: axis.x };
+  const rawOffset = dimensionOffsetFromPoint(start, end, point);
+  const threshold = 28 / state.view.scale;
+  let best = null;
+
+  for (const candidate of state.entities) {
+    if (candidate.layer !== "dimensions" || !isLayerVisible(candidate.layer)) continue;
+    const geometry = dimensionWorldGeometry(candidate);
+    const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
+    if (!candidateAxis) continue;
+    const parallelScore = Math.abs(axis.x * candidateAxis.y - axis.y * candidateAxis.x);
+    if (parallelScore > 0.12) continue;
+    const candidateOffset = (geometry.lineStart.x - start.x) * normal.x + (geometry.lineStart.y - start.y) * normal.y;
+    const distance = Math.abs(rawOffset - candidateOffset);
+    if (distance > threshold) continue;
+    const score = distance + parallelScore * 240;
+    if (!best || score < best.score) {
+      const projection = projectPointToSegmentWorld(point, geometry.lineStart, geometry.lineEnd);
+      best = {
+        offset: candidateOffset,
+        score,
+        point: { x: projection.x, y: projection.y },
+        segment: { p1: geometry.lineStart, p2: geometry.lineEnd },
+      };
+    }
+  }
+
+  if (!best) return rawOffset;
+  state.dimensionSnapHint = {
+    type: "line",
+    label: "Выравнивание",
+    point: best.point,
+    segment: best.segment,
+  };
+  return best.offset;
 }
 
 function drawFurnitureSelection(entity, c) {
@@ -2472,6 +2555,11 @@ function clampScreenY(y, height, canvasHeight) {
 }
 
 function drawActiveSegment(c) {
+  if (state.tool === "dimension" && state.dimensionTool === "chain" && state.drawing?.phase === "multi-points") {
+    drawMultiDimensionPreview(c);
+    hideInlineEditors();
+    return;
+  }
   const { start } = state.drawing;
   let end = state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
   end = dimensionAdjustedEnd(start, end);
@@ -2501,7 +2589,7 @@ function drawActiveSegment(c) {
     }
     const offset =
       state.drawing.phase === "offset"
-        ? dimensionOffsetFromPoint(start, end, cursorWorld()) * state.view.scale
+        ? dimensionOffsetWithAlignmentSnap(start, end, rawCursorWorld()) * state.view.scale
         : undefined;
     drawDimensionGeometry(start, end, c, { active: false, offset });
     drawHandle(p1.x, p1.y, c);
@@ -2512,6 +2600,41 @@ function drawActiveSegment(c) {
 
   drawEditableSegment(start, end, c, { dashed: true, lineWidth: state.tool === "wall" ? 5 : 2.2 });
   updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
+}
+
+function drawMultiDimensionPreview(c) {
+  const points = state.drawing?.points || [];
+  const resolved = cursorSnapResolved();
+  const cursorPoint = resolved.snap ? resolved.point : rawCursorWorld();
+  const previewPoints = resolved.snap
+    ? [...points, { point: cursorPoint, ref: dimensionRefFromSnap(resolved.snap) }]
+    : points;
+  const sorted = sortedMultiDimensionPoints(previewPoints);
+
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.6;
+  for (const item of points) {
+    const p = worldToScreen(item.point);
+    drawHandle(p.x, p.y, c);
+  }
+  ctx.restore();
+
+  if (sorted.length < 2) return;
+  if (resolved.snap) {
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      drawDimensionGeometry(sorted[i].point, sorted[i + 1].point, c, { active: true });
+    }
+    return;
+  }
+
+  const overallStart = sorted[0].point;
+  const overallEnd = sorted.at(-1).point;
+  const offset = dimensionOffsetWithAlignmentSnap(overallStart, overallEnd, cursorPoint) * state.view.scale;
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    drawDimensionGeometry(sorted[i].point, sorted[i + 1].point, c, { active: false, offset });
+  }
 }
 
 function drawEditableSegment(start, end, c, options = {}) {
@@ -3340,6 +3463,11 @@ function canUseSnapTracking() {
   return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && state.snaps.has("polar") && state.snaps.has("end") && !state.pointer && !state.pinch;
 }
 
+function canCreateSnapTrackingPoint() {
+  if (state.tool === "dimension" && state.drawing) return false;
+  return canUseSnapTracking();
+}
+
 function canSnapToTrackingGuides() {
   return Boolean(trackingBasePoint()) && state.snaps.has("polar") && state.snapTracking.points.length > 0 && !state.pinch;
 }
@@ -3361,7 +3489,7 @@ function trackingBasePoint() {
 }
 
 function updateSnapTrackingHover() {
-  if (!canUseSnapTracking()) {
+  if (!canCreateSnapTrackingPoint()) {
     clearSnapTrackingHover();
     state.snapTracking.active = null;
     return;
@@ -3406,7 +3534,7 @@ function clearSnapTrackingHover() {
 
 function commitSnapTrackingHover(key) {
   const point = state.snapTracking.hoverPoint;
-  if (!point || state.snapTracking.hoverKey !== key || !canUseSnapTracking()) return;
+  if (!point || state.snapTracking.hoverKey !== key || !canCreateSnapTrackingPoint()) return;
   const current = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
   const currentKey = current ? trackingPointKey(current) : null;
   const stillNearOriginal = distanceWorld(screenToWorld(centerScreen()), point) <= trackingActivationThreshold() * 1.15;
@@ -3697,6 +3825,7 @@ function resetSnapTracking() {
 
 function drawCursorSnap(c) {
   if ((state.tool === "select" && !state.moveCommand && !state.selectedEndpoint) || state.tool === "furniture") return;
+  if (state.tool === "dimension" && state.drawing?.phase === "offset") return;
   const snap = cursorSnapResolved().snap;
   if (!snap) return;
   const p = worldToScreen(snap);
@@ -3996,6 +4125,26 @@ function resolveSnapWorld(point) {
         };
       }
     }
+  }
+  return { point: result, snap };
+}
+
+function resolveDimensionPointSnap(point) {
+  const objectThreshold = 34 / state.view.scale;
+  const midpointThreshold = 22 / state.view.scale;
+  let result = { ...point };
+  let snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
+  state.snapTracking.active = null;
+  state.polarSnapGuide = null;
+
+  if (!snap && state.snaps.has("mid")) {
+    snap = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+  }
+  if (snap) {
+    result = { x: snap.x, y: snap.y };
+  } else if (state.snaps.has("grid")) {
+    result.x = snapValueToGrid(result.x);
+    result.y = snapValueToGrid(result.y);
   }
   return { point: result, snap };
 }
@@ -4689,10 +4838,10 @@ function selectDimensionTool(tool) {
 
 function dimensionToolStatusText() {
   const text = {
-    aligned: "Размер по линии: 1 начало, 2 конец, 3 положение размерной линии",
+    aligned: "Параллельный размер: 1 начало, 2 конец, 3 положение размерной линии",
     linear: "Линейный размер: выберите две точки, размер будет по горизонтали/вертикали",
     angular: "Угол: выберите две линии или две стороны угла",
-    chain: "Цепочка: продолжение размеров от предыдущей точки",
+    chain: "Мульти-размер: выбирайте опорные точки, затем тапните в пустом месте для линии размера",
     baseline: "База: несколько размеров от общей базовой точки",
   };
   return text[state.dimensionTool] || text.aligned;
@@ -4804,6 +4953,46 @@ function angularDimensionEntity(id, vertex, arm1, arm2) {
   return { id, type: "line", layer: "dimensions", dimensionKind: "angular", vertex, arm1, arm2 };
 }
 
+function dimensionEntityFromPoints(id, start, end, offset, refStart = null, refEnd = null) {
+  const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
+  entity.offset = offset ?? 360;
+  if (refStart) entity.refStart = refStart;
+  if (refEnd) entity.refEnd = refEnd;
+  ensureDimensionLineGeometry(entity);
+  return entity;
+}
+
+function sortedMultiDimensionPoints(points) {
+  if (!points?.length) return [];
+  if (points.length <= 2) return [...points];
+  const first = points[0].point;
+  const last = points.at(-1).point;
+  const axis = normalizeWorldVector(last.x - first.x, last.y - first.y) || { x: 1, y: 0 };
+  return [...points].sort((a, b) => {
+    const da = (a.point.x - first.x) * axis.x + (a.point.y - first.y) * axis.y;
+    const db = (b.point.x - first.x) * axis.x + (b.point.y - first.y) * axis.y;
+    return da - db;
+  });
+}
+
+function createMultiDimensionEntities(points, offsetPoint) {
+  const sorted = sortedMultiDimensionPoints(points);
+  if (sorted.length < 2) return [];
+  const overallStart = sorted[0].point;
+  const overallEnd = sorted.at(-1).point;
+  const offset = dimensionOffsetWithAlignmentSnap(overallStart, overallEnd, offsetPoint);
+  const safeOffset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
+  const entities = [];
+  const stamp = Date.now();
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const start = sorted[i];
+    const end = sorted[i + 1];
+    if (distanceWorld(start.point, end.point) <= 1) continue;
+    entities.push(dimensionEntityFromPoints(`dimension-${stamp}-${i}`, start.point, end.point, safeOffset, start.ref, end.ref));
+  }
+  return entities;
+}
+
 function dimensionAdjustedEnd(start, end) {
   if (state.tool !== "dimension" || state.dimensionTool !== "linear") return end;
   return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
@@ -4898,6 +5087,47 @@ function commitCursorPoint() {
       draw();
       return;
     }
+    if (state.dimensionTool === "chain") {
+      const pointItem = resolved.snap ? { point: world, ref: dimensionRefFromSnap(resolved.snap) } : null;
+      if (!state.drawing) {
+        if (!pointItem) {
+          statusChip.textContent = "Мульти-размер: наведите курсор на угол или конец объекта";
+          draw();
+          return;
+        }
+        resetSnapTracking();
+        state.drawing = { start: pointItem.point, end: pointItem.point, lockedEnd: false, phase: "multi-points", points: [pointItem] };
+        statusChip.textContent = "Мульти-размер: выберите следующую опорную точку";
+        draw();
+        return;
+      }
+      if (state.drawing.phase === "multi-points") {
+        if (pointItem) {
+          const exists = state.drawing.points.some((item) => distanceWorld(item.point, pointItem.point) <= 1);
+          if (!exists) state.drawing.points.push(pointItem);
+          state.drawing.start = state.drawing.points[0].point;
+          state.drawing.end = pointItem.point;
+          statusChip.textContent =
+            state.drawing.points.length >= 2
+              ? `Мульти-размер: ${state.drawing.points.length} точки. Тапните в пустом месте, чтобы поставить линию`
+              : "Мульти-размер: выберите следующую опорную точку";
+          draw();
+          return;
+        }
+        if ((state.drawing.points || []).length < 2) {
+          statusChip.textContent = "Мульти-размер: нужно минимум две опорные точки";
+          draw();
+          return;
+        }
+        const entities = createMultiDimensionEntities(state.drawing.points, rawCursorWorld());
+        for (const entity of entities) pushEntity(entity);
+        state.drawing = null;
+        resetSnapTracking();
+        statusChip.textContent = `Мульти-размер: создано ${entities.length} сегментов`;
+        draw();
+        return;
+      }
+    }
     if (!state.drawing) {
       resetSnapTracking();
       state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap), baseStart: world, baseRefStart: dimensionRefFromSnap(resolved.snap) };
@@ -4917,7 +5147,7 @@ function commitCursorPoint() {
         statusChip.textContent = "Размер: поставьте третью точку для положения размерной линии";
       }
     } else if (state.drawing.phase === "offset") {
-      const offset = dimensionOffsetFromPoint(state.drawing.start, state.drawing.end, world);
+      const offset = dimensionOffsetWithAlignmentSnap(state.drawing.start, state.drawing.end, rawCursorWorld());
       state.drawing.offset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, state.drawing.end.x, state.drawing.end.y);
       pushEntity(createEntityFromDrawing());
