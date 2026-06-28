@@ -189,6 +189,7 @@ const state = {
   gestureSuppressTap: false,
   inlineEdit: null,
   furnitureDrag: null,
+  furniturePress: null,
   dimensionSnapHint: null,
   polarSnapGuide: null,
   dimensionPickCycle: null,
@@ -211,6 +212,7 @@ const state = {
   openEditMenuAfterPointer: false,
   furnitureEditId: null,
   furnitureResizeHandlesId: null,
+  activeFurnitureDimension: null,
   undo: [],
   redo: [],
   snaps: new Set(["grid", "end", "polar"]),
@@ -293,7 +295,7 @@ function arcEntity(id, start, through, end, layer = "measure") {
 }
 
 function block(id, kind, x, y, rotation = 0, size = defaultBlockSize(kind)) {
-  return { id, type: "block", layer: "furniture", kind, x, y, rotation, scale: 1, width: size.width, height: size.height };
+  return { id, type: "block", layer: "furniture", kind, x, y, rotation, scale: 1, flipX: false, width: size.width, height: size.height };
 }
 
 const persistence = {
@@ -523,9 +525,10 @@ function furnitureThumbMarkup(item) {
 }
 
 function createFurnitureCard(item, index) {
-  const button = document.createElement("button");
+  const button = document.createElement("div");
   button.className = `block furniture-card${index === 0 ? " active" : ""}`;
-  button.type = "button";
+  button.role = "button";
+  button.tabIndex = 0;
   button.dataset.tab = item.tab;
   button.dataset.category = item.category;
   button.dataset.block = item.kind;
@@ -538,24 +541,33 @@ function createFurnitureCard(item, index) {
 
 function attachFurnitureCardEvents(button) {
   button.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    beginFurnitureDrag(button, event);
+    beginFurniturePress(button, event);
   });
 
   button.addEventListener("pointermove", (event) => {
+    updateFurniturePress(event);
     updateFurnitureDrag(event);
   });
 
   button.addEventListener("pointerup", (event) => {
+    finishFurniturePress(event);
     finishFurnitureDrag(event);
   });
 
   button.addEventListener("pointercancel", (event) => {
+    finishFurniturePress(event);
     finishFurnitureDrag(event);
   });
 
   button.addEventListener("click", () => {
     if (state.suppressFurnitureClick) return;
+    setActiveFurnitureCard(button);
+    statusChip.textContent = `${furnitureCardData(button).title}: перетащите карточку на план`;
+  });
+
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
     setActiveFurnitureCard(button);
     statusChip.textContent = `${furnitureCardData(button).title}: перетащите карточку на план`;
   });
@@ -675,6 +687,18 @@ function centerViewOnWorldPoint(point) {
   state.view.panX = center.x - point.x * state.view.scale;
   state.view.panY = center.y - point.y * state.view.scale;
   markProjectDirty("view-center");
+}
+
+function centerViewOnFurnitureForInput(entity) {
+  if (!entity) return;
+  const rect = canvas.getBoundingClientRect();
+  const target = {
+    x: rect.width / 2,
+    y: Math.max(150, rect.height * 0.38),
+  };
+  state.view.panX = target.x - entity.x * state.view.scale;
+  state.view.panY = target.y - entity.y * state.view.scale;
+  markProjectDirty("view-center-furniture-input");
 }
 
 function cursorWorld() {
@@ -1005,7 +1029,9 @@ function drawRotatePreview(entity, command, end, c) {
   const delta = signedAngleDelta(startAngle, endAngle);
   if (entity.type === "block") {
     const center = rotatePointAround({ x: entity.x, y: entity.y }, command.base, delta);
-    drawBlockPreview({ ...entity, x: center.x, y: center.y, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(delta)) }, c);
+    const preview = { ...entity, x: center.x, y: center.y, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(delta)) };
+    drawBlock(preview, c);
+    drawFurnitureSelection(preview, c);
     return;
   }
   const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, command.base, delta);
@@ -1058,9 +1084,11 @@ function canApplySelectionAction(action) {
   if (selected.length !== 1) return false;
   const entity = selected[0];
   if (action === "move") return true;
+  if (action === "resize") return entity.type === "block";
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "mirror" || action === "offset") return linearEditableEntity(entity);
+  if (action === "mirror") return entity.type === "block" || linearEditableEntity(entity);
+  if (action === "offset") return linearEditableEntity(entity);
   return false;
 }
 
@@ -1100,6 +1128,10 @@ function setSelection(ids, options = {}) {
   if (state.furnitureResizeHandlesId && !state.selectedIds.includes(state.furnitureResizeHandlesId)) {
     state.furnitureResizeHandlesId = null;
   }
+  if (!state.selectedIds.some((id) => state.entities.find((entity) => entity.id === id)?.type === "block")) {
+    state.activeFurnitureDimension = null;
+  }
+  syncSelectionActions();
 }
 
 function entityMatchesSelectionFilter(entity) {
@@ -1647,10 +1679,12 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const aExtension = { x: a.x + aLeg.x * extension, y: a.y + aLeg.y * extension };
   const bExtension = { x: b.x + bLeg.x * extension, y: b.y + bLeg.y * extension };
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
-  const displayLength =
-    options.lineStart && options.lineEnd
-      ? Math.round(distanceWorld(options.lineStart, options.lineEnd))
-      : metrics.length;
+  let displayLength = metrics.length;
+  if (Number.isFinite(options.displayLength)) {
+    displayLength = options.displayLength;
+  } else if (options.lineStart && options.lineEnd) {
+    displayLength = Math.round(distanceWorld(options.lineStart, options.lineEnd));
+  }
   const displayText = decodeMojibakeText(`${displayLength} мм`);
   const labelGap = annotationPx(15);
   const isVerticalDimension = Math.abs(lineDx) <= Math.max(2, lineLength * 0.08);
@@ -1730,7 +1764,7 @@ function drawBlock(entity, c) {
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate((entity.rotation * Math.PI) / 180);
-  ctx.scale(state.view.scale, state.view.scale);
+  ctx.scale((entity.flipX ? -1 : 1) * state.view.scale, state.view.scale);
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.fillStyle = state.theme === "dark" ? "#162434" : "#eef5ff";
   ctx.lineWidth = 16;
@@ -2365,18 +2399,20 @@ function drawFurnitureSelection(entity, c) {
 
   if (layout.editing) {
     if (state.furnitureResizeHandlesId === entity.id) {
-      drawFurnitureResizeHandle(layout.resizeHandles.left, "↔", c);
-      drawFurnitureResizeHandle(layout.resizeHandles.right, "↔", c);
-      drawFurnitureResizeHandle(layout.resizeHandles.top, "↕", c);
-      drawFurnitureResizeHandle(layout.resizeHandles.bottom, "↕", c);
-    } else {
-      drawFurnitureActionButton(layout.duplicate, "+", c);
+      if (layout.showResizeControls) {
+        drawFurnitureResizeHandle(layout.resizeHandles.widthStart, "↔", c);
+        drawFurnitureResizeHandle(layout.resizeHandles.widthEnd, "↔", c);
+        drawFurnitureResizeHandle(layout.resizeHandles.depthStart, "↕", c);
+        drawFurnitureResizeHandle(layout.resizeHandles.depthEnd, "↕", c);
+      }
+    } else if (layout.showEditControls) {
       drawFurnitureActionButton(layout.resizeToggle, "↔", c);
       drawFurnitureActionButton(layout.rotate, "↻", c);
       drawFurnitureActionButton(layout.scale, "⤢", c);
     }
-    const size = entitySize(entity);
-    drawBadge(`${Math.round(size.width)} × ${Math.round(size.height)}`, layout.bbox.centerX, layout.bbox.maxY + 24, c, true);
+    if (layout.showEditControls) {
+      drawFurnitureSideDimensions(entity, layout, c);
+    }
   }
   ctx.restore();
 }
@@ -2417,8 +2453,8 @@ function drawFurnitureActionButton(control, label, c) {
 
 function drawFurnitureResizeHandle(control, label, c) {
   if (!control) return;
-  const width = screenUiPx(control.axis === "height" ? 30 : 44);
-  const height = screenUiPx(control.axis === "height" ? 44 : 30);
+  const width = screenUiPx(control.axis === "height" ? 34 : 48);
+  const height = screenUiPx(control.axis === "height" ? 48 : 34);
   const rect = {
     x: control.x - width / 2,
     y: control.y - height / 2,
@@ -2429,7 +2465,7 @@ function drawFurnitureResizeHandle(control, label, c) {
   ctx.translate(control.x, control.y);
   ctx.rotate(control.angle || 0);
   ctx.translate(-control.x, -control.y);
-  ctx.fillStyle = c.surface;
+  ctx.fillStyle = colorMixSurface(c.surface);
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = screenUiPx(2);
   roundedRect(rect.x, rect.y, rect.width, rect.height, screenUiPx(8), true);
@@ -2439,6 +2475,89 @@ function drawFurnitureResizeHandle(control, label, c) {
   ctx.textBaseline = "middle";
   ctx.fillText(label, control.x, control.y + 1);
   ctx.restore();
+}
+
+function drawFurnitureSideDimensions(entity, layout, c) {
+  if (!layout?.corners?.length) return;
+  const dimensions = furnitureDimensionSegments(entity, layout);
+  drawFurnitureScreenDimension(dimensions.width.screenStart, dimensions.width.screenEnd, Math.round(entitySize(entity).width), c, state.activeFurnitureDimension === "width");
+  drawFurnitureScreenDimension(dimensions.height.screenStart, dimensions.height.screenEnd, Math.round(entitySize(entity).height), c, state.activeFurnitureDimension === "height");
+}
+
+function drawFurnitureScreenDimension(a, b, value, c, active = false) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  if (length < screenUiPx(28)) return;
+  const ux = dx / length;
+  const uy = dy / length;
+  const arrowSize = screenUiPx(7);
+  const tick = screenUiPx(8);
+  const labelGap = screenUiPx(13);
+  const mid = midpoint(a, b);
+  const nx = -uy;
+  const ny = ux;
+  const text = `${value} мм`;
+  const angle = Math.atan2(dy, dx);
+
+  ctx.save();
+  ctx.strokeStyle = active ? c.accent : c.dimension;
+  ctx.fillStyle = active ? c.accent : c.dimension;
+  ctx.lineWidth = screenUiPx(active ? 2.4 : 1.35);
+  linePath(a.x, a.y, b.x, b.y);
+  linePath(a.x - nx * tick, a.y - ny * tick, a.x + nx * tick, a.y + ny * tick);
+  linePath(b.x - nx * tick, b.y - ny * tick, b.x + nx * tick, b.y + ny * tick);
+  drawDimensionArrow(a, ux, uy, arrowSize, c);
+  drawDimensionArrow(b, -ux, -uy, arrowSize, c);
+  ctx.translate(mid.x + nx * labelGap, mid.y + ny * labelGap);
+  let textAngle = angle;
+  if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
+  ctx.rotate(textAngle);
+  ctx.font = screenUiFont(800, 11);
+  ctx.lineWidth = screenUiPx(4);
+  ctx.strokeStyle = colors().bg;
+  ctx.lineJoin = "round";
+  ctx.strokeText(text, 0, 1);
+  ctx.fillStyle = active ? c.accent : c.dimension;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 0, 1);
+  ctx.restore();
+}
+
+function furnitureDimensionSegments(entity, layout = furnitureControlLayout(entity)) {
+  const [topLeft, topRight, bottomRight, bottomLeft] = blockCorners(entity);
+  const screenOffset = screenUiPx(24);
+  const worldOffset = screenOffset / state.view.scale;
+  const screenCorners = [topLeft, topRight, bottomRight, bottomLeft].map(worldToScreen);
+  const [screenTopLeft, , screenBottomRight, screenBottomLeft] = screenCorners;
+  return {
+    screenOffset,
+    width: {
+      start: bottomLeft,
+      end: bottomRight,
+      lineStart: offsetBlockDimensionPoint(bottomLeft, layout.bottomNormal, worldOffset),
+      lineEnd: offsetBlockDimensionPoint(bottomRight, layout.bottomNormal, worldOffset),
+      screenStart: offsetScreenPoint(screenBottomLeft, layout.bottomNormal, screenOffset),
+      screenEnd: offsetScreenPoint(screenBottomRight, layout.bottomNormal, screenOffset),
+    },
+    height: {
+      start: topLeft,
+      end: bottomLeft,
+      lineStart: offsetBlockDimensionPoint(topLeft, layout.leftNormal, worldOffset),
+      lineEnd: offsetBlockDimensionPoint(bottomLeft, layout.leftNormal, worldOffset),
+      screenStart: offsetScreenPoint(screenTopLeft, layout.leftNormal, screenOffset),
+      screenEnd: offsetScreenPoint(screenBottomLeft, layout.leftNormal, screenOffset),
+    },
+  };
+}
+
+function offsetBlockDimensionPoint(point, normal, distance) {
+  return { x: point.x + normal.x * distance, y: point.y + normal.y * distance };
+}
+
+function offsetScreenPoint(point, normal, distance) {
+  return { x: point.x + normal.x * distance, y: point.y + normal.y * distance };
 }
 
 function drawFurnitureDoneButton(rect, c) {
@@ -2478,8 +2597,14 @@ function furnitureControlLayout(entity) {
   };
   bbox.centerX = (bbox.minX + bbox.maxX) / 2;
   bbox.centerY = (bbox.minY + bbox.maxY) / 2;
+  bbox.width = bbox.maxX - bbox.minX;
+  bbox.height = bbox.maxY - bbox.minY;
 
   const editing = entity.id === state.selectedId && (state.tool === "select" || state.tool === "furniture");
+  const minScreenSide = Math.min(bbox.width, bbox.height);
+  const maxScreenSide = Math.max(bbox.width, bbox.height);
+  const showEditControls = maxScreenSide >= screenUiPx(92) && minScreenSide >= screenUiPx(34);
+  const showResizeControls = maxScreenSide >= screenUiPx(72) && minScreenSide >= screenUiPx(22);
   const topLeft = corners[0];
   const topRight = corners[1];
   const bottomRight = corners[2];
@@ -2500,10 +2625,6 @@ function furnitureControlLayout(entity) {
   const leftNormal = { x: (leftMid.x - center.x) / leftLength, y: (leftMid.y - center.y) / leftLength };
   const cornerOffset = 18;
   const handleOffset = 18;
-  const duplicate = {
-    x: topLeft.x + normal.x * cornerOffset - tangent.x * cornerOffset,
-    y: topLeft.y + normal.y * cornerOffset - tangent.y * cornerOffset,
-  };
   const resizeToggle = {
     x: topRight.x + normal.x * cornerOffset + tangent.x * cornerOffset,
     y: topRight.y + normal.y * cornerOffset + tangent.y * cornerOffset,
@@ -2517,28 +2638,28 @@ function furnitureControlLayout(entity) {
     y: bottomRight.y - normal.y * cornerOffset + tangent.y * cornerOffset,
   };
   const resizeHandles = {
-    left: {
+    widthStart: {
       x: leftMid.x + leftNormal.x * handleOffset,
       y: leftMid.y + leftNormal.y * handleOffset,
       axis: "width",
       side: "left",
       angle: Math.atan2(tangent.y, tangent.x),
     },
-    right: {
+    widthEnd: {
       x: rightMid.x + rightNormal.x * handleOffset,
       y: rightMid.y + rightNormal.y * handleOffset,
       axis: "width",
       side: "right",
       angle: Math.atan2(tangent.y, tangent.x),
     },
-    top: {
+    depthStart: {
       x: topMid.x + normal.x * handleOffset,
       y: topMid.y + normal.y * handleOffset,
       axis: "height",
       side: "top",
       angle: Math.atan2(normal.y, normal.x) + Math.PI / 2,
     },
-    bottom: {
+    depthEnd: {
       x: bottomMid.x + bottomNormal.x * handleOffset,
       y: bottomMid.y + bottomNormal.y * handleOffset,
       axis: "height",
@@ -2546,7 +2667,7 @@ function furnitureControlLayout(entity) {
       angle: Math.atan2(normal.y, normal.x) + Math.PI / 2,
     },
   };
-  return { corners, center, bbox, editing, resizeToggle, rotate, scale, duplicate, resizeHandles };
+  return { corners, center, bbox, editing, resizeToggle, rotate, scale, resizeHandles, showEditControls, showResizeControls, bottomNormal, leftNormal };
 }
 
 function clampScreenX(x, width, canvasWidth) {
@@ -3196,15 +3317,15 @@ function applySelectionAction(action) {
 
   if (!actionEntity) return;
   if (action === "move") {
-    if (actionEntity.type === "block") {
-      state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === actionEntity.id ? null : actionEntity.id;
-      state.furnitureEditId = actionEntity.id;
-      statusChip.textContent = state.furnitureResizeHandlesId ? "Размер мебели: тяните боковые ручки ширины или глубины" : "Ручки размера скрыты";
-      syncSelectToolMenu();
-      draw();
-      return;
-    }
     startMoveLikeCommand(actionEntity, "move");
+    return;
+  }
+  if (action === "resize" && actionEntity.type === "block") {
+    state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === actionEntity.id ? null : actionEntity.id;
+    state.furnitureEditId = actionEntity.id;
+    statusChip.textContent = state.furnitureResizeHandlesId ? "Размер мебели: тяните боковые ручки ширины или глубины" : "Ручки размера скрыты";
+    syncSelectToolMenu();
+    draw();
     return;
   }
   if (action === "copy") {
@@ -3219,6 +3340,18 @@ function applySelectionAction(action) {
     startMoveLikeCommand(actionEntity, "rotate");
     return;
   }
+  if (action === "mirror" && actionEntity.type === "block") {
+    const before = entityGeometry(actionEntity);
+    mirrorBlockEntity(actionEntity);
+    const after = entityGeometry(actionEntity);
+    state.undo.push({ type: "move", entityId: actionEntity.id, before, after });
+    state.redo.length = 0;
+    markProjectDirty("mirror-block");
+    statusChip.textContent = "Мебель отзеркалена";
+    draw();
+    return;
+  }
+
   const entity = state.entities.find((item) => item.id === state.selectedId);
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
 
@@ -3313,10 +3446,12 @@ function hideInlineEditors() {
 }
 
 function updateFurnitureSizePanel(entity) {
-  const visible = entity?.type === "block" && (state.tool === "furniture" || state.furnitureEditId === entity.id);
+  const visible = entity?.type === "block" && !state.drawing && !state.moveCommand && !state.offsetCommand;
   if (!furnitureSizePanel) return;
   furnitureSizePanel.hidden = !visible;
   shell.classList.toggle("furniture-panel-open", visible);
+  furnitureWidthInput?.closest("label")?.classList.toggle("active-dimension", visible && state.activeFurnitureDimension === "width");
+  furnitureDepthInput?.closest("label")?.classList.toggle("active-dimension", visible && state.activeFurnitureDimension === "height");
   if (!visible) return;
   const size = entitySize(entity);
   if (document.activeElement !== furnitureWidthInput) {
@@ -4733,9 +4868,17 @@ function syncSelectToolMenu() {
   if (moveButton) {
     const icon = moveButton.querySelector("span");
     const label = moveButton.querySelector("small");
-    if (icon) icon.textContent = furnitureOnly ? "↔" : "↕";
-    if (label) label.textContent = furnitureOnly ? "Размер" : "Переместить";
-    moveButton.title = furnitureOnly ? "Показать ручки ширины и глубины" : "Переместить";
+    if (icon) icon.textContent = "↕";
+    if (label) label.textContent = "Переместить";
+    moveButton.title = "Точное перемещение по двум точкам";
+  }
+  const copyButton = selectToolMenu?.querySelector('button[data-action="copy"]');
+  if (copyButton) {
+    const icon = copyButton.querySelector("span");
+    const label = copyButton.querySelector("small");
+    if (icon) icon.textContent = "⧉";
+    if (label) label.textContent = "Копия";
+    copyButton.title = "Точная копия по двум точкам";
   }
   selectToolMenu?.querySelectorAll("button[data-action]").forEach((button) => {
     button.disabled = !canApplySelectionAction(button.dataset.action);
@@ -5466,6 +5609,7 @@ function hitFurnitureControl(screen) {
 
   if (layout.editing) {
     if (state.furnitureResizeHandlesId === entity.id) {
+      if (!layout.showResizeControls) return null;
       for (const handle of Object.values(layout.resizeHandles)) {
         if (pointDistance(screen, handle) <= 28) {
           return { type: "resize-handle", axis: handle.axis, side: handle.side, entity, layout };
@@ -5473,12 +5617,51 @@ function hitFurnitureControl(screen) {
       }
       return null;
     }
+    if (!layout.showEditControls) return null;
     if (pointDistance(screen, layout.resizeToggle) <= 24) return { type: "resize-toggle", entity, layout };
     if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
     if (pointDistance(screen, layout.scale) <= 24) return { type: "scale", entity, layout };
-    if (pointDistance(screen, layout.duplicate) <= 24) return { type: "duplicate", entity, layout };
   }
   return null;
+}
+
+function hitFurnitureDimensionInput(screen) {
+  const entity = selectedFurnitureEntity();
+  if (!entity || state.drawing || state.moveCommand || state.offsetCommand) return null;
+  const layout = furnitureControlLayout(entity);
+  if (!layout) return null;
+  const dimensions = furnitureDimensionSegments(entity, layout);
+  const threshold = screenUiPx(18);
+  const widthStart = dimensions.width.screenStart;
+  const widthEnd = dimensions.width.screenEnd;
+  const heightStart = dimensions.height.screenStart;
+  const heightEnd = dimensions.height.screenEnd;
+  const widthHit = pointToSegmentDistance(screen, widthStart, widthEnd);
+  const heightHit = pointToSegmentDistance(screen, heightStart, heightEnd);
+  if (widthHit <= threshold && widthHit <= heightHit) return { kind: "width", entity };
+  if (heightHit <= threshold) return { kind: "height", entity };
+  return null;
+}
+
+function focusFurnitureSizeInput(kind) {
+  const entity = selectedFurnitureEntity();
+  if (!entity) return false;
+  state.activeFurnitureDimension = kind === "height" ? "height" : "width";
+  centerViewOnFurnitureForInput(entity);
+  updateFurnitureSizePanel(entity);
+  const input = kind === "height" ? furnitureDepthInput : furnitureWidthInput;
+  input?.focus();
+  input?.select();
+  positionKeyboardConfirmButton();
+  window.setTimeout(() => {
+    if (selectedFurnitureEntity()?.id === entity.id && (document.activeElement === furnitureWidthInput || document.activeElement === furnitureDepthInput)) {
+      centerViewOnFurnitureForInput(entity);
+      draw();
+    }
+  }, 260);
+  statusChip.textContent = kind === "height" ? "Введите глубину мебели" : "Введите ширину мебели";
+  draw();
+  return true;
 }
 
 function rectContainsPoint(point, rect) {
@@ -5494,12 +5677,6 @@ function beginFurnitureControl(control, event, screen) {
     draw();
     return true;
   }
-  if (control.type === "duplicate") {
-    duplicateFurnitureEntity(control.entity);
-    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
-    draw();
-    return true;
-  }
   if (control.type === "resize-toggle") {
     state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === control.entity.id ? null : control.entity.id;
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
@@ -5509,6 +5686,7 @@ function beginFurnitureControl(control, event, screen) {
   }
   const entity = control.entity;
   const centerScreenPoint = worldToScreen({ x: entity.x, y: entity.y });
+  const startLocal = worldToBlockLocalGeometry(entityGeometry(entity), screenToWorld(screen));
   state.pointer = {
     id: event.pointerId,
     screen,
@@ -5520,6 +5698,7 @@ function beginFurnitureControl(control, event, screen) {
     before: entityGeometry(entity),
     resizeAxis: control.type === "scale" ? "both" : control.axis,
     resizeSide: control.side,
+    startScaleDistance: Math.max(1, Math.hypot(startLocal.x, startLocal.y)),
     startRotation: entity.rotation || 0,
     startAngle: Math.atan2(screen.y - centerScreenPoint.y, screen.x - centerScreenPoint.x),
   };
@@ -5551,7 +5730,9 @@ function resizeFurnitureByPointer(entity, screen) {
     entity.height = nextHeight;
     setBlockCenterFromLocalDelta(entity, start, 0, side === "top" ? -delta : delta);
   } else {
-    const scale = Math.max(pointerWidth / startWidth, pointerHeight / startHeight, 300 / startWidth, 300 / startHeight);
+    const currentDistance = Math.max(1, Math.hypot(local.x, local.y));
+    const rawScale = currentDistance / Math.max(1, state.pointer?.startScaleDistance || currentDistance);
+    const scale = Math.max(300 / startWidth, 300 / startHeight, Math.min(4, Math.max(0.25, rawScale)));
     entity.width = snapFurnitureSize(startWidth * scale);
     entity.height = snapFurnitureSize(startHeight * scale);
   }
@@ -5615,6 +5796,11 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   state.gestureSuppressTap = false;
   const screen = getPointer(event);
+  const furnitureDimensionInput = hitFurnitureDimensionInput(screen);
+  if (furnitureDimensionInput && focusFurnitureSizeInput(furnitureDimensionInput.kind)) {
+    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
+    return;
+  }
   const furnitureControl = hitFurnitureControl(screen);
   if (furnitureControl && beginFurnitureControl(furnitureControl, event, screen)) {
     return;
@@ -6019,6 +6205,7 @@ function cloneEntityForCommand(entity, dx = 260, dy = 260) {
     const size = entitySize(entity);
     const copy = block(`${entity.kind}-${Date.now()}`, entity.kind, entity.x + dx, entity.y + dy, entity.rotation || 0, size);
     copy.scale = entity.scale || 1;
+    copy.flipX = Boolean(entity.flipX);
     return copy;
   }
   return cloneLinearEntity(entity, dx, dy);
@@ -6059,6 +6246,10 @@ function mirrorLinearEntity(entity) {
   const cx = (entity.x1 + entity.x2) / 2;
   entity.x1 = cx - (entity.x1 - cx);
   entity.x2 = cx - (entity.x2 - cx);
+}
+
+function mirrorBlockEntity(entity) {
+  entity.flipX = !entity.flipX;
 }
 
 function offsetLinearEntity(entity, distance = 300, sidePoint = null) {
@@ -6209,7 +6400,7 @@ function normalizeWorldVector(dx, dy) {
 function entityGeometry(entity) {
   if (!entity) return null;
   if (entity.type === "block") {
-    return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0 };
+    return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0, flipX: Boolean(entity.flipX) };
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (entity.layer === "dimensions") {
@@ -6234,7 +6425,10 @@ function applyEntityGeometry(entity, geometry) {
 
 function geometryChanged(before, after) {
   if (!before || !after) return false;
-  return Object.keys(after).some((key) => Math.abs((after[key] || 0) - (before[key] || 0)) > 0.01);
+  return Object.keys(after).some((key) => {
+    if (typeof after[key] === "boolean" || typeof before[key] === "boolean") return after[key] !== before[key];
+    return Math.abs((after[key] || 0) - (before[key] || 0)) > 0.01;
+  });
 }
 
 function pickEntity(screen) {
@@ -6454,8 +6648,75 @@ function isClientPointInCanvas(clientX, clientY) {
   return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= visibleBottom;
 }
 
+function beginFurniturePress(card, event) {
+  if (card.hidden || state.furnitureDrag) return;
+  event.preventDefault();
+  const press = {
+    pointerId: event.pointerId,
+    card,
+    startX: event.clientX,
+    startY: event.clientY,
+    latestX: event.clientX,
+    latestY: event.clientY,
+    mode: "pending",
+    activated: false,
+    timer: null,
+  };
+  press.timer = window.setTimeout(() => {
+    if (state.furniturePress !== press || press.activated) return;
+    press.activated = true;
+    state.suppressFurnitureClick = true;
+    beginFurnitureDrag(card, {
+      pointerId: press.pointerId,
+      clientX: press.latestX,
+      clientY: press.latestY,
+      preventDefault() {},
+    });
+  }, 300);
+  state.furniturePress = press;
+}
+
+function updateFurniturePress(event) {
+  const press = state.furniturePress;
+  if (!press || press.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  if (press.mode === "scroll") {
+    furnitureGrid.scrollTop += press.latestY - event.clientY;
+    press.latestX = event.clientX;
+    press.latestY = event.clientY;
+    return;
+  }
+  const travel = Math.hypot(event.clientX - press.startX, event.clientY - press.startY);
+  const verticalTravel = Math.abs(event.clientY - press.startY);
+  const horizontalTravel = Math.abs(event.clientX - press.startX);
+  if (!press.activated && travel > 10) {
+    window.clearTimeout(press.timer);
+    if (verticalTravel > horizontalTravel) {
+      press.mode = "scroll";
+      furnitureGrid.scrollTop += press.latestY - event.clientY;
+    } else {
+      state.furniturePress = null;
+    }
+  }
+  press.latestX = event.clientX;
+  press.latestY = event.clientY;
+}
+
+function finishFurniturePress(event) {
+  const press = state.furniturePress;
+  if (!press || press.pointerId !== event.pointerId) return;
+  window.clearTimeout(press.timer);
+  state.furniturePress = null;
+  if (press.activated) {
+    window.setTimeout(() => {
+      state.suppressFurnitureClick = false;
+    }, 250);
+  }
+}
+
 function beginFurnitureDrag(card, event) {
   if (card.hidden) return;
+  event.preventDefault?.();
   const data = furnitureCardData(card);
   setActiveFurnitureCard(card);
   const preview = document.createElement("div");
@@ -6463,7 +6724,11 @@ function beginFurnitureDrag(card, event) {
   preview.innerHTML = `<strong>${data.title}</strong><small>${data.width} × ${data.height}</small>`;
   document.body.append(preview);
   card.classList.add("dragging");
-  card.setPointerCapture?.(event.pointerId);
+  try {
+    card.setPointerCapture?.(event.pointerId);
+  } catch {
+    // Long-press drag can start after the browser has already moved pointer focus.
+  }
   state.furnitureDrag = {
     pointerId: event.pointerId,
     card,
@@ -6480,6 +6745,7 @@ function beginFurnitureDrag(card, event) {
 function updateFurnitureDrag(event) {
   const drag = state.furnitureDrag;
   if (!drag || drag.pointerId !== event.pointerId) return;
+  event.preventDefault?.();
   const travel = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
   if (travel > 4) drag.moved = true;
   drag.preview.style.left = `${event.clientX}px`;
@@ -6717,6 +6983,11 @@ keyboardConfirmButton?.addEventListener("click", (event) => {
 });
 
 [furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].forEach((input) => {
+  input?.addEventListener("focus", () => {
+    state.activeFurnitureDimension = input === furnitureWidthInput ? "width" : input === furnitureDepthInput ? "height" : null;
+    updateFurnitureSizePanel(selectedFurnitureEntity());
+    draw();
+  });
   input?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     applyFurnitureSizeInput({ recordUndo: false });
@@ -6729,6 +7000,13 @@ keyboardConfirmButton?.addEventListener("click", (event) => {
   input?.addEventListener("blur", () => {
     applyFurnitureSizeInput({ recordUndo: false });
     commitNumericInputEdit();
+    window.setTimeout(() => {
+      if (document.activeElement !== furnitureWidthInput && document.activeElement !== furnitureDepthInput) {
+        state.activeFurnitureDimension = null;
+        updateFurnitureSizePanel(selectedFurnitureEntity());
+        draw();
+      }
+    }, 0);
   });
 });
 
