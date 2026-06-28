@@ -4644,7 +4644,8 @@ function activateSelectionTool() {
 }
 
 function toggleMainSelectTool() {
-  state.selectTool = "select";
+  const nextSelectTool = state.tool === "select" && state.selectTool === "select" ? "window" : "select";
+  state.selectTool = nextSelectTool;
   state.selectionDrag = null;
   state.drawing = null;
   state.moveCommand = null;
@@ -4658,11 +4659,11 @@ function toggleMainSelectTool() {
   hideInlineEditors();
   hideDrawToolMenu();
   hideDimensionToolMenu();
-  hideSelectToolMenu();
   hideSheet(furnitureSheet);
   setTool("select");
   showSelectModeMenuAfterLayout();
-  statusChip.textContent = "Выбор: тапните объект или выберите режим выделения";
+  syncSelectModeMenu();
+  statusChip.textContent = selectionStatusText();
 }
 
 function selectDrawTool(tool) {
@@ -4713,7 +4714,7 @@ function selectSelectionTool(tool) {
   }
   syncSelectToolMenu();
   setTool("select");
-  hideSelectModeMenu();
+  showSelectModeMenuAfterLayout();
   syncToolButtons();
   syncSelectionActions();
   statusChip.textContent = selectionStatusText();
