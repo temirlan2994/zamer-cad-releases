@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=83" />
+    <link rel="stylesheet" href="./styles.css?v=86" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -104,6 +104,7 @@
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" hidden>
           <button data-select-tool="cycle"><span>▣</span><small>Рамка</small></button>
           <button data-action="move"><span>↕</span><small>Переместить</small></button>
+          <button data-action="resize"><span>↔</span><small>Размер</small></button>
           <button data-action="delete"><span>⌫</span><small>Удалить</small></button>
           <button data-action="copy"><span>⧉</span><small>Копия</small></button>
           <button data-action="rotate"><span>↻</span><small>Поворот</small></button>
@@ -179,7 +180,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=154"></script>
+    <script type="module" src="./app.js?v=170"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
