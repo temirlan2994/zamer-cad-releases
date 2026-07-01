@@ -34,6 +34,7 @@ const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
 const themeButton = document.getElementById("themeButton");
 const annotationScaleSelect = document.getElementById("annotationScaleSelect");
 const statusChip = document.getElementById("statusChip");
+const saveIndicator = document.getElementById("saveIndicator");
 const layersSheet = document.getElementById("layersSheet");
 const exportSheet = document.getElementById("exportSheet");
 const furnitureSheet = document.getElementById("furnitureSheet");
@@ -303,15 +304,165 @@ const persistence = {
   endpoint: "",
   debounceMs: 250,
   retryMs: 1600,
+  localDbName: "zamer-cad-projects",
+  localDbVersion: 1,
+  localVersionLimit: 20,
   ready: false,
   dirty: false,
   saving: false,
   pending: false,
   restoring: false,
   timer: null,
+  statusTimer: null,
+  dbPromise: null,
   lastHash: "",
+  restoredSavedAt: 0,
+  needsRemoteSync: false,
 };
 persistence.endpoint = `/api/project?client=${encodeURIComponent(persistence.clientId)}`;
+
+function updateSaveIndicator(stateName, text, options = {}) {
+  if (!saveIndicator) return;
+  window.clearTimeout(persistence.statusTimer);
+  saveIndicator.dataset.state = stateName;
+  saveIndicator.textContent = text;
+  if (options.autoDim) {
+    persistence.statusTimer = window.setTimeout(() => {
+      if (!saveIndicator || saveIndicator.dataset.state !== stateName) return;
+      saveIndicator.dataset.state = "idle";
+    }, options.autoDim);
+  }
+}
+
+function projectSavedTime(project) {
+  return Date.parse(project?.savedAt || project?.localSavedAt || "") || 0;
+}
+
+function newestProject(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return projectSavedTime(b) > projectSavedTime(a) ? b : a;
+}
+
+function localProjectFallbackKey() {
+  return `zamer.project.${persistence.clientId}`;
+}
+
+function writeEmergencyLocalBackup(project) {
+  try {
+    localStorage.setItem(localProjectFallbackKey(), JSON.stringify(project));
+  } catch (error) {
+    console.warn("Emergency local backup failed", error);
+  }
+}
+
+function readEmergencyLocalBackup() {
+  try {
+    const raw = localStorage.getItem(localProjectFallbackKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB request failed"));
+  });
+}
+
+function idbTransactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error || new Error("IndexedDB transaction aborted"));
+    transaction.onerror = () => reject(transaction.error || new Error("IndexedDB transaction failed"));
+  });
+}
+
+function openLocalProjectDb() {
+  if (!("indexedDB" in window)) return Promise.resolve(null);
+  if (persistence.dbPromise) return persistence.dbPromise;
+  persistence.dbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(persistence.localDbName, persistence.localDbVersion);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("projects")) {
+        db.createObjectStore("projects", { keyPath: "clientId" });
+      }
+      if (!db.objectStoreNames.contains("versions")) {
+        const versions = db.createObjectStore("versions", { keyPath: "id", autoIncrement: true });
+        versions.createIndex("projectId", "projectId", { unique: false });
+        versions.createIndex("savedAt", "savedAt", { unique: false });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Could not open IndexedDB"));
+  });
+  return persistence.dbPromise;
+}
+
+async function trimLocalProjectVersions() {
+  const db = await openLocalProjectDb();
+  if (!db) return;
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction("versions", "readwrite");
+    const store = transaction.objectStore("versions");
+    const index = store.index("projectId");
+    let kept = 0;
+    const request = index.openCursor(IDBKeyRange.only(persistence.clientId), "prev");
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      kept += 1;
+      if (kept > persistence.localVersionLimit) store.delete(cursor.primaryKey);
+      cursor.continue();
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error || new Error("Version cleanup aborted"));
+    transaction.onerror = () => reject(transaction.error || new Error("Version cleanup failed"));
+  });
+}
+
+async function saveProjectToLocalStore(project, reason = "change") {
+  const savedAt = project.savedAt || new Date().toISOString();
+  const localProject = { ...project, clientId: persistence.clientId, savedAt, localSavedAt: savedAt };
+  writeEmergencyLocalBackup(localProject);
+  try {
+    const db = await openLocalProjectDb();
+    if (!db) return false;
+    const transaction = db.transaction(["projects", "versions"], "readwrite");
+    transaction.objectStore("projects").put(localProject);
+    transaction.objectStore("versions").put({
+      projectId: persistence.clientId,
+      savedAt,
+      reason,
+      project: localProject,
+    });
+    await idbTransactionDone(transaction);
+    await trimLocalProjectVersions();
+    return true;
+  } catch (error) {
+    console.warn("IndexedDB save failed; emergency backup is still available", error);
+    return false;
+  }
+}
+
+async function loadProjectFromLocalStore() {
+  const fallbackProject = readEmergencyLocalBackup();
+  try {
+    const db = await openLocalProjectDb();
+    if (!db) return fallbackProject;
+    const transaction = db.transaction("projects", "readonly");
+    const done = idbTransactionDone(transaction);
+    const indexedProject = await idbRequest(transaction.objectStore("projects").get(persistence.clientId));
+    await done;
+    return newestProject(fallbackProject, indexedProject);
+  } catch (error) {
+    console.warn("Local project restore failed", error);
+    return fallbackProject;
+  }
+}
 
 function getProjectClientId() {
   const storageKey = "zamer.clientId";
@@ -422,6 +573,7 @@ function restoreProject(project) {
     syncToolButtons();
     renderLayerList();
     draw();
+    persistence.restoredSavedAt = projectSavedTime(project);
     return true;
   } finally {
     persistence.restoring = false;
@@ -445,24 +597,31 @@ async function saveProjectNow() {
     return;
   }
   const snapshot = projectSnapshotKey();
-  if (!persistence.dirty && snapshot === persistence.lastHash) return;
+  if (!persistence.dirty && !persistence.needsRemoteSync && snapshot === persistence.lastHash) return;
   persistence.saving = true;
   let retryScheduled = false;
+  const project = serializeProject();
   window.clearTimeout(persistence.timer);
+  updateSaveIndicator("saving", "Сохраняю...");
   try {
+    await saveProjectToLocalStore(project, persistence.lastReason || "change");
+    persistence.lastHash = snapshot;
+    persistence.dirty = projectSnapshotKey() !== snapshot;
     const response = await fetch(persistence.endpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(serializeProject()),
+      body: JSON.stringify(project),
     });
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
-    persistence.lastHash = snapshot;
-    persistence.dirty = projectSnapshotKey() !== snapshot;
+    persistence.needsRemoteSync = false;
+    updateSaveIndicator("saved", "Сохранено", { autoDim: 2400 });
   } catch (error) {
     console.warn("Project autosave failed", error);
-    persistence.dirty = true;
+    persistence.needsRemoteSync = true;
+    persistence.dirty = projectSnapshotKey() !== snapshot;
     persistence.timer = window.setTimeout(saveProjectNow, persistence.retryMs);
     retryScheduled = true;
+    updateSaveIndicator("offline", "На телефоне", { autoDim: 3200 });
   } finally {
     persistence.saving = false;
     if (!retryScheduled && (persistence.pending || persistence.dirty)) {
@@ -489,10 +648,63 @@ async function loadProjectFromServer() {
   }
 }
 
+async function loadProjectSafely() {
+  let restoredLocal = false;
+  let restoredLocalProject = null;
+  let shouldPushLocalToServer = false;
+  updateSaveIndicator("saving", "Восстановление...");
+
+  try {
+    restoredLocalProject = await loadProjectFromLocalStore();
+    if (restoredLocalProject && restoreProject(restoredLocalProject)) {
+      restoredLocal = true;
+      updateSaveIndicator("saved", "С телефона", { autoDim: 2600 });
+    }
+  } catch (error) {
+    console.warn("Local restore failed", error);
+  }
+
+  try {
+    const response = await fetch(persistence.endpoint, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+    const payload = await response.json();
+    if (payload?.project) {
+      const serverTime = projectSavedTime(payload.project);
+      const localTime = projectSavedTime(restoredLocalProject);
+      if (!restoredLocal || serverTime >= localTime) {
+        restoreProject(payload.project);
+        await saveProjectToLocalStore(payload.project, "server-restore");
+        statusChip.textContent = "Проект загружен с сервера";
+        updateSaveIndicator("saved", "С сервера", { autoDim: 2600 });
+      } else {
+        shouldPushLocalToServer = true;
+        updateSaveIndicator("offline", "Локальная новее", { autoDim: 2600 });
+      }
+    } else if (restoredLocal) {
+      shouldPushLocalToServer = true;
+    }
+  } catch (error) {
+    console.warn("Project restore failed", error);
+    updateSaveIndicator(restoredLocal ? "offline" : "idle", restoredLocal ? "С телефона" : "Нет проекта", { autoDim: 2600 });
+  } finally {
+    persistence.ready = true;
+    persistence.lastHash = projectSnapshotKey();
+    if (shouldPushLocalToServer) {
+      persistence.dirty = true;
+      persistence.needsRemoteSync = true;
+      window.clearTimeout(persistence.timer);
+      persistence.timer = window.setTimeout(saveProjectNow, 120);
+    }
+  }
+}
+
 function flushProjectBeforeUnload() {
   if (!persistence.ready || persistence.restoring) return;
   if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
-  const body = JSON.stringify(serializeProject());
+  const project = serializeProject();
+  writeEmergencyLocalBackup(project);
+  saveProjectToLocalStore(project, "page-close").catch(() => {});
+  const body = JSON.stringify(project);
   const blob = new Blob([body], { type: "application/json" });
   if (navigator.sendBeacon?.(persistence.endpoint, blob)) return;
   fetch(persistence.endpoint, {
@@ -7125,8 +7337,18 @@ document.getElementById("closeLayersButton").addEventListener("click", () => hid
 document.getElementById("closeExportButton").addEventListener("click", () => hideSheet(exportSheet));
 
 exportCards.forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     const type = button.dataset.export;
+    if (type === "zamer") {
+      const project = serializeProject();
+      await saveProjectToLocalStore(project, "manual-export");
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      downloadFile(`zamer-backup-${stamp}.zamer`, JSON.stringify(project, null, 2), "application/json");
+      updateSaveIndicator("saved", "Копия скачана", { autoDim: 2600 });
+      statusChip.textContent = "Резервная копия .zamer скачана";
+      hideSheet(exportSheet);
+      return;
+    }
     if (type === "dxf") {
       const dxf = buildDxf(state.entities.filter((entity) => isLayerVisible(entity.layer)));
       downloadFile("zamer-plan.dxf", dxf, "application/dxf");
@@ -7255,6 +7477,10 @@ window.addEventListener("scroll", lockDocumentScroll, { passive: true });
 window.visualViewport?.addEventListener("resize", updateViewportLock);
 window.visualViewport?.addEventListener("scroll", updateViewportLock);
 window.addEventListener("beforeunload", flushProjectBeforeUnload);
+window.addEventListener("pagehide", flushProjectBeforeUnload);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushProjectBeforeUnload();
+});
 new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) normalizeDynamicText(node);
@@ -7266,7 +7492,7 @@ setAnnotationScale(state.annotationScale, { save: false });
 loadFurnitureLibrary();
 prepareSelectMenuStructure();
 setTool("select");
-loadProjectFromServer();
+loadProjectSafely();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
   entityCount: () => state.entities.length,

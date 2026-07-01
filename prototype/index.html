@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=93" />
+    <link rel="stylesheet" href="./styles.css?v=94" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -63,6 +63,7 @@
         </div>
 
         <div class="status-chip" id="statusChip">Выберите Линия и тяните отрезок</div>
+        <div class="save-indicator" id="saveIndicator" data-state="idle">Сохранение...</div>
         <div class="draw-metrics" id="drawMetrics" hidden>
           <label>
             <span>L</span>
@@ -173,6 +174,7 @@
         </div>
         <div class="export-grid">
           <button class="export-card" data-export="pdf"><strong>PDF</strong><span>печать и клиент</span></button>
+          <button class="export-card ready" data-export="zamer"><strong>ZAMER</strong><span>резервная копия</span></button>
           <button class="export-card ready" data-export="dxf"><strong>DXF</strong><span>AutoCAD, Archicad, Revit</span></button>
           <button class="export-card" data-export="dwg"><strong>DWG</strong><span>через ODA/сервер</span></button>
           <button class="export-card" data-export="ifc"><strong>IFC</strong><span>BIM позже</span></button>
