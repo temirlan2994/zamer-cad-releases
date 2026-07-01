@@ -948,21 +948,23 @@ input {
 
 .furniture-sheet[data-position="peek"] .furniture-tabs {
   border-bottom: 0;
-  gap: 12px;
+  gap: 8px;
+  justify-content: center;
   padding: 6px 4px 0;
 }
 
 .furniture-sheet[data-position="peek"] .furniture-tab {
-  font-size: 0.8rem;
-  padding-bottom: 8px;
+  height: 36px;
+  padding: 0;
+  width: 38px;
 }
 
 .furniture-tabs {
   border-bottom: 1px solid var(--border);
   display: flex;
-  gap: 18px;
+  gap: 8px;
   overflow-x: auto;
-  padding: 8px 8px 0;
+  padding: 6px 6px 7px;
   scrollbar-width: none;
 }
 
@@ -971,18 +973,30 @@ input {
 }
 
 .furniture-tab {
+  align-items: center;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--muted);
+  display: inline-flex;
   flex: 0 0 auto;
-  font-size: 0.9rem;
-  padding: 0 0 10px;
+  font-size: 1.06rem;
+  height: 38px;
+  justify-content: center;
+  padding: 0;
+  width: 40px;
 }
 
 .furniture-tab.active {
-  border-bottom: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   color: var(--accent);
   font-weight: 800;
+}
+
+.furniture-tab span {
+  line-height: 1;
+  pointer-events: none;
 }
 
 .furniture-browser {

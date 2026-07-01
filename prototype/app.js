@@ -214,6 +214,7 @@ const state = {
   openEditMenuAfterPointer: false,
   furnitureEditId: null,
   furnitureResizeHandlesId: null,
+  furnitureProportionalHandlesId: null,
   activeFurnitureDimension: null,
   undo: [],
   redo: [],
@@ -1147,6 +1148,9 @@ function setSelection(ids, options = {}) {
   state.selectedEndpoint = null;
   if (state.furnitureResizeHandlesId && !state.selectedIds.includes(state.furnitureResizeHandlesId)) {
     state.furnitureResizeHandlesId = null;
+  }
+  if (state.furnitureProportionalHandlesId && !state.selectedIds.includes(state.furnitureProportionalHandlesId)) {
+    state.furnitureProportionalHandlesId = null;
   }
   if (!state.selectedIds.some((id) => state.entities.find((entity) => entity.id === id)?.type === "block")) {
     state.activeFurnitureDimension = null;
@@ -2551,10 +2555,16 @@ function drawFurnitureSelection(entity, c) {
         drawFurnitureResizeHandle(layout.resizeHandles.depthStart, "↕", c);
         drawFurnitureResizeHandle(layout.resizeHandles.depthEnd, "↕", c);
       }
+    } else if (state.furnitureProportionalHandlesId === entity.id) {
+      if (layout.showResizeControls) {
+        for (const handle of Object.values(layout.proportionalHandles)) {
+          drawFurnitureProportionalHandle(handle, c);
+        }
+      }
     } else if (layout.showEditControls) {
       drawFurnitureActionButton(layout.resizeToggle, "↔", c);
       drawFurnitureActionButton(layout.rotate, "↻", c);
-      drawFurnitureActionButton(layout.scale, "⤢", c);
+      drawFurnitureActionButton(layout.proportionalToggle, "⤢", c);
     }
     if (layout.showEditControls) {
       drawFurnitureSideDimensions(entity, layout, c);
@@ -2623,6 +2633,22 @@ function drawFurnitureResizeHandle(control, label, c) {
   ctx.restore();
 }
 
+function drawFurnitureProportionalHandle(control, c) {
+  if (!control) return;
+  const size = screenUiPx(18);
+  ctx.save();
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = screenUiPx(2);
+  roundedRect(control.x - size / 2, control.y - size / 2, size, size, screenUiPx(4), true);
+  ctx.fillStyle = c.accent;
+  ctx.font = screenUiFont(900, 12);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("⤢", control.x, control.y + 0.5);
+  ctx.restore();
+}
+
 function drawFurnitureSideDimensions(entity, layout, c) {
   if (!layout?.corners?.length) return;
   const dimensions = furnitureDimensionSegments(entity, layout);
@@ -2635,31 +2661,16 @@ function drawFurnitureScreenDimension(a, b, value, c, active = false) {
   const dy = b.y - a.y;
   const length = Math.hypot(dx, dy);
   if (length < screenUiPx(28)) return;
-  const ux = dx / length;
-  const uy = dy / length;
-  const arrowSize = screenUiPx(7);
-  const tick = screenUiPx(8);
-  const labelGap = screenUiPx(13);
   const mid = midpoint(a, b);
-  const nx = -uy;
-  const ny = ux;
   const text = `${value} мм`;
   const angle = Math.atan2(dy, dx);
 
   ctx.save();
-  ctx.strokeStyle = active ? c.accent : c.dimension;
-  ctx.fillStyle = active ? c.accent : c.dimension;
-  ctx.lineWidth = screenUiPx(active ? 2.4 : 1.35);
-  linePath(a.x, a.y, b.x, b.y);
-  linePath(a.x - nx * tick, a.y - ny * tick, a.x + nx * tick, a.y + ny * tick);
-  linePath(b.x - nx * tick, b.y - ny * tick, b.x + nx * tick, b.y + ny * tick);
-  drawDimensionArrow(a, ux, uy, arrowSize, c);
-  drawDimensionArrow(b, -ux, -uy, arrowSize, c);
-  ctx.translate(mid.x + nx * labelGap, mid.y + ny * labelGap);
+  ctx.translate(mid.x, mid.y);
   let textAngle = angle;
   if (textAngle > Math.PI / 2 || textAngle < -Math.PI / 2) textAngle += Math.PI;
   ctx.rotate(textAngle);
-  ctx.font = screenUiFont(800, 11);
+  ctx.font = screenUiFont(850, active ? 12 : 11);
   ctx.lineWidth = screenUiPx(4);
   ctx.strokeStyle = colors().bg;
   ctx.lineJoin = "round";
@@ -2779,7 +2790,7 @@ function furnitureControlLayout(entity) {
     x: bottomLeft.x - normal.x * cornerOffset - tangent.x * cornerOffset,
     y: bottomLeft.y - normal.y * cornerOffset - tangent.y * cornerOffset,
   };
-  const scale = {
+  const proportionalToggle = {
     x: bottomRight.x - normal.x * cornerOffset + tangent.x * cornerOffset,
     y: bottomRight.y - normal.y * cornerOffset + tangent.y * cornerOffset,
   };
@@ -2813,7 +2824,13 @@ function furnitureControlLayout(entity) {
       angle: Math.atan2(normal.y, normal.x) + Math.PI / 2,
     },
   };
-  return { corners, center, bbox, editing, resizeToggle, rotate, scale, resizeHandles, showEditControls, showResizeControls, bottomNormal, leftNormal };
+  const proportionalHandles = {
+    nw: { x: topLeft.x + normal.x * handleOffset + leftNormal.x * handleOffset, y: topLeft.y + normal.y * handleOffset + leftNormal.y * handleOffset, side: "nw" },
+    ne: { x: topRight.x + normal.x * handleOffset + rightNormal.x * handleOffset, y: topRight.y + normal.y * handleOffset + rightNormal.y * handleOffset, side: "ne" },
+    se: { x: bottomRight.x + bottomNormal.x * handleOffset + rightNormal.x * handleOffset, y: bottomRight.y + bottomNormal.y * handleOffset + rightNormal.y * handleOffset, side: "se" },
+    sw: { x: bottomLeft.x + bottomNormal.x * handleOffset + leftNormal.x * handleOffset, y: bottomLeft.y + bottomNormal.y * handleOffset + leftNormal.y * handleOffset, side: "sw" },
+  };
+  return { corners, center, bbox, editing, resizeToggle, rotate, proportionalToggle, resizeHandles, proportionalHandles, showEditControls, showResizeControls, bottomNormal, leftNormal };
 }
 
 function clampScreenX(x, width, canvasWidth) {
@@ -5751,10 +5768,19 @@ function hitFurnitureControl(screen) {
       }
       return null;
     }
+    if (state.furnitureProportionalHandlesId === entity.id) {
+      if (!layout.showResizeControls) return null;
+      for (const handle of Object.values(layout.proportionalHandles)) {
+        if (pointDistance(screen, handle) <= 28) {
+          return { type: "proportional-handle", side: handle.side, entity, layout };
+        }
+      }
+      return null;
+    }
     if (!layout.showEditControls) return null;
     if (pointDistance(screen, layout.resizeToggle) <= 24) return { type: "resize-toggle", entity, layout };
     if (pointDistance(screen, layout.rotate) <= 24) return { type: "rotate", entity, layout };
-    if (pointDistance(screen, layout.scale) <= 24) return { type: "scale", entity, layout };
+    if (pointDistance(screen, layout.proportionalToggle) <= 24) return { type: "proportional-toggle", entity, layout };
   }
   return null;
 }
@@ -5765,13 +5791,13 @@ function hitFurnitureDimensionInput(screen) {
   const layout = furnitureControlLayout(entity);
   if (!layout) return null;
   const dimensions = furnitureDimensionSegments(entity, layout);
-  const threshold = screenUiPx(18);
+  const threshold = screenUiPx(30);
   const widthStart = dimensions.width.screenStart;
   const widthEnd = dimensions.width.screenEnd;
   const heightStart = dimensions.height.screenStart;
   const heightEnd = dimensions.height.screenEnd;
-  const widthHit = pointToSegmentDistance(screen, widthStart, widthEnd);
-  const heightHit = pointToSegmentDistance(screen, heightStart, heightEnd);
+  const widthHit = pointDistance(screen, midpoint(widthStart, widthEnd));
+  const heightHit = pointDistance(screen, midpoint(heightStart, heightEnd));
   if (widthHit <= threshold && widthHit <= heightHit) return { kind: "width", entity };
   if (heightHit <= threshold) return { kind: "height", entity };
   return null;
@@ -5781,18 +5807,11 @@ function focusFurnitureSizeInput(kind) {
   const entity = selectedFurnitureEntity();
   if (!entity) return false;
   state.activeFurnitureDimension = kind === "height" ? "height" : "width";
-  centerViewOnFurnitureForInput(entity);
   updateFurnitureSizePanel(entity);
   const input = kind === "height" ? furnitureDepthInput : furnitureWidthInput;
   input?.focus();
   input?.select();
   positionKeyboardConfirmButton();
-  window.setTimeout(() => {
-    if (selectedFurnitureEntity()?.id === entity.id && (document.activeElement === furnitureWidthInput || document.activeElement === furnitureDepthInput)) {
-      centerViewOnFurnitureForInput(entity);
-      draw();
-    }
-  }, 260);
   statusChip.textContent = kind === "height" ? "Введите глубину мебели" : "Введите ширину мебели";
   draw();
   return true;
@@ -5813,8 +5832,17 @@ function beginFurnitureControl(control, event, screen) {
   }
   if (control.type === "resize-toggle") {
     state.furnitureResizeHandlesId = state.furnitureResizeHandlesId === control.entity.id ? null : control.entity.id;
+    state.furnitureProportionalHandlesId = null;
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
     statusChip.textContent = state.furnitureResizeHandlesId ? "Размер мебели: тяните боковые ручки ширины или глубины" : "Ручки размера скрыты";
+    draw();
+    return true;
+  }
+  if (control.type === "proportional-toggle") {
+    state.furnitureProportionalHandlesId = state.furnitureProportionalHandlesId === control.entity.id ? null : control.entity.id;
+    state.furnitureResizeHandlesId = null;
+    state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
+    statusChip.textContent = state.furnitureProportionalHandlesId ? "Пропорции: тяните точку с нужной стороны" : "Пропорциональные точки скрыты";
     draw();
     return true;
   }
@@ -5830,7 +5858,7 @@ function beginFurnitureControl(control, event, screen) {
     mode: control.type === "rotate" ? "furniture-rotate" : "furniture-resize",
     targetId: entity.id,
     before: entityGeometry(entity),
-    resizeAxis: control.type === "scale" ? "both" : control.axis,
+    resizeAxis: control.type === "proportional-handle" ? "proportional" : control.axis,
     resizeSide: control.side,
     startScaleDistance: Math.max(1, Math.hypot(startLocal.x, startLocal.y)),
     startRotation: entity.rotation || 0,
@@ -5863,6 +5891,20 @@ function resizeFurnitureByPointer(entity, screen) {
     entity.width = startWidth;
     entity.height = nextHeight;
     setBlockCenterFromLocalDelta(entity, start, 0, side === "top" ? -delta : delta);
+  } else if (axis === "proportional") {
+    const sx = side.includes("w") ? -1 : 1;
+    const sy = side.includes("n") ? -1 : 1;
+    const rawWidth = startWidth / 2 + sx * local.x;
+    const rawHeight = startHeight / 2 + sy * local.y;
+    const rawScale = Math.max(rawWidth / Math.max(1, startWidth), rawHeight / Math.max(1, startHeight));
+    const scale = Math.max(300 / startWidth, 300 / startHeight, Math.min(4, Math.max(0.2, rawScale)));
+    const nextWidth = snapFurnitureSize(startWidth * scale);
+    const nextHeight = snapFurnitureSize(startHeight * scale);
+    const dx = sx * (nextWidth - startWidth) / 2;
+    const dy = sy * (nextHeight - startHeight) / 2;
+    entity.width = nextWidth;
+    entity.height = nextHeight;
+    setBlockCenterFromLocalDelta(entity, start, dx, dy);
   } else {
     const currentDistance = Math.max(1, Math.hypot(local.x, local.y));
     const rawScale = currentDistance / Math.max(1, state.pointer?.startScaleDistance || currentDistance);
