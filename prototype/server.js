@@ -96,8 +96,12 @@ function clientProjectPaths(url) {
   return {
     client,
     statePath: path.join(projectStatesDir, `project-${client}.json`),
-    tempPath: path.join(projectStatesDir, `project-${client}.tmp.json`),
   };
+}
+
+function uniqueProjectTempPath(client) {
+  const nonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  return path.join(projectStatesDir, `project-${client}.${nonce}.tmp.json`);
 }
 
 function handleProjectApi(request, response, url) {
@@ -106,6 +110,10 @@ function handleProjectApi(request, response, url) {
     fs.readFile(paths.statePath, "utf8", (error, content) => {
       if (error) {
         if (error.code === "ENOENT") {
+          if (paths.client !== "default") {
+            sendJson(response, 200, { ok: true, project: null, client: paths.client });
+            return;
+          }
           fs.readFile(projectStatePath, "utf8", (legacyError, legacyContent) => {
             if (legacyError) {
               sendJson(response, 200, { ok: true, project: null, client: paths.client });
@@ -140,19 +148,21 @@ function handleProjectApi(request, response, url) {
           sendJson(response, 500, { ok: false, error: "Could not prepare project storage" });
           return;
         }
-        fs.writeFile(paths.tempPath, content, "utf8", (writeError) => {
-        if (writeError) {
-          sendJson(response, 500, { ok: false, error: "Could not write project" });
-          return;
-        }
-        fs.rename(paths.tempPath, paths.statePath, (renameError) => {
-          if (renameError) {
-            sendJson(response, 500, { ok: false, error: "Could not save project" });
+        const tempPath = uniqueProjectTempPath(paths.client);
+        fs.writeFile(tempPath, content, "utf8", (writeError) => {
+          if (writeError) {
+            sendJson(response, 500, { ok: false, error: "Could not write project" });
             return;
           }
-          sendJson(response, 200, { ok: true, client: paths.client });
+          fs.rename(tempPath, paths.statePath, (renameError) => {
+            if (renameError) {
+              fs.unlink(tempPath, () => {});
+              sendJson(response, 500, { ok: false, error: "Could not save project" });
+              return;
+            }
+            sendJson(response, 200, { ok: true, client: paths.client });
+          });
         });
-      });
       });
     });
     return;

@@ -481,6 +481,12 @@ async function loadProjectFromLocalStore() {
 }
 
 function getProjectClientId() {
+  try {
+    const urlClient = new URLSearchParams(window.location.search).get("client");
+    if (/^[a-zA-Z0-9_-]{8,80}$/.test(urlClient || "")) return urlClient;
+  } catch {
+    // Fall back to the device-local client id below.
+  }
   const storageKey = "zamer.clientId";
   try {
     const existing = localStorage.getItem(storageKey);
@@ -695,9 +701,10 @@ async function loadProjectSafely() {
       } else {
         shouldPushLocalToServer = true;
         updateSaveIndicator("offline", "Локальная новее", { autoDim: 2600 });
-      }
     } else if (restoredLocal) {
       shouldPushLocalToServer = true;
+    } else {
+      updateSaveIndicator("idle", "Готово", { autoDim: 1800 });
     }
   } catch (error) {
     console.warn("Project restore failed", error);
@@ -5517,6 +5524,7 @@ function selectSelectionTool(tool) {
     state.selectTool = currentIndex >= 0 ? selectionToolCycle[(currentIndex + 1) % selectionToolCycle.length] : selectionToolCycle[0];
   } else if (tool === "filter") {
     state.selectionFilter = nextSelectionFilter();
+    markProjectDirty("selection-filter");
   } else {
     state.selectTool = tool;
   }
@@ -7223,9 +7231,11 @@ function nearestFurnitureSheetPosition(height) {
 
 function setFurnitureSheetPosition(position) {
   if (!furnitureSheetPositions.includes(position)) return;
+  const changed = state.furnitureSheetPosition !== position;
   state.furnitureSheetPosition = position;
   furnitureSheet.dataset.position = position;
   furnitureSheet.style.height = "";
+  if (changed) markProjectDirty("furniture-sheet");
 }
 
 function cycleFurnitureSheetPosition() {
@@ -7440,6 +7450,7 @@ themeButton.addEventListener("click", () => {
   shell.dataset.theme = state.theme;
   themeButton.textContent = state.theme === "light" ? "☾" : "☼";
   draw();
+  markProjectDirty("theme");
 });
 
 annotationScaleSelect?.addEventListener("change", () => {
