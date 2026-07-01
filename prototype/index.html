@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=204" />
+    <link rel="stylesheet" href="./styles.css?v=207" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -23,7 +23,7 @@
           <p>Ваши чертежи будут храниться внутри аккаунта и не смешиваться с другими пользователями.</p>
           <label>
             <span>Логин</span>
-            <input id="authLoginInput" name="login" type="text" autocomplete="username" inputmode="email" placeholder="temirlan" required />
+            <input id="authLoginInput" name="login" type="text" autocomplete="username" inputmode="email" placeholder="Логин или email" required />
           </label>
           <label>
             <span>Пароль</span>
@@ -31,6 +31,7 @@
           </label>
           <div class="auth-error" id="authError" aria-live="polite"></div>
           <button class="auth-submit" id="authSubmitButton" type="submit">Войти</button>
+          <button class="auth-dev" id="authDevButton" type="button">Войти как разработчик</button>
           <button class="auth-switch" id="authModeButton" type="button">Создать аккаунт</button>
         </form>
       </section>
@@ -252,7 +253,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=205"></script>
+    <script type="module" src="./app.js?v=208"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {

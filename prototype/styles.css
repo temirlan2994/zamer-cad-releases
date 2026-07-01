@@ -150,6 +150,7 @@ input {
 }
 
 .auth-submit,
+.auth-dev,
 .auth-switch {
   border-radius: 7px;
   cursor: pointer;
@@ -161,6 +162,12 @@ input {
   background: var(--accent);
   border: 1px solid var(--accent);
   color: white;
+}
+
+.auth-dev {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
 }
 
 .auth-switch {

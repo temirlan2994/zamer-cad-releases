@@ -195,7 +195,7 @@ function clearSessionCookie() {
 }
 
 function createSession(userId) {
-  const sessions = readSessions().filter((session) => Date.parse(session.expiresAt || "") > Date.now());
+  const sessions = readSessions().filter((session) => session.userId !== userId && Date.parse(session.expiresAt || "") > Date.now());
   const now = Date.now();
   const session = {
     id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString("hex"),

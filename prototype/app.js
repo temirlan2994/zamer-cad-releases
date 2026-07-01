@@ -11,6 +11,7 @@ const authForm = document.getElementById("authForm");
 const authLoginInput = document.getElementById("authLoginInput");
 const authPasswordInput = document.getElementById("authPasswordInput");
 const authSubmitButton = document.getElementById("authSubmitButton");
+const authDevButton = document.getElementById("authDevButton");
 const authModeButton = document.getElementById("authModeButton");
 const authError = document.getElementById("authError");
 const projectHome = document.getElementById("projectHome");
@@ -364,6 +365,8 @@ const authState = {
   mode: "login",
   user: null,
   busy: false,
+  checkTimer: null,
+  checkIntervalMs: 5000,
 };
 
 const installState = {
@@ -593,6 +596,7 @@ function renderAuthUi() {
   if (authSubmitButton) authSubmitButton.textContent = authState.busy ? "Проверяю..." : isRegister ? "Создать аккаунт" : "Войти";
   if (authModeButton) authModeButton.textContent = isRegister ? "У меня уже есть аккаунт" : "Создать аккаунт";
   if (authSubmitButton) authSubmitButton.disabled = authState.busy;
+  if (authDevButton) authDevButton.disabled = authState.busy;
   if (authModeButton) authModeButton.disabled = authState.busy;
   if (accountBadge) {
     accountBadge.hidden = !authState.user;
@@ -631,6 +635,44 @@ function setAuthenticatedUser(user) {
   renderAuthUi();
 }
 
+function stopAuthMonitor() {
+  window.clearInterval(authState.checkTimer);
+  authState.checkTimer = null;
+}
+
+function startAuthMonitor() {
+  stopAuthMonitor();
+  if (!authState.user) return;
+  authState.checkTimer = window.setInterval(checkActiveSession, authState.checkIntervalMs);
+}
+
+async function forceAuthLogout(message = "Войдите") {
+  stopAuthMonitor();
+  authState.mode = "login";
+  setAuthenticatedUser(null);
+  resetProjectSession();
+  setProjectHomeVisible(false);
+  setAuthScreenVisible(true);
+  updateSaveIndicator("idle", "Войдите");
+  setAuthError(message);
+}
+
+async function checkActiveSession() {
+  if (!authState.user || document.hidden) return;
+  try {
+    const payload = await fetchAuthJson("status");
+    if (!payload.user) {
+      await forceAuthLogout("Аккаунт открыт на другом устройстве. Войдите снова.");
+      return;
+    }
+    if (payload.user.id !== authState.user.id) {
+      await forceAuthLogout("Сессия изменилась. Войдите снова.");
+    }
+  } catch (error) {
+    console.warn("Auth monitor failed", error);
+  }
+}
+
 async function fetchAuthJson(action, options = {}) {
   const response = await fetch(authEndpoint(action), {
     cache: "no-store",
@@ -655,6 +697,7 @@ async function initAuthGate() {
     const payload = await fetchAuthJson("status");
     if (payload.user) {
       setAuthenticatedUser(payload.user);
+      startAuthMonitor();
       setAuthScreenVisible(false);
       await initProjectHome();
       return;
@@ -682,6 +725,7 @@ async function submitAuthForm(event) {
       body: JSON.stringify({ login, password }),
     });
     setAuthenticatedUser(payload.user);
+    startAuthMonitor();
     if (authPasswordInput) authPasswordInput.value = "";
     setAuthScreenVisible(false);
     await initProjectHome();
@@ -693,9 +737,45 @@ async function submitAuthForm(event) {
   }
 }
 
+async function loginAsDeveloper() {
+  if (authState.busy) return;
+  const login = "developer";
+  const password = "developer123";
+  setAuthError("");
+  authState.busy = true;
+  renderAuthUi();
+  try {
+    let payload;
+    try {
+      payload = await fetchAuthJson("login", {
+        method: "POST",
+        body: JSON.stringify({ login, password }),
+      });
+    } catch (loginError) {
+      payload = await fetchAuthJson("register", {
+        method: "POST",
+        body: JSON.stringify({ login, password }),
+      });
+    }
+    authState.mode = "login";
+    setAuthenticatedUser(payload.user);
+    startAuthMonitor();
+    if (authLoginInput) authLoginInput.value = login;
+    if (authPasswordInput) authPasswordInput.value = "";
+    setAuthScreenVisible(false);
+    await initProjectHome();
+  } catch (error) {
+    setAuthError(error.message || "Не удалось войти как разработчик");
+  } finally {
+    authState.busy = false;
+    renderAuthUi();
+  }
+}
+
 async function logoutAccount() {
   if (persistence.ready && persistence.projectId) await saveProjectNow();
   await fetchAuthJson("logout", { method: "POST" }).catch((error) => console.warn("Logout failed", error));
+  stopAuthMonitor();
   authState.mode = "login";
   setAuthenticatedUser(null);
   resetProjectSession();
@@ -1281,6 +1361,10 @@ async function saveProjectNow() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(project),
     });
+    if (response.status === 401) {
+      await forceAuthLogout("Аккаунт открыт на другом устройстве. Это устройство вышло из аккаунта.");
+      return;
+    }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
     persistence.needsRemoteSync = false;
     updateSaveIndicator("saved", "Сохранено", { autoDim: 2400 });
@@ -7976,6 +8060,12 @@ furnitureCatsNav.addEventListener("click", (event) => {
 });
 
 authForm?.addEventListener("submit", submitAuthForm);
+authDevButton?.addEventListener("click", () => {
+  loginAsDeveloper().catch((error) => {
+    console.warn("Developer login failed", error);
+    setAuthError("Не удалось войти как разработчик");
+  });
+});
 authModeButton?.addEventListener("click", () => {
   authState.mode = authState.mode === "login" ? "register" : "login";
   setAuthError("");
@@ -8393,6 +8483,7 @@ window.addEventListener("beforeunload", flushProjectBeforeUnload);
 window.addEventListener("pagehide", flushProjectBeforeUnload);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") flushProjectBeforeUnload();
+  else checkActiveSession();
 });
 new MutationObserver((mutations) => {
   for (const mutation of mutations) {
