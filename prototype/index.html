@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=93" />
+    <link rel="stylesheet" href="./styles.css?v=94" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -128,12 +128,12 @@
           <strong>↑</strong>
         </button>
         <div class="furniture-tabs" aria-label="Категории библиотеки">
-          <button class="furniture-tab active" data-tab="furniture">Мебель</button>
-          <button class="furniture-tab" data-tab="doors">Двери</button>
-          <button class="furniture-tab" data-tab="windows">Окна</button>
-          <button class="furniture-tab" data-tab="kitchen">Кухня</button>
-          <button class="furniture-tab" data-tab="bath">Санузел</button>
-          <button class="furniture-tab" data-tab="decor">Декор</button>
+          <button class="furniture-tab active" data-tab="furniture" title="Мебель" aria-label="Мебель"><span>▥</span></button>
+          <button class="furniture-tab" data-tab="doors" title="Двери" aria-label="Двери"><span>◜</span></button>
+          <button class="furniture-tab" data-tab="windows" title="Окна" aria-label="Окна"><span>⊞</span></button>
+          <button class="furniture-tab" data-tab="kitchen" title="Кухня" aria-label="Кухня"><span>▣</span></button>
+          <button class="furniture-tab" data-tab="bath" title="Санузел" aria-label="Санузел"><span>◉</span></button>
+          <button class="furniture-tab" data-tab="decor" title="Декор" aria-label="Декор"><span>✦</span></button>
         </div>
         <div class="furniture-browser">
           <nav class="furniture-cats" aria-label="Тип мебели">
@@ -180,7 +180,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=175"></script>
+    <script type="module" src="./app.js?v=180"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
