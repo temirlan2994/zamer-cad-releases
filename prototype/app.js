@@ -701,6 +701,7 @@ async function loadProjectSafely() {
       } else {
         shouldPushLocalToServer = true;
         updateSaveIndicator("offline", "Локальная новее", { autoDim: 2600 });
+      }
     } else if (restoredLocal) {
       shouldPushLocalToServer = true;
     } else {
