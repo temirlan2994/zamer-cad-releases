@@ -321,12 +321,59 @@ input {
   font-size: 0.73rem;
   line-height: 1.25;
   left: 10px;
-  max-width: calc(100% - 20px);
+  max-width: calc(100% - 150px);
   overflow: hidden;
   padding: 7px 9px;
   position: absolute;
   text-wrap: balance;
   z-index: 3;
+}
+
+.save-indicator {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.66rem;
+  font-weight: 750;
+  gap: 5px;
+  max-width: calc(100% - 20px);
+  min-height: 26px;
+  padding: 5px 8px;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 6;
+}
+
+.save-indicator::before {
+  background: currentColor;
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  width: 6px;
+}
+
+.save-indicator[data-state="saving"] {
+  color: var(--accent);
+}
+
+.save-indicator[data-state="saved"] {
+  color: var(--accent-2);
+}
+
+.save-indicator[data-state="offline"] {
+  color: #d79a2b;
+}
+
+.save-indicator[data-state="error"] {
+  color: #dc5b5b;
+}
+
+.save-indicator[data-state="idle"] {
+  opacity: 0.72;
 }
 
 .draw-metrics[hidden] {
