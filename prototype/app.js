@@ -1,6 +1,6 @@
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js";
 import { defaultBlockSize, entitySize, blockSegments } from "./core/blocks.js";
-import { buildDxf } from "./core/dxf.js";
+import { buildDxf, buildRevitDxf } from "./core/dxf.js";
 
 const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
@@ -7128,9 +7128,18 @@ exportCards.forEach((button) => {
   button.addEventListener("click", () => {
     const type = button.dataset.export;
     if (type === "dxf") {
-      const dxf = buildDxf(state.entities.filter((entity) => isLayerVisible(entity.layer)));
+      const visibleEntitiesForExport = state.entities.filter((entity) => isLayerVisible(entity.layer));
+      const dxf = buildDxf(visibleEntitiesForExport);
       downloadFile("zamer-plan.dxf", dxf, "application/dxf");
       statusChip.textContent = "DXF экспортирован с включенными слоями";
+      hideSheet(exportSheet);
+      return;
+    }
+    if (type === "revit-dxf") {
+      const visibleEntitiesForExport = state.entities.filter((entity) => isLayerVisible(entity.layer));
+      const dxf = buildRevitDxf(visibleEntitiesForExport);
+      downloadFile("zamer-revit-mm.dxf", dxf, "application/dxf");
+      statusChip.textContent = "Revit DXF экспортирован: импортируйте как CAD, единицы - миллиметры";
       hideSheet(exportSheet);
       return;
     }
@@ -7269,6 +7278,7 @@ setTool("select");
 loadProjectFromServer();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
+  exportRevitDxf: () => buildRevitDxf(state.entities),
   entityCount: () => state.entities.length,
   tool: () => state.tool,
   drawing: () => Boolean(state.drawing),

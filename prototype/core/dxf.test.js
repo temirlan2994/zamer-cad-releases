@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDxf, dxfLine, dxfCircle, roundDxf } from "./dxf.js";
+import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, roundDxf } from "./dxf.js";
 
 const countRecords = (dxf, type) => (dxf.match(new RegExp(`\\n0\\n${type}\\n`, "g")) || []).length;
 
@@ -27,6 +27,9 @@ test("dxfCircle flips center Y and uses absolute radius", () => {
 test("buildDxf wraps a valid section/EOF envelope", () => {
   const dxf = buildDxf([]);
   assert.ok(dxf.startsWith("0\nSECTION\n2\nHEADER"));
+  assert.ok(dxf.includes("\n9\n$ACADVER\n1\nAC1009\n"));
+  assert.ok(dxf.includes("\n9\n$INSUNITS\n70\n4\n"));
+  assert.ok(dxf.includes("\n0\nLTYPE\n2\nCONTINUOUS\n"));
   assert.ok(dxf.includes("\n2\nENTITIES\n"));
   assert.ok(dxf.endsWith("0\nENDSEC\n0\nEOF\n"));
 });
@@ -64,4 +67,16 @@ test("buildDxf exports a non-collinear arc", () => {
 test("buildDxf skips a degenerate (collinear) arc instead of emitting garbage", () => {
   const dxf = buildDxf([{ type: "arc", start: { x: 0, y: 0 }, through: { x: 50, y: 0 }, end: { x: 100, y: 0 }, layer: "measure" }]);
   assert.equal(countRecords(dxf, "ARC"), 0);
+});
+
+test("buildRevitDxf uses Revit-friendly millimeter layers", () => {
+  const dxf = buildRevitDxf([
+    { type: "wall", x1: 0, y1: 0, x2: 1000, y2: 0, width: 180 },
+    { type: "line", x1: 0, y1: 0, x2: 0, y2: 500, layer: "dimensions" },
+  ]);
+  assert.ok(dxf.includes("\n9\n$INSUNITS\n70\n4\n"));
+  assert.ok(dxf.includes("\n2\nZAMER_WALLS\n"));
+  assert.ok(dxf.includes("\n2\nZAMER_DIMENSIONS\n"));
+  assert.ok(dxf.includes("\n8\nZAMER_WALLS\n"));
+  assert.ok(dxf.includes("\n8\nZAMER_DIMENSIONS\n"));
 });
