@@ -1,0 +1,841 @@
+{
+  "version": 1,
+  "clientId": "8b3f02db-c1fa-4245-b67a-b1a535f296c1",
+  "theme": "dark",
+  "view": {
+    "scale": 0.10146956551435068,
+    "panX": -2039.8501606700816,
+    "panY": 37.3333242420878
+  },
+  "snaps": [
+    "grid",
+    "end",
+    "polar"
+  ],
+  "visibleLayers": [
+    "walls",
+    "dimensions",
+    "furniture",
+    "measure"
+  ],
+  "annotationScale": 1,
+  "selectionFilter": "all",
+  "furnitureTab": "decor",
+  "furnitureCategory": "decor",
+  "furnitureSheetPosition": "peek",
+  "entities": [
+    {
+      "id": "sofa-1782402184072",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 23150,
+      "y": -1250,
+      "rotation": 0,
+      "scale": 1,
+      "width": 3800,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782402191347",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": -18075,
+      "y": -1249.999999999993,
+      "rotation": 360,
+      "scale": 1,
+      "width": 2900,
+      "height": 1150
+    },
+    {
+      "id": "wall-1782402479932",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 1900,
+      "y1": 1350,
+      "x2": 1900.0000000000005,
+      "y2": -6807.5118755659805,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402484492",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 1900,
+      "y1": 1350,
+      "x2": 5881.519810323691,
+      "y2": 1350,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402493878",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 5881.519810323691,
+      "y1": 1350,
+      "x2": 5881.519810323692,
+      "y2": -6674.887368108743,
+      "width": 180
+    },
+    {
+      "id": "wall-1782402497390",
+      "type": "wall",
+      "layer": "walls",
+      "x1": 5881.519810323692,
+      "y1": -6674.887368108743,
+      "x2": 1900.0000000000005,
+      "y2": -6807.5118755659805,
+      "width": 180
+    },
+    {
+      "id": "sofa-1782402501909",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 4100,
+      "y": 800,
+      "rotation": 180,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782402515257",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 2500,
+      "y": -800,
+      "rotation": 270,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "door-1782402581731",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "door",
+      "x": 7000,
+      "y": -3000,
+      "rotation": 0,
+      "scale": 1,
+      "width": 700,
+      "height": 700
+    },
+    {
+      "id": "sofa-1782402670528",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 4200,
+      "y": -2000,
+      "rotation": 90,
+      "scale": 1,
+      "width": 3200,
+      "height": 1400
+    },
+    {
+      "id": "sofa-1782402725836",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 2500,
+      "y": -4000,
+      "rotation": 270,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "dimension-1782402769383",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 5200,
+      "y1": 1275,
+      "x2": 3000,
+      "y2": 1275,
+      "offset": -675,
+      "refStart": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-0"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-1"
+      },
+      "dimX1": 5200,
+      "dimY1": 1950,
+      "dimX2": 3000,
+      "dimY2": 1950
+    },
+    {
+      "id": "dimension-1782402783513",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 3300,
+      "y1": 2350,
+      "x2": 9302.72026065849,
+      "y2": 3400.57028510096,
+      "offset": 2020.9540520832813,
+      "refEnd": null,
+      "dimX1": 4029.998156354938,
+      "dimY1": 4234.504702130038,
+      "dimX2": 8895.647668757892,
+      "dimY2": 2349.7043248697623
+    },
+    {
+      "id": "dimension-1782402789596",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 3000,
+      "y1": 325.0000000000001,
+      "x2": 2975,
+      "y2": -1900,
+      "offset": -1581.0799753770357,
+      "refStart": {
+        "entityId": "sofa-1782402501909",
+        "pointKey": "corner-2"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402515257",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1419.0198182277204,
+      "dimY1": 342.7638222671044,
+      "dimX2": 1394.0198182277204,
+      "dimY2": -1882.2361777328958
+    },
+    {
+      "id": "dimension-1782402793880",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 2975,
+      "y1": -2900,
+      "x2": 2975,
+      "y2": -1900,
+      "offset": 1575,
+      "refStart": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-3"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402515257",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1400,
+      "dimY1": -2900,
+      "dimX2": 1400,
+      "dimY2": -1900
+    },
+    {
+      "id": "dimension-1782402811847",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 2975,
+      "y1": -2900,
+      "x2": 2975,
+      "y2": -5100,
+      "offset": -1525,
+      "refStart": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-3"
+      },
+      "refEnd": {
+        "entityId": "sofa-1782402725836",
+        "pointKey": "corner-2"
+      },
+      "dimX1": 1450,
+      "dimY1": -2900,
+      "dimX2": 1450,
+      "dimY2": -5100
+    },
+    {
+      "id": "dimension-1782402814918",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 1450,
+      "y1": 50,
+      "x2": 1900,
+      "y2": 1350,
+      "offset": 1253.9238282188057,
+      "refEnd": {
+        "entityId": "wall-1782402479932",
+        "pointKey": "start"
+      },
+      "dimX1": 265.05944517833404,
+      "dimY1": 460.17173051519205,
+      "dimX2": 715.059445178334,
+      "dimY2": 1760.171730515192
+    },
+    {
+      "id": "line-1782403491018",
+      "type": "line",
+      "layer": "measure",
+      "x1": 8050,
+      "y1": -3850.4716561397145,
+      "x2": 10308.82968813579,
+      "y2": -3850.4716561397145
+    },
+    {
+      "id": "sofa-1782403500147",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 9200,
+      "y": -3300,
+      "rotation": 360,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782404959692",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 10800,
+      "y": -1700,
+      "rotation": 90,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "sofa-1782404967558",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 9200,
+      "y": -100,
+      "rotation": 180,
+      "scale": 1,
+      "width": 2200,
+      "height": 950
+    },
+    {
+      "id": "line-1782405259698",
+      "type": "line",
+      "layer": "measure",
+      "x1": 8850,
+      "y1": -1300,
+      "x2": 10325,
+      "y2": -600
+    },
+    {
+      "id": "line-1782405865974",
+      "type": "line",
+      "layer": "measure",
+      "x1": 4900,
+      "y1": -400.00000000000006,
+      "x2": 4900.000000000001,
+      "y2": 9450.126902735823
+    },
+    {
+      "id": "line-1782406062494",
+      "type": "line",
+      "layer": "measure",
+      "x1": 4550,
+      "y1": 4350,
+      "x2": 5668.033988749895,
+      "y2": 5468.033988749895
+    },
+    {
+      "id": "line-1782406602974",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7350,
+      "y1": -6700,
+      "x2": 7350,
+      "y2": -9946.921619010844
+    },
+    {
+      "id": "line-1782406618090",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7350,
+      "y1": -6700,
+      "x2": 9850,
+      "y2": -6700
+    },
+    {
+      "id": "line-1782406649683",
+      "type": "line",
+      "layer": "measure",
+      "x1": 9850,
+      "y1": -6700,
+      "x2": 9850,
+      "y2": -11700
+    },
+    {
+      "id": "line-1782406741976",
+      "type": "line",
+      "layer": "measure",
+      "x1": 9850,
+      "y1": -11700,
+      "x2": 7449.479223168439,
+      "y2": -11700
+    },
+    {
+      "id": "polyline-1782406777750",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7449.479223168439,
+      "y1": -11700,
+      "x2": 7449.479223168439,
+      "y2": -13500.70884623019
+    },
+    {
+      "id": "polyline-1782406779806",
+      "type": "line",
+      "layer": "measure",
+      "x1": 7449.479223168439,
+      "y1": -13500.70884623019,
+      "x2": 5830.470665153508,
+      "y2": -13500.70884623019
+    },
+    {
+      "id": "polyline-1782406795114",
+      "type": "line",
+      "layer": "measure",
+      "x1": 5830.470665153508,
+      "y1": -13500.70884623019,
+      "x2": 5830.470665153508,
+      "y2": -10067.739511512844
+    },
+    {
+      "id": "polyline-1782406900361",
+      "type": "line",
+      "layer": "measure",
+      "x1": 5830.470665153508,
+      "y1": -10067.739511512844,
+      "x2": 7439.090057237165,
+      "y2": -10071.651558880443
+    },
+    {
+      "id": "line-1782407755834",
+      "type": "line",
+      "layer": "measure",
+      "x1": 10900,
+      "y1": 4800,
+      "x2": 13916.610131608799,
+      "y2": 4792.663819805661
+    },
+    {
+      "id": "line-1782407766853",
+      "type": "line",
+      "layer": "measure",
+      "x1": 13916.610131608799,
+      "y1": 4792.663819805661,
+      "x2": 13916.610131608799,
+      "y2": 343.4466579600994
+    },
+    {
+      "id": "line-1782407786534",
+      "type": "line",
+      "layer": "measure",
+      "x1": 13916.610131608799,
+      "y1": 343.4466579600994,
+      "x2": 13916.610131608799,
+      "y2": -3713.249770611329
+    },
+    {
+      "id": "line-1782407793386",
+      "type": "line",
+      "layer": "measure",
+      "x1": 13916.610131608799,
+      "y1": -3713.249770611329,
+      "x2": 9850,
+      "y2": -6700
+    },
+    {
+      "id": "line-1782407819344",
+      "type": "line",
+      "layer": "measure",
+      "x1": 5830.470665153508,
+      "y1": -10067.739511512844,
+      "x2": 6650.796854534921,
+      "y2": -6000.796854534921
+    },
+    {
+      "id": "line-1782407826027",
+      "type": "line",
+      "layer": "measure",
+      "x1": 5830.470665153508,
+      "y1": -13500.70884623019,
+      "x2": 5830.470665153508,
+      "y2": -15668.606913468471
+    },
+    {
+      "id": "line-1782645675428",
+      "type": "line",
+      "layer": "measure",
+      "x1": 17855.07858719599,
+      "y1": -13699.649353991963,
+      "x2": 23055.07858719599,
+      "y2": -13699.649353991963
+    },
+    {
+      "id": "line-1782645686316",
+      "type": "line",
+      "layer": "measure",
+      "x1": 23055.07858719599,
+      "y1": -13699.649353991963,
+      "x2": 23055.07858719599,
+      "y2": -15699.649353991963
+    },
+    {
+      "id": "polyline-1782645764423",
+      "type": "line",
+      "layer": "measure",
+      "x1": 23055.07858719599,
+      "y1": -15699.649353991963,
+      "x2": 25402.116385353012,
+      "y2": -15699.649353991963
+    },
+    {
+      "id": "rectangle-1782645927749",
+      "type": "rectangle",
+      "layer": "measure",
+      "x1": 28572.055126096227,
+      "y1": -15699.649353991963,
+      "x2": 31741.993866839442,
+      "y2": -17529.81433927468
+    },
+    {
+      "id": "rectangle-1782645986434",
+      "type": "line",
+      "layer": "measure",
+      "x1": 28572.055126096227,
+      "y1": -15699.649353991963,
+      "x2": 31741.993866839442,
+      "y2": -13869.484368709245
+    },
+    {
+      "id": "rectangle-1782646004151",
+      "type": "line",
+      "layer": "measure",
+      "x1": 28572.055126096227,
+      "y1": -13869.484368709245,
+      "x2": 31741.993866839442,
+      "y2": -12039.319383426528
+    },
+    {
+      "id": "line-1782646039171",
+      "type": "line",
+      "layer": "measure",
+      "x1": 32250.3446311554,
+      "y1": -15699.649353991963,
+      "x2": 35420.283371898615,
+      "y2": -13869.484368709245
+    },
+    {
+      "id": "line-1782646047676",
+      "type": "line",
+      "layer": "measure",
+      "x1": 28572.055126096227,
+      "y1": -15699.649353991963,
+      "x2": 30919.09292425325,
+      "y2": -15699.649353991963
+    },
+    {
+      "id": "line-1782646129223",
+      "type": "line",
+      "layer": "measure",
+      "x1": 28572.055126096227,
+      "y1": -15399.649353991963,
+      "x2": 30919.09292425325,
+      "y2": -15399.649353991963
+    },
+    {
+      "id": "rectangle-1782646139469",
+      "type": "line",
+      "layer": "measure",
+      "x1": 28722.055126096227,
+      "y1": -15439.841732856632,
+      "x2": 31891.993866839442,
+      "y2": -17270.006718139346
+    },
+    {
+      "id": "circle-1782646158520",
+      "type": "circle",
+      "layer": "measure",
+      "cx": 27989.91363773553,
+      "cy": -15916.276144376781,
+      "radius": 2596.848433342028
+    },
+    {
+      "id": "circle-1782646168043",
+      "type": "line",
+      "layer": "measure",
+      "x1": null,
+      "y1": null,
+      "x2": null,
+      "y2": null
+    },
+    {
+      "id": "dimension-1782646198070",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 25402.116385353012,
+      "y1": -15699.649353991963,
+      "x2": 23055.07858719599,
+      "y2": -15699.649353991963,
+      "offset": 1438.4746349795623,
+      "refStart": {
+        "entityId": "polyline-1782645764423",
+        "pointKey": "end"
+      },
+      "refEnd": {
+        "entityId": "line-1782645686316",
+        "pointKey": "end"
+      },
+      "dimX1": 25402.116385353012,
+      "dimY1": -17138.123988971525,
+      "dimX2": 23055.07858719599,
+      "dimY2": -17138.123988971525
+    },
+    {
+      "id": "dimension-1782646220274",
+      "type": "line",
+      "layer": "dimensions",
+      "x1": 23055.07858719599,
+      "y1": -13699.649353991963,
+      "x2": 23055.07858719599,
+      "y2": -15699.649353991963,
+      "offset": 797.9709442357635,
+      "refStart": {
+        "entityId": "line-1782645675428",
+        "pointKey": "end"
+      },
+      "refEnd": {
+        "entityId": "line-1782645686316",
+        "pointKey": "end"
+      },
+      "dimX1": 23853.049531431752,
+      "dimY1": -13699.649353991963,
+      "dimX2": 23853.049531431752,
+      "dimY2": -15699.649353991963
+    },
+    {
+      "id": "dimension-1782646232180",
+      "type": "line",
+      "layer": "dimensions",
+      "dimensionKind": "angular",
+      "vertex": {
+        "x": 28572.055126096227,
+        "y": -15699.649353991963
+      },
+      "arm1": {
+        "x": 28572.055126096227,
+        "y": -17529.81433927468
+      },
+      "arm2": {
+        "x": 30919.09292425325,
+        "y": -15699.649353991963
+      }
+    },
+    {
+      "id": "dimension-1782646244274",
+      "type": "line",
+      "layer": "dimensions",
+      "dimensionKind": "angular",
+      "vertex": {
+        "x": 28572.055126096227,
+        "y": -15699.649353991963
+      },
+      "arm1": {
+        "x": 28572.055126096227,
+        "y": -17529.81433927468
+      },
+      "arm2": {
+        "x": 30919.09292425325,
+        "y": -15699.649353991963
+      }
+    },
+    {
+      "id": "sofa-1782646320540",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sofa",
+      "x": 20550,
+      "y": -13200,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 2200,
+      "height": 900
+    },
+    {
+      "id": "sectional-1782646382593",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sectional",
+      "x": 18800,
+      "y": -10900,
+      "rotation": 270,
+      "scale": 1,
+      "flipX": false,
+      "width": 2550,
+      "height": 1700
+    },
+    {
+      "id": "bed-1782646482474",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "bed",
+      "x": 16500,
+      "y": -17000,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 500,
+      "height": 5000
+    },
+    {
+      "id": "table-1782646527007",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "table",
+      "x": 21000,
+      "y": -5750,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 2200,
+      "height": 1000
+    },
+    {
+      "id": "chair-1782646571121",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "chair",
+      "x": 24064.281976877337,
+      "y": -8846.46886641015,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 550,
+      "height": 550
+    },
+    {
+      "id": "chair-1782646580351",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "chair",
+      "x": 25000,
+      "y": -8750,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 650,
+      "height": 700
+    },
+    {
+      "id": "cabinet-1782646603804",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "cabinet",
+      "x": 27267.670167343396,
+      "y": -10119.729349542595,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 1200,
+      "height": 550
+    },
+    {
+      "id": "cabinet-1782646607515",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "cabinet",
+      "x": 25324.261701717358,
+      "y": -10639.628944629429,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 1800,
+      "height": 650
+    },
+    {
+      "id": "cabinet-1782646619050",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "cabinet",
+      "x": 27656.784209404228,
+      "y": -8962.835655970994,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 2000,
+      "height": 600
+    },
+    {
+      "id": "tv-1782646637002",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "tv",
+      "x": 22185.408429093317,
+      "y": -10719.253206940024,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 1600,
+      "height": 420
+    },
+    {
+      "id": "tv-1782646640481",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "tv",
+      "x": 22232.966812011866,
+      "y": -9084.613939504847,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 1200,
+      "height": 420
+    },
+    {
+      "id": "sink-1782646735740",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "sink",
+      "x": 19944.028416474943,
+      "y": 2172.784562402208,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 600,
+      "height": 500
+    },
+    {
+      "id": "toilet-1782646763494",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "toilet",
+      "x": 21650,
+      "y": 1875,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 700,
+      "height": 400
+    },
+    {
+      "id": "lamp-1782646902542",
+      "type": "block",
+      "layer": "furniture",
+      "kind": "lamp",
+      "x": 22796.307434103863,
+      "y": 1612.2959794058086,
+      "rotation": 0,
+      "scale": 1,
+      "flipX": false,
+      "width": 450,
+      "height": 450
+    }
+  ],
+  "savedAt": "2026-06-28T11:41:42.794Z"
+}
