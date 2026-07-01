@@ -20,6 +20,8 @@ let blocks = [...document.querySelectorAll(".block")];
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
+const leaderTextEditor = document.getElementById("leaderTextEditor");
+const leaderTextInput = document.getElementById("leaderTextInput");
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
@@ -79,7 +81,7 @@ const furnitureCategoriesByTab = {
   bath: [{ id: "bath", label: "Санузел" }],
   decor: [{ id: "decor", label: "Декор" }],
 };
-const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, furnitureWidthInput, furnitureDepthInput, furnitureRotationInput].filter(Boolean);
+const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, furnitureWidthInput, furnitureDepthInput, furnitureRotationInput, leaderTextInput].filter(Boolean);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 const cp1251Chars =
   "\u0402\u0403\u201A\u0453\u201E\u2026\u2020\u2021\u20AC\u2030\u0409\u2039\u040A\u040C\u040B\u040F" +
@@ -105,9 +107,9 @@ const dimensionToolButtonVisuals = {
   aligned: { icon: "↔", label: "Параллельный" },
   linear: { icon: "⟷", label: "Линейный" },
   angular: { icon: "∠", label: "Угол" },
-  chain: { icon: "⛓", label: "Мульти" },
   baseline: { icon: "⊥", label: "База" },
 };
+dimensionToolButtonVisuals.leader = { icon: "↗", label: "Выноска" };
 const selectModeButtonVisuals = {
   select: { icon: "↖", label: "Выбор" },
   window: { icon: "▣", label: "Рамка" },
@@ -149,8 +151,8 @@ function createDimensionToolMenu() {
     <button data-dimension-tool="aligned"><span>&#8596;</span><small>Параллельный</small></button>
     <button data-dimension-tool="linear"><span>&#10231;</span><small>Линейный</small></button>
     <button data-dimension-tool="angular"><span>&#8736;</span><small>Угол</small></button>
-    <button data-dimension-tool="chain"><span>&#9939;</span><small>Мульти</small></button>
     <button data-dimension-tool="baseline"><span>&#8869;</span><small>База</small></button>
+    <button data-dimension-tool="leader"><span>&#8599;</span><small>Выноска</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -804,6 +806,11 @@ function requestDraw() {
 // call sites stay unchanged; the heavy work lives in renderFrame().
 function draw() {
   requestDraw();
+}
+
+function drawNow() {
+  drawScheduled = false;
+  renderFrame();
 }
 
 function renderFrame() {
@@ -1625,6 +1632,10 @@ function drawDimensionEntity(entity, c, options = {}) {
     drawAngularDimensionEntity(entity, c, options);
     return;
   }
+  if (entity.dimensionKind === "leader") {
+    drawLeaderEntity(entity, c, options);
+    return;
+  }
   const start = { x: entity.x1, y: entity.y1 };
   const end = { x: entity.x2, y: entity.y2 };
   const geometry = dimensionWorldGeometry(entity);
@@ -1634,6 +1645,102 @@ function drawDimensionEntity(entity, c, options = {}) {
     lineEnd: geometry.lineEnd,
     offset: entity.offset == null ? undefined : entity.offset * state.view.scale,
   });
+}
+
+function drawLeaderEntity(entity, c, options = {}) {
+  const geometry = leaderScreenGeometry(entity);
+  const { arrow, connector, rect, text, font } = geometry;
+  const dx = connector.x - arrow.x;
+  const dy = connector.y - arrow.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 4) return;
+  const ux = dx / length;
+  const uy = dy / length;
+
+  ctx.save();
+  ctx.strokeStyle = c.dimension;
+  ctx.fillStyle = c.dimension;
+  ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.45);
+  ctx.setLineDash(options.active ? [7, 5] : []);
+  linePath(arrow.x, arrow.y, connector.x, connector.y);
+  ctx.setLineDash([]);
+  drawDimensionArrow(arrow, ux, uy, annotationPx(8), c);
+
+  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.strokeStyle = c.dimension;
+  ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.25);
+  roundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
+
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = c.dimension;
+  ctx.fillText(text, rect.x + rect.width / 2, rect.y + rect.height / 2 + annotationPx(0.6));
+  ctx.restore();
+}
+
+function leaderScreenGeometry(entity) {
+  const arrow = worldToScreen({ x: entity.x1, y: entity.y1 });
+  const center = worldToScreen({ x: entity.x2, y: entity.y2 });
+  const text = decodeMojibakeText(entity.text || "Текст");
+  const font = annotationFont(700, 12);
+  ctx.save();
+  ctx.font = font;
+  const textWidth = ctx.measureText(text).width;
+  ctx.restore();
+  const padX = annotationPx(10);
+  const width = Math.max(annotationPx(46), textWidth + padX * 2);
+  const height = annotationPx(25);
+  const rect = {
+    x: center.x - width / 2,
+    y: center.y - height / 2,
+    width,
+    height,
+  };
+  return {
+    arrow,
+    center,
+    connector: pointOnRectTowardTarget(rect, arrow),
+    rect,
+    text,
+    font,
+  };
+}
+
+function pointOnRectTowardTarget(rect, target) {
+  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  const dx = target.x - center.x;
+  const dy = target.y - center.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 0.001) return center;
+  const halfW = rect.width / 2;
+  const halfH = rect.height / 2;
+  const tx = Math.abs(dx) > 0.001 ? halfW / Math.abs(dx) : Infinity;
+  const ty = Math.abs(dy) > 0.001 ? halfH / Math.abs(dy) : Infinity;
+  const t = Math.min(tx, ty);
+  return {
+    x: center.x + dx * t,
+    y: center.y + dy * t,
+  };
+}
+
+function screenRectDistance(point, rect) {
+  if (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  ) {
+    return 0;
+  }
+  const left = { x: rect.x, y: rect.y };
+  const right = { x: rect.x + rect.width, y: rect.y + rect.height };
+  return Math.min(
+    pointToSegmentDistance(point, left, { x: right.x, y: left.y }),
+    pointToSegmentDistance(point, { x: right.x, y: left.y }, right),
+    pointToSegmentDistance(point, right, { x: left.x, y: right.y }),
+    pointToSegmentDistance(point, { x: left.x, y: right.y }, left),
+  );
 }
 
 function drawDimensionGeometry(start, end, c, options = {}) {
@@ -2130,6 +2237,21 @@ function drawSelectionDrag(c) {
 }
 
 function drawDimensionSelection(entity, c) {
+  if (entity.dimensionKind === "leader") {
+    const geometry = leaderScreenGeometry(entity);
+    const { arrow, connector, rect } = geometry;
+    ctx.save();
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    linePath(arrow.x, arrow.y, connector.x, connector.y);
+    ctx.setLineDash([6, 5]);
+    roundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
+    ctx.setLineDash([]);
+    drawEndpointHandle(arrow, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
+    drawHandle(rect.x + rect.width / 2, rect.y + rect.height / 2, c);
+    ctx.restore();
+    return;
+  }
   const geometry = dimensionScreenGeometry(entity);
   if (!geometry) return;
   const { a, b, label } = geometry;
@@ -2154,6 +2276,16 @@ function hitDimensionControl(screen) {
     const entity = state.entities[i];
     if (entity.layer !== "dimensions" || !isLayerVisible(entity.layer)) continue;
     if (!selectedDimensionIds.has(entity.id)) continue;
+    if (entity.dimensionKind === "leader") {
+      const geometry = leaderScreenGeometry(entity);
+      const arrowDistance = pointDistance(screen, geometry.arrow);
+      const boxDistance = screenRectDistance(screen, geometry.rect);
+      const lineDistance = pointToSegmentDistance(screen, geometry.arrow, geometry.connector);
+      if (arrowDistance <= 22) hits.push({ type: "leader-arrow", entity, score: arrowDistance, order: i });
+      if (boxDistance <= 18) hits.push({ type: "leader-box", entity, score: boxDistance + 4, order: i });
+      if (lineDistance <= 14) hits.push({ type: "leader-box", entity, score: lineDistance + 18, order: i });
+      continue;
+    }
     const geometry = dimensionScreenGeometry(entity);
     if (!geometry) continue;
     const startDistance = pointDistance(screen, geometry.a);
@@ -2186,6 +2318,7 @@ function hitDimensionControl(screen) {
 }
 
 function dimensionScreenGeometry(entity) {
+  if (entity.dimensionKind === "leader" || entity.dimensionKind === "angular") return null;
   const geometry = dimensionWorldGeometry(entity);
   let a = worldToScreen(geometry.lineStart);
   let b = worldToScreen(geometry.lineEnd);
@@ -2680,11 +2813,6 @@ function clampScreenY(y, height, canvasHeight) {
 }
 
 function drawActiveSegment(c) {
-  if (state.tool === "dimension" && state.dimensionTool === "chain" && state.drawing?.phase === "multi-points") {
-    drawMultiDimensionPreview(c);
-    hideInlineEditors();
-    return;
-  }
   const { start } = state.drawing;
   let end = state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
   end = dimensionAdjustedEnd(start, end);
@@ -2712,6 +2840,13 @@ function drawActiveSegment(c) {
       drawActiveAngularDimension(c);
       return;
     }
+    if (state.dimensionTool === "leader") {
+      drawLeaderEntity(leaderEntity("preview", start, end, state.drawing.text || "Текст"), c, { active: true });
+      drawHandle(p1.x, p1.y, c);
+      drawHandle(p2.x, p2.y, c);
+      hideInlineEditors();
+      return;
+    }
     const offset =
       state.drawing.phase === "offset"
         ? dimensionOffsetWithAlignmentSnap(start, end, rawCursorWorld()) * state.view.scale
@@ -2725,41 +2860,6 @@ function drawActiveSegment(c) {
 
   drawEditableSegment(start, end, c, { lineWidth: state.tool === "wall" ? 5 : 2.2 });
   updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
-}
-
-function drawMultiDimensionPreview(c) {
-  const points = state.drawing?.points || [];
-  const resolved = cursorSnapResolved();
-  const cursorPoint = resolved.snap ? resolved.point : rawCursorWorld();
-  const previewPoints = resolved.snap
-    ? [...points, { point: cursorPoint, ref: dimensionRefFromSnap(resolved.snap) }]
-    : points;
-  const sorted = sortedMultiDimensionPoints(previewPoints);
-
-  ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.fillStyle = c.accent;
-  ctx.lineWidth = 1.6;
-  for (const item of points) {
-    const p = worldToScreen(item.point);
-    drawHandle(p.x, p.y, c);
-  }
-  ctx.restore();
-
-  if (sorted.length < 2) return;
-  if (resolved.snap) {
-    for (let i = 0; i < sorted.length - 1; i += 1) {
-      drawDimensionGeometry(sorted[i].point, sorted[i + 1].point, c, { active: true });
-    }
-    return;
-  }
-
-  const overallStart = sorted[0].point;
-  const overallEnd = sorted.at(-1).point;
-  const offset = dimensionOffsetWithAlignmentSnap(overallStart, overallEnd, cursorPoint) * state.view.scale;
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    drawDimensionGeometry(sorted[i].point, sorted[i + 1].point, c, { active: false, offset });
-  }
 }
 
 function drawEditableSegment(start, end, c, options = {}) {
@@ -3443,6 +3543,47 @@ function hideInlineEditors() {
     updateTopMetricLabels();
   }
   state.inlineEdit = null;
+}
+
+function positionLeaderTextEditor(point) {
+  if (!leaderTextEditor) return;
+  const screen = worldToScreen(point);
+  const rect = canvas.getBoundingClientRect();
+  const width = leaderTextEditor.offsetWidth || 300;
+  const height = leaderTextEditor.offsetHeight || 54;
+  const left = Math.max(12 + width / 2, Math.min(rect.width - width / 2 - 12, screen.x + 44));
+  const top = Math.max(82, Math.min(rect.height - height / 2 - 18, screen.y - 8));
+  leaderTextEditor.style.left = `${left}px`;
+  leaderTextEditor.style.top = `${top}px`;
+}
+
+function showLeaderTextEditor(point) {
+  if (!leaderTextEditor || !leaderTextInput) return;
+  leaderTextEditor.hidden = false;
+  leaderTextInput.value = "";
+  requestAnimationFrame(() => {
+    positionLeaderTextEditor(point);
+    leaderTextInput.focus({ preventScroll: true });
+  });
+}
+
+function hideLeaderTextEditor() {
+  if (leaderTextEditor) leaderTextEditor.hidden = true;
+  if (leaderTextInput) leaderTextInput.value = "";
+}
+
+function commitLeaderText() {
+  if (state.tool !== "dimension" || state.dimensionTool !== "leader" || state.drawing?.phase !== "leader-text") {
+    hideLeaderTextEditor();
+    return;
+  }
+  const text = (leaderTextInput?.value || "").trim() || "Текст";
+  pushEntity(leaderEntity(`leader-${Date.now()}`, state.drawing.start, state.drawing.end, text));
+  state.drawing = null;
+  hideLeaderTextEditor();
+  resetSnapTracking();
+  statusChip.textContent = "Выноска создана";
+  drawNow();
 }
 
 function updateFurnitureSizePanel(entity) {
@@ -4792,6 +4933,7 @@ function syncToolButtons() {
 
 function setTool(tool) {
   state.tool = tool;
+  hideLeaderTextEditor();
   if (tool !== "select") {
     state.selectTool = "select";
   }
@@ -5070,6 +5212,7 @@ function selectDimensionTool(tool) {
   state.dimensionTool = tool;
   state.drawing = null;
   state.dimensionSnapHint = null;
+  hideLeaderTextEditor();
   resetSnapTracking();
   syncDimensionToolMenu();
   hideDimensionToolMenu();
@@ -5082,9 +5225,9 @@ function dimensionToolStatusText() {
     aligned: "Параллельный размер: 1 начало, 2 конец, 3 положение размерной линии",
     linear: "Линейный размер: выберите две точки, размер будет по горизонтали/вертикали",
     angular: "Угол: выберите две линии или две стороны угла",
-    chain: "Мульти-размер: выбирайте опорные точки, затем тапните в пустом месте для линии размера",
     baseline: "База: несколько размеров от общей базовой точки",
   };
+  text.leader = "Выноска: 1 кончик стрелки, 2 место текста, затем введите текст";
   return text[state.dimensionTool] || text.aligned;
 }
 
@@ -5194,44 +5337,18 @@ function angularDimensionEntity(id, vertex, arm1, arm2) {
   return { id, type: "line", layer: "dimensions", dimensionKind: "angular", vertex, arm1, arm2 };
 }
 
-function dimensionEntityFromPoints(id, start, end, offset, refStart = null, refEnd = null) {
-  const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
-  entity.offset = offset ?? 360;
-  if (refStart) entity.refStart = refStart;
-  if (refEnd) entity.refEnd = refEnd;
-  ensureDimensionLineGeometry(entity);
-  return entity;
-}
-
-function sortedMultiDimensionPoints(points) {
-  if (!points?.length) return [];
-  if (points.length <= 2) return [...points];
-  const first = points[0].point;
-  const last = points.at(-1).point;
-  const axis = normalizeWorldVector(last.x - first.x, last.y - first.y) || { x: 1, y: 0 };
-  return [...points].sort((a, b) => {
-    const da = (a.point.x - first.x) * axis.x + (a.point.y - first.y) * axis.y;
-    const db = (b.point.x - first.x) * axis.x + (b.point.y - first.y) * axis.y;
-    return da - db;
-  });
-}
-
-function createMultiDimensionEntities(points, offsetPoint) {
-  const sorted = sortedMultiDimensionPoints(points);
-  if (sorted.length < 2) return [];
-  const overallStart = sorted[0].point;
-  const overallEnd = sorted.at(-1).point;
-  const offset = dimensionOffsetWithAlignmentSnap(overallStart, overallEnd, offsetPoint);
-  const safeOffset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
-  const entities = [];
-  const stamp = Date.now();
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    const start = sorted[i];
-    const end = sorted[i + 1];
-    if (distanceWorld(start.point, end.point) <= 1) continue;
-    entities.push(dimensionEntityFromPoints(`dimension-${stamp}-${i}`, start.point, end.point, safeOffset, start.ref, end.ref));
-  }
-  return entities;
+function leaderEntity(id, start, end, text) {
+  return {
+    id,
+    type: "line",
+    layer: "dimensions",
+    dimensionKind: "leader",
+    x1: start.x,
+    y1: start.y,
+    x2: end.x,
+    y2: end.y,
+    text: text || "Текст",
+  };
 }
 
 function dimensionAdjustedEnd(start, end) {
@@ -5243,19 +5360,6 @@ function dimensionAdjustedEnd(start, end) {
 
 function continueDimensionAfterCreate(metrics) {
   const previous = state.drawing;
-  if (state.dimensionTool === "chain") {
-    state.drawing = {
-      start: previous.end,
-      end: previous.end,
-      lockedEnd: false,
-      phase: "end",
-      refStart: previous.refEnd,
-      baseStart: previous.baseStart || previous.start,
-      baseRefStart: previous.baseRefStart || previous.refStart,
-    };
-    statusChip.textContent = `Цепочка ${metrics.length} мм. Поставьте следующую точку`;
-    return;
-  }
   if (state.dimensionTool === "baseline") {
     const baseStart = previous.baseStart || previous.start;
     const baseRefStart = previous.baseRefStart || previous.refStart;
@@ -5308,6 +5412,28 @@ function commitCursorPoint() {
     return;
   }
   if (state.tool === "dimension") {
+    if (state.dimensionTool === "leader") {
+      if (!state.drawing) {
+        resetSnapTracking();
+        state.drawing = { start: world, end: world, lockedEnd: false, phase: "leader-end" };
+        statusChip.textContent = "Выноска: поставьте место текста";
+      } else if (state.drawing.phase === "leader-end") {
+        const end = state.drawing.lockedEnd ? state.drawing.end : world;
+        const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
+        if (metrics.length <= 0) {
+          statusChip.textContent = "Выноска: нужна вторая точка";
+          draw();
+          return;
+        }
+        state.drawing.end = end;
+        state.drawing.lockedEnd = true;
+        state.drawing.phase = "leader-text";
+        showLeaderTextEditor(end);
+        statusChip.textContent = "Выноска: введите текст и нажмите галочку";
+      }
+      draw();
+      return;
+    }
     if (state.dimensionTool === "angular") {
       if (!state.drawing) {
         resetSnapTracking();
@@ -5327,47 +5453,6 @@ function commitCursorPoint() {
       }
       draw();
       return;
-    }
-    if (state.dimensionTool === "chain") {
-      const pointItem = resolved.snap ? { point: world, ref: dimensionRefFromSnap(resolved.snap) } : null;
-      if (!state.drawing) {
-        if (!pointItem) {
-          statusChip.textContent = "Мульти-размер: наведите курсор на угол или конец объекта";
-          draw();
-          return;
-        }
-        resetSnapTracking();
-        state.drawing = { start: pointItem.point, end: pointItem.point, lockedEnd: false, phase: "multi-points", points: [pointItem] };
-        statusChip.textContent = "Мульти-размер: выберите следующую опорную точку";
-        draw();
-        return;
-      }
-      if (state.drawing.phase === "multi-points") {
-        if (pointItem) {
-          const exists = state.drawing.points.some((item) => distanceWorld(item.point, pointItem.point) <= 1);
-          if (!exists) state.drawing.points.push(pointItem);
-          state.drawing.start = state.drawing.points[0].point;
-          state.drawing.end = pointItem.point;
-          statusChip.textContent =
-            state.drawing.points.length >= 2
-              ? `Мульти-размер: ${state.drawing.points.length} точки. Тапните в пустом месте, чтобы поставить линию`
-              : "Мульти-размер: выберите следующую опорную точку";
-          draw();
-          return;
-        }
-        if ((state.drawing.points || []).length < 2) {
-          statusChip.textContent = "Мульти-размер: нужно минимум две опорные точки";
-          draw();
-          return;
-        }
-        const entities = createMultiDimensionEntities(state.drawing.points, rawCursorWorld());
-        for (const entity of entities) pushEntity(entity);
-        state.drawing = null;
-        resetSnapTracking();
-        statusChip.textContent = `Мульти-размер: создано ${entities.length} сегментов`;
-        draw();
-        return;
-      }
     }
     if (!state.drawing) {
       resetSnapTracking();
@@ -6139,7 +6224,7 @@ function finishCanvasPointer(event, canceled = false) {
     state.gestureSuppressTap = false;
   }
   forceMoveCursorVisible();
-  draw();
+  drawNow();
 }
 
 function finishPointerMoveUndo() {
@@ -6516,6 +6601,11 @@ function pointInsideBlock(screen, entity) {
 
 function distanceToEntityScreen(screen, entity) {
   if (entity.layer === "dimensions") {
+    if (entity.dimensionKind === "leader") {
+      const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
+      const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
+      return pointToSegmentDistance(screen, p1, p2);
+    }
     const dimensionGeometry = dimensionScreenGeometry(entity);
     const p1 = dimensionGeometry?.a || worldToScreen({ x: entity.x1, y: entity.y1 });
     const p2 = dimensionGeometry?.b || worldToScreen({ x: entity.x2, y: entity.y2 });
@@ -6588,6 +6678,21 @@ selectToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-select-tool]");
   if (!button) return;
   selectSelectionTool(button.dataset.selectTool);
+});
+
+leaderTextEditor?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  commitLeaderText();
+});
+
+leaderTextInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    state.drawing = null;
+    hideLeaderTextEditor();
+    statusChip.textContent = dimensionToolStatusText();
+    draw();
+  }
 });
 
 snaps.forEach((button) => {
