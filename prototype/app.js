@@ -294,6 +294,19 @@ function arcEntity(id, start, through, end, layer = "measure") {
   return { id, type: "arc", layer, start, through, end };
 }
 
+function arcThroughFromMidBulge(start, end, control) {
+  const chord = distanceWorld(start, end);
+  if (chord < 1) return control;
+  const mid = midpoint(start, end);
+  const nx = -(end.y - start.y) / chord;
+  const ny = (end.x - start.x) / chord;
+  const sagitta = (control.x - mid.x) * nx + (control.y - mid.y) * ny;
+  return {
+    x: mid.x + nx * sagitta,
+    y: mid.y + ny * sagitta,
+  };
+}
+
 function block(id, kind, x, y, rotation = 0, size = defaultBlockSize(kind)) {
   return { id, type: "block", layer: "furniture", kind, x, y, rotation, scale: 1, flipX: false, width: size.width, height: size.height };
 }
@@ -2810,13 +2823,34 @@ function drawActiveAngularDimension(c) {
 }
 
 function drawActiveCircle(centerWorld, edgeWorld, c) {
-  const center = worldToScreen(centerWorld), edge = worldToScreen(edgeWorld);
+  const center = worldToScreen(centerWorld);
+  const edge = worldToScreen(edgeWorld);
   const radius = distanceWorld(centerWorld, edgeWorld);
-  ctx.save(); ctx.strokeStyle = c.accent; ctx.fillStyle = c.accent; ctx.lineWidth = 1.8; ctx.setLineDash([8, 6]);
-  ctx.beginPath(); ctx.arc(center.x, center.y, radius * state.view.scale, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-  drawHandle(center.x, center.y, c); drawHandle(edge.x, edge.y, c); drawBadge(`R ${Math.round(radius)} мм`, (center.x + edge.x) / 2, (center.y + edge.y) / 2 - 18, c); updateTopMetricInputs(Math.round(radius), 0); ctx.restore();
+  const mid = midpoint(center, edge);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.fillStyle = c.accent;
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * state.view.scale, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.78;
+  ctx.setLineDash([6, 5]);
+  linePath(center.x, center.y, edge.x, edge.y);
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  drawHandle(center.x, center.y, c);
+  drawHandle(edge.x, edge.y, c);
+  ctx.restore();
+  inlineEditors.hidden = false;
+  state.inlineEdit = { start: centerWorld, end: edgeWorld, metrics: { length: Math.round(radius), angle: 0 } };
+  if (document.activeElement !== lengthInput) lengthInput.value = Math.round(radius);
+  syncInlineEditorWidth(lengthInput);
+  positionInlineEditor(lengthEditor, mid.x, mid.y - 18);
+  if (angleEditor) angleEditor.hidden = true;
+  updateTopMetricInputs(Math.round(radius), 0);
 }
-
 function drawActiveRectangle(start, end, c) {
   drawRectangleEntity(rectangleEntity("preview", start.x, start.y, end.x, end.y), { ...c, line: c.accent });
   const center = worldToScreen({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 });
@@ -2836,19 +2870,28 @@ function drawActiveArc(c) {
   ctx.setLineDash([8, 6]);
   if (!drawing.arcEnd) {
     linePath(pStart.x, pStart.y, pCurrent.x, pCurrent.y);
-    drawBadge("Конец дуги", pCurrent.x, pCurrent.y - 22, c);
+    drawBadge("\u041a\u043e\u043d\u0435\u0446 \u0434\u0443\u0433\u0438", pCurrent.x, pCurrent.y - 22, c);
   } else {
-    drawArcEntity(arcEntity("preview", drawing.start, current, drawing.arcEnd), { ...c, line: c.accent });
+    ctx.setLineDash([]);
+    const through = arcThroughFromMidBulge(drawing.start, drawing.arcEnd, current);
+    const chordMid = midpoint(drawing.start, drawing.arcEnd);
+    const pThrough = worldToScreen(through);
+    const pChordMid = worldToScreen(chordMid);
+    drawArcEntity(arcEntity("preview", drawing.start, through, drawing.arcEnd), { ...c, line: c.accent });
     const pEnd = worldToScreen(drawing.arcEnd);
     drawHandle(pEnd.x, pEnd.y, c);
-    drawBadge("Изгиб", pCurrent.x, pCurrent.y - 22, c);
+    ctx.setLineDash([6, 5]);
+    ctx.globalAlpha = 0.7;
+    linePath(pChordMid.x, pChordMid.y, pThrough.x, pThrough.y);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    drawHandle(pThrough.x, pThrough.y, c);
   }
   ctx.setLineDash([]);
   drawHandle(pStart.x, pStart.y, c);
-  drawHandle(pCurrent.x, pCurrent.y, c);
+  if (!drawing.arcEnd) drawHandle(pCurrent.x, pCurrent.y, c);
   ctx.restore();
 }
-
 function drawAngleArc(origin, target, angleInfo, c, options = {}) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
@@ -3151,8 +3194,8 @@ function confirmKeyboardInput() {
     applyFurnitureSizeInput({ recordUndo: false });
   }
   const shouldFinishDrawing = Boolean(
-    state.drawing?.lockedEnd &&
-      ["line", "wall", "circle", "rectangle"].includes(state.tool) &&
+      state.drawing?.lockedEnd &&
+      ["line", "polyline", "wall", "circle", "rectangle"].includes(state.tool) &&
       [lengthInput, angleInput, topLengthInput, topAngleInput].includes(input)
   );
   commitNumericInputEdit();
@@ -3644,7 +3687,7 @@ function canCreateSnapTrackingPoint() {
 }
 
 function canSnapToTrackingGuides() {
-  return Boolean(trackingBasePoint()) && state.snaps.has("polar") && state.snapTracking.points.length > 0 && !state.pinch;
+  return Boolean(trackingBasePoint()) && state.snaps.has("polar") && !state.pinch;
 }
 
 function canUsePrePointTracking() {
@@ -3711,7 +3754,7 @@ function commitSnapTrackingHover(key) {
   if (!point || state.snapTracking.hoverKey !== key || !canCreateSnapTrackingPoint()) return;
   const current = nearestTrackingAnchorCandidate(screenToWorld(centerScreen()));
   const currentKey = current ? trackingPointKey(current) : null;
-  const stillNearOriginal = distanceWorld(screenToWorld(centerScreen()), point) <= trackingActivationThreshold() * 1.15;
+  const stillNearOriginal = distanceWorld(screenToWorld(centerScreen()), point) <= trackingActivationThreshold();
   if ((!current || currentKey !== key) && !stillNearOriginal) return;
   addSnapTrackingPoint(currentKey === key ? current : point);
   clearSnapTrackingHover();
@@ -3721,17 +3764,11 @@ function commitSnapTrackingHover(key) {
 
 
 function nearestTrackingAnchorCandidate(point) {
-  const threshold = trackingActivationThreshold();
-  const candidates = snapCandidates({
-    includeCorners: true,
-    includeMidpoints: state.snaps.has("mid"),
-    includeCenters: state.snaps.has("mid"),
-  });
-  return nearestSnapCandidate(point, candidates, threshold);
+  return nearestObjectSnap(point);
 }
 
 function trackingActivationThreshold() {
-  return (state.tool === "dimension" || state.tool === "circle" || state.tool === "arc" || state.tool === "rectangle" ? 48 : 42) / state.view.scale;
+  return objectSnapThreshold();
 }
 
 function addSnapTrackingPoint(point) {
@@ -3764,7 +3801,7 @@ function trackingPointKey(point) {
   return `${Math.round(point.x)}:${Math.round(point.y)}`;
 }
 
-function snapTrackingGuides() {
+function snapTrackingGuides(base = null) {
   const guides = [];
   for (const point of state.snapTracking.points) {
     for (const angle of trackingAngles) {
@@ -3776,11 +3813,23 @@ function snapTrackingGuides() {
       });
     }
   }
+  if (base) {
+    const basePoint = { ...base, key: "__base__", label: "Base" };
+    for (const angle of trackingAngles) {
+      guides.push({
+        point: basePoint,
+        angle,
+        ux: Math.cos(angle),
+        uy: Math.sin(angle),
+        isBase: true,
+      });
+    }
+  }
   return guides;
 }
 
 function nearestSnapTrackingPoint(point, threshold, base = null) {
-  const guides = snapTrackingGuides();
+  const guides = snapTrackingGuides(base);
   if (guides.length === 0) return null;
   let bestIntersection = null;
   const testIntersection = (a, b) => {
@@ -3802,20 +3851,6 @@ function nearestSnapTrackingPoint(point, threshold, base = null) {
     }
   }
 
-  if (base) {
-    const baseGuides = trackingAngles.map((angle) => ({
-      point: { ...base, key: "__base__", label: "Base" },
-      angle,
-      ux: Math.cos(angle),
-      uy: Math.sin(angle),
-      isBase: true,
-    }));
-    for (const baseGuide of baseGuides) {
-      for (const guide of guides) {
-        testIntersection(baseGuide, guide);
-      }
-    }
-  }
   if (bestIntersection) {
     return {
       x: bestIntersection.x,
@@ -3868,25 +3903,17 @@ function trackingGuideIntersection(a, b) {
 }
 
 function drawSnapTracking(c) {
-  if ((!canUseSnapTracking() && !canSnapToTrackingGuides()) || state.snapTracking.points.length === 0) {
+  const base = trackingBasePoint();
+  if ((!canUseSnapTracking() && !canSnapToTrackingGuides()) || (!base && state.snapTracking.points.length === 0)) {
     drawSnapTrackingHover(c);
     return;
   }
-  const base = trackingBasePoint();
   if (base) resolveLineLikeSnap(screenToWorld(centerScreen()), base);
   else if (canSnapToPrePointTrackingGuides()) resolvePrePointTrackingSnap(screenToWorld(centerScreen()));
   const rect = canvas.getBoundingClientRect();
-  const guides = snapTrackingGuides();
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = c.accent;
-  ctx.lineWidth = 1.2;
-  ctx.globalAlpha = 0.24;
-  ctx.setLineDash([8, 7]);
-  for (const guide of guides) {
-    drawTrackingGuideLine(guide, rect);
-  }
-  ctx.setLineDash([]);
 
   const activeGuides = activeTrackingGuides();
   if (activeGuides.length) {
@@ -3900,6 +3927,7 @@ function drawSnapTracking(c) {
   }
 
   ctx.globalAlpha = 0.95;
+  if (base) drawTrackingAnchor({ ...base, key: "__base__" }, c);
   for (const point of state.snapTracking.points) {
     drawTrackingAnchor(point, c);
   }
@@ -3921,18 +3949,10 @@ function drawSnapTrackingHover(c) {
   if (!state.snapTracking.hoverPoint || state.snapTracking.hoverTimer == null) return;
   const p = worldToScreen(state.snapTracking.hoverPoint);
   ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.fillStyle = colorMixSurface(c.surface);
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.92;
-  ctx.beginPath();
-  ctx.rect(p.x - 7, p.y - 7, 14, 14);
-  ctx.fill();
-  ctx.stroke();
-  drawBadge(state.snapTracking.hoverPoint.label || "Точка", p.x, p.y - 27, c, true);
+  ctx.globalAlpha = 0.72;
+  drawTrackingSnapMarker(p, c);
   ctx.restore();
 }
-
 function drawPolarSnapGuide(c) {
   const guide = state.polarSnapGuide;
   if (!guide || !state.snaps.has("polar")) return;
@@ -4002,26 +4022,25 @@ function drawCursorSnap(c) {
   if ((state.tool === "select" && !state.moveCommand && !state.selectedEndpoint) || state.tool === "furniture") return;
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return;
   const resolved = cursorSnapResolved();
-  const objectSnap = cursorObjectSnapMarker();
-  const points = [];
-  if (objectSnap) points.push(objectSnap);
-  if (resolved.snap && (!objectSnap || distanceWorld(resolved.snap, objectSnap) > 0.5)) points.push(resolved.snap);
-  if (!points.length) return;
+  if (!resolved.snap) return;
+  const snap = resolved.snap;
+  const p = worldToScreen(snap);
   ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.fillStyle = colorMixSurface(c.surface);
   ctx.lineWidth = 2;
   ctx.setLineDash([]);
-  for (const snap of points) {
-    const p = worldToScreen(snap);
-    if (isMidSnap(snap)) {
-      drawMidSnapMarker(p, c);
-    } else {
-      ctx.beginPath();
-      ctx.rect(p.x - 6, p.y - 6, 12, 12);
-      ctx.fill();
-      ctx.stroke();
-    }
+  if (snap?.type === "tracking") {
+    drawTrackingSnapMarker(p, c);
+  } else if (isMidSnap(snap)) {
+    drawMidSnapMarker(p, c);
+  } else if (snap?.type === "nearest") {
+    drawNearestSnapMarker(p, c);
+  } else {
+    ctx.beginPath();
+    ctx.rect(p.x - 6, p.y - 6, 12, 12);
+    ctx.fill();
+    ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(p.x - 14, p.y);
     ctx.lineTo(p.x + 14, p.y);
@@ -4051,22 +4070,71 @@ function drawMidSnapMarker(point, c) {
   ctx.restore();
 }
 
+function drawNearestSnapMarker(point, c) {
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(point.x - 7, point.y - 7);
+  ctx.lineTo(point.x + 7, point.y + 7);
+  ctx.moveTo(point.x + 7, point.y - 7);
+  ctx.lineTo(point.x - 7, point.y + 7);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTrackingSnapMarker(point, c) {
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 1.6;
+  ctx.globalAlpha = 0.82;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(point.x - 11, point.y);
+  ctx.lineTo(point.x + 11, point.y);
+  ctx.moveTo(point.x, point.y - 11);
+  ctx.lineTo(point.x, point.y + 11);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function cursorObjectSnapMarker() {
   const raw = screenToWorld(centerScreen());
-  const objectThreshold = (state.tool === "dimension" ? 34 : 24) / state.view.scale;
-  const midpointThreshold = 22 / state.view.scale;
-  const nearestThreshold = 14 / state.view.scale;
+  return nearestObjectSnap(raw, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
+}
+
+function objectSnapThreshold() {
+  return (state.tool === "dimension" ? 34 : 24) / state.view.scale;
+}
+
+function midpointSnapThreshold() {
+  return 22 / state.view.scale;
+}
+
+function nearestSegmentSnapThreshold() {
+  return 14 / state.view.scale;
+}
+
+function nearestObjectSnap(point, { includeNearestSegment = false } = {}) {
+  const objectThreshold = objectSnapThreshold();
+  const midpointThreshold = midpointSnapThreshold();
+  const nearestThreshold = nearestSegmentSnapThreshold();
   const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
   if (useObjectSnap) {
-    const corner = nearestSnapCandidate(raw, snapCandidates({ includeCorners: true }), objectThreshold);
+    const corner = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
     if (corner) return corner;
   }
   if (state.snaps.has("mid")) {
-    const mid = nearestSnapCandidate(raw, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+    const mid = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
     if (mid) return mid;
   }
-  if (useObjectSnap && trackingDrawingTools.has(state.tool)) {
-    return nearestPointOnDrawableSegment(raw, nearestThreshold);
+  if (useObjectSnap && includeNearestSegment) {
+    return nearestPointOnDrawableSegment(point, nearestThreshold);
   }
   return null;
 }
@@ -4312,22 +4380,13 @@ function snapWorld(point) {
 }
 
 function resolveSnapWorld(point) {
-  const objectThreshold = (state.tool === "dimension" ? 34 : 24) / state.view.scale;
-  const midpointThreshold = 22 / state.view.scale;
-  const trackingThreshold = 18 / state.view.scale;
-  const nearestThreshold = 14 / state.view.scale;
-  const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
+  const trackingThreshold = objectSnapThreshold();
   let result = { ...point };
   let snap = null;
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  if (useObjectSnap) {
-    snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
-  }
-  if (!snap && state.snaps.has("mid")) {
-    snap = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
-  }
+  snap = nearestObjectSnap(point);
   if (snap) {
     result = { x: snap.x, y: snap.y };
   } else if (canUseSnapTracking()) {
@@ -4378,25 +4437,13 @@ function resolveDimensionPointSnap(point) {
 }
 
 function resolveLineLikeSnap(point, start) {
-  const objectThreshold = 24 / state.view.scale;
-  const midpointThreshold = 22 / state.view.scale;
-  const directionThreshold = 18 / state.view.scale;
-  const nearestThreshold = 14 / state.view.scale;
-  const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
+  const directionThreshold = objectSnapThreshold();
   let result = { ...point };
   let snap = null;
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  if (useObjectSnap) {
-    snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
-  }
-  if (!snap && state.snaps.has("mid")) {
-    snap = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
-  }
-  if (!snap && useObjectSnap && trackingDrawingTools.has(state.tool)) {
-    snap = nearestPointOnDrawableSegment(point, nearestThreshold);
-  }
+  snap = nearestObjectSnap(point, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
   if (snap) {
     result = { x: snap.x, y: snap.y };
   } else {
@@ -4430,7 +4477,7 @@ function resolveLineLikeSnap(point, start) {
           snap = guideTracking;
           state.snapTracking.active = guideTracking;
         } else {
-          const nearest = state.snaps.has("end") ? nearestPointOnDrawableSegment(point, nearestThreshold) : null;
+          const nearest = nearestObjectSnap(point, { includeNearestSegment: true });
           if (nearest) {
             result = { x: nearest.x, y: nearest.y };
             snap = nearest;
@@ -4440,7 +4487,7 @@ function resolveLineLikeSnap(point, start) {
           }
         }
       } else {
-        const nearest = state.snaps.has("end") ? nearestPointOnDrawableSegment(point, nearestThreshold) : null;
+        const nearest = nearestObjectSnap(point, { includeNearestSegment: true });
         if (nearest) {
           result = { x: nearest.x, y: nearest.y };
           snap = nearest;
@@ -4467,7 +4514,7 @@ function resolveLineLikeSnap(point, start) {
 }
 
 function resolvePrePointTrackingSnap(point) {
-  const trackingThreshold = 18 / state.view.scale;
+  const trackingThreshold = objectSnapThreshold();
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
   const tracking = nearestSnapTrackingPoint(point, trackingThreshold);
@@ -5175,7 +5222,7 @@ function createEntityFromDrawing() {
   const id = `${state.tool}-${Date.now()}`;
   if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
-  if (state.tool === "arc") return arcEntity(id, state.drawing.start, end, state.drawing.arcEnd);
+  if (state.tool === "arc") return arcEntity(id, state.drawing.start, arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end), state.drawing.arcEnd);
   if (state.tool === "wall") {
     return wall(id, start.x, start.y, end.x, end.y);
   }
@@ -5418,7 +5465,8 @@ function commitCursorPoint() {
       if (finishedTool === "arc" && !state.drawing.arcEnd) { state.drawing.arcEnd = end; state.drawing.end = end; state.drawing.lockedEnd = false; statusChip.textContent = "Дуга: укажите изгиб"; draw(); return; }
       state.drawing.end = end;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
-      const validShape = metrics.length > 0 && (finishedTool !== "arc" || arcGeometry(state.drawing.start, end, state.drawing.arcEnd)) && (finishedTool !== "rectangle" || (Math.abs(end.x - state.drawing.start.x) > 0 && Math.abs(end.y - state.drawing.start.y) > 0));
+      const arcThrough = finishedTool === "arc" && state.drawing.arcEnd ? arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end) : null;
+      const validShape = metrics.length > 0 && (finishedTool !== "arc" || arcGeometry(state.drawing.start, arcThrough, state.drawing.arcEnd)) && (finishedTool !== "rectangle" || (Math.abs(end.x - state.drawing.start.x) > 0 && Math.abs(end.y - state.drawing.start.y) > 0));
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
