@@ -6,6 +6,16 @@ const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const centerCursor = document.querySelector(".center-cursor");
+const projectHome = document.getElementById("projectHome");
+const projectList = document.getElementById("projectList");
+const projectSearchInput = document.getElementById("projectSearchInput");
+const createProjectButton = document.getElementById("createProjectButton");
+const createBlankProjectButton = document.getElementById("createBlankProjectButton");
+const createApartmentProjectButton = document.getElementById("createApartmentProjectButton");
+const projectImportInput = document.getElementById("projectImportInput");
+const refreshProjectsButton = document.getElementById("refreshProjectsButton");
+const projectTitle = document.querySelector(".project-title");
+const projectNameCaption = document.querySelector(".project-title strong");
 const projectScaleCaption = document.querySelector(".project-title span");
 const tools = [...document.querySelectorAll(".tool")];
 const drawToolMenu = document.getElementById("drawToolMenu");
@@ -317,11 +327,14 @@ function block(id, kind, x, y, rotation = 0, size = defaultBlockSize(kind)) {
 
 const persistence = {
   clientId: getProjectClientId(),
+  projectId: "",
+  projectName: "",
+  projectCreatedAt: "",
   endpoint: "",
   debounceMs: 250,
   retryMs: 1600,
   localDbName: "zamer-cad-projects",
-  localDbVersion: 1,
+  localDbVersion: 2,
   localVersionLimit: 20,
   ready: false,
   dirty: false,
@@ -334,8 +347,16 @@ const persistence = {
   lastHash: "",
   restoredSavedAt: 0,
   needsRemoteSync: false,
+  projects: [],
 };
-persistence.endpoint = `/api/project?client=${encodeURIComponent(persistence.clientId)}`;
+
+function projectsEndpoint() {
+  return `/api/projects?client=${encodeURIComponent(persistence.clientId)}`;
+}
+
+function projectEndpoint(projectId = persistence.projectId) {
+  return `/api/projects/${encodeURIComponent(projectId)}?client=${encodeURIComponent(persistence.clientId)}`;
+}
 
 function updateSaveIndicator(stateName, text, options = {}) {
   if (!saveIndicator) return;
@@ -361,7 +382,11 @@ function newestProject(a, b) {
 }
 
 function localProjectFallbackKey() {
-  return `zamer.project.${persistence.clientId}`;
+  return `zamer.project.${persistence.clientId}.${persistence.projectId || "home"}`;
+}
+
+function projectStorageId() {
+  return `${persistence.clientId}:${persistence.projectId || "home"}`;
 }
 
 function writeEmergencyLocalBackup(project) {
@@ -403,9 +428,8 @@ function openLocalProjectDb() {
     const request = indexedDB.open(persistence.localDbName, persistence.localDbVersion);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains("projects")) {
-        db.createObjectStore("projects", { keyPath: "clientId" });
-      }
+      if (db.objectStoreNames.contains("projects")) db.deleteObjectStore("projects");
+      db.createObjectStore("projects", { keyPath: "storageId" });
       if (!db.objectStoreNames.contains("versions")) {
         const versions = db.createObjectStore("versions", { keyPath: "id", autoIncrement: true });
         versions.createIndex("projectId", "projectId", { unique: false });
@@ -426,7 +450,7 @@ async function trimLocalProjectVersions() {
     const store = transaction.objectStore("versions");
     const index = store.index("projectId");
     let kept = 0;
-    const request = index.openCursor(IDBKeyRange.only(persistence.clientId), "prev");
+    const request = index.openCursor(IDBKeyRange.only(projectStorageId()), "prev");
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
@@ -441,8 +465,10 @@ async function trimLocalProjectVersions() {
 }
 
 async function saveProjectToLocalStore(project, reason = "change") {
+  if (!persistence.projectId) return false;
   const savedAt = project.savedAt || new Date().toISOString();
-  const localProject = { ...project, clientId: persistence.clientId, savedAt, localSavedAt: savedAt };
+  const storageId = projectStorageId();
+  const localProject = { ...project, storageId, clientId: persistence.clientId, projectId: persistence.projectId, savedAt, localSavedAt: savedAt };
   writeEmergencyLocalBackup(localProject);
   try {
     const db = await openLocalProjectDb();
@@ -450,7 +476,7 @@ async function saveProjectToLocalStore(project, reason = "change") {
     const transaction = db.transaction(["projects", "versions"], "readwrite");
     transaction.objectStore("projects").put(localProject);
     transaction.objectStore("versions").put({
-      projectId: persistence.clientId,
+      projectId: storageId,
       savedAt,
       reason,
       project: localProject,
@@ -465,13 +491,14 @@ async function saveProjectToLocalStore(project, reason = "change") {
 }
 
 async function loadProjectFromLocalStore() {
+  if (!persistence.projectId) return null;
   const fallbackProject = readEmergencyLocalBackup();
   try {
     const db = await openLocalProjectDb();
     if (!db) return fallbackProject;
     const transaction = db.transaction("projects", "readonly");
     const done = idbTransactionDone(transaction);
-    const indexedProject = await idbRequest(transaction.objectStore("projects").get(persistence.clientId));
+    const indexedProject = await idbRequest(transaction.objectStore("projects").get(projectStorageId()));
     await done;
     return newestProject(fallbackProject, indexedProject);
   } catch (error) {
@@ -500,10 +527,266 @@ function getProjectClientId() {
   }
 }
 
+function updateProjectTitle() {
+  if (projectNameCaption) projectNameCaption.textContent = persistence.projectName || "Проекты";
+  if (projectScaleCaption) {
+    const label = annotationScaleSelect?.selectedOptions?.[0]?.textContent || "1:100";
+    projectScaleCaption.textContent = persistence.projectId ? `MM - ${label}` : "Выберите файл";
+  }
+}
+
+function setProjectHomeVisible(visible) {
+  if (!projectHome) return;
+  projectHome.hidden = !visible;
+  shell.classList.toggle("project-home-open", visible);
+}
+
+function projectDateLabel(value) {
+  const date = new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return "без даты";
+  return date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function projectMetaLine(project) {
+  const count = Number(project.entityCount) || 0;
+  return `${count} объектов · ${projectDateLabel(project.updatedAt)}`;
+}
+
+function filteredProjects() {
+  const query = (projectSearchInput?.value || "").trim().toLowerCase();
+  if (!query) return persistence.projects;
+  return persistence.projects.filter((project) => String(project.name || "").toLowerCase().includes(query));
+}
+
+function renderProjectList() {
+  if (!projectList) return;
+  const projects = filteredProjects();
+  projectList.replaceChildren();
+  if (!projects.length) {
+    const empty = document.createElement("div");
+    empty.className = "project-empty";
+    empty.textContent = persistence.projects.length ? "Поиск ничего не нашел" : "Файлов пока нет. Создайте новый замер или импортируйте .zamer.";
+    projectList.append(empty);
+    return;
+  }
+  for (const project of projects) {
+    const card = document.createElement("article");
+    card.className = "project-card";
+    card.dataset.projectId = project.id;
+
+    const preview = document.createElement("div");
+    preview.className = "project-card-preview";
+    preview.textContent = "⌁";
+
+    const main = document.createElement("div");
+    main.className = "project-card-main";
+
+    const title = document.createElement("div");
+    title.className = "project-card-title";
+    const name = document.createElement("strong");
+    name.textContent = project.name || "Без названия";
+    title.append(name);
+    if (project.legacy) {
+      const badge = document.createElement("em");
+      badge.textContent = "старый";
+      title.append(badge);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "project-card-meta";
+    meta.textContent = projectMetaLine(project);
+
+    const actions = document.createElement("div");
+    actions.className = "project-card-actions";
+    const buttons = [
+      ["open", "Открыть", "primary"],
+      ["rename", "Имя", ""],
+      ["duplicate", "Копия", ""],
+      ["export", ".zamer", ""],
+      ["delete", "Удалить", ""],
+    ];
+    for (const [action, label, className] of buttons) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.projectAction = action;
+      button.dataset.projectId = project.id;
+      button.textContent = label;
+      if (className) button.className = className;
+      if (project.legacy && action === "delete") button.disabled = true;
+      actions.append(button);
+    }
+
+    main.append(title, meta, actions);
+    card.append(preview, main);
+    projectList.append(card);
+  }
+}
+
+async function loadProjects() {
+  if (!projectList) return;
+  try {
+    const response = await fetch(projectsEndpoint(), { cache: "no-store" });
+    if (!response.ok) throw new Error(`Projects failed: ${response.status}`);
+    const payload = await response.json();
+    persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
+    renderProjectList();
+  } catch (error) {
+    console.warn("Could not load projects", error);
+    projectList.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "project-empty";
+    empty.textContent = "Не удалось загрузить список проектов. Проверьте сервер.";
+    projectList.append(empty);
+  }
+}
+
+function setActiveProject(project, projectId = project?.projectId || project?.id) {
+  persistence.projectId = projectId || "";
+  persistence.projectName = project?.name || "Без названия";
+  persistence.projectCreatedAt = project?.createdAt || new Date().toISOString();
+  persistence.endpoint = persistence.projectId ? projectEndpoint(persistence.projectId) : "";
+  persistence.ready = false;
+  persistence.dirty = false;
+  persistence.pending = false;
+  persistence.needsRemoteSync = false;
+  persistence.lastHash = "";
+  updateProjectTitle();
+}
+
+async function openProject(projectId) {
+  if (!projectId) return;
+  if (persistence.ready && persistence.projectId) await saveProjectNow();
+  updateSaveIndicator("saving", "Открываю...");
+  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
+  if (!response.ok) {
+    updateSaveIndicator("error", "Не открыт", { autoDim: 2600 });
+    throw new Error(`Open project failed: ${response.status}`);
+  }
+  const payload = await response.json();
+  const project = payload.project;
+  setActiveProject(project, projectId);
+  if (restoreProject(project)) {
+    setProjectHomeVisible(false);
+    persistence.ready = true;
+    persistence.lastHash = projectSnapshotKey();
+    updateSaveIndicator("saved", "С сервера", { autoDim: 2400 });
+    statusChip.textContent = `${persistence.projectName}: открыт`;
+    localStorage.setItem("zamer.lastProjectId", persistence.projectId);
+    await saveProjectToLocalStore(project, "server-open");
+  }
+}
+
+async function createProject(options = {}) {
+  const response = await fetch(projectsEndpoint(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  });
+  if (!response.ok) throw new Error(`Create project failed: ${response.status}`);
+  const payload = await response.json();
+  await loadProjects();
+  await openProject(payload.project.projectId);
+}
+
+async function renameProject(projectId) {
+  const current = persistence.projects.find((project) => project.id === projectId);
+  const nextName = window.prompt("Название проекта", current?.name || "Без названия");
+  if (!nextName) return;
+  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
+  if (!response.ok) return;
+  const payload = await response.json();
+  const project = { ...payload.project, name: nextName.trim().slice(0, 80) };
+  const saveResponse = await fetch(projectEndpoint(projectId), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(project),
+  });
+  if (!saveResponse.ok) return;
+  if (persistence.projectId === projectId) {
+    persistence.projectName = project.name;
+    updateProjectTitle();
+  }
+  await loadProjects();
+}
+
+async function duplicateProject(projectId) {
+  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
+  if (!response.ok) return;
+  const payload = await response.json();
+  const sourceName = payload.project?.name || "Без названия";
+  await createProject({ name: `${sourceName} копия`, project: payload.project });
+}
+
+async function deleteProject(projectId) {
+  const current = persistence.projects.find((project) => project.id === projectId);
+  if (!window.confirm(`Удалить проект "${current?.name || projectId}"?`)) return;
+  const response = await fetch(projectEndpoint(projectId), { method: "DELETE" });
+  if (!response.ok) return;
+  if (persistence.projectId === projectId) {
+    persistence.projectId = "";
+    persistence.ready = false;
+    setProjectHomeVisible(true);
+  }
+  await loadProjects();
+}
+
+async function exportProjectBackup(projectId) {
+  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
+  if (!response.ok) return;
+  const payload = await response.json();
+  const name = String(payload.project?.name || "zamer").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 48) || "zamer";
+  downloadFile(`${name}.zamer`, JSON.stringify(payload.project, null, 2), "application/json");
+}
+
+async function importProjectFile(file) {
+  if (!file) return;
+  const text = await file.text();
+  const project = JSON.parse(text);
+  const name = window.prompt("Название импортируемого проекта", project.name || file.name.replace(/\.zamer$/i, "")) || project.name || "Импорт";
+  await createProject({ name, project });
+  projectImportInput.value = "";
+}
+
+async function handleProjectAction(action, projectId) {
+  try {
+    if (action === "open") await openProject(projectId);
+    else if (action === "rename") await renameProject(projectId);
+    else if (action === "duplicate") await duplicateProject(projectId);
+    else if (action === "export") await exportProjectBackup(projectId);
+    else if (action === "delete") await deleteProject(projectId);
+  } catch (error) {
+    console.warn("Project action failed", error);
+    updateSaveIndicator("error", "Ошибка проекта", { autoDim: 2600 });
+  }
+}
+
+async function showProjectHome() {
+  if (persistence.ready && persistence.projectId) await saveProjectNow();
+  setProjectHomeVisible(true);
+  updateSaveIndicator("idle", "Выберите файл");
+  await loadProjects();
+}
+
+async function initProjectHome() {
+  setProjectHomeVisible(true);
+  updateProjectTitle();
+  updateSaveIndicator("idle", "Выберите файл");
+  await loadProjects();
+  try {
+    const urlProject = new URLSearchParams(window.location.search).get("project");
+    if (/^[a-zA-Z0-9_-]{3,80}$/.test(urlProject || "")) await openProject(urlProject);
+  } catch (error) {
+    console.warn("Direct project open failed", error);
+  }
+}
+
 function serializableProjectState() {
   return {
-    version: 1,
+    version: 2,
     clientId: persistence.clientId,
+    projectId: persistence.projectId,
+    name: persistence.projectName || "Без названия",
+    createdAt: persistence.projectCreatedAt || new Date().toISOString(),
     theme: state.theme,
     view: {
       scale: state.view.scale,
@@ -522,9 +805,11 @@ function serializableProjectState() {
 }
 
 function serializeProject() {
+  const savedAt = new Date().toISOString();
   return {
     ...serializableProjectState(),
-    savedAt: new Date().toISOString(),
+    updatedAt: savedAt,
+    savedAt,
   };
 }
 
@@ -547,6 +832,9 @@ function cloneProjectEntity(entity) {
 
 function restoreProject(project) {
   if (!project || !Array.isArray(project.entities)) return false;
+  if (project.projectId && !persistence.projectId) persistence.projectId = project.projectId;
+  if (project.name) persistence.projectName = project.name;
+  if (project.createdAt) persistence.projectCreatedAt = project.createdAt;
   const restoredEntities = project.entities.map(cloneProjectEntity).filter(Boolean);
   persistence.restoring = true;
   try {
@@ -594,6 +882,7 @@ function restoreProject(project) {
     syncSnapButtons();
     syncToolButtons();
     renderLayerList();
+    updateProjectTitle();
     draw();
     persistence.restoredSavedAt = projectSavedTime(project);
     return true;
@@ -613,7 +902,7 @@ function markProjectDirty(reason = "change") {
 }
 
 async function saveProjectNow() {
-  if (!persistence.ready || persistence.restoring) return;
+  if (!persistence.ready || persistence.restoring || !persistence.projectId) return;
   if (persistence.saving) {
     persistence.pending = true;
     return;
@@ -723,7 +1012,7 @@ async function loadProjectSafely() {
 }
 
 function flushProjectBeforeUnload() {
-  if (!persistence.ready || persistence.restoring) return;
+  if (!persistence.ready || persistence.restoring || !persistence.projectId) return;
   if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
   const project = serializeProject();
   writeEmergencyLocalBackup(project);
@@ -7328,6 +7617,42 @@ furnitureCatsNav.addEventListener("click", (event) => {
   }
 });
 
+projectSearchInput?.addEventListener("input", renderProjectList);
+refreshProjectsButton?.addEventListener("click", loadProjects);
+createProjectButton?.addEventListener("click", () => createBlankProjectButton?.click());
+createBlankProjectButton?.addEventListener("click", () => {
+  const name = window.prompt("Название нового проекта", "Новый замер") || "Новый замер";
+  createProject({ name, template: "blank" }).catch((error) => {
+    console.warn("Create blank project failed", error);
+    updateSaveIndicator("error", "Не создан", { autoDim: 2600 });
+  });
+});
+createApartmentProjectButton?.addEventListener("click", () => {
+  const name = window.prompt("Название проекта", "Замер комнаты") || "Замер комнаты";
+  createProject({ name, template: "apartment" }).catch((error) => {
+    console.warn("Create template project failed", error);
+    updateSaveIndicator("error", "Не создан", { autoDim: 2600 });
+  });
+});
+projectImportInput?.addEventListener("change", () => {
+  importProjectFile(projectImportInput.files?.[0]).catch((error) => {
+    console.warn("Import project failed", error);
+    updateSaveIndicator("error", "Импорт не удался", { autoDim: 2600 });
+  });
+});
+projectList?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-project-action]");
+  if (!button) return;
+  handleProjectAction(button.dataset.projectAction, button.dataset.projectId);
+});
+projectList?.addEventListener("dblclick", (event) => {
+  const card = event.target.closest(".project-card[data-project-id]");
+  if (card) openProject(card.dataset.projectId).catch((error) => console.warn("Open project failed", error));
+});
+projectTitle?.addEventListener("click", () => {
+  showProjectHome().catch((error) => console.warn("Project home failed", error));
+});
+
 lengthInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   applyInlineValue("length", { recordUndo: false });
@@ -7708,7 +8033,7 @@ setAnnotationScale(state.annotationScale, { save: false });
 loadFurnitureLibrary();
 prepareSelectMenuStructure();
 setTool("select");
-loadProjectSafely();
+initProjectHome();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
   exportRevitDxf: () => buildRevitDxf(state.entities),

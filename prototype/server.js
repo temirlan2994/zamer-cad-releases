@@ -24,6 +24,11 @@ const types = {
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${host}:${port}`);
 
+  if (url.pathname === "/api/projects" || url.pathname.startsWith("/api/projects/")) {
+    handleProjectsApi(request, response, url);
+    return;
+  }
+
   if (url.pathname === "/api/project") {
     handleProjectApi(request, response, url);
     return;
@@ -102,6 +107,258 @@ function clientProjectPaths(url) {
 function uniqueProjectTempPath(client) {
   const nonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
   return path.join(projectStatesDir, `project-${client}.${nonce}.tmp.json`);
+}
+
+function safeId(value, fallback = "default") {
+  return /^[a-zA-Z0-9_-]{3,80}$/.test(value || "") ? value : fallback;
+}
+
+function clientFromUrl(url) {
+  return safeId(url.searchParams.get("client"), "default");
+}
+
+function projectsIndexPath(client) {
+  return path.join(projectStatesDir, `projects-${client}.json`);
+}
+
+function projectFilePath(client, projectId) {
+  if (projectId === "legacy") return path.join(projectStatesDir, `project-${client}.json`);
+  return path.join(projectStatesDir, `project-${client}-${projectId}.json`);
+}
+
+function uniqueProjectFileTempPath(client, projectId) {
+  const nonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  return path.join(projectStatesDir, `project-${client}-${projectId}.${nonce}.tmp.json`);
+}
+
+function projectSummary(project, fallback = {}) {
+  const entities = Array.isArray(project?.entities) ? project.entities : [];
+  return {
+    id: fallback.id || safeId(project?.projectId, ""),
+    name: String(project?.name || fallback.name || "Без названия").slice(0, 80),
+    createdAt: project?.createdAt || fallback.createdAt || new Date().toISOString(),
+    updatedAt: project?.savedAt || project?.updatedAt || fallback.updatedAt || new Date().toISOString(),
+    entityCount: entities.length,
+    thumbnail: project?.thumbnail || fallback.thumbnail || null,
+    legacy: Boolean(fallback.legacy),
+  };
+}
+
+function readJsonFile(filePath, fallback, callback) {
+  fs.readFile(filePath, "utf8", (error, content) => {
+    if (error) {
+      callback(null, fallback);
+      return;
+    }
+    try {
+      callback(null, JSON.parse(content));
+    } catch (parseError) {
+      callback(parseError, fallback);
+    }
+  });
+}
+
+function writeJsonFileAtomic(filePath, payload, tempPath, callback) {
+  const content = JSON.stringify(payload, null, 2);
+  fs.mkdir(path.dirname(filePath), { recursive: true }, (mkdirError) => {
+    if (mkdirError) {
+      callback(mkdirError);
+      return;
+    }
+    fs.writeFile(tempPath, content, "utf8", (writeError) => {
+      if (writeError) {
+        callback(writeError);
+        return;
+      }
+      fs.rename(tempPath, filePath, (renameError) => {
+        if (renameError) fs.unlink(tempPath, () => {});
+        callback(renameError);
+      });
+    });
+  });
+}
+
+function readProjectsIndex(client, callback) {
+  readJsonFile(projectsIndexPath(client), { projects: [] }, (error, payload) => {
+    const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+    callback(error, projects);
+  });
+}
+
+function writeProjectsIndex(client, projects, callback) {
+  const tempPath = path.join(projectStatesDir, `projects-${client}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp.json`);
+  writeJsonFileAtomic(projectsIndexPath(client), { client, projects }, tempPath, callback);
+}
+
+function upsertProjectMeta(client, meta, callback) {
+  readProjectsIndex(client, (_error, projects) => {
+    const next = projects.filter((project) => project.id !== meta.id);
+    next.unshift(meta);
+    next.sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+    writeProjectsIndex(client, next, callback);
+  });
+}
+
+function removeProjectMeta(client, projectId, callback) {
+  readProjectsIndex(client, (_error, projects) => {
+    writeProjectsIndex(client, projects.filter((project) => project.id !== projectId), callback);
+  });
+}
+
+function sendProjectsList(response, client) {
+  readProjectsIndex(client, (_error, projects) => {
+    const sorted = [...projects].sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+    const legacyPath = projectFilePath(client, "legacy");
+    fs.readFile(legacyPath, "utf8", (legacyError, legacyContent) => {
+      if (!legacyError && !sorted.some((project) => project.id === "legacy")) {
+        try {
+          const legacyProject = JSON.parse(legacyContent);
+          sorted.unshift(projectSummary(legacyProject, { id: "legacy", name: "Последний замер", legacy: true }));
+        } catch {
+          // Ignore a broken legacy file in the project picker.
+        }
+      }
+      sendJson(response, 200, { ok: true, client, projects: sorted });
+    });
+  });
+}
+
+function defaultProjectPayload(client, body = {}) {
+  const now = new Date().toISOString();
+  const id = safeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const name = String(body.name || "Новый замер").slice(0, 80);
+  const source = body.project && typeof body.project === "object" ? body.project : {};
+  const template = body.template || "blank";
+  const entities = template === "apartment" && !Array.isArray(source.entities)
+    ? [
+        { id: "wall-1", type: "wall", layer: "walls", x1: 0, y1: 0, x2: 5200, y2: 0, width: 180 },
+        { id: "wall-2", type: "wall", layer: "walls", x1: 5200, y1: 0, x2: 5200, y2: 3600, width: 180 },
+        { id: "wall-3", type: "wall", layer: "walls", x1: 5200, y1: 3600, x2: 0, y2: 3600, width: 180 },
+        { id: "wall-4", type: "wall", layer: "walls", x1: 0, y1: 3600, x2: 0, y2: 0, width: 180 },
+      ]
+    : Array.isArray(source.entities) ? source.entities : [];
+  return {
+    version: 2,
+    clientId: client,
+    projectId: id,
+    name,
+    createdAt: source.createdAt || now,
+    updatedAt: now,
+    savedAt: now,
+    theme: source.theme === "dark" ? "dark" : "light",
+    view: source.view || { scale: 0.085, panX: 92, panY: 84 },
+    snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
+    annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
+    selectionFilter: source.selectionFilter || "all",
+    furnitureTab: source.furnitureTab || "furniture",
+    furnitureCategory: source.furnitureCategory || "sofas",
+    furnitureSheetPosition: source.furnitureSheetPosition || "half",
+    entities,
+    thumbnail: source.thumbnail || null,
+  };
+}
+
+function handleProjectsApi(request, response, url) {
+  const client = clientFromUrl(url);
+  const match = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
+  const projectId = match ? safeId(decodeURIComponent(match[1]), "") : "";
+
+  if (url.pathname === "/api/projects" && request.method === "GET") {
+    sendProjectsList(response, client);
+    return;
+  }
+
+  if (url.pathname === "/api/projects" && request.method === "POST") {
+    readRequestJson(request, response, (body) => {
+      const project = defaultProjectPayload(client, body);
+      const filePath = projectFilePath(client, project.projectId);
+      const tempPath = uniqueProjectFileTempPath(client, project.projectId);
+      writeJsonFileAtomic(filePath, project, tempPath, (writeError) => {
+        if (writeError) {
+          sendJson(response, 500, { ok: false, error: "Could not create project" });
+          return;
+        }
+        upsertProjectMeta(client, projectSummary(project, { id: project.projectId }), (indexError) => {
+          if (indexError) {
+            sendJson(response, 500, { ok: false, error: "Could not update project list" });
+            return;
+          }
+          sendJson(response, 200, { ok: true, client, project, meta: projectSummary(project, { id: project.projectId }) });
+        });
+      });
+    });
+    return;
+  }
+
+  if (!projectId) {
+    sendJson(response, 404, { ok: false, error: "Project not found" });
+    return;
+  }
+
+  const filePath = projectFilePath(client, projectId);
+
+  if (request.method === "GET") {
+    readJsonFile(filePath, null, (error, project) => {
+      if (error || !project) {
+        sendJson(response, 404, { ok: false, error: "Project not found", client, projectId });
+        return;
+      }
+      sendJson(response, 200, { ok: true, client, projectId, project });
+    });
+    return;
+  }
+
+  if (request.method === "PUT" || request.method === "POST") {
+    readRequestJson(request, response, (body) => {
+      const now = new Date().toISOString();
+      const project = {
+        ...body,
+        version: body.version || 2,
+        clientId: client,
+        projectId,
+        name: String(body.name || "Без названия").slice(0, 80),
+        createdAt: body.createdAt || now,
+        updatedAt: now,
+        savedAt: body.savedAt || now,
+      };
+      const tempPath = uniqueProjectFileTempPath(client, projectId);
+      writeJsonFileAtomic(filePath, project, tempPath, (writeError) => {
+        if (writeError) {
+          sendJson(response, 500, { ok: false, error: "Could not save project" });
+          return;
+        }
+        upsertProjectMeta(client, projectSummary(project, { id: projectId }), (indexError) => {
+          if (indexError) {
+            sendJson(response, 500, { ok: false, error: "Could not update project list" });
+            return;
+          }
+          sendJson(response, 200, { ok: true, client, projectId, meta: projectSummary(project, { id: projectId }) });
+        });
+      });
+    });
+    return;
+  }
+
+  if (request.method === "DELETE") {
+    if (projectId === "legacy") {
+      sendJson(response, 400, { ok: false, error: "Legacy project cannot be deleted here" });
+      return;
+    }
+    fs.unlink(filePath, () => {
+      removeProjectMeta(client, projectId, (indexError) => {
+        if (indexError) {
+          sendJson(response, 500, { ok: false, error: "Could not update project list" });
+          return;
+        }
+        sendJson(response, 200, { ok: true, client, projectId });
+      });
+    });
+    return;
+  }
+
+  response.writeHead(405, { Allow: "GET, POST, PUT, DELETE" });
+  response.end("Method not allowed");
 }
 
 function handleProjectApi(request, response, url) {

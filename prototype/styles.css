@@ -68,6 +68,235 @@ input {
   --border: #263241;
 }
 
+.project-home[hidden] {
+  display: none;
+}
+
+.project-home {
+  background: var(--bg);
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  inset: 0;
+  overflow: hidden;
+  padding: 16px 12px calc(14px + env(safe-area-inset-bottom));
+  position: absolute;
+  z-index: 40;
+}
+
+.project-home-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.project-home h1 {
+  font-size: 1.45rem;
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 4px 0 0;
+}
+
+.project-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.project-search {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  gap: 7px;
+  grid-column: 1 / -1;
+  height: 42px;
+  padding: 0 10px;
+}
+
+.project-search span {
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.project-search input {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.project-action-card {
+  align-items: start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  min-height: 62px;
+  padding: 10px;
+  text-align: left;
+}
+
+.project-action-card strong {
+  font-size: 0.78rem;
+  line-height: 1.1;
+}
+
+.project-action-card span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.2;
+}
+
+.project-list-head {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.7rem;
+  font-weight: 800;
+  justify-content: space-between;
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.project-list-head button {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 4px;
+}
+
+.project-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.project-empty {
+  align-items: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  justify-content: center;
+  min-height: 110px;
+  padding: 14px;
+  text-align: center;
+}
+
+.project-card {
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 78px minmax(0, 1fr);
+  min-height: 86px;
+  padding: 8px;
+}
+
+.project-card-preview {
+  align-items: center;
+  background:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px),
+    var(--canvas);
+  background-size: 18px 18px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  display: flex;
+  font-size: 1.4rem;
+  font-weight: 900;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.project-card-main {
+  min-width: 0;
+}
+
+.project-card-title {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-card-title strong {
+  font-size: 0.9rem;
+  line-height: 1.15;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-title em {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.55rem;
+  font-style: normal;
+  font-weight: 900;
+  padding: 3px 6px;
+}
+
+.project-card-meta {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.3;
+  margin-top: 5px;
+}
+
+.project-card-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.project-card-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.project-card-actions button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 0.64rem;
+  font-weight: 800;
+  min-height: 30px;
+  padding: 6px 8px;
+}
+
+.project-card-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
 .topbar {
   align-items: center;
   background: var(--surface);
@@ -79,6 +308,7 @@ input {
 }
 
 .project-title {
+  cursor: pointer;
   min-width: 0;
 }
 
