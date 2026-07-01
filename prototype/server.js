@@ -1,13 +1,19 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const root = __dirname;
 const port = process.env.PORT || 4187;
 const host = process.env.HOST || "127.0.0.1";
 const projectStatePath = path.join(root, "project-state.json");
 const projectStatesDir = path.join(root, "project-states");
+const usersPath = path.join(projectStatesDir, "auth-users.json");
+const sessionsPath = path.join(projectStatesDir, "auth-sessions.json");
 const maxProjectBytes = 2 * 1024 * 1024;
+const sessionCookieName = "zamer_session";
+const sessionMaxAgeSeconds = 60 * 60 * 24 * 30;
+const passwordIterations = 120000;
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -23,6 +29,11 @@ const types = {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${host}:${port}`);
+
+  if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/")) {
+    handleAuthApi(request, response, url);
+    return;
+  }
 
   if (url.pathname === "/api/projects" || url.pathname.startsWith("/api/projects/")) {
     handleProjectsApi(request, response, url);
@@ -67,10 +78,11 @@ const server = http.createServer((request, response) => {
   });
 });
 
-function sendJson(response, status, payload) {
+function sendJson(response, status, payload, extraHeaders = {}) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...extraHeaders,
   });
   response.end(JSON.stringify(payload));
 }
@@ -93,6 +105,196 @@ function readRequestJson(request, response, callback) {
       sendJson(response, 400, { ok: false, error: "Invalid JSON" });
     }
   });
+}
+
+function readJsonFileSync(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonFileSyncAtomic(filePath, payload) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+function normalizeLogin(login) {
+  return String(login || "").trim().toLowerCase();
+}
+
+function validLogin(login) {
+  return /^[\p{L}\p{N}._@+-]{3,80}$/u.test(login);
+}
+
+function validPassword(password) {
+  return typeof password === "string" && password.length >= 6 && password.length <= 128;
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    login: user.login,
+    createdAt: user.createdAt,
+  };
+}
+
+function readUsers() {
+  const payload = readJsonFileSync(usersPath, { users: [] });
+  return Array.isArray(payload.users) ? payload.users : [];
+}
+
+function writeUsers(users) {
+  writeJsonFileSyncAtomic(usersPath, { users });
+}
+
+function readSessions() {
+  const payload = readJsonFileSync(sessionsPath, { sessions: [] });
+  return Array.isArray(payload.sessions) ? payload.sessions : [];
+}
+
+function writeSessions(sessions) {
+  writeJsonFileSyncAtomic(sessionsPath, { sessions });
+}
+
+function passwordHash(password, salt = crypto.randomBytes(16).toString("base64")) {
+  const hash = crypto.pbkdf2Sync(password, salt, passwordIterations, 32, "sha256").toString("base64");
+  return { salt, hash, iterations: passwordIterations };
+}
+
+function passwordMatches(password, user) {
+  if (!validPassword(password) || !user?.passwordHash || !user?.salt) return false;
+  const iterations = Number(user.iterations) || passwordIterations;
+  const candidate = crypto.pbkdf2Sync(password, user.salt, iterations, 32, "sha256");
+  const saved = Buffer.from(user.passwordHash, "base64");
+  return saved.length === candidate.length && crypto.timingSafeEqual(saved, candidate);
+}
+
+function parseCookies(header = "") {
+  const cookies = {};
+  for (const part of String(header).split(";")) {
+    const index = part.indexOf("=");
+    if (index <= 0) continue;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function sessionCookie(sessionId, maxAge = sessionMaxAgeSeconds) {
+  return `${sessionCookieName}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function clearSessionCookie() {
+  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function createSession(userId) {
+  const sessions = readSessions().filter((session) => Date.parse(session.expiresAt || "") > Date.now());
+  const now = Date.now();
+  const session = {
+    id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString("hex"),
+    userId,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + sessionMaxAgeSeconds * 1000).toISOString(),
+  };
+  sessions.push(session);
+  writeSessions(sessions);
+  return session;
+}
+
+function currentAuth(request) {
+  const sessionId = parseCookies(request.headers.cookie || "")[sessionCookieName];
+  if (!/^[a-zA-Z0-9_-]{16,80}$/.test(sessionId || "")) return null;
+  const sessions = readSessions();
+  const session = sessions.find((item) => item.id === sessionId);
+  if (!session || Date.parse(session.expiresAt || "") <= Date.now()) {
+    if (session) writeSessions(sessions.filter((item) => item.id !== sessionId));
+    return null;
+  }
+  const user = readUsers().find((item) => item.id === session.userId);
+  if (!user) return null;
+  return { session, user };
+}
+
+function removeSession(sessionId) {
+  if (!sessionId) return;
+  writeSessions(readSessions().filter((session) => session.id !== sessionId));
+}
+
+function sendAuthRequired(response) {
+  sendJson(response, 401, { ok: false, error: "Auth required" });
+}
+
+function handleAuthApi(request, response, url) {
+  if (url.pathname === "/api/auth/status" && request.method === "GET") {
+    const auth = currentAuth(request);
+    sendJson(response, 200, { ok: true, user: publicUser(auth?.user) });
+    return;
+  }
+
+  if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    const sessionId = parseCookies(request.headers.cookie || "")[sessionCookieName];
+    removeSession(sessionId);
+    sendJson(response, 200, { ok: true, user: null }, { "Set-Cookie": clearSessionCookie() });
+    return;
+  }
+
+  if ((url.pathname === "/api/auth/login" || url.pathname === "/api/auth/register") && request.method === "POST") {
+    readRequestJson(request, response, (body) => {
+      const login = normalizeLogin(body.login);
+      const password = String(body.password || "");
+      if (!validLogin(login)) {
+        sendJson(response, 400, { ok: false, error: "Логин: минимум 3 символа, буквы/цифры/._@+-" });
+        return;
+      }
+      if (!validPassword(password)) {
+        sendJson(response, 400, { ok: false, error: "Пароль должен быть от 6 символов" });
+        return;
+      }
+
+      const users = readUsers();
+      const existing = users.find((user) => user.login === login);
+      if (url.pathname === "/api/auth/register") {
+        if (existing) {
+          sendJson(response, 409, { ok: false, error: "Такой логин уже есть" });
+          return;
+        }
+        const { salt, hash, iterations } = passwordHash(password);
+        const now = new Date().toISOString();
+        const user = {
+          id: `u-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString("hex")}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80),
+          login,
+          salt,
+          passwordHash: hash,
+          iterations,
+          createdAt: now,
+          updatedAt: now,
+        };
+        users.push(user);
+        writeUsers(users);
+        const session = createSession(user.id);
+        sendJson(response, 200, { ok: true, user: publicUser(user) }, { "Set-Cookie": sessionCookie(session.id) });
+        return;
+      }
+
+      if (!existing || !passwordMatches(password, existing)) {
+        sendJson(response, 401, { ok: false, error: "Неверный логин или пароль" });
+        return;
+      }
+      const session = createSession(existing.id);
+      sendJson(response, 200, { ok: true, user: publicUser(existing) }, { "Set-Cookie": sessionCookie(session.id) });
+    });
+    return;
+  }
+
+  response.writeHead(405, { Allow: "GET, POST" });
+  response.end("Method not allowed");
 }
 
 function clientProjectPaths(url) {
@@ -260,7 +462,12 @@ function defaultProjectPayload(client, body = {}) {
 }
 
 function handleProjectsApi(request, response, url) {
-  const client = clientFromUrl(url);
+  const auth = currentAuth(request);
+  if (!auth) {
+    sendAuthRequired(response);
+    return;
+  }
+  const client = auth.user.id;
   const match = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
   const projectId = match ? safeId(decodeURIComponent(match[1]), "") : "";
 
@@ -362,7 +569,15 @@ function handleProjectsApi(request, response, url) {
 }
 
 function handleProjectApi(request, response, url) {
-  const paths = clientProjectPaths(url);
+  const auth = currentAuth(request);
+  if (!auth) {
+    sendAuthRequired(response);
+    return;
+  }
+  const paths = {
+    client: auth.user.id,
+    statePath: path.join(projectStatesDir, `project-${auth.user.id}.json`),
+  };
   if (request.method === "GET") {
     fs.readFile(paths.statePath, "utf8", (error, content) => {
       if (error) {

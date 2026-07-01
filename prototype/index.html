@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=199" />
+    <link rel="stylesheet" href="./styles.css?v=204" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -16,13 +16,36 @@
   </head>
   <body>
     <main class="app-shell" data-theme="light">
+      <section class="auth-screen" id="authScreen" aria-label="Вход">
+        <form class="auth-panel" id="authForm">
+          <span class="panel-kicker">Zamer CAD</span>
+          <h1>Вход в аккаунт</h1>
+          <p>Ваши чертежи будут храниться внутри аккаунта и не смешиваться с другими пользователями.</p>
+          <label>
+            <span>Логин</span>
+            <input id="authLoginInput" name="login" type="text" autocomplete="username" inputmode="email" placeholder="temirlan" required />
+          </label>
+          <label>
+            <span>Пароль</span>
+            <input id="authPasswordInput" name="password" type="password" autocomplete="current-password" placeholder="Минимум 6 символов" required />
+          </label>
+          <div class="auth-error" id="authError" aria-live="polite"></div>
+          <button class="auth-submit" id="authSubmitButton" type="submit">Войти</button>
+          <button class="auth-switch" id="authModeButton" type="button">Создать аккаунт</button>
+        </form>
+      </section>
+
       <section class="project-home" id="projectHome" aria-label="Проекты">
         <header class="project-home-head">
           <div>
             <span class="panel-kicker">Zamer CAD</span>
             <h1>Проекты</h1>
+            <span class="account-badge" id="accountBadge" hidden></span>
           </div>
-          <button class="icon-button primary" id="createProjectButton" type="button" title="Создать проект" aria-label="Создать проект">+</button>
+          <div class="project-home-actions">
+            <button class="icon-button" id="logoutButton" type="button" title="Выйти" aria-label="Выйти" hidden>⎋</button>
+            <button class="icon-button primary" id="createProjectButton" type="button" title="Создать проект" aria-label="Создать проект">+</button>
+          </div>
         </header>
 
         <div class="project-actions">
@@ -43,6 +66,10 @@
             <span>.zamer backup</span>
             <input id="projectImportInput" type="file" accept=".zamer,application/json" hidden />
           </label>
+          <button class="project-action-card install-card" id="installAppButton" type="button">
+            <strong>Установить</strong>
+            <span>На телефон</span>
+          </button>
         </div>
 
         <div class="project-list-head">
@@ -225,7 +252,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=199"></script>
+    <script type="module" src="./app.js?v=205"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {

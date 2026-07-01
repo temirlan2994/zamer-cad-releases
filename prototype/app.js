@@ -6,6 +6,13 @@ const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
 const shell = document.querySelector(".app-shell");
 const centerCursor = document.querySelector(".center-cursor");
+const authScreen = document.getElementById("authScreen");
+const authForm = document.getElementById("authForm");
+const authLoginInput = document.getElementById("authLoginInput");
+const authPasswordInput = document.getElementById("authPasswordInput");
+const authSubmitButton = document.getElementById("authSubmitButton");
+const authModeButton = document.getElementById("authModeButton");
+const authError = document.getElementById("authError");
 const projectHome = document.getElementById("projectHome");
 const projectList = document.getElementById("projectList");
 const projectSearchInput = document.getElementById("projectSearchInput");
@@ -13,7 +20,10 @@ const createProjectButton = document.getElementById("createProjectButton");
 const createBlankProjectButton = document.getElementById("createBlankProjectButton");
 const createApartmentProjectButton = document.getElementById("createApartmentProjectButton");
 const projectImportInput = document.getElementById("projectImportInput");
+const installAppButton = document.getElementById("installAppButton");
 const refreshProjectsButton = document.getElementById("refreshProjectsButton");
+const accountBadge = document.getElementById("accountBadge");
+const logoutButton = document.getElementById("logoutButton");
 const projectTitle = document.querySelector(".project-title");
 const projectNameCaption = document.querySelector(".project-title strong");
 const projectScaleCaption = document.querySelector(".project-title span");
@@ -102,7 +112,7 @@ const cp1251Chars =
   "АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" +
   "абвгдежзийклмнопрстуфхцчшщъыьэюя";
 const cp1251ByteByChar = new Map([...cp1251Chars].map((char, index) => [char, index + 0x80]));
-const trackingHoverDelayMs = 2000;
+const trackingHoverDelayMs = 1000;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
@@ -350,6 +360,21 @@ const persistence = {
   projects: [],
 };
 
+const authState = {
+  mode: "login",
+  user: null,
+  busy: false,
+};
+
+const installState = {
+  promptEvent: null,
+  installed: window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true,
+};
+
+function authEndpoint(action) {
+  return `/api/auth/${action}`;
+}
+
 function projectsEndpoint() {
   return `/api/projects?client=${encodeURIComponent(persistence.clientId)}`;
 }
@@ -541,6 +566,144 @@ function setProjectHomeVisible(visible) {
   shell.classList.toggle("project-home-open", visible);
 }
 
+function setAuthScreenVisible(visible) {
+  if (!authScreen) return;
+  authScreen.hidden = !visible;
+  shell.classList.toggle("auth-open", visible);
+  if (visible) requestAnimationFrame(() => authLoginInput?.focus());
+}
+
+function setAuthError(message = "") {
+  if (authError) authError.textContent = message;
+}
+
+function renderAuthUi() {
+  const isRegister = authState.mode === "register";
+  if (authScreen) {
+    const title = authScreen.querySelector("h1");
+    const text = authScreen.querySelector("p");
+    if (title) title.textContent = isRegister ? "Создать аккаунт" : "Вход в аккаунт";
+    if (text) {
+      text.textContent = isRegister
+        ? "Создайте логин и пароль. Все новые чертежи будут храниться отдельно в этом аккаунте."
+        : "Ваши чертежи будут храниться внутри аккаунта и не смешиваться с другими пользователями.";
+    }
+  }
+  if (authPasswordInput) authPasswordInput.autocomplete = isRegister ? "new-password" : "current-password";
+  if (authSubmitButton) authSubmitButton.textContent = authState.busy ? "Проверяю..." : isRegister ? "Создать аккаунт" : "Войти";
+  if (authModeButton) authModeButton.textContent = isRegister ? "У меня уже есть аккаунт" : "Создать аккаунт";
+  if (authSubmitButton) authSubmitButton.disabled = authState.busy;
+  if (authModeButton) authModeButton.disabled = authState.busy;
+  if (accountBadge) {
+    accountBadge.hidden = !authState.user;
+    accountBadge.textContent = authState.user ? `Аккаунт: ${authState.user.login}` : "";
+  }
+  if (logoutButton) logoutButton.hidden = !authState.user;
+}
+
+function resetProjectSession() {
+  persistence.projectId = "";
+  persistence.projectName = "";
+  persistence.projectCreatedAt = "";
+  persistence.endpoint = "";
+  persistence.ready = false;
+  persistence.dirty = false;
+  persistence.pending = false;
+  persistence.needsRemoteSync = false;
+  persistence.projects = [];
+  setSelection([]);
+  state.drawing = null;
+  state.command = null;
+  state.moveCommand = null;
+  state.offsetCommand = null;
+  state.inlineEdit = null;
+  state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
+  updateProjectTitle();
+  renderProjectList();
+}
+
+function setAuthenticatedUser(user) {
+  authState.user = user || null;
+  if (user?.id) {
+    persistence.clientId = user.id;
+  }
+  renderAuthUi();
+}
+
+async function fetchAuthJson(action, options = {}) {
+  const response = await fetch(authEndpoint(action), {
+    cache: "no-store",
+    credentials: "same-origin",
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Ошибка аккаунта");
+  return payload;
+}
+
+async function initAuthGate() {
+  setAuthScreenVisible(true);
+  setProjectHomeVisible(false);
+  updateSaveIndicator("idle", "Войдите");
+  renderAuthUi();
+  try {
+    const payload = await fetchAuthJson("status");
+    if (payload.user) {
+      setAuthenticatedUser(payload.user);
+      setAuthScreenVisible(false);
+      await initProjectHome();
+      return;
+    }
+  } catch (error) {
+    console.warn("Auth status failed", error);
+  }
+  authState.mode = "login";
+  setAuthenticatedUser(null);
+  resetProjectSession();
+  setAuthScreenVisible(true);
+}
+
+async function submitAuthForm(event) {
+  event.preventDefault();
+  if (authState.busy) return;
+  const login = authLoginInput?.value.trim() || "";
+  const password = authPasswordInput?.value || "";
+  setAuthError("");
+  authState.busy = true;
+  renderAuthUi();
+  try {
+    const payload = await fetchAuthJson(authState.mode === "register" ? "register" : "login", {
+      method: "POST",
+      body: JSON.stringify({ login, password }),
+    });
+    setAuthenticatedUser(payload.user);
+    if (authPasswordInput) authPasswordInput.value = "";
+    setAuthScreenVisible(false);
+    await initProjectHome();
+  } catch (error) {
+    setAuthError(error.message || "Не удалось войти");
+  } finally {
+    authState.busy = false;
+    renderAuthUi();
+  }
+}
+
+async function logoutAccount() {
+  if (persistence.ready && persistence.projectId) await saveProjectNow();
+  await fetchAuthJson("logout", { method: "POST" }).catch((error) => console.warn("Logout failed", error));
+  authState.mode = "login";
+  setAuthenticatedUser(null);
+  resetProjectSession();
+  setProjectHomeVisible(false);
+  setAuthScreenVisible(true);
+  updateSaveIndicator("idle", "Войдите");
+}
+
 function projectDateLabel(value) {
   const date = new Date(value || Date.now());
   if (Number.isNaN(date.getTime())) return "без даты";
@@ -622,10 +785,203 @@ function renderProjectList() {
   }
 }
 
+function showProjectDialog({ title, message = "", value = "", placeholder = "", confirmText = "Готово", destructive = false, withInput = true }) {
+  return new Promise((resolve) => {
+    shell.querySelector(".project-dialog-backdrop")?.remove();
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const backdrop = document.createElement("div");
+    backdrop.className = "project-dialog-backdrop";
+
+    const dialog = document.createElement("form");
+    dialog.className = "project-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", title);
+
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    dialog.append(heading);
+
+    if (message) {
+      const text = document.createElement("p");
+      text.textContent = message;
+      dialog.append(text);
+    }
+
+    let input = null;
+    if (withInput) {
+      input = document.createElement("input");
+      input.type = "text";
+      input.value = value;
+      input.placeholder = placeholder || value;
+      input.maxLength = 80;
+      input.autocomplete = "off";
+      dialog.append(input);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "project-dialog-actions";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = "Отмена";
+
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "submit";
+    confirmButton.className = destructive ? "danger" : "primary";
+    confirmButton.textContent = confirmText;
+    actions.append(cancelButton, confirmButton);
+    dialog.append(actions);
+    backdrop.append(dialog);
+
+    const finish = (result) => {
+      document.removeEventListener("keydown", onKeydown);
+      backdrop.remove();
+      previousFocus?.focus?.();
+      resolve(result);
+    };
+
+    function onKeydown(event) {
+      if (event.key === "Escape") finish(null);
+    }
+
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) finish(null);
+    });
+    cancelButton.addEventListener("click", () => finish(null));
+    dialog.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!withInput) {
+        finish(true);
+        return;
+      }
+      const nextValue = input.value.trim().slice(0, 80);
+      if (!nextValue) {
+        input.focus();
+        return;
+      }
+      finish(nextValue);
+    });
+
+    document.addEventListener("keydown", onKeydown);
+    shell.append(backdrop);
+    requestAnimationFrame(() => {
+      if (input) {
+        input.focus();
+        input.select();
+      } else {
+        confirmButton.focus();
+      }
+    });
+  });
+}
+
+function askProjectName(title, value, placeholder = "") {
+  return showProjectDialog({ title, value, placeholder });
+}
+
+function confirmProjectDelete(name) {
+  return showProjectDialog({
+    title: "Удалить проект",
+    message: `Проект "${name}" будет удален с сервера.`,
+    confirmText: "Удалить",
+    destructive: true,
+    withInput: false,
+  });
+}
+
+function isSecureInstallContext() {
+  return window.isSecureContext || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+function updateInstallButton() {
+  if (!installAppButton) return;
+  if (installState.installed) {
+    installAppButton.hidden = true;
+    return;
+  }
+  installAppButton.hidden = false;
+  installAppButton.classList.toggle("ready", !!installState.promptEvent);
+  const title = installAppButton.querySelector("strong");
+  const text = installAppButton.querySelector("span");
+  if (title) title.textContent = installState.promptEvent ? "Установить" : "На экран";
+  if (text) text.textContent = installState.promptEvent ? "Приложение" : "Подсказка";
+}
+
+function standaloneInstallHelpText() {
+  if (!isSecureInstallContext()) {
+    return "Для установки телефон должен открыть сайт по HTTPS. Откройте Cloudflare-ссылку, потом нажмите эту кнопку еще раз.";
+  }
+  const isApple = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isApple) {
+    return "На iPhone установка идет через Safari: нажмите Поделиться, потом На экран Домой.";
+  }
+  return "Если окно установки не появилось, откройте меню браузера и выберите Установить приложение или Добавить на главный экран.";
+}
+
+async function requestAppInstall() {
+  if (installState.installed) {
+    await showProjectDialog({
+      title: "Уже установлено",
+      message: "Приложение уже открыто как установленное.",
+      confirmText: "Понятно",
+      withInput: false,
+    });
+    updateInstallButton();
+    return;
+  }
+  if (!installState.promptEvent) {
+    await showProjectDialog({
+      title: "Установка на телефон",
+      message: standaloneInstallHelpText(),
+      confirmText: "Понятно",
+      withInput: false,
+    });
+    return;
+  }
+  const promptEvent = installState.promptEvent;
+  installState.promptEvent = null;
+  updateInstallButton();
+  promptEvent.prompt();
+  const choice = await promptEvent.userChoice.catch(() => null);
+  if (choice?.outcome === "accepted") {
+    installState.installed = true;
+    updateInstallButton();
+  }
+}
+
+function initAppInstallPrompt() {
+  updateInstallButton();
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installState.promptEvent = event;
+    updateInstallButton();
+  });
+  window.addEventListener("appinstalled", () => {
+    installState.installed = true;
+    installState.promptEvent = null;
+    updateInstallButton();
+  });
+  installAppButton?.addEventListener("click", () => {
+    requestAppInstall().catch((error) => {
+      console.warn("Install prompt failed", error);
+      updateSaveIndicator("error", "Не установлено", { autoDim: 2600 });
+    });
+  });
+}
+
 async function loadProjects() {
   if (!projectList) return;
   try {
     const response = await fetch(projectsEndpoint(), { cache: "no-store" });
+    if (response.status === 401) {
+      setAuthenticatedUser(null);
+      resetProjectSession();
+      setProjectHomeVisible(false);
+      setAuthScreenVisible(true);
+      updateSaveIndicator("idle", "Войдите");
+      return;
+    }
     if (!response.ok) throw new Error(`Projects failed: ${response.status}`);
     const payload = await response.json();
     persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
@@ -690,7 +1046,7 @@ async function createProject(options = {}) {
 
 async function renameProject(projectId) {
   const current = persistence.projects.find((project) => project.id === projectId);
-  const nextName = window.prompt("Название проекта", current?.name || "Без названия");
+  const nextName = await askProjectName("Название проекта", current?.name || "Без названия");
   if (!nextName) return;
   const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
   if (!response.ok) return;
@@ -719,7 +1075,7 @@ async function duplicateProject(projectId) {
 
 async function deleteProject(projectId) {
   const current = persistence.projects.find((project) => project.id === projectId);
-  if (!window.confirm(`Удалить проект "${current?.name || projectId}"?`)) return;
+  if (!(await confirmProjectDelete(current?.name || projectId))) return;
   const response = await fetch(projectEndpoint(projectId), { method: "DELETE" });
   if (!response.ok) return;
   if (persistence.projectId === projectId) {
@@ -742,9 +1098,11 @@ async function importProjectFile(file) {
   if (!file) return;
   const text = await file.text();
   const project = JSON.parse(text);
-  const name = window.prompt("Название импортируемого проекта", project.name || file.name.replace(/\.zamer$/i, "")) || project.name || "Импорт";
-  await createProject({ name, project });
+  const fallbackName = project.name || file.name.replace(/\.zamer$/i, "") || "Импорт";
+  const name = await askProjectName("Название импортируемого проекта", fallbackName);
   projectImportInput.value = "";
+  if (!name) return;
+  await createProject({ name, project });
 }
 
 async function handleProjectAction(action, projectId) {
@@ -7617,18 +7975,32 @@ furnitureCatsNav.addEventListener("click", (event) => {
   }
 });
 
+authForm?.addEventListener("submit", submitAuthForm);
+authModeButton?.addEventListener("click", () => {
+  authState.mode = authState.mode === "login" ? "register" : "login";
+  setAuthError("");
+  renderAuthUi();
+});
+logoutButton?.addEventListener("click", () => {
+  logoutAccount().catch((error) => {
+    console.warn("Logout failed", error);
+    setAuthError("Не удалось выйти");
+  });
+});
 projectSearchInput?.addEventListener("input", renderProjectList);
 refreshProjectsButton?.addEventListener("click", loadProjects);
 createProjectButton?.addEventListener("click", () => createBlankProjectButton?.click());
-createBlankProjectButton?.addEventListener("click", () => {
-  const name = window.prompt("Название нового проекта", "Новый замер") || "Новый замер";
+createBlankProjectButton?.addEventListener("click", async () => {
+  const name = await askProjectName("Название нового проекта", "Новый замер");
+  if (!name) return;
   createProject({ name, template: "blank" }).catch((error) => {
     console.warn("Create blank project failed", error);
     updateSaveIndicator("error", "Не создан", { autoDim: 2600 });
   });
 });
-createApartmentProjectButton?.addEventListener("click", () => {
-  const name = window.prompt("Название проекта", "Замер комнаты") || "Замер комнаты";
+createApartmentProjectButton?.addEventListener("click", async () => {
+  const name = await askProjectName("Название проекта", "Замер комнаты");
+  if (!name) return;
   createProject({ name, template: "apartment" }).catch((error) => {
     console.warn("Create template project failed", error);
     updateSaveIndicator("error", "Не создан", { autoDim: 2600 });
@@ -8033,7 +8405,8 @@ setAnnotationScale(state.annotationScale, { save: false });
 loadFurnitureLibrary();
 prepareSelectMenuStructure();
 setTool("select");
-initProjectHome();
+initAppInstallPrompt();
+initAuthGate();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
   exportRevitDxf: () => buildRevitDxf(state.entities),
