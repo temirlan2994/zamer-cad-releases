@@ -54,6 +54,20 @@ export function dxfArc(arc, layer) {
   return ["0", "ARC", "8", layer || "measure", "10", roundDxf(arc.center.x), "20", roundDxf(-arc.center.y), "30", "0", "40", roundDxf(arc.radius), "50", roundDxf(startDeg), "51", roundDxf(endDeg)];
 }
 
+export function dxfText(entity, layer) {
+  return [
+    "0", "TEXT",
+    "8", layer || "dimensions",
+    "10", roundDxf(entity.x || 0),
+    "20", roundDxf(-(entity.y || 0)),
+    "30", "0",
+    "40", roundDxf(Math.abs(entity.height || 260)),
+    "1", String(entity.text || ""),
+    "50", roundDxf(normalizeDegrees(-(entity.rotation || 0))),
+    "7", "STANDARD",
+  ];
+}
+
 function dxfLayerName(layer, layerMap) {
   return layerMap.get(layer || "measure") || layerMap.get("measure") || layer || "measure";
 }
@@ -123,6 +137,8 @@ export function buildDxf(entities, options = {}) {
     } else if (entity.type === "arc") {
       const arc = arcGeometry(entity.start, entity.through, entity.end);
       if (arc) lines.push(...dxfArc(arc, dxfLayerName(entity.layer, layerMap)));
+    } else if (entity.type === "text") {
+      lines.push(...dxfText(entity, dxfLayerName(entity.layer || "dimensions", layerMap)));
     }
   }
 

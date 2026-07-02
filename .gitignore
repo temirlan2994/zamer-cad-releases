@@ -3,3 +3,8 @@ tools/
 *.err.log
 node_modules/
 .DS_Store
+.claude/
+tmp/
+prototype/project-state.json
+prototype/project-states/
+prototype/phone-server*.log

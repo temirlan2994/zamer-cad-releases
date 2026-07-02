@@ -94,6 +94,11 @@ export function normalizeScreenVector(dx, dy, fallbackX, fallbackY) {
 
 // Axis-aligned bounding box of any entity, in world coordinates.
 export function entityBounds(entity) {
+  if (entity.type === "text") {
+    const height = Math.max(1, Math.abs(entity.height || 260));
+    const width = Math.max(height * 0.8, String(entity.text || "").length * height * 0.58);
+    return { minX: entity.x, maxX: entity.x + width, minY: entity.y - height, maxY: entity.y };
+  }
   if (entity.type === "circle") return { minX: entity.cx - entity.radius, maxX: entity.cx + entity.radius, minY: entity.cy - entity.radius, maxY: entity.cy + entity.radius };
   if (entity.type === "rectangle") return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };
   if (entity.type === "arc") { const pts = [entity.start, entity.through, entity.end]; return { minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)), minY: Math.min(...pts.map((p) => p.y)), maxY: Math.max(...pts.map((p) => p.y)) }; }

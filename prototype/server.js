@@ -195,7 +195,7 @@ function clearSessionCookie() {
 }
 
 function createSession(userId) {
-  const sessions = readSessions().filter((session) => session.userId !== userId && Date.parse(session.expiresAt || "") > Date.now());
+  const sessions = readSessions().filter((session) => Date.parse(session.expiresAt || "") > Date.now());
   const now = Date.now();
   const session = {
     id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString("hex"),
@@ -206,6 +206,27 @@ function createSession(userId) {
   sessions.push(session);
   writeSessions(sessions);
   return session;
+}
+
+function developerUser() {
+  const login = "developer";
+  const users = readUsers();
+  let user = users.find((item) => item.login === login);
+  if (user) return user;
+  const { salt, hash, iterations } = passwordHash("developer123");
+  const now = new Date().toISOString();
+  user = {
+    id: "developer",
+    login,
+    salt,
+    passwordHash: hash,
+    iterations,
+    createdAt: now,
+    updatedAt: now,
+  };
+  users.push(user);
+  writeUsers(users);
+  return user;
 }
 
 function currentAuth(request) {
@@ -242,6 +263,14 @@ function handleAuthApi(request, response, url) {
     const sessionId = parseCookies(request.headers.cookie || "")[sessionCookieName];
     removeSession(sessionId);
     sendJson(response, 200, { ok: true, user: null }, { "Set-Cookie": clearSessionCookie() });
+    return;
+  }
+
+
+  if (url.pathname === "/api/auth/dev" && request.method === "POST") {
+    const user = developerUser();
+    const session = createSession(user.id);
+    sendJson(response, 200, { ok: true, user: publicUser(user), developer: true }, { "Set-Cookie": sessionCookie(session.id) });
     return;
   }
 

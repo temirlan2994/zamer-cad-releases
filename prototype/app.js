@@ -33,6 +33,8 @@ const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const dimensionToolMenu = createDimensionToolMenu();
 const dimensionToolButtons = [...dimensionToolMenu.querySelectorAll("[data-dimension-tool]")];
+const annotationToolMenu = createAnnotationToolMenu();
+const annotationToolButtons = [...annotationToolMenu.querySelectorAll("[data-annotation-tool]")];
 const selectToolMenu = document.getElementById("selectToolMenu");
 const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
@@ -131,7 +133,10 @@ const dimensionToolButtonVisuals = {
   angular: { icon: "∠", label: "Угол" },
   baseline: { icon: "⊥", label: "База" },
 };
-dimensionToolButtonVisuals.leader = { icon: "↗", label: "Выноска" };
+const annotationToolButtonVisuals = {
+  text: { icon: "T", label: "Текст" },
+  leader: { icon: "↗", label: "Выноска" },
+};
 const selectModeButtonVisuals = {
   select: { icon: "↖", label: "Выбор" },
   window: { icon: "▣", label: "Рамка" },
@@ -174,7 +179,19 @@ function createDimensionToolMenu() {
     <button data-dimension-tool="linear"><span>&#10231;</span><small>Линейный</small></button>
     <button data-dimension-tool="angular"><span>&#8736;</span><small>Угол</small></button>
     <button data-dimension-tool="baseline"><span>&#8869;</span><small>База</small></button>
-    <button data-dimension-tool="leader"><span>&#8599;</span><small>Выноска</small></button>
+  `;
+  document.querySelector(".workspace")?.append(menu);
+  return menu;
+}
+
+function createAnnotationToolMenu() {
+  const menu = document.createElement("div");
+  menu.className = "draw-tool-menu annotation-tool-menu";
+  menu.id = "annotationToolMenu";
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button data-annotation-tool="text"><span>T</span><small>Текст</small></button>
+    <button data-annotation-tool="leader"><span>&#8599;</span><small>Выноска</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -212,11 +229,13 @@ const state = {
   pinch: null,
   gestureSuppressTap: false,
   inlineEdit: null,
+  circleRadiusEdit: null,
   furnitureDrag: null,
   furniturePress: null,
   dimensionSnapHint: null,
   polarSnapGuide: null,
   dimensionPickCycle: null,
+  lastTextTap: null,
   snapTracking: {
     points: [],
     hoverKey: null,
@@ -299,12 +318,24 @@ function normalizeDynamicText(root = document.body) {
   while (walker.nextNode()) normalizeTextNode(walker.currentNode);
 }
 
+function lockPortraitOrientation() {
+  const lock = screen.orientation?.lock;
+  if (typeof lock !== "function") return;
+  lock.call(screen.orientation, "portrait").catch(() => {
+    // Mobile browsers allow hard orientation lock mainly in installed/fullscreen PWAs.
+  });
+}
+
 function wall(id, x1, y1, x2, y2) {
   return { id, type: "wall", layer: "walls", x1, y1, x2, y2, width: 180 };
 }
 
 function line(id, x1, y1, x2, y2, layer = "measure") {
   return { id, type: "line", layer, x1, y1, x2, y2 };
+}
+
+function textEntity(id, x, y, text, height = 260, rotation = 0) {
+  return { id, type: "text", layer: "dimensions", x, y, text: text || "Текст", height, rotation };
 }
 
 function circleEntity(id, cx, cy, radius, layer = "measure") {
@@ -739,28 +770,15 @@ async function submitAuthForm(event) {
 
 async function loginAsDeveloper() {
   if (authState.busy) return;
-  const login = "developer";
-  const password = "developer123";
   setAuthError("");
   authState.busy = true;
   renderAuthUi();
   try {
-    let payload;
-    try {
-      payload = await fetchAuthJson("login", {
-        method: "POST",
-        body: JSON.stringify({ login, password }),
-      });
-    } catch (loginError) {
-      payload = await fetchAuthJson("register", {
-        method: "POST",
-        body: JSON.stringify({ login, password }),
-      });
-    }
+    const payload = await fetchAuthJson("dev", { method: "POST" });
     authState.mode = "login";
     setAuthenticatedUser(payload.user);
     startAuthMonitor();
-    if (authLoginInput) authLoginInput.value = login;
+    if (authLoginInput) authLoginInput.value = payload.user?.login || "developer";
     if (authPasswordInput) authPasswordInput.value = "";
     setAuthScreenVisible(false);
     await initProjectHome();
@@ -958,6 +976,16 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
 
 function askProjectName(title, value, placeholder = "") {
   return showProjectDialog({ title, value, placeholder });
+}
+
+function askCadText(value = "Текст") {
+  return showProjectDialog({
+    title: "Текст",
+    message: "Введите надпись для чертежа.",
+    value,
+    placeholder: "Например: Спальня, высота 2700",
+    confirmText: "Поставить",
+  });
 }
 
 function confirmProjectDelete(name) {
@@ -1980,6 +2008,14 @@ function drawMovePreview(entity, dx, dy, c) {
     drawBlockPreview({ ...entity, x: entity.x + dx, y: entity.y + dy }, c);
     return;
   }
+  if (entity.type === "text") {
+    drawTextEntity({ ...entity, x: entity.x + dx, y: entity.y + dy }, c);
+    return;
+  }
+  if (entity.type === "circle") {
+    drawCircleEntity({ ...entity, cx: entity.cx + dx, cy: entity.cy + dy }, c);
+    return;
+  }
   const p1 = worldToScreen({ x: entity.x1 + dx, y: entity.y1 + dy });
   const p2 = worldToScreen({ x: entity.x2 + dx, y: entity.y2 + dy });
   ctx.save();
@@ -2004,6 +2040,16 @@ function drawRotatePreview(entity, command, end, c) {
     const preview = { ...entity, x: center.x, y: center.y, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(delta)) };
     drawBlock(preview, c);
     drawFurnitureSelection(preview, c);
+    return;
+  }
+  if (entity.type === "text") {
+    const position = rotatePointAround({ x: entity.x, y: entity.y }, command.base, delta);
+    drawTextEntity({ ...entity, x: position.x, y: position.y, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(delta)) }, c);
+    return;
+  }
+  if (entity.type === "circle") {
+    const position = rotatePointAround({ x: entity.cx, y: entity.cy }, command.base, delta);
+    drawCircleEntity({ ...entity, cx: position.x, cy: position.y }, c);
     return;
   }
   const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, command.base, delta);
@@ -2046,7 +2092,11 @@ function editableSelectionEntity() {
 }
 
 function linearEditableEntity(entity) {
-  return entity && entity.type !== "block" && entity.layer !== "dimensions";
+  return entity && (entity.type === "text" || (entity.type !== "block" && entity.layer !== "dimensions"));
+}
+
+function isDirectMoveAnnotation(entity) {
+  return entity?.type === "text" || entity?.dimensionKind === "leader";
 }
 
 function canApplySelectionAction(action) {
@@ -2060,7 +2110,7 @@ function canApplySelectionAction(action) {
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "mirror") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "offset") return linearEditableEntity(entity);
+  if (action === "offset") return !["text", "circle"].includes(entity.type) && linearEditableEntity(entity);
   return false;
 }
 
@@ -2125,6 +2175,7 @@ function selectableEntities() {
 function selectionEntityPoints(entity) {
   if (!entity) return [];
   if (entity.type === "block") return blockCorners(entity);
+  if (entity.type === "text") return [{ x: entity.x, y: entity.y }];
   if (entity.type === "circle") {
     const r = Math.abs(entity.radius || 0);
     return [
@@ -2387,6 +2438,8 @@ function drawEntity(entity, c) {
     drawArcEntity(entity, c);
   } else if (entity.type === "block") {
     drawBlock(entity, c);
+  } else if (entity.type === "text") {
+    drawTextEntity(entity, c);
   }
 }
 
@@ -2537,15 +2590,17 @@ function drawLineEntity(entity, c) {
 function drawCircleEntity(entity, c) {
   const center = worldToScreen({ x: entity.cx, y: entity.cy });
   const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const radius = Math.abs(entity.radius) * state.view.scale;
   ctx.save();
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   ctx.beginPath();
-  ctx.arc(center.x, center.y, Math.abs(entity.radius) * state.view.scale, 0, Math.PI * 2);
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
   ctx.stroke();
   if (selected) {
     drawHandle(center.x, center.y, c);
-    drawBadge(`R ${Math.round(Math.abs(entity.radius))} мм`, center.x, center.y - Math.abs(entity.radius) * state.view.scale - 18, c);
+    drawHandle(center.x + radius, center.y, c);
+    drawBadge(`R ${Math.round(Math.abs(entity.radius))} мм`, center.x, center.y - radius - 18, c);
   }
   ctx.restore();
 }
@@ -2580,6 +2635,29 @@ function drawArcEntity(entity, c) {
   ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, arc.counterClockwise);
   ctx.stroke();
   if (selected) [entity.start, entity.through, entity.end].forEach((point) => { const pt = worldToScreen(point); drawHandle(pt.x, pt.y, c); });
+  ctx.restore();
+}
+
+function drawTextEntity(entity, c) {
+  const p = worldToScreen({ x: entity.x, y: entity.y });
+  const height = Math.max(10, Math.abs(entity.height || 260) * state.view.scale);
+  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(((entity.rotation || 0) * Math.PI) / 180);
+  ctx.font = `${height}px Inter, Arial, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = selected ? c.accent : c.dimension;
+  ctx.fillText(entity.text || "Текст", 0, 0);
+  if (selected) {
+    const width = Math.max(height * 0.8, ctx.measureText(entity.text || "Текст").width);
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(-4, -height - 4, width + 8, height + 8);
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 }
 
@@ -3213,10 +3291,9 @@ function drawDimensionSelection(entity, c) {
     ctx.lineWidth = 2;
     linePath(arrow.x, arrow.y, connector.x, connector.y);
     ctx.setLineDash([6, 5]);
-    roundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
+    strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
     ctx.setLineDash([]);
     drawEndpointHandle(arrow, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
-    drawHandle(rect.x + rect.width / 2, rect.y + rect.height / 2, c);
     ctx.restore();
     return;
   }
@@ -4204,6 +4281,7 @@ function selectInlineValue(input) {
 }
 
 function editableEntityForNumericInput() {
+  if (state.circleRadiusEdit) return state.entities.find((item) => item.id === state.circleRadiusEdit.entityId) || null;
   if (state.selectedEndpoint) return selectedEndpointGeometry()?.entity || null;
   return selectedFurnitureEntity();
 }
@@ -4250,6 +4328,9 @@ function confirmKeyboardInput() {
   const shouldFinishEndpoint = Boolean(
     state.selectedEndpoint && [lengthInput, angleInput, topLengthInput, topAngleInput].includes(input)
   );
+  const shouldFinishCircleRadius = Boolean(
+    state.circleRadiusEdit && [lengthInput, topLengthInput].includes(input)
+  );
   if (input === lengthInput) {
     applyInlineValue("length", { recordUndo: false });
   } else if (input === angleInput) {
@@ -4269,6 +4350,10 @@ function confirmKeyboardInput() {
   commitNumericInputEdit();
   if (shouldFinishEndpoint) {
     finishSelectedEndpointNumericEdit();
+  } else if (shouldFinishCircleRadius) {
+    hideInlineEditors();
+    statusChip.textContent = "Радиус круга применен";
+    draw();
   }
   input.blur();
   if (keyboardConfirmButton) keyboardConfirmButton.hidden = true;
@@ -4554,6 +4639,53 @@ function hideInlineEditors() {
     updateTopMetricLabels();
   }
   state.inlineEdit = null;
+  state.circleRadiusEdit = null;
+}
+
+function circleRadiusScreenGeometry(entity) {
+  if (!entity || entity.type !== "circle") return null;
+  const center = worldToScreen({ x: entity.cx, y: entity.cy });
+  const radius = Math.abs(entity.radius || 0) * state.view.scale;
+  const label = { x: center.x, y: center.y - radius - 18 };
+  const text = `R ${Math.round(Math.abs(entity.radius || 0))} мм`;
+  const fontSize = annotationPx(12);
+  const width = Math.max(54, text.length * fontSize * 0.58 + annotationPx(16));
+  const height = annotationPx(24);
+  return {
+    center,
+    handle: { x: center.x + radius, y: center.y },
+    label,
+    labelRect: { x: label.x - width / 2, y: label.y - height / 2, width, height },
+  };
+}
+
+function hitCircleControl(screen) {
+  if (state.tool !== "select") return null;
+  const entity = state.selectedId ? state.entities.find((item) => item.id === state.selectedId) : null;
+  if (!entity || entity.type !== "circle" || !isLayerVisible(entity.layer)) return null;
+  const geometry = circleRadiusScreenGeometry(entity);
+  if (!geometry) return null;
+  if (pointDistance(screen, geometry.handle) <= 24) return { type: "circle-radius", entity };
+  if (screenRectDistance(screen, geometry.labelRect) <= 12) return { type: "circle-radius-input", entity };
+  return null;
+}
+
+function showCircleRadiusEditor(entity) {
+  if (!entity || entity.type !== "circle" || !inlineEditors || !lengthEditor || !lengthInput) return;
+  const geometry = circleRadiusScreenGeometry(entity);
+  if (!geometry) return;
+  inlineEditors.hidden = false;
+  state.circleRadiusEdit = { entityId: entity.id, before: entityGeometry(entity) };
+  state.inlineEdit = null;
+  lengthEditor.hidden = false;
+  if (angleEditor) angleEditor.hidden = true;
+  lengthInput.value = Math.round(Math.abs(entity.radius || 0));
+  syncInlineEditorWidth(lengthInput);
+  positionInlineEditor(lengthEditor, geometry.label.x, geometry.label.y);
+  lengthInput.focus({ preventScroll: true });
+  selectInlineValue(lengthInput);
+  updateTopMetricInputs(Math.round(Math.abs(entity.radius || 0)), 0);
+  statusChip.textContent = "Круг: введите радиус";
 }
 
 function positionLeaderTextEditor(point) {
@@ -4595,6 +4727,84 @@ function commitLeaderText() {
   resetSnapTracking();
   statusChip.textContent = "Выноска создана";
   drawNow();
+}
+
+function editLeaderText(entity) {
+  if (!entity || entity.dimensionKind !== "leader") return;
+  const before = entityGeometry(entity);
+  showProjectDialog({
+    title: "Текст выноски",
+    value: decodeMojibakeText(entity.text || "Текст"),
+    placeholder: "Текст выноски",
+    confirmText: "Готово",
+  }).then((text) => {
+    if (!text) return;
+    entity.text = text;
+    const after = entityGeometry(entity);
+    if (geometryChanged(before, after)) {
+      state.undo.push({ type: "move", entityId: entity.id, before, after });
+      state.redo.length = 0;
+      markProjectDirty("leader-text");
+    }
+    setSelection(entity.id);
+    statusChip.textContent = "Текст выноски изменен";
+    draw();
+  });
+}
+
+function editTextEntity(entity) {
+  if (!entity || entity.type !== "text") return;
+  const before = entityGeometry(entity);
+  askCadText(decodeMojibakeText(entity.text || "Текст")).then((text) => {
+    if (!text) return;
+    entity.text = text;
+    const after = entityGeometry(entity);
+    if (geometryChanged(before, after)) {
+      state.undo.push({ type: "move", entityId: entity.id, before, after });
+      state.redo.length = 0;
+      markProjectDirty("text-edit");
+    }
+    setSelection(entity.id);
+    state.lastTextTap = null;
+    statusChip.textContent = "Текст изменен";
+    draw();
+  });
+}
+
+function shouldEditTextFromTap(entity, screen) {
+  if (!entity || entity.type !== "text") {
+    state.lastTextTap = null;
+    return false;
+  }
+  const now = Date.now();
+  const previous = state.lastTextTap;
+  const isDoubleTap =
+    previous?.id === entity.id &&
+    now - previous.time <= 420 &&
+    pointDistance(screen, previous.screen) <= 24;
+  state.lastTextTap = { id: entity.id, time: now, screen };
+  return isDoubleTap;
+}
+
+function createTextAtPoint(point) {
+  const anchor = { x: point.x, y: point.y };
+  statusChip.textContent = "Текст: введите надпись";
+  askCadText().then((text) => {
+    if (!text) {
+      statusChip.textContent = "Текст отменен";
+      draw();
+      return;
+    }
+    const entity = textEntity(`text-${Date.now()}`, anchor.x, anchor.y, text);
+    pushEntity(entity);
+    state.drawing = null;
+    resetSnapTracking();
+    state.selectTool = "select";
+    setTool("select");
+    showSelectToolMenuAfterLayout();
+    statusChip.textContent = "Текст поставлен";
+    draw();
+  });
 }
 
 function updateFurnitureSizePanel(entity) {
@@ -4655,6 +4865,10 @@ function applyFurnitureSizeInput(options = {}) {
 }
 
 function applyInlineValue(kind, options = {}) {
+  if (state.circleRadiusEdit) {
+    applyCircleRadiusInlineValue(options);
+    return;
+  }
   if (state.selectedEndpoint) {
     applySelectedEndpointInlineValue(kind, options);
     return;
@@ -5268,6 +5482,39 @@ function roundedRect(x, y, w, h, r, fillOnly = false) {
   if (!fillOnly) {
     ctx.stroke();
   }
+}
+
+function applyCircleRadiusInlineValue(options = {}) {
+  const { recordUndo = true } = options;
+  const edit = state.circleRadiusEdit;
+  const entity = edit ? state.entities.find((item) => item.id === edit.entityId) : null;
+  if (!entity || entity.type !== "circle") return;
+  const typedRadius = Number(lengthInput.value.replace(",", "."));
+  if (!Number.isFinite(typedRadius) || typedRadius <= 0) return;
+  const before = edit.before || entityGeometry(entity);
+  entity.radius = typedRadius;
+  const after = entityGeometry(entity);
+  const changed = geometryChanged(before, after);
+  if (recordUndo && changed) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    state.circleRadiusEdit.before = after;
+  }
+  if (changed) markProjectDirty("circle-radius-input");
+  updateTopMetricInputs(Math.round(Math.abs(entity.radius)), 0);
+  draw();
+}
+
+function strokeRoundedRect(x, y, w, h, r) {
+  const radius = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+  ctx.stroke();
 }
 
 function circle(x, y, radius) {
@@ -5908,10 +6155,12 @@ function syncToolButtonVisuals() {
   const selectButton = tools.find((button) => button.dataset.tool === "select");
   const lineButton = tools.find((button) => button.dataset.tool === "line");
   const dimensionButton = tools.find((button) => button.dataset.tool === "dimension");
+  const annotationButton = tools.find((button) => button.dataset.tool === "annotation");
   const selectionButton = tools.find((button) => button.dataset.tool === "selection");
   setToolButtonVisual(selectButton, selectModeButtonVisuals[state.selectTool] || selectModeButtonVisuals.select);
   setToolButtonVisual(lineButton, isGroupedDrawTool(state.tool) ? drawToolButtonVisuals[state.tool] : drawToolButtonVisuals.line);
   setToolButtonVisual(dimensionButton, dimensionToolButtonVisuals[state.dimensionTool] || dimensionToolButtonVisuals.aligned);
+  setToolButtonVisual(annotationButton, state.tool === "dimension" && state.dimensionTool === "leader" ? annotationToolButtonVisuals.leader : annotationToolButtonVisuals.text);
   setToolButtonVisual(selectionButton, selectionToolButtonVisuals.select);
 }
 
@@ -5941,7 +6190,9 @@ function syncToolButtons() {
         ? editModeActive
         : buttonTool === "select"
           ? state.tool === "select"
-          : buttonTool === state.tool || (buttonTool === "line" && isGroupedDrawTool(state.tool));
+          : buttonTool === "annotation"
+            ? state.tool === "text" || (state.tool === "dimension" && state.dimensionTool === "leader")
+            : buttonTool === state.tool || (buttonTool === "line" && isGroupedDrawTool(state.tool));
     button.classList.toggle("active", active);
   });
 }
@@ -5957,7 +6208,7 @@ function setTool(tool) {
   state.offsetCommand = null;
   state.selectionDrag = null;
   syncCommandState();
-  if (["line", "polyline", "circle", "arc", "rectangle", "wall", "dimension"].includes(tool)) {
+  if (["line", "polyline", "circle", "arc", "rectangle", "wall", "dimension", "text"].includes(tool)) {
     state.selectedId = null;
     state.selectedIds = [];
     state.selectedEndpoint = null;
@@ -5984,6 +6235,7 @@ function setTool(tool) {
     rectangle: "Прямоугольник: укажите два противоположных угла",
     wall: "Стена: подведите курсор к началу и тапните холст",
     dimension: "Размер: подведите курсор к отрезку",
+    text: "Текст: подведите курсор к месту вставки и тапните холст",
     furniture: "Объект: тапните объект на плане или перетащите блок из библиотеки",
   };
   statusChip.textContent = copy[tool];
@@ -6013,6 +6265,14 @@ function syncDrawToolMenu() {
 
 function syncDimensionToolMenu() {
   dimensionToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.dimensionTool === state.dimensionTool));
+}
+
+function syncAnnotationToolMenu() {
+  annotationToolButtons.forEach((button) => {
+    const tool = button.dataset.annotationTool;
+    const active = tool === "text" ? state.tool === "text" : state.tool === "dimension" && state.dimensionTool === "leader";
+    button.classList.toggle("active", active);
+  });
 }
 
 function syncSelectToolMenu() {
@@ -6048,6 +6308,7 @@ function showDrawToolMenu() {
   hideSelectToolMenu();
   hideSelectModeMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   drawToolMenu.hidden = false;
 }
 
@@ -6059,6 +6320,7 @@ function showDimensionToolMenu() {
   if (!dimensionToolMenu) return;
   syncDimensionToolMenu();
   hideDrawToolMenu();
+  hideAnnotationToolMenu();
   hideSelectToolMenu();
   hideSelectModeMenu();
   dimensionToolMenu.hidden = false;
@@ -6068,11 +6330,26 @@ function hideDimensionToolMenu() {
   if (dimensionToolMenu) dimensionToolMenu.hidden = true;
 }
 
+function showAnnotationToolMenu() {
+  if (!annotationToolMenu) return;
+  syncAnnotationToolMenu();
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideSelectToolMenu();
+  hideSelectModeMenu();
+  annotationToolMenu.hidden = false;
+}
+
+function hideAnnotationToolMenu() {
+  if (annotationToolMenu) annotationToolMenu.hidden = true;
+}
+
 function showSelectToolMenu() {
   if (!selectToolMenu) return;
   syncSelectToolMenu();
   hideDrawToolMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   hideSelectModeMenu();
   selectToolMenu.hidden = false;
   syncToolButtons();
@@ -6095,6 +6372,7 @@ function showSelectModeMenu() {
   syncSelectModeMenu();
   hideDrawToolMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   hideSelectToolMenu();
   selectModeMenu.hidden = false;
 }
@@ -6139,9 +6417,18 @@ function activateDrawToolMenu() {
 }
 
 function activateDimensionToolMenu() {
+  if (state.dimensionTool === "leader") state.dimensionTool = "aligned";
   setTool("dimension");
   showDimensionToolMenu();
   statusChip.textContent = dimensionToolStatusText();
+}
+
+function activateAnnotationToolMenu() {
+  if (state.tool !== "text" && !(state.tool === "dimension" && state.dimensionTool === "leader")) {
+    setTool("text");
+  }
+  showAnnotationToolMenu();
+  statusChip.textContent = state.tool === "text" ? "Текст: подведите курсор к месту вставки и тапните холст" : dimensionToolStatusText();
 }
 
 function activatePlainSelect() {
@@ -6159,6 +6446,7 @@ function activatePlainSelect() {
   hideInlineEditors();
   hideDrawToolMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   hideSelectToolMenu();
   hideSelectModeMenu();
   hideSheet(furnitureSheet);
@@ -6182,6 +6470,7 @@ function activateSelectionTool() {
   hideSheet(furnitureSheet);
   hideDrawToolMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   hideSelectToolMenu();
   hideSelectModeMenu();
   setTool("select");
@@ -6205,6 +6494,7 @@ function toggleMainSelectTool() {
   hideInlineEditors();
   hideDrawToolMenu();
   hideDimensionToolMenu();
+  hideAnnotationToolMenu();
   hideSheet(furnitureSheet);
   setTool("select");
   showSelectModeMenuAfterLayout();
@@ -6233,6 +6523,23 @@ function selectDimensionTool(tool) {
   hideDimensionToolMenu();
   setTool("dimension");
   statusChip.textContent = dimensionToolStatusText();
+}
+
+function selectAnnotationTool(tool) {
+  state.drawing = null;
+  state.dimensionSnapHint = null;
+  hideLeaderTextEditor();
+  resetSnapTracking();
+  syncAnnotationToolMenu();
+  hideAnnotationToolMenu();
+  if (tool === "leader") {
+    state.dimensionTool = "leader";
+    setTool("dimension");
+    statusChip.textContent = dimensionToolStatusText();
+    return;
+  }
+  setTool("text");
+  statusChip.textContent = "Текст: подведите курсор к месту вставки и тапните холст";
 }
 
 function dimensionToolStatusText() {
@@ -6425,6 +6732,16 @@ function commitCursorPoint() {
   }
   if (state.moveCommand) {
     commitMoveCommandPoint(world);
+    return;
+  }
+  if (state.tool === "text") {
+    setSelection(null);
+    hideInlineEditors();
+    hideDrawToolMenu();
+    hideDimensionToolMenu();
+    hideSelectToolMenu();
+    resetSnapTracking();
+    createTextAtPoint(world);
     return;
   }
   if (state.tool === "dimension") {
@@ -6967,12 +7284,70 @@ canvas.addEventListener("pointerdown", (event) => {
     startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event, screen);
     return;
   }
+  const circleControl = hitCircleControl(screen);
+  if (circleControl) {
+    const hitEntity = circleControl.entity;
+    state.selectedId = hitEntity.id;
+    state.selectedIds = [hitEntity.id];
+    state.furnitureEditId = null;
+    state.selectedEndpoint = null;
+    if (circleControl.type === "circle-radius-input") {
+      state.pointer = { id: event.pointerId, screen, startScreen: screen, world: screenToWorld(screen), moved: false, mode: "circle-radius-input", targetId: hitEntity.id, before: entityGeometry(hitEntity) };
+      statusChip.textContent = "Круг: тапните, чтобы ввести радиус";
+      draw();
+      return;
+    }
+    state.pointer = {
+      id: event.pointerId,
+      screen,
+      startScreen: screen,
+      world: screenToWorld(screen),
+      moved: false,
+      mode: "circle-radius",
+      targetId: hitEntity.id,
+      before: entityGeometry(hitEntity),
+    };
+    statusChip.textContent = "Круг: тяните ручку радиуса";
+    draw();
+    return;
+  }
   const dimensionControl = hitDimensionControl(screen);
   if (dimensionControl) {
     const hitEntity = dimensionControl.entity;
     state.selectedId = hitEntity.id;
     state.selectedIds = [hitEntity.id];
     state.furnitureEditId = null;
+    if (dimensionControl.type === "leader-box") {
+      state.pointer = {
+        id: event.pointerId,
+        screen,
+        startScreen: screen,
+        world: screenToWorld(screen),
+        moved: false,
+        mode: "leader-move",
+        targetId: hitEntity.id,
+        before: entityGeometry(hitEntity),
+        editLeaderTextOnTap: true,
+      };
+      statusChip.textContent = "Выноска выбрана: тяните для перемещения или тапните текст для правки";
+      draw();
+      return;
+    }
+    if (dimensionControl.type === "leader-arrow") {
+      state.pointer = {
+        id: event.pointerId,
+        screen,
+        startScreen: screen,
+        world: screenToWorld(screen),
+        moved: false,
+        mode: "leader-arrow",
+        targetId: hitEntity.id,
+        before: entityGeometry(hitEntity),
+      };
+      statusChip.textContent = "Выноска: тяните только стрелку";
+      draw();
+      return;
+    }
     state.pointer = {
       id: event.pointerId,
       screen,
@@ -7049,7 +7424,9 @@ canvas.addEventListener("pointerdown", (event) => {
   const hitIsSelected = hitId && (state.selectedId === hitId || (state.selectedIds || []).includes(hitId));
   const canMoveHit = Boolean(hitEntity && hitIsSelected && (state.tool === "select" || state.tool === "furniture"));
   const pointerMode = canMoveHit
-    ? hitEntity.layer === "dimensions"
+    ? isDirectMoveAnnotation(hitEntity)
+      ? "move"
+      : hitEntity.layer === "dimensions"
       ? "dimension-offset"
       : "move"
     : "pan";
@@ -7137,6 +7514,32 @@ canvas.addEventListener("pointermove", (event) => {
       state.pointer.world = currentWorld;
       statusChip.textContent = "Перемещение объекта";
     }
+  } else if ((state.pointer.mode === "leader-move" || state.pointer.mode === "leader-arrow") && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity?.dimensionKind === "leader") {
+      const currentWorld = screenToWorld(screen);
+      const dx = currentWorld.x - state.pointer.world.x;
+      const dy = currentWorld.y - state.pointer.world.y;
+      if (state.pointer.mode === "leader-arrow") {
+        entity.x1 += dx;
+        entity.y1 += dy;
+        statusChip.textContent = "Выноска: положение стрелки";
+      } else {
+        moveEntityBy(entity, dx, dy);
+        statusChip.textContent = "Перемещение выноски";
+      }
+      state.pointer.world = currentWorld;
+      markProjectDirty("leader-move");
+    }
+  } else if (state.pointer.mode === "circle-radius" && state.pointer.targetId) {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (entity?.type === "circle") {
+      const currentWorld = screenToWorld(screen);
+      entity.radius = Math.max(1, distanceWorld({ x: entity.cx, y: entity.cy }, currentWorld));
+      markProjectDirty("circle-radius");
+      updateTopMetricInputs(Math.round(Math.abs(entity.radius)), 0);
+      statusChip.textContent = `Круг R ${Math.round(Math.abs(entity.radius))} мм`;
+    }
   } else if (state.pointer.mode === "line-endpoint" && state.pointer.targetId) {
     const currentWorld = screenToWorld(screen);
     const geometry = selectedEndpointGeometry();
@@ -7222,6 +7625,34 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
       forceMoveCursorVisible();
     }
+  } else if (state.pointer?.mode === "leader-move") {
+    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
+    if (!canceled && !state.pointer.moved && state.pointer.editLeaderTextOnTap) {
+      if (entity?.dimensionKind === "leader") editLeaderText(entity);
+    } else {
+      finishPointerMoveUndo();
+    }
+  } else if (state.pointer?.mode === "leader-arrow") {
+    if (!canceled && state.pointer.moved) {
+      finishPointerMoveUndo();
+    } else {
+      statusChip.textContent = "Выноска: тяните синюю точку, чтобы переместить стрелку";
+      draw();
+    }
+  } else if (state.pointer?.mode === "circle-radius") {
+    if (!canceled && state.pointer.moved) {
+      finishPointerMoveUndo();
+    } else {
+      showCircleRadiusEditor(state.entities.find((item) => item.id === state.pointer.targetId));
+      draw();
+    }
+  } else if (state.pointer?.mode === "circle-radius-input") {
+    if (!canceled && !state.pointer.moved) {
+      showCircleRadiusEditor(state.entities.find((item) => item.id === state.pointer.targetId));
+      draw();
+    } else {
+      draw();
+    }
   } else if (state.pointer && !state.pointer.moved) {
     if (state.pointer.mode === "line-endpoint") {
       updateSelectedEndpointEditors();
@@ -7240,6 +7671,9 @@ function finishCanvasPointer(event, canceled = false) {
       }
       if (!(!hitId && state.furnitureEditId)) {
         applyTapSelection(hitId);
+      }
+      if (shouldEditTextFromTap(hitEntity, state.pointer.startScreen)) {
+        editTextEntity(hitEntity);
       }
       draw();
     } else if (state.tool === "furniture") {
@@ -7311,6 +7745,18 @@ function moveEntityBy(entity, dx, dy) {
     markProjectDirty("move");
     return;
   }
+  if (entity.type === "text") {
+    entity.x += dx;
+    entity.y += dy;
+    markProjectDirty("move");
+    return;
+  }
+  if (entity.type === "circle") {
+    entity.cx += dx;
+    entity.cy += dy;
+    markProjectDirty("move");
+    return;
+  }
   entity.x1 += dx;
   entity.y1 += dy;
   entity.x2 += dx;
@@ -7320,6 +7766,12 @@ function moveEntityBy(entity, dx, dy) {
 
 function cloneLinearEntity(entity, dx = 260, dy = 260) {
   const id = `${entity.type || "line"}-${Date.now()}`;
+  if (entity.type === "text") {
+    return textEntity(id, entity.x + dx, entity.y + dy, entity.text, entity.height, entity.rotation || 0);
+  }
+  if (entity.type === "circle") {
+    return circleEntity(id, entity.cx + dx, entity.cy + dy, entity.radius, entity.layer || "measure");
+  }
   if (entity.type === "wall") {
     const copy = wall(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy);
     copy.width = entity.width || copy.width;
@@ -7367,10 +7819,31 @@ function rotateEntityAround(entity, base, radians) {
     entity.rotation = normalizeDegrees((entity.rotation || 0) + radToDeg(radians));
     return;
   }
+  if (entity.type === "text") {
+    const position = rotatePointAround({ x: entity.x, y: entity.y }, base, radians);
+    entity.x = position.x;
+    entity.y = position.y;
+    entity.rotation = normalizeDegrees((entity.rotation || 0) + radToDeg(radians));
+    return;
+  }
+  if (entity.type === "circle") {
+    const position = rotatePointAround({ x: entity.cx, y: entity.cy }, base, radians);
+    entity.cx = position.x;
+    entity.cy = position.y;
+    return;
+  }
   rotateLinearEntityAround(entity, base, radians);
 }
 
 function mirrorLinearEntity(entity) {
+  if (entity.type === "text") {
+    entity.rotation = normalizeDegrees(180 - (entity.rotation || 0));
+    markProjectDirty("mirror");
+    return;
+  }
+  if (entity.type === "circle") {
+    return;
+  }
   const cx = (entity.x1 + entity.x2) / 2;
   entity.x1 = cx - (entity.x1 - cx);
   entity.x2 = cx - (entity.x2 - cx);
@@ -7530,6 +8003,15 @@ function entityGeometry(entity) {
   if (entity.type === "block") {
     return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0, flipX: Boolean(entity.flipX) };
   }
+  if (entity.type === "text") {
+    return { x: entity.x, y: entity.y, text: entity.text || "", height: entity.height || 260, rotation: entity.rotation || 0 };
+  }
+  if (entity.type === "circle") {
+    return { cx: entity.cx, cy: entity.cy, radius: entity.radius };
+  }
+  if (entity.dimensionKind === "leader") {
+    return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, text: entity.text || "Текст" };
+  }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (entity.layer === "dimensions") {
     geometry.offset = entity.offset ?? 360;
@@ -7554,6 +8036,7 @@ function applyEntityGeometry(entity, geometry) {
 function geometryChanged(before, after) {
   if (!before || !after) return false;
   return Object.keys(after).some((key) => {
+    if (typeof after[key] === "string" || typeof before[key] === "string") return after[key] !== before[key];
     if (typeof after[key] === "boolean" || typeof before[key] === "boolean") return after[key] !== before[key];
     return Math.abs((after[key] || 0) - (before[key] || 0)) > 0.01;
   });
@@ -7642,6 +8125,22 @@ function pointInsideBlock(screen, entity) {
 }
 
 function distanceToEntityScreen(screen, entity) {
+  if (entity.type === "text") {
+    const origin = worldToScreen({ x: entity.x, y: entity.y });
+    const height = Math.max(10, Math.abs(entity.height || 260) * state.view.scale);
+    const width = Math.max(height * 0.8, String(entity.text || "Текст").length * height * 0.58);
+    const radians = -((entity.rotation || 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const dx = screen.x - origin.x;
+    const dy = screen.y - origin.y;
+    const localX = dx * cos - dy * sin;
+    const localY = dx * sin + dy * cos;
+    if (localX >= -8 && localX <= width + 8 && localY >= -height - 8 && localY <= 8) return 0;
+    const clampedX = Math.max(0, Math.min(width, localX));
+    const clampedY = Math.max(-height, Math.min(0, localY));
+    return Math.hypot(localX - clampedX, localY - clampedY);
+  }
   if (entity.layer === "dimensions") {
     if (entity.dimensionKind === "leader") {
       const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
@@ -7671,6 +8170,10 @@ tools.forEach((button) => {
       activateDimensionToolMenu();
       return;
     }
+    if (tool === "annotation") {
+      activateAnnotationToolMenu();
+      return;
+    }
     if (tool === "select") {
       toggleMainSelectTool();
       return;
@@ -7681,6 +8184,7 @@ tools.forEach((button) => {
     }
     hideDrawToolMenu();
     hideDimensionToolMenu();
+    hideAnnotationToolMenu();
     hideSelectToolMenu();
     setTool(tool);
     if (tool === "furniture") {
@@ -7701,6 +8205,12 @@ dimensionToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-dimension-tool]");
   if (!button) return;
   selectDimensionTool(button.dataset.dimensionTool);
+});
+
+annotationToolMenu?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-annotation-tool]");
+  if (!button) return;
+  selectAnnotationTool(button.dataset.annotationTool);
 });
 
 selectModeMenu?.addEventListener("click", (event) => {
@@ -8473,8 +8983,12 @@ function renderLayerList() {
 
 window.addEventListener("resize", updateViewportLock);
 window.addEventListener("orientationchange", () => {
+  lockPortraitOrientation();
   stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || stableViewportHeight);
   window.setTimeout(updateViewportLock, 250);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) lockPortraitOrientation();
 });
 window.addEventListener("scroll", lockDocumentScroll, { passive: true });
 window.visualViewport?.addEventListener("resize", updateViewportLock);
@@ -8498,6 +9012,7 @@ prepareSelectMenuStructure();
 setTool("select");
 initAppInstallPrompt();
 initAuthGate();
+lockPortraitOrientation();
 window.zamerDebug = {
   exportDxf: () => buildDxf(state.entities),
   exportRevitDxf: () => buildRevitDxf(state.entities),

@@ -64,6 +64,13 @@ test("buildDxf exports a non-collinear arc", () => {
   assert.equal(countRecords(dxf, "ARC"), 1);
 });
 
+test("buildDxf exports text annotations", () => {
+  const dxf = buildDxf([{ type: "text", x: 120, y: 340, text: "Спальня", height: 260, rotation: 15, layer: "dimensions" }]);
+  assert.equal(countRecords(dxf, "TEXT"), 1);
+  assert.ok(dxf.includes("\n1\nСпальня\n"));
+  assert.ok(dxf.includes("\n40\n260\n"));
+});
+
 test("buildDxf skips a degenerate (collinear) arc instead of emitting garbage", () => {
   const dxf = buildDxf([{ type: "arc", start: { x: 0, y: 0 }, through: { x: 50, y: 0 }, end: { x: 100, y: 0 }, layer: "measure" }]);
   assert.equal(countRecords(dxf, "ARC"), 0);
