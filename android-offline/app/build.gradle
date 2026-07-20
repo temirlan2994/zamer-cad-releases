@@ -1,0 +1,74 @@
+plugins {
+    id "com.android.application"
+}
+
+def generatedWebAssets = layout.buildDirectory.dir("generated/zamerWebAssets")
+def signingPropertiesFile = rootProject.file("keystore.properties")
+def signingProperties = new java.util.Properties()
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+
+android {
+    namespace "com.zamercad.offline"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.zamercad.offline"
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (signingPropertiesFile.exists()) {
+                storeFile rootProject.file(signingProperties["storeFile"])
+                storePassword signingProperties["storePassword"]
+                keyAlias signingProperties["keyAlias"]
+                keyPassword signingProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (signingPropertiesFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            assets.srcDir(generatedWebAssets)
+        }
+    }
+}
+
+tasks.register("syncWebAssets", Sync) {
+    from("${rootDir}/../prototype") {
+        include "index.html"
+        include "app.js"
+        include "styles.css"
+        include "manifest.webmanifest"
+        include "core/**"
+        include "assets/**"
+        include "icons/**"
+        exclude "core/*.test.js"
+    }
+    into(generatedWebAssets)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(tasks.named("syncWebAssets"))
+}

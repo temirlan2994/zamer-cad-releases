@@ -1,0 +1,35 @@
+services:
+  zamer:
+    build: .
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4187
+      DATA_DIR: /data
+      NODE_ENV: production
+    volumes:
+      - zamer_data:/data
+    expose:
+      - "4187"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - zamer
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  zamer_data:
+    name: zamer_data
+  caddy_data:
+  caddy_config:

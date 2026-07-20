@@ -22,6 +22,31 @@ export function roundDxf(value) {
   return String(Math.round(value * 1000) / 1000);
 }
 
+export function dxfString(value) {
+  const source = String(value ?? "").replace(/[\r\n]+/g, " ");
+  let encoded = "";
+  for (const character of source) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint >= 32 && codePoint <= 126) {
+      encoded += character;
+    } else if (codePoint < 32) {
+      encoded += " ";
+    } else {
+      const width = codePoint <= 0xffff ? 4 : 8;
+      encoded += `\\U+${codePoint.toString(16).toUpperCase().padStart(width, "0")}`;
+    }
+  }
+  return encoded;
+}
+
+function finiteNumber(value) {
+  return Number.isFinite(Number(value));
+}
+
+function finitePoint(point) {
+  return finiteNumber(point?.x) && finiteNumber(point?.y);
+}
+
 export function dxfLayer(name, color) {
   return ["0", "LAYER", "2", name, "70", "0", "62", String(color), "6", "CONTINUOUS"];
 }
@@ -31,6 +56,7 @@ export function dxfContinuousLineType() {
 }
 
 export function dxfLine(x1, y1, x2, y2, layer) {
+  if (![x1, y1, x2, y2].every(finiteNumber)) return [];
   return [
     "0", "LINE",
     "8", layer || "measure",
@@ -44,6 +70,7 @@ export function dxfLine(x1, y1, x2, y2, layer) {
 }
 
 export function dxfCircle(cx, cy, radius, layer) {
+  if (![cx, cy, radius].every(finiteNumber) || Math.abs(Number(radius)) < 0.0001) return [];
   return ["0", "CIRCLE", "8", layer || "measure", "10", roundDxf(cx), "20", roundDxf(-cy), "30", "0", "40", roundDxf(Math.abs(radius))];
 }
 
@@ -55,6 +82,7 @@ export function dxfArc(arc, layer) {
 }
 
 export function dxfText(entity, layer) {
+  if (![entity?.x, entity?.y].every(finiteNumber)) return [];
   return [
     "0", "TEXT",
     "8", layer || "dimensions",
@@ -62,9 +90,89 @@ export function dxfText(entity, layer) {
     "20", roundDxf(-(entity.y || 0)),
     "30", "0",
     "40", roundDxf(Math.abs(entity.height || 260)),
-    "1", String(entity.text || ""),
+    "1", dxfString(entity.text || ""),
     "50", roundDxf(normalizeDegrees(-(entity.rotation || 0))),
     "7", "STANDARD",
+  ];
+}
+
+function dimensionLineGeometry(entity) {
+  const start = { x: Number(entity.x1), y: Number(entity.y1) };
+  const end = { x: Number(entity.x2), y: Number(entity.y2) };
+  if (!finitePoint(start) || !finitePoint(end)) return null;
+
+  if ([entity.dimX1, entity.dimY1, entity.dimX2, entity.dimY2].every(finiteNumber)) {
+    return {
+      start,
+      end,
+      lineStart: { x: Number(entity.dimX1), y: Number(entity.dimY1) },
+      lineEnd: { x: Number(entity.dimX2), y: Number(entity.dimY2) },
+    };
+  }
+
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 0.0001) return null;
+  const offset = finiteNumber(entity.offset) ? Number(entity.offset) : 360;
+  const nx = -dy / length;
+  const ny = dx / length;
+  return {
+    start,
+    end,
+    lineStart: { x: start.x + nx * offset, y: start.y + ny * offset },
+    lineEnd: { x: end.x + nx * offset, y: end.y + ny * offset },
+  };
+}
+
+function dxfArrow(point, ux, uy, size, layer) {
+  const wing = size * 0.48;
+  const nx = -uy;
+  const ny = ux;
+  return [
+    ...dxfLine(point.x, point.y, point.x + ux * size + nx * wing, point.y + uy * size + ny * wing, layer),
+    ...dxfLine(point.x, point.y, point.x + ux * size - nx * wing, point.y + uy * size - ny * wing, layer),
+  ];
+}
+
+export function dxfLinearDimension(entity, layer) {
+  const geometry = dimensionLineGeometry(entity);
+  if (!geometry) return [];
+  const { start, end, lineStart, lineEnd } = geometry;
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 0.0001) return [];
+  const ux = dx / length;
+  const uy = dy / length;
+  const arrowSize = Math.max(70, Math.min(180, length * 0.035));
+  const textHeight = Math.max(120, Math.min(260, length * 0.045));
+  const textRotation = radToDeg(Math.atan2(dy, dx));
+  const text = String(Math.round(Math.hypot(end.x - start.x, end.y - start.y)));
+  return [
+    ...dxfLine(start.x, start.y, lineStart.x, lineStart.y, layer),
+    ...dxfLine(end.x, end.y, lineEnd.x, lineEnd.y, layer),
+    ...dxfLine(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y, layer),
+    ...dxfArrow(lineStart, ux, uy, arrowSize, layer),
+    ...dxfArrow(lineEnd, -ux, -uy, arrowSize, layer),
+    ...dxfText({ x: (lineStart.x + lineEnd.x) / 2, y: (lineStart.y + lineEnd.y) / 2, text, height: textHeight, rotation: textRotation }, layer),
+  ];
+}
+
+export function dxfLeader(entity, layer) {
+  const start = { x: Number(entity.x1), y: Number(entity.y1) };
+  const end = { x: Number(entity.x2), y: Number(entity.y2) };
+  if (!finitePoint(start) || !finitePoint(end)) return [];
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 0.0001) return [];
+  const ux = dx / length;
+  const uy = dy / length;
+  return [
+    ...dxfLine(start.x, start.y, end.x, end.y, layer),
+    ...dxfArrow(start, ux, uy, Math.max(70, Math.min(150, length * 0.08)), layer),
+    ...dxfText({ x: end.x, y: end.y, text: entity.text || "Текст", height: entity.height || 220, rotation: 0 }, layer),
   ];
 }
 
@@ -113,6 +221,12 @@ export function buildDxf(entities, options = {}) {
       lines.push(...dxfLine(offset.a.x1, offset.a.y1, offset.a.x2, offset.a.y2, layer));
       lines.push(...dxfLine(offset.b.x1, offset.b.y1, offset.b.x2, offset.b.y2, layer));
       lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, layer));
+    } else if (entity.type === "line" && entity.dimensionKind === "angular") {
+      // Angular dimensions are intentionally omitted until their CAD representation is finalized.
+    } else if (entity.type === "line" && entity.dimensionKind === "leader") {
+      lines.push(...dxfLeader(entity, dxfLayerName("dimensions", layerMap)));
+    } else if (entity.type === "line" && entity.layer === "dimensions" && (finiteNumber(entity.offset) || finiteNumber(entity.dimX1))) {
+      lines.push(...dxfLinearDimension(entity, dxfLayerName("dimensions", layerMap)));
     } else if (entity.type === "line") {
       lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, dxfLayerName(entity.layer, layerMap)));
     } else if (entity.type === "block") {

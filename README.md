@@ -49,10 +49,10 @@ fallback), and icons in `icons/` (regenerate with `npm run icons`).
   Service workers / offline require HTTPS or `localhost`, so over a plain LAN IP
   the app runs but full install/offline is limited.
 
-- **Real install (anywhere + offline)** — deploy the static `prototype/` folder to
-  any HTTPS static host (Netlify, Vercel, GitHub Pages), open the URL on the phone,
-  then use **Add to Home Screen**. The Node server is only needed for project
-  autosave; the app itself runs from the static files.
+- **Real install (anywhere + offline)** — deploy the complete `prototype/` app and
+  its Node API to one HTTPS domain with persistent server storage. A static host by
+  itself is no longer sufficient because accounts, project revisions, and conflict
+  recovery are server features. Follow [`docs/deployment.md`](docs/deployment.md).
 
 ## Temporary Public Phone Link
 
@@ -84,9 +84,9 @@ domain or named Cloudflare Tunnel.
 
 4. Open `http://127.0.0.1:4187`.
 
-Project files and login/session data are intentionally ignored by Git:
-`prototype/project-states/` and `prototype/project-state.json` are local runtime
-data, not source code.
+Project files, revision history, deleted-project recovery files, and login/session
+data are intentionally ignored by Git. They are runtime data and must live in the
+persistent server volume, not in the source repository.
 
 ## Prototype Code Structure
 
@@ -121,6 +121,13 @@ Or, if `npm` is on PATH, from the `prototype/` folder:
 ```powershell
 npm test
 ```
+
+## Deploy To A Real Domain
+
+The urgent closed-beta deployment uses Docker, a persistent data volume, Caddy HTTPS,
+server-side project revisions, recoverable deletes, and automatic conflict copies.
+See [`docs/deployment.md`](docs/deployment.md) for the DNS, server, backup, update,
+and pre-measurement checklist.
 
 ## APK Status
 

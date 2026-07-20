@@ -7,4 +7,9 @@ node_modules/
 tmp/
 prototype/project-state.json
 prototype/project-states/
+prototype/project-versions/
+prototype/project-trash/
 prototype/phone-server*.log
+prototype/audit-*/
+prototype/downloads/
+dist/

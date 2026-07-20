@@ -1,0 +1,13 @@
+.git
+audit
+audit-*
+*.log
+*.err.log
+node_modules
+phone-server*
+project-state.json
+project-states
+project-trash
+project-versions
+screenshot-*.png
+server.test.js

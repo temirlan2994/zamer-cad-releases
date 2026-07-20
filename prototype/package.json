@@ -5,7 +5,7 @@
   "description": "Zamer CAD browser prototype (mobile measuring/drafting concept).",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test \"core/*.test.js\"",
+    "test": "node --test \"core/*.test.js\" \"server.test.js\"",
     "check:encoding": "node scripts/check-encoding.js",
     "icons": "node scripts/make-icons.js"
   }

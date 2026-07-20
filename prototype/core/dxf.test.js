@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, roundDxf } from "./dxf.js";
+import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, dxfLinearDimension, dxfString, roundDxf } from "./dxf.js";
 
 const countRecords = (dxf, type) => (dxf.match(new RegExp(`\\n0\\n${type}\\n`, "g")) || []).length;
 
@@ -8,6 +8,12 @@ test("roundDxf rounds to 3 decimals and normalizes -0", () => {
   assert.equal(roundDxf(1.23456), "1.235");
   assert.equal(roundDxf(-0), "0");
   assert.equal(roundDxf(200), "200");
+});
+
+test("dxfString keeps R12 text ASCII-safe and preserves Cyrillic as Unicode escapes", () => {
+  assert.equal(dxfString("Замер 1"), "\\U+0417\\U+0430\\U+043C\\U+0435\\U+0440 1");
+  assert.equal(dxfString("Первая\nстрока"), "\\U+041F\\U+0435\\U+0440\\U+0432\\U+0430\\U+044F \\U+0441\\U+0442\\U+0440\\U+043E\\U+043A\\U+0430");
+  assert.equal(dxfString("📐"), "\\U+0001F4D0");
 });
 
 test("dxfLine flips Y and tags the layer", () => {
@@ -67,8 +73,42 @@ test("buildDxf exports a non-collinear arc", () => {
 test("buildDxf exports text annotations", () => {
   const dxf = buildDxf([{ type: "text", x: 120, y: 340, text: "Спальня", height: 260, rotation: 15, layer: "dimensions" }]);
   assert.equal(countRecords(dxf, "TEXT"), 1);
-  assert.ok(dxf.includes("\n1\nСпальня\n"));
+  assert.ok(dxf.includes(`\n1\n${dxfString("Спальня")}\n`));
   assert.ok(dxf.includes("\n40\n260\n"));
+});
+
+test("linear dimensions export as extension lines, arrows, dimension line and text", () => {
+  const records = dxfLinearDimension({
+    type: "line",
+    layer: "dimensions",
+    x1: 0,
+    y1: 0,
+    x2: 2400,
+    y2: 0,
+    dimX1: 0,
+    dimY1: -360,
+    dimX2: 2400,
+    dimY2: -360,
+  }, "dimensions").join("\n");
+  assert.equal((records.match(/(^|\n)0\nLINE\n/g) || []).length, 7);
+  assert.equal((records.match(/(^|\n)0\nTEXT\n/g) || []).length, 1);
+  assert.ok(records.includes("\n1\n2400\n"));
+  assert.ok(!records.includes("NaN"));
+});
+
+test("angular dimensions are safely omitted until supported", () => {
+  const dxf = buildDxf([{ type: "line", layer: "dimensions", dimensionKind: "angular", vertex: { x: 0, y: 0 } }]);
+  assert.equal(countRecords(dxf, "LINE"), 0);
+  assert.ok(!dxf.includes("NaN"));
+  assert.ok(!dxf.includes("undefined"));
+});
+
+test("leader exports a line, arrow and visible text", () => {
+  const dxf = buildDxf([{ type: "line", layer: "dimensions", dimensionKind: "leader", x1: 0, y1: 0, x2: 900, y2: 600, text: "Розетка" }]);
+  assert.equal(countRecords(dxf, "LINE"), 3);
+  assert.equal(countRecords(dxf, "TEXT"), 1);
+  assert.ok(dxf.includes(`\n1\n${dxfString("Розетка")}\n`));
+  assert.ok(!dxf.includes("NaN"));
 });
 
 test("buildDxf skips a degenerate (collinear) arc instead of emitting garbage", () => {

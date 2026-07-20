@@ -1,6 +1,193 @@
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js";
 import { defaultBlockSize, entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
+import { chooseProjectSource, projectRevision } from "./core/sync.js";
+
+const nativeApkMode = new URLSearchParams(window.location.search).get("apk") === "1" || Boolean(window.ZamerAndroid);
+const nativeFetchDelegate = window.fetch.bind(window);
+const apkProjectIndexKey = "zamer.apk.projects.v1";
+const apkProjectPrefix = "zamer.apk.project.v1.";
+const apkTrashPrefix = "zamer.apk.trash.v1.";
+const apkUser = { id: "offline", login: "На телефоне" };
+
+function apkSafeId(value, fallback = "") {
+  const normalized = String(value || "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
+  return normalized || fallback;
+}
+
+function apkReadJson(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function apkProjectKey(projectId) {
+  return `${apkProjectPrefix}${projectId}`;
+}
+
+function apkProjectMeta(project) {
+  const entities = Array.isArray(project?.entities) ? project.entities : [];
+  return {
+    id: project.projectId,
+    name: String(project.name || "Без названия").slice(0, 80),
+    createdAt: project.createdAt,
+    updatedAt: project.serverSavedAt || project.savedAt || project.updatedAt,
+    revision: Math.max(1, Number(project.revision) || 1),
+    entityCount: entities.length,
+    thumbnail: project.thumbnail || null,
+  };
+}
+
+function apkReadProjectIndex() {
+  const indexed = apkReadJson(apkProjectIndexKey, []);
+  const projects = new Map(Array.isArray(indexed) ? indexed.map((project) => [project.id, project]) : []);
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(apkProjectPrefix)) continue;
+    const project = apkReadJson(key, null);
+    if (project?.projectId) projects.set(project.projectId, apkProjectMeta(project));
+  }
+  return [...projects.values()].sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+}
+
+function apkWriteProjectIndex(projects) {
+  localStorage.setItem(apkProjectIndexKey, JSON.stringify(projects));
+}
+
+function apkStoreProject(project) {
+  localStorage.setItem(apkProjectKey(project.projectId), JSON.stringify(project));
+  const projects = apkReadProjectIndex().filter((item) => item.id !== project.projectId);
+  projects.unshift(apkProjectMeta(project));
+  apkWriteProjectIndex(projects);
+  return project;
+}
+
+function apkCreateProject(body = {}) {
+  const now = new Date().toISOString();
+  const source = body.project && typeof body.project === "object" ? body.project : {};
+  const projectId = apkSafeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const templateEntities = body.template === "apartment" && !Array.isArray(source.entities)
+    ? [
+        { id: "wall-1", type: "wall", layer: "walls", x1: 0, y1: 0, x2: 5200, y2: 0, width: 180 },
+        { id: "wall-2", type: "wall", layer: "walls", x1: 5200, y1: 0, x2: 5200, y2: 3600, width: 180 },
+        { id: "wall-3", type: "wall", layer: "walls", x1: 5200, y1: 3600, x2: 0, y2: 3600, width: 180 },
+        { id: "wall-4", type: "wall", layer: "walls", x1: 0, y1: 3600, x2: 0, y2: 0, width: 180 },
+      ]
+    : Array.isArray(source.entities) ? source.entities : [];
+  return {
+    version: 2,
+    clientId: apkUser.id,
+    projectId,
+    name: String(body.name || source.name || "Новый замер").slice(0, 80),
+    createdAt: source.createdAt || now,
+    updatedAt: now,
+    savedAt: now,
+    serverSavedAt: now,
+    revision: 1,
+    baseRevision: 1,
+    syncPending: false,
+    theme: source.theme === "dark" ? "dark" : "light",
+    view: source.view || { scale: 0.085, panX: 92, panY: 84 },
+    snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
+    annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
+    selectionFilter: source.selectionFilter || "all",
+    furnitureTab: source.furnitureTab || "furniture",
+    furnitureCategory: source.furnitureCategory || "sofas",
+    furnitureSheetPosition: source.furnitureSheetPosition || "half",
+    entities: JSON.parse(JSON.stringify(templateEntities)),
+    thumbnail: source.thumbnail || null,
+  };
+}
+
+function apkJsonResponse(status, payload) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+async function apkRequestBody(resource, options, method) {
+  if (["GET", "HEAD"].includes(method)) return {};
+  const body = options?.body;
+  if (typeof body === "string") return JSON.parse(body || "{}");
+  if (body instanceof Blob) return JSON.parse(await body.text());
+  if (resource instanceof Request) return JSON.parse(await resource.clone().text() || "{}");
+  return body && typeof body === "object" ? body : {};
+}
+
+async function apkOfflineFetch(resource, options = {}) {
+  const requestUrl = new URL(resource instanceof Request ? resource.url : String(resource), window.location.href);
+  if (!nativeApkMode || !requestUrl.pathname.startsWith("/api/")) return nativeFetchDelegate(resource, options);
+  const method = String(options.method || (resource instanceof Request ? resource.method : "GET")).toUpperCase();
+  try {
+    if (requestUrl.pathname === "/api/health") return apkJsonResponse(200, { ok: true, storage: "phone" });
+    if (requestUrl.pathname === "/api/auth/status") return apkJsonResponse(200, { ok: true, user: apkUser, offline: true });
+    if (requestUrl.pathname === "/api/auth/logout") return apkJsonResponse(200, { ok: true, user: apkUser, offline: true });
+    if (["/api/auth/login", "/api/auth/register", "/api/auth/dev"].includes(requestUrl.pathname)) {
+      return apkJsonResponse(200, { ok: true, user: apkUser, offline: true });
+    }
+
+    if (requestUrl.pathname === "/api/projects" && method === "GET") {
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, projects: apkReadProjectIndex() });
+    }
+    if (requestUrl.pathname === "/api/projects" && method === "POST") {
+      const body = await apkRequestBody(resource, options, method);
+      const project = apkStoreProject(apkCreateProject(body));
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, project, meta: apkProjectMeta(project) });
+    }
+
+    const match = requestUrl.pathname.match(/^\/api\/projects\/([^/]+)$/);
+    const projectId = match ? apkSafeId(decodeURIComponent(match[1]), "") : "";
+    if (!projectId) return apkJsonResponse(404, { ok: false, error: "Project not found" });
+    const current = apkReadJson(apkProjectKey(projectId), null);
+
+    if (method === "GET") {
+      return current
+        ? apkJsonResponse(200, { ok: true, client: apkUser.id, projectId, project: current })
+        : apkJsonResponse(404, { ok: false, error: "Project not found", projectId });
+    }
+    if (method === "DELETE") {
+      if (current) {
+        localStorage.setItem(`${apkTrashPrefix}${projectId}.${Date.now()}`, JSON.stringify(current));
+        localStorage.removeItem(apkProjectKey(projectId));
+      }
+      apkWriteProjectIndex(apkReadProjectIndex().filter((project) => project.id !== projectId));
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, projectId, recoverable: Boolean(current) });
+    }
+    if ((method === "PUT" || method === "POST") && current) {
+      const body = await apkRequestBody(resource, options, method);
+      const now = new Date().toISOString();
+      const revision = Math.max(1, Number(current.revision) || 1) + 1;
+      const project = apkStoreProject({
+        ...body,
+        clientId: apkUser.id,
+        projectId,
+        name: String(body.name || current.name || "Без названия").slice(0, 80),
+        createdAt: body.createdAt || current.createdAt || now,
+        updatedAt: now,
+        savedAt: now,
+        serverSavedAt: now,
+        revision,
+        baseRevision: revision,
+        syncPending: false,
+      });
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, projectId, revision, savedAt: now, meta: apkProjectMeta(project) });
+    }
+    return apkJsonResponse(current ? 405 : 404, { ok: false, error: current ? "Method not allowed" : "Project not found" });
+  } catch (error) {
+    console.error("Offline APK storage failed", error);
+    return apkJsonResponse(507, { ok: false, error: "Не удалось сохранить проект в памяти телефона" });
+  }
+}
+
+if (nativeApkMode) {
+  document.documentElement.dataset.nativeApk = "true";
+  window.fetch = apkOfflineFetch;
+}
 
 const canvas = document.getElementById("cadCanvas");
 const ctx = canvas.getContext("2d");
@@ -372,8 +559,10 @@ const persistence = {
   projectId: "",
   projectName: "",
   projectCreatedAt: "",
+  revision: 0,
   endpoint: "",
   debounceMs: 250,
+  localDebounceMs: 80,
   retryMs: 1600,
   localDbName: "zamer-cad-projects",
   localDbVersion: 2,
@@ -384,9 +573,13 @@ const persistence = {
   pending: false,
   restoring: false,
   timer: null,
+  localTimer: null,
   statusTimer: null,
   dbPromise: null,
+  localWriteChain: Promise.resolve(),
   lastHash: "",
+  pendingSaveId: "",
+  pendingSnapshot: "",
   restoredSavedAt: 0,
   needsRemoteSync: false,
   projects: [],
@@ -402,10 +595,11 @@ const authState = {
 
 const installState = {
   promptEvent: null,
-  installed: window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true,
+  installed: nativeApkMode || window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true,
 };
 
 function authEndpoint(action) {
+  if (window.location.protocol === "file:") return `http://127.0.0.1:4187/api/auth/${action}`;
   return `/api/auth/${action}`;
 }
 
@@ -431,7 +625,7 @@ function updateSaveIndicator(stateName, text, options = {}) {
 }
 
 function projectSavedTime(project) {
-  return Date.parse(project?.savedAt || project?.localSavedAt || "") || 0;
+  return Date.parse(project?.serverSavedAt || project?.savedAt || project?.localSavedAt || "") || 0;
 }
 
 function newestProject(a, b) {
@@ -501,7 +695,7 @@ function openLocalProjectDb() {
   return persistence.dbPromise;
 }
 
-async function trimLocalProjectVersions() {
+async function trimLocalProjectVersions(storageId = projectStorageId()) {
   const db = await openLocalProjectDb();
   if (!db) return;
   await new Promise((resolve, reject) => {
@@ -509,7 +703,7 @@ async function trimLocalProjectVersions() {
     const store = transaction.objectStore("versions");
     const index = store.index("projectId");
     let kept = 0;
-    const request = index.openCursor(IDBKeyRange.only(projectStorageId()), "prev");
+    const request = index.openCursor(IDBKeyRange.only(storageId), "prev");
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
@@ -523,30 +717,35 @@ async function trimLocalProjectVersions() {
   });
 }
 
-async function saveProjectToLocalStore(project, reason = "change") {
-  if (!persistence.projectId) return false;
+function saveProjectToLocalStore(project, reason = "change") {
+  if (!persistence.projectId) return Promise.resolve(false);
   const savedAt = project.savedAt || new Date().toISOString();
   const storageId = projectStorageId();
   const localProject = { ...project, storageId, clientId: persistence.clientId, projectId: persistence.projectId, savedAt, localSavedAt: savedAt };
   writeEmergencyLocalBackup(localProject);
-  try {
-    const db = await openLocalProjectDb();
-    if (!db) return false;
-    const transaction = db.transaction(["projects", "versions"], "readwrite");
-    transaction.objectStore("projects").put(localProject);
-    transaction.objectStore("versions").put({
-      projectId: storageId,
-      savedAt,
-      reason,
-      project: localProject,
-    });
-    await idbTransactionDone(transaction);
-    await trimLocalProjectVersions();
-    return true;
-  } catch (error) {
-    console.warn("IndexedDB save failed; emergency backup is still available", error);
-    return false;
-  }
+  const write = async () => {
+    try {
+      const db = await openLocalProjectDb();
+      if (!db) return false;
+      const transaction = db.transaction(["projects", "versions"], "readwrite");
+      transaction.objectStore("projects").put(localProject);
+      transaction.objectStore("versions").put({
+        projectId: storageId,
+        savedAt,
+        reason,
+        project: localProject,
+      });
+      await idbTransactionDone(transaction);
+      await trimLocalProjectVersions(storageId);
+      return true;
+    } catch (error) {
+      console.warn("IndexedDB save failed; emergency backup is still available", error);
+      return false;
+    }
+  };
+  const queued = persistence.localWriteChain.catch(() => {}).then(write);
+  persistence.localWriteChain = queued;
+  return queued;
 }
 
 async function loadProjectFromLocalStore() {
@@ -633,18 +832,26 @@ function renderAuthUi() {
     accountBadge.hidden = !authState.user;
     accountBadge.textContent = authState.user ? `Аккаунт: ${authState.user.login}` : "";
   }
-  if (logoutButton) logoutButton.hidden = !authState.user;
+  if (logoutButton) logoutButton.hidden = nativeApkMode || !authState.user;
 }
 
 function resetProjectSession() {
+  window.clearTimeout(persistence.timer);
+  window.clearTimeout(persistence.localTimer);
+  persistence.timer = null;
+  persistence.localTimer = null;
   persistence.projectId = "";
   persistence.projectName = "";
   persistence.projectCreatedAt = "";
   persistence.endpoint = "";
+  persistence.revision = 0;
   persistence.ready = false;
   persistence.dirty = false;
   persistence.pending = false;
   persistence.needsRemoteSync = false;
+  persistence.pendingSaveId = "";
+  persistence.pendingSnapshot = "";
+  persistence.localWriteChain = Promise.resolve();
   persistence.projects = [];
   setSelection([]);
   state.drawing = null;
@@ -705,15 +912,20 @@ async function checkActiveSession() {
 }
 
 async function fetchAuthJson(action, options = {}) {
-  const response = await fetch(authEndpoint(action), {
-    cache: "no-store",
-    credentials: "same-origin",
-    ...options,
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  let response;
+  try {
+    response = await fetch(authEndpoint(action), {
+      cache: "no-store",
+      credentials: window.location.protocol === "file:" ? "include" : "same-origin",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  } catch {
+    throw new Error("Не удалось подключиться к серверу входа. Обновите страницу или откройте http://127.0.0.1:4187/");
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || "Ошибка аккаунта");
   return payload;
@@ -991,7 +1203,7 @@ function askCadText(value = "Текст") {
 function confirmProjectDelete(name) {
   return showProjectDialog({
     title: "Удалить проект",
-    message: `Проект "${name}" будет удален с сервера.`,
+    message: nativeApkMode ? `Проект "${name}" будет перемещен в локальную корзину.` : `Проект "${name}" будет удален с сервера.`,
     confirmText: "Удалить",
     destructive: true,
     withInput: false,
@@ -1004,7 +1216,7 @@ function isSecureInstallContext() {
 
 function updateInstallButton() {
   if (!installAppButton) return;
-  if (installState.installed) {
+  if (nativeApkMode || installState.installed) {
     installAppButton.hidden = true;
     return;
   }
@@ -1105,15 +1317,20 @@ async function loadProjects() {
 }
 
 function setActiveProject(project, projectId = project?.projectId || project?.id) {
+  window.clearTimeout(persistence.timer);
+  window.clearTimeout(persistence.localTimer);
   persistence.projectId = projectId || "";
   persistence.projectName = project?.name || "Без названия";
   persistence.projectCreatedAt = project?.createdAt || new Date().toISOString();
+  persistence.revision = projectRevision(project);
   persistence.endpoint = persistence.projectId ? projectEndpoint(persistence.projectId) : "";
   persistence.ready = false;
   persistence.dirty = false;
   persistence.pending = false;
   persistence.needsRemoteSync = false;
   persistence.lastHash = "";
+  persistence.pendingSaveId = "";
+  persistence.pendingSnapshot = "";
   updateProjectTitle();
 }
 
@@ -1121,23 +1338,59 @@ async function openProject(projectId) {
   if (!projectId) return;
   if (persistence.ready && persistence.projectId) await saveProjectNow();
   updateSaveIndicator("saving", "Открываю...");
-  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
-  if (!response.ok) {
+  const meta = persistence.projects.find((project) => project.id === projectId) || { id: projectId, projectId, name: "Без названия" };
+  setActiveProject(meta, projectId);
+
+  const localProject = await loadProjectFromLocalStore();
+  let serverProject = null;
+  let serverError = null;
+  let serverMissing = false;
+  try {
+    const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
+    if (response.status === 401) {
+      await forceAuthLogout("Сессия завершена. Локальная копия чертежа сохранена на этом устройстве.");
+      return;
+    }
+    if (response.ok) {
+      const payload = await response.json();
+      serverProject = payload.project || null;
+    } else if (response.status === 404) {
+      serverMissing = true;
+    } else {
+      throw new Error(`Open project failed: ${response.status}`);
+    }
+  } catch (error) {
+    serverError = error;
+  }
+
+  const choice = chooseProjectSource(localProject, serverProject);
+  if (!choice.project || !restoreProject(choice.project)) {
     updateSaveIndicator("error", "Не открыт", { autoDim: 2600 });
-    throw new Error(`Open project failed: ${response.status}`);
+    throw serverError || new Error("Project is unavailable both locally and on the server");
   }
-  const payload = await response.json();
-  const project = payload.project;
-  setActiveProject(project, projectId);
-  if (restoreProject(project)) {
-    setProjectHomeVisible(false);
-    persistence.ready = true;
-    persistence.lastHash = projectSnapshotKey();
+
+  persistence.revision = projectRevision(choice.project);
+  persistence.ready = true;
+  persistence.lastHash = projectSnapshotKey();
+  persistence.dirty = false;
+  const shouldPush = choice.shouldPush || (serverMissing && Boolean(localProject));
+  persistence.needsRemoteSync = shouldPush;
+  setProjectHomeVisible(false);
+  localStorage.setItem("zamer.lastProjectId", persistence.projectId);
+
+  if (choice.source === "server") {
+    await saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open");
     updateSaveIndicator("saved", "С сервера", { autoDim: 2400 });
-    statusChip.textContent = `${persistence.projectName}: открыт`;
-    localStorage.setItem("zamer.lastProjectId", persistence.projectId);
-    await saveProjectToLocalStore(project, "server-open");
+  } else if (shouldPush) {
+    persistence.pendingSnapshot = persistence.lastHash;
+    persistence.pendingSaveId = choice.project.clientSaveId || createClientSaveId();
+    persistence.dirty = true;
+    updateSaveIndicator("offline", serverProject ? "Локальная новее" : "На телефоне", { autoDim: 2600 });
+    persistence.timer = window.setTimeout(saveProjectNow, 120);
+  } else {
+    updateSaveIndicator("saved", "С телефона", { autoDim: 2400 });
   }
+  statusChip.textContent = `${persistence.projectName}: открыт`;
 }
 
 async function createProject(options = {}) {
@@ -1270,10 +1523,27 @@ function serializableProjectState() {
   };
 }
 
-function serializeProject() {
+function createClientSaveId() {
+  const value = crypto.randomUUID ? crypto.randomUUID() : `save-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 72);
+}
+
+function clientSaveIdForSnapshot(snapshot) {
+  if (!persistence.pendingSaveId || persistence.pendingSnapshot !== snapshot) {
+    persistence.pendingSaveId = createClientSaveId();
+    persistence.pendingSnapshot = snapshot;
+  }
+  return persistence.pendingSaveId;
+}
+
+function serializeProject(options = {}) {
   const savedAt = new Date().toISOString();
   return {
     ...serializableProjectState(),
+    revision: persistence.revision,
+    baseRevision: persistence.revision,
+    clientSaveId: options.clientSaveId || "",
+    syncPending: Boolean(options.syncPending),
     updatedAt: savedAt,
     savedAt,
   };
@@ -1301,6 +1571,8 @@ function restoreProject(project) {
   if (project.projectId && !persistence.projectId) persistence.projectId = project.projectId;
   if (project.name) persistence.projectName = project.name;
   if (project.createdAt) persistence.projectCreatedAt = project.createdAt;
+  persistence.revision = projectRevision(project);
+  if (project.syncPending && project.clientSaveId) persistence.pendingSaveId = project.clientSaveId;
   const restoredEntities = project.entities.map(cloneProjectEntity).filter(Boolean);
   persistence.restoring = true;
   try {
@@ -1363,8 +1635,59 @@ function markProjectDirty(reason = "change") {
   if (!persistence.dirty && snapshot === persistence.lastHash) return;
   persistence.dirty = true;
   persistence.lastReason = reason;
+  const saveId = clientSaveIdForSnapshot(snapshot);
+  window.clearTimeout(persistence.localTimer);
+  persistence.localTimer = window.setTimeout(() => {
+    if (!persistence.ready || !persistence.projectId) return;
+    saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }), `checkpoint-${reason}`).catch(() => {});
+  }, persistence.localDebounceMs);
   window.clearTimeout(persistence.timer);
   persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
+}
+
+async function recoverMissingRemoteProject(project) {
+  const response = await fetch(projectsEndpoint(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: persistence.projectId, name: persistence.projectName, project }),
+  });
+  if (!response.ok) return false;
+  const payload = await response.json();
+  persistence.revision = projectRevision(payload.project);
+  persistence.pendingSaveId = "";
+  persistence.pendingSnapshot = "";
+  const confirmed = { ...payload.project, syncPending: false };
+  await saveProjectToLocalStore(confirmed, "server-recreated");
+  persistence.lastHash = projectSnapshotKey();
+  persistence.dirty = false;
+  persistence.needsRemoteSync = false;
+  updateSaveIndicator("saved", "Восстановлено", { autoDim: 2600 });
+  loadProjects().catch(() => {});
+  return true;
+}
+
+async function switchToRecoveryProject(payload, snapshot) {
+  const recovery = payload?.recoveryProject;
+  if (!recovery?.projectId) return false;
+  const changedDuringSave = projectSnapshotKey() !== snapshot;
+  setActiveProject(recovery, recovery.projectId);
+  persistence.ready = true;
+  persistence.revision = projectRevision(recovery);
+  const currentSnapshot = projectSnapshotKey();
+  if (changedDuringSave) {
+    persistence.dirty = true;
+    persistence.needsRemoteSync = true;
+    const saveId = clientSaveIdForSnapshot(currentSnapshot);
+    await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }), "conflict-latest");
+  } else {
+    persistence.lastHash = currentSnapshot;
+    await saveProjectToLocalStore({ ...recovery, syncPending: false }, "conflict-recovery");
+  }
+  updateProjectTitle();
+  updateSaveIndicator("saved", "Безопасная копия", { autoDim: 3600 });
+  statusChip.textContent = "Найдена более новая версия. Этот чертеж сохранен отдельной копией";
+  loadProjects().catch(() => {});
+  return true;
 }
 
 async function saveProjectNow() {
@@ -1377,8 +1700,10 @@ async function saveProjectNow() {
   if (!persistence.dirty && !persistence.needsRemoteSync && snapshot === persistence.lastHash) return;
   persistence.saving = true;
   let retryScheduled = false;
-  const project = serializeProject();
+  const saveId = clientSaveIdForSnapshot(snapshot);
+  const project = serializeProject({ syncPending: true, clientSaveId: saveId });
   window.clearTimeout(persistence.timer);
+  window.clearTimeout(persistence.localTimer);
   updateSaveIndicator("saving", "Сохраняю...");
   try {
     await saveProjectToLocalStore(project, persistence.lastReason || "change");
@@ -1393,13 +1718,45 @@ async function saveProjectNow() {
       await forceAuthLogout("Аккаунт открыт на другом устройстве. Это устройство вышло из аккаунта.");
       return;
     }
+    if (response.status === 409) {
+      const payload = await response.json().catch(() => ({}));
+      if (await switchToRecoveryProject(payload, snapshot)) return;
+      throw new Error("Project revision conflict");
+    }
+    if (response.status === 404) {
+      if (await recoverMissingRemoteProject(project)) return;
+      throw new Error("Project disappeared from the server");
+    }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    const payload = await response.json().catch(() => ({}));
+    persistence.revision = Number.isFinite(Number(payload.revision)) ? Number(payload.revision) : persistence.revision + 1;
+    persistence.pendingSaveId = "";
+    persistence.pendingSnapshot = "";
     persistence.needsRemoteSync = false;
+    const changedDuringSave = projectSnapshotKey() !== snapshot;
+    persistence.dirty = changedDuringSave;
+    if (changedDuringSave) {
+      const latestSnapshot = projectSnapshotKey();
+      const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
+      await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }), "after-server-save");
+    } else {
+      await saveProjectToLocalStore({
+        ...project,
+        revision: persistence.revision,
+        baseRevision: persistence.revision,
+        savedAt: payload.savedAt || project.savedAt,
+        serverSavedAt: payload.savedAt || project.savedAt,
+        syncPending: false,
+      }, "server-confirmed");
+    }
     updateSaveIndicator("saved", "Сохранено", { autoDim: 2400 });
   } catch (error) {
     console.warn("Project autosave failed", error);
     persistence.needsRemoteSync = true;
-    persistence.dirty = projectSnapshotKey() !== snapshot;
+    const latestSnapshot = projectSnapshotKey();
+    persistence.dirty = latestSnapshot !== snapshot;
+    const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
+    await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }), "network-pending");
     persistence.timer = window.setTimeout(saveProjectNow, persistence.retryMs);
     retryScheduled = true;
     updateSaveIndicator("offline", "На телефоне", { autoDim: 3200 });
@@ -1484,7 +1841,9 @@ async function loadProjectSafely() {
 function flushProjectBeforeUnload() {
   if (!persistence.ready || persistence.restoring || !persistence.projectId) return;
   if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
-  const project = serializeProject();
+  const snapshot = projectSnapshotKey();
+  const saveId = clientSaveIdForSnapshot(snapshot);
+  const project = serializeProject({ syncPending: true, clientSaveId: saveId });
   writeEmergencyLocalBackup(project);
   saveProjectToLocalStore(project, "page-close").catch(() => {});
   const body = JSON.stringify(project);
@@ -9028,6 +9387,11 @@ window.zamerDebug = {
 };
 
 function downloadFile(filename, content, mimeType) {
+  if (nativeApkMode && window.ZamerAndroid?.saveTextFile) {
+    window.ZamerAndroid.saveTextFile(filename, mimeType, String(content));
+    updateSaveIndicator("saved", "Файл в Загрузках", { autoDim: 2800 });
+    return;
+  }
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

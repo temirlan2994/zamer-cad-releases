@@ -48,11 +48,17 @@ input {
   color: var(--text);
   display: grid;
   grid-template-rows: 56px 52px 1fr;
-  height: min(var(--app-height), 844px);
-  max-height: var(--app-height);
+  height: var(--app-height);
+  max-height: none;
   overflow: hidden;
   position: relative;
-  width: min(100vw, 390px);
+  width: 100vw;
+}
+
+@media (min-width: 600px) {
+  .app-shell {
+    width: min(100vw, 480px);
+  }
 }
 
 .app-shell[data-theme="dark"] {

@@ -4,16 +4,21 @@ const path = require("path");
 const crypto = require("crypto");
 
 const root = __dirname;
+const dataRoot = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : root;
 const port = process.env.PORT || 4187;
 const host = process.env.HOST || "127.0.0.1";
-const projectStatePath = path.join(root, "project-state.json");
-const projectStatesDir = path.join(root, "project-states");
+const projectStatePath = path.join(dataRoot, "project-state.json");
+const projectStatesDir = path.join(dataRoot, "project-states");
+const projectVersionsDir = path.join(dataRoot, "project-versions");
+const projectTrashDir = path.join(dataRoot, "project-trash");
 const usersPath = path.join(projectStatesDir, "auth-users.json");
 const sessionsPath = path.join(projectStatesDir, "auth-sessions.json");
 const maxProjectBytes = 2 * 1024 * 1024;
+const maxServerVersions = 50;
 const sessionCookieName = "zamer_session";
 const sessionMaxAgeSeconds = 60 * 60 * 24 * 30;
 const passwordIterations = 120000;
+const secureCookieSuffix = process.env.NODE_ENV === "production" ? "; Secure" : "";
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -29,6 +34,20 @@ const types = {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${host}:${port}`);
+
+  if (url.pathname.startsWith("/api/")) {
+    applyApiCors(request, response);
+    if (request.method === "OPTIONS") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+  }
+
+  if (url.pathname === "/api/health") {
+    handleHealthApi(response);
+    return;
+  }
 
   if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/")) {
     handleAuthApi(request, response, url);
@@ -78,6 +97,24 @@ const server = http.createServer((request, response) => {
   });
 });
 
+function applyApiCors(request, response) {
+  const origin = request.headers.origin;
+  const hostname = (() => {
+    try {
+      return new URL(origin || "http://localhost").hostname;
+    } catch {
+      return "";
+    }
+  })();
+  if (origin === "null" || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(origin || "") || /\.trycloudflare\.com$/i.test(hostname)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Access-Control-Allow-Credentials", "true");
+    response.setHeader("Vary", "Origin");
+  }
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
 function sendJson(response, status, payload, extraHeaders = {}) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -85,6 +122,16 @@ function sendJson(response, status, payload, extraHeaders = {}) {
     ...extraHeaders,
   });
   response.end(JSON.stringify(payload));
+}
+
+function handleHealthApi(response) {
+  try {
+    fs.mkdirSync(projectStatesDir, { recursive: true });
+    fs.accessSync(projectStatesDir, fs.constants.R_OK | fs.constants.W_OK);
+    sendJson(response, 200, { ok: true, storage: "ready", time: new Date().toISOString() });
+  } catch {
+    sendJson(response, 503, { ok: false, storage: "unavailable" });
+  }
 }
 
 function readRequestJson(request, response, callback) {
@@ -187,15 +234,17 @@ function parseCookies(header = "") {
 }
 
 function sessionCookie(sessionId, maxAge = sessionMaxAgeSeconds) {
-  return `${sessionCookieName}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+  return `${sessionCookieName}=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureCookieSuffix}`;
 }
 
 function clearSessionCookie() {
-  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookieSuffix}`;
 }
 
 function createSession(userId) {
-  const sessions = readSessions().filter((session) => Date.parse(session.expiresAt || "") > Date.now());
+  const sessions = readSessions().filter(
+    (session) => Date.parse(session.expiresAt || "") > Date.now() && session.userId !== userId,
+  );
   const now = Date.now();
   const session = {
     id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString("hex"),
@@ -344,6 +393,122 @@ function safeId(value, fallback = "default") {
   return /^[a-zA-Z0-9_-]{3,80}$/.test(value || "") ? value : fallback;
 }
 
+const clientMutationQueues = new Map();
+
+function enqueueClientMutation(client, task) {
+  const previous = clientMutationQueues.get(client) || Promise.resolve();
+  const queued = previous.catch(() => {}).then(task);
+  clientMutationQueues.set(client, queued);
+  const cleanup = () => {
+    if (clientMutationQueues.get(client) === queued) clientMutationQueues.delete(client);
+  };
+  queued.then(cleanup, cleanup);
+  return queued;
+}
+
+function runClientMutation(client, response, task) {
+  enqueueClientMutation(client, task).catch((error) => {
+    console.error("Project mutation failed", error);
+    if (!response.headersSent) sendJson(response, 500, { ok: false, error: "Could not safely update project" });
+  });
+}
+
+function projectRevisionValue(project) {
+  const value = Number(project?.revision);
+  return Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+}
+
+function projectContentHash(project) {
+  const content = { ...(project || {}) };
+  for (const key of [
+    "baseRevision",
+    "clientId",
+    "clientSaveId",
+    "clientSavedAt",
+    "localSavedAt",
+    "revision",
+    "savedAt",
+    "serverSavedAt",
+    "storageId",
+    "syncPending",
+    "updatedAt",
+  ]) delete content[key];
+  return crypto.createHash("sha256").update(stableJson(content)).digest("hex");
+}
+
+function readProjectsIndexSync(client) {
+  const payload = readJsonFileSync(projectsIndexPath(client), { projects: [] });
+  return Array.isArray(payload.projects) ? payload.projects : [];
+}
+
+function writeProjectsIndexSync(client, projects) {
+  writeJsonFileSyncAtomic(projectsIndexPath(client), { client, projects });
+}
+
+function upsertProjectMetaSync(client, meta) {
+  const projects = readProjectsIndexSync(client);
+  const next = projects.filter((project) => project.id !== meta.id);
+  next.unshift(meta);
+  next.sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+  writeProjectsIndexSync(client, next);
+}
+
+function removeProjectMetaSync(client, projectId) {
+  writeProjectsIndexSync(client, readProjectsIndexSync(client).filter((project) => project.id !== projectId));
+}
+
+function archiveProjectVersionSync(client, projectId, project, reason = "save") {
+  if (!project || typeof project !== "object") return;
+  const directory = path.join(projectVersionsDir, client, projectId);
+  fs.mkdirSync(directory, { recursive: true });
+  const revision = String(projectRevisionValue(project)).padStart(8, "0");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const archivePath = path.join(directory, `${revision}-${stamp}-${safeId(reason, "save")}.json`);
+  writeJsonFileSyncAtomic(archivePath, { archivedAt: new Date().toISOString(), reason, project });
+
+  const versions = fs.readdirSync(directory)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .reverse();
+  for (const name of versions.slice(maxServerVersions)) {
+    fs.unlinkSync(path.join(directory, name));
+  }
+}
+
+function recoveryProjectForConflict(client, originalProjectId, incomingProject) {
+  const saveId = safeId(incomingProject.clientSaveId, `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const recoveryId = safeId(`recovery-${saveId}`.slice(0, 80), `recovery-${Date.now()}`);
+  const recoveryPath = projectFilePath(client, recoveryId);
+  const existing = readJsonFileSync(recoveryPath, null);
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
+  const originalName = String(incomingProject.name || "Без названия").slice(0, 52);
+  const recovery = {
+    ...incomingProject,
+    clientId: client,
+    projectId: recoveryId,
+    name: `${originalName} - восстановленная копия`.slice(0, 80),
+    createdAt: now,
+    updatedAt: now,
+    savedAt: now,
+    serverSavedAt: now,
+    revision: 1,
+    baseRevision: 1,
+    syncPending: false,
+    recoveredFrom: originalProjectId,
+  };
+  writeJsonFileSyncAtomic(recoveryPath, recovery);
+  upsertProjectMetaSync(client, projectSummary(recovery, { id: recoveryId }));
+  return recovery;
+}
+
 function clientFromUrl(url) {
   return safeId(url.searchParams.get("client"), "default");
 }
@@ -369,6 +534,7 @@ function projectSummary(project, fallback = {}) {
     name: String(project?.name || fallback.name || "Без названия").slice(0, 80),
     createdAt: project?.createdAt || fallback.createdAt || new Date().toISOString(),
     updatedAt: project?.savedAt || project?.updatedAt || fallback.updatedAt || new Date().toISOString(),
+    revision: projectRevisionValue(project),
     entityCount: entities.length,
     thumbnail: project?.thumbnail || fallback.thumbnail || null,
     legacy: Boolean(fallback.legacy),
@@ -476,6 +642,10 @@ function defaultProjectPayload(client, body = {}) {
     createdAt: source.createdAt || now,
     updatedAt: now,
     savedAt: now,
+    serverSavedAt: now,
+    revision: 1,
+    baseRevision: 1,
+    syncPending: false,
     theme: source.theme === "dark" ? "dark" : "light",
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
@@ -507,21 +677,13 @@ function handleProjectsApi(request, response, url) {
 
   if (url.pathname === "/api/projects" && request.method === "POST") {
     readRequestJson(request, response, (body) => {
-      const project = defaultProjectPayload(client, body);
-      const filePath = projectFilePath(client, project.projectId);
-      const tempPath = uniqueProjectFileTempPath(client, project.projectId);
-      writeJsonFileAtomic(filePath, project, tempPath, (writeError) => {
-        if (writeError) {
-          sendJson(response, 500, { ok: false, error: "Could not create project" });
-          return;
-        }
-        upsertProjectMeta(client, projectSummary(project, { id: project.projectId }), (indexError) => {
-          if (indexError) {
-            sendJson(response, 500, { ok: false, error: "Could not update project list" });
-            return;
-          }
-          sendJson(response, 200, { ok: true, client, project, meta: projectSummary(project, { id: project.projectId }) });
-        });
+      runClientMutation(client, response, () => {
+        const project = defaultProjectPayload(client, body);
+        const filePath = projectFilePath(client, project.projectId);
+        writeJsonFileSyncAtomic(filePath, project);
+        const meta = projectSummary(project, { id: project.projectId });
+        upsertProjectMetaSync(client, meta);
+        sendJson(response, 200, { ok: true, client, project, meta });
       });
     });
     return;
@@ -547,29 +709,71 @@ function handleProjectsApi(request, response, url) {
 
   if (request.method === "PUT" || request.method === "POST") {
     readRequestJson(request, response, (body) => {
-      const now = new Date().toISOString();
-      const project = {
-        ...body,
-        version: body.version || 2,
-        clientId: client,
-        projectId,
-        name: String(body.name || "Без названия").slice(0, 80),
-        createdAt: body.createdAt || now,
-        updatedAt: now,
-        savedAt: body.savedAt || now,
-      };
-      const tempPath = uniqueProjectFileTempPath(client, projectId);
-      writeJsonFileAtomic(filePath, project, tempPath, (writeError) => {
-        if (writeError) {
-          sendJson(response, 500, { ok: false, error: "Could not save project" });
+      runClientMutation(client, response, () => {
+        const current = readJsonFileSync(filePath, null);
+        if (!current) {
+          sendJson(response, 404, { ok: false, error: "Project not found", client, projectId });
           return;
         }
-        upsertProjectMeta(client, projectSummary(project, { id: projectId }), (indexError) => {
-          if (indexError) {
-            sendJson(response, 500, { ok: false, error: "Could not update project list" });
+
+        const currentRevision = projectRevisionValue(current);
+        const requestedRevision = Number(body.baseRevision ?? body.revision ?? currentRevision);
+        const baseRevision = Number.isFinite(requestedRevision) ? Math.floor(requestedRevision) : currentRevision;
+        if (baseRevision !== currentRevision) {
+          if (projectContentHash(body) === projectContentHash(current)) {
+            sendJson(response, 200, {
+              ok: true,
+              client,
+              projectId,
+              revision: currentRevision,
+              savedAt: current.savedAt,
+              deduplicated: true,
+              meta: projectSummary(current, { id: projectId }),
+            });
             return;
           }
-          sendJson(response, 200, { ok: true, client, projectId, meta: projectSummary(project, { id: projectId }) });
+          const recoveryProject = recoveryProjectForConflict(client, projectId, body);
+          sendJson(response, 409, {
+            ok: false,
+            code: "revision_conflict",
+            error: "A newer project revision already exists",
+            currentRevision,
+            recoveryProject,
+            recoveryMeta: projectSummary(recoveryProject, { id: recoveryProject.projectId }),
+          });
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const serverDocument = { ...body };
+        delete serverDocument.localSavedAt;
+        delete serverDocument.storageId;
+        const project = {
+          ...serverDocument,
+          version: body.version || 2,
+          clientId: client,
+          projectId,
+          name: String(body.name || "Без названия").slice(0, 80),
+          createdAt: body.createdAt || current.createdAt || now,
+          clientSavedAt: body.savedAt || body.clientSavedAt || now,
+          updatedAt: now,
+          savedAt: now,
+          serverSavedAt: now,
+          revision: currentRevision + 1,
+          baseRevision: currentRevision + 1,
+          syncPending: false,
+        };
+        archiveProjectVersionSync(client, projectId, current, "save");
+        writeJsonFileSyncAtomic(filePath, project);
+        const meta = projectSummary(project, { id: projectId });
+        upsertProjectMetaSync(client, meta);
+        sendJson(response, 200, {
+          ok: true,
+          client,
+          projectId,
+          revision: project.revision,
+          savedAt: project.savedAt,
+          meta,
         });
       });
     });
@@ -581,14 +785,17 @@ function handleProjectsApi(request, response, url) {
       sendJson(response, 400, { ok: false, error: "Legacy project cannot be deleted here" });
       return;
     }
-    fs.unlink(filePath, () => {
-      removeProjectMeta(client, projectId, (indexError) => {
-        if (indexError) {
-          sendJson(response, 500, { ok: false, error: "Could not update project list" });
-          return;
-        }
-        sendJson(response, 200, { ok: true, client, projectId });
-      });
+    runClientMutation(client, response, () => {
+      const project = readJsonFileSync(filePath, null);
+      if (project) {
+        archiveProjectVersionSync(client, projectId, project, "delete");
+        const directory = path.join(projectTrashDir, client);
+        fs.mkdirSync(directory, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.renameSync(filePath, path.join(directory, `${projectId}-${stamp}.json`));
+      }
+      removeProjectMetaSync(client, projectId);
+      sendJson(response, 200, { ok: true, client, projectId, recoverable: Boolean(project) });
     });
     return;
   }
@@ -686,3 +893,12 @@ server.listen(port, host, () => {
     }
   }
 });
+
+function shutdown(signal) {
+  console.log(`${signal}: finishing active requests`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
