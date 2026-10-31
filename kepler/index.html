@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kepler Plan</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <meta name="theme-color" content="#1f75ff" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+        <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
+        <div class="top-actions">
+          <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
+          <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
+          <button id="fitBtn" title="Вписать план в экран">Вписать</button>
+          <button id="newBtn" title="Начать новый проект">Новый</button>
+          <button id="sampleBtn" title="Загрузить демонстрационный план">Пример</button>
+          <button id="openBtn" title="Открыть файл .kepler.json">Открыть</button>
+          <input type="file" id="fileInput" accept=".json,application/json" hidden />
+          <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
+          <div class="export-wrap">
+            <button id="exportBtn" class="primary">Экспорт ▾</button>
+            <div class="export-dropdown" id="exportDropdown" hidden>
+              <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
+              <button data-export="dxf">DXF-чертёж</button>
+              <button data-export="dxf-revit">DXF со слоями для Revit</button>
+              <button data-export="copy">Копировать проект в буфер</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="status-strip" id="connectivityBar" hidden></div>
+
+      <main class="workspace">
+        <aside class="library">
+          <h2>Помещения</h2>
+          <p class="hint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
+          <div class="room-cards" id="roomCards"></div>
+        </aside>
+
+        <section class="canvas-wrap">
+          <canvas id="canvas"></canvas>
+          <div class="canvas-hint" id="canvasHint" hidden></div>
+          <div class="zoom-controls">
+            <button id="zoomInBtn" title="Приблизить">+</button>
+            <button id="zoomOutBtn" title="Отдалить">−</button>
+          </div>
+          <div class="statusbar">
+            <span id="cursorPos"></span>
+            <span id="scaleInfo"></span>
+          </div>
+        </section>
+
+        <aside class="props" id="propsPanel"></aside>
+      </main>
+    </div>
+
+    <div id="toast" role="status"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
