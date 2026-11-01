@@ -23,13 +23,20 @@ export function createSite() {
     neighbors: [], // [{id, x, y, w, h, height}] — соседние дома (прямоугольники)
     entry: null, // {x, y, angle} — въезд на участок (на границе)
     underlay: null, // {srcId, x, y, mmPerPx, opacity, locked, widthPx, heightPx}
+    norms: { day: null, hours: null }, // норма инсоляции: null — по широте (core/insolation.js)
   };
 }
 
 export function ensureSite(project) {
   if (!project.site) project.site = createSite();
   const d = createSite();
-  project.site = { ...d, ...project.site, location: { ...d.location, ...(project.site.location || {}) }, sun: { ...d.sun, ...(project.site.sun || {}) } };
+  project.site = {
+    ...d,
+    ...project.site,
+    location: { ...d.location, ...(project.site.location || {}) },
+    sun: { ...d.sun, ...(project.site.sun || {}) },
+    norms: { ...d.norms, ...(project.site.norms || {}) },
+  };
   return project.site;
 }
 

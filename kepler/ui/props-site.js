@@ -1,8 +1,10 @@
 // Панель свойств в режиме «Участок»: настройки участка и его объекты.
 
+import { insolationZone } from '../core/insolation.js';
 import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
 import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
+import { bindNormLinks, normsSection } from './norms-view.js';
 import { deleteSelection } from './plan-actions.js';
 import { setBuildingRotation } from './site-actions.js';
 import { state } from './state.js';
@@ -33,6 +35,7 @@ export function renderSiteSettings(panel) {
   const site = state.project.site;
   const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
   const zone = site.boundary ? buildZonePolygon(site) : null;
+  const auto = insolationZone(site.location.lat);
   const hours = Math.floor(site.sun.time / 60);
   const mins = site.sun.time % 60;
   panel.innerHTML = `
@@ -71,7 +74,15 @@ export function renderSiteSettings(panel) {
       <label class="prop-field"><span>Время: <b id="sunTimeLabel">${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</b></span>
         <input id="sunTime" type="range" min="0" max="1440" step="15" value="${site.sun.time}"></label>
       <div class="prop-row"><span>Солнце</span><strong id="sunInfo">${formatSunInfo(sun)}</strong></div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Норма инсоляции, ч</span>
+          <input id="normHours" type="number" step="0.5" min="0.5" placeholder="${auto.hours}" value="${site.norms?.hours ?? ''}"></label>
+        <label class="prop-field"><span>Расчётный день</span>
+          <input id="normDay" placeholder="ММ-ДД: ${auto.day}" value="${site.norms?.day ?? ''}"></label>
+      </div>
+      <p class="empty-hint">Пусто — по широте участка: ${auto.zone} зона, ${String(auto.hours).replace('.', ',')} ч на ${auto.day.split('-').reverse().join('.')} (СанПиН). Часы по комнатам видны на плане при включённом солнце.</p>
     </div>
+    ${normsSection()}
     <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. В этом режиме север всегда вверх; вернитесь в «План» — камера станет прежней.</p>`;
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
@@ -106,10 +117,19 @@ export function renderSiteSettings(panel) {
     ['sunDate', (v) => { if (/^\d{4}-\d{2}-\d{2}$/.test(v)) site.sun.date = v; }],
   ]) {
     panel.querySelector(`#${id}`).addEventListener('change', (e) => {
-      tweak(() => apply(e.target.value));
+      mutate(() => apply(e.target.value));
       updateSun();
     });
   }
+  panel.querySelector('#normHours').addEventListener('change', (e) => {
+    const v = Number(String(e.target.value).replace(',', '.'));
+    mutate(() => { site.norms = { ...site.norms, hours: v > 0 ? v : null }; });
+  });
+  panel.querySelector('#normDay').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    mutate(() => { site.norms = { ...site.norms, day: /^\d\d-\d\d$/.test(v) ? v : null }; });
+  });
+  bindNormLinks(panel);
   panel.querySelector('#sunTime').addEventListener('input', (e) => {
     tweak(() => { site.sun.time = Number(e.target.value); });
     const h = Math.floor(site.sun.time / 60);

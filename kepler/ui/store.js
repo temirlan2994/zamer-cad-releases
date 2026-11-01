@@ -1,6 +1,7 @@
 // Изменения проекта: транзакции с историей, отмена/повтор, автосохранение.
 
 import { arrangeRoom } from '../core/furnish.js';
+import { normsReport } from '../core/norms.js';
 import {
   deserializeProject, levelBelow, levelProject, roomById, serializeProject,
 } from '../core/model.js';
@@ -55,9 +56,20 @@ export function tweak(fn) {
   requestDraw();
 }
 
+// Нормы (инсоляция, площади, свет, высота) — пересчёт после изменений.
+export function refreshNorms() {
+  try {
+    state.norms = normsReport(state.project);
+  } catch (error) {
+    state.norms = null;
+    console.error('Нормы не посчитались:', error);
+  }
+}
+
 export function afterChange() {
   syncUnderlayImage();
   updateConnectivity();
+  refreshNorms();
   renderProps();
   updateDimModeBtn();
   renderLevelBar();

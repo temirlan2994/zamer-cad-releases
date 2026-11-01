@@ -11,6 +11,7 @@ import {
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
+import { formatDuration } from './core/insolation.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -32,6 +33,7 @@ function cssTokens(style = getComputedStyle(document.documentElement)) {
     accent2: token('--accent-2', '#1db4a8'),
     hover: token('--hover', '#1d4ed8'),
     danger: token('--danger', '#e14b4b'),
+    ok: token('--ok-text', '#0e7a4e'),
     wall: token('--wall-fill', '#39434f'),
     wallBearing: token('--wall-bearing', '#1d242c'),
     furniture: token('--furniture', '#5b6b7e'),
@@ -1240,6 +1242,13 @@ function drawRoomLabel(ctx, state, room, w2s, tokens) {
   ctx.fillStyle = tokens.muted;
   ctx.font = '12px system-ui, sans-serif';
   ctx.fillText(`${area.toFixed(1)} м²`, center.x, center.y + 13);
+  // Инсоляция комнаты (при включённом солнце): зелёным — жилая в норме.
+  const ins = state.project.site?.sun?.enabled ? state.norms?.insolation.rooms.find((r) => r.id === room.id) : null;
+  if (ins && (ins.living || ins.windows)) {
+    ctx.fillStyle = ins.living ? (ins.meets ? tokens.ok : tokens.danger) : tokens.muted;
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.fillText(`☀ ${ins.windows ? formatDuration(ins.longest) : 'нет окон'}`, center.x, center.y + 29);
+  }
 }
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
