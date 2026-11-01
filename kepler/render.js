@@ -295,22 +295,40 @@ export function createRenderer(canvas) {
 }
 
 function drawGrid(ctx, box, scale, px, tokens) {
-  const minor = 500;
-  const major = 1000;
+  // Адаптивный шаг: промежуточная клетка не мельче ~9 px на экране; главная
+  // линия — каждая пятая. Промежуточные тоньше и прозрачнее, главные пожирнее.
+  const steps = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+  let minor = steps[steps.length - 1];
+  for (const s of steps) { if (s * scale >= 9) { minor = s; break; } }
+  const major = minor * 5;
+
+  const line = (fromX, fromY, toX, toY) => {
+    ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke();
+  };
+
+  // Промежуточные линии (пропускаем те, что попадают на главные).
+  ctx.strokeStyle = tokens.grid;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = px(0.6);
+  let sx = Math.floor(box.minX / minor) * minor;
+  for (let x = sx; x <= box.maxX; x += minor) {
+    if (Math.round(x) % major === 0) continue;
+    line(x, box.minY, x, box.maxY);
+  }
+  let sy = Math.floor(box.minY / minor) * minor;
+  for (let y = sy; y <= box.maxY; y += minor) {
+    if (Math.round(y) % major === 0) continue;
+    line(box.minX, y, box.maxX, y);
+  }
+
+  // Главные линии — чётче.
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = tokens.gridMajor;
   ctx.lineWidth = px(1);
-  const useMinor = minor * scale >= 9;
-  const step = useMinor ? minor : major;
-  if (major * scale < 3) return;
-  const startX = Math.floor(box.minX / step) * step;
-  const startY = Math.floor(box.minY / step) * step;
-  for (let x = startX; x <= box.maxX; x += step) {
-    ctx.strokeStyle = x % major === 0 ? tokens.gridMajor : tokens.grid;
-    ctx.beginPath(); ctx.moveTo(x, box.minY); ctx.lineTo(x, box.maxY); ctx.stroke();
-  }
-  for (let y = startY; y <= box.maxY; y += step) {
-    ctx.strokeStyle = y % major === 0 ? tokens.gridMajor : tokens.grid;
-    ctx.beginPath(); ctx.moveTo(box.minX, y); ctx.lineTo(box.maxX, y); ctx.stroke();
-  }
+  sx = Math.floor(box.minX / major) * major;
+  for (let x = sx; x <= box.maxX; x += major) line(x, box.minY, x, box.maxY);
+  sy = Math.floor(box.minY / major) * major;
+  for (let y = sy; y <= box.maxY; y += major) line(box.minX, y, box.maxX, y);
 }
 
 // --- Участок: слой под домом (дороги, запретные зоны, соседи, тени) ---
