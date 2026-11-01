@@ -8,7 +8,7 @@ import { nearestPointOnPolyline } from '../core/site.js';
 import { clampOpeningOffset, openingRect, sideEdge } from '../core/walls.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
-  itemCorners, neighborCorners, rotateVec, underlayCenter, underlayHandles,
+  itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
 import { canvas, el, refs, toast } from './dom.js';
@@ -17,6 +17,7 @@ import {
   hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
+import { closeLibrarySheet } from './mobile.js';
 import {
   addFurnitureAt, bringRoomToTop, computeOpeningParams, overlappingTopRooms, placeOpeningAt,
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
@@ -30,10 +31,47 @@ import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from 
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
-  pointerScreen, pointerWorld, requestDraw, screenToPlan, worldToPlan, worldToScreen, zoomAt,
+  pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, worldToPlan, worldToScreen, zoomAt,
 } from './view.js';
 
 let drag = null;
+// Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
+const touches = new Map();
+
+// Второй палец: всё начатое одним пальцем отменяется, начинается щипок.
+function startPinch() {
+  if (drag?.before && drag.moved) restoreFrom(drag.before);
+  state.marquee = null;
+  state.ghost = null;
+  state.guides = [];
+  const [a, b] = [...touches.values()];
+  drag = {
+    kind: 'pinch',
+    dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+    mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    view: { ...state.view },
+  };
+  requestDraw();
+}
+
+// Щипок: масштаб по расстоянию между пальцами, сдвиг — за серединой; точка
+// под серединой в начале жеста остаётся под пальцами.
+function movePinch() {
+  const pts = [...touches.values()];
+  if (pts.length < 2) return;
+  const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+  const v0 = drag.view;
+  const anchor = unprojectPoint(v0, drag.mid.x, drag.mid.y);
+  state.view.scale = Math.min(0.6, Math.max(0.004, (v0.scale * dist) / drag.dist));
+  const p = projectPoint({ ...state.view, panX: 0, panY: 0 }, anchor.x, anchor.y);
+  state.view.panX = mid.x - p.x;
+  state.view.panY = mid.y - p.y;
+  refs.statusScale.textContent = scaleLabel();
+  positionCalInput();
+  if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
+  requestDraw();
+}
 
 // Инструмент «Въезд» активен: клик создаёт въезд (если нет) и сразу тянет
 // его по границе; существующий — просто тянется.
@@ -250,6 +288,13 @@ export function bindCanvasInput() {
   });
   canvas.addEventListener('pointerdown', (event) => {
     const screen = pointerScreen(event);
+    state.coarsePointer = event.pointerType === 'touch';
+    closeLibrarySheet(); // телефон: нажали на план — библиотека уезжает
+    if (event.pointerType === 'touch') {
+      touches.set(event.pointerId, screen);
+      if (touches.size === 2) { canvas.setPointerCapture(event.pointerId); startPinch(); return; }
+      if (touches.size > 2) return;
+    }
     const world = pointerWorld(event); // участок — координаты съёмки
     const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
@@ -427,13 +472,19 @@ export function bindCanvasInput() {
       return;
     }
 
-    // Пустое место: рамка выделения левой кнопкой.
+    // Пустое место: пальцем — панорама, мышью — рамка выделения.
     selectObject(null);
+    if (event.pointerType === 'touch') {
+      drag = { kind: 'pan', start: screen, view: { ...state.view } };
+      return;
+    }
     drag = { kind: 'marquee', start: screen };
     state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y };
   });
   canvas.addEventListener('pointermove', (event) => {
     const screen = pointerScreen(event);
+    if (event.pointerType === 'touch' && touches.has(event.pointerId)) touches.set(event.pointerId, screen);
+    if (drag?.kind === 'pinch') { movePinch(); return; }
     const world = pointerWorld(event);
     const plan = worldToPlan(world);
     // В «Плане» — координаты в осях дома, в «Участке» — координаты съёмки.
@@ -727,7 +778,12 @@ export function bindCanvasInput() {
       requestDraw();
     }
   });
-  canvas.addEventListener('pointerup', () => {
+  canvas.addEventListener('pointerup', (event) => {
+    touches.delete(event.pointerId);
+    if (drag?.kind === 'pinch') {
+      if (touches.size < 2) { drag = null; requestDraw(); }
+      return;
+    }
     if (!drag) return;
     const finished = drag;
     drag = null;
@@ -797,6 +853,15 @@ export function bindCanvasInput() {
       afterChange();
       return;
     }
+    requestDraw();
+  });
+  canvas.addEventListener('pointercancel', (event) => {
+    touches.delete(event.pointerId);
+    if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) restoreFrom(drag.before);
+    drag = null;
+    state.marquee = null;
+    state.ghost = null;
+    state.guides = [];
     requestDraw();
   });
   canvas.addEventListener('dblclick', () => {

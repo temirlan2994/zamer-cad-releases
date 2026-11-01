@@ -5,7 +5,7 @@ import { canvas, el, refs, toast } from './dom.js';
 import { handleExport, loadSample, openProjectFile } from './files.js';
 import { applyLibraryTab } from './library.js';
 import { setEditorMode } from './modes.js';
-import { setBuildingRotation } from './site-actions.js';
+import { finishDraft, setBuildingRotation } from './site-actions.js';
 import { closeStartMenu, openStartMenu, requestNewProject } from './start-menu.js';
 import { state } from './state.js';
 import { mutate, redo, tweak, undo } from './store.js';
@@ -60,6 +60,7 @@ export function bindToolbar() {
     if (el('wallAddWindow').disabled) return;
     if (state.selection?.type === 'wall') startPlaceOpening('window', { key: state.selection.key, from: state.selection.from });
   });
+  el('draftDone').addEventListener('click', () => finishDraft());
   el('calInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); applyCalibration(Number(el('calInput').value)); }
     else if (e.key === 'Escape') { e.preventDefault(); hideCalInput(); toast('Калибровка отменена'); }

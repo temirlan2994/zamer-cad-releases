@@ -69,6 +69,9 @@ export function requestDraw() {
   requestAnimationFrame(() => {
     drawQueued = false;
     renderer.draw(state);
+    // «Готово» видна, пока чертится ломаная (на телефоне нет Enter).
+    const done = document.getElementById('draftDone');
+    if (done) done.hidden = !state.draft;
   });
 }
 

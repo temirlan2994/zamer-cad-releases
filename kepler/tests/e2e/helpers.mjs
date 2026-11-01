@@ -5,13 +5,16 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 // Поднимает приложение: сервер на свободном порту + Chromium.
 // Страница открывается с ?debug=1 — тестам нужен window.__kepler
 // (без флага отладочный API не публикуется).
-export async function startApp({ width = 1280, height = 820, debug = true } = {}) {
+// mobile: true — телефон (390×844, касания, isMobile).
+export async function startApp({ width = 1280, height = 820, debug = true, mobile = false } = {}) {
   const server = createServer();
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
   // с кириллицей в имени как «download» (имя нельзя перевести в кодировку ФС).
   const browser = await chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } });
-  const page = await browser.newPage({ viewport: { width, height } });
+  const page = mobile
+    ? await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage()
+    : await browser.newPage({ viewport: { width, height } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });

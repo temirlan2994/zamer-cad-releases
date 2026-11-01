@@ -7,6 +7,7 @@ import { findWall } from './hit.js';
 import { renderLibrary } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
+import { closeLibrarySheet } from './mobile.js';
 import { planToScreen, requestDraw } from './view.js';
 
 export function selectObject(selection) {
@@ -73,6 +74,7 @@ export function cancelTool() {
 }
 
 export function startPlaceRoom(type) {
+  closeLibrarySheet(); // телефон: освободить план для касания
   setTool({ kind: 'place-room', type }, `Кликните на плане, чтобы разместить «${roomType(type).title}» · Esc — отмена`);
   state.selection = null;
   renderProps();

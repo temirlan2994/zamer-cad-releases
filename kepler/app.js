@@ -12,6 +12,7 @@ import { refs } from './ui/dom.js';
 import { bindCanvasInput } from './ui/input.js';
 import { bindKeyboard } from './ui/keyboard.js';
 import { renderLevelBar } from './ui/levels.js';
+import { bindMobile } from './ui/mobile.js';
 import { applyLibraryTab, renderFurnitureBar, renderLibrary } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
 import { renderProps } from './ui/props.js';
@@ -28,6 +29,7 @@ import { bindView, fitView, requestDraw, scaleLabel } from './ui/view.js';
 bindCanvasInput();
 bindKeyboard();
 bindToolbar();
+bindMobile();
 bindView();
 bindTheme();
 

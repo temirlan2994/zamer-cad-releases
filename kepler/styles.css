@@ -523,6 +523,25 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .cal-overlay .cal-unit { font-weight: 600; }
 
+/* --- Нижняя панель телефона: на больших экранах скрыта --- */
+.mobile-bar { display: none; }
+
+/* --- «Готово» при черчении ломаной (палец, нет Enter) --- */
+.draft-done {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
 /* --- Этажи: переключатель в левом нижнем углу холста --- */
 .level-bar {
   position: absolute;
@@ -818,12 +837,66 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   .props { width: 220px; padding: 10px; }
   .topbar { gap: 6px; }
 }
+/* --- Телефон: холст во весь экран, панели выезжают снизу (ui/mobile.js) --- */
 @media (max-width: 640px) {
-  .workspace { flex-direction: column; }
-  .library { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); flex: none; max-height: 46vh; }
-  .library-top { flex: 0 0 auto; max-height: 40%; }
-  .room-cards { flex-direction: row; flex-wrap: wrap; }
-  .props { width: 100%; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; }
+  html, body { overscroll-behavior: none; }
+  .app { height: 100dvh; }
+  .topbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 10px; scrollbar-width: none; }
+  .topbar::-webkit-scrollbar { display: none; }
+  .topbar > *, .top-actions > * { flex: none; }
+  .top-actions { flex-wrap: nowrap; }
+  .brand small { display: none; }
+  .project-name { flex: none; width: 130px; min-width: 0; }
+  /* clip — не контейнер прокрутки: спрятанные панели не дают её даже программно */
+  .workspace { position: relative; overflow: hidden; overflow: clip; }
+  .canvas-wrap { flex: 1; min-width: 0; }
+  .library, .props {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    width: auto;
+    max-height: 58%;
+    overflow: auto;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -12px 30px rgba(24, 32, 43, 0.18);
+    transform: translateY(110%);
+    visibility: hidden;
+    pointer-events: none; /* уезжающая панель не перехватывает касания */
+    transition: transform 0.2s ease, visibility 0s linear 0.2s; /* скрыть — после выезда */
+  }
+  body.sheet-library .library, body.sheet-props .props {
+    transform: none;
+    visibility: visible;
+    pointer-events: auto;
+    transition: transform 0.2s ease, visibility 0s; /* показать — сразу */
+  }
+  .mobile-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .mobile-bar button { flex: 1; height: 40px; border-radius: 10px; font-weight: 600; }
+  .mobile-bar button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .mobile-bar button.dot::after {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: middle;
+  }
+  .mobile-bar button.active.dot::after { background: #fff; }
+  .zoom-controls { display: none; } /* масштаб — щипком */
+  .level-bar { left: 8px; bottom: 30px; }
+  .status-strip { max-width: calc(100% - 80px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

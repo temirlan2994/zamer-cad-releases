@@ -8,6 +8,7 @@ import { MAX_SHARED_GAP, clampOpeningOffset, deriveWalls, openingRect } from '..
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
+import { syncMobileBar } from './mobile.js';
 import { bindNormLinks, normsSection, roomNormsBlock } from './norms-view.js';
 import {
   addFurniture, changeWallThickness, deleteSelection, overlappingTopRooms, reconcileOpenings,
@@ -22,6 +23,7 @@ import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './st
 import { selectObject, startPlaceOpening } from './tools.js';
 
 export function renderProps() {
+  syncMobileBar();
   const sel = state.selection;
   const panel = refs.props;
   if (!sel) {

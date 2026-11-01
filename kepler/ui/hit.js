@@ -11,13 +11,16 @@ import {
 import { state } from './state.js';
 import { planToScreen, worldToScreen } from './view.js';
 
+// Допуск попадания по ручкам: палец (сенсор) — крупнее, мышь — по ручке.
+const tol = () => (state.coarsePointer ? 22 : HANDLE_SIZE);
+
 export function hitRoomHandle(screen) {
   if (state.selection?.type !== 'room') return null;
   const room = roomById(state.project, state.selection.id);
   if (!room) return null;
   for (const handle of roomHandles(room)) {
     const p = planToScreen(handle.x, handle.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { room, handle: handle.id };
     }
   }
@@ -30,7 +33,7 @@ export function hitOpeningHandle(screen) {
   if (!opening) return null;
   for (const handle of openingHandles(state.project, opening, state.walls)) {
     const p = planToScreen(handle.x, handle.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { opening, end: handle.end };
     }
   }
@@ -44,11 +47,11 @@ export function hitUnderlayHandle(screen) {
   // Круги вращения — чуть снаружи углов (проверяем раньше квадратов).
   for (const r of underlayRotators(site.underlay, 22, state.view.scale)) {
     const p = worldToScreen(r.x, r.y);
-    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
   }
   for (const handle of underlayHandles(site.underlay)) {
     const p = worldToScreen(handle.x, handle.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { mode: 'resize', corner: handle.id };
     }
   }
@@ -61,11 +64,11 @@ export function hitItemHandle(screen) {
   if (!item) return null;
   for (const r of itemRotators(item, 20, state.view.scale)) {
     const p = planToScreen(r.x, r.y);
-    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
   }
   for (const c of itemCorners(item)) {
     const p = planToScreen(c.x, c.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { mode: 'resize', corner: c.id };
     }
   }
@@ -79,11 +82,11 @@ export function hitNeighborHandle(screen) {
   // Круги вращения — чуть снаружи углов (проверяем раньше квадратов).
   for (const r of neighborRotators(n, 22, state.view.scale)) {
     const p = worldToScreen(r.x, r.y);
-    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
   }
   for (const c of neighborCorners(n)) {
     const p = worldToScreen(c.x, c.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { mode: 'resize', corner: c.id };
     }
   }
@@ -100,7 +103,7 @@ export function hitSiteVertex(screen) {
   if (!points) return null;
   for (let i = 0; i < points.length; i += 1) {
     const p = worldToScreen(points[i].x, points[i].y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
       return { kind: sel.kind, id: sel.id, index: i, points };
     }
   }
