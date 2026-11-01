@@ -4,7 +4,6 @@
 
 import { deriveWalls, doorSymbol, openingRect } from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
-import { itemRect } from './core/furnish.js';
 import { roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
@@ -1197,22 +1196,6 @@ function drawRoomLabel(ctx, state, room, w2s, tokens) {
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
 // стенами — снаружи. Невыбранные комнаты рисуются полупрозрачно.
-// Занята ли сторона комнаты соседней комнатой (есть что-то снаружи вплотную).
-function sideOccupied(project, room, side) {
-  const depth = 700;
-  let strip;
-  if (side === 0) strip = { x: room.x + 10, y: room.y - depth, w: room.w - 20, h: depth };
-  else if (side === 2) strip = { x: room.x + 10, y: room.y + room.h, w: room.w - 20, h: depth };
-  else if (side === 3) strip = { x: room.x - depth, y: room.y + 10, w: depth, h: room.h - 20 };
-  else strip = { x: room.x + room.w, y: room.y + 10, w: depth, h: room.h - 20 };
-  for (const o of project.rooms) {
-    if (o.id === room.id || o.parentId) continue;
-    if (strip.x + strip.w > o.x + 1 && o.x + o.w > strip.x + 1
-      && strip.y + strip.h > o.y + 1 && o.y + o.h > strip.y + 1) return true;
-  }
-  return false;
-}
-
 function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   ctx.lineWidth = 1;
   ctx.font = '10px system-ui, sans-serif';
@@ -1290,9 +1273,9 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       const len = Math.round(edge.to - edge.from);
       if (len < 400) continue;
       // Направление наружу и проверка, что за ребром нет здания (внешняя сторона).
-      let external = false;
-      let chainPerp = 0;
-      let dir = { x: 0, y: 0 };
+      let external;
+      let chainPerp;
+      let dir;
       if (horiz && edge.inSide === 1) { // верхняя сторона (наружу вверх)
         external = !rects.some((r) => overlap(r.x, r.x + r.w, edge.from, edge.to) && r.y < edge.at - 1);
         chainPerp = bb.minY - outOff; dir = { x: 0, y: -1 };
@@ -1324,26 +1307,6 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     }
     ctx.globalAlpha = 1;
   }
-}
-
-// Габарит комнаты вместе с её стенами (по полотнам стен).
-function roomOuterRect(room, walls) {
-  let minX = room.x;
-  let minY = room.y;
-  let maxX = room.x + room.w;
-  let maxY = room.y + room.h;
-  for (const wall of walls) {
-    if (!wall.rooms.includes(room.id)) continue;
-    minX = Math.min(minX, wall.band.x);
-    minY = Math.min(minY, wall.band.y);
-    maxX = Math.max(maxX, wall.band.x + wall.band.w);
-    maxY = Math.max(maxY, wall.band.y + wall.band.h);
-  }
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-}
-
-function flipN(n) {
-  return { x: -n.x, y: -n.y };
 }
 
 // Ручки на торцах проёма (на осевой линии стены).
@@ -1381,7 +1344,6 @@ export function neighborCorners(n) {
 
 // Точки круглых ручек вращения — вынесены наружу от каждого угла по диагонали.
 export function neighborRotators(n, outPx, scale) {
-  const rot = n.rot || 0;
   const out = outPx / scale;
   return neighborCorners(n).map((c) => {
     const dx = c.x - n.x;
@@ -1549,13 +1511,6 @@ function drawHandleSquare(ctx, p, tokens) {
   ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
   ctx.fill();
   ctx.stroke();
-}
-
-function normal(p, q) {
-  const dx = q.x - p.x;
-  const dy = q.y - p.y;
-  const len = Math.hypot(dx, dy) || 1;
-  return { x: dy / len, y: -dx / len };
 }
 
 function drawDim(ctx, p, q, n, off, label) {

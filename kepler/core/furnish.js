@@ -450,7 +450,6 @@ export function arrangeRoom(project, room, walls) {
   }
 
   // Парные предметы: к кровати/столу, по свободным местам рядом.
-  const usedPairSlots = new Map(); // anchorKind -> занятые индексы
   for (const def of pairQueue) {
     const anchorKind = def.rules.pairWith.find((k) => anchors[k]);
     if (!anchorKind) {

@@ -102,3 +102,29 @@ test('ближайшая точка на границе — для въезда'
   assert.equal(Math.round(near.x), 10000);
   assert.ok(Math.abs(near.angle) < 1); // верхнее ребро горизонтально
 });
+
+// --- Буфер соседа поворачивается вместе с домом ---
+import { neighborBuffers } from '../core/site.js';
+
+test('буфер соседнего дома — повёрнутый полигон', () => {
+  const site = { setbackNeighbor: 6000, neighbors: [{ id: 'n', x: 0, y: 0, w: 10000, h: 6000, rot: 30 }] };
+  const [buf] = neighborBuffers(site);
+  assert.equal(buf.poly.length, 4);
+  // Сторона буфера = сторона дома + 2 отступа, и она повёрнута на 30°.
+  const [a, b] = buf.poly;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  assert.ok(Math.abs(len - 22000) < 1, `длина ${len}`);
+  const ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+  assert.ok(Math.abs(ang - 30) < 1e-6, `угол ${ang}`);
+});
+
+test('проверка застройки учитывает повёрнутый буфер (SAT)', () => {
+  const boundary = [{ x: -60000, y: -60000 }, { x: 60000, y: -60000 }, { x: 60000, y: 60000 }, { x: -60000, y: 60000 }];
+  const site = { boundary, setbackBoundary: 1500, setbackNeighbor: 6000, neighbors: [{ id: 'n', x: 0, y: 0, w: 10000, h: 6000, rot: 45 }] };
+  // Прямоугольник у угла AABB, но вне повёрнутого буфера — допустим.
+  const farCorner = checkRectBuildable(site, { x: 9000, y: 9000, w: 2000, h: 2000 });
+  assert.equal(farCorner.ok, true, farCorner.reason);
+  // Прямоугольник рядом с центром — внутри буфера.
+  const near = checkRectBuildable(site, { x: 2000, y: -1000, w: 2000, h: 2000 });
+  assert.equal(near.ok, false);
+});

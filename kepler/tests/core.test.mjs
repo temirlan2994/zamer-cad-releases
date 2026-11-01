@@ -375,3 +375,47 @@ test('dxfToImage: точки-марки + выброс при малом чис�
   assert.ok(info.worldWidthM < 100, `ширина ~десятки м, получено ${info.worldWidthM}`);
   assert.equal(info.reliableScale, true);
 });
+
+// --- Мягкое предупреждение вместо запрета у границы застройки ---
+test('вне зоны застройки — ok с предупреждением', () => {
+  const p = createProject('t');
+  p.site = { boundary: [{ x: 0, y: 0 }, { x: 20000, y: 0 }, { x: 20000, y: 20000 }, { x: 0, y: 20000 }], setbackBoundary: 1500, setbackNeighbor: 6000, neighbors: [] };
+  const inside = validateRoomPlacement(p, { x: 5000, y: 5000, w: 4000, h: 3000, parentId: null }, null);
+  assert.equal(inside.ok, true);
+  assert.equal(inside.warning, undefined);
+  const edge = validateRoomPlacement(p, { x: 200, y: 5000, w: 4000, h: 3000, parentId: null }, null);
+  assert.equal(edge.ok, true);
+  assert.match(edge.warning, /границу застройки/);
+});
+
+// --- Заплатка выравнивания стен не заходит в интерьер ---
+test('диагонально смещённые комнаты: нет заплаток внутри помещений', () => {
+  const p = createProject('t');
+  p.rooms.push(createRoom('living', 0, 0, 5000, 4200), createRoom('kitchen', 5100, 2600, 3600, 3000));
+  const walls = deriveWalls(p);
+  for (const w of walls.filter((x) => x.kind === 'chamfer')) {
+    for (const r of p.rooms) {
+      const ox = Math.min(w.band.x + w.band.w, r.x + r.w) - Math.max(w.band.x, r.x);
+      const oy = Math.min(w.band.y + w.band.h, r.y + r.h) - Math.max(w.band.y, r.y);
+      assert.ok(!(ox > 10 && oy > 10), `заплатка ${JSON.stringify(w.band)} внутри ${r.type}`);
+    }
+  }
+});
+
+// --- DXF: INSERT разворачивается с масштабом и поворотом ---
+test('parseDxf: INSERT с масштабом 2 и поворотом 90°', () => {
+  const dxf = [
+    '0', 'SECTION', '2', 'BLOCKS',
+    '0', 'BLOCK', '2', 'B', '10', '0', '20', '0',
+    '0', 'CIRCLE', '10', '5', '20', '5', '40', '3',
+    '0', 'ENDBLK', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'INSERT', '2', 'B', '10', '300', '20', '200', '41', '2', '42', '2', '50', '90',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+  const { entities } = parseDxf(dxf);
+  const c = entities.find((e) => e.type === 'circle');
+  assert.ok(c);
+  assert.ok(Math.abs(c.cx - 290) < 1e-6 && Math.abs(c.cy - 210) < 1e-6, `центр ${c.cx},${c.cy}`);
+  assert.equal(c.r, 6);
+});

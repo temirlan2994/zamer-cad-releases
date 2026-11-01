@@ -358,7 +358,6 @@ function extendOwnCorners(walls, roomsById) {
 
 // Сегмент стены, на котором лежит сторона/offset (для проёмов).
 export function wallAt(walls, roomId, side, offset) {
-  const room = { id: roomId };
   for (const wall of walls) {
     const wallSide = wall.sides?.[roomId];
     if (wallSide !== side) continue;
