@@ -7,7 +7,9 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 export async function startApp({ width = 1280, height = 820 } = {}) {
   const server = createServer();
   const port = await listen(server);
-  const browser = await chromium.launch();
+  // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
+  // с кириллицей в имени как «download» (имя нельзя перевести в кодировку ФС).
+  const browser = await chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } });
   const page = await browser.newPage({ viewport: { width, height } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
