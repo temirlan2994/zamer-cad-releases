@@ -920,6 +920,20 @@ const GLYPH_ALIAS = {
   'fridge-side': 'fridge', dryer: 'washer', dishwasher: 'washer', boiler: 'fridge',
   'coffee-table-2': 'pouf', 'car-suv': 'car', 'garden-lounger': 'bench',
   treadmill: 'workbench', sofa: 'sofa',
+  // Дополнительный каталог → базовые обозначения.
+  daybed: 'bench', recliner: 'armchair', 'bean-bag': 'pouf', 'sofa-bed': 'sofa',
+  'bed-queen': 'bed-double', 'desk-l': 'desk', 'bar-table': 'table-round',
+  'folding-chair': 'chair', 'gaming-chair': 'armchair', 'shelf-open': 'bookcase',
+  'display-cabinet': 'wardrobe', chest: 'dresser', oven: 'stove', 'kitchen-corner': 'kitchen-row',
+  pantry: 'fridge', 'washbasin-double': 'sink', jacuzzi: 'bath', urinal: 'toilet',
+  hood: 'tv-stand', 'ac-unit': 'tv', chandelier: 'floor-lamp', curtain: 'tv',
+  'rug-round': 'table-round', 'office-desk': 'desk', 'conference-table': 'dining-table',
+  'filing-cabinet': 'dresser', safe: 'washer', printer: 'tv-stand',
+  'kids-bed': 'bed-single', 'changing-table': 'dresser', 'toy-box': 'chest', 'kids-desk': 'desk',
+  'exercise-bike': 'motorcycle', 'weight-bench': 'bench', 'yoga-mat': 'rug',
+  'ping-pong': 'dining-table', 'umbrella-stand': 'column', bicycle: 'motorcycle',
+  trampoline: 'pool', 'hot-tub': 'bbq', gazebo: 'pool', sandbox: 'rug',
+  microwave: 'tv-stand',
 };
 
 // Условные обозначения мебели (вид сверху), центр в (0,0), размеры w×h мм.

@@ -20,6 +20,9 @@ export const FURNITURE_CATEGORIES = [
   { id: 'bath', title: 'Санузел' },
   { id: 'appliance', title: 'Техника' },
   { id: 'decor', title: 'Декор и свет' },
+  { id: 'office', title: 'Кабинет' },
+  { id: 'kids', title: 'Детская' },
+  { id: 'gym', title: 'Спорт' },
   { id: 'hall', title: 'Прихожая' },
   { id: 'outdoor', title: 'Улица и гараж' },
   { id: 'misc', title: 'Разное' },
@@ -137,7 +140,78 @@ export const FURNITURE = {
   // --- Разное ---
   box: { title: 'Прямоугольный блок', cat: 'misc', w: 1000, h: 1000, rules: { center: false, priority: 9 } },
   column: { title: 'Колонна', cat: 'misc', w: 400, h: 400, rules: { center: false, priority: 9 } },
-  'treadmill': { title: 'Беговая дорожка', cat: 'misc', w: 900, h: 2000, rules: { wall: true, clearFront: 700, priority: 4 } },
+
+  // --- Дополнительно: диваны/кресла ---
+  daybed: { title: 'Кушетка-лежанка', cat: 'seating', w: 1900, h: 900, rules: { wall: true, clearFront: 600, priority: 2 } },
+  recliner: { title: 'Кресло-реклайнер', cat: 'seating', w: 900, h: 1000, rules: { wall: true, clearFront: 600, priority: 6 } },
+  'bean-bag': { title: 'Кресло-мешок', cat: 'seating', w: 800, h: 800, rules: { center: false, priority: 8 } },
+  'sofa-bed': { title: 'Диван-кровать', cat: 'seating', w: 2000, h: 1000, rules: { wall: true, clearFront: 700, priority: 1 } },
+
+  // --- Кровати ---
+  'bed-queen': { title: 'Кровать Queen 1400', cat: 'beds', w: 1400, h: 2000, rules: { wall: true, clearSides: 700, priority: 1 } },
+
+  // --- Столы ---
+  'desk-l': { title: 'Угловой письменный стол', cat: 'tables', w: 1600, h: 1400, rules: { wall: true, clearFront: 700, priority: 5 } },
+  'bar-table': { title: 'Барный стол', cat: 'tables', w: 600, h: 600, rules: { center: true, priority: 6 } },
+
+  // --- Стулья ---
+  'folding-chair': { title: 'Складной стул', cat: 'chairs', w: 450, h: 450, rules: { center: false, priority: 8 } },
+  'gaming-chair': { title: 'Игровое кресло', cat: 'chairs', w: 650, h: 650, rules: { center: false, priority: 6 } },
+
+  // --- Хранение ---
+  'shelf-open': { title: 'Открытая полка', cat: 'storage', w: 900, h: 300, rules: { wall: true, clearFront: 400, priority: 5 } },
+  'display-cabinet': { title: 'Витрина', cat: 'storage', w: 1000, h: 450, rules: { wall: true, clearFront: 500, tall: true, priority: 4 } },
+  chest: { title: 'Сундук', cat: 'storage', w: 1000, h: 500, rules: { wall: true, clearFront: 400, priority: 6 } },
+
+  // --- Кухня ---
+  oven: { title: 'Духовой шкаф', cat: 'kitchen', w: 600, h: 600, rules: { wall: true, clearFront: 900, priority: 3 } },
+  microwave: { title: 'СВЧ-печь', cat: 'kitchen', w: 500, h: 350, rules: { wall: true, clearFront: 300, priority: 5 } },
+  'kitchen-corner': { title: 'Угловая кухня', cat: 'kitchen', w: 1800, h: 1800, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
+  pantry: { title: 'Пенал/кладовка', cat: 'kitchen', w: 600, h: 600, rules: { wall: true, clearFront: 700, tall: true, priority: 2 } },
+
+  // --- Санузел ---
+  'washbasin-double': { title: 'Двойная раковина', cat: 'bath', w: 1200, h: 500, rules: { wall: true, clearFront: 700, priority: 3 } },
+  jacuzzi: { title: 'Джакузи', cat: 'bath', w: 2000, h: 2000, rules: { wall: true, clearFront: 700, priority: 1 } },
+  urinal: { title: 'Писсуар', cat: 'bath', w: 400, h: 350, rules: { wall: true, clearFront: 500, priority: 3 } },
+
+  // --- Техника ---
+  hood: { title: 'Вытяжка', cat: 'appliance', w: 600, h: 500, rules: { wall: true, clearFront: 0, priority: 6 } },
+  'ac-unit': { title: 'Кондиционер', cat: 'appliance', w: 900, h: 250, rules: { wall: true, clearFront: 0, priority: 7 } },
+
+  // --- Декор и свет ---
+  chandelier: { title: 'Люстра', cat: 'decor', w: 700, h: 700, rules: { center: false, priority: 9 } },
+  curtain: { title: 'Штора', cat: 'decor', w: 1800, h: 150, rules: { wall: true, clearFront: 0, priority: 9 } },
+  'rug-round': { title: 'Круглый ковёр', cat: 'decor', w: 1800, h: 1800, rules: { center: true, priority: 10 } },
+
+  // --- Кабинет (офис) ---
+  'office-desk': { title: 'Офисный стол', cat: 'office', w: 1400, h: 700, rules: { wall: true, clearFront: 800, priority: 2 } },
+  'conference-table': { title: 'Стол переговоров', cat: 'office', w: 2400, h: 1200, rules: { center: true, clearAround: 800, priority: 1 } },
+  'filing-cabinet': { title: 'Картотека', cat: 'office', w: 500, h: 600, rules: { wall: true, clearFront: 600, priority: 4 } },
+  safe: { title: 'Сейф', cat: 'office', w: 600, h: 600, rules: { wall: true, clearFront: 500, priority: 5 } },
+  printer: { title: 'Принтер/МФУ', cat: 'office', w: 500, h: 450, rules: { center: false, priority: 6 } },
+
+  // --- Детская ---
+  'kids-bed': { title: 'Детская кровать', cat: 'kids', w: 900, h: 1700, rules: { wall: true, clearSides: 600, priority: 1 } },
+  'changing-table': { title: 'Пеленальный столик', cat: 'kids', w: 800, h: 600, rules: { wall: true, clearFront: 600, priority: 3 } },
+  'toy-box': { title: 'Ящик для игрушек', cat: 'kids', w: 800, h: 450, rules: { wall: true, clearFront: 400, priority: 5 } },
+  'kids-desk': { title: 'Парта', cat: 'kids', w: 1000, h: 550, rules: { wall: true, clearFront: 700, priority: 4 } },
+
+  // --- Спорт ---
+  treadmill: { title: 'Беговая дорожка', cat: 'gym', w: 900, h: 2000, rules: { wall: true, clearFront: 700, priority: 2 } },
+  'exercise-bike': { title: 'Велотренажёр', cat: 'gym', w: 600, h: 1200, rules: { center: false, priority: 3 } },
+  'weight-bench': { title: 'Силовая скамья', cat: 'gym', w: 700, h: 1400, rules: { center: false, priority: 3 } },
+  'yoga-mat': { title: 'Коврик для йоги', cat: 'gym', w: 600, h: 1800, rules: { center: true, priority: 6 } },
+  'ping-pong': { title: 'Теннисный стол', cat: 'gym', w: 1525, h: 2740, rules: { center: true, clearAround: 1000, priority: 1 } },
+
+  // --- Прихожая ---
+  'umbrella-stand': { title: 'Стойка для зонтов', cat: 'hall', w: 300, h: 300, rules: { wall: true, clearFront: 300, priority: 5 } },
+
+  // --- Улица и гараж ---
+  bicycle: { title: 'Велосипед', cat: 'outdoor', w: 600, h: 1800, rules: { wall: true, clearFront: 300, priority: 3 } },
+  trampoline: { title: 'Батут', cat: 'outdoor', w: 3000, h: 3000, rules: { center: true, priority: 2 } },
+  'hot-tub': { title: 'СПА / джакузи', cat: 'outdoor', w: 2200, h: 2200, rules: { center: true, priority: 2 } },
+  gazebo: { title: 'Беседка', cat: 'outdoor', w: 3000, h: 3000, rules: { center: true, priority: 1 } },
+  sandbox: { title: 'Песочница', cat: 'outdoor', w: 1500, h: 1500, rules: { center: true, priority: 3 } },
 };
 
 // Типы помещений. furniture — набор доступных галочек (default: включены по умолчанию).
