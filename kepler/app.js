@@ -1336,7 +1336,8 @@ canvas.addEventListener('pointermove', (event) => {
     drag.moved = true;
     const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
     let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
-    if (event.shiftKey) deg = Math.round(deg / 15) * 15;
+    const stepDeg = event.shiftKey ? 15 : 5; // по умолчанию шаг 5°, Shift — 15°
+    deg = Math.round(deg / stepDeg) * stepDeg;
     item.rotation = ((deg % 360) + 360) % 360;
     requestDraw();
     return;
@@ -1365,7 +1366,8 @@ canvas.addEventListener('pointermove', (event) => {
     drag.moved = true;
     const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
     let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
-    if (event.shiftKey) deg = Math.round(deg / 15) * 15; // шаг 15° с Shift
+    const stepDeg = event.shiftKey ? 15 : 5; // по умолчанию шаг 5°, Shift — 15°
+    deg = Math.round(deg / stepDeg) * stepDeg;
     n.rot = ((deg % 360) + 360) % 360;
     requestDraw();
     return;
@@ -2335,7 +2337,7 @@ function renderSiteObjectProps(panel, sel) {
         <label class="prop-field"><span>Высота (для теней), м</span><input id="nht" type="number" step="0.5" min="2" value="${((n.height || 6000) / 1000).toFixed(1)}"></label>
       </div>
       <label class="prop-field"><span>Поворот, °</span><input id="nrot" type="number" step="5" value="${Math.round(n.rot || 0)}"></label>
-      <p class="empty-hint">Тяните квадраты по углам — масштаб, круглые ручки снаружи углов — поворот (Shift — шаг 15°). Вокруг дома держится отступ ${(site.setbackNeighbor / 1000).toLocaleString('ru-RU')} м (красная штриховка).</p>
+      <p class="empty-hint">Тяните квадраты по углам — масштаб, круглые ручки снаружи углов — поворот (шаг 5°, с Shift — 15°). Вокруг дома держится отступ ${(site.setbackNeighbor / 1000).toLocaleString('ru-RU')} м (красная штриховка).</p>
       <div class="prop-actions"><button id="del" class="danger">Удалить</button></div>`;
     const apply = () => {
       mutate(() => {
