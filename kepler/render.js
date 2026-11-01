@@ -7,8 +7,8 @@ import { roomNetAreaM2 } from './core/rooms.js';
 import { itemRect } from './core/furnish.js';
 import { roomType } from './core/catalog.js';
 import {
-  buildZonePolygon, neighborBuffers, polygonAreaM2, sunPosition,
-  shadowVector, shadowPolygon,
+  buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
+  shadowVector, shadowPolygon, shadowPolygonFromCorners,
 } from './core/site.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
@@ -177,10 +177,87 @@ export function createRenderer(canvas) {
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
       ctx.fillRect(r.x, r.y, r.w, r.h);
     }
+    // Предпросмотр линии севера при задании по двум точкам.
+    const northTool = state.tool?.kind === 'north' ? state.tool : null;
+    if (northTool && northTool.points.length === 1 && state.northCursor) {
+      const a = northTool.points[0];
+      const b = state.northCursor;
+      ctx.strokeStyle = tokens.danger;
+      ctx.fillStyle = tokens.danger;
+      ctx.lineWidth = px(2);
+      ctx.setLineDash([px(8), px(5)]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.setLineDash([]);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const head = px(14);
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - Math.cos(ang - 0.4) * head, b.y - Math.sin(ang - 0.4) * head);
+      ctx.lineTo(b.x - Math.cos(ang + 0.4) * head, b.y - Math.sin(ang + 0.4) * head);
+      ctx.closePath(); ctx.fill();
+      state._calLabelAt = { x: b.x, y: b.y, text: 'С' };
+    }
+
+    // Предпросмотр въезда: стрелка скользит по границе за курсором.
+    if (state.entryGhost) {
+      const e = state.entryGhost;
+      const rad = (e.dir * Math.PI) / 180;
+      const len = 2200;
+      const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = tokens.accent2;
+      ctx.fillStyle = tokens.accent2;
+      ctx.lineWidth = px(2.4);
+      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+      const head = 500;
+      ctx.beginPath();
+      ctx.moveTo(tip.x, tip.y);
+      ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
+      ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, px(5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
     state._snapLabelAt = (state.draft?.snapStart && state.draft.points.length)
       ? { x: state.draft.points[0].x, y: state.draft.points[0].y, text: state.draft.snapLabel }
       : null;
+
+    // Отрезок калибровки топосъёмки (как в Revit/ArchiCAD).
+    state._calLabelAt = null;
+    const calTool = state.tool?.kind === 'calibrate' ? state.tool : null;
+    let calA = null;
+    let calB = null;
+    let calDashed = false;
+    if (state.calibration) { calA = state.calibration.p1; calB = state.calibration.p2; }
+    else if (calTool && calTool.points.length === 1 && state.calCursor) {
+      calA = calTool.points[0]; calB = state.calCursor; calDashed = true;
+    }
+    if (calA && calB) {
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = px(2);
+      ctx.setLineDash(calDashed ? [px(8), px(5)] : []);
+      ctx.beginPath(); ctx.moveTo(calA.x, calA.y); ctx.lineTo(calB.x, calB.y); ctx.stroke();
+      ctx.setLineDash([]);
+      // Засечки на концах.
+      const dx = calB.x - calA.x; const dy = calB.y - calA.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len; const ny = dx / len;
+      const tick = px(8);
+      for (const p of [calA, calB]) {
+        ctx.beginPath();
+        ctx.moveTo(p.x - nx * tick, p.y - ny * tick);
+        ctx.lineTo(p.x + nx * tick, p.y + ny * tick);
+        ctx.stroke();
+      }
+      // При черчении — показываем текущую длину в пикселях-условно; после
+      // второй точки поле ввода само стоит на линии, цифра не нужна.
+      if (calDashed) {
+        state._calLabelAt = { x: (calA.x + calB.x) / 2, y: (calA.y + calB.y) / 2, text: 'кликните 2-ю точку' };
+      }
+    }
 
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
@@ -239,10 +316,39 @@ export function createRenderer(canvas) {
       ctx.textAlign = 'center';
       ctx.fillText(state._snapLabelAt.text, p.x, p.y - 16);
     }
+    // Подсказка при черчении отрезка калибровки.
+    if (state._calLabelAt) {
+      const p = w2s(state._calLabelAt.x, state._calLabelAt.y);
+      ctx.fillStyle = tokens.accent;
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(state._calLabelAt.text, p.x, p.y - 14);
+    }
     // Угловые ручки топосъёмки — тянуть, чтобы менять масштаб.
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
       for (const hp of underlayHandles(site.underlay)) {
         drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
+      }
+    }
+    // Ручки соседнего дома: квадраты по углам (масштаб) + круги (вращение).
+    if (site && state.selection?.type === 'site' && state.selection.kind === 'neighbor') {
+      const n = site.neighbors.find((x) => x.id === state.selection.id);
+      if (n) {
+        for (const r of neighborRotators(n, 22, scale)) {
+          const p = w2s(r.x, r.y);
+          ctx.fillStyle = tokens.surface;
+          ctx.strokeStyle = tokens.accent;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Значок «поворот».
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2);
+          ctx.stroke();
+        }
+        for (const c of neighborCorners(n)) drawHandleSquare(ctx, w2s(c.x, c.y), tokens);
       }
     }
 
@@ -351,13 +457,13 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    polyPath(ctx, road.points, false);
+    polyPath(ctx, road.points, Boolean(road.closed));
     ctx.stroke();
     ctx.strokeStyle = tokens.muted;
     ctx.lineWidth = px(1.2);
     ctx.setLineDash([800, 600]);
     ctx.beginPath();
-    polyPath(ctx, road.points, false);
+    polyPath(ctx, road.points, Boolean(road.closed));
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -396,12 +502,15 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.restore();
   }
 
-  // Соседние дома.
+  // Соседние дома (с учётом поворота).
   for (const n of site.neighbors || []) {
     const selected = state.selection?.type === 'site' && state.selection.kind === 'neighbor' && state.selection.id === n.id;
     const hovered = hov?.kind === 'neighbor' && hov.id === n.id;
-    const x = n.x - n.w / 2;
-    const y = n.y - n.h / 2;
+    ctx.save();
+    ctx.translate(n.x, n.y);
+    ctx.rotate(((n.rot || 0) * Math.PI) / 180);
+    const x = -n.w / 2;
+    const y = -n.h / 2;
     ctx.fillStyle = 'rgba(120,132,148,0.25)';
     ctx.fillRect(x, y, n.w, n.h);
     ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.muted;
@@ -411,6 +520,7 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.moveTo(x, y); ctx.lineTo(x + n.w, y + n.h);
     ctx.moveTo(x + n.w, y); ctx.lineTo(x, y + n.h);
     ctx.stroke();
+    ctx.restore();
   }
 
   // Тени (инсоляция).
@@ -428,7 +538,7 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
       for (const n of site.neighbors || []) {
         const nv = shadowVector(sun, site.north, n.height || 6000);
         if (!nv) continue;
-        polyPath(ctx, shadowPolygon({ x: n.x - n.w / 2, y: n.y - n.h / 2, w: n.w, h: n.h }, nv));
+        polyPath(ctx, shadowPolygonFromCorners(neighborRectCorners(n), nv));
       }
       ctx.fillStyle = 'rgba(24,32,43,0.22)';
       ctx.fill();
@@ -499,7 +609,7 @@ function drawSiteOver(ctx, state, site, tokens, px) {
     ctx.lineWidth = px(selectedKind === 'redline' || hov?.kind === 'redline' ? 2.8 : 2);
     ctx.setLineDash([1600, 500, 250, 500]);
     ctx.beginPath();
-    polyPath(ctx, site.redLine, false);
+    polyPath(ctx, site.redLine, Boolean(site.redLineClosed));
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -862,6 +972,38 @@ export function openingHandles(project, opening, walls) {
   }
   const cx = rect.x + rect.w / 2;
   return [{ end: 'start', x: cx, y: rect.y }, { end: 'end', x: cx, y: rect.y + rect.h }];
+}
+
+// Поворот вектора (dx,dy) на угол deg вокруг нуля.
+export function rotateVec(dx, dy, deg) {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
+// Четыре угла соседнего дома (мировые координаты, с учётом поворота).
+export function neighborCorners(n) {
+  const rot = n.rot || 0;
+  const hw = n.w / 2;
+  const hh = n.h / 2;
+  const defs = [['nw', -hw, -hh], ['ne', hw, -hh], ['se', hw, hh], ['sw', -hw, hh]];
+  return defs.map(([id, lx, ly]) => {
+    const v = rotateVec(lx, ly, rot);
+    return { id, x: n.x + v.x, y: n.y + v.y };
+  });
+}
+
+// Точки круглых ручек вращения — вынесены наружу от каждого угла по диагонали.
+export function neighborRotators(n, outPx, scale) {
+  const rot = n.rot || 0;
+  const out = outPx / scale;
+  return neighborCorners(n).map((c) => {
+    const dx = c.x - n.x;
+    const dy = c.y - n.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { id: c.id, x: c.x + (dx / len) * out, y: c.y + (dy / len) * out };
+  });
 }
 
 // Четыре угла топосъёмки (мировые координаты) для масштабирования.

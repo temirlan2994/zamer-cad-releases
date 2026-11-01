@@ -26,7 +26,7 @@ import {
 import { pointInPolygon } from './core/zamer/geometry.js';
 import {
   createRenderer, roomHandles, openingHandles, underlayHandles, HANDLE_SIZE,
-  projectPoint, unprojectPoint,
+  neighborCorners, neighborRotators, rotateVec, projectPoint, unprojectPoint,
 } from './render.js';
 
 const AUTOSAVE_KEY = 'kepler-plan-autosave';
@@ -321,6 +321,24 @@ function hitUnderlayHandle(screen) {
   return null;
 }
 
+function hitNeighborHandle(screen) {
+  if (state.selection?.type !== 'site' || state.selection.kind !== 'neighbor') return null;
+  const n = state.project.site.neighbors.find((x) => x.id === state.selection.id);
+  if (!n) return null;
+  // Круги вращения — чуть снаружи углов (проверяем раньше квадратов).
+  for (const r of neighborRotators(n, 22, state.view.scale)) {
+    const p = worldToScreen(r.x, r.y);
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+  }
+  for (const c of neighborCorners(n)) {
+    const p = worldToScreen(c.x, c.y);
+    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+      return { mode: 'resize', corner: c.id };
+    }
+  }
+  return null;
+}
+
 function hitSiteVertex(screen) {
   const sel = state.selection;
   if (sel?.type !== 'site') return null;
@@ -394,11 +412,11 @@ function hitSiteObject(world) {
   if (site.boundary?.length >= 2 && distanceToPolyline(site.boundary, world, true) < tol + 60) {
     return { type: 'site', kind: 'boundary' };
   }
-  if (site.redLine?.length >= 2 && distanceToPolyline(site.redLine, world, false) < tol + 80) {
+  if (site.redLine?.length >= 2 && distanceToPolyline(site.redLine, world, Boolean(site.redLineClosed)) < tol + 80) {
     return { type: 'site', kind: 'redline' };
   }
   for (const road of site.roads || []) {
-    if (road.points.length >= 2 && distanceToPolyline(road.points, world, false) < road.width / 2 + tol) {
+    if (road.points.length >= 2 && distanceToPolyline(road.points, world, Boolean(road.closed)) < road.width / 2 + tol) {
       return { type: 'site', kind: 'road', id: road.id };
     }
   }
@@ -455,7 +473,11 @@ function cancelTool() {
   state.ghost = null;
   state.ghostOpening = null;
   state.calibration = null;
+  state.entryGhost = null;
+  state.calCursor = null;
+  state.northCursor = null;
   state.guides = [];
+  if (!el('calOverlay').hidden) el('calOverlay').hidden = true;
   setHint('');
   renderLibrary();
   requestDraw();
@@ -612,11 +634,17 @@ function finishDraft() {
     toast(`Граница участка: ${polygonAreaM2(site.boundary).toFixed(1)} м². Красная зона — отступ ${(site.setbackBoundary / 1000).toLocaleString('ru-RU')} м`);
   } else if (draft.kind === 'redline') {
     if (draft.points.length < 2) { toast('Нужно минимум 2 точки'); return; }
-    mutate(() => { site.redLine = draft.points.map((p) => ({ ...p })); });
+    mutate(() => {
+      site.redLine = draft.points.map((p) => ({ ...p }));
+      site.redLineClosed = Boolean(draft.closed);
+    });
     selectObject({ type: 'site', kind: 'redline' });
   } else if (draft.kind === 'road') {
     if (draft.points.length < 2) { toast('Нужно минимум 2 точки'); return; }
-    const road = { id: makeSiteId('road'), points: draft.points.map((p) => ({ ...p })), width: DEFAULT_ROAD_WIDTH };
+    const road = {
+      id: makeSiteId('road'), points: draft.points.map((p) => ({ ...p })),
+      width: DEFAULT_ROAD_WIDTH, closed: Boolean(draft.closed),
+    };
     mutate(() => { site.roads.push(road); });
     selectObject({ type: 'site', kind: 'road', id: road.id });
   }
@@ -627,29 +655,37 @@ function addDraftPoint(world) {
   const draft = state.draft;
   const snap = (v) => Math.round(v / 100) * 100;
   const point = { x: snap(world.x), y: snap(world.y) };
-  // Клик по начальной точке (когда к ней привязались) — замкнуть/завершить.
-  const minPts = draft.kind === 'boundary' ? 3 : 2;
-  if (draft.points.length >= minPts) {
+  // Клик по начальной точке (когда к ней привязались) — замкнуть контур.
+  if (draft.points.length >= 3) {
     const first = worldToScreen(draft.points[0].x, draft.points[0].y);
     const here = worldToScreen(point.x, point.y);
-    if (Math.hypot(first.x - here.x, first.y - here.y) < 15) { finishDraft(); return; }
+    if (Math.hypot(first.x - here.x, first.y - here.y) < 15) { draft.closed = true; finishDraft(); return; }
   }
   draft.points.push(point);
   requestDraw();
 }
 
-function placeEntryAt(world) {
+// Точка въезда на границе, ближайшая к курсору, со стрелкой внутрь участка.
+function computeEntryAt(world) {
   const site = state.project.site;
-  if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
+  if (!site.boundary || site.boundary.length < 3) return null;
   const near = nearestPointOnPolyline(site.boundary, world, true);
-  if (!near || near.dist > 40 / state.view.scale + 1500) { toast('Кликните ближе к границе участка'); return; }
-  // Стрелка направлена внутрь участка.
+  if (!near) return null;
   const candidates = [near.angle + 90, near.angle - 90];
   let dir = candidates[0];
   const rad = (candidates[0] * Math.PI) / 180;
   const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
   if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
-  mutate(() => { site.entry = { x: near.x, y: near.y, dir }; });
+  return { x: near.x, y: near.y, dir, dist: near.dist };
+}
+
+function placeEntryAt(world) {
+  const site = state.project.site;
+  if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
+  const spot = computeEntryAt(world);
+  if (!spot) { toast('Кликните ближе к границе участка'); return; }
+  mutate(() => { site.entry = { x: spot.x, y: spot.y, dir: spot.dir }; });
+  state.entryGhost = null;
   cancelTool();
   selectObject({ type: 'site', kind: 'entry' });
 }
@@ -662,6 +698,7 @@ function placeNeighborAt(world) {
     y: Math.round(world.y / 100) * 100,
     w: 8000,
     h: 8000,
+    rot: 0,
     height: 6000,
   };
   mutate(() => { site.neighbors.push(neighbor); });
@@ -672,13 +709,14 @@ function placeNeighborAt(world) {
 
 function addNorthPoint(world) {
   const points = state.tool.points;
-  points.push(world);
-  if (points.length < 2) { setHint('Теперь кликните вторую точку — конец стрелки на север'); return; }
+  points.push({ x: world.x, y: world.y });
+  if (points.length < 2) { setHint('Теперь кликните вторую точку — конец стрелки на север'); requestDraw(); return; }
   const dx = points[1].x - points[0].x;
   const dy = points[1].y - points[0].y;
   if (Math.hypot(dx, dy) < 200) { toast('Точки слишком близко'); state.tool.points = []; return; }
   const north = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
   mutate(() => { state.project.site.north = Math.round(north * 10) / 10; });
+  state.northCursor = null;
   applyModeRotation();
   cancelTool();
   toast(`Север задан: ${Math.round(north)}°`);
@@ -686,13 +724,47 @@ function addNorthPoint(world) {
 
 function addCalibratePoint(world) {
   const points = state.tool.points;
-  points.push({ ...world });
-  if (points.length < 2) { setHint('Кликните вторую точку известного отрезка'); return; }
+  points.push({ x: world.x, y: world.y });
+  if (points.length < 2) {
+    setHint('Теперь кликните вторую точку отрезка');
+    requestDraw();
+    return;
+  }
   const measured = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+  if (measured < 1) { toast('Точки слишком близко — кликните дальше'); state.tool.points = [points[0]]; return; }
+  // Отрезок начерчен — показываем поле прямо на линии (как в Revit/ArchiCAD).
   state.calibration = { p1: points[0], p2: points[1], measured };
-  cancelTool();
-  selectObject({ type: 'site', kind: 'underlay' });
-  toast('Введите реальную длину отрезка в панели справа');
+  state.tool = null;
+  state.calCursor = null;
+  setHint('');
+  renderLibrary();
+  requestDraw();
+  showCalInput();
+}
+
+function showCalInput() {
+  const overlay = el('calOverlay');
+  const input = el('calInput');
+  input.value = '';
+  overlay.hidden = false;
+  positionCalInput();
+  setTimeout(() => input.focus(), 30);
+}
+
+function positionCalInput() {
+  const overlay = el('calOverlay');
+  if (overlay.hidden || !state.calibration) return;
+  const c = state.calibration;
+  const mid = worldToScreen((c.p1.x + c.p2.x) / 2, (c.p1.y + c.p2.y) / 2);
+  // Смещаем чуть выше линии, чтобы не перекрывать её.
+  overlay.style.left = `${mid.x}px`;
+  overlay.style.top = `${mid.y - 26}px`;
+}
+
+function hideCalInput() {
+  el('calOverlay').hidden = true;
+  state.calibration = null;
+  requestDraw();
 }
 
 function applyCalibration(realMeters) {
@@ -700,7 +772,7 @@ function applyCalibration(realMeters) {
   const cal = state.calibration;
   if (!site.underlay || !cal) return;
   const realMm = realMeters * 1000;
-  if (!(realMm > 10)) { toast('Введите длину в метрах'); return; }
+  if (!(realMm > 10)) { toast('Введите длину отрезка в метрах'); return; }
   const k = realMm / cal.measured;
   mutate(() => {
     const u = site.underlay;
@@ -708,9 +780,9 @@ function applyCalibration(realMeters) {
     u.x = cal.p1.x - (cal.p1.x - u.x) * k;
     u.y = cal.p1.y - (cal.p1.y - u.y) * k;
   });
-  state.calibration = null;
-  renderProps();
-  toast('Масштаб топосъёмки задан');
+  hideCalInput();
+  selectObject({ type: 'site', kind: 'underlay' });
+  toast('Масштаб топосъёмки задан по отрезку');
 }
 
 // --- Загрузка топосъёмки ---
@@ -841,6 +913,9 @@ canvas.addEventListener('pointerdown', (event) => {
     return;
   }
 
+  // Клик мимо поля калибровки — отменяем калибровку.
+  if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
+
   // Ручки.
   const openingHandleHit = hitOpeningHandle(screen);
   if (openingHandleHit) {
@@ -850,6 +925,27 @@ canvas.addEventListener('pointerdown', (event) => {
   const handleHit = hitRoomHandle(screen);
   if (handleHit) {
     drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), world, valid: true };
+    return;
+  }
+  const neighborHandleHit = hitNeighborHandle(screen);
+  if (neighborHandleHit) {
+    const n = state.project.site.neighbors.find((x) => x.id === state.selection.id);
+    if (neighborHandleHit.mode === 'rotate') {
+      drag = {
+        kind: 'neighbor-rotate', id: n.id, startRot: n.rot || 0,
+        startAngle: Math.atan2(world.y - n.y, world.x - n.x), center: { x: n.x, y: n.y },
+        before: snapshot(), moved: false,
+      };
+    } else {
+      // Якорь — противоположный угол (мировые координаты, фиксирован).
+      const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[neighborHandleHit.corner];
+      const anchor = neighborCorners(n).find((c) => c.id === opposite);
+      drag = {
+        kind: 'neighbor-resize', id: n.id, corner: neighborHandleHit.corner,
+        anchor: { x: anchor.x, y: anchor.y }, rot: n.rot || 0,
+        before: snapshot(), moved: false,
+      };
+    }
     return;
   }
   const underlayHandleHit = hitUnderlayHandle(screen);
@@ -867,7 +963,11 @@ canvas.addEventListener('pointerdown', (event) => {
   }
   const vertexHit = hitSiteVertex(screen);
   if (vertexHit) {
-    drag = { kind: 'site-vertex', ...vertexHit, before: snapshot(), moved: false };
+    // Важно не затереть kind='site-vertex' полем kind из vertexHit.
+    drag = {
+      kind: 'site-vertex', siteKind: vertexHit.kind, id: vertexHit.id,
+      index: vertexHit.index, points: vertexHit.points, before: snapshot(), moved: false,
+    };
     return;
   }
 
@@ -1131,6 +1231,35 @@ canvas.addEventListener('pointermove', (event) => {
     return;
   }
 
+  if (drag.kind === 'neighbor-rotate') {
+    const n = state.project.site.neighbors.find((x) => x.id === drag.id);
+    if (!n) return;
+    drag.moved = true;
+    const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
+    let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
+    if (event.shiftKey) deg = Math.round(deg / 15) * 15; // шаг 15° с Shift
+    n.rot = ((deg % 360) + 360) % 360;
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'neighbor-resize') {
+    const n = state.project.site.neighbors.find((x) => x.id === drag.id);
+    if (!n) return;
+    drag.moved = true;
+    // Размер в собственной (повёрнутой) системе дома, якорь-угол зафиксирован.
+    const dLocal = rotateVec(world.x - drag.anchor.x, world.y - drag.anchor.y, -drag.rot);
+    const newW = Math.max(2000, Math.abs(dLocal.x));
+    const newH = Math.max(2000, Math.abs(dLocal.y));
+    const half = rotateVec((Math.sign(dLocal.x) || 1) * newW / 2, (Math.sign(dLocal.y) || 1) * newH / 2, drag.rot);
+    n.w = newW;
+    n.h = newH;
+    n.x = drag.anchor.x + half.x;
+    n.y = drag.anchor.y + half.y;
+    requestDraw();
+    return;
+  }
+
   if (drag.kind === 'underlay-resize') {
     const u = state.project.site.underlay;
     if (!u) return;
@@ -1304,6 +1433,7 @@ function zoomAt(screen, factor) {
   state.view.panX += screen.x - projected.x;
   state.view.panY += screen.y - projected.y;
   refs.statusScale.textContent = scaleLabel();
+  positionCalInput();
   requestDraw();
 }
 
@@ -1331,6 +1461,22 @@ function updateHoverAndGhost(world) {
     requestDraw();
     return;
   }
+  if (state.tool?.kind === 'calibrate' && state.tool.points.length === 1) {
+    state.calCursor = { x: world.x, y: world.y };
+    requestDraw();
+    return;
+  }
+  if (state.tool?.kind === 'entry') {
+    // Предпросмотр: стрелка скользит по границе за курсором.
+    state.entryGhost = computeEntryAt(world);
+    requestDraw();
+    return;
+  }
+  if (state.tool?.kind === 'north' && state.tool.points.length === 1) {
+    state.northCursor = { x: world.x, y: world.y };
+    requestDraw();
+    return;
+  }
   if (state.tool?.kind === 'place-opening') {
     const wall = nearestWall(world);
     state.ghostOpening = null;
@@ -1355,10 +1501,9 @@ function updateHoverAndGhost(world) {
     const snap = (v) => Math.round(v / 100) * 100;
     let cursor = { x: snap(world.x), y: snap(world.y) };
     const pts = state.draft.points;
-    const minPts = state.draft.kind === 'boundary' ? 3 : 2;
     state.draft.snapStart = false;
-    // Возврат к первой точке: привязка + подпись «замкнуть/завершить».
-    if (pts.length >= minPts) {
+    // Возврат к первой точке (от 3 точек) — привязка и замыкание контура.
+    if (pts.length >= 3) {
       const first = worldToScreen(pts[0].x, pts[0].y);
       const cur = worldToScreen(cursor.x, cursor.y);
       if (Math.hypot(first.x - cur.x, first.y - cur.y) < 15) {
@@ -1367,7 +1512,7 @@ function updateHoverAndGhost(world) {
       }
     }
     state.draft.cursor = cursor;
-    state.draft.snapLabel = state.draft.kind === 'boundary' ? 'Замкнуть' : 'Завершить';
+    state.draft.snapLabel = 'Замкнуть';
     requestDraw();
     return;
   }
@@ -1961,19 +2106,22 @@ function renderSiteObjectProps(panel, sel) {
         </div>
         <label class="prop-field"><span>Высота (для теней), м</span><input id="nht" type="number" step="0.5" min="2" value="${((n.height || 6000) / 1000).toFixed(1)}"></label>
       </div>
-      <p class="empty-hint">Вокруг соседнего дома держится отступ ${(site.setbackNeighbor / 1000).toLocaleString('ru-RU')} м — зона заштрихована красным.</p>
+      <label class="prop-field"><span>Поворот, °</span><input id="nrot" type="number" step="5" value="${Math.round(n.rot || 0)}"></label>
+      <p class="empty-hint">Тяните квадраты по углам — масштаб, круглые ручки снаружи углов — поворот (Shift — шаг 15°). Вокруг дома держится отступ ${(site.setbackNeighbor / 1000).toLocaleString('ru-RU')} м (красная штриховка).</p>
       <div class="prop-actions"><button id="del" class="danger">Удалить</button></div>`;
     const apply = () => {
       mutate(() => {
         n.w = Math.max(2000, (Number(panel.querySelector('#nw').value) || 8) * 1000);
         n.h = Math.max(2000, (Number(panel.querySelector('#nh').value) || 8) * 1000);
         n.height = Math.max(2000, (Number(panel.querySelector('#nht').value) || 6) * 1000);
+        n.rot = ((Number(panel.querySelector('#nrot').value) || 0) % 360 + 360) % 360;
       });
       selectObject(sel);
     };
     panel.querySelector('#nw').addEventListener('change', apply);
     panel.querySelector('#nh').addEventListener('change', apply);
     panel.querySelector('#nht').addEventListener('change', apply);
+    panel.querySelector('#nrot').addEventListener('change', apply);
     panel.querySelector('#del').addEventListener('click', deleteSelection);
     return;
   }
@@ -2353,6 +2501,10 @@ el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
+el('calInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyCalibration(Number(el('calInput').value)); }
+  else if (e.key === 'Escape') { e.preventDefault(); hideCalInput(); toast('Калибровка отменена'); }
+});
 el('themeBtn').addEventListener('click', cycleTheme);
 el('menuBtn').addEventListener('click', () => openStartMenu());
 el('startClose').addEventListener('click', closeStartMenu);
@@ -2434,4 +2586,5 @@ window.__kepler = {
   fitView,
   loadSample,
   setEditorMode,
+  selectRoom: (id) => selectObject({ type: 'room', id }),
 };

@@ -131,16 +131,45 @@ export function distanceToPolyline(points, p, closed = false) {
 
 // ---------------------------------------------------------------- Зона застройки
 
-// Прямоугольники, запрещённые из-за соседних домов (6 м вокруг).
+// Углы соседнего дома (с учётом поворота rot в градусах).
+export function neighborRectCorners(n) {
+  const rot = ((n.rot || 0) * Math.PI) / 180;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  const hw = n.w / 2;
+  const hh = n.h / 2;
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([lx, ly]) => ({
+    x: n.x + lx * c - ly * s,
+    y: n.y + lx * s + ly * c,
+  }));
+}
+
+// Прямоугольники, запрещённые из-за соседних домов (отступ вокруг рамки дома).
+// Для повёрнутого дома берём его осевой габарит (AABB) плюс отступ.
 export function neighborBuffers(site) {
   const buffer = site.setbackNeighbor ?? DEFAULT_SETBACK_NEIGHBOR;
-  return (site.neighbors || []).map((n) => ({
-    x: n.x - n.w / 2 - buffer,
-    y: n.y - n.h / 2 - buffer,
-    w: n.w + buffer * 2,
-    h: n.h + buffer * 2,
-    neighbor: n,
-  }));
+  return (site.neighbors || []).map((n) => {
+    const corners = neighborRectCorners(n);
+    const xs = corners.map((p) => p.x);
+    const ys = corners.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return {
+      x: minX - buffer,
+      y: minY - buffer,
+      w: maxX - minX + buffer * 2,
+      h: maxY - minY + buffer * 2,
+      neighbor: n,
+    };
+  });
+}
+
+// Полигон тени от произвольного набора углов при сдвиге {dx,dy}.
+export function shadowPolygonFromCorners(corners, vector) {
+  const moved = corners.map((c) => ({ x: c.x + vector.dx, y: c.y + vector.dy }));
+  return convexHull([...corners, ...moved]);
 }
 
 // Полигон зоны застройки (инсет границы участка) или null, если границы нет.

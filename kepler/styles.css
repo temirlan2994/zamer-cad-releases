@@ -286,6 +286,35 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   max-width: 85%;
 }
 
+.cal-overlay {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.cal-overlay .cal-label { color: var(--muted); font-size: 12px; }
+.cal-overlay input {
+  width: 72px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  text-align: right;
+}
+.cal-overlay .cal-unit { font-weight: 600; }
+
 .zoom-controls {
   position: absolute;
   right: 14px;
