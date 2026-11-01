@@ -1141,56 +1141,56 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   ctx.lineWidth = 1;
   ctx.font = '10px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  for (const room of state.project.rooms) {
-    const selected = state.selection?.type === 'room' && state.selection.id === room.id;
-    const color = selected ? tokens.accent : tokens.muted;
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = selected ? 1 : 0.5;
-    const a = w2s(room.x, room.y);
-    const b = w2s(room.x + room.w, room.y);
-    const c = w2s(room.x, room.y + room.h);
-    const edgePx = Math.hypot(b.x - a.x, b.y - a.y);
-    const edgePy = Math.hypot(c.x - a.x, c.y - a.y);
-    // Внутренние размеры — всегда.
-    if (edgePx > 70) drawDim(ctx, a, b, flipN(normal(a, b)), 14, `${room.w}`);
-    if (edgePy > 70) drawDim(ctx, c, a, flipN(normal(c, a)), 14, `${room.h}`);
-    ctx.globalAlpha = 1;
-  }
-
-  // Наружные размеры выбранной комнаты — по каждому участку собственной стены.
-  // Где сторона разбита соседями на части (ступени), каждая часть получает
-  // свой размер; сплошная сторона — один размер. Общие (пристыкованные к
-  // соседу) участки не подписываются.
-  const room = state.selection?.type === 'room'
-    ? state.project.rooms.find((r) => r.id === state.selection.id) : null;
-  if (!room || room.parentId) return;
-  ctx.strokeStyle = tokens.accent;
-  ctx.fillStyle = tokens.accent;
+  const selId = state.selection?.type === 'room' ? state.selection.id : null;
   const outwardScreen = (cx, cy, ox, oy) => {
     const s1 = w2s(cx, cy);
     const s2 = w2s(cx + ox * 100, cy + oy * 100);
     const len = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
     return { x: (s2.x - s1.x) / len, y: (s2.y - s1.y) / len };
   };
+
+  // Внутренние габариты комнаты (ширина/глубина).
+  for (const room of state.project.rooms) {
+    const selected = room.id === selId;
+    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = selected ? 1 : 0.4;
+    const a = w2s(room.x, room.y);
+    const b = w2s(room.x + room.w, room.y);
+    const c = w2s(room.x, room.y + room.h);
+    const edgePx = Math.hypot(b.x - a.x, b.y - a.y);
+    const edgePy = Math.hypot(c.x - a.x, c.y - a.y);
+    if (edgePx > (selected ? 60 : 90)) drawDim(ctx, a, b, flipN(normal(a, b)), 14, `${room.w}`);
+    if (edgePy > (selected ? 60 : 90)) drawDim(ctx, c, a, flipN(normal(c, a)), 14, `${room.h}`);
+    ctx.globalAlpha = 1;
+  }
+
+  // Наружные размеры по участкам стен — для ВСЕХ комнат (бледно), у выбранной
+  // ярко. Где сторона разбита соседями (ступени), каждый участок свой размер.
   for (const wall of walls) {
-    if (wall.kind !== 'own' || wall.rooms[0] !== room.id) continue;
-    const side = wall.sides[room.id];
+    if (wall.kind !== 'own') continue;
+    const roomId = wall.rooms[0];
+    const selected = roomId === selId;
+    const side = wall.sides[roomId];
     const horiz = side === 0 || side === 2;
     const len = Math.round(wall.to - wall.from);
-    if (len < 250) continue; // совсем короткие не подписываем
+    if (len < 500) continue;
     const off = wall.thickness + 300;
     const perpLine = wall.edge + wall.outward * off;
     const p = horiz ? w2s(wall.from, perpLine) : w2s(perpLine, wall.from);
     const q = horiz ? w2s(wall.to, perpLine) : w2s(perpLine, wall.to);
+    const screenLen = Math.hypot(q.x - p.x, q.y - p.y);
+    if (!selected && screenLen < 55) continue; // мелкие при отдалении скрываем
+    if (screenLen < 24) continue;
+    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = selected ? 1 : 0.38;
     const midAlong = (wall.from + wall.to) / 2;
     const n = horiz
       ? outwardScreen(midAlong, wall.edge, 0, wall.outward)
       : outwardScreen(wall.edge, midAlong, wall.outward, 0);
-    // Выноски от грани стены к размерной линии.
     const i1 = horiz ? w2s(wall.from, wall.edge) : w2s(wall.edge, wall.from);
     const i2 = horiz ? w2s(wall.to, wall.edge) : w2s(wall.edge, wall.to);
-    ctx.globalAlpha = 0.9;
     ctx.beginPath();
     ctx.moveTo(i1.x, i1.y); ctx.lineTo(p.x, p.y);
     ctx.moveTo(i2.x, i2.y); ctx.lineTo(q.x, q.y);
