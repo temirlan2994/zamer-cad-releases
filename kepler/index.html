@@ -41,15 +41,18 @@
 
       <main class="workspace">
         <aside class="library">
+          <div class="library-tabs" id="libraryTabs">
+            <button id="libTabRooms" class="lib-tab active" type="button">Помещения</button>
+            <button id="libTabFurniture" class="lib-tab" type="button">Мебель</button>
+          </div>
           <div class="library-top" id="libraryTop">
-            <h2 id="libraryTitle">Помещения</h2>
+            <h2 id="libraryTitle" hidden>Помещения</h2>
             <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
             <div class="room-cards" id="roomCards"></div>
             <div class="room-cards" id="siteTools" hidden></div>
             <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
           </div>
           <div class="library-furniture" id="furnitureBar">
-            <h2>Мебель</h2>
             <p class="hint furn-hint">Перетащите карточку на план</p>
             <div class="furniture-body">
               <div class="furniture-cats" id="furnitureCats"></div>

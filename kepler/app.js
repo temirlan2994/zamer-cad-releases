@@ -81,6 +81,7 @@ const state = {
   project: null,
   walls: [],
   modeName: 'plan', // 'plan' | 'site'
+  libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },
     site: { scale: 0.03, panX: 120, panY: 120 },
@@ -128,6 +129,10 @@ const refs = {
   furnitureBar: el('furnitureBar'),
   furnitureCats: el('furnitureCats'),
   furnitureItems: el('furnitureItems'),
+  libraryTop: el('libraryTop'),
+  libraryTabs: el('libraryTabs'),
+  libTabRooms: el('libTabRooms'),
+  libTabFurniture: el('libTabFurniture'),
 };
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
@@ -267,6 +272,24 @@ function applyModeRotation() {
     : 0;
 }
 
+// Вкладки левой панели: в режиме «План» переключают «Помещения» / «Мебель»
+// (как вкладки обозревателя в Revit). В режиме «Участок» вкладок нет — там
+// только инструменты участка.
+function applyLibraryTab() {
+  const plan = state.modeName === 'plan';
+  refs.libraryTabs.hidden = !plan;
+  if (!plan) {
+    refs.libraryTop.hidden = false;
+    refs.furnitureBar.hidden = true;
+    return;
+  }
+  const furn = state.libraryTab === 'furniture';
+  refs.libTabRooms.classList.toggle('active', !furn);
+  refs.libTabFurniture.classList.toggle('active', furn);
+  refs.libraryTop.hidden = furn;
+  refs.furnitureBar.hidden = !furn;
+}
+
 function setEditorMode(mode) {
   if (state.modeName === mode) return;
   state.views[state.modeName] = { scale: state.view.scale, panX: state.view.panX, panY: state.view.panY };
@@ -282,12 +305,14 @@ function setEditorMode(mode) {
   refs.modeSite.classList.toggle('active', mode === 'site');
   refs.roomCards.hidden = mode !== 'plan';
   refs.siteTools.hidden = mode !== 'site';
+  refs.libraryTitle.hidden = mode === 'plan'; // в «Плане» заголовок задаёт вкладка
   refs.libraryTitle.textContent = mode === 'plan' ? 'Помещения' : 'Участок';
   refs.libraryHint.textContent = mode === 'plan'
     ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'
     : 'Топосъёмка, граница, красная линия, въезд, дорога, север.';
   renderProps();
   renderFurnitureBar();
+  applyLibraryTab();
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }
@@ -2001,8 +2026,8 @@ function renderLibrary() {
 // ---------------------------------------------------------------- Нижняя панель мебели
 
 function renderFurnitureBar() {
-  // В режиме участка панель мебели не нужна.
-  refs.furnitureBar.hidden = state.modeName !== 'plan';
+  // Содержимое строится только в режиме «План»; видимость задаёт вкладка
+  // (applyLibraryTab).
   if (state.modeName !== 'plan') return;
 
   refs.furnitureCats.innerHTML = '';
@@ -3094,7 +3119,10 @@ function newProject() {
   refs.modeSite.classList.remove('active');
   refs.roomCards.hidden = false;
   refs.siteTools.hidden = true;
+  refs.libraryTitle.hidden = true;
   refs.libraryTitle.textContent = 'Помещения';
+  state.libraryTab = 'rooms';
+  applyLibraryTab();
   refreshDerived();
   applyModeRotation();
   if (before) pushHistory(before);
@@ -3162,6 +3190,8 @@ function requestNewProject() {
 
 refs.modePlan.addEventListener('click', () => setEditorMode('plan'));
 refs.modeSite.addEventListener('click', () => setEditorMode('site'));
+refs.libTabRooms.addEventListener('click', () => { state.libraryTab = 'rooms'; applyLibraryTab(); });
+refs.libTabFurniture.addEventListener('click', () => { state.libraryTab = 'furniture'; applyLibraryTab(); });
 el('undoBtn').addEventListener('click', undo);
 el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
@@ -3262,6 +3292,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   updateConnectivity();
   renderLibrary();
   renderFurnitureBar();
+  applyLibraryTab();
   renderProps();
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);

@@ -1273,11 +1273,14 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       if (Math.hypot(q.x - p.x, q.y - p.y) < 40) continue;
       const mid = (edge.from + edge.to) / 2;
       const n = horiz ? outwardScreen(mid, chainPerp, 0, dir.y) : outwardScreen(chainPerp, mid, dir.x, 0);
-      // Выноски от стены к цепочке — бледнее основной линии.
+      // Выноски от стены до самой размерной линии (учёт её выноса off=13,
+      // плюс 3 px выхода за линию — как положено выносным линиям в CAD).
       const i1 = horiz ? w2s(edge.from, edge.at) : w2s(edge.at, edge.from);
       const i2 = horiz ? w2s(edge.to, edge.at) : w2s(edge.at, edge.to);
-      drawWitness(ctx, i1, p);
-      drawWitness(ctx, i2, q);
+      const a1 = { x: p.x + n.x * 16, y: p.y + n.y * 16 };
+      const b1 = { x: q.x + n.x * 16, y: q.y + n.y * 16 };
+      drawWitness(ctx, i1, a1);
+      drawWitness(ctx, i2, b1);
       drawDim(ctx, p, q, n, 13, `${len}`);
     }
     ctx.globalAlpha = 1;
