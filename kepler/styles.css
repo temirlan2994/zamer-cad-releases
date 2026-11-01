@@ -327,6 +327,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-radius: 999px;
 }
 .room-card.names-only .room-card-name { font-size: 12px; font-weight: 600; }
+.room-card.names-only { cursor: grab; }
+.room-card.names-only:active { cursor: grabbing; }
+.room-card.dragging { opacity: 0.5; }
 
 .canvas-wrap {
   flex: 1;

@@ -617,8 +617,9 @@ function activeSiteLayer() {
 
 // ---------------------------------------------------------------- Действия: план
 
-function placeRoomAt(world) {
-  const def = roomType(state.tool.type);
+function placeRoomAt(world, typeOverride = null) {
+  const type = typeOverride || state.tool.type;
+  const def = roomType(type);
   const w = def.w;
   const h = def.h;
   let x = world.x - w / 2;
@@ -628,7 +629,7 @@ function placeRoomAt(world) {
   x = snapped.x; y = snapped.y;
   const verdict = validateRoomPlacement(state.project, { x, y, w, h, parentId }, null);
   if (!verdict.ok) { toast(verdict.reason, true); return; }
-  const room = createRoom(state.tool.type, x, y, w, h);
+  const room = createRoom(type, x, y, w, h);
   room.parentId = parentId;
   const sameType = state.project.rooms.filter((r) => r.type === room.type).length;
   if (sameType > 0) room.name = `${def.title} ${sameType + 1}`;
@@ -1141,16 +1142,25 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 // Перетаскивание мебели из панели на план.
 canvas.addEventListener('dragover', (e) => {
   if (state.modeName !== 'plan') return;
-  if (!e.dataTransfer?.types.includes('application/x-kepler-furn')) return;
+  const t = e.dataTransfer?.types || [];
+  if (!t.includes('application/x-kepler-furn') && !t.includes('application/x-kepler-room')) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
 });
 canvas.addEventListener('drop', (e) => {
   if (state.modeName !== 'plan') return;
+  const rect = canvas.getBoundingClientRect();
+  const roomType = e.dataTransfer?.getData('application/x-kepler-room');
+  if (roomType) {
+    e.preventDefault();
+    cancelTool();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    placeRoomAt(world, roomType);
+    return;
+  }
   const kind = e.dataTransfer?.getData('application/x-kepler-furn') || e.dataTransfer?.getData('text/plain');
   if (!kind || !furnitureDef(kind)) return;
   e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
   const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
   addFurnitureAt(kind, world.x, world.y);
 });
@@ -2043,12 +2053,20 @@ function renderLibrary() {
   for (const def of ROOM_TYPES) {
     const card = document.createElement('button');
     card.className = 'room-card names-only';
+    card.draggable = true;
     if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
     card.innerHTML = `<span class="room-card-name">${def.title}</span>`;
     card.addEventListener('click', () => {
       if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
       else startPlaceRoom(def.type);
     });
+    card.addEventListener('dragstart', (e) => {
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/x-kepler-room', def.type);
+      e.dataTransfer.setData('text/plain', def.type);
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
     refs.roomCards.appendChild(card);
   }
 
