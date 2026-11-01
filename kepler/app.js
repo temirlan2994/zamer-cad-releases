@@ -30,7 +30,42 @@ import {
 } from './render.js';
 
 const AUTOSAVE_KEY = 'kepler-plan-autosave';
+const THEME_KEY = 'kepler-theme';
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174';
+
+// --- Тема: система (по умолчанию) → светлая → тёмная ---
+function prefersDark() {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === 'light' || mode === 'dark') root.dataset.theme = mode;
+  else delete root.dataset.theme;
+  const btn = document.getElementById('themeBtn');
+  if (btn) {
+    const effectiveDark = mode === 'dark' || (mode === 'system' && prefersDark());
+    btn.textContent = effectiveDark ? '☾' : '☀';
+    btn.title = `Тема: ${mode === 'system' ? 'как в системе' : mode === 'light' ? 'светлая' : 'тёмная'} — нажмите, чтобы сменить`;
+  }
+}
+
+function loadTheme() {
+  let mode = 'system';
+  try { mode = localStorage.getItem(THEME_KEY) || 'system'; } catch { /* нет доступа */ }
+  applyTheme(mode);
+  return mode;
+}
+
+function cycleTheme() {
+  let current = 'system';
+  try { current = localStorage.getItem(THEME_KEY) || 'system'; } catch { /* нет */ }
+  const next = current === 'system' ? 'light' : current === 'light' ? 'dark' : 'system';
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* нет */ }
+  applyTheme(next);
+  requestDraw();
+  toast(`Тема: ${next === 'system' ? 'как в системе' : next === 'light' ? 'светлая' : 'тёмная'}`);
+}
 
 // ---------------------------------------------------------------- Состояние
 
@@ -2318,6 +2353,7 @@ el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
+el('themeBtn').addEventListener('click', cycleTheme);
 el('menuBtn').addEventListener('click', () => openStartMenu());
 el('startClose').addEventListener('click', closeStartMenu);
 el('startContinue').addEventListener('click', closeStartMenu);
@@ -2350,11 +2386,17 @@ refs.projectName.addEventListener('change', () => {
 });
 
 new ResizeObserver(() => requestDraw()).observe(canvas);
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => requestDraw());
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+  let mode = 'system';
+  try { mode = localStorage.getItem(THEME_KEY) || 'system'; } catch { /* нет */ }
+  if (mode === 'system') applyTheme('system');
+  requestDraw();
+});
 
 // ---------------------------------------------------------------- Старт
 
 (function boot() {
+  loadTheme();
   let restored = null;
   try {
     const saved = localStorage.getItem(AUTOSAVE_KEY);
