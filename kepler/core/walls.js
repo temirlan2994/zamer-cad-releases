@@ -198,24 +198,20 @@ export function deriveWalls(project) {
   return walls;
 }
 
-// Сглаживает ступеньку на стыке колинеарных стен разной толщины (например
-// тонкая перегородка 100 встречает наружную стену 250 на одной линии): по
-// общей грани — заподлицо, а по второй грани добавляется диагональная фаска,
-// чтобы переход был плавным, без торчащего «бугорка».
+// Выравнивает ступеньку на стыке колинеарных стен разной толщины (например
+// тонкая перегородка 100 встречает наружную стену 250 на одной линии): тонкую
+// стену «добирают» прямоугольной заплаткой до наружной грани толстой — так
+// линия стены остаётся прямой, без ступеньки-бугорка и без скоса.
 function addThicknessChamfers(walls) {
   const solid = walls.filter((w) => w.kind === 'own' || w.kind === 'shared');
   const EPS = 2;
   const MIN_STEP = 20; // меньше — не считаем ступенькой
   const out = [];
-  const makeTri = (p1, p2, p3, src) => ({
-    key: `chamfer-${Math.round(p1.x)}|${Math.round(p1.y)}|${Math.round(p2.x)}|${Math.round(p2.y)}`,
+  const makeRect = (x, y, w, h, src) => ({
+    key: `chamfer-${Math.round(x)}|${Math.round(y)}|${Math.round(w)}|${Math.round(h)}`,
     kind: 'chamfer', orient: src.orient, rooms: [], sides: {}, from: 0, to: 0, edge: 0, thickness: 0,
-    poly: [p1, p2, p3],
-    band: {
-      x: Math.min(p1.x, p2.x, p3.x), y: Math.min(p1.y, p2.y, p3.y),
-      w: Math.max(p1.x, p2.x, p3.x) - Math.min(p1.x, p2.x, p3.x),
-      h: Math.max(p1.y, p2.y, p3.y) - Math.min(p1.y, p2.y, p3.y),
-    },
+    poly: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
+    band: { x, y, w, h },
     wallType: src.wallType,
   });
   for (let i = 0; i < solid.length; i += 1) {
@@ -228,49 +224,39 @@ function addThicknessChamfers(walls) {
       const b = B.band;
       if (A.orient === 'h') {
         if (Math.abs(a.x + a.w - b.x) > EPS) continue; // A слева, B справа, встык по X
-        const j0 = b.x;
         const topA = a.y;
         const botA = a.y + a.h;
         const topB = b.y;
         const botB = b.y + b.h;
         if (Math.abs(topA - topB) < EPS && Math.abs(botA - botB) > MIN_STEP) {
-          // общая верхняя грань, ступенька снизу
-          const shallow = Math.min(botA, botB);
+          // общая верхняя грань, ступенька снизу — тонкую добираем вниз до толстой
+          const thin = botA < botB ? A : B;
           const deep = Math.max(botA, botB);
-          const thinLeft = botA < botB; // тонкая стена слева
-          const s = thinLeft ? -1 : 1;
-          const off = Math.min(deep - shallow, thinLeft ? a.w : b.w, 500);
-          out.push(makeTri({ x: j0, y: shallow }, { x: j0, y: deep }, { x: j0 + s * off, y: shallow }, deep === botB ? B : A));
+          const shallow = Math.min(botA, botB);
+          out.push(makeRect(thin.band.x, shallow, thin.band.w, deep - shallow, deep === botB ? B : A));
         } else if (Math.abs(botA - botB) < EPS && Math.abs(topA - topB) > MIN_STEP) {
-          // общая нижняя грань, ступенька сверху
-          const shallow = Math.max(topA, topB);
+          // общая нижняя грань, ступенька сверху — тонкую добираем вверх
+          const thin = topA > topB ? A : B;
           const deep = Math.min(topA, topB);
-          const thinLeft = topA > topB;
-          const s = thinLeft ? -1 : 1;
-          const off = Math.min(shallow - deep, thinLeft ? a.w : b.w, 500);
-          out.push(makeTri({ x: j0, y: shallow }, { x: j0, y: deep }, { x: j0 + s * off, y: shallow }, deep === topB ? B : A));
+          const shallow = Math.max(topA, topB);
+          out.push(makeRect(thin.band.x, deep, thin.band.w, shallow - deep, deep === topB ? B : A));
         }
       } else {
         if (Math.abs(a.y + a.h - b.y) > EPS) continue; // A сверху, B снизу, встык по Y
-        const j0 = b.y;
         const leftA = a.x;
         const rightA = a.x + a.w;
         const leftB = b.x;
         const rightB = b.x + b.w;
         if (Math.abs(leftA - leftB) < EPS && Math.abs(rightA - rightB) > MIN_STEP) {
-          const shallow = Math.min(rightA, rightB);
+          const thin = rightA < rightB ? A : B;
           const deep = Math.max(rightA, rightB);
-          const thinTop = rightA < rightB;
-          const s = thinTop ? -1 : 1;
-          const off = Math.min(deep - shallow, thinTop ? a.h : b.h, 500);
-          out.push(makeTri({ x: shallow, y: j0 }, { x: deep, y: j0 }, { x: shallow, y: j0 + s * off }, deep === rightB ? B : A));
+          const shallow = Math.min(rightA, rightB);
+          out.push(makeRect(shallow, thin.band.y, deep - shallow, thin.band.h, deep === rightB ? B : A));
         } else if (Math.abs(rightA - rightB) < EPS && Math.abs(leftA - leftB) > MIN_STEP) {
-          const shallow = Math.max(leftA, leftB);
+          const thin = leftA > leftB ? A : B;
           const deep = Math.min(leftA, leftB);
-          const thinTop = leftA > leftB;
-          const s = thinTop ? -1 : 1;
-          const off = Math.min(shallow - deep, thinTop ? a.h : b.h, 500);
-          out.push(makeTri({ x: shallow, y: j0 }, { x: deep, y: j0 }, { x: shallow, y: j0 + s * off }, deep === leftB ? B : A));
+          const shallow = Math.max(leftA, leftB);
+          out.push(makeRect(deep, thin.band.y, shallow - deep, thin.band.h, deep === leftB ? B : A));
         }
       }
     }
