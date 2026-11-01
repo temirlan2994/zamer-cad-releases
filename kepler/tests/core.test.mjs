@@ -326,3 +326,31 @@ test('parseDxf: POLYLINE/VERTEX собирается в полилинию', () 
   assert.equal(poly.pts.length, 3);
   assert.equal(poly.pts[1].x, 500);
 });
+
+// --- Робастный габарит DXF: выносная точка не раздувает масштаб ---
+import { dxfToImage } from '../core/dxf.js';
+
+test('dxfToImage: одиночный выброс не ломает масштаб', () => {
+  // мини-заглушка canvas для node
+  globalThis.document = {
+    createElement: () => ({
+      width: 0, height: 0,
+      getContext: () => ({
+        fillStyle: '', strokeStyle: '', lineWidth: 0, lineJoin: '', lineCap: '',
+        fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, arc() {}, stroke() {}, closePath() {},
+      }),
+      toDataURL: () => 'data:,',
+    }),
+  };
+  const L = ['0', 'SECTION', '2', 'ENTITIES'];
+  for (let i = 0; i < 50; i += 1) {
+    const x = 3526400 + (i % 10) * 3;
+    const y = 4957300 + Math.floor(i / 10) * 8;
+    L.push('0', 'LWPOLYLINE', '90', '2', '70', '0', '10', String(x), '20', String(y), '10', String(x + 3), '20', String(y + 8));
+  }
+  L.push('0', 'POINT', '10', '0', '20', '0'); // выброс в (0,0)
+  L.push('0', 'ENDSEC', '0', 'EOF');
+  const info = dxfToImage(parseDxf(L.join('\n')));
+  assert.ok(info.worldWidthM < 200, `ширина должна быть ~десятки м, а не ${info.worldWidthM}`);
+  assert.equal(info.reliableScale, true);
+});

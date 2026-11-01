@@ -92,24 +92,33 @@ export function parseDxf(text) {
 // в пикселях и реальную ширину в мм (по $INSUNITS; по умолчанию — метры).
 export function dxfToImage(parsed, { targetMax = 2200, defaultUnitMm = 1000 } = {}) {
   const { entities } = parsed;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  const ext = (x, y) => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-  };
+  // Собираем все вершины. В геодезических DXF часто есть одиночные выносные
+  // точки/рамки далеко от участка — они раздувают габарит, из-за чего сам
+  // чертёж становится микроскопическим. Поэтому границы берём РОБАСТНО: по
+  // перцентилям (1–99%), отсекая выбросы.
+  const xs = [];
+  const ys = [];
+  const add = (x, y) => { if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); } };
   for (const e of entities) {
-    if (e.type === 'line') { ext(e.x1, e.y1); ext(e.x2, e.y2); }
-    else if (e.type === 'poly') { for (const p of e.pts) ext(p.x, p.y); }
-    else if (e.type === 'circle' || e.type === 'arc') { ext(e.cx - e.r, e.cy - e.r); ext(e.cx + e.r, e.cy + e.r); }
-    else if (e.type === 'point') { ext(e.x, e.y); }
+    if (e.type === 'line') { add(e.x1, e.y1); add(e.x2, e.y2); }
+    else if (e.type === 'poly') { for (const p of e.pts) add(p.x, p.y); }
+    else if (e.type === 'circle' || e.type === 'arc') { add(e.cx - e.r, e.cy - e.r); add(e.cx + e.r, e.cy + e.r); }
+    else if (e.type === 'point') { add(e.x, e.y); }
   }
-  if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) {
+  if (!xs.length) {
+    throw new Error('в DXF не найдено геометрии (линии/полилинии)');
+  }
+  const sx = [...xs].sort((a, b) => a - b);
+  const sy = [...ys].sort((a, b) => a - b);
+  const pick = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.round((arr.length - 1) * p)))];
+  let minX = pick(sx, 0.01);
+  let maxX = pick(sx, 0.99);
+  let minY = pick(sy, 0.01);
+  let maxY = pick(sy, 0.99);
+  // Если после отсечения габарит выродился — берём полный диапазон.
+  if (maxX - minX < 1e-6) { minX = sx[0]; maxX = sx[sx.length - 1]; }
+  if (maxY - minY < 1e-6) { minY = sy[0]; maxY = sy[sy.length - 1]; }
+  if (maxX <= minX || maxY <= minY) {
     throw new Error('в DXF не найдено геометрии (линии/полилинии)');
   }
   const wU = maxX - minX;
@@ -157,10 +166,17 @@ export function dxfToImage(parsed, { targetMax = 2200, defaultUnitMm = 1000 } = 
     }
   }
   const unitMm = UNIT_TO_MM[parsed.insunits] || defaultUnitMm;
+  const worldWidthMm = bw * unitMm;
+  // Масштаб считаем надёжным только если реальный размер правдоподобный
+  // (от 0.5 м до 2 км). Иначе единицы угаданы неверно — пусть пользователь
+  // задаст масштаб по отрезку, а картинку поставим удобного размера.
+  const reliableScale = worldWidthMm >= 500 && worldWidthMm <= 2_000_000;
   return {
     dataUrl: cnv.toDataURL('image/png'),
     size: { w: W, h: H },
-    worldWidthMm: bw * unitMm,
+    worldWidthMm,
+    worldWidthM: worldWidthMm / 1000,
+    reliableScale,
     hadUnits: Boolean(UNIT_TO_MM[parsed.insunits]),
     entityCount: entities.length,
   };

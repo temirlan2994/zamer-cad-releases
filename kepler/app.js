@@ -994,11 +994,14 @@ async function loadUnderlayFile(file) {
     if (name.endsWith('.dxf')) {
       const text = await file.text();
       const parsed = parseDxf(text);
-      const { dataUrl, size, worldWidthMm, hadUnits, entityCount } = dxfToImage(parsed);
-      placeUnderlay(dataUrl, size, worldWidthMm);
-      toast(hadUnits
-        ? `DXF загружен (${entityCount} объектов), масштаб по единицам чертежа. Проверьте размер справа.`
-        : `DXF загружен (${entityCount} объектов). Единицы не указаны — приняты метры; при необходимости задайте масштаб по отрезку.`, true);
+      const info = dxfToImage(parsed);
+      placeUnderlay(info.dataUrl, info.size, info.reliableScale ? info.worldWidthMm : null);
+      if (state.modeName === 'site') fitView(); // сразу вписываем в экран
+      if (info.reliableScale) {
+        toast(`DXF загружен (${info.entityCount} об.), ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы не указаны — приняты метры)'}. Проверьте масштаб справа.`, true);
+      } else {
+        toast(`DXF загружен (${info.entityCount} об.). Единицы чертежа непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «масштаб по отрезку» справа.`, true);
+      }
       return;
     }
     let dataUrl;
