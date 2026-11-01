@@ -716,6 +716,50 @@ function bringRoomToTop(roomId) {
   state.project.rooms.push(room);
 }
 
+// Добавить/убрать объект в мультивыбор по Shift-клику.
+function toggleInMulti(kind, id) {
+  const sel = state.selection;
+  const roomIds = new Set(sel?.type === 'multi' ? sel.roomIds : sel?.type === 'room' ? [sel.id] : []);
+  const itemIds = new Set(sel?.type === 'multi' ? sel.itemIds : sel?.type === 'item' ? [sel.id] : []);
+  const set = kind === 'room' ? roomIds : itemIds;
+  if (set.has(id)) set.delete(id); else set.add(id);
+  const rooms = [...roomIds];
+  const items = [...itemIds];
+  const total = rooms.length + items.length;
+  if (total === 0) { selectObject(null); return; }
+  if (total === 1) {
+    selectObject(rooms.length ? { type: 'room', id: rooms[0] } : { type: 'item', id: items[0] });
+    return;
+  }
+  selectObject({ type: 'multi', roomIds: rooms, itemIds: items });
+}
+
+// Выбрать всю группу мебели как мультивыбор.
+function selectGroup(groupId) {
+  const itemIds = state.project.items.filter((i) => i.group === groupId).map((i) => i.id);
+  if (itemIds.length <= 1) { selectObject(itemIds.length ? { type: 'item', id: itemIds[0] } : null); return; }
+  selectObject({ type: 'multi', roomIds: [], itemIds });
+}
+
+// Повернуть выбранную мебель группой на 90° вокруг общего центра.
+function rotateMulti90() {
+  const sel = state.selection;
+  if (sel?.type !== 'multi' || !sel.itemIds.length) return;
+  const items = sel.itemIds.map((id) => state.project.items.find((i) => i.id === id)).filter(Boolean);
+  const cx = items.reduce((s, i) => s + i.x, 0) / items.length;
+  const cy = items.reduce((s, i) => s + i.y, 0) / items.length;
+  mutate(() => {
+    for (const item of items) {
+      const dx = item.x - cx;
+      const dy = item.y - cy;
+      item.x = cx - dy;
+      item.y = cy + dx;
+      item.rotation = ((item.rotation || 0) + 90) % 360;
+    }
+  });
+  selectObject(sel);
+}
+
 function rotateSelectedItem() {
   if (state.selection?.type !== 'item') return;
   const item = state.project.items.find((i) => i.id === state.selection.id);
@@ -1115,10 +1159,12 @@ canvas.addEventListener('pointerdown', (event) => {
 
   const item = hitItem(world);
   if (item) {
+    if (event.shiftKey) { toggleInMulti('item', item.id); return; }
     if (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id)) {
       startMultiDrag(world);
       return;
     }
+    if (item.group) { selectGroup(item.group); startMultiDrag(world); return; }
     selectObject({ type: 'item', id: item.id });
     drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, world, before: snapshot(), moved: false };
     return;
@@ -1139,6 +1185,7 @@ canvas.addEventListener('pointerdown', (event) => {
 
   const room = hitRoom(world);
   if (room) {
+    if (event.shiftKey) { toggleInMulti('room', room.id); return; }
     if (state.selection?.type === 'multi' && state.selection.roomIds.includes(room.id)) {
       startMultiDrag(world);
       return;
@@ -1805,7 +1852,10 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
   if (event.key === 'Escape') { cancelTool(); selectObject(null); return; }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
-  if (event.code === 'KeyR') { rotateSelectedItem(); return; }
+  if (event.code === 'KeyR') {
+    if (state.selection?.type === 'multi') rotateMulti90(); else rotateSelectedItem();
+    return;
+  }
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
   if (nudge && state.selection) {
     event.preventDefault();
@@ -2378,16 +2428,37 @@ function renderItemProps(panel, item) {
 }
 
 function renderMultiProps(panel, sel) {
+  const items = sel.itemIds.map((id) => state.project.items.find((i) => i.id === id)).filter(Boolean);
+  const groups = new Set(items.map((i) => i.group).filter(Boolean));
+  const grouped = items.length >= 2 && groups.size === 1 && items.every((i) => i.group) && groups.size;
   panel.innerHTML = `
-    <h2>Выделено рамкой</h2>
+    <h2>Выделено</h2>
     <div class="prop-block">
       <div class="prop-row"><span>Комнат</span><strong>${sel.roomIds.length}</strong></div>
       <div class="prop-row"><span>Мебели</span><strong>${sel.itemIds.length}</strong></div>
     </div>
-    <p class="empty-hint">Перетащите любой выделенный объект — группа поедет вместе. Del — удалить всё выделенное.</p>
+    <p class="empty-hint">Shift-клик добавляет/убирает объект. Перетащите любой — поедут все. R — повернуть мебель группой на 90°. Del — удалить.</p>
     <div class="prop-actions">
+      ${items.length >= 2 ? `<button id="rotateMulti">Повернуть мебель на 90° (R)</button>` : ''}
+      ${items.length >= 2 && !grouped ? `<button id="groupBtn">Объединить в группу</button>` : ''}
+      ${grouped ? `<button id="ungroupBtn">Разгруппировать</button>` : ''}
       <button id="deleteMulti" class="danger">Удалить выделенное</button>
     </div>`;
+  const rot = panel.querySelector('#rotateMulti');
+  if (rot) rot.addEventListener('click', rotateMulti90);
+  const groupBtn = panel.querySelector('#groupBtn');
+  if (groupBtn) groupBtn.addEventListener('click', () => {
+    const gid = `grp-${Date.now().toString(36)}`;
+    mutate(() => { for (const i of items) i.group = gid; });
+    selectObject(sel);
+    toast('Мебель объединена в группу — клик по любому выделит всю группу');
+  });
+  const ungroupBtn = panel.querySelector('#ungroupBtn');
+  if (ungroupBtn) ungroupBtn.addEventListener('click', () => {
+    mutate(() => { for (const i of items) delete i.group; });
+    selectObject(sel);
+    toast('Группа расформирована');
+  });
   panel.querySelector('#deleteMulti').addEventListener('click', deleteSelection);
 }
 
