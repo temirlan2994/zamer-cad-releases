@@ -573,14 +573,16 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     for (const buf of neighborBuffers(site)) {
       ctx.save();
       ctx.beginPath();
-      ctx.rect(buf.x, buf.y, buf.w, buf.h);
+      polyPath(ctx, buf.poly);
       ctx.clip();
-      paintHatch(ctx, [{ x: buf.x, y: buf.y }, { x: buf.x + buf.w, y: buf.y }, { x: buf.x + buf.w, y: buf.y + buf.h }, { x: buf.x, y: buf.y + buf.h }], 'rgba(225,75,75,0.07)', 'rgba(225,75,75,0.22)', px);
+      paintHatch(ctx, buf.poly, 'rgba(225,75,75,0.07)', 'rgba(225,75,75,0.22)', px);
       ctx.restore();
       ctx.strokeStyle = 'rgba(225,75,75,0.5)';
       ctx.lineWidth = px(1);
       ctx.setLineDash([px(5), px(4)]);
-      ctx.strokeRect(buf.x, buf.y, buf.w, buf.h);
+      ctx.beginPath();
+      polyPath(ctx, buf.poly);
+      ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.restore();

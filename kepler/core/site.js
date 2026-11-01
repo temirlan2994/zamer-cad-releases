@@ -144,25 +144,21 @@ export function neighborRectCorners(n) {
   }));
 }
 
-// Прямоугольники, запрещённые из-за соседних домов (отступ вокруг рамки дома).
-// Для повёрнутого дома берём его осевой габарит (AABB) плюс отступ.
+// Запретная зона вокруг соседнего дома (отступ). Это рамка дома, раздутая на
+// отступ со всех сторон и ПОВЁРНУТАЯ вместе с домом — возвращается полигоном.
 export function neighborBuffers(site) {
   const buffer = site.setbackNeighbor ?? DEFAULT_SETBACK_NEIGHBOR;
   return (site.neighbors || []).map((n) => {
-    const corners = neighborRectCorners(n);
-    const xs = corners.map((p) => p.x);
-    const ys = corners.map((p) => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    return {
-      x: minX - buffer,
-      y: minY - buffer,
-      w: maxX - minX + buffer * 2,
-      h: maxY - minY + buffer * 2,
-      neighbor: n,
-    };
+    const rot = ((n.rot || 0) * Math.PI) / 180;
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const hw = n.w / 2 + buffer;
+    const hh = n.h / 2 + buffer;
+    const poly = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([lx, ly]) => ({
+      x: n.x + lx * c - ly * s,
+      y: n.y + lx * s + ly * c,
+    }));
+    return { poly, neighbor: n };
   });
 }
 
@@ -198,14 +194,36 @@ export function checkRectBuildable(site, rect) {
       return { ok: false, reason: `Выходит за границу застройки (отступ ${setbackM} м от границы участка)` };
     }
   }
+  const rectPoly = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h },
+  ];
   for (const buf of neighborBuffers(site)) {
-    const overlap = rect.x + rect.w > buf.x && buf.x + buf.w > rect.x && rect.y + rect.h > buf.y && buf.y + buf.h > rect.y;
-    if (overlap) {
+    if (convexPolysOverlap(rectPoly, buf.poly)) {
       const m = ((site.setbackNeighbor ?? DEFAULT_SETBACK_NEIGHBOR) / 1000).toLocaleString('ru-RU');
       return { ok: false, reason: `Ближе ${m} м к соседнему дому` };
     }
   }
   return { ok: true };
+}
+
+// Пересечение двух выпуклых многоугольников (теорема о разделяющей оси).
+function convexPolysOverlap(a, b) {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i += 1) {
+      const p = poly[i];
+      const q = poly[(i + 1) % poly.length];
+      const nx = -(q.y - p.y);
+      const ny = q.x - p.x;
+      let minA = Infinity; let maxA = -Infinity; let minB = Infinity; let maxB = -Infinity;
+      for (const v of a) { const d = v.x * nx + v.y * ny; if (d < minA) minA = d; if (d > maxA) maxA = d; }
+      for (const v of b) { const d = v.x * nx + v.y * ny; if (d < minB) minB = d; if (d > maxB) maxB = d; }
+      if (maxA < minB || maxB < minA) return false;
+    }
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------- Солнце
