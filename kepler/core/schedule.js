@@ -7,7 +7,7 @@
 //   летние — террасы и балконы (отдельной строкой).
 
 import { isOpenRoom } from './catalog.js';
-import { levelProject, sortedLevels } from './model.js';
+import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomNetAreaM2 } from './rooms.js';
 
 export const LIVING_TYPES = new Set(['living', 'bedroom', 'master-bedroom', 'cabinet']);
@@ -26,6 +26,7 @@ export function roomSchedule(project) {
       area: roomNetAreaM2(lp, room),
       w: room.w,
       h: room.h,
+      ceiling: roomCeiling(room, level),
       living: LIVING_TYPES.has(room.type),
       open: isOpenRoom(room),
       parent: room.parentId ? lp.rooms.find((r) => r.id === room.parentId)?.name || null : null,
@@ -56,12 +57,12 @@ export function buildRoomScheduleCsv(project) {
     const s = String(v ?? '');
     return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const lines = [['Этаж', '№', 'Помещение', 'Площадь, м²', 'Ширина, м', 'Длина, м', 'Высота этажа, м', 'Жилое', 'Внутри помещения'].join(';')];
+  const lines = [['Этаж', '№', 'Помещение', 'Площадь, м²', 'Ширина, м', 'Длина, м', 'Высота, м', 'Жилое', 'Внутри помещения'].join(';')];
   for (const { level, rows, totals } of schedule) {
     for (const r of rows) {
       lines.push([
         cell(level.name), r.number, cell(r.name), num(r.area), num(r.w / 1000), num(r.h / 1000),
-        num(level.height / 1000), r.living ? 'да' : '', cell(r.parent || ''),
+        num(r.ceiling / 1000), r.living ? 'да' : '', cell(r.parent || ''),
       ].join(';'));
     }
     lines.push([cell(level.name), '', 'Итого по этажу (общая)', num(totals.total), '', '', '', '', ''].join(';'));

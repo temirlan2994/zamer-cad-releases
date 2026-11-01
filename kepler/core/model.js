@@ -22,6 +22,12 @@ export function makeId(prefix) {
 // скрытые свойства-аксессоры (attachLevelAccessors): в JSON их нет.
 
 export const DEFAULT_LEVEL_HEIGHT = 3000; // от пола до пола следующего этажа, мм
+export const DEFAULT_SLAB = 300; // перекрытие: чистая высота = высота этажа − плита
+
+// Чистая высота помещения (от пола до потолка): своя или по этажу.
+export function roomCeiling(room, level) {
+  return room.ceiling || (level?.height ?? DEFAULT_LEVEL_HEIGHT) - DEFAULT_SLAB;
+}
 export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides'];
 
 export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {

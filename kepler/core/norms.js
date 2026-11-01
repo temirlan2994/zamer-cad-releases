@@ -6,13 +6,13 @@
 //     ванная (санузел) 1,5 м;
 //   естественный свет: окна жилых комнат и кухни — не меньше 1:8 площади пола;
 //   высота жилых комнат и кухни от пола до потолка — не менее 2,5 м
-//     (здесь: высота этажа минус перекрытие 0,3 м).
+//     (своя высота комнаты или высота этажа минус перекрытие 0,3 м).
 // Плюс инсоляция (core/insolation.js). Это подсказка для концепции,
 // а не экспертиза проекта.
 
 import { roomType } from './catalog.js';
 import { insolationReport } from './insolation.js';
-import { levelProject, sortedLevels } from './model.js';
+import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
 
@@ -22,7 +22,7 @@ export const SP55 = {
   lightTypes: new Set([...LIVING_TYPES, 'kitchen']),
   lightRatio: 1 / 8,
   minClearHeight: 2500,
-  slab: 300,
+  slab: DEFAULT_SLAB,
 };
 
 const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
@@ -60,7 +60,7 @@ export function roomChecks(project, room, level) {
     });
   }
   if (SP55.lightTypes.has(room.type) && level) {
-    const clear = level.height - SP55.slab;
+    const clear = roomCeiling(room, level);
     out.push({
       kind: 'height', ok: clear >= SP55.minClearHeight,
       text: `Высота ≈ ${fmt(clear / 1000, 2)} м ${clear >= SP55.minClearHeight ? '≥' : '<'} 2,5 м`,

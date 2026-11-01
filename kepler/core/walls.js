@@ -416,6 +416,34 @@ export function doorLink(project, opening, walls) {
 
 // Геометрия символа двери (петля, закрытое/открытое положение створки, точка
 // дуги). Используется и рендером, и DXF-экспортом — чертёж и экспорт совпадают.
+// Типы дверей и окон (opening.type; нет поля — первый тип).
+export const DOOR_TYPES = {
+  single: 'Одностворчатая',
+  double: 'Двустворчатая',
+  sliding: 'Раздвижная',
+  none: 'Проём без двери',
+};
+export const WINDOW_TYPES = {
+  standard: 'Обычное',
+  panoramic: 'Панорамное (в пол)',
+};
+
+// Распашные створки двери: одна (single) или две половины от обоих косяков
+// (double); у раздвижной и проёма без двери створок-дуг нет.
+export function doorLeaves(project, opening, walls) {
+  const type = opening.type || 'single';
+  if (type === 'double') {
+    const half = opening.width / 2;
+    return [
+      doorSymbol(project, { ...opening, width: half, offset: opening.offset - half / 2, hingeStart: true }, walls),
+      doorSymbol(project, { ...opening, width: half, offset: opening.offset + half / 2, hingeStart: false }, walls),
+    ].filter(Boolean);
+  }
+  if (type !== 'single') return [];
+  const one = doorSymbol(project, opening, walls);
+  return one ? [one] : [];
+}
+
 export function doorSymbol(project, opening, walls) {
   const placed = openingRect(project, opening, walls);
   if (!placed) return null;

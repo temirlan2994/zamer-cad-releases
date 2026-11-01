@@ -15,12 +15,12 @@
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
 import { buildDxf } from './zamer/dxf.js';
-import { deriveWalls, doorLink, doorSymbol, openingRect } from './walls.js';
+import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
-import { groundLevel, levelProject, sortedLevels } from './model.js';
+import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -39,6 +39,7 @@ function buildLevelExport(project, level) {
       { x: room.x, y: room.y + room.h },
     ],
     size: { w: room.w, h: room.h },
+    ceiling_height: roomCeiling(room, level), // чистая высота, мм
     area_m2: Number(((room.w * room.h) / 1_000_000).toFixed(3)),
     net_area_m2: Number(roomNetAreaM2(project, room).toFixed(3)),
   }));
@@ -66,6 +67,9 @@ function buildLevelExport(project, level) {
         ? { x: placed.rect.x + placed.rect.w / 2, y: placed.rect.y + placed.rect.h / 2 }
         : null,
       wallKey: placed ? placed.wall.key : null,
+      type: opening.type || (opening.kind === 'door' ? 'single' : 'standard'),
+      height: opening.height ?? (opening.kind === 'door' ? 2100 : 1500),
+      sill: opening.kind === 'door' ? 0 : opening.sill ?? 900,
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
     };
@@ -173,10 +177,25 @@ export function planEntities(project, { dims = true } = {}) {
 
   for (const opening of project.openings) {
     if (opening.kind === 'door') {
-      const symbol = doorSymbol(project, opening, walls);
-      if (!symbol) continue;
-      entities.push({ type: 'line', layer: 'walls', x1: symbol.hinge.x, y1: symbol.hinge.y, x2: symbol.open.x, y2: symbol.open.y });
-      entities.push({ type: 'arc', layer: 'walls', start: symbol.closed, through: symbol.through, end: symbol.open });
+      const type = opening.type || 'single';
+      if (type === 'sliding') {
+        const placed = openingRect(project, opening, walls);
+        if (!placed) continue;
+        const { rect, wall } = placed;
+        const horiz = wall.orient === 'h';
+        const len = horiz ? rect.w : rect.h;
+        const t = horiz ? rect.h : rect.w;
+        for (const [from, to, at] of [[0, 0.6, 0.35], [0.4, 1, 0.65]]) {
+          entities.push(horiz
+            ? { type: 'line', layer: 'walls', x1: rect.x + len * from, y1: rect.y + t * at, x2: rect.x + len * to, y2: rect.y + t * at }
+            : { type: 'line', layer: 'walls', x1: rect.x + t * at, y1: rect.y + len * from, x2: rect.x + t * at, y2: rect.y + len * to });
+        }
+        continue;
+      }
+      for (const symbol of doorLeaves(project, opening, walls)) {
+        entities.push({ type: 'line', layer: 'walls', x1: symbol.hinge.x, y1: symbol.hinge.y, x2: symbol.open.x, y2: symbol.open.y });
+        entities.push({ type: 'arc', layer: 'walls', start: symbol.closed, through: symbol.through, end: symbol.open });
+      }
     } else {
       const placed = openingRect(project, opening, walls);
       if (!placed) continue;

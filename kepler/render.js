@@ -2,7 +2,7 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
-import { deriveWalls, doorSymbol, openingRect } from './core/walls.js';
+import { deriveWalls, doorLeaves, doorSymbol, openingRect } from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, roomType } from './core/catalog.js';
 import {
@@ -968,21 +968,48 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
   ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.line;
   ctx.lineWidth = px(selected || hovered ? 1.8 : 1.4);
   if (opening.kind === 'door') {
-    const symbol = doorSymbol(state.project, opening, walls);
-    if (!symbol) return;
-    ctx.beginPath();
-    ctx.moveTo(symbol.hinge.x, symbol.hinge.y);
-    ctx.lineTo(symbol.open.x, symbol.open.y);
-    ctx.stroke();
-    ctx.beginPath();
-    const radius = opening.width;
-    const a1 = Math.atan2(symbol.closed.y - symbol.hinge.y, symbol.closed.x - symbol.hinge.x);
-    const a2 = Math.atan2(symbol.open.y - symbol.hinge.y, symbol.open.x - symbol.hinge.x);
-    let delta = a2 - a1;
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-    ctx.arc(symbol.hinge.x, symbol.hinge.y, radius, a1, a1 + delta, delta < 0);
-    ctx.stroke();
+    const type = opening.type || 'single';
+    if (type === 'sliding') {
+      // Раздвижная: два полотна внахлёст внутри толщины стены.
+      const horiz = wall.orient === 'h';
+      const len = horiz ? rect.w : rect.h;
+      const t = horiz ? rect.h : rect.w;
+      for (const [from, to, at] of [[0, 0.6, 0.35], [0.4, 1, 0.65]]) {
+        ctx.beginPath();
+        if (horiz) { ctx.moveTo(rect.x + len * from, rect.y + t * at); ctx.lineTo(rect.x + len * to, rect.y + t * at); }
+        else { ctx.moveTo(rect.x + t * at, rect.y + len * from); ctx.lineTo(rect.x + t * at, rect.y + len * to); }
+        ctx.stroke();
+      }
+      return;
+    }
+    if (type === 'none') {
+      // Проём без двери: только косяки.
+      ctx.beginPath();
+      if (wall.orient === 'h') {
+        ctx.moveTo(rect.x, rect.y); ctx.lineTo(rect.x, rect.y + rect.h);
+        ctx.moveTo(rect.x + rect.w, rect.y); ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+      } else {
+        ctx.moveTo(rect.x, rect.y); ctx.lineTo(rect.x + rect.w, rect.y);
+        ctx.moveTo(rect.x, rect.y + rect.h); ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+      }
+      ctx.stroke();
+      return;
+    }
+    for (const symbol of doorLeaves(state.project, opening, walls)) {
+      ctx.beginPath();
+      ctx.moveTo(symbol.hinge.x, symbol.hinge.y);
+      ctx.lineTo(symbol.open.x, symbol.open.y);
+      ctx.stroke();
+      ctx.beginPath();
+      const radius = Math.hypot(symbol.closed.x - symbol.hinge.x, symbol.closed.y - symbol.hinge.y);
+      const a1 = Math.atan2(symbol.closed.y - symbol.hinge.y, symbol.closed.x - symbol.hinge.x);
+      const a2 = Math.atan2(symbol.open.y - symbol.hinge.y, symbol.open.x - symbol.hinge.x);
+      let delta = a2 - a1;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      ctx.arc(symbol.hinge.x, symbol.hinge.y, radius, a1, a1 + delta, delta < 0);
+      ctx.stroke();
+    }
   } else {
     // Окно рисуем строго в пределах полотна стены (clip по band), чтобы рамка
     // не выступала за грани стены ни внутрь, ни наружу — окно вровень со стеной.
@@ -993,12 +1020,16 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
     ctx.clip();
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.beginPath();
-    if (rect.w >= rect.h) {
-      ctx.moveTo(rect.x, rect.y + rect.h / 2);
-      ctx.lineTo(rect.x + rect.w, rect.y + rect.h / 2);
-    } else {
-      ctx.moveTo(rect.x + rect.w / 2, rect.y);
-      ctx.lineTo(rect.x + rect.w / 2, rect.y + rect.h);
+    // Обычное окно — одна линия стекла, панорамное — две.
+    const glassAt = opening.type === 'panoramic' ? [1 / 3, 2 / 3] : [1 / 2];
+    for (const k of glassAt) {
+      if (rect.w >= rect.h) {
+        ctx.moveTo(rect.x, rect.y + rect.h * k);
+        ctx.lineTo(rect.x + rect.w, rect.y + rect.h * k);
+      } else {
+        ctx.moveTo(rect.x + rect.w * k, rect.y);
+        ctx.lineTo(rect.x + rect.w * k, rect.y + rect.h);
+      }
     }
     ctx.strokeStyle = selected ? tokens.accent : tokens.line;
     ctx.stroke();

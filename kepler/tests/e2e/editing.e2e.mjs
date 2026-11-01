@@ -131,3 +131,57 @@ describe('правка через интерфейс', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('типы проёмов и высота потолка', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openNew(app.page);
+    await dropOnCanvas(app.page, 'application/x-kepler-room', 'living');
+  });
+  after(async () => { await app?.close(); });
+
+  const opening = (page, kind) => page.evaluate((k) => {
+    const o = window.__kepler.state.project.openings.find((x) => x.kind === k);
+    return o && { id: o.id, type: o.type, width: o.width, sill: o.sill, height: o.height };
+  }, kind);
+
+  it('дверь → двустворчатая (ширина не меньше 1200), окно → панорамное', async () => {
+    const r = (await proj(app.page)).rooms[0];
+    await app.page.click('#addDoorBtn');
+    await clickWorld(app.page, r.x + r.w / 2, r.y - 60);
+    const d = await opening(app.page, 'door');
+    await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), d.id);
+    await app.page.selectOption('#openType', 'double');
+    const d2 = await opening(app.page, 'door');
+    assert.equal(d2.type, 'double');
+    assert.ok(d2.width >= 1200);
+
+    await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
+    await app.page.click('#addWindowBtn');
+    await clickWorld(app.page, r.x - 60, r.y + r.h / 2);
+    const w = await opening(app.page, 'window');
+    await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), w.id);
+    await app.page.selectOption('#openType', 'panoramic');
+    const w2 = await opening(app.page, 'window');
+    assert.deepEqual([w2.type, w2.sill], ['panoramic', 100]);
+    assert.ok(w2.height >= 2000);
+  });
+
+  it('высота потолка комнаты; пусто — снова по этажу', async () => {
+    const r = (await proj(app.page)).rooms[0];
+    await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
+    await app.page.fill('#roomCeil', '2.4');
+    await app.page.locator('#roomCeil').blur();
+    const ceil = () => app.page.evaluate(() => window.__kepler.state.project.rooms[0].ceiling);
+    assert.equal(await ceil(), 2400);
+    assert.match(await app.page.textContent('#propsPanel'), /Высота ≈ 2,40 м < 2,5 м/);
+    await app.page.fill('#roomCeil', '');
+    await app.page.locator('#roomCeil').blur();
+    assert.equal(await ceil(), null);
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});

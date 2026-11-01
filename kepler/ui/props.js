@@ -3,8 +3,11 @@
 import { furnitureDef, roomType } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, levelProject, roomById } from '../core/model.js';
+import { SP55 } from '../core/norms.js';
 import { MIN_ROOM_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
-import { MAX_SHARED_GAP, clampOpeningOffset, deriveWalls, openingRect } from '../core/walls.js';
+import {
+  DOOR_TYPES, MAX_SHARED_GAP, WINDOW_TYPES, clampOpeningOffset, deriveWalls, openingRect,
+} from '../core/walls.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
@@ -38,6 +41,11 @@ export function renderProps() {
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
   if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
   renderProjectProps(panel);
+}
+
+// Чистая высота по умолчанию: высота этажа минус перекрытие (core/norms.js).
+function defaultCeiling() {
+  return activeLevel(state.project).height - SP55.slab;
 }
 
 function renderProjectProps(panel) {
@@ -160,6 +168,8 @@ function renderRoomProps(panel, room) {
         <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${MIN_ROOM_SIZE}" value="${room.w}"></label>
         <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${MIN_ROOM_SIZE}" value="${room.h}"></label>
       </div>
+      <label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
+        <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
       <div class="prop-row"><span>Площадь (чистая)</span><strong>${roomNetAreaM2(state.project, room).toFixed(2)} м²</strong></div>
     </div>
     ${areaControl}
@@ -199,6 +209,10 @@ function renderRoomProps(panel, room) {
   };
   panel.querySelector('#roomW').addEventListener('change', applySize);
   panel.querySelector('#roomH').addEventListener('change', applySize);
+  panel.querySelector('#roomCeil').addEventListener('change', (e) => {
+    const v = Number(String(e.target.value).replace(',', '.'));
+    mutate(() => { room.ceiling = v >= 2 ? Math.round(v * 1000) : null; });
+  });
   panel.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', () => addFurniture(btn.dataset.add, room));
   });
@@ -330,6 +344,10 @@ function renderOpeningProps(panel, opening) {
     <p class="subtitle">Стена «${room?.name}»</p>
     <div class="elev-wrap">${elevationSVG(opening)}</div>
     <div class="prop-block">
+      <label class="prop-field"><span>Тип</span>
+        <select id="openType">${Object.entries(isDoor ? DOOR_TYPES : WINDOW_TYPES).map(([id, title]) => `
+          <option value="${id}" ${(opening.type || (isDoor ? 'single' : 'standard')) === id ? 'selected' : ''}>${title}</option>`).join('')}
+        </select></label>
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span>
           <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
@@ -350,7 +368,7 @@ function renderOpeningProps(panel, opening) {
       <label class="prop-field"><span>От начала стены, мм</span>
         <input id="openOff" type="number" step="50" value="${Math.round(opening.offset)}"></label>
     </div>
-    ${isDoor ? `
+    ${isDoor && ['single', 'double', undefined].includes(opening.type) ? `
     <div class="prop-actions">
       <button id="flipSwing">Открывание: ${opening.swingIn ? 'внутрь' : 'наружу'}</button>
       <button id="flipHinge">Петли: ${opening.hingeStart ? 'слева' : 'справа'}</button>
@@ -370,6 +388,20 @@ function renderOpeningProps(panel, opening) {
       const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), opening.offset);
       if (clamped !== null) opening.offset = clamped;
       else toast('Проём шире стены — уменьшите ширину');
+    });
+  });
+  panel.querySelector('#openType').addEventListener('change', (e) => {
+    const type = e.target.value;
+    commitOpening(() => {
+      opening.type = type;
+      if (!isDoor) {
+        // Панорамное — почти от пола и выше; обычное — подоконник 900, 1500.
+        const top = activeLevel(state.project).height - 400;
+        if (type === 'panoramic') { opening.sill = 100; opening.height = Math.min(2400, top - 100); }
+        else { opening.sill = 900; opening.height = Math.min(1500, top - 900); }
+      } else if (type === 'double' && opening.width < 1200) {
+        opening.width = 1200; // двустворчатой нужна ширина
+      }
     });
   });
   panel.querySelector('#openH').addEventListener('change', (e) => {

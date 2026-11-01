@@ -35,8 +35,8 @@ test('CSV для Excel: BOM, «;», десятичная запятая, кав�
   const csv = buildRoomScheduleCsv(house());
   assert.ok(csv.startsWith('﻿'));
   const lines = csv.slice(1).trim().split('\r\n');
-  assert.equal(lines[0], 'Этаж;№;Помещение;Площадь, м²;Ширина, м;Длина, м;Высота этажа, м;Жилое;Внутри помещения');
-  assert.equal(lines[1], '1 этаж;1.01;Гостиная;21,00;5,00;4,20;3,00;да;');
+  assert.equal(lines[0], 'Этаж;№;Помещение;Площадь, м²;Ширина, м;Длина, м;Высота, м;Жилое;Внутри помещения');
+  assert.equal(lines[1], '1 этаж;1.01;Гостиная;21,00;5,00;4,20;2,70;да;');
   assert.ok(lines.includes(';;Общая площадь;45,80;;;;;'));
   assert.ok(lines.includes(';;Летние помещения (терраса, балкон);10,00;;;;;'));
 });
