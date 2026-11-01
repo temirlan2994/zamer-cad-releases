@@ -18,6 +18,8 @@ import { buildDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
+import { isRoundItem, isStructural } from './catalog.js';
+import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
@@ -86,7 +88,16 @@ function buildLevelExport(project, level) {
     }
     return null;
   };
-  const furniture = project.items.map((item) => ({
+  // Конструкции — отдельно от мебели.
+  const structures = project.items.filter((i) => isStructural(i.kind));
+  const freeWalls = structures.filter((i) => i.kind === 'wall-free').map((i) => {
+    const [e] = structuralEntities(i);
+    return { id: i.id, from: { x: e.x1, y: e.y1 }, to: { x: e.x2, y: e.y2 }, thickness: i.h };
+  });
+  const columns = structures.filter((i) => i.kind !== 'wall-free').map((i) => ({
+    id: i.id, shape: isRoundItem(i.kind) ? 'round' : 'rect', center: { x: i.x, y: i.y }, size: { w: i.w, h: i.h }, rotation_deg: i.rotation || 0,
+  }));
+  const furniture = project.items.filter((i) => !isStructural(i.kind)).map((item) => ({
     id: item.id,
     kind: item.kind,
     title: itemTitle(item.kind),
@@ -111,6 +122,8 @@ function buildLevelExport(project, level) {
     walls: wallsOut,
     openings,
     furniture,
+    free_walls: freeWalls,
+    columns,
     connections: {
       doors,
       has_entrance: connectivity.hasEntrance,
@@ -215,6 +228,10 @@ export function planEntities(project, { dims = true } = {}) {
   }
 
   for (const item of project.items) {
+    if (isStructural(item.kind)) {
+      entities.push(...structuralEntities(item));
+      continue;
+    }
     entities.push({
       type: 'block',
       layer: 'furniture',
@@ -251,6 +268,20 @@ export function planEntities(project, { dims = true } = {}) {
     entities.push({ type: 'line', layer: 'dimensions', x1: room.x, y1: room.y + room.h, x2: room.x, y2: room.y, offset: -600 });
   }
   return entities;
+}
+
+// Свободная стена — стена по длинной оси (две грани и ось), колонна —
+// контур (круглая — окружность). Слой стен.
+function structuralEntities(item) {
+  if (isRoundItem(item.kind)) return [{ type: 'circle', layer: 'walls', cx: item.x, cy: item.y, radius: item.w / 2 }];
+  if (item.kind === 'wall-free') {
+    const r = ((item.rotation || 0) * Math.PI) / 180;
+    const dx = (Math.cos(r) * item.w) / 2;
+    const dy = (Math.sin(r) * item.w) / 2;
+    return [{ type: 'wall', layer: 'walls', width: item.h, x1: item.x - dx, y1: item.y - dy, x2: item.x + dx, y2: item.y + dy }];
+  }
+  const c = structuralOutline(item);
+  return c.map((p, i) => ({ type: 'line', layer: 'walls', x1: p.x, y1: p.y, x2: c[(i + 1) % c.length].x, y2: c[(i + 1) % c.length].y }));
 }
 
 // Чертёж плана: в осях дома, поэтому от поворота дома не зависит.

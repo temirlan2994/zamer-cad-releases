@@ -39,7 +39,7 @@ describe('smoke', () => {
   it('мебель: иконки категорий и превью-канвасы', async () => {
     await app.page.click('#libTabFurniture');
     const cats = await app.page.$$('#furnitureCats button');
-    assert.equal(cats.length, 15);
+    assert.equal(cats.length, 16);
     const chips = await app.page.$$('#furnitureItems .furniture-chip');
     const canvases = await app.page.$$('#furnitureItems .furniture-chip canvas');
     assert.ok(chips.length > 0);

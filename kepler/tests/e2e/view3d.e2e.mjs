@@ -49,3 +49,38 @@ describe('3D', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('стены и колонны', () => {
+  let app;
+  before(async () => { app = await startApp(); await openSample(app.page); });
+  after(async () => { await app?.close(); });
+
+  it('категория «Стены и колонны»: стена перетаскивается на план и видна в 3D', async () => {
+    await app.page.click('#libTabFurniture');
+    await app.page.click('#furnitureCats button[aria-label="Стены и колонны"]');
+    const names = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
+    assert.deepEqual(names, ['Стена', 'Колонна', 'Колонна круглая']);
+    await app.page.evaluate(() => {
+      const c = document.getElementById('canvas');
+      const r = c.getBoundingClientRect();
+      const dt = new DataTransfer();
+      dt.setData('application/x-kepler-furn', 'wall-free');
+      const o = { clientX: r.left + 30, clientY: r.top + r.height / 2, dataTransfer: dt, bubbles: true, cancelable: true };
+      c.dispatchEvent(new DragEvent('dragover', o));
+      c.dispatchEvent(new DragEvent('drop', o));
+    });
+    const wall = await app.page.evaluate(() => window.__kepler.state.project.items.find((i) => i.kind === 'wall-free'));
+    assert.ok(wall && wall.w === 3000 && wall.h === 120, JSON.stringify(wall));
+    await app.page.click('#view3dBtn');
+    const withWall = (await d3(app.page)).faces;
+    await app.page.keyboard.press('Escape');
+    await app.page.keyboard.press('Control+z');
+    await app.page.click('#view3dBtn');
+    assert.ok((await d3(app.page)).faces < withWall, 'без стены граней меньше');
+    await app.page.keyboard.press('Escape');
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});

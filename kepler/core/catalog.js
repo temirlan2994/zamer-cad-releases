@@ -26,6 +26,7 @@ export const FURNITURE_CATEGORIES = [
   { id: 'hall', title: 'Прихожая' },
   { id: 'outdoor', title: 'Улица и гараж' },
   { id: 'misc', title: 'Разное' },
+  { id: 'structure', title: 'Стены и колонны' },
 ];
 
 // Мебель — все предметы параметрические (w/h свободно меняются, поворот).
@@ -139,7 +140,11 @@ export const FURNITURE = {
 
   // --- Разное ---
   box: { title: 'Прямоугольный блок', cat: 'misc', w: 1000, h: 1000, rules: { center: false, priority: 9 } },
-  column: { title: 'Колонна', cat: 'misc', w: 400, h: 400, rules: { center: false, priority: 9 } },
+  // --- Конструкции (structural): рисуются как стены, в 3D — на высоту
+  // этажа, в DXF — слой стен; это не мебель, к ним не нужен проход.
+  'wall-free': { title: 'Стена', cat: 'structure', w: 3000, h: 120, structural: true, rules: { center: false, priority: 9 } },
+  column: { title: 'Колонна', cat: 'structure', w: 400, h: 400, structural: true, rules: { center: false, priority: 9 } },
+  'column-round': { title: 'Колонна круглая', cat: 'structure', w: 400, h: 400, structural: true, round: true, rules: { center: false, priority: 9 } },
 
   // --- Дополнительно: диваны/кресла ---
   daybed: { title: 'Кушетка-лежанка', cat: 'seating', w: 1900, h: 900, rules: { wall: true, clearFront: 600, priority: 2 } },
@@ -282,6 +287,15 @@ export function furnitureByCategory(catId) {
   return Object.entries(FURNITURE)
     .filter(([, def]) => def.cat === catId)
     .map(([kind, def]) => ({ kind, ...def }));
+}
+
+// Конструкция (свободная стена, колонна), а не мебель.
+export function isStructural(kind) {
+  return Boolean(FURNITURE[kind]?.structural);
+}
+
+export function isRoundItem(kind) {
+  return Boolean(FURNITURE[kind]?.round);
 }
 
 // Весь каталог мебели (для поиска).

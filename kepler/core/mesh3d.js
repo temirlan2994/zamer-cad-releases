@@ -9,7 +9,7 @@
 //
 // face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind }
 
-import { isOpenRoom, roomType } from './catalog.js';
+import { isOpenRoom, isRoundItem, isStructural, roomType } from './catalog.js';
 import { toLocal } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
@@ -105,6 +105,43 @@ function levelFloors(lp, z) {
   return faces;
 }
 
+// Контур конструкции в плане: повёрнутый прямоугольник или 12-угольник.
+export function structuralOutline(item) {
+  const r = ((item.rotation || 0) * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const local = isRoundItem(item.kind)
+    ? Array.from({ length: 12 }, (_, i) => {
+      const a = (i / 12) * Math.PI * 2;
+      return { x: (Math.cos(a) * item.w) / 2, y: (Math.sin(a) * item.h) / 2 };
+    })
+    : [{ x: -item.w / 2, y: -item.h / 2 }, { x: item.w / 2, y: -item.h / 2 }, { x: item.w / 2, y: item.h / 2 }, { x: -item.w / 2, y: item.h / 2 }];
+  return local.map((p) => ({ x: item.x + p.x * c - p.y * s, y: item.y + p.x * s + p.y * c }));
+}
+
+// Призма над многоугольником: верх и боковые грани (нормали — от центра).
+function prismFaces(poly, z0, z1, color, kind) {
+  const cx = poly.reduce((t, p) => t + p.x, 0) / poly.length;
+  const cy = poly.reduce((t, p) => t + p.y, 0) / poly.length;
+  const faces = [{ pts: poly.map((p) => v(p.x, p.y, z1)), normal: v(0, 0, 1), color, kind }];
+  for (let i = 0; i < poly.length; i += 1) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    let nx = b.y - a.y;
+    let ny = -(b.x - a.x);
+    if (nx * ((a.x + b.x) / 2 - cx) + ny * ((a.y + b.y) / 2 - cy) < 0) { nx = -nx; ny = -ny; }
+    const len = Math.hypot(nx, ny) || 1;
+    faces.push({ pts: [v(a.x, a.y, z0), v(b.x, b.y, z0), v(b.x, b.y, z1), v(a.x, a.y, z1)], normal: v(nx / len, ny / len, 0), color, kind });
+  }
+  return faces;
+}
+
+// Свободные стены и колонны этажа — на всю высоту этажа.
+function levelStructures(lp, z0, height) {
+  return lp.items.filter((i) => isStructural(i.kind))
+    .flatMap((i) => prismFaces(structuralOutline(i), z0, z0 + height, WALL_COLOR, 'wall'));
+}
+
 // Крыша: плоское перекрытие над комнатами верхнего этажа.
 function roofFaces(lp, z) {
   const t = lp.settings?.exterior || 250;
@@ -165,6 +202,7 @@ export function buildHouseMesh(project, { roof = false, site = false } = {}) {
     const lp = levelProject(project, level.id);
     faces.push(...levelFloors(lp, level.elevation));
     faces.push(...levelWalls(lp, level.elevation, level.height));
+    faces.push(...levelStructures(lp, level.elevation, level.height));
   }
   const top = levels[levels.length - 1];
   if (roof && top) faces.push(...roofFaces(levelProject(project, top.id), top.elevation + top.height));

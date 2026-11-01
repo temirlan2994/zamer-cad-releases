@@ -7,7 +7,7 @@
 // Дополнительно: мебель пересекается с мебелью, мебель в зоне открывания
 // двери.
 
-import { furnitureDef } from './catalog.js';
+import { furnitureDef, isStructural } from './catalog.js';
 import { buildRoomContext, itemsInRoom } from './furnish.js';
 
 export const MIN_PASSAGE = 600;
@@ -90,7 +90,7 @@ export function furnitureIssues(project, room, walls) {
     }
   }
   items.forEach((item, i) => {
-    if (SKIP_REACH.has(item.kind)) return;
+    if (SKIP_REACH.has(item.kind) || isStructural(item.kind)) return;
     const ring = grow(boxes[i], R + CELL * 1.5);
     let reached = false;
     for (let y = 0; y < rows && !reached; y += 1) {

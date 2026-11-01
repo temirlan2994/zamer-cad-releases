@@ -4,7 +4,7 @@
 
 import { deriveWalls, doorLeaves, doorSymbol, openingRect } from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
-import { isOpenRoom, roomType } from './core/catalog.js';
+import { isOpenRoom, isRoundItem, isStructural, roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygonFromCorners,
@@ -1057,6 +1057,14 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.save();
   ctx.translate(item.x, item.y);
   ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
+  if (isStructural(item.kind)) {
+    // Свободная стена или колонна — заливка цветом стен.
+    ctx.fillStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.wall;
+    structuralPath(ctx, item.kind, item.w, item.h);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
   ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.furniture;
   ctx.lineWidth = px(selected || hovered ? 1.8 : 1.2);
   ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : 'rgba(127,144,165,0.08)';
@@ -1516,6 +1524,12 @@ export function underlayRotators(u, outPx, scale) {
 
 // Рисует top-view глиф мебели в превью-канвас, вписывая w×h с отступом.
 // Используется карточками библиотеки мебели.
+function structuralPath(ctx, kind, w, h) {
+  ctx.beginPath();
+  if (isRoundItem(kind)) ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+  else ctx.rect(-w / 2, -h / 2, w, h);
+}
+
 export function drawGlyphPreview(canvas, kind, w, h, stroke) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
@@ -1532,7 +1546,13 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
   ctx.lineWidth = 3.1 / s; // с запасом под уменьшение карточкой
   ctx.strokeStyle = stroke || '#7f90a5';
   ctx.fillStyle = 'rgba(127,144,165,0.08)';
-  drawGlyph(ctx, kind, w, h);
+  if (isStructural(kind)) {
+    ctx.fillStyle = stroke || '#7f90a5';
+    structuralPath(ctx, kind, w, h);
+    ctx.fill();
+  } else {
+    drawGlyph(ctx, kind, w, h);
+  }
   ctx.restore();
 }
 

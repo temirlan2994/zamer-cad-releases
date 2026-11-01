@@ -174,5 +174,6 @@ const CATEGORY_ICONS = {
   gym: svgIcon('<path d="M6.5 8.5v7M4 10v4M17.5 8.5v7M20 10v4M8 12h8"/>'),
   hall: svgIcon('<rect x="6" y="3" width="12" height="18" rx="1.5"/><circle cx="14.5" cy="12" r="1"/>'),
   outdoor: svgIcon('<path d="M12 21v-6"/><path d="M12 15a5 5 0 1 0-4.6-7A4 4 0 0 0 7 15z"/>'),
+  structure: svgIcon('<rect x="3" y="9" width="12" height="4" rx="0.5" fill="currentColor"/><rect x="16" y="5" width="5" height="5" rx="0.5"/><circle cx="18.5" cy="16.5" r="2.5"/>'),
   misc: svgIcon('<rect x="4" y="4" width="7" height="7" rx="1.2"/><rect x="13" y="4" width="7" height="7" rx="1.2"/><rect x="4" y="13" width="7" height="7" rx="1.2"/><rect x="13" y="13" width="7" height="7" rx="1.2"/>'),
 };
