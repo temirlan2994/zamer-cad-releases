@@ -2017,8 +2017,10 @@ function renderLibrary() {
   const layer = activeSiteLayer();
   const editHint = (name) => `Правка: ${name}. Тяните точки/объект. Esc — выйти`;
   const tools = [
-    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'двигать / масштаб' : 'PDF / JPG / PNG',
-      action: () => (site?.underlay ? setTool({ kind: 'underlay-edit' }, editHint('топосъёмка — двигайте, тяните углы')) : refs.underlayInput.click()) },
+    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'двигать / масштаб' : 'импорт PDF/JPG/DXF',
+      action: () => setTool({ kind: 'underlay-edit' }, site?.underlay
+        ? editHint('топосъёмка — двигайте, тяните углы')
+        : 'Нажмите «Импортировать топосъёмку» в панели справа · PDF / JPG / PNG / DXF') },
     { id: 'boundary', title: 'Граница участка', note: site?.boundary ? `${polygonAreaM2(site.boundary).toFixed(0)} м² · правка` : 'полигон по точкам',
       action: () => (site?.boundary ? startEditLayer('boundary', { type: 'site', kind: 'boundary' }, editHint('граница — тяните вершины')) : startDraw('boundary')) },
     { id: 'redline', title: 'Красная линия', note: site?.redLine ? 'правка' : 'линия застройки',
@@ -2673,6 +2675,10 @@ function renderSiteSettings(panel) {
   panel.innerHTML = `
     <h2>Участок</h2>
     <div class="prop-block">
+      <button id="importUnderlay" class="primary-inline" style="width:100%">📁 ${site.underlay ? 'Заменить топосъёмку' : 'Импортировать топосъёмку'}</button>
+      <p class="empty-hint">PDF · JPG · PNG · DXF. DWG — сохраните из CAD как DXF.</p>
+    </div>
+    <div class="prop-block">
       <div class="prop-row"><span>Площадь участка</span><strong>${site.boundary ? `${polygonAreaM2(site.boundary).toFixed(1)} м²` : '—'}</strong></div>
       <div class="prop-row"><span>Зона застройки</span><strong>${zone ? `${polygonAreaM2(zone).toFixed(1)} м²` : '—'}</strong></div>
       <label class="prop-field"><span>Север, ° по часовой (0 = вверх плана)</span>
@@ -2704,6 +2710,7 @@ function renderSiteSettings(panel) {
     </div>
     <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. В этом режиме север всегда вверх; вернитесь в «План» — камера станет прежней.</p>`;
 
+  panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   panel.querySelector('#northDeg').addEventListener('change', (e) => {
     mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
     applyModeRotation();
@@ -2874,6 +2881,7 @@ function renderSiteObjectProps(panel, sel) {
         <p class="empty-hint">Поворот также тянется круглыми ручками у углов картинки.</p>
       </div>
       <div class="prop-actions">
+        <button id="replaceUnderlay">📁 Заменить файл</button>
         <button id="del" class="danger">Удалить подложку</button>
       </div>
       <p class="empty-hint">Совет: начертите границу участка по топосъёмке, затем подгоните масштаб так, чтобы известная сторона совпала с реальной длиной.</p>`;
@@ -2915,6 +2923,7 @@ function renderSiteObjectProps(panel, sel) {
         setTool({ kind: 'calibrate', points: [] }, 'Кликните две точки на топосъёмке с известным расстоянием (например, сторону участка)');
       });
     }
+    panel.querySelector('#replaceUnderlay').addEventListener('click', () => refs.underlayInput.click());
     panel.querySelector('#del').addEventListener('click', deleteSelection);
     if (cal) {
       panel.querySelector('#calApply').addEventListener('click', () => {
