@@ -248,6 +248,20 @@ export function createRenderer(canvas) {
       state._calLabelAt = { x: b.x, y: b.y, text: 'С' };
     }
 
+    // Предпросмотр выравнивания съёмки: линия между двумя точками.
+    const alignTool = state.tool?.kind === 'align-underlay' ? state.tool : null;
+    if (alignTool && alignTool.points.length === 1 && state.alignCursor) {
+      const a = alignTool.points[0];
+      const b = state.alignCursor;
+      ctx.strokeStyle = tokens.accent;
+      ctx.fillStyle = tokens.accent;
+      ctx.lineWidth = px(2);
+      ctx.setLineDash([px(8), px(5)]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.setLineDash([]);
+      for (const p of [a, b]) { ctx.beginPath(); ctx.arc(p.x, p.y, px(4), 0, Math.PI * 2); ctx.fill(); }
+    }
+
     // Предпросмотр въезда: стрелка скользит по границе за курсором.
     if (state.entryGhost) {
       const e = state.entryGhost;
