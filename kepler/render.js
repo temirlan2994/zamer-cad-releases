@@ -1158,42 +1158,45 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     ctx.globalAlpha = 1;
   }
 
-  // Габаритные (внешние) размеры — только у выбранной комнаты и только со
-  // свободных сторон (где рядом нет другой комнаты).
+  // Наружные размеры выбранной комнаты — по каждому участку собственной стены.
+  // Где сторона разбита соседями на части (ступени), каждая часть получает
+  // свой размер; сплошная сторона — один размер. Общие (пристыкованные к
+  // соседу) участки не подписываются.
   const room = state.selection?.type === 'room'
     ? state.project.rooms.find((r) => r.id === state.selection.id) : null;
   if (!room || room.parentId) return;
-  const outer = roomOuterRect(room, walls);
   ctx.strokeStyle = tokens.accent;
   ctx.fillStyle = tokens.accent;
-  // Направление наружу в экранных координатах (учитывает поворот вида).
   const outwardScreen = (cx, cy, ox, oy) => {
     const s1 = w2s(cx, cy);
     const s2 = w2s(cx + ox * 100, cy + oy * 100);
     const len = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
     return { x: (s2.x - s1.x) / len, y: (s2.y - s1.y) / len };
   };
-  // Ширина: снизу если свободно, иначе сверху.
-  const topFree = !sideOccupied(state.project, room, 0);
-  const botFree = !sideOccupied(state.project, room, 2);
-  if (botFree || topFree) {
-    const atBottom = botFree;
-    const ey = atBottom ? outer.y + outer.h : outer.y;
-    const p = w2s(outer.x, ey);
-    const q = w2s(outer.x + outer.w, ey);
-    const n = outwardScreen((outer.x + outer.w) / 2, ey, 0, atBottom ? 1 : -1);
-    drawDim(ctx, p, q, n, 16, `${Math.round(outer.w)}`);
-  }
-  // Высота: справа если свободно, иначе слева.
-  const leftFree = !sideOccupied(state.project, room, 3);
-  const rightFree = !sideOccupied(state.project, room, 1);
-  if (rightFree || leftFree) {
-    const atRight = rightFree;
-    const ex = atRight ? outer.x + outer.w : outer.x;
-    const p = w2s(ex, outer.y);
-    const q = w2s(ex, outer.y + outer.h);
-    const n = outwardScreen(ex, (outer.y + outer.h) / 2, atRight ? 1 : -1, 0);
-    drawDim(ctx, p, q, n, 16, `${Math.round(outer.h)}`);
+  for (const wall of walls) {
+    if (wall.kind !== 'own' || wall.rooms[0] !== room.id) continue;
+    const side = wall.sides[room.id];
+    const horiz = side === 0 || side === 2;
+    const len = Math.round(wall.to - wall.from);
+    if (len < 250) continue; // совсем короткие не подписываем
+    const off = wall.thickness + 300;
+    const perpLine = wall.edge + wall.outward * off;
+    const p = horiz ? w2s(wall.from, perpLine) : w2s(perpLine, wall.from);
+    const q = horiz ? w2s(wall.to, perpLine) : w2s(perpLine, wall.to);
+    const midAlong = (wall.from + wall.to) / 2;
+    const n = horiz
+      ? outwardScreen(midAlong, wall.edge, 0, wall.outward)
+      : outwardScreen(wall.edge, midAlong, wall.outward, 0);
+    // Выноски от грани стены к размерной линии.
+    const i1 = horiz ? w2s(wall.from, wall.edge) : w2s(wall.edge, wall.from);
+    const i2 = horiz ? w2s(wall.to, wall.edge) : w2s(wall.edge, wall.to);
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(i1.x, i1.y); ctx.lineTo(p.x, p.y);
+    ctx.moveTo(i2.x, i2.y); ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    drawDim(ctx, p, q, n, 12, `${len}`);
+    ctx.globalAlpha = 1;
   }
 }
 
