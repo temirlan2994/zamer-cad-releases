@@ -3,6 +3,7 @@
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { createProject, serializeProject } from '../core/model.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
+import { buildTemplate } from '../core/templates.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
@@ -90,6 +91,21 @@ export function openProjectFile(file) {
     }
   };
   reader.readAsText(file);
+}
+
+// Шаблон дома (core/templates.js) — как пример: текущий проект уходит в
+// историю (Ctrl+Z вернёт).
+export function loadTemplate(id) {
+  const before = state.project ? snapshot() : null;
+  state.project = buildTemplate(id);
+  state.rejected = new Map();
+  state.selection = null;
+  refreshDerived();
+  applyModeRotation();
+  if (before) pushHistory(before);
+  refs.projectName.value = state.project.name;
+  afterChange();
+  fitView();
 }
 
 export function loadSample() {

@@ -80,6 +80,7 @@ export function createProject(name = 'Новый дом') {
       partition: DEFAULT_PARTITION,
       exterior: DEFAULT_EXTERIOR,
       dimOuter: true, // наружные размеры по внешней грани стен (иначе — по оси)
+      units: 'mm', // подписи размеров на плане: 'mm' (5000) или 'm' (5,00)
     },
     levels: [level], // этажи: rooms, openings, items, wallOverrides (ключ стены → { thickness, kind })
     activeLevel: level.id,
@@ -169,7 +170,9 @@ export function normalizeProject(data) {
     rotation: normDeg(b.rotation),
     origin: { x: Number(b.origin?.x) || 0, y: Number(b.origin?.y) || 0 },
   };
-  data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
+  data.settings = {
+    partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, units: 'mm', ...(data.settings || {}),
+  };
   ensureSite(data);
   return attachLevelAccessors(data);
 }

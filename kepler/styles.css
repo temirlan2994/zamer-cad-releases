@@ -546,6 +546,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .view3d-bar button { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
 #view3dBtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* --- Шаблоны в стартовом меню, справка, поиск мебели --- */
+.start-sub { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.start-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.start-templates .start-item { padding: 10px 12px; }
+.help-card { max-width: 760px; }
+.help-title { font-size: 17px; }
+.help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 20px; margin-top: 8px; }
+.help-grid h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+.help-grid ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.furn-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
 /* --- Нижняя панель телефона: на больших экранах скрыта --- */
 .mobile-bar { display: none; }
 

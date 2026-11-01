@@ -284,6 +284,11 @@ export function furnitureByCategory(catId) {
     .map(([kind, def]) => ({ kind, ...def }));
 }
 
+// Весь каталог мебели (для поиска).
+export function allFurniture() {
+  return Object.entries(FURNITURE).map(([kind, def]) => ({ kind, ...def }));
+}
+
 // Галочки мебели по умолчанию для нового помещения.
 export function defaultChecklist(type) {
   const def = roomTypeMap.get(type);

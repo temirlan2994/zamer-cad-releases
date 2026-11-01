@@ -59,6 +59,11 @@ function renderProjectProps(panel) {
       <div class="prop-row"><span>${multi ? 'Площадь этажа' : 'Общая площадь'}</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
       ${multi ? `<div class="prop-row"><span>Всего (${state.project.levels.length} эт.)</span><strong>${allArea.toFixed(1)} м²</strong></div>` : ''}
       ${hasSite ? buildingRotationField() : ''}
+      <label class="prop-field"><span>Размеры на плане</span>
+        <select id="unitsSel">
+          <option value="mm" ${state.project.settings.units !== 'm' ? 'selected' : ''}>в миллиметрах — 5000</option>
+          <option value="m" ${state.project.settings.units === 'm' ? 'selected' : ''}>в метрах — 5,00</option>
+        </select></label>
     </div>
     <h3>Этаж</h3>
     <div class="prop-block">
@@ -87,6 +92,9 @@ function renderProjectProps(panel) {
     btn.addEventListener('click', () => selectObject({ type: 'room', id: btn.dataset.room }));
   });
   bindBuildingRotation(panel);
+  panel.querySelector('#unitsSel').addEventListener('change', (e) => {
+    mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
+  });
   panel.querySelector('#levelName').addEventListener('change', (e) => {
     const name = e.target.value.trim();
     if (name) mutate(() => { level.name = name; });

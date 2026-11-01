@@ -10,11 +10,14 @@ import { createProject, deserializeProject } from './core/model.js';
 import { exposeDebugApi } from './ui/debug.js';
 import { refs } from './ui/dom.js';
 import { bindCanvasInput } from './ui/input.js';
+import { bindHelp } from './ui/help.js';
 import { bindKeyboard } from './ui/keyboard.js';
 import { renderLevelBar } from './ui/levels.js';
 import { bindMobile } from './ui/mobile.js';
 import { bind3d } from './ui/view3d.js';
-import { applyLibraryTab, renderFurnitureBar, renderLibrary } from './ui/library.js';
+import {
+  applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
+} from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
 import { renderProps } from './ui/props.js';
 import { openStartMenu } from './ui/start-menu.js';
@@ -32,6 +35,8 @@ bindKeyboard();
 bindToolbar();
 bindMobile();
 bind3d();
+bindHelp();
+bindFurnitureSearch();
 bindView();
 bindTheme();
 

@@ -1,7 +1,8 @@
-// Стартовое меню: продолжить, новый, пример, открыть.
+// Стартовое меню: продолжить, новый, пример, открыть, шаблоны.
 
+import { TEMPLATES } from '../core/templates.js';
 import { el, escapeHtml, toast } from './dom.js';
-import { handleExport, newProject } from './files.js';
+import { handleExport, loadTemplate, newProject } from './files.js';
 import { state } from './state.js';
 
 function projectHasContent() {
@@ -11,7 +12,22 @@ function projectHasContent() {
     || Boolean(p.site?.boundary) || Boolean(p.site?.underlay);
 }
 
+// Кнопки шаблонов строятся один раз.
+function renderTemplates() {
+  const box = el('startTemplates');
+  if (!box || box.childElementCount) return;
+  for (const t of TEMPLATES) {
+    const btn = document.createElement('button');
+    btn.className = 'start-item';
+    btn.dataset.template = t.id;
+    btn.innerHTML = `<b>${t.title}</b><span>${t.note}</span>`;
+    btn.addEventListener('click', () => { loadTemplate(t.id); closeStartMenu(); });
+    box.appendChild(btn);
+  }
+}
+
 export function openStartMenu({ initial = false } = {}) {
+  renderTemplates();
   const screen = el('startScreen');
   const warn = el('startWarn');
   const closeBtn = el('startClose');

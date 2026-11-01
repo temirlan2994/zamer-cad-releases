@@ -1,9 +1,9 @@
 // Левая панель: вкладки, карточки помещений, каталог мебели.
 
-import { FURNITURE_CATEGORIES, ROOM_TYPES, furnitureByCategory } from '../core/catalog.js';
+import { FURNITURE_CATEGORIES, ROOM_TYPES, allFurniture, furnitureByCategory } from '../core/catalog.js';
 import { polygonAreaM2 } from '../core/site.js';
 import { drawGlyphPreview } from '../render.js';
-import { refs } from './dom.js';
+import { el, refs } from './dom.js';
 import { addFurnitureToSelection } from './plan-actions.js';
 import { state } from './state.js';
 import {
@@ -15,6 +15,10 @@ let furnitureCat = FURNITURE_CATEGORIES[0].id;
 // Вкладки левой панели: в режиме «План» переключают «Помещения» / «Мебель»
 // (как вкладки обозревателя в Revit). В режиме «Участок» вкладок нет — там
 // только инструменты участка.
+export function bindFurnitureSearch() {
+  el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
+}
+
 export function applyLibraryTab() {
   const plan = state.modeName === 'plan';
   refs.libraryTabs.hidden = !plan;
@@ -97,13 +101,32 @@ export function renderFurnitureBar() {
     btn.title = cat.title;
     btn.setAttribute('aria-label', cat.title);
     if (cat.id === furnitureCat) btn.classList.add('active');
-    btn.addEventListener('click', () => { furnitureCat = cat.id; renderFurnitureBar(); });
+    btn.addEventListener('click', () => {
+      furnitureCat = cat.id;
+      if (el('furnSearch')) el('furnSearch').value = '';
+      renderFurnitureBar();
+    });
     refs.furnitureCats.appendChild(btn);
   }
 
+  renderFurnitureItems();
+}
+
+// Поиск по всему каталогу (название или код), иначе — выбранная категория.
+function furnitureList() {
+  const q = (el('furnSearch')?.value || '').trim().toLowerCase();
+  if (!q) return furnitureByCategory(furnitureCat);
+  return allFurniture().filter((f) => f.title.toLowerCase().includes(q) || f.kind.includes(q));
+}
+
+function renderFurnitureItems() {
+  const searching = Boolean((el('furnSearch')?.value || '').trim());
+  refs.furnitureCats.classList.toggle('searching', searching);
   const stroke = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#7f90a5';
   refs.furnitureItems.innerHTML = '';
-  for (const item of furnitureByCategory(furnitureCat)) {
+  const list = furnitureList();
+  if (!list.length) refs.furnitureItems.innerHTML = '<p class="empty-hint">Ничего не нашлось</p>';
+  for (const item of list) {
     const chip = document.createElement('div');
     chip.className = 'furniture-chip';
     chip.draggable = true;

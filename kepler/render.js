@@ -1253,6 +1253,11 @@ function drawRoomLabel(ctx, state, room, w2s, tokens) {
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
 // стенами — снаружи. Невыбранные комнаты рисуются полупрозрачно.
+// Подпись размера: миллиметры (5000) или метры (5,00) — настройка проекта.
+function dimLabel(state, len) {
+  return state.project.settings?.units === 'm' ? (len / 1000).toFixed(2).replace('.', ',') : String(len);
+}
+
 function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   ctx.lineWidth = 1;
   ctx.font = '10px system-ui, sans-serif';
@@ -1289,7 +1294,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       const n = horiz
         ? outwardScreen(mid, edge.at, 0, edge.inSide)
         : outwardScreen(edge.at, mid, edge.inSide, 0);
-      drawDim(ctx, p, q, n, 13, `${len}`);
+      drawDim(ctx, p, q, n, 13, dimLabel(state, len));
     };
 
     if (rectangular) {
@@ -1360,7 +1365,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       const b1 = { x: q.x + n.x * 16, y: q.y + n.y * 16 };
       drawWitness(ctx, i1, a1);
       drawWitness(ctx, i2, b1);
-      drawDim(ctx, p, q, n, 13, `${len}`);
+      drawDim(ctx, p, q, n, 13, dimLabel(state, len));
     }
     ctx.globalAlpha = 1;
   }

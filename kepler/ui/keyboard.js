@@ -3,6 +3,7 @@
 import { roomById } from '../core/model.js';
 import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
 import { canvas, toast } from './dom.js';
+import { closeHelp, isHelpOpen, openHelp } from './help.js';
 import { stepLevel } from './levels.js';
 import {
   deleteSelection, reconcileOpenings, rotateMulti90, rotateSelectedItem,
@@ -19,7 +20,8 @@ export let spaceDown = false;
 
 export function bindKeyboard() {
   window.addEventListener('keydown', (event) => {
-    // 3D закрывается по Esc откуда угодно (и с флажков панели 3D).
+    // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
+    if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     if (event.code === 'Space') {
       const tag = event.target.tagName;
@@ -38,6 +40,11 @@ export function bindKeyboard() {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
+    if (event.key === '?' || event.key === 'F1') {
+      event.preventDefault();
+      if (isHelpOpen()) closeHelp(); else openHelp();
+      return;
+    }
     if (event.key === 'PageUp' || event.key === 'PageDown') {
       event.preventDefault();
       stepLevel(event.key === 'PageUp' ? 1 : -1);
