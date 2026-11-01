@@ -2,10 +2,12 @@
 
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { createProject, serializeProject } from '../core/model.js';
+import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
 import { buildSample } from './sample.js';
+import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { fitView } from './view.js';
@@ -41,6 +43,19 @@ export function handleExport(kind) {
   } else if (kind === 'dxf') {
     download(`${safeFileName()}.dxf`, buildProjectDxf(state.project), 'application/dxf');
     toast('DXF сохраняется');
+  } else if (kind === 'sheet-pdf') {
+    const pdf = buildSheetsPdf(state.project);
+    if (!pdf) { toast('Нечего печатать: добавьте комнаты или границу участка', true); return; }
+    download(`${safeFileName()}-листы.pdf`, pdf, 'application/pdf');
+    toast('PDF: листы A3 с рамкой, штампом и экспликацией');
+  } else if (kind === 'sheet-png') {
+    const png = buildCurrentSheetPng(state.project, state.modeName);
+    if (!png) { toast(state.modeName === 'site' ? 'Для генплана нужна граница участка' : 'На этом этаже нет комнат', true); return; }
+    png.then((blob) => download(`${safeFileName()}-лист.png`, blob, 'image/png'));
+    toast('PNG: лист A3, 150 dpi');
+  } else if (kind === 'schedule-csv') {
+    download(`${safeFileName()}-экспликация.csv`, buildRoomScheduleCsv(state.project), 'text/csv;charset=utf-8');
+    toast('Экспликация помещений (CSV) — откроется в Excel');
   } else if (kind === 'dxf-site') {
     if (!state.project.site?.boundary) { toast('Для генплана нужна граница участка (режим «Участок»)', true); return; }
     download(`${safeFileName()}-genplan.dxf`, buildSitePlanDxf(state.project), 'application/dxf');

@@ -8,7 +8,7 @@
 //   s|<idA>|<idB>'      — общая стена пары комнат,
 //   'e|<roomId>|<side>' — собственные стены стороны комнаты (для overrides).
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR } from './catalog.js';
+import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom } from './catalog.js';
 
 export const MAX_SHARED_GAP = 450; // максимальный зазор, считающийся общей стеной
 
@@ -134,7 +134,7 @@ export function deriveWalls(project) {
   const byId = new Map(project.rooms.map((r) => [r.id, r]));
   const topRooms = project.rooms.filter((r) => !r.parentId);
   for (const room of project.rooms) {
-    if (room.open) continue; // открытые помещения (терраса/балкон) — без стен
+    if (isOpenRoom(room)) continue; // открытые помещения (терраса/балкон) — без стен
     const nested = Boolean(room.parentId && byId.has(room.parentId));
     for (let side = 0; side < 4; side += 1) {
       const edge = sideEdge(room, side);
@@ -204,7 +204,7 @@ export function deriveWalls(project) {
 // линия стены остаётся прямой, без ступеньки-бугорка и без скоса.
 function addThicknessChamfers(walls, allRooms = []) {
   const solid = walls.filter((w) => w.kind === 'own' || w.kind === 'shared');
-  const rooms = allRooms.filter((r) => !r.open);
+  const rooms = allRooms.filter((r) => !isOpenRoom(r));
   // Заплатку нельзя заводить внутрь комнаты — только в наружное/зазорное
   // пространство. Иначе «ровная» стена полезет внутрь помещения бугром.
   const intrudesRoom = (x, y, w, h) => rooms.some((r) => {

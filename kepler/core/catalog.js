@@ -267,6 +267,12 @@ export function roomType(type) {
   return roomTypeMap.get(type) || null;
 }
 
+// Открытое помещение (терраса, балкон): без стен, с ограждением. Задаётся
+// типом помещения; room.open, если есть, имеет приоритет.
+export function isOpenRoom(room) {
+  return Boolean(room.open ?? roomType(room.type)?.open);
+}
+
 export function furnitureDef(kind) {
   return FURNITURE[kind] || null;
 }

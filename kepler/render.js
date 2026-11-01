@@ -4,7 +4,7 @@
 
 import { deriveWalls, doorSymbol, openingRect } from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
-import { roomType } from './core/catalog.js';
+import { isOpenRoom, roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygonFromCorners,
@@ -14,9 +14,11 @@ import { composeView, rectCornersWorld } from './core/building.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
-function cssTokens() {
-  const style = getComputedStyle(document.documentElement);
-  const token = (name, fallback) => (style.getPropertyValue(name) || fallback).trim();
+// Палитра печати: всегда светлая, на белом листе (не зависит от темы).
+const PRINT_TINTS = { warm: '#f7efe3', calm: '#e9eef9', wet: '#e3f1f4', neutral: '#eef1f5', cool: '#e9ecf1', green: '#e9f3e6' };
+
+function cssTokens(style = getComputedStyle(document.documentElement)) {
+  const token = (name, fallback) => ((style && style.getPropertyValue(name)) || fallback).trim();
   const tints = {};
   for (const t of TINTS) tints[t] = token(`--tint-${t}`, '#eef2f7');
   return {
@@ -36,6 +38,10 @@ function cssTokens() {
     surface: token('--surface', '#ffffff'),
     tints,
   };
+}
+
+function printTokens() {
+  return { ...cssTokens(null), canvas: '#ffffff', tints: { ...PRINT_TINTS } };
 }
 
 // Мировая точка -> экранная с учётом поворота вида.
@@ -60,11 +66,15 @@ export function unprojectPoint(view, sx, sy) {
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
 
-  function draw(state) {
-    const tokens = cssTokens();
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
+  // opts (для печати листов): width/height — размер в CSS px, dpr — плотность,
+  // print — светлая палитра без сетки, site: false — без слоёв участка,
+  // detail: false — без мебели, подписей и размеров комнат (генплан).
+  function draw(state, opts = {}) {
+    const print = Boolean(opts.print);
+    const tokens = print ? printTokens() : cssTokens();
+    const dpr = opts.dpr || window.devicePixelRatio || 1;
+    const width = opts.width ?? canvas.clientWidth;
+    const height = opts.height ?? canvas.clientHeight;
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -72,7 +82,7 @@ export function createRenderer(canvas) {
     const view = state.view; // мир (участок, съёмка) → экран
     const { scale } = view;
     const walls = state.walls || deriveWalls(state.project);
-    const site = state.project.site;
+    const site = opts.site === false ? null : state.project.site;
     const w2s = (x, y) => projectPoint(view, x, y);
     // Дом рисуется в своих осях: вид дома = вид мира, повёрнутый и сдвинутый
     // на поворот дома (core/building.js). Масштаб тот же.
@@ -104,9 +114,9 @@ export function createRenderer(canvas) {
 
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
-    // 1. Сетка.
+    // 1. Сетка (на печати не нужна).
     setView(gridView);
-    drawGrid(ctx, worldBox, scale, px, tokens);
+    if (!print) drawGrid(ctx, worldBox, scale, px, tokens);
     setView(view); // дальше — участок в координатах съёмки
 
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
@@ -180,7 +190,7 @@ export function createRenderer(canvas) {
     };
     for (const room of state.project.rooms) {
       drawFloor(ctx, room, tokens);
-      if (room.open) drawRailing(ctx, room, tokens, px);
+      if (isOpenRoom(room)) drawRailing(ctx, room, tokens, px);
       for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
     }
     // Общие стыковочные стены — поверх всех полов.
@@ -212,8 +222,9 @@ export function createRenderer(canvas) {
       drawOpening(ctx, state, opening, walls, tokens, px);
     }
 
-    // 6. Мебель.
-    for (const item of state.project.items) {
+    // 6. Мебель (на генплане — без неё: opts.detail === false).
+    const detail = opts.detail !== false;
+    for (const item of detail ? state.project.items : []) {
       const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
         (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
       const hovered = state.hover?.type === 'item' && state.hover.id === item.id;
@@ -394,9 +405,11 @@ export function createRenderer(canvas) {
     // --- Экранный слой ---
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens);
-    // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-    drawAllRoomDims(ctx, state, walls, p2s, tokens);
+    if (detail) {
+      for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens);
+      // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
+      drawAllRoomDims(ctx, state, walls, p2s, tokens);
+    }
     if (selRoom) drawRoomHandles(ctx, selRoom, p2s, tokens);
     // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
     const selOpening = state.selection?.type === 'opening'
@@ -1289,7 +1302,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   const dimOuter = state.project.settings?.dimOuter !== false; // по умолчанию — снаружи
   const expand = dimOuter ? exterior : exterior / 2;
   const outline = computeBuildingOutline(state.project, expand);
-  const rects = state.project.rooms.filter((r) => !r.parentId && !r.open)
+  const rects = state.project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
     .map((r) => ({ x: r.x - expand, y: r.y - expand, w: r.w + 2 * expand, h: r.h + 2 * expand }));
   if (outline.length && rects.length) {
     const outOff = 850;

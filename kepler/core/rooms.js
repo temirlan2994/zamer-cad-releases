@@ -1,7 +1,7 @@
 // Операции над комнатами: проверка размещения, привязка/стыковка, вложение,
 // перемещение, площади и анализ связности помещений. Чистый модуль.
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP } from './catalog.js';
+import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP, isOpenRoom } from './catalog.js';
 import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
@@ -386,9 +386,37 @@ export function computeRoomEdges(project, room) {
 // exterior — по наружной грани стен, exterior/2 — по оси наружных стен.
 // Раздвигание прямоугольников наружу заодно закрывает зазоры межкомнатных
 // стен: соседние комнаты перекрываются, и общий размер включает их толщину.
+// Площадь объединения прямоугольников (сжатие координат по X).
+export function rectsUnionArea(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.w]))].sort((a, b) => a - b);
+  let area = 0;
+  for (let i = 0; i < xs.length - 1; i += 1) {
+    const mid = (xs[i] + xs[i + 1]) / 2;
+    const spans = rects.filter((r) => r.x <= mid && mid <= r.x + r.w)
+      .map((r) => [r.y, r.y + r.h]).sort((a, b) => a[0] - b[0]);
+    let len = 0;
+    let cur = null;
+    for (const [a, b] of spans) {
+      if (!cur || a > cur[1]) { if (cur) len += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b);
+    }
+    if (cur) len += cur[1] - cur[0];
+    area += len * (xs[i + 1] - xs[i]);
+  }
+  return area;
+}
+
+// Пятно застройки этажа: комнаты верхнего уровня вместе с наружными стенами
+// (без террас и балконов), м².
+export function buildingFootprintM2(project) {
+  const t = project.settings?.exterior || DEFAULT_EXTERIOR;
+  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
+    .map((r) => ({ x: r.x - t, y: r.y - t, w: r.w + t * 2, h: r.h + t * 2 }));
+  return rectsUnionArea(rects) / 1_000_000;
+}
+
 export function computeBuildingOutline(project, expand = 0) {
   const rects = project.rooms
-    .filter((r) => !r.parentId && !r.open)
+    .filter((r) => !r.parentId && !isOpenRoom(r))
     .map((r) => {
       const rc = roomRect(r);
       return expand
