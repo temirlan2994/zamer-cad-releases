@@ -72,3 +72,17 @@ describe('smoke', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('без ?debug', () => {
+  let app;
+  before(async () => { app = await startApp({ debug: false }); });
+  after(async () => { await app?.close(); });
+
+  it('отладочный API не публикуется, приложение работает', async () => {
+    assert.equal(await app.page.evaluate(() => typeof window.__kepler), 'undefined');
+    await app.page.click('#startSample');
+    await app.page.waitForSelector('#startScreen', { state: 'hidden' });
+    assert.match(await app.page.textContent('#propsPanel'), /м²/);
+    assert.deepEqual(app.errors, []);
+  });
+});

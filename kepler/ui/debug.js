@@ -7,8 +7,10 @@ import { state } from './state.js';
 import { selectObject } from './tools.js';
 import { fitView, screenToWorld, worldToScreen } from './view.js';
 
+// Только с ?debug в адресе: обычным пользователям внутреннее состояние
+// редактора в window не видно.
 export function exposeDebugApi() {
-  // Отладочный доступ для автотестов.
+  if (!new URLSearchParams(window.location.search).has('debug')) return;
   window.__kepler = {
     state,
     worldToScreen,

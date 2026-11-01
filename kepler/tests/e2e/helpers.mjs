@@ -3,8 +3,9 @@ import { chromium } from 'playwright';
 import { createServer, listen } from '../../scripts/serve.mjs';
 
 // Поднимает приложение: сервер на свободном порту + Chromium.
-// Страница открывается с ?debug=1 — тестам нужен window.__kepler.
-export async function startApp({ width = 1280, height = 820 } = {}) {
+// Страница открывается с ?debug=1 — тестам нужен window.__kepler
+// (без флага отладочный API не публикуется).
+export async function startApp({ width = 1280, height = 820, debug = true } = {}) {
   const server = createServer();
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
@@ -14,8 +15,9 @@ export async function startApp({ width = 1280, height = 820 } = {}) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-  await page.goto(`http://127.0.0.1:${port}/index.html?debug=1`);
-  await page.waitForFunction(() => Boolean(window.__kepler));
+  await page.goto(`http://127.0.0.1:${port}/index.html${debug ? '?debug=1' : ''}`);
+  if (debug) await page.waitForFunction(() => Boolean(window.__kepler));
+  else await page.waitForSelector('#startScreen:not([hidden])');
   return {
     page,
     errors,
