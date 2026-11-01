@@ -194,7 +194,7 @@ export function deriveWalls(project) {
 
   extendOwnCorners(walls, byId);
   fillWallJoints(walls);
-  addThicknessChamfers(walls);
+  addThicknessChamfers(walls, project.rooms);
   return walls;
 }
 
@@ -202,18 +202,29 @@ export function deriveWalls(project) {
 // тонкая перегородка 100 встречает наружную стену 250 на одной линии): тонкую
 // стену «добирают» прямоугольной заплаткой до наружной грани толстой — так
 // линия стены остаётся прямой, без ступеньки-бугорка и без скоса.
-function addThicknessChamfers(walls) {
+function addThicknessChamfers(walls, allRooms = []) {
   const solid = walls.filter((w) => w.kind === 'own' || w.kind === 'shared');
+  const rooms = allRooms.filter((r) => !r.open);
+  // Заплатку нельзя заводить внутрь комнаты — только в наружное/зазорное
+  // пространство. Иначе «ровная» стена полезет внутрь помещения бугром.
+  const intrudesRoom = (x, y, w, h) => rooms.some((r) => {
+    const ox = Math.min(x + w, r.x + r.w) - Math.max(x, r.x);
+    const oy = Math.min(y + h, r.y + r.h) - Math.max(y, r.y);
+    return ox > 10 && oy > 10;
+  });
   const EPS = 2;
   const MIN_STEP = 20; // меньше — не считаем ступенькой
   const out = [];
-  const makeRect = (x, y, w, h, src) => ({
-    key: `chamfer-${Math.round(x)}|${Math.round(y)}|${Math.round(w)}|${Math.round(h)}`,
-    kind: 'chamfer', orient: src.orient, rooms: [], sides: {}, from: 0, to: 0, edge: 0, thickness: 0,
-    poly: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
-    band: { x, y, w, h },
-    wallType: src.wallType,
-  });
+  const makeRect = (x, y, w, h, src) => {
+    if (intrudesRoom(x, y, w, h)) return null;
+    return {
+      key: `chamfer-${Math.round(x)}|${Math.round(y)}|${Math.round(w)}|${Math.round(h)}`,
+      kind: 'chamfer', orient: src.orient, rooms: [], sides: {}, from: 0, to: 0, edge: 0, thickness: 0,
+      poly: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
+      band: { x, y, w, h },
+      wallType: src.wallType,
+    };
+  };
   for (let i = 0; i < solid.length; i += 1) {
     for (let j = 0; j < solid.length; j += 1) {
       if (i === j) continue;
@@ -261,7 +272,7 @@ function addThicknessChamfers(walls) {
       }
     }
   }
-  for (const c of out) walls.push(c);
+  for (const c of out) if (c) walls.push(c);
 }
 
 // Заполняет уголки на стыках стен (например, общая стена ↔ наружная):
