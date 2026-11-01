@@ -213,8 +213,11 @@ export function createRenderer(canvas) {
     // 8. Призраки и направляющие.
     if (state.ghost?.rect) {
       const g = state.ghost;
-      ctx.fillStyle = g.valid ? 'rgba(31,117,255,0.14)' : 'rgba(225,75,75,0.16)';
-      ctx.strokeStyle = g.valid ? tokens.accent : tokens.danger;
+      // valid+warn — янтарный (можно ставить, но с предупреждением);
+      // valid — синий; invalid — красный (ставить нельзя).
+      if (g.warn) { ctx.fillStyle = 'rgba(225,140,30,0.16)'; ctx.strokeStyle = '#e08c1e'; }
+      else if (g.valid) { ctx.fillStyle = 'rgba(31,117,255,0.14)'; ctx.strokeStyle = tokens.accent; }
+      else { ctx.fillStyle = 'rgba(225,75,75,0.16)'; ctx.strokeStyle = tokens.danger; }
       ctx.lineWidth = px(1.6);
       ctx.setLineDash([px(8), px(5)]);
       ctx.fillRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
@@ -480,7 +483,7 @@ export function createRenderer(canvas) {
     if (state.ghost?.rect) {
       const g = state.ghost;
       const p = w2s(g.rect.x + g.rect.w / 2, g.rect.y + g.rect.h / 2);
-      ctx.fillStyle = g.valid ? tokens.accent : tokens.danger;
+      ctx.fillStyle = g.warn ? '#e08c1e' : (g.valid ? tokens.accent : tokens.danger);
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
       const label = g.label || `${(g.rect.w / 1000).toFixed(1)} × ${(g.rect.h / 1000).toFixed(1)} м`;

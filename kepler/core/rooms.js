@@ -108,7 +108,9 @@ export function validateRoomPlacement(project, candidate, excludeId) {
       }));
     }
     const buildable = checkRectBuildable(project.site, outer, corners);
-    if (!buildable.ok) return buildable;
+    // Отступы от границы/соседа — МЯГКОЕ правило: ставить можно, но с
+    // предупреждением (не жёсткий запрет).
+    if (!buildable.ok) return { ok: true, warning: buildable.reason };
   }
   return { ok: true };
 }

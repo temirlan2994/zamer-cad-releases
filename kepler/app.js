@@ -644,6 +644,7 @@ function placeRoomAt(world, typeOverride = null) {
   cancelTool();
   selectObject({ type: 'room', id: room.id });
   if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
+  else if (verdict.warning) toast(`⚠ ${verdict.warning} — поставлено, проверьте отступы`, true);
 }
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
@@ -1819,8 +1820,9 @@ function updateHoverAndGhost(world) {
     state.ghost = {
       rect: { x, y, w: def.w, h: def.h },
       valid: verdict.ok,
+      warn: Boolean(verdict.warning),
       label: parentId ? `Вложить в «${roomById(state.project, parentId)?.name}»` : undefined,
-      reason: verdict.ok ? '' : verdict.reason,
+      reason: verdict.ok ? (verdict.warning || '') : verdict.reason,
     };
     requestDraw();
     return;
