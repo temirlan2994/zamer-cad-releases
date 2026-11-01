@@ -1,0 +1,48 @@
+name: Kepler Plan
+
+on:
+  push:
+    branches: [main]
+    paths: ['kepler/**', '.github/workflows/kepler.yml']
+  pull_request:
+    paths: ['kepler/**', '.github/workflows/kepler.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kepler-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint + unit + e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: kepler
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kepler/package-lock.json
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Chromium для e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Линтер
+        run: npm run lint
+
+      - name: Юнит-тесты ядра
+        run: npm test
+
+      - name: e2e (Playwright)
+        run: npm run test:e2e

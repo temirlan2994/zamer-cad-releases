@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kepler Plan</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <meta name="theme-color" content="#1f75ff" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+        <div class="mode-tabs" role="tablist">
+          <button id="modePlanBtn" class="tab active" role="tab">План</button>
+          <button id="modeSiteBtn" class="tab" role="tab">Участок</button>
+        </div>
+        <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
+        <div class="top-actions">
+          <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
+          <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
+          <button id="fitBtn" title="Вписать план в экран">Вписать</button>
+          <button id="view3dBtn" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
+          <button id="alignBtn" title="Выровнять дом по участку: кликните 2 точки вдоль ровной линии (край участка, красная линия) — дом встанет вдоль неё, вид «План» повернётся вслед за домом. Повторный клик — вернуть 0°">⟲ Выровнять</button>
+          <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
+          <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
+          <button id="helpBtn" class="icon-btn" title="Управление и горячие клавиши (?)">?</button>
+          <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
+          <input type="file" id="fileInput" accept=".json,application/json" hidden />
+          <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
+          <div class="export-wrap">
+            <button id="exportBtn" class="primary">Экспорт ▾</button>
+            <div class="export-dropdown" id="exportDropdown" hidden>
+              <button data-export="sheet-pdf">Листы PDF A3 (генплан и этажи)</button>
+              <button data-export="sheet-png">Лист PNG (текущий этаж / генплан)</button>
+              <button data-export="schedule-csv">Экспликация помещений (CSV для Excel)</button>
+              <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
+              <button data-export="dxf">DXF-чертёж</button>
+              <button data-export="dxf-revit">DXF со слоями для Revit</button>
+              <button data-export="dxf-site">DXF генплан (дом на участке, координаты съёмки)</button>
+              <button data-export="copy">Копировать проект в буфер</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="library">
+          <div class="library-tabs" id="libraryTabs">
+            <button id="libTabRooms" class="lib-tab active" type="button">Помещения</button>
+            <button id="libTabFurniture" class="lib-tab" type="button">Мебель</button>
+          </div>
+          <div class="library-top" id="libraryTop">
+            <h2 id="libraryTitle" hidden>Помещения</h2>
+            <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
+            <div class="room-cards" id="roomCards"></div>
+            <div class="room-cards" id="siteTools" hidden></div>
+            <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
+          </div>
+          <div class="library-furniture" id="furnitureBar">
+            <p class="hint furn-hint">Клик — в выбранную комнату · или перетащите на план</p>
+            <input id="furnSearch" class="furn-search" type="search" placeholder="Поиск мебели: диван, ванна, шкаф…" aria-label="Поиск мебели" />
+            <div class="furniture-body">
+              <div class="furniture-cats" id="furnitureCats"></div>
+              <div class="furniture-items" id="furnitureItems"></div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="canvas-wrap">
+          <canvas id="canvas"></canvas>
+          <div class="status-strip" id="connectivityBar" hidden></div>
+          <div class="canvas-hint" id="canvasHint" hidden></div>
+          <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
+          <div class="wall-buttons" id="wallButtons" hidden>
+            <button id="wallAddDoor" title="Добавить дверь" aria-label="Добавить дверь">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v17"/><path d="M15 21a6 6 0 0 0-6-6"/><circle cx="11.5" cy="12" r="0.6" fill="currentColor"/></svg>
+            </button>
+            <button id="wallAddWindow" title="Добавить окно" aria-label="Добавить окно">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/></svg>
+            </button>
+          </div>
+          <div class="cal-overlay" id="dimInput" hidden>
+            <input id="dimInputField" type="number" step="50" min="0" inputmode="decimal" />
+            <span class="cal-unit">мм</span>
+          </div>
+          <div class="cal-overlay" id="calOverlay" hidden>
+            <span class="cal-label">Длина отрезка:</span>
+            <input id="calInput" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="0.0" />
+            <span class="cal-unit">м</span>
+          </div>
+          <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
+          <div class="view3d" id="view3d" hidden>
+            <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
+            <div class="view3d-bar">
+              <label class="check-row"><input type="checkbox" id="v3Roof"><span>Крыша</span></label>
+              <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
+              <button id="v3Fit" type="button">Вписать</button>
+              <button id="v3Close" type="button">✕ Закрыть</button>
+            </div>
+          </div>
+          <div class="zoom-controls">
+            <button id="zoomInBtn" title="Приблизить">+</button>
+            <button id="zoomOutBtn" title="Отдалить">−</button>
+          </div>
+          <div class="statusbar">
+            <span id="cursorPos"></span>
+            <span id="scaleInfo"></span>
+          </div>
+        </section>
+
+        <aside class="props" id="propsPanel"></aside>
+      </main>
+      <nav class="mobile-bar" id="mobileBar" aria-label="Панели">
+        <button type="button" data-sheet="rooms">Помещения</button>
+        <button type="button" data-sheet="furniture">Мебель</button>
+        <button type="button" data-sheet="props">Свойства</button>
+      </nav>
+    </div>
+
+    <div id="toast" role="status"></div>
+
+    <div class="start-screen" id="startScreen" hidden>
+      <div class="start-card">
+        <div class="start-head">
+          <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+          <button class="icon-btn" id="startClose" title="Закрыть" hidden>✕</button>
+        </div>
+        <div id="startWarn" class="start-warn" hidden></div>
+        <div class="start-actions">
+          <button class="start-item" id="startContinue" hidden>
+            <b>Продолжить</b><span>вернуться к текущему проекту</span></button>
+          <button class="start-item accent" id="startNew">
+            <b>＋ Новый проект</b><span>чистый лист без топосъёмки и мебели</span></button>
+          <button class="start-item" id="startOpen">
+            <b>Открыть файл…</b><span>.kepler.json с компьютера</span></button>
+          <button class="start-item" id="startSample">
+            <b>Загрузить пример</b><span>демо-дом с участком и инсоляцией</span></button>
+        </div>
+        <div class="start-sub">Шаблоны домов — готовая планировка, двери и окна</div>
+        <div class="start-templates" id="startTemplates"></div>
+      </div>
+    </div>
+
+    <div class="start-screen" id="helpScreen" hidden>
+      <div class="start-card help-card">
+        <div class="start-head">
+          <b class="help-title">Управление</b>
+          <button class="icon-btn" id="helpClose" title="Закрыть (Esc)">✕</button>
+        </div>
+        <div class="help-grid">
+          <section><h4>Мышь</h4><ul>
+            <li><b>ЛКМ</b> — выбрать; по пустому месту — рамка</li>
+            <li><b>Тянуть</b> комнату, мебель, проём, ручки углов</li>
+            <li><b>ПКМ / колесо нажато / пробел</b> — панорама</li>
+            <li><b>Колесо</b> — масштаб</li>
+            <li><b>Shift + клик</b> — добавить к выделению</li>
+          </ul></section>
+          <section><h4>Клавиши</h4><ul>
+            <li><b>Ctrl+Z / Ctrl+Shift+Z</b> — отмена / повтор</li>
+            <li><b>Del</b> — удалить, <b>R</b> — повернуть мебель</li>
+            <li><b>Стрелки</b> — сдвиг на 50 мм (Shift — 500)</li>
+            <li><b>PgUp / PgDn</b> — этаж выше / ниже</li>
+            <li><b>Enter</b> — закончить ломаную, <b>Esc</b> — отмена</li>
+            <li><b>?</b> или <b>F1</b> — эта справка</li>
+          </ul></section>
+          <section><h4>Пальцы (телефон, планшет)</h4><ul>
+            <li><b>Тап</b> — выбрать, поставить выбранное</li>
+            <li><b>Один палец</b> по пустому месту — двигать план</li>
+            <li><b>Два пальца</b> — масштаб и сдвиг</li>
+            <li>Панели — кнопками внизу экрана</li>
+          </ul></section>
+          <section><h4>Режимы и виды</h4><ul>
+            <li><b>План</b> — комнаты прямо по осям дома</li>
+            <li><b>Участок</b> — север вверх, граница, соседи, солнце</li>
+            <li><b>Выровнять</b> — дом вдоль линии участка (2 точки)</li>
+            <li><b>3D</b> — объём дома: тянуть — вращать</li>
+          </ul></section>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
