@@ -638,8 +638,8 @@ function placeRoomAt(world, typeOverride = null) {
     state.project.rooms.push(room);
     // Мебель родителя из-под нового помещения вытаскивается.
     if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
-    // Типовой набор мебели сразу в комнату — дальше пользователь двигает сам.
-    for (const item of defaultItemsFor(room)) state.project.items.push(item);
+    // Новая комната создаётся ПУСТОЙ — мебель пользователь добавляет сам из
+    // панели «Мебель» (клик по карточке или перетаскиванием).
   }, { arrange: parentId ? [room.id, parentId] : [room.id] });
   cancelTool();
   selectObject({ type: 'room', id: room.id });
@@ -2148,7 +2148,7 @@ function renderFurnitureBar() {
       e.dataTransfer.setData('text/plain', item.kind);
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
-    chip.addEventListener('click', () => toast('Перетащите карточку мебели на план'));
+    chip.addEventListener('click', () => addFurnitureToSelection(item.kind));
     refs.furnitureItems.appendChild(chip);
   }
 }
@@ -2186,6 +2186,21 @@ function addFurnitureAt(kind, worldX, worldY) {
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
   toast(`«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
+}
+
+// Клик по карточке мебели: кладём в выбранную комнату (или центр экрана),
+// каскадом — чтобы можно было быстро накликать много и потом растащить.
+// Панель мебели при этом не перерисовывается, список остаётся на месте.
+function addFurnitureToSelection(kind) {
+  const sel = state.selection;
+  const room = sel?.type === 'room' ? roomById(state.project, sel.id)
+    : sel?.type === 'item' ? containingRoom(state.project.items.find((i) => i.id === sel.id)) : null;
+  let cx;
+  let cy;
+  if (room) { cx = room.x + room.w / 2; cy = room.y + room.h / 2; }
+  else { const c = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
+  const k = state.project.items.length % 6; // каскад, чтобы не ложились стопкой
+  addFurnitureAt(kind, cx + k * 180, cy + k * 180);
 }
 
 function containingRoom(item) {
