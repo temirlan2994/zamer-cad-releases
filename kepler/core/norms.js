@@ -7,14 +7,16 @@
 //   естественный свет: окна жилых комнат и кухни — не меньше 1:8 площади пола;
 //   высота жилых комнат и кухни от пола до потолка — не менее 2,5 м
 //     (своя высота комнаты или высота этажа минус перекрытие 0,3 м).
-// Плюс инсоляция (core/insolation.js). Это подсказка для концепции,
-// а не экспертиза проекта.
+// Плюс инсоляция (core/insolation.js) и проходы у мебели (core/clearance.js).
+// Это подсказка для концепции, а не экспертиза проекта.
 
 import { roomType } from './catalog.js';
+import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
+import { deriveWalls } from './walls.js';
 
 export const SP55 = {
   minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, kitchen: 6 },
@@ -73,12 +75,19 @@ export function roomChecks(project, room, level) {
 export function normsReport(project) {
   const insolation = insolationReport(project);
   const rooms = [];
+  const flagged = new Set(); // мебель с замечаниями — подсветка на плане
   for (const level of sortedLevels(project)) {
     const lp = levelProject(project, level.id);
+    const walls = deriveWalls(lp);
     for (const room of lp.rooms) {
-      rooms.push({ id: room.id, levelId: level.id, name: room.name, checks: roomChecks(lp, room, level) });
+      const checks = roomChecks(lp, room, level);
+      for (const f of furnitureIssues(lp, room, walls)) {
+        checks.push({ kind: 'furniture', ok: false, text: f.text, itemIds: f.itemIds });
+        for (const id of f.itemIds) flagged.add(id);
+      }
+      rooms.push({ id: room.id, levelId: level.id, name: room.name, checks });
     }
   }
   const problems = rooms.flatMap((r) => r.checks.filter((c) => !c.ok).map((c) => ({ ...c, room: r })));
-  return { insolation, rooms, problems, ok: insolation.ok && !problems.length };
+  return { insolation, rooms, problems, flagged, ok: insolation.ok && !problems.length };
 }

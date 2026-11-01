@@ -233,6 +233,22 @@ export function createRenderer(canvas) {
       drawItem(ctx, item, tokens, px, selected, hovered);
     }
 
+    // Мебель с замечаниями (пересечение, дверь, нет прохода) — красный пунктир.
+    if (state.norms?.flagged?.size) {
+      ctx.strokeStyle = tokens.danger;
+      ctx.lineWidth = px(1.6);
+      ctx.setLineDash([px(5), px(4)]);
+      for (const item of state.project.items) {
+        if (!state.norms.flagged.has(item.id)) continue;
+        ctx.save();
+        ctx.translate(item.x, item.y);
+        ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
+        ctx.strokeRect(-item.w / 2 - px(3), -item.h / 2 - px(3), item.w + px(6), item.h + px(6));
+        ctx.restore();
+      }
+      ctx.setLineDash([]);
+    }
+
     // 7. Участок поверх полов (граница, красная линия, въезд) и
     // предпросмотры инструментов участка — в координатах съёмки.
     setView(view);

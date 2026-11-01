@@ -7,9 +7,9 @@
 
 import { rectCornersWorld } from '../core/building.js';
 import { groundLevel, levelProject, sortedLevels } from '../core/model.js';
-import { buildingFootprintM2 } from '../core/rooms.js';
 import { buildImagePdf } from '../core/pdf.js';
 import { roomSchedule } from '../core/schedule.js';
+import { tepReport, tepRows } from '../core/tep.js';
 import { buildZonePolygon, neighborRectCorners, polygonAreaM2 } from '../core/site.js';
 import { deriveWalls } from '../core/walls.js';
 import { createRenderer, projectPoint, underlayHandles } from '../render.js';
@@ -181,27 +181,28 @@ function scheduleTable(ctx, { level, rows, totals }) {
 }
 
 function siteTable(ctx, project) {
-  const site = project.site;
-  const zone = buildZonePolygon(site);
   const x0 = FRAME.x0 + 2;
-  let y = STAMP.y0 + 4;
+  const y0 = STAMP.y0 + 4;
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#000';
   ctx.font = '600 3.6px system-ui, sans-serif';
-  ctx.fillText('Показатели участка', x0, y);
+  ctx.fillText('Технико-экономические показатели', x0, y0);
   ctx.font = '400 3px system-ui, sans-serif';
-  const footprint = buildingFootprintM2(project);
-  const lines = [
-    `Площадь участка: ${fmt(polygonAreaM2(site.boundary))} м²`,
-    zone ? `Зона застройки: ${fmt(polygonAreaM2(zone))} м²` : 'Зона застройки: отступы съедают участок',
-    `Отступы: ${fmt((site.setbackBoundary ?? 0) / 1000)} м от границы, ${fmt((site.setbackNeighbor ?? 0) / 1000)} м от соседних домов`,
-    `Север: ${Math.round(site.north || 0)}° · поворот дома: ${Math.round(project.building?.rotation || 0)}°`,
-  ];
-  if (footprint > 0) {
-    const share = Math.round((footprint / polygonAreaM2(site.boundary)) * 100);
-    lines.push(`Пятно застройки: ${fmt(footprint)} м² (${share}% участка)`);
-  }
-  for (const line of lines) { y += 5.2; ctx.fillText(line, x0, y); }
+  const rows = tepRows(tepReport(project));
+  const zone = buildZonePolygon(project.site);
+  if (zone) rows.splice(1, 0, ['Зона застройки (с отступами)', `${fmt(polygonAreaM2(zone))} м²`]);
+  // Две колонки строк: название слева, значение справа.
+  const perCol = Math.ceil(rows.length / 2);
+  rows.forEach(([k, v], i) => {
+    const col = Math.floor(i / perCol);
+    const x = x0 + col * 104;
+    const y = y0 + 6 + (i % perCol) * 5;
+    ctx.textAlign = 'left';
+    ctx.fillText(k, x, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(v, x + 98, y);
+  });
+  ctx.textAlign = 'left';
 }
 
 // ---------------------------------------------------------------- Листы

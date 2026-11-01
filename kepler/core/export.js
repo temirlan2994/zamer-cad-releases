@@ -21,6 +21,7 @@ import { itemTitle } from './furnish.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { tepReport } from './tep.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -136,6 +137,7 @@ export function buildStructuredExport(project) {
     // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site),
+    indicators: tepReport(project), // ТЭП: площади, коэффициенты, объём (м², м³)
   };
 }
 

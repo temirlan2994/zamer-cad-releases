@@ -3,6 +3,7 @@
 // (state.norms) после каждого изменения.
 
 import { formatDuration } from '../core/insolation.js';
+import { tepReport, tepRows } from '../core/tep.js';
 import { escapeHtml } from './dom.js';
 import { switchLevel } from './levels.js';
 import { state } from './state.js';
@@ -14,6 +15,14 @@ const mark = (ok) => (ok ? '✓' : '✗');
 function sunLine(r, hours) {
   if (!r.windows) return 'нет окон';
   return `${formatDuration(r.longest)} подряд${r.total > r.longest ? `, всего ${formatDuration(r.total)}` : ''}${r.living ? ` (норма ${String(hours).replace('.', ',')} ч)` : ''}`;
+}
+
+// Таблица ТЭП (свойства проекта).
+export function tepSection() {
+  const rows = tepRows(tepReport(state.project));
+  return `<h3>ТЭП</h3><div class="prop-block">${rows.map(([k, v]) => `
+      <div class="prop-row"><span>${k}</span><strong>${v}</strong></div>`).join('')}
+    </div>`;
 }
 
 // Сводка для свойств проекта.
@@ -37,7 +46,7 @@ export function normsSection() {
     <div class="prop-block norms">
       <div class="norm-head">☀ Инсоляция — ${ins.norm.zone} зона: ${String(ins.norm.hours).replace('.', ',')} ч на ${fmtDay(ins.norm.day)}. ${verdict}</div>
       ${rows ? `<ul class="norm-list">${rows}</ul>` : ''}
-      ${problems ? `<div class="norm-head">Площади, ширины, свет, высота</div><ul class="norm-list">${problems}</ul>` : '<p class="empty-hint">Площади, ширины, свет 1:8 и высота — в норме.</p>'}
+      ${problems ? `<div class="norm-head">Площади, свет, высота, проходы у мебели</div><ul class="norm-list">${problems}</ul>` : '<p class="empty-hint">Площади, ширины, свет 1:8, высота и проходы у мебели — в норме.</p>'}
       <p class="empty-hint">Ориентир: СанПиН 1.2.3685-21 (инсоляция), СП 55.13330 (дома одноквартирные). Подсказка для концепции, не экспертиза.</p>
     </div>`;
 }

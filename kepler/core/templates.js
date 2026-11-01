@@ -22,9 +22,9 @@ function row(level, y, h, items, x0 = 0) {
   });
 }
 
-// Дверь из комнаты a в состыкованную b — посередине общей стены;
+// Дверь из комнаты a в состыкованную b — посередине общей стены (или на доле at);
 // открывается внутрь a (двери из коридора и холла — внутрь комнат).
-export function door(level, a, b, width = 800) {
+export function door(level, a, b, width = 800, at = 0.5) {
   let side;
   let from;
   let to;
@@ -40,7 +40,8 @@ export function door(level, a, b, width = 800) {
     throw new Error(`Шаблон: «${a.name}» и «${b.name}» не стыкуются`);
   }
   if (to - from < width + 200) throw new Error(`Шаблон: общая стена «${a.name}»/«${b.name}» коротка для двери`);
-  const center = (from + to) / 2;
+  // at — доля общей стены (0…1); дверь целиком остаётся на общей стене.
+  const center = Math.min(to - width / 2 - 50, Math.max(from + width / 2 + 50, from + (to - from) * at));
   const offset = side === 1 || side === 3 ? center - a.y : center - a.x;
   level.openings.push(createOpening('door', a.id, side, offset, width));
 }
@@ -100,9 +101,9 @@ function twoStorey() {
   const L1 = p.levels[0];
   const [living, kitchen] = row(L1, 0, 4500, [{ type: 'living', w: 5600 }, { type: 'kitchen', w: 3700 }]);
   const [hall, stairs1, study] = row(L1, 4600, 3200, [
-    { type: 'hall', w: 3000 }, { type: 'stairs-room', w: 2400 }, { type: 'cabinet', w: 3800, name: 'Кабинет / гостевая' },
+    { type: 'hall', w: 3000 }, { type: 'stairs-room', w: 2800 }, { type: 'cabinet', w: 3400, name: 'Кабинет / гостевая' },
   ]);
-  door(L1, living, hall); door(L1, living, kitchen); door(L1, stairs1, hall);
+  door(L1, living, hall); door(L1, living, kitchen); door(L1, hall, stairs1); // к лестнице — в холл
   door(L1, study, stairs1); door(L1, study, kitchen);
   opening(L1, 'door', hall, 3); // вход
   opening(L1, 'window', living, 0, 0.3); opening(L1, 'window', living, 0, 0.7);
@@ -114,10 +115,11 @@ function twoStorey() {
   p.levels.push(L2);
   const [master, bedR] = row(L2, 0, 4500, [{ type: 'master-bedroom', w: 5600 }, { type: 'bedroom', w: 3700, name: 'Спальня 2' }]);
   const [bedL, stairs2, hall2, bath2] = row(L2, 4600, 3200, [
-    { type: 'bedroom', w: 3000, name: 'Спальня 3' }, { type: 'stairs-room', w: 2400 },
-    { type: 'corridor', w: 1300, name: 'Холл 2 этажа' }, { type: 'bathroom', w: 2400 },
+    { type: 'bedroom', w: 3000, name: 'Спальня 3' }, { type: 'stairs-room', w: 2800 },
+    { type: 'corridor', w: 1300, name: 'Холл 2 этажа' }, { type: 'bathroom', w: 2000 },
   ]);
-  door(L2, master, stairs2); door(L2, bedL, stairs2); door(L2, stairs2, hall2);
+  // Дверь мастер-спальни — сбоку от марша (марш почти во всю длину лестницы).
+  door(L2, master, stairs2, 800, 0.2); door(L2, bedL, stairs2); door(L2, hall2, stairs2);
   door(L2, bedR, hall2); door(L2, bath2, hall2);
   opening(L2, 'window', master, 0, 0.3); opening(L2, 'window', master, 0, 0.7); opening(L2, 'window', master, 3);
   opening(L2, 'window', bedR, 0); opening(L2, 'window', bedR, 1);

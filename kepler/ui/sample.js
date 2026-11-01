@@ -1,5 +1,6 @@
 // Демонстрационный проект «Дом · 1 этаж».
 
+import { furnitureIssues } from '../core/clearance.js';
 import { arrangeRoom, defaultItemsFor } from '../core/furnish.js';
 import { createOpening, createProject, createRoom } from '../core/model.js';
 import { ensureSite } from '../core/site.js';
@@ -45,6 +46,15 @@ export function buildSample() {
   }
   for (const room of project.rooms) {
     rejected.set(room.id, arrangeRoom(project, room, walls));
+  }
+  // Не поместившиеся предметы остаются внахлёст — в примере их убираем,
+  // чтобы он открывался без замечаний (причина видна в свойствах комнаты).
+  for (const room of project.rooms) {
+    const kinds = new Set((rejected.get(room.id) || []).map((r) => r.kind));
+    if (!kinds.size) continue;
+    const bad = new Set(furnitureIssues(project, room, walls)
+      .filter((i) => i.kind === 'overlap').flatMap((i) => i.itemIds));
+    project.items = project.items.filter((it) => !(bad.has(it.id) && kinds.has(it.kind)));
   }
   return { project, rejected };
 }

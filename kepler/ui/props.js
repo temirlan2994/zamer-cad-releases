@@ -12,7 +12,9 @@ import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
-import { bindNormLinks, normsSection, roomNormsBlock } from './norms-view.js';
+import {
+  bindNormLinks, normsSection, roomNormsBlock, tepSection,
+} from './norms-view.js';
 import {
   addFurniture, changeWallThickness, deleteSelection, overlappingTopRooms, reconcileOpenings,
   rotateMulti90, rotateSelectedItem,
@@ -87,6 +89,7 @@ function renderProjectProps(panel) {
     ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
     <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
     ${normsSection()}
+    ${tepSection()}
     <h3>Управление</h3>
     <ul class="hotkeys">
       <li><b>ЛКМ</b> — выделение, рамка по пустому месту</li>
