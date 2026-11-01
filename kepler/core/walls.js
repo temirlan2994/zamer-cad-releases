@@ -193,7 +193,48 @@ export function deriveWalls(project) {
   }
 
   extendOwnCorners(walls, byId);
+  fillWallJoints(walls);
   return walls;
+}
+
+// Заполняет уголки на стыках стен (например, общая стена ↔ наружная):
+// там, где перпендикулярная стена не доходит до соседней, добавляется
+// маленький прямоугольник-заплатка того же типа.
+function fillWallJoints(walls) {
+  const fillers = [];
+  const seen = new Set();
+  for (const wall of walls) {
+    // Перпендикулярные полосы, чья грань совпадает с концом этой стены.
+    const perpOrient = wall.orient === 'h' ? 'v' : 'h';
+    for (const end of [wall.from, wall.to]) {
+      for (const other of walls) {
+        if (other === wall || other.orient !== perpOrient) continue;
+        // Грань перпендикулярной стены на уровне конца нашей стены.
+        if (Math.abs(other.edge - end) > 2) continue;
+        const b = other.band;
+        const wb = wall.band;
+        // other примыкает к торцу wall по поперечной оси?
+        const touchesX = Math.abs(b.x + b.w - wb.x) < 2 || Math.abs(b.x - (wb.x + wb.w)) < 2;
+        const touchesY = Math.abs(b.y + b.h - wb.y) < 2 || Math.abs(b.y - (wb.y + wb.h)) < 2;
+        const adjacent = wall.orient === 'v' ? touchesX : touchesY;
+        if (!adjacent) continue;
+        // Заплатка: ширина полотна wall × толщина other (в зоне зазора).
+        const rect = wall.orient === 'v'
+          ? { x: wb.x, y: b.y, w: wb.w, h: b.h }
+          : { x: b.x, y: wb.y, w: b.w, h: wb.h };
+        const key = `${Math.round(rect.x)}|${Math.round(rect.y)}|${Math.round(rect.w)}|${Math.round(rect.h)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        fillers.push({
+          key: `joint-${key}`, kind: 'joint', orient: wall.orient, rooms: [],
+          sides: {}, from: 0, to: 0, edge: 0, thickness: 0, band: rect,
+          center: { x1: rect.x, y1: rect.y, x2: rect.x, y2: rect.y },
+          wallType: other.wallType,
+        });
+      }
+    }
+  }
+  for (const f of fillers) walls.push(f);
 }
 
 // Удлиняет собственные стены на углах комнаты, чтобы угол замыкался без щели.

@@ -123,7 +123,7 @@ export function createRenderer(canvas) {
     const ownByRoom = new Map();
     const sharedWalls = [];
     for (const wall of walls) {
-      if (wall.kind === 'shared') { sharedWalls.push(wall); continue; }
+      if (wall.kind === 'shared' || wall.kind === 'joint') { sharedWalls.push(wall); continue; }
       const rid = wall.rooms[0];
       if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
       ownByRoom.get(rid).push(wall);

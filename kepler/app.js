@@ -407,6 +407,7 @@ function hitOpening(world) {
 
 function hitWall(world) {
   for (const wall of state.walls) {
+    if (wall.kind === 'joint') continue; // заплатки стыков не выбираются
     const b = wall.band;
     if (world.x >= b.x && world.x <= b.x + b.w && world.y >= b.y && world.y <= b.y + b.h) return wall;
   }
