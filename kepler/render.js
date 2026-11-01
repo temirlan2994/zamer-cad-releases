@@ -1203,11 +1203,22 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     ctx.globalAlpha = 1;
   }
 
-  // Общие наружные размеры по внешнему контуру всего дома.
+  // Общие наружные размеры — только для ДЕЙСТВИТЕЛЬНО внешних сторон дома,
+  // вынесенные единой цепочкой за габарит (вогнутые уступы/ниши пропускаются,
+  // чтобы размерные линии не шли внутри комнат).
   const outline = computeBuildingOutline(state.project);
-  if (outline.length) {
+  const rects = state.project.rooms.filter((r) => !r.parentId && !r.open)
+    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+  if (outline.length && rects.length) {
     const exterior = state.project.settings?.exterior || 250;
-    const outOff = exterior + 850; // размерная линия снаружи стен
+    const outOff = exterior + 850;
+    const bb = {
+      minX: Math.min(...rects.map((r) => r.x)),
+      maxX: Math.max(...rects.map((r) => r.x + r.w)),
+      minY: Math.min(...rects.map((r) => r.y)),
+      maxY: Math.max(...rects.map((r) => r.y + r.h)),
+    };
+    const overlap = (a1, a2, b1, b2) => Math.min(a2, b2) - Math.max(a1, b1) > 1;
     ctx.strokeStyle = tokens.line;
     ctx.fillStyle = tokens.line;
     ctx.globalAlpha = 0.75;
@@ -1215,16 +1226,30 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       const horiz = edge.orient === 'h';
       const len = Math.round(edge.to - edge.from);
       if (len < 400) continue;
-      const perp = edge.at - edge.inSide * outOff; // наружу (против inSide)
-      const p = horiz ? w2s(edge.from, perp) : w2s(perp, edge.from);
-      const q = horiz ? w2s(edge.to, perp) : w2s(perp, edge.to);
-      const screenLen = Math.hypot(q.x - p.x, q.y - p.y);
-      if (screenLen < 44) continue;
+      // Направление наружу и проверка, что за ребром нет здания (внешняя сторона).
+      let external = false;
+      let chainPerp = 0;
+      let dir = { x: 0, y: 0 };
+      if (horiz && edge.inSide === 1) { // верхняя сторона (наружу вверх)
+        external = !rects.some((r) => overlap(r.x, r.x + r.w, edge.from, edge.to) && r.y < edge.at - 1);
+        chainPerp = bb.minY - outOff; dir = { x: 0, y: -1 };
+      } else if (horiz && edge.inSide === -1) { // нижняя
+        external = !rects.some((r) => overlap(r.x, r.x + r.w, edge.from, edge.to) && r.y + r.h > edge.at + 1);
+        chainPerp = bb.maxY + outOff; dir = { x: 0, y: 1 };
+      } else if (!horiz && edge.inSide === 1) { // левая
+        external = !rects.some((r) => overlap(r.y, r.y + r.h, edge.from, edge.to) && r.x < edge.at - 1);
+        chainPerp = bb.minX - outOff; dir = { x: -1, y: 0 };
+      } else { // правая
+        external = !rects.some((r) => overlap(r.y, r.y + r.h, edge.from, edge.to) && r.x + r.w > edge.at + 1);
+        chainPerp = bb.maxX + outOff; dir = { x: 1, y: 0 };
+      }
+      if (!external) continue;
+      const p = horiz ? w2s(edge.from, chainPerp) : w2s(chainPerp, edge.from);
+      const q = horiz ? w2s(edge.to, chainPerp) : w2s(chainPerp, edge.to);
+      if (Math.hypot(q.x - p.x, q.y - p.y) < 40) continue;
       const mid = (edge.from + edge.to) / 2;
-      const n = horiz
-        ? outwardScreen(mid, edge.at, 0, -edge.inSide)
-        : outwardScreen(edge.at, mid, -edge.inSide, 0);
-      // Выноски от стены к наружной линии.
+      const n = horiz ? outwardScreen(mid, chainPerp, 0, dir.y) : outwardScreen(chainPerp, mid, dir.x, 0);
+      // Выноски от стены к цепочке.
       const i1 = horiz ? w2s(edge.from, edge.at) : w2s(edge.at, edge.from);
       const i2 = horiz ? w2s(edge.to, edge.at) : w2s(edge.at, edge.to);
       ctx.beginPath();
