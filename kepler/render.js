@@ -97,7 +97,10 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr * scale * cos, dpr * scale * sin, -dpr * scale * sin, dpr * scale * cos, dpr * view.panX, dpr * view.panY);
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
-    // 0. Подложка-топосъёмка.
+    // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
+    drawGrid(ctx, worldBox, scale, px, tokens);
+
+    // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
     if (site?.underlay && state.underlayImg && !state.underlayHidden) {
       const u = site.underlay;
       ctx.globalAlpha = u.opacity ?? 0.7;
@@ -111,9 +114,6 @@ export function createRenderer(canvas) {
         ctx.setLineDash([]);
       }
     }
-
-    // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
-    drawGrid(ctx, worldBox, scale, px, tokens);
 
     // 2. Участок: дороги, запретная зона, соседи, тени.
     if (site) drawSiteUnder(ctx, state, site, tokens, px);
@@ -178,6 +178,9 @@ export function createRenderer(canvas) {
       ctx.fillRect(r.x, r.y, r.w, r.h);
     }
     if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
+    state._snapLabelAt = (state.draft?.snapStart && state.draft.points.length)
+      ? { x: state.draft.points[0].x, y: state.draft.points[0].y, text: state.draft.snapLabel }
+      : null;
 
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
@@ -228,6 +231,20 @@ export function createRenderer(canvas) {
       }
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    // Подпись «замкнуть/завершить» у первой точки черновика.
+    if (state._snapLabelAt) {
+      const p = w2s(state._snapLabelAt.x, state._snapLabelAt.y);
+      ctx.fillStyle = tokens.accent2;
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(state._snapLabelAt.text, p.x, p.y - 16);
+    }
+    // Угловые ручки топосъёмки — тянуть, чтобы менять масштаб.
+    if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
+      for (const hp of underlayHandles(site.underlay)) {
+        drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
+      }
+    }
 
     const selItem = state.selection?.type === 'item'
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
@@ -305,11 +322,13 @@ function polyPath(ctx, points, close = true) {
 }
 
 function drawSiteUnder(ctx, state, site, tokens, px) {
+  const hov = state.hover?.type === 'site-obj' ? state.hover : null;
   // Дороги.
   for (const road of site.roads || []) {
     if (road.points.length < 2) continue;
     const selected = state.selection?.type === 'site' && state.selection.kind === 'road' && state.selection.id === road.id;
-    ctx.strokeStyle = selected ? 'rgba(31,117,255,0.4)' : 'rgba(120,132,148,0.3)';
+    const hovered = hov?.kind === 'road' && hov.id === road.id;
+    ctx.strokeStyle = selected ? 'rgba(31,117,255,0.4)' : hovered ? 'rgba(29,78,216,0.32)' : 'rgba(120,132,148,0.3)';
     ctx.lineWidth = road.width;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -362,12 +381,13 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
   // Соседние дома.
   for (const n of site.neighbors || []) {
     const selected = state.selection?.type === 'site' && state.selection.kind === 'neighbor' && state.selection.id === n.id;
+    const hovered = hov?.kind === 'neighbor' && hov.id === n.id;
     const x = n.x - n.w / 2;
     const y = n.y - n.h / 2;
     ctx.fillStyle = 'rgba(120,132,148,0.25)';
     ctx.fillRect(x, y, n.w, n.h);
-    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
-    ctx.lineWidth = px(selected ? 2 : 1.3);
+    ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.muted;
+    ctx.lineWidth = px(selected || hovered ? 2 : 1.3);
     ctx.strokeRect(x, y, n.w, n.h);
     ctx.beginPath();
     ctx.moveTo(x, y); ctx.lineTo(x + n.w, y + n.h);
@@ -421,10 +441,16 @@ function paintHatch(ctx, polygon, fill, stroke, px) {
 
 function drawSiteOver(ctx, state, site, tokens, px) {
   const selectedKind = state.selection?.type === 'site' ? state.selection.kind : null;
+  const hov = state.hover?.type === 'site-obj' ? state.hover : null;
+  const kindColor = (kind, id, base) => {
+    if (selectedKind === kind && (id === undefined || state.selection.id === id)) return tokens.accent;
+    if (hov?.kind === kind && (id === undefined || hov.id === id)) return tokens.hover;
+    return base;
+  };
 
   if (site.boundary?.length >= 2) {
-    ctx.strokeStyle = selectedKind === 'boundary' ? tokens.accent : tokens.line;
-    ctx.lineWidth = px(2.2);
+    ctx.strokeStyle = kindColor('boundary', undefined, tokens.line);
+    ctx.lineWidth = px(selectedKind === 'boundary' || hov?.kind === 'boundary' ? 3 : 2.2);
     ctx.beginPath();
     polyPath(ctx, site.boundary, site.boundary.length >= 3);
     ctx.stroke();
@@ -451,8 +477,8 @@ function drawSiteOver(ctx, state, site, tokens, px) {
   }
 
   if (site.redLine?.length >= 2) {
-    ctx.strokeStyle = selectedKind === 'redline' ? tokens.accent : tokens.danger;
-    ctx.lineWidth = px(2);
+    ctx.strokeStyle = kindColor('redline', undefined, tokens.danger);
+    ctx.lineWidth = px(selectedKind === 'redline' || hov?.kind === 'redline' ? 2.8 : 2);
     ctx.setLineDash([1600, 500, 250, 500]);
     ctx.beginPath();
     polyPath(ctx, site.redLine, false);
@@ -465,7 +491,7 @@ function drawSiteOver(ctx, state, site, tokens, px) {
     const rad = (e.dir * Math.PI) / 180;
     const len = 2200;
     const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
-    ctx.strokeStyle = selectedKind === 'entry' ? tokens.accent : tokens.accent2;
+    ctx.strokeStyle = kindColor('entry', undefined, tokens.accent2);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = px(2.4);
     ctx.beginPath();
@@ -505,12 +531,12 @@ function drawDraft(ctx, draft, tokens, px) {
     ctx.arc(p.x, p.y, px(3.5), 0, Math.PI * 2);
     ctx.fill();
   }
-  // Замыкание полигона подсвечивается у первой точки.
-  if (draft.closeHint && draft.points.length >= 3) {
-    ctx.strokeStyle = tokens.accent2;
-    ctx.lineWidth = px(2);
+  // Привязка к первой точке: яркий кружок (подпись рисуется в экранном слое).
+  if (draft.points.length >= 2) {
+    ctx.strokeStyle = draft.snapStart ? tokens.accent2 : tokens.muted;
+    ctx.lineWidth = px(draft.snapStart ? 2.4 : 1.4);
     ctx.beginPath();
-    ctx.arc(draft.points[0].x, draft.points[0].y, px(9), 0, Math.PI * 2);
+    ctx.arc(draft.points[0].x, draft.points[0].y, px(draft.snapStart ? 11 : 7), 0, Math.PI * 2);
     ctx.stroke();
   }
 }
@@ -818,6 +844,18 @@ export function openingHandles(project, opening, walls) {
   }
   const cx = rect.x + rect.w / 2;
   return [{ end: 'start', x: cx, y: rect.y }, { end: 'end', x: cx, y: rect.y + rect.h }];
+}
+
+// Четыре угла топосъёмки (мировые координаты) для масштабирования.
+export function underlayHandles(u) {
+  const w = u.widthPx * u.mmPerPx;
+  const h = u.heightPx * u.mmPerPx;
+  return [
+    { id: 'nw', x: u.x, y: u.y },
+    { id: 'ne', x: u.x + w, y: u.y },
+    { id: 'se', x: u.x + w, y: u.y + h },
+    { id: 'sw', x: u.x, y: u.y + h },
+  ];
 }
 
 function drawHandleSquare(ctx, p, tokens) {

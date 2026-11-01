@@ -20,9 +20,7 @@
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
           <button id="fitBtn" title="Вписать план в экран">Вписать</button>
-          <button id="newBtn" title="Начать новый проект">Новый</button>
-          <button id="sampleBtn" title="Загрузить демонстрационный план">Пример</button>
-          <button id="openBtn" title="Открыть файл .kepler.json">Открыть</button>
+          <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
           <input type="file" id="fileInput" accept=".json,application/json" hidden />
           <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
           <div class="export-wrap">
@@ -66,6 +64,27 @@
     </div>
 
     <div id="toast" role="status"></div>
+
+    <div class="start-screen" id="startScreen" hidden>
+      <div class="start-card">
+        <div class="start-head">
+          <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+          <button class="icon-btn" id="startClose" title="Закрыть" hidden>✕</button>
+        </div>
+        <div id="startWarn" class="start-warn" hidden></div>
+        <div class="start-actions">
+          <button class="start-item" id="startContinue" hidden>
+            <b>Продолжить</b><span>вернуться к текущему проекту</span></button>
+          <button class="start-item accent" id="startNew">
+            <b>＋ Новый проект</b><span>чистый лист без топосъёмки и мебели</span></button>
+          <button class="start-item" id="startOpen">
+            <b>Открыть файл…</b><span>.kepler.json с компьютера</span></button>
+          <button class="start-item" id="startSample">
+            <b>Загрузить пример</b><span>демо-дом с участком и инсоляцией</span></button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="./app.js"></script>
   </body>
 </html>

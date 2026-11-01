@@ -25,7 +25,7 @@ import {
 } from './core/site.js';
 import { pointInPolygon } from './core/zamer/geometry.js';
 import {
-  createRenderer, roomHandles, openingHandles, HANDLE_SIZE,
+  createRenderer, roomHandles, openingHandles, underlayHandles, HANDLE_SIZE,
   projectPoint, unprojectPoint,
 } from './render.js';
 
@@ -268,6 +268,19 @@ function hitOpeningHandle(screen) {
     const p = worldToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { opening, end: handle.end };
+    }
+  }
+  return null;
+}
+
+function hitUnderlayHandle(screen) {
+  const site = state.project.site;
+  if (state.selection?.type !== 'site' || state.selection.kind !== 'underlay') return null;
+  if (!site.underlay || site.underlay.locked) return null;
+  for (const handle of underlayHandles(site.underlay)) {
+    const p = worldToScreen(handle.x, handle.y);
+    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+      return { corner: handle.id };
     }
   }
   return null;
@@ -579,11 +592,12 @@ function addDraftPoint(world) {
   const draft = state.draft;
   const snap = (v) => Math.round(v / 100) * 100;
   const point = { x: snap(world.x), y: snap(world.y) };
-  // Замыкание границы кликом по первой точке.
-  if (draft.kind === 'boundary' && draft.points.length >= 3) {
+  // Клик по начальной точке (когда к ней привязались) — замкнуть/завершить.
+  const minPts = draft.kind === 'boundary' ? 3 : 2;
+  if (draft.points.length >= minPts) {
     const first = worldToScreen(draft.points[0].x, draft.points[0].y);
     const here = worldToScreen(point.x, point.y);
-    if (Math.hypot(first.x - here.x, first.y - here.y) < 12) { finishDraft(); return; }
+    if (Math.hypot(first.x - here.x, first.y - here.y) < 15) { finishDraft(); return; }
   }
   draft.points.push(point);
   requestDraw();
@@ -745,7 +759,9 @@ async function renderPdfToImage(file) {
 
 function placeUnderlay(dataUrl, size) {
   const center = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
-  const mmPerPx = 40000 / size.w; // по умолчанию ширина листа = 40 м, уточняется калибровкой
+  // Картинка занимает ~70% ширины видимой области — сразу видна и по центру.
+  const visibleWorldWidth = canvas.clientWidth / state.view.scale;
+  const mmPerPx = (visibleWorldWidth * 0.7) / size.w;
   mutate(() => {
     state.project.site.underlay = {
       src: dataUrl,
@@ -759,7 +775,7 @@ function placeUnderlay(dataUrl, size) {
     };
   });
   selectObject({ type: 'site', kind: 'underlay' });
-  toast('Топосъёмка загружена. Задайте масштаб: «Масштаб по отрезку» справа', true);
+  toast('Топосъёмка загружена. Задайте масштаб справа: впишите ширину в метрах, или тяните углы картинки', true);
 }
 
 // ---------------------------------------------------------------- Ввод мыши
@@ -799,6 +815,19 @@ canvas.addEventListener('pointerdown', (event) => {
   const handleHit = hitRoomHandle(screen);
   if (handleHit) {
     drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), world, valid: true };
+    return;
+  }
+  const underlayHandleHit = hitUnderlayHandle(screen);
+  if (underlayHandleHit) {
+    const u = state.project.site.underlay;
+    // Фиксированный угол — противоположный тянущемуся.
+    const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[underlayHandleHit.corner];
+    const anchor = underlayHandles(u).find((h) => h.id === opposite);
+    drag = {
+      kind: 'underlay-resize', corner: underlayHandleHit.corner, anchor,
+      startW: u.widthPx * u.mmPerPx, startH: u.heightPx * u.mmPerPx,
+      startMmPerPx: u.mmPerPx, world, before: snapshot(), moved: false,
+    };
     return;
   }
   const vertexHit = hitSiteVertex(screen);
@@ -1067,6 +1096,24 @@ canvas.addEventListener('pointermove', (event) => {
     return;
   }
 
+  if (drag.kind === 'underlay-resize') {
+    const u = state.project.site.underlay;
+    if (!u) return;
+    drag.moved = true;
+    // Пропорциональный масштаб: новая ширина = расстояние от закреплённого
+    // угла до курсора по горизонтали; высота тянется пропорционально.
+    const anchor = drag.anchor;
+    const newW = Math.max(1000, Math.abs(world.x - anchor.x));
+    const k = newW / (drag.startW || 1);
+    u.mmPerPx = Math.max(0.5, drag.startMmPerPx * k);
+    const w = u.widthPx * u.mmPerPx;
+    const h = u.heightPx * u.mmPerPx;
+    u.x = drag.corner.includes('w') ? anchor.x - w : anchor.x;
+    u.y = drag.corner.includes('n') ? anchor.y - h : anchor.y;
+    requestDraw();
+    return;
+  }
+
   if (drag.kind === 'site-vertex') {
     drag.moved = true;
     const point = drag.points[drag.index];
@@ -1270,7 +1317,22 @@ function updateHoverAndGhost(world) {
     return;
   }
   if (state.draft) {
-    state.draft.cursor = { x: Math.round(world.x / 100) * 100, y: Math.round(world.y / 100) * 100 };
+    const snap = (v) => Math.round(v / 100) * 100;
+    let cursor = { x: snap(world.x), y: snap(world.y) };
+    const pts = state.draft.points;
+    const minPts = state.draft.kind === 'boundary' ? 3 : 2;
+    state.draft.snapStart = false;
+    // Возврат к первой точке: привязка + подпись «замкнуть/завершить».
+    if (pts.length >= minPts) {
+      const first = worldToScreen(pts[0].x, pts[0].y);
+      const cur = worldToScreen(cursor.x, cursor.y);
+      if (Math.hypot(first.x - cur.x, first.y - cur.y) < 15) {
+        cursor = { x: pts[0].x, y: pts[0].y };
+        state.draft.snapStart = true;
+      }
+    }
+    state.draft.cursor = cursor;
+    state.draft.snapLabel = state.draft.kind === 'boundary' ? 'Замкнуть' : 'Завершить';
     requestDraw();
     return;
   }
@@ -1891,25 +1953,63 @@ function renderSiteObjectProps(panel, sel) {
   if (sel.kind === 'underlay' && site.underlay) {
     const u = site.underlay;
     const cal = state.calibration;
+    const widthM = (u.widthPx * u.mmPerPx) / 1000;
+    const heightM = (u.heightPx * u.mmPerPx) / 1000;
     panel.innerHTML = `
       <h2>Топосъёмка</h2>
+      <p class="subtitle">Размер картинки: ${widthM.toFixed(1)} × ${heightM.toFixed(1)} м</p>
+      <h3>Масштаб — 3 способа</h3>
+      <div class="prop-block">
+        <label class="prop-field"><span>1. Ширина топосъёмки, м (если знаете)</span>
+          <input id="uWidth" type="number" step="0.5" min="1" value="${widthM.toFixed(1)}"></label>
+        <div class="scale-row">
+          <span>2. Подогнать кнопками</span>
+          <div class="scale-btns">
+            <button id="scaleDown" title="Меньше">−</button>
+            <button id="scaleUp" title="Больше">+</button>
+          </div>
+        </div>
+        <p class="empty-hint">3. Или тяните угловые белые квадраты прямо на картинке.</p>
+      </div>
+      ${cal ? `
+      <div class="prop-block cal-active">
+        <strong>Отрезок отмечен.</strong>
+        <label class="prop-field"><span>Его реальная длина, м</span>
+          <input id="calDist" type="number" step="0.1" min="0.1" placeholder="например 20" autofocus></label>
+        <button id="calApply" class="primary-inline">Применить</button>
+      </div>` : `
+      <div class="prop-actions">
+        <button id="calibrate">4. Точно: масштаб по отрезку</button>
+      </div>`}
+      <h3>Вид</h3>
       <div class="prop-block">
         <label class="prop-field"><span>Прозрачность</span>
           <input id="uOpacity" type="range" min="0.1" max="1" step="0.05" value="${u.opacity}"></label>
-        <label class="check-row"><input type="checkbox" id="uLocked" ${u.locked ? 'checked' : ''}><span>Закрепить (не двигать мышью)</span></label>
-        <div class="prop-row"><span>Масштаб</span><strong>${(u.mmPerPx).toFixed(1)} мм/пикс</strong></div>
+        <label class="check-row"><input type="checkbox" id="uLocked" ${u.locked ? 'checked' : ''}><span>Закрепить (не двигать и не масштабировать мышью)</span></label>
       </div>
-      ${cal ? `
-      <div class="prop-block">
-        <label class="prop-field"><span>Реальная длина отрезка, м</span>
-          <input id="calDist" type="number" step="0.1" min="0.1" placeholder="например 20"></label>
-        <button id="calApply" class="primary-inline">Применить масштаб</button>
-      </div>` : ''}
       <div class="prop-actions">
-        <button id="calibrate">Масштаб по отрезку</button>
         <button id="del" class="danger">Удалить подложку</button>
       </div>
-      <p class="empty-hint">«Масштаб по отрезку»: кликните две точки на топосъёмке с известным расстоянием (например, сторону участка) и введите её длину.</p>`;
+      <p class="empty-hint">Совет: начертите границу участка по топосъёмке, затем подгоните масштаб так, чтобы известная сторона совпала с реальной длиной.</p>`;
+
+    const rescale = (factor) => {
+      mutate(() => {
+        const cx = u.x + (u.widthPx * u.mmPerPx) / 2;
+        const cy = u.y + (u.heightPx * u.mmPerPx) / 2;
+        u.mmPerPx = Math.max(0.5, u.mmPerPx * factor);
+        u.x = cx - (u.widthPx * u.mmPerPx) / 2;
+        u.y = cy - (u.heightPx * u.mmPerPx) / 2;
+      });
+      selectObject(sel);
+    };
+    panel.querySelector('#uWidth').addEventListener('change', (e) => {
+      const targetM = Number(e.target.value);
+      if (!(targetM > 0)) return;
+      const factor = (targetM * 1000) / (u.widthPx * u.mmPerPx);
+      rescale(factor);
+    });
+    panel.querySelector('#scaleUp').addEventListener('click', () => rescale(1.1));
+    panel.querySelector('#scaleDown').addEventListener('click', () => rescale(1 / 1.1));
     panel.querySelector('#uOpacity').addEventListener('input', (e) => {
       tweak(() => { u.opacity = Number(e.target.value); });
     });
@@ -1917,9 +2017,12 @@ function renderSiteObjectProps(panel, sel) {
       mutate(() => { u.locked = e.target.checked; });
       selectObject(sel);
     });
-    panel.querySelector('#calibrate').addEventListener('click', () => {
-      setTool({ kind: 'calibrate', points: [] }, 'Кликните первую точку отрезка с известной длиной');
-    });
+    const calibrateBtn = panel.querySelector('#calibrate');
+    if (calibrateBtn) {
+      calibrateBtn.addEventListener('click', () => {
+        setTool({ kind: 'calibrate', points: [] }, 'Кликните две точки на топосъёмке с известным расстоянием (например, сторону участка)');
+      });
+    }
     panel.querySelector('#del').addEventListener('click', deleteSelection);
     if (cal) {
       panel.querySelector('#calApply').addEventListener('click', () => {
@@ -2126,17 +2229,84 @@ function loadSample() {
 }
 
 function newProject() {
-  const before = snapshot();
+  const before = state.project ? snapshot() : null;
   state.project = createProject();
-  ensureSite(state.project);
+  ensureSite(state.project); // чистый участок: без топосъёмки, границы, соседей
   state.selection = null;
+  state.tool = null;
   state.rejected.clear();
+  state.underlayImg = null; // убрать картинку топосъёмки из прошлого проекта
+  state.modeName = 'plan';
+  state.views = {
+    plan: { scale: 0.08, panX: 120, panY: 120 },
+    site: { scale: 0.03, panX: 120, panY: 120 },
+  };
+  refs.modePlan.classList.add('active');
+  refs.modeSite.classList.remove('active');
+  refs.roomCards.hidden = false;
+  refs.siteTools.hidden = true;
+  refs.libraryTitle.textContent = 'Помещения';
   refreshDerived();
-  pushHistory(before);
+  applyModeRotation();
+  if (before) pushHistory(before);
   refs.projectName.value = state.project.name;
   afterChange();
   fitView();
-  toast('Новый проект. Старый можно вернуть через Ctrl+Z');
+}
+
+// ---------------------------------------------------------------- Стартовое меню
+
+function projectHasContent() {
+  const p = state.project;
+  if (!p) return false;
+  return p.rooms.length > 0 || p.items.length > 0 || Boolean(p.site?.boundary) || Boolean(p.site?.underlay);
+}
+
+function openStartMenu({ initial = false } = {}) {
+  const screen = el('startScreen');
+  const warn = el('startWarn');
+  const closeBtn = el('startClose');
+  const continueBtn = el('startContinue');
+  warn.hidden = true;
+  warn.innerHTML = '';
+  const hasContent = projectHasContent();
+  closeBtn.hidden = initial && !hasContent;
+  continueBtn.hidden = initial && !hasContent;
+  screen.hidden = false;
+}
+
+function closeStartMenu() {
+  el('startScreen').hidden = true;
+}
+
+function requestNewProject() {
+  const warn = el('startWarn');
+  if (projectHasContent()) {
+    // Спрашиваем подтверждение, прежде чем стереть текущий проект.
+    warn.hidden = false;
+    warn.innerHTML = `
+      <span>⚠ Текущий проект «${escapeHtml(state.project.name)}» будет закрыт. Сохранить его в файл перед этим?</span>
+      <div class="warn-actions">
+        <button id="warnSave" class="primary-inline">Сохранить и создать</button>
+        <button id="warnDiscard" class="danger">Создать без сохранения</button>
+        <button id="warnCancel">Отмена</button>
+      </div>`;
+    warn.querySelector('#warnSave').addEventListener('click', () => {
+      handleExport('project');
+      newProject();
+      closeStartMenu();
+      toast('Новый проект создан, старый сохранён в файл');
+    });
+    warn.querySelector('#warnDiscard').addEventListener('click', () => {
+      newProject();
+      closeStartMenu();
+      toast('Новый проект. Прежний можно вернуть через Ctrl+Z');
+    });
+    warn.querySelector('#warnCancel').addEventListener('click', () => { warn.hidden = true; });
+    return;
+  }
+  newProject();
+  closeStartMenu();
 }
 
 // ---------------------------------------------------------------- Шапка
@@ -2148,11 +2318,14 @@ el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
-el('sampleBtn').addEventListener('click', loadSample);
-el('newBtn').addEventListener('click', newProject);
-el('openBtn').addEventListener('click', () => refs.fileInput.click());
+el('menuBtn').addEventListener('click', () => openStartMenu());
+el('startClose').addEventListener('click', closeStartMenu);
+el('startContinue').addEventListener('click', closeStartMenu);
+el('startNew').addEventListener('click', requestNewProject);
+el('startSample').addEventListener('click', () => { loadSample(); closeStartMenu(); });
+el('startOpen').addEventListener('click', () => refs.fileInput.click());
 refs.fileInput.addEventListener('change', () => {
-  if (refs.fileInput.files?.[0]) openProjectFile(refs.fileInput.files[0]);
+  if (refs.fileInput.files?.[0]) { openProjectFile(refs.fileInput.files[0]); closeStartMenu(); }
   refs.fileInput.value = '';
 });
 refs.underlayInput.addEventListener('change', () => {
@@ -2187,13 +2360,16 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
     const saved = localStorage.getItem(AUTOSAVE_KEY);
     if (saved) restored = deserializeProject(saved);
   } catch { /* нет сохранения */ }
-  if (restored && restored.rooms.length) {
+  let showStart = false;
+  if (restored && (restored.rooms.length || restored.site?.boundary)) {
+    // Есть сохранённый проект — продолжаем его.
     state.project = restored;
     ensureSite(state.project);
   } else {
-    const { project, rejected } = buildSample();
-    state.project = project;
-    state.rejected = rejected;
+    // Пустой старт: чистый проект и стартовое меню поверх.
+    state.project = createProject();
+    ensureSite(state.project);
+    showStart = true;
   }
   refreshDerived();
   applyModeRotation();
@@ -2205,6 +2381,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);
   requestDraw();
+  if (showStart) openStartMenu({ initial: true });
 })();
 
 // Отладочный доступ для автотестов.
