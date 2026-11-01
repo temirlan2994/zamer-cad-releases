@@ -27,6 +27,7 @@ import {
   distanceToPolyline, sunPosition, formatSunInfo, DEFAULT_ROAD_WIDTH,
 } from './core/site.js';
 import { pointInPolygon } from './core/zamer/geometry.js';
+import { parseDxf, dxfToImage } from './core/dxf.js';
 import {
   createRenderer, roomHandles, openingHandles, underlayHandles, underlayRotators,
   underlayCenter, HANDLE_SIZE, drawGlyphPreview,
@@ -985,11 +986,21 @@ function applyCalibration(realMeters) {
 
 async function loadUnderlayFile(file) {
   const name = file.name.toLowerCase();
-  if (name.endsWith('.dwg') || name.endsWith('.dxf')) {
-    toast('DWG/DXF в браузере не читаются. Сохраните топосъёмку как PDF или JPG (в CAD: печать в PDF) и загрузите её.', true);
+  if (name.endsWith('.dwg')) {
+    toast('DWG (бинарный) в браузере не читается. Сохраните как DXF (в CAD: Save As → DXF) или PDF/JPG и загрузите.', true);
     return;
   }
   try {
+    if (name.endsWith('.dxf')) {
+      const text = await file.text();
+      const parsed = parseDxf(text);
+      const { dataUrl, size, worldWidthMm, hadUnits, entityCount } = dxfToImage(parsed);
+      placeUnderlay(dataUrl, size, worldWidthMm);
+      toast(hadUnits
+        ? `DXF загружен (${entityCount} объектов), масштаб по единицам чертежа. Проверьте размер справа.`
+        : `DXF загружен (${entityCount} объектов). Единицы не указаны — приняты метры; при необходимости задайте масштаб по отрезку.`, true);
+      return;
+    }
     let dataUrl;
     let size;
     if (name.endsWith('.pdf') || file.type === 'application/pdf') {
@@ -1060,11 +1071,14 @@ async function renderPdfToImage(file) {
   return { dataUrl: cnv.toDataURL('image/jpeg', 0.85), size: { w: cnv.width, h: cnv.height } };
 }
 
-function placeUnderlay(dataUrl, size) {
+function placeUnderlay(dataUrl, size, worldWidthMm = null) {
   const center = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
-  // Картинка занимает ~70% ширины видимой области — сразу видна и по центру.
+  // Если известна реальная ширина (из DXF) — масштаб 1:1; иначе картинка
+  // занимает ~70% ширины видимой области.
   const visibleWorldWidth = canvas.clientWidth / state.view.scale;
-  const mmPerPx = (visibleWorldWidth * 0.7) / size.w;
+  const mmPerPx = worldWidthMm && worldWidthMm > 0
+    ? worldWidthMm / size.w
+    : (visibleWorldWidth * 0.7) / size.w;
   mutate(() => {
     state.project.site.underlay = {
       src: dataUrl,

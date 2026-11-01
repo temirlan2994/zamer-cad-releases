@@ -284,3 +284,45 @@ test('сериализация проекта: сохранение и загр�
   assert.equal(loaded.items[0].kind, 'sofa');
   assert.throws(() => deserializeProject('{"schema":"other"}'));
 });
+
+// --- Разбор DXF (текстовый) для подложки ---
+import { parseDxf } from '../core/dxf.js';
+
+test('parseDxf читает LINE, LWPOLYLINE и единицы', () => {
+  const dxf = [
+    '0', 'SECTION', '2', 'HEADER',
+    '9', '$INSUNITS', '70', '6',
+    '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'LINE', '10', '0', '20', '0', '11', '1000', '21', '500',
+    '0', 'LWPOLYLINE', '90', '3', '70', '1',
+    '10', '0', '20', '0', '10', '1000', '20', '0', '10', '1000', '20', '1000',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+  const { entities, insunits } = parseDxf(dxf);
+  assert.equal(insunits, 6); // метры
+  const line = entities.find((e) => e.type === 'line');
+  assert.ok(line);
+  assert.equal(line.x2, 1000);
+  assert.equal(line.y2, 500);
+  const poly = entities.find((e) => e.type === 'poly');
+  assert.ok(poly);
+  assert.equal(poly.pts.length, 3);
+  assert.equal(poly.closed, true);
+});
+
+test('parseDxf: POLYLINE/VERTEX собирается в полилинию', () => {
+  const dxf = [
+    '0', 'POLYLINE', '70', '0',
+    '0', 'VERTEX', '10', '0', '20', '0',
+    '0', 'VERTEX', '10', '500', '20', '0',
+    '0', 'VERTEX', '10', '500', '20', '500',
+    '0', 'SEQEND',
+    '0', 'EOF',
+  ].join('\n');
+  const { entities } = parseDxf(dxf);
+  const poly = entities.find((e) => e.type === 'poly');
+  assert.ok(poly);
+  assert.equal(poly.pts.length, 3);
+  assert.equal(poly.pts[1].x, 500);
+});
