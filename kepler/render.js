@@ -891,7 +891,7 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
       ctx.moveTo(rect.x + rect.w / 2, rect.y);
       ctx.lineTo(rect.x + rect.w / 2, rect.y + rect.h);
     }
-    ctx.strokeStyle = selected ? tokens.accent : tokens.accent2;
+    ctx.strokeStyle = selected ? tokens.accent : tokens.line;
     ctx.stroke();
   }
 }
