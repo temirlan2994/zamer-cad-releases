@@ -1119,6 +1119,22 @@ function drawRoomLabel(ctx, state, room, w2s, tokens) {
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
 // стенами — снаружи. Невыбранные комнаты рисуются полупрозрачно.
+// Занята ли сторона комнаты соседней комнатой (есть что-то снаружи вплотную).
+function sideOccupied(project, room, side) {
+  const depth = 700;
+  let strip;
+  if (side === 0) strip = { x: room.x + 10, y: room.y - depth, w: room.w - 20, h: depth };
+  else if (side === 2) strip = { x: room.x + 10, y: room.y + room.h, w: room.w - 20, h: depth };
+  else if (side === 3) strip = { x: room.x - depth, y: room.y + 10, w: depth, h: room.h - 20 };
+  else strip = { x: room.x + room.w, y: room.y + 10, w: depth, h: room.h - 20 };
+  for (const o of project.rooms) {
+    if (o.id === room.id || o.parentId) continue;
+    if (strip.x + strip.w > o.x + 1 && o.x + o.w > strip.x + 1
+      && strip.y + strip.h > o.y + 1 && o.y + o.h > strip.y + 1) return true;
+  }
+  return false;
+}
+
 function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   ctx.lineWidth = 1;
   ctx.font = '10px system-ui, sans-serif';
@@ -1134,19 +1150,48 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     const c = w2s(room.x, room.y + room.h);
     const edgePx = Math.hypot(b.x - a.x, b.y - a.y);
     const edgePy = Math.hypot(c.x - a.x, c.y - a.y);
-    // Внутренние размеры.
+    // Внутренние размеры — всегда.
     if (edgePx > 70) drawDim(ctx, a, b, flipN(normal(a, b)), 14, `${room.w}`);
     if (edgePy > 70) drawDim(ctx, c, a, flipN(normal(c, a)), 14, `${room.h}`);
-    // Габарит со стенами — только для комнат верхнего уровня.
-    if (!room.parentId) {
-      const outer = roomOuterRect(room, walls);
-      const oa = w2s(outer.x, outer.y);
-      const ob = w2s(outer.x + outer.w, outer.y);
-      const oc = w2s(outer.x, outer.y + outer.h);
-      if (edgePx > 70) drawDim(ctx, oa, ob, normal(oa, ob), 16, `${Math.round(outer.w)}`);
-      if (edgePy > 70) drawDim(ctx, oc, oa, normal(oc, oa), 16, `${Math.round(outer.h)}`);
-    }
     ctx.globalAlpha = 1;
+  }
+
+  // Габаритные (внешние) размеры — только у выбранной комнаты и только со
+  // свободных сторон (где рядом нет другой комнаты).
+  const room = state.selection?.type === 'room'
+    ? state.project.rooms.find((r) => r.id === state.selection.id) : null;
+  if (!room || room.parentId) return;
+  const outer = roomOuterRect(room, walls);
+  ctx.strokeStyle = tokens.accent;
+  ctx.fillStyle = tokens.accent;
+  // Направление наружу в экранных координатах (учитывает поворот вида).
+  const outwardScreen = (cx, cy, ox, oy) => {
+    const s1 = w2s(cx, cy);
+    const s2 = w2s(cx + ox * 100, cy + oy * 100);
+    const len = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+    return { x: (s2.x - s1.x) / len, y: (s2.y - s1.y) / len };
+  };
+  // Ширина: снизу если свободно, иначе сверху.
+  const topFree = !sideOccupied(state.project, room, 0);
+  const botFree = !sideOccupied(state.project, room, 2);
+  if (botFree || topFree) {
+    const atBottom = botFree;
+    const ey = atBottom ? outer.y + outer.h : outer.y;
+    const p = w2s(outer.x, ey);
+    const q = w2s(outer.x + outer.w, ey);
+    const n = outwardScreen((outer.x + outer.w) / 2, ey, 0, atBottom ? 1 : -1);
+    drawDim(ctx, p, q, n, 16, `${Math.round(outer.w)}`);
+  }
+  // Высота: справа если свободно, иначе слева.
+  const leftFree = !sideOccupied(state.project, room, 3);
+  const rightFree = !sideOccupied(state.project, room, 1);
+  if (rightFree || leftFree) {
+    const atRight = rightFree;
+    const ex = atRight ? outer.x + outer.w : outer.x;
+    const p = w2s(ex, outer.y);
+    const q = w2s(ex, outer.y + outer.h);
+    const n = outwardScreen(ex, (outer.y + outer.h) / 2, atRight ? 1 : -1, 0);
+    drawDim(ctx, p, q, n, 16, `${Math.round(outer.h)}`);
   }
 }
 
