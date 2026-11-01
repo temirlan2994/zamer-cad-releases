@@ -141,8 +141,10 @@ export function createRenderer(canvas) {
       ctx.restore();
     });
 
-    // 2. Участок: дороги, запретная зона, соседи, тени.
+    // 2. Участок: дороги, запретная зона, соседи, тени соседей.
     if (site) withSiteRot(() => drawSiteUnder(ctx, state, site, tokens, px));
+    // Тень дома — в системе дома (не участка), чтобы совпадала со стенами.
+    if (site) drawHouseShadows(ctx, state, site, planSiteRot);
 
     // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
@@ -642,27 +644,43 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.restore();
   }
 
-  // Тени (инсоляция).
+  // Тени соседних домов (инсоляция). Тени самого дома рисуются отдельно, в
+  // системе дома (см. draw → drawHouseShadows), чтобы совпадать со стенами.
   if (site.sun?.enabled) {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
-    const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
-    if (vector) {
-      ctx.beginPath();
-      for (const room of state.project.rooms) {
-        if (room.parentId) continue;
-        const t = 250;
-        const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
-        polyPath(ctx, shadowPolygon(rect, vector));
-      }
-      for (const n of site.neighbors || []) {
-        const nv = shadowVector(sun, site.north, n.height || 6000);
-        if (!nv) continue;
-        polyPath(ctx, shadowPolygonFromCorners(neighborRectCorners(n), nv));
-      }
-      ctx.fillStyle = 'rgba(24,32,43,0.22)';
-      ctx.fill();
+    ctx.beginPath();
+    let any = false;
+    for (const n of site.neighbors || []) {
+      const nv = shadowVector(sun, site.north, n.height || 6000);
+      if (!nv) continue;
+      polyPath(ctx, shadowPolygonFromCorners(neighborRectCorners(n), nv));
+      any = true;
     }
+    if (any) { ctx.fillStyle = 'rgba(24,32,43,0.22)'; ctx.fill(); }
   }
+}
+
+// Тень дома — в системе дома (комнаты по осям), направление солнца довёрнуто
+// на planSiteRot, как и компас. Рисуется под полами.
+function drawHouseShadows(ctx, state, site, planSiteRot) {
+  if (!site?.sun?.enabled || !state.project.rooms.length) return;
+  const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
+  let v = shadowVector(sun, site.north, site.buildingHeight || 6000);
+  if (!v) return;
+  if (planSiteRot) {
+    const c = Math.cos(planSiteRot);
+    const s = Math.sin(planSiteRot);
+    v = { dx: v.dx * c - v.dy * s, dy: v.dx * s + v.dy * c };
+  }
+  ctx.beginPath();
+  for (const room of state.project.rooms) {
+    if (room.parentId) continue;
+    const t = 250;
+    const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
+    polyPath(ctx, shadowPolygon(rect, v));
+  }
+  ctx.fillStyle = 'rgba(24,32,43,0.22)';
+  ctx.fill();
 }
 
 function paintHatch(ctx, polygon, fill, stroke, px) {
