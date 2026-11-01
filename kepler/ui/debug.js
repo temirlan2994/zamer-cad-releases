@@ -5,6 +5,7 @@ import { loadSample } from './files.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
+import { debug3d } from './view3d.js';
 import {
   fitView, planToScreen, screenToPlan, screenToWorld, worldToScreen,
 } from './view.js';
@@ -18,6 +19,7 @@ export function exposeDebugApi() {
     worldToScreen,
     screenToWorld,
     planToScreen, // оси дома ↔ экран
+    debug3d,
     screenToPlan,
     fitView,
     loadSample,

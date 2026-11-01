@@ -13,11 +13,14 @@ import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
+import { close3d, is3dOpen } from './view3d.js';
 
 export let spaceDown = false;
 
 export function bindKeyboard() {
   window.addEventListener('keydown', (event) => {
+    // 3D закрывается по Esc откуда угодно (и с флажков панели 3D).
+    if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {

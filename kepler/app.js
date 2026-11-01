@@ -13,6 +13,7 @@ import { bindCanvasInput } from './ui/input.js';
 import { bindKeyboard } from './ui/keyboard.js';
 import { renderLevelBar } from './ui/levels.js';
 import { bindMobile } from './ui/mobile.js';
+import { bind3d } from './ui/view3d.js';
 import { applyLibraryTab, renderFurnitureBar, renderLibrary } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
 import { renderProps } from './ui/props.js';
@@ -30,6 +31,7 @@ bindCanvasInput();
 bindKeyboard();
 bindToolbar();
 bindMobile();
+bind3d();
 bindView();
 bindTheme();
 

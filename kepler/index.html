@@ -20,6 +20,7 @@
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
           <button id="fitBtn" title="Вписать план в экран">Вписать</button>
+          <button id="view3dBtn" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
           <button id="alignBtn" title="Выровнять дом по участку: кликните 2 точки вдоль ровной линии (край участка, красная линия) — дом встанет вдоль неё, вид «План» повернётся вслед за домом. Повторный клик — вернуть 0°">⟲ Выровнять</button>
           <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
@@ -87,6 +88,15 @@
             <span class="cal-unit">м</span>
           </div>
           <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
+          <div class="view3d" id="view3d" hidden>
+            <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
+            <div class="view3d-bar">
+              <label class="check-row"><input type="checkbox" id="v3Roof"><span>Крыша</span></label>
+              <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
+              <button id="v3Fit" type="button">Вписать</button>
+              <button id="v3Close" type="button">✕ Закрыть</button>
+            </div>
+          </div>
           <div class="zoom-controls">
             <button id="zoomInBtn" title="Приблизить">+</button>
             <button id="zoomOutBtn" title="Отдалить">−</button>

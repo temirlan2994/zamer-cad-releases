@@ -15,6 +15,7 @@ import { updateConnectivity } from './status.js';
 import { updateDimModeBtn } from './toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
+import { refresh3d } from './view3d.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
 
@@ -73,6 +74,7 @@ export function afterChange() {
   renderProps();
   updateDimModeBtn();
   renderLevelBar();
+  refresh3d(); // открытый 3D-вид следует за правками
   el('alignBtn')?.classList.toggle('active', Boolean(state.project?.building?.rotation));
   requestDraw();
   scheduleAutosave();
