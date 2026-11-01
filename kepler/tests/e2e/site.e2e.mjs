@@ -46,10 +46,10 @@ describe('участок', () => {
     await clickWorld(app.page, 0, 0);
     await clickWorld(app.page, 1000, 577);
     const plan = await app.page.evaluate(() => ({
-      rot: window.__kepler.state.project.planSiteRot,
+      rot: window.__kepler.state.project.viewRotation,
       view: window.__kepler.state.view.rotation,
     }));
-    assert.ok(Math.abs(plan.rot - 330) < 0.5, `planSiteRot=${plan.rot}`);
+    assert.ok(Math.abs(plan.rot - 330) < 0.5, `viewRotation=${plan.rot}`);
     assert.ok(Math.abs(plan.view - (-30 * Math.PI) / 180) < 0.01 || Math.abs(plan.view - (330 * Math.PI) / 180) < 0.01);
     await app.page.click('#modeSiteBtn');
     const site = await app.page.evaluate(() => window.__kepler.state.view.rotation);
@@ -60,7 +60,7 @@ describe('участок', () => {
   it('повторное «Выровнять» сбрасывает поворот', async () => {
     await app.page.click('#modePlanBtn');
     await app.page.click('#alignBtn');
-    const rot = await app.page.evaluate(() => [window.__kepler.state.project.planSiteRot, window.__kepler.state.view.rotation]);
+    const rot = await app.page.evaluate(() => [window.__kepler.state.project.viewRotation, window.__kepler.state.view.rotation]);
     assert.deepEqual(rot, [0, 0]);
   });
 

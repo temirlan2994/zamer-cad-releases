@@ -207,7 +207,7 @@ function afterChange() {
   updateConnectivity();
   renderProps();
   updateDimModeBtn();
-  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.planSiteRot));
+  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.viewRotation));
   requestDraw();
   scheduleAutosave();
 }
@@ -221,7 +221,6 @@ function scheduleAutosave() {
 
 function restoreFrom(text) {
   state.project = deserializeProject(text);
-  ensureSite(state.project);
   state.selection = null;
   refreshDerived();
   applyModeRotation();
@@ -271,7 +270,7 @@ function reconcileOpenings() {
 function applyModeRotation() {
   // «Выровнять» = поворот всего вида (ракурса) целиком, одинаково в обоих
   // режимах. В «Участке» добавляется север (север вверх).
-  const viewRot = ((state.project.planSiteRot || 0) * Math.PI) / 180;
+  const viewRot = ((state.project.viewRotation || 0) * Math.PI) / 180;
   state.view.rotation = state.modeName === 'site'
     ? viewRot - ((state.project.site?.north || 0) * Math.PI) / 180
     : viewRot;
@@ -942,7 +941,7 @@ function addAlignPoint(world) {
   rot = ((rot % 180) + 180) % 180;
   if (rot > 90) rot -= 180;
   state.alignCursor = null;
-  mutate(() => { state.project.planSiteRot = ((rot % 360) + 360) % 360; });
+  mutate(() => { state.project.viewRotation = ((rot % 360) + 360) % 360; });
   applyModeRotation();
   cancelTool();
   toast(`Вид повёрнут (${rot > 0 ? '+' : ''}${rot.toFixed(1)}°). Повторный клик по «Выровнять» — сброс.`);
@@ -3214,8 +3213,7 @@ function loadSample() {
 
 function newProject() {
   const before = state.project ? snapshot() : null;
-  state.project = createProject();
-  ensureSite(state.project); // чистый участок: без топосъёмки, границы, соседей
+  state.project = createProject(); // чистый участок: без топосъёмки, границы, соседей
   state.selection = null;
   state.tool = null;
   state.rejected.clear();
@@ -3308,9 +3306,9 @@ el('fitBtn').addEventListener('click', fitView);
 el('alignBtn').addEventListener('click', () => {
   const site = state.project.site;
   if (!site?.underlay && !(site?.boundary?.length)) { toast('Сначала загрузите топосъёмку или начертите границу участка (режим «Участок»)', true); return; }
-  if (state.project.planSiteRot) {
+  if (state.project.viewRotation) {
     // Уже повёрнуто — повторный клик сбрасывает поворот вида.
-    mutate(() => { state.project.planSiteRot = 0; });
+    mutate(() => { state.project.viewRotation = 0; });
     applyModeRotation();
     requestDraw();
     toast('Поворот вида сброшен');
@@ -3401,11 +3399,9 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   if (restored && (restored.rooms.length || restored.site?.boundary)) {
     // Есть сохранённый проект — продолжаем его.
     state.project = restored;
-    ensureSite(state.project);
   } else {
     // Пустой старт: чистый проект и стартовое меню поверх.
     state.project = createProject();
-    ensureSite(state.project);
     showStart = true;
   }
   refreshDerived();

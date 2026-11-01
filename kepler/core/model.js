@@ -2,8 +2,10 @@
 // Чистый модуль без DOM. Все размеры в миллиметрах, ось Y вниз.
 
 import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
+import { SCHEMA, migrateProject, normDeg } from './migrate.js';
+import { createSite, ensureSite } from './site.js';
 
-export const SCHEMA = 'kepler-plan/1';
+export { SCHEMA };
 
 let idCounter = 0;
 export function makeId(prefix) {
@@ -25,8 +27,8 @@ export function createProject(name = 'Новый дом') {
     openings: [],
     items: [],
     wallOverrides: {}, // ключ стены -> { thickness, kind }
-    planSiteRot: 0, // поворот показа участка/съёмки в режиме «План» (°), чтобы
-    // чертить дом ровно по наклонному участку (сам участок не меняется)
+    viewRotation: 0, // поворот вида «Выровнять» (°, по часовой): камера, не данные
+    site: createSite(),
   };
 }
 
@@ -76,17 +78,30 @@ export function serializeProject(project) {
   return JSON.stringify(project, null, 2);
 }
 
+// Открытие файла любой поддерживаемой версии: разбор → миграции до текущей
+// схемы (core/migrate.js) → проверка → значения по умолчанию.
 export function deserializeProject(text) {
-  const data = JSON.parse(text);
-  if (!data || data.schema !== SCHEMA) {
-    throw new Error(`Неизвестный формат файла (ожидался ${SCHEMA})`);
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error('Файл не является JSON-проектом Kepler Plan');
   }
+  const data = migrateProject(raw);
   if (!Array.isArray(data.rooms) || !Array.isArray(data.openings) || !Array.isArray(data.items)) {
     throw new Error('Файл повреждён: нет списков rooms/openings/items');
   }
+  return normalizeProject(data);
+}
+
+// Заполняет необязательные поля текущей схемы значениями по умолчанию.
+export function normalizeProject(data) {
+  data.name = typeof data.name === 'string' && data.name ? data.name : 'Без названия';
+  data.revision = Number(data.revision) || 0;
   data.wallOverrides = data.wallOverrides || {};
-  data.planSiteRot = data.planSiteRot || 0;
+  data.viewRotation = normDeg(data.viewRotation);
   data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
+  ensureSite(data);
   return data;
 }
 
