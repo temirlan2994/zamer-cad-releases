@@ -3,7 +3,7 @@
 
 import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP } from './catalog.js';
 import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
-import { checkRectBuildable } from './site.js';
+import { checkRectBuildable, sitePivot } from './site.js';
 
 export const MIN_ROOM_SIZE = 900;
 
@@ -87,7 +87,27 @@ export function validateRoomPlacement(project, candidate, excludeId) {
   if (!candidate.parentId && project.site?.boundary) {
     const t = project.settings?.exterior || DEFAULT_EXTERIOR;
     const outer = { x: rect.x - t, y: rect.y - t, w: rect.w + t * 2, h: rect.h + t * 2 };
-    const buildable = checkRectBuildable(project.site, outer);
+    // Показ участка в «Плане» может быть повёрнут (planSiteRot). Комната
+    // кладётся в экранных координатах, поэтому для проверки её углы поворачиваем
+    // в истинную систему участка (−planSiteRot вокруг центра показа).
+    let corners = null;
+    const psr = project.planSiteRot || 0;
+    if (psr) {
+      const piv = sitePivot(project.site);
+      const rad = (-psr * Math.PI) / 180;
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
+      corners = [
+        { x: outer.x, y: outer.y },
+        { x: outer.x + outer.w, y: outer.y },
+        { x: outer.x + outer.w, y: outer.y + outer.h },
+        { x: outer.x, y: outer.y + outer.h },
+      ].map((p) => ({
+        x: piv.x + (p.x - piv.x) * c - (p.y - piv.y) * s,
+        y: piv.y + (p.x - piv.x) * s + (p.y - piv.y) * c,
+      }));
+    }
+    const buildable = checkRectBuildable(project.site, outer, corners);
     if (!buildable.ok) return buildable;
   }
   return { ok: true };

@@ -8,7 +8,7 @@ import { itemRect } from './core/furnish.js';
 import { roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
-  shadowVector, shadowPolygon, shadowPolygonFromCorners,
+  shadowVector, shadowPolygon, shadowPolygonFromCorners, sitePivot,
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 
@@ -103,24 +103,13 @@ export function createRenderer(canvas) {
     // визуально доворачивается, а комнаты (по осям) ложатся параллельно ему.
     const planSiteRotDeg = state.modeName === 'plan' ? (state.project.planSiteRot || 0) : 0;
     const planSiteRot = (planSiteRotDeg * Math.PI) / 180;
-    let sitePivot = { x: 0, y: 0 };
-    if (site?.underlay) {
-      sitePivot = {
-        x: site.underlay.x + (site.underlay.widthPx * site.underlay.mmPerPx) / 2,
-        y: site.underlay.y + (site.underlay.heightPx * site.underlay.mmPerPx) / 2,
-      };
-    } else if (site?.boundary?.length) {
-      sitePivot = {
-        x: site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length,
-        y: site.boundary.reduce((s, p) => s + p.y, 0) / site.boundary.length,
-      };
-    }
+    const sitePiv = sitePivot(site);
     const withSiteRot = (fn) => {
       if (!planSiteRot) { fn(); return; }
       ctx.save();
-      ctx.translate(sitePivot.x, sitePivot.y);
+      ctx.translate(sitePiv.x, sitePiv.y);
       ctx.rotate(planSiteRot);
-      ctx.translate(-sitePivot.x, -sitePivot.y);
+      ctx.translate(-sitePiv.x, -sitePiv.y);
       fn();
       ctx.restore();
     };
