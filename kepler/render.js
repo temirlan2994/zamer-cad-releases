@@ -10,6 +10,7 @@ import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygon, shadowPolygonFromCorners,
 } from './core/site.js';
+import { computeRoomEdges } from './core/rooms.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -1149,53 +1150,42 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     return { x: (s2.x - s1.x) / len, y: (s2.y - s1.y) / len };
   };
 
-  // Внутренние габариты комнаты (ширина/глубина).
+  // Внутренние размеры по реальному контуру комнаты. Для прямоугольной —
+  // ширина (сверху) и глубина (слева); для Г/Т-образной — каждая грань со
+  // своей длиной. Показываются у всех комнат (бледно), у выбранной — ярко.
   for (const room of state.project.rooms) {
     const selected = room.id === selId;
+    const { rectangular, edges } = computeRoomEdges(state.project, room);
     ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.globalAlpha = selected ? 1 : 0.4;
-    const a = w2s(room.x, room.y);
-    const b = w2s(room.x + room.w, room.y);
-    const c = w2s(room.x, room.y + room.h);
-    const edgePx = Math.hypot(b.x - a.x, b.y - a.y);
-    const edgePy = Math.hypot(c.x - a.x, c.y - a.y);
-    if (edgePx > (selected ? 60 : 90)) drawDim(ctx, a, b, flipN(normal(a, b)), 14, `${room.w}`);
-    if (edgePy > (selected ? 60 : 90)) drawDim(ctx, c, a, flipN(normal(c, a)), 14, `${room.h}`);
-    ctx.globalAlpha = 1;
-  }
+    ctx.globalAlpha = selected ? 1 : 0.42;
+    const off = 260; // отступ размерной линии внутрь комнаты, мм
 
-  // Наружные размеры по участкам стен — для ВСЕХ комнат (бледно), у выбранной
-  // ярко. Где сторона разбита соседями (ступени), каждый участок свой размер.
-  for (const wall of walls) {
-    if (wall.kind !== 'own') continue;
-    const roomId = wall.rooms[0];
-    const selected = roomId === selId;
-    const side = wall.sides[roomId];
-    const horiz = side === 0 || side === 2;
-    const len = Math.round(wall.to - wall.from);
-    if (len < 500) continue;
-    const off = wall.thickness + 300;
-    const perpLine = wall.edge + wall.outward * off;
-    const p = horiz ? w2s(wall.from, perpLine) : w2s(perpLine, wall.from);
-    const q = horiz ? w2s(wall.to, perpLine) : w2s(perpLine, wall.to);
-    const screenLen = Math.hypot(q.x - p.x, q.y - p.y);
-    if (!selected && screenLen < 55) continue; // мелкие при отдалении скрываем
-    if (screenLen < 24) continue;
-    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.globalAlpha = selected ? 1 : 0.38;
-    const midAlong = (wall.from + wall.to) / 2;
-    const n = horiz
-      ? outwardScreen(midAlong, wall.edge, 0, wall.outward)
-      : outwardScreen(wall.edge, midAlong, wall.outward, 0);
-    const i1 = horiz ? w2s(wall.from, wall.edge) : w2s(wall.edge, wall.from);
-    const i2 = horiz ? w2s(wall.to, wall.edge) : w2s(wall.edge, wall.to);
-    ctx.beginPath();
-    ctx.moveTo(i1.x, i1.y); ctx.lineTo(p.x, p.y);
-    ctx.moveTo(i2.x, i2.y); ctx.lineTo(q.x, q.y);
-    ctx.stroke();
-    drawDim(ctx, p, q, n, 12, `${len}`);
+    const drawEdge = (edge) => {
+      const horiz = edge.orient === 'h';
+      const len = Math.round(edge.to - edge.from);
+      if (len < 400) return;
+      const perp = edge.at + edge.inSide * off;
+      const p = horiz ? w2s(edge.from, perp) : w2s(perp, edge.from);
+      const q = horiz ? w2s(edge.to, perp) : w2s(perp, edge.to);
+      const screenLen = Math.hypot(q.x - p.x, q.y - p.y);
+      if (screenLen < (selected ? 26 : 52)) return;
+      const mid = (edge.from + edge.to) / 2;
+      const n = horiz
+        ? outwardScreen(mid, edge.at, 0, edge.inSide)
+        : outwardScreen(edge.at, mid, edge.inSide, 0);
+      drawDim(ctx, p, q, n, 13, `${len}`);
+    };
+
+    if (rectangular) {
+      // Минимум: верхняя (ширина) и левая (глубина) грани.
+      const top = edges.find((e) => e.orient === 'h' && Math.abs(e.at - room.y) < 1);
+      const left = edges.find((e) => e.orient === 'v' && Math.abs(e.at - room.x) < 1);
+      if (top) drawEdge(top);
+      if (left) drawEdge(left);
+    } else {
+      for (const edge of edges) drawEdge(edge);
+    }
     ctx.globalAlpha = 1;
   }
 }

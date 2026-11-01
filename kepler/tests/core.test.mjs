@@ -11,6 +11,7 @@ import {
   roomNetAreaM2, analyzeConnectivity, suggestAccess, rectsOverlap,
 } from '../core/rooms.js';
 import { arrangeRoom, defaultItemsFor, itemRect, itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
+import { computeRoomEdges } from '../core/rooms.js';
 import { buildStructuredExport, buildProjectDxf } from '../core/export.js';
 
 function makeTwoDockedRooms() {
@@ -227,6 +228,24 @@ test('мебель свободна: предмет вне комнат нико
   const rejected = arrangeRoom(project, project.rooms[0], walls);
   assert.equal(rejected.length, 0);
   assert.equal(project.items[0].x, 50000);
+});
+
+test('контур комнаты: прямоугольная — 4 ребра, Г-образная — 6 с реальными длинами', () => {
+  const project = createProject();
+  const a = createRoom('living', 0, 0, 8000, 4000);
+  project.rooms.push(a);
+  const rectEdges = computeRoomEdges(project, a);
+  assert.equal(rectEdges.rectangular, true);
+  assert.equal(rectEdges.edges.length, 4);
+  // Кабинет съедает верхний правый угол (перекрытие 2000×2000).
+  const b = createRoom('cabinet', 6000, 0, 3000, 2000);
+  project.rooms.push(b);
+  const L = computeRoomEdges(project, a);
+  assert.equal(L.rectangular, false);
+  assert.equal(L.edges.length, 6);
+  const topH = L.edges.filter((e) => e.orient === 'h').map((e) => Math.round(e.to - e.from)).sort((x, y) => x - y);
+  // Низ 8000, верхняя часть 6000, ступень 2000.
+  assert.deepEqual(topH, [2000, 6000, 8000]);
 });
 
 test('экспорт: структурированный JSON и DXF собираются', () => {

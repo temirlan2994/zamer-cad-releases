@@ -273,6 +273,90 @@ export function analyzeConnectivity(project, walls = null) {
   return { hasEntrance, reachable, unreachable, graph };
 }
 
+// Рёбра реального внутреннего контура комнаты (прямоугольник минус области,
+// «съеденные» перекрывающими комнатами и вложенными помещениями). Для Г- и
+// Т-образных комнат даёт все стороны с их настоящими длинами.
+// Возвращает { rectangular, edges:[{orient:'v'|'h', at, from, to, inSide}] }.
+export function computeRoomEdges(project, room) {
+  const partition = project.settings?.partition || DEFAULT_PARTITION;
+  const rect = roomRect(room);
+  const subs = [];
+  if (!room.parentId) {
+    for (const eater of eatersOf(project, room)) {
+      const clip = intersectRect(rect, roomRect(eater));
+      if (clip) subs.push(clip);
+    }
+  }
+  for (const child of project.rooms) {
+    if (child.parentId !== room.id || child.takesArea === false) continue;
+    const clip = intersectRect(rect, nestedOuterRect(child, partition));
+    if (clip) subs.push(clip);
+  }
+  const rectangular = subs.length === 0;
+
+  const xs = [...new Set([rect.x, rect.x + rect.w, ...subs.flatMap((s) => [s.x, s.x + s.w])])]
+    .filter((v) => v >= rect.x - 0.5 && v <= rect.x + rect.w + 0.5).sort((a, b) => a - b);
+  const ys = [...new Set([rect.y, rect.y + rect.h, ...subs.flatMap((s) => [s.y, s.y + s.h])])]
+    .filter((v) => v >= rect.y - 0.5 && v <= rect.y + rect.h + 0.5).sort((a, b) => a - b);
+  const nx = xs.length - 1;
+  const ny = ys.length - 1;
+  const inside = (i, j) => {
+    if (i < 0 || j < 0 || i >= nx || j >= ny) return false;
+    const cx = (xs[i] + xs[i + 1]) / 2;
+    const cy = (ys[j] + ys[j + 1]) / 2;
+    for (const s of subs) {
+      if (cx > s.x + 0.5 && cx < s.x + s.w - 0.5 && cy > s.y + 0.5 && cy < s.y + s.h - 0.5) return false;
+    }
+    return true;
+  };
+
+  // Единичные граничные рёбра.
+  const vert = []; // {at, from, to, inSide}
+  for (let i = 0; i <= nx; i += 1) {
+    for (let j = 0; j < ny; j += 1) {
+      const left = inside(i - 1, j);
+      const right = inside(i, j);
+      if (left === right) continue;
+      vert.push({ at: xs[i], from: ys[j], to: ys[j + 1], inSide: right ? 1 : -1 });
+    }
+  }
+  const horiz = [];
+  for (let j = 0; j <= ny; j += 1) {
+    for (let i = 0; i < nx; i += 1) {
+      const up = inside(i, j - 1);
+      const down = inside(i, j);
+      if (up === down) continue;
+      horiz.push({ at: ys[j], from: xs[i], to: xs[i + 1], inSide: down ? 1 : -1 });
+    }
+  }
+
+  const merge = (list) => {
+    const groups = new Map();
+    for (const e of list) {
+      const key = `${Math.round(e.at)}|${e.inSide}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    const out = [];
+    for (const [, segs] of groups) {
+      segs.sort((a, b) => a.from - b.from);
+      let cur = null;
+      for (const s of segs) {
+        if (cur && Math.abs(s.from - cur.to) < 1) cur.to = s.to;
+        else { if (cur) out.push(cur); cur = { ...s }; }
+      }
+      if (cur) out.push(cur);
+    }
+    return out;
+  };
+
+  const edges = [
+    ...merge(vert).map((e) => ({ orient: 'v', ...e })),
+    ...merge(horiz).map((e) => ({ orient: 'h', ...e })),
+  ];
+  return { rectangular, edges };
+}
+
 // Подсказка, где добавить дверь для недостижимой комнаты: самая длинная общая
 // стена с достижимой комнатой (или родителем). Коридоры программа только
 // предлагает — никогда не строит сама.
