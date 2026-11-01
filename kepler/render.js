@@ -845,8 +845,10 @@ function drawCompass(ctx, state, site, width, tokens) {
   const cx = width - 46;
   const cy = 46;
   const r = 26;
-  // Направление севера на экране: поворот вида + север проекта.
-  const angle = (state.view.rotation || 0) + (site.north * Math.PI) / 180;
+  // Направление севера на экране: поворот вида + поворот показа участка
+  // (в режиме «План») + север проекта.
+  const planSiteRot = state.modeName === 'plan' ? ((state.project.planSiteRot || 0) * Math.PI) / 180 : 0;
+  const angle = (state.view.rotation || 0) + planSiteRot + (site.north * Math.PI) / 180;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.fillStyle = tokens.surface;
