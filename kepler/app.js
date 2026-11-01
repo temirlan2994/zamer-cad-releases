@@ -2928,10 +2928,13 @@ function updateConnectivity() {
     bar.hidden = false;
     bar.className = 'status-strip ok';
     bar.textContent = '✓ Все помещения доступны от входа';
+    bar.title = '';
   } else {
     bar.hidden = false;
     bar.className = 'status-strip warn';
-    bar.textContent = `⚠ ${problems.join(' · ')}`;
+    const text = `⚠ ${problems.join(' · ')}`;
+    bar.textContent = problems.length > 1 ? `⚠ ${problems.length}: ${problems[0]}…` : text;
+    bar.title = problems.join('\n'); // полный список по наведению
   }
 }
 
@@ -3315,5 +3318,12 @@ window.__kepler = {
     if (!o) return null;
     const p = openingRect(state.project, o, state.walls);
     return p ? { x: p.rect.x + p.rect.w / 2, y: p.rect.y + p.rect.h / 2 } : null;
+  },
+  openingRectOf: (id) => {
+    const o = state.project.openings.find((x) => x.id === id);
+    if (!o) return null;
+    const p = openingRect(state.project, o, state.walls);
+    if (!p) return null;
+    return { rect: p.rect, band: p.wall.band, thickness: p.wall.thickness, kind: p.wall.kind };
   },
 };

@@ -879,7 +879,7 @@ function drawFloor(ctx, room, tokens) {
 function drawOpening(ctx, state, opening, walls, tokens, px) {
   const placed = openingRect(state.project, opening, walls);
   if (!placed) return;
-  const { rect } = placed;
+  const { rect, wall } = placed;
   const selected = state.selection?.type === 'opening' && state.selection.id === opening.id;
   const hovered = state.hover?.type === 'opening' && state.hover.id === opening.id;
   ctx.fillStyle = tokens.canvas;
@@ -904,6 +904,13 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
     ctx.arc(symbol.hinge.x, symbol.hinge.y, radius, a1, a1 + delta, delta < 0);
     ctx.stroke();
   } else {
+    // Окно рисуем строго в пределах полотна стены (clip по band), чтобы рамка
+    // не выступала за грани стены ни внутрь, ни наружу — окно вровень со стеной.
+    const band = wall.band;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(band.x, band.y, band.w, band.h);
+    ctx.clip();
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.beginPath();
     if (rect.w >= rect.h) {
@@ -915,6 +922,7 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
     }
     ctx.strokeStyle = selected ? tokens.accent : tokens.line;
     ctx.stroke();
+    ctx.restore();
   }
 }
 
