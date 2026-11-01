@@ -354,3 +354,24 @@ test('dxfToImage: одиночный выброс не ломает масшта
   assert.ok(info.worldWidthM < 200, `ширина должна быть ~десятки м, а не ${info.worldWidthM}`);
   assert.equal(info.reliableScale, true);
 });
+
+test('dxfToImage: точки-марки + выброс при малом числе точек', () => {
+  globalThis.document = {
+    createElement: () => ({
+      width: 0, height: 0,
+      getContext: () => ({
+        fillStyle: '', strokeStyle: '', lineWidth: 0, lineJoin: '', lineCap: '', font: '', textBaseline: '',
+        fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, arc() {}, ellipse() {}, stroke() {}, closePath() {},
+        fillText() {}, save() {}, restore() {}, translate() {}, rotate() {},
+      }),
+      toDataURL: () => 'data:,',
+    }),
+  };
+  const L = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '6', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES'];
+  for (let i = 0; i < 40; i += 1) { const x = 3526400 + (i % 8) * 4; const y = 4957300 + Math.floor(i / 8) * 5; L.push('0', 'POINT', '10', String(x), '20', String(y)); }
+  L.push('0', 'POINT', '10', '0', '20', '0'); // выброс
+  L.push('0', 'ENDSEC', '0', 'EOF');
+  const info = dxfToImage(parseDxf(L.join('\n')));
+  assert.ok(info.worldWidthM < 100, `ширина ~десятки м, получено ${info.worldWidthM}`);
+  assert.equal(info.reliableScale, true);
+});

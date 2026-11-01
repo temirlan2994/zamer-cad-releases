@@ -27,7 +27,7 @@ import {
   distanceToPolyline, sunPosition, formatSunInfo, DEFAULT_ROAD_WIDTH,
 } from './core/site.js';
 import { pointInPolygon } from './core/zamer/geometry.js';
-import { parseDxf, dxfToImage } from './core/dxf.js';
+import { parseDxf, dxfToImage, dxfTypeSummary } from './core/dxf.js';
 import {
   createRenderer, roomHandles, openingHandles, underlayHandles, underlayRotators,
   underlayCenter, HANDLE_SIZE, drawGlyphPreview,
@@ -994,13 +994,21 @@ async function loadUnderlayFile(file) {
     if (name.endsWith('.dxf')) {
       const text = await file.text();
       const parsed = parseDxf(text);
-      const info = dxfToImage(parsed);
+      const summary = dxfTypeSummary(parsed);
+      let info;
+      try {
+        info = dxfToImage(parsed);
+      } catch (e) {
+        toast(`DXF прочитан, но рисовать нечего (${summary || 'нет поддерживаемых объектов'}). Возможно, чертёж из блоков INSERT или это бинарный DXF — пришлите файл, добавлю поддержку.`, true);
+        return;
+      }
       placeUnderlay(info.dataUrl, info.size, info.reliableScale ? info.worldWidthMm : null);
       if (state.modeName === 'site') fitView(); // сразу вписываем в экран
+      const base = `DXF: ${info.entityCount} объектов${summary ? ` (${summary})` : ''}`;
       if (info.reliableScale) {
-        toast(`DXF загружен (${info.entityCount} об.), ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы не указаны — приняты метры)'}. Проверьте масштаб справа.`, true);
+        toast(`${base}, ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы приняты за метры)'}. Масштаб — справа.`, true);
       } else {
-        toast(`DXF загружен (${info.entityCount} об.). Единицы чертежа непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «масштаб по отрезку» справа.`, true);
+        toast(`${base}. Единицы непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «по отрезку» справа.`, true);
       }
       return;
     }
