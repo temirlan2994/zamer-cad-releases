@@ -1416,9 +1416,9 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
   ctx.scale(s, s);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  ctx.lineWidth = 1.4 / s;
+  ctx.lineWidth = 3.1 / s; // с запасом под уменьшение карточкой
   ctx.strokeStyle = stroke || '#7f90a5';
-  ctx.fillStyle = 'rgba(127,144,165,0.10)';
+  ctx.fillStyle = 'rgba(127,144,165,0.08)';
   drawGlyph(ctx, kind, w, h);
   ctx.restore();
 }
@@ -1530,8 +1530,12 @@ function drawDim(ctx, p, q, n, off, label) {
   const s = 6; // длина засечки в экранных px
   const ux = (dx / dl) * s;
   const uy = (dy / dl) * s;
+  // Небольшой выход линии за крайние засечки — чтобы линия всегда доходила
+  // до концов и не оставляла зазора у засечки.
+  const ex = ax * s;
+  const ey = ay * s;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.moveTo(a.x - ex, a.y - ey); ctx.lineTo(b.x + ex, b.y + ey); // линия с выходом за засечки
   ctx.moveTo(a.x - ux, a.y - uy); ctx.lineTo(a.x + ux, a.y + uy); // засечка слева
   ctx.moveTo(b.x - ux, b.y - uy); ctx.lineTo(b.x + ux, b.y + uy); // засечка справа
   ctx.stroke();

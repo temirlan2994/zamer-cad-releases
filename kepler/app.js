@@ -2008,7 +2008,7 @@ function renderFurnitureBar() {
   refs.furnitureCats.innerHTML = '';
   for (const cat of FURNITURE_CATEGORIES) {
     const btn = document.createElement('button');
-    btn.textContent = CATEGORY_ICONS[cat.id] || '•';
+    btn.innerHTML = CATEGORY_ICONS[cat.id] || '';
     btn.title = cat.title;
     btn.setAttribute('aria-label', cat.title);
     if (cat.id === furnitureCat) btn.classList.add('active');
@@ -2024,8 +2024,8 @@ function renderFurnitureBar() {
     chip.draggable = true;
     chip.title = `Перетащите «${item.title}» на план (${item.w}×${item.h} мм)`;
     const preview = document.createElement('canvas');
-    preview.width = 120;
-    preview.height = 68;
+    preview.width = 240;
+    preview.height = 132;
     chip.appendChild(preview);
     const name = document.createElement('span');
     name.className = 'chip-name';
@@ -2048,11 +2048,24 @@ function renderFurnitureBar() {
   }
 }
 
-// Иконки категорий мебели для левой колонки панели.
+// Чёткие контурные иконки категорий мебели (монохром, наследуют цвет).
+const svgIcon = (inner) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 const CATEGORY_ICONS = {
-  seating: '🛋️', beds: '🛏️', tables: '🍽️', chairs: '🪑', storage: '🗄️',
-  kitchen: '🍳', bath: '🛁', appliance: '🔌', decor: '🪴', office: '💻',
-  kids: '🧸', gym: '🏋️', hall: '🚪', outdoor: '🌳', misc: '📦',
+  seating: svgIcon('<path d="M5 11V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V11"/><path d="M4 11.5A1.5 1.5 0 0 1 5.5 13v3h13v-3A1.5 1.5 0 0 1 20 11.5"/><path d="M6.5 16v2M17.5 16v2"/>'),
+  beds: svgIcon('<path d="M3 18V7h13a4 4 0 0 1 4 4v7"/><path d="M3 13h17"/><path d="M6.5 10.5h3"/>'),
+  tables: svgIcon('<rect x="3" y="7" width="18" height="3.5" rx="1"/><path d="M5.5 10.5V17M18.5 10.5V17"/>'),
+  chairs: svgIcon('<path d="M8 3v9M16 3v9M7 12h10l-1 9M8 21l-.7-9M7 12l-.5-9"/><path d="M8.5 16h7"/>'),
+  storage: svgIcon('<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M5 9h14M5 15h14"/><path d="M11 6h1M11 12h1M11 18h1"/>'),
+  kitchen: svgIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.8"/><circle cx="15" cy="9" r="1.8"/><path d="M5 14.5h14"/>'),
+  bath: svgIcon('<path d="M4 12h16v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M6 12V7.5A2.2 2.2 0 0 1 8.2 5.3a2.2 2.2 0 0 1 2.1 1.5"/><path d="M7 18l-.8 2M17 18l.8 2"/>'),
+  appliance: svgIcon('<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8.5 6h0M11 6h0"/>'),
+  decor: svgIcon('<path d="M8.5 3h7l2 7h-11z"/><path d="M12 10v8M9 21h6"/>'),
+  office: svgIcon('<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8.5 20h7M12 16v4"/>'),
+  kids: svgIcon('<circle cx="12" cy="13.5" r="5.5"/><circle cx="7" cy="7" r="2.3"/><circle cx="17" cy="7" r="2.3"/><path d="M10 13h0M14 13h0"/>'),
+  gym: svgIcon('<path d="M6.5 8.5v7M4 10v4M17.5 8.5v7M20 10v4M8 12h8"/>'),
+  hall: svgIcon('<rect x="6" y="3" width="12" height="18" rx="1.5"/><circle cx="14.5" cy="12" r="1"/>'),
+  outdoor: svgIcon('<path d="M12 21v-6"/><path d="M12 15a5 5 0 1 0-4.6-7A4 4 0 0 0 7 15z"/>'),
+  misc: svgIcon('<rect x="4" y="4" width="7" height="7" rx="1.2"/><rect x="13" y="4" width="7" height="7" rx="1.2"/><rect x="4" y="13" width="7" height="7" rx="1.2"/><rect x="13" y="13" width="7" height="7" rx="1.2"/>'),
 };
 
 // Добавляет предмет мебели в указанную мировую точку (центр предмета).
