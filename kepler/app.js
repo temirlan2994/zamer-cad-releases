@@ -269,13 +269,12 @@ function reconcileOpenings() {
 // ---------------------------------------------------------------- Режимы
 
 function applyModeRotation() {
-  const siteRot = ((state.project.planSiteRot || 0) * Math.PI) / 180;
-  // В «Участке» крутим весь вид (участок + дом вместе) на тот же угол
-  // выравнивания, что и показ участка в «Плане» — чтобы участок выглядел
-  // одинаково в обоих режимах.
+  // «Выровнять» = поворот всего вида (ракурса) целиком, одинаково в обоих
+  // режимах. В «Участке» добавляется север (север вверх).
+  const viewRot = ((state.project.planSiteRot || 0) * Math.PI) / 180;
   state.view.rotation = state.modeName === 'site'
-    ? siteRot - ((state.project.site?.north || 0) * Math.PI) / 180
-    : 0;
+    ? viewRot - ((state.project.site?.north || 0) * Math.PI) / 180
+    : viewRot;
 }
 
 // Вкладки левой панели: в режиме «План» переключают «Помещения» / «Мебель»
@@ -926,9 +925,9 @@ function addNorthPoint(world) {
   toast(`Север задан: ${Math.round(north)}°`);
 }
 
-// Выравнивание ПОКАЗА участка по 2 точкам: кликнутая линия участка становится
-// горизонтальной (минимальным поворотом показа) — чтобы по наклонному участку
-// строить дом ровно. Сам участок/съёмка не меняются, крутится только вид.
+// Выравнивание ВИДА по 2 точкам: весь ракурс (участок + дом + съёмка) целиком
+// поворачивается так, чтобы кликнутая линия стала горизонтальной. Это просто
+// поворот камеры — план не меняется, одинаково в обоих режимах.
 function addAlignPoint(world) {
   const points = state.tool.points;
   points.push({ x: world.x, y: world.y });
@@ -937,14 +936,16 @@ function addAlignPoint(world) {
   const dx = points[1].x - points[0].x;
   const dy = points[1].y - points[0].y;
   if (Math.hypot(dx, dy) < 10) { toast('Точки слишком близко'); state.tool.points = []; return; }
-  const clicked = (Math.atan2(dy, dx) * 180) / Math.PI; // экранный угол линии
-  let delta = -clicked; // довернуть показ до горизонтали
-  delta = ((delta % 180) + 180) % 180; // 0..180
-  if (delta > 90) delta -= 180; // минимальный поворот −90..90
+  // world — истинные координаты; угол линии в мире фиксирован. Чтобы линия
+  // стала горизонтальной на экране, поворот вида = −уголЛинии (минимальный).
+  let rot = -(Math.atan2(dy, dx) * 180) / Math.PI;
+  rot = ((rot % 180) + 180) % 180;
+  if (rot > 90) rot -= 180;
   state.alignCursor = null;
-  mutate(() => { state.project.planSiteRot = ((((state.project.planSiteRot || 0) + delta) % 360) + 360) % 360; });
+  mutate(() => { state.project.planSiteRot = ((rot % 360) + 360) % 360; });
+  applyModeRotation();
   cancelTool();
-  toast(`Участок выровнен для чертежа (поворот показа ${delta > 0 ? '+' : ''}${delta.toFixed(1)}°). Дом теперь ставится ровно.`);
+  toast(`Вид повёрнут (${rot > 0 ? '+' : ''}${rot.toFixed(1)}°). Повторный клик по «Выровнять» — сброс.`);
 }
 
 function addCalibratePoint(world) {
@@ -3308,12 +3309,14 @@ el('alignBtn').addEventListener('click', () => {
   const site = state.project.site;
   if (!site?.underlay && !(site?.boundary?.length)) { toast('Сначала загрузите топосъёмку или начертите границу участка (режим «Участок»)', true); return; }
   if (state.project.planSiteRot) {
-    // Уже повёрнуто — повторный клик сбрасывает выравнивание.
+    // Уже повёрнуто — повторный клик сбрасывает поворот вида.
     mutate(() => { state.project.planSiteRot = 0; });
-    toast('Выравнивание сброшено');
+    applyModeRotation();
+    requestDraw();
+    toast('Поворот вида сброшен');
     return;
   }
-  setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии участка (например, длинный край) — показ участка повернётся так, чтобы строить дом ровно');
+  setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии (например, длинный край участка) — весь вид повернётся так, чтобы эта линия стала горизонтальной');
 });
 function updateDimModeBtn() {
   const outer = state.project?.settings?.dimOuter !== false;

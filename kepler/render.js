@@ -8,7 +8,7 @@ import { itemRect } from './core/furnish.js';
 import { roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
-  shadowVector, shadowPolygon, shadowPolygonFromCorners, sitePivot,
+  shadowVector, shadowPolygon, shadowPolygonFromCorners,
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 
@@ -98,27 +98,11 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr * scale * cos, dpr * scale * sin, -dpr * scale * sin, dpr * scale * cos, dpr * view.panX, dpr * view.panY);
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
-    // Поворот ПОКАЗА участка/съёмки в режиме «План» (сам участок/съёмка не
-    // меняются). Нужен, чтобы по наклонному участку строить дом ровно: участок
-    // визуально доворачивается, а комнаты (по осям) ложатся параллельно ему.
-    const planSiteRotDeg = state.modeName === 'plan' ? (state.project.planSiteRot || 0) : 0;
-    const planSiteRot = (planSiteRotDeg * Math.PI) / 180;
-    const sitePiv = sitePivot(site);
-    const withSiteRot = (fn) => {
-      if (!planSiteRot) { fn(); return; }
-      ctx.save();
-      ctx.translate(sitePiv.x, sitePiv.y);
-      ctx.rotate(planSiteRot);
-      ctx.translate(-sitePiv.x, -sitePiv.y);
-      fn();
-      ctx.restore();
-    };
-
     // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
     drawGrid(ctx, worldBox, scale, px, tokens);
 
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
-    if (site?.underlay && state.underlayImg && !state.underlayHidden) withSiteRot(() => {
+    if (site?.underlay && state.underlayImg && !state.underlayHidden) {
       const u = site.underlay;
       const uw = u.widthPx * u.mmPerPx;
       const uh = u.heightPx * u.mmPerPx;
@@ -139,12 +123,10 @@ export function createRenderer(canvas) {
         ctx.setLineDash([]);
       }
       ctx.restore();
-    });
+    }
 
-    // 2. Участок: дороги, запретная зона, соседи, тени соседей.
-    if (site) withSiteRot(() => drawSiteUnder(ctx, state, site, tokens, px));
-    // Тень дома — в системе дома (не участка), чтобы совпадала со стенами.
-    if (site) drawHouseShadows(ctx, state, site, planSiteRot);
+    // 2. Участок: дороги, запретная зона, соседи, тени.
+    if (site) drawSiteUnder(ctx, state, site, tokens, px);
 
     // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
@@ -210,7 +192,7 @@ export function createRenderer(canvas) {
     }
 
     // 7. Линии участка поверх полов (граница, красная линия, въезд).
-    if (site) withSiteRot(() => drawSiteOver(ctx, state, site, tokens, px));
+    if (site) drawSiteOver(ctx, state, site, tokens, px);
 
     // 8. Призраки и направляющие.
     if (state.ghost?.rect) {
@@ -644,43 +626,28 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.restore();
   }
 
-  // Тени соседних домов (инсоляция). Тени самого дома рисуются отдельно, в
-  // системе дома (см. draw → drawHouseShadows), чтобы совпадать со стенами.
+  // Тени (инсоляция): дом + соседи. Всё в мировых координатах, вид крутится
+  // целиком, поэтому тени совпадают со стенами при любом повороте вида.
   if (site.sun?.enabled) {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
-    ctx.beginPath();
-    let any = false;
-    for (const n of site.neighbors || []) {
-      const nv = shadowVector(sun, site.north, n.height || 6000);
-      if (!nv) continue;
-      polyPath(ctx, shadowPolygonFromCorners(neighborRectCorners(n), nv));
-      any = true;
+    const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
+    if (vector) {
+      ctx.beginPath();
+      for (const room of state.project.rooms) {
+        if (room.parentId) continue;
+        const t = 250;
+        const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
+        polyPath(ctx, shadowPolygon(rect, vector));
+      }
+      for (const n of site.neighbors || []) {
+        const nv = shadowVector(sun, site.north, n.height || 6000);
+        if (!nv) continue;
+        polyPath(ctx, shadowPolygonFromCorners(neighborRectCorners(n), nv));
+      }
+      ctx.fillStyle = 'rgba(24,32,43,0.22)';
+      ctx.fill();
     }
-    if (any) { ctx.fillStyle = 'rgba(24,32,43,0.22)'; ctx.fill(); }
   }
-}
-
-// Тень дома — в системе дома (комнаты по осям), направление солнца довёрнуто
-// на planSiteRot, как и компас. Рисуется под полами.
-function drawHouseShadows(ctx, state, site, planSiteRot) {
-  if (!site?.sun?.enabled || !state.project.rooms.length) return;
-  const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
-  let v = shadowVector(sun, site.north, site.buildingHeight || 6000);
-  if (!v) return;
-  if (planSiteRot) {
-    const c = Math.cos(planSiteRot);
-    const s = Math.sin(planSiteRot);
-    v = { dx: v.dx * c - v.dy * s, dy: v.dx * s + v.dy * c };
-  }
-  ctx.beginPath();
-  for (const room of state.project.rooms) {
-    if (room.parentId) continue;
-    const t = 250;
-    const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
-    polyPath(ctx, shadowPolygon(rect, v));
-  }
-  ctx.fillStyle = 'rgba(24,32,43,0.22)';
-  ctx.fill();
 }
 
 function paintHatch(ctx, polygon, fill, stroke, px) {
@@ -855,10 +822,8 @@ function drawCompass(ctx, state, site, width, tokens) {
   const cx = width - 46;
   const cy = 46;
   const r = 26;
-  // Направление севера на экране: поворот вида + поворот показа участка
-  // (в режиме «План») + север проекта.
-  const planSiteRot = state.modeName === 'plan' ? ((state.project.planSiteRot || 0) * Math.PI) / 180 : 0;
-  const angle = (state.view.rotation || 0) + planSiteRot + (site.north * Math.PI) / 180;
+  // Направление севера на экране: поворот вида (уже включает выравнивание) + север.
+  const angle = (state.view.rotation || 0) + (site.north * Math.PI) / 180;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.fillStyle = tokens.surface;
