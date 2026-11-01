@@ -1,15 +1,16 @@
 // Тесты геометрического ядра Kepler Plan: стены, стыковка, вложение,
-// связность, авторасстановка мебели и экспорт. Запуск: node --test kepler/tests/
+// связность, расстановка свободной мебели и экспорт.
+// Запуск: node --test kepler/tests/core.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createProject, createRoom, createOpening, createItem, serializeProject, deserializeProject } from '../core/model.js';
-import { deriveWalls, doorLink, doorSymbol, openingRect, clampOpeningOffset } from '../core/walls.js';
+import { deriveWalls, doorLink, doorSymbol, clampOpeningOffset } from '../core/walls.js';
 import {
   validateRoomPlacement, snapRoomPosition, determineParent, moveRoomBy,
   roomNetAreaM2, analyzeConnectivity, suggestAccess, rectsOverlap,
 } from '../core/rooms.js';
-import { furnishRoom, refurnishRoom, itemRect } from '../core/furnish.js';
+import { arrangeRoom, defaultItemsFor, itemRect, itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { buildStructuredExport, buildProjectDxf } from '../core/export.js';
 
 function makeTwoDockedRooms() {
@@ -29,24 +30,23 @@ test('общая стена двух состыкованных комнат —
   assert.equal(shared[0].from, 0);
   assert.equal(shared[0].to, 3000);
   assert.deepEqual(new Set(shared[0].rooms), new Set([a.id, b.id]));
-  // Сторона комнаты A, выходящая на общую стену, не должна дублироваться own-сегментом.
   const ownOnSharedSide = walls.filter((w) => w.kind === 'own' && w.rooms[0] === a.id && w.sides[a.id] === 1);
   assert.equal(ownOnSharedSide.length, 0);
 });
 
 test('пересечение и узкая щель между комнатами запрещены', () => {
   const { project, b } = makeTwoDockedRooms();
-  assert.equal(validateRoomPlacement(project, { ...b, x: 3500 }, b.id).ok, false); // пересечение
-  assert.equal(validateRoomPlacement(project, { ...b, x: 4050 }, b.id).ok, false); // щель 50 < 100
-  assert.equal(validateRoomPlacement(project, { ...b, x: 4100 }, b.id).ok, true); // ровно стена
-  assert.equal(validateRoomPlacement(project, { ...b, x: 6000 }, b.id).ok, true); // отдельно
+  assert.equal(validateRoomPlacement(project, { ...b, x: 3500 }, b.id).ok, false);
+  assert.equal(validateRoomPlacement(project, { ...b, x: 4050 }, b.id).ok, false);
+  assert.equal(validateRoomPlacement(project, { ...b, x: 4100 }, b.id).ok, true);
+  assert.equal(validateRoomPlacement(project, { ...b, x: 6000 }, b.id).ok, true);
 });
 
 test('привязка при перетаскивании стыкует комнаты через толщину стены', () => {
-  const { project, a, b } = makeTwoDockedRooms();
+  const { project, b } = makeTwoDockedRooms();
   const snapped = snapRoomPosition(project, b, 4080, 12, 60, null);
-  assert.equal(snapped.x, 4100); // стыковка к правой стене A
-  assert.equal(snapped.y, 0); // выравнивание по верхней кромке
+  assert.equal(snapped.x, 4100);
+  assert.equal(snapped.y, 0);
 });
 
 test('вложение: санузел внутри спальни, площадь родителя уменьшается', () => {
@@ -59,28 +59,31 @@ test('вложение: санузел внутри спальни, площад
   bath.parentId = bedroom.id;
   project.rooms.push(bath);
   assert.equal(validateRoomPlacement(project, bath, bath.id).ok, true);
-  // Частично снаружи — нельзя.
   assert.equal(validateRoomPlacement(project, { ...bath, x: 4200 }, bath.id).ok, false);
   // 20 м² минус габарит санузла со стенами (2.2×2.2 = 4.84).
   assert.ok(Math.abs(roomNetAreaM2(project, bedroom) - 15.16) < 0.01);
+  // Переключение «кто берёт площадь»: спальня остаётся полной.
+  bath.takesArea = false;
+  assert.ok(Math.abs(roomNetAreaM2(project, bedroom) - 20) < 0.01);
 });
 
-test('перемещение комнаты двигает вложенные помещения и мебель', () => {
+test('перемещение комнаты двигает вложенные помещения и мебель внутри', () => {
   const project = createProject();
   const bedroom = createRoom('bedroom', 0, 0, 5000, 4000);
   const bath = createRoom('bathroom', 2900, 200, 2000, 1800);
   bath.parentId = bedroom.id;
   project.rooms.push(bedroom, bath);
-  project.items.push(createItem('bed-double', bedroom.id, 1000, 2000, 1600, 2000));
+  // Мебель свободна: кровать внутри спальни, стол снаружи.
+  project.items.push(createItem('bed-double', 1000, 3000, 1600, 2000));
+  project.items.push(createItem('table', 20000, 20000, 1400, 800));
   moveRoomBy(project, bedroom.id, 500, -300);
   assert.equal(bath.x, 3400);
-  assert.equal(bath.y, -100);
-  assert.equal(project.items[0].x, 1500);
+  assert.equal(project.items[0].x, 1500); // поехала вместе с комнатой
+  assert.equal(project.items[1].x, 20000); // внешняя мебель осталась
 });
 
 test('двери и связность: недостижимая комната находится, подсказка осмысленная', () => {
   const { project, a, b } = makeTwoDockedRooms();
-  // Входная дверь в комнату A (верхняя сторона — наружная стена).
   project.openings.push(createOpening('door', a.id, 0, 1200, 800));
   let result = analyzeConnectivity(project);
   assert.equal(result.hasEntrance, true);
@@ -88,7 +91,6 @@ test('двери и связность: недостижимая комната 
   const hint = suggestAccess(project, b.id, result);
   assert.equal(hint.targetId, a.id);
   assert.match(hint.text, /дверь/i);
-  // Дверь в общей стене соединяет комнаты.
   project.openings.push(createOpening('door', a.id, 1, 1500, 800));
   result = analyzeConnectivity(project);
   assert.equal(result.unreachable.length, 0);
@@ -116,71 +118,69 @@ test('символ двери: створка и дуга согласованы
   const walls = deriveWalls(project);
   const symbol = doorSymbol(project, door, walls);
   assert.ok(symbol);
-  // Открытая створка перпендикулярна стене и направлена внутрь комнаты (вниз).
   assert.equal(Math.round(symbol.open.x - symbol.hinge.x), 0);
   assert.equal(Math.round(symbol.open.y - symbol.hinge.y), 800);
 });
 
 // --- Сценарий MVP: спальня 5×4, мебель, вложенный санузел, перестройка ---
 
-test('MVP: авторасстановка спальни 5×4 расставляет всё без пересечений', () => {
+function furnishedBedroom() {
   const project = createProject();
   const bedroom = createRoom('bedroom', 0, 0, 5000, 4000);
-  bedroom.checklist = { 'bed-double': true, nightstand: true, wardrobe: true, 'dressing-table': true };
   project.rooms.push(bedroom);
   project.openings.push(createOpening('door', bedroom.id, 2, 2500, 800));
-  const walls = deriveWalls(project);
-  const { placed, rejected } = furnishRoom(project, bedroom, walls);
+  // Типовой набор: кровать, 2 тумбочки, шкаф — плюс туалетный столик.
+  for (const item of defaultItemsFor(bedroom)) project.items.push(item);
+  project.items.push(createItem('dressing-table', 2500, 2000, 1000, 450));
+  return { project, bedroom };
+}
 
+test('MVP: расстановка спальни 5×4 размещает всё без пересечений', () => {
+  const { project, bedroom } = furnishedBedroom();
+  const rejected = arrangeRoom(project, bedroom, deriveWalls(project));
   assert.equal(rejected.length, 0, `отказы: ${rejected.map((r) => r.reason).join('; ')}`);
-  const kinds = placed.map((p) => p.kind);
+
+  const items = itemsInRoom(project, bedroom);
+  const kinds = items.map((i) => i.kind);
   assert.ok(kinds.includes('bed-double'));
   assert.equal(kinds.filter((k) => k === 'nightstand').length, 2);
   assert.ok(kinds.includes('wardrobe'));
   assert.ok(kinds.includes('dressing-table'));
 
-  // Без пересечений между предметами.
-  const rects = placed.map((p) => itemRect({ ...p }));
+  const rects = items.map((i) => itemRect(i));
   for (let i = 0; i < rects.length; i += 1) {
     for (let j = i + 1; j < rects.length; j += 1) {
       assert.equal(rectsOverlap(rects[i], rects[j]), false,
-        `${placed[i].kind} пересекается с ${placed[j].kind}`);
+        `${items[i].kind} пересекается с ${items[j].kind}`);
     }
   }
-  // Все предметы внутри комнаты.
   for (const r of rects) {
     assert.ok(r.x >= -1 && r.y >= -1 && r.x + r.w <= 5001 && r.y + r.h <= 4001);
   }
 });
 
 test('MVP: вложенный санузел 2×2 — мебель перестраивается без пересечений', () => {
-  const project = createProject();
-  const bedroom = createRoom('bedroom', 0, 0, 5000, 4000);
-  bedroom.checklist = { 'bed-double': true, nightstand: true, wardrobe: true, 'dressing-table': true };
-  project.rooms.push(bedroom);
-  project.openings.push(createOpening('door', bedroom.id, 2, 2500, 800));
-
+  const { project, bedroom } = furnishedBedroom();
   let walls = deriveWalls(project);
-  refurnishRoom(project, bedroom, walls, createItem);
-  assert.ok(project.items.length >= 4);
+  arrangeRoom(project, bedroom, walls);
 
-  // Добавляем санузел 2×2 в угол спальни.
   const bath = createRoom('bathroom', 2900, 100, 2000, 2000);
   bath.parentId = bedroom.id;
   project.rooms.push(bath);
   assert.equal(validateRoomPlacement(project, bath, bath.id).ok, true);
   project.openings.push(createOpening('door', bath.id, 2, 1000, 700));
+  // Мебель спальни из-под нового санузла вытаскивается (как делает редактор).
+  reclaimItemsFromChild(project, bedroom, bath);
+  for (const item of defaultItemsFor(bath)) project.items.push(item);
 
   walls = deriveWalls(project);
-  const rejectedBedroom = refurnishRoom(project, bedroom, walls, createItem);
-  refurnishRoom(project, bath, walls, createItem);
+  const rejectedBedroom = arrangeRoom(project, bedroom, walls);
+  arrangeRoom(project, bath, walls);
 
-  // Кровать обязана остаться; отказы (если есть) объяснены по-русски.
-  const bedroomItems = project.items.filter((i) => i.roomId === bedroom.id);
+  const bedroomItems = itemsInRoom(project, bedroom);
   assert.ok(bedroomItems.some((i) => i.kind === 'bed-double'), 'кровать должна поместиться');
   for (const r of rejectedBedroom) assert.match(r.reason, /[а-яА-Я]/);
 
-  // Ничего не пересекается: мебель спальни ↔ габарит санузла и между собой.
   const bathOuter = { x: bath.x - 100, y: bath.y - 100, w: bath.w + 200, h: bath.h + 200 };
   const rects = bedroomItems.map((i) => itemRect(i));
   for (const r of rects) assert.equal(rectsOverlap(r, bathOuter), false, 'мебель в санузле');
@@ -189,30 +189,40 @@ test('MVP: вложенный санузел 2×2 — мебель перест�
       assert.equal(rectsOverlap(rects[i], rects[j]), false);
     }
   }
-  // Мебель санузла внутри санузла.
-  for (const item of project.items.filter((i) => i.roomId === bath.id)) {
+  for (const item of itemsInRoom(project, bath)) {
     const r = itemRect(item);
     assert.ok(r.x >= bath.x - 1 && r.y >= bath.y - 1 && r.x + r.w <= bath.x + bath.w + 1 && r.y + r.h <= bath.y + bath.h + 1);
   }
 });
 
-test('MVP: невозможная мебель отклоняется с объяснением', () => {
+test('MVP: невозможная мебель отклоняется с объяснением и остаётся на месте', () => {
   const project = createProject();
   const tiny = createRoom('bedroom', 0, 0, 1500, 1500);
-  tiny.checklist = { 'bed-double': true };
   project.rooms.push(tiny);
-  const { placed, rejected } = furnishRoom(project, tiny, deriveWalls(project));
-  assert.equal(placed.length, 0);
+  const bed = createItem('bed-double', 750, 750, 1600, 2000);
+  project.items.push(bed);
+  const rejected = arrangeRoom(project, tiny, deriveWalls(project));
   assert.equal(rejected.length, 1);
   assert.match(rejected[0].reason, /не помещается|не хватает/i);
+  assert.equal(bed.x, 750); // предмет не прыгнул
+});
+
+test('мебель свободна: предмет вне комнат никому не мешает', () => {
+  const { project } = makeTwoDockedRooms();
+  project.items.push(createItem('sofa', 50000, 50000, 2200, 950));
+  const walls = deriveWalls(project);
+  const rejected = arrangeRoom(project, project.rooms[0], walls);
+  assert.equal(rejected.length, 0);
+  assert.equal(project.items[0].x, 50000);
 });
 
 test('экспорт: структурированный JSON и DXF собираются', () => {
-  const { project, a, b } = makeTwoDockedRooms();
+  const { project, a } = makeTwoDockedRooms();
   project.openings.push(createOpening('door', a.id, 0, 1200, 800));
   project.openings.push(createOpening('door', a.id, 1, 1500, 800));
-  project.openings.push(createOpening('window', b.id, 0, 2500, 1200));
-  refurnishRoom(project, a, deriveWalls(project), createItem);
+  project.openings.push(createOpening('window', project.rooms[1].id, 0, 2500, 1200));
+  for (const item of defaultItemsFor(a)) project.items.push(item);
+  arrangeRoom(project, a, deriveWalls(project));
 
   const data = buildStructuredExport(project);
   assert.equal(data.schema, 'kepler-export/1');
@@ -221,6 +231,8 @@ test('экспорт: структурированный JSON и DXF собир�
   assert.ok(data.levels[0].walls.every((w) => w.thickness > 0));
   assert.equal(data.connections.has_entrance, true);
   assert.equal(data.connections.unreachable_rooms.length, 0);
+  // Мебель привязана к комнате по фактическому положению.
+  assert.ok(data.levels[0].furniture.every((f) => f.room === a.id));
 
   const dxf = buildProjectDxf(project);
   assert.ok(dxf.includes('ENTITIES'));
@@ -232,10 +244,11 @@ test('экспорт: структурированный JSON и DXF собир�
 test('сериализация проекта: сохранение и загрузка без потерь', () => {
   const { project } = makeTwoDockedRooms();
   project.openings.push(createOpening('door', project.rooms[0].id, 0, 1200, 800));
+  project.items.push(createItem('sofa', 1000, 1000, 2200, 950));
   const text = serializeProject(project);
   const loaded = deserializeProject(text);
   assert.equal(loaded.rooms.length, 2);
   assert.equal(loaded.openings.length, 1);
-  assert.deepEqual(loaded.rooms[0].checklist, project.rooms[0].checklist);
+  assert.equal(loaded.items[0].kind, 'sofa');
   assert.throws(() => deserializeProject('{"schema":"other"}'));
 });

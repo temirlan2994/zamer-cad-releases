@@ -1,8 +1,9 @@
 // Операции над комнатами: проверка размещения, привязка/стыковка, вложение,
 // перемещение, площади и анализ связности помещений. Чистый модуль.
 
-import { DEFAULT_PARTITION, GRID_STEP } from './catalog.js';
+import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP } from './catalog.js';
 import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
+import { checkRectBuildable } from './site.js';
 
 export const MIN_ROOM_SIZE = 900;
 
@@ -77,8 +78,14 @@ export function validateRoomPlacement(project, candidate, excludeId) {
     }
   }
 
-  // Комната верхнего уровня не может частично накрывать чужую вложенную зону —
-  // вложенные проверяются внутри родителя, а top-level друг с другом выше.
+  // Зона застройки участка: дом (комнаты верхнего уровня вместе с наружными
+  // стенами) можно чертить только внутри неё.
+  if (!candidate.parentId && project.site?.boundary) {
+    const t = project.settings?.exterior || DEFAULT_EXTERIOR;
+    const outer = { x: rect.x - t, y: rect.y - t, w: rect.w + t * 2, h: rect.h + t * 2 };
+    const buildable = checkRectBuildable(project.site, outer);
+    if (!buildable.ok) return buildable;
+  }
   return { ok: true };
 }
 
@@ -129,16 +136,22 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
   return { x: outX, y: outY, guides };
 }
 
-// Перемещение комнаты вместе с вложенными помещениями, мебелью и проёмами
-// (проёмы хранятся относительно комнаты, их двигать не нужно).
+// Перемещение комнаты вместе с вложенными помещениями и мебелью, которая
+// фактически стоит внутри (мебель свободна и не привязана к комнате — едет
+// то, что находится внутри на момент перемещения). Проёмы хранятся
+// относительно комнаты, их двигать не нужно.
 export function moveRoomBy(project, roomId, dx, dy) {
   const moved = new Set([roomId]);
   for (const r of project.rooms) if (r.parentId === roomId) moved.add(r.id);
+  const rects = project.rooms
+    .filter((r) => moved.has(r.id))
+    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
   for (const r of project.rooms) {
     if (moved.has(r.id)) { r.x += dx; r.y += dy; }
   }
   for (const item of project.items) {
-    if (moved.has(item.roomId)) { item.x += dx; item.y += dy; }
+    const inside = rects.some((r) => item.x >= r.x && item.x <= r.x + r.w && item.y >= r.y && item.y <= r.y + r.h);
+    if (inside) { item.x += dx; item.y += dy; }
   }
 }
 
@@ -148,6 +161,7 @@ export function roomNetAreaM2(project, room) {
   let area = room.w * room.h;
   for (const child of project.rooms) {
     if (child.parentId !== room.id) continue;
+    if (child.takesArea === false) continue; // площадь родителя не уменьшается
     const outer = nestedOuterRect(child, partition);
     const ix = Math.min(room.x + room.w, outer.x + outer.w) - Math.max(room.x, outer.x);
     const iy = Math.min(room.y + room.h, outer.y + outer.h) - Math.max(room.y, outer.y);

@@ -1,6 +1,7 @@
 // Kepler Plan — редактор архитектурных концепций частных домов.
-// Сборка плана из готовых блоков-помещений, автоматическая меблировка,
-// умные общие стены, анализ связности, экспорт JSON/DXF.
+// Два режима: «План» (дом) и «Участок» (граница, зона застройки, топосъёмка,
+// север, инсоляция). Мебель — свободные объекты. Выделение — левой кнопкой,
+// рамка по пустому месту; панорама — правой/средней кнопкой или с пробелом.
 
 import {
   createProject, createRoom, createOpening, createItem,
@@ -12,14 +13,24 @@ import {
 } from './core/walls.js';
 import {
   validateRoomPlacement, snapRoomPosition, determineParent, moveRoomBy,
-  roomNetAreaM2, totalAreaM2, analyzeConnectivity, suggestAccess,
-  rectsOverlap, nestedOuterRect, MIN_ROOM_SIZE,
+  roomNetAreaM2, totalAreaM2, analyzeConnectivity, suggestAccess, MIN_ROOM_SIZE,
 } from './core/rooms.js';
-import { refurnishRoom, itemRect, itemTitle } from './core/furnish.js';
+import {
+  arrangeRoom, defaultItemsFor, itemRect, itemTitle, itemsInRoom, reclaimItemsFromChild,
+} from './core/furnish.js';
 import { buildStructuredExport, buildProjectDxf } from './core/export.js';
-import { createRenderer, roomHandles, HANDLE_SIZE } from './render.js';
+import {
+  ensureSite, polygonAreaM2, buildZonePolygon, nearestPointOnPolyline,
+  distanceToPolyline, sunPosition, formatSunInfo, DEFAULT_ROAD_WIDTH,
+} from './core/site.js';
+import { pointInPolygon } from './core/zamer/geometry.js';
+import {
+  createRenderer, roomHandles, openingHandles, HANDLE_SIZE,
+  projectPoint, unprojectPoint,
+} from './render.js';
 
 const AUTOSAVE_KEY = 'kepler-plan-autosave';
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174';
 
 // ---------------------------------------------------------------- Состояние
 
@@ -29,19 +40,30 @@ const renderer = createRenderer(canvas);
 const state = {
   project: null,
   walls: [],
-  view: { scale: 0.08, panX: 80, panY: 80 },
-  selection: null, // {type:'room'|'wall'|'opening'|'item', ...}
+  modeName: 'plan', // 'plan' | 'site'
+  views: {
+    plan: { scale: 0.08, panX: 120, panY: 120 },
+    site: { scale: 0.03, panX: 120, panY: 120 },
+  },
+  view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
+  selection: null,
   hover: null,
-  mode: { kind: 'idle' },
+  tool: null, // активный инструмент (размещение, рисование, калибровка...)
   ghost: null,
   ghostOpening: null,
+  draft: null, // рисуемая ломаная участка
+  marquee: null,
   guides: [],
-  rejected: new Map(), // roomId -> [{kind,title,reason}]
+  rejected: new Map(), // roomId -> причины отказов расстановки
+  calibration: null, // {p1, p2, measured}
+  underlayImg: null,
 };
 
 const history = { undo: [], redo: [] };
 let autosaveTimer = null;
 let drawQueued = false;
+let spaceDown = false;
+let drag = null;
 
 // ---------------------------------------------------------------- DOM
 
@@ -49,6 +71,9 @@ const el = (id) => document.getElementById(id);
 const refs = {
   projectName: el('projectName'),
   roomCards: el('roomCards'),
+  siteTools: el('siteTools'),
+  libraryTitle: el('libraryTitle'),
+  libraryHint: el('libraryHint'),
   props: el('propsPanel'),
   hint: el('canvasHint'),
   statusCursor: el('cursorPos'),
@@ -56,27 +81,25 @@ const refs = {
   connectivity: el('connectivityBar'),
   toast: el('toast'),
   fileInput: el('fileInput'),
+  underlayInput: el('underlayInput'),
   exportDropdown: el('exportDropdown'),
+  modePlan: el('modePlanBtn'),
+  modeSite: el('modeSiteBtn'),
 };
 
 // ---------------------------------------------------------------- Утилиты
 
-function screenToWorld(sx, sy) {
-  return { x: (sx - state.view.panX) / state.view.scale, y: (sy - state.view.panY) / state.view.scale };
-}
-
-function worldToScreen(x, y) {
-  return { x: x * state.view.scale + state.view.panX, y: y * state.view.scale + state.view.panY };
-}
-
-function pointerWorld(event) {
-  const rect = canvas.getBoundingClientRect();
-  return screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
-}
+const screenToWorld = (sx, sy) => unprojectPoint(state.view, sx, sy);
+const worldToScreen = (x, y) => projectPoint(state.view, x, y);
 
 function pointerScreen(event) {
   const rect = canvas.getBoundingClientRect();
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function pointerWorld(event) {
+  const p = pointerScreen(event);
+  return screenToWorld(p.x, p.y);
 }
 
 function requestDraw() {
@@ -105,25 +128,31 @@ function snapshot() {
 
 function pushHistory(before) {
   history.undo.push(before);
-  if (history.undo.length > 60) history.undo.shift();
+  if (history.undo.length > 40) history.undo.shift();
   history.redo.length = 0;
-  scheduleAutosave();
 }
 
-function mutate(fn, { refurnish = [], skipHistory = false } = {}) {
+function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   const before = snapshot();
   fn();
   refreshDerived();
-  for (const roomId of new Set(refurnish)) {
+  for (const roomId of new Set(arrange)) {
     const room = roomById(state.project, roomId);
-    if (room) state.rejected.set(roomId, refurnishRoom(state.project, room, state.walls, createItem));
+    if (room) state.rejected.set(roomId, arrangeRoom(state.project, room, state.walls));
   }
-  if (refurnish.length) refreshDerived();
   if (!skipHistory) pushHistory(before);
   afterChange();
 }
 
+// Лёгкое изменение без истории (настройки солнца, прозрачность подложки).
+function tweak(fn) {
+  fn();
+  scheduleAutosave();
+  requestDraw();
+}
+
 function afterChange() {
+  syncUnderlayImage();
   updateConnectivity();
   renderProps();
   requestDraw();
@@ -133,29 +162,42 @@ function afterChange() {
 function scheduleAutosave() {
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
-    try { localStorage.setItem(AUTOSAVE_KEY, serializeProject(state.project)); } catch { /* приватный режим */ }
-  }, 400);
+    try { localStorage.setItem(AUTOSAVE_KEY, serializeProject(state.project)); } catch { /* тихо */ }
+  }, 500);
+}
+
+function restoreFrom(text) {
+  state.project = deserializeProject(text);
+  ensureSite(state.project);
+  state.selection = null;
+  refreshDerived();
+  applyModeRotation();
+  afterChange();
 }
 
 function undo() {
   if (!history.undo.length) return;
   history.redo.push(snapshot());
-  state.project = deserializeProject(history.undo.pop());
-  state.selection = null;
-  refreshDerived();
-  afterChange();
+  restoreFrom(history.undo.pop());
 }
 
 function redo() {
   if (!history.redo.length) return;
   history.undo.push(snapshot());
-  state.project = deserializeProject(history.redo.pop());
-  state.selection = null;
-  refreshDerived();
-  afterChange();
+  restoreFrom(history.redo.pop());
 }
 
-// Проёмы, оставшиеся без стены (после перемещений), прижимаются или удаляются.
+function syncUnderlayImage() {
+  const src = state.project.site?.underlay?.src;
+  if (!src) { state.underlayImg = null; return; }
+  if (state.underlayImg?.dataset?.src === src) return;
+  const img = new Image();
+  img.dataset.src = src;
+  img.onload = () => requestDraw();
+  img.src = src;
+  state.underlayImg = img;
+}
+
 function reconcileOpenings() {
   const walls = deriveWalls(state.project);
   const dropped = [];
@@ -171,7 +213,39 @@ function reconcileOpenings() {
   if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`);
 }
 
-// ---------------------------------------------------------------- Поиск объектов под курсором
+// ---------------------------------------------------------------- Режимы
+
+function applyModeRotation() {
+  state.view.rotation = state.modeName === 'site'
+    ? -((state.project.site?.north || 0) * Math.PI) / 180
+    : 0;
+}
+
+function setEditorMode(mode) {
+  if (state.modeName === mode) return;
+  state.views[state.modeName] = { scale: state.view.scale, panX: state.view.panX, panY: state.view.panY };
+  state.modeName = mode;
+  const saved = state.views[mode];
+  state.view.scale = saved.scale;
+  state.view.panX = saved.panX;
+  state.view.panY = saved.panY;
+  applyModeRotation();
+  cancelTool();
+  state.selection = null;
+  refs.modePlan.classList.toggle('active', mode === 'plan');
+  refs.modeSite.classList.toggle('active', mode === 'site');
+  refs.roomCards.hidden = mode !== 'plan';
+  refs.siteTools.hidden = mode !== 'site';
+  refs.libraryTitle.textContent = mode === 'plan' ? 'Помещения' : 'Участок';
+  refs.libraryHint.textContent = mode === 'plan'
+    ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'
+    : 'Топосъёмка, граница, красная линия, въезд, дорога, север.';
+  renderProps();
+  refs.statusScale.textContent = scaleLabel();
+  requestDraw();
+}
+
+// ---------------------------------------------------------------- Поиск под курсором
 
 function hitRoomHandle(screen) {
   if (state.selection?.type !== 'room') return null;
@@ -181,6 +255,36 @@ function hitRoomHandle(screen) {
     const p = worldToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { room, handle: handle.id };
+    }
+  }
+  return null;
+}
+
+function hitOpeningHandle(screen) {
+  if (state.selection?.type !== 'opening') return null;
+  const opening = state.project.openings.find((o) => o.id === state.selection.id);
+  if (!opening) return null;
+  for (const handle of openingHandles(state.project, opening, state.walls)) {
+    const p = worldToScreen(handle.x, handle.y);
+    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+      return { opening, end: handle.end };
+    }
+  }
+  return null;
+}
+
+function hitSiteVertex(screen) {
+  const sel = state.selection;
+  if (sel?.type !== 'site') return null;
+  const site = state.project.site;
+  const points = sel.kind === 'boundary' ? site.boundary
+    : sel.kind === 'redline' ? site.redLine
+      : sel.kind === 'road' ? site.roads.find((r) => r.id === sel.id)?.points : null;
+  if (!points) return null;
+  for (let i = 0; i < points.length; i += 1) {
+    const p = worldToScreen(points[i].x, points[i].y);
+    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+      return { kind: sel.kind, id: sel.id, index: i, points };
     }
   }
   return null;
@@ -217,7 +321,6 @@ function hitWall(world) {
 }
 
 function hitRoom(world) {
-  // Вложенные комнаты проверяются раньше родителей.
   const nested = state.project.rooms.filter((r) => r.parentId);
   const top = state.project.rooms.filter((r) => !r.parentId);
   for (const room of [...nested, ...top]) {
@@ -228,11 +331,40 @@ function hitRoom(world) {
   return null;
 }
 
+function hitSiteObject(world) {
+  const site = state.project.site;
+  if (!site) return null;
+  const tol = 9 / state.view.scale;
+  if (site.entry && Math.hypot(site.entry.x - world.x, site.entry.y - world.y) < tol + 900) {
+    return { type: 'site', kind: 'entry' };
+  }
+  for (const n of site.neighbors || []) {
+    if (Math.abs(world.x - n.x) <= n.w / 2 && Math.abs(world.y - n.y) <= n.h / 2) {
+      return { type: 'site', kind: 'neighbor', id: n.id };
+    }
+  }
+  if (site.boundary?.length >= 2 && distanceToPolyline(site.boundary, world, true) < tol + 60) {
+    return { type: 'site', kind: 'boundary' };
+  }
+  if (site.redLine?.length >= 2 && distanceToPolyline(site.redLine, world, false) < tol + 80) {
+    return { type: 'site', kind: 'redline' };
+  }
+  for (const road of site.roads || []) {
+    if (road.points.length >= 2 && distanceToPolyline(road.points, world, false) < road.width / 2 + tol) {
+      return { type: 'site', kind: 'road', id: road.id };
+    }
+  }
+  const u = site.underlay;
+  if (u && world.x >= u.x && world.x <= u.x + u.widthPx * u.mmPerPx && world.y >= u.y && world.y <= u.y + u.heightPx * u.mmPerPx) {
+    return { type: 'site', kind: 'underlay' };
+  }
+  return null;
+}
+
 function findWall(key, from) {
   return state.walls.find((w) => w.key === key && (from === undefined || Math.abs(w.from - from) < 1)) || null;
 }
 
-// Ближайшая стена к точке (для размещения проёмов).
 function nearestWall(world, maxScreenDist = 26) {
   const maxDist = maxScreenDist / state.view.scale;
   let best = null;
@@ -246,7 +378,7 @@ function nearestWall(world, maxScreenDist = 26) {
   return best?.wall || null;
 }
 
-// ---------------------------------------------------------------- Действия
+// ---------------------------------------------------------------- Инструменты
 
 function selectObject(selection) {
   state.selection = selection;
@@ -254,62 +386,86 @@ function selectObject(selection) {
   requestDraw();
 }
 
-function startPlaceRoom(type) {
-  state.mode = { kind: 'place-room', type };
-  state.selection = null;
-  setHint(`Кликните на плане, чтобы разместить «${roomType(type).title}» · Esc — отмена`);
-  renderLibrary();
-  renderProps();
+function setHint(text) {
+  refs.hint.textContent = text;
+  refs.hint.hidden = !text;
 }
 
-function startPlaceOpening(openKind, presetWall = null) {
-  state.mode = { kind: 'place-opening', openKind, presetWall };
-  setHint(openKind === 'door'
-    ? 'Кликните по стене, чтобы добавить дверь · Esc — отмена'
-    : 'Кликните по наружной стене, чтобы добавить окно · Esc — отмена');
+function setTool(tool, hint) {
+  state.tool = tool;
+  state.draft = null;
+  state.ghost = null;
+  state.ghostOpening = null;
+  setHint(hint || '');
+  renderLibrary();
   requestDraw();
 }
 
-function cancelMode() {
-  state.mode = { kind: 'idle' };
+function cancelTool() {
+  state.tool = null;
+  state.draft = null;
   state.ghost = null;
   state.ghostOpening = null;
+  state.calibration = null;
   state.guides = [];
   setHint('');
   renderLibrary();
   requestDraw();
 }
 
+function startPlaceRoom(type) {
+  setTool({ kind: 'place-room', type }, `Кликните на плане, чтобы разместить «${roomType(type).title}» · Esc — отмена`);
+  state.selection = null;
+  renderProps();
+}
+
+function startPlaceOpening(openKind, presetWall = null) {
+  setTool({ kind: 'place-opening', openKind, presetWall }, openKind === 'door'
+    ? 'Кликните по стене, чтобы добавить дверь · Esc — отмена'
+    : 'Кликните по наружной стене, чтобы добавить окно · Esc — отмена');
+}
+
+function startDraw(target) {
+  const names = { boundary: 'границу участка', redline: 'красную линию', road: 'ось дороги' };
+  const finish = target === 'boundary'
+    ? 'клик по первой точке или Enter — замкнуть'
+    : 'двойной клик или Enter — завершить';
+  setTool({ kind: 'draw', target }, `Кликами наметьте ${names[target]} · ${finish} · Esc — отмена`);
+  state.draft = { kind: target, points: [], cursor: null, closeHint: target === 'boundary' };
+}
+
+// ---------------------------------------------------------------- Действия: план
+
 function placeRoomAt(world) {
-  const def = roomType(state.mode.type);
+  const def = roomType(state.tool.type);
   const w = def.w;
   const h = def.h;
   let x = world.x - w / 2;
   let y = world.y - h / 2;
   const parentId = determineParent(state.project, { x, y, w, h }, null);
-  const probe = { id: '__ghost__', w, h };
-  const snapped = snapRoomPosition(state.project, probe, x, y, 14 / state.view.scale, parentId);
+  const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId);
   x = snapped.x; y = snapped.y;
-  const candidate = { x, y, w, h, parentId };
-  const verdict = validateRoomPlacement(state.project, candidate, null);
-  if (!verdict.ok) {
-    toast(verdict.reason, true);
-    return;
-  }
-  const room = createRoom(state.mode.type, x, y, w, h);
+  const verdict = validateRoomPlacement(state.project, { x, y, w, h, parentId }, null);
+  if (!verdict.ok) { toast(verdict.reason, true); return; }
+  const room = createRoom(state.tool.type, x, y, w, h);
   room.parentId = parentId;
-  // Уникальное имя: Спальня, Спальня 2, ...
   const sameType = state.project.rooms.filter((r) => r.type === room.type).length;
   if (sameType > 0) room.name = `${def.title} ${sameType + 1}`;
-  mutate(() => { state.project.rooms.push(room); }, { refurnish: [room.id, parentId].filter(Boolean) });
-  cancelMode();
+  mutate(() => {
+    state.project.rooms.push(room);
+    // Мебель родителя из-под нового помещения вытаскивается.
+    if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
+    // Типовой набор мебели сразу в комнату — дальше пользователь двигает сам.
+    for (const item of defaultItemsFor(room)) state.project.items.push(item);
+  }, { arrange: parentId ? [room.id, parentId] : [room.id] });
+  cancelTool();
   selectObject({ type: 'room', id: room.id });
-  if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}»`);
+  if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
 }
 
 function placeOpeningAt(world) {
-  const openKind = state.mode.openKind;
-  const wall = state.mode.presetWall ? findWall(state.mode.presetWall.key, state.mode.presetWall.from) : nearestWall(world);
+  const openKind = state.tool.openKind;
+  const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(world);
   if (!wall) { toast('Кликните ближе к стене'); return; }
   const roomId = wall.rooms[0];
   const side = wall.sides[roomId];
@@ -323,16 +479,22 @@ function placeOpeningAt(world) {
   const desired = (wall.orient === 'h' ? world.x : world.y) - base;
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
   const opening = createOpening(openKind, roomId, side, desired, width);
-  const walls = state.walls;
-  const clamped = clampOpeningOffset(state.project, opening, walls, desired);
+  const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
   if (clamped === null) { toast('На этом участке стены проём не помещается'); return; }
   opening.offset = clamped;
-  const affected = [roomId];
-  if (wall.kind === 'shared') affected.push(wall.rooms[1]);
-  if (room.parentId) affected.push(room.parentId);
-  mutate(() => { state.project.openings.push(opening); }, { refurnish: affected });
-  cancelMode();
+  mutate(() => { state.project.openings.push(opening); });
+  cancelTool();
   selectObject({ type: 'opening', id: opening.id });
+}
+
+function addFurniture(kind, room) {
+  const fd = furnitureDef(kind);
+  if (!fd) return;
+  const item = createItem(kind, Math.round((room.x + room.w / 2) / GRID_STEP) * GRID_STEP,
+    Math.round((room.y + room.h / 2) / GRID_STEP) * GRID_STEP, fd.w, fd.h);
+  mutate(() => { state.project.items.push(item); });
+  selectObject({ type: 'item', id: item.id });
+  toast(`«${fd.title}» в центре комнаты — перетащите на место`);
 }
 
 function deleteSelection() {
@@ -341,152 +503,440 @@ function deleteSelection() {
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;
-    const parentId = room.parentId;
-    mutate(() => { removeRoom(state.project, sel.id); reconcileOpenings(); },
-      { refurnish: parentId ? [parentId] : [] });
+    mutate(() => { removeRoom(state.project, sel.id); reconcileOpenings(); });
     state.selection = null;
     toast(`«${room.name}» удалена`);
   } else if (sel.type === 'opening') {
-    const opening = state.project.openings.find((o) => o.id === sel.id);
-    if (!opening) return;
-    const affected = openingAffectedRooms(opening);
     mutate(() => {
       state.project.openings = state.project.openings.filter((o) => o.id !== sel.id);
-    }, { refurnish: affected });
-    state.selection = null;
-  } else if (sel.type === 'item') {
-    const item = state.project.items.find((i) => i.id === sel.id);
-    if (!item) return;
-    const room = roomById(state.project, item.roomId);
-    mutate(() => {
-      state.project.items = state.project.items.filter((i) => i.id !== sel.id);
-      if (room && room.checklist[item.kind] !== undefined && item.auto) room.checklist[item.kind] = false;
     });
     state.selection = null;
-    if (item.auto && room) toast(`«${itemTitle(item.kind)}» снята с галочки в «${room.name}»`);
+  } else if (sel.type === 'item') {
+    mutate(() => {
+      state.project.items = state.project.items.filter((i) => i.id !== sel.id);
+    });
+    state.selection = null;
+  } else if (sel.type === 'multi') {
+    mutate(() => {
+      state.project.items = state.project.items.filter((i) => !sel.itemIds.includes(i.id));
+      for (const roomId of sel.roomIds) removeRoom(state.project, roomId);
+      reconcileOpenings();
+    });
+    state.selection = null;
+    toast('Выделенные объекты удалены');
+  } else if (sel.type === 'site') {
+    const site = state.project.site;
+    mutate(() => {
+      if (sel.kind === 'boundary') { site.boundary = null; site.entry = null; }
+      if (sel.kind === 'redline') site.redLine = null;
+      if (sel.kind === 'road') site.roads = site.roads.filter((r) => r.id !== sel.id);
+      if (sel.kind === 'neighbor') site.neighbors = site.neighbors.filter((n) => n.id !== sel.id);
+      if (sel.kind === 'entry') site.entry = null;
+      if (sel.kind === 'underlay') site.underlay = null;
+    });
+    state.selection = null;
   }
   renderProps();
   requestDraw();
-}
-
-function openingAffectedRooms(opening) {
-  const placed = openingRect(state.project, opening, state.walls);
-  const affected = [opening.roomId];
-  const room = roomById(state.project, opening.roomId);
-  if (room?.parentId) affected.push(room.parentId);
-  if (placed?.wall.kind === 'shared') affected.push(...placed.wall.rooms);
-  return affected;
 }
 
 function rotateSelectedItem() {
   if (state.selection?.type !== 'item') return;
   const item = state.project.items.find((i) => i.id === state.selection.id);
   if (!item) return;
-  const next = ((item.rotation || 0) + 90) % 360;
-  const rect = { ...itemRect({ ...item, rotation: next }) };
-  const verdict = validateItemRect(item, rect);
-  if (!verdict.ok) { toast(verdict.reason); return; }
-  mutate(() => { item.rotation = next; item.auto = false; });
+  mutate(() => { item.rotation = ((item.rotation || 0) + 90) % 360; });
 }
 
-function validateItemRect(item, rect) {
-  const room = roomById(state.project, item.roomId);
-  if (!room) return { ok: false, reason: 'Комната не найдена' };
-  const inner = { x: room.x, y: room.y, w: room.w, h: room.h };
-  if (rect.x < inner.x - 1 || rect.y < inner.y - 1 ||
-    rect.x + rect.w > inner.x + inner.w + 1 || rect.y + rect.h > inner.y + inner.h + 1) {
-    return { ok: false, reason: `«${itemTitle(item.kind)}» выходит за пределы комнаты` };
+// ---------------------------------------------------------------- Действия: участок
+
+function makeSiteId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
+}
+
+function finishDraft() {
+  const draft = state.draft;
+  if (!draft) return;
+  const site = state.project.site;
+  if (draft.kind === 'boundary') {
+    if (draft.points.length < 3) { toast('Нужно минимум 3 точки'); return; }
+    mutate(() => { site.boundary = draft.points.map((p) => ({ ...p })); });
+    selectObject({ type: 'site', kind: 'boundary' });
+    toast(`Граница участка: ${polygonAreaM2(site.boundary).toFixed(1)} м². Красная зона — отступ ${(site.setbackBoundary / 1000).toLocaleString('ru-RU')} м`);
+  } else if (draft.kind === 'redline') {
+    if (draft.points.length < 2) { toast('Нужно минимум 2 точки'); return; }
+    mutate(() => { site.redLine = draft.points.map((p) => ({ ...p })); });
+    selectObject({ type: 'site', kind: 'redline' });
+  } else if (draft.kind === 'road') {
+    if (draft.points.length < 2) { toast('Нужно минимум 2 точки'); return; }
+    const road = { id: makeSiteId('road'), points: draft.points.map((p) => ({ ...p })), width: DEFAULT_ROAD_WIDTH };
+    mutate(() => { site.roads.push(road); });
+    selectObject({ type: 'site', kind: 'road', id: road.id });
   }
-  for (const other of state.project.items) {
-    if (other.id === item.id || other.roomId !== item.roomId) continue;
-    if (rectsOverlap(rect, itemRect(other))) {
-      return { ok: false, reason: `Пересекается с «${itemTitle(other.kind)}»` };
+  cancelTool();
+}
+
+function addDraftPoint(world) {
+  const draft = state.draft;
+  const snap = (v) => Math.round(v / 100) * 100;
+  const point = { x: snap(world.x), y: snap(world.y) };
+  // Замыкание границы кликом по первой точке.
+  if (draft.kind === 'boundary' && draft.points.length >= 3) {
+    const first = worldToScreen(draft.points[0].x, draft.points[0].y);
+    const here = worldToScreen(point.x, point.y);
+    if (Math.hypot(first.x - here.x, first.y - here.y) < 12) { finishDraft(); return; }
+  }
+  draft.points.push(point);
+  requestDraw();
+}
+
+function placeEntryAt(world) {
+  const site = state.project.site;
+  if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
+  const near = nearestPointOnPolyline(site.boundary, world, true);
+  if (!near || near.dist > 40 / state.view.scale + 1500) { toast('Кликните ближе к границе участка'); return; }
+  // Стрелка направлена внутрь участка.
+  const candidates = [near.angle + 90, near.angle - 90];
+  let dir = candidates[0];
+  const rad = (candidates[0] * Math.PI) / 180;
+  const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
+  if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
+  mutate(() => { site.entry = { x: near.x, y: near.y, dir }; });
+  cancelTool();
+  selectObject({ type: 'site', kind: 'entry' });
+}
+
+function placeNeighborAt(world) {
+  const site = state.project.site;
+  const neighbor = {
+    id: makeSiteId('nbr'),
+    x: Math.round(world.x / 100) * 100,
+    y: Math.round(world.y / 100) * 100,
+    w: 8000,
+    h: 8000,
+    height: 6000,
+  };
+  mutate(() => { site.neighbors.push(neighbor); });
+  cancelTool();
+  selectObject({ type: 'site', kind: 'neighbor', id: neighbor.id });
+  toast('Соседний дом добавлен: вокруг него зона 6 м, строить в ней нельзя');
+}
+
+function addNorthPoint(world) {
+  const points = state.tool.points;
+  points.push(world);
+  if (points.length < 2) { setHint('Теперь кликните вторую точку — конец стрелки на север'); return; }
+  const dx = points[1].x - points[0].x;
+  const dy = points[1].y - points[0].y;
+  if (Math.hypot(dx, dy) < 200) { toast('Точки слишком близко'); state.tool.points = []; return; }
+  const north = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+  mutate(() => { state.project.site.north = Math.round(north * 10) / 10; });
+  applyModeRotation();
+  cancelTool();
+  toast(`Север задан: ${Math.round(north)}°`);
+}
+
+function addCalibratePoint(world) {
+  const points = state.tool.points;
+  points.push({ ...world });
+  if (points.length < 2) { setHint('Кликните вторую точку известного отрезка'); return; }
+  const measured = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+  state.calibration = { p1: points[0], p2: points[1], measured };
+  cancelTool();
+  selectObject({ type: 'site', kind: 'underlay' });
+  toast('Введите реальную длину отрезка в панели справа');
+}
+
+function applyCalibration(realMeters) {
+  const site = state.project.site;
+  const cal = state.calibration;
+  if (!site.underlay || !cal) return;
+  const realMm = realMeters * 1000;
+  if (!(realMm > 10)) { toast('Введите длину в метрах'); return; }
+  const k = realMm / cal.measured;
+  mutate(() => {
+    const u = site.underlay;
+    u.mmPerPx *= k;
+    u.x = cal.p1.x - (cal.p1.x - u.x) * k;
+    u.y = cal.p1.y - (cal.p1.y - u.y) * k;
+  });
+  state.calibration = null;
+  renderProps();
+  toast('Масштаб топосъёмки задан');
+}
+
+// --- Загрузка топосъёмки ---
+
+async function loadUnderlayFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.dwg') || name.endsWith('.dxf')) {
+    toast('DWG/DXF в браузере не читаются. Сохраните топосъёмку как PDF или JPG (в CAD: печать в PDF) и загрузите её.', true);
+    return;
+  }
+  try {
+    let dataUrl;
+    let size;
+    if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+      ({ dataUrl, size } = await renderPdfToImage(file));
+    } else {
+      ({ dataUrl, size } = await downscaleImage(file));
     }
+    placeUnderlay(dataUrl, size);
+  } catch (error) {
+    toast(`Не удалось загрузить: ${error.message}`, true);
   }
-  for (const child of state.project.rooms) {
-    if (child.parentId !== item.roomId) continue;
-    if (rectsOverlap(rect, nestedOuterRect(child))) {
-      return { ok: false, reason: `Пересекается с «${child.name}»` };
-    }
-  }
-  return { ok: true };
+}
+
+function downscaleImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('файл не прочитался'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('это не изображение'));
+      img.onload = () => {
+        const maxDim = 2200;
+        const k = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.round(img.width * k);
+        const h = Math.round(img.height * k);
+        const cnv = document.createElement('canvas');
+        cnv.width = w; cnv.height = h;
+        const c = cnv.getContext('2d');
+        c.fillStyle = '#ffffff';
+        c.fillRect(0, 0, w, h);
+        c.drawImage(img, 0, 0, w, h);
+        resolve({ dataUrl: cnv.toDataURL('image/jpeg', 0.85), size: { w, h } });
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function ensurePdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `${PDFJS}/pdf.min.js`;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('библиотека PDF недоступна (нужен интернет)'));
+    document.head.appendChild(script);
+  });
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS}/pdf.worker.min.js`;
+  return window.pdfjsLib;
+}
+
+async function renderPdfToImage(file) {
+  const pdfjs = await ensurePdfJs();
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buffer }).promise;
+  const page = await pdf.getPage(1);
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(3, 2200 / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const cnv = document.createElement('canvas');
+  cnv.width = Math.round(viewport.width);
+  cnv.height = Math.round(viewport.height);
+  const c = cnv.getContext('2d');
+  c.fillStyle = '#ffffff';
+  c.fillRect(0, 0, cnv.width, cnv.height);
+  await page.render({ canvasContext: c, viewport }).promise;
+  return { dataUrl: cnv.toDataURL('image/jpeg', 0.85), size: { w: cnv.width, h: cnv.height } };
+}
+
+function placeUnderlay(dataUrl, size) {
+  const center = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+  const mmPerPx = 40000 / size.w; // по умолчанию ширина листа = 40 м, уточняется калибровкой
+  mutate(() => {
+    state.project.site.underlay = {
+      src: dataUrl,
+      x: center.x - (size.w * mmPerPx) / 2,
+      y: center.y - (size.h * mmPerPx) / 2,
+      widthPx: size.w,
+      heightPx: size.h,
+      mmPerPx,
+      opacity: 0.7,
+      locked: false,
+    };
+  });
+  selectObject({ type: 'site', kind: 'underlay' });
+  toast('Топосъёмка загружена. Задайте масштаб: «Масштаб по отрезку» справа', true);
 }
 
 // ---------------------------------------------------------------- Ввод мыши
 
-let drag = null; // активное перетаскивание
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 canvas.addEventListener('pointerdown', (event) => {
-  if (event.button === 1 || event.button === 2) {
-    drag = { kind: 'pan', start: pointerScreen(event), view: { ...state.view } };
-    canvas.setPointerCapture(event.pointerId);
-    return;
-  }
   const screen = pointerScreen(event);
   const world = pointerWorld(event);
   canvas.setPointerCapture(event.pointerId);
 
-  if (state.mode.kind === 'place-room') { placeRoomAt(world); return; }
-  if (state.mode.kind === 'place-opening') { placeOpeningAt(world); return; }
-
-  const handleHit = hitRoomHandle(screen);
-  if (handleHit) {
-    drag = {
-      kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle,
-      start: { ...handleHit.room }, before: snapshot(), world,
-      valid: true,
-    };
+  // Панорама: правая/средняя кнопка или зажатый пробел.
+  if (event.button === 1 || event.button === 2 || spaceDown) {
+    drag = { kind: 'pan', start: screen, view: { ...state.view } };
     return;
   }
 
+  // Активный инструмент.
+  if (state.tool) {
+    const t = state.tool;
+    if (t.kind === 'place-room') { placeRoomAt(world); return; }
+    if (t.kind === 'place-opening') { placeOpeningAt(world); return; }
+    if (t.kind === 'draw') { addDraftPoint(world); return; }
+    if (t.kind === 'entry') { placeEntryAt(world); return; }
+    if (t.kind === 'neighbor') { placeNeighborAt(world); return; }
+    if (t.kind === 'north') { addNorthPoint(world); return; }
+    if (t.kind === 'calibrate') { addCalibratePoint(world); return; }
+    return;
+  }
+
+  // Ручки.
+  const openingHandleHit = hitOpeningHandle(screen);
+  if (openingHandleHit) {
+    drag = { kind: 'opening-handle', id: openingHandleHit.opening.id, end: openingHandleHit.end, before: snapshot(), moved: false };
+    return;
+  }
+  const handleHit = hitRoomHandle(screen);
+  if (handleHit) {
+    drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), world, valid: true };
+    return;
+  }
+  const vertexHit = hitSiteVertex(screen);
+  if (vertexHit) {
+    drag = { kind: 'site-vertex', ...vertexHit, before: snapshot(), moved: false };
+    return;
+  }
+
+  const siteFirst = state.modeName === 'site';
+  const trySite = () => {
+    const hit = hitSiteObject(world);
+    if (!hit) return false;
+    if (hit.kind === 'underlay' && state.project.site.underlay?.locked) {
+      selectObject(hit);
+      return true;
+    }
+    selectObject(hit);
+    if (hit.kind === 'entry') drag = { kind: 'entry', before: snapshot(), moved: false };
+    else if (hit.kind === 'neighbor') {
+      const n = state.project.site.neighbors.find((x) => x.id === hit.id);
+      drag = { kind: 'neighbor', id: hit.id, start: { x: n.x, y: n.y }, world, before: snapshot(), moved: false };
+    } else if (hit.kind === 'underlay') {
+      const u = state.project.site.underlay;
+      drag = { kind: 'underlay', start: { x: u.x, y: u.y }, world, before: snapshot(), moved: false };
+    }
+    return true;
+  };
+
+  if (siteFirst && trySite()) return;
+
   const item = hitItem(world);
   if (item) {
+    if (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id)) {
+      startMultiDrag(world);
+      return;
+    }
     selectObject({ type: 'item', id: item.id });
-    drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, world, before: snapshot(), moved: false, valid: true };
+    drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, world, before: snapshot(), moved: false };
     return;
   }
 
   const opening = hitOpening(world);
   if (opening) {
     selectObject({ type: 'opening', id: opening.id });
-    drag = { kind: 'opening', id: opening.id, before: snapshot(), startOffset: opening.offset, moved: false };
+    drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
     return;
   }
 
   const wall = hitWall(world);
   if (wall) {
     selectObject({ type: 'wall', key: wall.key, from: wall.from });
-    drag = null;
     return;
   }
 
   const room = hitRoom(world);
   if (room) {
+    if (state.selection?.type === 'multi' && state.selection.roomIds.includes(room.id)) {
+      startMultiDrag(world);
+      return;
+    }
     selectObject({ type: 'room', id: room.id });
+    // Перевозимый груз фиксируется в момент захвата: вложенные помещения и
+    // мебель, стоящая внутри, — чтобы комната не «сметала» чужую мебель по пути.
+    const children = state.project.rooms.filter((r) => r.parentId === room.id);
+    const carried = state.project.items
+      .filter((i) => i.x >= room.x && i.x <= room.x + room.w && i.y >= room.y && i.y <= room.y + room.h)
+      .map((i) => ({ id: i.id, x: i.x, y: i.y }));
     drag = {
       kind: 'room', id: room.id, world, start: { x: room.x, y: room.y },
-      before: snapshot(), moved: false, valid: true,
+      childStarts: children.map((c) => ({ id: c.id, x: c.x, y: c.y })),
+      carried,
+      startParent: room.parentId, before: snapshot(), moved: false, valid: true,
     };
     return;
   }
 
+  if (!siteFirst && trySite()) return;
+
+  // Пустое место: рамка выделения левой кнопкой.
   selectObject(null);
-  drag = { kind: 'pan', start: screen, view: { ...state.view } };
+  drag = { kind: 'marquee', start: screen };
+  state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y };
 });
+
+function startMultiDrag(world) {
+  const sel = state.selection;
+  // Груз фиксируется при захвате: выбранные комнаты с их вложенными
+  // помещениями и мебелью внутри + отдельно выбранная мебель.
+  const roomIds = new Set(sel.roomIds);
+  const movedRooms = new Map(); // id -> старт
+  for (const id of sel.roomIds) {
+    const room = roomById(state.project, id);
+    if (!room) continue;
+    movedRooms.set(id, { x: room.x, y: room.y });
+    for (const child of state.project.rooms) {
+      if (child.parentId === id && !movedRooms.has(child.id)) movedRooms.set(child.id, { x: child.x, y: child.y });
+    }
+  }
+  const movedItems = new Map(); // id -> старт
+  for (const item of state.project.items) {
+    if (sel.itemIds.includes(item.id)) { movedItems.set(item.id, { x: item.x, y: item.y }); continue; }
+    for (const id of roomIds) {
+      const room = roomById(state.project, id);
+      if (room && item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) {
+        movedItems.set(item.id, { x: item.x, y: item.y });
+        break;
+      }
+    }
+  }
+  drag = {
+    kind: 'multi',
+    world,
+    before: snapshot(),
+    moved: false,
+    valid: true,
+    roomIds: [...sel.roomIds],
+    roomStarts: movedRooms,
+    itemStarts: movedItems,
+  };
+}
 
 canvas.addEventListener('pointermove', (event) => {
   const screen = pointerScreen(event);
   const world = pointerWorld(event);
   refs.statusCursor.textContent = `${(world.x / 1000).toFixed(2)}; ${(world.y / 1000).toFixed(2)} м`;
 
-  if (!drag) {
-    updateHoverAndGhost(world);
-    return;
-  }
+  if (!drag) { updateHoverAndGhost(world); return; }
 
   if (drag.kind === 'pan') {
     state.view.panX = drag.view.panX + (screen.x - drag.start.x);
     state.view.panY = drag.view.panY + (screen.y - drag.start.y);
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'marquee') {
+    state.marquee.x2 = screen.x;
+    state.marquee.y2 = screen.y;
     requestDraw();
     return;
   }
@@ -497,23 +947,67 @@ canvas.addEventListener('pointermove', (event) => {
     drag.moved = true;
     const rawX = drag.start.x + (world.x - drag.world.x);
     const rawY = drag.start.y + (world.y - drag.world.y);
-    const snapped = snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, room.parentId);
-    const dx = snapped.x - room.x;
-    const dy = snapped.y - room.y;
-    moveRoomBy(state.project, room.id, dx, dy);
+    // Вложение перетаскиванием: родителем становится комната, внутрь которой
+    // попадает прямоугольник; вытащили наружу — комната снова самостоятельная.
+    const candidateParent = determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
+    room.parentId = candidateParent;
+    const snapped = snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent);
+    const dx = snapped.x - drag.start.x;
+    const dy = snapped.y - drag.start.y;
+    // Абсолютные позиции от стартовых: груз зафиксирован при захвате.
+    room.x = snapped.x;
+    room.y = snapped.y;
+    for (const entry of drag.childStarts) {
+      const child = roomById(state.project, entry.id);
+      if (child) { child.x = entry.x + dx; child.y = entry.y + dy; }
+    }
+    for (const entry of drag.carried) {
+      const item = state.project.items.find((i) => i.id === entry.id);
+      if (item) { item.x = entry.x + dx; item.y = entry.y + dy; }
+    }
     state.guides = snapped.guides;
     const verdict = validateRoomPlacement(state.project, room, room.id);
     drag.valid = verdict.ok;
     drag.reason = verdict.reason;
-    state.ghost = { rect: { x: room.x, y: room.y, w: room.w, h: room.h }, valid: verdict.ok, label: ' ', reason: verdict.ok ? '' : verdict.reason };
+    const nestLabel = candidateParent && candidateParent !== drag.startParent
+      ? `Вложить в «${roomById(state.project, candidateParent)?.name}»`
+      : !candidateParent && drag.startParent ? 'Отделить от родителя' : ' ';
+    state.ghost = { rect: { x: room.x, y: room.y, w: room.w, h: room.h }, valid: verdict.ok, label: nestLabel, reason: verdict.ok ? '' : verdict.reason };
+    refreshDerived();
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'multi') {
+    drag.moved = true;
+    const dx = Math.round((world.x - drag.world.x) / GRID_STEP) * GRID_STEP;
+    const dy = Math.round((world.y - drag.world.y) / GRID_STEP) * GRID_STEP;
+    for (const [id, start] of drag.roomStarts) {
+      const room = roomById(state.project, id);
+      if (room) { room.x = start.x + dx; room.y = start.y + dy; }
+    }
+    for (const [id, start] of drag.itemStarts) {
+      const item = state.project.items.find((i) => i.id === id);
+      if (item) { item.x = start.x + dx; item.y = start.y + dy; }
+    }
+    let valid = true;
+    let reason = '';
+    for (const id of drag.roomIds) {
+      const room = roomById(state.project, id);
+      const verdict = validateRoomPlacement(state.project, room, room.id);
+      if (!verdict.ok) { valid = false; reason = verdict.reason; break; }
+    }
+    drag.valid = valid;
+    drag.reason = reason;
     refreshDerived();
     requestDraw();
     return;
   }
 
   if (drag.kind === 'resize') {
-    const room = roomById(state.project, drag.id || drag.roomId);
+    const room = roomById(state.project, drag.roomId);
     if (!room) return;
+    drag.moved = true;
     applyResize(room, drag, world);
     const verdict = resizeVerdict(room);
     drag.valid = verdict.ok;
@@ -530,9 +1024,6 @@ canvas.addEventListener('pointermove', (event) => {
     drag.moved = true;
     item.x = Math.round((drag.start.x + (world.x - drag.world.x)) / GRID_STEP) * GRID_STEP;
     item.y = Math.round((drag.start.y + (world.y - drag.world.y)) / GRID_STEP) * GRID_STEP;
-    const verdict = validateItemRect(item, itemRect(item));
-    drag.valid = verdict.ok;
-    drag.reason = verdict.reason;
     requestDraw();
     return;
   }
@@ -548,10 +1039,81 @@ canvas.addEventListener('pointermove', (event) => {
     const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
     if (clamped !== null) opening.offset = Math.round(clamped / GRID_STEP) * GRID_STEP;
     requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'opening-handle') {
+    const opening = state.project.openings.find((o) => o.id === drag.id);
+    if (!opening) return;
+    drag.moved = true;
+    const room = roomById(state.project, opening.roomId);
+    const edge = sideEdge(room, opening.side);
+    const base = edge.orient === 'h' ? room.x : room.y;
+    const pos = (edge.orient === 'h' ? world.x : world.y) - base;
+    const startEdge = opening.offset - opening.width / 2;
+    const endEdge = opening.offset + opening.width / 2;
+    const fixed = drag.end === 'start' ? endEdge : startEdge;
+    const movingEdge = Math.round(pos / 50) * 50; // шаг 50 мм
+    let width = Math.abs(fixed - movingEdge);
+    width = Math.min(3000, Math.max(400, Math.round(width / 50) * 50));
+    const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
+    const probe = { ...opening, width };
+    const clamped = clampOpeningOffset(state.project, probe, state.walls, center);
+    if (clamped !== null) {
+      opening.width = width;
+      opening.offset = clamped;
+    }
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'site-vertex') {
+    drag.moved = true;
+    const point = drag.points[drag.index];
+    point.x = Math.round(world.x / 100) * 100;
+    point.y = Math.round(world.y / 100) * 100;
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'entry') {
+    const site = state.project.site;
+    if (!site.boundary) return;
+    drag.moved = true;
+    const near = nearestPointOnPolyline(site.boundary, world, true);
+    if (near) {
+      const candidates = [near.angle + 90, near.angle - 90];
+      let dir = candidates[0];
+      const rad = (candidates[0] * Math.PI) / 180;
+      const probe = { x: near.x + Math.cos(rad) * 500, y: near.y + Math.sin(rad) * 500 };
+      if (!pointInPolygon(probe, site.boundary)) dir = candidates[1];
+      site.entry = { x: near.x, y: near.y, dir };
+      requestDraw();
+    }
+    return;
+  }
+
+  if (drag.kind === 'neighbor') {
+    const n = state.project.site.neighbors.find((x) => x.id === drag.id);
+    if (!n) return;
+    drag.moved = true;
+    n.x = Math.round((drag.start.x + (world.x - drag.world.x)) / 100) * 100;
+    n.y = Math.round((drag.start.y + (world.y - drag.world.y)) / 100) * 100;
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'underlay') {
+    const u = state.project.site.underlay;
+    if (!u || u.locked) return;
+    drag.moved = true;
+    u.x = drag.start.x + (world.x - drag.world.x);
+    u.y = drag.start.y + (world.y - drag.world.y);
+    requestDraw();
   }
 });
 
-canvas.addEventListener('pointerup', (event) => {
+canvas.addEventListener('pointerup', () => {
   if (!drag) return;
   const finished = drag;
   drag = null;
@@ -559,60 +1121,91 @@ canvas.addEventListener('pointerup', (event) => {
 
   if (finished.kind === 'pan') { requestDraw(); return; }
 
-  if (finished.kind === 'room' || finished.kind === 'resize') {
-    const room = roomById(state.project, finished.id || finished.roomId);
+  if (finished.kind === 'marquee') {
+    applyMarquee();
+    state.marquee = null;
+    requestDraw();
+    return;
+  }
+
+  if (finished.kind === 'room' || finished.kind === 'resize' || finished.kind === 'multi') {
     state.ghost = null;
-    if (!finished.moved && finished.kind === 'room') { requestDraw(); return; }
+    if (!finished.moved) { requestDraw(); return; }
     if (!finished.valid) {
-      state.project = deserializeProject(finished.before);
-      refreshDerived();
+      restoreFrom(finished.before);
       toast(finished.reason || 'Так разместить нельзя', true);
-      afterChange();
       return;
+    }
+    if (finished.kind === 'room') {
+      const room = roomById(state.project, finished.id);
+      if (room && (room.parentId || null) !== (finished.startParent || null)) {
+        if (room.parentId) {
+          const parent = roomById(state.project, room.parentId);
+          // Мебель родителя из-под вложенной комнаты вытаскивается и
+          // расставляется заново; привезённая мебель остаётся на месте.
+          const carriedIds = new Set(finished.carried.map((c) => c.id));
+          reclaimItemsFromChild(state.project, parent, room, carriedIds);
+          refreshDerived();
+          state.rejected.set(parent.id, arrangeRoom(state.project, parent, state.walls));
+          toast(`«${room.name}» вложена в «${parent?.name}» и отнимает её площадь — можно поменять в панели справа`, true);
+        } else {
+          toast(`«${room.name}» отделена — снова самостоятельная комната`);
+        }
+      }
     }
     reconcileOpenings();
     refreshDerived();
-    const refurnish = finished.kind === 'resize' && room ? [room.id] : [];
-    for (const roomId of refurnish) {
-      const target = roomById(state.project, roomId);
-      if (target) state.rejected.set(roomId, refurnishRoom(state.project, target, state.walls, createItem));
+    pushHistory(finished.before);
+    afterChange();
+    return;
+  }
+
+  if (finished.moved) {
+    if (finished.kind === 'site-vertex' || finished.kind === 'entry') {
+      // Граница изменилась — въезд прижимается к ней заново.
+      const site = state.project.site;
+      if (site.boundary && site.entry) {
+        const near = nearestPointOnPolyline(site.boundary, site.entry, true);
+        if (near) { site.entry.x = near.x; site.entry.y = near.y; }
+      }
     }
     refreshDerived();
     pushHistory(finished.before);
     afterChange();
     return;
   }
+  requestDraw();
+});
 
-  if (finished.kind === 'item') {
-    const item = state.project.items.find((i) => i.id === finished.id);
-    if (!finished.moved || !item) { requestDraw(); return; }
-    if (!finished.valid) {
-      state.project = deserializeProject(finished.before);
-      refreshDerived();
-      toast(finished.reason || 'Мебель так поставить нельзя');
-      afterChange();
-      return;
-    }
-    item.auto = false; // предмет закреплён вручную
-    pushHistory(finished.before);
-    afterChange();
+function applyMarquee() {
+  const m = state.marquee;
+  if (!m || (Math.abs(m.x2 - m.x1) < 6 && Math.abs(m.y2 - m.y1) < 6)) return;
+  const poly = [
+    screenToWorld(m.x1, m.y1), screenToWorld(m.x2, m.y1),
+    screenToWorld(m.x2, m.y2), screenToWorld(m.x1, m.y2),
+  ];
+  const contains = (x, y) => pointInPolygon({ x, y }, poly);
+  const roomIds = [];
+  for (const room of state.project.rooms) {
+    const inside = contains(room.x, room.y) && contains(room.x + room.w, room.y)
+      && contains(room.x + room.w, room.y + room.h) && contains(room.x, room.y + room.h);
+    if (inside) roomIds.push(room.id);
+  }
+  const itemIds = [];
+  for (const item of state.project.items) {
+    if (contains(item.x, item.y)) itemIds.push(item.id);
+  }
+  const total = roomIds.length + itemIds.length;
+  if (total === 0) { selectObject(null); return; }
+  if (total === 1) {
+    selectObject(roomIds.length ? { type: 'room', id: roomIds[0] } : { type: 'item', id: itemIds[0] });
     return;
   }
+  selectObject({ type: 'multi', roomIds, itemIds });
+}
 
-  if (finished.kind === 'opening') {
-    if (!finished.moved) { requestDraw(); return; }
-    const opening = state.project.openings.find((o) => o.id === finished.id);
-    if (opening) {
-      const affected = openingAffectedRooms(opening);
-      for (const roomId of new Set(affected)) {
-        const room = roomById(state.project, roomId);
-        if (room) state.rejected.set(roomId, refurnishRoom(state.project, room, state.walls, createItem));
-      }
-      refreshDerived();
-    }
-    pushHistory(finished.before);
-    afterChange();
-  }
+canvas.addEventListener('dblclick', () => {
+  if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
 });
 
 canvas.addEventListener('wheel', (event) => {
@@ -624,22 +1217,22 @@ canvas.addEventListener('wheel', (event) => {
 
 function zoomAt(screen, factor) {
   const world = screenToWorld(screen.x, screen.y);
-  state.view.scale = Math.min(0.6, Math.max(0.008, state.view.scale * factor));
-  state.view.panX = screen.x - world.x * state.view.scale;
-  state.view.panY = screen.y - world.y * state.view.scale;
+  state.view.scale = Math.min(0.6, Math.max(0.004, state.view.scale * factor));
+  const projected = worldToScreen(world.x, world.y);
+  state.view.panX += screen.x - projected.x;
+  state.view.panY += screen.y - projected.y;
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }
 
 function scaleLabel() {
-  // 1 мм модели = scale px; масштаб ~ 1:(3.78/scale) при 96 dpi.
   const denominator = Math.round(96 / 25.4 / state.view.scale);
   return `≈ 1:${denominator}`;
 }
 
 function updateHoverAndGhost(world) {
-  if (state.mode.kind === 'place-room') {
-    const def = roomType(state.mode.type);
+  if (state.tool?.kind === 'place-room') {
+    const def = roomType(state.tool.type);
     let x = world.x - def.w / 2;
     let y = world.y - def.h / 2;
     const parentId = determineParent(state.project, { x, y, w: def.w, h: def.h }, null);
@@ -656,11 +1249,11 @@ function updateHoverAndGhost(world) {
     requestDraw();
     return;
   }
-  if (state.mode.kind === 'place-opening') {
+  if (state.tool?.kind === 'place-opening') {
     const wall = nearestWall(world);
     state.ghostOpening = null;
     if (wall) {
-      const width = state.mode.openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
+      const width = state.tool.openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
       const along = wall.orient === 'h' ? world.x : world.y;
       const lo = wall.from + width / 2;
       const hi = wall.to - width / 2;
@@ -676,9 +1269,34 @@ function updateHoverAndGhost(world) {
     requestDraw();
     return;
   }
-  // Подсветка стены под курсором.
-  const wall = hitItem(world) || hitOpening(world) ? null : hitWall(world);
-  const nextHover = wall ? { type: 'wall', key: wall.key, from: wall.from } : null;
+  if (state.draft) {
+    state.draft.cursor = { x: Math.round(world.x / 100) * 100, y: Math.round(world.y / 100) * 100 };
+    requestDraw();
+    return;
+  }
+  if (state.tool) return;
+
+  // Подсветка под курсором: мебель, проёмы, стены, комнаты, объекты участка.
+  let nextHover = null;
+  const item = hitItem(world);
+  if (item) nextHover = { type: 'item', id: item.id };
+  if (!nextHover) {
+    const opening = hitOpening(world);
+    if (opening) nextHover = { type: 'opening', id: opening.id };
+  }
+  if (!nextHover) {
+    const wall = hitWall(world);
+    if (wall) nextHover = { type: 'wall', key: wall.key, from: wall.from };
+  }
+  if (!nextHover) {
+    const room = hitRoom(world);
+    if (room) nextHover = { type: 'room', id: room.id };
+  }
+  if (!nextHover && state.modeName === 'site') {
+    const site = hitSiteObject(world);
+    if (site) nextHover = { type: 'site-obj', kind: site.kind, id: site.id };
+  }
+  canvas.style.cursor = nextHover ? 'pointer' : 'crosshair';
   if (JSON.stringify(nextHover) !== JSON.stringify(state.hover)) {
     state.hover = nextHover;
     requestDraw();
@@ -704,7 +1322,6 @@ function applyResize(room, dragState, world) {
 function resizeVerdict(room) {
   const verdict = validateRoomPlacement(state.project, room, room.id);
   if (!verdict.ok) return verdict;
-  // Вложенные помещения должны остаться внутри.
   for (const child of state.project.rooms) {
     if (child.parentId !== room.id) continue;
     const childVerdict = validateRoomPlacement(state.project, child, child.id);
@@ -716,6 +1333,15 @@ function resizeVerdict(room) {
 // ---------------------------------------------------------------- Клавиатура
 
 window.addEventListener('keydown', (event) => {
+  if (event.code === 'Space') {
+    const tag = event.target.tagName;
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      spaceDown = true;
+      canvas.style.cursor = 'grab';
+      event.preventDefault();
+    }
+    return;
+  }
   const tag = event.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
@@ -724,10 +1350,10 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
-  if (event.key === 'Escape') { cancelMode(); selectObject(null); return; }
+  if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
+  if (event.key === 'Escape') { cancelTool(); selectObject(null); return; }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
   if (event.code === 'KeyR') { rotateSelectedItem(); return; }
-  // Стрелки: сдвиг выбранной комнаты или мебели.
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
   if (nudge && state.selection) {
     event.preventDefault();
@@ -739,7 +1365,7 @@ window.addEventListener('keydown', (event) => {
       const before = snapshot();
       moveRoomBy(state.project, room.id, dx, dy);
       const verdict = validateRoomPlacement(state.project, room, room.id);
-      if (!verdict.ok) { state.project = deserializeProject(before); toast(verdict.reason); refreshDerived(); requestDraw(); return; }
+      if (!verdict.ok) { restoreFrom(before); toast(verdict.reason); return; }
       reconcileOpenings();
       refreshDerived();
       pushHistory(before);
@@ -747,33 +1373,55 @@ window.addEventListener('keydown', (event) => {
     } else if (state.selection.type === 'item') {
       const item = state.project.items.find((i) => i.id === state.selection.id);
       if (!item) return;
-      const before = snapshot();
-      item.x += dx; item.y += dy;
-      const verdict = validateItemRect(item, itemRect(item));
-      if (!verdict.ok) { state.project = deserializeProject(before); toast(verdict.reason); requestDraw(); return; }
-      item.auto = false;
-      pushHistory(before);
-      afterChange();
+      mutate(() => { item.x += dx; item.y += dy; });
     }
   }
 });
 
-// ---------------------------------------------------------------- Панель библиотеки
+window.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') { spaceDown = false; canvas.style.cursor = 'crosshair'; }
+});
+
+// ---------------------------------------------------------------- Левая панель
 
 function renderLibrary() {
+  // План: карточки помещений.
   refs.roomCards.innerHTML = '';
   for (const def of ROOM_TYPES) {
     const card = document.createElement('button');
     card.className = 'room-card';
-    if (state.mode.kind === 'place-room' && state.mode.type === def.type) card.classList.add('active');
+    if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
     card.innerHTML = `
       <span class="room-card-name">${def.title}</span>
       <span class="room-card-size">${(def.w / 1000).toFixed(1)} × ${(def.h / 1000).toFixed(1)} м</span>`;
     card.addEventListener('click', () => {
-      if (state.mode.kind === 'place-room' && state.mode.type === def.type) cancelMode();
+      if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
       else startPlaceRoom(def.type);
     });
     refs.roomCards.appendChild(card);
+  }
+
+  // Участок: инструменты.
+  const site = state.project?.site;
+  const tools = [
+    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'загружена' : 'PDF / JPG / PNG', action: () => refs.underlayInput.click() },
+    { id: 'boundary', title: site?.boundary ? 'Граница участка ↻' : 'Граница участка', note: site?.boundary ? `${polygonAreaM2(site.boundary).toFixed(0)} м²` : 'полигон по точкам', action: () => startDraw('boundary') },
+    { id: 'redline', title: site?.redLine ? 'Красная линия ↻' : 'Красная линия', note: 'линия застройки улицы', action: () => startDraw('redline') },
+    { id: 'road', title: 'Дорога', note: 'ось + ширина', action: () => startDraw('road') },
+    { id: 'entry', title: 'Въезд', note: 'точка на границе', action: () => setTool({ kind: 'entry' }, 'Кликните на границе участка, где въезд · Esc — отмена') },
+    { id: 'neighbor', title: 'Соседний дом', note: 'зона 6 м вокруг', action: () => setTool({ kind: 'neighbor' }, 'Кликните, где стоит соседний дом · Esc — отмена') },
+    { id: 'north', title: 'Север по 2 точкам', note: `сейчас ${Math.round(site?.north || 0)}°`, action: () => setTool({ kind: 'north', points: [] }, 'Кликните первую точку стрелки на север') },
+  ];
+  refs.siteTools.innerHTML = '';
+  for (const tool of tools) {
+    const btn = document.createElement('button');
+    btn.className = 'room-card';
+    const active = (state.tool?.kind === 'draw' && state.tool.target === tool.id)
+      || state.tool?.kind === tool.id || (tool.id === 'north' && state.tool?.kind === 'north');
+    if (active) btn.classList.add('active');
+    btn.innerHTML = `<span class="room-card-name">${tool.title}</span><span class="room-card-size">${tool.note}</span>`;
+    btn.addEventListener('click', () => { if (active) cancelTool(); else tool.action(); });
+    refs.siteTools.appendChild(btn);
   }
 }
 
@@ -782,11 +1430,17 @@ function renderLibrary() {
 function renderProps() {
   const sel = state.selection;
   const panel = refs.props;
-  if (!sel) { renderProjectProps(panel); return; }
+  if (!sel) {
+    if (state.modeName === 'site') renderSiteSettings(panel);
+    else renderProjectProps(panel);
+    return;
+  }
   if (sel.type === 'room') { renderRoomProps(panel, roomById(state.project, sel.id)); return; }
   if (sel.type === 'wall') { renderWallProps(panel, findWall(sel.key, sel.from)); return; }
   if (sel.type === 'opening') { renderOpeningProps(panel, state.project.openings.find((o) => o.id === sel.id)); return; }
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
+  if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
+  if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
   renderProjectProps(panel);
 }
 
@@ -795,7 +1449,7 @@ function renderProjectProps(panel) {
   const list = rooms.map((r) => {
     const area = roomNetAreaM2(state.project, r).toFixed(1);
     const nested = r.parentId ? ' ↳ ' : '';
-    return `<li><button class="link" data-room="${r.id}">${nested}${r.name}</button><span>${area} м²</span></li>`;
+    return `<li><button class="link" data-room="${r.id}">${nested}${escapeHtml(r.name)}</button><span>${area} м²</span></li>`;
   }).join('');
   panel.innerHTML = `
     <h2>Проект</h2>
@@ -804,11 +1458,11 @@ function renderProjectProps(panel) {
       <div class="prop-row"><span>Общая площадь</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
     </div>
     ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
-    <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой.</p>`}
+    <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
     <h3>Управление</h3>
     <ul class="hotkeys">
-      <li><b>Колесо</b> — масштаб, <b>пустое место</b> — панорама</li>
-      <li><b>Перетаскивание</b> — перемещение комнат и мебели</li>
+      <li><b>ЛКМ</b> — выделение, рамка по пустому месту</li>
+      <li><b>ПКМ / средняя / пробел</b> — панорама, <b>колесо</b> — масштаб</li>
       <li><b>Del</b> — удалить, <b>R</b> — повернуть мебель</li>
       <li><b>Ctrl+Z / Ctrl+Shift+Z</b> — отмена / повтор</li>
       <li><b>Стрелки</b> — сдвиг на 50 мм (Shift — 500)</li>
@@ -823,18 +1477,31 @@ function renderRoomProps(panel, room) {
   const def = roomType(room.type);
   const parent = room.parentId ? roomById(state.project, room.parentId) : null;
   const rejected = state.rejected.get(room.id) || [];
-  const checklistHtml = (def?.furniture || []).map((entry) => {
+  const insideCount = itemsInRoom(state.project, room).length;
+
+  const furnitureRows = (def?.furniture || []).map((entry) => {
     const fd = furnitureDef(entry.kind);
-    const checked = room.checklist?.[entry.kind] ? 'checked' : '';
-    return `<label class="check-row"><input type="checkbox" data-kind="${entry.kind}" ${checked}>
-      <span>${fd.title}</span><em>${fd.w}×${fd.h}</em></label>`;
+    return `<div class="add-row">
+      <span>${fd.title}</span><em>${fd.w}×${fd.h}</em>
+      <button class="add-btn" data-add="${entry.kind}" title="Добавить в центр комнаты">+</button>
+    </div>`;
   }).join('');
+
+  const areaControl = parent ? `
+    <h3>Площадь</h3>
+    <div class="prop-block">
+      <label class="check-row"><input type="radio" name="areaFrom" id="areaFromParent" ${room.takesArea !== false ? 'checked' : ''}>
+        <span>«${escapeHtml(room.name)}» отнимает у «${escapeHtml(parent.name)}»</span></label>
+      <label class="check-row"><input type="radio" name="areaFrom" id="areaFromSelf" ${room.takesArea === false ? 'checked' : ''}>
+        <span>«${escapeHtml(parent.name)}» показывается полной</span></label>
+    </div>` : '';
+
   const rejectedHtml = rejected.length
     ? `<div class="rejected"><h4>Не удалось расставить</h4>${rejected.map((r) => `<p>⚠ ${r.reason}</p>`).join('')}</div>`
     : '';
 
   panel.innerHTML = `
-    <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${parent.name}»</span>` : ''}</h2>
+    <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${escapeHtml(parent.name)}»</span>` : ''}</h2>
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
@@ -843,11 +1510,12 @@ function renderRoomProps(panel, room) {
       </div>
       <div class="prop-row"><span>Площадь (чистая)</span><strong>${roomNetAreaM2(state.project, room).toFixed(2)} м²</strong></div>
     </div>
-    <h3>Мебель</h3>
-    <div class="prop-block checklist">${checklistHtml || '<p class="empty-hint">Для этого типа нет набора мебели</p>'}</div>
+    ${areaControl}
+    <h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
+    <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>
     ${rejectedHtml}
     <div class="prop-actions">
-      <button id="refurnishBtn">Расставить заново</button>
+      <button id="arrangeBtn">Расставить мебель автоматически</button>
       <button id="addDoorBtn">+ Дверь</button>
       <button id="addWindowBtn">+ Окно</button>
       <button id="deleteRoomBtn" class="danger">Удалить комнату</button>
@@ -872,28 +1540,29 @@ function renderRoomProps(panel, room) {
     }
     reconcileOpenings();
     refreshDerived();
-    state.rejected.set(room.id, refurnishRoom(state.project, room, state.walls, createItem));
-    refreshDerived();
     pushHistory(before);
     afterChange();
   };
   panel.querySelector('#roomW').addEventListener('change', applySize);
   panel.querySelector('#roomH').addEventListener('change', applySize);
-  panel.querySelectorAll('input[data-kind]').forEach((box) => {
-    box.addEventListener('change', () => {
-      mutate(() => { room.checklist[box.dataset.kind] = box.checked; }, { refurnish: [room.id] });
-    });
+  panel.querySelectorAll('[data-add]').forEach((btn) => {
+    btn.addEventListener('click', () => addFurniture(btn.dataset.add, room));
   });
-  panel.querySelector('#refurnishBtn').addEventListener('click', () => {
-    mutate(() => {
-      for (const item of state.project.items) if (item.roomId === room.id) item.auto = true;
-    }, { refurnish: [room.id] });
-    const rejected = state.rejected.get(room.id) || [];
-    toast(rejected.length ? 'Расставлено, но есть замечания — смотрите панель' : 'Мебель расставлена заново');
+  panel.querySelector('#arrangeBtn').addEventListener('click', () => {
+    mutate(() => {}, { arrange: [room.id] });
+    const problems = state.rejected.get(room.id) || [];
+    toast(problems.length ? 'Расставлено, но есть замечания — смотрите панель' : 'Мебель расставлена');
+    selectObject({ type: 'room', id: room.id });
   });
   panel.querySelector('#addDoorBtn').addEventListener('click', () => startPlaceOpening('door'));
   panel.querySelector('#addWindowBtn').addEventListener('click', () => startPlaceOpening('window'));
   panel.querySelector('#deleteRoomBtn').addEventListener('click', deleteSelection);
+  const fromParent = panel.querySelector('#areaFromParent');
+  const fromSelf = panel.querySelector('#areaFromSelf');
+  if (fromParent && fromSelf) {
+    fromParent.addEventListener('change', () => mutate(() => { room.takesArea = true; }));
+    fromSelf.addEventListener('change', () => mutate(() => { room.takesArea = false; }));
+  }
 }
 
 function renderWallProps(panel, wall) {
@@ -943,18 +1612,13 @@ function renderWallProps(panel, wall) {
 function changeWallThickness(wall, newT) {
   const before = snapshot();
   if (wall.kind === 'shared') {
-    // Толщина общей стены = зазор между комнатами: соседняя комната сдвигается.
     const delta = newT - wall.thickness;
     const mover = roomById(state.project, wall.rooms[1]);
-    const dx = wall.orient === 'v' ? delta : 0;
-    const dy = wall.orient === 'h' ? delta : 0;
-    moveRoomBy(state.project, mover.id, dx, dy);
+    moveRoomBy(state.project, mover.id, wall.orient === 'v' ? delta : 0, wall.orient === 'h' ? delta : 0);
     const verdict = validateRoomPlacement(state.project, mover, mover.id);
     if (!verdict.ok) {
-      state.project = deserializeProject(before);
-      refreshDerived();
+      restoreFrom(before);
       toast(`Нельзя: ${verdict.reason}`, true);
-      renderProps();
       return;
     }
   } else {
@@ -973,7 +1637,7 @@ function renderOpeningProps(panel, opening) {
   const isDoor = opening.kind === 'door';
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
-    <p class="subtitle">Стена «${room?.name}»</p>
+    <p class="subtitle">Стена «${room?.name}» · тяните за точки на торцах — ширина меняется с шагом 50 мм</p>
     <div class="prop-block">
       <label class="prop-field"><span>Ширина, мм</span>
         <input id="openW" type="number" step="50" min="400" max="3000" value="${opening.width}"></label>
@@ -990,8 +1654,7 @@ function renderOpeningProps(panel, opening) {
     </div>`;
 
   const commitOpening = (fn) => {
-    const affected = openingAffectedRooms(opening);
-    mutate(fn, { refurnish: affected });
+    mutate(fn);
     selectObject({ type: 'opening', id: opening.id });
   };
   panel.querySelector('#openW').addEventListener('change', (e) => {
@@ -1018,10 +1681,9 @@ function renderOpeningProps(panel, opening) {
 
 function renderItemProps(panel, item) {
   if (!item) { renderProjectProps(panel); return; }
-  const room = roomById(state.project, item.roomId);
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">${room ? `В «${room.name}»` : ''} · ${item.auto ? 'расставлено автоматически' : 'закреплено вручную'}</p>
+    <p class="subtitle">Свободный объект: перетаскивается куда угодно, едет вместе с комнатой, в которой стоит</p>
     <div class="prop-block">
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span><input id="itemW" type="number" step="50" min="200" value="${item.w}"></label>
@@ -1031,31 +1693,242 @@ function renderItemProps(panel, item) {
     </div>
     <div class="prop-actions">
       <button id="rotateItem">Повернуть на 90° (R)</button>
-      ${!item.auto ? '<button id="autoItem">Вернуть в авторасстановку</button>' : ''}
       <button id="deleteItem" class="danger">Удалить</button>
     </div>`;
   const applySize = () => {
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
-    const before = snapshot();
-    const old = { w: item.w, h: item.h };
-    item.w = w; item.h = h;
-    const verdict = validateItemRect(item, itemRect(item));
-    if (!verdict.ok) { item.w = old.w; item.h = old.h; toast(verdict.reason); renderProps(); return; }
-    item.auto = false;
-    pushHistory(before);
-    afterChange();
+    mutate(() => { item.w = w; item.h = h; });
   };
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
   panel.querySelector('#rotateItem').addEventListener('click', rotateSelectedItem);
   panel.querySelector('#deleteItem').addEventListener('click', deleteSelection);
-  const autoBtn = panel.querySelector('#autoItem');
-  if (autoBtn) {
-    autoBtn.addEventListener('click', () => {
-      mutate(() => { item.auto = true; }, { refurnish: [item.roomId] });
+}
+
+function renderMultiProps(panel, sel) {
+  panel.innerHTML = `
+    <h2>Выделено рамкой</h2>
+    <div class="prop-block">
+      <div class="prop-row"><span>Комнат</span><strong>${sel.roomIds.length}</strong></div>
+      <div class="prop-row"><span>Мебели</span><strong>${sel.itemIds.length}</strong></div>
+    </div>
+    <p class="empty-hint">Перетащите любой выделенный объект — группа поедет вместе. Del — удалить всё выделенное.</p>
+    <div class="prop-actions">
+      <button id="deleteMulti" class="danger">Удалить выделенное</button>
+    </div>`;
+  panel.querySelector('#deleteMulti').addEventListener('click', deleteSelection);
+}
+
+// --- Свойства участка ---
+
+function renderSiteSettings(panel) {
+  const site = state.project.site;
+  const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
+  const zone = site.boundary ? buildZonePolygon(site) : null;
+  const hours = Math.floor(site.sun.time / 60);
+  const mins = site.sun.time % 60;
+  panel.innerHTML = `
+    <h2>Участок</h2>
+    <div class="prop-block">
+      <div class="prop-row"><span>Площадь участка</span><strong>${site.boundary ? `${polygonAreaM2(site.boundary).toFixed(1)} м²` : '—'}</strong></div>
+      <div class="prop-row"><span>Зона застройки</span><strong>${zone ? `${polygonAreaM2(zone).toFixed(1)} м²` : '—'}</strong></div>
+      <label class="prop-field"><span>Север, ° по часовой (0 = вверх плана)</span>
+        <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
+    </div>
+    <h3>Отступы застройки</h3>
+    <div class="prop-block">
+      <label class="prop-field"><span>От границы участка, м</span>
+        <input id="setbackB" type="number" step="0.1" min="0" value="${(site.setbackBoundary / 1000).toFixed(1)}"></label>
+      <label class="prop-field"><span>От соседнего дома, м</span>
+        <input id="setbackN" type="number" step="0.5" min="0" value="${(site.setbackNeighbor / 1000).toFixed(1)}"></label>
+      <label class="check-row"><input type="checkbox" id="showZone" ${site.showBuildZone ? 'checked' : ''}><span>Показывать зону застройки</span></label>
+    </div>
+    <h3>Инсоляция</h3>
+    <div class="prop-block">
+      <label class="check-row"><input type="checkbox" id="sunEnabled" ${site.sun.enabled ? 'checked' : ''}><span>Показывать солнце и тени</span></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Широта</span><input id="lat" type="number" step="0.001" value="${site.location.lat}"></label>
+        <label class="prop-field"><span>Долгота</span><input id="lon" type="number" step="0.001" value="${site.location.lon}"></label>
+      </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Пояс UTC+</span><input id="tz" type="number" step="1" value="${site.location.tz}"></label>
+        <label class="prop-field"><span>Высота дома, м</span><input id="bh" type="number" step="0.5" min="2" value="${(site.buildingHeight / 1000).toFixed(1)}"></label>
+      </div>
+      <label class="prop-field"><span>Дата</span><input id="sunDate" type="date" value="${site.sun.date}"></label>
+      <label class="prop-field"><span>Время: <b id="sunTimeLabel">${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</b></span>
+        <input id="sunTime" type="range" min="0" max="1440" step="15" value="${site.sun.time}"></label>
+      <div class="prop-row"><span>Солнце</span><strong id="sunInfo">${formatSunInfo(sun)}</strong></div>
+    </div>
+    <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. В этом режиме север всегда вверх; вернитесь в «План» — камера станет прежней.</p>`;
+
+  panel.querySelector('#northDeg').addEventListener('change', (e) => {
+    mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
+    applyModeRotation();
+    requestDraw();
+  });
+  panel.querySelector('#setbackB').addEventListener('change', (e) => {
+    mutate(() => { site.setbackBoundary = Math.max(0, Number(e.target.value) || 0) * 1000; });
+  });
+  panel.querySelector('#setbackN').addEventListener('change', (e) => {
+    mutate(() => { site.setbackNeighbor = Math.max(0, Number(e.target.value) || 0) * 1000; });
+  });
+  panel.querySelector('#showZone').addEventListener('change', (e) => {
+    mutate(() => { site.showBuildZone = e.target.checked; });
+  });
+  panel.querySelector('#sunEnabled').addEventListener('change', (e) => {
+    tweak(() => { site.sun.enabled = e.target.checked; });
+  });
+  const updateSun = () => {
+    const s = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
+    const info = panel.querySelector('#sunInfo');
+    if (info) info.textContent = formatSunInfo(s);
+  };
+  for (const [id, apply] of [
+    ['lat', (v) => { site.location.lat = Number(v) || 0; }],
+    ['lon', (v) => { site.location.lon = Number(v) || 0; }],
+    ['tz', (v) => { site.location.tz = Number(v) || 0; }],
+    ['bh', (v) => { site.buildingHeight = Math.max(2000, (Number(v) || 6) * 1000); }],
+    ['sunDate', (v) => { if (/^\d{4}-\d{2}-\d{2}$/.test(v)) site.sun.date = v; }],
+  ]) {
+    panel.querySelector(`#${id}`).addEventListener('change', (e) => {
+      tweak(() => apply(e.target.value));
+      updateSun();
     });
   }
+  panel.querySelector('#sunTime').addEventListener('input', (e) => {
+    tweak(() => { site.sun.time = Number(e.target.value); });
+    const h = Math.floor(site.sun.time / 60);
+    const m = site.sun.time % 60;
+    panel.querySelector('#sunTimeLabel').textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    updateSun();
+  });
+}
+
+function renderSiteObjectProps(panel, sel) {
+  const site = state.project.site;
+  if (sel.kind === 'boundary' && site.boundary) {
+    panel.innerHTML = `
+      <h2>Граница участка</h2>
+      <div class="prop-block">
+        <div class="prop-row"><span>Площадь</span><strong>${polygonAreaM2(site.boundary).toFixed(1)} м²</strong></div>
+        <div class="prop-row"><span>Вершин</span><strong>${site.boundary.length}</strong></div>
+      </div>
+      <p class="empty-hint">Тяните белые точки-вершины, чтобы поправить контур. Красная штриховка — запретная полоса отступа.</p>
+      <div class="prop-actions">
+        <button id="redraw">Перечертить заново</button>
+        <button id="del" class="danger">Удалить границу</button>
+      </div>`;
+    panel.querySelector('#redraw').addEventListener('click', () => startDraw('boundary'));
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    return;
+  }
+  if (sel.kind === 'redline' && site.redLine) {
+    panel.innerHTML = `
+      <h2>Красная линия</h2>
+      <p class="empty-hint">Линия регулирования застройки со стороны улицы. Тяните вершины, чтобы поправить.</p>
+      <div class="prop-actions">
+        <button id="redraw">Перечертить</button>
+        <button id="del" class="danger">Удалить</button>
+      </div>`;
+    panel.querySelector('#redraw').addEventListener('click', () => startDraw('redline'));
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    return;
+  }
+  if (sel.kind === 'road') {
+    const road = site.roads.find((r) => r.id === sel.id);
+    if (!road) { renderSiteSettings(panel); return; }
+    panel.innerHTML = `
+      <h2>Дорога</h2>
+      <div class="prop-block">
+        <label class="prop-field"><span>Ширина, м</span>
+          <input id="roadW" type="number" step="0.5" min="1" value="${(road.width / 1000).toFixed(1)}"></label>
+      </div>
+      <div class="prop-actions"><button id="del" class="danger">Удалить дорогу</button></div>`;
+    panel.querySelector('#roadW').addEventListener('change', (e) => {
+      mutate(() => { road.width = Math.max(1000, (Number(e.target.value) || 3.5) * 1000); });
+      selectObject(sel);
+    });
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    return;
+  }
+  if (sel.kind === 'neighbor') {
+    const n = site.neighbors.find((x) => x.id === sel.id);
+    if (!n) { renderSiteSettings(panel); return; }
+    panel.innerHTML = `
+      <h2>Соседний дом</h2>
+      <div class="prop-block">
+        <div class="prop-grid">
+          <label class="prop-field"><span>Ширина, м</span><input id="nw" type="number" step="0.5" min="2" value="${(n.w / 1000).toFixed(1)}"></label>
+          <label class="prop-field"><span>Глубина, м</span><input id="nh" type="number" step="0.5" min="2" value="${(n.h / 1000).toFixed(1)}"></label>
+        </div>
+        <label class="prop-field"><span>Высота (для теней), м</span><input id="nht" type="number" step="0.5" min="2" value="${((n.height || 6000) / 1000).toFixed(1)}"></label>
+      </div>
+      <p class="empty-hint">Вокруг соседнего дома держится отступ ${(site.setbackNeighbor / 1000).toLocaleString('ru-RU')} м — зона заштрихована красным.</p>
+      <div class="prop-actions"><button id="del" class="danger">Удалить</button></div>`;
+    const apply = () => {
+      mutate(() => {
+        n.w = Math.max(2000, (Number(panel.querySelector('#nw').value) || 8) * 1000);
+        n.h = Math.max(2000, (Number(panel.querySelector('#nh').value) || 8) * 1000);
+        n.height = Math.max(2000, (Number(panel.querySelector('#nht').value) || 6) * 1000);
+      });
+      selectObject(sel);
+    };
+    panel.querySelector('#nw').addEventListener('change', apply);
+    panel.querySelector('#nh').addEventListener('change', apply);
+    panel.querySelector('#nht').addEventListener('change', apply);
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    return;
+  }
+  if (sel.kind === 'entry' && site.entry) {
+    panel.innerHTML = `
+      <h2>Въезд</h2>
+      <p class="empty-hint">Перетащите стрелку вдоль границы, чтобы передвинуть въезд.</p>
+      <div class="prop-actions"><button id="del" class="danger">Удалить въезд</button></div>`;
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    return;
+  }
+  if (sel.kind === 'underlay' && site.underlay) {
+    const u = site.underlay;
+    const cal = state.calibration;
+    panel.innerHTML = `
+      <h2>Топосъёмка</h2>
+      <div class="prop-block">
+        <label class="prop-field"><span>Прозрачность</span>
+          <input id="uOpacity" type="range" min="0.1" max="1" step="0.05" value="${u.opacity}"></label>
+        <label class="check-row"><input type="checkbox" id="uLocked" ${u.locked ? 'checked' : ''}><span>Закрепить (не двигать мышью)</span></label>
+        <div class="prop-row"><span>Масштаб</span><strong>${(u.mmPerPx).toFixed(1)} мм/пикс</strong></div>
+      </div>
+      ${cal ? `
+      <div class="prop-block">
+        <label class="prop-field"><span>Реальная длина отрезка, м</span>
+          <input id="calDist" type="number" step="0.1" min="0.1" placeholder="например 20"></label>
+        <button id="calApply" class="primary-inline">Применить масштаб</button>
+      </div>` : ''}
+      <div class="prop-actions">
+        <button id="calibrate">Масштаб по отрезку</button>
+        <button id="del" class="danger">Удалить подложку</button>
+      </div>
+      <p class="empty-hint">«Масштаб по отрезку»: кликните две точки на топосъёмке с известным расстоянием (например, сторону участка) и введите её длину.</p>`;
+    panel.querySelector('#uOpacity').addEventListener('input', (e) => {
+      tweak(() => { u.opacity = Number(e.target.value); });
+    });
+    panel.querySelector('#uLocked').addEventListener('change', (e) => {
+      mutate(() => { u.locked = e.target.checked; });
+      selectObject(sel);
+    });
+    panel.querySelector('#calibrate').addEventListener('click', () => {
+      setTool({ kind: 'calibrate', points: [] }, 'Кликните первую точку отрезка с известной длиной');
+    });
+    panel.querySelector('#del').addEventListener('click', deleteSelection);
+    if (cal) {
+      panel.querySelector('#calApply').addEventListener('click', () => {
+        applyCalibration(Number(panel.querySelector('#calDist').value));
+      });
+    }
+    return;
+  }
+  renderSiteSettings(panel);
 }
 
 function escapeHtml(text) {
@@ -1085,33 +1958,44 @@ function updateConnectivity() {
   }
 }
 
-function setHint(text) {
-  refs.hint.textContent = text;
-  refs.hint.hidden = !text;
-}
-
 // ---------------------------------------------------------------- Вид
 
 function fitView() {
-  const rooms = state.project.rooms;
-  if (!rooms.length) {
-    state.view = { scale: 0.08, panX: 120, panY: 120 };
+  const site = state.project.site;
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  const extend = (x, y) => {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  };
+  for (const room of state.project.rooms) {
+    extend(room.x - 400, room.y - 400);
+    extend(room.x + room.w + 400, room.y + room.h + 400);
+  }
+  if (state.modeName === 'site' && site) {
+    for (const p of site.boundary || []) extend(p.x, p.y);
+    for (const road of site.roads || []) for (const p of road.points) extend(p.x, p.y);
+    for (const n of site.neighbors || []) { extend(n.x - n.w / 2, n.y - n.h / 2); extend(n.x + n.w / 2, n.y + n.h / 2); }
+    const u = site.underlay;
+    if (u) { extend(u.x, u.y); extend(u.x + u.widthPx * u.mmPerPx, u.y + u.heightPx * u.mmPerPx); }
+  }
+  if (minX === Infinity) {
+    state.view.scale = state.modeName === 'site' ? 0.02 : 0.08;
+    state.view.panX = canvas.clientWidth / 2;
+    state.view.panY = canvas.clientHeight / 2;
     requestDraw();
     return;
   }
-  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
-  for (const room of rooms) {
-    minX = Math.min(minX, room.x - 400);
-    minY = Math.min(minY, room.y - 400);
-    maxX = Math.max(maxX, room.x + room.w + 400);
-    maxY = Math.max(maxY, room.y + room.h + 400);
-  }
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
-  const scale = Math.min(0.6, Math.max(0.008, Math.min(width / (maxX - minX), height / (maxY - minY)) * 0.92));
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  // Учитываем поворот: вписываем диагональ.
+  const span = Math.max(maxX - minX, maxY - minY) * (state.view.rotation ? 1.2 : 1);
+  const scale = Math.min(0.6, Math.max(0.004, Math.min(width / (state.view.rotation ? span : maxX - minX), height / (state.view.rotation ? span : maxY - minY)) * 0.9));
   state.view.scale = scale;
-  state.view.panX = (width - (maxX + minX) * scale) / 2;
-  state.view.panY = (height - (maxY + minY) * scale) / 2;
+  const projected = projectPoint({ ...state.view, panX: 0, panY: 0 }, cx, cy);
+  state.view.panX = width / 2 - projected.x;
+  state.view.panY = height / 2 - projected.y;
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }
@@ -1130,7 +2014,7 @@ function download(filename, text, mime) {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   } catch {
-    toast('Скачивание недоступно в этом окружении — используйте «Копировать JSON»', true);
+    toast('Скачивание недоступно в этом окружении — используйте «Копировать»', true);
   }
 }
 
@@ -1168,17 +2052,12 @@ function openProjectFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const project = deserializeProject(String(reader.result));
       const before = snapshot();
-      state.project = project;
-      state.selection = null;
-      state.rejected.clear();
-      refreshDerived();
+      restoreFrom(String(reader.result));
       pushHistory(before);
-      afterChange();
       fitView();
-      refs.projectName.value = project.name;
-      toast(`Открыт проект «${project.name}»`);
+      refs.projectName.value = state.project.name;
+      toast(`Открыт проект «${state.project.name}»`);
     } catch (error) {
       toast(`Не удалось открыть: ${error.message}`, true);
     }
@@ -1190,6 +2069,7 @@ function openProjectFile(file) {
 
 function buildSample() {
   const project = createProject('Дом · 1 этаж');
+  const site = ensureSite(project);
   const bedroom = createRoom('bedroom', 0, 0, 5000, 4000);
   bedroom.name = 'Спальня';
   const bath = createRoom('bathroom', 2900, 1900, 2000, 2000);
@@ -1200,19 +2080,33 @@ function buildSample() {
   const hall = createRoom('hall', 0, 4100, 3000, 2400);
   project.rooms.push(bedroom, bath, living, kitchen, hall);
 
-  project.openings.push(createOpening('door', hall.id, 2, 1500, 900)); // входная
-  project.openings.push(createOpening('door', bedroom.id, 2, 1200, 800)); // спальня ↔ холл
-  project.openings.push(createOpening('door', bedroom.id, 1, 700, 800)); // спальня ↔ гостиная
-  project.openings.push(createOpening('door', bath.id, 0, 1000, 700)); // санузел ↔ спальня
-  project.openings.push(createOpening('door', living.id, 2, 1800, 900)); // гостиная ↔ кухня
+  project.openings.push(createOpening('door', hall.id, 2, 1500, 900));
+  project.openings.push(createOpening('door', bedroom.id, 2, 1200, 800));
+  project.openings.push(createOpening('door', bedroom.id, 1, 700, 800));
+  project.openings.push(createOpening('door', bath.id, 0, 1000, 700));
+  project.openings.push(createOpening('door', living.id, 2, 1800, 900));
   project.openings.push(createOpening('window', bedroom.id, 0, 2500, 1500));
   project.openings.push(createOpening('window', living.id, 0, 2500, 1800));
   project.openings.push(createOpening('window', kitchen.id, 1, 1500, 1200));
 
-  const walls = deriveWalls(project);
+  // Участок вокруг дома: граница, въезд, дорога, север и сосед.
+  site.boundary = [
+    { x: -5000, y: -6000 }, { x: 16000, y: -6000 },
+    { x: 16000, y: 12000 }, { x: -5000, y: 12000 },
+  ];
+  site.entry = { x: 5000, y: 12000, dir: -90 };
+  site.roads.push({ id: 'road-sample', points: [{ x: 5000, y: 12000 }, { x: 5000, y: 16000 }], width: 3500 });
+  site.neighbors.push({ id: 'nbr-sample', x: 24000, y: 2000, w: 8000, h: 9000, height: 6500 });
+  site.north = 20;
+  site.sun.enabled = true;
+
   const rejected = new Map();
+  const walls = deriveWalls(project);
   for (const room of project.rooms) {
-    rejected.set(room.id, refurnishRoom(project, room, walls, createItem));
+    for (const item of defaultItemsFor(room)) project.items.push(item);
+  }
+  for (const room of project.rooms) {
+    rejected.set(room.id, arrangeRoom(project, room, walls));
   }
   return { project, rejected };
 }
@@ -1224,6 +2118,7 @@ function loadSample() {
   state.rejected = rejected;
   state.selection = null;
   refreshDerived();
+  applyModeRotation();
   if (before) pushHistory(before);
   refs.projectName.value = project.name;
   afterChange();
@@ -1233,6 +2128,7 @@ function loadSample() {
 function newProject() {
   const before = snapshot();
   state.project = createProject();
+  ensureSite(state.project);
   state.selection = null;
   state.rejected.clear();
   refreshDerived();
@@ -1245,6 +2141,8 @@ function newProject() {
 
 // ---------------------------------------------------------------- Шапка
 
+refs.modePlan.addEventListener('click', () => setEditorMode('plan'));
+refs.modeSite.addEventListener('click', () => setEditorMode('site'));
 el('undoBtn').addEventListener('click', undo);
 el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
@@ -1256,6 +2154,10 @@ el('openBtn').addEventListener('click', () => refs.fileInput.click());
 refs.fileInput.addEventListener('change', () => {
   if (refs.fileInput.files?.[0]) openProjectFile(refs.fileInput.files[0]);
   refs.fileInput.value = '';
+});
+refs.underlayInput.addEventListener('change', () => {
+  if (refs.underlayInput.files?.[0]) loadUnderlayFile(refs.underlayInput.files[0]);
+  refs.underlayInput.value = '';
 });
 el('saveBtn').addEventListener('click', () => handleExport('project'));
 el('exportBtn').addEventListener('click', (event) => {
@@ -1287,34 +2189,30 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   } catch { /* нет сохранения */ }
   if (restored && restored.rooms.length) {
     state.project = restored;
-    state.selection = null;
-    refreshDerived();
-    // Повторная меблировка не нужна — мебель в файле.
-    refs.projectName.value = state.project.name;
-    updateConnectivity();
-    renderLibrary();
-    renderProps();
-    requestAnimationFrame(fitView);
+    ensureSite(state.project);
   } else {
-    state.project = createProject();
     const { project, rejected } = buildSample();
     state.project = project;
     state.rejected = rejected;
-    refreshDerived();
-    refs.projectName.value = project.name;
-    updateConnectivity();
-    renderLibrary();
-    renderProps();
-    requestAnimationFrame(fitView);
   }
+  refreshDerived();
+  applyModeRotation();
+  syncUnderlayImage();
+  refs.projectName.value = state.project.name;
+  updateConnectivity();
+  renderLibrary();
+  renderProps();
   refs.statusScale.textContent = scaleLabel();
+  requestAnimationFrame(fitView);
   requestDraw();
 })();
 
-// Отладочный доступ для автотестов (браузерный smoke-тест читает состояние).
+// Отладочный доступ для автотестов.
 window.__kepler = {
   state,
   worldToScreen,
+  screenToWorld,
   fitView,
   loadSample,
+  setEditorMode,
 };

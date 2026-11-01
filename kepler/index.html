@@ -11,6 +11,10 @@
     <div class="app">
       <header class="topbar">
         <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+        <div class="mode-tabs" role="tablist">
+          <button id="modePlanBtn" class="tab active" role="tab">План</button>
+          <button id="modeSiteBtn" class="tab" role="tab">Участок</button>
+        </div>
         <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
         <div class="top-actions">
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
@@ -37,9 +41,11 @@
 
       <main class="workspace">
         <aside class="library">
-          <h2>Помещения</h2>
-          <p class="hint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
+          <h2 id="libraryTitle">Помещения</h2>
+          <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
           <div class="room-cards" id="roomCards"></div>
+          <div class="room-cards" id="siteTools" hidden></div>
+          <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
         </aside>
 
         <section class="canvas-wrap">

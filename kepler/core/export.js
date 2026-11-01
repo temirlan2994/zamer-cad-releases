@@ -11,6 +11,7 @@ import { buildDxf, buildRevitDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLink, doorSymbol, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
+import { buildZonePolygon, polygonAreaM2 } from './site.js';
 
 export function buildStructuredExport(project) {
   const walls = deriveWalls(project);
@@ -60,15 +61,24 @@ export function buildStructuredExport(project) {
     };
   });
 
+  // Мебель свободна: комната определяется по фактическому положению
+  // (сначала вложенные, затем родительские).
+  const containingRoom = (item) => {
+    const nested = project.rooms.filter((r) => r.parentId);
+    const top = project.rooms.filter((r) => !r.parentId);
+    for (const room of [...nested, ...top]) {
+      if (item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) return room.id;
+    }
+    return null;
+  };
   const furniture = project.items.map((item) => ({
     id: item.id,
     kind: item.kind,
     title: itemTitle(item.kind),
-    room: item.roomId,
+    room: containingRoom(item),
     center: { x: item.x, y: item.y },
     size: { w: item.w, h: item.h },
     rotation_deg: item.rotation || 0,
-    placed_automatically: Boolean(item.auto),
   }));
 
   const doors = [];
@@ -91,6 +101,23 @@ export function buildStructuredExport(project) {
       has_entrance: connectivity.hasEntrance,
       unreachable_rooms: connectivity.unreachable,
     },
+    site: buildSiteExport(project.site),
+  };
+}
+
+function buildSiteExport(site) {
+  if (!site || !site.boundary) return null;
+  return {
+    north_deg: site.north,
+    location: site.location,
+    boundary: site.boundary,
+    boundary_area_m2: Number(polygonAreaM2(site.boundary).toFixed(2)),
+    build_zone: buildZonePolygon(site),
+    setbacks: { boundary: site.setbackBoundary, neighbor: site.setbackNeighbor },
+    red_line: site.redLine || null,
+    entry: site.entry || null,
+    roads: site.roads || [],
+    neighbor_houses: site.neighbors || [],
   };
 }
 

@@ -13,6 +13,7 @@
   --text: #18202b;
   --accent: #1f75ff;
   --accent-2: #1db4a8;
+  --hover: #1a3f9e;
   --danger: #e14b4b;
   --warn-bg: #fff4e0;
   --warn-text: #8a5a00;
@@ -44,6 +45,7 @@
     --text: #eef4fb;
     --accent: #2da2ff;
     --accent-2: #21d0bc;
+    --hover: #6f9eff;
     --danger: #ff6b6b;
     --warn-bg: #3a2d10;
     --warn-text: #ffd27d;
@@ -76,6 +78,7 @@
   --text: #eef4fb;
   --accent: #2da2ff;
   --accent-2: #21d0bc;
+  --hover: #6f9eff;
   --danger: #ff6b6b;
   --warn-bg: #3a2d10;
   --warn-text: #ffd27d;
@@ -154,6 +157,27 @@ body {
 }
 
 .top-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+.mode-tabs {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.mode-tabs .tab {
+  border: 0;
+  background: transparent;
+  padding: 5px 14px;
+  border-radius: 7px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.mode-tabs .tab.active {
+  background: var(--accent);
+  color: #fff;
+}
 
 button {
   font: inherit;
@@ -346,6 +370,47 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .check-row input { accent-color: var(--accent); }
 .check-row span { flex: 1; }
 .check-row em { font-style: normal; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.add-list { gap: 2px; }
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px;
+  border-radius: 6px;
+}
+.add-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.add-row span { flex: 1; }
+.add-row em { font-style: normal; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.add-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.add-btn:hover { background: var(--accent); color: #fff; }
+
+.count-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-left: 6px;
+}
+
+.primary-inline {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+input[type="range"] { accent-color: var(--accent); width: 100%; }
 
 .rejected {
   margin-top: 10px;

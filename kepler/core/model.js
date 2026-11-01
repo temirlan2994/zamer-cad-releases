@@ -1,7 +1,7 @@
 // Модель проекта Kepler Plan: создание, сериализация, идентификаторы.
 // Чистый модуль без DOM. Все размеры в миллиметрах, ось Y вниз.
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, defaultChecklist, roomType } from './catalog.js';
+import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
 
 export const SCHEMA = 'kepler-plan/1';
 
@@ -38,7 +38,6 @@ export function createRoom(type, x, y, w, h) {
     w: w || (def ? def.w : 3000),
     h: h || (def ? def.h : 3000),
     parentId: null, // вложенное помещение (санузел внутри спальни)
-    checklist: defaultChecklist(type),
   };
 }
 
@@ -58,8 +57,10 @@ export function createOpening(kind, roomId, side, offset, width) {
   };
 }
 
-export function createItem(kind, roomId, x, y, w, h, rotation = 0, auto = true) {
-  return { id: makeId('item'), kind, roomId, x, y, w, h, rotation, auto };
+// Мебель — свободный объект: ни к какой комнате не привязана, двигается куда
+// угодно. При перемещении комнаты едет всё, что фактически стоит внутри неё.
+export function createItem(kind, x, y, w, h, rotation = 0) {
+  return { id: makeId('item'), kind, x, y, w, h, rotation };
 }
 
 export function cloneProject(project) {
@@ -95,15 +96,17 @@ export function roomOpenings(project, roomId) {
   return project.openings.filter((o) => o.roomId === roomId);
 }
 
-export function roomItems(project, roomId) {
-  return project.items.filter((i) => i.roomId === roomId);
-}
-
 export function removeRoom(project, roomId) {
   const doomed = new Set([roomId]);
   // Вложенные помещения удаляются вместе с родителем.
   for (const r of project.rooms) if (r.parentId === roomId) doomed.add(r.id);
+  const rects = project.rooms
+    .filter((r) => doomed.has(r.id))
+    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
   project.rooms = project.rooms.filter((r) => !doomed.has(r.id));
   project.openings = project.openings.filter((o) => !doomed.has(o.roomId));
-  project.items = project.items.filter((i) => !doomed.has(i.roomId));
+  // Мебель, стоявшая внутри удалённых помещений, удаляется вместе с ними.
+  project.items = project.items.filter((i) => !rects.some(
+    (r) => i.x >= r.x && i.x <= r.x + r.w && i.y >= r.y && i.y <= r.y + r.h,
+  ));
 }

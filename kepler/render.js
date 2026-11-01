@@ -1,11 +1,15 @@
-// Отрисовка плана Kepler Plan на canvas.
-// Геометрия рисуется в мировых координатах (мм) через transform, подписи —
-// в экранных, чтобы размер шрифта не зависел от зума.
+// Отрисовка Kepler Plan: план дома и участок.
+// Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
+// поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
 import { deriveWalls, doorSymbol, openingRect } from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { itemRect } from './core/furnish.js';
 import { roomType } from './core/catalog.js';
+import {
+  buildZonePolygon, neighborBuffers, polygonAreaM2, sunPosition,
+  shadowVector, shadowPolygon,
+} from './core/site.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -23,12 +27,33 @@ function cssTokens() {
     text: token('--text', '#18202b'),
     accent: token('--accent', '#1f75ff'),
     accent2: token('--accent-2', '#1db4a8'),
+    hover: token('--hover', '#1d4ed8'),
     danger: token('--danger', '#e14b4b'),
     wall: token('--wall-fill', '#39434f'),
     wallBearing: token('--wall-bearing', '#1d242c'),
     furniture: token('--furniture', '#5b6b7e'),
+    surface: token('--surface', '#ffffff'),
     tints,
   };
+}
+
+// Мировая точка -> экранная с учётом поворота вида.
+export function projectPoint(view, x, y) {
+  const cos = Math.cos(view.rotation || 0);
+  const sin = Math.sin(view.rotation || 0);
+  return {
+    x: (x * cos - y * sin) * view.scale + view.panX,
+    y: (x * sin + y * cos) * view.scale + view.panY,
+  };
+}
+
+// Экранная точка -> мировая.
+export function unprojectPoint(view, sx, sy) {
+  const cos = Math.cos(view.rotation || 0);
+  const sin = Math.sin(view.rotation || 0);
+  const dx = (sx - view.panX) / view.scale;
+  const dy = (sy - view.panY) / view.scale;
+  return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
 }
 
 export function createRenderer(canvas) {
@@ -43,52 +68,100 @@ export function createRenderer(canvas) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
     }
-    const { scale, panX, panY } = state.view;
+    const view = state.view;
+    const { scale } = view;
+    const rotation = view.rotation || 0;
     const walls = state.walls || deriveWalls(state.project);
+    const site = state.project.site;
+    const w2s = (x, y) => projectPoint(view, x, y);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = tokens.canvas;
     ctx.fillRect(0, 0, width, height);
 
-    drawGrid(ctx, state.view, width, height, tokens);
+    // Видимая область в мировых координатах (для сетки).
+    const corners = [
+      unprojectPoint(view, 0, 0), unprojectPoint(view, width, 0),
+      unprojectPoint(view, 0, height), unprojectPoint(view, width, height),
+    ];
+    const worldBox = {
+      minX: Math.min(...corners.map((c) => c.x)),
+      maxX: Math.max(...corners.map((c) => c.x)),
+      minY: Math.min(...corners.map((c) => c.y)),
+      maxY: Math.max(...corners.map((c) => c.y)),
+    };
 
-    // Мировая система координат.
-    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * panX, dpr * panY);
+    // Мировая система координат (масштаб + поворот).
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    ctx.setTransform(dpr * scale * cos, dpr * scale * sin, -dpr * scale * sin, dpr * scale * cos, dpr * view.panX, dpr * view.panY);
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
-    // 1. Полы комнат.
-    for (const room of state.project.rooms) {
-      if (room.parentId) continue;
-      drawFloor(ctx, room, tokens);
-    }
-    for (const room of state.project.rooms) {
-      if (!room.parentId) continue;
-      drawFloor(ctx, room, tokens);
+    // 0. Подложка-топосъёмка.
+    if (site?.underlay && state.underlayImg && !state.underlayHidden) {
+      const u = site.underlay;
+      ctx.globalAlpha = u.opacity ?? 0.7;
+      ctx.drawImage(state.underlayImg, u.x, u.y, u.widthPx * u.mmPerPx, u.heightPx * u.mmPerPx);
+      ctx.globalAlpha = 1;
+      if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
+        ctx.strokeStyle = tokens.accent;
+        ctx.lineWidth = px(1.6);
+        ctx.setLineDash([px(8), px(5)]);
+        ctx.strokeRect(u.x, u.y, u.widthPx * u.mmPerPx, u.heightPx * u.mmPerPx);
+        ctx.setLineDash([]);
+      }
     }
 
-    // 2. Стены.
+    // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
+    drawGrid(ctx, worldBox, scale, px, tokens);
+
+    // 2. Участок: дороги, запретная зона, соседи, тени.
+    if (site) drawSiteUnder(ctx, state, site, tokens, px);
+
+    // 3. Полы комнат.
+    for (const room of state.project.rooms) if (!room.parentId) drawFloor(ctx, room, tokens);
+    for (const room of state.project.rooms) if (room.parentId) drawFloor(ctx, room, tokens);
+
+    // 4. Стены.
     for (const wall of walls) {
       const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
         (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
       const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
       ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
       if (selected) ctx.fillStyle = tokens.accent;
-      else if (hovered) ctx.fillStyle = tokens.accent2;
+      else if (hovered) ctx.fillStyle = tokens.hover;
       ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
     }
 
-    // 3. Проёмы: вырез в стене + символ.
+    // Подсветка комнаты под курсором.
+    if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
+      const hoverRoom = state.project.rooms.find((r) => r.id === state.hover.id);
+      if (hoverRoom) {
+        ctx.strokeStyle = tokens.hover;
+        ctx.lineWidth = px(1.6);
+        ctx.globalAlpha = 0.8;
+        ctx.strokeRect(hoverRoom.x, hoverRoom.y, hoverRoom.w, hoverRoom.h);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // 5. Проёмы.
     for (const opening of state.project.openings) {
       drawOpening(ctx, state, opening, walls, tokens, px);
     }
 
-    // 4. Мебель.
+    // 6. Мебель.
     for (const item of state.project.items) {
-      const selected = state.selection?.type === 'item' && state.selection.id === item.id;
-      drawItem(ctx, item, tokens, px, selected);
+      const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
+        (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
+      const hovered = state.hover?.type === 'item' && state.hover.id === item.id;
+      drawItem(ctx, item, tokens, px, selected, hovered);
     }
 
-    // 5. Призрак размещаемой комнаты / проёма.
+    // 7. Линии участка поверх полов (граница, красная линия, въезд).
+    if (site) drawSiteOver(ctx, state, site, tokens, px);
+
+    // 8. Призраки и направляющие.
     if (state.ghost?.rect) {
       const g = state.ghost;
       ctx.fillStyle = g.valid ? 'rgba(31,117,255,0.14)' : 'rgba(225,75,75,0.16)';
@@ -104,8 +177,8 @@ export function createRenderer(canvas) {
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
       ctx.fillRect(r.x, r.y, r.w, r.h);
     }
+    if (state.draft?.points?.length) drawDraft(ctx, state.draft, tokens, px);
 
-    // 6. Направляющие привязки.
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
       ctx.lineWidth = px(1);
@@ -113,14 +186,14 @@ export function createRenderer(canvas) {
       for (const guide of state.guides) {
         if (guide.type !== 'align') continue;
         ctx.beginPath();
-        if (guide.axis === 'v') { ctx.moveTo(guide.at, -1e5); ctx.lineTo(guide.at, 1e5); }
-        else { ctx.moveTo(-1e5, guide.at); ctx.lineTo(1e5, guide.at); }
+        if (guide.axis === 'v') { ctx.moveTo(guide.at, -1e6); ctx.lineTo(guide.at, 1e6); }
+        else { ctx.moveTo(-1e6, guide.at); ctx.lineTo(1e6, guide.at); }
         ctx.stroke();
       }
       ctx.setLineDash([]);
     }
 
-    // 7. Выделение комнаты: рамка + ручки.
+    // 9. Рамки выделения комнат.
     const selRoom = state.selection?.type === 'room'
       ? state.project.rooms.find((r) => r.id === state.selection.id) : null;
     if (selRoom) {
@@ -128,16 +201,33 @@ export function createRenderer(canvas) {
       ctx.lineWidth = px(2);
       ctx.strokeRect(selRoom.x, selRoom.y, selRoom.w, selRoom.h);
     }
-
-    // --- Экранный слой: подписи ---
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const w2s = (x, y) => ({ x: x * scale + panX, y: y * scale + panY });
-
-    for (const room of state.project.rooms) {
-      drawRoomLabel(ctx, state, room, w2s, tokens);
+    if (state.selection?.type === 'multi') {
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = px(1.6);
+      ctx.setLineDash([px(6), px(4)]);
+      for (const id of state.selection.roomIds) {
+        const room = state.project.rooms.find((r) => r.id === id);
+        if (room) ctx.strokeRect(room.x, room.y, room.w, room.h);
+      }
+      ctx.setLineDash([]);
     }
-    if (selRoom) drawRoomDimensions(ctx, selRoom, w2s, scale, tokens);
+
+    // --- Экранный слой ---
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, w2s, tokens);
+    // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
+    drawAllRoomDims(ctx, state, walls, w2s, tokens);
     if (selRoom) drawRoomHandles(ctx, selRoom, w2s, tokens);
+    // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
+    const selOpening = state.selection?.type === 'opening'
+      ? state.project.openings.find((o) => o.id === state.selection.id) : null;
+    if (selOpening) {
+      for (const hp of openingHandles(state.project, selOpening, walls)) {
+        drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
+      }
+    }
+    if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
 
     const selItem = state.selection?.type === 'item'
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
@@ -163,46 +253,363 @@ export function createRenderer(canvas) {
         ctx.fillText(g.reason, p.x, p.y + 16);
       }
     }
+
+    // Рамка выделения (ЛКМ по пустому месту).
+    if (state.marquee) {
+      const m = state.marquee;
+      const x = Math.min(m.x1, m.x2);
+      const y = Math.min(m.y1, m.y2);
+      const w = Math.abs(m.x2 - m.x1);
+      const h = Math.abs(m.y2 - m.y1);
+      ctx.fillStyle = 'rgba(31,117,255,0.08)';
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+    }
+
+    // Компас и солнце.
+    if (site) drawCompass(ctx, state, site, width, tokens);
   }
 
   return { draw };
 }
 
-function drawGrid(ctx, view, width, height, tokens) {
-  const { scale, panX, panY } = view;
-  const minor = 500; // мм
+function drawGrid(ctx, box, scale, px, tokens) {
+  const minor = 500;
   const major = 1000;
-  const minorPx = minor * scale;
-  ctx.lineWidth = 1;
-  const startX = Math.floor((0 - panX) / scale / minor) * minor;
-  const endX = (width - panX) / scale;
-  const startY = Math.floor((0 - panY) / scale / minor) * minor;
-  const endY = (height - panY) / scale;
-  if (minorPx >= 9) {
-    for (let x = startX; x <= endX; x += minor) {
-      const sx = x * scale + panX;
-      ctx.strokeStyle = x % major === 0 ? tokens.gridMajor : tokens.grid;
-      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, height); ctx.stroke();
+  ctx.lineWidth = px(1);
+  const useMinor = minor * scale >= 9;
+  const step = useMinor ? minor : major;
+  if (major * scale < 3) return;
+  const startX = Math.floor(box.minX / step) * step;
+  const startY = Math.floor(box.minY / step) * step;
+  for (let x = startX; x <= box.maxX; x += step) {
+    ctx.strokeStyle = x % major === 0 ? tokens.gridMajor : tokens.grid;
+    ctx.beginPath(); ctx.moveTo(x, box.minY); ctx.lineTo(x, box.maxY); ctx.stroke();
+  }
+  for (let y = startY; y <= box.maxY; y += step) {
+    ctx.strokeStyle = y % major === 0 ? tokens.gridMajor : tokens.grid;
+    ctx.beginPath(); ctx.moveTo(box.minX, y); ctx.lineTo(box.maxX, y); ctx.stroke();
+  }
+}
+
+// --- Участок: слой под домом (дороги, запретные зоны, соседи, тени) ---
+
+function polyPath(ctx, points, close = true) {
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+  if (close) ctx.closePath();
+}
+
+function drawSiteUnder(ctx, state, site, tokens, px) {
+  // Дороги.
+  for (const road of site.roads || []) {
+    if (road.points.length < 2) continue;
+    const selected = state.selection?.type === 'site' && state.selection.kind === 'road' && state.selection.id === road.id;
+    ctx.strokeStyle = selected ? 'rgba(31,117,255,0.4)' : 'rgba(120,132,148,0.3)';
+    ctx.lineWidth = road.width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    polyPath(ctx, road.points, false);
+    ctx.stroke();
+    ctx.strokeStyle = tokens.muted;
+    ctx.lineWidth = px(1.2);
+    ctx.setLineDash([800, 600]);
+    ctx.beginPath();
+    polyPath(ctx, road.points, false);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  const boundary = site.boundary;
+  const zone = site.showBuildZone && boundary ? buildZonePolygon(site) : null;
+
+  // Запретная полоса: участок минус зона застройки (красная штриховка).
+  if (boundary && site.showBuildZone) {
+    ctx.save();
+    ctx.beginPath();
+    polyPath(ctx, boundary);
+    if (zone) polyPath(ctx, [...zone].reverse());
+    ctx.clip('evenodd');
+    paintHatch(ctx, boundary, 'rgba(225,75,75,0.07)', 'rgba(225,75,75,0.28)', px);
+    ctx.restore();
+
+    // Буферы соседних домов внутри участка.
+    ctx.save();
+    ctx.beginPath();
+    polyPath(ctx, boundary);
+    ctx.clip();
+    for (const buf of neighborBuffers(site)) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(buf.x, buf.y, buf.w, buf.h);
+      ctx.clip();
+      paintHatch(ctx, [{ x: buf.x, y: buf.y }, { x: buf.x + buf.w, y: buf.y }, { x: buf.x + buf.w, y: buf.y + buf.h }, { x: buf.x, y: buf.y + buf.h }], 'rgba(225,75,75,0.07)', 'rgba(225,75,75,0.22)', px);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(225,75,75,0.5)';
+      ctx.lineWidth = px(1);
+      ctx.setLineDash([px(5), px(4)]);
+      ctx.strokeRect(buf.x, buf.y, buf.w, buf.h);
+      ctx.setLineDash([]);
     }
-    for (let y = startY; y <= endY; y += minor) {
-      const sy = y * scale + panY;
-      ctx.strokeStyle = y % major === 0 ? tokens.gridMajor : tokens.grid;
-      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(width, sy); ctx.stroke();
-    }
-  } else {
-    const majorStart = Math.floor((0 - panX) / scale / major) * major;
-    for (let x = majorStart; x <= endX; x += major) {
-      const sx = x * scale + panX;
-      ctx.strokeStyle = tokens.grid;
-      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, height); ctx.stroke();
-    }
-    const majorStartY = Math.floor((0 - panY) / scale / major) * major;
-    for (let y = majorStartY; y <= endY; y += major) {
-      const sy = y * scale + panY;
-      ctx.strokeStyle = tokens.grid;
-      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(width, sy); ctx.stroke();
+    ctx.restore();
+  }
+
+  // Соседние дома.
+  for (const n of site.neighbors || []) {
+    const selected = state.selection?.type === 'site' && state.selection.kind === 'neighbor' && state.selection.id === n.id;
+    const x = n.x - n.w / 2;
+    const y = n.y - n.h / 2;
+    ctx.fillStyle = 'rgba(120,132,148,0.25)';
+    ctx.fillRect(x, y, n.w, n.h);
+    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
+    ctx.lineWidth = px(selected ? 2 : 1.3);
+    ctx.strokeRect(x, y, n.w, n.h);
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + n.w, y + n.h);
+    ctx.moveTo(x + n.w, y); ctx.lineTo(x, y + n.h);
+    ctx.stroke();
+  }
+
+  // Тени (инсоляция).
+  if (site.sun?.enabled) {
+    const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
+    const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
+    if (vector) {
+      ctx.beginPath();
+      for (const room of state.project.rooms) {
+        if (room.parentId) continue;
+        const t = 250;
+        const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
+        polyPath(ctx, shadowPolygon(rect, vector));
+      }
+      for (const n of site.neighbors || []) {
+        const nv = shadowVector(sun, site.north, n.height || 6000);
+        if (!nv) continue;
+        polyPath(ctx, shadowPolygon({ x: n.x - n.w / 2, y: n.y - n.h / 2, w: n.w, h: n.h }, nv));
+      }
+      ctx.fillStyle = 'rgba(24,32,43,0.22)';
+      ctx.fill();
     }
   }
+}
+
+function paintHatch(ctx, polygon, fill, stroke, px) {
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const p of polygon) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+  ctx.fillStyle = fill;
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = px(1);
+  ctx.beginPath();
+  const step = 700;
+  for (let x = minX - (maxY - minY); x <= maxX; x += step) {
+    ctx.moveTo(x, maxY);
+    ctx.lineTo(x + (maxY - minY), minY);
+  }
+  ctx.stroke();
+}
+
+// --- Участок: линии поверх (граница, красная линия, зона, въезд, черновик) ---
+
+function drawSiteOver(ctx, state, site, tokens, px) {
+  const selectedKind = state.selection?.type === 'site' ? state.selection.kind : null;
+
+  if (site.boundary?.length >= 2) {
+    ctx.strokeStyle = selectedKind === 'boundary' ? tokens.accent : tokens.line;
+    ctx.lineWidth = px(2.2);
+    ctx.beginPath();
+    polyPath(ctx, site.boundary, site.boundary.length >= 3);
+    ctx.stroke();
+    // Столбики на вершинах.
+    ctx.fillStyle = selectedKind === 'boundary' ? tokens.accent : tokens.line;
+    for (const p of site.boundary) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, px(3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  if (site.showBuildZone && site.boundary) {
+    const zone = buildZonePolygon(site);
+    if (zone) {
+      ctx.strokeStyle = 'rgba(225,75,75,0.75)';
+      ctx.lineWidth = px(1.4);
+      ctx.setLineDash([px(10), px(6)]);
+      ctx.beginPath();
+      polyPath(ctx, zone);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  if (site.redLine?.length >= 2) {
+    ctx.strokeStyle = selectedKind === 'redline' ? tokens.accent : tokens.danger;
+    ctx.lineWidth = px(2);
+    ctx.setLineDash([1600, 500, 250, 500]);
+    ctx.beginPath();
+    polyPath(ctx, site.redLine, false);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  if (site.entry) {
+    const e = site.entry;
+    const rad = (e.dir * Math.PI) / 180;
+    const len = 2200;
+    const tip = { x: e.x + Math.cos(rad) * len, y: e.y + Math.sin(rad) * len };
+    ctx.strokeStyle = selectedKind === 'entry' ? tokens.accent : tokens.accent2;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = px(2.4);
+    ctx.beginPath();
+    ctx.moveTo(e.x, e.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+    const head = 500;
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - Math.cos(rad - 0.45) * head, tip.y - Math.sin(rad - 0.45) * head);
+    ctx.lineTo(tip.x - Math.cos(rad + 0.45) * head, tip.y - Math.sin(rad + 0.45) * head);
+    ctx.closePath();
+    ctx.fill();
+    // Разрыв в заборе.
+    ctx.strokeStyle = tokens.canvas;
+    ctx.lineWidth = px(3.2);
+    ctx.beginPath();
+    ctx.moveTo(e.x - Math.sin(rad) * 1500, e.y + Math.cos(rad) * 1500);
+    ctx.lineTo(e.x + Math.sin(rad) * 1500, e.y - Math.cos(rad) * 1500);
+    ctx.stroke();
+  }
+}
+
+function drawDraft(ctx, draft, tokens, px) {
+  const color = draft.kind === 'redline' ? tokens.danger : draft.kind === 'road' ? tokens.muted : tokens.accent;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = px(1.8);
+  ctx.setLineDash([px(7), px(5)]);
+  ctx.beginPath();
+  polyPath(ctx, draft.points, false);
+  if (draft.cursor) ctx.lineTo(draft.cursor.x, draft.cursor.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  for (const p of draft.points) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, px(3.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Замыкание полигона подсвечивается у первой точки.
+  if (draft.closeHint && draft.points.length >= 3) {
+    ctx.strokeStyle = tokens.accent2;
+    ctx.lineWidth = px(2);
+    ctx.beginPath();
+    ctx.arc(draft.points[0].x, draft.points[0].y, px(9), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+function drawSiteLabels(ctx, state, site, w2s, tokens) {
+  if (site.boundary?.length >= 3) {
+    const cx = site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length;
+    const minY = Math.min(...site.boundary.map((p) => p.y));
+    const p = w2s(cx, minY);
+    ctx.fillStyle = tokens.muted;
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Участок ${polygonAreaM2(site.boundary).toFixed(1)} м²`, p.x, p.y - 10);
+  }
+  if (site.entry) {
+    const p = w2s(site.entry.x, site.entry.y);
+    ctx.fillStyle = tokens.accent2;
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Въезд', p.x, p.y + 22);
+  }
+  for (const n of site.neighbors || []) {
+    const p = w2s(n.x, n.y);
+    ctx.fillStyle = tokens.muted;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Соседний дом', p.x, p.y);
+  }
+  // Ручки вершин выбранного полигона.
+  const sel = state.selection;
+  if (sel?.type === 'site') {
+    const points = sel.kind === 'boundary' ? site.boundary
+      : sel.kind === 'redline' ? site.redLine
+        : sel.kind === 'road' ? site.roads.find((r) => r.id === sel.id)?.points : null;
+    if (points) {
+      for (const point of points) {
+        const p = w2s(point.x, point.y);
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = tokens.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawCompass(ctx, state, site, width, tokens) {
+  const cx = width - 46;
+  const cy = 46;
+  const r = 26;
+  // Направление севера на экране: поворот вида + север проекта.
+  const angle = (state.view.rotation || 0) + (site.north * Math.PI) / 180;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = tokens.surface;
+  ctx.strokeStyle = tokens.muted;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.globalAlpha = 0.92;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.stroke();
+  ctx.rotate(angle);
+  // Стрелка севера.
+  ctx.fillStyle = tokens.danger;
+  ctx.beginPath();
+  ctx.moveTo(0, -r + 6);
+  ctx.lineTo(-5, 2);
+  ctx.lineTo(5, 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = tokens.muted;
+  ctx.beginPath();
+  ctx.moveTo(0, r - 6);
+  ctx.lineTo(-5, 2);
+  ctx.lineTo(5, 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = tokens.text;
+  ctx.font = '700 10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('С', 0, -r + 4);
+  // Солнце на лимбе.
+  if (site.sun?.enabled) {
+    const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
+    if (sun.altitude > 0.5) {
+      const sunAngle = (sun.azimuth * Math.PI) / 180;
+      ctx.rotate(sunAngle);
+      ctx.fillStyle = '#f2b32b';
+      ctx.beginPath();
+      ctx.arc(0, -r + 6, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
 }
 
 function drawFloor(ctx, room, tokens) {
@@ -217,12 +624,12 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
   if (!placed) return;
   const { rect } = placed;
   const selected = state.selection?.type === 'opening' && state.selection.id === opening.id;
-  // Вырез в стене.
+  const hovered = state.hover?.type === 'opening' && state.hover.id === opening.id;
   ctx.fillStyle = tokens.canvas;
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-  ctx.strokeStyle = selected ? tokens.accent : tokens.line;
-  ctx.lineWidth = px(1.4);
+  ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.line;
+  ctx.lineWidth = px(selected || hovered ? 1.8 : 1.4);
   if (opening.kind === 'door') {
     const symbol = doorSymbol(state.project, opening, walls);
     if (!symbol) return;
@@ -234,14 +641,12 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
     const radius = opening.width;
     const a1 = Math.atan2(symbol.closed.y - symbol.hinge.y, symbol.closed.x - symbol.hinge.x);
     const a2 = Math.atan2(symbol.open.y - symbol.hinge.y, symbol.open.x - symbol.hinge.x);
-    // Короткая дуга от закрытого к открытому положению.
     let delta = a2 - a1;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
     ctx.arc(symbol.hinge.x, symbol.hinge.y, radius, a1, a1 + delta, delta < 0);
     ctx.stroke();
   } else {
-    // Окно: рамка + стекло.
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.beginPath();
     if (rect.w >= rect.h) {
@@ -256,21 +661,14 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
   }
 }
 
-function drawItem(ctx, item, tokens, px, selected) {
+function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.save();
   ctx.translate(item.x, item.y);
   ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
-  ctx.strokeStyle = selected ? tokens.accent : tokens.furniture;
-  ctx.lineWidth = px(selected ? 1.8 : 1.2);
-  ctx.fillStyle = 'rgba(127,144,165,0.08)';
+  ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.furniture;
+  ctx.lineWidth = px(selected || hovered ? 1.8 : 1.2);
+  ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : 'rgba(127,144,165,0.08)';
   drawGlyph(ctx, item.kind, item.w, item.h);
-  if (!item.auto) {
-    // Ручная мебель помечается точкой в углу.
-    ctx.fillStyle = tokens.accent2;
-    ctx.beginPath();
-    ctx.arc(-item.w / 2 + 90, -item.h / 2 + 90, 45, 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.restore();
 }
 
@@ -356,34 +754,101 @@ function drawRoomLabel(ctx, state, room, w2s, tokens) {
   ctx.fillText(`${area.toFixed(1)} м²`, center.x, center.y + 13);
 }
 
-function drawRoomDimensions(ctx, room, w2s, scale, tokens) {
-  const off = 26; // px от стены
-  const a = w2s(room.x, room.y);
-  const b = w2s(room.x + room.w, room.y);
-  const c = w2s(room.x, room.y + room.h);
-  ctx.strokeStyle = tokens.accent;
-  ctx.fillStyle = tokens.accent;
+// Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
+// стенами — снаружи. Невыбранные комнаты рисуются полупрозрачно.
+function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   ctx.lineWidth = 1;
-  ctx.font = '11px system-ui, sans-serif';
+  ctx.font = '10px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  // Ширина (над комнатой).
+  for (const room of state.project.rooms) {
+    const selected = state.selection?.type === 'room' && state.selection.id === room.id;
+    const color = selected ? tokens.accent : tokens.muted;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = selected ? 1 : 0.5;
+    const a = w2s(room.x, room.y);
+    const b = w2s(room.x + room.w, room.y);
+    const c = w2s(room.x, room.y + room.h);
+    const edgePx = Math.hypot(b.x - a.x, b.y - a.y);
+    const edgePy = Math.hypot(c.x - a.x, c.y - a.y);
+    // Внутренние размеры.
+    if (edgePx > 70) drawDim(ctx, a, b, flipN(normal(a, b)), 14, `${room.w}`);
+    if (edgePy > 70) drawDim(ctx, c, a, flipN(normal(c, a)), 14, `${room.h}`);
+    // Габарит со стенами — только для комнат верхнего уровня.
+    if (!room.parentId) {
+      const outer = roomOuterRect(room, walls);
+      const oa = w2s(outer.x, outer.y);
+      const ob = w2s(outer.x + outer.w, outer.y);
+      const oc = w2s(outer.x, outer.y + outer.h);
+      if (edgePx > 70) drawDim(ctx, oa, ob, normal(oa, ob), 16, `${Math.round(outer.w)}`);
+      if (edgePy > 70) drawDim(ctx, oc, oa, normal(oc, oa), 16, `${Math.round(outer.h)}`);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Габарит комнаты вместе с её стенами (по полотнам стен).
+function roomOuterRect(room, walls) {
+  let minX = room.x;
+  let minY = room.y;
+  let maxX = room.x + room.w;
+  let maxY = room.y + room.h;
+  for (const wall of walls) {
+    if (!wall.rooms.includes(room.id)) continue;
+    minX = Math.min(minX, wall.band.x);
+    minY = Math.min(minY, wall.band.y);
+    maxX = Math.max(maxX, wall.band.x + wall.band.w);
+    maxY = Math.max(maxY, wall.band.y + wall.band.h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function flipN(n) {
+  return { x: -n.x, y: -n.y };
+}
+
+// Ручки на торцах проёма (на осевой линии стены).
+export function openingHandles(project, opening, walls) {
+  const placed = openingRect(project, opening, walls);
+  if (!placed) return [];
+  const { rect, wall } = placed;
+  if (wall.orient === 'h') {
+    const cy = rect.y + rect.h / 2;
+    return [{ end: 'start', x: rect.x, y: cy }, { end: 'end', x: rect.x + rect.w, y: cy }];
+  }
+  const cx = rect.x + rect.w / 2;
+  return [{ end: 'start', x: cx, y: rect.y }, { end: 'end', x: cx, y: rect.y + rect.h }];
+}
+
+function drawHandleSquare(ctx, p, tokens) {
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = tokens.accent;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y - off); ctx.lineTo(b.x, b.y - off);
-  ctx.moveTo(a.x, a.y - off - 4); ctx.lineTo(a.x, a.y - off + 4);
-  ctx.moveTo(b.x, b.y - off - 4); ctx.lineTo(b.x, b.y - off + 4);
+  ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+  ctx.fill();
   ctx.stroke();
-  ctx.fillText(`${room.w} мм`, (a.x + b.x) / 2, a.y - off - 5);
-  // Высота (слева).
+}
+
+function normal(p, q) {
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dy / len, y: -dx / len };
+}
+
+function drawDim(ctx, p, q, n, off, label) {
+  const a = { x: p.x + n.x * off, y: p.y + n.y * off };
+  const b = { x: q.x + n.x * off, y: q.y + n.y * off };
   ctx.beginPath();
-  ctx.moveTo(a.x - off, a.y); ctx.lineTo(c.x - off, c.y);
-  ctx.moveTo(a.x - off - 4, a.y); ctx.lineTo(a.x - off + 4, a.y);
-  ctx.moveTo(c.x - off - 4, c.y); ctx.lineTo(c.x - off + 4, c.y);
+  ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.moveTo(p.x + n.x * (off - 5), p.y + n.y * (off - 5));
+  ctx.lineTo(p.x + n.x * (off + 5), p.y + n.y * (off + 5));
+  ctx.moveTo(q.x + n.x * (off - 5), q.y + n.y * (off - 5));
+  ctx.lineTo(q.x + n.x * (off + 5), q.y + n.y * (off + 5));
   ctx.stroke();
-  ctx.save();
-  ctx.translate(a.x - off - 5, (a.y + c.y) / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText(`${room.h} мм`, 0, 0);
-  ctx.restore();
+  const mid = { x: (a.x + b.x) / 2 + n.x * 10, y: (a.y + b.y) / 2 + n.y * 10 };
+  ctx.fillText(label, mid.x, mid.y + 3);
 }
 
 export const HANDLE_SIZE = 9;
