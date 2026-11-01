@@ -1373,11 +1373,12 @@ canvas.addEventListener('pointerup', () => {
 
   if (finished.moved) {
     if (finished.kind === 'site-vertex' || finished.kind === 'entry') {
-      // Граница изменилась — въезд прижимается к ней заново.
+      // Граница изменилась — въезд заново садится на неё и ориентируется
+      // перпендикулярно отрезку границы (стрелка внутрь участка).
       const site = state.project.site;
       if (site.boundary && site.entry) {
-        const near = nearestPointOnPolyline(site.boundary, site.entry, true);
-        if (near) { site.entry.x = near.x; site.entry.y = near.y; }
+        const spot = computeEntryAt(site.entry);
+        if (spot) { site.entry.x = spot.x; site.entry.y = spot.y; site.entry.dir = spot.dir; }
       }
     }
     refreshDerived();
