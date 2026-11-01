@@ -1124,6 +1124,17 @@ canvas.addEventListener('pointerdown', (event) => {
 
   // Клик мимо поля калибровки — отменяем калибровку.
   if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
+  if (!el('dimInput').hidden) hideDimInput();
+
+  // Стрелки-перевороты и размерные подписи выбранного проёма.
+  if (state.selection?.type === 'opening' && state._openingUI) {
+    for (const f of state._openingUI.flips) {
+      if (Math.hypot(f.x - screen.x, f.y - screen.y) <= 15) { toggleOpeningFlip(f.kind); return; }
+    }
+    for (const d of state._openingUI.dims) {
+      if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
+    }
+  }
 
   // Ручки плановых объектов.
   const openingHandleHit = hitOpeningHandle(screen);
@@ -2256,6 +2267,58 @@ function elevationSVG(opening) {
   </svg>`;
 }
 
+function toggleOpeningFlip(kind) {
+  const opening = state.project.openings.find((o) => o.id === state.selection.id);
+  if (!opening) return;
+  mutate(() => {
+    if (kind === 'swing') opening.swingIn = !opening.swingIn;
+    else opening.hingeStart = !opening.hingeStart;
+  });
+  selectObject({ type: 'opening', id: opening.id });
+}
+
+// Инлайн-ввод размера (отступа до стены) прямо на размерной линии.
+function openDimInput(dim) {
+  const overlay = el('dimInput');
+  const input = el('dimInputField');
+  state.dimEdit = { openingId: state.selection.id, kind: dim.kind };
+  input.value = Math.round(dim.gap);
+  overlay.style.left = `${dim.x}px`;
+  overlay.style.top = `${dim.y}px`;
+  overlay.hidden = false;
+  setTimeout(() => { input.focus(); input.select(); }, 20);
+}
+
+function hideDimInput() {
+  el('dimInput').hidden = true;
+  state.dimEdit = null;
+}
+
+function applyDimInput() {
+  const edit = state.dimEdit;
+  if (!edit) return;
+  const opening = state.project.openings.find((o) => o.id === edit.openingId);
+  if (!opening) { hideDimInput(); return; }
+  const value = Math.max(0, Number(el('dimInputField').value) || 0);
+  const walls = deriveWalls(state.project);
+  const placed = openingRect(state.project, opening, walls);
+  if (!placed) { hideDimInput(); return; }
+  const { wall } = placed;
+  const room = roomById(state.project, opening.roomId);
+  const base = wall.orient === 'h' ? room.x : room.y;
+  const half = opening.width / 2;
+  const desired = edit.kind === 'left'
+    ? (wall.from - base) + value + half
+    : (wall.to - base) - value - half;
+  mutate(() => {
+    const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
+    if (clamped !== null) opening.offset = clamped;
+    else toast('Сюда проём не помещается');
+  });
+  hideDimInput();
+  selectObject({ type: 'opening', id: opening.id });
+}
+
 function renderOpeningProps(panel, opening) {
   if (!opening) { renderProjectProps(panel); return; }
   const room = roomById(state.project, opening.roomId);
@@ -3001,6 +3064,10 @@ el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
+el('dimInputField').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyDimInput(); }
+  else if (e.key === 'Escape') { e.preventDefault(); hideDimInput(); }
+});
 el('wallAddDoor').addEventListener('click', () => {
   if (state.selection?.type === 'wall') startPlaceOpening('door', { key: state.selection.key, from: state.selection.from });
 });
@@ -3095,4 +3162,11 @@ window.__kepler = {
   loadSample,
   setEditorMode,
   selectRoom: (id) => selectObject({ type: 'room', id }),
+  select: (sel) => selectObject(sel),
+  openingCenter: (id) => {
+    const o = state.project.openings.find((x) => x.id === id);
+    if (!o) return null;
+    const p = openingRect(state.project, o, state.walls);
+    return p ? { x: p.rect.x + p.rect.w / 2, y: p.rect.y + p.rect.h / 2 } : null;
+  },
 };

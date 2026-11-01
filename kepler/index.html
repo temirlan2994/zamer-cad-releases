@@ -65,6 +65,10 @@
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/></svg>
             </button>
           </div>
+          <div class="cal-overlay" id="dimInput" hidden>
+            <input id="dimInputField" type="number" step="50" min="0" inputmode="decimal" />
+            <span class="cal-unit">мм</span>
+          </div>
           <div class="cal-overlay" id="calOverlay" hidden>
             <span class="cal-label">Длина отрезка:</span>
             <input id="calInput" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="0.0" />

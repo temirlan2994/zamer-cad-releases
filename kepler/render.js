@@ -331,10 +331,12 @@ export function createRenderer(canvas) {
     // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
     const selOpening = state.selection?.type === 'opening'
       ? state.project.openings.find((o) => o.id === state.selection.id) : null;
+    state._openingUI = null;
     if (selOpening) {
       for (const hp of openingHandles(state.project, selOpening, walls)) {
         drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
       }
+      drawSelectedOpeningUI(ctx, state, selOpening, walls, w2s, scale, tokens);
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
     // Подпись «замкнуть/завершить» у первой точки черновика.
@@ -1292,6 +1294,82 @@ export function underlayHandles(u) {
     { id: 'se', x: u.x + w, y: u.y + h },
     { id: 'sw', x: u.x, y: u.y + h },
   ];
+}
+
+// Размерные линии до ближайших стен и стрелки-перевороты у выбранного проёма.
+// Зоны клика сохраняются в state._openingUI для обработки в pointerdown.
+function drawSelectedOpeningUI(ctx, state, opening, walls, w2s, scale, tokens) {
+  const placed = openingRect(state.project, opening, walls);
+  if (!placed) return;
+  const { rect, wall } = placed;
+  const room = state.project.rooms.find((r) => r.id === opening.roomId);
+  if (!room) return;
+  const horiz = wall.orient === 'h';
+  const centerAlong = horiz ? rect.x + rect.w / 2 : rect.y + rect.h / 2;
+  const half = opening.width / 2;
+  const leftGap = Math.round((centerAlong - half) - wall.from);
+  const rightGap = Math.round(wall.to - (centerAlong + half));
+  const roomPerp = horiz ? room.y + room.h / 2 : room.x + room.w / 2;
+  const outward = Math.sign(wall.edge - roomPerp) || 1;
+  const perpLine = wall.edge + outward * (wall.thickness + 450);
+  const ui = { flips: [], dims: [] };
+
+  const worldPt = (along, perp) => (horiz ? { x: along, y: perp } : { x: perp, y: along });
+  // Размерная линия + подпись (кликабельная).
+  const drawGap = (fromAlong, toAlong, label, kind) => {
+    if (toAlong - fromAlong < 1) return;
+    const a = w2s(...Object.values(worldPt(fromAlong, perpLine)));
+    const b = w2s(...Object.values(worldPt(toAlong, perpLine)));
+    const inner1 = w2s(...Object.values(worldPt(fromAlong, wall.edge)));
+    const inner2 = w2s(...Object.values(worldPt(toAlong, wall.edge)));
+    ctx.strokeStyle = tokens.accent;
+    ctx.fillStyle = tokens.accent;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.moveTo(inner1.x, inner1.y); ctx.lineTo(a.x, a.y); // выноски
+    ctx.moveTo(inner2.x, inner2.y); ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const tw = ctx.measureText(`${label}`).width + 10;
+    ctx.fillStyle = tokens.surface;
+    ctx.fillRect(mx - tw / 2, my - 9, tw, 18);
+    ctx.strokeStyle = tokens.accent;
+    ctx.strokeRect(mx - tw / 2, my - 9, tw, 18);
+    ctx.fillStyle = tokens.accent;
+    ctx.fillText(`${label}`, mx, my + 4);
+    ui.dims.push({ x: mx, y: my, kind, gap: label });
+  };
+  drawGap(wall.from, centerAlong - half, leftGap, 'left');
+  drawGap(centerAlong + half, wall.to, rightGap, 'right');
+
+  // Стрелки-перевороты (только у двери): перпендикулярная = куда открывается,
+  // вдоль стены = сторона петель.
+  if (opening.kind === 'door') {
+    const cAlong = centerAlong;
+    const cPerp = wall.edge;
+    const flip = (along, perp, kind, dir) => {
+      const p = w2s(...Object.values(worldPt(along, perp)));
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // Двойная стрелка.
+      ctx.fillStyle = tokens.accent;
+      ctx.font = '700 15px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(dir, p.x, p.y + 5);
+      ui.flips.push({ x: p.x, y: p.y, kind });
+    };
+    // Куда открывается — кружок на стороне открывания, перпендикулярно стене.
+    flip(cAlong, wall.edge + outward * -(wall.thickness + 900), 'swing', '⇅');
+    // Петли — вдоль стены за торцом проёма.
+    flip(cAlong + (half + 650), cPerp, 'hinge', '⇆');
+  }
+  state._openingUI = ui;
 }
 
 function drawHandleSquare(ctx, p, tokens) {
