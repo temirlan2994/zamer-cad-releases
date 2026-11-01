@@ -1,9 +1,12 @@
 // Изменения проекта: транзакции с историей, отмена/повтор, автосохранение.
 
 import { arrangeRoom } from '../core/furnish.js';
-import { deserializeProject, roomById, serializeProject } from '../core/model.js';
+import {
+  deserializeProject, levelBelow, levelProject, roomById, serializeProject,
+} from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
 import { el } from './dom.js';
+import { renderLevelBar } from './levels.js';
 import { applyModeRotation } from './modes.js';
 import { renderProps } from './props.js';
 import { history, state } from './state.js';
@@ -18,6 +21,9 @@ let autosaveTimer = null;
 
 export function refreshDerived() {
   state.walls = deriveWalls(state.project);
+  // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
+  const below = levelBelow(state.project);
+  state.belowWalls = below ? deriveWalls(levelProject(state.project, below.id)) : null;
 }
 
 export function snapshot() {
@@ -54,6 +60,7 @@ export function afterChange() {
   updateConnectivity();
   renderProps();
   updateDimModeBtn();
+  renderLevelBar();
   el('alignBtn')?.classList.toggle('active', Boolean(state.project?.building?.rotation));
   requestDraw();
   scheduleAutosave();

@@ -5,6 +5,7 @@ import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP } from './catalog.js';
 import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
+import { isUpperLevel } from './model.js';
 
 export const MIN_ROOM_SIZE = 900;
 
@@ -271,12 +272,18 @@ export function analyzeConnectivity(project, walls = null) {
     if (link) addEdge(link[0], link[1]);
   }
 
-  const hasEntrance = graph.has('outside');
-  const start = hasEntrance ? 'outside' : project.rooms[0]?.id;
+  // На верхних этажах вход — лестница: помещения «Лестница» ведут на этаж
+  // ниже, поэтому служат точкой входа наравне с наружной дверью.
+  if (project.levels && isUpperLevel(project)) {
+    for (const room of project.rooms) if (room.type === 'stairs-room') addEdge('stairs', room.id);
+  }
+  const sources = ['outside', 'stairs'].filter((n) => graph.has(n));
+  const hasEntrance = sources.length > 0;
+  if (!hasEntrance && project.rooms[0]) sources.push(project.rooms[0].id);
   const reachable = new Set();
-  if (start !== undefined) {
-    const queue = [start];
-    reachable.add(start);
+  if (sources.length) {
+    const queue = [...sources];
+    for (const s of sources) reachable.add(s);
     while (queue.length) {
       const node = queue.shift();
       for (const next of graph.get(node) || []) {

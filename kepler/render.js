@@ -139,6 +139,24 @@ export function createRenderer(canvas) {
     // 3–6. Дом — в своих осях.
     setView(pv);
 
+    // Этаж ниже — бледные стены (подложка для выравнивания этажей).
+    if (state.belowWalls?.length) {
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = tokens.wall;
+      for (const wall of state.belowWalls) {
+        if (wall.kind === 'chamfer') {
+          ctx.beginPath();
+          wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+        }
+      }
+      ctx.restore();
+    }
+
     // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
     const ownByRoom = new Map();
@@ -648,7 +666,8 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     if (vector) {
       ctx.beginPath();
       const t = state.project.settings?.exterior || 250;
-      for (const room of state.project.rooms) {
+      // Тень дают все этажи (верхний может нависать над нижним).
+      for (const room of state.project.levels.flatMap((l) => l.rooms)) {
         if (room.parentId) continue;
         const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
         // Комната в осях дома → настоящие (повёрнутые) углы в координатах съёмки.

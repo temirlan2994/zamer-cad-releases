@@ -261,8 +261,8 @@ test('экспорт: структурированный JSON и DXF собир�
   assert.equal(data.levels[0].rooms.length, 2);
   assert.ok(data.levels[0].walls.some((w) => w.shared));
   assert.ok(data.levels[0].walls.every((w) => w.thickness > 0));
-  assert.equal(data.connections.has_entrance, true);
-  assert.equal(data.connections.unreachable_rooms.length, 0);
+  assert.equal(data.levels[0].connections.has_entrance, true);
+  assert.equal(data.levels[0].connections.unreachable_rooms.length, 0);
   // Мебель привязана к комнате по фактическому положению.
   assert.ok(data.levels[0].furniture.every((f) => f.room === a.id));
 

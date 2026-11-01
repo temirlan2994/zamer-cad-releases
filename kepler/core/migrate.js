@@ -7,7 +7,7 @@
 // «ломаются». На каждую версию в tests/fixtures лежит настоящий файл.
 
 export const SCHEMA_NAME = 'kepler-plan';
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const SCHEMA = `${SCHEMA_NAME}/${SCHEMA_VERSION}`;
 
 const normDeg = (value) => {
@@ -33,6 +33,16 @@ export const MIGRATIONS = Object.freeze({
   2(data) {
     const { viewRotation: _dropped, ...rest } = data;
     return { ...rest, building: { rotation: 0, origin: { x: 0, y: 0 } } };
+  },
+  // v3 → v4: этажи. Комнаты, проёмы, мебель и переопределения стен
+  // переезжают в первый этаж levels[0]; активный этаж — activeLevel.
+  3(data) {
+    const { rooms = [], openings = [], items = [], wallOverrides = {}, ...rest } = data;
+    return {
+      ...rest,
+      levels: [{ id: 'L1', name: '1 этаж', elevation: 0, height: 3000, rooms, openings, items, wallOverrides }],
+      activeLevel: 'L1',
+    };
   },
 });
 

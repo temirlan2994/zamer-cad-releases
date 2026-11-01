@@ -14,8 +14,65 @@ export function makeId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}`;
 }
 
+// ---------------------------------------------------------------- Этажи
+//
+// Файл хранит этажи в levels[]: у каждого свои rooms, openings, items и
+// wallOverrides. Редактор и вся логика плана работают с одним АКТИВНЫМ
+// этажом через project.rooms / openings / items / wallOverrides — это
+// скрытые свойства-аксессоры (attachLevelAccessors): в JSON их нет.
+
+export const DEFAULT_LEVEL_HEIGHT = 3000; // от пола до пола следующего этажа, мм
+export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides'];
+
+export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {
+  return { id, name, elevation, height, rooms: [], openings: [], items: [], wallOverrides: {} };
+}
+
+export function activeLevel(project) {
+  return project.levels.find((l) => l.id === project.activeLevel) || project.levels[0];
+}
+
+export function attachLevelAccessors(project) {
+  for (const key of LEVEL_KEYS) {
+    Object.defineProperty(project, key, {
+      configurable: true,
+      enumerable: false,
+      get() { return activeLevel(this)[key]; },
+      set(value) { activeLevel(this)[key] = value; },
+    });
+  }
+  return project;
+}
+
+// Тот же проект «на этаже levelId»: данные общие (без копий), меняется
+// только активный этаж — для экспорта и подложки соседнего этажа.
+export function levelProject(project, levelId) {
+  return attachLevelAccessors({ ...project, activeLevel: levelId });
+}
+
+// Этажи снизу вверх по отметке.
+export function sortedLevels(project) {
+  return [...project.levels].sort((a, b) => a.elevation - b.elevation);
+}
+
+export function groundLevel(project) {
+  return sortedLevels(project)[0];
+}
+
+// Ближайший этаж ниже данного (или null).
+export function levelBelow(project, levelId = project.activeLevel) {
+  const list = sortedLevels(project);
+  const i = list.findIndex((l) => l.id === levelId);
+  return i > 0 ? list[i - 1] : null;
+}
+
+export function isUpperLevel(project, levelId = project.activeLevel) {
+  return Boolean(project.levels?.length > 1 && groundLevel(project).id !== levelId);
+}
+
 export function createProject(name = 'Новый дом') {
-  return {
+  const level = createLevel('1 этаж', 0, DEFAULT_LEVEL_HEIGHT, 'L1');
+  return attachLevelAccessors({
     schema: SCHEMA,
     revision: 0,
     name,
@@ -24,13 +81,11 @@ export function createProject(name = 'Новый дом') {
       exterior: DEFAULT_EXTERIOR,
       dimOuter: true, // наружные размеры по внешней грани стен (иначе — по оси)
     },
-    rooms: [],
-    openings: [],
-    items: [],
-    wallOverrides: {}, // ключ стены -> { thickness, kind }
+    levels: [level], // этажи: rooms, openings, items, wallOverrides (ключ стены → { thickness, kind })
+    activeLevel: level.id,
     building: createBuilding(), // оси дома относительно съёмки (core/building.js)
     site: createSite(),
-  };
+  });
 }
 
 // Комната хранит ВНУТРЕННИЙ прямоугольник (чистые размеры помещения).
@@ -72,7 +127,7 @@ export function createItem(kind, x, y, w, h, rotation = 0) {
 }
 
 export function cloneProject(project) {
-  return JSON.parse(JSON.stringify(project));
+  return attachLevelAccessors(JSON.parse(JSON.stringify(project)));
 }
 
 export function serializeProject(project) {
@@ -89,8 +144,9 @@ export function deserializeProject(text) {
     throw new Error('Файл не является JSON-проектом Kepler Plan');
   }
   const data = migrateProject(raw);
-  if (!Array.isArray(data.rooms) || !Array.isArray(data.openings) || !Array.isArray(data.items)) {
-    throw new Error('Файл повреждён: нет списков rooms/openings/items');
+  const levelOk = (l) => l && Array.isArray(l.rooms) && Array.isArray(l.openings) && Array.isArray(l.items);
+  if (!Array.isArray(data.levels) || !data.levels.length || !data.levels.every(levelOk)) {
+    throw new Error('Файл повреждён: нет этажей со списками rooms/openings/items');
   }
   return normalizeProject(data);
 }
@@ -99,7 +155,15 @@ export function deserializeProject(text) {
 export function normalizeProject(data) {
   data.name = typeof data.name === 'string' && data.name ? data.name : 'Без названия';
   data.revision = Number(data.revision) || 0;
-  data.wallOverrides = data.wallOverrides || {};
+  data.levels = data.levels.map((l, i) => ({
+    ...l,
+    id: typeof l.id === 'string' && l.id ? l.id : makeId('level'),
+    name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
+    elevation: Number(l.elevation) || 0,
+    height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
+    wallOverrides: l.wallOverrides || {},
+  }));
+  if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;
   const b = data.building || {};
   data.building = {
     rotation: normDeg(b.rotation),
@@ -107,7 +171,7 @@ export function normalizeProject(data) {
   };
   data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
   ensureSite(data);
-  return data;
+  return attachLevelAccessors(data);
 }
 
 export function roomById(project, id) {

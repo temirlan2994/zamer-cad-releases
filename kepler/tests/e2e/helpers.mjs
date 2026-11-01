@@ -52,17 +52,20 @@ export async function clickWorld(page, x, y) {
   await page.mouse.click(p.x, p.y);
 }
 
-// Перетаскивание (HTML5 DnD) комнаты/мебели из панели на центр холста.
-export async function dropOnCanvas(page, mime, value) {
-  await page.evaluate(([m, v]) => {
+// Перетаскивание (HTML5 DnD) комнаты/мебели из панели на холст: в центр
+// или в точку at (координаты относительно холста, пиксели).
+export async function dropOnCanvas(page, mime, value, at = null) {
+  await page.evaluate(([m, v, p]) => {
     const c = document.getElementById('canvas');
     const r = c.getBoundingClientRect();
     const dt = new DataTransfer();
     dt.setData(m, v);
-    const opts = { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, dataTransfer: dt, bubbles: true, cancelable: true };
+    const x = r.left + (p ? p.x : r.width / 2);
+    const y = r.top + (p ? p.y : r.height / 2);
+    const opts = { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true };
     c.dispatchEvent(new DragEvent('dragover', opts));
     c.dispatchEvent(new DragEvent('drop', opts));
-  }, [mime, value]);
+  }, [mime, value, at]);
 }
 
 // Загрузка текстового файла (DXF/JSON) в скрытый input без файловой системы.

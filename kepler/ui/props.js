@@ -2,11 +2,12 @@
 
 import { furnitureDef, roomType } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
-import { roomById } from '../core/model.js';
+import { activeLevel, levelProject, roomById } from '../core/model.js';
 import { MIN_ROOM_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
 import { MAX_SHARED_GAP, clampOpeningOffset, deriveWalls, openingRect } from '../core/walls.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
+import { deleteLevel } from './levels.js';
 import {
   addFurniture, changeWallThickness, deleteSelection, overlappingTopRooms, reconcileOpenings,
   rotateMulti90, rotateSelectedItem,
@@ -40,6 +41,9 @@ function renderProjectProps(panel) {
   const rooms = state.project.rooms;
   const site = state.project.site;
   const hasSite = Boolean(site?.boundary?.length || site?.underlay);
+  const level = activeLevel(state.project);
+  const multi = state.project.levels.length > 1;
+  const allArea = state.project.levels.reduce((sum, l) => sum + totalAreaM2(levelProject(state.project, l.id)), 0);
   const list = rooms.map((r) => {
     const area = roomNetAreaM2(state.project, r).toFixed(1);
     const nested = r.parentId ? ' ↳ ' : '';
@@ -48,9 +52,21 @@ function renderProjectProps(panel) {
   panel.innerHTML = `
     <h2>Проект</h2>
     <div class="prop-block">
-      <div class="prop-row"><span>Помещений</span><strong>${rooms.length}</strong></div>
-      <div class="prop-row"><span>Общая площадь</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
+      <div class="prop-row"><span>Помещений${multi ? ' на этаже' : ''}</span><strong>${rooms.length}</strong></div>
+      <div class="prop-row"><span>${multi ? 'Площадь этажа' : 'Общая площадь'}</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
+      ${multi ? `<div class="prop-row"><span>Всего (${state.project.levels.length} эт.)</span><strong>${allArea.toFixed(1)} м²</strong></div>` : ''}
       ${hasSite ? buildingRotationField() : ''}
+    </div>
+    <h3>Этаж</h3>
+    <div class="prop-block">
+      <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Отметка пола, м</span>
+          <input id="levelElev" type="number" step="0.05" value="${(level.elevation / 1000).toFixed(2)}"></label>
+        <label class="prop-field"><span>Высота этажа, м</span>
+          <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
+      </div>
+      ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : '<p class="empty-hint">Второй этаж — кнопка «+» внизу слева на плане.</p>'}
     </div>
     ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
     <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
@@ -61,11 +77,23 @@ function renderProjectProps(panel) {
       <li><b>Del</b> — удалить, <b>R</b> — повернуть мебель</li>
       <li><b>Ctrl+Z / Ctrl+Shift+Z</b> — отмена / повтор</li>
       <li><b>Стрелки</b> — сдвиг на 50 мм (Shift — 500)</li>
+      <li><b>PgUp / PgDn</b> — этаж выше / ниже</li>
     </ul>`;
   panel.querySelectorAll('[data-room]').forEach((btn) => {
     btn.addEventListener('click', () => selectObject({ type: 'room', id: btn.dataset.room }));
   });
   bindBuildingRotation(panel);
+  panel.querySelector('#levelName').addEventListener('change', (e) => {
+    const name = e.target.value.trim();
+    if (name) mutate(() => { level.name = name; });
+  });
+  panel.querySelector('#levelElev').addEventListener('change', (e) => {
+    mutate(() => { level.elevation = Math.round((Number(e.target.value) || 0) * 1000); });
+  });
+  panel.querySelector('#levelHeight').addEventListener('change', (e) => {
+    mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
+  });
+  panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
 }
 
 function renderRoomProps(panel, room) {

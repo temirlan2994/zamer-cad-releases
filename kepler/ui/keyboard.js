@@ -3,6 +3,7 @@
 import { roomById } from '../core/model.js';
 import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
 import { canvas, toast } from './dom.js';
+import { stepLevel } from './levels.js';
 import {
   deleteSelection, reconcileOpenings, rotateMulti90, rotateSelectedItem,
 } from './plan-actions.js';
@@ -34,6 +35,11 @@ export function bindKeyboard() {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
+    if (event.key === 'PageUp' || event.key === 'PageDown') {
+      event.preventDefault();
+      stepLevel(event.key === 'PageUp' ? 1 : -1);
+      return;
+    }
     if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
     if (event.key === 'Escape') { cancelTool(); selectObject(null); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }

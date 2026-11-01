@@ -11,6 +11,7 @@ import { exposeDebugApi } from './ui/debug.js';
 import { refs } from './ui/dom.js';
 import { bindCanvasInput } from './ui/input.js';
 import { bindKeyboard } from './ui/keyboard.js';
+import { renderLevelBar } from './ui/levels.js';
 import { applyLibraryTab, renderFurnitureBar, renderLibrary } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
 import { renderProps } from './ui/props.js';
@@ -38,7 +39,7 @@ bindTheme();
     if (saved) restored = deserializeProject(saved);
   } catch { /* нет сохранения */ }
   let showStart = false;
-  if (restored && (restored.rooms.length || restored.site?.boundary)) {
+  if (restored && (restored.levels.some((l) => l.rooms.length) || restored.site?.boundary)) {
     // Есть сохранённый проект — продолжаем его.
     state.project = restored;
   } else {
@@ -52,6 +53,7 @@ bindTheme();
   refs.projectName.value = state.project.name;
   updateConnectivity();
   renderLibrary();
+  renderLevelBar();
   renderFurnitureBar();
   applyLibraryTab();
   renderProps();

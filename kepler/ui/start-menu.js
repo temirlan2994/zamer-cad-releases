@@ -7,7 +7,8 @@ import { state } from './state.js';
 function projectHasContent() {
   const p = state.project;
   if (!p) return false;
-  return p.rooms.length > 0 || p.items.length > 0 || Boolean(p.site?.boundary) || Boolean(p.site?.underlay);
+  return p.levels.some((l) => l.rooms.length > 0 || l.items.length > 0)
+    || Boolean(p.site?.boundary) || Boolean(p.site?.underlay);
 }
 
 export function openStartMenu({ initial = false } = {}) {

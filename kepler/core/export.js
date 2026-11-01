@@ -20,8 +20,10 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
+import { groundLevel, levelProject, sortedLevels } from './model.js';
 
-export function buildStructuredExport(project) {
+// Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
+function buildLevelExport(project, level) {
   const walls = deriveWalls(project);
   const connectivity = analyzeConnectivity(project, walls);
 
@@ -96,6 +98,24 @@ export function buildStructuredExport(project) {
   }
 
   return {
+    id: level.id,
+    name: level.name,
+    elevation: level.elevation,
+    height: level.height,
+    rooms,
+    walls: wallsOut,
+    openings,
+    furniture,
+    connections: {
+      doors,
+      has_entrance: connectivity.hasEntrance,
+      unreachable_rooms: connectivity.unreachable,
+    },
+  };
+}
+
+export function buildStructuredExport(project) {
+  return {
     schema: 'kepler-export/2',
     units: 'mm',
     axes: 'x-right, y-down',
@@ -109,14 +129,8 @@ export function buildStructuredExport(project) {
     },
     name: project.name,
     generated_at: new Date().toISOString(),
-    levels: [
-      { id: 'L1', name: 'Этаж 1', elevation: 0, rooms, walls: wallsOut, openings, furniture },
-    ],
-    connections: {
-      doors,
-      has_entrance: connectivity.hasEntrance,
-      unreachable_rooms: connectivity.unreachable,
-    },
+    // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
+    levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site),
   };
 }
@@ -219,8 +233,28 @@ export function planEntities(project, { dims = true } = {}) {
 }
 
 // Чертёж плана: в осях дома, поэтому от поворота дома не зависит.
+// Несколько этажей — рядом слева направо (снизу вверх) с подписями.
 export function buildProjectDxf(project, { profile = 'default' } = {}) {
-  return buildDxf(planEntities(project), { profile });
+  const levels = project.levels ? sortedLevels(project) : [];
+  if (levels.length <= 1) return buildDxf(planEntities(project), { profile });
+  const entities = [];
+  const gap = 6000;
+  let cursor = 0;
+  for (const level of levels) {
+    const lp = levelProject(project, level.id);
+    const ents = planEntities(lp);
+    const t = (project.settings?.exterior || 250) + 1000;
+    const box = lp.rooms.length ? {
+      minX: Math.min(...lp.rooms.map((r) => r.x)) - t,
+      maxX: Math.max(...lp.rooms.map((r) => r.x + r.w)) + t,
+      minY: Math.min(...lp.rooms.map((r) => r.y)) - t,
+    } : { minX: 0, maxX: 6000, minY: 0 };
+    const shift = { rotation: 0, origin: { x: cursor - box.minX, y: 0 } };
+    entities.push(...ents.flatMap((e) => entityToWorld(e, shift)));
+    entities.push({ type: 'text', layer: 'dimensions', x: cursor, y: box.minY - 1200, height: 500, text: `${level.name} (${(level.elevation / 1000).toFixed(2)})` });
+    cursor += box.maxX - box.minX + gap;
+  }
+  return buildDxf(entities, { profile });
 }
 
 // ---------------------------------------------------------------- Генплан
@@ -327,9 +361,10 @@ function siteEntities(site) {
   return out;
 }
 
-// Генплан: дом в координатах съёмки (повёрнут, как стоит) + участок.
+// Генплан: дом (нижний этаж) в координатах съёмки (повёрнут, как стоит) + участок.
 export function buildSitePlanDxf(project) {
-  const entities = planEntities(project, { dims: false })
+  const ground = project.levels ? levelProject(project, groundLevel(project).id) : project;
+  const entities = planEntities(ground, { dims: false })
     .flatMap((e) => entityToWorld(e, project.building));
   entities.push(...siteEntities(project.site));
   return buildDxf(entities, { extraLayers: SITE_LAYERS });

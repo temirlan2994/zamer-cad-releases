@@ -3,6 +3,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { startApp, openNew, uploadText } from './helpers.mjs';
+import { SCHEMA } from '../../core/migrate.js';
 
 const v1 = readFileSync(new URL('../fixtures/v1-project.kepler.json', import.meta.url), 'utf8');
 
@@ -25,7 +26,7 @@ describe('файлы проекта', () => {
         aligned: document.getElementById('alignBtn').classList.contains('active'),
       };
     });
-    assert.equal(s.schema, 'kepler-plan/3');
+    assert.equal(s.schema, SCHEMA);
     assert.equal(s.legacy, false);
     assert.deepEqual(s.building, { rotation: 0, origin: { x: 0, y: 0 } });
     assert.equal(s.rooms, 2);
