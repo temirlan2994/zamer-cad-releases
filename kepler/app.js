@@ -269,8 +269,12 @@ function reconcileOpenings() {
 // ---------------------------------------------------------------- Режимы
 
 function applyModeRotation() {
+  const siteRot = ((state.project.planSiteRot || 0) * Math.PI) / 180;
+  // В «Участке» крутим весь вид (участок + дом вместе) на тот же угол
+  // выравнивания, что и показ участка в «Плане» — чтобы участок выглядел
+  // одинаково в обоих режимах.
   state.view.rotation = state.modeName === 'site'
-    ? -((state.project.site?.north || 0) * Math.PI) / 180
+    ? siteRot - ((state.project.site?.north || 0) * Math.PI) / 180
     : 0;
 }
 
