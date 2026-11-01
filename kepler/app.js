@@ -7,13 +7,16 @@ import {
   createProject, createRoom, createOpening, createItem,
   serializeProject, deserializeProject, roomById, removeRoom,
 } from './core/model.js';
-import { ROOM_TYPES, roomType, furnitureDef, DOOR_WIDTH, WINDOW_WIDTH, GRID_STEP } from './core/catalog.js';
+import {
+  ROOM_TYPES, roomType, furnitureDef, furnitureByCategory, FURNITURE_CATEGORIES,
+  DOOR_WIDTH, WINDOW_WIDTH, GRID_STEP,
+} from './core/catalog.js';
 import {
   deriveWalls, openingRect, clampOpeningOffset, sideEdge, MAX_SHARED_GAP,
 } from './core/walls.js';
 import {
   validateRoomPlacement, snapRoomPosition, determineParent, moveRoomBy,
-  roomNetAreaM2, totalAreaM2, analyzeConnectivity, suggestAccess, MIN_ROOM_SIZE,
+  roomNetAreaM2, totalAreaM2, analyzeConnectivity, suggestAccess, rectsOverlap, MIN_ROOM_SIZE,
 } from './core/rooms.js';
 import {
   arrangeRoom, defaultItemsFor, itemRect, itemTitle, itemsInRoom, reclaimItemsFromChild,
@@ -26,7 +29,8 @@ import {
 import { pointInPolygon } from './core/zamer/geometry.js';
 import {
   createRenderer, roomHandles, openingHandles, underlayHandles, HANDLE_SIZE,
-  neighborCorners, neighborRotators, rotateVec, projectPoint, unprojectPoint,
+  neighborCorners, neighborRotators, itemCorners, itemRotators, rotateVec,
+  projectPoint, unprojectPoint,
 } from './render.js';
 
 const AUTOSAVE_KEY = 'kepler-plan-autosave';
@@ -120,7 +124,12 @@ const refs = {
   exportDropdown: el('exportDropdown'),
   modePlan: el('modePlanBtn'),
   modeSite: el('modeSiteBtn'),
+  furnitureBar: el('furnitureBar'),
+  furnitureCats: el('furnitureCats'),
+  furnitureItems: el('furnitureItems'),
 };
+
+let furnitureCat = FURNITURE_CATEGORIES[0].id;
 
 // ---------------------------------------------------------------- Утилиты
 
@@ -276,6 +285,7 @@ function setEditorMode(mode) {
     ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'
     : 'Топосъёмка, граница, красная линия, въезд, дорога, север.';
   renderProps();
+  renderFurnitureBar();
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }
@@ -316,6 +326,23 @@ function hitUnderlayHandle(screen) {
     const p = worldToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { corner: handle.id };
+    }
+  }
+  return null;
+}
+
+function hitItemHandle(screen) {
+  if (state.selection?.type !== 'item') return null;
+  const item = state.project.items.find((i) => i.id === state.selection.id);
+  if (!item) return null;
+  for (const r of itemRotators(item, 20, state.view.scale)) {
+    const p = worldToScreen(r.x, r.y);
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+  }
+  for (const c of itemCorners(item)) {
+    const p = worldToScreen(c.x, c.y);
+    if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
+      return { mode: 'resize', corner: c.id };
     }
   }
   return null;
@@ -449,7 +476,31 @@ function nearestWall(world, maxScreenDist = 26) {
 function selectObject(selection) {
   state.selection = selection;
   renderProps();
+  updateWallButtons();
   requestDraw();
+}
+
+// Плавающие кнопки «+ дверь / + окно» у середины выбранной стены.
+function updateWallButtons() {
+  const panel = el('wallButtons');
+  if (state.selection?.type !== 'wall') { panel.hidden = true; return; }
+  const wall = findWall(state.selection.key, state.selection.from);
+  if (!wall) { panel.hidden = true; return; }
+  positionWallButtons(wall);
+  const roomA = roomById(state.project, wall.rooms[0]);
+  const windowBtn = el('wallAddWindow');
+  const canWindow = wall.kind !== 'shared' && !roomA?.parentId;
+  windowBtn.disabled = !canWindow;
+  windowBtn.style.opacity = canWindow ? '1' : '0.4';
+  panel.hidden = false;
+}
+
+function positionWallButtons(wall) {
+  const panel = el('wallButtons');
+  if (panel.hidden && state.selection?.type !== 'wall') return;
+  const mid = worldToScreen((wall.center.x1 + wall.center.x2) / 2, (wall.center.y1 + wall.center.y2) / 2);
+  panel.style.left = `${mid.x}px`;
+  panel.style.top = `${mid.y}px`;
 }
 
 function setHint(text) {
@@ -462,6 +513,7 @@ function setTool(tool, hint) {
   state.draft = null;
   state.ghost = null;
   state.ghostOpening = null;
+  el('wallButtons').hidden = true; // при активном инструменте кнопки стены прячем
   setHint(hint || '');
   renderLibrary();
   requestDraw();
@@ -502,6 +554,23 @@ function startDraw(target) {
     : 'двойной клик или Enter — завершить';
   setTool({ kind: 'draw', target }, `Кликами наметьте ${names[target]} · ${finish} · Esc — отмена`);
   state.draft = { kind: target, points: [], cursor: null, closeHint: target === 'boundary' };
+}
+
+// Включить правку существующего слоя (вершины/перемещение) — объект выделяется.
+function startEditLayer(target, selection, hint) {
+  setTool({ kind: 'edit', target }, hint);
+  selectObject(selection);
+}
+
+// Какой слой участка сейчас редактируется (по активному инструменту).
+function activeSiteLayer() {
+  const t = state.tool;
+  if (!t) return null;
+  if (t.kind === 'underlay-edit') return 'underlay';
+  if (t.kind === 'entry') return 'entry';
+  if (t.kind === 'neighbor') return 'neighbor';
+  if (t.kind === 'draw' || t.kind === 'edit') return t.target;
+  return null;
 }
 
 // ---------------------------------------------------------------- Действия: план
@@ -610,6 +679,22 @@ function deleteSelection() {
   requestDraw();
 }
 
+// Комнаты верхнего уровня, перекрывающиеся с данной (любой порядок z).
+function overlappingTopRooms(room) {
+  if (room.parentId) return [];
+  const rect = { x: room.x, y: room.y, w: room.w, h: room.h };
+  return state.project.rooms.filter((o) => o !== room && !o.parentId
+    && rectsOverlap(rect, { x: o.x, y: o.y, w: o.w, h: o.h }));
+}
+
+// Переместить комнату в конец массива (поверх всех по z — она «съедает»).
+function bringRoomToTop(roomId) {
+  const idx = state.project.rooms.findIndex((r) => r.id === roomId);
+  if (idx < 0) return;
+  const [room] = state.project.rooms.splice(idx, 1);
+  state.project.rooms.push(room);
+}
+
 function rotateSelectedItem() {
   if (state.selection?.type !== 'item') return;
   const item = state.project.items.find((i) => i.id === state.selection.id);
@@ -679,15 +764,22 @@ function computeEntryAt(world) {
   return { x: near.x, y: near.y, dir, dist: near.dist };
 }
 
-function placeEntryAt(world) {
+// Инструмент «Въезд» активен: клик создаёт въезд (если нет) и сразу тянет
+// его по границе; существующий — просто тянется.
+function startEntryDrag(world) {
   const site = state.project.site;
   if (!site.boundary || site.boundary.length < 3) { toast('Сначала начертите границу участка'); return; }
-  const spot = computeEntryAt(world);
-  if (!spot) { toast('Кликните ближе к границе участка'); return; }
-  mutate(() => { site.entry = { x: spot.x, y: spot.y, dir: spot.dir }; });
-  state.entryGhost = null;
-  cancelTool();
+  const before = snapshot();
+  let created = false;
+  if (!site.entry) {
+    const spot = computeEntryAt(world);
+    if (!spot) { toast('Кликните ближе к границе участка'); return; }
+    site.entry = { x: spot.x, y: spot.y, dir: spot.dir };
+    created = true;
+  }
   selectObject({ type: 'site', kind: 'entry' });
+  drag = { kind: 'entry', before, moved: created }; // создание сразу коммитится
+  if (created) requestDraw();
 }
 
 function placeNeighborAt(world) {
@@ -702,9 +794,9 @@ function placeNeighborAt(world) {
     height: 6000,
   };
   mutate(() => { site.neighbors.push(neighbor); });
-  cancelTool();
+  // Инструмент остаётся активным — дом можно сразу двигать/крутить/масштабировать.
   selectObject({ type: 'site', kind: 'neighbor', id: neighbor.id });
-  toast('Соседний дом добавлен: вокруг него зона 6 м, строить в ней нельзя');
+  toast('Соседний дом добавлен: тяните углы — размер и поворот; вокруг зона 6 м');
 }
 
 function addNorthPoint(world) {
@@ -900,14 +992,66 @@ canvas.addEventListener('pointerdown', (event) => {
     return;
   }
 
-  // Активный инструмент.
+  // --- Правка слоя участка: доступна только при активном его инструменте ---
+  const layer = activeSiteLayer();
+  if (layer === 'neighbor') {
+    const hh = hitNeighborHandle(screen);
+    if (hh) {
+      const n = state.project.site.neighbors.find((x) => x.id === state.selection.id);
+      if (hh.mode === 'rotate') {
+        drag = { kind: 'neighbor-rotate', id: n.id, startRot: n.rot || 0, startAngle: Math.atan2(world.y - n.y, world.x - n.x), center: { x: n.x, y: n.y }, before: snapshot(), moved: false };
+      } else {
+        const opp = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[hh.corner];
+        const anchor = neighborCorners(n).find((c) => c.id === opp);
+        drag = { kind: 'neighbor-resize', id: n.id, corner: hh.corner, anchor: { x: anchor.x, y: anchor.y }, rot: n.rot || 0, before: snapshot(), moved: false };
+      }
+      return;
+    }
+    const hit = hitSiteObject(world);
+    if (hit?.kind === 'neighbor') {
+      const n = state.project.site.neighbors.find((x) => x.id === hit.id);
+      selectObject(hit);
+      drag = { kind: 'neighbor', id: hit.id, start: { x: n.x, y: n.y }, world, before: snapshot(), moved: false };
+      return;
+    }
+    placeNeighborAt(world); // пустое место — новый дом
+    return;
+  }
+  if (layer === 'underlay') {
+    const hh = hitUnderlayHandle(screen);
+    if (hh) {
+      const u = state.project.site.underlay;
+      const opp = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[hh.corner];
+      const anchor = underlayHandles(u).find((h) => h.id === opp);
+      drag = { kind: 'underlay-resize', corner: hh.corner, anchor, startW: u.widthPx * u.mmPerPx, startH: u.heightPx * u.mmPerPx, startMmPerPx: u.mmPerPx, world, before: snapshot(), moved: false };
+      return;
+    }
+    const hit = hitSiteObject(world);
+    if (hit?.kind === 'underlay' && !state.project.site.underlay?.locked) {
+      const u = state.project.site.underlay;
+      selectObject(hit);
+      drag = { kind: 'underlay', start: { x: u.x, y: u.y }, world, before: snapshot(), moved: false };
+      return;
+    }
+    selectObject({ type: 'site', kind: 'underlay' });
+    return;
+  }
+  if (layer === 'entry') { startEntryDrag(world); return; }
+  if (layer === 'boundary' || layer === 'redline' || layer === 'road') {
+    const v = hitSiteVertex(screen);
+    if (v) {
+      drag = { kind: 'site-vertex', siteKind: v.kind, id: v.id, index: v.index, points: v.points, before: snapshot(), moved: false };
+      return;
+    }
+    if (state.draft) { addDraftPoint(world); return; } // режим черчения нового контура
+    return;
+  }
+
+  // --- Прочие инструменты плана ---
   if (state.tool) {
     const t = state.tool;
     if (t.kind === 'place-room') { placeRoomAt(world); return; }
     if (t.kind === 'place-opening') { placeOpeningAt(world); return; }
-    if (t.kind === 'draw') { addDraftPoint(world); return; }
-    if (t.kind === 'entry') { placeEntryAt(world); return; }
-    if (t.kind === 'neighbor') { placeNeighborAt(world); return; }
     if (t.kind === 'north') { addNorthPoint(world); return; }
     if (t.kind === 'calibrate') { addCalibratePoint(world); return; }
     return;
@@ -916,7 +1060,7 @@ canvas.addEventListener('pointerdown', (event) => {
   // Клик мимо поля калибровки — отменяем калибровку.
   if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
 
-  // Ручки.
+  // Ручки плановых объектов.
   const openingHandleHit = hitOpeningHandle(screen);
   if (openingHandleHit) {
     drag = { kind: 'opening-handle', id: openingHandleHit.opening.id, end: openingHandleHit.end, before: snapshot(), moved: false };
@@ -927,71 +1071,26 @@ canvas.addEventListener('pointerdown', (event) => {
     drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), world, valid: true };
     return;
   }
-  const neighborHandleHit = hitNeighborHandle(screen);
-  if (neighborHandleHit) {
-    const n = state.project.site.neighbors.find((x) => x.id === state.selection.id);
-    if (neighborHandleHit.mode === 'rotate') {
+  const itemHandleHit = hitItemHandle(screen);
+  if (itemHandleHit) {
+    const item = state.project.items.find((i) => i.id === state.selection.id);
+    if (itemHandleHit.mode === 'rotate') {
       drag = {
-        kind: 'neighbor-rotate', id: n.id, startRot: n.rot || 0,
-        startAngle: Math.atan2(world.y - n.y, world.x - n.x), center: { x: n.x, y: n.y },
+        kind: 'item-rotate', id: item.id, startRot: item.rotation || 0,
+        startAngle: Math.atan2(world.y - item.y, world.x - item.x), center: { x: item.x, y: item.y },
         before: snapshot(), moved: false,
       };
     } else {
-      // Якорь — противоположный угол (мировые координаты, фиксирован).
-      const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[neighborHandleHit.corner];
-      const anchor = neighborCorners(n).find((c) => c.id === opposite);
+      const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[itemHandleHit.corner];
+      const anchor = itemCorners(item).find((c) => c.id === opposite);
       drag = {
-        kind: 'neighbor-resize', id: n.id, corner: neighborHandleHit.corner,
-        anchor: { x: anchor.x, y: anchor.y }, rot: n.rot || 0,
+        kind: 'item-resize', id: item.id, corner: itemHandleHit.corner,
+        anchor: { x: anchor.x, y: anchor.y }, rot: item.rotation || 0,
         before: snapshot(), moved: false,
       };
     }
     return;
   }
-  const underlayHandleHit = hitUnderlayHandle(screen);
-  if (underlayHandleHit) {
-    const u = state.project.site.underlay;
-    // Фиксированный угол — противоположный тянущемуся.
-    const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[underlayHandleHit.corner];
-    const anchor = underlayHandles(u).find((h) => h.id === opposite);
-    drag = {
-      kind: 'underlay-resize', corner: underlayHandleHit.corner, anchor,
-      startW: u.widthPx * u.mmPerPx, startH: u.heightPx * u.mmPerPx,
-      startMmPerPx: u.mmPerPx, world, before: snapshot(), moved: false,
-    };
-    return;
-  }
-  const vertexHit = hitSiteVertex(screen);
-  if (vertexHit) {
-    // Важно не затереть kind='site-vertex' полем kind из vertexHit.
-    drag = {
-      kind: 'site-vertex', siteKind: vertexHit.kind, id: vertexHit.id,
-      index: vertexHit.index, points: vertexHit.points, before: snapshot(), moved: false,
-    };
-    return;
-  }
-
-  const siteFirst = state.modeName === 'site';
-  const trySite = () => {
-    const hit = hitSiteObject(world);
-    if (!hit) return false;
-    if (hit.kind === 'underlay' && state.project.site.underlay?.locked) {
-      selectObject(hit);
-      return true;
-    }
-    selectObject(hit);
-    if (hit.kind === 'entry') drag = { kind: 'entry', before: snapshot(), moved: false };
-    else if (hit.kind === 'neighbor') {
-      const n = state.project.site.neighbors.find((x) => x.id === hit.id);
-      drag = { kind: 'neighbor', id: hit.id, start: { x: n.x, y: n.y }, world, before: snapshot(), moved: false };
-    } else if (hit.kind === 'underlay') {
-      const u = state.project.site.underlay;
-      drag = { kind: 'underlay', start: { x: u.x, y: u.y }, world, before: snapshot(), moved: false };
-    }
-    return true;
-  };
-
-  if (siteFirst && trySite()) return;
 
   const item = hitItem(world);
   if (item) {
@@ -1038,8 +1137,6 @@ canvas.addEventListener('pointerdown', (event) => {
     };
     return;
   }
-
-  if (!siteFirst && trySite()) return;
 
   // Пустое место: рамка выделения левой кнопкой.
   selectObject(null);
@@ -1094,6 +1191,8 @@ canvas.addEventListener('pointermove', (event) => {
   if (drag.kind === 'pan') {
     state.view.panX = drag.view.panX + (screen.x - drag.start.x);
     state.view.panY = drag.view.panY + (screen.y - drag.start.y);
+    positionCalInput();
+    if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
     requestDraw();
     return;
   }
@@ -1231,6 +1330,35 @@ canvas.addEventListener('pointermove', (event) => {
     return;
   }
 
+  if (drag.kind === 'item-rotate') {
+    const item = state.project.items.find((i) => i.id === drag.id);
+    if (!item) return;
+    drag.moved = true;
+    const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
+    let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
+    if (event.shiftKey) deg = Math.round(deg / 15) * 15;
+    item.rotation = ((deg % 360) + 360) % 360;
+    requestDraw();
+    return;
+  }
+
+  if (drag.kind === 'item-resize') {
+    const item = state.project.items.find((i) => i.id === drag.id);
+    if (!item) return;
+    drag.moved = true;
+    const dLocal = rotateVec(world.x - drag.anchor.x, world.y - drag.anchor.y, -drag.rot);
+    const snap = (v) => Math.max(200, Math.round(Math.abs(v) / 50) * 50);
+    const newW = snap(dLocal.x);
+    const newH = snap(dLocal.y);
+    const half = rotateVec((Math.sign(dLocal.x) || 1) * newW / 2, (Math.sign(dLocal.y) || 1) * newH / 2, drag.rot);
+    item.w = newW;
+    item.h = newH;
+    item.x = drag.anchor.x + half.x;
+    item.y = drag.anchor.y + half.y;
+    requestDraw();
+    return;
+  }
+
   if (drag.kind === 'neighbor-rotate') {
     const n = state.project.site.neighbors.find((x) => x.id === drag.id);
     if (!n) return;
@@ -1362,6 +1490,14 @@ canvas.addEventListener('pointerup', () => {
         } else {
           toast(`«${room.name}» отделена — снова самостоятельная комната`);
         }
+      } else if (room && !room.parentId) {
+        // Перетащенная комната, перекрывшая другую, становится «съедающей»
+        // (наверх по z). Кто у кого забирает площадь — переключается в панели.
+        const over = overlappingTopRooms(room);
+        if (over.length) {
+          bringRoomToTop(room.id);
+          toast(`«${room.name}» перекрывает «${over[0].name}» и забирает площадь — поменять можно в панели`, true);
+        }
       }
     }
     reconcileOpenings();
@@ -1435,6 +1571,7 @@ function zoomAt(screen, factor) {
   state.view.panY += screen.y - projected.y;
   refs.statusScale.textContent = scaleLabel();
   positionCalInput();
+  if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
   requestDraw();
 }
 
@@ -1628,15 +1765,13 @@ window.addEventListener('keyup', (event) => {
 // ---------------------------------------------------------------- Левая панель
 
 function renderLibrary() {
-  // План: карточки помещений.
+  // План: карточки помещений — только названия, без размеров.
   refs.roomCards.innerHTML = '';
   for (const def of ROOM_TYPES) {
     const card = document.createElement('button');
-    card.className = 'room-card';
+    card.className = 'room-card names-only';
     if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
-    card.innerHTML = `
-      <span class="room-card-name">${def.title}</span>
-      <span class="room-card-size">${(def.w / 1000).toFixed(1)} × ${(def.h / 1000).toFixed(1)} м</span>`;
+    card.innerHTML = `<span class="room-card-name">${def.title}</span>`;
     card.addEventListener('click', () => {
       if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
       else startPlaceRoom(def.type);
@@ -1644,28 +1779,91 @@ function renderLibrary() {
     refs.roomCards.appendChild(card);
   }
 
-  // Участок: инструменты.
+  // Участок: инструменты-слои. Правка слоя доступна, только пока его кнопка
+  // активна (подсвечена). Повторный клик по активной — выключает.
   const site = state.project?.site;
+  const layer = activeSiteLayer();
+  const editHint = (name) => `Правка: ${name}. Тяните точки/объект. Esc — выйти`;
   const tools = [
-    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'загружена' : 'PDF / JPG / PNG', action: () => refs.underlayInput.click() },
-    { id: 'boundary', title: site?.boundary ? 'Граница участка ↻' : 'Граница участка', note: site?.boundary ? `${polygonAreaM2(site.boundary).toFixed(0)} м²` : 'полигон по точкам', action: () => startDraw('boundary') },
-    { id: 'redline', title: site?.redLine ? 'Красная линия ↻' : 'Красная линия', note: 'линия застройки улицы', action: () => startDraw('redline') },
-    { id: 'road', title: 'Дорога', note: 'ось + ширина', action: () => startDraw('road') },
-    { id: 'entry', title: 'Въезд', note: 'точка на границе', action: () => setTool({ kind: 'entry' }, 'Кликните на границе участка, где въезд · Esc — отмена') },
-    { id: 'neighbor', title: 'Соседний дом', note: 'зона 6 м вокруг', action: () => setTool({ kind: 'neighbor' }, 'Кликните, где стоит соседний дом · Esc — отмена') },
+    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'двигать / масштаб' : 'PDF / JPG / PNG',
+      action: () => (site?.underlay ? setTool({ kind: 'underlay-edit' }, editHint('топосъёмка — двигайте, тяните углы')) : refs.underlayInput.click()) },
+    { id: 'boundary', title: 'Граница участка', note: site?.boundary ? `${polygonAreaM2(site.boundary).toFixed(0)} м² · правка` : 'полигон по точкам',
+      action: () => (site?.boundary ? startEditLayer('boundary', { type: 'site', kind: 'boundary' }, editHint('граница — тяните вершины')) : startDraw('boundary')) },
+    { id: 'redline', title: 'Красная линия', note: site?.redLine ? 'правка' : 'линия застройки',
+      action: () => (site?.redLine ? startEditLayer('redline', { type: 'site', kind: 'redline' }, editHint('красная линия — тяните вершины')) : startDraw('redline')) },
+    { id: 'road', title: 'Дорога', note: site?.roads?.length ? 'правка / новая' : 'ось + ширина',
+      action: () => (site?.roads?.length ? startEditLayer('road', { type: 'site', kind: 'road', id: site.roads[site.roads.length - 1].id }, editHint('дорога — тяните вершины')) : startDraw('road')) },
+    { id: 'entry', title: 'Въезд', note: 'точка на границе', action: () => setTool({ kind: 'entry' }, 'Кликните/тяните по границе участка — там будет въезд · Esc — выйти') },
+    { id: 'neighbor', title: 'Соседний дом', note: 'зона 6 м вокруг', action: () => setTool({ kind: 'neighbor' }, 'Кликните — новый дом; тяните углы для размера и поворота · Esc — выйти') },
     { id: 'north', title: 'Север по 2 точкам', note: `сейчас ${Math.round(site?.north || 0)}°`, action: () => setTool({ kind: 'north', points: [] }, 'Кликните первую точку стрелки на север') },
   ];
   refs.siteTools.innerHTML = '';
   for (const tool of tools) {
     const btn = document.createElement('button');
     btn.className = 'room-card';
-    const active = (state.tool?.kind === 'draw' && state.tool.target === tool.id)
-      || state.tool?.kind === tool.id || (tool.id === 'north' && state.tool?.kind === 'north');
+    const active = layer === tool.id || (tool.id === 'north' && state.tool?.kind === 'north');
     if (active) btn.classList.add('active');
     btn.innerHTML = `<span class="room-card-name">${tool.title}</span><span class="room-card-size">${tool.note}</span>`;
     btn.addEventListener('click', () => { if (active) cancelTool(); else tool.action(); });
     refs.siteTools.appendChild(btn);
   }
+}
+
+// ---------------------------------------------------------------- Нижняя панель мебели
+
+function renderFurnitureBar() {
+  // В режиме участка панель мебели не нужна.
+  refs.furnitureBar.hidden = state.modeName !== 'plan';
+  if (state.modeName !== 'plan') return;
+
+  refs.furnitureCats.innerHTML = '';
+  for (const cat of FURNITURE_CATEGORIES) {
+    const btn = document.createElement('button');
+    btn.textContent = cat.title;
+    if (cat.id === furnitureCat) btn.classList.add('active');
+    btn.addEventListener('click', () => { furnitureCat = cat.id; renderFurnitureBar(); });
+    refs.furnitureCats.appendChild(btn);
+  }
+
+  refs.furnitureItems.innerHTML = '';
+  for (const item of furnitureByCategory(furnitureCat)) {
+    const chip = document.createElement('button');
+    chip.className = 'furniture-chip';
+    chip.innerHTML = `
+      <span class="chip-name">${item.title}</span>
+      <span class="chip-size">${item.w}×${item.h}</span>`;
+    chip.title = `Добавить «${item.title}» (${item.w}×${item.h} мм)`;
+    chip.addEventListener('click', () => addFurnitureToScene(item.kind));
+    refs.furnitureItems.appendChild(chip);
+  }
+}
+
+// Добавляет предмет: в выбранную комнату (её центр) либо в центр видимой
+// области, если комната не выбрана.
+function addFurnitureToScene(kind) {
+  const fd = furnitureDef(kind);
+  if (!fd) return;
+  let cx;
+  let cy;
+  const sel = state.selection;
+  const room = sel?.type === 'room' ? roomById(state.project, sel.id)
+    : sel?.type === 'item' ? containingRoom(state.project.items.find((i) => i.id === sel.id)) : null;
+  if (room) { cx = room.x + room.w / 2; cy = room.y + room.h / 2; }
+  else { const c = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
+  const item = createItem(kind, Math.round(cx / GRID_STEP) * GRID_STEP, Math.round(cy / GRID_STEP) * GRID_STEP, fd.w, fd.h);
+  mutate(() => { state.project.items.push(item); });
+  selectObject({ type: 'item', id: item.id });
+  toast(`«${fd.title}» добавлен — перетащите на место, тяните углы для размера`);
+}
+
+function containingRoom(item) {
+  if (!item) return null;
+  const nested = state.project.rooms.filter((r) => r.parentId);
+  const top = state.project.rooms.filter((r) => !r.parentId);
+  for (const room of [...nested, ...top]) {
+    if (item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) return room;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- Панель свойств
@@ -1739,6 +1937,21 @@ function renderRoomProps(panel, room) {
         <span>«${escapeHtml(parent.name)}» показывается полной</span></label>
     </div>` : '';
 
+  // Пересечения с другими комнатами: кто у кого забирает площадь (по z-порядку).
+  const overlaps = overlappingTopRooms(room);
+  const myIdx = state.project.rooms.indexOf(room);
+  const overlapControl = overlaps.length ? `
+    <h3>Пересечения</h3>
+    <div class="prop-block">
+      ${overlaps.map((o) => {
+    const eats = myIdx > state.project.rooms.indexOf(o); // эта комната выше → съедает o
+    return `<div class="prop-row overlap-row" data-other="${o.id}">
+          <span>${eats ? `съедает «${escapeHtml(o.name)}»` : `«${escapeHtml(o.name)}» съедает эту`}</span>
+          <button class="link" data-swap="${o.id}">поменять</button>
+        </div>`;
+  }).join('')}
+    </div>` : '';
+
   const rejectedHtml = rejected.length
     ? `<div class="rejected"><h4>Не удалось расставить</h4>${rejected.map((r) => `<p>⚠ ${r.reason}</p>`).join('')}</div>`
     : '';
@@ -1754,6 +1967,7 @@ function renderRoomProps(panel, room) {
       <div class="prop-row"><span>Площадь (чистая)</span><strong>${roomNetAreaM2(state.project, room).toFixed(2)} м²</strong></div>
     </div>
     ${areaControl}
+    ${overlapControl}
     <h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>
     ${rejectedHtml}
@@ -1806,6 +2020,19 @@ function renderRoomProps(panel, room) {
     fromParent.addEventListener('change', () => mutate(() => { room.takesArea = true; }));
     fromSelf.addEventListener('change', () => mutate(() => { room.takesArea = false; }));
   }
+  panel.querySelectorAll('[data-swap]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const other = roomById(state.project, btn.dataset.swap);
+      if (!other) return;
+      mutate(() => {
+        const rooms = state.project.rooms;
+        const i = rooms.indexOf(room);
+        const j = rooms.indexOf(other);
+        [rooms[i], rooms[j]] = [rooms[j], rooms[i]];
+      });
+      selectObject({ type: 'room', id: room.id });
+    });
+  });
 }
 
 function renderWallProps(panel, wall) {
@@ -2502,6 +2729,13 @@ el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
+el('wallAddDoor').addEventListener('click', () => {
+  if (state.selection?.type === 'wall') startPlaceOpening('door', { key: state.selection.key, from: state.selection.from });
+});
+el('wallAddWindow').addEventListener('click', () => {
+  if (el('wallAddWindow').disabled) return;
+  if (state.selection?.type === 'wall') startPlaceOpening('window', { key: state.selection.key, from: state.selection.from });
+});
 el('calInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); applyCalibration(Number(el('calInput').value)); }
   else if (e.key === 'Escape') { e.preventDefault(); hideCalInput(); toast('Калибровка отменена'); }
@@ -2572,6 +2806,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   refs.projectName.value = state.project.name;
   updateConnectivity();
   renderLibrary();
+  renderFurnitureBar();
   renderProps();
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);

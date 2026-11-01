@@ -50,6 +50,10 @@
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
           <div class="canvas-hint" id="canvasHint" hidden></div>
+          <div class="wall-buttons" id="wallButtons" hidden>
+            <button id="wallAddDoor" title="Добавить дверь в эту стену"><span class="wb-ico">🚪</span>Дверь</button>
+            <button id="wallAddWindow" title="Добавить окно в эту стену"><span class="wb-ico">▭</span>Окно</button>
+          </div>
           <div class="cal-overlay" id="calOverlay" hidden>
             <span class="cal-label">Длина отрезка:</span>
             <input id="calInput" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="0.0" />
@@ -67,6 +71,11 @@
 
         <aside class="props" id="propsPanel"></aside>
       </main>
+
+      <footer class="furniture-bar" id="furnitureBar">
+        <div class="furniture-cats" id="furnitureCats"></div>
+        <div class="furniture-items" id="furnitureItems"></div>
+      </footer>
     </div>
 
     <div id="toast" role="status"></div>

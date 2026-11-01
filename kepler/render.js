@@ -118,12 +118,17 @@ export function createRenderer(canvas) {
     // 2. Участок: дороги, запретная зона, соседи, тени.
     if (site) drawSiteUnder(ctx, state, site, tokens, px);
 
-    // 3. Полы комнат.
-    for (const room of state.project.rooms) if (!room.parentId) drawFloor(ctx, room, tokens);
-    for (const room of state.project.rooms) if (room.parentId) drawFloor(ctx, room, tokens);
-
-    // 4. Стены.
+    // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
+    // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
+    const ownByRoom = new Map();
+    const sharedWalls = [];
     for (const wall of walls) {
+      if (wall.kind === 'shared') { sharedWalls.push(wall); continue; }
+      const rid = wall.rooms[0];
+      if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
+      ownByRoom.get(rid).push(wall);
+    }
+    const paintWall = (wall) => {
       const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
         (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
       const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
@@ -131,7 +136,13 @@ export function createRenderer(canvas) {
       if (selected) ctx.fillStyle = tokens.accent;
       else if (hovered) ctx.fillStyle = tokens.hover;
       ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+    };
+    for (const room of state.project.rooms) {
+      drawFloor(ctx, room, tokens);
+      for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
     }
+    // Общие стыковочные стены — поверх всех полов.
+    for (const wall of sharedWalls) paintWall(wall);
 
     // Подсветка комнаты под курсором.
     if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
@@ -355,12 +366,31 @@ export function createRenderer(canvas) {
     const selItem = state.selection?.type === 'item'
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
     if (selItem) {
-      const r = itemRect(selItem);
-      const p = w2s(r.x + r.w / 2, r.y);
+      // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
+      const corners = itemCorners(selItem);
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      corners.forEach((c, i) => {
+        const p = w2s(c.x, c.y);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+      const top = w2s((corners[0].x + corners[1].x) / 2, (corners[0].y + corners[1].y) / 2);
       ctx.fillStyle = tokens.accent;
       ctx.font = '11px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(`${selItem.w} × ${selItem.h} мм`, p.x, p.y - 8);
+      ctx.fillText(`${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`, top.x, top.y - 10);
+      for (const r of itemRotators(selItem, 20, scale)) {
+        const p = w2s(r.x, r.y);
+        ctx.fillStyle = tokens.surface;
+        ctx.strokeStyle = tokens.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
+      }
+      for (const c of corners) drawHandleSquare(ctx, w2s(c.x, c.y), tokens);
     }
 
     if (state.ghost?.rect) {
@@ -826,8 +856,24 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.restore();
 }
 
+// Приведение новых видов к базовым глифам (внешний вид сверху).
+const GLYPH_ALIAS = {
+  'sofa-2': 'sofa', 'sofa-u': 'sofa-corner', loveseat: 'sofa',
+  'armchair-lounge': 'armchair', 'bed-king': 'bed-double', 'bed-bunk': 'bed-single',
+  crib: 'bed-single', 'dining-table-6': 'dining-table', 'side-table': 'coffee-table',
+  'desk-corner': 'desk', 'console-table': 'tv-stand', 'chair-soft': 'chair',
+  'office-chair': 'armchair', stool: 'nightstand', 'bar-stool': 'nightstand',
+  'wardrobe-sliding': 'wardrobe', 'wardrobe-corner': 'wardrobe', sideboard: 'dresser',
+  'kitchen-island': 'table', 'cooktop-hood': 'stove', 'bar-counter': 'tv-stand',
+  'bath-corner': 'bath', bidet: 'toilet', 'vanity-unit': 'washbasin',
+  'fridge-side': 'fridge', dryer: 'washer', dishwasher: 'washer', boiler: 'fridge',
+  'coffee-table-2': 'pouf', 'car-suv': 'car', 'garden-lounger': 'bench',
+  treadmill: 'workbench', sofa: 'sofa',
+};
+
 // Условные обозначения мебели (вид сверху), центр в (0,0), размеры w×h мм.
-function drawGlyph(ctx, kind, w, h) {
+function drawGlyph(ctx, kindRaw, w, h) {
+  const kind = GLYPH_ALIAS[kindRaw] || kindRaw;
   const x = -w / 2;
   const y = -h / 2;
   const rect = (rx, ry, rw, rh) => { ctx.fillRect(rx, ry, rw, rh); ctx.strokeRect(rx, ry, rw, rh); };
@@ -835,6 +881,20 @@ function drawGlyph(ctx, kind, w, h) {
   const circle = (cx, cy, r) => { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); };
 
   switch (kind) {
+    case 'pouf': ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
+    case 'bench': rect(x, y, w, h); line(x, y + h * 0.4, x + w, y + h * 0.4); break;
+    case 'plant': circle(0, 0, Math.min(w, h) * 0.46); circle(0, 0, Math.min(w, h) * 0.2); break;
+    case 'floor-lamp': circle(0, 0, Math.min(w, h) * 0.45); circle(0, 0, 60); break;
+    case 'mirror':
+    case 'tv': rect(x, y, w, h); ctx.fillStyle = 'rgba(127,144,165,0.4)'; ctx.fillRect(x + 40, y + 20, w - 80, Math.max(20, h - 40)); break;
+    case 'rug': ctx.setLineDash([180, 140]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); ctx.strokeRect(x + 150, y + 150, w - 300, h - 300); break;
+    case 'piano': rect(x, y, w, h); ctx.strokeRect(x, y, w, h * 0.45); for (let kx = x + 120; kx < x + w; kx += 120) line(kx, y, kx, y + h * 0.45); break;
+    case 'fireplace': rect(x, y, w, h); ctx.strokeRect(x + w * 0.2, y + h * 0.3, w * 0.6, h * 0.5); break;
+    case 'aquarium': rect(x, y, w, h); circle(-w * 0.15, 0, 50); circle(w * 0.15, h * 0.1, 40); break;
+    case 'pool': ctx.beginPath(); roundRectPath(ctx, x, y, w, h, Math.min(w, h) * 0.25); ctx.fill(); ctx.stroke(); break;
+    case 'motorcycle': ctx.beginPath(); ctx.ellipse(0, -h * 0.3, w * 0.3, h * 0.12, 0, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.ellipse(0, h * 0.3, w * 0.3, h * 0.14, 0, 0, Math.PI * 2); ctx.stroke(); line(0, -h * 0.3, 0, h * 0.3); break;
+    case 'bbq': circle(0, 0, Math.min(w, h) * 0.42); circle(0, 0, Math.min(w, h) * 0.24); break;
+    case 'column': circle(0, 0, Math.min(w, h) / 2); break;
     case 'bed-double':
     case 'bed-single': {
       rect(x, y, w, h);
@@ -892,8 +952,18 @@ function drawGlyph(ctx, kind, w, h) {
     case 'workbench': rect(x, y, w, h); line(x, y + 150, x + w, y + 150); break;
     case 'garden-set': circle(0, 0, Math.min(w, h) * 0.22); circle(-w * 0.32, 0, 140); circle(w * 0.32, 0, 140); circle(0, -h * 0.32, 140); circle(0, h * 0.32, 140); break;
     case 'stairs': { rect(x, y, w, h); const step = 280; for (let sy = y + step; sy < y + h; sy += step) line(x, sy, x + w, sy); line(0, y + h - 150, 0, y + 150); line(0, y + 150, -90, y + 330); line(0, y + 150, 90, y + 330); break; }
-    default: rect(x, y, w, h); line(x, y, x + w, y + h);
+    default: { ctx.beginPath(); roundRectPath(ctx, x, y, w, h, Math.min(60, Math.min(w, h) * 0.12)); ctx.fill(); ctx.stroke(); }
   }
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 function drawRoomLabel(ctx, state, room, w2s, tokens) {
@@ -1001,6 +1071,28 @@ export function neighborRotators(n, outPx, scale) {
   return neighborCorners(n).map((c) => {
     const dx = c.x - n.x;
     const dy = c.y - n.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { id: c.id, x: c.x + (dx / len) * out, y: c.y + (dy / len) * out };
+  });
+}
+
+// Углы и ручки вращения для мебели (вращение в градусах).
+export function itemCorners(item) {
+  const rot = item.rotation || 0;
+  const hw = item.w / 2;
+  const hh = item.h / 2;
+  const defs = [['nw', -hw, -hh], ['ne', hw, -hh], ['se', hw, hh], ['sw', -hw, hh]];
+  return defs.map(([id, lx, ly]) => {
+    const v = rotateVec(lx, ly, rot);
+    return { id, x: item.x + v.x, y: item.y + v.y };
+  });
+}
+
+export function itemRotators(item, outPx, scale) {
+  const out = outPx / scale;
+  return itemCorners(item).map((c) => {
+    const dx = c.x - item.x;
+    const dy = c.y - item.y;
     const len = Math.hypot(dx, dy) || 1;
     return { id: c.id, x: c.x + (dx / len) * out, y: c.y + (dy / len) * out };
   });

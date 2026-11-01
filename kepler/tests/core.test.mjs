@@ -34,12 +34,25 @@ test('общая стена двух состыкованных комнат —
   assert.equal(ownOnSharedSide.length, 0);
 });
 
-test('пересечение и узкая щель между комнатами запрещены', () => {
+test('комнаты верхнего уровня могут перекрываться (одна съедает другую)', () => {
   const { project, b } = makeTwoDockedRooms();
-  assert.equal(validateRoomPlacement(project, { ...b, x: 3500 }, b.id).ok, false);
-  assert.equal(validateRoomPlacement(project, { ...b, x: 4050 }, b.id).ok, false);
+  // Перекрытие верхнеуровневых комнат теперь разрешено.
+  assert.equal(validateRoomPlacement(project, { ...b, x: 3500 }, b.id).ok, true);
   assert.equal(validateRoomPlacement(project, { ...b, x: 4100 }, b.id).ok, true);
   assert.equal(validateRoomPlacement(project, { ...b, x: 6000 }, b.id).ok, true);
+});
+
+test('eat-площадь: верхняя комната отнимает перекрытие у нижней', () => {
+  const project = createProject();
+  const a = createRoom('living', 0, 0, 5000, 4000); // 20 м²
+  const b = createRoom('bedroom', 3000, 0, 4000, 4000); // перекрытие по x: 3000..5000 = 2000×4000 = 8 м²
+  project.rooms.push(a, b); // b позже в массиве → b съедает a
+  assert.ok(Math.abs(roomNetAreaM2(project, a) - 12) < 0.01, `a=${roomNetAreaM2(project, a)}`);
+  assert.ok(Math.abs(roomNetAreaM2(project, b) - 16) < 0.01, `b=${roomNetAreaM2(project, b)}`);
+  // Поменяли порядок: теперь a съедает b.
+  project.rooms = [b, a];
+  assert.ok(Math.abs(roomNetAreaM2(project, a) - 20) < 0.01);
+  assert.ok(Math.abs(roomNetAreaM2(project, b) - 8) < 0.01);
 });
 
 test('привязка при перетаскивании стыкует комнаты через толщину стены', () => {

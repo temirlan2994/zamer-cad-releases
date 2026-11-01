@@ -60,8 +60,12 @@ export function validateRoomPlacement(project, candidate, excludeId) {
     }
   }
 
+  // Комнаты верхнего уровня могут перекрываться (одна «съедает» площадь другой);
+  // вложенные комнаты пересекаться между собой не должны.
+  const allowOverlap = !candidate.parentId;
   for (const other of siblings(project, candidate.parentId, excludeId)) {
     const o = roomRect(other);
+    if (allowOverlap) continue;
     if (rectsOverlap(rect, o)) {
       return { ok: false, reason: `Пересекается с «${other.name}»` };
     }
@@ -155,19 +159,78 @@ export function moveRoomBy(project, roomId, dx, dy) {
   }
 }
 
-// Чистая площадь: внутренняя минус габариты вложенных помещений (со стенами).
+// Площадь объединения набора прямоугольников (координатное сжатие).
+function rectUnionArea(rects) {
+  if (!rects.length) return 0;
+  const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.w]))].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i < xs.length - 1; i += 1) {
+    const x1 = xs[i];
+    const x2 = xs[i + 1];
+    const stripW = x2 - x1;
+    if (stripW <= 0) continue;
+    const ys = [];
+    for (const r of rects) {
+      if (r.x <= x1 + 0.001 && r.x + r.w >= x2 - 0.001) ys.push([r.y, r.y + r.h]);
+    }
+    ys.sort((a, b) => a[0] - b[0]);
+    let covered = 0;
+    let curStart = null;
+    let curEnd = null;
+    for (const [a, b] of ys) {
+      if (curStart === null) { curStart = a; curEnd = b; }
+      else if (a > curEnd) { covered += curEnd - curStart; curStart = a; curEnd = b; }
+      else curEnd = Math.max(curEnd, b);
+    }
+    if (curStart !== null) covered += curEnd - curStart;
+    total += stripW * covered;
+  }
+  return total;
+}
+
+function intersectRect(a, b) {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const w = Math.min(a.x + a.w, b.x + b.w) - x;
+  const h = Math.min(a.y + a.h, b.y + b.h) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+
+// Комнаты верхнего уровня, которые «съедают» данную (идут выше по z = позже в
+// массиве и перекрываются с ней).
+export function eatersOf(project, room) {
+  const idx = project.rooms.indexOf(room);
+  const rect = roomRect(room);
+  const result = [];
+  for (let i = idx + 1; i < project.rooms.length; i += 1) {
+    const other = project.rooms[i];
+    if (other.parentId || room.parentId) continue;
+    const clip = intersectRect(rect, roomRect(other));
+    if (clip) result.push(other);
+  }
+  return result;
+}
+
+// Чистая площадь: внутренняя минус габариты вложенных помещений (со стенами)
+// и минус область, «съеденная» перекрывающими комнатами поверх этой.
 export function roomNetAreaM2(project, room) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   let area = room.w * room.h;
+  const subtractRects = [];
   for (const child of project.rooms) {
     if (child.parentId !== room.id) continue;
     if (child.takesArea === false) continue; // площадь родителя не уменьшается
     const outer = nestedOuterRect(child, partition);
-    const ix = Math.min(room.x + room.w, outer.x + outer.w) - Math.max(room.x, outer.x);
-    const iy = Math.min(room.y + room.h, outer.y + outer.h) - Math.max(room.y, outer.y);
-    if (ix > 0 && iy > 0) area -= ix * iy;
+    const clip = intersectRect(roomRect(room), outer);
+    if (clip) subtractRects.push(clip);
   }
-  return area / 1_000_000;
+  // Перекрытие комнатами, стоящими поверх (eaters).
+  for (const eater of eatersOf(project, room)) {
+    const clip = intersectRect(roomRect(room), roomRect(eater));
+    if (clip) subtractRects.push(clip);
+  }
+  area -= rectUnionArea(subtractRects);
+  return Math.max(0, area) / 1_000_000;
 }
 
 export function totalAreaM2(project) {

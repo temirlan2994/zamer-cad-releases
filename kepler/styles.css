@@ -269,6 +269,56 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   min-width: 0;
   background: var(--canvas);
 }
+
+/* --- Нижняя панель мебели --- */
+.furniture-bar {
+  flex: none;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px max(16px, env(safe-area-inset-left, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.furniture-cats {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+  scrollbar-width: thin;
+}
+.furniture-cats button {
+  white-space: nowrap;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+}
+.furniture-cats button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.furniture-cats button:hover:not(.active) { background: var(--surface-2); }
+.furniture-items {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 2px;
+  scrollbar-width: thin;
+}
+.furniture-chip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 92px;
+  padding: 7px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+}
+.furniture-chip:hover { border-color: var(--accent); }
+.furniture-chip .chip-name { font-size: 11.5px; font-weight: 600; line-height: 1.15; }
+.furniture-chip .chip-size { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
 #canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
 
 .canvas-hint {
@@ -285,6 +335,32 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   pointer-events: none;
   max-width: 85%;
 }
+
+.wall-buttons {
+  position: absolute;
+  z-index: 20;
+  transform: translate(-50%, -50%);
+  display: flex;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+.wall-buttons button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.wall-buttons button:hover { border-color: var(--accent); color: var(--accent); }
+.wall-buttons .wb-ico { font-size: 14px; }
 
 .cal-overlay {
   position: absolute;
