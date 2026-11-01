@@ -54,7 +54,7 @@ export function afterChange() {
   updateConnectivity();
   renderProps();
   updateDimModeBtn();
-  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.viewRotation));
+  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.building?.rotation));
   requestDraw();
   scheduleAutosave();
 }

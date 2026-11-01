@@ -5,26 +5,33 @@ import { applyLibraryTab, renderFurnitureBar } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
 import { cancelTool } from './tools.js';
-import { requestDraw, scaleLabel } from './view.js';
+import { requestDraw, rotateViewTo, scaleLabel } from './view.js';
 
-export function applyModeRotation() {
-  // «Выровнять» = поворот всего вида (ракурса) целиком, одинаково в обоих
-  // режимах. В «Участке» добавляется север (север вверх).
-  const viewRot = ((state.project.viewRotation || 0) * Math.PI) / 180;
-  state.view.rotation = state.modeName === 'site'
-    ? viewRot - ((state.project.site?.north || 0) * Math.PI) / 180
-    : viewRot;
+// Поворот камеры режима: «План» идёт по осям дома (комнаты всегда прямые),
+// «Участок» — север вверх. Связь дома и участка одна и та же — это данные
+// (project.building), меняется только ракурс.
+export function modeRotation(mode = state.modeName) {
+  const deg = mode === 'site' ? state.project.site?.north || 0 : state.project.building?.rotation || 0;
+  return deg ? -(deg * Math.PI) / 180 : 0; // без «-0»
+}
+
+// pivot — мировая точка, которая остаётся на месте экрана (по умолчанию центр).
+export function applyModeRotation(pivot = null) {
+  rotateViewTo(modeRotation(), pivot);
 }
 
 export function setEditorMode(mode) {
   if (state.modeName === mode) return;
-  state.views[state.modeName] = { scale: state.view.scale, panX: state.view.panX, panY: state.view.panY };
+  state.views[state.modeName] = {
+    scale: state.view.scale, panX: state.view.panX, panY: state.view.panY, rotation: state.view.rotation,
+  };
   state.modeName = mode;
   const saved = state.views[mode];
   state.view.scale = saved.scale;
   state.view.panX = saved.panX;
   state.view.panY = saved.panY;
-  applyModeRotation();
+  state.view.rotation = saved.rotation ?? modeRotation(mode);
+  applyModeRotation(); // если поворот дома/север поменялся — докрутить вокруг центра
   cancelTool();
   state.selection = null;
   refs.modePlan.classList.toggle('active', mode === 'plan');

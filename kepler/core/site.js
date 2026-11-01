@@ -174,27 +174,9 @@ export function buildZonePolygon(site) {
   return insetPolygon(site.boundary, site.setbackBoundary ?? DEFAULT_SETBACK_BOUNDARY);
 }
 
-// Центр, вокруг которого крутится ПОКАЗ участка в режиме «План» (топосъёмка →
-// её центр; иначе центр масс границы; иначе 0,0). Общий для отрисовки и проверок.
-export function sitePivot(site) {
-  if (site?.underlay) {
-    return {
-      x: site.underlay.x + (site.underlay.widthPx * site.underlay.mmPerPx) / 2,
-      y: site.underlay.y + (site.underlay.heightPx * site.underlay.mmPerPx) / 2,
-    };
-  }
-  if (site?.boundary?.length) {
-    return {
-      x: site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length,
-      y: site.boundary.reduce((s, p) => s + p.y, 0) / site.boundary.length,
-    };
-  }
-  return { x: 0, y: 0 };
-}
-
 // Проверка: прямоугольник (внешний габарит дома/комнаты) внутри зоны застройки
-// и вне буферов соседей. corners — опц. 4 угла (если дом повёрнут относительно
-// участка); иначе берутся из rect. Возвращает { ok, reason }.
+// и вне буферов соседей. corners — 4 мировых угла (дом повёрнут относительно
+// участка, см. core/building.js); иначе берутся из rect. Возвращает { ok, reason }.
 export function checkRectBuildable(site, rect, cornersOverride = null) {
   if (!site || !site.boundary || site.boundary.length < 3) return { ok: true };
   const zone = buildZonePolygon(site);

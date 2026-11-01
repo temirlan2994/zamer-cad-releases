@@ -70,7 +70,7 @@ describe('правка через интерфейс', () => {
     const before = await proj(app.page);
     const file = await download(app.page, () => app.page.click('#saveBtn'));
     assert.match(file.name, /\.kepler\.json$/);
-    assert.equal(JSON.parse(file.text).schema, 'kepler-plan/2');
+    assert.equal(JSON.parse(file.text).schema, 'kepler-plan/3');
     await uploadText(app.page, '#fileInput', file.name, file.text);
     await app.page.waitForFunction(() => /Открыт проект/.test(document.getElementById('toast').textContent));
     const after = await proj(app.page);
@@ -82,7 +82,7 @@ describe('правка через интерфейс', () => {
     await app.page.click('#exportBtn');
     const json = await download(app.page, () => app.page.click('[data-export="json"]'));
     const data = JSON.parse(json.text);
-    assert.equal(data.schema, 'kepler-export/1');
+    assert.equal(data.schema, 'kepler-export/2');
     assert.equal(data.levels[0].rooms.length, 1);
     await app.page.click('#exportBtn');
     const dxf = await download(app.page, () => app.page.click('[data-export="dxf"]'));

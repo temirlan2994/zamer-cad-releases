@@ -1,13 +1,17 @@
-// Действия режима «Участок»: ломаные, въезд, соседи, север, выравнивание вида.
+// Действия режима «Участок»: ломаные, въезд, соседи, север, поворот дома.
 
+import { buildingCenter, rotateBuildingAbout, rotationAlongLine } from '../core/building.js';
+import { siteWarning } from '../core/rooms.js';
 import { DEFAULT_ROAD_WIDTH, nearestPointOnPolyline, polygonAreaM2 } from '../core/site.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
-import { toast } from './dom.js';
+import { canvas, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, selectObject, setHint } from './tools.js';
-import { requestDraw, worldToScreen } from './view.js';
+import {
+  planToWorld, requestDraw, screenToWorld, worldToPlan, worldToScreen,
+} from './view.js';
 
 function makeSiteId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`;
@@ -101,9 +105,24 @@ export function addNorthPoint(world) {
   toast(`Север задан: ${Math.round(north)}°`);
 }
 
-// Выравнивание ВИДА по 2 точкам: весь ракурс (участок + дом + съёмка) целиком
-// поворачивается так, чтобы кликнутая линия стала горизонтальной. Это просто
-// поворот камеры — план не меняется, одинаково в обоих режимах.
+// Поворот дома (оси комнат относительно участка). Дом крутится НА МЕСТЕ —
+// вокруг центра своего габарита (пустой дом — вокруг центра экрана). В «Плане»
+// камера идёт по осям дома, поэтому там дом остаётся неподвижным и прямым,
+// а поворачивается участок вокруг него.
+export function setBuildingRotation(deg) {
+  const project = state.project;
+  const pivot = buildingCenter(project)
+    || worldToPlan(screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2));
+  const pivotWorld = planToWorld(pivot);
+  mutate(() => { project.building = rotateBuildingAbout(project.building, pivot, deg); });
+  applyModeRotation(pivotWorld);
+  requestDraw();
+  return siteWarning(project);
+}
+
+// «Выровнять» по 2 точкам: оси дома встают вдоль кликнутой линии участка
+// (край участка, красная линия, дорога). Новые комнаты ставятся параллельно
+// ей, а не по диагонали; на экране «Плана» это выглядит как поворот вида.
 export function addAlignPoint(world) {
   const points = state.tool.points;
   points.push({ x: world.x, y: world.y });
@@ -112,14 +131,12 @@ export function addAlignPoint(world) {
   const dx = points[1].x - points[0].x;
   const dy = points[1].y - points[0].y;
   if (Math.hypot(dx, dy) < 10) { toast('Точки слишком близко'); state.tool.points = []; return; }
-  // world — истинные координаты; угол линии в мире фиксирован. Чтобы линия
-  // стала горизонтальной на экране, поворот вида = −уголЛинии (минимальный).
-  let rot = -(Math.atan2(dy, dx) * 180) / Math.PI;
-  rot = ((rot % 180) + 180) % 180;
-  if (rot > 90) rot -= 180;
+  const lineDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const rotation = rotationAlongLine(state.project.building.rotation, lineDeg);
   state.alignCursor = null;
-  mutate(() => { state.project.viewRotation = ((rot % 360) + 360) % 360; });
-  applyModeRotation();
   cancelTool();
-  toast(`Вид повёрнут (${rot > 0 ? '+' : ''}${rot.toFixed(1)}°). Повторный клик по «Выровнять» — сброс.`);
+  const warning = setBuildingRotation(rotation);
+  const shown = rotation > 180 ? rotation - 360 : rotation;
+  toast(`Дом выровнен по линии участка: ${shown > 0 ? '+' : ''}${shown.toFixed(1)}°.`
+    + `${warning ? ` ⚠ ${warning}.` : ''} Повторный клик по «Выровнять» — вернуть 0°`, true);
 }

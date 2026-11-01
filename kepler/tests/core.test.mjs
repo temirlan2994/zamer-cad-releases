@@ -257,7 +257,7 @@ test('экспорт: структурированный JSON и DXF собир�
   arrangeRoom(project, a, deriveWalls(project));
 
   const data = buildStructuredExport(project);
-  assert.equal(data.schema, 'kepler-export/1');
+  assert.equal(data.schema, 'kepler-export/2');
   assert.equal(data.levels[0].rooms.length, 2);
   assert.ok(data.levels[0].walls.some((w) => w.shared));
   assert.ok(data.levels[0].walls.every((w) => w.thickness > 0));

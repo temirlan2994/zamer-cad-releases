@@ -1,6 +1,6 @@
 // Проект как файл: новый, пример, открыть, сохранить, экспорт.
 
-import { buildProjectDxf, buildStructuredExport } from '../core/export.js';
+import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { createProject, serializeProject } from '../core/model.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
@@ -41,6 +41,10 @@ export function handleExport(kind) {
   } else if (kind === 'dxf') {
     download(`${safeFileName()}.dxf`, buildProjectDxf(state.project), 'application/dxf');
     toast('DXF сохраняется');
+  } else if (kind === 'dxf-site') {
+    if (!state.project.site?.boundary) { toast('Для генплана нужна граница участка (режим «Участок»)', true); return; }
+    download(`${safeFileName()}-genplan.dxf`, buildSitePlanDxf(state.project), 'application/dxf');
+    toast('Генплан DXF: дом на участке в координатах съёмки');
   } else if (kind === 'dxf-revit') {
     download(`${safeFileName()}-revit.dxf`, buildProjectDxf(state.project, { profile: 'revit' }), 'application/dxf');
     toast('DXF с Revit-слоями (ZAMER_*) сохраняется');

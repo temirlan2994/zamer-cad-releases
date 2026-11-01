@@ -9,14 +9,14 @@ import {
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
 } from '../render.js';
 import { state } from './state.js';
-import { worldToScreen } from './view.js';
+import { planToScreen, worldToScreen } from './view.js';
 
 export function hitRoomHandle(screen) {
   if (state.selection?.type !== 'room') return null;
   const room = roomById(state.project, state.selection.id);
   if (!room) return null;
   for (const handle of roomHandles(room)) {
-    const p = worldToScreen(handle.x, handle.y);
+    const p = planToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { room, handle: handle.id };
     }
@@ -29,7 +29,7 @@ export function hitOpeningHandle(screen) {
   const opening = state.project.openings.find((o) => o.id === state.selection.id);
   if (!opening) return null;
   for (const handle of openingHandles(state.project, opening, state.walls)) {
-    const p = worldToScreen(handle.x, handle.y);
+    const p = planToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { opening, end: handle.end };
     }
@@ -60,11 +60,11 @@ export function hitItemHandle(screen) {
   const item = state.project.items.find((i) => i.id === state.selection.id);
   if (!item) return null;
   for (const r of itemRotators(item, 20, state.view.scale)) {
-    const p = worldToScreen(r.x, r.y);
+    const p = planToScreen(r.x, r.y);
     if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
   }
   for (const c of itemCorners(item)) {
-    const p = worldToScreen(c.x, c.y);
+    const p = planToScreen(c.x, c.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
       return { mode: 'resize', corner: c.id };
     }
@@ -107,42 +107,43 @@ export function hitSiteVertex(screen) {
   return null;
 }
 
-export function hitItem(world) {
+// Плановые хит-тесты: точка p — в локальных координатах дома.
+export function hitItem(p) {
   const items = state.project.items;
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const r = itemRect(items[i]);
-    if (world.x >= r.x && world.x <= r.x + r.w && world.y >= r.y && world.y <= r.y + r.h) return items[i];
+    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return items[i];
   }
   return null;
 }
 
-export function hitOpening(world) {
+export function hitOpening(p) {
   const pad = 8 / state.view.scale + 40;
   for (const opening of state.project.openings) {
     const placed = openingRect(state.project, opening, state.walls);
     if (!placed) continue;
     const r = placed.rect;
-    if (world.x >= r.x - pad && world.x <= r.x + r.w + pad && world.y >= r.y - pad && world.y <= r.y + r.h + pad) {
+    if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) {
       return opening;
     }
   }
   return null;
 }
 
-export function hitWall(world) {
+export function hitWall(p) {
   for (const wall of state.walls) {
     if (wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски не выбираются
     const b = wall.band;
-    if (world.x >= b.x && world.x <= b.x + b.w && world.y >= b.y && world.y <= b.y + b.h) return wall;
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return wall;
   }
   return null;
 }
 
-export function hitRoom(world) {
+export function hitRoom(p) {
   const nested = state.project.rooms.filter((r) => r.parentId);
   const top = state.project.rooms.filter((r) => !r.parentId);
   for (const room of [...nested, ...top]) {
-    if (world.x >= room.x && world.x <= room.x + room.w && world.y >= room.y && world.y <= room.y + room.h) {
+    if (p.x >= room.x && p.x <= room.x + room.w && p.y >= room.y && p.y <= room.y + room.h) {
       return room;
     }
   }
@@ -157,7 +158,9 @@ export function hitSiteObject(world) {
     return { type: 'site', kind: 'entry' };
   }
   for (const n of site.neighbors || []) {
-    if (Math.abs(world.x - n.x) <= n.w / 2 && Math.abs(world.y - n.y) <= n.h / 2) {
+    // В собственных (повёрнутых) осях соседнего дома.
+    const loc = rotateVec(world.x - n.x, world.y - n.y, -(n.rot || 0));
+    if (Math.abs(loc.x) <= n.w / 2 && Math.abs(loc.y) <= n.h / 2) {
       return { type: 'site', kind: 'neighbor', id: n.id };
     }
   }
@@ -189,15 +192,15 @@ export function findWall(key, from) {
   return state.walls.find((w) => w.key === key && (from === undefined || Math.abs(w.from - from) < 1)) || null;
 }
 
-export function nearestWall(world, maxScreenDist = 26) {
+export function nearestWall(p, maxScreenDist = 26) {
   const maxDist = maxScreenDist / state.view.scale;
   let best = null;
   for (const wall of state.walls) {
     if (wall.kind === 'joint' || wall.kind === 'chamfer') continue;
     const b = wall.band;
-    const cx = Math.min(Math.max(world.x, b.x), b.x + b.w);
-    const cy = Math.min(Math.max(world.y, b.y), b.y + b.h);
-    const d = Math.hypot(world.x - cx, world.y - cy);
+    const cx = Math.min(Math.max(p.x, b.x), b.x + b.w);
+    const cy = Math.min(Math.max(p.y, b.y), b.y + b.h);
+    const d = Math.hypot(p.x - cx, p.y - cy);
     if (d <= maxDist && (!best || d < best.dist)) best = { wall, dist: d };
   }
   return best?.wall || null;

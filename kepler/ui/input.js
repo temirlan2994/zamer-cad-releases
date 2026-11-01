@@ -30,7 +30,7 @@ import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from 
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
-  pointerScreen, pointerWorld, requestDraw, screenToWorld, worldToScreen, zoomAt,
+  pointerScreen, pointerWorld, requestDraw, screenToPlan, worldToPlan, worldToScreen, zoomAt,
 } from './view.js';
 
 let drag = null;
@@ -53,7 +53,7 @@ function startEntryDrag(world) {
   if (created) requestDraw();
 }
 
-function startMultiDrag(world) {
+function startMultiDrag(plan) {
   const sel = state.selection;
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
@@ -80,7 +80,7 @@ function startMultiDrag(world) {
   }
   drag = {
     kind: 'multi',
-    world,
+    plan,
     before: snapshot(),
     moved: false,
     valid: true,
@@ -94,8 +94,8 @@ function applyMarquee() {
   const m = state.marquee;
   if (!m || (Math.abs(m.x2 - m.x1) < 6 && Math.abs(m.y2 - m.y1) < 6)) return;
   const poly = [
-    screenToWorld(m.x1, m.y1), screenToWorld(m.x2, m.y1),
-    screenToWorld(m.x2, m.y2), screenToWorld(m.x1, m.y2),
+    screenToPlan(m.x1, m.y1), screenToPlan(m.x2, m.y1),
+    screenToPlan(m.x2, m.y2), screenToPlan(m.x1, m.y2),
   ];
   const contains = (x, y) => pointInPolygon({ x, y }, poly);
   const roomIds = [];
@@ -117,11 +117,11 @@ function applyMarquee() {
   selectObject({ type: 'multi', roomIds, itemIds });
 }
 
-function updateHoverAndGhost(world) {
+function updateHoverAndGhost(world, plan) {
   if (state.tool?.kind === 'place-room') {
     const def = roomType(state.tool.type);
-    let x = world.x - def.w / 2;
-    let y = world.y - def.h / 2;
+    let x = plan.x - def.w / 2;
+    let y = plan.y - def.h / 2;
     const parentId = determineParent(state.project, { x, y, w: def.w, h: def.h }, null);
     const snapped = snapRoomPosition(state.project, { id: '__ghost__', w: def.w, h: def.h }, x, y, 14 / state.view.scale, parentId);
     x = snapped.x; y = snapped.y;
@@ -161,7 +161,7 @@ function updateHoverAndGhost(world) {
   if (state.tool?.kind === 'place-opening') {
     state.ghostOpening = null;
     state.ghostDoor = null;
-    const res = computeOpeningParams(world);
+    const res = computeOpeningParams(plan);
     if (res && res.opening && !res.error) {
       if (state.tool.openKind === 'door') {
         state.ghostDoor = res.opening; // превью двери со створкой и направлением
@@ -196,18 +196,18 @@ function updateHoverAndGhost(world) {
 
   // Подсветка под курсором: мебель, проёмы, стены, комнаты, объекты участка.
   let nextHover = null;
-  const item = hitItem(world);
+  const item = hitItem(plan);
   if (item) nextHover = { type: 'item', id: item.id };
   if (!nextHover) {
-    const opening = hitOpening(world);
+    const opening = hitOpening(plan);
     if (opening) nextHover = { type: 'opening', id: opening.id };
   }
   if (!nextHover) {
-    const wall = hitWall(world);
+    const wall = hitWall(plan);
     if (wall) nextHover = { type: 'wall', key: wall.key, from: wall.from };
   }
   if (!nextHover) {
-    const room = hitRoom(world);
+    const room = hitRoom(plan);
     if (room) nextHover = { type: 'room', id: room.id };
   }
   if (!nextHover && state.modeName === 'site') {
@@ -238,19 +238,20 @@ export function bindCanvasInput() {
     if (roomType) {
       e.preventDefault();
       cancelTool();
-      const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-      placeRoomAt(world, roomType);
+      const at = screenToPlan(e.clientX - rect.left, e.clientY - rect.top);
+      placeRoomAt(at, roomType);
       return;
     }
     const kind = e.dataTransfer?.getData('application/x-kepler-furn') || e.dataTransfer?.getData('text/plain');
     if (!kind || !furnitureDef(kind)) return;
     e.preventDefault();
-    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    addFurnitureAt(kind, world.x, world.y);
+    const at = screenToPlan(e.clientX - rect.left, e.clientY - rect.top);
+    addFurnitureAt(kind, at.x, at.y);
   });
   canvas.addEventListener('pointerdown', (event) => {
     const screen = pointerScreen(event);
-    const world = pointerWorld(event);
+    const world = pointerWorld(event); // участок — координаты съёмки
+    const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
 
     // Панорама: правая/средняя кнопка или зажатый пробел.
@@ -323,8 +324,8 @@ export function bindCanvasInput() {
     // --- Прочие инструменты плана ---
     if (state.tool) {
       const t = state.tool;
-      if (t.kind === 'place-room') { placeRoomAt(world); return; }
-      if (t.kind === 'place-opening') { placeOpeningAt(world); return; }
+      if (t.kind === 'place-room') { placeRoomAt(plan); return; }
+      if (t.kind === 'place-opening') { placeOpeningAt(plan); return; }
       if (t.kind === 'north') { addNorthPoint(world); return; }
       if (t.kind === 'align-underlay') { addAlignPoint(world); return; }
       if (t.kind === 'calibrate') { addCalibratePoint(world); return; }
@@ -353,7 +354,7 @@ export function bindCanvasInput() {
     }
     const handleHit = hitRoomHandle(screen);
     if (handleHit) {
-      drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), world, valid: true };
+      drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), plan, valid: true };
       return;
     }
     const itemHandleHit = hitItemHandle(screen);
@@ -362,7 +363,7 @@ export function bindCanvasInput() {
       if (itemHandleHit.mode === 'rotate') {
         drag = {
           kind: 'item-rotate', id: item.id, startRot: item.rotation || 0,
-          startAngle: Math.atan2(world.y - item.y, world.x - item.x), center: { x: item.x, y: item.y },
+          startAngle: Math.atan2(plan.y - item.y, plan.x - item.x), center: { x: item.x, y: item.y },
           before: snapshot(), moved: false,
         };
       } else {
@@ -377,37 +378,37 @@ export function bindCanvasInput() {
       return;
     }
 
-    const item = hitItem(world);
+    const item = hitItem(plan);
     if (item) {
       if (event.shiftKey) { toggleInMulti('item', item.id); return; }
       if (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id)) {
-        startMultiDrag(world);
+        startMultiDrag(plan);
         return;
       }
-      if (item.group) { selectGroup(item.group); startMultiDrag(world); return; }
+      if (item.group) { selectGroup(item.group); startMultiDrag(plan); return; }
       selectObject({ type: 'item', id: item.id });
-      drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, world, before: snapshot(), moved: false };
+      drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan, before: snapshot(), moved: false };
       return;
     }
 
-    const opening = hitOpening(world);
+    const opening = hitOpening(plan);
     if (opening) {
       selectObject({ type: 'opening', id: opening.id });
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
       return;
     }
 
-    const wall = hitWall(world);
+    const wall = hitWall(plan);
     if (wall) {
       selectObject({ type: 'wall', key: wall.key, from: wall.from });
       return;
     }
 
-    const room = hitRoom(world);
+    const room = hitRoom(plan);
     if (room) {
       if (event.shiftKey) { toggleInMulti('room', room.id); return; }
       if (state.selection?.type === 'multi' && state.selection.roomIds.includes(room.id)) {
-        startMultiDrag(world);
+        startMultiDrag(plan);
         return;
       }
       selectObject({ type: 'room', id: room.id });
@@ -418,7 +419,7 @@ export function bindCanvasInput() {
         .filter((i) => i.x >= room.x && i.x <= room.x + room.w && i.y >= room.y && i.y <= room.y + room.h)
         .map((i) => ({ id: i.id, x: i.x, y: i.y }));
       drag = {
-        kind: 'room', id: room.id, world, start: { x: room.x, y: room.y },
+        kind: 'room', id: room.id, plan, start: { x: room.x, y: room.y },
         childStarts: children.map((c) => ({ id: c.id, x: c.x, y: c.y })),
         carried,
         startParent: room.parentId, before: snapshot(), moved: false, valid: true,
@@ -434,9 +435,12 @@ export function bindCanvasInput() {
   canvas.addEventListener('pointermove', (event) => {
     const screen = pointerScreen(event);
     const world = pointerWorld(event);
-    refs.statusCursor.textContent = `${(world.x / 1000).toFixed(2)}; ${(world.y / 1000).toFixed(2)} м`;
+    const plan = worldToPlan(world);
+    // В «Плане» — координаты в осях дома, в «Участке» — координаты съёмки.
+    const shown = state.modeName === 'plan' ? plan : world;
+    refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`;
 
-    if (!drag) { updateHoverAndGhost(world); return; }
+    if (!drag) { updateHoverAndGhost(world, plan); return; }
 
     if (drag.kind === 'pan') {
       state.view.panX = drag.view.panX + (screen.x - drag.start.x);
@@ -458,8 +462,8 @@ export function bindCanvasInput() {
       const room = roomById(state.project, drag.id);
       if (!room) return;
       drag.moved = true;
-      const rawX = drag.start.x + (world.x - drag.world.x);
-      const rawY = drag.start.y + (world.y - drag.world.y);
+      const rawX = drag.start.x + (plan.x - drag.plan.x);
+      const rawY = drag.start.y + (plan.y - drag.plan.y);
       // Вложение перетаскиванием: родителем становится комната, внутрь которой
       // попадает прямоугольник; вытащили наружу — комната снова самостоятельная.
       const candidateParent = determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
@@ -493,8 +497,8 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'multi') {
       drag.moved = true;
-      const dx = Math.round((world.x - drag.world.x) / GRID_STEP) * GRID_STEP;
-      const dy = Math.round((world.y - drag.world.y) / GRID_STEP) * GRID_STEP;
+      const dx = Math.round((plan.x - drag.plan.x) / GRID_STEP) * GRID_STEP;
+      const dy = Math.round((plan.y - drag.plan.y) / GRID_STEP) * GRID_STEP;
       for (const [id, start] of drag.roomStarts) {
         const room = roomById(state.project, id);
         if (room) { room.x = start.x + dx; room.y = start.y + dy; }
@@ -521,7 +525,7 @@ export function bindCanvasInput() {
       const room = roomById(state.project, drag.roomId);
       if (!room) return;
       drag.moved = true;
-      applyResize(room, drag, world);
+      applyResize(room, drag, plan);
       const verdict = resizeVerdict(room);
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
@@ -535,8 +539,8 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       drag.moved = true;
-      item.x = Math.round((drag.start.x + (world.x - drag.world.x)) / GRID_STEP) * GRID_STEP;
-      item.y = Math.round((drag.start.y + (world.y - drag.world.y)) / GRID_STEP) * GRID_STEP;
+      item.x = Math.round((drag.start.x + (plan.x - drag.plan.x)) / GRID_STEP) * GRID_STEP;
+      item.y = Math.round((drag.start.y + (plan.y - drag.plan.y)) / GRID_STEP) * GRID_STEP;
       if (!event.shiftKey) snapItemToWalls(item); // Shift отключает привязку к стенам
       requestDraw();
       return;
@@ -549,7 +553,7 @@ export function bindCanvasInput() {
       const room = roomById(state.project, opening.roomId);
       const edge = sideEdge(room, opening.side);
       const base = edge.orient === 'h' ? room.x : room.y;
-      const desired = (edge.orient === 'h' ? world.x : world.y) - base;
+      const desired = (edge.orient === 'h' ? plan.x : plan.y) - base;
       const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
       if (clamped !== null) opening.offset = Math.round(clamped / GRID_STEP) * GRID_STEP;
       requestDraw();
@@ -563,7 +567,7 @@ export function bindCanvasInput() {
       const room = roomById(state.project, opening.roomId);
       const edge = sideEdge(room, opening.side);
       const base = edge.orient === 'h' ? room.x : room.y;
-      const pos = (edge.orient === 'h' ? world.x : world.y) - base;
+      const pos = (edge.orient === 'h' ? plan.x : plan.y) - base;
       const startEdge = opening.offset - opening.width / 2;
       const endEdge = opening.offset + opening.width / 2;
       const fixed = drag.end === 'start' ? endEdge : startEdge;
@@ -585,7 +589,7 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       drag.moved = true;
-      const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
+      const ang = Math.atan2(plan.y - drag.center.y, plan.x - drag.center.x);
       let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
       const stepDeg = event.shiftKey ? 15 : 5; // по умолчанию шаг 5°, Shift — 15°
       deg = Math.round(deg / stepDeg) * stepDeg;
@@ -598,7 +602,7 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       drag.moved = true;
-      const dLocal = rotateVec(world.x - drag.anchor.x, world.y - drag.anchor.y, -drag.rot);
+      const dLocal = rotateVec(plan.x - drag.anchor.x, plan.y - drag.anchor.y, -drag.rot);
       const snap = (v) => Math.max(200, Math.round(Math.abs(v) / 50) * 50);
       const newW = snap(dLocal.x);
       const newH = snap(dLocal.y);

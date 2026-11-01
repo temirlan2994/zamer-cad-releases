@@ -31,10 +31,10 @@ function snapValue(value, candidates, tol) {
   return best ? best.c : null;
 }
 
-export function applyResize(room, dragState, world) {
+export function applyResize(room, dragState, plan) {
   const start = dragState.start;
-  const dx = world.x - dragState.world.x;
-  const dy = world.y - dragState.world.y;
+  const dx = plan.x - dragState.plan.x;
+  const dy = plan.y - dragState.plan.y;
   const snap = (v) => Math.round(v / GRID_STEP) * GRID_STEP;
   const h = dragState.handle;
   let { x, y, w, h: hh } = start;

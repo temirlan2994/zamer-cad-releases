@@ -20,7 +20,7 @@
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
           <button id="fitBtn" title="Вписать план в экран">Вписать</button>
-          <button id="alignBtn" title="Выровнять топосъёмку по 2 точкам: кликните вдоль ровной линии (край участка), чтобы повернуть съёмку прямо и строить дом без наклона">⟲ Выровнять</button>
+          <button id="alignBtn" title="Выровнять дом по участку: кликните 2 точки вдоль ровной линии (край участка, красная линия) — дом встанет вдоль неё, вид «План» повернётся вслед за домом. Повторный клик — вернуть 0°">⟲ Выровнять</button>
           <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
           <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
@@ -32,6 +32,7 @@
               <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
               <button data-export="dxf">DXF-чертёж</button>
               <button data-export="dxf-revit">DXF со слоями для Revit</button>
+              <button data-export="dxf-site">DXF генплан (дом на участке, координаты съёмки)</button>
               <button data-export="copy">Копировать проект в буфер</button>
             </div>
           </div>

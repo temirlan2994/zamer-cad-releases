@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createProject, serializeProject, deserializeProject } from '../core/model.js';
-import { SCHEMA, SCHEMA_VERSION, migrateProject, schemaVersion } from '../core/migrate.js';
+import { SCHEMA, SCHEMA_VERSION, MIGRATIONS, migrateProject, schemaVersion } from '../core/migrate.js';
 
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
@@ -13,13 +13,13 @@ test('на каждую прошлую версию формата есть на
   }
 });
 
-test('файл версии 1 открывается: planSiteRot → viewRotation, данные целы', () => {
+test('файл версии 1 открывается: данные целы, формат текущий', () => {
   const text = fixture('v1-project.kepler.json');
   const raw = JSON.parse(text);
   const p = deserializeProject(text);
   assert.equal(p.schema, SCHEMA);
-  assert.equal(p.viewRotation, 330);
-  assert.ok(!('planSiteRot' in p));
+  assert.ok(!('planSiteRot' in p) && !('viewRotation' in p));
+  assert.deepEqual(p.building, { rotation: 0, origin: { x: 0, y: 0 } });
   assert.deepEqual(p.rooms, raw.rooms);
   assert.deepEqual(p.openings, raw.openings);
   assert.deepEqual(p.items, raw.items);
@@ -31,11 +31,21 @@ test('файл версии 1 открывается: planSiteRot → viewRotati
   assert.deepEqual(again, p);
 });
 
-test('v1 без поля поворота и с мусором в нём', () => {
+test('файл версии 2: поворот камеры убран, у дома появились свои оси', () => {
+  const raw = JSON.parse(fixture('v2-project.kepler.json'));
+  assert.equal(raw.viewRotation, 330);
+  const p = deserializeProject(JSON.stringify(raw));
+  assert.equal(p.schema, SCHEMA);
+  assert.ok(!('viewRotation' in p));
+  assert.deepEqual(p.building, { rotation: 0, origin: { x: 0, y: 0 } });
+  assert.deepEqual(p.rooms, raw.rooms, 'геометрия дома не меняется');
+});
+
+test('шаг 1 → 2: planSiteRot → viewRotation, мусор и минус нормализуются', () => {
   const base = { schema: 'kepler-plan/1', name: 'x', rooms: [], openings: [], items: [] };
-  assert.equal(deserializeProject(JSON.stringify(base)).viewRotation, 0);
-  assert.equal(deserializeProject(JSON.stringify({ ...base, planSiteRot: 'abc' })).viewRotation, 0);
-  assert.equal(deserializeProject(JSON.stringify({ ...base, planSiteRot: -30 })).viewRotation, 330);
+  assert.equal(MIGRATIONS[1](base).viewRotation, 0);
+  assert.equal(MIGRATIONS[1]({ ...base, planSiteRot: 'abc' }).viewRotation, 0);
+  assert.equal(MIGRATIONS[1]({ ...base, planSiteRot: -30 }).viewRotation, 330);
 });
 
 test('миграция не меняет исходные данные', () => {

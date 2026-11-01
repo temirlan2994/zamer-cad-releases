@@ -15,7 +15,7 @@ import {
   afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
-import { requestDraw, screenToWorld } from './view.js';
+import { requestDraw, screenToPlan } from './view.js';
 
 export function reconcileOpenings() {
   const walls = deriveWalls(state.project);
@@ -32,13 +32,14 @@ export function reconcileOpenings() {
   if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`);
 }
 
-export function placeRoomAt(world, typeOverride = null) {
+// Точки — в локальных координатах дома (см. core/building.js).
+export function placeRoomAt(at, typeOverride = null) {
   const type = typeOverride || state.tool.type;
   const def = roomType(type);
   const w = def.w;
   const h = def.h;
-  let x = world.x - w / 2;
-  let y = world.y - h / 2;
+  let x = at.x - w / 2;
+  let y = at.y - h / 2;
   const parentId = determineParent(state.project, { x, y, w, h }, null);
   const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId);
   x = snapped.x; y = snapped.y;
@@ -63,9 +64,9 @@ export function placeRoomAt(world, typeOverride = null) {
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
 // зависят от того, с какой стороны стены и ближе к какому концу стоит мышь.
-export function computeOpeningParams(world) {
+export function computeOpeningParams(at) {
   const openKind = state.tool.openKind;
-  const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(world);
+  const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(at);
   if (!wall) return null;
   const roomId = wall.rooms[0];
   const side = wall.sides[roomId];
@@ -74,7 +75,7 @@ export function computeOpeningParams(world) {
   if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) return { error: 'Окно можно разместить только на наружной стене' };
   const edge = sideEdge(room, side);
   const base = edge.orient === 'h' ? room.x : room.y;
-  const along = wall.orient === 'h' ? world.x : world.y;
+  const along = wall.orient === 'h' ? at.x : at.y;
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
   const opening = createOpening(openKind, roomId, side, along - base, width);
   const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
@@ -83,7 +84,7 @@ export function computeOpeningParams(world) {
   if (openKind === 'door') {
     // Сторона открывания — та, где мышь относительно линии стены.
     const perpRoomCenter = wall.orient === 'h' ? room.y + room.h / 2 : room.x + room.w / 2;
-    const mousePerp = wall.orient === 'h' ? world.y : world.x;
+    const mousePerp = wall.orient === 'h' ? at.y : at.x;
     const roomSign = Math.sign(perpRoomCenter - wall.edge) || 1;
     const mouseSign = Math.sign(mousePerp - wall.edge) || roomSign;
     opening.swingIn = mouseSign === roomSign; // открывается в сторону курсора
@@ -94,8 +95,8 @@ export function computeOpeningParams(world) {
   return { opening, wall };
 }
 
-export function placeOpeningAt(world) {
-  const res = computeOpeningParams(world);
+export function placeOpeningAt(at) {
+  const res = computeOpeningParams(at);
   if (!res) { toast('Кликните ближе к стене'); return; }
   if (res.error) { toast(res.error); return; }
   const { opening } = res;
@@ -225,13 +226,13 @@ export function rotateSelectedItem() {
 }
 
 // Добавляет предмет мебели в указанную мировую точку (центр предмета).
-export function addFurnitureAt(kind, worldX, worldY) {
+export function addFurnitureAt(kind, x, y) {
   const fd = furnitureDef(kind);
   if (!fd) return;
   const item = createItem(
     kind,
-    Math.round(worldX / GRID_STEP) * GRID_STEP,
-    Math.round(worldY / GRID_STEP) * GRID_STEP,
+    Math.round(x / GRID_STEP) * GRID_STEP,
+    Math.round(y / GRID_STEP) * GRID_STEP,
     fd.w, fd.h,
   );
   mutate(() => { state.project.items.push(item); });
@@ -249,7 +250,7 @@ export function addFurnitureToSelection(kind) {
   let cx;
   let cy;
   if (room) { cx = room.x + room.w / 2; cy = room.y + room.h / 2; }
-  else { const c = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
+  else { const c = screenToPlan(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
   const k = state.project.items.length % 6; // каскад, чтобы не ложились стопкой
   addFurnitureAt(kind, cx + k * 180, cy + k * 180);
 }

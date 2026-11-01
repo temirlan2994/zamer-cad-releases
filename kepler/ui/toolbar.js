@@ -4,14 +4,15 @@ import { applyDimInput, hideDimInput } from './dim-input.js';
 import { canvas, el, refs, toast } from './dom.js';
 import { handleExport, loadSample, openProjectFile } from './files.js';
 import { applyLibraryTab } from './library.js';
-import { applyModeRotation, setEditorMode } from './modes.js';
+import { setEditorMode } from './modes.js';
+import { setBuildingRotation } from './site-actions.js';
 import { closeStartMenu, openStartMenu, requestNewProject } from './start-menu.js';
 import { state } from './state.js';
 import { mutate, redo, tweak, undo } from './store.js';
 import { cycleTheme } from './theme.js';
 import { setTool, startPlaceOpening } from './tools.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
-import { fitView, requestDraw, zoomAt } from './view.js';
+import { fitView, zoomAt } from './view.js';
 
 export function updateDimModeBtn() {
   const outer = state.project?.settings?.dimOuter !== false;
@@ -32,15 +33,13 @@ export function bindToolbar() {
   el('alignBtn').addEventListener('click', () => {
     const site = state.project.site;
     if (!site?.underlay && !(site?.boundary?.length)) { toast('Сначала загрузите топосъёмку или начертите границу участка (режим «Участок»)', true); return; }
-    if (state.project.viewRotation) {
-      // Уже повёрнуто — повторный клик сбрасывает поворот вида.
-      mutate(() => { state.project.viewRotation = 0; });
-      applyModeRotation();
-      requestDraw();
-      toast('Поворот вида сброшен');
+    if (state.project.building.rotation) {
+      // Дом уже повёрнут — повторный клик возвращает его к 0° (тоже на месте).
+      setBuildingRotation(0);
+      toast('Поворот дома сброшен (0°). Ctrl+Z — вернуть');
       return;
     }
-    setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии (например, длинный край участка) — весь вид повернётся так, чтобы эта линия стала горизонтальной');
+    setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии участка (край, красная линия) — дом встанет вдоль неё, вид «План» повернётся вслед за домом');
   });
   el('dimModeBtn').addEventListener('click', () => {
     const cur = state.project.settings.dimOuter !== false;

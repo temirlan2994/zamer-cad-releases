@@ -11,7 +11,9 @@ import {
   addFurniture, changeWallThickness, deleteSelection, overlappingTopRooms, reconcileOpenings,
   rotateMulti90, rotateSelectedItem,
 } from './plan-actions.js';
-import { renderSiteObjectProps, renderSiteSettings } from './props-site.js';
+import {
+  bindBuildingRotation, buildingRotationField, renderSiteObjectProps, renderSiteSettings,
+} from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
@@ -36,6 +38,8 @@ export function renderProps() {
 
 function renderProjectProps(panel) {
   const rooms = state.project.rooms;
+  const site = state.project.site;
+  const hasSite = Boolean(site?.boundary?.length || site?.underlay);
   const list = rooms.map((r) => {
     const area = roomNetAreaM2(state.project, r).toFixed(1);
     const nested = r.parentId ? ' ↳ ' : '';
@@ -46,6 +50,7 @@ function renderProjectProps(panel) {
     <div class="prop-block">
       <div class="prop-row"><span>Помещений</span><strong>${rooms.length}</strong></div>
       <div class="prop-row"><span>Общая площадь</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
+      ${hasSite ? buildingRotationField() : ''}
     </div>
     ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
     <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
@@ -60,6 +65,7 @@ function renderProjectProps(panel) {
   panel.querySelectorAll('[data-room]').forEach((btn) => {
     btn.addEventListener('click', () => selectObject({ type: 'room', id: btn.dataset.room }));
   });
+  bindBuildingRotation(panel);
 }
 
 function renderRoomProps(panel, room) {

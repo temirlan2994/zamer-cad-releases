@@ -4,6 +4,7 @@
 import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
 import { SCHEMA, migrateProject, normDeg } from './migrate.js';
 import { createSite, ensureSite } from './site.js';
+import { createBuilding } from './building.js';
 
 export { SCHEMA };
 
@@ -27,7 +28,7 @@ export function createProject(name = 'Новый дом') {
     openings: [],
     items: [],
     wallOverrides: {}, // ключ стены -> { thickness, kind }
-    viewRotation: 0, // поворот вида «Выровнять» (°, по часовой): камера, не данные
+    building: createBuilding(), // оси дома относительно съёмки (core/building.js)
     site: createSite(),
   };
 }
@@ -99,7 +100,11 @@ export function normalizeProject(data) {
   data.name = typeof data.name === 'string' && data.name ? data.name : 'Без названия';
   data.revision = Number(data.revision) || 0;
   data.wallOverrides = data.wallOverrides || {};
-  data.viewRotation = normDeg(data.viewRotation);
+  const b = data.building || {};
+  data.building = {
+    rotation: normDeg(b.rotation),
+    origin: { x: Number(b.origin?.x) || 0, y: Number(b.origin?.y) || 0 },
+  };
   data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
   ensureSite(data);
   return data;

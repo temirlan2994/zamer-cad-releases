@@ -4,6 +4,7 @@
 import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP } from './catalog.js';
 import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
 import { checkRectBuildable } from './site.js';
+import { rectCornersWorld } from './building.js';
 
 export const MIN_ROOM_SIZE = 900;
 
@@ -87,12 +88,25 @@ export function validateRoomPlacement(project, candidate, excludeId) {
   if (!candidate.parentId && project.site?.boundary) {
     const t = project.settings?.exterior || DEFAULT_EXTERIOR;
     const outer = { x: rect.x - t, y: rect.y - t, w: rect.w + t * 2, h: rect.h + t * 2 };
-    const buildable = checkRectBuildable(project.site, outer);
+    // Комнаты — в осях дома, участок — в координатах съёмки: проверяем
+    // настоящие (повёрнутые) углы дома.
+    const buildable = checkRectBuildable(project.site, outer, rectCornersWorld(project.building, outer));
     // Отступы от границы/соседа — МЯГКОЕ правило: ставить можно, но с
     // предупреждением (не жёсткий запрет).
     if (!buildable.ok) return { ok: true, warning: buildable.reason };
   }
   return { ok: true };
+}
+
+// Первое предупреждение участка (зона застройки, отступы от соседей) для
+// дома целиком или null — например, после поворота дома.
+export function siteWarning(project) {
+  for (const room of project.rooms) {
+    if (room.parentId) continue;
+    const verdict = validateRoomPlacement(project, room, room.id);
+    if (verdict.warning) return verdict.warning;
+  }
+  return null;
 }
 
 // Привязка позиции при перетаскивании: стыковка к соседям (зазор = стена),

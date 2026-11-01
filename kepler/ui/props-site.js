@@ -1,9 +1,10 @@
 // Панель свойств в режиме «Участок»: настройки участка и его объекты.
 
 import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
-import { refs } from './dom.js';
+import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
 import { deleteSelection } from './plan-actions.js';
+import { setBuildingRotation } from './site-actions.js';
 import { state } from './state.js';
 import { mutate, tweak } from './store.js';
 import { selectObject, setTool, startDraw } from './tools.js';
@@ -11,6 +12,22 @@ import { applyCalibration } from './underlay.js';
 import { requestDraw } from './view.js';
 
 // --- Свойства участка ---
+
+// Поле «Поворот дома»: оси комнат относительно участка (°, по часовой).
+// Дом поворачивается на месте; «Выровнять» задаёт то же по 2 точкам.
+export function buildingRotationField() {
+  const deg = state.project.building.rotation;
+  const shown = Number((deg > 180 ? deg - 360 : deg).toFixed(2));
+  return `<label class="prop-field"><span>Поворот дома, ° (оси комнат к участку)</span>
+        <input id="buildingRot" type="number" step="0.5" value="${shown}"></label>`;
+}
+
+export function bindBuildingRotation(panel) {
+  panel.querySelector('#buildingRot')?.addEventListener('change', (e) => {
+    const warning = setBuildingRotation(Number(e.target.value) || 0);
+    if (warning) toast(`⚠ ${warning}`, true);
+  });
+}
 
 export function renderSiteSettings(panel) {
   const site = state.project.site;
@@ -27,8 +44,9 @@ export function renderSiteSettings(panel) {
     <div class="prop-block">
       <div class="prop-row"><span>Площадь участка</span><strong>${site.boundary ? `${polygonAreaM2(site.boundary).toFixed(1)} м²` : '—'}</strong></div>
       <div class="prop-row"><span>Зона застройки</span><strong>${zone ? `${polygonAreaM2(zone).toFixed(1)} м²` : '—'}</strong></div>
-      <label class="prop-field"><span>Север, ° по часовой (0 = вверх плана)</span>
+      <label class="prop-field"><span>Север, ° по часовой (0 = вверх съёмки)</span>
         <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
+      ${buildingRotationField()}
     </div>
     <h3>Отступы застройки</h3>
     <div class="prop-block">
@@ -57,6 +75,7 @@ export function renderSiteSettings(panel) {
     <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. В этом режиме север всегда вверх; вернитесь в «План» — камера станет прежней.</p>`;
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
+  bindBuildingRotation(panel);
   panel.querySelector('#northDeg').addEventListener('change', (e) => {
     mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
     applyModeRotation();

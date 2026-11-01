@@ -7,9 +7,10 @@ import { roomNetAreaM2 } from './core/rooms.js';
 import { roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
-  shadowVector, shadowPolygon, shadowPolygonFromCorners,
+  shadowVector, shadowPolygonFromCorners,
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
+import { composeView, rectCornersWorld } from './core/building.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -68,21 +69,31 @@ export function createRenderer(canvas) {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
     }
-    const view = state.view;
+    const view = state.view; // мир (участок, съёмка) → экран
     const { scale } = view;
-    const rotation = view.rotation || 0;
     const walls = state.walls || deriveWalls(state.project);
     const site = state.project.site;
     const w2s = (x, y) => projectPoint(view, x, y);
+    // Дом рисуется в своих осях: вид дома = вид мира, повёрнутый и сдвинутый
+    // на поворот дома (core/building.js). Масштаб тот же.
+    const pv = composeView(view, state.project.building);
+    const p2s = (x, y) => projectPoint(pv, x, y);
+    const setView = (v) => {
+      const c = Math.cos(v.rotation || 0);
+      const s = Math.sin(v.rotation || 0);
+      ctx.setTransform(dpr * v.scale * c, dpr * v.scale * s, -dpr * v.scale * s, dpr * v.scale * c, dpr * v.panX, dpr * v.panY);
+    };
+    // Сетка: в «Плане» — по осям дома, в «Участке» — по осям съёмки.
+    const gridView = state.modeName === 'plan' ? pv : view;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = tokens.canvas;
     ctx.fillRect(0, 0, width, height);
 
-    // Видимая область в мировых координатах (для сетки).
+    // Видимая область в координатах сетки.
     const corners = [
-      unprojectPoint(view, 0, 0), unprojectPoint(view, width, 0),
-      unprojectPoint(view, 0, height), unprojectPoint(view, width, height),
+      unprojectPoint(gridView, 0, 0), unprojectPoint(gridView, width, 0),
+      unprojectPoint(gridView, 0, height), unprojectPoint(gridView, width, height),
     ];
     const worldBox = {
       minX: Math.min(...corners.map((c) => c.x)),
@@ -91,14 +102,12 @@ export function createRenderer(canvas) {
       maxY: Math.max(...corners.map((c) => c.y)),
     };
 
-    // Мировая система координат (масштаб + поворот).
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    ctx.setTransform(dpr * scale * cos, dpr * scale * sin, -dpr * scale * sin, dpr * scale * cos, dpr * view.panX, dpr * view.panY);
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
-    // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
+    // 1. Сетка.
+    setView(gridView);
     drawGrid(ctx, worldBox, scale, px, tokens);
+    setView(view); // дальше — участок в координатах съёмки
 
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
     if (site?.underlay && state.underlayImg && !state.underlayHidden) {
@@ -126,6 +135,9 @@ export function createRenderer(canvas) {
 
     // 2. Участок: дороги, запретная зона, соседи, тени.
     if (site) drawSiteUnder(ctx, state, site, tokens, px);
+
+    // 3–6. Дом — в своих осях.
+    setView(pv);
 
     // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
@@ -190,45 +202,12 @@ export function createRenderer(canvas) {
       drawItem(ctx, item, tokens, px, selected, hovered);
     }
 
-    // 7. Линии участка поверх полов (граница, красная линия, въезд).
+    // 7. Участок поверх полов (граница, красная линия, въезд) и
+    // предпросмотры инструментов участка — в координатах съёмки.
+    setView(view);
     if (site) drawSiteOver(ctx, state, site, tokens, px);
 
-    // 8. Призраки и направляющие.
-    if (state.ghost?.rect) {
-      const g = state.ghost;
-      // valid+warn — янтарный (можно ставить, но с предупреждением);
-      // valid — синий; invalid — красный (ставить нельзя).
-      if (g.warn) { ctx.fillStyle = 'rgba(225,140,30,0.16)'; ctx.strokeStyle = '#e08c1e'; }
-      else if (g.valid) { ctx.fillStyle = 'rgba(31,117,255,0.14)'; ctx.strokeStyle = tokens.accent; }
-      else { ctx.fillStyle = 'rgba(225,75,75,0.16)'; ctx.strokeStyle = tokens.danger; }
-      ctx.lineWidth = px(1.6);
-      ctx.setLineDash([px(8), px(5)]);
-      ctx.fillRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
-      ctx.strokeRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
-      ctx.setLineDash([]);
-    }
-    if (state.ghostOpening) {
-      const r = state.ghostOpening.rect;
-      ctx.fillStyle = 'rgba(29,180,168,0.5)';
-      ctx.fillRect(r.x, r.y, r.w, r.h);
-    }
-    // Превью двери под курсором: створка с направлением открывания.
-    if (state.ghostDoor) {
-      const sym = doorSymbol(state.project, state.ghostDoor, walls);
-      if (sym) {
-        ctx.fillStyle = tokens.canvas;
-        ctx.fillRect(sym.rect.x, sym.rect.y, sym.rect.w, sym.rect.h);
-        ctx.strokeStyle = tokens.accent2;
-        ctx.lineWidth = px(1.8);
-        ctx.globalAlpha = 0.85;
-        ctx.beginPath(); ctx.moveTo(sym.hinge.x, sym.hinge.y); ctx.lineTo(sym.open.x, sym.open.y); ctx.stroke();
-        const a1 = Math.atan2(sym.closed.y - sym.hinge.y, sym.closed.x - sym.hinge.x);
-        const a2 = Math.atan2(sym.open.y - sym.hinge.y, sym.open.x - sym.hinge.x);
-        let d = a2 - a1; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-        ctx.beginPath(); ctx.arc(sym.hinge.x, sym.hinge.y, state.ghostDoor.width, a1, a1 + d, d < 0); ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-    }
+    state._calLabelAt = null;
     // Предпросмотр линии севера при задании по двум точкам.
     const northTool = state.tool?.kind === 'north' ? state.tool : null;
     if (northTool && northTool.points.length === 1 && state.northCursor) {
@@ -292,7 +271,6 @@ export function createRenderer(canvas) {
       : null;
 
     // Отрезок калибровки топосъёмки (как в Revit/ArchiCAD).
-    state._calLabelAt = null;
     const calTool = state.tool?.kind === 'calibrate' ? state.tool : null;
     let calA = null;
     let calB = null;
@@ -325,6 +303,43 @@ export function createRenderer(canvas) {
       }
     }
 
+    // 8. Призраки и направляющие дома — снова в осях дома.
+    setView(pv);
+    if (state.ghost?.rect) {
+      const g = state.ghost;
+      // valid+warn — янтарный (можно ставить, но с предупреждением);
+      // valid — синий; invalid — красный (ставить нельзя).
+      if (g.warn) { ctx.fillStyle = 'rgba(225,140,30,0.16)'; ctx.strokeStyle = '#e08c1e'; }
+      else if (g.valid) { ctx.fillStyle = 'rgba(31,117,255,0.14)'; ctx.strokeStyle = tokens.accent; }
+      else { ctx.fillStyle = 'rgba(225,75,75,0.16)'; ctx.strokeStyle = tokens.danger; }
+      ctx.lineWidth = px(1.6);
+      ctx.setLineDash([px(8), px(5)]);
+      ctx.fillRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
+      ctx.strokeRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
+      ctx.setLineDash([]);
+    }
+    if (state.ghostOpening) {
+      const r = state.ghostOpening.rect;
+      ctx.fillStyle = 'rgba(29,180,168,0.5)';
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+    }
+    // Превью двери под курсором: створка с направлением открывания.
+    if (state.ghostDoor) {
+      const sym = doorSymbol(state.project, state.ghostDoor, walls);
+      if (sym) {
+        ctx.fillStyle = tokens.canvas;
+        ctx.fillRect(sym.rect.x, sym.rect.y, sym.rect.w, sym.rect.h);
+        ctx.strokeStyle = tokens.accent2;
+        ctx.lineWidth = px(1.8);
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath(); ctx.moveTo(sym.hinge.x, sym.hinge.y); ctx.lineTo(sym.open.x, sym.open.y); ctx.stroke();
+        const a1 = Math.atan2(sym.closed.y - sym.hinge.y, sym.closed.x - sym.hinge.x);
+        const a2 = Math.atan2(sym.open.y - sym.hinge.y, sym.open.x - sym.hinge.x);
+        let d = a2 - a1; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+        ctx.beginPath(); ctx.arc(sym.hinge.x, sym.hinge.y, state.ghostDoor.width, a1, a1 + d, d < 0); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
       ctx.lineWidth = px(1);
@@ -361,19 +376,19 @@ export function createRenderer(canvas) {
     // --- Экранный слой ---
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, w2s, tokens);
+    for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens);
     // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-    drawAllRoomDims(ctx, state, walls, w2s, tokens);
-    if (selRoom) drawRoomHandles(ctx, selRoom, w2s, tokens);
+    drawAllRoomDims(ctx, state, walls, p2s, tokens);
+    if (selRoom) drawRoomHandles(ctx, selRoom, p2s, tokens);
     // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
     const selOpening = state.selection?.type === 'opening'
       ? state.project.openings.find((o) => o.id === state.selection.id) : null;
     state._openingUI = null;
     if (selOpening) {
       for (const hp of openingHandles(state.project, selOpening, walls)) {
-        drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
+        drawHandleSquare(ctx, p2s(hp.x, hp.y), tokens);
       }
-      drawSelectedOpeningUI(ctx, state, selOpening, walls, w2s, scale, tokens);
+      drawSelectedOpeningUI(ctx, state, selOpening, walls, p2s, scale, tokens);
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
     // Подпись «замкнуть/завершить» у первой точки черновика.
@@ -442,30 +457,30 @@ export function createRenderer(canvas) {
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       corners.forEach((c, i) => {
-        const p = w2s(c.x, c.y);
+        const p = p2s(c.x, c.y);
         if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
       });
       ctx.closePath();
       ctx.stroke();
-      const top = w2s((corners[0].x + corners[1].x) / 2, (corners[0].y + corners[1].y) / 2);
+      const top = p2s((corners[0].x + corners[1].x) / 2, (corners[0].y + corners[1].y) / 2);
       ctx.fillStyle = tokens.accent;
       ctx.font = '11px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`, top.x, top.y - 10);
       for (const r of itemRotators(selItem, 20, scale)) {
-        const p = w2s(r.x, r.y);
+        const p = p2s(r.x, r.y);
         ctx.fillStyle = tokens.surface;
         ctx.strokeStyle = tokens.accent;
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
       }
-      for (const c of corners) drawHandleSquare(ctx, w2s(c.x, c.y), tokens);
+      for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
     }
 
     if (state.ghost?.rect) {
       const g = state.ghost;
-      const p = w2s(g.rect.x + g.rect.w / 2, g.rect.y + g.rect.h / 2);
+      const p = p2s(g.rect.x + g.rect.w / 2, g.rect.y + g.rect.h / 2);
       ctx.fillStyle = g.warn ? '#e08c1e' : (g.valid ? tokens.accent : tokens.danger);
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -625,18 +640,19 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
     ctx.restore();
   }
 
-  // Тени (инсоляция): дом + соседи. Всё в мировых координатах, вид крутится
-  // целиком, поэтому тени совпадают со стенами при любом повороте вида.
+  // Тени (инсоляция): дом + соседи — в координатах съёмки, поэтому тени
+  // совпадают со стенами при любом повороте дома и вида.
   if (site.sun?.enabled) {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
     const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
     if (vector) {
       ctx.beginPath();
+      const t = state.project.settings?.exterior || 250;
       for (const room of state.project.rooms) {
         if (room.parentId) continue;
-        const t = 250;
         const rect = { x: room.x - t, y: room.y - t, w: room.w + t * 2, h: room.h + t * 2 };
-        polyPath(ctx, shadowPolygon(rect, vector));
+        // Комната в осях дома → настоящие (повёрнутые) углы в координатах съёмки.
+        polyPath(ctx, shadowPolygonFromCorners(rectCornersWorld(state.project.building, rect), vector));
       }
       for (const n of site.neighbors || []) {
         const nv = shadowVector(sun, site.north, n.height || 6000);

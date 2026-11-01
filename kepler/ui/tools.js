@@ -7,7 +7,7 @@ import { findWall } from './hit.js';
 import { renderLibrary } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
-import { requestDraw, worldToScreen } from './view.js';
+import { planToScreen, requestDraw } from './view.js';
 
 export function selectObject(selection) {
   state.selection = selection;
@@ -34,7 +34,7 @@ function updateWallButtons() {
 export function positionWallButtons(wall) {
   const panel = el('wallButtons');
   if (panel.hidden && state.selection?.type !== 'wall') return;
-  const mid = worldToScreen((wall.center.x1 + wall.center.x2) / 2, (wall.center.y1 + wall.center.y2) / 2);
+  const mid = planToScreen((wall.center.x1 + wall.center.x2) / 2, (wall.center.y1 + wall.center.y2) / 2);
   panel.style.left = `${mid.x}px`;
   panel.style.top = `${mid.y}px`;
 }

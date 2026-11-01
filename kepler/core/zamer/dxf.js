@@ -180,8 +180,11 @@ function dxfLayerName(layer, layerMap) {
   return layerMap.get(layer || "measure") || layerMap.get("measure") || layer || "measure";
 }
 
+// options.extraLayers — дополнительные слои [{ key, name, color }]
+// (например, генплан: участок, красная линия, зона застройки).
 export function buildDxf(entities, options = {}) {
-  const layerDefs = options.profile === "revit" ? REVIT_LAYER_DEFS : DEFAULT_LAYER_DEFS;
+  const baseLayers = options.profile === "revit" ? REVIT_LAYER_DEFS : DEFAULT_LAYER_DEFS;
+  const layerDefs = [...baseLayers, ...(options.extraLayers || [])];
   const layerMap = new Map(layerDefs.map((layer) => [layer.key, layer.name]));
   const lines = [
     "0", "SECTION",

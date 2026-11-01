@@ -5,7 +5,9 @@ import { loadSample } from './files.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
-import { fitView, screenToWorld, worldToScreen } from './view.js';
+import {
+  fitView, planToScreen, screenToPlan, screenToWorld, worldToScreen,
+} from './view.js';
 
 // Только с ?debug в адресе: обычным пользователям внутреннее состояние
 // редактора в window не видно.
@@ -15,6 +17,8 @@ export function exposeDebugApi() {
     state,
     worldToScreen,
     screenToWorld,
+    planToScreen, // оси дома ↔ экран
+    screenToPlan,
     fitView,
     loadSample,
     setEditorMode,

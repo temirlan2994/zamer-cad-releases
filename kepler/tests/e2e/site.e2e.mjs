@@ -1,8 +1,8 @@
-// e2e участка: импорт DXF (выбросы, блоки, proxy), поворот вида «Выровнять».
+// e2e участка: импорт DXF (выбросы, блоки, proxy), поворот дома «Выровнять».
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  startApp, openNew, uploadText, clickWorld,
+  startApp, openNew, uploadText, clickWorld, dropOnCanvas,
   dxfSurveyWithOutlier, dxfWithBlocks, dxfProxyOnly,
 } from './helpers.mjs';
 
@@ -39,29 +39,53 @@ describe('участок', () => {
     await app.page.waitForFunction(() => /proxy/i.test(document.getElementById('toast').textContent));
   });
 
-  it('«Выровнять» поворачивает весь вид, одинаково в обоих режимах', async () => {
+  it('«Выровнять» ставит дом вдоль линии участка: в «Плане» комнаты прямые', async () => {
     await app.page.click('#modePlanBtn');
     await app.page.click('#alignBtn');
-    // Две точки вдоль линии под 30°.
+    // Две точки вдоль линии участка под 30° (координаты съёмки).
     await clickWorld(app.page, 0, 0);
     await clickWorld(app.page, 1000, 577);
-    const plan = await app.page.evaluate(() => ({
-      rot: window.__kepler.state.project.viewRotation,
-      view: window.__kepler.state.view.rotation,
-    }));
-    assert.ok(Math.abs(plan.rot - 330) < 0.5, `viewRotation=${plan.rot}`);
-    assert.ok(Math.abs(plan.view - (-30 * Math.PI) / 180) < 0.01 || Math.abs(plan.view - (330 * Math.PI) / 180) < 0.01);
+    const s = await app.page.evaluate(() => {
+      const k = window.__kepler;
+      const a = k.worldToScreen(0, 0);
+      const b = k.worldToScreen(1000, 577);
+      return { rot: k.state.project.building.rotation, view: k.state.view.rotation, lineDy: b.y - a.y };
+    });
+    assert.ok(Math.abs(s.rot - 30) < 0.5, `поворот дома ${s.rot}`);
+    assert.ok(Math.abs(s.view + (30 * Math.PI) / 180) < 0.01, 'вид «Плана» идёт по осям дома');
+    assert.ok(Math.abs(s.lineDy) < 1, 'линия участка на экране горизонтальна');
+    assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), true);
+
+    // Новая комната — прямая на экране «Плана» и параллельна линии участка.
+    await dropOnCanvas(app.page, 'application/x-kepler-room', 'living');
+    const edge = () => app.page.evaluate(() => {
+      const k = window.__kepler;
+      const r = k.state.project.rooms.at(-1);
+      const a = k.planToScreen(r.x, r.y);
+      const b = k.planToScreen(r.x + r.w, r.y);
+      return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+    });
+    assert.ok(Math.abs(await edge()) < 0.01, 'в «Плане» стена горизонтальна');
     await app.page.click('#modeSiteBtn');
-    const site = await app.page.evaluate(() => window.__kepler.state.view.rotation);
-    // В «Участке» тот же поворот (север проекта = 0).
-    assert.ok(Math.abs(Math.cos(site) - Math.cos(plan.view)) < 1e-6 && Math.abs(Math.sin(site) - Math.sin(plan.view)) < 1e-6);
+    assert.ok(Math.abs((await edge()) - s.rot) < 0.01, 'в «Участке» (север вверх) дом стоит под углом линии');
   });
 
-  it('повторное «Выровнять» сбрасывает поворот', async () => {
+  it('повторное «Выровнять» возвращает 0°, дом крутится на месте', async () => {
+    const center = () => app.page.evaluate(() => {
+      const { building: b, rooms } = window.__kepler.state.project;
+      const r = rooms.at(-1);
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      const t = (b.rotation * Math.PI) / 180;
+      return { x: b.origin.x + cx * Math.cos(t) - cy * Math.sin(t), y: b.origin.y + cx * Math.sin(t) + cy * Math.cos(t) };
+    });
+    const before = await center();
     await app.page.click('#modePlanBtn');
     await app.page.click('#alignBtn');
-    const rot = await app.page.evaluate(() => [window.__kepler.state.project.viewRotation, window.__kepler.state.view.rotation]);
-    assert.deepEqual(rot, [0, 0]);
+    const after = await center();
+    const s = await app.page.evaluate(() => [window.__kepler.state.project.building.rotation, window.__kepler.state.view.rotation]);
+    assert.deepEqual(s, [0, 0]);
+    assert.ok(Math.hypot(after.x - before.x, after.y - before.y) < 1, 'центр дома на участке не сдвинулся');
   });
 
   it('без ошибок в консоли', () => {

@@ -5,13 +5,21 @@
 //    Это НЕ BIM-модель, а концепт: плагин на C# превратит её в редактируемые
 //    элементы Revit (Walls/Doors/Windows/Rooms) на следующем этапе.
 // 2. buildProjectDxf — чертёж DXF через модуль Zamer CAD (buildDxf), включая
-//    Revit-профиль слоёв (ZAMER_*).
+//    Revit-профиль слоёв (ZAMER_*). План — в осях дома (всегда прямой).
+// 3. buildSitePlanDxf — генплан в координатах съёмки: дом повёрнут так, как
+//    стоит на участке, плюс граница, красная линия, зона застройки, дороги,
+//    соседи, въезд и север. Ложится поверх исходной топосъёмки в CAD.
+//
+// Системы координат (см. core/building.js): комнаты, стены, проёмы и мебель —
+// в осях дома; участок — в координатах съёмки;
+// world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
-import { buildDxf, buildRevitDxf } from './zamer/dxf.js';
+import { buildDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLink, doorSymbol, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
-import { buildZonePolygon, polygonAreaM2 } from './site.js';
+import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
+import { northInBuilding, toWorld } from './building.js';
 
 export function buildStructuredExport(project) {
   const walls = deriveWalls(project);
@@ -88,9 +96,17 @@ export function buildStructuredExport(project) {
   }
 
   return {
-    schema: 'kepler-export/1',
+    schema: 'kepler-export/2',
     units: 'mm',
     axes: 'x-right, y-down',
+    // Помещения, стены, проёмы, мебель — в осях дома (frame: building);
+    // участок (site) — в координатах съёмки (frame: world).
+    building: {
+      rotation_deg: project.building?.rotation || 0,
+      origin: { ...(project.building?.origin || { x: 0, y: 0 }) },
+      transform: 'world = origin + R(rotation_deg) * local; y down, clockwise',
+      true_north_deg: northInBuilding(project.site?.north, project.building),
+    },
     name: project.name,
     generated_at: new Date().toISOString(),
     levels: [
@@ -108,6 +124,7 @@ export function buildStructuredExport(project) {
 function buildSiteExport(site) {
   if (!site || !site.boundary) return null;
   return {
+    frame: 'world',
     north_deg: site.north,
     location: site.location,
     boundary: site.boundary,
@@ -121,8 +138,9 @@ function buildSiteExport(site) {
   };
 }
 
-// Перевод модели Kepler в сущности Zamer CAD и сборка DXF.
-export function buildProjectDxf(project, { profile = 'default' } = {}) {
+// Перевод модели Kepler в сущности Zamer CAD (в осях дома).
+// dims: false — без размерных линий (для генплана).
+export function planEntities(project, { dims = true } = {}) {
   const walls = deriveWalls(project);
   const entities = [];
 
@@ -193,9 +211,126 @@ export function buildProjectDxf(project, { profile = 'default' } = {}) {
       text: `${area.toFixed(1)} m2`,
     });
     // Габаритные размеры комнаты (сверху и слева).
+    if (!dims) continue;
     entities.push({ type: 'line', layer: 'dimensions', x1: room.x, y1: room.y, x2: room.x + room.w, y2: room.y, offset: -600 });
     entities.push({ type: 'line', layer: 'dimensions', x1: room.x, y1: room.y + room.h, x2: room.x, y2: room.y, offset: -600 });
   }
+  return entities;
+}
 
-  return profile === 'revit' ? buildRevitDxf(entities) : buildDxf(entities);
+// Чертёж плана: в осях дома, поэтому от поворота дома не зависит.
+export function buildProjectDxf(project, { profile = 'default' } = {}) {
+  return buildDxf(planEntities(project), { profile });
+}
+
+// ---------------------------------------------------------------- Генплан
+
+const SITE_LAYERS = [
+  { key: 'site', name: 'site_boundary', color: 8 },
+  { key: 'redline', name: 'red_line', color: 1 },
+  { key: 'zone', name: 'build_zone', color: 6 },
+  { key: 'roads', name: 'roads', color: 9 },
+  { key: 'neighbors', name: 'neighbors', color: 8 },
+];
+
+// Сущность плана (оси дома) → сущности в координатах съёмки.
+function entityToWorld(e, b) {
+  const w = (x, y) => toWorld(b, { x, y });
+  const rot = b?.rotation || 0;
+  if (e.type === 'wall' || e.type === 'line') {
+    const p = w(e.x1, e.y1);
+    const q = w(e.x2, e.y2);
+    return [{ ...e, x1: p.x, y1: p.y, x2: q.x, y2: q.y }];
+  }
+  if (e.type === 'rectangle') {
+    const c = [w(e.x1, e.y1), w(e.x2, e.y1), w(e.x2, e.y2), w(e.x1, e.y2)];
+    return c.map((p, i) => ({ type: 'line', layer: e.layer, x1: p.x, y1: p.y, x2: c[(i + 1) % 4].x, y2: c[(i + 1) % 4].y }));
+  }
+  if (e.type === 'arc') {
+    return [{ ...e, start: w(e.start.x, e.start.y), through: w(e.through.x, e.through.y), end: w(e.end.x, e.end.y) }];
+  }
+  if (e.type === 'block' || e.type === 'text') {
+    const p = w(e.x, e.y);
+    return [{ ...e, x: p.x, y: p.y, rotation: (e.rotation || 0) + rot }];
+  }
+  if (e.type === 'circle') {
+    const p = w(e.cx, e.cy);
+    return [{ ...e, cx: p.x, cy: p.y }];
+  }
+  return [];
+}
+
+function polyLines(points, layer, closed) {
+  const out = [];
+  const n = points.length;
+  for (let i = 0; i < (closed ? n : n - 1); i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    out.push({ type: 'line', layer, x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+  }
+  return out;
+}
+
+function siteEntities(site) {
+  if (!site) return [];
+  const out = [];
+  if (site.boundary?.length >= 3) {
+    out.push(...polyLines(site.boundary, 'site', true));
+    const zone = buildZonePolygon(site);
+    if (zone) out.push(...polyLines(zone, 'zone', true));
+    for (const buf of neighborBuffers(site)) out.push(...polyLines(buf.poly, 'zone', true));
+  }
+  if (site.redLine?.length >= 2) out.push(...polyLines(site.redLine, 'redline', Boolean(site.redLineClosed)));
+  for (const road of site.roads || []) {
+    if (road.points.length < 2) continue;
+    out.push(...polyLines(road.points, 'roads', Boolean(road.closed)));
+    // Кромки дороги: смещение каждого отрезка на ±ширина/2.
+    const half = (road.width || 0) / 2;
+    const n = road.points.length;
+    for (let i = 0; i < (road.closed ? n : n - 1); i += 1) {
+      const a = road.points[i];
+      const c = road.points[(i + 1) % n];
+      const len = Math.hypot(c.x - a.x, c.y - a.y) || 1;
+      const nx = (-(c.y - a.y) / len) * half;
+      const ny = ((c.x - a.x) / len) * half;
+      for (const sgn of [1, -1]) {
+        out.push({ type: 'line', layer: 'roads', x1: a.x + nx * sgn, y1: a.y + ny * sgn, x2: c.x + nx * sgn, y2: c.y + ny * sgn });
+      }
+    }
+  }
+  for (const nb of site.neighbors || []) {
+    const c = neighborRectCorners(nb);
+    out.push(...polyLines(c, 'neighbors', true));
+    out.push({ type: 'line', layer: 'neighbors', x1: c[0].x, y1: c[0].y, x2: c[2].x, y2: c[2].y });
+    out.push({ type: 'line', layer: 'neighbors', x1: c[1].x, y1: c[1].y, x2: c[3].x, y2: c[3].y });
+    out.push({ type: 'text', layer: 'neighbors', x: nb.x - 600, y: nb.y, height: 400, text: `${((nb.height || 6000) / 1000).toFixed(1)} m`, rotation: nb.rot || 0 });
+  }
+  if (site.entry) {
+    const rad = ((site.entry.dir || 0) * Math.PI) / 180;
+    const tip = { x: site.entry.x + Math.cos(rad) * 2200, y: site.entry.y + Math.sin(rad) * 2200 };
+    out.push({ type: 'line', layer: 'site', x1: site.entry.x, y1: site.entry.y, x2: tip.x, y2: tip.y });
+    for (const da of [-0.45, 0.45]) {
+      out.push({ type: 'line', layer: 'site', x1: tip.x, y1: tip.y, x2: tip.x - Math.cos(rad + da) * 500, y2: tip.y - Math.sin(rad + da) * 500 });
+    }
+  }
+  // Стрелка севера у правого верхнего угла участка.
+  if (site.boundary?.length >= 3) {
+    const maxX = Math.max(...site.boundary.map((p) => p.x));
+    const minY = Math.min(...site.boundary.map((p) => p.y));
+    const base = { x: maxX + 3000, y: minY + 3000 };
+    const rad = ((site.north || 0) * Math.PI) / 180;
+    const dir = { x: Math.sin(rad), y: -Math.cos(rad) };
+    const tip = { x: base.x + dir.x * 2500, y: base.y + dir.y * 2500 };
+    out.push({ type: 'line', layer: 'site', x1: base.x, y1: base.y, x2: tip.x, y2: tip.y });
+    out.push({ type: 'text', layer: 'site', x: tip.x + dir.x * 300 - 150, y: tip.y + dir.y * 300, height: 450, text: 'N' });
+  }
+  return out;
+}
+
+// Генплан: дом в координатах съёмки (повёрнут, как стоит) + участок.
+export function buildSitePlanDxf(project) {
+  const entities = planEntities(project, { dims: false })
+    .flatMap((e) => entityToWorld(e, project.building));
+  entities.push(...siteEntities(project.site));
+  return buildDxf(entities, { extraLayers: SITE_LAYERS });
 }

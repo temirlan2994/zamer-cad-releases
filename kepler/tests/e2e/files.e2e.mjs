@@ -11,26 +11,26 @@ describe('файлы проекта', () => {
   before(async () => { app = await startApp(); await openNew(app.page); });
   after(async () => { await app?.close(); });
 
-  it('файл версии 1 открывается и мигрирует (поворот вида сохраняется)', async () => {
+  it('файл версии 1 открывается и мигрирует до текущего формата', async () => {
     await uploadText(app.page, '#fileInput', 'old.kepler.json', v1);
     await app.page.waitForFunction(() => window.__kepler.state.project.name === 'Дом из версии 1');
     const s = await app.page.evaluate(() => {
       const { project, view } = window.__kepler.state;
       return {
         schema: project.schema,
-        viewRotation: project.viewRotation,
-        legacy: 'planSiteRot' in project,
+        legacy: 'planSiteRot' in project || 'viewRotation' in project,
+        building: project.building,
         rooms: project.rooms.length,
         viewDeg: ((view.rotation * 180) / Math.PI + 360) % 360,
         aligned: document.getElementById('alignBtn').classList.contains('active'),
       };
     });
-    assert.equal(s.schema, 'kepler-plan/2');
-    assert.equal(s.viewRotation, 330);
+    assert.equal(s.schema, 'kepler-plan/3');
     assert.equal(s.legacy, false);
+    assert.deepEqual(s.building, { rotation: 0, origin: { x: 0, y: 0 } });
     assert.equal(s.rooms, 2);
-    assert.ok(Math.abs(s.viewDeg - 330) < 0.01, `поворот вида ${s.viewDeg}`);
-    assert.ok(s.aligned, 'кнопка «Выровнять» подсвечена');
+    assert.ok(Math.abs(s.viewDeg) < 0.01 || Math.abs(s.viewDeg - 360) < 0.01, `поворот вида ${s.viewDeg}`);
+    assert.equal(s.aligned, false, 'дом не повёрнут — «Выровнять» не подсвечена');
     assert.match(await app.page.textContent('#toast'), /Открыт проект/);
   });
 
