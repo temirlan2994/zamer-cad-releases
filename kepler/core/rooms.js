@@ -357,6 +357,70 @@ export function computeRoomEdges(project, room) {
   return { rectangular, edges };
 }
 
+// Рёбра внешнего контура всего дома (объединение прямоугольников комнат
+// верхнего уровня, кроме открытых площадок). Для общих наружных размеров.
+export function computeBuildingOutline(project) {
+  const rects = project.rooms
+    .filter((r) => !r.parentId && !r.open)
+    .map((r) => roomRect(r));
+  if (!rects.length) return [];
+  return unionEdges(rects);
+}
+
+function unionEdges(rects) {
+  const xs = [...new Set(rects.flatMap((r) => [r.x, r.x + r.w]))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.flatMap((r) => [r.y, r.y + r.h]))].sort((a, b) => a - b);
+  const nx = xs.length - 1;
+  const ny = ys.length - 1;
+  const inside = (i, j) => {
+    if (i < 0 || j < 0 || i >= nx || j >= ny) return false;
+    const cx = (xs[i] + xs[i + 1]) / 2;
+    const cy = (ys[j] + ys[j + 1]) / 2;
+    return rects.some((r) => cx > r.x - 0.5 && cx < r.x + r.w + 0.5 && cy > r.y - 0.5 && cy < r.y + r.h + 0.5);
+  };
+  const vert = [];
+  for (let i = 0; i <= nx; i += 1) {
+    for (let j = 0; j < ny; j += 1) {
+      const left = inside(i - 1, j);
+      const right = inside(i, j);
+      if (left === right) continue;
+      vert.push({ at: xs[i], from: ys[j], to: ys[j + 1], inSide: right ? 1 : -1 });
+    }
+  }
+  const horiz = [];
+  for (let j = 0; j <= ny; j += 1) {
+    for (let i = 0; i < nx; i += 1) {
+      const up = inside(i, j - 1);
+      const down = inside(i, j);
+      if (up === down) continue;
+      horiz.push({ at: ys[j], from: xs[i], to: xs[i + 1], inSide: down ? 1 : -1 });
+    }
+  }
+  const merge = (list) => {
+    const groups = new Map();
+    for (const e of list) {
+      const key = `${Math.round(e.at)}|${e.inSide}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    const out = [];
+    for (const [, segs] of groups) {
+      segs.sort((a, b) => a.from - b.from);
+      let cur = null;
+      for (const s of segs) {
+        if (cur && Math.abs(s.from - cur.to) < 1) cur.to = s.to;
+        else { if (cur) out.push(cur); cur = { ...s }; }
+      }
+      if (cur) out.push(cur);
+    }
+    return out;
+  };
+  return [
+    ...merge(vert).map((e) => ({ orient: 'v', ...e })),
+    ...merge(horiz).map((e) => ({ orient: 'h', ...e })),
+  ];
+}
+
 // Подсказка, где добавить дверь для недостижимой комнаты: самая длинная общая
 // стена с достижимой комнатой (или родителем). Коридоры программа только
 // предлагает — никогда не строит сама.

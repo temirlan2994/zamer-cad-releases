@@ -10,7 +10,7 @@ import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygon, shadowPolygonFromCorners,
 } from './core/site.js';
-import { computeRoomEdges } from './core/rooms.js';
+import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -1159,7 +1159,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
     ctx.fillStyle = ctx.strokeStyle;
     ctx.globalAlpha = selected ? 1 : 0.42;
-    const off = 260; // отступ размерной линии внутрь комнаты, мм
+    const off = 120; // отступ размерной линии внутрь комнаты (ближе к стене), мм
 
     const drawEdge = (edge) => {
       const horiz = edge.orient === 'h';
@@ -1185,6 +1185,39 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       if (left) drawEdge(left);
     } else {
       for (const edge of edges) drawEdge(edge);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Общие наружные размеры по внешнему контуру всего дома.
+  const outline = computeBuildingOutline(state.project);
+  if (outline.length) {
+    const exterior = state.project.settings?.exterior || 250;
+    const outOff = exterior + 850; // размерная линия снаружи стен
+    ctx.strokeStyle = tokens.line;
+    ctx.fillStyle = tokens.line;
+    ctx.globalAlpha = 0.75;
+    for (const edge of outline) {
+      const horiz = edge.orient === 'h';
+      const len = Math.round(edge.to - edge.from);
+      if (len < 400) continue;
+      const perp = edge.at - edge.inSide * outOff; // наружу (против inSide)
+      const p = horiz ? w2s(edge.from, perp) : w2s(perp, edge.from);
+      const q = horiz ? w2s(edge.to, perp) : w2s(perp, edge.to);
+      const screenLen = Math.hypot(q.x - p.x, q.y - p.y);
+      if (screenLen < 44) continue;
+      const mid = (edge.from + edge.to) / 2;
+      const n = horiz
+        ? outwardScreen(mid, edge.at, 0, -edge.inSide)
+        : outwardScreen(edge.at, mid, -edge.inSide, 0);
+      // Выноски от стены к наружной линии.
+      const i1 = horiz ? w2s(edge.from, edge.at) : w2s(edge.at, edge.from);
+      const i2 = horiz ? w2s(edge.to, edge.at) : w2s(edge.at, edge.to);
+      ctx.beginPath();
+      ctx.moveTo(i1.x, i1.y); ctx.lineTo(p.x, p.y);
+      ctx.moveTo(i2.x, i2.y); ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      drawDim(ctx, p, q, n, 13, `${len}`);
     }
     ctx.globalAlpha = 1;
   }
