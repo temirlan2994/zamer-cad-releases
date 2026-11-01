@@ -132,7 +132,9 @@ export function createRenderer(canvas) {
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
     const ownByRoom = new Map();
     const sharedWalls = [];
+    const chamferWalls = [];
     for (const wall of walls) {
+      if (wall.kind === 'chamfer') { chamferWalls.push(wall); continue; }
       if (wall.kind === 'shared' || wall.kind === 'joint') { sharedWalls.push(wall); continue; }
       const rid = wall.rooms[0];
       if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
@@ -154,6 +156,15 @@ export function createRenderer(canvas) {
     }
     // Общие стыковочные стены — поверх всех полов.
     for (const wall of sharedWalls) paintWall(wall);
+    // Фаски на переходах толщины — заполняют ступеньку треугольником.
+    for (const wall of chamferWalls) {
+      ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+      ctx.beginPath();
+      ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
+      for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
 
     // Подсветка комнаты под курсором.
     if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {

@@ -439,7 +439,7 @@ function hitOpening(world) {
 
 function hitWall(world) {
   for (const wall of state.walls) {
-    if (wall.kind === 'joint') continue; // заплатки стыков не выбираются
+    if (wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски не выбираются
     const b = wall.band;
     if (world.x >= b.x && world.x <= b.x + b.w && world.y >= b.y && world.y <= b.y + b.h) return wall;
   }
@@ -501,6 +501,7 @@ function nearestWall(world, maxScreenDist = 26) {
   const maxDist = maxScreenDist / state.view.scale;
   let best = null;
   for (const wall of state.walls) {
+    if (wall.kind === 'joint' || wall.kind === 'chamfer') continue;
     const b = wall.band;
     const cx = Math.min(Math.max(world.x, b.x), b.x + b.w);
     const cy = Math.min(Math.max(world.y, b.y), b.y + b.h);

@@ -33,7 +33,7 @@ export function buildStructuredExport(project) {
     net_area_m2: Number(roomNetAreaM2(project, room).toFixed(3)),
   }));
 
-  const wallsOut = walls.filter((w) => w.kind !== 'joint').map((wall, index) => ({
+  const wallsOut = walls.filter((w) => w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({
     id: `${wall.key}#${index}`,
     key: wall.key,
     shared: wall.kind === 'shared',
@@ -127,7 +127,7 @@ export function buildProjectDxf(project, { profile = 'default' } = {}) {
   const entities = [];
 
   for (const wall of walls) {
-    if (wall.kind === 'joint') continue; // заплатки стыков в DXF не нужны
+    if (wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски в DXF не нужны
     entities.push({
       type: 'wall',
       layer: 'walls',
