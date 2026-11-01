@@ -98,11 +98,38 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr * scale * cos, dpr * scale * sin, -dpr * scale * sin, dpr * scale * cos, dpr * view.panX, dpr * view.panY);
     const px = (v) => v / scale; // толщина линии в экранных пикселях
 
+    // Поворот ПОКАЗА участка/съёмки в режиме «План» (сам участок/съёмка не
+    // меняются). Нужен, чтобы по наклонному участку строить дом ровно: участок
+    // визуально доворачивается, а комнаты (по осям) ложатся параллельно ему.
+    const planSiteRotDeg = state.modeName === 'plan' ? (state.project.planSiteRot || 0) : 0;
+    const planSiteRot = (planSiteRotDeg * Math.PI) / 180;
+    let sitePivot = { x: 0, y: 0 };
+    if (site?.underlay) {
+      sitePivot = {
+        x: site.underlay.x + (site.underlay.widthPx * site.underlay.mmPerPx) / 2,
+        y: site.underlay.y + (site.underlay.heightPx * site.underlay.mmPerPx) / 2,
+      };
+    } else if (site?.boundary?.length) {
+      sitePivot = {
+        x: site.boundary.reduce((s, p) => s + p.x, 0) / site.boundary.length,
+        y: site.boundary.reduce((s, p) => s + p.y, 0) / site.boundary.length,
+      };
+    }
+    const withSiteRot = (fn) => {
+      if (!planSiteRot) { fn(); return; }
+      ctx.save();
+      ctx.translate(sitePivot.x, sitePivot.y);
+      ctx.rotate(planSiteRot);
+      ctx.translate(-sitePivot.x, -sitePivot.y);
+      fn();
+      ctx.restore();
+    };
+
     // 1. Сетка (в мировых координатах, чтобы поворачивалась вместе с планом).
     drawGrid(ctx, worldBox, scale, px, tokens);
 
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
-    if (site?.underlay && state.underlayImg && !state.underlayHidden) {
+    if (site?.underlay && state.underlayImg && !state.underlayHidden) withSiteRot(() => {
       const u = site.underlay;
       const uw = u.widthPx * u.mmPerPx;
       const uh = u.heightPx * u.mmPerPx;
@@ -123,10 +150,10 @@ export function createRenderer(canvas) {
         ctx.setLineDash([]);
       }
       ctx.restore();
-    }
+    });
 
     // 2. Участок: дороги, запретная зона, соседи, тени.
-    if (site) drawSiteUnder(ctx, state, site, tokens, px);
+    if (site) withSiteRot(() => drawSiteUnder(ctx, state, site, tokens, px));
 
     // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
     // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
@@ -192,7 +219,7 @@ export function createRenderer(canvas) {
     }
 
     // 7. Линии участка поверх полов (граница, красная линия, въезд).
-    if (site) drawSiteOver(ctx, state, site, tokens, px);
+    if (site) withSiteRot(() => drawSiteOver(ctx, state, site, tokens, px));
 
     // 8. Призраки и направляющие.
     if (state.ghost?.rect) {

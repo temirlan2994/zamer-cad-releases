@@ -25,6 +25,8 @@ export function createProject(name = 'Новый дом') {
     openings: [],
     items: [],
     wallOverrides: {}, // ключ стены -> { thickness, kind }
+    planSiteRot: 0, // поворот показа участка/съёмки в режиме «План» (°), чтобы
+    // чертить дом ровно по наклонному участку (сам участок не меняется)
   };
 }
 
@@ -83,6 +85,7 @@ export function deserializeProject(text) {
     throw new Error('Файл повреждён: нет списков rooms/openings/items');
   }
   data.wallOverrides = data.wallOverrides || {};
+  data.planSiteRot = data.planSiteRot || 0;
   data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
   return data;
 }

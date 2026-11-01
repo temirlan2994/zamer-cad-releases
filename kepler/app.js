@@ -207,6 +207,7 @@ function afterChange() {
   updateConnectivity();
   renderProps();
   updateDimModeBtn();
+  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.planSiteRot));
   requestDraw();
   scheduleAutosave();
 }
@@ -920,11 +921,10 @@ function addNorthPoint(world) {
   toast(`Север задан: ${Math.round(north)}°`);
 }
 
-// Выравнивание топосъёмки по 2 точкам: кликнутая линия становится
-// горизонтальной (минимальным поворотом), чтобы по ней строить дом без наклона.
+// Выравнивание ПОКАЗА участка по 2 точкам: кликнутая линия участка становится
+// горизонтальной (минимальным поворотом показа) — чтобы по наклонному участку
+// строить дом ровно. Сам участок/съёмка не меняются, крутится только вид.
 function addAlignPoint(world) {
-  const u = state.project.site?.underlay;
-  if (!u) { cancelTool(); return; }
   const points = state.tool.points;
   points.push({ x: world.x, y: world.y });
   state.alignCursor = { x: world.x, y: world.y };
@@ -932,15 +932,14 @@ function addAlignPoint(world) {
   const dx = points[1].x - points[0].x;
   const dy = points[1].y - points[0].y;
   if (Math.hypot(dx, dy) < 10) { toast('Точки слишком близко'); state.tool.points = []; return; }
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI; // угол линии, °
-  let delta = -angle; // довернуть до горизонтали
+  const clicked = (Math.atan2(dy, dx) * 180) / Math.PI; // экранный угол линии
+  let delta = -clicked; // довернуть показ до горизонтали
   delta = ((delta % 180) + 180) % 180; // 0..180
   if (delta > 90) delta -= 180; // минимальный поворот −90..90
   state.alignCursor = null;
-  mutate(() => { u.rot = ((((u.rot || 0) + delta) % 360) + 360) % 360; });
-  applyModeRotation();
+  mutate(() => { state.project.planSiteRot = ((((state.project.planSiteRot || 0) + delta) % 360) + 360) % 360; });
   cancelTool();
-  toast(`Съёмка выровнена (поворот ${delta > 0 ? '+' : ''}${delta.toFixed(1)}°)`);
+  toast(`Участок выровнен для чертежа (поворот показа ${delta > 0 ? '+' : ''}${delta.toFixed(1)}°). Дом теперь ставится ровно.`);
 }
 
 function addCalibratePoint(world) {
@@ -3285,9 +3284,15 @@ el('undoBtn').addEventListener('click', undo);
 el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
 el('alignBtn').addEventListener('click', () => {
-  if (!state.project.site?.underlay) { toast('Сначала загрузите топосъёмку (режим «Участок» → «Импортировать топосъёмку»)', true); return; }
-  if (state.project.site.underlay.locked) { toast('Топосъёмка закреплена — снимите «Закрепить» в её свойствах', true); return; }
-  setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии съёмки (например, край участка) — съёмка повернётся так, чтобы эта линия стала горизонтальной');
+  const site = state.project.site;
+  if (!site?.underlay && !(site?.boundary?.length)) { toast('Сначала загрузите топосъёмку или начертите границу участка (режим «Участок»)', true); return; }
+  if (state.project.planSiteRot) {
+    // Уже повёрнуто — повторный клик сбрасывает выравнивание.
+    mutate(() => { state.project.planSiteRot = 0; });
+    toast('Выравнивание сброшено');
+    return;
+  }
+  setTool({ kind: 'align-underlay', points: [] }, 'Кликните две точки вдоль ровной линии участка (например, длинный край) — показ участка повернётся так, чтобы строить дом ровно');
 });
 function updateDimModeBtn() {
   const outer = state.project?.settings?.dimOuter !== false;
