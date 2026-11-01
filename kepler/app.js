@@ -1004,8 +1004,12 @@ async function loadUnderlayFile(file) {
       }
       placeUnderlay(info.dataUrl, info.size, info.reliableScale ? info.worldWidthMm : null);
       if (state.modeName === 'site') fitView(); // сразу вписываем в экран
+      const proxy = /PROXY/i.test(summary);
       const base = `DXF: ${info.entityCount} объектов${summary ? ` (${summary})` : ''}`;
-      if (info.reliableScale) {
+      if (proxy) {
+        // Часть/вся геометрия — в проприетарных proxy-объектах, их не прочитать.
+        toast(`${base}. Если пусто/мало — геометрия в проприетарных proxy-объектах: в CAD расчлените чертёж (EXPLODE / «Расчленить») и «Сохранить как» DXF R12/2000, либо импортируйте PDF.`, true);
+      } else if (info.reliableScale) {
         toast(`${base}, ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы приняты за метры)'}. Масштаб — справа.`, true);
       } else {
         toast(`${base}. Единицы непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «по отрезку» справа.`, true);

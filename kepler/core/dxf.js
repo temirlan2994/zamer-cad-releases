@@ -7,14 +7,12 @@ const UNIT_TO_MM = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000, 8: 0.001, 13: 1e-6
 
 export function parseDxf(text) {
   const raw = text.split(/\r\n|\r|\n/);
-  // Пары «код / значение».
   const pairs = [];
   for (let i = 0; i + 1 < raw.length; i += 2) {
     const code = parseInt(raw[i].trim(), 10);
     if (Number.isNaN(code)) continue;
     pairs.push({ code, value: raw[i + 1] });
   }
-  // $INSUNITS из заголовка.
   let insunits = null;
   for (let i = 0; i < pairs.length - 1; i += 1) {
     if (pairs[i].code === 9 && pairs[i].value.trim() === '$INSUNITS') {
@@ -22,104 +20,146 @@ export function parseDxf(text) {
       break;
     }
   }
-  // Разбиваем на блоки по коду 0 (тип объекта).
-  const blocks = [];
+  // Группы по коду 0.
+  const groups = [];
   let cur = null;
   for (const p of pairs) {
-    if (p.code === 0) {
-      if (cur) blocks.push(cur);
-      cur = { type: p.value.trim(), codes: [] };
-    } else if (cur) {
-      cur.codes.push(p);
-    }
+    if (p.code === 0) { if (cur) groups.push(cur); cur = { type: p.value.trim(), codes: [] }; }
+    else if (cur) cur.codes.push(p);
   }
-  if (cur) blocks.push(cur);
-
-  const entities = [];
+  if (cur) groups.push(cur);
+  // Разметка секций ($SEC) и подсчёт типов.
+  let section = null;
   const typeCounts = {};
-  for (let i = 0; i < blocks.length; i += 1) {
-    const blk = blocks[i];
-    typeCounts[blk.type] = (typeCounts[blk.type] || 0) + 1;
-    const get = (code) => {
-      const f = blk.codes.find((c) => c.code === code);
-      return f ? parseFloat(f.value) : undefined;
-    };
-    const getAll = (code) => blk.codes.filter((c) => c.code === code).map((c) => parseFloat(c.value));
-    const getStr = (code) => { const f = blk.codes.find((c) => c.code === code); return f ? f.value : undefined; };
-    switch (blk.type) {
-      case 'LINE':
-        entities.push({ type: 'line', x1: get(10), y1: get(20), x2: get(11), y2: get(21) });
-        break;
-      case 'SPLINE': {
-        // Берём контрольные точки (10/20); если есть опорные (11/21) — их.
-        let xs = getAll(11);
-        let ys = getAll(21);
-        if (!xs.length) { xs = getAll(10); ys = getAll(20); }
-        const pts = xs.map((x, idx) => ({ x, y: ys[idx] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-        if (pts.length >= 2) entities.push({ type: 'poly', pts, closed: Boolean((get(70) || 0) & 1) });
-        break;
-      }
-      case 'ELLIPSE':
-        entities.push({
-          type: 'ellipse', cx: get(10), cy: get(20),
-          mx: get(11), my: get(21), ratio: get(40) ?? 1,
-          a1: get(41) ?? 0, a2: get(42) ?? (Math.PI * 2),
-        });
-        break;
-      case 'TEXT':
-        entities.push({ type: 'text', x: get(10), y: get(20), h: get(40) || 2.5, text: getStr(1) || '', rot: get(50) || 0 });
-        break;
-      case 'MTEXT': {
-        const parts = blk.codes.filter((c) => c.code === 1 || c.code === 3).map((c) => c.value);
-        entities.push({ type: 'text', x: get(10), y: get(20), h: get(40) || 2.5, text: parts.join('').replace(/\\[A-Za-z][^;]*;|[{}]/g, ''), rot: 0 });
-        break;
-      }
-      case 'SOLID':
-      case '3DFACE': {
-        const xs = getAll(10).concat(getAll(11), getAll(12), getAll(13));
-        const ys = getAll(20).concat(getAll(21), getAll(22), getAll(23));
-        const pts = xs.map((x, idx) => ({ x, y: ys[idx] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-        if (pts.length >= 3) entities.push({ type: 'poly', pts, closed: true });
-        break;
-      }
+  for (const g of groups) {
+    if (g.type === 'SECTION') { const f = g.codes.find((c) => c.code === 2); section = f ? f.value.trim() : null; }
+    g._sec = section;
+    if (g.type === 'ENDSEC') section = null;
+    typeCounts[g.type] = (typeCounts[g.type] || 0) + 1;
+  }
+  const gnum = (g, code) => { const f = g.codes.find((c) => c.code === code); return f ? parseFloat(f.value) : undefined; };
+  const gall = (g, code) => g.codes.filter((c) => c.code === code).map((c) => parseFloat(c.value));
+  const gstr = (g, code) => { const f = g.codes.find((c) => c.code === code); return f ? f.value : undefined; };
+
+  // Считывает один объект (и VERTEX-ы для POLYLINE). Возвращает {ents, skip}.
+  function readEntity(arr, idx) {
+    const g = arr[idx];
+    const ents = [];
+    let skip = 0;
+    switch (g.type) {
+      case 'LINE': ents.push({ type: 'line', x1: gnum(g, 10), y1: gnum(g, 20), x2: gnum(g, 11), y2: gnum(g, 21) }); break;
       case 'LWPOLYLINE': {
-        const xs = getAll(10);
-        const ys = getAll(20);
-        const pts = xs.map((x, idx) => ({ x, y: ys[idx] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-        entities.push({ type: 'poly', pts, closed: Boolean((get(70) || 0) & 1) });
+        const xs = gall(g, 10); const ys = gall(g, 20);
+        const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (pts.length) ents.push({ type: 'poly', pts, closed: Boolean((gnum(g, 70) || 0) & 1) });
         break;
       }
       case 'POLYLINE': {
-        // За POLYLINE идут VERTEX … до SEQEND.
-        const pts = [];
-        const closed = Boolean((get(70) || 0) & 1);
-        let j = i + 1;
-        for (; j < blocks.length && blocks[j].type === 'VERTEX'; j += 1) {
-          const vget = (code) => {
-            const f = blocks[j].codes.find((c) => c.code === code);
-            return f ? parseFloat(f.value) : undefined;
-          };
-          const x = vget(10);
-          const y = vget(20);
+        const pts = []; const closed = Boolean((gnum(g, 70) || 0) & 1);
+        let j = idx + 1;
+        for (; j < arr.length && arr[j].type === 'VERTEX'; j += 1) {
+          const x = gnum(arr[j], 10); const y = gnum(arr[j], 20);
           if (Number.isFinite(x) && Number.isFinite(y)) pts.push({ x, y });
         }
-        i = j - 1; // пропускаем разобранные VERTEX (SEQEND пропустит switch)
-        if (pts.length) entities.push({ type: 'poly', pts, closed });
+        skip = j - idx - 1;
+        if (pts.length) ents.push({ type: 'poly', pts, closed });
         break;
       }
-      case 'CIRCLE':
-        entities.push({ type: 'circle', cx: get(10), cy: get(20), r: get(40) });
+      case 'SPLINE': {
+        let xs = gall(g, 11); let ys = gall(g, 21);
+        if (!xs.length) { xs = gall(g, 10); ys = gall(g, 20); }
+        const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (pts.length >= 2) ents.push({ type: 'poly', pts, closed: false });
         break;
-      case 'ARC':
-        entities.push({ type: 'arc', cx: get(10), cy: get(20), r: get(40), a1: get(50), a2: get(51) });
+      }
+      case 'CIRCLE': ents.push({ type: 'circle', cx: gnum(g, 10), cy: gnum(g, 20), r: gnum(g, 40) }); break;
+      case 'ARC': ents.push({ type: 'arc', cx: gnum(g, 10), cy: gnum(g, 20), r: gnum(g, 40), a1: gnum(g, 50), a2: gnum(g, 51) }); break;
+      case 'ELLIPSE': ents.push({ type: 'ellipse', cx: gnum(g, 10), cy: gnum(g, 20), mx: gnum(g, 11), my: gnum(g, 21), ratio: gnum(g, 40) ?? 1, a1: gnum(g, 41) ?? 0, a2: gnum(g, 42) ?? (Math.PI * 2) }); break;
+      case 'POINT': ents.push({ type: 'point', x: gnum(g, 10), y: gnum(g, 20) }); break;
+      case 'TEXT': { const t = gstr(g, 1); if (t) ents.push({ type: 'text', x: gnum(g, 10), y: gnum(g, 20), h: gnum(g, 40) || 2.5, text: t, rot: gnum(g, 50) || 0 }); break; }
+      case 'MTEXT': {
+        const parts = g.codes.filter((c) => c.code === 1 || c.code === 3).map((c) => c.value);
+        const t = parts.join('').replace(/\\[A-Za-z][^;]*;|[{}]/g, '');
+        if (t) ents.push({ type: 'text', x: gnum(g, 10), y: gnum(g, 20), h: gnum(g, 40) || 2.5, text: t, rot: 0 });
         break;
-      case 'POINT':
-        entities.push({ type: 'point', x: get(10), y: get(20) });
+      }
+      case 'SOLID': case '3DFACE': {
+        const xs = gall(g, 10).concat(gall(g, 11), gall(g, 12), gall(g, 13));
+        const ys = gall(g, 20).concat(gall(g, 21), gall(g, 22), gall(g, 23));
+        const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (pts.length >= 3) ents.push({ type: 'poly', pts, closed: true });
         break;
-      default:
-        break;
+      }
+      case 'INSERT': ents.push({ type: 'insert', name: gstr(g, 2), x: gnum(g, 10) || 0, y: gnum(g, 20) || 0, sx: gnum(g, 41) ?? 1, sy: gnum(g, 42) ?? 1, rot: gnum(g, 50) || 0 }); break;
+      default: break;
+    }
+    return { ents, skip };
+  }
+
+  // Определения блоков (секция BLOCKS): имя → {base, items}.
+  const blockDefs = {};
+  for (let i = 0; i < groups.length; i += 1) {
+    if (groups[i].type === 'BLOCK' && groups[i]._sec === 'BLOCKS') {
+      const name = gstr(groups[i], 2);
+      const base = { x: gnum(groups[i], 10) || 0, y: gnum(groups[i], 20) || 0 };
+      const items = [];
+      let j = i + 1;
+      for (; j < groups.length && groups[j].type !== 'ENDBLK'; j += 1) {
+        const r = readEntity(groups, j);
+        for (const e of r.ents) items.push(e);
+        j += r.skip;
+      }
+      if (name) blockDefs[name] = { base, items };
+      i = j;
     }
   }
+
+  const tfPoint = (p, tf) => {
+    const lx = (p.x - tf.base.x) * tf.sx;
+    const ly = (p.y - tf.base.y) * tf.sy;
+    const c = Math.cos(tf.rot); const s = Math.sin(tf.rot);
+    return { x: tf.x + lx * c - ly * s, y: tf.y + lx * s + ly * c };
+  };
+  const tfEnt = (e, tf) => {
+    const sc = (Math.abs(tf.sx) + Math.abs(tf.sy)) / 2;
+    const degRot = (tf.rot * 180) / Math.PI;
+    if (e.type === 'line') { const a = tfPoint({ x: e.x1, y: e.y1 }, tf); const b = tfPoint({ x: e.x2, y: e.y2 }, tf); return { type: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y }; }
+    if (e.type === 'poly') return { type: 'poly', closed: e.closed, pts: e.pts.map((p) => tfPoint(p, tf)) };
+    if (e.type === 'circle') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'circle', cx: c.x, cy: c.y, r: e.r * sc }; }
+    if (e.type === 'arc') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'arc', cx: c.x, cy: c.y, r: e.r * sc, a1: e.a1 + degRot, a2: e.a2 + degRot }; }
+    if (e.type === 'ellipse') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'ellipse', cx: c.x, cy: c.y, mx: e.mx * sc, my: e.my * sc, ratio: e.ratio, a1: e.a1, a2: e.a2 }; }
+    if (e.type === 'point') { const c = tfPoint({ x: e.x, y: e.y }, tf); return { type: 'point', x: c.x, y: c.y }; }
+    if (e.type === 'text') { const c = tfPoint({ x: e.x, y: e.y }, tf); return { type: 'text', x: c.x, y: c.y, h: e.h * sc, text: e.text, rot: e.rot + degRot }; }
+    return null;
+  };
+  // Разворачивает INSERT в примитивы (рекурсивно, с ограничением глубины).
+  function expand(ins, depth, out) {
+    if (depth > 6) return;
+    const def = blockDefs[ins.name];
+    if (!def) return;
+    const tf = { x: ins.x, y: ins.y, sx: ins.sx, sy: ins.sy, rot: (ins.rot * Math.PI) / 180, base: def.base };
+    for (const e of def.items) {
+      if (e.type === 'insert') {
+        const np = tfPoint({ x: e.x, y: e.y }, tf);
+        expand({ name: e.name, x: np.x, y: np.y, sx: e.sx * tf.sx, sy: e.sy * tf.sy, rot: e.rot + ins.rot }, depth + 1, out);
+      } else { const t = tfEnt(e, tf); if (t) out.push(t); }
+    }
+  }
+
+  // Модельное пространство (секция ENTITIES).
+  const entities = [];
+  const collect = (filterSec) => {
+    for (let i = 0; i < groups.length; i += 1) {
+      if (filterSec && groups[i]._sec !== 'ENTITIES') continue;
+      const r = readEntity(groups, i);
+      i += r.skip;
+      for (const e of r.ents) { if (e.type === 'insert') expand(e, 0, entities); else entities.push(e); }
+    }
+  };
+  collect(true);
+  // Запас: если в ENTITIES ничего не нашли — пробуем по всему файлу.
+  if (!entities.length) collect(false);
+
   return { entities, insunits, typeCounts };
 }
 
