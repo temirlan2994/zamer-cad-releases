@@ -139,6 +139,7 @@ export function createRenderer(canvas) {
     };
     for (const room of state.project.rooms) {
       drawFloor(ctx, room, tokens);
+      if (room.open) drawRailing(ctx, room, tokens, px);
       for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
     }
     // Общие стыковочные стены — поверх всех полов.
@@ -813,6 +814,36 @@ function drawCompass(ctx, state, site, width, tokens) {
   ctx.restore();
 }
 
+// Перила открытого помещения (терраса/балкон): двойная линия + стойки.
+function drawRailing(ctx, room, tokens, px) {
+  const inset = 70;
+  ctx.strokeStyle = tokens.line;
+  ctx.lineWidth = px(2);
+  ctx.strokeRect(room.x, room.y, room.w, room.h);
+  ctx.lineWidth = px(1.2);
+  ctx.strokeRect(room.x + inset, room.y + inset, room.w - inset * 2, room.h - inset * 2);
+  // Стойки по периметру.
+  ctx.fillStyle = tokens.line;
+  const step = 700;
+  const post = px(2.5);
+  const edges = [
+    [room.x, room.y, room.x + room.w, room.y],
+    [room.x + room.w, room.y, room.x + room.w, room.y + room.h],
+    [room.x + room.w, room.y + room.h, room.x, room.y + room.h],
+    [room.x, room.y + room.h, room.x, room.y],
+  ];
+  for (const [x1, y1, x2, y2] of edges) {
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const n = Math.max(1, Math.round(len / step));
+    for (let i = 0; i <= n; i += 1) {
+      const t = i / n;
+      ctx.beginPath();
+      ctx.arc(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, post, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 function drawFloor(ctx, room, tokens) {
   const def = roomType(room.type);
   const tint = tokens.tints[def?.tint || 'neutral'] || tokens.tints.neutral;
@@ -1051,10 +1082,13 @@ function drawGlyph(ctx, kindRaw, w, h) {
     case 'column': { circle(0, 0, mn / 2); ctx.fill(); break; }
     case 'stairs': {
       rrFill(x, y, w, h, 0);
-      const step = Math.min(300, h / 8);
-      for (let sy = y + step; sy < y + h; sy += step) line(x, sy, x + w, sy);
-      line(0, y + h - 150, 0, y + 150); // стрелка подъёма
-      line(0, y + 150, -90, y + 340); line(0, y + 150, 90, y + 340);
+      // Число ступеней — из длины марша при проступи ≈ 280 мм.
+      const steps = Math.max(2, Math.round(h / 280));
+      const step = h / steps;
+      for (let i = 1; i < steps; i += 1) line(x, y + step * i, x + w, y + step * i);
+      line(0, y + h - step, 0, y + step); // стрелка подъёма
+      line(0, y + step, -w * 0.18, y + step * 2.2);
+      line(0, y + step, w * 0.18, y + step * 2.2);
       break;
     }
     default: { rrFill(x, y, w, h, Math.min(60, mn * 0.12)); }

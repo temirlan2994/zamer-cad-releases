@@ -485,6 +485,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .prop-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
 .prop-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.prop-row strong.bad { color: var(--danger); }
 
 .checklist { gap: 2px; }
 .check-row {

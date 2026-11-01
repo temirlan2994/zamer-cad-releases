@@ -181,9 +181,10 @@ export const ROOM_TYPES = [
   { type: 'garage', title: 'Гараж', w: 3600, h: 6000, tint: 'cool', furniture: [
     { kind: 'car', default: true }, { kind: 'workbench', default: false },
   ] },
-  { type: 'terrace', title: 'Терраса', w: 4000, h: 2500, tint: 'green', furniture: [
+  { type: 'terrace', title: 'Терраса', w: 4000, h: 2500, tint: 'green', open: true, furniture: [
     { kind: 'garden-set', default: false },
   ] },
+  { type: 'balcony', title: 'Балкон', w: 3000, h: 1200, tint: 'green', open: true, furniture: [] },
 ];
 
 const roomTypeMap = new Map(ROOM_TYPES.map((t) => [t.type, t]));

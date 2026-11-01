@@ -132,7 +132,9 @@ export function deriveWalls(project) {
 
   // Собственные стены: стороны комнат за вычетом общих участков.
   const byId = new Map(project.rooms.map((r) => [r.id, r]));
+  const topRooms = project.rooms.filter((r) => !r.parentId);
   for (const room of project.rooms) {
+    if (room.open) continue; // открытые помещения (терраса/балкон) — без стен
     const nested = Boolean(room.parentId && byId.has(room.parentId));
     for (let side = 0; side < 4; side += 1) {
       const edge = sideEdge(room, side);
@@ -140,32 +142,52 @@ export function deriveWalls(project) {
       const rest = subtractIntervals(edge.from, edge.to, subs);
       const key = ownKey(room.id, side);
       const override = overrides[key];
-      const thickness = (override && override.thickness) || (nested ? partition : exterior);
-      for (const seg of rest) {
+      const baseThick = (override && override.thickness) || (nested ? partition : exterior);
+      const baseType = wallTypeOf(override, nested ? 'partition' : 'exterior');
+
+      // Участки, попадающие внутрь другой комнаты верхнего уровня (перекрытие),
+      // становятся тонкой перегородкой.
+      const covered = [];
+      if (!nested) {
+        for (const o of topRooms) {
+          if (o.id === room.id) continue;
+          const pLo = edge.orient === 'h' ? o.y : o.x;
+          const pHi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
+          if (edge.edge <= pLo + 1 || edge.edge >= pHi - 1) continue; // грань не внутри o
+          const aLo = edge.orient === 'h' ? o.x : o.y;
+          const aHi = edge.orient === 'h' ? o.x + o.w : o.y + o.h;
+          const f = Math.max(edge.from, aLo);
+          const t = Math.min(edge.to, aHi);
+          if (t - f > 1) covered.push({ from: f, to: t });
+        }
+      }
+
+      const emit = (segFrom, segTo, thickness, type) => {
         const inner = edge.edge;
-        const outer = edge.edge + edge.outward * thickness;
+        const outer = inner + edge.outward * thickness;
         const lo = Math.min(inner, outer);
         const band = edge.orient === 'h'
-          ? { x: seg.from, y: lo, w: seg.to - seg.from, h: thickness }
-          : { x: lo, y: seg.from, w: thickness, h: seg.to - seg.from };
+          ? { x: segFrom, y: lo, w: segTo - segFrom, h: thickness }
+          : { x: lo, y: segFrom, w: thickness, h: segTo - segFrom };
         const mid = inner + edge.outward * (thickness / 2);
         walls.push({
-          key,
-          kind: 'own',
-          orient: edge.orient,
-          rooms: [room.id],
-          sides: { [room.id]: side },
-          from: seg.from,
-          to: seg.to,
-          edge: inner,
-          outward: edge.outward,
-          thickness,
-          band,
+          key, kind: 'own', orient: edge.orient, rooms: [room.id], sides: { [room.id]: side },
+          from: segFrom, to: segTo, edge: inner, outward: edge.outward, thickness, band,
           center: edge.orient === 'h'
-            ? { x1: seg.from, y1: mid, x2: seg.to, y2: mid }
-            : { x1: mid, y1: seg.from, x2: mid, y2: seg.to },
-          wallType: wallTypeOf(override, nested ? 'partition' : 'exterior'),
+            ? { x1: segFrom, y1: mid, x2: segTo, y2: mid }
+            : { x1: mid, y1: segFrom, x2: mid, y2: segTo },
+          wallType: type,
         });
+      };
+
+      for (const seg of rest) {
+        if (!covered.length) { emit(seg.from, seg.to, baseThick, baseType); continue; }
+        const thinParts = covered
+          .map((c) => ({ from: Math.max(seg.from, c.from), to: Math.min(seg.to, c.to) }))
+          .filter((c) => c.to - c.from > 1);
+        const thickParts = subtractIntervals(seg.from, seg.to, thinParts);
+        for (const p of thickParts) emit(p.from, p.to, baseThick, baseType);
+        for (const p of thinParts) emit(p.from, p.to, Math.min(baseThick, partition), 'partition');
       }
     }
   }

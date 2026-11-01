@@ -2305,18 +2305,56 @@ function renderOpeningProps(panel, opening) {
   panel.querySelector('#deleteOpening').addEventListener('click', deleteSelection);
 }
 
+// Расчёт лестницы по высоте этажа и длине марша (как калькулятор в Revit).
+function stairCalc(item) {
+  const floorH = item.floorHeight || 3000;
+  const run = item.h; // длина марша (глубина предмета)
+  const idealRiser = 170; // комфортный подступенок
+  const risers = Math.max(2, Math.round(floorH / idealRiser));
+  const riserH = floorH / risers;
+  const treads = risers - 1; // проступей на один меньше подступенков
+  const treadD = treads > 0 ? run / treads : run;
+  // Правило удобства: 2·подступенок + проступь ≈ 600–640 мм.
+  const comfort = 2 * riserH + treadD;
+  const neededRun = treads * 280; // при проступи 280 мм
+  const okRiser = riserH >= 150 && riserH <= 190;
+  const okTread = treadD >= 230 && treadD <= 340;
+  return { floorH, run, risers, riserH, treads, treadD, comfort, neededRun, okRiser, okTread };
+}
+
 function renderItemProps(panel, item) {
   if (!item) { renderProjectProps(panel); return; }
+  const isStairs = item.kind === 'stairs';
+  let stairsBlock = '';
+  if (isStairs) {
+    const c = stairCalc(item);
+    const diff = Math.round(c.neededRun - c.run);
+    const diffText = Math.abs(diff) < 50 ? 'длина марша оптимальна'
+      : diff > 0 ? `марш короче нужного на ${diff} мм — добавьте длину` : `марш длиннее нужного на ${-diff} мм`;
+    stairsBlock = `
+      <h3>Расчёт лестницы</h3>
+      <div class="prop-block">
+        <label class="prop-field"><span>Высота этажа, мм</span>
+          <input id="floorH" type="number" step="50" min="2000" value="${c.floorH}"></label>
+        <div class="prop-row"><span>Подступенков</span><strong>${c.risers}</strong></div>
+        <div class="prop-row"><span>Проступей</span><strong>${c.treads}</strong></div>
+        <div class="prop-row"><span>Высота ступени</span><strong class="${c.okRiser ? '' : 'bad'}">${Math.round(c.riserH)} мм</strong></div>
+        <div class="prop-row"><span>Глубина проступи</span><strong class="${c.okTread ? '' : 'bad'}">${Math.round(c.treadD)} мм</strong></div>
+        <div class="prop-row"><span>Формула удобства</span><strong>${Math.round(c.comfort)} мм</strong></div>
+        <p class="empty-hint">${diffText}. Комфортно: ступень 150–190, проступь 230–340, формула 600–640 мм.</p>
+      </div>`;
+  }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">Свободный объект: перетаскивается куда угодно, едет вместе с комнатой, в которой стоит</p>
+    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
     <div class="prop-block">
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span><input id="itemW" type="number" step="50" min="200" value="${item.w}"></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="itemH" type="number" step="50" min="200" value="${item.h}"></label>
+        <label class="prop-field"><span>${isStairs ? 'Длина марша, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}"></label>
       </div>
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
     </div>
+    ${stairsBlock}
     <div class="prop-actions">
       <button id="rotateItem">Повернуть на 90° (R)</button>
       <button id="deleteItem" class="danger">Удалить</button>
@@ -2325,9 +2363,15 @@ function renderItemProps(panel, item) {
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
     mutate(() => { item.w = w; item.h = h; });
+    if (isStairs) selectObject({ type: 'item', id: item.id });
   };
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
+  const fh = panel.querySelector('#floorH');
+  if (fh) fh.addEventListener('change', (e) => {
+    mutate(() => { item.floorHeight = Math.max(2000, Number(e.target.value) || 3000); });
+    selectObject({ type: 'item', id: item.id });
+  });
   panel.querySelector('#rotateItem').addEventListener('click', rotateSelectedItem);
   panel.querySelector('#deleteItem').addEventListener('click', deleteSelection);
 }
