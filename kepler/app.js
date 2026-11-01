@@ -528,6 +528,7 @@ function cancelTool() {
   state.entryGhost = null;
   state.calCursor = null;
   state.northCursor = null;
+  state.ghostDoor = null;
   state.guides = [];
   if (!el('calOverlay').hidden) el('calOverlay').hidden = true;
   setHint('');
@@ -602,25 +603,44 @@ function placeRoomAt(world) {
   if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
 }
 
-function placeOpeningAt(world) {
+// Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
+// зависят от того, с какой стороны стены и ближе к какому концу стоит мышь.
+function computeOpeningParams(world) {
   const openKind = state.tool.openKind;
   const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(world);
-  if (!wall) { toast('Кликните ближе к стене'); return; }
+  if (!wall) return null;
   const roomId = wall.rooms[0];
   const side = wall.sides[roomId];
   const room = roomById(state.project, roomId);
-  if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) {
-    toast('Окно можно разместить только на наружной стене');
-    return;
-  }
+  if (!room) return null;
+  if (openKind === 'window' && (wall.kind === 'shared' || room.parentId)) return { error: 'Окно можно разместить только на наружной стене' };
   const edge = sideEdge(room, side);
   const base = edge.orient === 'h' ? room.x : room.y;
-  const desired = (wall.orient === 'h' ? world.x : world.y) - base;
+  const along = wall.orient === 'h' ? world.x : world.y;
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
-  const opening = createOpening(openKind, roomId, side, desired, width);
-  const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
-  if (clamped === null) { toast('На этом участке стены проём не помещается'); return; }
+  const opening = createOpening(openKind, roomId, side, along - base, width);
+  const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
+  if (clamped === null) return { error: 'На этом участке стены проём не помещается' };
   opening.offset = clamped;
+  if (openKind === 'door') {
+    // Сторона открывания — та, где мышь относительно линии стены.
+    const perpRoomCenter = wall.orient === 'h' ? room.y + room.h / 2 : room.x + room.w / 2;
+    const mousePerp = wall.orient === 'h' ? world.y : world.x;
+    const roomSign = Math.sign(perpRoomCenter - wall.edge) || 1;
+    const mouseSign = Math.sign(mousePerp - wall.edge) || roomSign;
+    opening.swingIn = mouseSign === roomSign; // открывается в сторону курсора
+    // Петли — на дальнем от курсора конце, створка «смотрит» к курсору.
+    const center = base + opening.offset;
+    opening.hingeStart = along > center;
+  }
+  return { opening, wall };
+}
+
+function placeOpeningAt(world) {
+  const res = computeOpeningParams(world);
+  if (!res) { toast('Кликните ближе к стене'); return; }
+  if (res.error) { toast(res.error); return; }
+  const { opening } = res;
   mutate(() => { state.project.openings.push(opening); });
   cancelTool();
   selectObject({ type: 'opening', id: opening.id });
@@ -1287,6 +1307,7 @@ canvas.addEventListener('pointermove', (event) => {
     drag.moved = true;
     item.x = Math.round((drag.start.x + (world.x - drag.world.x)) / GRID_STEP) * GRID_STEP;
     item.y = Math.round((drag.start.y + (world.y - drag.world.y)) / GRID_STEP) * GRID_STEP;
+    if (!event.shiftKey) snapItemToWalls(item); // Shift отключает привязку к стенам
     requestDraw();
     return;
   }
@@ -1318,7 +1339,7 @@ canvas.addEventListener('pointermove', (event) => {
     const fixed = drag.end === 'start' ? endEdge : startEdge;
     const movingEdge = Math.round(pos / 50) * 50; // шаг 50 мм
     let width = Math.abs(fixed - movingEdge);
-    width = Math.min(3000, Math.max(400, Math.round(width / 50) * 50));
+    width = Math.max(300, Math.round(width / 50) * 50);
     const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
     const probe = { ...opening, width };
     const clamped = clampOpeningOffset(state.project, probe, state.walls, center);
@@ -1618,20 +1639,15 @@ function updateHoverAndGhost(world) {
     return;
   }
   if (state.tool?.kind === 'place-opening') {
-    const wall = nearestWall(world);
     state.ghostOpening = null;
-    if (wall) {
-      const width = state.tool.openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
-      const along = wall.orient === 'h' ? world.x : world.y;
-      const lo = wall.from + width / 2;
-      const hi = wall.to - width / 2;
-      if (hi > lo) {
-        const center = Math.min(hi, Math.max(lo, along));
-        state.ghostOpening = {
-          rect: wall.orient === 'h'
-            ? { x: center - width / 2, y: wall.band.y, w: width, h: wall.band.h }
-            : { x: wall.band.x, y: center - width / 2, w: wall.band.w, h: width },
-        };
+    state.ghostDoor = null;
+    const res = computeOpeningParams(world);
+    if (res && res.opening && !res.error) {
+      if (state.tool.openKind === 'door') {
+        state.ghostDoor = res.opening; // превью двери со створкой и направлением
+      } else {
+        const placed = openingRect(state.project, res.opening, state.walls);
+        if (placed) state.ghostOpening = { rect: placed.rect };
       }
     }
     requestDraw();
@@ -1685,6 +1701,32 @@ function updateHoverAndGhost(world) {
   }
 }
 
+// Линии привязки: грани стен и кромки других комнат.
+function collectSnapLines(excludeRoomId) {
+  const xs = [];
+  const ys = [];
+  for (const wall of state.walls) {
+    if (excludeRoomId && wall.rooms.includes(excludeRoomId) && wall.kind === 'own') continue;
+    xs.push(wall.band.x, wall.band.x + wall.band.w);
+    ys.push(wall.band.y, wall.band.y + wall.band.h);
+  }
+  for (const r of state.project.rooms) {
+    if (r.id === excludeRoomId) continue;
+    xs.push(r.x, r.x + r.w);
+    ys.push(r.y, r.y + r.h);
+  }
+  return { xs, ys };
+}
+
+function snapValue(value, candidates, tol) {
+  let best = null;
+  for (const c of candidates) {
+    const d = Math.abs(value - c);
+    if (d <= tol && (!best || d < best.d)) best = { c, d };
+  }
+  return best ? best.c : null;
+}
+
 function applyResize(room, dragState, world) {
   const start = dragState.start;
   const dx = world.x - dragState.world.x;
@@ -1696,9 +1738,36 @@ function applyResize(room, dragState, world) {
   if (h.includes('e')) { w = snap(start.w + dx); }
   if (h.includes('n')) { const ny = snap(start.y + dy); hh = start.y + start.h - ny; y = ny; }
   if (h.includes('s')) { hh = snap(start.h + dy); }
+  // Привязка подвижной грани к стенам/кромкам соседних комнат.
+  const tol = 14 / state.view.scale;
+  const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(room.id));
+  if (h.includes('w')) { const s = snapValue(x, lines.xs, tol); if (s !== null) { w += x - s; x = s; } }
+  if (h.includes('e')) { const s = snapValue(x + w, lines.xs, tol); if (s !== null) w = s - x; }
+  if (h.includes('n')) { const s = snapValue(y, lines.ys, tol); if (s !== null) { hh += y - s; y = s; } }
+  if (h.includes('s')) { const s = snapValue(y + hh, lines.ys, tol); if (s !== null) hh = s - y; }
   if (w < MIN_ROOM_SIZE) { if (h.includes('w')) x -= MIN_ROOM_SIZE - w; w = MIN_ROOM_SIZE; }
   if (hh < MIN_ROOM_SIZE) { if (h.includes('n')) y -= MIN_ROOM_SIZE - hh; hh = MIN_ROOM_SIZE; }
   room.x = x; room.y = y; room.w = w; room.h = hh;
+}
+
+// Привязка мебели к стенам: кромки/центр предмета липнут к граням стен.
+function snapItemToWalls(item) {
+  const tol = 12 / state.view.scale;
+  const lines = collectSnapLines(null);
+  const rect = itemRect(item);
+  const sx = snapValue(rect.x, lines.xs, tol);
+  const ex = snapValue(rect.x + rect.w, lines.xs, tol);
+  const cx = snapValue(item.x, lines.xs, tol);
+  if (sx !== null) item.x += sx - rect.x;
+  else if (ex !== null) item.x += ex - (rect.x + rect.w);
+  else if (cx !== null) item.x = cx;
+  const r2 = itemRect(item);
+  const sy = snapValue(r2.y, lines.ys, tol);
+  const ey = snapValue(r2.y + r2.h, lines.ys, tol);
+  const cy = snapValue(item.y, lines.ys, tol);
+  if (sy !== null) item.y += sy - r2.y;
+  else if (ey !== null) item.y += ey - (r2.y + r2.h);
+  else if (cy !== null) item.y = cy;
 }
 
 function resizeVerdict(room) {
@@ -2103,17 +2172,78 @@ function changeWallThickness(wall, newT) {
   selectObject({ type: 'wall', key: wall.key, from: wall.from });
 }
 
+// Фасад проёма (вид на стену) — SVG с размерами ширины, высоты и отступа
+// от пола. Чисто параметрический, масштабируется.
+function elevationSVG(opening) {
+  const isDoor = opening.kind === 'door';
+  const sill = isDoor ? 0 : (opening.sill || 0);
+  const height = opening.height || (isDoor ? 2100 : 1500);
+  const width = opening.width;
+  const ceil = Math.max(2700, sill + height + 350);
+  const margin = Math.max(500, width * 0.35);
+  const W = width + margin * 2;
+  const ox = margin;
+  const oy = ceil - sill - height;
+  const sw = Math.max(14, W / 90); // толщина линий в единицах viewBox
+  const dim = (x1, y1, x2, y2, label, tx, ty, rot) => `
+    <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="elev-dim"/>
+    <text x="${tx}" y="${ty}" class="elev-txt" ${rot ? `transform="rotate(${rot} ${tx} ${ty})"` : ''}>${label}</text>`;
+  const glass = isDoor
+    ? `<rect x="${ox + sw * 1.5}" y="${oy + sw * 1.5}" width="${width - sw * 3}" height="${height - sw * 3}" class="elev-door"/>
+       <circle cx="${ox + width - sw * 5}" cy="${oy + height / 2}" r="${sw * 1.5}" class="elev-dim"/>`
+    : `<rect x="${ox}" y="${oy}" width="${width}" height="${height}" class="elev-glass"/>
+       <line x1="${ox + width / 2}" y1="${oy}" x2="${ox + width / 2}" y2="${oy + height}" class="elev-dim"/>
+       <line x1="${ox}" y1="${oy + height / 2}" x2="${ox + width}" y2="${oy + height / 2}" class="elev-dim"/>`;
+  return `<svg viewBox="0 0 ${W} ${ceil}" class="elev" preserveAspectRatio="xMidYMid meet" style="--sw:${sw}px">
+    <rect x="0" y="0" width="${W}" height="${ceil}" class="elev-wall"/>
+    <rect x="${ox}" y="${oy}" width="${width}" height="${height}" class="elev-open"/>
+    ${glass}
+    <line x1="0" y1="${ceil}" x2="${W}" y2="${ceil}" class="elev-floor"/>
+    ${dim(ox, oy - sw * 6, ox + width, oy - sw * 6, `${width}`, ox + width / 2, oy - sw * 8)}
+    ${dim(ox + width + sw * 6, oy, ox + width + sw * 6, oy + height, `${height}`, ox + width + sw * 10, oy + height / 2, -90)}
+    ${sill > 0 ? dim(ox - sw * 6, oy + height, ox - sw * 6, ceil, `${sill}`, ox - sw * 10, oy + height + sill / 2, -90) : ''}
+  </svg>`;
+}
+
 function renderOpeningProps(panel, opening) {
   if (!opening) { renderProjectProps(panel); return; }
   const room = roomById(state.project, opening.roomId);
   const isDoor = opening.kind === 'door';
+  const walls = state.walls;
+  const placed = openingRect(state.project, opening, walls);
+  let leftGap = null;
+  let rightGap = null;
+  let wall = null;
+  if (placed) {
+    wall = placed.wall;
+    const centerAlong = wall.orient === 'h' ? placed.rect.x + placed.rect.w / 2 : placed.rect.y + placed.rect.h / 2;
+    leftGap = Math.round((centerAlong - opening.width / 2) - wall.from);
+    rightGap = Math.round(wall.to - (centerAlong + opening.width / 2));
+  }
+
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
-    <p class="subtitle">Стена «${room?.name}» · тяните за точки на торцах — ширина меняется с шагом 50 мм</p>
+    <p class="subtitle">Стена «${room?.name}»</p>
+    <div class="elev-wrap">${elevationSVG(opening)}</div>
     <div class="prop-block">
-      <label class="prop-field"><span>Ширина, мм</span>
-        <input id="openW" type="number" step="50" min="400" max="3000" value="${opening.width}"></label>
-      <label class="prop-field"><span>Положение от начала стены, мм</span>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Ширина, мм</span>
+          <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
+        <label class="prop-field"><span>Высота, мм</span>
+          <input id="openH" type="number" step="50" min="300" value="${opening.height || (isDoor ? 2100 : 1500)}"></label>
+      </div>
+      ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
+        <input id="openSill" type="number" step="50" min="0" value="${opening.sill || 0}"></label>`}
+    </div>
+    <h3>Положение на стене</h3>
+    <div class="prop-block">
+      <div class="prop-grid">
+        <label class="prop-field"><span>Отступ слева, мм</span>
+          <input id="gapL" type="number" step="50" value="${leftGap ?? ''}" ${leftGap === null ? 'disabled' : ''}></label>
+        <label class="prop-field"><span>Отступ справа, мм</span>
+          <input id="gapR" type="number" step="50" value="${rightGap ?? ''}" ${rightGap === null ? 'disabled' : ''}></label>
+      </div>
+      <label class="prop-field"><span>От начала стены, мм</span>
         <input id="openOff" type="number" step="50" value="${Math.round(opening.offset)}"></label>
     </div>
     ${isDoor ? `
@@ -2130,13 +2260,37 @@ function renderOpeningProps(panel, opening) {
     selectObject({ type: 'opening', id: opening.id });
   };
   panel.querySelector('#openW').addEventListener('change', (e) => {
-    const width = Math.min(3000, Math.max(400, Number(e.target.value) || opening.width));
+    const width = Math.max(300, Number(e.target.value) || opening.width);
     commitOpening(() => {
       opening.width = width;
       const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), opening.offset);
       if (clamped !== null) opening.offset = clamped;
+      else toast('Проём шире стены — уменьшите ширину');
     });
   });
+  panel.querySelector('#openH').addEventListener('change', (e) => {
+    commitOpening(() => { opening.height = Math.max(300, Number(e.target.value) || opening.height); });
+  });
+  const sillInput = panel.querySelector('#openSill');
+  if (sillInput) sillInput.addEventListener('change', (e) => commitOpening(() => { opening.sill = Math.max(0, Number(e.target.value) || 0); }));
+
+  const setByGap = (fromLeft) => (e) => {
+    if (!wall) return;
+    const base = wall.orient === 'h'
+      ? roomById(state.project, opening.roomId).x
+      : roomById(state.project, opening.roomId).y;
+    const value = Math.max(0, Number(e.target.value) || 0);
+    const desired = fromLeft
+      ? (wall.from - base) + opening.width / 2 + value
+      : (wall.to - base) - opening.width / 2 - value;
+    commitOpening(() => {
+      const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
+      if (clamped !== null) opening.offset = clamped;
+      else toast('Сюда проём не помещается');
+    });
+  };
+  if (leftGap !== null) panel.querySelector('#gapL').addEventListener('change', setByGap(true));
+  if (rightGap !== null) panel.querySelector('#gapR').addEventListener('change', setByGap(false));
   panel.querySelector('#openOff').addEventListener('change', (e) => {
     commitOpening(() => {
       const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || opening.offset);

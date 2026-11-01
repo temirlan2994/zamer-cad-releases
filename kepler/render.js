@@ -188,6 +188,23 @@ export function createRenderer(canvas) {
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
       ctx.fillRect(r.x, r.y, r.w, r.h);
     }
+    // Превью двери под курсором: створка с направлением открывания.
+    if (state.ghostDoor) {
+      const sym = doorSymbol(state.project, state.ghostDoor, walls);
+      if (sym) {
+        ctx.fillStyle = tokens.canvas;
+        ctx.fillRect(sym.rect.x, sym.rect.y, sym.rect.w, sym.rect.h);
+        ctx.strokeStyle = tokens.accent2;
+        ctx.lineWidth = px(1.8);
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath(); ctx.moveTo(sym.hinge.x, sym.hinge.y); ctx.lineTo(sym.open.x, sym.open.y); ctx.stroke();
+        const a1 = Math.atan2(sym.closed.y - sym.hinge.y, sym.closed.x - sym.hinge.x);
+        const a2 = Math.atan2(sym.open.y - sym.hinge.y, sym.open.x - sym.hinge.x);
+        let d = a2 - a1; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+        ctx.beginPath(); ctx.arc(sym.hinge.x, sym.hinge.y, state.ghostDoor.width, a1, a1 + d, d < 0); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
     // Предпросмотр линии севера при задании по двум точкам.
     const northTool = state.tool?.kind === 'north' ? state.tool : null;
     if (northTool && northTool.points.length === 1 && state.northCursor) {
@@ -872,87 +889,175 @@ const GLYPH_ALIAS = {
 };
 
 // Условные обозначения мебели (вид сверху), центр в (0,0), размеры w×h мм.
+// Параметрические top-view символы мебели в духе ArchiCAD: чистые контуры,
+// скруглённые углы, аккуратные детали. Всё рисуется из размеров w×h, поэтому
+// масштабируется без искажений. Центр в (0,0).
 function drawGlyph(ctx, kindRaw, w, h) {
   const kind = GLYPH_ALIAS[kindRaw] || kindRaw;
   const x = -w / 2;
   const y = -h / 2;
-  const rect = (rx, ry, rw, rh) => { ctx.fillRect(rx, ry, rw, rh); ctx.strokeRect(rx, ry, rw, rh); };
+  const mn = Math.min(w, h);
+  const rrFill = (rx, ry, rw, rh, r) => { ctx.beginPath(); roundRectPath(ctx, rx, ry, rw, rh, r); ctx.fill(); ctx.stroke(); };
+  const rrStroke = (rx, ry, rw, rh, r) => { ctx.beginPath(); roundRectPath(ctx, rx, ry, rw, rh, r); ctx.stroke(); };
   const line = (x1, y1, x2, y2) => { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); };
   const circle = (cx, cy, r) => { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); };
+  const ellipse = (cx, cy, rxr, ryr) => { ctx.beginPath(); ctx.ellipse(cx, cy, rxr, ryr, 0, 0, Math.PI * 2); ctx.stroke(); };
+  const body = Math.min(90, mn * 0.08); // базовый радиус скругления
 
   switch (kind) {
-    case 'pouf': ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
-    case 'bench': rect(x, y, w, h); line(x, y + h * 0.4, x + w, y + h * 0.4); break;
-    case 'plant': circle(0, 0, Math.min(w, h) * 0.46); circle(0, 0, Math.min(w, h) * 0.2); break;
-    case 'floor-lamp': circle(0, 0, Math.min(w, h) * 0.45); circle(0, 0, 60); break;
-    case 'mirror':
-    case 'tv': rect(x, y, w, h); ctx.fillStyle = 'rgba(127,144,165,0.4)'; ctx.fillRect(x + 40, y + 20, w - 80, Math.max(20, h - 40)); break;
-    case 'rug': ctx.setLineDash([180, 140]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); ctx.strokeRect(x + 150, y + 150, w - 300, h - 300); break;
-    case 'piano': rect(x, y, w, h); ctx.strokeRect(x, y, w, h * 0.45); for (let kx = x + 120; kx < x + w; kx += 120) line(kx, y, kx, y + h * 0.45); break;
-    case 'fireplace': rect(x, y, w, h); ctx.strokeRect(x + w * 0.2, y + h * 0.3, w * 0.6, h * 0.5); break;
-    case 'aquarium': rect(x, y, w, h); circle(-w * 0.15, 0, 50); circle(w * 0.15, h * 0.1, 40); break;
-    case 'pool': ctx.beginPath(); roundRectPath(ctx, x, y, w, h, Math.min(w, h) * 0.25); ctx.fill(); ctx.stroke(); break;
-    case 'motorcycle': ctx.beginPath(); ctx.ellipse(0, -h * 0.3, w * 0.3, h * 0.12, 0, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.ellipse(0, h * 0.3, w * 0.3, h * 0.14, 0, 0, Math.PI * 2); ctx.stroke(); line(0, -h * 0.3, 0, h * 0.3); break;
-    case 'bbq': circle(0, 0, Math.min(w, h) * 0.42); circle(0, 0, Math.min(w, h) * 0.24); break;
-    case 'column': circle(0, 0, Math.min(w, h) / 2); break;
     case 'bed-double':
     case 'bed-single': {
-      rect(x, y, w, h);
-      const pillowW = kind === 'bed-double' ? w / 2 - 90 : w - 120;
-      ctx.strokeRect(x + 60, y + 60, pillowW, 300);
-      if (kind === 'bed-double') ctx.strokeRect(x + w / 2 + 30, y + 60, pillowW, 300);
-      line(x, y + 500, x + w, y + 500);
+      const twin = kind === 'bed-single';
+      rrFill(x, y, w, h, body); // рама
+      const inset = Math.min(90, w * 0.06);
+      // Одеяло: отступ сверху под подушки, линия отворота.
+      const duvetTop = y + Math.min(620, h * 0.32);
+      rrStroke(x + inset, duvetTop, w - inset * 2, (y + h) - duvetTop - inset, body * 0.6);
+      line(x + inset, duvetTop + 220, x + w - inset, duvetTop + 220); // отворот
+      // Подушки.
+      const pw = twin ? w - inset * 2 : (w - inset * 3) / 2;
+      const ph = Math.min(360, (duvetTop - y) - inset);
+      rrStroke(x + inset, y + inset, pw, ph, ph * 0.3);
+      if (!twin) rrStroke(x + inset * 2 + pw, y + inset, pw, ph, ph * 0.3);
       break;
     }
-    case 'nightstand': rect(x, y, w, h); circle(0, 0, Math.min(w, h) * 0.18); break;
-    case 'sofa': rect(x, y, w, h); ctx.strokeRect(x, y, w, 220); ctx.strokeRect(x, y, 180, h); ctx.strokeRect(x + w - 180, y, 180, h); break;
+    case 'nightstand': rrFill(x, y, w, h, body); rrStroke(x + w * 0.2, y + h * 0.2, w * 0.6, h * 0.6, body * 0.5); break;
+    case 'sofa':
+    case 'bench-sofa': {
+      rrFill(x, y, w, h, body * 1.4);
+      const arm = Math.min(220, w * 0.14);
+      const back = Math.min(260, h * 0.3);
+      rrStroke(x, y, arm, h, body); // левый подлокотник
+      rrStroke(x + w - arm, y, arm, h, body); // правый
+      rrStroke(x + arm * 0.4, y, w - arm * 0.8, back, body * 0.6); // спинка
+      // Подушки сидения.
+      const seatX = x + arm;
+      const seatW = w - arm * 2;
+      const cushions = Math.max(1, Math.round(seatW / 900));
+      for (let i = 1; i < cushions; i += 1) line(seatX + (seatW / cushions) * i, y + back, seatX + (seatW / cushions) * i, y + h - body);
+      break;
+    }
     case 'sofa-corner': {
-      const seat = Math.min(900, h * 0.56);
-      const wing = Math.min(900, w * 0.35);
-      rect(x, y, w, seat);
-      rect(x, y, wing, h);
-      ctx.strokeRect(x, y, w, 200);
+      const seat = Math.min(950, h * 0.56);
+      const wing = Math.min(950, w * 0.36);
+      rrFill(x, y, w, seat, body * 1.2);
+      rrFill(x, y, wing, h, body * 1.2);
+      rrStroke(x + wing * 0.3, y, w - wing * 0.3, Math.min(220, seat * 0.35), body * 0.6);
       break;
     }
-    case 'armchair': rect(x, y, w, h); ctx.strokeRect(x, y, w, 200); ctx.strokeRect(x, y, 160, h); ctx.strokeRect(x + w - 160, y, 160, h); break;
-    case 'chair': rect(x, y, w, h); ctx.strokeRect(x, y, w, 90); break;
-    case 'table':
+    case 'armchair': {
+      rrFill(x, y, w, h, body * 1.4);
+      const arm = Math.min(170, w * 0.2);
+      const back = Math.min(220, h * 0.28);
+      rrStroke(x, y, arm, h, body); rrStroke(x + w - arm, y, arm, h, body);
+      rrStroke(x + arm * 0.4, y, w - arm * 0.8, back, body * 0.6);
+      break;
+    }
+    case 'pouf': ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
+    case 'bench': rrFill(x, y, w, h, body); line(x + body, y + h * 0.32, x + w - body, y + h * 0.32); break;
+    case 'chair': {
+      rrFill(x + w * 0.08, y + h * 0.2, w * 0.84, h * 0.8, body); // сиденье
+      rrStroke(x + w * 0.08, y, w * 0.84, h * 0.22, body * 0.5); // спинка
+      break;
+    }
     case 'dining-table':
-    case 'coffee-table': rect(x, y, w, h); ctx.strokeRect(x + 70, y + 70, w - 140, h - 140); break;
-    case 'wardrobe': rect(x, y, w, h); line(x, 0, x + w, 0); for (let hx = x + 300; hx < x + w; hx += 300) line(hx, -h * 0.18, hx, h * 0.18); break;
-    case 'wardrobe-rack': rect(x, y, w, h); line(x, 0, x + w, 0); break;
-    case 'dresser': rect(x, y, w, h); line(x + w / 3, y, x + w / 3, y + h); line(x + (2 * w) / 3, y, x + (2 * w) / 3, y + h); break;
-    case 'dressing-table': {
-      rect(x, y, w, h);
-      ctx.beginPath();
-      ctx.ellipse(0, y + h * 0.4, w * 0.28, h * 0.24, 0, 0, Math.PI * 2);
-      ctx.stroke();
+    case 'table': {
+      rrFill(x, y, w, h, body);
+      // Стулья вокруг (условно), чтобы читалась обеденная группа.
+      const perSide = Math.max(1, Math.round(w / 900));
+      const cw = Math.min(380, w / (perSide + 0.5));
+      for (let i = 0; i < perSide; i += 1) {
+        const cx = x + (w / perSide) * (i + 0.5) - cw / 2;
+        rrStroke(cx, y - cw * 0.7, cw, cw * 0.6, body * 0.4);
+        rrStroke(cx, y + h + cw * 0.1, cw, cw * 0.6, body * 0.4);
+      }
       break;
     }
-    case 'tv-stand': rect(x, y, w, h); ctx.fillStyle = 'rgba(127,144,165,0.35)'; ctx.fillRect(x + w * 0.12, y + h * 0.25, w * 0.76, h * 0.2); break;
-    case 'bookcase': { rect(x, y, w, h); for (let bx = x + w / 4; bx < x + w; bx += w / 4) line(bx, y, bx, y + h); break; }
-    case 'kitchen-row': rect(x, y, w, h); line(x, y + h - 120, x + w, y + h - 120); for (let kx = x + 600; kx < x + w; kx += 600) line(kx, y, kx, y + h - 120); break;
-    case 'stove': rect(x, y, w, h); circle(-w * 0.22, -h * 0.22, 90); circle(w * 0.22, -h * 0.22, 90); circle(-w * 0.22, h * 0.22, 90); circle(w * 0.22, h * 0.22, 90); break;
-    case 'sink': rect(x, y, w, h); circle(0, 30, Math.min(w, h) * 0.3); circle(0, y + 90, 45); break;
-    case 'fridge': rect(x, y, w, h); line(x, y, x + w, y + h); line(x + w, y, x, y + h); break;
-    case 'bath': rect(x, y, w, h); ctx.strokeRect(x + 90, y + 90, w - 180, h - 180); circle(x + w * 0.18, 0, 55); break;
-    case 'shower': rect(x, y, w, h); line(x, y, x + w, y + h); line(x + w, y, x, y + h); circle(0, 0, 90); break;
+    case 'table-round': { ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ellipse(0, 0, w * 0.32, h * 0.32); break; }
+    case 'coffee-table': rrFill(x, y, w, h, body); rrStroke(x + w * 0.14, y + h * 0.18, w * 0.72, h * 0.64, body * 0.5); break;
+    case 'desk': { rrFill(x, y, w, h, body); rrStroke(x + w * 0.62, y + h * 0.15, w * 0.33, h * 0.7, body * 0.4); break; } // столешница + тумба
+    case 'wardrobe':
+    case 'wardrobe-rack': {
+      rrFill(x, y, w, h, body * 0.5);
+      // Штанга + дуги плечиков (вид сверху).
+      line(x + w * 0.08, y + h * 0.5, x + w * 0.92, y + h * 0.5);
+      const doors = Math.max(1, Math.round(w / 600));
+      for (let i = 1; i < doors; i += 1) line(x + (w / doors) * i, y, x + (w / doors) * i, y + h);
+      break;
+    }
+    case 'dresser': { rrFill(x, y, w, h, body * 0.5); const n = Math.max(2, Math.round(w / 500)); for (let i = 1; i < n; i += 1) line(x + (w / n) * i, y, x + (w / n) * i, y + h); break; }
+    case 'dressing-table': { rrFill(x, y, w, h, body * 0.5); ellipse(0, y + h * 0.42, w * 0.26, h * 0.3); break; }
+    case 'tv-stand': { rrFill(x, y, w, h, body * 0.4); ctx.fillStyle = 'rgba(127,144,165,0.3)'; ctx.fillRect(x + w * 0.1, y + h * 0.3, w * 0.8, h * 0.18); ctx.strokeRect(x + w * 0.1, y + h * 0.3, w * 0.8, h * 0.18); break; }
+    case 'bookcase': { rrFill(x, y, w, h, body * 0.3); const n = Math.max(2, Math.round(w / 500)); for (let i = 1; i < n; i += 1) line(x + (w / n) * i, y, x + (w / n) * i, y + h); break; }
+    case 'kitchen-row': {
+      rrFill(x, y, w, h, body * 0.3);
+      line(x, y + h - Math.min(120, h * 0.2), x + w, y + h - Math.min(120, h * 0.2)); // передний край
+      const n = Math.max(1, Math.round(w / 600));
+      for (let i = 1; i < n; i += 1) line(x + (w / n) * i, y, x + (w / n) * i, y + h);
+      break;
+    }
+    case 'stove': {
+      rrFill(x, y, w, h, body * 0.4);
+      const r = mn * 0.16;
+      circle(-w * 0.22, -h * 0.22, r); circle(w * 0.22, -h * 0.22, r);
+      circle(-w * 0.22, h * 0.22, r * 0.85); circle(w * 0.22, h * 0.22, r * 0.85);
+      break;
+    }
+    case 'sink': {
+      rrFill(x, y, w, h, body * 0.4);
+      rrStroke(x + w * 0.12, y + h * 0.22, w * 0.76, h * 0.5, body * 0.5); // чаша
+      circle(0, y + h * 0.12, 42); // смеситель
+      break;
+    }
+    case 'fridge': { rrFill(x, y, w, h, body * 0.4); line(x, y + h * 0.5, x + w, y + h * 0.5); line(x + w * 0.1, y + h * 0.5 - 140, x + w * 0.1, y + h * 0.5 - 40); break; }
+    case 'bath': {
+      rrFill(x, y, w, h, Math.min(h, w) * 0.22);
+      rrStroke(x + w * 0.08, y + h * 0.12, w * 0.76, h * 0.76, Math.min(h, w) * 0.2); // внутренняя чаша
+      circle(x + w * 0.9, 0, 40); // слив/смеситель у торца
+      break;
+    }
+    case 'shower': { rrFill(x, y, w, h, body * 0.4); line(x, y, x + w, y + h); line(x + w, y, x, y + h); circle(x + w * 0.2, y + h * 0.2, 60); break; }
     case 'toilet': {
-      ctx.strokeRect(x, y, w, 200); // бачок
-      ctx.beginPath();
-      ctx.ellipse(0, y + 200 + (h - 200) / 2, w * 0.42, (h - 260) / 2, 0, 0, Math.PI * 2);
-      ctx.stroke();
+      const tankH = Math.min(200, h * 0.26);
+      rrFill(x + w * 0.1, y, w * 0.8, tankH, body * 0.4); // бачок
+      ctx.beginPath(); ctx.ellipse(0, y + tankH + (h - tankH) / 2, w * 0.4, (h - tankH) / 2 - 20, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); // чаша
       break;
     }
-    case 'washbasin': rect(x, y, w, h); ctx.beginPath(); ctx.ellipse(0, 20, w * 0.33, h * 0.3, 0, 0, Math.PI * 2); ctx.stroke(); break;
-    case 'washer': rect(x, y, w, h); circle(0, 30, Math.min(w, h) * 0.3); circle(x + 120, y + 100, 40); break;
-    case 'coat-rack': rect(x, y, w, h); for (let cx = x + 200; cx < x + w; cx += 250) circle(cx, 0, 40); break;
-    case 'shoe-bench': rect(x, y, w, h); line(x, 0, x + w, 0); break;
-    case 'car': { rect(x, y, w, h); line(x + 100, y + h * 0.22, x + w - 100, y + h * 0.22); line(x + 100, y + h * 0.78, x + w - 100, y + h * 0.78); ctx.strokeRect(x + 120, y + h * 0.3, w - 240, h * 0.4); break; }
-    case 'workbench': rect(x, y, w, h); line(x, y + 150, x + w, y + 150); break;
-    case 'garden-set': circle(0, 0, Math.min(w, h) * 0.22); circle(-w * 0.32, 0, 140); circle(w * 0.32, 0, 140); circle(0, -h * 0.32, 140); circle(0, h * 0.32, 140); break;
-    case 'stairs': { rect(x, y, w, h); const step = 280; for (let sy = y + step; sy < y + h; sy += step) line(x, sy, x + w, sy); line(0, y + h - 150, 0, y + 150); line(0, y + 150, -90, y + 330); line(0, y + 150, 90, y + 330); break; }
-    default: { ctx.beginPath(); roundRectPath(ctx, x, y, w, h, Math.min(60, Math.min(w, h) * 0.12)); ctx.fill(); ctx.stroke(); }
+    case 'bidet': { ctx.beginPath(); ctx.ellipse(0, 0, w * 0.4, h * 0.44, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break; }
+    case 'washbasin': { rrFill(x, y, w, h, body * 0.4); ellipse(0, h * 0.05, w * 0.34, h * 0.32); circle(0, y + h * 0.16, 36); break; }
+    case 'washer': { rrFill(x, y, w, h, body * 0.4); circle(0, 0, mn * 0.32); circle(0, 0, mn * 0.2); break; }
+    case 'coat-rack': { rrFill(x, y, w, h, body * 0.3); for (let cx = x + 180; cx < x + w; cx += 240) circle(cx, 0, 34); break; }
+    case 'shoe-bench': { rrFill(x, y, w, h, body * 0.4); line(x, y + h * 0.5, x + w, y + h * 0.5); break; }
+    case 'mirror':
+    case 'tv': { rrFill(x, y, w, h, Math.min(30, h * 0.3)); ctx.fillStyle = 'rgba(127,144,165,0.35)'; ctx.fillRect(x + 40, y + Math.max(10, h * 0.2), w - 80, Math.max(20, h * 0.6)); break; }
+    case 'plant': { circle(0, 0, mn * 0.46); circle(0, 0, mn * 0.22); break; }
+    case 'floor-lamp': { circle(0, 0, mn * 0.46); circle(0, 0, mn * 0.12); break; }
+    case 'rug': { ctx.setLineDash([180, 140]); rrStroke(x, y, w, h, body); ctx.setLineDash([]); rrStroke(x + w * 0.08, y + h * 0.1, w * 0.84, h * 0.8, body * 0.6); break; }
+    case 'piano': { rrFill(x, y, w, h, body * 0.4); ctx.strokeRect(x, y, w, h * 0.42); for (let kx = x + 120; kx < x + w; kx += 120) line(kx, y, kx, y + h * 0.42); break; }
+    case 'fireplace': { rrFill(x, y, w, h, body * 0.3); rrStroke(x + w * 0.2, y + h * 0.28, w * 0.6, h * 0.55, body * 0.4); break; }
+    case 'aquarium': { rrFill(x, y, w, h, body * 0.4); circle(-w * 0.15, 0, 44); circle(w * 0.18, h * 0.12, 34); break; }
+    case 'pool': { rrFill(x, y, w, h, mn * 0.25); rrStroke(x + w * 0.06, y + h * 0.08, w * 0.88, h * 0.84, mn * 0.2); break; }
+    case 'car':
+    case 'car-suv': {
+      rrFill(x + w * 0.05, y, w * 0.9, h, Math.min(w * 0.4, h * 0.14));
+      rrStroke(x + w * 0.16, y + h * 0.1, w * 0.68, h * 0.22, body); // лобовое
+      rrStroke(x + w * 0.16, y + h * 0.68, w * 0.68, h * 0.2, body); // заднее
+      break;
+    }
+    case 'motorcycle': { ellipse(0, -h * 0.3, w * 0.28, h * 0.12); ellipse(0, h * 0.3, w * 0.3, h * 0.14); line(0, -h * 0.3, 0, h * 0.3); break; }
+    case 'workbench': { rrFill(x, y, w, h, body * 0.3); line(x, y + h * 0.3, x + w, y + h * 0.3); break; }
+    case 'garden-set': { ellipse(0, 0, mn * 0.24, mn * 0.24); circle(-w * 0.3, 0, mn * 0.13); circle(w * 0.3, 0, mn * 0.13); circle(0, -h * 0.3, mn * 0.13); circle(0, h * 0.3, mn * 0.13); break; }
+    case 'bbq': { circle(0, 0, mn * 0.42); circle(0, 0, mn * 0.24); break; }
+    case 'column': { circle(0, 0, mn / 2); ctx.fill(); break; }
+    case 'stairs': {
+      rrFill(x, y, w, h, 0);
+      const step = Math.min(300, h / 8);
+      for (let sy = y + step; sy < y + h; sy += step) line(x, sy, x + w, sy);
+      line(0, y + h - 150, 0, y + 150); // стрелка подъёма
+      line(0, y + 150, -90, y + 340); line(0, y + 150, 90, y + 340);
+      break;
+    }
+    default: { rrFill(x, y, w, h, Math.min(60, mn * 0.12)); }
   }
 }
 

@@ -40,19 +40,30 @@
 
       <main class="workspace">
         <aside class="library">
-          <h2 id="libraryTitle">Помещения</h2>
-          <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
-          <div class="room-cards" id="roomCards"></div>
-          <div class="room-cards" id="siteTools" hidden></div>
-          <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
+          <div class="library-top" id="libraryTop">
+            <h2 id="libraryTitle">Помещения</h2>
+            <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
+            <div class="room-cards" id="roomCards"></div>
+            <div class="room-cards" id="siteTools" hidden></div>
+            <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
+          </div>
+          <div class="library-furniture" id="furnitureBar">
+            <h2>Мебель</h2>
+            <div class="furniture-cats" id="furnitureCats"></div>
+            <div class="furniture-items" id="furnitureItems"></div>
+          </div>
         </aside>
 
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
           <div class="canvas-hint" id="canvasHint" hidden></div>
           <div class="wall-buttons" id="wallButtons" hidden>
-            <button id="wallAddDoor" title="Добавить дверь в эту стену"><span class="wb-ico">🚪</span>Дверь</button>
-            <button id="wallAddWindow" title="Добавить окно в эту стену"><span class="wb-ico">▭</span>Окно</button>
+            <button id="wallAddDoor" title="Добавить дверь" aria-label="Добавить дверь">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v17"/><path d="M15 21a6 6 0 0 0-6-6"/><circle cx="11.5" cy="12" r="0.6" fill="currentColor"/></svg>
+            </button>
+            <button id="wallAddWindow" title="Добавить окно" aria-label="Добавить окно">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/></svg>
+            </button>
           </div>
           <div class="cal-overlay" id="calOverlay" hidden>
             <span class="cal-label">Длина отрезка:</span>
@@ -71,11 +82,6 @@
 
         <aside class="props" id="propsPanel"></aside>
       </main>
-
-      <footer class="furniture-bar" id="furnitureBar">
-        <div class="furniture-cats" id="furnitureCats"></div>
-        <div class="furniture-items" id="furnitureItems"></div>
-      </footer>
     </div>
 
     <div id="toast" role="status"></div>

@@ -52,6 +52,8 @@ export function createOpening(kind, roomId, side, offset, width) {
     side,
     offset,
     width,
+    height: kind === 'door' ? 2100 : 1500, // высота проёма, мм
+    sill: kind === 'door' ? 0 : 900, // высота от пола до низа проёма, мм
     swingIn: true, // дверь открывается внутрь комнаты roomId
     hingeStart: true, // петли со стороны начала стены
   };

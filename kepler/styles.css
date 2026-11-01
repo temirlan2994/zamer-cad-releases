@@ -238,12 +238,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .library {
-  width: 212px;
+  width: 220px;
   flex: none;
   background: var(--surface);
   border-right: 1px solid var(--border);
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.library-top {
+  flex: 1 1 46%;
   overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
+}
+.library-furniture {
+  flex: 1 1 54%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  padding: 10px 12px 0;
 }
 .library h2 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
 .library .hint { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
@@ -270,24 +285,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: var(--canvas);
 }
 
-/* --- Нижняя панель мебели --- */
-.furniture-bar {
-  flex: none;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  padding: 6px max(16px, env(safe-area-inset-left, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-}
+/* --- Секция мебели в левой панели --- */
 .furniture-cats {
+  flex: none;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  overflow-x: auto;
-  padding-bottom: 5px;
+  padding-bottom: 8px;
+  max-height: 96px;
+  overflow-y: auto;
   scrollbar-width: thin;
 }
 .furniture-cats button {
   white-space: nowrap;
-  padding: 5px 11px;
-  font-size: 12.5px;
+  padding: 4px 9px;
+  font-size: 11.5px;
   border-radius: 999px;
   background: transparent;
   border: 1px solid transparent;
@@ -296,25 +308,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .furniture-cats button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .furniture-cats button:hover:not(.active) { background: var(--surface-2); }
 .furniture-items {
-  display: flex;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
-  overflow-x: auto;
-  padding: 2px 0 2px;
+  overflow-y: auto;
+  padding: 2px 2px 10px 0;
+  align-content: start;
   scrollbar-width: thin;
 }
 .furniture-chip {
-  flex: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 2px;
-  width: 92px;
-  padding: 7px 6px;
+  padding: 7px 8px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
-  text-align: center;
+  text-align: left;
 }
 .furniture-chip:hover { border-color: var(--accent); }
 .furniture-chip .chip-name { font-size: 11.5px; font-weight: 600; line-height: 1.15; }
@@ -351,16 +364,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .wall-buttons button {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  font-size: 12.5px;
-  font-weight: 600;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
 }
 .wall-buttons button:hover { border-color: var(--accent); color: var(--accent); }
-.wall-buttons .wb-ico { font-size: 14px; }
+
+/* Фасад проёма (вид на стену) */
+.elev-wrap { margin: 2px 0 12px; display: flex; justify-content: center; }
+.elev { width: 100%; max-height: 180px; }
+.elev-wall { fill: var(--surface-2); stroke: var(--border); stroke-width: var(--sw); }
+.elev-floor { stroke: var(--line); stroke-width: calc(var(--sw) * 2.2); }
+.elev-open { fill: var(--canvas); stroke: var(--line); stroke-width: var(--sw); }
+.elev-glass { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent-2); stroke-width: var(--sw); }
+.elev-door { fill: color-mix(in srgb, var(--muted) 18%, transparent); stroke: var(--line); stroke-width: var(--sw); }
+.elev-dim { stroke: var(--accent); stroke-width: var(--sw); }
+.elev-txt { fill: var(--accent); font-size: calc(var(--sw) * 9); font-family: system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; }
 
 .cal-overlay {
   position: absolute;
@@ -633,7 +657,8 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 @media (max-width: 640px) {
   .workspace { flex-direction: column; }
-  .library { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); max-height: 120px; }
+  .library { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); flex: none; max-height: 46vh; }
+  .library-top { flex: 0 0 auto; max-height: 40%; }
   .room-cards { flex-direction: row; flex-wrap: wrap; }
   .props { width: 100%; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; }
 }
