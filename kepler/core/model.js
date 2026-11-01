@@ -19,6 +19,7 @@ export function createProject(name = 'Новый дом') {
     settings: {
       partition: DEFAULT_PARTITION,
       exterior: DEFAULT_EXTERIOR,
+      dimOuter: true, // наружные размеры по внешней грани стен (иначе — по оси)
     },
     rooms: [],
     openings: [],
@@ -82,7 +83,7 @@ export function deserializeProject(text) {
     throw new Error('Файл повреждён: нет списков rooms/openings/items');
   }
   data.wallOverrides = data.wallOverrides || {};
-  data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, ...(data.settings || {}) };
+  data.settings = { partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, ...(data.settings || {}) };
   return data;
 }
 

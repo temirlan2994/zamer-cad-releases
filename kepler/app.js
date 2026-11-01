@@ -28,7 +28,8 @@ import {
 } from './core/site.js';
 import { pointInPolygon } from './core/zamer/geometry.js';
 import {
-  createRenderer, roomHandles, openingHandles, underlayHandles, HANDLE_SIZE,
+  createRenderer, roomHandles, openingHandles, underlayHandles, underlayRotators,
+  underlayCenter, HANDLE_SIZE, drawGlyphPreview,
   neighborCorners, neighborRotators, itemCorners, itemRotators, rotateVec,
   projectPoint, unprojectPoint,
 } from './render.js';
@@ -199,6 +200,7 @@ function afterChange() {
   syncUnderlayImage();
   updateConnectivity();
   renderProps();
+  updateDimModeBtn();
   requestDraw();
   scheduleAutosave();
 }
@@ -322,10 +324,15 @@ function hitUnderlayHandle(screen) {
   const site = state.project.site;
   if (state.selection?.type !== 'site' || state.selection.kind !== 'underlay') return null;
   if (!site.underlay || site.underlay.locked) return null;
+  // Круги вращения — чуть снаружи углов (проверяем раньше квадратов).
+  for (const r of underlayRotators(site.underlay, 22, state.view.scale)) {
+    const p = worldToScreen(r.x, r.y);
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_SIZE) return { mode: 'rotate', corner: r.id };
+  }
   for (const handle of underlayHandles(site.underlay)) {
     const p = worldToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= HANDLE_SIZE && Math.abs(p.y - screen.y) <= HANDLE_SIZE) {
-      return { corner: handle.id };
+      return { mode: 'resize', corner: handle.id };
     }
   }
   return null;
@@ -449,8 +456,14 @@ function hitSiteObject(world) {
     }
   }
   const u = site.underlay;
-  if (u && world.x >= u.x && world.x <= u.x + u.widthPx * u.mmPerPx && world.y >= u.y && world.y <= u.y + u.heightPx * u.mmPerPx) {
-    return { type: 'site', kind: 'underlay' };
+  if (u) {
+    const w = u.widthPx * u.mmPerPx;
+    const h = u.heightPx * u.mmPerPx;
+    const c = underlayCenter(u);
+    const loc = rotateVec(world.x - c.x, world.y - c.y, -(u.rot || 0));
+    if (Math.abs(loc.x) <= w / 2 && Math.abs(loc.y) <= h / 2) {
+      return { type: 'site', kind: 'underlay' };
+    }
   }
   return null;
 }
@@ -1034,6 +1047,7 @@ function placeUnderlay(dataUrl, size) {
       widthPx: size.w,
       heightPx: size.h,
       mmPerPx,
+      rot: 0,
       opacity: 0.7,
       locked: false,
     };
@@ -1045,6 +1059,23 @@ function placeUnderlay(dataUrl, size) {
 // ---------------------------------------------------------------- Ввод мыши
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Перетаскивание мебели из панели на план.
+canvas.addEventListener('dragover', (e) => {
+  if (state.modeName !== 'plan') return;
+  if (!e.dataTransfer?.types.includes('application/x-kepler-furn')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+canvas.addEventListener('drop', (e) => {
+  if (state.modeName !== 'plan') return;
+  const kind = e.dataTransfer?.getData('application/x-kepler-furn') || e.dataTransfer?.getData('text/plain');
+  if (!kind || !furnitureDef(kind)) return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+  addFurnitureAt(kind, world.x, world.y);
+});
 
 canvas.addEventListener('pointerdown', (event) => {
   const screen = pointerScreen(event);
@@ -1086,9 +1117,15 @@ canvas.addEventListener('pointerdown', (event) => {
     const hh = hitUnderlayHandle(screen);
     if (hh) {
       const u = state.project.site.underlay;
+      const c = underlayCenter(u);
+      if (hh.mode === 'rotate') {
+        drag = { kind: 'underlay-rotate', startRot: u.rot || 0, startAngle: Math.atan2(world.y - c.y, world.x - c.x), center: c, before: snapshot(), moved: false };
+        return;
+      }
       const opp = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[hh.corner];
       const anchor = underlayHandles(u).find((h) => h.id === opp);
-      drag = { kind: 'underlay-resize', corner: hh.corner, anchor, startW: u.widthPx * u.mmPerPx, startH: u.heightPx * u.mmPerPx, startMmPerPx: u.mmPerPx, world, before: snapshot(), moved: false };
+      const sign = { nw: [-1, -1], ne: [1, -1], se: [1, 1], sw: [-1, 1] }[opp];
+      drag = { kind: 'underlay-resize', corner: hh.corner, anchor, anchorSign: sign, rot: u.rot || 0, startW: u.widthPx * u.mmPerPx, startH: u.heightPx * u.mmPerPx, startMmPerPx: u.mmPerPx, before: snapshot(), moved: false };
       return;
     }
     const hit = hitSiteObject(world);
@@ -1470,20 +1507,39 @@ canvas.addEventListener('pointermove', (event) => {
     return;
   }
 
+  if (drag.kind === 'underlay-rotate') {
+    const u = state.project.site.underlay;
+    if (!u || u.locked) return;
+    drag.moved = true;
+    const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
+    let deg = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
+    const stepDeg = event.shiftKey ? 15 : 5; // по умолчанию шаг 5°, Shift — 15°
+    deg = Math.round(deg / stepDeg) * stepDeg;
+    u.rot = ((deg % 360) + 360) % 360;
+    requestDraw();
+    return;
+  }
+
   if (drag.kind === 'underlay-resize') {
     const u = state.project.site.underlay;
     if (!u) return;
     drag.moved = true;
-    // Пропорциональный масштаб: новая ширина = расстояние от закреплённого
-    // угла до курсора по горизонтали; высота тянется пропорционально.
+    // Пропорциональный масштаб в собственной (повёрнутой) системе: курсор
+    // переводим в локальные оси, ширина — расстояние от закреплённого угла.
     const anchor = drag.anchor;
-    const newW = Math.max(1000, Math.abs(world.x - anchor.x));
+    const dLocal = rotateVec(world.x - anchor.x, world.y - anchor.y, -drag.rot);
+    const newW = Math.max(1000, Math.abs(dLocal.x));
     const k = newW / (drag.startW || 1);
     u.mmPerPx = Math.max(0.5, drag.startMmPerPx * k);
     const w = u.widthPx * u.mmPerPx;
     const h = u.heightPx * u.mmPerPx;
-    u.x = drag.corner.includes('w') ? anchor.x - w : anchor.x;
-    u.y = drag.corner.includes('n') ? anchor.y - h : anchor.y;
+    // Якорный угол неподвижен; восстанавливаем центр, затем левый-верхний.
+    const [asx, asy] = drag.anchorSign;
+    const half = rotateVec(asx * w / 2, asy * h / 2, drag.rot);
+    const cx = anchor.x - half.x;
+    const cy = anchor.y - half.y;
+    u.x = cx - w / 2;
+    u.y = cy - h / 2;
     requestDraw();
     return;
   }
@@ -1952,41 +2008,66 @@ function renderFurnitureBar() {
   refs.furnitureCats.innerHTML = '';
   for (const cat of FURNITURE_CATEGORIES) {
     const btn = document.createElement('button');
-    btn.textContent = cat.title;
+    btn.textContent = CATEGORY_ICONS[cat.id] || '•';
+    btn.title = cat.title;
+    btn.setAttribute('aria-label', cat.title);
     if (cat.id === furnitureCat) btn.classList.add('active');
     btn.addEventListener('click', () => { furnitureCat = cat.id; renderFurnitureBar(); });
     refs.furnitureCats.appendChild(btn);
   }
 
+  const stroke = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#7f90a5';
   refs.furnitureItems.innerHTML = '';
   for (const item of furnitureByCategory(furnitureCat)) {
-    const chip = document.createElement('button');
+    const chip = document.createElement('div');
     chip.className = 'furniture-chip';
-    chip.innerHTML = `
-      <span class="chip-name">${item.title}</span>
-      <span class="chip-size">${item.w}×${item.h}</span>`;
-    chip.title = `Добавить «${item.title}» (${item.w}×${item.h} мм)`;
-    chip.addEventListener('click', () => addFurnitureToScene(item.kind));
+    chip.draggable = true;
+    chip.title = `Перетащите «${item.title}» на план (${item.w}×${item.h} мм)`;
+    const preview = document.createElement('canvas');
+    preview.width = 120;
+    preview.height = 68;
+    chip.appendChild(preview);
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = item.title;
+    chip.appendChild(name);
+    const size = document.createElement('span');
+    size.className = 'chip-size';
+    size.textContent = `${item.w}×${item.h}`;
+    chip.appendChild(size);
+    try { drawGlyphPreview(preview, item.kind, item.w, item.h, stroke); } catch { /* превью не критично */ }
+    chip.addEventListener('dragstart', (e) => {
+      chip.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/x-kepler-furn', item.kind);
+      e.dataTransfer.setData('text/plain', item.kind);
+    });
+    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    chip.addEventListener('click', () => toast('Перетащите карточку мебели на план'));
     refs.furnitureItems.appendChild(chip);
   }
 }
 
-// Добавляет предмет: в выбранную комнату (её центр) либо в центр видимой
-// области, если комната не выбрана.
-function addFurnitureToScene(kind) {
+// Иконки категорий мебели для левой колонки панели.
+const CATEGORY_ICONS = {
+  seating: '🛋️', beds: '🛏️', tables: '🍽️', chairs: '🪑', storage: '🗄️',
+  kitchen: '🍳', bath: '🛁', appliance: '🔌', decor: '🪴', office: '💻',
+  kids: '🧸', gym: '🏋️', hall: '🚪', outdoor: '🌳', misc: '📦',
+};
+
+// Добавляет предмет мебели в указанную мировую точку (центр предмета).
+function addFurnitureAt(kind, worldX, worldY) {
   const fd = furnitureDef(kind);
   if (!fd) return;
-  let cx;
-  let cy;
-  const sel = state.selection;
-  const room = sel?.type === 'room' ? roomById(state.project, sel.id)
-    : sel?.type === 'item' ? containingRoom(state.project.items.find((i) => i.id === sel.id)) : null;
-  if (room) { cx = room.x + room.w / 2; cy = room.y + room.h / 2; }
-  else { const c = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
-  const item = createItem(kind, Math.round(cx / GRID_STEP) * GRID_STEP, Math.round(cy / GRID_STEP) * GRID_STEP, fd.w, fd.h);
+  const item = createItem(
+    kind,
+    Math.round(worldX / GRID_STEP) * GRID_STEP,
+    Math.round(worldY / GRID_STEP) * GRID_STEP,
+    fd.w, fd.h,
+  );
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
-  toast(`«${fd.title}» добавлен — перетащите на место, тяните углы для размера`);
+  toast(`«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
 }
 
 function containingRoom(item) {
@@ -2729,9 +2810,12 @@ function renderSiteObjectProps(panel, sel) {
       </div>`}
       <h3>Вид</h3>
       <div class="prop-block">
+        <label class="prop-field"><span>Поворот, °</span>
+          <input id="uRot" type="number" step="1" value="${Math.round(u.rot || 0)}"></label>
         <label class="prop-field"><span>Прозрачность</span>
           <input id="uOpacity" type="range" min="0.1" max="1" step="0.05" value="${u.opacity}"></label>
         <label class="check-row"><input type="checkbox" id="uLocked" ${u.locked ? 'checked' : ''}><span>Закрепить (не двигать и не масштабировать мышью)</span></label>
+        <p class="empty-hint">Поворот также тянется круглыми ручками у углов картинки.</p>
       </div>
       <div class="prop-actions">
         <button id="del" class="danger">Удалить подложку</button>
@@ -2758,6 +2842,12 @@ function renderSiteObjectProps(panel, sel) {
     panel.querySelector('#scaleDown').addEventListener('click', () => rescale(1 / 1.1));
     panel.querySelector('#uOpacity').addEventListener('input', (e) => {
       tweak(() => { u.opacity = Number(e.target.value); });
+    });
+    panel.querySelector('#uRot').addEventListener('change', (e) => {
+      const deg = Number(e.target.value);
+      if (Number.isNaN(deg)) return;
+      mutate(() => { u.rot = ((deg % 360) + 360) % 360; });
+      selectObject(sel);
     });
     panel.querySelector('#uLocked').addEventListener('change', (e) => {
       mutate(() => { u.locked = e.target.checked; });
@@ -3062,6 +3152,19 @@ refs.modeSite.addEventListener('click', () => setEditorMode('site'));
 el('undoBtn').addEventListener('click', undo);
 el('redoBtn').addEventListener('click', redo);
 el('fitBtn').addEventListener('click', fitView);
+function updateDimModeBtn() {
+  const outer = state.project?.settings?.dimOuter !== false;
+  const b = el('dimModeBtn');
+  if (!b) return;
+  b.textContent = outer ? '⟺ Снаружи' : '⟺ По оси';
+  b.classList.toggle('active', outer);
+}
+el('dimModeBtn').addEventListener('click', () => {
+  const cur = state.project.settings.dimOuter !== false;
+  tweak(() => { state.project.settings.dimOuter = !cur; });
+  updateDimModeBtn();
+  toast(cur ? 'Наружные размеры — по оси стен' : 'Наружные размеры — по внешней грани');
+});
 el('zoomInBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 1.25));
 el('zoomOutBtn').addEventListener('click', () => zoomAt({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }, 0.8));
 el('dimInputField').addEventListener('keydown', (e) => {

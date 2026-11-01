@@ -359,10 +359,19 @@ export function computeRoomEdges(project, room) {
 
 // Рёбра внешнего контура всего дома (объединение прямоугольников комнат
 // верхнего уровня, кроме открытых площадок). Для общих наружных размеров.
-export function computeBuildingOutline(project) {
+// expand — выдвижение контура наружу (мм). 0 — по внутренней грани комнат,
+// exterior — по наружной грани стен, exterior/2 — по оси наружных стен.
+// Раздвигание прямоугольников наружу заодно закрывает зазоры межкомнатных
+// стен: соседние комнаты перекрываются, и общий размер включает их толщину.
+export function computeBuildingOutline(project, expand = 0) {
   const rects = project.rooms
     .filter((r) => !r.parentId && !r.open)
-    .map((r) => roomRect(r));
+    .map((r) => {
+      const rc = roomRect(r);
+      return expand
+        ? { x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand }
+        : rc;
+    });
   if (!rects.length) return [];
   return unionEdges(rects);
 }

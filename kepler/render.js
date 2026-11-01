@@ -104,16 +104,25 @@ export function createRenderer(canvas) {
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
     if (site?.underlay && state.underlayImg && !state.underlayHidden) {
       const u = site.underlay;
+      const uw = u.widthPx * u.mmPerPx;
+      const uh = u.heightPx * u.mmPerPx;
+      const ucx = u.x + uw / 2;
+      const ucy = u.y + uh / 2;
+      const urot = ((u.rot || 0) * Math.PI) / 180;
+      ctx.save();
+      ctx.translate(ucx, ucy);
+      ctx.rotate(urot);
       ctx.globalAlpha = u.opacity ?? 0.7;
-      ctx.drawImage(state.underlayImg, u.x, u.y, u.widthPx * u.mmPerPx, u.heightPx * u.mmPerPx);
+      ctx.drawImage(state.underlayImg, -uw / 2, -uh / 2, uw, uh);
       ctx.globalAlpha = 1;
       if (state.selection?.type === 'site' && state.selection.kind === 'underlay') {
         ctx.strokeStyle = tokens.accent;
         ctx.lineWidth = px(1.6);
         ctx.setLineDash([px(8), px(5)]);
-        ctx.strokeRect(u.x, u.y, u.widthPx * u.mmPerPx, u.heightPx * u.mmPerPx);
+        ctx.strokeRect(-uw / 2, -uh / 2, uw, uh);
         ctx.setLineDash([]);
       }
+      ctx.restore();
     }
 
     // 2. Участок: дороги, запретная зона, соседи, тени.
@@ -356,8 +365,21 @@ export function createRenderer(canvas) {
       ctx.textAlign = 'center';
       ctx.fillText(state._calLabelAt.text, p.x, p.y - 14);
     }
-    // Угловые ручки топосъёмки — тянуть, чтобы менять масштаб.
+    // Ручки топосъёмки: круги вращения снаружи углов + квадраты (масштаб).
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
+      for (const r of underlayRotators(site.underlay, 22, scale)) {
+        const p = w2s(r.x, r.y);
+        ctx.fillStyle = tokens.surface;
+        ctx.strokeStyle = tokens.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2);
+        ctx.stroke();
+      }
       for (const hp of underlayHandles(site.underlay)) {
         drawHandleSquare(ctx, w2s(hp.x, hp.y), tokens);
       }
@@ -1206,12 +1228,14 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   // Общие наружные размеры — только для ДЕЙСТВИТЕЛЬНО внешних сторон дома,
   // вынесенные единой цепочкой за габарит (вогнутые уступы/ниши пропускаются,
   // чтобы размерные линии не шли внутри комнат).
-  const outline = computeBuildingOutline(state.project);
+  const exterior = state.project.settings?.exterior || 250;
+  const dimOuter = state.project.settings?.dimOuter !== false; // по умолчанию — снаружи
+  const expand = dimOuter ? exterior : exterior / 2;
+  const outline = computeBuildingOutline(state.project, expand);
   const rects = state.project.rooms.filter((r) => !r.parentId && !r.open)
-    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+    .map((r) => ({ x: r.x - expand, y: r.y - expand, w: r.w + 2 * expand, h: r.h + 2 * expand }));
   if (outline.length && rects.length) {
-    const exterior = state.project.settings?.exterior || 250;
-    const outOff = exterior + 850;
+    const outOff = 850;
     const bb = {
       minX: Math.min(...rects.map((r) => r.x)),
       maxX: Math.max(...rects.map((r) => r.x + r.w)),
@@ -1249,13 +1273,11 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       if (Math.hypot(q.x - p.x, q.y - p.y) < 40) continue;
       const mid = (edge.from + edge.to) / 2;
       const n = horiz ? outwardScreen(mid, chainPerp, 0, dir.y) : outwardScreen(chainPerp, mid, dir.x, 0);
-      // Выноски от стены к цепочке.
+      // Выноски от стены к цепочке — бледнее основной линии.
       const i1 = horiz ? w2s(edge.from, edge.at) : w2s(edge.at, edge.from);
       const i2 = horiz ? w2s(edge.to, edge.at) : w2s(edge.at, edge.to);
-      ctx.beginPath();
-      ctx.moveTo(i1.x, i1.y); ctx.lineTo(p.x, p.y);
-      ctx.moveTo(i2.x, i2.y); ctx.lineTo(q.x, q.y);
-      ctx.stroke();
+      drawWitness(ctx, i1, p);
+      drawWitness(ctx, i2, q);
       drawDim(ctx, p, q, n, 13, `${len}`);
     }
     ctx.globalAlpha = 1;
@@ -1349,16 +1371,56 @@ export function itemRotators(item, outPx, scale) {
   });
 }
 
-// Четыре угла топосъёмки (мировые координаты) для масштабирования.
+// Центр топосъёмки (мировые координаты).
+export function underlayCenter(u) {
+  return { x: u.x + (u.widthPx * u.mmPerPx) / 2, y: u.y + (u.heightPx * u.mmPerPx) / 2 };
+}
+
+// Четыре угла топосъёмки (мировые координаты) с учётом поворота — для масштаба.
 export function underlayHandles(u) {
-  const w = u.widthPx * u.mmPerPx;
-  const h = u.heightPx * u.mmPerPx;
-  return [
-    { id: 'nw', x: u.x, y: u.y },
-    { id: 'ne', x: u.x + w, y: u.y },
-    { id: 'se', x: u.x + w, y: u.y + h },
-    { id: 'sw', x: u.x, y: u.y + h },
-  ];
+  const hw = (u.widthPx * u.mmPerPx) / 2;
+  const hh = (u.heightPx * u.mmPerPx) / 2;
+  const c = underlayCenter(u);
+  const rot = u.rot || 0;
+  const defs = [['nw', -hw, -hh], ['ne', hw, -hh], ['se', hw, hh], ['sw', -hw, hh]];
+  return defs.map(([id, lx, ly]) => {
+    const v = rotateVec(lx, ly, rot);
+    return { id, x: c.x + v.x, y: c.y + v.y };
+  });
+}
+
+// Точки круглых ручек вращения топосъёмки — вынесены наружу от углов.
+export function underlayRotators(u, outPx, scale) {
+  const c = underlayCenter(u);
+  const out = outPx / scale;
+  return underlayHandles(u).map((h) => {
+    const dx = h.x - c.x;
+    const dy = h.y - c.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { id: h.id, x: h.x + (dx / len) * out, y: h.y + (dy / len) * out };
+  });
+}
+
+// Рисует top-view глиф мебели в превью-канвас, вписывая w×h с отступом.
+// Используется карточками библиотеки мебели.
+export function drawGlyphPreview(canvas, kind, w, h, stroke) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const pad = 9;
+  const s = Math.min((W - pad * 2) / w, (H - pad * 2) / h);
+  if (!(s > 0)) return;
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(s, s);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 1.4 / s;
+  ctx.strokeStyle = stroke || '#7f90a5';
+  ctx.fillStyle = 'rgba(127,144,165,0.10)';
+  drawGlyph(ctx, kind, w, h);
+  ctx.restore();
 }
 
 // Размерные линии до ближайших стен и стрелки-перевороты у выбранного проёма.
@@ -1392,9 +1454,9 @@ function drawSelectedOpeningUI(ctx, state, opening, walls, w2s, scale, tokens) {
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-    ctx.moveTo(inner1.x, inner1.y); ctx.lineTo(a.x, a.y); // выноски
-    ctx.moveTo(inner2.x, inner2.y); ctx.lineTo(b.x, b.y);
     ctx.stroke();
+    drawWitness(ctx, inner1, a); // выноски — бледнее
+    drawWitness(ctx, inner2, b);
     const mx = (a.x + b.x) / 2;
     const my = (a.y + b.y) / 2;
     ctx.font = '600 12px system-ui, sans-serif';
@@ -1457,15 +1519,34 @@ function normal(p, q) {
 function drawDim(ctx, p, q, n, off, label) {
   const a = { x: p.x + n.x * off, y: p.y + n.y * off };
   const b = { x: q.x + n.x * off, y: q.y + n.y * off };
+  // Направление линии и диагональ 45° для архитектурной засечки.
+  let ax = b.x - a.x;
+  let ay = b.y - a.y;
+  const alen = Math.hypot(ax, ay) || 1;
+  ax /= alen; ay /= alen;
+  const dx = (ax + n.x);
+  const dy = (ay + n.y);
+  const dl = Math.hypot(dx, dy) || 1;
+  const s = 6; // длина засечки в экранных px
+  const ux = (dx / dl) * s;
+  const uy = (dy / dl) * s;
   ctx.beginPath();
   ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-  ctx.moveTo(p.x + n.x * (off - 5), p.y + n.y * (off - 5));
-  ctx.lineTo(p.x + n.x * (off + 5), p.y + n.y * (off + 5));
-  ctx.moveTo(q.x + n.x * (off - 5), q.y + n.y * (off - 5));
-  ctx.lineTo(q.x + n.x * (off + 5), q.y + n.y * (off + 5));
+  ctx.moveTo(a.x - ux, a.y - uy); ctx.lineTo(a.x + ux, a.y + uy); // засечка слева
+  ctx.moveTo(b.x - ux, b.y - uy); ctx.lineTo(b.x + ux, b.y + uy); // засечка справа
   ctx.stroke();
   const mid = { x: (a.x + b.x) / 2 + n.x * 10, y: (a.y + b.y) / 2 + n.y * 10 };
   ctx.fillText(label, mid.x, mid.y + 3);
+}
+
+// Выноска от стены к размерной линии — бледнее основной линии.
+function drawWitness(ctx, a, b) {
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.globalAlpha = prev;
 }
 
 export const HANDLE_SIZE = 9;
