@@ -12,6 +12,8 @@ import {
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
 import { formatDuration } from './core/insolation.js';
+import { compositeBounds, compositeParts, defaultComp, isRoundTable } from './core/composite.js';
+import { furnitureBlock } from './core/blocks.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -1068,8 +1070,82 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.furniture;
   ctx.lineWidth = px(selected || hovered ? 1.8 : 1.2);
   ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : 'rgba(127,144,165,0.08)';
+  const parts = compositeParts(item);
+  // Части составной мебели (стулья у стола) — под основой.
+  drawParts(ctx, parts, item);
   drawGlyph(ctx, item.kind, item.w, item.h);
+  if (selected && parts.length) {
+    // Рамка группы: основа выделена ручками, части — пунктиром вокруг.
+    const b = compositeBounds({ ...item, x: 0, y: 0, rotation: 0 });
+    ctx.save();
+    ctx.setLineDash([px(4), px(3)]);
+    ctx.lineWidth = px(1);
+    ctx.strokeRect(b.x - px(3), b.y - px(3), b.w + px(6), b.h + px(6));
+    ctx.restore();
+  }
   ctx.restore();
+}
+
+// Части в локальных осях предмета: блок каталога — его глифом, блок из
+// DXF — своими линиями.
+// Задвинутая под столешницу часть стула не видна (вырез по контуру основы).
+function drawParts(ctx, parts, base) {
+  if (!parts.length) return;
+  ctx.save();
+  ctx.beginPath();
+  const big = (Math.max(base.w, base.h) + 10000) * 2;
+  ctx.rect(-big, -big, big * 2, big * 2);
+  if (isRoundTable(base.kind)) ctx.ellipse(0, 0, base.w / 2, base.h / 2, 0, 0, Math.PI * 2);
+  else ctx.rect(-base.w / 2, -base.h / 2, base.w, base.h);
+  ctx.clip('evenodd');
+  for (const part of parts) {
+    const block = furnitureBlock(part.kind);
+    ctx.save();
+    ctx.translate(part.x, part.y);
+    ctx.rotate(((part.rotation || 0) * Math.PI) / 180);
+    if (block?.lines) {
+      ctx.beginPath();
+      for (const [x1, y1, x2, y2] of block.lines) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+      ctx.stroke();
+    } else {
+      drawGlyph(ctx, block?.glyph || part.kind, part.w, part.h);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// Контур со своим радиусом у каждого угла [вл, вп, нп, нл].
+function cornerRectPath(ctx, x, y, w, h, radii) {
+  const lim = Math.min(w, h) / 2;
+  const [tl, tr, br, bl] = radii.map((r) => Math.max(0, Math.min(r, lim)));
+  ctx.moveTo(x + tl, y);
+  ctx.arcTo(x + w, y, x + w, y + h, tr);
+  ctx.arcTo(x + w, y + h, x, y + h, br);
+  ctx.arcTo(x, y + h, x, y, bl);
+  ctx.arcTo(x, y, x + w, y, tl);
+  ctx.closePath();
+}
+
+// Диван/кресло: подлокотники — отдельные блоки полной глубины (скруглены
+// только снаружи), между ними — спинка и сиденье шириной seatW. Боковые
+// кромки сиденья совпадают с внутренними кромками подлокотников и не
+// рисуются второй раз; подушки — только между подлокотниками.
+function drawSofaGlyph(ctx, x, y, w, h, arm, back, cushions, r) {
+  const seatX = x + arm;
+  const seatW = w - arm * 2;
+  ctx.fillRect(seatX, y, seatW, h);
+  ctx.beginPath();
+  ctx.moveTo(seatX, y); ctx.lineTo(seatX + seatW, y); // задняя кромка спинки
+  ctx.moveTo(seatX, y + back); ctx.lineTo(seatX + seatW, y + back); // спинка | сиденье
+  ctx.moveTo(seatX, y + h); ctx.lineTo(seatX + seatW, y + h); // передняя кромка
+  for (let i = 1; i < cushions; i += 1) {
+    const cx = seatX + (seatW / cushions) * i;
+    ctx.moveTo(cx, y + back); ctx.lineTo(cx, y + h);
+  }
+  ctx.stroke();
+  ctx.beginPath(); cornerRectPath(ctx, x, y, arm, h, [r, 0, 0, r]); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); cornerRectPath(ctx, x + w - arm, y, arm, h, [0, r, r, 0]); ctx.fill(); ctx.stroke();
 }
 
 // Приведение новых видов к базовым глифам (внешний вид сверху).
@@ -1137,53 +1213,58 @@ function drawGlyph(ctx, kindRaw, w, h) {
     case 'nightstand': rrFill(x, y, w, h, body); rrStroke(x + w * 0.2, y + h * 0.2, w * 0.6, h * 0.6, body * 0.5); break;
     case 'sofa':
     case 'bench-sofa': {
-      rrFill(x, y, w, h, body * 1.4);
       const arm = Math.min(220, w * 0.14);
       const back = Math.min(260, h * 0.3);
-      rrStroke(x, y, arm, h, body); // левый подлокотник
-      rrStroke(x + w - arm, y, arm, h, body); // правый
-      rrStroke(x + arm * 0.4, y, w - arm * 0.8, back, body * 0.6); // спинка
-      // Подушки сидения.
-      const seatX = x + arm;
-      const seatW = w - arm * 2;
-      const cushions = Math.max(1, Math.round(seatW / 900));
-      for (let i = 1; i < cushions; i += 1) line(seatX + (seatW / cushions) * i, y + back, seatX + (seatW / cushions) * i, y + h - body);
+      const cushions = Math.max(1, Math.round((w - arm * 2) / 900));
+      drawSofaGlyph(ctx, x, y, w, h, arm, back, cushions, body * 1.4);
       break;
     }
     case 'sofa-corner': {
+      // Г-образный: один общий контур (без наложения двух прямоугольников),
+      // спинка вдоль верха и левого края, подлокотники на концах, угловой
+      // модуль и подушки — внутренними линиями, которые не пересекаются.
       const seat = Math.min(950, h * 0.56);
       const wing = Math.min(950, w * 0.36);
-      rrFill(x, y, w, seat, body * 1.2);
-      rrFill(x, y, wing, h, body * 1.2);
-      rrStroke(x + wing * 0.3, y, w - wing * 0.3, Math.min(220, seat * 0.35), body * 0.6);
+      const bk = Math.min(220, seat * 0.3, wing * 0.3);
+      const arm = Math.min(200, w * 0.08, h * 0.08);
+      ctx.beginPath();
+      ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + seat);
+      ctx.lineTo(x + wing, y + seat); ctx.lineTo(x + wing, y + h); ctx.lineTo(x, y + h);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + w - arm, y); ctx.lineTo(x + w - arm, y + seat); // правый подлокотник
+      ctx.moveTo(x, y + h - arm); ctx.lineTo(x + wing, y + h - arm); // нижний подлокотник
+      ctx.moveTo(x + w - arm, y + bk); ctx.lineTo(x + bk, y + bk); ctx.lineTo(x + bk, y + h - arm); // спинка
+      ctx.moveTo(x + wing, y + bk); ctx.lineTo(x + wing, y + seat); // угловой модуль
+      ctx.moveTo(x + bk, y + seat); ctx.lineTo(x + wing, y + seat);
+      const runW = (x + w - arm) - (x + wing);
+      const nW = Math.max(1, Math.round(runW / 900));
+      for (let i = 1; i < nW; i += 1) { const cx = x + wing + (runW / nW) * i; ctx.moveTo(cx, y + bk); ctx.lineTo(cx, y + seat); }
+      const runH = (y + h - arm) - (y + seat);
+      const nH = Math.max(1, Math.round(runH / 900));
+      for (let i = 1; i < nH; i += 1) { const cy = y + seat + (runH / nH) * i; ctx.moveTo(x + bk, cy); ctx.lineTo(x + wing, cy); }
+      ctx.stroke();
       break;
     }
     case 'armchair': {
-      rrFill(x, y, w, h, body * 1.4);
       const arm = Math.min(170, w * 0.2);
       const back = Math.min(220, h * 0.28);
-      rrStroke(x, y, arm, h, body); rrStroke(x + w - arm, y, arm, h, body);
-      rrStroke(x + arm * 0.4, y, w - arm * 0.8, back, body * 0.6);
+      drawSofaGlyph(ctx, x, y, w, h, arm, back, 1, body * 1.4);
       break;
     }
     case 'pouf': ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
     case 'bench': rrFill(x, y, w, h, body); line(x + body, y + h * 0.32, x + w - body, y + h * 0.32); break;
     case 'chair': {
-      rrFill(x + w * 0.08, y + h * 0.2, w * 0.84, h * 0.8, body); // сиденье
-      rrStroke(x + w * 0.08, y, w * 0.84, h * 0.22, body * 0.5); // спинка
+      // Спинка (сзади, −Y) и сиденье (лицом в +Y) стыкуются, не перекрываясь.
+      const backH = h * 0.18;
+      rrFill(x + w * 0.04, y, w * 0.92, backH, body * 0.5); // спинка
+      rrFill(x + w * 0.1, y + backH, w * 0.8, h - backH, body); // сиденье
       break;
     }
     case 'dining-table':
     case 'table': {
+      // Только столешница: стулья — части составного стола (core/composite.js).
       rrFill(x, y, w, h, body);
-      // Стулья вокруг (условно), чтобы читалась обеденная группа.
-      const perSide = Math.max(1, Math.round(w / 900));
-      const cw = Math.min(380, w / (perSide + 0.5));
-      for (let i = 0; i < perSide; i += 1) {
-        const cx = x + (w / perSide) * (i + 0.5) - cw / 2;
-        rrStroke(cx, y - cw * 0.7, cw, cw * 0.6, body * 0.4);
-        rrStroke(cx, y + h + cw * 0.1, cw, cw * 0.6, body * 0.4);
-      }
       break;
     }
     case 'table-round': { ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ellipse(0, 0, w * 0.32, h * 0.32); break; }
@@ -1536,11 +1617,16 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
   const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
   const pad = 9;
-  const s = Math.min((W - pad * 2) / w, (H - pad * 2) / h);
+  // Составной предмет (стол со стульями) — с частями по умолчанию.
+  const comp = defaultComp(kind);
+  const sample = { kind, x: 0, y: 0, w, h, rotation: 0, ...(comp ? { comp } : {}) };
+  const box = comp ? compositeBounds(sample) : { x: -w / 2, y: -h / 2, w, h };
+  const s = Math.min((W - pad * 2) / box.w, (H - pad * 2) / box.h);
   if (!(s > 0)) return;
   ctx.save();
   ctx.translate(W / 2, H / 2);
   ctx.scale(s, s);
+  ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.lineWidth = 3.1 / s; // с запасом под уменьшение карточкой
@@ -1551,6 +1637,7 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
     structuralPath(ctx, kind, w, h);
     ctx.fill();
   } else {
+    drawParts(ctx, compositeParts(sample), sample);
     drawGlyph(ctx, kind, w, h);
   }
   ctx.restore();

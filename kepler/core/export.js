@@ -19,6 +19,7 @@ import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isStructural } from './catalog.js';
+import { partsInHouse } from './composite.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
@@ -108,6 +109,13 @@ function buildLevelExport(project, level) {
     center: { x: item.x, y: item.y },
     size: { w: item.w, h: item.h },
     rotation_deg: item.rotation || 0,
+    // Составная мебель: параметры и готовые части (стулья у стола) в осях дома.
+    ...(item.comp ? {
+      comp: item.comp,
+      parts: partsInHouse(item).map((p) => ({
+        kind: p.kind, center: { x: p.x, y: p.y }, size: { w: p.w, h: p.h }, rotation_deg: p.rotation,
+      })),
+    } : {}),
   }));
 
   const doors = [];
@@ -245,6 +253,12 @@ export function planEntities(project, { dims = true } = {}) {
       width: item.w,
       height: item.h,
     });
+    // Части составной мебели — отдельными блоками на том же слое.
+    for (const p of partsInHouse(item)) {
+      entities.push({
+        type: 'block', layer: 'furniture', kind: p.kind, x: p.x, y: p.y, rotation: p.rotation, width: p.w, height: p.h,
+      });
+    }
   }
 
   for (const room of project.rooms) {

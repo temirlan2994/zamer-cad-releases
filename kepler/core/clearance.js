@@ -9,12 +9,15 @@
 
 import { furnitureDef, isStructural } from './catalog.js';
 import { buildRoomContext, itemsInRoom } from './furnish.js';
+import { compositeBounds } from './composite.js';
 
 export const MIN_PASSAGE = 600;
 const CELL = 100;
 
-// Честный габарит повёрнутого предмета.
+// Честный габарит повёрнутого предмета (составного — вместе с частями,
+// например стол со стульями).
 export function itemBounds(item) {
+  if (item.comp) return compositeBounds(item);
   const r = ((item.rotation || 0) * Math.PI) / 180;
   const c = Math.abs(Math.cos(r));
   const s = Math.abs(Math.sin(r));

@@ -5,6 +5,7 @@ import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
 import { SCHEMA, migrateProject, normDeg } from './migrate.js';
 import { createSite, ensureSite } from './site.js';
 import { createBuilding } from './building.js';
+import { normalizeItemsComp } from './composite.js';
 
 export { SCHEMA };
 
@@ -130,6 +131,7 @@ export function createOpening(kind, roomId, side, offset, width) {
 
 // Мебель — свободный объект: ни к какой комнате не привязана, двигается куда
 // угодно. При перемещении комнаты едет всё, что фактически стоит внутри неё.
+// Необязательное поле comp — параметры составной мебели (core/composite.js).
 export function createItem(kind, x, y, w, h, rotation = 0) {
   return { id: makeId('item'), kind, x, y, w, h, rotation };
 }
@@ -170,6 +172,7 @@ export function normalizeProject(data) {
     elevation: Number(l.elevation) || 0,
     height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
     wallOverrides: l.wallOverrides || {},
+    items: normalizeItemsComp(l.items),
   }));
   if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;
   data.variants = Array.isArray(data.variants) ? data.variants.filter((v) => v?.house?.levels) : [];

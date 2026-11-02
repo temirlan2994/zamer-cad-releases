@@ -77,3 +77,37 @@ test('понятные ошибки: чужой файл, файл из буду
   assert.throws(() => deserializeProject('<html>'), /не является JSON/);
   assert.throws(() => deserializeProject(`{"schema":"${SCHEMA}"}`), /повреждён/);
 });
+
+test('файл версии 4: обеденный стол без стульев получает стулья частями (comp)', () => {
+  const raw = JSON.parse(fixture('v4-project.kepler.json'));
+  const p = deserializeProject(JSON.stringify(raw));
+  assert.equal(p.schema, SCHEMA);
+  const byId = Object.fromEntries(p.items.map((i) => [i.id, i]));
+  const table = byId['item-v4-table'];
+  assert.equal(table.comp.type, 'dining');
+  assert.deepEqual(table.comp.sides, { top: true, bottom: true, left: false, right: false });
+  assert.equal(table.w, 1600, 'размер стола не меняется');
+  // Круглый стол и диван — без comp; у стула рядом со столом — тоже.
+  assert.ok(!('comp' in byId['item-v4-round']));
+  assert.ok(!('comp' in byId['item-v4-sofa']));
+  assert.ok(!('comp' in byId['item-v4-chair']));
+  assert.deepEqual(deserializeProject(serializeProject(p)), p);
+});
+
+test('шаг 4 → 5: стол рядом с отдельными стульями остаётся без comp, варианты тоже мигрируют', () => {
+  const lvl = (items) => ({ id: 'L1', rooms: [], openings: [], items, wallOverrides: {} });
+  const t = { id: 't', kind: 'dining-table', x: 0, y: 0, w: 1600, h: 900, rotation: 0 };
+  const c = { id: 'c', kind: 'chair-soft', x: 0, y: -700, w: 500, h: 520, rotation: 0 };
+  const out = MIGRATIONS[4]({ schema: 'kepler-plan/4', levels: [lvl([t, c])], variants: [{ id: 'v', house: { levels: [lvl([t])] } }] });
+  assert.ok(!('comp' in out.levels[0].items[0]));
+  assert.equal(out.variants[0].house.levels[0].items[0].comp.type, 'dining');
+});
+
+test('битый comp при открытии отбрасывается, предмет остаётся', () => {
+  const p = createProject('x');
+  p.items.push({ id: 'i1', kind: 'sofa', x: 0, y: 0, w: 2200, h: 950, rotation: 0, comp: { type: 'dining' } });
+  p.items.push({ id: 'i2', kind: 'dining-table', x: 0, y: 0, w: 1600, h: 900, rotation: 0, comp: { type: 'dining', offset: 'abc' } });
+  const q = deserializeProject(serializeProject(p));
+  assert.ok(!('comp' in q.items[0]));
+  assert.equal(q.items[1].comp.offset, 100);
+});

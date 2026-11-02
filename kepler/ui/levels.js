@@ -76,7 +76,10 @@ export function addLevel() {
       copy.name = s.name;
       level.rooms.push(copy);
       for (const it of top.items) {
-        if (inside(it, s)) level.items.push(createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0));
+        if (!inside(it, s)) continue;
+        const copyItem = createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0);
+        if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
+        level.items.push(copyItem);
       }
     }
     project.levels.push(level);

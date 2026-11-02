@@ -25,6 +25,7 @@ import {
 import { resizeVerdict } from './snap.js';
 import { state } from './state.js';
 import { bindVariants, variantsSection } from './variants.js';
+import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject, startPlaceOpening } from './tools.js';
 
@@ -488,7 +489,7 @@ function renderItemProps(panel, item) {
   }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
+    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
     <div class="prop-block">
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span><input id="itemW" type="number" step="50" min="200" value="${item.w}"></label>
@@ -497,6 +498,7 @@ function renderItemProps(panel, item) {
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
     </div>
     ${stairsBlock}
+    ${compositeSection(item)}
     <div class="prop-actions">
       <button id="rotateItem">Повернуть на 90° (R)</button>
       <button id="deleteItem" class="danger">Удалить</button>
@@ -505,7 +507,7 @@ function renderItemProps(panel, item) {
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
     mutate(() => { item.w = w; item.h = h; });
-    if (isStairs) selectObject({ type: 'item', id: item.id });
+    if (isStairs || item.comp) selectObject({ type: 'item', id: item.id });
   };
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
@@ -514,6 +516,7 @@ function renderItemProps(panel, item) {
     mutate(() => { item.floorHeight = Math.max(2000, Number(e.target.value) || 3000); });
     selectObject({ type: 'item', id: item.id });
   });
+  bindCompositeSection(panel, item);
   panel.querySelector('#rotateItem').addEventListener('click', rotateSelectedItem);
   panel.querySelector('#deleteItem').addEventListener('click', deleteSelection);
 }

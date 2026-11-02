@@ -7,7 +7,7 @@
 // «ломаются». На каждую версию в tests/fixtures лежит настоящий файл.
 
 export const SCHEMA_NAME = 'kepler-plan';
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const SCHEMA = `${SCHEMA_NAME}/${SCHEMA_VERSION}`;
 
 const normDeg = (value) => {
@@ -44,7 +44,41 @@ export const MIGRATIONS = Object.freeze({
       activeLevel: 'L1',
     };
   },
+  // v4 → v5: составная мебель — у предмета необязательное поле comp
+  // (core/composite.js). Обеденный стол раньше сам рисовал условные стулья
+  // сверху и снизу; теперь стулья — его части. Чтобы старый план выглядел
+  // как прежде, столу без настоящих стульев рядом даётся comp с теми же
+  // сторонами. Значения записаны здесь буквально: миграция не зависит от
+  // будущих умолчаний.
+  4(data) {
+    const level = (l) => ({ ...l, items: (l.items || []).map((it, _i, all) => migrateTable4(it, all)) });
+    const out = { ...data };
+    if (Array.isArray(data.levels)) out.levels = data.levels.map(level);
+    if (Array.isArray(data.variants)) {
+      out.variants = data.variants.map((v) => (Array.isArray(v?.house?.levels)
+        ? { ...v, house: { ...v.house, levels: v.house.levels.map(level) } } : v));
+    }
+    return out;
+  },
 });
+
+const TABLES_V4 = new Set(['dining-table', 'dining-table-6', 'conference-table']);
+const CHAIR_RE = /chair|stool/;
+
+function migrateTable4(item, all) {
+  if (!item || !TABLES_V4.has(item.kind) || item.comp) return item;
+  const reach = Math.max(item.w, item.h) / 2 + 700;
+  const chairNear = all.some((o) => o !== item && CHAIR_RE.test(String(o?.kind))
+    && Math.abs(o.x - item.x) <= reach && Math.abs(o.y - item.y) <= reach);
+  if (chairNear) return item; // стулья уже расставлены отдельными предметами
+  return {
+    ...item,
+    comp: {
+      type: 'dining', chair: 'chair', offset: 100, spacing: 150,
+      sides: { top: true, bottom: true, left: false, right: false }, count: 0,
+    },
+  };
+}
 
 // Номер версии из строки схемы 'kepler-plan/N'; null — не наш файл.
 export function schemaVersion(schema) {
