@@ -110,8 +110,9 @@ test('JSON для Revit: оси дома, поворот и север в ося
   assert.equal(data.building.rotation_deg, 30);
   assert.equal(data.building.true_north_deg, 342);
   assert.equal(data.site.frame, 'world');
-  // Помещения — в осях дома (прямоугольник как есть).
+  // Помещения — в осях дома (прямоугольник как есть), с номером экспликации.
   assert.deepEqual(data.levels[0].rooms[0].polygon[1], { x: 4000, y: 0 });
+  assert.equal(data.levels[0].rooms[0].number, '1.01');
 });
 
 test('DXF плана — в осях дома: от поворота дома не зависит', () => {

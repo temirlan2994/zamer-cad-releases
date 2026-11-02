@@ -23,6 +23,7 @@ import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
@@ -30,8 +31,10 @@ function buildLevelExport(project, level) {
   const walls = deriveWalls(project);
   const connectivity = analyzeConnectivity(project, walls);
 
+  const numbers = new Map((roomSchedule(project).find((x) => x.level.id === level.id)?.rows || []).map((r) => [r.id, r.number]));
   const rooms = project.rooms.map((room) => ({
     id: room.id,
+    number: numbers.get(room.id) || null, // как в экспликации и на листах
     type: room.type,
     name: room.name,
     parent: room.parentId || null,

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Надстройка Revit 2025+ (.NET 8): импорт концепции Kepler Plan
+    (структурированный JSON kepler-export/2) в настоящие элементы Revit.
+    Сборка:  dotnet build -c Release
+    Ссылки на API Revit — справочные сборки из NuGet (Nice3point.Revit.Api),
+    в выходную папку не копируются: в Revit они уже есть.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>KeplerRevit</AssemblyName>
+    <RootNamespace>Kepler.Revit</RootNamespace>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2025.*" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2025.*" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="KeplerImport.addin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

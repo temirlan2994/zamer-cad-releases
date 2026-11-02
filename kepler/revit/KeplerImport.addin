@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Положите рядом с KeplerRevit.dll в %AppData%\Autodesk\Revit\Addins\2025\ -->
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Name>Kepler Plan — импорт концепции</Name>
+    <Text>Импорт Kepler Plan</Text>
+    <Description>Этажи, стены, двери, окна, помещения и колонны из kepler-export JSON</Description>
+    <Assembly>KeplerRevit.dll</Assembly>
+    <AddInId>8C0F7B3E-6D0E-4F1A-9A77-2F1F2B9C5E11</AddInId>
+    <FullClassName>Kepler.Revit.ImportCommand</FullClassName>
+    <VendorId>KEPLER</VendorId>
+    <VendorDescription>Kepler Plan</VendorDescription>
+  </AddIn>
+</RevitAddIns>
