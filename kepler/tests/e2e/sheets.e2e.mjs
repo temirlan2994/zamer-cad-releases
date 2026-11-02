@@ -48,3 +48,25 @@ describe('листы и экспликация', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('IFC', () => {
+  let app;
+  before(async () => { app = await startApp(); await openSample(app.page); });
+  after(async () => { await app?.close(); });
+
+  it('экспорт IFC4 из меню: файл STEP со стенами, проёмами и помещениями', async () => {
+    const f = await exportFile(app.page, 'ifc');
+    assert.match(f.name, /\.ifc$/);
+    const text = f.bytes.toString('utf8');
+    assert.ok(text.startsWith('ISO-10303-21;'));
+    assert.match(text, /FILE_SCHEMA\(\('IFC4'\)\)/);
+    assert.ok((text.match(/=IFCWALL\(/g) || []).length > 10);
+    assert.equal((text.match(/=IFCSPACE\(/g) || []).length, 5);
+    assert.match(await app.page.textContent('#toast'), /IFC4: стен \d+, дверей \d+, окон \d+, помещений 5/);
+    if (process.env.KEPLER_IFC_OUT) await writeFile(process.env.KEPLER_IFC_OUT, f.bytes);
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});

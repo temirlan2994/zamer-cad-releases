@@ -1,6 +1,7 @@
 // Проект как файл: новый, пример, открыть, сохранить, экспорт.
 
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
+import { buildIfc } from '../core/ifc.js';
 import { createProject, serializeProject } from '../core/model.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildTemplate } from '../core/templates.js';
@@ -57,6 +58,10 @@ export function handleExport(kind) {
   } else if (kind === 'schedule-csv') {
     download(`${safeFileName()}-экспликация.csv`, buildRoomScheduleCsv(state.project), 'text/csv;charset=utf-8');
     toast('Экспликация помещений (CSV) — откроется в Excel');
+  } else if (kind === 'ifc') {
+    const { text, counts } = buildIfc(state.project);
+    download(`${safeFileName()}.ifc`, text, 'application/x-step');
+    toast(`IFC4: стен ${counts.walls}, дверей ${counts.doors}, окон ${counts.windows}, помещений ${counts.spaces}`, true);
   } else if (kind === 'dxf-site') {
     if (!state.project.site?.boundary) { toast('Для генплана нужна граница участка (режим «Участок»)', true); return; }
     download(`${safeFileName()}-genplan.dxf`, buildSitePlanDxf(state.project), 'application/dxf');
