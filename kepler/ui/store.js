@@ -18,6 +18,7 @@ import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
+export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
 
 let autosaveTimer = null;
 
@@ -83,7 +84,10 @@ export function afterChange() {
 function scheduleAutosave() {
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
-    try { localStorage.setItem(AUTOSAVE_KEY, serializeProject(state.project)); } catch { /* тихо */ }
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, serializeProject(state.project));
+      localStorage.setItem(PID_KEY, state.pid || '');
+    } catch { /* тихо */ }
   }, 500);
 }
 

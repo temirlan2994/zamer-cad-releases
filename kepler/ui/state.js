@@ -21,6 +21,7 @@ export const state = {
   rejected: new Map(), // roomId -> причины отказов расстановки
   calibration: null, // {p1, p2, measured}
   underlayImg: null,
+  pid: null, // идентификатор проекта в хранилище («Проекты»); null — ещё не сохранялся
 };
 
 export const history = { undo: [], redo: [] };

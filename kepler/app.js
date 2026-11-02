@@ -20,6 +20,7 @@ import {
   applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
 } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
+import { bindProjects } from './ui/projects.js';
 import { renderProps } from './ui/props.js';
 import { openStartMenu } from './ui/start-menu.js';
 import { state } from './ui/state.js';
@@ -37,6 +38,7 @@ bindToolbar();
 bindMobile();
 bind3d();
 bindHelp();
+bindProjects();
 bindCompare();
 bindFurnitureSearch();
 bindView();

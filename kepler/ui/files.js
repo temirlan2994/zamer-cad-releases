@@ -5,6 +5,7 @@ import { buildIfc } from '../core/ifc.js';
 import { createProject, serializeProject } from '../core/model.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildTemplate } from '../core/templates.js';
+import { saveFile, saveZip } from './cloud.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
@@ -14,21 +15,7 @@ import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { fitView } from './view.js';
 
-function download(filename, text, mime) {
-  try {
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  } catch {
-    toast('Скачивание недоступно в этом окружении — используйте «Копировать»', true);
-  }
-}
+const download = (filename, data, mime) => saveFile(filename, data, mime);
 
 function safeFileName() {
   return (state.project.name || 'kepler-plan').replace(/[^\wа-яА-ЯёЁ -]/g, '').trim().replace(/\s+/g, '-') || 'kepler-plan';
@@ -69,6 +56,17 @@ export function handleExport(kind) {
   } else if (kind === 'dxf-revit') {
     download(`${safeFileName()}-revit.dxf`, buildProjectDxf(state.project, { profile: 'revit' }), 'application/dxf');
     toast('DXF с Revit-слоями (ZAMER_*) сохраняется');
+  } else if (kind === 'zip') {
+    const { text } = buildIfc(state.project);
+    const name = safeFileName();
+    saveZip(`${name}.zip`, [
+      { name: `${name}.kepler.json`, data: serializeProject(state.project) },
+      { name: `${name}.dxf`, data: buildProjectDxf(state.project) },
+      { name: `${name}-revit.dxf`, data: buildProjectDxf(state.project, { profile: 'revit' }) },
+      { name: `${name}.ifc`, data: text },
+      { name: `${name}-экспликация.csv`, data: buildRoomScheduleCsv(state.project) },
+    ]);
+    toast('Архив: проект, DXF, DXF для Revit, IFC, экспликация');
   } else if (kind === 'copy') {
     const text = serializeProject(state.project);
     if (navigator.clipboard?.writeText) {
@@ -87,6 +85,7 @@ export function openProjectFile(file) {
     try {
       const before = snapshot();
       restoreFrom(String(reader.result));
+      state.pid = null;
       pushHistory(before);
       fitView();
       refs.projectName.value = state.project.name;
@@ -103,6 +102,7 @@ export function openProjectFile(file) {
 export function loadTemplate(id) {
   const before = state.project ? snapshot() : null;
   state.project = buildTemplate(id);
+  state.pid = null;
   state.rejected = new Map();
   state.selection = null;
   refreshDerived();
@@ -117,6 +117,7 @@ export function loadSample() {
   const before = state.project ? snapshot() : null;
   const { project, rejected } = buildSample();
   state.project = project;
+  state.pid = null;
   state.rejected = rejected;
   state.selection = null;
   refreshDerived();
@@ -129,6 +130,7 @@ export function loadSample() {
 
 export function newProject() {
   const before = state.project ? snapshot() : null;
+  state.pid = null;
   state.project = createProject(); // чистый участок: без топосъёмки, границы, соседей
   state.selection = null;
   state.tool = null;

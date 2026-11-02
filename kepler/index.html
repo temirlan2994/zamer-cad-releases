@@ -25,6 +25,7 @@
           <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
           <button id="helpBtn" class="icon-btn" title="Управление и горячие клавиши (?)">?</button>
+          <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
           <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
           <input type="file" id="fileInput" accept=".json,application/json" hidden />
           <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
@@ -39,6 +40,7 @@
               <button data-export="dxf">DXF-чертёж</button>
               <button data-export="dxf-revit">DXF со слоями для Revit</button>
               <button data-export="dxf-site">DXF генплан (дом на участке, координаты съёмки)</button>
+              <button data-export="zip">Всё одним архивом (.zip): проект, DXF, IFC, CSV</button>
               <button data-export="copy">Копировать проект в буфер</button>
             </div>
           </div>
@@ -140,6 +142,25 @@
         </div>
         <div class="start-sub">Шаблоны домов — готовая планировка, двери и окна</div>
         <div class="start-templates" id="startTemplates"></div>
+      </div>
+    </div>
+
+    <div class="start-screen" id="projectsScreen" hidden>
+      <div class="start-card projects-card">
+        <div class="start-head">
+          <b class="help-title">Проекты</b>
+          <button class="icon-btn" id="projectsClose" title="Закрыть (Esc)">✕</button>
+        </div>
+        <p class="hint" id="projectsMode"></p>
+        <div class="library-tabs">
+          <button class="lib-tab active" id="prjTabMine" type="button">Мои проекты</button>
+          <button class="lib-tab" id="prjTabShared" type="button">Общие</button>
+        </div>
+        <div class="projects-save" id="projectsSave">
+          <input id="prjNote" type="text" maxlength="80" placeholder="Подпись версии (необязательно)" aria-label="Подпись версии" />
+          <button id="prjSave" class="primary" type="button">Сохранить версию</button>
+        </div>
+        <div class="projects-list" id="projectsList"></div>
       </div>
     </div>
 
