@@ -100,7 +100,7 @@ function sofaSection(item) {
   }
   const rows = comp.modules.map((m, i) => {
     const def = SOFA_MODULES[m.type];
-    const opts = MODULE_TYPES.map((t) => `<option value="${t}" ${t === m.type ? 'selected' : ''}>${escapeHtml(SOFA_MODULES[t].title)}</option>`).join('');
+    const opts = MODULE_TYPES.map((t) => `<option value="${t}" title="${escapeHtml(SOFA_MODULES[t].title)}" ${t === m.type ? 'selected' : ''}>${escapeHtml(SOFA_MODULES[t].short)}</option>`).join('');
     const width = m.type === 'corner'
       ? `<input type="number" value="${comp.depth}" disabled title="Угловой модуль — глубина × глубина">`
       : `<input type="number" data-sofa-w="${i}" step="50" min="${def.min}" max="${def.max}" value="${m.w}" aria-label="Ширина модуля ${i + 1}, мм">`;
@@ -111,6 +111,9 @@ function sofaSection(item) {
       <button class="danger" data-sofa-del="${i}" title="Удалить модуль" aria-label="Удалить модуль ${i + 1}" ${comp.modules.length <= 1 ? 'disabled' : ''}>×</button>
     </div>`;
   }).join('');
+  const n = comp.modules.length;
+  const whereOpts = [`<option value="${n}">в конец</option>`, '<option value="0">в начало</option>',
+    ...comp.modules.slice(0, -1).map((_, i) => `<option value="${i + 1}">после ${i + 1}</option>`)].join('');
   const addOpts = MODULE_TYPES.map((t) => `<option value="${t}">${escapeHtml(SOFA_MODULES[t].title)}</option>`).join('');
   return `
     <h3>Модули дивана</h3>
@@ -121,7 +124,7 @@ function sofaSection(item) {
       <div class="sofa-modules" id="sofaModules">${rows}</div>
       <div class="prop-grid">
         <label class="prop-field"><span>Модуль</span><select id="sofaAddType">${addOpts}</select></label>
-        <label class="prop-field"><span>Куда</span><select id="sofaAddEnd"><option value="end">в конец</option><option value="start">в начало</option></select></label>
+        <label class="prop-field"><span>Куда</span><select id="sofaAddAt">${whereOpts}</select></label>
       </div>
       <button id="sofaAdd">Добавить модуль</button>
       <p class="empty-hint">Ширина — вдоль спинки. Угловой модуль поворачивает диван; модули не должны пересекаться.</p>
@@ -138,7 +141,7 @@ function bindSofaSection(panel, item) {
   });
   root.querySelector('#sofaDepth')?.addEventListener('change', (e) => applySofaEdit(item, { op: 'depth', value: Number(e.target.value) }));
   root.querySelector('#sofaAdd')?.addEventListener('click', () => {
-    applySofaEdit(item, { op: 'add', end: root.querySelector('#sofaAddEnd').value, type: root.querySelector('#sofaAddType').value });
+    applySofaEdit(item, { op: 'insert', at: Number(root.querySelector('#sofaAddAt').value), type: root.querySelector('#sofaAddType').value });
   });
   for (const sel of root.querySelectorAll('[data-sofa-type]')) {
     sel.addEventListener('change', () => {
@@ -155,20 +158,21 @@ function bindSofaSection(panel, item) {
   }
 }
 
-// Меню выбора модуля у кнопки «+» на плане (координаты — экранные, px).
+// Меню выбора модуля у кнопки «+» на плане (координаты — экранные, px):
+// на торце — модуль к концу цепочки, на стыке — вставка между модулями.
 export function openSofaMenu(item, spot) {
   const menu = el('sofaMenu');
   menu.innerHTML = MODULE_TYPES.map((t) => `<button type="button" role="menuitem" data-sofa-add="${t}">${escapeHtml(SOFA_MODULES[t].title)}</button>`).join('');
   menu.style.left = `${spot.x}px`;
   menu.style.top = `${spot.y + (spot.r || 0)}px`;
   menu.hidden = false;
-  state.sofaMenu = { itemId: item.id, end: spot.end };
+  state.sofaMenu = { itemId: item.id, at: spot.at };
   for (const btn of menu.querySelectorAll('[data-sofa-add]')) {
     btn.addEventListener('click', () => {
       const target = state.project.items.find((i) => i.id === state.sofaMenu?.itemId);
-      const end = state.sofaMenu?.end;
+      const at = state.sofaMenu?.at;
       hideSofaMenu();
-      if (target) applySofaEdit(target, { op: 'add', end, type: btn.dataset.sofaAdd });
+      if (target) applySofaEdit(target, { op: 'insert', at, type: btn.dataset.sofaAdd });
     });
   }
 }

@@ -4,8 +4,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SOFA_BACK, compositeBounds, compositeParts, editSofa, isFixedSizeComp, normalizeComp, normalizeItemsComp,
-  partRect, partsInHouse, partsOverlap, sofaEnds, sofaModule, withDefaultComp,
+  dedupeSegments, partRect, partsInHouse, partsOverlap, pointInComposite, sofaEnds, sofaLines, sofaModule, sofaSpots,
+  withDefaultComp,
 } from '../core/composite.js';
+import { defaultItemsFor } from '../core/furnish.js';
+import { createRoom } from '../core/model.js';
 import { itemBounds } from '../core/clearance.js';
 import { buildStructuredExport, planEntities } from '../core/export.js';
 import { createItem, createProject, deserializeProject, serializeProject } from '../core/model.js';
@@ -181,4 +184,78 @@ test('выгрузка: JSON — comp и модули, DXF — только мо
   assert.equal(f.comp.type, 'sofa');
   assert.equal(f.parts.length, 3);
   assert.deepEqual(f.size, { w: 1300, h: 950 });
+});
+
+// Сумма длин перекрытий коллинеарных отрезков (0 — повторов нет).
+function duplicatedLength(segs) {
+  let total = 0;
+  for (let i = 0; i < segs.length; i += 1) {
+    for (let j = i + 1; j < segs.length; j += 1) {
+      const [a1, b1, a2, b2] = segs[i]; const [c1, d1, c2, d2] = segs[j];
+      if (b1 === b2 && d1 === d2 && b1 === d1) total += Math.max(0, Math.min(Math.max(a1, a2), Math.max(c1, c2)) - Math.max(Math.min(a1, a2), Math.min(c1, c2)));
+      if (a1 === a2 && c1 === c2 && a1 === c1) total += Math.max(0, Math.min(Math.max(b1, b2), Math.max(d1, d2)) - Math.max(Math.min(b1, b2), Math.min(d1, d2)));
+    }
+  }
+  return total;
+}
+
+test('линии модулей: каждый отрезок кромки один раз (и шезлонг → угол → модуль)', () => {
+  assert.deepEqual(dedupeSegments([[0, 0, 100, 0], [50, 0, 150, 0], [0, 0, 0, 10]]), [[0, 0, 100, 0], [100, 0, 150, 0], [0, 0, 0, 10]]);
+  const cases = [
+    ['arm', 'seat', 'seat', 'arm'],
+    ['chaise', 'corner', 'seat', 'arm'],
+    ['arm', 'seat', 'chaise', 'seat', 'arm'],
+    ['arm', 'seat', 'corner', ['seat', 1200], 'corner', 'chaise', 'arm'],
+  ];
+  for (const mods of cases) {
+    const parts = compositeParts(sofaWith(mods));
+    const naive = parts.flatMap((p) => { const r = partRect(p); return [[r.x, r.y, r.x + r.w, r.y], [r.x, r.y + r.h, r.x + r.w, r.y + r.h], [r.x, r.y, r.x, r.y + r.h], [r.x + r.w, r.y, r.x + r.w, r.y + r.h]]; });
+    assert.ok(duplicatedLength(naive) > 0, 'без слияния кромки на стыках повторяются');
+    const { segs, arcs } = sofaLines(parts);
+    assert.equal(duplicatedLength(segs), 0, `${mods.join('+')}: повторов нет`);
+    assert.ok(arcs.length >= 2 || !mods.includes('arm'), 'скругления подлокотников');
+  }
+  // Шезлонг → угол → сиденье: общая часть кромки шезлонга и сиденья нарисована один раз.
+  const parts = compositeParts(sofaWith(['chaise', 'corner', 'seat']));
+  const ch = partRect(parts[0]);
+  const edgeX = ch.x + ch.w;
+  const onEdge = sofaLines(parts).segs.filter((q) => q[0] === edgeX && q[2] === edgeX);
+  const len = onEdge.reduce((n, q) => n + Math.abs(q[3] - q[1]), 0);
+  near(len, ch.h + 900 - 700, 'кромка x = конец шезлонга: шезлонг 1650 + сиденье 900 − общие 700');
+});
+
+test('вставка в середину: стыки как места «+», якорь — модуль перед вставкой', () => {
+  const it = sofaWith(['arm', 'seat', 'corner', 'seat', 'arm'], { x: 2000, y: 1000, rotation: 90 });
+  const spots = sofaSpots(it);
+  assert.deepEqual(spots.filter((s) => s.end === 'joint').map((s) => s.at), [1, 2, 3, 4]);
+  assert.deepEqual(spots.filter((s) => s.end !== 'joint').map((s) => s.at), [0, 5]);
+  const before = partsInHouse(it);
+  Object.assign(it, editSofa(it, { op: 'insert', at: 2, type: 'ottoman' }));
+  assert.deepEqual(it.comp.modules.map((m) => m.type), ['arm', 'seat', 'ottoman', 'corner', 'seat', 'arm']);
+  const after = partsInHouse(it);
+  for (const i of [0, 1]) { near(after[i].x, before[i].x, `x ${i}`); near(after[i].y, before[i].y, `y ${i}`); }
+  assert.equal(partsOverlap(compositeParts(it)), false);
+  assert.equal(editSofa(it, { op: 'insert', at: 99, type: 'seat' }), null);
+});
+
+test('попадание по дивану — только по модулям, не в пустой угол Г', () => {
+  const it = sofaWith(['seat', 'corner', 'seat'], { x: 1000, y: 1000 });
+  // Габарит 1850×1850, модули: верх (сиденье + угол) и правое крыло вниз.
+  const b = compositeBounds(it);
+  assert.ok(pointInComposite(it, b.x + 100, b.y + 100), 'сиденье');
+  assert.ok(pointInComposite(it, b.x + b.w - 100, b.y + b.h - 100), 'крыло');
+  assert.equal(pointInComposite(it, b.x + 100, b.y + b.h - 100), false, 'пустой угол');
+  it.rotation = 90;
+  const b2 = compositeBounds(it);
+  assert.equal(pointInComposite(it, b2.x + 100, b2.y + 100), false, 'пустой угол после поворота — слева сверху');
+  assert.ok(pointInComposite(it, b2.x + b2.w - 100, b2.y + 100));
+  assert.ok(pointInComposite(createItem('bed-double', 0, 0, 1600, 2000), 700, 900));
+});
+
+test('автоподбор ставит диван конструктором того же размера', () => {
+  const room = createRoom('living', 0, 0, 5000, 4000);
+  const sofaItem = defaultItemsFor(room).find((i) => i.kind === 'sofa');
+  assert.equal(sofaItem.comp?.type, 'sofa');
+  assert.deepEqual([sofaItem.w, sofaItem.h], [2200, 950]);
+  assert.equal(defaultItemsFor(room).find((i) => i.kind === 'dining-table')?.comp, undefined);
 });

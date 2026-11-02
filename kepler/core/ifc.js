@@ -13,7 +13,8 @@
 // GlobalId устойчивые: выводятся из id элемента — повторный экспорт того же
 // проекта сохраняет идентичность элементов.
 
-import { isRoundItem, isStructural } from './catalog.js';
+import { FURNITURE, isRoundItem, isStructural } from './catalog.js';
+import { SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect } from './walls.js';
@@ -74,6 +75,27 @@ const real = (v) => {
   return s === '-0.' ? '0.' : s;
 };
 
+// Высота бруска мебели в IFC по категории каталога, мм.
+const CAT_HEIGHT = {
+  chairs: 900, tables: 750, beds: 500, seating: 850, storage: 2000, kitchen: 900, appliance: 900, bath: 600,
+  office: 750, kids: 800, hall: 1000, decor: 400, gym: 1000, outdoor: 800, misc: 800,
+};
+const SOFA_PART_HEIGHT = { seat: 850, corner: 850, chaise: 850, arm: 650, ottoman: 450 };
+const furnitureHeight = (kind) => CAT_HEIGHT[FURNITURE[kind]?.cat] || 800;
+
+// IfcFurnitureTypeEnum (IFC4) по виду предмета.
+function furnitureType(kind) {
+  const cat = FURNITURE[kind]?.cat;
+  if (kind.startsWith('sofa') || kind === 'loveseat') return '.SOFA.';
+  if (cat === 'chairs' || cat === 'seating') return '.CHAIR.';
+  if (cat === 'tables') return '.TABLE.';
+  if (cat === 'beds') return '.BED.';
+  if (/desk/.test(kind)) return '.DESK.';
+  if (kind === 'filing-cabinet') return '.FILECABINET.';
+  if (/shelf|bookcase/.test(kind)) return '.SHELF.';
+  return '.NOTDEFINED.';
+}
+
 export function buildIfc(project, { timestamp = new Date() } = {}) {
   const lines = [];
   let next = 1;
@@ -132,7 +154,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
   const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list([item])})`)])})`);
 
   const storeys = [];
-  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0 };
+  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, furniture: 0, furnitureParts: 0 };
   const schedule = roomSchedule(project);
   for (const level of sortedLevels(project)) {
     const lp = levelProject(project, level.id);
@@ -208,6 +230,33 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
         : add(`IFCCOLUMN(${guid(`column-${item.id}`)},${owner},${stepString('Колонна')},$,$,${placement},${geom},$,.COLUMN.)`);
       if (item.kind === 'wall-free') counts.walls += 1; else counts.columns += 1;
       contained.push(ref);
+    }
+
+    // Мебель: IfcFurniture с габаритным телом (брусок на высоту по виду).
+    // Составная — родитель + части (стулья стола, модули дивана) отдельными
+    // IfcFurniture через IfcRelAggregates; в этаж входит только родитель.
+    // У дивана-конструктора своего тела нет — он весь из модулей.
+    for (const item of lp.items) {
+      if (isStructural(item.kind)) continue;
+      const box = (kind, x, y, w, h, rotDeg, height) => {
+        const angle = -((rotDeg || 0) * Math.PI) / 180;
+        const profile = isRoundItem(kind) || /round/.test(kind) // круглый стол, ковёр
+          ? add(`IFCELLIPSEPROFILEDEF(.AREA.,$,${add(`IFCAXIS2PLACEMENT2D(${pt(x, -y)},${dir(Math.cos(angle), Math.sin(angle))})`)},${real(w / 2)},${real(h / 2)})`)
+          : rectProfile(x, -y, w, h, angle);
+        return shape(solid(profile, 0, height));
+      };
+      const geom = isFixedSizeComp(item) ? '$' : box(item.kind, item.x, item.y, item.w, item.h, item.rotation, furnitureHeight(item.kind));
+      const parent = add(`IFCFURNITURE(${guid(`furniture-${item.id}`)},${owner},${stepString(FURNITURE[item.kind]?.title || item.kind)},$,${stepString(item.kind)},${placement},${geom},$,${furnitureType(item.kind)})`);
+      contained.push(parent);
+      counts.furniture += 1;
+      const parts = partsInHouse(item).map((p, i) => {
+        const module = p.kind.startsWith('sofa:') ? p.kind.slice(5) : null;
+        const title = module ? `Диван: ${SOFA_MODULES[module]?.title || module}` : (FURNITURE[p.kind]?.title || p.kind);
+        const height = module ? SOFA_PART_HEIGHT[module] || 850 : furnitureHeight(p.kind);
+        counts.furnitureParts += 1;
+        return add(`IFCFURNITURE(${guid(`furniture-${item.id}-part-${i}`)},${owner},${stepString(title)},$,${stepString(p.kind)},${placement},${box(p.kind, p.x, p.y, p.w, p.h, p.rotation, height)},$,${module ? '.SOFA.' : furnitureType(p.kind)})`);
+      });
+      if (parts.length) add(`IFCRELAGGREGATES(${guid(`furniture-parts-${item.id}`)},${owner},$,$,${parent},${list(parts)})`);
     }
 
     if (contained.length) add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid(`contains-${level.id}`)},${owner},$,$,${list(contained)},${storey})`);

@@ -21,7 +21,7 @@ describe('диван-конструктор', () => {
     assert.equal(s0.comp.modules.length, 4);
     await app.page.evaluate((id) => window.__kepler.select({ type: 'item', id }), s0.id);
     await app.page.waitForSelector('#compSofa');
-    await app.page.waitForFunction(() => window.__kepler.state._sofaUI?.spots?.length === 2);
+    await app.page.waitForFunction(() => window.__kepler.state._sofaUI?.spots?.filter((s) => s.end !== 'joint').length === 2);
     const spot = await app.page.evaluate(() => window.__kepler.state._sofaUI.spots.find((s) => s.end === 'end'));
     const box = await (await app.page.$('#canvas')).boundingBox();
     await app.page.mouse.click(box.x + spot.x, box.y + spot.y);
@@ -37,6 +37,22 @@ describe('диван-конструктор', () => {
     await app.page.keyboard.press('Control+z');
     await app.page.waitForFunction(() => window.__kepler.state.project.items.find((i) => i.kind === 'sofa').comp.modules.length === 4);
     assert.equal((await sofa()).w, s0.w);
+  });
+
+  it('«+» на стыке — вставка в середину, отмена', async () => {
+    const s0 = await sofa();
+    await app.page.evaluate((id) => window.__kepler.select({ type: 'item', id }), s0.id);
+    await app.page.waitForFunction(() => window.__kepler.state._sofaUI?.spots?.some((s) => s.end === 'joint'));
+    const spot = await app.page.evaluate(() => window.__kepler.state._sofaUI.spots.find((s) => s.end === 'joint'));
+    const box = await (await app.page.$('#canvas')).boundingBox();
+    await app.page.mouse.click(box.x + spot.x, box.y + spot.y);
+    await app.page.waitForSelector('#sofaMenu:not([hidden])');
+    await app.page.click('#sofaMenu [data-sofa-add="ottoman"]');
+    await app.page.waitForFunction(() => document.querySelector('#sofaCount')?.textContent === '5');
+    const s1 = await sofa();
+    assert.equal(s1.comp.modules[spot.at].type, 'ottoman');
+    await app.page.keyboard.press('Control+z');
+    await app.page.waitForFunction(() => window.__kepler.state.project.items.find((i) => i.kind === 'sofa').comp.modules.length === 4);
   });
 
   it('панель: угловой модуль и удаление', async () => {

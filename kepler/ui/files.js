@@ -48,7 +48,7 @@ export function handleExport(kind) {
   } else if (kind === 'ifc') {
     const { text, counts } = buildIfc(state.project);
     download(`${safeFileName()}.ifc`, text, 'application/x-step');
-    toast(`IFC4: стен ${counts.walls}, дверей ${counts.doors}, окон ${counts.windows}, помещений ${counts.spaces}`, true);
+    toast(`IFC4: стен ${counts.walls}, дверей ${counts.doors}, окон ${counts.windows}, помещений ${counts.spaces}, мебели ${counts.furniture}`, true);
   } else if (kind === 'dxf-site') {
     if (!state.project.site?.boundary) { toast('Для генплана нужна граница участка (режим «Участок»)', true); return; }
     download(`${safeFileName()}-genplan.dxf`, buildSitePlanDxf(state.project), 'application/dxf');

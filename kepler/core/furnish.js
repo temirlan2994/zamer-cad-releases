@@ -11,6 +11,7 @@
 import { FURNITURE, furnitureDef, roomType, DEFAULT_PARTITION } from './catalog.js';
 import { nestedOuterRect } from './rooms.js';
 import { doorSwingRect, openingRect } from './walls.js';
+import { compTypeFor, withDefaultComp } from './composite.js';
 import { createItem } from './model.js';
 
 const CELL = 100; // шаг сетки проходимости, мм
@@ -97,7 +98,11 @@ export function defaultItemsFor(room) {
     const fd = furnitureDef(entry.kind);
     const count = entry.kind === 'nightstand' ? 2 : entry.kind === 'chair' ? 4 : 1;
     for (let i = 0; i < count; i += 1) {
-      items.push(createItem(entry.kind, cx, cy, fd.w, fd.h));
+      const item = createItem(entry.kind, cx, cy, fd.w, fd.h);
+      // Диван — конструктором (размер модулей по умолчанию = размер каталога).
+      // Стол остаётся без comp: стулья в наборе комнаты идут отдельно.
+      if (compTypeFor(entry.kind) === 'sofa') withDefaultComp(item);
+      items.push(item);
     }
   }
   return items;

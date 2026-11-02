@@ -554,7 +554,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .sofa-menu button:hover, .sofa-menu button:focus-visible { background: var(--surface-2); }
 @media (pointer: coarse) { .sofa-menu button { min-height: 44px; font-size: 15px; } }
 .sofa-modules { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
-.sofa-module-row { display: grid; grid-template-columns: 22px 1fr 76px 30px; gap: 4px; align-items: center; }
+.sofa-module-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(56px, 72px) 30px; gap: 4px; align-items: center; }
+.sofa-module-row select { width: 100%; text-overflow: ellipsis; }
+.sofa-module-row input { width: 100%; }
 .sofa-module-row select, .sofa-module-row input { min-width: 0; }
 .sofa-module-row .sofa-n { color: var(--muted); font-size: 12px; text-align: right; }
 

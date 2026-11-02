@@ -141,11 +141,11 @@ const SOFA_MAX_MODULES = 24;
 
 // Типы модулей: подпись, ширина по умолчанию и пределы (угловой — depth×depth).
 export const SOFA_MODULES = Object.freeze({
-  seat: { title: 'Сиденье', w: 900, min: 400, max: 1600, back: true },
-  corner: { title: 'Угловой', back: true },
-  arm: { title: 'Подлокотник', w: 200, min: 100, max: 400, back: false },
-  ottoman: { title: 'Пуф (без спинки)', w: 900, min: 400, max: 1600, back: false },
-  chaise: { title: 'Шезлонг', w: 900, min: 600, max: 1600, back: true },
+  seat: { title: 'Сиденье', short: 'Сиденье', w: 900, min: 400, max: 1600, back: true },
+  corner: { title: 'Угловой', short: 'Угол', back: true },
+  arm: { title: 'Подлокотник', short: 'Подлок.', w: 200, min: 100, max: 400, back: false },
+  ottoman: { title: 'Пуф (без спинки)', short: 'Пуф', w: 900, min: 400, max: 1600, back: false },
+  chaise: { title: 'Шезлонг', short: 'Шезлонг', w: 900, min: 600, max: 1600, back: true },
 });
 
 const SOFA_DEFAULTS = {
@@ -179,6 +179,7 @@ export function sofaLayout(comp) {
   let dir = ((comp.dir || 0) % 4 + 4) % 4;
   let ox = 0; let oy = 0;
   const parts = [];
+  const joints = [];
   let prevDepth = 0;
   const startU = DIRS[dir];
   const n = comp.modules.length;
@@ -188,6 +189,11 @@ export function sofaLayout(comp) {
     const corner = m.type === 'corner';
     const len = corner ? D : m.w;
     const depth = m.type === 'chaise' ? D + SOFA_CHAISE_EXTRA : D;
+    // Стык с предыдущим модулем: «+» у передней кромки стыка (вставка в середину).
+    if (i > 0) {
+      const jd = Math.max(prevDepth, depth);
+      joints.push({ end: 'joint', at: i, x: ox + vx * jd, y: oy + vy * jd, nx: vx, ny: vy });
+    }
     parts.push({
       kind: `sofa:${m.type}`,
       x: ox + (ux * len) / 2 + (vx * depth) / 2,
@@ -215,8 +221,9 @@ export function sofaLayout(comp) {
   const [ux, uy] = DIRS[dir];
   const vx = -uy; const vy = ux;
   const ends = [
-    { end: 'start', x: ((-startU[1]) * D) / 2, y: (startU[0] * D) / 2, nx: -startU[0], ny: -startU[1] },
-    { end: 'end', x: ox + (vx * D) / 2, y: oy + (vy * D) / 2, nx: ux, ny: uy },
+    { end: 'start', at: 0, x: ((-startU[1]) * D) / 2, y: (startU[0] * D) / 2, nx: -startU[0], ny: -startU[1] },
+    { end: 'end', at: n, x: ox + (vx * D) / 2, y: oy + (vy * D) / 2, nx: ux, ny: uy },
+    ...joints,
   ];
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
   for (const p of parts) {
@@ -311,6 +318,12 @@ const rot = (x, y, deg) => {
 // Места «+» дивана в осях дома: { end, x, y, nx, ny } — середина свободного
 // торца цепочки и наружная нормаль. [] — не диван-конструктор.
 export function sofaEnds(item) {
+  return sofaSpots(item).filter((e) => e.end !== 'joint');
+}
+
+// Все места «+»: торцы и стыки между модулями ({ end: 'joint', at } —
+// вставка перед модулем at). Нормаль стыка — вперёд, от спинки.
+export function sofaSpots(item) {
   const comp = item?.comp && normalizeComp(item.comp, item.kind);
   if (!comp || comp.type !== 'sofa') return [];
   const r = item.rotation || 0;
@@ -318,12 +331,89 @@ export function sofaEnds(item) {
     const p = rot(e.x, e.y, r);
     const n = rot(e.nx, e.ny, r);
     const r3 = (v) => Math.round(v * 1000) / 1000 + 0; // + 0: без «-0»
-    return { end: e.end, x: r3(item.x + p.x), y: r3(item.y + p.y), nx: r3(n.x), ny: r3(n.y) };
+    return { end: e.end, at: e.at, x: r3(item.x + p.x), y: r3(item.y + p.y), nx: r3(n.x), ny: r3(n.y) };
   });
+}
+
+// Точка (в осях дома) попадает в один из модулей дивана — не в пустой
+// внутренний угол Г/П. Для прочих предметов — в их прямоугольник.
+export function pointInComposite(item, px, py) {
+  const local = rot(px - item.x, py - item.y, -(item.rotation || 0));
+  const inRect = (r) => local.x >= r.x - 1e-6 && local.x <= r.x + r.w + 1e-6 && local.y >= r.y - 1e-6 && local.y <= r.y + r.h + 1e-6;
+  if (isFixedSizeComp(item)) return compositeParts(item).some((p) => inRect(partRect(p)));
+  return inRect({ x: -item.w / 2, y: -item.h / 2, w: item.w, h: item.h });
+}
+
+// Линии модулей дивана (в локальных осях предмета) для чертежа: каждый
+// отрезок кромки — один раз (общие и частично совпадающие кромки соседних
+// модулей сливаются), скругления подлокотников на свободных концах — дугами.
+// { segs: [[x1, y1, x2, y2]], arcs: [{ cx, cy, r, a0, a1 }] }
+export function sofaLines(parts) {
+  const raw = [];
+  const arcs = [];
+  for (const part of parts) {
+    const type = part.kind.slice(5);
+    const { w, h } = part;
+    const x0 = -w / 2; const x1 = w / 2; const y0 = -h / 2; const y1 = h / 2;
+    const r = type === 'arm' ? Math.min(90, w * 0.45) : 0;
+    const rs = part.joinStart ? 0 : r;
+    const re = part.joinEnd ? 0 : r;
+    const local = [
+      [x0 + rs, y0, x1 - re, y0], // спинка (задняя кромка)
+      [x1, y0 + re, x1, y1 - re], // конец
+      [x0 + rs, y1, x1 - re, y1], // передняя кромка
+      [x0, y0 + rs, x0, y1 - rs], // начало
+    ];
+    const b = part.back || 0;
+    if (b > 0 && type === 'corner') local.push([x0, y0 + b, x1 - b, y0 + b], [x1 - b, y0 + b, x1 - b, y1]);
+    else if (b > 0) local.push([x0, y0 + b, x1, y0 + b]);
+    if (type === 'chaise') { const ys = y1 - h * 0.32; local.push([x0 + w * 0.12, ys, x1 - w * 0.12, ys]); }
+    const deg = part.rotation || 0;
+    const tp = (x, y) => { const q = rot(x, y, deg); return [part.x + q.x, part.y + q.y]; };
+    for (const [ax, ay, bx, by] of local) raw.push([...tp(ax, ay), ...tp(bx, by)]);
+    const a = (deg * Math.PI) / 180;
+    const arc = (cx, cy, a0, a1) => { const [X, Y] = tp(cx, cy); arcs.push({ cx: X, cy: Y, r, a0: a0 + a, a1: a1 + a }); };
+    if (rs) { arc(x0 + rs, y0 + rs, Math.PI, Math.PI * 1.5); arc(x0 + rs, y1 - rs, Math.PI / 2, Math.PI); }
+    if (re) { arc(x1 - re, y0 + re, Math.PI * 1.5, Math.PI * 2); arc(x1 - re, y1 - re, 0, Math.PI / 2); }
+  }
+  return { segs: dedupeSegments(raw), arcs };
+}
+
+// Осевые (горизонтальные/вертикальные) отрезки без повторов: из каждого
+// вычитается то, что уже покрыто отрезками той же прямой.
+export function dedupeSegments(segs) {
+  const r3 = (v) => Math.round(v * 1000) / 1000 + 0;
+  const covered = new Map(); // прямая → [[a, b]]
+  const out = [];
+  for (const [x1, y1, x2, y2] of segs) {
+    const horiz = Math.abs(y1 - y2) < 1e-6;
+    const vert = Math.abs(x1 - x2) < 1e-6;
+    if (!horiz && !vert) { out.push([x1, y1, x2, y2]); continue; }
+    const key = horiz ? `h${r3(y1)}` : `v${r3(x1)}`;
+    let pieces = [horiz ? [Math.min(x1, x2), Math.max(x1, x2)] : [Math.min(y1, y2), Math.max(y1, y2)]];
+    const cov = covered.get(key) || [];
+    for (const [ca, cb] of cov) {
+      pieces = pieces.flatMap(([a, b]) => {
+        if (cb <= a + 1e-6 || ca >= b - 1e-6) return [[a, b]];
+        const rest = [];
+        if (ca > a + 1e-6) rest.push([a, ca]);
+        if (cb < b - 1e-6) rest.push([cb, b]);
+        return rest;
+      });
+    }
+    for (const [a, b] of pieces) {
+      if (b - a < 0.5) continue;
+      out.push(horiz ? [r3(a), r3(y1), r3(b), r3(y1)] : [r3(x1), r3(a), r3(x1), r3(b)]);
+      cov.push([a, b]);
+    }
+    covered.set(key, cov);
+  }
+  return out;
 }
 
 // Правка дивана-конструктора без изменения предмета. op:
 //   { op: 'add', end: 'start' | 'end', type, w? } — модуль к торцу цепочки;
+//   { op: 'insert', at, type, w? } — модуль перед модулем at (0…n);
 //   { op: 'remove', index };  { op: 'set', index, type?, w? };  { op: 'depth', value }.
 // Возвращает { comp, x, y, w, h } — новые поля предмета, или null, если правка
 // невозможна (модули пересекаются, удаление последнего модуля, неверный тип).
@@ -339,10 +429,16 @@ export function editSofa(item, edit) {
   const idx = Number(edit?.index);
   let depth = old.depth;
   switch (edit?.op) {
-    case 'add': {
+    case 'add':
+    case 'insert': {
+      // add: к торцу (end: 'start' | 'end'); insert: перед модулем at (0…n).
       const m = sofaModule(edit.type, edit.w);
       if (!m || n >= SOFA_MAX_MODULES) return null;
-      if (edit.end === 'start') { mods.unshift(m); from = 0; to = 1; } else { mods.push(m); from = n - 1; to = n - 1; }
+      const at = edit.op === 'add' ? (edit.end === 'start' ? 0 : n) : Number(edit.at);
+      if (!(Number.isInteger(at) && at >= 0 && at <= n)) return null;
+      mods.splice(at, 0, m);
+      // Якорь — модуль перед вставкой (в начале — бывший первый).
+      if (at === 0) { from = 0; to = 1; } else { from = at - 1; to = at - 1; }
       break;
     }
     case 'remove': {

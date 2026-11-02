@@ -1,6 +1,6 @@
 // Поиск объектов под курсором: ручки, комнаты, стены, проёмы, мебель, участок.
 
-import { isFixedSizeComp } from '../core/composite.js';
+import { isFixedSizeComp, pointInComposite } from '../core/composite.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
@@ -116,6 +116,11 @@ export function hitSiteVertex(screen) {
 export function hitItem(p) {
   const items = state.project.items;
   for (let i = items.length - 1; i >= 0; i -= 1) {
+    // Диван-конструктор — только по модулям: пустой внутренний угол Г/П не его.
+    if (isFixedSizeComp(items[i])) {
+      if (pointInComposite(items[i], p.x, p.y)) return items[i];
+      continue;
+    }
     const r = itemRect(items[i]);
     if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return items[i];
   }
