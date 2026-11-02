@@ -14,7 +14,8 @@
 // проекта сохраняет идентичность элементов.
 
 import { FURNITURE, isRoundItem, isStructural } from './catalog.js';
-import { SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
+import { KITCHEN_PARTS, SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
+import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect } from './walls.js';
@@ -238,12 +239,12 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     // У дивана-конструктора своего тела нет — он весь из модулей.
     for (const item of lp.items) {
       if (isStructural(item.kind)) continue;
-      const box = (kind, x, y, w, h, rotDeg, height) => {
+      const box = (kind, x, y, w, h, rotDeg, height, z0 = 0) => {
         const angle = -((rotDeg || 0) * Math.PI) / 180;
         const profile = isRoundItem(kind) || /round/.test(kind) // круглый стол, ковёр
           ? add(`IFCELLIPSEPROFILEDEF(.AREA.,$,${add(`IFCAXIS2PLACEMENT2D(${pt(x, -y)},${dir(Math.cos(angle), Math.sin(angle))})`)},${real(w / 2)},${real(h / 2)})`)
           : rectProfile(x, -y, w, h, angle);
-        return shape(solid(profile, 0, height));
+        return shape(solid(profile, z0, height));
       };
       const geom = isFixedSizeComp(item) ? '$' : box(item.kind, item.x, item.y, item.w, item.h, item.rotation, furnitureHeight(item.kind));
       const parent = add(`IFCFURNITURE(${guid(`furniture-${item.id}`)},${owner},${stepString(FURNITURE[item.kind]?.title || item.kind)},$,${stepString(item.kind)},${placement},${geom},$,${furnitureType(item.kind)})`);
@@ -251,10 +252,14 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       counts.furniture += 1;
       const parts = partsInHouse(item).map((p, i) => {
         const module = p.kind.startsWith('sofa:') ? p.kind.slice(5) : null;
-        const title = module ? `Диван: ${SOFA_MODULES[module]?.title || module}` : (FURNITURE[p.kind]?.title || p.kind);
-        const height = module ? SOFA_PART_HEIGHT[module] || 850 : furnitureHeight(p.kind);
+        const kpart = p.kind.startsWith('kitchen:') ? p.kind.slice(8) : null;
+        const title = module ? `Диван: ${SOFA_MODULES[module]?.title || module}`
+          : kpart ? `Кухня: ${KITCHEN_PARTS[kpart] || kpart}` : (FURNITURE[p.kind]?.title || p.kind);
+        const height = module ? SOFA_PART_HEIGHT[module] || 850 : kpart ? KITCHEN_PART_HEIGHT[kpart] || 900 : furnitureHeight(p.kind);
+        // Верхний ряд кухни висит: шкафы 1400–2100, вытяжка 1700–2100 мм.
+        const z0 = p.layer === 'upper' ? 2100 - height : 0;
         counts.furnitureParts += 1;
-        return add(`IFCFURNITURE(${guid(`furniture-${item.id}-part-${i}`)},${owner},${stepString(title)},$,${stepString(p.kind)},${placement},${box(p.kind, p.x, p.y, p.w, p.h, p.rotation, height)},$,${module ? '.SOFA.' : furnitureType(p.kind)})`);
+        return add(`IFCFURNITURE(${guid(`furniture-${item.id}-part-${i}`)},${owner},${stepString(title)},$,${stepString(p.kind)},${placement},${box(p.kind, p.x, p.y, p.w, p.h, p.rotation, height, z0)},$,${module ? '.SOFA.' : furnitureType(p.kind)})`);
       });
       if (parts.length) add(`IFCRELAGGREGATES(${guid(`furniture-parts-${item.id}`)},${owner},$,$,${parent},${list(parts)})`);
     }

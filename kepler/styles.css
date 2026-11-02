@@ -559,6 +559,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .sofa-module-row input { width: 100%; }
 .sofa-module-row select, .sofa-module-row input { min-width: 0; }
 .sofa-module-row .sofa-n { color: var(--muted); font-size: 12px; text-align: right; }
+.kitchen-shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 6px; }
+.kitchen-shape button { min-width: 0; padding: 6px 4px; font-size: 12.5px; }
+.kitchen-shape button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.kitchen-els { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.kitchen-el-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px; margin: 0 0 4px 24px; }
+.kitchen-el-row select, .kitchen-el-row input { width: 100%; min-width: 0; }
+@media (pointer: coarse) { .kitchen-shape button { min-height: 40px; } }
 
 /* --- 3D-просмотр поверх плана --- */
 .view3d { position: absolute; inset: 0; z-index: 45; background: var(--canvas); }

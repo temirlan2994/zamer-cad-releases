@@ -87,7 +87,7 @@ export const FURNITURE = {
   'tv-stand': { title: 'ТВ-тумба', cat: 'storage', w: 1600, h: 420, rules: { wall: true, clearFront: 1500, priority: 2 } },
 
   // --- Кухня ---
-  'kitchen-row': { title: 'Кухонный гарнитур', cat: 'kitchen', w: 2400, h: 600, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
+  'kitchen-row': { title: 'Кухня линейная', cat: 'kitchen', w: 2400, h: 600, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
   'kitchen-island': { title: 'Кухонный остров', cat: 'kitchen', w: 1800, h: 900, rules: { center: true, clearAround: 900, priority: 2 } },
   stove: { title: 'Плита', cat: 'kitchen', w: 600, h: 600, rules: { wall: true, clearFront: 1000, priority: 2 } },
   'cooktop-hood': { title: 'Варочная с вытяжкой', cat: 'kitchen', w: 900, h: 600, rules: { wall: true, clearFront: 1000, priority: 2 } },
@@ -171,7 +171,9 @@ export const FURNITURE = {
   // --- Кухня ---
   oven: { title: 'Духовой шкаф', cat: 'kitchen', w: 600, h: 600, rules: { wall: true, clearFront: 900, priority: 3 } },
   microwave: { title: 'СВЧ-печь', cat: 'kitchen', w: 500, h: 350, rules: { wall: true, clearFront: 300, priority: 5 } },
-  'kitchen-corner': { title: 'Угловая кухня', cat: 'kitchen', w: 1800, h: 1800, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
+  // Кухни-конструкторы (core/kitchen.js): размер — габарит частей по умолчанию.
+  'kitchen-corner': { title: 'Кухня Г-образная', cat: 'kitchen', w: 2400, h: 1800, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
+  'kitchen-u': { title: 'Кухня П-образная', cat: 'kitchen', w: 3000, h: 1800, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
   pantry: { title: 'Пенал/кладовка', cat: 'kitchen', w: 600, h: 600, rules: { wall: true, clearFront: 700, tall: true, priority: 2 } },
 
   // --- Санузел ---

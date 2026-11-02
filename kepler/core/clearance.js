@@ -9,7 +9,7 @@
 
 import { furnitureDef, isStructural } from './catalog.js';
 import { buildRoomContext, itemsInRoom } from './furnish.js';
-import { compositeBounds } from './composite.js';
+import { compositeBounds, isFixedSizeComp, partsInHouse } from './composite.js';
 
 export const MIN_PASSAGE = 600;
 const CELL = 100;
@@ -26,6 +26,15 @@ export function itemBounds(item) {
   return { x: item.x - w / 2, y: item.y - h / 2, w, h };
 }
 
+// Контур предмета прямоугольниками (оси дома): у диванов и кухонь-
+// конструкторов — по частям (пустой внутренний угол Г/П свободен; верхние
+// шкафы кухни висят над нижними и не считаются), у прочих — габарит.
+export function itemShapes(item) {
+  if (!isFixedSizeComp(item)) return [itemBounds(item)];
+  const parts = partsInHouse(item).filter((p) => p.layer !== 'upper');
+  return parts.length ? parts.map((p) => itemBounds({ x: p.x, y: p.y, w: p.w, h: p.h, rotation: p.rotation })) : [itemBounds({ ...item, comp: undefined })];
+}
+
 const overlapArea = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x))
   * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 const grow = (r, d) => ({ x: r.x - d, y: r.y - d, w: r.w + d * 2, h: r.h + d * 2 });
@@ -38,12 +47,13 @@ export function furnitureIssues(project, room, walls) {
   const items = itemsInRoom(project, room);
   if (!items.length) return [];
   const issues = [];
-  const boxes = items.map(itemBounds);
+  const shapes = items.map(itemShapes);
+  const areaOf = (rs) => rs.reduce((sum, r) => sum + r.w * r.h, 0);
 
   for (let i = 0; i < items.length; i += 1) {
     for (let j = i + 1; j < items.length; j += 1) {
-      const a = overlapArea(boxes[i], boxes[j]);
-      if (a > 0.02 * Math.min(boxes[i].w * boxes[i].h, boxes[j].w * boxes[j].h)) {
+      const a = shapes[i].reduce((sum, ra) => sum + shapes[j].reduce((t, rb) => t + overlapArea(ra, rb), 0), 0);
+      if (a > 0.02 * Math.min(areaOf(shapes[i]), areaOf(shapes[j]))) {
         issues.push({ kind: 'overlap', itemIds: [items[i].id, items[j].id], text: `«${title(items[i])}» и «${title(items[j])}» пересекаются` });
       }
     }
@@ -51,7 +61,7 @@ export function furnitureIssues(project, room, walls) {
 
   const ctx = buildRoomContext(project, room, walls);
   items.forEach((item, i) => {
-    if (ctx.doorZones.some((z) => overlapArea(z, boxes[i]) > 1e4)) {
+    if (ctx.doorZones.some((z) => shapes[i].reduce((sum, r) => sum + overlapArea(z, r), 0) > 1e4)) {
       issues.push({ kind: 'door', itemIds: [item.id], text: `«${title(item)}» мешает открыть дверь` });
     }
   });
@@ -64,7 +74,7 @@ export function furnitureIssues(project, room, walls) {
   const center = (cx, cy) => ({ x: inner.x + (cx + 0.5) * CELL, y: inner.y + (cy + 0.5) * CELL });
   const inRect = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
   const blocked = new Uint8Array(cols * rows);
-  const obstacles = [...boxes, ...ctx.solids.map((s) => s.rect)].map((r) => grow(r, R));
+  const obstacles = [...shapes.flat(), ...ctx.solids.map((s) => s.rect)].map((r) => grow(r, R));
   for (let y = 0; y < rows; y += 1) {
     for (let x = 0; x < cols; x += 1) {
       const p = center(x, y);
@@ -94,11 +104,11 @@ export function furnitureIssues(project, room, walls) {
   }
   items.forEach((item, i) => {
     if (SKIP_REACH.has(item.kind) || isStructural(item.kind)) return;
-    const ring = grow(boxes[i], R + CELL * 1.5);
+    const rings = shapes[i].map((r) => grow(r, R + CELL * 1.5));
     let reached = false;
     for (let y = 0; y < rows && !reached; y += 1) {
       for (let x = 0; x < cols; x += 1) {
-        if (visited[y * cols + x] && inRect(center(x, y), ring)) { reached = true; break; }
+        if (visited[y * cols + x] && rings.some((ring) => inRect(center(x, y), ring))) { reached = true; break; }
       }
     }
     if (!reached) issues.push({ kind: 'reach', itemIds: [item.id], text: `К «${title(item)}» не подойти: проход уже ${MIN_PASSAGE} мм` });

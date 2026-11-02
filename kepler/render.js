@@ -13,7 +13,8 @@ import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
 import { formatDuration } from './core/insolation.js';
 import {
-  compositeBounds, compositeParts, defaultComp, isFixedSizeComp, isRoundTable, sofaLines, sofaSpots,
+  compositeBounds, compositeParts, defaultComp, isFixedSizeComp, isRoundTable, kitchenHandles, kitchenLines, sofaLines,
+  sofaSpots,
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 
@@ -506,6 +507,7 @@ export function createRenderer(canvas) {
     const selItem = state.selection?.type === 'item'
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
     state._sofaUI = null;
+    state._kitchenUI = null;
     if (selItem) {
       // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
       const corners = itemCorners(selItem);
@@ -532,7 +534,8 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
       }
       // Диван-конструктор не растягивается: вместо квадратов — «+» на торцах.
-      if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
+      if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens);
+      else if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
       else for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
     }
 
@@ -1100,6 +1103,7 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
 // Задвинутая под столешницу часть стула не видна (вырез по контуру основы).
 function drawParts(ctx, parts, base, whole = false) {
   if (!parts.length) return;
+  if (whole && parts[0].kind.startsWith('kitchen:')) { drawKitchenParts(ctx, parts); return; }
   if (whole) { drawSofaParts(ctx, parts); return; }
   ctx.save();
   if (!whole) {
@@ -1143,6 +1147,117 @@ function drawSofaParts(ctx, parts) {
   for (const [x1, y1, x2, y2] of segs) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
   for (const a of arcs) { ctx.moveTo(a.cx + a.r * Math.cos(a.a0), a.cy + a.r * Math.sin(a.a0)); ctx.arc(a.cx, a.cy, a.r, a.a0, a.a1); }
   ctx.stroke();
+}
+
+// Кухня-конструктор: заливка нижнего ряда, контуры без повторов на стыках
+// (core/composite.js kitchenLines), знаки элементов, верхний ряд — пунктиром.
+function drawKitchenParts(ctx, parts) {
+  const base = parts.filter((p) => p.layer === 'base');
+  ctx.beginPath();
+  for (const p of base) {
+    const odd = Math.round((p.rotation || 0) / 90) % 2 !== 0;
+    const w = odd ? p.h : p.w;
+    const h = odd ? p.w : p.h;
+    ctx.rect(p.x - w / 2, p.y - h / 2, w, h);
+  }
+  ctx.fill();
+  const { base: segs, upper } = kitchenLines(parts);
+  const lw = ctx.lineWidth;
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2] of segs) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  for (const p of parts) {
+    const type = p.kind.slice(8);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(((p.rotation || 0) * Math.PI) / 180);
+    drawKitchenSymbol(ctx, type, p.w, p.h, lw);
+    ctx.restore();
+  }
+  // Верхний ряд (шкафы, вытяжка) — пунктир поверх.
+  ctx.save();
+  ctx.lineWidth = lw * 0.8;
+  ctx.setLineDash([lw * 6, lw * 4]);
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2] of upper) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Знак элемента кухни в осях части: w — вдоль стороны, h — глубина, стена —
+// сверху (y = −h/2), фронт — снизу.
+function drawKitchenSymbol(ctx, type, w, h, lw) {
+  const x0 = -w / 2; const y0 = -h / 2;
+  const m = Math.min(w, h);
+  const line = (ax, ay, bx, by) => { ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); };
+  const circle = (cx, cy, r) => { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); };
+  const cross = () => { line(x0, y0, x0 + w, y0 + h); line(x0 + w, y0, x0, y0 + h); };
+  switch (type) {
+    case 'sink': { // чаша и смеситель у стены
+      ctx.beginPath(); cornerRectPath(ctx, x0 + w * 0.12, y0 + h * 0.3, w * 0.76, h * 0.58, Array(4).fill(m * 0.12)); ctx.stroke();
+      circle(0, y0 + h * 0.15, Math.min(45, m * 0.08));
+      line(0, y0 + h * 0.15, 0, y0 + h * 0.36);
+      circle(0, y0 + h * 0.6, Math.min(30, m * 0.05)); // слив
+      break;
+    }
+    case 'hob': { // четыре конфорки
+      const r = m * 0.15;
+      circle(-w * 0.23, -h * 0.21, r); circle(w * 0.23, -h * 0.21, r * 0.8);
+      circle(-w * 0.23, h * 0.21, r * 0.8); circle(w * 0.23, h * 0.21, r);
+      break;
+    }
+    case 'oven-column': { // колонна (крест) и духовой шкаф (дверца с окном)
+      cross();
+      ctx.beginPath(); ctx.rect(x0 + w * 0.15, y0 + h * 0.62, w * 0.7, h * 0.26); ctx.stroke();
+      break;
+    }
+    case 'fridge': { // колонна (крест) и дверь у фронта
+      cross();
+      line(x0, y0 + h - Math.min(60, h * 0.1), x0 + w, y0 + h - Math.min(60, h * 0.1));
+      break;
+    }
+    case 'dishwasher': { // корпус и барабан
+      ctx.beginPath(); ctx.rect(x0 + w * 0.12, y0 + h * 0.12, w * 0.76, h * 0.76); ctx.stroke();
+      circle(0, 0, m * 0.22);
+      break;
+    }
+    case 'corner': line(x0, y0 + h, x0 + w, y0); break; // угловой шкаф: диагональ
+    case 'filler': if (w > lw * 4) line(x0, y0, x0 + w, y0 + h); break;
+    case 'hood': { // пунктирный крест (верхний ряд)
+      ctx.save(); ctx.setLineDash([lw * 6, lw * 4]); ctx.lineWidth = lw * 0.8; cross(); ctx.restore();
+      break;
+    }
+    default: break;
+  }
+}
+
+// Ручки элементов выделенной кухни (экранный слой): круг со стрелками
+// вдоль стороны. Зоны — в state._kitchenUI для pointerdown (ui/input.js).
+function drawKitchenHandles(ctx, state, item, p2s, tokens) {
+  const touch = Boolean(state.coarsePointer);
+  const r = touch ? 15 : 9;
+  const handles = [];
+  for (const h of kitchenHandles(item)) {
+    const p = p2s(h.x, h.y);
+    const q = p2s(h.x + h.ux * 1000, h.y + h.uy * 1000);
+    const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    const ux = (q.x - p.x) / len; const uy = (q.y - p.y) / len;
+    handles.push({ type: h.type, x: p.x, y: p.y, r, ux, uy });
+    ctx.fillStyle = tokens.surface;
+    ctx.strokeStyle = tokens.accent;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const k = r * 0.6; const a = r * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(p.x - ux * k, p.y - uy * k); ctx.lineTo(p.x + ux * k, p.y + uy * k);
+    for (const sgn of [1, -1]) {
+      const tx = p.x + ux * k * sgn; const ty = p.y + uy * k * sgn;
+      ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn - uy * a, ty - uy * a * sgn + ux * a);
+      ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn + uy * a, ty - uy * a * sgn - ux * a);
+    }
+    ctx.stroke();
+  }
+  state._kitchenUI = { itemId: item.id, handles };
 }
 
 // Кнопки «+» у свободных торцов выделенного дивана-конструктора (экранный
@@ -1225,7 +1340,7 @@ const GLYPH_ALIAS = {
   daybed: 'bench', recliner: 'armchair', 'bean-bag': 'pouf', 'sofa-bed': 'sofa',
   'bed-queen': 'bed-double', 'desk-l': 'desk', 'bar-table': 'table-round',
   'folding-chair': 'chair', 'gaming-chair': 'armchair', 'shelf-open': 'bookcase',
-  'display-cabinet': 'wardrobe', chest: 'dresser', oven: 'stove', 'kitchen-corner': 'kitchen-row',
+  'display-cabinet': 'wardrobe', chest: 'dresser', oven: 'stove', 'kitchen-corner': 'kitchen-row', 'kitchen-u': 'kitchen-row',
   pantry: 'fridge', 'washbasin-double': 'sink', jacuzzi: 'bath', urinal: 'toilet',
   hood: 'tv-stand', 'ac-unit': 'tv', chandelier: 'floor-lamp', curtain: 'tv',
   'rug-round': 'table-round', 'office-desk': 'desk', 'conference-table': 'dining-table',

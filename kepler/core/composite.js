@@ -11,7 +11,8 @@
 //
 // Типы составной мебели — в TYPES: { kinds, defaults(kind), normalize(raw,
 // kind), parts(item, comp), fixedSize?, fit?(item, comp) }: 'dining' (стол со
-// стульями) и 'sofa' (диван-конструктор, ниже). У fixedSize-типа размер
+// стульями), 'sofa' (диван-конструктор, ниже) и 'kitchen' (кухня-конструктор,
+// core/kitchen.js). У fixedSize-типа размер
 // предмета — габарит частей (fit пересчитывает его), основа не рисуется.
 //
 // Стол со стульями, comp = {
@@ -27,6 +28,12 @@
 // стульев, ряд центрируется. Стул смотрит лицом (+Y блока) к столу.
 
 import { furnitureBlock } from './blocks.js';
+import { kitchen } from './kitchen.js';
+
+export {
+  KITCHEN_ELEMENTS, KITCHEN_KINDS, KITCHEN_PARTS, KITCHEN_SHAPES, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen,
+  kitchenElementAt, kitchenFrames, kitchenHandles, kitchenProject, shapeSides,
+} from './kitchen.js';
 
 export const DINING_KINDS = ['dining-table', 'dining-table-6', 'table-round', 'conference-table'];
 const ROUND_KINDS = new Set(['table-round']);
@@ -300,7 +307,7 @@ const sofa = {
   },
 };
 
-export const TYPES = Object.freeze({ dining, sofa });
+export const TYPES = Object.freeze({ dining, sofa, kitchen });
 
 // Размер предмета задаётся частями (диван-конструктор): не растягивается.
 export function isFixedSizeComp(item) {
@@ -377,6 +384,19 @@ export function sofaLines(parts) {
     if (re) { arc(x1 - re, y0 + re, Math.PI * 1.5, Math.PI * 2); arc(x1 - re, y1 - re, 0, Math.PI / 2); }
   }
   return { segs: dedupeSegments(raw), arcs };
+}
+
+// Линии кухни-конструктора (локальные оси предмета): контуры нижних частей
+// без повторов на стыках (base) и контуры верхнего ряда (upper — рисуются
+// пунктиром), без отрезков, уже нарисованных нижним рядом (линия стены).
+export function kitchenLines(parts) {
+  const outline = (layer) => parts.filter((p) => p.layer === layer).flatMap((p) => {
+    const r = partRect(p);
+    return [[r.x, r.y, r.x + r.w, r.y], [r.x + r.w, r.y, r.x + r.w, r.y + r.h], [r.x, r.y + r.h, r.x + r.w, r.y + r.h], [r.x, r.y, r.x, r.y + r.h]];
+  });
+  const base = dedupeSegments(outline('base'));
+  const upper = dedupeSegments([...base, ...outline('upper')]).slice(base.length);
+  return { base, upper };
 }
 
 // Осевые (горизонтальные/вертикальные) отрезки без повторов: из каждого

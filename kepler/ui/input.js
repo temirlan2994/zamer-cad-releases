@@ -11,6 +11,7 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
+import { KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenProject } from '../core/composite.js';
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
@@ -401,6 +402,26 @@ export function bindCanvasInput() {
       if (item) { openSofaMenu(item, spot); return; }
     }
 
+    // Элементы выделенной кухни-конструктора (ручка или сам элемент) —
+    // перетаскиваются вдоль стороны раньше, чем вся кухня целиком.
+    if (state.selection?.type === 'item' && state._kitchenUI?.itemId === state.selection.id) {
+      const item = state.project.items.find((i) => i.id === state.selection.id);
+      const tolPx = state.coarsePointer ? 6 : 3;
+      const h = state._kitchenUI.handles.find((hh) => Math.hypot(hh.x - screen.x, hh.y - screen.y) <= hh.r + tolPx);
+      const type = h?.type || (item && kitchenElementAt(item, plan.x, plan.y)?.type);
+      const el = type && item.comp.items.find((e) => e.type === type);
+      const at = el && kitchenProject(item, plan.x, plan.y);
+      if (el && at) {
+        drag = {
+          kind: 'kitchen-elem', id: item.id, type,
+          grab: at.side === el.side ? at.t - el.x : el.w / 2,
+          start: { comp: structuredClone(item.comp), x: item.x, y: item.y },
+          before: snapshot(), moved: false,
+        };
+        return;
+      }
+    }
+
     // Ручки плановых объектов.
     const openingHandleHit = hitOpeningHandle(screen);
     if (openingHandleHit) {
@@ -603,6 +624,21 @@ export function bindCanvasInput() {
       item.x = Math.round((drag.start.x + (plan.x - drag.plan.x)) / GRID_STEP) * GRID_STEP;
       item.y = Math.round((drag.start.y + (plan.y - drag.plan.y)) / GRID_STEP) * GRID_STEP;
       if (!event.shiftKey) snapItemToWalls(item); // Shift отключает привязку к стенам
+      requestDraw();
+      return;
+    }
+
+    if (drag.kind === 'kitchen-elem') {
+      const item = state.project.items.find((i) => i.id === drag.id);
+      if (!item) return;
+      const base = { ...item, comp: drag.start.comp, x: drag.start.x, y: drag.start.y };
+      const at = kitchenProject(base, plan.x, plan.y);
+      const x = Math.round((at.t - drag.grab) / KITCHEN_SNAP) * KITCHEN_SNAP;
+      const next = editKitchen(base, { op: 'move', type: drag.type, side: at.side, x });
+      if (next) {
+        Object.assign(item, next);
+        drag.moved = JSON.stringify(next.comp) !== JSON.stringify(drag.start.comp);
+      }
       requestDraw();
       return;
     }

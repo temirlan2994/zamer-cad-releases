@@ -3,10 +3,13 @@
 // столешницы; здесь — стулья: вид из библиотеки блоков, отступ, зазор, стороны.
 // Диван-конструктор: список модулей (тип, ширина, удалить), «Добавить модуль»
 // и меню кнопок «+» на плане (openSofaMenu — из ui/input.js).
+// Кухня-конструктор: форма (линия / Г / П), длины сторон, глубина, элементы
+// галочками со стороной, положением и шириной (core/kitchen.js).
 
 import { blocksByGroup, furnitureBlock } from '../core/blocks.js';
 import {
-  SOFA_MODULES, TYPES, chairsFit, compTypeFor, compositeParts, defaultComp, editSofa, isRoundTable, normalizeComp,
+  KITCHEN_ELEMENTS, KITCHEN_SHAPES, KITCHEN_SIDES, SOFA_MODULES, TYPES, chairsFit, compTypeFor, compositeParts,
+  defaultComp, editKitchen, editSofa, isRoundTable, kitchenFrames, normalizeComp,
 } from '../core/composite.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { state } from './state.js';
@@ -18,6 +21,7 @@ const SIDES = [['top', 'Сверху'], ['bottom', 'Снизу'], ['left', 'Сл
 // HTML блока настроек ('' — предмет не составной).
 export function compositeSection(item) {
   if (compTypeFor(item.kind) === 'sofa') return sofaSection(item);
+  if (compTypeFor(item.kind) === 'kitchen') return kitchenSection(item);
   if (compTypeFor(item.kind) !== 'dining') return '';
   const comp = normalizeComp(item.comp, item.kind);
   const on = Boolean(comp?.chair);
@@ -52,6 +56,7 @@ export function compositeSection(item) {
 
 export function bindCompositeSection(panel, item) {
   bindSofaSection(panel, item);
+  bindKitchenSection(panel, item);
   const root = panel.querySelector('#compDining');
   if (!root) return;
   const apply = (fn) => {
@@ -181,4 +186,98 @@ export function hideSofaMenu() {
   const menu = el('sofaMenu');
   if (menu) menu.hidden = true;
   state.sofaMenu = null;
+}
+
+// --- Кухня-конструктор -----------------------------------------------------
+
+const UPPER_ROW = 'upper'; // галочка «Верхние шкафы» — флаг comp.upper
+const CHECKS = [['sink'], ['hob'], ['oven-column'], ['fridge'], ['dishwasher'], [UPPER_ROW, 'Верхние шкафы'], ['hood']];
+
+// Правка кухни с отменой (одна запись истории). false — не получилось.
+export function applyKitchenEdit(item, edit) {
+  const next = editKitchen(item, edit);
+  if (!next) {
+    toast(edit.op === 'toggle' ? 'Нет свободного места на кухне — удлините сторону или уберите элемент'
+      : 'Элементы не помещаются — сначала уберите или сдвиньте их', true);
+    selectObject({ type: 'item', id: item.id });
+    return false;
+  }
+  const before = new Set((item.comp?.items || []).map((e) => e.type));
+  mutate(() => { Object.assign(item, next); });
+  const lost = [...before].filter((t) => !next.comp.items.some((e) => e.type === t));
+  if (lost.length) toast(`Не поместились и убраны: ${lost.map((t) => KITCHEN_ELEMENTS[t].title).join(', ')}`, true);
+  selectObject({ type: 'item', id: item.id });
+  return true;
+}
+
+function kitchenSection(item) {
+  const comp = normalizeComp(item.comp, item.kind);
+  if (!comp) {
+    return `
+    <h3>Кухня</h3>
+    <div class="prop-block" id="compKitchen">
+      <p class="empty-hint">Обычный гарнитур одним знаком. Соберите кухню конструктором — форма, мойка, плита, шкафы.</p>
+      <button id="kitchenMake">Собрать конструктором</button>
+    </div>`;
+  }
+  const frames = kitchenFrames(comp);
+  const sides = frames.map((f) => f.side);
+  const shapeBtns = Object.entries(KITCHEN_SHAPES).map(([k, t]) => `<button type="button" data-kitchen-shape="${k}" class="${k === comp.shape ? 'active' : ''}" aria-pressed="${k === comp.shape}">${t}</button>`).join('');
+  const lens = frames.map((f) => `<label class="prop-field"><span>${sides.length > 1 ? `${KITCHEN_SIDES[f.side]} сторона` : 'Длина'}, мм</span>
+      <input type="number" data-kitchen-len="${f.side}" step="50" min="${comp.depth * ((f.cs ? 1 : 0) + (f.ce ? 1 : 0)) + 300}" value="${comp.len[f.side]}"></label>`).join('');
+  const rows = CHECKS.map(([type, label]) => {
+    if (type === UPPER_ROW) {
+      return `<label class="check-row"><input type="checkbox" data-kitchen-upper ${comp.upper ? 'checked' : ''}><span>${label}</span></label>`;
+    }
+    const def = KITCHEN_ELEMENTS[type];
+    const el = comp.items.find((e) => e.type === type);
+    const head = `<label class="check-row"><input type="checkbox" data-kitchen-el="${type}" ${el ? 'checked' : ''}><span>${def.title}</span></label>`;
+    if (!el) return head;
+    const sideSel = sides.length > 1
+      ? `<select data-kitchen-side="${type}" aria-label="Сторона: ${escapeHtml(def.title)}">${sides.map((s) => `<option value="${s}" ${s === el.side ? 'selected' : ''}>${KITCHEN_SIDES[s]}</option>`).join('')}</select>`
+      : '';
+    return `${head}<div class="kitchen-el-row">
+      ${sideSel || '<span></span>'}
+      <input type="number" data-kitchen-x="${type}" step="50" value="${el.x}" title="Положение, мм от начала стороны" aria-label="Положение: ${escapeHtml(def.title)}, мм">
+      <input type="number" data-kitchen-w="${type}" step="50" min="${def.min}" max="${def.max}" value="${el.w}" ${def.min === def.max ? 'disabled' : ''} title="Ширина, мм" aria-label="Ширина: ${escapeHtml(def.title)}, мм">
+    </div>`;
+  }).join('');
+  return `
+    <h3>Кухня</h3>
+    <div class="prop-block" id="compKitchen">
+      <div class="seg kitchen-shape" role="group" aria-label="Форма кухни">${shapeBtns}</div>
+      ${comp.shape === 'L' ? `<label class="check-row"><input type="checkbox" id="kitchenMirror" ${comp.mirror ? 'checked' : ''}><span>Зеркально (угол справа)</span></label>` : ''}
+      <div class="prop-grid">${lens}</div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Глубина, мм</span><input id="kitchenDepth" type="number" step="50" min="400" max="900" value="${comp.depth}"></label>
+        <label class="prop-field"><span>Шкафы, мм</span><input id="kitchenBaseW" type="number" step="50" min="300" max="1200" value="${comp.baseW}" title="Ширина шкафов, которыми заполняется свободное место"></label>
+      </div>
+      <div class="kitchen-els">${rows}</div>
+      <p class="empty-hint">${sides.length > 1 ? 'Сторона, ' : ''}положение (мм от начала стороны) и ширина элемента. На плане элементы выделенной кухни тянутся мышью или пальцем вдоль стороны; свободное место заполняется шкафами.</p>
+    </div>`;
+}
+
+function bindKitchenSection(panel, item) {
+  const root = panel.querySelector('#compKitchen');
+  if (!root) return;
+  root.querySelector('#kitchenMake')?.addEventListener('click', () => {
+    const comp = defaultComp(item.kind);
+    mutate(() => { item.comp = comp; TYPES.kitchen.fit(item, comp); });
+    selectObject({ type: 'item', id: item.id });
+  });
+  const on = (sel, ev, fn) => { for (const n of root.querySelectorAll(sel)) n.addEventListener(ev, () => fn(n)); };
+  on('[data-kitchen-shape]', 'click', (b) => applyKitchenEdit(item, { op: 'shape', value: b.dataset.kitchenShape }));
+  on('#kitchenMirror', 'change', (b) => applyKitchenEdit(item, { op: 'mirror', value: b.checked }));
+  on('#kitchenDepth', 'change', (b) => applyKitchenEdit(item, { op: 'depth', value: Number(b.value) }));
+  on('#kitchenBaseW', 'change', (b) => applyKitchenEdit(item, { op: 'baseW', value: Number(b.value) }));
+  on('[data-kitchen-len]', 'change', (b) => applyKitchenEdit(item, { op: 'length', side: b.dataset.kitchenLen, value: Number(b.value) }));
+  on('[data-kitchen-upper]', 'change', (b) => applyKitchenEdit(item, { op: 'upper', value: b.checked }));
+  on('[data-kitchen-el]', 'change', (b) => applyKitchenEdit(item, { op: 'toggle', type: b.dataset.kitchenEl, on: b.checked }));
+  on('[data-kitchen-side]', 'change', (b) => {
+    const type = b.dataset.kitchenSide;
+    const x = Number(root.querySelector(`[data-kitchen-x="${type}"]`).value);
+    applyKitchenEdit(item, { op: 'move', type, side: b.value, x });
+  });
+  on('[data-kitchen-x]', 'change', (b) => applyKitchenEdit(item, { op: 'move', type: b.dataset.kitchenX, x: Number(b.value) }));
+  on('[data-kitchen-w]', 'change', (b) => applyKitchenEdit(item, { op: 'width', type: b.dataset.kitchenW, value: Number(b.value) }));
 }

@@ -240,7 +240,9 @@ export function addFurnitureAt(kind, x, y) {
   withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
-  toast(isFixedSizeComp(item)
+  toast(item.comp?.type === 'kitchen'
+    ? `«${fd.title}» добавлена — форма и элементы в панели справа, элементы тянутся по кухне`
+    : isFixedSizeComp(item)
     ? `«${fd.title}» добавлен — «+» на концах добавляет модули, круг — поворот`
     : `«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
 }
