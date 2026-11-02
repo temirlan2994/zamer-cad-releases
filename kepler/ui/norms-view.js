@@ -37,7 +37,7 @@ export function normsSection() {
         <span>${r.windows ? formatDuration(r.longest) : 'нет окон'}</span></li>`).join('');
   const verdict = !ins.need
     ? 'жилых комнат нет'
-    : `${ins.met} из ${ins.need} нужных ${ins.ok ? '— норма выполнена' : '— не хватает'}`;
+    : `В норме ${ins.met}, нужно ${ins.need} ${ins.ok ? '— выполнено' : '— не хватает'}`;
   const problems = report.problems.map((p) => `
       <li class="bad"><button class="link" data-norm-room="${p.room.id}" data-level="${p.room.levelId}">${escapeHtml(p.room.name)}</button>
         <span>${escapeHtml(p.text)}</span></li>`).join('');

@@ -567,6 +567,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 12.5px;
 }
 
+/* --- Варианты и сравнение --- */
+.variant-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.variant-list li { padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.variant-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 13px; }
+.variant-meta { margin: 3px 0 6px; font-size: 11.5px; color: var(--muted); }
+.variant-actions { display: flex; gap: 6px; }
+.variant-actions button { height: 28px; padding: 0 10px; font-size: 12px; }
+.compare-card { max-width: 780px; }
+.compare-thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0; }
+.compare-thumbs figure { margin: 0; text-align: center; }
+.compare-thumb { width: 100%; max-width: 330px; aspect-ratio: 3 / 2; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.compare-thumbs figcaption { margin-top: 4px; font-size: 12px; font-weight: 600; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.compare-table th, .compare-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+.compare-table th:first-child, .compare-table td.k { text-align: left; color: var(--muted); }
+
 /* --- Нижняя панель телефона: на больших экранах скрыта --- */
 .mobile-bar { display: none; }
 

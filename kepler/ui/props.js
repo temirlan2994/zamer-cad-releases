@@ -24,6 +24,7 @@ import {
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import { state } from './state.js';
+import { bindVariants, variantsSection } from './variants.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject, startPlaceOpening } from './tools.js';
 
@@ -90,6 +91,7 @@ function renderProjectProps(panel) {
     <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
     ${normsSection()}
     ${tepSection()}
+    ${variantsSection()}
     <h3>Управление</h3>
     <ul class="hotkeys">
       <li><b>ЛКМ</b> — выделение, рамка по пустому месту</li>
@@ -118,6 +120,7 @@ function renderProjectProps(panel) {
   });
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
   bindNormLinks(panel);
+  bindVariants(panel);
 }
 
 function renderRoomProps(panel, room) {

@@ -92,6 +92,7 @@ export function createProject(name = 'Новый дом') {
     activeLevel: level.id,
     building: createBuilding(), // оси дома относительно съёмки (core/building.js)
     site: createSite(),
+    variants: [], // сохранённые варианты планировки (core/variants.js)
   });
 }
 
@@ -171,6 +172,7 @@ export function normalizeProject(data) {
     wallOverrides: l.wallOverrides || {},
   }));
   if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;
+  data.variants = Array.isArray(data.variants) ? data.variants.filter((v) => v?.house?.levels) : [];
   const b = data.building || {};
   data.building = {
     rotation: normDeg(b.rotation),
