@@ -25,6 +25,7 @@ import {
 import { resizeVerdict } from './snap.js';
 import { state } from './state.js';
 import { bindVariants, variantsSection } from './variants.js';
+import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject, startPlaceOpening } from './tools.js';
@@ -468,6 +469,7 @@ function stairCalc(item) {
 function renderItemProps(panel, item) {
   if (!item) { renderProjectProps(panel); return; }
   const isStairs = item.kind === 'stairs';
+  const fixed = isFixedSizeComp(item);
   let stairsBlock = '';
   if (isStairs) {
     const c = stairCalc(item);
@@ -489,11 +491,11 @@ function renderItemProps(panel, item) {
   }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
+    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : fixed ? 'Собирается из модулей: «+» на концах дивана или список ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
     <div class="prop-block">
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="itemW" type="number" step="50" min="200" value="${item.w}"></label>
-        <label class="prop-field"><span>${isStairs ? 'Длина марша, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}"></label>
+        <label class="prop-field"><span>${fixed ? 'Общая ширина, мм' : 'Ширина, мм'}</span><input id="itemW" type="number" step="50" min="200" value="${item.w}" ${fixed ? 'readonly' : ''}></label>
+        <label class="prop-field"><span>${isStairs ? 'Длина марша, мм' : fixed ? 'Общая глубина, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}" ${fixed ? 'readonly' : ''}></label>
       </div>
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
     </div>
@@ -504,6 +506,7 @@ function renderItemProps(panel, item) {
       <button id="deleteItem" class="danger">Удалить</button>
     </div>`;
   const applySize = () => {
+    if (fixed) return; // диван-конструктор: размер — по модулям
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
     mutate(() => { item.w = w; item.h = h; });

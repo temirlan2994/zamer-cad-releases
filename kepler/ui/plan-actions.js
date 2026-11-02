@@ -3,7 +3,7 @@
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, roomType } from '../core/catalog.js';
 import { reclaimItemsFromChild } from '../core/furnish.js';
 import { createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
-import { withDefaultComp } from '../core/composite.js';
+import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import {
   determineParent, moveRoomBy, rectsOverlap, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -111,7 +111,7 @@ export function addFurniture(kind, room) {
   if (!fd) return;
   const item = createItem(kind, Math.round((room.x + room.w / 2) / GRID_STEP) * GRID_STEP,
     Math.round((room.y + room.h / 2) / GRID_STEP) * GRID_STEP, fd.w, fd.h);
-  withDefaultComp(item); // стол — сразу со стульями
+  withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
   toast(`«${fd.title}» в центре комнаты — перетащите на место`);
@@ -237,10 +237,12 @@ export function addFurnitureAt(kind, x, y) {
     Math.round(y / GRID_STEP) * GRID_STEP,
     fd.w, fd.h,
   );
-  withDefaultComp(item); // стол — сразу со стульями
+  withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
-  toast(`«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
+  toast(isFixedSizeComp(item)
+    ? `«${fd.title}» добавлен — «+» на концах добавляет модули, круг — поворот`
+    : `«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
 }
 
 // Клик по карточке мебели: кладём в выбранную комнату (или центр экрана),

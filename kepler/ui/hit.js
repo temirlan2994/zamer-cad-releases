@@ -1,5 +1,6 @@
 // Поиск объектов под курсором: ручки, комнаты, стены, проёмы, мебель, участок.
 
+import { isFixedSizeComp } from '../core/composite.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
@@ -66,6 +67,7 @@ export function hitItemHandle(screen) {
     const p = planToScreen(r.x, r.y);
     if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
   }
+  if (isFixedSizeComp(item)) return null; // диван-конструктор не растягивается
   for (const c of itemCorners(item)) {
     const p = planToScreen(c.x, c.y);
     if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {

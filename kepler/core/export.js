@@ -19,7 +19,7 @@ import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isStructural } from './catalog.js';
-import { partsInHouse } from './composite.js';
+import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
@@ -243,16 +243,19 @@ export function planEntities(project, { dims = true } = {}) {
       entities.push(...structuralEntities(item));
       continue;
     }
-    entities.push({
-      type: 'block',
-      layer: 'furniture',
-      kind: item.kind,
-      x: item.x,
-      y: item.y,
-      rotation: item.rotation || 0,
-      width: item.w,
-      height: item.h,
-    });
+    // Диван-конструктор — только модулями (габаритный блок их бы дублировал).
+    if (!isFixedSizeComp(item)) {
+      entities.push({
+        type: 'block',
+        layer: 'furniture',
+        kind: item.kind,
+        x: item.x,
+        y: item.y,
+        rotation: item.rotation || 0,
+        width: item.w,
+        height: item.h,
+      });
+    }
     // Части составной мебели — отдельными блоками на том же слое.
     for (const p of partsInHouse(item)) {
       entities.push({

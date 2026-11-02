@@ -103,7 +103,8 @@ test('проверка comp: мусор отбрасывается, числа �
   normalizeItemsComp(items);
   assert.ok(!('comp' in items[0]));
   assert.equal(items[1].comp.offset, 100);
-  assert.equal(defaultComp('sofa'), null);
+  assert.equal(defaultComp('sofa-bed'), null);
+  assert.equal(defaultComp('sofa').type, 'sofa');
   assert.equal(defaultComp('conference-table').sides.left, true);
 });
 

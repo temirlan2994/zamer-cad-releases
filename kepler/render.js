@@ -12,7 +12,9 @@ import {
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
 import { formatDuration } from './core/insolation.js';
-import { compositeBounds, compositeParts, defaultComp, isRoundTable } from './core/composite.js';
+import {
+  compositeBounds, compositeParts, defaultComp, isFixedSizeComp, isRoundTable, sofaEnds,
+} from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
@@ -501,6 +503,7 @@ export function createRenderer(canvas) {
 
     const selItem = state.selection?.type === 'item'
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
+    state._sofaUI = null;
     if (selItem) {
       // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
       const corners = itemCorners(selItem);
@@ -526,7 +529,9 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
       }
-      for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
+      // Диван-конструктор не растягивается: вместо квадратов — «+» на торцах.
+      if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
+      else for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
     }
 
     if (state.ghost?.rect) {
@@ -1071,10 +1076,12 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.lineWidth = px(selected || hovered ? 1.8 : 1.2);
   ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : 'rgba(127,144,165,0.08)';
   const parts = compositeParts(item);
+  // Диван-конструктор: предмет — только его модули, основы нет.
+  const whole = isFixedSizeComp(item);
   // Части составной мебели (стулья у стола) — под основой.
-  drawParts(ctx, parts, item);
-  drawGlyph(ctx, item.kind, item.w, item.h);
-  if (selected && parts.length) {
+  drawParts(ctx, parts, item, whole);
+  if (!whole) drawGlyph(ctx, item.kind, item.w, item.h);
+  if (selected && parts.length && !whole) {
     // Рамка группы: основа выделена ручками, части — пунктиром вокруг.
     const b = compositeBounds({ ...item, x: 0, y: 0, rotation: 0 });
     ctx.save();
@@ -1089,21 +1096,25 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
 // Части в локальных осях предмета: блок каталога — его глифом, блок из
 // DXF — своими линиями.
 // Задвинутая под столешницу часть стула не видна (вырез по контуру основы).
-function drawParts(ctx, parts, base) {
+function drawParts(ctx, parts, base, whole = false) {
   if (!parts.length) return;
   ctx.save();
-  ctx.beginPath();
-  const big = (Math.max(base.w, base.h) + 10000) * 2;
-  ctx.rect(-big, -big, big * 2, big * 2);
-  if (isRoundTable(base.kind)) ctx.ellipse(0, 0, base.w / 2, base.h / 2, 0, 0, Math.PI * 2);
-  else ctx.rect(-base.w / 2, -base.h / 2, base.w, base.h);
-  ctx.clip('evenodd');
+  if (!whole) {
+    ctx.beginPath();
+    const big = (Math.max(base.w, base.h) + 10000) * 2;
+    ctx.rect(-big, -big, big * 2, big * 2);
+    if (isRoundTable(base.kind)) ctx.ellipse(0, 0, base.w / 2, base.h / 2, 0, 0, Math.PI * 2);
+    else ctx.rect(-base.w / 2, -base.h / 2, base.w, base.h);
+    ctx.clip('evenodd');
+  }
   for (const part of parts) {
     const block = furnitureBlock(part.kind);
     ctx.save();
     ctx.translate(part.x, part.y);
     ctx.rotate(((part.rotation || 0) * Math.PI) / 180);
-    if (block?.lines) {
+    if (part.kind.startsWith('sofa:')) {
+      drawSofaModule(ctx, part);
+    } else if (block?.lines) {
       ctx.beginPath();
       for (const [x1, y1, x2, y2] of block.lines) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
       ctx.stroke();
@@ -1113,6 +1124,72 @@ function drawParts(ctx, parts, base) {
     ctx.restore();
   }
   ctx.restore();
+}
+
+// Модуль дивана-конструктора в своих осях: x — вдоль цепочки (начало слева),
+// −Y — спинка, +Y — вперёд. Общую кромку двух модулей рисует предыдущий:
+// у этого начальная кромка — только от startFrom (остаток, если он глубже).
+// Подлокотник на свободном конце скруглён снаружи.
+function drawSofaModule(ctx, part) {
+  const { w, h } = part;
+  const x0 = -w / 2; const x1 = w / 2;
+  const y0 = -h / 2; const y1 = h / 2;
+  const type = part.kind.slice(5);
+  const r = type === 'arm' ? Math.min(90, w * 0.45) : 0;
+  const rs = part.joinStart ? 0 : r; // скругление у начала
+  const re = part.joinEnd ? 0 : r; //   … у конца
+  ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.fill();
+  ctx.beginPath();
+  // Контур: от начальной кромки (низ) — по спинке, концу, передней кромке.
+  ctx.moveTo(x0, part.joinStart ? y0 : y0 + rs);
+  if (rs) ctx.arcTo(x0, y0, x0 + rs, y0, rs);
+  ctx.lineTo(x1 - re, y0);
+  if (re) ctx.arcTo(x1, y0, x1, y0 + re, re);
+  ctx.lineTo(x1, y1 - re);
+  if (re) ctx.arcTo(x1, y1, x1 - re, y1, re);
+  ctx.lineTo(x0 + rs, y1);
+  if (rs) ctx.arcTo(x0, y1, x0, y1 - rs, rs);
+  if (!part.joinStart) ctx.closePath();
+  else if (part.startFrom < h) { ctx.moveTo(x0, y0 + part.startFrom); ctx.lineTo(x0, y1); }
+  const b = part.back || 0;
+  if (b > 0 && type === 'corner') {
+    // Спинка в обе стороны: сверху и справа (по ходу после поворота).
+    ctx.moveTo(x0, y0 + b); ctx.lineTo(x1 - b, y0 + b); ctx.lineTo(x1 - b, y1);
+  } else if (b > 0) {
+    ctx.moveTo(x0, y0 + b); ctx.lineTo(x1, y0 + b);
+  }
+  if (type === 'chaise') {
+    // Шезлонг: сиденье и выдвинутая часть — пунктиром не нужно, одна линия.
+    const seatEnd = y1 - h * 0.32;
+    ctx.moveTo(x0 + w * 0.12, seatEnd); ctx.lineTo(x1 - w * 0.12, seatEnd);
+  }
+  ctx.stroke();
+}
+
+// Кнопки «+» у свободных торцов выделенного дивана-конструктора (экранный
+// слой). Зоны клика — в state._sofaUI для pointerdown (ui/input.js).
+const SOFA_PLUS_R = 11; // радиус кнопки, px (на тач-экране — больше)
+function drawSofaPlus(ctx, state, item, p2s, tokens) {
+  const touch = Boolean(state.coarsePointer);
+  const r = touch ? 17 : SOFA_PLUS_R;
+  const spots = [];
+  for (const e of sofaEnds(item)) {
+    const a = p2s(e.x, e.y);
+    const b = p2s(e.x + e.nx * 1000, e.y + e.ny * 1000);
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const x = a.x + ((b.x - a.x) / len) * (r + 8);
+    const y = a.y + ((b.y - a.y) / len) * (r + 8);
+    spots.push({ end: e.end, x, y, r });
+    ctx.fillStyle = tokens.accent;
+    ctx.strokeStyle = tokens.surface;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = tokens.surface;
+    ctx.lineWidth = 2.2;
+    const k = r * 0.5;
+    ctx.beginPath(); ctx.moveTo(x - k, y); ctx.lineTo(x + k, y); ctx.moveTo(x, y - k); ctx.lineTo(x, y + k); ctx.stroke();
+  }
+  state._sofaUI = { itemId: item.id, spots };
 }
 
 // Контур со своим радиусом у каждого угла [вл, вп, нп, нл].
@@ -1637,8 +1714,9 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
     structuralPath(ctx, kind, w, h);
     ctx.fill();
   } else {
-    drawParts(ctx, compositeParts(sample), sample);
-    drawGlyph(ctx, kind, w, h);
+    const whole = isFixedSizeComp(sample);
+    drawParts(ctx, compositeParts(sample), sample, whole);
+    if (!whole) drawGlyph(ctx, kind, w, h);
   }
   ctx.restore();
 }

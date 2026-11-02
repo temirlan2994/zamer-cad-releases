@@ -10,8 +10,9 @@
 // вокруг: выделение и растягивание идут по основе, габарит — по всему.
 //
 // Типы составной мебели — в TYPES: { kinds, defaults(kind), normalize(raw,
-// kind), parts(item, comp) }. Сейчас один — 'dining' (стол со стульями);
-// диван-конструктор и кухня добавятся сюда же своими типами.
+// kind), parts(item, comp), fixedSize?, fit?(item, comp) }: 'dining' (стол со
+// стульями) и 'sofa' (диван-конструктор, ниже). У fixedSize-типа размер
+// предмета — габарит частей (fit пересчитывает его), основа не рисуется.
 //
 // Стол со стульями, comp = {
 //   type: 'dining',
@@ -116,7 +117,276 @@ const dining = {
   },
 };
 
-export const TYPES = Object.freeze({ dining });
+// ---------------------------------------------------------------------------
+// Диван-конструктор, comp = {
+//   type: 'sofa',
+//   depth: 950,   // мм, глубина сиденья — общая для всех модулей
+//   dir: 0,       // направление первого модуля: 0 →, 1 ↓, 2 ←, 3 ↑ (×90° по часовой)
+//   modules: [{ type: 'arm' | 'seat' | 'ottoman' | 'chaise' | 'corner', w }],
+// }
+// Модули идут цепочкой вдоль спинки. У каждого модуля своя рамка: начало O
+// на линии спинки, u — направление цепочки, v = u, повёрнутый на +90°, —
+// «вперёд» (к сидящему). Прямой модуль занимает [0, w] вдоль u и [0, глубина]
+// вдоль v; угловой — квадрат depth×depth со спинкой с двух сторон, после него
+// цепочка поворачивает на +90° (все углы дивана — в одну сторону, так
+// собираются Г и П). Модули стыкуются без зазоров; пересечение частей —
+// неверная сборка (editSofa такую не допускает).
+// Здесь размер предмета w×h — это габарит дивана (считается из модулей, не
+// растягивается), части заполняют его целиком.
+
+export const SOFA_KINDS = ['sofa', 'sofa-2', 'sofa-corner', 'sofa-u'];
+export const SOFA_BACK = 220; // мм, толщина спинки
+export const SOFA_CHAISE_EXTRA = 700; // мм, на сколько шезлонг длиннее сиденья
+const SOFA_MAX_MODULES = 24;
+
+// Типы модулей: подпись, ширина по умолчанию и пределы (угловой — depth×depth).
+export const SOFA_MODULES = Object.freeze({
+  seat: { title: 'Сиденье', w: 900, min: 400, max: 1600, back: true },
+  corner: { title: 'Угловой', back: true },
+  arm: { title: 'Подлокотник', w: 200, min: 100, max: 400, back: false },
+  ottoman: { title: 'Пуф (без спинки)', w: 900, min: 400, max: 1600, back: false },
+  chaise: { title: 'Шезлонг', w: 900, min: 600, max: 1600, back: true },
+});
+
+const SOFA_DEFAULTS = {
+  sofa: { depth: 950, dir: 0, mods: [['arm'], ['seat', 900], ['seat', 900], ['arm']] },
+  'sofa-2': { depth: 900, dir: 0, mods: [['arm'], ['seat', 600], ['seat', 600], ['arm']] },
+  // Г: спинка сверху и слева, подлокотники справа и снизу (как прежний глиф).
+  'sofa-corner': { depth: 900, dir: 3, mods: [['arm'], ['seat', 500], ['corner'], ['seat', 750], ['seat', 750], ['arm']] },
+  'sofa-u': {
+    depth: 900,
+    dir: 3,
+    mods: [['arm'], ['seat', 650], ['seat', 650], ['corner'], ['seat', 600], ['seat', 600], ['corner'], ['seat', 650], ['seat', 650], ['arm']],
+  },
+};
+
+// Модуль по умолчанию заданного типа (ширина — из SOFA_MODULES).
+export function sofaModule(type, w) {
+  const def = SOFA_MODULES[type];
+  if (!def) return null;
+  if (type === 'corner') return { type };
+  return { type, w: num(w, def.w, def.min, def.max) };
+}
+
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // 0 →, 1 ↓, 2 ←, 3 ↑ (ось Y вниз)
+const turnsBefore = (modules, i) => modules.slice(0, i).filter((m) => m.type === 'corner').length;
+
+// Раскладка цепочки в «сырых» осях (первый модуль начинается в (0, 0)).
+// parts — прямоугольники модулей (центр, w вдоль u, h вдоль v, поворот),
+// ends — места присоединения: середина свободного торца и наружная нормаль.
+export function sofaLayout(comp) {
+  const D = comp.depth;
+  let dir = ((comp.dir || 0) % 4 + 4) % 4;
+  let ox = 0; let oy = 0;
+  const parts = [];
+  let prevDepth = 0;
+  const startU = DIRS[dir];
+  const n = comp.modules.length;
+  comp.modules.forEach((m, i) => {
+    const [ux, uy] = DIRS[dir];
+    const vx = -uy; const vy = ux; // u, повёрнутый на +90°
+    const corner = m.type === 'corner';
+    const len = corner ? D : m.w;
+    const depth = m.type === 'chaise' ? D + SOFA_CHAISE_EXTRA : D;
+    parts.push({
+      kind: `sofa:${m.type}`,
+      x: ox + (ux * len) / 2 + (vx * depth) / 2,
+      y: oy + (uy * len) / 2 + (vy * depth) / 2,
+      w: len,
+      h: depth,
+      rotation: dir * 90,
+      module: i,
+      back: SOFA_MODULES[m.type].back ? Math.min(SOFA_BACK, D / 3) : 0,
+      // Стык: общую кромку рисует предыдущий модуль, этот — только остаток
+      // своей боковой кромки, если он глубже соседа (шезлонг после сиденья).
+      startFrom: i > 0 ? Math.min(prevDepth, depth) : 0,
+      joinStart: i > 0,
+      joinEnd: i < n - 1,
+    });
+    if (corner) {
+      ox += ux * D + vx * D; oy += uy * D + vy * D;
+      dir = (dir + 1) % 4;
+      prevDepth = D;
+    } else {
+      ox += ux * len; oy += uy * len;
+      prevDepth = depth;
+    }
+  });
+  const [ux, uy] = DIRS[dir];
+  const vx = -uy; const vy = ux;
+  const ends = [
+    { end: 'start', x: ((-startU[1]) * D) / 2, y: (startU[0] * D) / 2, nx: -startU[0], ny: -startU[1] },
+    { end: 'end', x: ox + (vx * D) / 2, y: oy + (vy * D) / 2, nx: ux, ny: uy },
+  ];
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const p of parts) {
+    const odd = (p.rotation / 90) % 2 === 1;
+    const hw = (odd ? p.h : p.w) / 2;
+    const hh = (odd ? p.w : p.h) / 2;
+    minX = Math.min(minX, p.x - hw); maxX = Math.max(maxX, p.x + hw);
+    minY = Math.min(minY, p.y - hh); maxY = Math.max(maxY, p.y + hh);
+  }
+  return { parts, ends, box: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } };
+}
+
+// Прямоугольник части (AABB, все повороты кратны 90°).
+export function partRect(p) {
+  const odd = Math.round(p.rotation / 90) % 2 !== 0;
+  const w = odd ? p.h : p.w;
+  const h = odd ? p.w : p.h;
+  return { x: p.x - w / 2, y: p.y - h / 2, w, h };
+}
+
+// Есть ли у частей наложения (площадь пересечения больше 1 мм²).
+export function partsOverlap(parts) {
+  const rects = parts.map(partRect);
+  for (let i = 0; i < rects.length; i += 1) {
+    for (let j = i + 1; j < rects.length; j += 1) {
+      const a = rects[i]; const b = rects[j];
+      const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ix > 1e-6 && iy > 1e-6 && ix * iy > 1) return true;
+    }
+  }
+  return false;
+}
+
+const centered = (layout) => {
+  const cx = layout.box.x + layout.box.w / 2;
+  const cy = layout.box.y + layout.box.h / 2;
+  const r = (v) => Math.round(v * 1000) / 1000 + 0;
+  return {
+    parts: layout.parts.map((p) => ({ ...p, x: r(p.x - cx), y: r(p.y - cy) })),
+    ends: layout.ends.map((e) => ({ ...e, x: r(e.x - cx), y: r(e.y - cy) })),
+    w: r(layout.box.w),
+    h: r(layout.box.h),
+  };
+};
+
+const sofa = {
+  kinds: SOFA_KINDS,
+  fixedSize: true, // размер предмета = габарит модулей
+  defaults(kind) {
+    const d = SOFA_DEFAULTS[kind] || SOFA_DEFAULTS.sofa;
+    return { type: 'sofa', depth: d.depth, dir: d.dir, modules: d.mods.map(([t, w]) => sofaModule(t, w)) };
+  },
+  normalize(raw, kind) {
+    const d = sofa.defaults(kind);
+    const mods = Array.isArray(raw.modules)
+      ? raw.modules.map((m) => (m && typeof m === 'object' ? sofaModule(m.type, m.w) : null)).filter(Boolean).slice(0, SOFA_MAX_MODULES)
+      : [];
+    return {
+      type: 'sofa',
+      depth: num(raw.depth, d.depth, 500, 1400),
+      dir: ((num(raw.dir, d.dir, -1000, 1000) % 4) + 4) % 4,
+      modules: mods.length ? mods : d.modules,
+    };
+  },
+  parts(item, comp) {
+    return centered(sofaLayout(comp)).parts;
+  },
+  // Размер предмета по модулям (центр предмета не меняется).
+  fit(item, comp) {
+    const c = centered(sofaLayout(comp));
+    item.w = c.w;
+    item.h = c.h;
+  },
+};
+
+export const TYPES = Object.freeze({ dining, sofa });
+
+// Размер предмета задаётся частями (диван-конструктор): не растягивается.
+export function isFixedSizeComp(item) {
+  const comp = item?.comp && normalizeComp(item.comp, item.kind);
+  return Boolean(comp && TYPES[comp.type].fixedSize);
+}
+
+const rot = (x, y, deg) => {
+  const r = (deg * Math.PI) / 180;
+  const c = Math.round(Math.cos(r) * 1e9) / 1e9;
+  const s = Math.round(Math.sin(r) * 1e9) / 1e9;
+  return { x: x * c - y * s, y: x * s + y * c };
+};
+
+// Места «+» дивана в осях дома: { end, x, y, nx, ny } — середина свободного
+// торца цепочки и наружная нормаль. [] — не диван-конструктор.
+export function sofaEnds(item) {
+  const comp = item?.comp && normalizeComp(item.comp, item.kind);
+  if (!comp || comp.type !== 'sofa') return [];
+  const r = item.rotation || 0;
+  return centered(sofaLayout(comp)).ends.map((e) => {
+    const p = rot(e.x, e.y, r);
+    const n = rot(e.nx, e.ny, r);
+    const r3 = (v) => Math.round(v * 1000) / 1000 + 0; // + 0: без «-0»
+    return { end: e.end, x: r3(item.x + p.x), y: r3(item.y + p.y), nx: r3(n.x), ny: r3(n.y) };
+  });
+}
+
+// Правка дивана-конструктора без изменения предмета. op:
+//   { op: 'add', end: 'start' | 'end', type, w? } — модуль к торцу цепочки;
+//   { op: 'remove', index };  { op: 'set', index, type?, w? };  { op: 'depth', value }.
+// Возвращает { comp, x, y, w, h } — новые поля предмета, или null, если правка
+// невозможна (модули пересекаются, удаление последнего модуля, неверный тип).
+// Якорь — модуль рядом с местом правки: он остаётся на месте и в той же
+// ориентации, диван не «прыгает».
+export function editSofa(item, edit) {
+  const old = item?.comp && normalizeComp(item.comp, item.kind);
+  if (!old || old.type !== 'sofa') return null;
+  const mods = old.modules.map((m) => ({ ...m }));
+  let from = 0; // индекс якоря в старой цепочке
+  let to = 0; //   … и в новой
+  const n = mods.length;
+  const idx = Number(edit?.index);
+  let depth = old.depth;
+  switch (edit?.op) {
+    case 'add': {
+      const m = sofaModule(edit.type, edit.w);
+      if (!m || n >= SOFA_MAX_MODULES) return null;
+      if (edit.end === 'start') { mods.unshift(m); from = 0; to = 1; } else { mods.push(m); from = n - 1; to = n - 1; }
+      break;
+    }
+    case 'remove': {
+      if (n <= 1 || !(idx >= 0 && idx < n)) return null;
+      mods.splice(idx, 1);
+      from = idx > 0 ? idx - 1 : 1;
+      to = idx > 0 ? idx - 1 : 0;
+      break;
+    }
+    case 'set': {
+      if (!(idx >= 0 && idx < n)) return null;
+      // Смена типа без ширины — ширина по умолчанию нового типа.
+      const type = edit.type || mods[idx].type;
+      const m = sofaModule(type, edit.w ?? (type === mods[idx].type ? mods[idx].w : undefined));
+      if (!m) return null;
+      mods[idx] = m;
+      from = idx; to = idx;
+      break;
+    }
+    case 'depth':
+      depth = num(edit.value, old.depth, 500, 1400);
+      break;
+    default:
+      return null;
+  }
+  // Направление первого модуля — так, чтобы якорь сохранил ориентацию.
+  const dir = ((old.dir + turnsBefore(old.modules, from) - turnsBefore(mods, to)) % 4 + 4) % 4;
+  const comp = normalizeComp({ type: 'sofa', depth, dir, modules: mods }, item.kind);
+  const a = centered(sofaLayout(old));
+  const b = centered(sofaLayout(comp));
+  if (partsOverlap(b.parts)) return null;
+  const pa = a.parts[from];
+  const pb = b.parts[to];
+  // Для якоря берём его угол «начало спинки» — он не зависит от его ширины.
+  const anchor = (p) => {
+    const [ux, uy] = DIRS[(p.rotation / 90) % 4];
+    return { x: p.x - (ux * p.w) / 2 + (uy * p.h) / 2, y: p.y - (uy * p.w) / 2 - (ux * p.h) / 2 };
+  };
+  const qa = anchor(pa);
+  const qb = anchor(pb);
+  const d = rot(qa.x - qb.x, qa.y - qb.y, item.rotation || 0);
+  const round = (v) => Math.round(v * 1000) / 1000 + 0;
+  return { comp, x: round(item.x + d.x), y: round(item.y + d.y), w: b.w, h: b.h };
+}
 
 // Тип составной мебели, подходящий виду предмета (или null).
 export function compTypeFor(kind) {
@@ -142,7 +412,7 @@ export function normalizeItemsComp(items) {
   for (const item of items || []) {
     if (!item || !('comp' in item)) continue;
     const comp = normalizeComp(item.comp, item.kind);
-    if (comp) item.comp = comp; else delete item.comp;
+    if (comp) { item.comp = comp; TYPES[comp.type].fit?.(item, comp); } else delete item.comp;
   }
   return items;
 }
@@ -150,7 +420,10 @@ export function normalizeItemsComp(items) {
 // Новому предмету составного вида — comp по умолчанию (на месте).
 export function withDefaultComp(item) {
   const comp = defaultComp(item.kind);
-  if (comp && !item.comp) item.comp = comp;
+  if (comp && !item.comp) {
+    item.comp = comp;
+    TYPES[comp.type].fit?.(item, comp); // диван: размер — по модулям
+  }
   return item;
 }
 

@@ -5,6 +5,7 @@ import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
 import { canvas, toast } from './dom.js';
 import { closeHelp, isHelpOpen, openHelp } from './help.js';
 import { closeProjects, isProjectsOpen } from './projects.js';
+import { hideSofaMenu } from './props-composite.js';
 import { stepLevel } from './levels.js';
 import {
   deleteSelection, reconcileOpenings, rotateMulti90, rotateSelectedItem,
@@ -27,6 +28,7 @@ export function bindKeyboard() {
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }
     if (event.key === 'Escape' && isCompareOpen()) { closeCompare(); return; }
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
+    if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {

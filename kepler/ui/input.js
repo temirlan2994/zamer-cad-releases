@@ -11,6 +11,7 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
+import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
   findWall, hitItem, hitItemHandle, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
@@ -380,6 +381,7 @@ export function bindCanvasInput() {
     // Клик мимо поля калибровки — отменяем калибровку.
     if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
     if (!el('dimInput').hidden) hideDimInput();
+    if (state.sofaMenu) hideSofaMenu();
 
     // Стрелки-перевороты и размерные подписи выбранного проёма.
     if (state.selection?.type === 'opening' && state._openingUI) {
@@ -389,6 +391,14 @@ export function bindCanvasInput() {
       for (const d of state._openingUI.dims) {
         if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
       }
+    }
+
+    // Кнопки «+» выделенного дивана-конструктора — раньше ручек и перетаскивания.
+    if (state.selection?.type === 'item' && state._sofaUI?.itemId === state.selection.id) {
+      const tolPx = state.coarsePointer ? 6 : 3;
+      const spot = state._sofaUI.spots.find((sp) => Math.hypot(sp.x - screen.x, sp.y - screen.y) <= sp.r + tolPx);
+      const item = spot && state.project.items.find((i) => i.id === state.selection.id);
+      if (item) { openSofaMenu(item, spot); return; }
     }
 
     // Ручки плановых объектов.
