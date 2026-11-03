@@ -8,6 +8,7 @@ import { findWall } from './hit.js';
 import { state } from './state.js';
 import { positionWallButtons } from './tools.js';
 import { positionCalInput } from './underlay.js';
+import { positionElevInput } from './terrain.js';
 
 let drawQueued = false;
 
@@ -83,6 +84,7 @@ export function zoomAt(screen, factor) {
   state.view.panY += screen.y - projected.y;
   refs.statusScale.textContent = scaleLabel();
   positionCalInput();
+  positionElevInput();
   if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
   requestDraw();
 }

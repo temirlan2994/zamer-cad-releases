@@ -153,6 +153,7 @@ export function deleteSelection() {
       if (sel.kind === 'neighbor') site.neighbors = site.neighbors.filter((n) => n.id !== sel.id);
       if (sel.kind === 'entry') site.entry = null;
       if (sel.kind === 'underlay') site.underlay = null;
+      if (sel.kind === 'terrain-point' && site.terrain) site.terrain.points = site.terrain.points.filter((p) => p.id !== sel.id);
     });
     state.selection = null;
   }

@@ -1,6 +1,9 @@
 // Подложка-топосъёмка: загрузка JPG/PNG/PDF/DXF, калибровка масштаба.
 
-import { dxfToImage, dxfTypeSummary, parseDxf } from '../core/dxf.js';
+import {
+  dxfToImage, dxfTypeSummary, extractDxfElevations, parseDxf,
+} from '../core/dxf.js';
+import { dxfMarksToPx } from '../core/terrain.js';
 import { canvas, el, toast } from './dom.js';
 import { renderLibrary } from './library.js';
 import { state } from './state.js';
@@ -104,17 +107,22 @@ export async function loadUnderlayFile(file) {
         toast(`DXF прочитан, но рисовать нечего (${summary || 'нет поддерживаемых объектов'}). Возможно, чертёж из блоков INSERT или это бинарный DXF — пришлите файл, добавлю поддержку.`, true);
         return;
       }
-      placeUnderlay(info.dataUrl, info.size, info.reliableScale ? info.worldWidthMm : null);
+      // Отметки высот (POINT с Z, подписи «123.45», 3DFACE) — храним в
+      // пикселях картинки: они следуют за масштабом/поворотом подложки.
+      const elev = extractDxfElevations(parsed);
+      const marks = dxfMarksToPx(elev.marks, info.transform);
+      placeUnderlay(info.dataUrl, info.size, info.reliableScale ? info.worldWidthMm : null, marks);
       if (state.modeName === 'site') fitView(); // сразу вписываем в экран
       const proxy = /PROXY/i.test(summary);
+      const found = marks.length ? ` Найдено отметок высот: ${marks.length} — «Импортировать отметки» справа добавит их как рельеф.` : '';
       const base = `DXF: ${info.entityCount} объектов${summary ? ` (${summary})` : ''}`;
       if (proxy) {
         // Часть/вся геометрия — в проприетарных proxy-объектах, их не прочитать.
-        toast(`${base}. Если пусто/мало — геометрия в проприетарных proxy-объектах: в CAD расчлените чертёж (EXPLODE / «Расчленить») и «Сохранить как» DXF R12/2000, либо импортируйте PDF.`, true);
+        toast(`${base}. Если пусто/мало — геометрия в проприетарных proxy-объектах: в CAD расчлените чертёж (EXPLODE / «Расчленить») и «Сохранить как» DXF R12/2000, либо импортируйте PDF.${found}`, true);
       } else if (info.reliableScale) {
-        toast(`${base}, ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы приняты за метры)'}. Масштаб — справа.`, true);
+        toast(`${base}, ширина ≈ ${info.worldWidthM.toFixed(1)} м${info.hadUnits ? '' : ' (единицы приняты за метры)'}. Масштаб — справа.${found}`, true);
       } else {
-        toast(`${base}. Единицы непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «по отрезку» справа.`, true);
+        toast(`${base}. Единицы непонятны — поставил удобный размер. Задайте масштаб: «Ширина, м» или «по отрезку» справа.${found}`, true);
       }
       return;
     }
@@ -188,7 +196,7 @@ async function renderPdfToImage(file) {
   return { dataUrl: cnv.toDataURL('image/jpeg', 0.85), size: { w: cnv.width, h: cnv.height } };
 }
 
-function placeUnderlay(dataUrl, size, worldWidthMm = null) {
+function placeUnderlay(dataUrl, size, worldWidthMm = null, marks = null) {
   const center = screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
   // Если известна реальная ширина (из DXF) — масштаб 1:1; иначе картинка
   // занимает ~70% ширины видимой области.
@@ -207,6 +215,7 @@ function placeUnderlay(dataUrl, size, worldWidthMm = null) {
       rot: 0,
       opacity: 0.7,
       locked: false,
+      ...(marks?.length ? { marks } : {}),
     };
   });
   selectObject({ type: 'site', kind: 'underlay' });

@@ -23,6 +23,9 @@ import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
+import {
+  contours, formatElevation, houseTerrain, terrainModel, terrainSummary,
+} from './terrain.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
@@ -160,25 +163,51 @@ export function buildStructuredExport(project) {
     generated_at: new Date().toISOString(),
     // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
-    site: buildSiteExport(project.site),
+    site: buildSiteExport(project.site, project),
     indicators: tepReport(project), // ТЭП: площади, коэффициенты, объём (м², м³)
   };
 }
 
-function buildSiteExport(site) {
-  if (!site || !site.boundary) return null;
+// Рельеф: отметки (мм, абсолютные), шаг горизонталей, отметка пола и сводка.
+function buildTerrainExport(project) {
+  const terrain = project.site?.terrain;
+  if (!terrain?.points?.length) return null;
+  const model = terrainModel(terrain);
+  const summary = terrainSummary(model);
+  const house = houseTerrain(project, model);
+  return {
+    units: 'mm',
+    points: terrain.points.map((p) => ({ id: p.id, x: p.x, y: p.y, z: p.z })),
+    contour_step: terrain.contourStep,
+    floor_z: house ? house.floorZ : terrain.floorZ,
+    floor_z_auto: terrain.floorZ == null,
+    min_z: summary.minZ,
+    max_z: summary.maxZ,
+    mean_slope_percent: Number((summary.meanSlope * 100).toFixed(2)),
+    house: house ? {
+      corners: house.corners.map((c) => ({ name: c.name, x: c.x, y: c.y, z: Math.round(c.z) })),
+      drop: Math.round(house.drop),
+    } : null,
+    error: summary.error,
+  };
+}
+
+function buildSiteExport(site, project) {
+  const terrain = project ? buildTerrainExport(project) : null;
+  if (!site || (!site.boundary && !terrain)) return null;
   return {
     frame: 'world',
     north_deg: site.north,
     location: site.location,
     boundary: site.boundary,
-    boundary_area_m2: Number(polygonAreaM2(site.boundary).toFixed(2)),
-    build_zone: buildZonePolygon(site),
+    boundary_area_m2: site.boundary ? Number(polygonAreaM2(site.boundary).toFixed(2)) : null,
+    build_zone: site.boundary ? buildZonePolygon(site) : null,
     setbacks: { boundary: site.setbackBoundary, neighbor: site.setbackNeighbor },
     red_line: site.redLine || null,
     entry: site.entry || null,
     roads: site.roads || [],
     neighbor_houses: site.neighbors || [],
+    terrain,
   };
 }
 
@@ -337,7 +366,35 @@ const SITE_LAYERS = [
   { key: 'zone', name: 'build_zone', color: 6 },
   { key: 'roads', name: 'roads', color: 9 },
   { key: 'neighbors', name: 'neighbors', color: 8 },
+  { key: 'terrain', name: 'terrain_points', color: 3 },
+  { key: 'contours', name: 'contours', color: 32 },
+  { key: 'contoursMajor', name: 'contours_major', color: 30 },
 ];
+
+// Рельеф для генплана: точки POINT с Z (мм) + подпись отметки, горизонтали —
+// отрезками с Z на отдельных слоях (основные — каждая 5-я).
+function terrainEntities(site) {
+  const terrain = site?.terrain;
+  if (!terrain?.points?.length) return [];
+  const out = [];
+  for (const p of terrain.points) {
+    out.push({ type: 'point', layer: 'terrain', x: p.x, y: p.y, z: p.z });
+    out.push({ type: 'text', layer: 'terrain', x: p.x + 150, y: p.y - 150, height: 250, text: formatElevation(p.z) });
+  }
+  const model = terrainModel(terrain);
+  for (const level of contours(model, terrain.contourStep)) {
+    const layer = level.major ? 'contoursMajor' : 'contours';
+    for (const line of level.lines) {
+      const n = line.pts.length;
+      for (let i = 0; i < (line.closed ? n : n - 1); i += 1) {
+        const a = line.pts[i];
+        const b = line.pts[(i + 1) % n];
+        out.push({ type: 'line', layer, x1: a.x, y1: a.y, x2: b.x, y2: b.y, z1: level.z, z2: level.z });
+      }
+    }
+  }
+  return out;
+}
 
 // Сущность плана (оси дома) → сущности в координатах съёмки.
 function entityToWorld(e, b) {
@@ -439,5 +496,6 @@ export function buildSitePlanDxf(project) {
   const entities = planEntities(ground, { dims: false })
     .flatMap((e) => entityToWorld(e, project.building));
   entities.push(...siteEntities(project.site));
+  entities.push(...terrainEntities(project.site));
   return buildDxf(entities, { extraLayers: SITE_LAYERS });
 }

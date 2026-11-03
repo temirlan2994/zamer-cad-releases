@@ -55,18 +55,24 @@ export function dxfContinuousLineType() {
   return ["0", "LTYPE", "2", "CONTINUOUS", "70", "0", "3", "Solid line", "72", "65", "73", "0", "40", "0"];
 }
 
-export function dxfLine(x1, y1, x2, y2, layer) {
+export function dxfLine(x1, y1, x2, y2, layer, z1 = 0, z2 = z1) {
   if (![x1, y1, x2, y2].every(finiteNumber)) return [];
   return [
     "0", "LINE",
     "8", layer || "measure",
     "10", roundDxf(x1),
     "20", roundDxf(-y1),
-    "30", "0",
+    "30", finiteNumber(z1) && z1 ? roundDxf(z1) : "0",
     "11", roundDxf(x2),
     "21", roundDxf(-y2),
-    "31", "0",
+    "31", finiteNumber(z2) && z2 ? roundDxf(z2) : "0",
   ];
+}
+
+// Точка с отметкой Z (рельеф).
+export function dxfPoint(x, y, z, layer) {
+  if (![x, y].every(finiteNumber)) return [];
+  return ["0", "POINT", "8", layer || "measure", "10", roundDxf(x), "20", roundDxf(-y), "30", finiteNumber(z) ? roundDxf(z) : "0"];
 }
 
 export function dxfCircle(cx, cy, radius, layer) {
@@ -231,7 +237,9 @@ export function buildDxf(entities, options = {}) {
     } else if (entity.type === "line" && entity.layer === "dimensions" && (finiteNumber(entity.offset) || finiteNumber(entity.dimX1))) {
       lines.push(...dxfLinearDimension(entity, dxfLayerName("dimensions", layerMap)));
     } else if (entity.type === "line") {
-      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, dxfLayerName(entity.layer, layerMap)));
+      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, dxfLayerName(entity.layer, layerMap), entity.z1 ?? 0, entity.z2 ?? entity.z1 ?? 0));
+    } else if (entity.type === "point") {
+      lines.push(...dxfPoint(entity.x, entity.y, entity.z, dxfLayerName(entity.layer, layerMap)));
     } else if (entity.type === "block") {
       const layer = dxfLayerName("furniture", layerMap);
       for (const segment of blockSegments(entity)) {

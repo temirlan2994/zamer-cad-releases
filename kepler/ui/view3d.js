@@ -11,7 +11,7 @@ import { el } from './dom.js';
 import { state } from './state.js';
 
 const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, target: { x: 0, y: 0, z: 1500 } };
-const opts = { roof: false, site: true };
+const opts = { roof: false, site: true, terrainScale: 1 };
 let faces = [];
 let active = false;
 let gl = null; // WebGL-контекст (null — рисуем через canvas 2D)
@@ -99,7 +99,7 @@ function initGl(canvas) {
   uploadGeometry();
 }
 
-const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor']);
+const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth']);
 
 // Грани → треугольники (затенение по Ламберту заранее) и рёбра.
 function uploadGeometry() {
@@ -260,7 +260,7 @@ function render2d(canvas) {
     ctx.closePath();
     ctx.fillStyle = it.fill;
     ctx.fill();
-    if (it.kind === 'wall' || it.kind === 'roof' || it.kind === 'neighbor') {
+    if (EDGE_KINDS.has(it.kind)) {
       ctx.strokeStyle = 'rgba(30,38,48,0.22)';
       ctx.lineWidth = 0.6;
       ctx.stroke();
@@ -287,8 +287,15 @@ function frameHouse() {
   cam.dist = Math.min(400000, Math.max(8000, span * 1.7));
 }
 
+// Ползунок рельефа виден, только когда есть отметки высот.
+function syncReliefControl() {
+  const wrap = el('v3ReliefWrap');
+  if (wrap) wrap.hidden = !(state.project?.site?.terrain?.points?.length >= 3);
+}
+
 export function refresh3d() {
   if (!active) return;
+  syncReliefControl();
   faces = buildHouseMesh(state.project, opts);
   uploadGeometry();
   requestRender();
@@ -298,6 +305,7 @@ export function open3d() {
   active = true;
   el('view3d').hidden = false;
   el('view3dBtn')?.classList.add('active');
+  syncReliefControl();
   faces = buildHouseMesh(state.project, opts);
   uploadGeometry();
   frameHouse();
@@ -376,6 +384,12 @@ export function bind3d() {
   el('v3Close')?.addEventListener('click', close3d);
   el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
+  el('v3Relief')?.addEventListener('input', (e) => {
+    opts.terrainScale = Math.max(1, Math.min(5, Number(e.target.value) || 1));
+    const label = el('v3ReliefVal');
+    if (label) label.textContent = String(opts.terrainScale);
+    refresh3d();
+  });
   el('v3Fit')?.addEventListener('click', () => { frameHouse(); requestRender(); });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', onDown);

@@ -12,6 +12,7 @@ import { mutate, redo, tweak, undo } from './store.js';
 import { cycleTheme } from './theme.js';
 import { setTool, startPlaceOpening } from './tools.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
+import { bindElevInput } from './terrain.js';
 import { fitView, zoomAt } from './view.js';
 
 export function updateDimModeBtn() {
@@ -61,6 +62,7 @@ export function bindToolbar() {
     if (state.selection?.type === 'wall') startPlaceOpening('window', { key: state.selection.key, from: state.selection.from });
   });
   el('draftDone').addEventListener('click', () => finishDraft());
+  bindElevInput();
   el('calInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); applyCalibration(Number(el('calInput').value)); }
     else if (e.key === 'Escape') { e.preventDefault(); hideCalInput(); toast('Калибровка отменена'); }

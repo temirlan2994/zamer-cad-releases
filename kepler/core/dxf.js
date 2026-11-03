@@ -1,9 +1,16 @@
 // Минимальный разбор текстового DXF для подложки-топосъёмки.
-// Поддержаны LINE, LWPOLYLINE, POLYLINE/VERTEX, CIRCLE, ARC, POINT.
+// Поддержаны LINE, LWPOLYLINE, POLYLINE/VERTEX, SPLINE, CIRCLE, ARC, ELLIPSE,
+// POINT, TEXT/MTEXT/ATTRIB, SOLID/3DFACE, INSERT. Отметки высот (Z у POINT,
+// вершин 3D-полилиний и 3DFACE, подписи «123.45») — extractDxfElevations.
 // DWG (бинарный) так читать нельзя — только DXF.
 
 // Единицы чертежа ($INSUNITS) → миллиметры.
 const UNIT_TO_MM = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000, 8: 0.001, 13: 1e-6 };
+
+// Миллиметров в единице чертежа (по $INSUNITS; без него — метры, как в съёмке).
+export function dxfUnitMm(parsed, defaultUnitMm = 1000) {
+  return UNIT_TO_MM[parsed?.insunits] || defaultUnitMm;
+}
 
 export function parseDxf(text) {
   const raw = text.split(/\r\n|\r|\n/);
@@ -50,19 +57,22 @@ export function parseDxf(text) {
       case 'LINE': ents.push({ type: 'line', x1: gnum(g, 10), y1: gnum(g, 20), x2: gnum(g, 11), y2: gnum(g, 21) }); break;
       case 'LWPOLYLINE': {
         const xs = gall(g, 10); const ys = gall(g, 20);
+        const elev = gnum(g, 38); // отметка плоской полилинии (горизонтали)
         const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-        if (pts.length) ents.push({ type: 'poly', pts, closed: Boolean((gnum(g, 70) || 0) & 1) });
+        if (pts.length) ents.push({ type: 'poly', pts, closed: Boolean((gnum(g, 70) || 0) & 1), elev: Number.isFinite(elev) && elev !== 0 ? elev : undefined });
         break;
       }
       case 'POLYLINE': {
-        const pts = []; const closed = Boolean((gnum(g, 70) || 0) & 1);
+        const pts = []; const flags = gnum(g, 70) || 0; const closed = Boolean(flags & 1);
+        const is3d = Boolean(flags & 8);
+        const elev = gnum(g, 30); // у 2D-полилинии Z «фиктивной точки» — отметка
         let j = idx + 1;
         for (; j < arr.length && arr[j].type === 'VERTEX'; j += 1) {
-          const x = gnum(arr[j], 10); const y = gnum(arr[j], 20);
-          if (Number.isFinite(x) && Number.isFinite(y)) pts.push({ x, y });
+          const x = gnum(arr[j], 10); const y = gnum(arr[j], 20); const z = gnum(arr[j], 30);
+          if (Number.isFinite(x) && Number.isFinite(y)) pts.push(is3d && Number.isFinite(z) ? { x, y, z } : { x, y });
         }
         skip = j - idx - 1;
-        if (pts.length) ents.push({ type: 'poly', pts, closed });
+        if (pts.length) ents.push({ type: 'poly', pts, closed, elev: !is3d && Number.isFinite(elev) && elev !== 0 ? elev : undefined });
         break;
       }
       case 'SPLINE': {
@@ -75,8 +85,14 @@ export function parseDxf(text) {
       case 'CIRCLE': ents.push({ type: 'circle', cx: gnum(g, 10), cy: gnum(g, 20), r: gnum(g, 40) }); break;
       case 'ARC': ents.push({ type: 'arc', cx: gnum(g, 10), cy: gnum(g, 20), r: gnum(g, 40), a1: gnum(g, 50), a2: gnum(g, 51) }); break;
       case 'ELLIPSE': ents.push({ type: 'ellipse', cx: gnum(g, 10), cy: gnum(g, 20), mx: gnum(g, 11), my: gnum(g, 21), ratio: gnum(g, 40) ?? 1, a1: gnum(g, 41) ?? 0, a2: gnum(g, 42) ?? (Math.PI * 2) }); break;
-      case 'POINT': ents.push({ type: 'point', x: gnum(g, 10), y: gnum(g, 20) }); break;
+      case 'POINT': ents.push({ type: 'point', x: gnum(g, 10), y: gnum(g, 20), z: gnum(g, 30) }); break;
       case 'TEXT': { const t = gstr(g, 1); if (t) ents.push({ type: 'text', x: gnum(g, 10), y: gnum(g, 20), h: gnum(g, 40) || 2.5, text: t, rot: gnum(g, 50) || 0 }); break; }
+      case 'ATTRIB': {
+        // Атрибут блока (часто — отметка у геодезической точки); невидимые пропускаем.
+        const t = gstr(g, 1);
+        if (t && !((gnum(g, 70) || 0) & 1)) ents.push({ type: 'text', x: gnum(g, 10), y: gnum(g, 20), h: gnum(g, 40) || 2.5, text: t, rot: gnum(g, 50) || 0 });
+        break;
+      }
       case 'MTEXT': {
         const parts = g.codes.filter((c) => c.code === 1 || c.code === 3).map((c) => c.value);
         const t = parts.join('').replace(/\\[A-Za-z][^;]*;|[{}]/g, '');
@@ -86,11 +102,14 @@ export function parseDxf(text) {
       case 'SOLID': case '3DFACE': {
         const xs = gall(g, 10).concat(gall(g, 11), gall(g, 12), gall(g, 13));
         const ys = gall(g, 20).concat(gall(g, 21), gall(g, 22), gall(g, 23));
-        const pts = xs.map((x, i) => ({ x, y: ys[i] })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
-        if (pts.length >= 3) ents.push({ type: 'poly', pts, closed: true });
+        const zs = gall(g, 30).concat(gall(g, 31), gall(g, 32), gall(g, 33));
+        const face = g.type === '3DFACE' && zs.length === xs.length;
+        const pts = xs.map((x, i) => (face ? { x, y: ys[i], z: zs[i] } : { x, y: ys[i] }))
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (pts.length >= 3) ents.push({ type: 'poly', pts, closed: true, face: face || undefined });
         break;
       }
-      case 'INSERT': ents.push({ type: 'insert', name: gstr(g, 2), x: gnum(g, 10) || 0, y: gnum(g, 20) || 0, sx: gnum(g, 41) ?? 1, sy: gnum(g, 42) ?? 1, rot: gnum(g, 50) || 0 }); break;
+      case 'INSERT': ents.push({ type: 'insert', name: gstr(g, 2), x: gnum(g, 10) || 0, y: gnum(g, 20) || 0, z: gnum(g, 30) || 0, sx: gnum(g, 41) ?? 1, sy: gnum(g, 42) ?? 1, sz: gnum(g, 43) ?? 1, rot: gnum(g, 50) || 0 }); break;
       default: break;
     }
     return { ents, skip };
@@ -118,17 +137,24 @@ export function parseDxf(text) {
     const lx = (p.x - tf.base.x) * tf.sx;
     const ly = (p.y - tf.base.y) * tf.sy;
     const c = Math.cos(tf.rot); const s = Math.sin(tf.rot);
-    return { x: tf.x + lx * c - ly * s, y: tf.y + lx * s + ly * c };
+    const out = { x: tf.x + lx * c - ly * s, y: tf.y + lx * s + ly * c };
+    if (Number.isFinite(p.z)) out.z = (tf.z || 0) + p.z * (tf.sz ?? 1);
+    return out;
   };
   const tfEnt = (e, tf) => {
     const sc = (Math.abs(tf.sx) + Math.abs(tf.sy)) / 2;
     const degRot = (tf.rot * 180) / Math.PI;
     if (e.type === 'line') { const a = tfPoint({ x: e.x1, y: e.y1 }, tf); const b = tfPoint({ x: e.x2, y: e.y2 }, tf); return { type: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y }; }
-    if (e.type === 'poly') return { type: 'poly', closed: e.closed, pts: e.pts.map((p) => tfPoint(p, tf)) };
+    if (e.type === 'poly') {
+      return {
+        type: 'poly', closed: e.closed, face: e.face, pts: e.pts.map((p) => tfPoint(p, tf)),
+        elev: e.elev !== undefined ? (tf.z || 0) + e.elev * (tf.sz ?? 1) : undefined,
+      };
+    }
     if (e.type === 'circle') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'circle', cx: c.x, cy: c.y, r: e.r * sc }; }
     if (e.type === 'arc') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'arc', cx: c.x, cy: c.y, r: e.r * sc, a1: e.a1 + degRot, a2: e.a2 + degRot }; }
     if (e.type === 'ellipse') { const c = tfPoint({ x: e.cx, y: e.cy }, tf); return { type: 'ellipse', cx: c.x, cy: c.y, mx: e.mx * sc, my: e.my * sc, ratio: e.ratio, a1: e.a1, a2: e.a2 }; }
-    if (e.type === 'point') { const c = tfPoint({ x: e.x, y: e.y }, tf); return { type: 'point', x: c.x, y: c.y }; }
+    if (e.type === 'point') { const c = tfPoint({ x: e.x, y: e.y, z: e.z }, tf); return { type: 'point', x: c.x, y: c.y, z: c.z }; }
     if (e.type === 'text') { const c = tfPoint({ x: e.x, y: e.y }, tf); return { type: 'text', x: c.x, y: c.y, h: e.h * sc, text: e.text, rot: e.rot + degRot }; }
     return null;
   };
@@ -137,11 +163,11 @@ export function parseDxf(text) {
     if (depth > 6) return;
     const def = blockDefs[ins.name];
     if (!def) return;
-    const tf = { x: ins.x, y: ins.y, sx: ins.sx, sy: ins.sy, rot: (ins.rot * Math.PI) / 180, base: def.base };
+    const tf = { x: ins.x, y: ins.y, z: ins.z || 0, sx: ins.sx, sy: ins.sy, sz: ins.sz ?? 1, rot: (ins.rot * Math.PI) / 180, base: def.base };
     for (const e of def.items) {
       if (e.type === 'insert') {
         const np = tfPoint({ x: e.x, y: e.y }, tf);
-        expand({ name: e.name, x: np.x, y: np.y, sx: e.sx * tf.sx, sy: e.sy * tf.sy, rot: e.rot + ins.rot }, depth + 1, out);
+        expand({ name: e.name, x: np.x, y: np.y, z: (tf.z || 0) + (e.z || 0) * (tf.sz ?? 1), sx: e.sx * tf.sx, sy: e.sy * tf.sy, sz: (e.sz ?? 1) * (tf.sz ?? 1), rot: e.rot + ins.rot }, depth + 1, out);
       } else { const t = tfEnt(e, tf); if (t) out.push(t); }
     }
   }
@@ -169,6 +195,109 @@ export function dxfTypeSummary(parsed, limit = 5) {
     .filter(([t]) => t && t !== 'ENDSEC' && t !== 'SECTION' && t !== 'EOF' && t !== 'ENDBLK' && t !== 'SEQEND' && t !== 'VERTEX')
     .sort((a, b) => b[1] - a[1]);
   return entries.slice(0, limit).map(([t, n]) => `${t}×${n}`).join(', ');
+}
+
+// Подпись отметки: «123.45», «123,45», «+0.50», допускается «м» в конце.
+const ELEV_TEXT_RE = /^[+-]?\d{1,5}[.,]\d{1,3}\s*(м|m)?$/i;
+
+// Отметки высот из разобранного DXF (для рельефа, core/terrain.js):
+//  — POINT с Z (код 30); Z — в единицах чертежа, как XY ($INSUNITS);
+//  — подписи TEXT/MTEXT/ATTRIB вида «123.45» (метры): рядом с POINT (в
+//    радиусе 2 высот текста) — отметка этой точки, иначе — сама по себе в
+//    точке вставки текста;
+//  — вершины 3DFACE и 3D-полилиний с Z, горизонтали с отметкой (код 38).
+// Возвращает { marks: [{x, y, z}] — x, y в единицах чертежа, z в мм;
+//   counts: { points, labels, vertices }, unitMm }.
+export function extractDxfElevations(parsed, { defaultUnitMm = 1000, maxMarks = 4000 } = {}) {
+  const unitMm = dxfUnitMm(parsed, defaultUnitMm);
+  const ents = parsed?.entities || [];
+  const fin = (v) => Number.isFinite(v);
+  const points = ents.filter((e) => e.type === 'point' && fin(e.x) && fin(e.y))
+    .map((e) => ({ x: e.x, y: e.y, z: fin(e.z) && e.z !== 0 ? e.z * unitMm : null, label: null }));
+  let labels = [];
+  for (const e of ents) {
+    if (e.type !== 'text' || !fin(e.x) || !fin(e.y)) continue;
+    const t = String(e.text).trim();
+    if (!ELEV_TEXT_RE.test(t)) continue;
+    const v = Number(t.replace(/\s*(м|m)$/i, '').replace(',', '.'));
+    if (fin(v)) labels.push({ x: e.x, y: e.y, h: e.h || 2.5, z: v * 1000 });
+  }
+  // Отсев посторонних чисел (размеры, площади): отметки участка лежат рядом
+  // друг с другом — дальше 100 м от медианы не бывает.
+  if (labels.length > 2) {
+    const sorted = labels.map((l) => l.z).sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    labels = labels.filter((l) => Math.abs(l.z - med) <= 100000);
+  }
+  // Привязка подписи к ближайшей точке в радиусе 2 высот текста.
+  if (points.length && labels.length) {
+    const cell = Math.max(1e-9, Math.max(...labels.map((l) => l.h)) * 2);
+    const grid = new Map();
+    points.forEach((p, i) => {
+      const k = `${Math.floor(p.x / cell)},${Math.floor(p.y / cell)}`;
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k).push(i);
+    });
+    for (const l of labels) {
+      const cx = Math.floor(l.x / cell); const cy = Math.floor(l.y / cell);
+      let best = null;
+      for (let i = -1; i <= 1; i += 1) {
+        for (let j = -1; j <= 1; j += 1) {
+          for (const idx of grid.get(`${cx + i},${cy + j}`) || []) {
+            const p = points[idx];
+            if (p.label) continue;
+            const d = Math.hypot(p.x - l.x, p.y - l.y);
+            if (d <= l.h * 2 && (!best || d < best.d)) best = { d, idx };
+          }
+        }
+      }
+      if (best) { points[best.idx].label = l; l.used = true; }
+    }
+  }
+  const counts = { points: 0, labels: 0, vertices: 0 };
+  const raw = [];
+  for (const p of points) {
+    const z = p.z ?? p.label?.z ?? null;
+    if (z == null) continue;
+    raw.push({ x: p.x, y: p.y, z });
+    counts.points += 1;
+  }
+  for (const l of labels) {
+    if (l.used) continue;
+    raw.push({ x: l.x, y: l.y, z: l.z });
+    counts.labels += 1;
+  }
+  for (const e of ents) {
+    if (e.type !== 'poly') continue;
+    for (const p of e.pts) {
+      const z = fin(p.z) ? p.z : e.elev;
+      if (!fin(z) || z === 0 || !fin(p.x) || !fin(p.y)) continue;
+      if (!e.face && !fin(p.z) && e.elev === undefined) continue;
+      raw.push({ x: p.x, y: p.y, z: z * unitMm, vertex: true });
+    }
+  }
+  // Дубликаты (общие вершины граней, точка + подпись) и прореживание.
+  let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+  for (const m of raw) {
+    if (m.x < minX) minX = m.x; if (m.x > maxX) maxX = m.x;
+    if (m.y < minY) minY = m.y; if (m.y > maxY) maxY = m.y;
+  }
+  const span = Math.max(maxX - minX, maxY - minY) || 1;
+  const tol = span / 2000;
+  const seen = new Set();
+  let marks = [];
+  for (const m of raw) {
+    const k = `${Math.round(m.x / tol)},${Math.round(m.y / tol)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (m.vertex) counts.vertices += 1;
+    marks.push({ x: m.x, y: m.y, z: Math.round(m.z * 100) / 100 });
+  }
+  if (marks.length > maxMarks) {
+    const stride = marks.length / maxMarks;
+    marks = Array.from({ length: maxMarks }, (_, i) => marks[Math.floor(i * stride)]);
+  }
+  return { marks, counts, unitMm };
 }
 
 // Растрирует разобранный DXF в canvas-изображение. Возвращает dataURL, размер
@@ -284,7 +413,7 @@ export function dxfToImage(parsed, { targetMax = 2200, defaultUnitMm = 1000 } = 
       c.stroke();
     }
   }
-  const unitMm = UNIT_TO_MM[parsed.insunits] || defaultUnitMm;
+  const unitMm = dxfUnitMm(parsed, defaultUnitMm);
   const worldWidthMm = bw * unitMm;
   // Масштаб считаем надёжным только если реальный размер правдоподобный
   // (от 0.5 м до 2 км). Иначе единицы угаданы неверно — пусть пользователь
@@ -298,5 +427,7 @@ export function dxfToImage(parsed, { targetMax = 2200, defaultUnitMm = 1000 } = 
     reliableScale,
     hadUnits: Boolean(UNIT_TO_MM[parsed.insunits]),
     entityCount: entities.length,
+    // Единицы чертежа → пиксели картинки: px = (x − bx)·k, py = H − (y − by)·k.
+    transform: { bx, by, k, H },
   };
 }

@@ -10,9 +10,10 @@
 // face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind }
 
 import { isOpenRoom, isRoundItem, isStructural, roomType } from './catalog.js';
-import { toLocal } from './building.js';
+import { toLocal, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
+import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect } from './walls.js';
 
 export const WALL_COLOR = '#ece8e1';
@@ -149,53 +150,156 @@ function roofFaces(lp, z) {
     .flatMap((r) => boxFaces(r.x - t, r.y - t, r.x + r.w + t, r.y + r.h + t, z, z + 250, '#9aa3ad', 'roof'));
 }
 
-function siteFaces(project) {
+const GROUND_LOW = [0xb9, 0xc9, 0xa6];
+const GROUND_HIGH = [0xd9, 0xd2, 0xb4];
+const hex = (rgb) => `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
+
+// Рельеф для 3D: функция «отметка в осях дома → z над полом 1 этажа».
+// Отметка пола — site.terrain.floorZ или средняя под домом (core/terrain.js).
+// scale — вертикальное усиление рельефа (дом не масштабируется).
+export function terrainHeightFn(project, scale = 1) {
+  const model = terrainModel(project.site?.terrain);
+  if (!model?.tris?.length) return null;
+  const house = houseTerrain(project, model);
+  const avg = model.pts.reduce((t, p) => t + p.z, 0) / model.pts.length;
+  const floorZ = house ? house.floorZ
+    : (Number.isFinite(project.site.terrain.floorZ) ? project.site.terrain.floorZ : avg);
+  const b = project.building;
+  const fn = (x, y) => {
+    const w = toWorld(b, { x, y });
+    const z = interpolateZ(model, w.x, w.y, { clamp: true });
+    return ((z ?? floorZ) - floorZ) * scale;
+  };
+  fn.minRel = (model.minZ - floorZ) * scale;
+  fn.maxRel = (model.maxZ - floorZ) * scale;
+  return fn;
+}
+
+// Поверхность рельефа: регулярная сетка по габариту участка; отметки узлов —
+// по триангуляции (вне оболочки отметок — по ближайшему её краю).
+function terrainGround(minX, minY, maxX, maxY, hz) {
+  const faces = [];
+  const span = Math.max(maxX - minX, maxY - minY);
+  const cell = Math.max(1000, span / 48);
+  const nx = Math.max(1, Math.ceil((maxX - minX) / cell));
+  const ny = Math.max(1, Math.ceil((maxY - minY) / cell));
+  const dx = (maxX - minX) / nx;
+  const dy = (maxY - minY) / ny;
+  const z = [];
+  for (let i = 0; i <= nx; i += 1) {
+    z.push([]);
+    for (let j = 0; j <= ny; j += 1) z[i].push(hz(minX + i * dx, minY + j * dy) - 5);
+  }
+  const range = (hz.maxRel - hz.minRel) || 1;
+  const color = (zz) => {
+    const t = Math.max(0, Math.min(1, (zz - hz.minRel) / range));
+    return hex(GROUND_LOW.map((c, k) => c + (GROUND_HIGH[k] - c) * t));
+  };
+  const tri = (a, b, c) => {
+    // Нормаль вверх (в осях дома: y вниз — порядок обхода не важен, берём z>0).
+    const ux = b.x - a.x; const uy = b.y - a.y; const uz = b.z - a.z;
+    const vx = c.x - a.x; const vy = c.y - a.y; const vz = c.z - a.z;
+    let n = v(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    if (n.z < 0) n = v(-n.x, -n.y, -n.z);
+    const len = Math.hypot(n.x, n.y, n.z) || 1;
+    faces.push({ pts: [a, b, c], normal: v(n.x / len, n.y / len, n.z / len), color: color((a.z + b.z + c.z) / 3), kind: 'ground' });
+  };
+  for (let i = 0; i < nx; i += 1) {
+    for (let j = 0; j < ny; j += 1) {
+      const p00 = v(minX + i * dx, minY + j * dy, z[i][j]);
+      const p10 = v(minX + (i + 1) * dx, minY + j * dy, z[i + 1][j]);
+      const p11 = v(minX + (i + 1) * dx, minY + (j + 1) * dy, z[i + 1][j + 1]);
+      const p01 = v(minX + i * dx, minY + (j + 1) * dy, z[i][j + 1]);
+      tri(p00, p10, p11);
+      tri(p00, p11, p01);
+    }
+  }
+  return faces;
+}
+
+// «Юбка» (цоколь): если рельеф под домом ниже пола 1 этажа — от рельефа до
+// пола по контуру каждой комнаты нижнего этажа (с наружной стеной).
+function plinthFaces(project, hz) {
+  const faces = [];
+  const ground = sortedLevels(project)[0];
+  if (!ground) return faces;
+  const t = project.settings?.exterior || 250;
+  for (const r of ground.rooms.filter((room) => !room.parentId)) {
+    const poly = [
+      { x: r.x - t, y: r.y - t }, { x: r.x + r.w + t, y: r.y - t },
+      { x: r.x + r.w + t, y: r.y + r.h + t }, { x: r.x - t, y: r.y + r.h + t },
+    ];
+    const samples = [...poly, { x: r.x + r.w / 2, y: r.y + r.h / 2 }];
+    const low = Math.min(...samples.map((p) => hz(p.x, p.y)));
+    if (low < -20) faces.push(...prismFaces(poly, low - 50, 0, '#a59d92', 'plinth'));
+  }
+  return faces;
+}
+
+function siteFaces(project, { terrainScale = 1 } = {}) {
   const faces = [];
   const site = project.site;
   const b = project.building;
   const local = (p) => toLocal(b, p);
+  const hz = terrainHeightFn(project, terrainScale);
+  const zAt = (p) => (hz ? hz(p.x, p.y) : 0);
   const pts = [...(site?.boundary || []).map(local)];
   for (const level of project.levels) for (const r of level.rooms) pts.push(v(r.x, r.y, 0), v(r.x + r.w, r.y + r.h, 0));
   for (const n of site?.neighbors || []) pts.push(...neighborRectCorners(n).map(local));
+  if (hz) for (const p of site.terrain.points) pts.push(local(p));
   if (!pts.length) return faces;
   const pad = 15000;
   const minX = Math.min(...pts.map((p) => p.x)) - pad;
   const maxX = Math.max(...pts.map((p) => p.x)) + pad;
   const minY = Math.min(...pts.map((p) => p.y)) - pad;
   const maxY = Math.max(...pts.map((p) => p.y)) + pad;
-  faces.push({ pts: [v(minX, minY, -5), v(maxX, minY, -5), v(maxX, maxY, -5), v(minX, maxY, -5)], normal: v(0, 0, 1), color: '#cfd8c4', kind: 'ground' });
+  if (hz) faces.push(...terrainGround(minX, minY, maxX, maxY, hz));
+  else faces.push({ pts: [v(minX, minY, -5), v(maxX, minY, -5), v(maxX, maxY, -5), v(minX, maxY, -5)], normal: v(0, 0, 1), color: '#cfd8c4', kind: 'ground' });
   if (site?.boundary?.length >= 3) {
     // Граница — тонкая полоса чуть над землёй (иначе мерцает при отдалении).
+    // На рельефе ребро режется на куски ≤ 2 м, чтобы полоса шла по земле.
     const loc = site.boundary.map(local);
     for (let i = 0; i < loc.length; i += 1) {
-      const a = loc[i];
-      const c = loc[(i + 1) % loc.length];
-      const len = Math.hypot(c.x - a.x, c.y - a.y) || 1;
-      const nx = (-(c.y - a.y) / len) * 120;
-      const ny = ((c.x - a.x) / len) * 120;
-      faces.push({
-        pts: [v(a.x - nx, a.y - ny, 20), v(c.x - nx, c.y - ny, 20), v(c.x + nx, c.y + ny, 20), v(a.x + nx, a.y + ny, 20)],
-        normal: v(0, 0, 1), color: '#3a4552', kind: 'boundary', twoSided: true,
-      });
+      const a0 = loc[i];
+      const c0 = loc[(i + 1) % loc.length];
+      const len = Math.hypot(c0.x - a0.x, c0.y - a0.y) || 1;
+      const nx = (-(c0.y - a0.y) / len) * 120;
+      const ny = ((c0.x - a0.x) / len) * 120;
+      const parts = hz ? Math.max(1, Math.ceil(len / 2000)) : 1;
+      for (let k = 0; k < parts; k += 1) {
+        const a = { x: a0.x + ((c0.x - a0.x) * k) / parts, y: a0.y + ((c0.y - a0.y) * k) / parts };
+        const c = { x: a0.x + ((c0.x - a0.x) * (k + 1)) / parts, y: a0.y + ((c0.y - a0.y) * (k + 1)) / parts };
+        const za = zAt(a) + 20;
+        const zc = zAt(c) + 20;
+        faces.push({
+          pts: [v(a.x - nx, a.y - ny, za), v(c.x - nx, c.y - ny, zc), v(c.x + nx, c.y + ny, zc), v(a.x + nx, a.y + ny, za)],
+          normal: v(0, 0, 1), color: '#3a4552', kind: 'boundary', twoSided: true,
+        });
+      }
     }
   }
   for (const n of site?.neighbors || []) {
     const c = neighborRectCorners(n).map(local);
     const h = n.height || 6000;
-    // Соседний дом — призма по повёрнутому прямоугольнику.
-    faces.push({ pts: c.map((p) => v(p.x, p.y, h)), normal: v(0, 0, 1), color: '#b8bec6', kind: 'neighbor', twoSided: true });
+    // Соседний дом — призма по повёрнутому прямоугольнику; на рельефе низ —
+    // по самому низкому углу, высота — от земли в центре.
+    const z0 = hz ? Math.min(...c.map(zAt)) : 0;
+    const zTop = (hz ? zAt(local(n)) : 0) + h;
+    faces.push({ pts: c.map((p) => v(p.x, p.y, zTop)), normal: v(0, 0, 1), color: '#b8bec6', kind: 'neighbor', twoSided: true });
     for (let i = 0; i < 4; i += 1) {
       const a = c[i];
       const d = c[(i + 1) % 4];
-      faces.push({ pts: [v(a.x, a.y, 0), v(d.x, d.y, 0), v(d.x, d.y, h), v(a.x, a.y, h)], normal: v(0, 0, 0), color: '#b8bec6', kind: 'neighbor', twoSided: true });
+      faces.push({ pts: [v(a.x, a.y, z0), v(d.x, d.y, z0), v(d.x, d.y, zTop), v(a.x, a.y, zTop)], normal: v(0, 0, 0), color: '#b8bec6', kind: 'neighbor', twoSided: true });
     }
   }
+  if (hz) faces.push(...plinthFaces(project, hz));
   return faces;
 }
 
 // Все грани дома: этажи снизу вверх; roof — крыша над верхним этажом,
-// site — земля, граница и соседи.
-export function buildHouseMesh(project, { roof = false, site = false } = {}) {
+// site — земля (с рельефом, если есть отметки), граница и соседи;
+// terrainScale — вертикальное усиление рельефа (1×–5×).
+export function buildHouseMesh(project, { roof = false, site = false, terrainScale = 1 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
   for (const level of levels) {
@@ -206,6 +310,6 @@ export function buildHouseMesh(project, { roof = false, site = false } = {}) {
   }
   const top = levels[levels.length - 1];
   if (roof && top) faces.push(...roofFaces(levelProject(project, top.id), top.elevation + top.height));
-  if (site) faces.push(...siteFaces(project));
+  if (site) faces.push(...siteFaces(project, { terrainScale }));
   return faces;
 }

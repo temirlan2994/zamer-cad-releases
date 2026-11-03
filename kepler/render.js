@@ -17,6 +17,7 @@ import {
   sofaSpots,
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
+import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -150,7 +151,9 @@ export function createRenderer(canvas) {
       ctx.restore();
     }
 
-    // 2. Участок: дороги, запретная зона, соседи, тени.
+    // 2. Рельеф (закраска высот, горизонтали), затем участок: дороги,
+    // запретная зона, соседи, тени.
+    if (site) drawTerrainUnder(ctx, state, site, px);
     if (site) drawSiteUnder(ctx, state, site, tokens, px);
 
     // 3–6. Дом — в своих осях.
@@ -447,6 +450,7 @@ export function createRenderer(canvas) {
       drawSelectedOpeningUI(ctx, state, selOpening, walls, p2s, scale, tokens);
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });
     // Подпись «замкнуть/завершить» у первой точки черновика.
     if (state._snapLabelAt) {
       const p = w2s(state._snapLabelAt.x, state._snapLabelAt.y);

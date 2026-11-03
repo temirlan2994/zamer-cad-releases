@@ -6,6 +6,7 @@ import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { addFurnitureToSelection } from './plan-actions.js';
 import { state } from './state.js';
+import { startTerrainTool } from './terrain.js';
 import {
   activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceRoom,
 } from './tools.js';
@@ -75,6 +76,7 @@ export function renderLibrary() {
       action: () => (site?.roads?.length ? startEditLayer('road', { type: 'site', kind: 'road', id: site.roads[site.roads.length - 1].id }, editHint('дорога — тяните вершины')) : startDraw('road')) },
     { id: 'entry', title: 'Въезд', note: 'точка на границе', action: () => setTool({ kind: 'entry' }, 'Кликните/тяните по границе участка — там будет въезд · Esc — выйти') },
     { id: 'neighbor', title: 'Соседний дом', note: 'зона 6 м вокруг', action: () => setTool({ kind: 'neighbor' }, 'Кликните — новый дом; тяните углы для размера и поворота · Esc — выйти') },
+    { id: 'terrain', title: 'Отметка высоты', note: site?.terrain?.points?.length ? `${site.terrain.points.length} отм. · правка` : 'рельеф по точкам', action: startTerrainTool },
     { id: 'north', title: 'Север по 2 точкам', note: `сейчас ${Math.round(site?.north || 0)}°`, action: () => setTool({ kind: 'north', points: [] }, 'Кликните первую точку стрелки на север') },
   ];
   refs.siteTools.innerHTML = '';

@@ -1020,3 +1020,29 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .prj-vers { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
 .prj-ver { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
 .prj-ver span { flex: 1; }
+
+/* --- Рельеф (отметки высот) --- */
+.terrain-warn {
+  margin: 0;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+.terrain-corners { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.terrain-corners b { color: var(--text); font-weight: 600; }
+.terrain-xyz textarea {
+  width: 100%;
+  min-height: 110px;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; }
+.view3d-bar #v3Relief { width: 72px; }

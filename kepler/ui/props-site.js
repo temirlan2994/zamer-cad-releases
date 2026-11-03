@@ -11,6 +11,8 @@ import { state } from './state.js';
 import { mutate, tweak } from './store.js';
 import { selectObject, setTool, startDraw } from './tools.js';
 import { applyCalibration } from './underlay.js';
+import { bindTerrainSection, renderTerrainPointProps, terrainSection } from './props-terrain.js';
+import { importUnderlayMarks } from './terrain.js';
 import { requestDraw } from './view.js';
 
 // --- Свойства участка ---
@@ -51,6 +53,7 @@ export function renderSiteSettings(panel) {
         <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
       ${buildingRotationField()}
     </div>
+    ${terrainSection()}
     <h3>Отступы застройки</h3>
     <div class="prop-block">
       <label class="prop-field"><span>От границы участка, м</span>
@@ -87,6 +90,7 @@ export function renderSiteSettings(panel) {
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   bindBuildingRotation(panel);
+  bindTerrainSection(panel);
   panel.querySelector('#northDeg').addEventListener('change', (e) => {
     mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
     applyModeRotation();
@@ -141,6 +145,7 @@ export function renderSiteSettings(panel) {
 
 export function renderSiteObjectProps(panel, sel) {
   const site = state.project.site;
+  if (sel.kind === 'terrain-point' && renderTerrainPointProps(panel, sel)) return;
   if (sel.kind === 'boundary' && site.boundary) {
     panel.innerHTML = `
       <h2>Граница участка</h2>
@@ -230,9 +235,16 @@ export function renderSiteObjectProps(panel, sel) {
     const cal = state.calibration;
     const widthM = (u.widthPx * u.mmPerPx) / 1000;
     const heightM = (u.heightPx * u.mmPerPx) / 1000;
+    const marks = Array.isArray(u.marks) ? u.marks.length : 0;
     panel.innerHTML = `
       <h2>Топосъёмка</h2>
       <p class="subtitle">Размер картинки: ${widthM.toFixed(1)} × ${heightM.toFixed(1)} м</p>
+      ${marks ? `
+      <div class="prop-block cal-active">
+        <strong>В DXF найдено отметок высот: ${marks}</strong>
+        <button id="importMarks" class="primary-inline">Импортировать отметки из подложки DXF</button>
+        <p class="empty-hint">Сначала задайте масштаб и положение подложки: отметки встанут по ней. Повторный импорт заменит прежние DXF-отметки.</p>
+      </div>` : ''}
       <h3>Масштаб — 3 способа</h3>
       <div class="prop-block">
         <label class="prop-field"><span>1. Ширина топосъёмки, м (если знаете)</span>
@@ -309,6 +321,7 @@ export function renderSiteObjectProps(panel, sel) {
       });
     }
     panel.querySelector('#replaceUnderlay').addEventListener('click', () => refs.underlayInput.click());
+    panel.querySelector('#importMarks')?.addEventListener('click', () => { importUnderlayMarks(); selectObject(sel); });
     panel.querySelector('#del').addEventListener('click', deleteSelection);
     if (cal) {
       panel.querySelector('#calApply').addEventListener('click', () => {

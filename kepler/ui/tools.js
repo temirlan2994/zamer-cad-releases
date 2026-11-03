@@ -67,7 +67,9 @@ export function cancelTool() {
   state.northCursor = null;
   state.ghostDoor = null;
   state.guides = [];
+  state.elevEdit = null;
   if (!el('calOverlay').hidden) el('calOverlay').hidden = true;
+  if (!el('elevOverlay').hidden) el('elevOverlay').hidden = true;
   setHint('');
   renderLibrary();
   requestDraw();
@@ -108,6 +110,7 @@ export function activeSiteLayer() {
   if (t.kind === 'underlay-edit') return 'underlay';
   if (t.kind === 'entry') return 'entry';
   if (t.kind === 'neighbor') return 'neighbor';
+  if (t.kind === 'terrain') return 'terrain';
   if (t.kind === 'draw' || t.kind === 'edit') return t.target;
   return null;
 }

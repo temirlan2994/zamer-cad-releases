@@ -33,6 +33,9 @@ import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from 
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
+  applyElevInput, hitTerrainPoint, openElevInput, positionElevInput, terrainStatus,
+} from './terrain.js';
+import {
   pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, worldToPlan, worldToScreen, zoomAt,
 } from './view.js';
 
@@ -71,6 +74,7 @@ function movePinch() {
   state.view.panY = mid.y - p.y;
   refs.statusScale.textContent = scaleLabel();
   positionCalInput();
+  positionElevInput();
   if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
   requestDraw();
 }
@@ -232,6 +236,14 @@ function updateHoverAndGhost(world, plan) {
     requestDraw();
     return;
   }
+  if (state.tool?.kind === 'terrain') {
+    const s = worldToScreen(world.x, world.y);
+    const tp = hitTerrainPoint(s);
+    const next = tp ? { type: 'site-obj', kind: 'terrain-point', id: tp.id } : null;
+    canvas.style.cursor = tp ? 'move' : 'crosshair';
+    if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
+    return;
+  }
   if (state.tool) return;
 
   // Подсветка под курсором: мебель, проёмы, стены, комнаты, объекты участка.
@@ -358,6 +370,18 @@ export function bindCanvasInput() {
       return;
     }
     if (layer === 'entry') { startEntryDrag(world); return; }
+    if (layer === 'terrain') {
+      // Открытое поле с введённым числом — сохраняем, пустое — закрываем.
+      if (state.elevEdit) applyElevInput({ quiet: true });
+      const tp = hitTerrainPoint(screen);
+      if (tp) {
+        selectObject({ type: 'site', kind: 'terrain-point', id: tp.id });
+        drag = { kind: 'terrain-point', id: tp.id, start: { x: tp.x, y: tp.y }, world, screen, before: snapshot(), moved: false };
+        return;
+      }
+      openElevInput(world);
+      return;
+    }
     if (layer === 'boundary' || layer === 'redline' || layer === 'road') {
       const v = hitSiteVertex(screen);
       if (v) {
@@ -520,7 +544,8 @@ export function bindCanvasInput() {
     const plan = worldToPlan(world);
     // В «Плане» — координаты в осях дома, в «Участке» — координаты съёмки.
     const shown = state.modeName === 'plan' ? plan : world;
-    refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`;
+    refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`
+      + (state.modeName === 'site' ? terrainStatus(world) : '');
 
     if (!drag) { updateHoverAndGhost(world, plan); return; }
 
@@ -528,7 +553,20 @@ export function bindCanvasInput() {
       state.view.panX = drag.view.panX + (screen.x - drag.start.x);
       state.view.panY = drag.view.panY + (screen.y - drag.start.y);
       positionCalInput();
+      positionElevInput();
       if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
+      requestDraw();
+      return;
+    }
+
+    if (drag.kind === 'terrain-point') {
+      const p = state.project.site.terrain?.points.find((x) => x.id === drag.id);
+      if (!p) return;
+      // Порог 3 px: простой клик по точке не создаёт записи в истории.
+      if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
+      drag.moved = true;
+      p.x = Math.round((drag.start.x + (world.x - drag.world.x)) / 10) * 10;
+      p.y = Math.round((drag.start.y + (world.y - drag.world.y)) / 10) * 10;
       requestDraw();
       return;
     }
