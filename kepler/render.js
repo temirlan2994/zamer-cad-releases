@@ -22,9 +22,10 @@ import {
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
 import { facadeDimensionStations, shapedRoomDimensionChains } from './core/dimensions.js';
-import { roomLabelPoint, roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
+import { roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
+import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -480,10 +481,17 @@ export function createRenderer(canvas) {
     // --- Экранный слой ---
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    // Подписи и размеры зависят от масштаба: при отдалении шрифт меньше,
+    // мельче 8 px подписи не рисуются, размеры скрываются раньше.
+    const text = planTextScale(scale * 1000, { print });
+    state._labelBoxes = [];
     if (detail) {
-      for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens);
+      if (text.labels) {
+        const obstacles = labelObstacles(state.project, walls);
+        for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens, obstacles, text, print);
+      }
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-      drawAllRoomDims(ctx, state, walls, p2s, tokens);
+      if (text.dims) drawAllRoomDims(ctx, state, walls, p2s, tokens);
     }
     state._wallUI = null;
     const selWall = state.selection?.type === 'wall'
@@ -577,11 +585,13 @@ export function createRenderer(canvas) {
       });
       ctx.closePath();
       ctx.stroke();
-      const top = p2s((corners[0].x + corners[1].x) / 2, (corners[0].y + corners[1].y) / 2);
-      ctx.fillStyle = tokens.accent;
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`, top.x, top.y - 10);
+      // Подпись размера — над верхней (на экране) точкой объекта, вне его,
+      // на подложке: не сливается с именем комнаты.
+      const sc = corners.map((c) => p2s(c.x, c.y));
+      const topY = Math.min(...sc.map((p) => p.y));
+      const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
+      drawTextPill(ctx, `${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`,
+        midX, topY - 12, tokens, tokens.accent);
       for (const r of itemRotators(selItem, 20, scale)) {
         const p = p2s(r.x, r.y);
         ctx.fillStyle = tokens.surface;
@@ -598,16 +608,17 @@ export function createRenderer(canvas) {
 
     if (state.ghost?.rect) {
       const g = state.ghost;
-      const p = p2s(g.rect.x + g.rect.w / 2, g.rect.y + g.rect.h / 2);
-      ctx.fillStyle = g.warn ? '#e08c1e' : (g.valid ? tokens.accent : tokens.danger);
-      ctx.font = '600 12px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      const label = g.label || `${(g.rect.w / 1000).toFixed(1)} × ${(g.rect.h / 1000).toFixed(1)} м`;
-      ctx.fillText(label, p.x, p.y);
-      if (g.reason) {
-        ctx.font = '11px system-ui, sans-serif';
-        ctx.fillText(g.reason, p.x, p.y + 16);
-      }
+      // Размер призрака — над его верхней (на экране) гранью, на подложке:
+      // в центре он ложился на имя комнаты.
+      const r = g.rect;
+      const sc = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => p2s(x, y));
+      const topY = Math.min(...sc.map((q) => q.y));
+      const midX = sc.reduce((sum, q) => sum + q.x, 0) / 4;
+      const color = g.warn ? '#e08c1e' : (g.valid ? tokens.accent : tokens.danger);
+      const label = g.label || `${(r.w / 1000).toFixed(1)} × ${(r.h / 1000).toFixed(1)} м`;
+      const y0 = topY - (g.reason ? 30 : 12);
+      drawTextPill(ctx, label, midX, y0, tokens, color, '600 12px system-ui, sans-serif');
+      if (g.reason) drawTextPill(ctx, g.reason, midX, y0 + 18, tokens, color);
     }
 
     // Рамка выделения (ЛКМ по пустому месту).
@@ -1722,26 +1733,77 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawRoomLabel(ctx, state, room, w2s, tokens) {
-  const label = roomLabelPoint(room);
-  const center = w2s(label.x, label.y);
+// Подпись комнаты (имя, площадь, инсоляция) в свободной части комнаты:
+// точку выбирает core/label-anchor.js по рамке подписи, пересчитанной в мм.
+// Экранная рамка подписи сохраняется в state._labelBoxes — от неё отходят
+// размер выбранной стены и кнопки двери.
+function drawRoomLabel(ctx, state, room, w2s, tokens, obstacles = [], text = { font: 13 }, print = false) {
   const shaft = isShaft(room);
   const area = shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room);
+  const ins = !shaft && state.project.site?.sun?.enabled ? state.norms?.insolation.rooms.find((r) => r.id === room.id) : null;
+  const showIns = Boolean(ins && (ins.living || ins.windows));
+  const k = text.font / 13;
+  const fontOf = (weight, size) => `${weight}${(size * k).toFixed(1)}px system-ui, sans-serif`;
+  const areaText = `${area.toFixed(1)} м²`;
+  const insText = showIns ? `☀ ${ins.windows ? formatDuration(ins.longest) : 'нет окон'}` : '';
+  ctx.font = fontOf('600 ', 13);
+  let tw = ctx.measureText(room.name).width;
+  if (!shaft) { ctx.font = fontOf('', 12); tw = Math.max(tw, ctx.measureText(areaText).width); }
+  if (showIns) { ctx.font = fontOf('600 ', 11); tw = Math.max(tw, ctx.measureText(insText).width); }
+  const bw = tw + 8 * k;
+  const bh = (shaft ? 18 : (showIns ? 50 : 34)) * k;
+  // Рамка подписи в мм в осях дома (с учётом поворота вида).
+  const o = w2s(0, 0); const ex = w2s(1000, 0);
+  const pxPerMm = Math.hypot(ex.x - o.x, ex.y - o.y) / 1000 || 1;
+  const ang = Math.atan2(ex.y - o.y, ex.x - o.x);
+  const c = Math.abs(Math.cos(ang)); const s = Math.abs(Math.sin(ang));
+  const wMm = bw / pxPerMm; const hMm = bh / pxPerMm;
+  const labelW = wMm * c + hMm * s;
+  const labelH = wMm * s + hMm * c;
+  // При отдалении подпись, которая заметно больше комнаты, не рисуется.
+  if (!print && k < 1) {
+    const rb = roomRects(room).reduce((acc, r) => ({ w: Math.max(acc.w, r.w), h: Math.max(acc.h, r.h) }), { w: 0, h: 0 });
+    if (labelW > rb.w * 1.5 || labelH > rb.h * 1.5) return;
+  }
+  const anchor = roomLabelAnchor(room, obstacles, { labelW, labelH });
+  const center = w2s(anchor.x, anchor.y);
+  state._labelBoxes?.push({ x: center.x - bw / 2, y: center.y - bh / 2, w: bw, h: bh, roomId: room.id });
+  const lift = showIns ? 8 : 0;
   ctx.textAlign = 'center';
   ctx.fillStyle = tokens.text;
-  ctx.font = '600 13px system-ui, sans-serif';
-  ctx.fillText(room.name, center.x, center.y + (shaft ? 4 : -4));
+  ctx.font = fontOf('600 ', 13);
+  ctx.fillText(room.name, center.x, center.y + (shaft ? 4 : -5 - lift) * k);
   if (shaft) return;
   ctx.fillStyle = tokens.muted;
-  ctx.font = '12px system-ui, sans-serif';
-  ctx.fillText(`${area.toFixed(1)} м²`, center.x, center.y + 13);
+  ctx.font = fontOf('', 12);
+  ctx.fillText(areaText, center.x, center.y + (12 - lift) * k);
   // Инсоляция комнаты (при включённом солнце): зелёным — жилая в норме.
-  const ins = state.project.site?.sun?.enabled ? state.norms?.insolation.rooms.find((r) => r.id === room.id) : null;
-  if (ins && (ins.living || ins.windows)) {
+  if (showIns) {
     ctx.fillStyle = ins.living ? (ins.meets ? tokens.ok : tokens.danger) : tokens.muted;
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.fillText(`☀ ${ins.windows ? formatDuration(ins.longest) : 'нет окон'}`, center.x, center.y + 29);
+    ctx.font = fontOf('600 ', 11);
+    ctx.fillText(insText, center.x, center.y + (28 - lift) * k);
   }
+}
+
+// Пересекается ли экранный прямоугольник с подписями комнат.
+function hitsLabels(state, box, pad = 2) {
+  return (state._labelBoxes || []).some((b) => box.x < b.x + b.w + pad && box.x + box.w > b.x - pad &&
+    box.y < b.y + b.h + pad && box.y + box.h > b.y - pad);
+}
+
+// Подпись на подложке цвета поверхности — читается поверх плана и имён.
+function drawTextPill(ctx, label, x, y, tokens, color, font = '11px system-ui, sans-serif') {
+  ctx.font = font;
+  ctx.textAlign = 'center';
+  const tw = ctx.measureText(label).width + 10;
+  ctx.fillStyle = tokens.surface;
+  ctx.globalAlpha = 0.92;
+  ctx.beginPath();
+  roundRectPath(ctx, x - tw / 2, y - 12, tw, 16, 4);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.fillText(label, x, y);
 }
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со
@@ -2164,7 +2226,18 @@ function drawSelectedOpeningUI(ctx, state, opening, walls, w2s, scale, tokens) {
       ui.flips.push({ x: p.x, y: p.y, kind });
     };
     // Куда открывается — кружок на стороне открывания, перпендикулярно стене.
-    flip(cAlong, wall.edge + outward * -(wall.thickness + 900), 'swing', '⇅');
+    // У раздвижной и проёма без двери открывания нет — кнопки нет. Кружок
+    // не садится на подпись комнаты: при наложении ищется другой отступ.
+    const type = opening.type || 'single';
+    if (type === 'single' || type === 'double') {
+      let perp = wall.edge + outward * -(wall.thickness + 900);
+      for (const d of [900, 600, 1200, 450, 1500]) {
+        const at = wall.edge + outward * -(wall.thickness + d);
+        const p = w2s(...Object.values(worldPt(cAlong, at)));
+        if (!hitsLabels(state, { x: p.x - 13, y: p.y - 13, w: 26, h: 26 })) { perp = at; break; }
+      }
+      flip(cAlong, perp, 'swing', '⇅');
+    }
     // Петли — вдоль стены за торцом проёма.
     flip(cAlong + (half + 650), cPerp, 'hinge', '⇆');
   }
@@ -2183,9 +2256,18 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
   for (const dim of wallRoomDimensions(state.project, wall)) {
     const a = dim.orient === 'h' ? w2s(dim.along, dim.edge.edge) : w2s(dim.edge.edge, dim.along);
     const b = dim.orient === 'h' ? w2s(dim.along, dim.opposite.edge) : w2s(dim.opposite.edge, dim.along);
+    // Линия не перечёркивает подписи комнат: их рамки вырезаются из клипа.
+    ctx.save();
+    if (state._labelBoxes?.length) {
+      ctx.beginPath();
+      ctx.rect(-1e5, -1e5, 2e5, 2e5);
+      for (const box of state._labelBoxes) ctx.rect(box.x - 2, box.y - 2, box.w + 4, box.h + 4);
+      ctx.clip('evenodd');
+    }
     ctx.beginPath();
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
     ctx.stroke();
+    ctx.restore();
     const dx = b.x - a.x; const dy = b.y - a.y;
     const len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len; const ny = dx / len;
@@ -2195,12 +2277,18 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
       ctx.lineTo(point.x + nx * 5, point.y + ny * 5);
       ctx.stroke();
     }
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
     const label = String(Math.round(dim.distance));
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
     const tw = ctx.measureText(label).width + 12;
+    // Подпись — в середине линии, а если там имя комнаты — ближе к концам.
+    let mx = (a.x + b.x) / 2;
+    let my = (a.y + b.y) / 2;
+    for (const t of [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85]) {
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      if (!hitsLabels(state, { x: x - tw / 2, y: y - 10, w: tw, h: 20 })) { mx = x; my = y; break; }
+    }
     ctx.fillStyle = tokens.surface;
     ctx.fillRect(mx - tw / 2, my - 10, tw, 20);
     ctx.strokeStyle = tokens.accent;
