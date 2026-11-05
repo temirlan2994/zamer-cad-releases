@@ -200,7 +200,22 @@ export function createRenderer(canvas) {
       const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
         (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
       const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
-      if (wall.hidden && !selected && !hovered) return;
+      if (wall.hidden && !selected && !hovered) {
+        // Скрытая стена — тонкий пунктир по оси: видно, где была граница.
+        const c = wall.center;
+        if (!c) return;
+        ctx.save();
+        ctx.strokeStyle = tokens.wall;
+        ctx.globalAlpha = 0.6;
+        ctx.lineWidth = px(1);
+        ctx.setLineDash([px(6), px(4)]);
+        ctx.beginPath();
+        ctx.moveTo(c.x1, c.y1);
+        ctx.lineTo(c.x2, c.y2);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
       ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
       if (selected) ctx.fillStyle = tokens.accent;
       else if (hovered) ctx.fillStyle = tokens.hover;

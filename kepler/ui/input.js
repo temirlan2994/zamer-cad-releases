@@ -6,7 +6,8 @@ import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { nearestPointOnPolyline } from '../core/site.js';
-import { clampOpeningOffset, openingRect, sideEdge } from '../core/walls.js';
+import { openingRect, sideEdge } from '../core/walls.js';
+import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
@@ -787,8 +788,10 @@ export function bindCanvasInput() {
       const edge = sideEdge(room, opening.side);
       const base = edge.orient === 'h' ? room.x : room.y;
       const desired = (edge.orient === 'h' ? plan.x : plan.y) - base;
-      const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
-      if (clamped !== null) opening.offset = Math.round(clamped / GRID_STEP) * GRID_STEP;
+      // Сначала шаг сетки, потом поиск свободного места: округление не должно
+      // загонять проём на соседний (зазор ≥ OPENING_GAP).
+      const clamped = fitOpeningOffset(state.project, opening, state.walls, Math.round(desired / GRID_STEP) * GRID_STEP);
+      if (clamped !== null) opening.offset = clamped;
       requestDraw();
       return;
     }
@@ -829,7 +832,7 @@ export function bindCanvasInput() {
       width = Math.max(300, Math.round(width / 50) * 50);
       const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
       const probe = { ...opening, width };
-      const clamped = clampOpeningOffset(state.project, probe, state.walls, center);
+      const clamped = fitOpeningOffset(state.project, probe, state.walls, center);
       if (clamped !== null) {
         opening.width = width;
         opening.offset = clamped;

@@ -6,10 +6,11 @@ import { activeLevel, levelProject, roomById } from '../core/model.js';
 import { SP55 } from '../core/norms.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
 import {
-  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, clampOpeningOffset, deriveWalls, openingRect,
+  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingRect,
   wallClassThickness,
 } from '../core/walls.js';
 import { roomShapeArea } from '../core/room-shape.js';
+import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
@@ -393,9 +394,9 @@ function renderOpeningProps(panel, opening) {
     const width = Math.max(300, Number(e.target.value) || opening.width);
     commitOpening(() => {
       opening.width = width;
-      const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), opening.offset);
+      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), opening.offset);
       if (clamped !== null) opening.offset = clamped;
-      else toast('Проём шире стены — уменьшите ширину');
+      else toast('Проём шире свободного участка стены (с зазором 100 мм до соседних) — уменьшите ширину');
     });
   });
   panel.querySelector('#openType').addEventListener('change', (e) => {
@@ -428,18 +429,18 @@ function renderOpeningProps(panel, opening) {
       ? (wall.from - base) + opening.width / 2 + value
       : (wall.to - base) - opening.width / 2 - value;
     commitOpening(() => {
-      const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
+      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
       if (clamped !== null) opening.offset = clamped;
-      else toast('Сюда проём не помещается');
+      else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });
   };
   if (leftGap !== null) panel.querySelector('#gapL').addEventListener('change', setByGap(true));
   if (rightGap !== null) panel.querySelector('#gapR').addEventListener('change', setByGap(false));
   panel.querySelector('#openOff').addEventListener('change', (e) => {
     commitOpening(() => {
-      const clamped = clampOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || opening.offset);
+      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || opening.offset);
       if (clamped !== null) opening.offset = clamped;
-      else toast('Сюда проём не помещается');
+      else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });
   });
 }

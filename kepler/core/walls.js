@@ -424,7 +424,8 @@ function fillWallJoints(walls) {
   const fillers = [];
   const seen = new Set();
   for (const wall of walls) {
-    if (wall.hidden) continue;
+    // Скрытую стену не рисуем, но заплатку в перпендикулярной (наружной)
+    // стене на её торце оставляем: иначе контур дома рвётся щелью в зазор.
     // Перпендикулярные полосы, чья грань совпадает с концом этой стены.
     const perpOrient = wall.orient === 'h' ? 'v' : 'h';
     for (const end of [wall.from, wall.to]) {

@@ -6,6 +6,8 @@ import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomByI
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { keepOpenings } from '../core/opening-anchor.js';
+import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
+import { planRoomDuplicate } from '../core/duplicate-room.js';
 import { roomContainsPoint, splitRoomOutlineWall } from '../core/room-shape.js';
 import {
   determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
@@ -35,7 +37,12 @@ export function reconcileOpenings() {
       opening.offset = clamped;
     }
   }
-  if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`);
+  // Прижатые к краю (Б3) или вставленные проёмы не должны налезать друг на
+  // друга: раздвигаем с зазором OPENING_GAP, не помещающиеся — удаляем.
+  const spaced = resolveOpeningConflicts(state.project, walls);
+  if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`, true);
+  if (spaced.dropped.length) toast(`Проёмов удалено: ${spaced.dropped.length} — на стене нет места (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
+  else if (spaced.moved.length) toast(`Проёмы раздвинуты, чтобы не налезали друг на друга: ${spaced.moved.length}`);
 }
 
 // Деление не меняет форму: на месте клика появляются две совпадающие вершины.
@@ -136,7 +143,10 @@ export function computeOpeningParams(at) {
   const opening = createOpening(openKind, roomId, side, along - base, width);
   const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
   if (clamped === null) return { error: 'На этом участке стены проём не помещается' };
-  opening.offset = clamped;
+  // Ближайшее место, где проём не налезает на соседние (зазор ≥ OPENING_GAP).
+  const free = fitOpeningOffset(state.project, opening, state.walls, along - base);
+  if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
+  opening.offset = free;
   if (openKind === 'door') {
     // Сторона открывания — та, где мышь относительно линии стены.
     const perpRoomCenter = wall.orient === 'h' ? room.y + room.h / 2 : room.x + room.w / 2;
@@ -372,10 +382,14 @@ function pasteOpening(clipboard) {
   Object.assign(copy, cloneData(source), { id });
   const walls = deriveWalls(state.project);
   const step = (source.width + 300) * (clipboard.pastes + 1);
-  const right = clampOpeningOffset(state.project, copy, walls, source.offset + step);
-  const left = clampOpeningOffset(state.project, copy, walls, source.offset - step);
-  copy.offset = right !== null && Math.abs(right - source.offset) > 1 ? right
-    : left !== null ? left : source.offset;
+  const right = fitOpeningOffset(state.project, copy, walls, source.offset + step);
+  const left = fitOpeningOffset(state.project, copy, walls, source.offset - step);
+  if (right === null && left === null) {
+    toast(`На стене нет места для копии проёма (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
+    return false;
+  }
+  copy.offset = right === null ? left : left === null ? right
+    : Math.abs(right - source.offset - step) <= Math.abs(left - source.offset + step) ? right : left;
   mutate(() => { state.project.openings.push(copy); });
   clipboard.pastes += 1;
   selectObject({ type: 'opening', id: copy.id });
@@ -468,10 +482,14 @@ function duplicateOpeningSelection(sel) {
   Object.assign(copy, JSON.parse(JSON.stringify(source)), { id });
   const walls = deriveWalls(state.project);
   const step = source.width + 300;
-  const right = clampOpeningOffset(state.project, copy, walls, source.offset + step);
-  const left = clampOpeningOffset(state.project, copy, walls, source.offset - step);
-  copy.offset = right !== null && Math.abs(right - source.offset) > 1 ? right
-    : left !== null ? left : source.offset;
+  const right = fitOpeningOffset(state.project, copy, walls, source.offset + step);
+  const left = fitOpeningOffset(state.project, copy, walls, source.offset - step);
+  if (right === null && left === null) {
+    toast(`На стене нет места для копии проёма (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
+    return false;
+  }
+  copy.offset = right === null ? left : left === null ? right
+    : Math.abs(right - source.offset - step) <= Math.abs(left - source.offset + step) ? right : left;
   mutate(() => { state.project.openings.push(copy); });
   selectObject({ type: 'opening', id: copy.id });
   toast(`Создана копия ${source.kind === 'door' ? 'двери' : 'окна'}`);
@@ -480,45 +498,26 @@ function duplicateOpeningSelection(sel) {
 function duplicateRoomSelection(sel) {
   const source = roomById(state.project, sel.id);
   if (!source) return;
-  const partition = state.project.settings?.partition || 100;
-  let dx = source.parentId ? source.w + partition : source.w + partition;
-  let candidate = { ...source, x: source.x + dx };
-  if (source.parentId && !validateRoomPlacement(state.project, candidate, null).ok) {
-    dx = -(source.w + partition);
-    candidate = { ...source, x: source.x + dx };
-    if (!validateRoomPlacement(state.project, candidate, null).ok) {
-      toast('Рядом нет места для копии вложенного помещения', true);
-      return;
-    }
-  }
-  const sourceRooms = [source, ...state.project.rooms.filter((room) => !source.parentId && room.parentId === source.id)];
-  const roomMap = new Map();
-  const copies = sourceRooms.map((room) => {
-    const copy = createRoom(room.type, room.x + dx, room.y, room.w, room.h);
-    const id = copy.id;
-    Object.assign(copy, JSON.parse(JSON.stringify(room)), { id, x: room.x + dx });
-    roomMap.set(room.id, copy.id);
-    return copy;
-  });
-  for (let i = 0; i < sourceRooms.length; i += 1) {
-    const oldParent = sourceRooms[i].parentId;
-    copies[i].parentId = roomMap.get(oldParent) || oldParent || null;
-  }
+  // Место копии и судьба её проёмов — в core/duplicate-room.js: окна копии
+  // в общей стене удаляются, остальные проёмы раздвигаются с соседями.
+  const plan = planRoomDuplicate(state.project, source.id);
+  if (!plan.ok) { toast(plan.reason, true); return; }
+  const { dx, dy, rooms: copies, openings } = plan;
   copies[0].name = `${source.name} — копия`;
-  const openings = state.project.openings.filter((opening) => roomMap.has(opening.roomId)).map((opening) => {
-    const copy = createOpening(opening.kind, roomMap.get(opening.roomId), opening.side, opening.offset, opening.width);
-    const id = copy.id;
-    return Object.assign(copy, JSON.parse(JSON.stringify(opening)), { id, roomId: roomMap.get(opening.roomId) });
-  });
   const items = state.project.items.filter((item) => roomContainsPoint(source, item.x, item.y))
-    .map((item) => cloneItem(item, dx, 0));
+    .map((item) => cloneItem(item, dx, dy));
   mutate(() => {
     state.project.rooms.push(...copies);
     state.project.openings.push(...openings);
     state.project.items.push(...items);
   });
   selectObject({ type: 'room', id: copies[0].id });
-  toast('Создана копия помещения справа от исходного');
+  const where = plan.detached ? 'отдельно справа от дома (вплотную места нет)'
+    : dx > 0 ? 'справа от исходного' : dx < 0 ? 'слева от исходного' : dy > 0 ? 'снизу от исходного' : 'сверху от исходного';
+  const notes = [];
+  if (plan.removedOpenings) notes.push(`Проёмов удалено: ${plan.removedOpenings}`);
+  if (plan.movedOpenings) notes.push(`сдвинуто: ${plan.movedOpenings}`);
+  toast(`Создана копия помещения ${where}${notes.length ? ` · ${notes.join(', ')}` : ''}`, plan.removedOpenings > 0);
 }
 
 export function duplicateSelection() {
