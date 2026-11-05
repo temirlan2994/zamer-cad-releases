@@ -6,6 +6,7 @@ import {
   deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge,
 } from './core/walls.js';
 import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
+import { tempDimensions } from './core/temp-dims.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './core/catalog.js';
 import {
@@ -669,6 +670,7 @@ export function createRenderer(canvas) {
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
     state._sofaUI = null;
     state._kitchenUI = null;
+    state._tempDimsUI = null;
     if (selItem) {
       // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
       const corners = itemCorners(selItem);
@@ -686,9 +688,15 @@ export function createRenderer(canvas) {
       const sc = corners.map((c) => p2s(c.x, c.y));
       const topY = Math.min(...sc.map((p) => p.y));
       const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
-      drawTextPill(ctx, `${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`,
-        midX, topY - 12, tokens, tokens.accent);
+      const sizeLabel = `${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`;
+      drawTextPill(ctx, sizeLabel, midX, topY - 12, tokens, tokens.accent);
       const handleMode = itemHandleMode(state.itemHandle, selItem.id);
+      // Временные размеры до стен и соседней мебели (в режиме поворота — нет).
+      if (!print && state.modeName === 'plan' && handleMode !== 'rotate') {
+        const sizeW = ctx.measureText(sizeLabel).width + 10;
+        drawTempDims(ctx, state, selItem, p2s, tokens,
+          { x: midX - sizeW / 2, y: topY - 24, w: sizeW, h: 16 });
+      }
       const rotatorsPx = [];
       for (const r of handleMode === 'rotate' ? itemRotators(selItem, 20, scale) : []) {
         const p = p2s(r.x, r.y);
@@ -2544,6 +2552,84 @@ function drawDim(ctx, p, q, n, off, label) {
     ctx.fillText(label, 0, 3);
     ctx.restore();
   }
+}
+
+// Временные размеры выбранного предмета (core/temp-dims.js): линия с
+// засечками от грани до цели и кликабельная подпись. Рамки подписей (экран)
+// — в state._tempDimsUI для ui/temp-dims.js. avoid — рамка подписи габарита.
+function drawTempDims(ctx, state, item, p2s, tokens, avoid) {
+  const dims = tempDimensions(state.project, item);
+  const ui = { itemId: item.id, dims: [] };
+  state._tempDimsUI = ui;
+  if (!dims.length) return;
+  const minHit = state.coarsePointer ? 36 : 20;
+  const boxes = [avoid];
+  const overlaps = (r) => boxes.some((b) => r.x < b.x + b.w && b.x < r.x + r.w && r.y < b.y + b.h && b.y < r.y + r.h);
+  ctx.save();
+  ctx.font = '600 12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const dim of dims) {
+    const a = p2s(dim.from.x, dim.from.y);
+    const b = p2s(dim.to.x, dim.to.y);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len < 2) continue;
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    ctx.strokeStyle = tokens.accent;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+    // Засечки 45° на концах, как у обычных размеров.
+    const tx = (ux - uy) * 4.5;
+    const ty = (uy + ux) * 4.5;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (const p of [a, b]) { ctx.moveTo(p.x - tx, p.y - ty); ctx.lineTo(p.x + tx, p.y + ty); }
+    ctx.stroke();
+    const label = String(Math.round(dim.value));
+    const w = ctx.measureText(label).width + 10;
+    const h = 18;
+    // Подпись — в середине; короткая линия — подпись за целью.
+    let cx = (a.x + b.x) / 2;
+    let cy = (a.y + b.y) / 2;
+    const along = Math.abs(ux) > 0.5 ? w : h;
+    if (len < along + 12) { cx = b.x + ux * (along / 2 + 6); cy = b.y + uy * (along / 2 + 6); }
+    const at = (shift) => ({ x: cx - uy * shift - w / 2, y: cy + ux * shift - h / 2, w, h });
+    let box = at(0);
+    // Не на подписи габарита, соседней подписи и имени комнаты — ближайший
+    // свободный сдвиг вбок от линии (имя комнаты — только если иначе никак).
+    const free = (r) => !overlaps(r) && !hitsLabels(state, r);
+    if (!free(box)) {
+      let found = null;
+      for (let k = 1; k <= 14 && !found; k += 1) {
+        for (const s of [k * 6, -k * 6]) if (!found && free(at(s))) found = at(s);
+      }
+      for (let k = 1; k <= 14 && !found && overlaps(box); k += 1) {
+        for (const s of [k * 6, -k * 6]) if (!found && !overlaps(at(s))) found = at(s);
+      }
+      if (found) box = found;
+    }
+    boxes.push(box);
+    ctx.fillStyle = tokens.surface;
+    ctx.strokeStyle = tokens.accent;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    roundRectPath(ctx, box.x, box.y, w, h, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = tokens.accent;
+    ctx.fillText(label, box.x + w / 2, box.y + h / 2 + 0.5);
+    // Цель попадания — не меньше minHit (на телефоне ~36 px).
+    const hw = Math.max(w, minHit);
+    const hh = Math.max(h, minHit);
+    ui.dims.push({
+      dir: dim.dir, value: dim.value, x: box.x + w / 2, y: box.y + h / 2,
+      box: { x: box.x + w / 2 - hw / 2, y: box.y + h / 2 - hh / 2, w: hw, h: hh },
+    });
+  }
+  ctx.restore();
 }
 
 // Выноска от стены к размерной линии — бледнее основной линии.

@@ -622,6 +622,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .split-overlay .split-ok,
 .split-overlay .split-cancel { border: 1px solid var(--border); border-radius: 6px; }
 .split-overlay .split-ok { color: var(--accent); font-weight: 700; }
+/* ✓ у поля размера — для телефона (Enter на экранной клавиатуре не всегда есть). */
+.cal-overlay .dim-ok {
+  font: inherit;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 32px;
+  min-height: 32px;
+  cursor: pointer;
+}
 
 /* --- Меню «+» дивана-конструктора --- */
 .sofa-menu {

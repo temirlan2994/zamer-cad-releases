@@ -55,6 +55,7 @@ export function bindToolbar() {
     if (e.key === 'Enter') { e.preventDefault(); applyDimInput(); }
     else if (e.key === 'Escape') { e.preventDefault(); hideDimInput(); }
   });
+  el('dimInputOk').addEventListener('click', () => applyDimInput());
   el('draftDone').addEventListener('click', () => finishDraft());
   bindElevInput();
   el('calInput').addEventListener('keydown', (e) => {

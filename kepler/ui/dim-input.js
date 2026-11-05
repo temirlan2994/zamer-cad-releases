@@ -8,14 +8,15 @@ import { el, toast } from './dom.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { selectObject } from './tools.js';
+import { applyTempDim } from './temp-dims.js';
 
 // Инлайн-ввод размера (отступа до стены) прямо на размерной линии.
 export function openDimInput(dim) {
   const overlay = el('dimInput');
   const input = el('dimInputField');
-  state.dimEdit = dim.type === 'wall'
-    ? { type: 'wall', wallKey: dim.wallKey, wallFrom: dim.wallFrom, roomId: dim.roomId }
-    : { type: 'opening', openingId: state.selection.id, kind: dim.kind };
+  if (dim.type === 'item-temp') state.dimEdit = { type: 'item-temp', itemId: dim.itemId, dir: dim.dir };
+  else if (dim.type === 'wall') state.dimEdit = { type: 'wall', wallKey: dim.wallKey, wallFrom: dim.wallFrom, roomId: dim.roomId };
+  else state.dimEdit = { type: 'opening', openingId: state.selection.id, kind: dim.kind };
   input.value = Math.round(dim.gap);
   overlay.style.left = `${dim.x}px`;
   overlay.style.top = `${dim.y}px`;
@@ -31,6 +32,13 @@ export function hideDimInput() {
 export function applyDimInput() {
   const edit = state.dimEdit;
   if (!edit) return;
+  if (edit.type === 'item-temp') {
+    // Временный размер мебели: при ошибке поле остаётся открытым.
+    const res = applyTempDim(edit, el('dimInputField').value);
+    if (!res.ok) { toast(res.reason || 'Так переместить предмет нельзя'); return; }
+    hideDimInput();
+    return;
+  }
   if (edit.type === 'wall') {
     const value = Math.max(0, Number(el('dimInputField').value) || 0);
     const walls = deriveWalls(state.project);

@@ -21,6 +21,7 @@ import {
 } from '../render.js';
 import { ITEM_HANDLE_TITLES, nextItemHandle, stretchItem } from '../core/item-handles.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
+import { hitTempDim } from './temp-dims.js';
 import { hideSplitInput } from './split-input.js';
 import { focusGap, gapMarkerAt } from './gaps.js';
 import {
@@ -339,6 +340,7 @@ function updateHoverAndGhost(world, plan, event) {
     if (site) nextHover = { type: 'site-obj', kind: site.kind, id: site.id };
   }
   canvas.style.cursor = nextHover ? 'pointer' : 'crosshair';
+  if (event?.clientX !== undefined && state._tempDimsUI && hitTempDim(pointerScreen(event))) canvas.style.cursor = 'text';
   if (JSON.stringify(nextHover) !== JSON.stringify(state.hover)) {
     state.hover = nextHover;
     requestDraw();
@@ -536,6 +538,10 @@ export function bindCanvasInput() {
         if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
       }
     }
+    // Подпись временного размера мебели — раньше ручек и перетаскивания предмета
+    // (на телефоне — сразу по касанию, без удержания).
+    const tempDimHit = hitTempDim(screen);
+    if (tempDimHit) { openDimInput(tempDimHit); return; }
 
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
     const gapHit = gapMarkerAt(screen.x, screen.y);
