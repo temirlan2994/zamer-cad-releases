@@ -6,6 +6,7 @@
 // и линии плана выходят того же размера, что на экране (≈3 мм текст).
 
 import { rectCornersWorld } from '../core/building.js';
+import { LS_COLORS, landscapeDef } from '../core/landscape.js';
 import { groundLevel, levelProject, sortedLevels } from '../core/model.js';
 import { buildImagePdf } from '../core/pdf.js';
 import { roomSchedule } from '../core/schedule.js';
@@ -205,6 +206,64 @@ function siteTable(ctx, project) {
   ctx.textAlign = 'left';
 }
 
+// Условные обозначения ландшафта (генплан): только группы, что есть на участке.
+export function landscapeLegend(objects) {
+  const has = { plants: false, green: false, hard: false, water: false, small: false, fence: false };
+  for (const o of objects || []) {
+    const def = landscapeDef(o.kind);
+    if (!def) continue;
+    if (def.group === 'Деревья' || def.group === 'Кустарники' || o.kind === 'grass-clump') has.plants = true;
+    else if (def.group === 'Ограждение') has.fence = true;
+    else if (def.surface === 'green') has.green = true;
+    else if (def.surface === 'water') has.water = true;
+    else if (def.surface === 'hard') has.hard = true;
+    else has.small = true;
+  }
+  return [
+    ['plants', 'Деревья и кустарники (проекция кроны)', 'circle', LS_COLORS.pine[1]],
+    ['green', 'Газон, цветники, грядки', 'rect', LS_COLORS.lawn[0]],
+    ['hard', 'Дорожки, площадки, мощение', 'rect', LS_COLORS.tiles[1]],
+    ['water', 'Бассейн, пруд', 'rect', LS_COLORS.water[0]],
+    ['small', 'Малые архитектурные формы', 'rect', LS_COLORS.wood[0]],
+    ['fence', 'Ограждения', 'line', LS_COLORS.metal[0]],
+  ].filter(([k]) => has[k]).map(([, title, mark, color]) => ({ title, mark, color }));
+}
+
+function legendBox(ctx, items) {
+  if (!items.length) return;
+  const x0 = AREA.x0 + 2;
+  const y0 = AREA.y0 + 2;
+  const w = 68;
+  const h = 7 + items.length * 5;
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillRect(x0, y0, w, h);
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 0.25;
+  ctx.strokeRect(x0, y0, w, h);
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#000';
+  ctx.font = '600 3px system-ui, sans-serif';
+  ctx.fillText('Условные обозначения', x0 + 2, y0 + 3.5);
+  ctx.font = '400 2.6px system-ui, sans-serif';
+  items.forEach((it, i) => {
+    const y = y0 + 9 + i * 5;
+    ctx.fillStyle = it.color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 0.2;
+    if (it.mark === 'circle') {
+      ctx.beginPath(); ctx.arc(x0 + 5, y, 1.8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else if (it.mark === 'line') {
+      ctx.strokeStyle = it.color; ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.moveTo(x0 + 2.5, y); ctx.lineTo(x0 + 7.5, y); ctx.stroke();
+    } else {
+      ctx.fillRect(x0 + 2.5, y - 1.5, 5, 3); ctx.strokeRect(x0 + 2.5, y - 1.5, 5, 3);
+    }
+    ctx.fillStyle = '#000';
+    ctx.fillText(it.title, x0 + 10, y);
+  });
+}
+
 // ---------------------------------------------------------------- Листы
 
 function composeSheet(build) {
@@ -240,6 +299,7 @@ export function renderSheet(project, spec, sheetNo, sheetCount) {
       ctx.drawImage(canvas, AREA.x0, AREA.y0, AREA.x1 - AREA.x0, AREA.y1 - AREA.y0);
       frameAndStamp(ctx, { project, title: 'Генплан (схема планировочной организации участка)', denominator, sheetNo, sheetCount, subtitle: 'Север вверх · дом — нижний этаж' });
       siteTable(ctx, project);
+      legendBox(ctx, landscapeLegend(project.site?.landscape?.objects));
     });
   }
   const lp = levelProject(project, spec.levelId);

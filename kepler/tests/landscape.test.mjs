@@ -31,10 +31,11 @@ test('каталог валиден: id уникальны, размеры > 0, 
     if (d.shape === 'point' || d.shape === 'circle') assert.equal(d.w, d.h, `${d.kind}: круглый`);
   }
   for (const c of LANDSCAPE_CATEGORIES) assert.ok(landscapeByCategory(c.id).length >= 10, c.id);
-  // Этап 1 — точечные/прямоугольные/круглые; линейные и площадные описаны на этап 2.
-  assert.ok(LANDSCAPE_CATALOG.some((d) => d.shape === 'line' && d.stage === 2));
-  assert.ok(LANDSCAPE_CATALOG.some((d) => d.shape === 'poly' && d.stage === 2));
-  assert.ok(landscapeByCategory('site').every((d) => d.stage === 1 && !['line', 'poly'].includes(d.shape)));
+  // Этап 2: линейные и площадные доступны в каталоге (рисуются мышью).
+  assert.ok(landscapeByCategory('site').some((d) => d.shape === 'line'));
+  assert.ok(landscapeByCategory('site').some((d) => d.shape === 'poly'));
+  assert.ok(LANDSCAPE_CATALOG.every((d) => d.stage === 1));
+  for (const d of LANDSCAPE_CATALOG) assert.ok(['green', 'hard', 'water', null].includes(d.surface), `${d.kind}: поверхность`);
   for (const kind of ['tree-pine', 'tree-thuja', 'shrub-box', 'parking-2', 'firepit', 'pool', 'pond', 'gazebo', 'carport']) {
     assert.ok(landscapeDef(kind), kind);
   }

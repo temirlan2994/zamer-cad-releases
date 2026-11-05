@@ -36,6 +36,7 @@
               <button data-export="sheet-pdf">Листы PDF A3 (генплан и этажи)</button>
               <button data-export="sheet-png">Лист PNG (текущий этаж / генплан)</button>
               <button data-export="schedule-csv">Экспликация помещений (CSV для Excel)</button>
+              <button data-export="landscape-csv">Ведомость ландшафта (CSV)</button>
               <button data-export="ifc">IFC4 — BIM (Revit, ArchiCAD, Renga, просмотрщики)</button>
               <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
               <button data-export="dxf">DXF-чертёж</button>
@@ -119,6 +120,7 @@
             <div class="view3d-bar">
               <label class="check-row"><input type="checkbox" id="v3Roof"><span>Крыша</span></label>
               <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
+              <label class="check-row"><input type="checkbox" id="v3Landscape" checked><span>Ландшафт</span></label>
               <label class="check-row" id="v3ReliefWrap" title="Вертикальный масштаб рельефа" hidden><span>Рельеф ×<b id="v3ReliefVal">1</b></span><input type="range" id="v3Relief" min="1" max="5" step="1" value="1"></label>
               <button id="v3Fit" type="button">Вписать</button>
               <button id="v3Close" type="button">✕ Закрыть</button>

@@ -13,6 +13,7 @@ import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './cata
 import { toLocal, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
+import { landscapeFaces } from './mesh3d-landscape.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect, wallJoinPatches } from './walls.js';
 import { roomRects } from './room-shape.js';
@@ -607,8 +608,9 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
 // Все грани дома: этажи снизу вверх, перекрытия между ними; roof — плоская
 // кровля над каждой частью этажа, не закрытой этажом выше;
 // site — земля (с рельефом, если есть отметки), граница и соседи;
-// terrainScale — вертикальное усиление рельефа (1×–5×).
-export function buildHouseMesh(project, { roof = false, site = false, terrainScale = 1 } = {}) {
+// terrainScale — вертикальное усиление рельефа (1×–5×); landscape — объекты
+// ландшафта (только вместе с site).
+export function buildHouseMesh(project, { roof = false, site = false, terrainScale = 1, landscape = true } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
   for (const level of levels) {
@@ -624,5 +626,7 @@ export function buildHouseMesh(project, { roof = false, site = false, terrainSca
     levels.forEach((level, k) => faces.push(...roofFaces(lps[k], lps[k + 1], level.elevation + level.height)));
   }
   if (site) faces.push(...siteFaces(project, { terrainScale }));
+  // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
+  if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
   return faces;
 }

@@ -2,6 +2,7 @@
 
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { buildIfc } from '../core/ifc.js';
+import { buildLandscapeCsv } from '../core/landscape-report.js';
 import { createProject, serializeProject } from '../core/model.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildTemplate } from '../core/templates.js';
@@ -47,6 +48,10 @@ export function handleExport(kind) {
   } else if (kind === 'schedule-csv') {
     download(`${safeFileName()}-экспликация.csv`, buildRoomScheduleCsv(state.project), 'text/csv;charset=utf-8');
     toast('Экспликация помещений (CSV) — откроется в Excel');
+  } else if (kind === 'landscape-csv') {
+    if (!state.project.site?.landscape?.objects?.length) { toast('Ландшафт пуст — добавьте объекты в режиме «Ландшафт»', true); return; }
+    download(`${safeFileName()}-ландшафт.csv`, buildLandscapeCsv(state.project), 'text/csv;charset=utf-8');
+    toast('Ведомость озеленения и малых форм (CSV)');
   } else if (kind === 'ifc') {
     const { text, counts } = buildIfc(state.project);
     download(`${safeFileName()}.ifc`, text, 'application/x-step');
@@ -67,6 +72,7 @@ export function handleExport(kind) {
       { name: `${name}-revit.dxf`, data: buildProjectDxf(state.project, { profile: 'revit' }) },
       { name: `${name}.ifc`, data: text },
       { name: `${name}-экспликация.csv`, data: buildRoomScheduleCsv(state.project) },
+      ...(state.project.site?.landscape?.objects?.length ? [{ name: `${name}-ландшафт.csv`, data: buildLandscapeCsv(state.project) }] : []),
     ]);
     toast('Архив: проект, DXF, DXF для Revit, IFC, экспликация');
   } else if (kind === 'copy') {

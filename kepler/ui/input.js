@@ -33,8 +33,8 @@ import {
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
 import {
-  LANDSCAPE_MIME, applyLandscapeMarquee, dropLandscape, landscapeDragEnd, landscapeDragMove, landscapeHover,
-  landscapePointerDown,
+  LANDSCAPE_MIME, applyLandscapeMarquee, dropLandscape, landscapeDblClick, landscapeDragEnd, landscapeDragMove,
+  landscapeHover, landscapePointerDown,
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
@@ -179,8 +179,8 @@ function applyMarquee() {
   selectObject({ type: 'multi', roomIds, itemIds });
 }
 
-function updateHoverAndGhost(world, plan) {
-  if (state.modeName === 'landscape' && landscapeHover(world, canvas)) return;
+function updateHoverAndGhost(world, plan, event) {
+  if (state.modeName === 'landscape' && landscapeHover(world, canvas, event)) return;
   if (state.tool?.kind === 'place-furniture') {
     const def = furnitureDef(state.tool.itemKind);
     if (!def) return;
@@ -684,7 +684,7 @@ export function bindCanvasInput() {
     refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`
       + (state.modeName !== 'plan' ? terrainStatus(world) : '');
 
-    if (!drag) { updateHoverAndGhost(world, plan); return; }
+    if (!drag) { updateHoverAndGhost(world, plan, event); return; }
 
     if (drag.kind === 'pan') {
       markViewTouched();
@@ -1220,7 +1220,8 @@ export function bindCanvasInput() {
     state.guides = [];
     requestDraw();
   });
-  canvas.addEventListener('dblclick', () => {
+  canvas.addEventListener('dblclick', (event) => {
+    if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
     if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
   });
   canvas.addEventListener('wheel', (event) => {

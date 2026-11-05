@@ -20,7 +20,8 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
-import { landscapeDef } from './landscape.js';
+import { isPathShape, landscapeDef, objectAreaM2, objectLengthM } from './landscape.js';
+import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
@@ -225,9 +226,14 @@ function buildLandscapeExport(site) {
         id: o.id, kind: o.kind, title: def?.title || o.kind, category: def?.cat || null,
         shape: def?.shape || 'rect', x: o.x, y: o.y, rotation_deg: o.rotation || 0,
         w: o.w, h: o.h, r: o.r ?? null, height: o.height ?? 0, variant: o.variant,
-        tall: Boolean(def?.tall), cover: Boolean(def?.cover),
+        tall: Boolean(def?.tall), cover: Boolean(def?.cover), surface: def?.surface || null,
         ...(o.points ? { points: o.points } : {}),
+        ...(o.width ? { width: o.width } : {}),
+        ...(o.smooth ? { smooth: true } : {}),
+        ...(isPathShape(def) ? { length_m: Number(objectLengthM(o).toFixed(3)) } : {}),
+        ...(def?.cover || isPathShape(def) ? { area_m2: Number(objectAreaM2(o).toFixed(3)) } : {}),
         ...(o.color ? { color: o.color } : {}),
+        ...(o.locked ? { locked: true } : {}),
       };
     }),
   };
@@ -519,5 +525,6 @@ export function buildSitePlanDxf(project) {
     .flatMap((e) => entityToWorld(e, project.building));
   entities.push(...siteEntities(project.site));
   entities.push(...terrainEntities(project.site));
-  return buildDxf(entities, { extraLayers: SITE_LAYERS });
+  entities.push(...landscapeDxfEntities(project.site));
+  return buildDxf(entities, { extraLayers: [...SITE_LAYERS, ...LANDSCAPE_DXF_LAYERS] });
 }

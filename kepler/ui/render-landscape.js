@@ -8,9 +8,11 @@
 // (средние тона, читаются в обеих темах); выделение — токены темы.
 
 import {
-  LS_COLORS, isRoundObject, landscapeDef, landscapeHandles, objectColors, objectCorners,
-  objectOutline, seededRandom, variantOf,
+  LS_COLORS, SHAPE_RANK, isPathShape, isRoundObject, landscapeDef, landscapeHandles, objectAreaM2, objectColors,
+  objectCorners, objectLengthM, objectOutline, objectPath, pointAlong, polylineLength, ribbonOutline, seededRandom,
+  steppingSlabs, variantOf,
 } from '../core/landscape.js';
+import { pointInPolygon } from '../core/zamer/geometry.js';
 import { sunPosition } from '../core/site.js';
 
 const TAU = Math.PI * 2;
@@ -1113,6 +1115,386 @@ const LOOKS = {
   },
 };
 
+// ------------------------------------------------------------ Линии и площади
+// Рисуются в мировых координатах (без поворота объекта): ось/контур —
+// objectPath (сглаженный, если smooth).
+
+function tracePath(ctx, pts, closed) {
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  if (closed) ctx.closePath();
+}
+
+// Поперечный отрезок полосы на расстоянии s вдоль оси.
+function crossAt(path, s, hw) {
+  const p = pointAlong(path, s);
+  const nx = -Math.sin(p.angle) * hw;
+  const ny = Math.cos(p.angle) * hw;
+  return [{ x: p.x + nx, y: p.y + ny }, { x: p.x - nx, y: p.y - ny }, p];
+}
+
+// Угол самого длинного ребра контура — направление досок и плитки.
+function mainAngle(pts) {
+  let best = 0;
+  let angle = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > best) { best = len; angle = Math.atan2(b.y - a.y, b.x - a.x); }
+  }
+  return angle;
+}
+
+// Текстура в осях контура: fn(ctx, x, y, w, h) рисует по габариту в
+// повёрнутой системе (доски/плитка параллельно длинному ребру).
+function alignedFill(ctx, pts, fn) {
+  const ang = mainAngle(pts);
+  const o = pts[0];
+  const local = pts.map((p) => {
+    const dx = p.x - o.x; const dy = p.y - o.y;
+    return { x: dx * Math.cos(-ang) - dy * Math.sin(-ang), y: dx * Math.sin(-ang) + dy * Math.cos(-ang) };
+  });
+  const xs = local.map((p) => p.x); const ys = local.map((p) => p.y);
+  const x0 = Math.min(...xs); const y0 = Math.min(...ys);
+  ctx.save();
+  ctx.translate(o.x, o.y);
+  ctx.rotate(ang);
+  fn(ctx, x0, y0, Math.max(...xs) - x0, Math.max(...ys) - y0);
+  ctx.restore();
+}
+
+function centroid(pts) {
+  let a = 0; let cx = 0; let cy = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const p = pts[i]; const q = pts[(i + 1) % pts.length];
+    const f = p.x * q.y - q.x * p.y;
+    a += f; cx += (p.x + q.x) * f; cy += (p.y + q.y) * f;
+  }
+  if (Math.abs(a) < 1e-6) return { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length };
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+function boxOf(pts) {
+  const xs = pts.map((p) => p.x); const ys = pts.map((p) => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
+const SHAPE_LOOKS = {
+  path(ctx, o, path, C, rc) {
+    const width = o.width || 1000;
+    const hw = width / 2;
+    const total = polylineLength(path);
+    const ribbon = ribbonOutline(path, width);
+    if (o.variant === 'stepping') {
+      for (const sl of steppingSlabs(o)) {
+        ctx.save();
+        ctx.translate(sl.x, sl.y);
+        ctx.rotate(sl.angle);
+        if (rc.lod >= 4) {
+          ctx.fillStyle = 'rgba(20,30,15,0.22)';
+          ctx.beginPath(); rrect(ctx, -sl.along / 2 + 40, -sl.across / 2 + 50, sl.along, sl.across, 50); ctx.fill();
+        }
+        ctx.fillStyle = sl.tone > 0.66 ? C[2] : sl.tone > 0.33 ? C[0] : C[1];
+        ctx.beginPath(); rrect(ctx, -sl.along / 2, -sl.across / 2, sl.along, sl.across, 50); ctx.fill();
+        if (rc.lod >= 6) edge(ctx, 'rgba(70,64,56,0.45)', Math.max(rc.px(0.7), 14));
+        ctx.restore();
+      }
+      return;
+    }
+    tracePath(ctx, ribbon, true);
+    ctx.fillStyle = C[0];
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const rand = rc.rand;
+    if (o.variant === 'gravel') {
+      if (rc.lod >= 8) {
+        const grain = Math.max(rc.px(1.2), 22);
+        const count = Math.min(4000, Math.round((total * width) / (grain * grain * 9)));
+        for (let i = 0; i < count; i += 1) {
+          const p = pointAlong(path, rand() * total);
+          const off = (rand() - 0.5) * width;
+          ctx.fillStyle = i % 3 === 0 ? C[1] : C[2];
+          ctx.globalAlpha = 0.55 + rand() * 0.45;
+          ctx.fillRect(p.x - Math.sin(p.angle) * off, p.y + Math.cos(p.angle) * off, grain, grain);
+        }
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      // Поперечные полосы: доски (145), брусчатка (200), швы бетона (2000).
+      const step = o.variant === 'deck' ? 145 : o.variant === 'pavers' ? 200 : 2000;
+      const concrete = o.variant === 'concrete';
+      if (rc.lod >= (concrete ? 2 : 6)) {
+        let prev = crossAt(path, 0, hw * 1.2);
+        for (let s = step; s < total + step; s += step) {
+          const cur = crossAt(path, Math.min(s, total), hw * 1.2);
+          if (!concrete && rc.lod >= 9) {
+            ctx.fillStyle = rand() > 0.6 ? C[2] : C[1];
+            ctx.globalAlpha = o.variant === 'deck' ? 0.5 : 0.28;
+            ctx.beginPath(); ctx.moveTo(prev[0].x, prev[0].y); ctx.lineTo(cur[0].x, cur[0].y);
+            ctx.lineTo(cur[1].x, cur[1].y); ctx.lineTo(prev[1].x, prev[1].y); ctx.closePath(); ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          if (rc.lod >= (concrete ? 2 : 10)) {
+            ctx.strokeStyle = o.variant === 'deck' ? 'rgba(40,24,12,0.4)' : 'rgba(60,56,50,0.35)';
+            ctx.lineWidth = Math.max(rc.px(0.6), concrete ? 20 : 10);
+            ctx.beginPath(); ctx.moveTo(cur[0].x, cur[0].y); ctx.lineTo(cur[1].x, cur[1].y); ctx.stroke();
+          }
+          prev = cur;
+        }
+        if (o.variant === 'pavers' && rc.lod >= 10) {
+          // Продольные швы брусчатки.
+          ctx.strokeStyle = 'rgba(60,56,50,0.3)';
+          ctx.lineWidth = Math.max(rc.px(0.5), 10);
+          for (const k of [-1 / 3, 1 / 3]) {
+            const off = path.map((p, j) => {
+              const a = path[Math.max(0, j - 1)]; const b = path[Math.min(path.length - 1, j + 1)];
+              const ang = Math.atan2(b.y - a.y, b.x - a.x);
+              return { x: p.x - Math.sin(ang) * hw * k * 2, y: p.y + Math.cos(ang) * hw * k * 2 };
+            });
+            tracePath(ctx, off, false); ctx.stroke();
+          }
+        }
+      }
+    }
+    ctx.restore();
+    // Бордюр/кромка.
+    tracePath(ctx, ribbon, true);
+    const curb = o.variant === 'deck' ? C[1] : o.variant === 'gravel' ? 'rgba(70,70,70,0.6)' : 'rgba(90,84,74,0.65)';
+    edge(ctx, curb, Math.max(rc.px(1), o.variant === 'deck' ? 70 : o.variant === 'gravel' ? 25 : 60));
+  },
+  'fence-line'(ctx, o, path, C, rc) {
+    if (o.variant === 'hedge') { SHAPE_LOOKS['hedge-line'](ctx, { ...o, width: Math.max(o.width || 0, 600) }, path, C, rc); return; }
+    const width = o.width || 150;
+    const total = polylineLength(path);
+    ctx.lineJoin = 'miter';
+    tracePath(ctx, path, false);
+    if (o.variant === 'mesh') {
+      ctx.strokeStyle = C[0];
+      ctx.lineWidth = Math.max(rc.px(1.2), Math.min(width, 50));
+      ctx.stroke();
+      if (rc.lod >= 8) {
+        ctx.setLineDash([60, 60]);
+        ctx.strokeStyle = C[2];
+        ctx.lineWidth = Math.max(rc.px(0.8), 20);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    } else {
+      ctx.strokeStyle = C[0];
+      ctx.lineWidth = Math.max(rc.px(1.5), width);
+      ctx.stroke();
+      if (rc.lod >= 8) {
+        ctx.strokeStyle = 'rgba(30,20,10,0.4)';
+        ctx.lineWidth = Math.max(rc.px(0.5), 10);
+        ctx.beginPath();
+        for (let s = 60; s < total; s += 120) {
+          const [a, b] = crossAt(path, s, width / 2);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        }
+        ctx.stroke();
+      }
+    }
+    // Столбы через ~2,5 м.
+    const post = Math.max(width * 1.4, 100);
+    const n = Math.max(1, Math.round(total / 2500));
+    ctx.fillStyle = C[1];
+    for (let i = 0; i <= n; i += 1) {
+      const p = pointAlong(path, (total * i) / n);
+      if (o.variant === 'mesh') circle(ctx, p.x, p.y, post / 2, C[1]);
+      else ctx.fillRect(p.x - post / 2, p.y - post / 2, post, post);
+    }
+  },
+  'hedge-line'(ctx, o, path, C, rc) {
+    const width = o.width || 800;
+    const b = width / 2;
+    const total = polylineLength(path);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    tracePath(ctx, path, false);
+    ctx.strokeStyle = C[0];
+    ctx.lineWidth = width;
+    ctx.stroke();
+    if (rc.lod >= 4) {
+      const step = b * 1.1;
+      const trim = o.variant !== 'free';
+      for (let s = 0; s <= total; s += step) {
+        const p = pointAlong(path, s);
+        const off = (rc.rand() - 0.5) * b * 0.3;
+        circle(ctx, p.x - Math.sin(p.angle) * off, p.y + Math.cos(p.angle) * off, b * (trim ? 0.7 : 0.95), C[1]);
+      }
+      tracePath(ctx, path, false);
+      ctx.strokeStyle = C[2];
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = width * 0.3;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.lineCap = 'butt';
+  },
+  'lawn-area'(ctx, o, pts, C, rc) {
+    tracePath(ctx, pts, true);
+    ctx.fillStyle = C[0];
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const box = boxOf(pts);
+    if (o.variant === 'mown' && rc.lod >= 3) {
+      alignedFill(ctx, pts, (c, x, y, w, h) => {
+        c.fillStyle = 'rgba(255,255,255,0.08)';
+        for (let xx = x; xx < x + w; xx += 1600) c.fillRect(xx, y, 800, h);
+      });
+    }
+    if (rc.lod >= 6) {
+      // Лёгкая текстура травы/мха: пятна тона.
+      const moss = o.variant === 'moss';
+      const n = Math.min(900, Math.round((box.w * box.h) / (moss ? 5e5 : 1.2e6)));
+      for (let i = 0; i < n; i += 1) {
+        ctx.globalAlpha = moss ? 0.5 : 0.25;
+        circle(ctx, box.x + rc.rand() * box.w, box.y + rc.rand() * box.h, (moss ? 250 : 160) + rc.rand() * 300, rc.rand() > 0.5 ? C[1] : C[2]);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (o.variant === 'meadow' && rc.lod >= 8) {
+      const n = Math.min(500, (box.w * box.h) / 2e5);
+      for (let i = 0; i < n; i += 1) circle(ctx, box.x + rc.rand() * box.w, box.y + rc.rand() * box.h, 40, LS_COLORS.flowers[Math.floor(rc.rand() * 4)]);
+    }
+    ctx.restore();
+    tracePath(ctx, pts, true);
+    edge(ctx, C[2], rc.px(1));
+  },
+  'area-paving'(ctx, o, pts, C, rc) {
+    tracePath(ctx, pts, true);
+    ctx.fillStyle = C[0];
+    ctx.fill();
+    ctx.save(); ctx.clip();
+    const module = o.variant === 'pavers' ? 250 : o.variant === 'concrete' ? 3000 : 500;
+    alignedFill(ctx, pts, (c, x, y, w, h) => tiles(c, x, y, w, h, module, C, rc, o.variant === 'concrete' ? null : rc.rand));
+    ctx.restore();
+    tracePath(ctx, pts, true);
+    edge(ctx, 'rgba(90,84,74,0.7)', Math.max(rc.px(1), 80));
+  },
+  'area-gravel'(ctx, o, pts, C, rc) {
+    tracePath(ctx, pts, true);
+    ctx.save(); ctx.clip();
+    const b = boxOf(pts);
+    gravel(ctx, b.x, b.y, b.w, b.h, C, rc.rand, rc);
+    if (o.variant === 'white' && rc.lod >= 5) {
+      // Японский гравий: следы грабель — волны вдоль длинной стороны.
+      ctx.strokeStyle = 'rgba(120,112,98,0.35)';
+      ctx.lineWidth = Math.max(rc.px(0.6), 18);
+      alignedFill(ctx, pts, (c, x, y, w, h) => {
+        for (let yy = y + 150; yy < y + h; yy += 220) {
+          c.beginPath();
+          for (let xx = x; xx <= x + w; xx += 200) {
+            const wy = yy + Math.sin(xx / 900) * 60;
+            if (xx === x) c.moveTo(xx, wy); else c.lineTo(xx, wy);
+          }
+          c.stroke();
+        }
+      });
+    }
+    ctx.restore();
+    tracePath(ctx, pts, true);
+    edge(ctx, 'rgba(70,70,70,0.55)', Math.max(rc.px(0.8), 25));
+  },
+  'area-deck'(ctx, o, pts, C, rc) {
+    tracePath(ctx, pts, true);
+    ctx.save(); ctx.clip();
+    // Доски вдоль длинного ребра (boards кладёт их вдоль большей стороны).
+    alignedFill(ctx, pts, (c, x, y, w, h) => boards(c, x, y, w, h, C, rc.rand, rc));
+    ctx.restore();
+    tracePath(ctx, pts, true);
+    edge(ctx, C[1], Math.max(rc.px(1.2), 90));
+  },
+  'area-pond'(ctx, o, pts, C, rc) {
+    const c = centroid(pts);
+    const b = boxOf(pts);
+    const r = Math.max(b.w, b.h) / 2;
+    tracePath(ctx, pts, true);
+    const g = ctx.createRadialGradient(c.x - r * 0.2, c.y - r * 0.2, 0, c.x, c.y, r);
+    g.addColorStop(0, C[0]); g.addColorStop(0.7, C[1]); g.addColorStop(1, '#24525a');
+    ctx.fillStyle = g;
+    ctx.fill();
+    if (rc.lod < 5) { edge(ctx, LS_COLORS.stone[2], rc.px(1)); return; }
+    ctx.save();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = Math.max(rc.px(0.9), 40);
+    ctx.beginPath(); ctx.ellipse(c.x - b.w * 0.1, c.y - b.h * 0.12, b.w * 0.25, b.h * 0.16, 0, Math.PI * 1.1, Math.PI * 1.6); ctx.stroke();
+    if (o.variant !== 'mirror' && rc.lod >= 6) {
+      let placed = 0;
+      for (let i = 0; i < 40 && placed < 8; i += 1) {
+        const x = b.x + rc.rand() * b.w; const y = b.y + rc.rand() * b.h;
+        if (!pointInPolygon({ x, y }, pts)) continue;
+        placed += 1;
+        const lr = 160 + rc.rand() * 120; const t = rc.rand() * TAU;
+        ctx.fillStyle = '#5f9e4a';
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, lr, t + 0.35, t + TAU - 0.35); ctx.closePath(); ctx.fill();
+        if (placed % 2) circle(ctx, x, y, lr * 0.32, '#f2a7c3');
+      }
+    }
+    ctx.restore();
+    // Берег из камней по контуру.
+    const closed = [...pts, pts[0]];
+    const total = polylineLength(closed);
+    const n = Math.max(10, Math.round(total / 360));
+    for (let i = 0; i < n; i += 1) {
+      const p = pointAlong(closed, (total * i) / n);
+      circle(ctx, p.x, p.y, 120 + rc.rand() * 150, LS_COLORS.stone[i % 3]);
+    }
+  },
+  'area-pool'(ctx, o, pts, C, rc) {
+    const coping = 350;
+    ctx.lineJoin = 'miter';
+    tracePath(ctx, pts, true);
+    ctx.strokeStyle = LS_COLORS.coping[0];
+    ctx.lineWidth = coping * 2;
+    ctx.stroke();
+    if (rc.lod >= 8) {
+      // Швы плитки каймы.
+      ctx.strokeStyle = 'rgba(120,110,95,0.3)';
+      ctx.setLineDash([12, 588]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const b = boxOf(pts);
+    const g = ctx.createLinearGradient(b.x, b.y, b.x + b.w * 0.3, b.y + b.h);
+    g.addColorStop(0, C[2]); g.addColorStop(0.35, C[0]); g.addColorStop(1, C[1]);
+    tracePath(ctx, pts, true);
+    ctx.fillStyle = g;
+    ctx.fill();
+    edge(ctx, 'rgba(20,80,120,0.55)', Math.max(rc.px(1), 40));
+    if (rc.lod >= 5) {
+      ctx.save(); ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = Math.max(rc.px(0.8), 30);
+      for (let y = b.y + 350; y < b.y + b.h; y += 600) {
+        ctx.beginPath();
+        for (let x = b.x; x <= b.x + b.w; x += 150) {
+          const yy = y + Math.sin(x / 260 + y) * 70 + Math.sin(x / 90) * 25;
+          if (x === b.x) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  },
+};
+
+function drawShapeObject(ctx, o, def, opts) {
+  const look = SHAPE_LOOKS[def.look] || SHAPE_LOOKS[def.shape === 'line' ? 'path' : 'area-paving'];
+  const pts = objectPath(o);
+  if (pts.length < 2) return;
+  const rc = { px: opts.px, lod: opts.lod, rand: seededRandom(o.id), light: { x: -Math.SQRT1_2, y: -Math.SQRT1_2 } };
+  ctx.save();
+  try {
+    look(ctx, o, pts, objectColors(o, def), rc);
+  } finally {
+    ctx.restore();
+  }
+}
+
 // Силуэт для тени (локальные оси объекта).
 function silhouette(ctx, o, def, a, b) {
   ctx.beginPath();
@@ -1151,6 +1533,24 @@ function shadowOffset(height, shadow) {
 // Мягкая тень: силуэт несколько раз с растущим размером и малой плотностью.
 function drawShadow(ctx, o, def, shadow) {
   const off = shadowOffset(o.height || def.height, shadow);
+  if (def.shape === 'line') {
+    // Линия (изгородь, забор): тень — сдвинутая ось той же толщины.
+    const path = objectPath(o);
+    ctx.save();
+    ctx.translate(off.x * 0.6, off.y * 0.6);
+    ctx.strokeStyle = 'rgb(18,32,18)';
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (const [k, alpha] of [[1.6, 0.06], [1.2, 0.09]]) {
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = Math.max(o.width || def.h, 120) * k;
+      ctx.beginPath();
+      path.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.translate(o.x + off.x, o.y + off.y);
   ctx.rotate(((o.rotation || 0) * Math.PI) / 180);
@@ -1179,6 +1579,7 @@ function renderContext(o, opts) {
 export function drawLandscapeObject(ctx, o, opts) {
   const def = landscapeDef(o.kind);
   if (!def) return;
+  if (isPathShape(def)) { drawShapeObject(ctx, o, def, opts); return; }
   const look = LOOKS[def.look] || LOOKS.pad;
   ctx.save();
   ctx.translate(o.x, o.y);
@@ -1190,11 +1591,24 @@ export function drawLandscapeObject(ctx, o, opts) {
   }
 }
 
+// Порядок внутри слоя: площади → линии → прочие (SHAPE_RANK), затем порядок добавления.
+function layerObjects(objects, layer) {
+  return objects
+    .map((o, i) => ({ o, i, def: landscapeDef(o.kind) }))
+    .filter((x) => x.def?.layer === layer)
+    .sort((a, b) => (SHAPE_RANK[a.def.shape] ?? 2) - (SHAPE_RANK[b.def.shape] ?? 2) || a.i - b.i)
+    .map((x) => x.o);
+}
+
+// Видимость групп (панель «Слои»): vis — { plants, covers, objects, shadows, labels }.
+export function visibleLandscape(objects, vis) {
+  if (!vis) return objects;
+  return objects.filter((o) => vis[landscapeDef(o.kind)?.vis] !== false);
+}
+
 // Покрытия — до дома; opts: { px, lod, shadow }.
 export function drawLandscapeGround(ctx, objects, opts) {
-  for (const o of objects) {
-    if (landscapeDef(o.kind)?.layer === 'ground') drawLandscapeObject(ctx, o, opts);
-  }
+  for (const o of layerObjects(objects, 'ground')) drawLandscapeObject(ctx, o, opts);
 }
 
 // Тень дома на землю — до заливки пятна дома (render.js), иначе ляжет на крышу.
@@ -1215,17 +1629,65 @@ export function drawHouseShadow(ctx, footprints, opts, height = 6000) {
 
 // Тени объектов, низкие объекты, кроны — после дома.
 export function drawLandscapeRaised(ctx, objects, opts) {
-  if (opts.lod >= 1.5) {
+  if (opts.lod >= 1.5 && !opts.noShadows) {
     for (const o of objects) {
       const def = landscapeDef(o.kind);
       if (def?.shadow) drawShadow(ctx, o, def, opts.shadow);
     }
   }
   for (const layer of ['low', 'tall']) {
-    for (const o of objects) {
-      if (landscapeDef(o.kind)?.layer === layer) drawLandscapeObject(ctx, o, opts);
-    }
+    for (const o of layerObjects(objects, layer)) drawLandscapeObject(ctx, o, opts);
   }
+}
+
+// Черновик рисования линии/контура (инструмент draw-landscape): объект по
+// точкам + курсор, полупрозрачно; вершины и пунктир — в экранных px.
+export function drawLandscapeDraft(ctx, tool, opts, color) {
+  const def = landscapeDef(tool.lsKind);
+  if (!def) return;
+  let pts = [...(tool.points || [])];
+  if (tool.rect) {
+    pts = tool.rect.pts;
+  } else if (tool.cursor) {
+    pts.push(tool.cursor);
+  }
+  if (pts.length >= 2) {
+    const o = {
+      id: '__draft-ls__', kind: tool.lsKind, x: 0, y: 0, rotation: 0, w: 1, h: 1, points: pts,
+      width: tool.opts?.width, smooth: tool.opts?.smooth, variant: tool.opts?.variant || def.variants[0].id, meta: {},
+      color: tool.opts?.color,
+    };
+    ctx.save();
+    ctx.globalAlpha = 0.62;
+    if (def.shape === 'line' || pts.length >= 3) drawShapeObject(ctx, o, def, opts);
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = opts.px(1.5);
+    ctx.setLineDash([opts.px(7), opts.px(5)]);
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    if (def.shape === 'poly' && pts.length >= 3) ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.save();
+  for (const [i, p] of (tool.rect ? pts : tool.points || []).entries()) {
+    ctx.fillStyle = i === 0 && def.shape === 'poly' ? color : '#ffffff';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = opts.px(1.5);
+    ctx.beginPath(); ctx.arc(p.x, p.y, opts.px(4), 0, TAU); ctx.fill(); ctx.stroke();
+  }
+  if (tool.cursor && !tool.rect) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = opts.px(1.2);
+    const r = opts.px(6);
+    ctx.beginPath();
+    ctx.moveTo(tool.cursor.x - r, tool.cursor.y); ctx.lineTo(tool.cursor.x + r, tool.cursor.y);
+    ctx.moveTo(tool.cursor.x, tool.cursor.y - r); ctx.lineTo(tool.cursor.x, tool.cursor.y + r);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // Призрак при постановке: полупрозрачный объект + пунктирный контур.
@@ -1265,9 +1727,66 @@ function pill(ctx, label, x, y, tokens, color) {
 
 // Экранный слой: замечания, наведение, выделение, ручки.
 // sel — массив id; warnings — Map id → [текст].
-export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor }) {
+const fmtM = (v, d = 1) => v.toFixed(d).replace('.', ',');
+
+// Подпись размера: линия — длина × ширина, площадь — м², прочие — габарит.
+export function landscapeMeasure(o, def = landscapeDef(o.kind)) {
+  if (def?.shape === 'line') return `L ${fmtM(objectLengthM(o), 2)} м · ${fmtM((o.width || def.h) / 1000, 2)} м`;
+  if (def?.shape === 'poly') return `S ${fmtM(objectAreaM2(o), 1)} м² · P ${fmtM(objectLengthM(o), 1)} м`;
+  return def?.lockAspect ? `⌀ ${(o.w / 1000).toFixed(2)} м` : `${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м`;
+}
+
+// Ручки вершин фигуры (экран): вершины и середины рёбер (+ — вставить).
+export function shapeHandles(o, w2s) {
+  const def = landscapeDef(o.kind);
+  const pts = (o.points || []).map((p) => w2s(p.x, p.y));
+  const closed = def?.shape === 'poly';
+  const mids = [];
+  for (let i = 0; i < (closed ? pts.length : pts.length - 1); i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    if (Math.hypot(b.x - a.x, b.y - a.y) > 28) mids.push({ index: i, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  }
+  return { vertices: pts, mids };
+}
+
+const shortTitle = (def) => def.title.replace(/ \(.*\)$/, '');
+
+// Подписи позиций на плане (слой «Подписи»): площади и линии — название с
+// мерой, деревья — без подписи (их много).
+function drawLabels(ctx, objects, w2s, tokens) {
+  ctx.save();
+  for (const o of objects) {
+    const def = landscapeDef(o.kind);
+    if (!def || (def.group === 'Деревья' || def.group === 'Кустарники') && !isPathShape(def)) continue;
+    let at = w2s(o.x, o.y);
+    if (def.shape === 'line') {
+      const path = objectPath(o);
+      const p = pointAlong(path, polylineLength(path) / 2);
+      at = w2s(p.x, p.y);
+    }
+    const text = isPathShape(def)
+      ? `${shortTitle(def)} · ${def.shape === 'line' ? `${fmtM(objectLengthM(o))} м` : `${fmtM(objectAreaM2(o))} м²`}`
+      : shortTitle(def);
+    ctx.font = '600 10.5px system-ui, sans-serif';
+    const w = ctx.measureText(text).width + 10;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = tokens.surface;
+    ctx.beginPath(); rrect(ctx, at.x - w / 2, at.y - 8, w, 16, 8); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tokens.text || tokens.muted;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, at.x, at.y + 0.5);
+  }
+  ctx.restore();
+  ctx.textBaseline = 'alphabetic';
+}
+
+export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor, labels = false, vertex = null }) {
+  if (labels) drawLabels(ctx, objects, w2s, tokens);
   const screenPath = (o, inflate = 0) => {
-    const pts = objectOutline(inflate ? { ...o, w: o.w + inflate * 2, h: o.h + inflate * 2 } : o).map((p) => w2s(p.x, p.y));
+    const shape = isPathShape(landscapeDef(o.kind));
+    const pts = objectOutline(inflate && !shape ? { ...o, w: o.w + inflate * 2, h: o.h + inflate * 2 } : o).map((p) => w2s(p.x, p.y));
     outlinePath(ctx, pts);
   };
   const selected = new Set(sel);
@@ -1291,7 +1810,8 @@ export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, w
   }
   const chosen = objects.filter((o) => selected.has(o.id));
   for (const o of chosen) {
-    const corners = objectCorners(o).map((c) => w2s(c.x, c.y));
+    const shape = isPathShape(landscapeDef(o.kind));
+    const corners = (shape ? objectOutline(o) : objectCorners(o)).map((c) => w2s(c.x, c.y));
     outlinePath(ctx, corners);
     ctx.strokeStyle = tokens.accent;
     ctx.lineWidth = 1.5;
@@ -1305,8 +1825,28 @@ export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, w
   const corners = objectCorners(o).map((c) => w2s(c.x, c.y));
   const top = Math.min(...corners.map((p) => p.y));
   const mid = corners.reduce((s, p) => s + p.x, 0) / 4;
-  const size = def?.lockAspect ? `⌀ ${(o.w / 1000).toFixed(2)} м` : `${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м`;
-  pill(ctx, `${size} · ${Math.round(o.rotation || 0)}°`, mid, top - 14, tokens, tokens.accent);
+  const lock = o.locked ? ' · закреплён' : '';
+  if (isPathShape(def)) {
+    pill(ctx, `${landscapeMeasure(o, def)}${lock}`, mid, top - 14, tokens, tokens.accent);
+    if (o.locked) return null;
+    const { vertices, mids } = shapeHandles(o, w2s);
+    for (const p of mids) {
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, TAU); ctx.fill(); ctx.stroke();
+    }
+    vertices.forEach((p, i) => {
+      const active = vertex && vertex.id === o.id && vertex.index === i;
+      ctx.fillStyle = active ? tokens.accent : '#ffffff';
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.rect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE); ctx.fill(); ctx.stroke();
+    });
+    return null;
+  }
+  pill(ctx, `${landscapeMeasure(o, def)} · ${Math.round(o.rotation || 0)}°${lock}`, mid, top - 14, tokens, tokens.accent);
+  if (o.locked) return null;
   const { rotators } = landscapeHandles(o, 20, scale);
   for (const r of rotators) {
     const p = w2s(r.x, r.y);
@@ -1335,6 +1875,24 @@ export function drawLandscapePreview(canvas, kind) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const o = { id: `preview-${kind}`, kind, x: 0, y: 0, rotation: 0, w: def.w, h: def.h, height: def.height, variant: def.variants[0].id, meta: { ...(def.meta || {}) } };
+  if (def.shape === 'line') {
+    // Линия на карточке — S-образная, сглаженная.
+    const width = def.h;
+    Object.assign(o, {
+      points: [{ x: -2600, y: 700 }, { x: -900, y: -500 }, { x: 900, y: 500 }, { x: 2600, y: -700 }],
+      width, smooth: true, w: 6000 + width, h: 2600 + width,
+    });
+  } else if (def.shape === 'poly') {
+    const round = kind === 'pond-area' || kind === 'lawn-area';
+    const pts = round
+      ? Array.from({ length: 9 }, (_, i) => {
+        const t = (i / 9) * TAU;
+        const k = 0.85 + 0.15 * Math.sin(i * 2.3);
+        return { x: Math.cos(t) * 2700 * k, y: Math.sin(t) * 1500 * k };
+      })
+      : [{ x: -2600, y: -1500 }, { x: 2600, y: -1500 }, { x: 2600, y: 400 }, { x: 600, y: 400 }, { x: 600, y: 1500 }, { x: -2600, y: 1500 }];
+    Object.assign(o, { points: pts, smooth: round, w: 6200, h: 3700 });
+  }
   // Длинные узкие объекты (изгородь, забор) — по ширине карточки.
   const scale = Math.min((W * 0.78) / o.w, (H * 0.74) / o.h);
   const shadow = { x: Math.SQRT1_2, y: Math.SQRT1_2, k: 0.18 };

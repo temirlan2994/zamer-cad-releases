@@ -5,20 +5,25 @@
 // проектах его нет, normalizeLandscape() даёт пустой список (схема
 // kepler-plan/5 не меняется).
 //
-// Объект: { id, kind, x, y, rotation, w, h, r?, height, variant, color?, points?, meta }
-//   x, y      — центр (для линейных/площадных — центр габарита точек);
-//   w, h      — габарит в собственных осях до поворота (мм);
+// Объект: { id, kind, x, y, rotation, w, h, r?, height, variant, color?, points?,
+//           width?, smooth?, locked?, meta }
+//   x, y      — центр (для линейных/площадных — центр габарита, syncShape);
+//   w, h      — габарит в собственных осях до поворота (мм); у линейных и
+//               площадных — габарит точек (с полушириной линии), rotation = 0;
 //   r         — радиус кроны (только деревья/кусты-шары, = w/2);
 //   rotation  — градусы по часовой (ось Y вниз);
-//   points    — для shape 'line' (ось дорожки, ширина = h) и 'poly' (контур);
+//   points    — вершины в мире: shape 'line' — ось, 'poly' — контур;
+//   width     — ширина линейного объекта (мм);
+//   smooth    — линия/контур сглажены сплайном Катмулла-Рома через вершины;
+//   locked    — «замок»: не двигается, не удаляется и не правится мышью;
 //   meta      — свободные параметры вида (места парковки и т.п.).
 //
 // Формы (shape):
 //   'point'  — точечный объект с круглой кроной/основанием, масштаб по одной оси;
 //   'circle' — круглая площадка (w = h);
 //   'rect'   — прямоугольник/овал (round: true — эллипс), стороны независимы;
-//   'line'   — линейный (дорожка, изгородь по ломаной) — этап 2;
-//   'poly'   — площадной (газон, гравий, плитка, пруд произвольной формы) — этап 2.
+//   'line'   — линейный (дорожка, ограждение по ломаной);
+//   'poly'   — площадной (газон, гравий, плитка, пруд произвольной формы).
 
 import { pointInPolygon, pointToSegmentDistance } from './zamer/geometry.js';
 
@@ -77,7 +82,7 @@ const v = (id, title, colors = null) => (colors ? { id, title, colors } : { id, 
 //   cover                   — покрытие (учёт площади в ТЭП этапа 2);
 //   layer                   — слой отрисовки: ground | low | tall;
 //   look, colors, variants  — стиль рисования и краски;
-//   stage                   — 1: доступно сейчас, 2: только описание (этап 2).
+//   stage                   — 1: доступно в каталоге (2 — только описание).
 const RAW = [
   // ---------------------------------------------------------- Озеленение
   { kind: 'tree-pine', title: 'Сосна', cat: 'green', group: 'Деревья', shape: 'point', w: 5000, min: 1500, max: 12000, height: 15000, look: 'pine', colors: 'pine',
@@ -114,8 +119,10 @@ const RAW = [
     variants: [v('miscanthus', 'Мискантус'), v('festuca', 'Овсяница сизая', ['#7f9fa3', '#9bb8b9', '#647f83'])], keywords: 'куртина травы' },
   { kind: 'boulder', title: 'Валун', cat: 'green', group: 'Камни', shape: 'rect', w: 1200, h: 900, min: [300, 300], max: [5000, 5000], height: 700, look: 'boulder', colors: 'stone',
     variants: [v('one', 'Одиночный'), v('trio', 'Группа из трёх')], keywords: 'камень японский сад' },
-  { kind: 'lawn-area', title: 'Газон (контур)', cat: 'green', group: 'Газон', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'lawn', colors: 'lawn', stage: 2, keywords: 'трава' },
-  { kind: 'hedge-line', title: 'Живая изгородь (по линии)', cat: 'green', group: 'Кустарники', shape: 'line', w: 6000, h: 800, height: 1800, look: 'hedge', colors: 'leafDark', stage: 2 },
+  { kind: 'lawn-area', title: 'Газон (контур)', cat: 'green', group: 'Газон', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'lawn-area', colors: 'lawn',
+    variants: [v('mown', 'Стриженый, полосы'), v('meadow', 'Мавританский', ['#8fb35e', '#a5c470', '#79a04f']), v('moss', 'Мох', ['#6f8f45', '#5c7a39', '#86a65a'])], keywords: 'трава мох рисовать контур' },
+  { kind: 'hedge-line', title: 'Живая изгородь (по линии)', cat: 'green', group: 'Кустарники', shape: 'line', w: 6000, h: 800, height: 1800, look: 'hedge-line', colors: 'leafDark',
+    variants: [v('trim', 'Стриженая'), v('free', 'Свободная')], keywords: 'туя граница рисовать линия' },
 
   // ------------------------------------------------- Ландшафт и площадки
   { kind: 'parking-1', layer: 'ground', title: 'Парковочное место', cat: 'site', group: 'Парковка', shape: 'rect', w: 2500, h: 5300, min: [2300, 4500], max: [4000, 7000], height: 1500, cover: true, look: 'parking', colors: 'asphalt',
@@ -178,14 +185,50 @@ const RAW = [
     variants: [v('wood', 'Дерево'), v('metal', 'Металл', ['#4a4f57', '#373b42', '#6c727b'])], keywords: 'забор' },
   { kind: 'gate', title: 'Калитка / ворота', cat: 'site', group: 'Ограждение', shape: 'rect', w: 4000, h: 200, min: [800, 100], max: [7000, 400], height: 1800, look: 'gate', colors: 'metal',
     variants: [v('gate', 'Ворота распашные'), v('wicket', 'Калитка')], keywords: 'въезд забор' },
-  { kind: 'path', title: 'Дорожка', cat: 'site', group: 'Площадки', shape: 'line', w: 6000, h: 1000, height: 0, cover: true, look: 'path', colors: 'tiles', stage: 2,
-    variants: [v('stepping', 'Плиты-ступени'), v('gravel', 'Гравий'), v('deck', 'Деревянная')] },
-  { kind: 'paving-area', title: 'Мощение (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'pad', colors: 'tiles', stage: 2 },
-  { kind: 'gravel-area', title: 'Гравий (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'pad', colors: 'gravel', stage: 2 },
-  { kind: 'deck-area', title: 'Настил (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 300, cover: true, look: 'deck', colors: 'deck', stage: 2 },
-  { kind: 'pond-area', title: 'Пруд (контур)', cat: 'site', group: 'Вода', shape: 'poly', w: 5000, h: 3000, height: 0, cover: true, look: 'pond', colors: 'pond', stage: 2 },
-  { kind: 'pool-area', title: 'Бассейн-чаша (контур)', cat: 'site', group: 'Вода', shape: 'poly', w: 6000, h: 3000, height: 0, cover: true, look: 'pool', colors: 'water', stage: 2 },
+  // Линейные и площадные — рисуются мышью (ui/landscape.js, инструмент draw-landscape).
+  { kind: 'path', title: 'Дорожка', cat: 'site', group: 'Дорожки', shape: 'line', w: 6000, h: 1000, min: [300, 300], max: [500000, 6000], height: 0, cover: true, look: 'path', colors: 'tiles',
+    variants: [
+      v('stepping', 'Плиты-ступени', ['#c9c3b8', '#b3ada2', '#ddd8ce']), v('pavers', 'Брусчатка', ['#9a9690', '#85817b', '#b0aca5']),
+      v('deck', 'Настил-доски', ['#a8714a', '#8e5d3b', '#bf875c']), v('gravel', 'Гравий', ['#c8bda8', '#a99f8c', '#ddd3c0']),
+      v('concrete', 'Бетон', ['#c9c9c4', '#b5b5b0', '#dcdcd7']),
+    ], keywords: 'тропинка плиты ступени настил гравий брусчатка рисовать линия' },
+  { kind: 'fence-line', title: 'Ограждение (по линии)', cat: 'site', group: 'Ограждение', shape: 'line', w: 6000, h: 150, min: [300, 50], max: [500000, 1500], height: 1800, look: 'fence-line', colors: 'wood',
+    variants: [v('picket', 'Штакетник'), v('mesh', 'Сетка', ['#6c727b', '#4a4f57', '#9aa0a8']), v('hedge', 'Живая изгородь', ['#3d6f35', '#52883f', '#6f9f55'])], keywords: 'забор штакетник сетка рисовать линия' },
+  { kind: 'paving-area', title: 'Мощение (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'area-paving', colors: 'tiles',
+    variants: [v('tiles', 'Плитка 500×500'), v('pavers', 'Брусчатка', ['#9a9690', '#85817b', '#b0aca5']), v('concrete', 'Бетон', ['#c9c9c4', '#b5b5b0', '#dcdcd7'])], keywords: 'плитка брусчатка рисовать контур' },
+  { kind: 'gravel-area', title: 'Гравий (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'area-gravel', colors: 'gravel',
+    variants: [v('gravel', 'Гравий'), v('white', 'Белый (японский)', ['#e6e2d8', '#cfcabd', '#f4f1ea'])], keywords: 'гравий отсыпка рисовать контур' },
+  { kind: 'deck-area', title: 'Настил (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 300, cover: true, look: 'area-deck', colors: 'deck',
+    variants: [v('larch', 'Лиственница'), v('wpc', 'ДПК графит', ['#5d5650', '#4b4540', '#706962']), v('teak', 'Тик', ['#b7834f', '#9c6b3e', '#cf9a65'])], keywords: 'терраса доски рисовать контур' },
+  { kind: 'pond-area', title: 'Пруд (контур)', cat: 'site', group: 'Вода', shape: 'poly', w: 5000, h: 3000, height: 0, cover: true, look: 'area-pond', colors: 'pond',
+    variants: [v('lilies', 'С кувшинками'), v('mirror', 'Зеркальный')], keywords: 'вода рисовать контур' },
+  { kind: 'pool-area', title: 'Бассейн-чаша (контур)', cat: 'site', group: 'Вода', shape: 'poly', w: 6000, h: 3000, height: 0, cover: true, look: 'area-pool', colors: 'water',
+    variants: [v('mosaic', 'Голубая мозаика'), v('dark', 'Тёмная чаша', ['#2c6f86', '#1f5568', '#5aa3b8'])], keywords: 'вода бассейн рисовать контур' },
 ];
+
+// Поверхность для баланса территории (ТЭП): green — озеленение (газон,
+// цветники, проекции крон), hard — твёрдые покрытия, water — вода, null —
+// не покрытие (малые формы, ограждения).
+const WATER_KINDS = new Set(['pool', 'jacuzzi', 'pond', 'fountain', 'pond-area', 'pool-area']);
+function surfaceOf(raw) {
+  if (WATER_KINDS.has(raw.kind)) return 'water';
+  if ((raw.cat === 'green' && raw.kind !== 'boulder') || raw.kind === 'vegbeds' || raw.kind === 'parking-guest') return 'green';
+  return raw.cover ? 'hard' : null;
+}
+
+// Группы видимости в панели: растения, покрытия (площади и дорожки), малые формы.
+export const LANDSCAPE_VIS = [
+  { id: 'shadows', title: 'Тени' },
+  { id: 'plants', title: 'Деревья и кусты' },
+  { id: 'covers', title: 'Покрытия и дорожки' },
+  { id: 'objects', title: 'Малые формы' },
+  { id: 'labels', title: 'Подписи' },
+];
+function visGroupOf(raw, layer) {
+  if (raw.kind === 'hedge-line' || (raw.cat === 'green' && layer !== 'ground' && raw.shape !== 'poly')) return 'plants';
+  if (layer === 'ground' || raw.shape === 'poly' || raw.kind === 'path') return 'covers';
+  return 'objects';
+}
 
 const pair = (value, fallback) => (Array.isArray(value) ? value : [value ?? fallback, value ?? fallback]);
 
@@ -211,6 +254,8 @@ function finalizeDef(raw) {
     layer,
     shadow: layer !== 'ground' && raw.height >= 400,
     lockAspect: square,
+    surface: surfaceOf(raw),
+    vis: visGroupOf(raw, layer),
     colors: Array.isArray(raw.colors) ? raw.colors : LS_COLORS[raw.colors] || LS_COLORS.leaf,
   };
 }
@@ -256,9 +301,14 @@ export function makeLandscapeId() {
 
 // ---------------------------------------------------------------- Объекты
 
+export const isPathShape = (def) => def?.shape === 'line' || def?.shape === 'poly';
+export const LINE_WIDTH_MIN = 50;
+export const LINE_WIDTH_MAX = 10000;
+
 export function createLandscapeObject(kind, x, y, opts = {}) {
   const def = landscapeDef(kind);
   if (!def) throw new Error(`Неизвестный объект ландшафта: ${kind}`);
+  if (isPathShape(def)) return createShapeObject(def, x, y, opts);
   const obj = {
     id: opts.id || makeLandscapeId(),
     kind,
@@ -272,8 +322,298 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
     meta: { ...(def.meta || {}), ...(opts.meta || {}) },
   };
   if (opts.color) obj.color = opts.color;
-  if (opts.points) obj.points = opts.points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+  if (opts.locked) obj.locked = true;
   return syncRadius(clampSize(obj, def), def);
+}
+
+// Линейный/площадной: точки в мире; без точек — заготовка по габариту типа
+// с центром (x, y).
+function createShapeObject(def, x, y, opts) {
+  const line = def.shape === 'line';
+  let points = Array.isArray(opts.points) ? opts.points : null;
+  if (!points) {
+    const a = (opts.w ?? def.w) / 2;
+    const b = (line ? 0 : (opts.h ?? def.h)) / 2;
+    points = line
+      ? [{ x: x - a, y }, { x: x + a, y }]
+      : [{ x: x - a, y: y - b }, { x: x + a, y: y - b }, { x: x + a, y: y + b }, { x: x - a, y: y + b }];
+  }
+  const obj = {
+    id: opts.id || makeLandscapeId(),
+    kind: def.kind,
+    x: Math.round(x),
+    y: Math.round(y),
+    rotation: 0,
+    w: 1,
+    h: 1,
+    height: opts.height ?? def.height,
+    variant: opts.variant || def.variants[0].id,
+    meta: { ...(def.meta || {}), ...(opts.meta || {}) },
+    points: points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+  };
+  if (line) obj.width = clampWidth(opts.width ?? def.h);
+  if (opts.smooth) obj.smooth = true;
+  if (opts.color) obj.color = opts.color;
+  if (opts.locked) obj.locked = true;
+  return syncShape(obj);
+}
+
+export const clampWidth = (w) => Math.min(LINE_WIDTH_MAX, Math.max(LINE_WIDTH_MIN, Math.round(Number(w) || 1000)));
+
+// Габарит (x, y, w, h) по точкам — после любой правки вершин.
+export function syncShape(obj) {
+  const path = objectPath(obj);
+  if (!path.length) return obj;
+  const pad = obj.width ? obj.width / 2 : 0;
+  const xs = path.map((p) => p.x);
+  const ys = path.map((p) => p.y);
+  const minX = Math.min(...xs) - pad;
+  const maxX = Math.max(...xs) + pad;
+  const minY = Math.min(...ys) - pad;
+  const maxY = Math.max(...ys) + pad;
+  obj.x = Math.round((minX + maxX) / 2);
+  obj.y = Math.round((minY + maxY) / 2);
+  obj.w = Math.max(1, Math.round(maxX - minX));
+  obj.h = Math.max(1, Math.round(maxY - minY));
+  obj.rotation = 0;
+  return obj;
+}
+
+// Копия объекта со сдвигом (новый id) — вставка, дубликат.
+export function cloneLandscapeObject(o, dx = 0, dy = 0) {
+  const copy = JSON.parse(JSON.stringify(o));
+  copy.id = makeLandscapeId();
+  delete copy.locked;
+  return translateObject(copy, dx, dy);
+}
+
+// Сдвиг объекта целиком (с вершинами).
+export function translateObject(o, dx, dy) {
+  o.x += dx;
+  o.y += dy;
+  if (Array.isArray(o.points)) for (const p of o.points) { p.x += dx; p.y += dy; }
+  return o;
+}
+
+// Поворот объекта вокруг точки (cx, cy) на deg: у фигур вращаются вершины.
+export function rotateObjectAbout(o, cx, cy, deg) {
+  const a = (deg * Math.PI) / 180;
+  const rot = (p) => {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    return { x: Math.round(cx + dx * Math.cos(a) - dy * Math.sin(a)), y: Math.round(cy + dx * Math.sin(a) + dy * Math.cos(a)) };
+  };
+  if (isPathShape(landscapeDef(o.kind)) && Array.isArray(o.points)) {
+    o.points = o.points.map(rot);
+    return syncShape(o);
+  }
+  const c = rot(o);
+  o.x = c.x;
+  o.y = c.y;
+  o.rotation = normDeg((o.rotation || 0) + deg);
+  return o;
+}
+
+// ------------------------------------------------- Вершины линий и контуров
+
+export const minVertices = (o) => (landscapeDef(o.kind)?.shape === 'poly' ? 3 : 2);
+
+export function moveVertex(o, index, p) {
+  if (!o.points?.[index]) return o;
+  o.points[index] = { x: Math.round(p.x), y: Math.round(p.y) };
+  return syncShape(o);
+}
+
+// Вставка вершины после index (на ребре index → index+1).
+export function insertVertex(o, index, p) {
+  o.points.splice(index + 1, 0, { x: Math.round(p.x), y: Math.round(p.y) });
+  return syncShape(o);
+}
+
+export function removeVertex(o, index) {
+  if (!o.points || o.points.length <= minVertices(o)) return false;
+  o.points.splice(index, 1);
+  syncShape(o);
+  return true;
+}
+
+// Вершина под точкой (мир), tol — мм.
+export function hitVertex(o, p, tol) {
+  let best = -1;
+  let bestD = tol;
+  (o.points || []).forEach((q, i) => {
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d <= bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+
+// Ребро (индекс начальной вершины) под точкой: по сглаженной линии, если
+// она сглажена (seg — номер исходного ребра у каждой точки выборки).
+export function hitEdge(o, p, tol) {
+  const closed = landscapeDef(o.kind)?.shape === 'poly';
+  const path = objectPath(o);
+  const n = path.length;
+  let best = null;
+  for (let i = 0; i < (closed ? n : n - 1); i += 1) {
+    const a = path[i];
+    const b = path[(i + 1) % n];
+    const d = pointToSegmentDistance(p, a, b);
+    if (d <= tol && (!best || d < best.d)) best = { d, seg: a.seg };
+  }
+  return best ? best.seg : -1;
+}
+
+// ------------------------------------------------- Сглаживание и выборка
+
+// Кривая Катмулла-Рома (центростремительная) через вершины: точки выборки
+// { x, y, seg }, seg — исходное ребро. closed — замкнутый контур.
+export function smoothPath(points, closed = false, stepMm = 250) {
+  const n = points.length;
+  if (n < 3 && !closed) return points.map((p, i) => ({ x: p.x, y: p.y, seg: Math.min(i, n - 2) }));
+  const at = (i) => {
+    if (closed) return points[((i % n) + n) % n];
+    if (i < 0) return { x: 2 * points[0].x - points[1].x, y: 2 * points[0].y - points[1].y };
+    if (i >= n) return { x: 2 * points[n - 1].x - points[n - 2].x, y: 2 * points[n - 1].y - points[n - 2].y };
+    return points[i];
+  };
+  const out = [];
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i += 1) {
+    const p0 = at(i - 1); const p1 = at(i); const p2 = at(i + 1); const p3 = at(i + 2);
+    const t01 = Math.sqrt(Math.hypot(p1.x - p0.x, p1.y - p0.y)) || 1e-3;
+    const t12 = Math.sqrt(Math.hypot(p2.x - p1.x, p2.y - p1.y)) || 1e-3;
+    const t23 = Math.sqrt(Math.hypot(p3.x - p2.x, p3.y - p2.y)) || 1e-3;
+    // Касательные (Барри–Голдман) для центростремительного варианта.
+    const m1 = {
+      x: (p1.x - p0.x) / t01 - (p2.x - p0.x) / (t01 + t12) + (p2.x - p1.x) / t12,
+      y: (p1.y - p0.y) / t01 - (p2.y - p0.y) / (t01 + t12) + (p2.y - p1.y) / t12,
+    };
+    const m2 = {
+      x: (p2.x - p1.x) / t12 - (p3.x - p1.x) / (t12 + t23) + (p3.x - p2.x) / t23,
+      y: (p2.y - p1.y) / t12 - (p3.y - p1.y) / (t12 + t23) + (p3.y - p2.y) / t23,
+    };
+    m1.x *= t12; m1.y *= t12; m2.x *= t12; m2.y *= t12;
+    const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const k = Math.max(2, Math.min(32, Math.ceil(len / stepMm)));
+    for (let j = 0; j < k; j += 1) {
+      const t = j / k;
+      const t2 = t * t; const t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1; const h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2; const h11 = t3 - t2;
+      out.push({
+        x: h00 * p1.x + h10 * m1.x + h01 * p2.x + h11 * m2.x,
+        y: h00 * p1.y + h10 * m1.y + h01 * p2.y + h11 * m2.y,
+        seg: i,
+      });
+    }
+  }
+  if (!closed) out.push({ x: points[n - 1].x, y: points[n - 1].y, seg: n - 2 });
+  return out;
+}
+
+// Ось линии или контур площади (сглаженные, если smooth), мир.
+export function objectPath(o) {
+  const pts = o.points || [];
+  const closed = landscapeDef(o.kind)?.shape === 'poly';
+  if (pts.length < 2) return pts.map((p) => ({ x: p.x, y: p.y, seg: 0 }));
+  if (o.smooth && pts.length >= (closed ? 3 : 3)) return smoothPath(pts, closed);
+  return pts.map((p, i) => ({ x: p.x, y: p.y, seg: closed ? i : Math.min(i, pts.length - 2) }));
+}
+
+export function polylineLength(pts, closed = false) {
+  let s = 0;
+  const n = pts.length;
+  for (let i = 0; i < (closed ? n : n - 1); i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % n];
+    s += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return s;
+}
+
+export function polygonArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    s += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(s) / 2;
+}
+
+// Полоса шириной width вдоль ломаной: левый край + правый в обратном порядке.
+export function ribbonOutline(path, width) {
+  const n = path.length;
+  if (n < 2) return [];
+  const hw = width / 2;
+  const left = [];
+  const right = [];
+  const norm = (a, b) => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
+  };
+  for (let i = 0; i < n; i += 1) {
+    const n1 = i > 0 ? norm(path[i - 1], path[i]) : null;
+    const n2 = i < n - 1 ? norm(path[i], path[i + 1]) : null;
+    let nx = (n1?.x || 0) + (n2?.x || 0);
+    let ny = (n1?.y || 0) + (n2?.y || 0);
+    const len = Math.hypot(nx, ny) || 1;
+    nx /= len; ny /= len;
+    const ref = n1 || n2;
+    const cos = Math.max(0.5, nx * ref.x + ny * ref.y); // срез острых углов
+    const k = hw / cos;
+    left.push({ x: path[i].x + nx * k, y: path[i].y + ny * k });
+    right.push({ x: path[i].x - nx * k, y: path[i].y - ny * k });
+  }
+  return [...left, ...right.reverse()];
+}
+
+// Точка и направление на расстоянии s вдоль ломаной.
+export function pointAlong(path, s) {
+  let rest = s;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const a = path[i]; const b = path[i + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (rest <= len || i === path.length - 2) {
+      const t = len ? Math.min(1, Math.max(0, rest / len)) : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, angle: Math.atan2(b.y - a.y, b.x - a.x) };
+    }
+    rest -= len;
+  }
+  const p = path[0] || { x: 0, y: 0 };
+  return { x: p.x, y: p.y, angle: 0 };
+}
+
+// Плиты-ступени дорожки: по длине с шагом, детерминированный разброс тона,
+// поворота и сдвига. { x, y, angle (рад), along, across, tone }.
+export function steppingSlabs(o) {
+  const path = objectPath(o);
+  const total = polylineLength(path);
+  const width = o.width || 1000;
+  const along = Math.round(Math.min(650, Math.max(300, width * 0.45)));
+  const gap = Math.round(Math.min(300, Math.max(120, width * 0.18)));
+  const step = along + gap;
+  const count = Math.max(1, Math.floor((total + gap) / step));
+  const lead = (total - (count * step - gap)) / 2;
+  const rand = seededRandom(o.id);
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const s = lead + i * step + along / 2;
+    const p = pointAlong(path, s);
+    const jitter = (rand() - 0.5) * 0.08;
+    const shift = (rand() - 0.5) * width * 0.08;
+    out.push({
+      x: p.x - Math.sin(p.angle) * shift, y: p.y + Math.cos(p.angle) * shift, angle: p.angle + jitter,
+      along, across: Math.round(width * (0.9 + rand() * 0.1)), tone: rand(),
+    });
+  }
+  return out;
+}
+
+// Длина (м) линейного объекта; у площадного — периметр.
+export function objectLengthM(o) {
+  const def = landscapeDef(o.kind);
+  if (!isPathShape(def)) return 0;
+  return polylineLength(objectPath(o), def.shape === 'poly') / 1000;
 }
 
 function normDeg(d) {
@@ -283,7 +623,7 @@ function normDeg(d) {
 
 // Размер в пределах типа; у круглых — w = h.
 export function clampSize(obj, def = landscapeDef(obj.kind)) {
-  if (!def) return obj;
+  if (!def || isPathShape(def)) return obj;
   const cl = (val, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(val) || lo)));
   obj.w = cl(obj.w, def.min.w, def.max.w);
   obj.h = def.lockAspect ? obj.w : cl(obj.h, def.min.h, def.max.h);
@@ -299,6 +639,15 @@ function syncRadius(obj, def) {
 // Новый размер (из панели или ручкой): пределы типа + радиус кроны.
 export function resizeObject(obj, w, h = w) {
   const def = landscapeDef(obj.kind);
+  if (isPathShape(def)) {
+    // Фигура: вершины масштабируются от центра габарита.
+    const pad = obj.width || 0;
+    const kx = Math.max(1, w - pad) / Math.max(1, obj.w - pad);
+    const ky = Math.max(1, h - pad) / Math.max(1, obj.h - pad);
+    const cx = obj.x; const cy = obj.y;
+    obj.points = obj.points.map((p) => ({ x: Math.round(cx + (p.x - cx) * kx), y: Math.round(cy + (p.y - cy) * ky) }));
+    return syncShape(obj);
+  }
   obj.w = w;
   obj.h = h;
   clampSize(obj, def);
@@ -314,6 +663,21 @@ export function normalizeLandscapeObject(raw) {
   const y = num(raw.y);
   if (x == null || y == null) return null;
   const r = num(raw.r);
+  if (isPathShape(def)) {
+    const points = Array.isArray(raw.points) ? raw.points.filter((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y)) : [];
+    if (points.length < (def.shape === 'poly' ? 3 : 2)) return null;
+    return createLandscapeObject(raw.kind, x, y, {
+      id: typeof raw.id === 'string' && raw.id ? raw.id : undefined,
+      height: num(raw.height) ?? def.height,
+      variant: def.variants.some((x2) => x2.id === raw.variant) ? raw.variant : undefined,
+      color: typeof raw.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(raw.color) ? raw.color : undefined,
+      meta: raw.meta && typeof raw.meta === 'object' ? raw.meta : undefined,
+      points,
+      width: num(raw.width) ?? undefined,
+      smooth: raw.smooth === true,
+      locked: raw.locked === true,
+    });
+  }
   const obj = createLandscapeObject(raw.kind, x, y, {
     id: typeof raw.id === 'string' && raw.id ? raw.id : undefined,
     rotation: num(raw.rotation) || 0,
@@ -323,8 +687,7 @@ export function normalizeLandscapeObject(raw) {
     variant: def.variants.some((x2) => x2.id === raw.variant) ? raw.variant : undefined,
     color: typeof raw.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(raw.color) ? raw.color : undefined,
     meta: raw.meta && typeof raw.meta === 'object' ? raw.meta : undefined,
-    points: Array.isArray(raw.points)
-      ? raw.points.filter((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y)) : undefined,
+    locked: raw.locked === true,
   });
   return obj;
 }
@@ -381,6 +744,9 @@ export function objectCorners(obj) {
 
 // Контур объекта для проверок (эллипс — многоугольником).
 export function objectOutline(obj, segments = 24) {
+  const def = landscapeDef(obj.kind);
+  if (def?.shape === 'poly') return objectPath(obj).map(({ x, y }) => ({ x, y }));
+  if (def?.shape === 'line') return ribbonOutline(objectPath(obj), obj.width || def.h);
   if (!isRoundObject(obj)) return objectCorners(obj).map(({ x, y }) => ({ x, y }));
   const out = [];
   for (let i = 0; i < segments; i += 1) {
@@ -399,6 +765,19 @@ export function objectBox(obj) {
 
 // Попадание точки (мир) в объект; tol — запас в мм (клик по мелочи).
 export function pointInObject(obj, p, tol = 0) {
+  const def = landscapeDef(obj.kind);
+  if (def?.shape === 'line') {
+    const path = objectPath(obj);
+    const half = (obj.width || def.h) / 2 + tol;
+    for (let i = 0; i < path.length - 1; i += 1) if (pointToSegmentDistance(p, path[i], path[i + 1]) <= half) return true;
+    return false;
+  }
+  if (def?.shape === 'poly') {
+    const path = objectPath(obj);
+    if (path.length < 3) return false;
+    if (pointInPolygon(p, path)) return true;
+    return tol > 0 && distanceToPolygon(p, path) <= tol;
+  }
   const l = toLocal(obj, p);
   const a = obj.w / 2 + tol;
   const b = obj.h / 2 + tol;
@@ -406,13 +785,17 @@ export function pointInObject(obj, p, tol = 0) {
   return Math.abs(l.x) <= a && Math.abs(l.y) <= b;
 }
 
+// Порядок внутри слоя: площади → линии → остальные (и в отрисовке).
+export const SHAPE_RANK = { poly: 0, line: 1, point: 2, circle: 2, rect: 2 };
+
 // Верхний объект под точкой: высокие (кроны) поверх, затем позже добавленные.
 export function hitLandscape(objects, p, tol = 0) {
   const order = { tall: 2, low: 1, ground: 0 };
   let best = null;
   objects.forEach((obj, index) => {
     if (!pointInObject(obj, p, tol)) return;
-    const z = (order[landscapeDef(obj.kind)?.layer] ?? 1) * 1e6 + index;
+    const def = landscapeDef(obj.kind);
+    const z = (order[def?.layer] ?? 1) * 1e6 + (SHAPE_RANK[def?.shape] ?? 2) * 1e5 + index;
     if (!best || z > best.z) best = { obj, z };
   });
   return best?.obj || null;
@@ -426,7 +809,10 @@ export function objectsInPolygon(objects, polygon) {
 // Выходит ли объект за границу участка (хоть одна точка контура снаружи).
 export function isOutsideSite(obj, boundary) {
   if (!Array.isArray(boundary) || boundary.length < 3) return false;
-  return objectOutline(obj, 16).some((p) => !pointInPolygon(p, boundary));
+  // Линии (ограждение по границе) — по оси; точки на самой границе — внутри.
+  const def = landscapeDef(obj.kind);
+  const pts = def?.shape === 'line' ? objectPath(obj) : objectOutline(obj, 16);
+  return pts.some((p) => !pointInPolygon(p, boundary) && distanceToPolygon(p, boundary) > 50);
 }
 
 export function distanceToPolygon(p, polygon) {
@@ -457,7 +843,15 @@ export function landscapeWarnings(objects, { boundary = null, footprints = [] } 
 
 // Площадь объекта, м² (для сводки и ТЭП этапа 2).
 export function objectAreaM2(obj) {
-  const area = isRoundObject(obj) ? (Math.PI * obj.w * obj.h) / 4 : obj.w * obj.h;
+  const def = landscapeDef(obj.kind);
+  if (def?.shape === 'poly') return polygonArea(objectPath(obj)) / 1e6;
+  if (def?.shape === 'line') {
+    if (obj.kind === 'path' && obj.variant === 'stepping') {
+      return steppingSlabs(obj).reduce((s, sl) => s + sl.along * sl.across, 0) / 1e6;
+    }
+    return (polylineLength(objectPath(obj)) * (obj.width || def.h)) / 1e6;
+  }
+  const area =isRoundObject(obj) ? (Math.PI * obj.w * obj.h) / 4 : obj.w * obj.h;
   return area / 1e6;
 }
 

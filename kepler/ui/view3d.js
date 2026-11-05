@@ -14,7 +14,7 @@ import { state } from './state.js';
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
 // дом, и ближняя плоскость начинает срезать стены.
 const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000, target: { x: 0, y: 0, z: 1500 } };
-const opts = { roof: false, site: true, terrainScale: 1 };
+const opts = { roof: false, site: true, terrainScale: 1, landscape: true };
 let faces = [];
 let active = false;
 let gl = null; // WebGL-контекст (null — рисуем через canvas 2D)
@@ -413,6 +413,7 @@ export function bind3d() {
   el('v3Close')?.addEventListener('click', close3d);
   el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
+  el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
   el('v3Relief')?.addEventListener('input', (e) => {
     opts.terrainScale = Math.max(1, Math.min(5, Number(e.target.value) || 1));
     const label = el('v3ReliefVal');

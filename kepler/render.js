@@ -28,7 +28,8 @@ import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
 import { landscapeWarnings } from './core/landscape.js';
 import {
-  drawHouseShadow, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised, landscapeShadow,
+  drawHouseShadow, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
+  landscapeShadow, visibleLandscape,
 } from './ui/render-landscape.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
@@ -173,8 +174,10 @@ export function createRenderer(canvas) {
     // Ландшафт (core/landscape.js, ui/render-landscape.js): в «Ландшафте» —
     // для правки, в «Участке» — для контекста. Покрытия — под домом.
     const landscape = state.modeName === 'landscape';
-    const lsObjects = site && state.modeName !== 'plan' ? site.landscape?.objects || [] : [];
-    const lsOpts = { px, lod: scale * 1000, shadow: landscapeShadow(site) };
+    // Слои ландшафта (панель «Ландшафт»): скрытые группы не рисуются.
+    const lsVis = state.lsVis || null;
+    const lsObjects = site && state.modeName !== 'plan' ? visibleLandscape(site.landscape?.objects || [], lsVis) : [];
+    const lsOpts = { px, lod: scale * 1000, shadow: landscapeShadow(site), noShadows: lsVis?.shadows === false };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
     if (landscape && site?.boundary?.length >= 3) {
       // Участок — газоном (палитра «вид сверху», читается в обеих темах).
@@ -341,6 +344,7 @@ export function createRenderer(canvas) {
     setView(view);
     if (lsObjects.length) drawLandscapeRaised(ctx, lsObjects, lsOpts);
     if (landscape && state.ghostLandscape) drawLandscapeGhost(ctx, state.ghostLandscape, lsOpts, tokens.accent);
+    if (landscape && state.tool?.kind === 'draw-landscape') drawLandscapeDraft(ctx, state.tool, lsOpts, tokens.accent);
     if (site) drawSiteOver(ctx, state, site, tokens, px);
 
     state._calLabelAt = null;
@@ -567,6 +571,7 @@ export function createRenderer(canvas) {
         sel: state.selection?.type === 'landscape' ? state.selection.ids : [],
         hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
         warnings, w2s, tokens, scale, warnColor: '#e08c1e',
+        labels: lsVis?.labels === true, vertex: state.lsVertex || null,
       });
     }
     if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });

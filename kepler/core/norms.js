@@ -28,6 +28,13 @@ export const SP55 = {
   slab: DEFAULT_SLAB,
 };
 
+// Благоустройство участка: ориентир минимальной доли озеленения (0…1).
+// Настраиваемое значение (project.settings.minGreenShare перекрывает), а не
+// юридическая норма: требования зависят от ПЗЗ и местных правил.
+export const LANDSCAPE_NORMS = {
+  minGreenShare: 0.4,
+};
+
 const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
 
 // Проверки одной комнаты: [{ kind, ok, text }].
