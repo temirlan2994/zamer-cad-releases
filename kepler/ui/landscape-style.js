@@ -3,6 +3,7 @@
 // генплана по умолчанию — «Чертёж», либо «как на экране».
 
 import { state } from './state.js';
+import { clearLandscapeSprites } from './render-landscape-kit.js';
 
 const KEY = 'kepler-ls-style';
 const SHEET_KEY = 'kepler-ls-sheet-style';
@@ -20,7 +21,10 @@ export function loadLandscapeStyle() {
 }
 
 export function setLandscapeStyle(style) {
-  state.lsStyle = style === 'drawing' ? 'drawing' : 'sketch';
+  const next = style === 'drawing' ? 'drawing' : 'sketch';
+  // Спрайты прежнего стиля больше не нужны — освободить память.
+  if (state.lsStyle && state.lsStyle !== next) clearLandscapeSprites();
+  state.lsStyle = next;
   write(KEY, state.lsStyle);
   return state.lsStyle;
 }

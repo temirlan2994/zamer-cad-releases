@@ -101,12 +101,57 @@ export function hashStr(s) {
 
 // ------------------------------------------------------------ Кеш
 
-const LIMIT = 700;
+// Бюджет — по суммарной площади (пикселях), а не по числу спрайтов: при
+// активном зуме число спрайтов мало что значит, а память canvas (4 байта на
+// пиксель, вне JS-кучи) на телефоне роняет вкладку. Вытеснение — LRU.
+// 60 Мпикс ≈ 240 МБ на компьютере, на телефоне/планшете — 24 Мпикс ≈ 96 МБ.
 const SPRITE_MAX_SIDE = 1400;
 const SPRITE_MAX_AREA = 1_300_000;
-const sprites = new Map();
-const stats = { hits: 0, misses: 0 };
-export const spriteStats = () => ({ ...stats, size: sprites.size });
+const DESKTOP_BUDGET = 60_000_000;
+const MOBILE_BUDGET = 24_000_000;
+const PATTERN_BUDGET = 16_000_000; // узоры физического размера (до 1024² каждый)
+
+function defaultBudget() {
+  try {
+    const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    const lowMem = typeof navigator !== 'undefined' && navigator.deviceMemory > 0 && navigator.deviceMemory <= 4;
+    return coarse || lowMem ? MOBILE_BUDGET : DESKTOP_BUDGET;
+  } catch {
+    return DESKTOP_BUDGET;
+  }
+}
+
+let budget = null; // вычисляется при первом обращении (в Node нет matchMedia)
+const sprites = new Map(); // key → canvas; порядок вставки = порядок LRU
+let spritePixels = 0;
+const stats = { hits: 0, misses: 0, evicted: 0 };
+export const spriteStats = () => ({ ...stats, size: sprites.size, pixels: spritePixels, budget: spriteBudget() });
+
+export function spriteBudget() {
+  if (budget === null) budget = defaultBudget();
+  return budget;
+}
+
+// Для тестов и отладки: задать бюджет (пикс.) и сразу ужаться под него.
+export function setSpriteBudget(px) {
+  budget = px > 0 ? px : defaultBudget();
+  trimSprites();
+}
+
+const areaOf = (cv) => (cv?.width || 0) * (cv?.height || 0);
+
+// reserve — сколько пикселей нужно освободить под будущий спрайт.
+function trimSprites(reserve = 0) {
+  const max = spriteBudget();
+  while (spritePixels + reserve > max && sprites.size) {
+    const [oldKey, oldCv] = sprites.entries().next().value;
+    sprites.delete(oldKey);
+    spritePixels -= areaOf(oldCv);
+    stats.evicted += 1;
+    // Холст не обнуляем: вызывающий мог получить его в этом же кадре и ещё
+    // не нарисовать (drawImage холста 0×0 бросает исключение).
+  }
+}
 
 function makeCanvas(w, h) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
@@ -136,14 +181,20 @@ export function cachedSprite(key, w, h, draw) {
   if (!s) return null;
   const g = s.getContext('2d');
   draw(g, cw, ch);
+  // Место под новый — вытеснением самых давних; новый встаёт последним.
+  trimSprites(cw * ch);
   sprites.set(key, s);
-  if (sprites.size > LIMIT) sprites.delete(sprites.keys().next().value);
+  spritePixels += cw * ch;
   return s;
 }
 
+// Сброс кешей: смена темы или стиля графики (ключи старых спрайтов больше
+// не запрашиваются, а память держат).
 export function clearLandscapeSprites() {
   sprites.clear();
+  spritePixels = 0;
   patterns.clear();
+  patternPixels = 0;
 }
 
 // Квант размера: спрайты отличаются шагом ~9 % (незаметно при растяжении).
@@ -155,6 +206,7 @@ export function sizeBucket(px) {
 // ------------------------------------------------------------ Узоры (текстуры)
 
 const patterns = new Map();
+let patternPixels = 0;
 const hasMatrix = typeof DOMMatrix !== 'undefined';
 
 // Узор, привязанный к миру: тайл в экранных пикселях (одинаковое зерно при
@@ -168,6 +220,7 @@ export function grainPattern(ctx, name, pal, k, draw, tile = 128) {
     draw(cv.getContext('2d'), tile, seededRandom(key));
     p = { cv, pat: null };
     patterns.set(key, p);
+    patternPixels += tile * tile;
   }
   const pat = ctx.createPattern(p.cv, 'repeat');
   if (pat && hasMatrix && pat.setTransform) pat.setTransform(new DOMMatrix([1 / k, 0, 0, 1 / k, 0, 0]));
@@ -187,8 +240,16 @@ export function physicalPattern(ctx, name, pal, k, tileMM, draw) {
     g.scale(px / tileMM, px / tileMM);
     draw(g, tileMM, seededRandom(name), px / tileMM);
     p = { cv };
+    // Тот же бюджет по площади (LRU по порядку вставки), что у спрайтов.
+    while (patternPixels + px * px > PATTERN_BUDGET && patterns.size) {
+      const [k0, p0] = patterns.entries().next().value;
+      patterns.delete(k0);
+      patternPixels -= areaOf(p0.cv);
+    }
     patterns.set(key, p);
-    if (patterns.size > 160) patterns.delete(patterns.keys().next().value);
+    patternPixels += px * px;
+  } else {
+    patterns.delete(key); patterns.set(key, p); // LRU
   }
   const pat = ctx.createPattern(p.cv, 'repeat');
   if (pat && hasMatrix && pat.setTransform) {

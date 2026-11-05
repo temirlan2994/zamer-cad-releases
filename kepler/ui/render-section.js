@@ -58,7 +58,7 @@ export function drawSectionDraft(ctx, tool, { w2s, tokens }) {
   const pts = [...(tool.points || []), ...(tool.cursor ? [tool.cursor] : [])].map((p) => w2s(p.x, p.y));
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = tokens.surface || '#ffffff';
   ctx.lineWidth = 1.6;
   ctx.setLineDash([10, 5]);
   if (pts.length >= 2) {

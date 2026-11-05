@@ -100,6 +100,13 @@ export function renderLibrary() {
   }
 }
 
+// Смена темы: миниатюры на canvas (мебель — цвет --muted, ландшафт — тёмная
+// палитра) сами не перерисуются — пересобрать карточки.
+export function refreshLibraryTheme() {
+  try { renderLandscapeLibrary(); } catch { /* каталога ещё нет */ }
+  if (refs.furnitureItems?.childElementCount) renderFurnitureItems();
+}
+
 export function renderFurnitureBar() {
   // Содержимое строится только в режиме «План»; видимость задаёт вкладка
   // (applyLibraryTab).

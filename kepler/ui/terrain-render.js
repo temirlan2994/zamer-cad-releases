@@ -4,8 +4,41 @@
 
 import { contours, formatElevation, terrainModel } from '../core/terrain.js';
 
-const CONTOUR = '#9a6a33';
-const POINT = '#7a4a1c';
+// Цвета горизонталей и отметок по теме: на тёмном холсте (#0d1118) прежние
+// #9a6a33/#7a4a1c давали контраст ~2:1 — там светлая охра (≥ 7:1).
+const LIGHT = { contour: '#9a6a33', point: '#7a4a1c' };
+const DARK = { contour: '#d8a865', point: '#ebc48e' };
+
+// Яркость цвета #rgb/#rrggbb/rgb(…) 0…1; не разобрали — светлый.
+function lum(color) {
+  const s = String(color || '').trim();
+  let r; let g; let b;
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].replace(/./g, '$&$&') : hex[1];
+    [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  } else {
+    const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(s);
+    if (!m) return 1;
+    [r, g, b] = [m[1], m[2], m[3]].map(Number);
+  }
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+export function terrainColors(canvasColor) {
+  return lum(canvasColor) < 0.4 ? DARK : LIGHT;
+}
+
+// Слой под объектами токенов не получает: тему берём у документа, но только
+// для холста на странице (листы печати рисуются на отдельном холсте — светлые).
+function underColors(ctx) {
+  try {
+    if (!ctx.canvas?.isConnected || typeof getComputedStyle === 'undefined') return LIGHT;
+    return terrainColors(getComputedStyle(document.documentElement).getPropertyValue('--canvas'));
+  } catch {
+    return LIGHT;
+  }
+}
 
 // Гипсометрическая шкала: низ — зелёный, середина — жёлтый, верх — коричневый.
 const HYPSO = [[0x6f, 0xb2, 0x6a], [0xe6, 0xd8, 0x7a], [0xb0, 0x73, 0x3e]];
@@ -28,7 +61,7 @@ export function drawTerrainUnder(ctx, state, site, px) {
   if (show.shade && inSite) drawShade(ctx, model, px);
   if (show.contours) {
     ctx.save();
-    ctx.strokeStyle = CONTOUR;
+    ctx.strokeStyle = underColors(ctx).contour;
     ctx.lineJoin = 'round';
     for (const level of contours(model, terrain.contourStep)) {
       ctx.globalAlpha = (inSite ? 1 : 0.45) * (level.major ? 0.85 : 0.5);
@@ -100,6 +133,7 @@ export function drawTerrainLabels(ctx, state, site, w2s, tokens, size) {
   }
   if (!terrain?.points?.length) return;
   const show = terrain.show || {};
+  const { point: POINT } = terrainColors(tokens.canvas);
   const place = makePlacer();
   const onScreen = (p) => p.x > -40 && p.y > -20 && p.x < size.width + 40 && p.y < size.height + 20;
   const sel = state.selection?.type === 'site' && state.selection.kind === 'terrain-point' ? state.selection.id : null;
@@ -154,6 +188,7 @@ export function drawTerrainLabels(ctx, state, site, w2s, tokens, size) {
 function drawContourLabels(ctx, terrain, w2s, tokens, place, onScreen) {
   const model = terrainModel(terrain);
   if (!model.tris.length) return;
+  const { contour: CONTOUR } = terrainColors(tokens.canvas);
   ctx.font = '10px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

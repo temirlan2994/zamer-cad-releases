@@ -14,6 +14,7 @@ import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
+import { hotkeysHtml } from './help.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
 import {
@@ -113,15 +114,7 @@ function renderProjectProps(panel) {
     ${tepSection()}
     ${variantsSection()}
     <h3>Управление</h3>
-    <ul class="hotkeys">
-      <li><b>ЛКМ</b> — выделение, рамка по пустому месту</li>
-      <li><b>ПКМ / средняя / пробел</b> — панорама, <b>колесо</b> — масштаб</li>
-      <li><b>Ctrl+C / Ctrl+V</b> — копировать / вставить объект</li>
-      <li><b>Del</b> — удалить, <b>R</b> — повернуть мебель</li>
-      <li><b>Ctrl+Z / Ctrl+Shift+Z</b> — отмена / повтор</li>
-      <li><b>Стрелки</b> — сдвиг на 50 мм (Shift — 500)</li>
-      <li><b>PgUp / PgDn</b> — этаж выше / ниже</li>
-    </ul>`;
+    ${hotkeysHtml()}`;
   panel.querySelectorAll('[data-room]').forEach((btn) => {
     btn.addEventListener('click', () => selectObject({ type: 'room', id: btn.dataset.room }));
   });

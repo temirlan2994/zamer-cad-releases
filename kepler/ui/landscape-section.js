@@ -218,7 +218,7 @@ function renderSectionView() {
       <button type="button" id="lsSecDel">Удалить</button>
       <button type="button" id="lsSecClose">✕ Закрыть</button>
     </div>
-    <div class="ls-section-body" id="lsSecBody">${svg}</div>`;
+    <div class="ls-section-body" id="lsSecBody" title="Разрез — как лист печати: белый фон в любой теме">${svg}</div>`;
   box.querySelectorAll('input[name="lsSecStyle"]').forEach((r) => r.addEventListener('change', () => {
     if (!r.checked) return;
     secStyle = r.value;
