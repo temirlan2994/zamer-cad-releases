@@ -13,6 +13,7 @@ import {
   copySelection, deleteSelection, duplicateSelection, mirrorSelection, moveMultiBy, pasteSelection,
   reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
+import { handleLandscapeKey, rotateLandscapeGhost } from './landscape.js';
 import { finishDraft } from './site-actions.js';
 import { state } from './state.js';
 import {
@@ -35,7 +36,7 @@ export function bindKeyboard() {
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
-        if (!event.repeat && rotatePlacementPreview()) {
+        if (!event.repeat && (rotatePlacementPreview() || rotateLandscapeGhost())) {
           event.preventDefault();
           return;
         }
@@ -53,6 +54,8 @@ export function bindKeyboard() {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
+    // «Ландшафт»: копирование, удаление, поворот, стрелки — свои объекты.
+    if (state.modeName === 'landscape' && handleLandscapeKey(event)) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyC' && state.selection) {
       event.preventDefault();
       copySelection();

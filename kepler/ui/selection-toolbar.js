@@ -81,6 +81,15 @@ function contentForSelection(sel) {
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'landscape') {
+    const many = sel.ids.length > 1;
+    return {
+      label: many ? `Выбрано: ${sel.ids.length}` : 'Ландшафт',
+      html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
+        ${button('rotate', '↻', 'Повернуть 90°', 'R')}
+        ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
   if (sel.type === 'site' && sel.kind === 'building') {
     return { label: 'Дом: тяните мышью или стрелками', html: '' };
   }
@@ -108,6 +117,13 @@ export function bindSelectionToolbar() {
     const target = event.target.closest('[data-selection-action]');
     if (!target || target.disabled) return;
     const action = target.dataset.selectionAction;
+    if (state.selection?.type === 'landscape') {
+      const ls = await import('./landscape.js');
+      if (action === 'duplicate') ls.duplicateLandscapeSelection();
+      else if (action === 'rotate') ls.rotateLandscape90();
+      else if (action === 'delete') ls.deleteLandscapeSelection();
+      return;
+    }
     const actions = await actionsReady;
     if (action === 'duplicate') actions.duplicateSelection();
     else if (action === 'rotate') actions.rotateSelection90();

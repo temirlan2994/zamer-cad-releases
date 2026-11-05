@@ -69,6 +69,12 @@
               <div class="furniture-items" id="furnitureItems"></div>
             </div>
           </div>
+          <div class="library-furniture library-landscape" id="landscapeBar" hidden>
+            <h2>Ландшафт</h2>
+            <div class="ls-tabs" id="lsTabs" role="tablist" aria-label="Категории ландшафта"></div>
+            <input id="lsSearch" class="furn-search" type="search" placeholder="Поиск: сосна, бассейн, парковка…" aria-label="Поиск по ландшафту" />
+            <div class="furniture-items ls-items" id="lsItems"></div>
+          </div>
         </aside>
 
         <section class="canvas-wrap">
@@ -101,7 +107,13 @@
             <input id="calInput" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="0.0" />
             <span class="cal-unit">м</span>
           </div>
-          <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
+          <div class="level-dock" id="levelDock">
+            <button type="button" class="landscape-chip" id="landscapeBtn" aria-pressed="false" title="Ландшафт: деревья, площадки, вода, парковка на участке">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c-4.5 0-7-2.6-7-6.2C5 5 7.6 3 12 3s7 2 7 4.8C19 11.4 16.5 14 12 14z"/><path d="M12 10.5l-2.5-2.5M12 9l2.5-2"/><path d="M4 21h16"/></svg>
+              <span>Ландшафт</span>
+            </button>
+            <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
+          </div>
           <div class="view3d" id="view3d" hidden>
             <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
             <div class="view3d-bar">

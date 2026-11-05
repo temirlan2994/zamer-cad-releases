@@ -26,6 +26,7 @@ export function updateDimModeBtn() {
 export function bindToolbar() {
   refs.modePlan.addEventListener('click', () => setEditorMode('plan'));
   refs.modeSite.addEventListener('click', () => setEditorMode('site'));
+  el('landscapeBtn')?.addEventListener('click', () => setEditorMode('landscape'));
   refs.libTabRooms.addEventListener('click', () => { state.libraryTab = 'rooms'; applyLibraryTab(); });
   refs.libTabFurniture.addEventListener('click', () => { state.libraryTab = 'furniture'; applyLibraryTab(); });
   el('undoBtn').addEventListener('click', undo);

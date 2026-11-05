@@ -33,11 +33,13 @@ import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject } from './tools.js';
+import { renderLandscapeProps } from './landscape.js';
 
 export function renderProps() {
   syncMobileBar();
   const sel = state.selection;
   const panel = refs.props;
+  if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
   if (!sel) {
     if (state.modeName === 'site') renderSiteSettings(panel);
     else renderProjectProps(panel);

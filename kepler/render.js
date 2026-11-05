@@ -26,6 +26,10 @@ import { roomRects, roomShapeArea, roomShapeHandles, wallSplitAt } from './core/
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
+import { landscapeWarnings } from './core/landscape.js';
+import {
+  drawHouseShadow, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised, landscapeShadow,
+} from './ui/render-landscape.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -166,145 +170,177 @@ export function createRenderer(canvas) {
     if (site) drawTerrainUnder(ctx, state, site, px);
     if (site) drawSiteUnder(ctx, state, site, tokens, px);
 
-    // 3–6. Дом — в своих осях.
-    setView(pv);
-
-    // Этаж ниже — бледные стены (подложка для выравнивания этажей).
-    if (state.belowWalls?.length) {
-      ctx.save();
-      ctx.globalAlpha = 0.16;
-      ctx.fillStyle = tokens.wall;
-      for (const wall of state.belowWalls) {
-        if (wall.hidden) continue;
-        if (wall.kind === 'chamfer') {
-          ctx.beginPath();
-          wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-          ctx.closePath();
-          ctx.fill();
-        } else {
-          ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
-        }
-      }
-      ctx.restore();
-    }
-
-    // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
-    // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
-    const ownByRoom = new Map();
-    const sharedWalls = [];
-    const chamferWalls = [];
-    for (const wall of walls) {
-      if (wall.kind === 'chamfer') { chamferWalls.push(wall); continue; }
-      if (wall.kind === 'shared' || wall.kind === 'joint') { sharedWalls.push(wall); continue; }
-      const rid = wall.rooms[0];
-      if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
-      ownByRoom.get(rid).push(wall);
-    }
-    const paintWall = (wall) => {
-      const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
-        (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
-      const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
-      if (wall.hidden && !selected && !hovered) {
-        // Скрытая стена — тонкий пунктир по оси: видно, где была граница.
-        const c = wall.center;
-        if (!c) return;
-        ctx.save();
-        ctx.strokeStyle = tokens.wall;
-        ctx.globalAlpha = 0.6;
-        ctx.lineWidth = px(1);
-        ctx.setLineDash([px(6), px(4)]);
-        ctx.beginPath();
-        ctx.moveTo(c.x1, c.y1);
-        ctx.lineTo(c.x2, c.y2);
-        ctx.stroke();
-        ctx.restore();
-        return;
-      }
-      ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
-      if (selected) ctx.fillStyle = tokens.accent;
-      else if (hovered) ctx.fillStyle = tokens.hover;
-      if (wall.hidden) ctx.globalAlpha = 0.22;
-      ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
-      ctx.globalAlpha = 1;
-    };
-    const roomLayer = (room) => {
-      if (isOpenRoom(room)) return 0; // террасы и балконы всегда под домом
-      if (isShaft(room)) return 3;
-      return room.parentId ? 2 : 1;
-    };
-    const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
-    for (const room of roomPaintOrder) {
-      drawFloor(ctx, room, tokens, px);
-      if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, tokens, px);
-      for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
-    }
-    // Общие стыковочные стены — поверх всех полов.
-    for (const wall of sharedWalls) paintWall(wall);
-    // Фаски на переходах толщины — заполняют ступеньку треугольником.
-    for (const wall of chamferWalls) {
-      ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+    // Ландшафт (core/landscape.js, ui/render-landscape.js): в «Ландшафте» —
+    // для правки, в «Участке» — для контекста. Покрытия — под домом.
+    const landscape = state.modeName === 'landscape';
+    const lsObjects = site && state.modeName !== 'plan' ? site.landscape?.objects || [] : [];
+    const lsOpts = { px, lod: scale * 1000, shadow: landscapeShadow(site) };
+    const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
+    if (landscape && site?.boundary?.length >= 3) {
+      // Участок — газоном (палитра «вид сверху», читается в обеих темах).
+      ctx.fillStyle = 'rgba(118,168,88,0.2)';
       ctx.beginPath();
-      ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
-      for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
-      ctx.closePath();
+      polyPath(ctx, site.boundary);
+      ctx.fill();
+    }
+    if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
+    if (landscape && houseFootprints.length) {
+      drawHouseShadow(ctx, houseFootprints, lsOpts, site?.buildingHeight || 6000);
+      // Дом — приглушённым пятном застройки: обводка, затем заливка поверх
+      // (внутренние швы между комнатами закрываются).
+      ctx.strokeStyle = tokens.muted;
+      ctx.lineWidth = px(3);
+      ctx.beginPath();
+      for (const f of houseFootprints) polyPath(ctx, f);
+      ctx.stroke();
+      ctx.fillStyle = tokens.surface;
       ctx.fill();
     }
 
-    // Шахта — верхний технический проём: она перекрывает полы и любые
-    // перегородки помещений под ней, затем поверх остаются только её стены.
-    for (const room of roomPaintOrder.filter((candidate) => isShaft(candidate))) {
-      drawFloor(ctx, room, tokens, px);
-      for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
-    }
+    // 3–6. Дом — в своих осях.
+    setView(pv);
 
-    // Подсветка комнаты под курсором.
-    if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
-      const hoverRoom = state.project.rooms.find((r) => r.id === state.hover.id);
-      if (hoverRoom) {
-        ctx.strokeStyle = tokens.hover;
-        ctx.lineWidth = px(1.6);
-        ctx.globalAlpha = 0.8;
-        ctx.strokeRect(hoverRoom.x, hoverRoom.y, hoverRoom.w, hoverRoom.h);
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    // 5. Проёмы.
-    for (const opening of state.project.openings) {
-      drawOpening(ctx, state, opening, walls, tokens, px);
-    }
-
-    // 6. Мебель (на генплане — без неё: opts.detail === false).
-    const detail = opts.detail !== false;
-    const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
-    for (const item of detail ? state.project.items : []) {
-      const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
-        (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
-      const hovered = hoveredItems.has(item.id);
-      drawItem(ctx, item, tokens, px, selected, hovered);
-    }
-
-    // Мебель с замечаниями (пересечение, дверь, нет прохода) — красный пунктир.
-    if (state.norms?.flagged?.size) {
-      ctx.strokeStyle = tokens.danger;
-      ctx.lineWidth = px(1.6);
-      ctx.setLineDash([px(5), px(4)]);
-      for (const item of state.project.items) {
-        if (!state.norms.flagged.has(item.id)) continue;
+    // 6. Мебель (на генплане и в «Ландшафте» — без неё).
+    const detail = opts.detail !== false && !landscape;
+    if (!landscape) {
+      // Этаж ниже — бледные стены (подложка для выравнивания этажей).
+      if (state.belowWalls?.length) {
         ctx.save();
-        ctx.translate(item.x, item.y);
-        ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
-        // Как в расчёте проходов (clearance.itemBounds): со стульями/модулями.
-        const b = item.comp ? compositeBounds({ ...item, x: 0, y: 0, rotation: 0 }) : { x: -item.w / 2, y: -item.h / 2, w: item.w, h: item.h };
-        ctx.strokeRect(b.x - px(3), b.y - px(3), b.w + px(6), b.h + px(6));
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = tokens.wall;
+        for (const wall of state.belowWalls) {
+          if (wall.hidden) continue;
+          if (wall.kind === 'chamfer') {
+            ctx.beginPath();
+            wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+          }
+        }
         ctx.restore();
       }
-      ctx.setLineDash([]);
+
+      // 3–4. Пол + собственные стены каждой комнаты в порядке массива (z):
+      // комната, стоящая позже (поверх), закрывает «съеденную» под ней.
+      const ownByRoom = new Map();
+      const sharedWalls = [];
+      const chamferWalls = [];
+      for (const wall of walls) {
+        if (wall.kind === 'chamfer') { chamferWalls.push(wall); continue; }
+        if (wall.kind === 'shared' || wall.kind === 'joint') { sharedWalls.push(wall); continue; }
+        const rid = wall.rooms[0];
+        if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
+        ownByRoom.get(rid).push(wall);
+      }
+      const paintWall = (wall) => {
+        const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
+          (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
+        const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
+        if (wall.hidden && !selected && !hovered) {
+          // Скрытая стена — тонкий пунктир по оси: видно, где была граница.
+          const c = wall.center;
+          if (!c) return;
+          ctx.save();
+          ctx.strokeStyle = tokens.wall;
+          ctx.globalAlpha = 0.6;
+          ctx.lineWidth = px(1);
+          ctx.setLineDash([px(6), px(4)]);
+          ctx.beginPath();
+          ctx.moveTo(c.x1, c.y1);
+          ctx.lineTo(c.x2, c.y2);
+          ctx.stroke();
+          ctx.restore();
+          return;
+        }
+        ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+        if (selected) ctx.fillStyle = tokens.accent;
+        else if (hovered) ctx.fillStyle = tokens.hover;
+        if (wall.hidden) ctx.globalAlpha = 0.22;
+        ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+        ctx.globalAlpha = 1;
+      };
+      const roomLayer = (room) => {
+        if (isOpenRoom(room)) return 0; // террасы и балконы всегда под домом
+        if (isShaft(room)) return 3;
+        return room.parentId ? 2 : 1;
+      };
+      const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
+      for (const room of roomPaintOrder) {
+        drawFloor(ctx, room, tokens, px);
+        if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, tokens, px);
+        for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
+      }
+      // Общие стыковочные стены — поверх всех полов.
+      for (const wall of sharedWalls) paintWall(wall);
+      // Фаски на переходах толщины — заполняют ступеньку треугольником.
+      for (const wall of chamferWalls) {
+        ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+        ctx.beginPath();
+        ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
+        for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Шахта — верхний технический проём: она перекрывает полы и любые
+      // перегородки помещений под ней, затем поверх остаются только её стены.
+      for (const room of roomPaintOrder.filter((candidate) => isShaft(candidate))) {
+        drawFloor(ctx, room, tokens, px);
+        for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
+      }
+
+      // Подсветка комнаты под курсором.
+      if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
+        const hoverRoom = state.project.rooms.find((r) => r.id === state.hover.id);
+        if (hoverRoom) {
+          ctx.strokeStyle = tokens.hover;
+          ctx.lineWidth = px(1.6);
+          ctx.globalAlpha = 0.8;
+          ctx.strokeRect(hoverRoom.x, hoverRoom.y, hoverRoom.w, hoverRoom.h);
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      // 5. Проёмы.
+      for (const opening of state.project.openings) {
+        drawOpening(ctx, state, opening, walls, tokens, px);
+      }
+
+      // 6. Мебель (на генплане — без неё: opts.detail === false).
+      const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
+      for (const item of detail ? state.project.items : []) {
+        const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
+          (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
+        const hovered = hoveredItems.has(item.id);
+        drawItem(ctx, item, tokens, px, selected, hovered);
+      }
+
+      // Мебель с замечаниями (пересечение, дверь, нет прохода) — красный пунктир.
+      if (state.norms?.flagged?.size) {
+        ctx.strokeStyle = tokens.danger;
+        ctx.lineWidth = px(1.6);
+        ctx.setLineDash([px(5), px(4)]);
+        for (const item of state.project.items) {
+          if (!state.norms.flagged.has(item.id)) continue;
+          ctx.save();
+          ctx.translate(item.x, item.y);
+          ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
+          // Как в расчёте проходов (clearance.itemBounds): со стульями/модулями.
+          const b = item.comp ? compositeBounds({ ...item, x: 0, y: 0, rotation: 0 }) : { x: -item.w / 2, y: -item.h / 2, w: item.w, h: item.h };
+          ctx.strokeRect(b.x - px(3), b.y - px(3), b.w + px(6), b.h + px(6));
+          ctx.restore();
+        }
+        ctx.setLineDash([]);
+      }
     }
 
     // 7. Участок поверх полов (граница, красная линия, въезд) и
     // предпросмотры инструментов участка — в координатах съёмки.
     setView(view);
+    if (lsObjects.length) drawLandscapeRaised(ctx, lsObjects, lsOpts);
+    if (landscape && state.ghostLandscape) drawLandscapeGhost(ctx, state.ghostLandscape, lsOpts, tokens.accent);
     if (site) drawSiteOver(ctx, state, site, tokens, px);
 
     state._calLabelAt = null;
@@ -525,6 +561,14 @@ export function createRenderer(canvas) {
       drawSelectedOpeningUI(ctx, state, selOpening, walls, p2s, scale, tokens);
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    if (landscape && site) {
+      const warnings = landscapeWarnings(lsObjects, { boundary: site.boundary, footprints: houseFootprints });
+      drawLandscapeOverlay(ctx, lsObjects, {
+        sel: state.selection?.type === 'landscape' ? state.selection.ids : [],
+        hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
+        warnings, w2s, tokens, scale, warnColor: '#e08c1e',
+      });
+    }
     if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });
     // Подпись «замкнуть/завершить» у первой точки черновика.
     if (state._snapLabelAt) {
@@ -742,7 +786,7 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
   const zone = site.showBuildZone && boundary ? buildZonePolygon(site) : null;
 
   // Запретная полоса: участок минус зона застройки (красная штриховка).
-  if (boundary && site.showBuildZone) {
+  if (boundary && site.showBuildZone && state.modeName !== 'landscape') {
     ctx.save();
     ctx.beginPath();
     polyPath(ctx, boundary);

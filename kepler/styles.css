@@ -748,12 +748,38 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   box-shadow: var(--shadow);
 }
 
-/* --- Этажи: переключатель в левом нижнем углу холста --- */
-.level-bar {
+/* --- Этажи: переключатель в левом нижнем углу холста; слева — «Ландшафт» --- */
+.level-dock {
   position: absolute;
   left: 14px;
   bottom: 40px;
   z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.landscape-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px 0 11px;
+  border: 1px solid color-mix(in srgb, #4f8a3c 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #6aa84f 12%, var(--surface));
+  color: color-mix(in srgb, #3f7a34 70%, var(--text));
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+}
+.landscape-chip:hover { background: color-mix(in srgb, #6aa84f 22%, var(--surface)); color: var(--text); }
+.landscape-chip.active {
+  background: linear-gradient(135deg, #4f8a3c, #6aa84f);
+  border-color: #4f8a3c;
+  color: #fff;
+}
+.level-bar {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1108,7 +1134,9 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   }
   .mobile-bar button.active.dot::after { background: #fff; }
   .zoom-controls { display: none; } /* масштаб — щипком */
-  .level-bar { left: 8px; bottom: 30px; }
+  .level-dock { left: 8px; bottom: 30px; }
+  .landscape-chip span { display: none; }
+  .landscape-chip { padding: 0 10px; }
   .status-strip { max-width: calc(100% - 80px); }
 }
 
@@ -1155,3 +1183,27 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; }
 .view3d-bar #v3Relief { width: 72px; }
+
+/* --- Ландшафт: каталог слева (ui/landscape.js) --- */
+.library-landscape h2 { margin-bottom: 6px; }
+.ls-tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
+.ls-tabs .lib-tab { padding: 7px 4px 8px; font-size: 12px; }
+.ls-group {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ls-chip canvas { background: color-mix(in srgb, #76a858 14%, var(--chip-paper)); }
+.ls-chip.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.ls-note {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 12px;
+}

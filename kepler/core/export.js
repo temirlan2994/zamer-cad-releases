@@ -20,6 +20,7 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
+import { landscapeDef } from './landscape.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
@@ -194,7 +195,8 @@ function buildTerrainExport(project) {
 
 function buildSiteExport(site, project) {
   const terrain = project ? buildTerrainExport(project) : null;
-  if (!site || (!site.boundary && !terrain)) return null;
+  const landscape = buildLandscapeExport(site);
+  if (!site || (!site.boundary && !terrain && !landscape)) return null;
   return {
     frame: 'world',
     north_deg: site.north,
@@ -208,6 +210,26 @@ function buildSiteExport(site, project) {
     roads: site.roads || [],
     neighbor_houses: site.neighbors || [],
     terrain,
+    landscape, // необязательно (версия схемы та же): благоустройство, мм в координатах участка
+  };
+}
+
+// Ландшафт (core/landscape.js): объекты с типом, размерами и признаками.
+function buildLandscapeExport(site) {
+  const objects = site?.landscape?.objects;
+  if (!objects?.length) return null;
+  return {
+    objects: objects.map((o) => {
+      const def = landscapeDef(o.kind);
+      return {
+        id: o.id, kind: o.kind, title: def?.title || o.kind, category: def?.cat || null,
+        shape: def?.shape || 'rect', x: o.x, y: o.y, rotation_deg: o.rotation || 0,
+        w: o.w, h: o.h, r: o.r ?? null, height: o.height ?? 0, variant: o.variant,
+        tall: Boolean(def?.tall), cover: Boolean(def?.cover),
+        ...(o.points ? { points: o.points } : {}),
+        ...(o.color ? { color: o.color } : {}),
+      };
+    }),
   };
 }
 

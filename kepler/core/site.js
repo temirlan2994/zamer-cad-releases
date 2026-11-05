@@ -4,6 +4,7 @@
 
 import { pointInPolygon } from './zamer/geometry.js';
 import { normalizeTerrain } from './terrain.js';
+import { normalizeLandscape } from './landscape.js';
 
 export const DEFAULT_SETBACK_BOUNDARY = 1500; // отступ от границы участка, мм
 export const DEFAULT_SETBACK_NEIGHBOR = 6000; // отступ от соседнего дома, мм
@@ -26,6 +27,7 @@ export function createSite() {
     underlay: null, // {srcId, x, y, mmPerPx, opacity, locked, widthPx, heightPx}
     norms: { day: null, hours: null }, // норма инсоляции: null — по широте (core/insolation.js)
     terrain: null, // рельеф: отметки высот (core/terrain.js); null — плоская земля
+    landscape: { objects: [] }, // благоустройство (core/landscape.js)
   };
 }
 
@@ -41,6 +43,8 @@ export function ensureSite(project) {
     // Необязательное поле (схема не меняется): битые точки и настройки
     // отбрасываются/заменяются умолчаниями, пустой рельеф — null.
     terrain: normalizeTerrain(project.site.terrain),
+    // Ландшафт — тоже необязательное поле: нет в старых проектах — пусто.
+    landscape: normalizeLandscape(project.site.landscape),
   };
   return project.site;
 }

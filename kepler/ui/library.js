@@ -5,6 +5,7 @@ import { polygonAreaM2 } from '../core/site.js';
 import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { state } from './state.js';
+import { bindLandscapeLibrary, renderLandscapeLibrary } from './landscape.js';
 import { startTerrainTool } from './terrain.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
@@ -18,13 +19,17 @@ let furnitureCat = FURNITURE_CATEGORIES[0].id;
 // только инструменты участка.
 export function bindFurnitureSearch() {
   el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
+  bindLandscapeLibrary();
 }
 
 export function applyLibraryTab() {
   const plan = state.modeName === 'plan';
+  const landscape = state.modeName === 'landscape';
   refs.libraryTabs.hidden = !plan;
+  const bar = el('landscapeBar');
+  if (bar) bar.hidden = !landscape;
   if (!plan) {
-    refs.libraryTop.hidden = false;
+    refs.libraryTop.hidden = landscape; // «Ландшафт» — свой каталог (ui/landscape.js)
     refs.furnitureBar.hidden = true;
     return;
   }
@@ -36,6 +41,7 @@ export function applyLibraryTab() {
 }
 
 export function renderLibrary() {
+  renderLandscapeLibrary(); // активная карточка ландшафта
   // План: карточки помещений — только названия, без размеров.
   refs.roomCards.innerHTML = '';
   for (const def of ROOM_TYPES) {

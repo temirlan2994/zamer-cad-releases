@@ -7,6 +7,7 @@ import {
   createItem, createLevel, createRoom, levelBelow, sortedLevels,
 } from '../core/model.js';
 import { el, toast } from './dom.js';
+import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { afterChange, mutate, refreshDerived } from './store.js';
 import { cancelTool } from './tools.js';
@@ -14,6 +15,12 @@ import { cancelTool } from './tools.js';
 export function renderLevelBar() {
   const bar = el('levelBar');
   if (!bar || !state.project) return;
+  const landscape = state.modeName === 'landscape';
+  const chip = el('landscapeBtn');
+  if (chip) {
+    chip.classList.toggle('active', landscape);
+    chip.setAttribute('aria-pressed', String(landscape));
+  }
   bar.innerHTML = '';
   for (const level of sortedLevels(state.project)) {
     const btn = document.createElement('button');
@@ -22,10 +29,14 @@ export function renderLevelBar() {
     btn.dataset.level = level.id;
     btn.textContent = level.name;
     btn.title = `${level.name}: отметка ${(level.elevation / 1000).toFixed(2)} м, высота ${(level.height / 1000).toFixed(2)} м · PgUp/PgDn`;
-    const active = level.id === state.project.activeLevel;
+    const active = !landscape && level.id === state.project.activeLevel;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', String(active));
-    btn.addEventListener('click', () => switchLevel(level.id));
+    btn.addEventListener('click', () => {
+      // Из «Ландшафта» клик по этажу возвращает в «План».
+      if (state.modeName === 'landscape') setEditorMode('plan');
+      switchLevel(level.id);
+    });
     bar.appendChild(btn);
   }
   const add = document.createElement('button');
@@ -33,7 +44,10 @@ export function renderLevelBar() {
   add.className = 'add';
   add.textContent = '+';
   add.title = 'Добавить этаж сверху';
-  add.addEventListener('click', addLevel);
+  add.addEventListener('click', () => {
+    if (state.modeName === 'landscape') setEditorMode('plan');
+    addLevel();
+  });
   bar.appendChild(add);
 }
 

@@ -43,7 +43,7 @@ export function renderGapBar() {
   const bar = el('gapBar');
   if (!bar) return;
   const gaps = state.gaps || [];
-  if (!gaps.length || state.modeName === 'site') { bar.hidden = true; bar.replaceChildren(); return; }
+  if (!gaps.length || state.modeName !== 'plan') { bar.hidden = true; bar.replaceChildren(); return; }
   bar.hidden = false;
   const focused = focusedGap();
   const shown = focused || gaps[0];

@@ -24,7 +24,7 @@ export function drawTerrainUnder(ctx, state, site, px) {
   const model = terrainModel(terrain);
   if (!model.tris.length) return;
   const show = terrain.show || {};
-  const inSite = state.modeName === 'site';
+  const inSite = state.modeName === 'site' || state.modeName === 'landscape';
   if (show.shade && inSite) drawShade(ctx, model, px);
   if (show.contours) {
     ctx.save();

@@ -32,6 +32,10 @@ import {
   hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
+import {
+  LANDSCAPE_MIME, applyLandscapeMarquee, dropLandscape, landscapeDragEnd, landscapeDragMove, landscapeHover,
+  landscapePointerDown,
+} from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
   addFurnitureAt, bringRoomToTop, computeOpeningParams, overlappingTopRooms, placeOpeningAt,
@@ -49,7 +53,8 @@ import {
   applyElevInput, hitTerrainPoint, openElevInput, positionElevInput, terrainStatus,
 } from './terrain.js';
 import {
-  markViewTouched, pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, worldToPlan, worldToScreen, zoomAt,
+  markViewTouched, pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, screenToWorld, worldToPlan, worldToScreen,
+  zoomAt,
 } from './view.js';
 
 let drag = null;
@@ -148,6 +153,7 @@ function startMultiDrag(plan) {
 
 function applyMarquee() {
   const m = state.marquee;
+  if (m && state.modeName === 'landscape') { applyLandscapeMarquee(m); return; }
   if (!m || (Math.abs(m.x2 - m.x1) < 6 && Math.abs(m.y2 - m.y1) < 6)) return;
   const poly = [
     screenToPlan(m.x1, m.y1), screenToPlan(m.x2, m.y1),
@@ -174,6 +180,7 @@ function applyMarquee() {
 }
 
 function updateHoverAndGhost(world, plan) {
+  if (state.modeName === 'landscape' && landscapeHover(world, canvas)) return;
   if (state.tool?.kind === 'place-furniture') {
     const def = furnitureDef(state.tool.itemKind);
     if (!def) return;
@@ -319,6 +326,11 @@ export function bindCanvasInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   // Перетаскивание мебели из панели на план.
   canvas.addEventListener('dragover', (e) => {
+    if (state.modeName === 'landscape' && (e.dataTransfer?.types || []).includes(LANDSCAPE_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      return;
+    }
     if (state.modeName !== 'plan') return;
     const t = e.dataTransfer?.types || [];
     if (!t.includes('application/x-kepler-furn') && !t.includes('application/x-kepler-room')) return;
@@ -326,8 +338,16 @@ export function bindCanvasInput() {
     e.dataTransfer.dropEffect = 'copy';
   });
   canvas.addEventListener('drop', (e) => {
-    if (state.modeName !== 'plan') return;
     const rect = canvas.getBoundingClientRect();
+    if (state.modeName === 'landscape') {
+      const kind = e.dataTransfer?.getData(LANDSCAPE_MIME);
+      if (kind) {
+        e.preventDefault();
+        dropLandscape(kind, screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
+      }
+      return;
+    }
+    if (state.modeName !== 'plan') return;
     const roomType = e.dataTransfer?.getData('application/x-kepler-room');
     if (roomType) {
       e.preventDefault();
@@ -358,6 +378,12 @@ export function bindCanvasInput() {
     // Панорама: правая/средняя кнопка или зажатый пробел.
     if (event.button === 1 || event.button === 2 || spaceDown) {
       drag = { kind: 'pan', start: screen, view: { ...state.view } };
+      return;
+    }
+
+    // --- «Ландшафт»: свои объекты, ручки, рамка (ui/landscape.js) ---
+    if (state.modeName === 'landscape') {
+      drag = landscapePointerDown(event, screen, world);
       return;
     }
 
@@ -656,7 +682,7 @@ export function bindCanvasInput() {
     // В «Плане» — координаты в осях дома, в «Участке» — координаты съёмки.
     const shown = state.modeName === 'plan' ? plan : world;
     refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`
-      + (state.modeName === 'site' ? terrainStatus(world) : '');
+      + (state.modeName !== 'plan' ? terrainStatus(world) : '');
 
     if (!drag) { updateHoverAndGhost(world, plan); return; }
 
@@ -670,6 +696,8 @@ export function bindCanvasInput() {
       requestDraw();
       return;
     }
+
+    if (drag.kind.startsWith('ls-')) { landscapeDragMove(drag, world, screen, event); return; }
 
     if (drag.kind === 'terrain-point') {
       const p = state.project.site.terrain?.points.find((x) => x.id === drag.id);
@@ -1072,6 +1100,7 @@ export function bindCanvasInput() {
     state.kitchenLabel = null;
 
     if (finished.kind === 'pan') { requestDraw(); return; }
+    if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {
       applyMarquee();

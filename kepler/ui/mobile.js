@@ -13,7 +13,7 @@ const has = (cls) => document.body.classList.contains(cls);
 
 function libraryKindActive(kind) {
   if (!has(LIB)) return false;
-  if (state.modeName === 'site') return kind === 'rooms';
+  if (state.modeName !== 'plan') return kind === 'rooms';
   return (state.libraryTab === 'furniture') === (kind === 'furniture');
 }
 
@@ -43,9 +43,9 @@ export function closeLibrarySheet() {
 export function syncMobileBar() {
   const bar = el('mobileBar');
   if (!bar || !state.project) return;
-  const site = state.modeName === 'site';
+  const site = state.modeName !== 'plan';
   const btn = (kind) => bar.querySelector(`[data-sheet="${kind}"]`);
-  btn('rooms').textContent = site ? 'Участок' : 'Помещения';
+  btn('rooms').textContent = state.modeName === 'landscape' ? 'Ландшафт' : site ? 'Участок' : 'Помещения';
   btn('furniture').hidden = site;
   for (const kind of ['rooms', 'furniture']) btn(kind).classList.toggle('active', libraryKindActive(kind));
   btn('props').classList.toggle('active', has(PROPS));

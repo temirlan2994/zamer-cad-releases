@@ -40,8 +40,8 @@ export function handleExport(kind) {
     download(`${safeFileName()}-листы.pdf`, pdf, 'application/pdf');
     toast('PDF: листы A3 с рамкой, штампом и экспликацией');
   } else if (kind === 'sheet-png') {
-    const png = buildCurrentSheetPng(state.project, state.modeName);
-    if (!png) { toast(state.modeName === 'site' ? 'Для генплана нужна граница участка' : 'На этом этаже нет комнат', true); return; }
+    const png = buildCurrentSheetPng(state.project, state.modeName === 'landscape' ? 'site' : state.modeName);
+    if (!png) { toast(state.modeName !== 'plan' ? 'Для генплана нужна граница участка' : 'На этом этаже нет комнат', true); return; }
     png.then((blob) => download(`${safeFileName()}-лист.png`, blob, 'image/png'));
     toast('PNG: лист A3, 150 dpi');
   } else if (kind === 'schedule-csv') {
@@ -146,7 +146,9 @@ export function newProject() {
   state.views = {
     plan: { scale: 0.08, panX: 120, panY: 120 },
     site: { scale: 0.03, panX: 120, panY: 120 },
+    landscape: { scale: 0.03, panX: 120, panY: 120 },
   };
+  document.body.classList.remove('mode-landscape');
   refs.modePlan.classList.add('active');
   refs.modeSite.classList.remove('active');
   refs.roomCards.hidden = false;

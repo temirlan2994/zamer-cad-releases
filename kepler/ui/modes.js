@@ -1,7 +1,9 @@
-// Режимы «План» / «Участок» и поворот вида («Выровнять», север).
+// Режимы «План» / «Участок» / «Ландшафт» и поворот вида («Выровнять», север).
 
 import { panForMovedBuilding } from '../core/site-check.js';
 import { refs } from './dom.js';
+import { renderLandscapeLibrary } from './landscape.js';
+import { renderLevelBar } from './levels.js';
 import { applyLibraryTab, renderFurnitureBar } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
@@ -11,8 +13,11 @@ import { fitViewOnce, requestDraw, rotateViewTo, scaleLabel } from './view.js';
 // Поворот камеры режима: «План» идёт по осям дома (комнаты всегда прямые),
 // «Участок» — север вверх. Связь дома и участка одна и та же — это данные
 // (project.building), меняется только ракурс.
+// «Ландшафт» — вид и координаты участка, как «Участок».
+export const isSiteView = (mode = state.modeName) => mode === 'site' || mode === 'landscape';
+
 export function modeRotation(mode = state.modeName) {
-  const deg = mode === 'site' ? state.project.site?.north || 0 : state.project.building?.rotation || 0;
+  const deg = isSiteView(mode) ? state.project.site?.north || 0 : state.project.building?.rotation || 0;
   return deg ? -(deg * Math.PI) / 180 : 0; // без «-0»
 }
 
@@ -33,6 +38,7 @@ export function setEditorMode(mode) {
     origin: { x: origin.x, y: origin.y },
   };
   state.modeName = mode;
+  if (!state.views[mode]) state.views[mode] = { scale: 0.03, panX: 120, panY: 120 };
   const saved = state.views[mode];
   state.view.scale = saved.scale;
   state.view.panX = saved.panX;
@@ -46,21 +52,26 @@ export function setEditorMode(mode) {
   applyModeRotation(); // если поворот дома/север поменялся — докрутить вокруг центра
   // «Участок» при первом входе вписывается целиком (граница, дороги, соседи),
   // если пользователь ещё не двигал там вид.
-  if (mode === 'site') fitViewOnce();
+  if (isSiteView(mode)) fitViewOnce();
   cancelTool();
   state.selection = null;
+  state.hover = null;
+  state.ghostLandscape = null;
   refs.modePlan.classList.toggle('active', mode === 'plan');
   refs.modeSite.classList.toggle('active', mode === 'site');
   refs.roomCards.hidden = mode !== 'plan';
   refs.siteTools.hidden = mode !== 'site';
   refs.libraryTitle.hidden = mode === 'plan'; // в «Плане» заголовок задаёт вкладка
   refs.libraryTitle.textContent = mode === 'plan' ? 'Помещения' : 'Участок';
+  document.body.classList.toggle('mode-landscape', mode === 'landscape');
   refs.libraryHint.textContent = mode === 'plan'
     ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'
     : 'Топосъёмка, граница, красная линия, въезд, дорога, север.';
   renderProps();
   renderFurnitureBar();
   applyLibraryTab();
+  renderLandscapeLibrary();
+  renderLevelBar();
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }

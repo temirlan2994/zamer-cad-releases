@@ -156,14 +156,18 @@ export function fitView() {
     pts.push(...rectCornersWorld(state.project.building,
       { x: room.x - pad, y: room.y - pad, w: room.w + pad * 2, h: room.h + pad * 2 }));
   }
-  if (state.modeName === 'site' && site) {
+  const siteView = state.modeName === 'site' || state.modeName === 'landscape';
+  if (siteView && site) {
     for (const p of site.boundary || []) pts.push(p);
     for (const road of site.roads || []) pts.push(...road.points);
     for (const n of site.neighbors || []) pts.push(...neighborRectCorners(n));
+    if (state.modeName === 'landscape') {
+      for (const o of site.landscape?.objects || []) pts.push({ x: o.x - o.w / 2, y: o.y - o.h / 2 }, { x: o.x + o.w / 2, y: o.y + o.h / 2 });
+    }
     if (site.underlay) pts.push(...underlayHandles(site.underlay));
   }
   if (!pts.length) {
-    state.view.scale = state.modeName === 'site' ? 0.02 : 0.08;
+    state.view.scale = siteView ? 0.02 : 0.08;
     state.view.panX = canvas.clientWidth / 2;
     state.view.panY = canvas.clientHeight / 2;
     requestDraw();

@@ -54,6 +54,7 @@ export function setHint(text) {
 export function setTool(tool, hint) {
   state.tool = tool;
   state.draft = null;
+  state.ghostLandscape = null;
   state.ghost = null;
   state.ghostItem = null;
   state.ghostOpening = null;
@@ -75,6 +76,7 @@ export function cancelTool() {
   state.calCursor = null;
   state.northCursor = null;
   state.ghostDoor = null;
+  state.ghostLandscape = null;
   state.guides = [];
   state.elevEdit = null;
   if (!el('calOverlay').hidden) el('calOverlay').hidden = true;

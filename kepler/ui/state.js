@@ -5,12 +5,14 @@ export const state = {
   walls: [],
   gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
-  modeName: 'plan', // 'plan' | 'site'
+  modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },
     site: { scale: 0.03, panX: 120, panY: 120 },
+    landscape: { scale: 0.03, panX: 120, panY: 120 },
   },
+  ghostLandscape: null, // призрак объекта ландшафта при постановке
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
   selection: null,
   hover: null,
