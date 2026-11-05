@@ -1952,10 +1952,11 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   // читаются снаружи комнаты, как в BIM/CAD, и не теряются среди подписей.
   const exterior = state.project.settings?.exterior || 250;
   for (const room of state.project.rooms) {
-    const chains = shapedRoomDimensionChains(room);
+    // Снаружи — наружные размеры (по граням стен), внутри комнаты свои внутренние.
+    const chains = shapedRoomDimensionChains(room, exterior);
     if (!chains || room.parentId || isOpenRoom(room) || isShaft(room)) continue;
     const selected = room.id === selId;
-    const offset = exterior + 420;
+    const offset = 420;
     const topAt = chains.minY - offset;
     const rightAt = chains.maxX + offset;
     const topN = outwardScreen((chains.minX + chains.maxX) / 2, topAt, 0, -1);

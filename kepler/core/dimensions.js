@@ -58,13 +58,44 @@ export function facadeDimensionStations(project, walls, edge, expand) {
   return points.filter((point, index) => index === 0 || Math.abs(point - points[index - 1]) > EPS);
 }
 
+// Контур ортогонального многоугольника, смещённый наружу на толщину стены t:
+// каждая вершина сдвигается на t·(n1 + n2) — нормали соседних рёбер. Работает
+// и для выпуклых, и для вогнутых углов. Совпавшие вершины (после деления
+// стены) схлопываются, иначе нормаль нулевого ребра не определена.
+export function offsetOrthoPolygon(points, t) {
+  const pts = points.filter((p, i) => {
+    const q = points[(i + 1) % points.length];
+    return Math.abs(p.x - q.x) > 0.5 || Math.abs(p.y - q.y) > 0.5;
+  });
+  if (!t || pts.length < 3) return pts;
+  let area = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  const sign = area >= 0 ? 1 : -1;
+  const normal = (a, b) => {
+    const dx = b.x - a.x; const dy = b.y - a.y; const len = Math.hypot(dx, dy) || 1;
+    return { x: sign * dy / len, y: -sign * dx / len };
+  };
+  return pts.map((p, i) => {
+    const prev = pts[(i - 1 + pts.length) % pts.length];
+    const next = pts[(i + 1) % pts.length];
+    const n1 = normal(prev, p); const n2 = normal(p, next);
+    return { x: p.x + t * (n1.x + n2.x), y: p.y + t * (n1.y + n2.y) };
+  });
+}
+
 // Наружные цепочки для Г/Т/П-образного помещения. Горизонтальная цепочка
 // собирает все вертикальные линии уступов, вертикальная — все горизонтальные.
 // witness — ближайшая к размерной линии точка контура для выноски.
-export function shapedRoomDimensionChains(room) {
+// expand > 0 — цепочки по НАРУЖНЫМ граням стен (контур смещён на толщину стены),
+// как наружный пояс у прямоугольных помещений; 0 — по внутреннему контуру.
+export function shapedRoomDimensionChains(room, expand = 0) {
   if (!room?.notch && !Array.isArray(room?.outline)) return null;
-  const points = roomPolygon(room);
-  if (points.length < 5) return null;
+  const inner = roomPolygon(room);
+  if (inner.length < 5) return null;
+  const points = expand ? offsetOrthoPolygon(inner, expand) : inner;
   const unique = (values) => [...new Set(values.map((value) => Math.round(value * 1000) / 1000))]
     .sort((a, b) => a - b);
   const xs = unique(points.map((point) => point.x));

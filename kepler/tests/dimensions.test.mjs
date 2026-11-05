@@ -65,3 +65,29 @@ test('Г-образное помещение получает наружные �
 test('прямоугольная комната не получает лишние наружные цепочки', () => {
   assert.equal(shapedRoomDimensionChains(createRoom('living', 0, 0, 5000, 4000)), null);
 });
+
+test('наружные цепочки Г-комнаты — по наружным граням стен, а не по внутреннему контуру', () => {
+  const room = createRoom('living', 1000, 2000, 5000, 4000);
+  room.outline = [
+    { x: 0, y: 0 }, { x: 1800, y: 0 }, { x: 1800, y: 1200 },
+    { x: 3400, y: 1200 }, { x: 3400, y: 2600 }, { x: 5000, y: 2600 },
+    { x: 5000, y: 4000 }, { x: 2200, y: 4000 }, { x: 2200, y: 3000 },
+    { x: 0, y: 3000 },
+  ];
+  const inner = shapedRoomDimensionChains(room);
+  const outer = shapedRoomDimensionChains(room, 250);
+  assert.deepEqual(outer.horizontal.map((s) => s.value), [750, 2950, 3050, 4650, 6250]);
+  assert.deepEqual(outer.vertical.map((s) => s.value), [1750, 2950, 4350, 6250]);
+  assert.deepEqual(outer.left.map((s) => s.value), [1750, 5250, 6250]);
+  // общий габарит больше внутреннего ровно на две толщины стены
+  assert.equal(outer.maxX - outer.minX, inner.maxX - inner.minX + 500);
+  assert.equal(outer.maxY - outer.minY, inner.maxY - inner.minY + 500);
+  // ни одна наружная станция не совпадает с внутренней — размеры не повторяются
+  for (const key of ['horizontal', 'vertical', 'left']) {
+    for (const s of outer[key]) assert.ok(!inner[key].some((i) => Math.abs(i.value - s.value) < 1), `${key}: ${s.value}`);
+  }
+  // совпавшие вершины после деления стены не ломают смещение
+  const split = structuredClone(room);
+  split.outline.splice(2, 0, { ...split.outline[1] });
+  assert.deepEqual(shapedRoomDimensionChains(split, 250).vertical.map((s) => s.value), [1750, 2950, 4350, 6250]);
+});
