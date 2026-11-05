@@ -20,7 +20,7 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
-import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, stairsInfo } from './landscape.js';
+import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, retainingInfo, stairsInfo } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
@@ -220,6 +220,15 @@ function stairsExport(o) {
   return { steps: st.steps, riser_mm: Math.round(st.riser), tread_mm: st.tread, flight_mm: Math.round(st.flight), rise_mm: Math.round(st.rise), cheek_mm: st.cheek };
 }
 
+function retainingExport(o) {
+  const ri = retainingInfo(o);
+  return {
+    thickness_mm: Math.round(ri.thick), height_mm: Math.round(ri.height), drop_mm: Math.round(ri.drop), parapet_mm: Math.round(ri.parapet),
+    upper_side: ri.upper, cap: ri.cap, ...(ri.cap ? { cap_mm: [Math.round(ri.capW), Math.round(ri.capH)] } : {}),
+    length_m: Number((ri.length / 1000).toFixed(3)), volume_m3: Number(ri.volume.toFixed(3)),
+  };
+}
+
 // Ландшафт (core/landscape.js): объекты с типом, размерами и признаками.
 function buildLandscapeExport(site) {
   const objects = site?.landscape?.objects;
@@ -247,6 +256,10 @@ function buildLandscapeExport(site) {
         ...(o.parent ? { parent: o.parent } : {}),
         ...(o.curb ? { curb: { ...o.curb } } : {}),
         ...(o.kind === 'stairs-out' ? { stairs: stairsExport(o) } : {}),
+        // Отметки уровня (мм от нуля участка) и подпорная стенка — тоже необязательные.
+        ...(Number.isFinite(o.elev) ? { elev_mm: o.elev } : {}),
+        ...(Number.isFinite(o.elevTo) ? { elev_to_mm: o.elevTo } : {}),
+        ...(o.kind === 'retaining-wall' ? { retaining: retainingExport(o) } : {}),
       };
     }),
   };

@@ -9,7 +9,7 @@
 import { toLocal } from './building.js';
 import {
   LS_COLORS, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline,
-  objectPath, planterInner, ribbonOutline, seededRandom, stairsInfo, steppingSlabs,
+  elevOf, objectPath, planterInner, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs,
 } from './landscape.js';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -274,6 +274,14 @@ function objectFaces(o, def, outline, path, hz) {
     return faces;
   }
   if (look === 'curb') return prism(outline, 0, Math.max(20, h), C[0], hz, { side: C[1] || C[0] });
+  // --- Подпорная стенка: тело на всю высоту над низом, капа со свесом.
+  if (look === 'retaining') {
+    const ri = retainingInfo(o);
+    const H = Math.max(50, ri.height);
+    faces.push(...prism(outline, 0, H, C[2] || C[0], hz, { side: C[1] || C[0] }));
+    if (ri.cap) faces.push(...prism(lineLayout({ ...o, width: ri.capW }).outline, H, H + ri.capH, C[2] || C[0], hz, { side: C[0] }));
+    return faces;
+  }
   // --- Покрытия-линии: дорожки.
   if (def.shape === 'line') {
     if (o.kind === 'path' && o.variant === 'stepping') {
@@ -460,10 +468,17 @@ export function landscapeFaces(project, hz = null) {
     if (o0.points) o.points = o0.points.map(local);
     const outline = objectOutline(o, 16);
     const path = isPathShape(def) ? objectPath(o) : [];
-    const up = o0.parent ? lift.get(o0.parent) || 0 : 0;
+    // Подъём: посадки в коробе — на засыпку; площадки с отметкой — на отметку.
+    const elev = elevOf(o0);
+    const up = (o0.parent ? lift.get(o0.parent) || 0 : 0) + elev;
     const hz2 = up ? (x, y) => ground(x, y) + up : ground;
     for (const f of objectFaces(o, def, outline, path, hz2)) faces.push(f);
-    if (o.curb) for (const f of curbFaces(o, ground)) faces.push(f);
+    // Приподнятая площадка/лестница — на подиуме: бока от земли до отметки.
+    if (elev > 0 && outline.length >= 3) {
+      const C = objectColors({ kind: 'curb', variant: o.kind === 'deck-area' ? 'wood' : 'stone' });
+      faces.push(...prism(outline, 0, elev, C[1], ground, { top: false }));
+    }
+    if (o.curb) for (const f of curbFaces(o, hz2)) faces.push(f);
   }
   return faces;
 }

@@ -9,9 +9,9 @@ import {
   landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorner, objectCorners, objectPath, objectsInPolygon,
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
-  syncStairs,
+  syncStairs, ELEV_KINDS, RETAINING_SIDES, applyStairsDrop, normalizeElev, retainingInfo, stairsDrop,
 } from '../core/landscape.js';
-import { balanceRows, buildLandscapeCsv, landscapeBalance } from '../core/landscape-report.js';
+import { balanceRows, buildLandscapeCsv, landscapeBalance, retainingRows, retainingTotals } from '../core/landscape-report.js';
 import {
   PLANTER_PLANTS, childrenOf, plantInPlanter, cloneGroup, isPlanter, pruneParents, refitChildren, rotateChildren, settleInPlanter, settleMoved,
   withChildren,
@@ -922,8 +922,45 @@ function bindPathProps(panel, o) {
 const CURB_TITLES = { concrete: 'Бетон', stone: 'Камень', metal: 'Сталь', wood: 'Дерево' };
 const mmField = (id, title, value, min, max, step = 10) => `<label class="prop-field"><span>${title}</span><input id="${id}" type="number" step="${step}" min="${min}" max="${max}" value="${Math.round(value)}"></label>`;
 
+// Отметка уровня (необязательно): пусто — объект на земле.
+const elevField = (id, title, value) => `<label class="prop-field"><span>${title}</span><input id="${id}" type="number" step="10" min="-20000" max="20000" placeholder="нет" value="${Number.isFinite(value) ? Math.round(value) : ''}"></label>`;
+
+function elevHtml(o) {
+  if (!ELEV_KINDS.has(o.kind)) return '';
+  if (o.kind === 'stairs-out') {
+    const d = stairsDrop(o);
+    return `<div class="prop-grid">
+        ${elevField('lsElev', 'Отметка низа, мм', o.elev)}
+        ${elevField('lsElevTo', 'Отметка верха, мм', o.elevTo)}
+      </div>
+      ${d !== null ? `<button type="button" id="lsStDrop" title="Высота подъёма = отметка верха − отметка низа">Взять перепад (${d} мм)</button>` : '<p class="hint">Задайте отметки низа и верха — кнопка «Взять перепад» поставит высоту подъёма</p>'}`;
+  }
+  const title = o.kind === 'retaining-wall' ? 'Отметка низа, мм' : 'Отметка, мм (от нуля участка)';
+  return elevField('lsElev', title, o.elev);
+}
+
+function retainingHtml(o) {
+  const ri = retainingInfo(o);
+  return `
+      <div class="prop-grid">
+        ${mmField('lsRwH', 'Высота над низом, мм', ri.height, 100, 6000)}
+        ${mmField('lsRwDrop', 'Перепад грунта, мм', ri.drop, 0, 6000)}
+      </div>
+      <label class="prop-field"><span>Сторона верха (грунт выше)</span><select id="lsRwUpper">${options(RETAINING_SIDES, ri.upper)}</select></label>
+      <label class="check-row"><input type="checkbox" id="lsRwCap" ${ri.cap ? 'checked' : ''}><span>Капа (парапетный камень) со свесом 30 мм</span></label>
+      ${ri.cap ? mmField('lsRwCapH', 'Толщина капы, мм', ri.capH, 20, 300) : ''}
+      <div class="prop-row"><span>Парапет над верхом грунта</span><strong>${Math.round(ri.parapet)} мм</strong></div>
+      <div class="prop-row"><span>Объём ${o.variant === 'concrete' || o.variant === 'corten' ? 'бетона' : 'кладки'}</span><strong id="lsRwVol">${ri.volume.toFixed(2).replace('.', ',')} м³</strong></div>
+      <p class="hint">Штрихи на «Чертеже» — от кромки низа в сторону низа · фундамент в объём не входит</p>`;
+}
+
 function buildPropsHtml(o, def) {
+  return buildPropsCore(o, def) + elevHtml(o);
+}
+
+function buildPropsCore(o, def) {
   const objects = landscapeObjects();
+  if (o.kind === 'retaining-wall') return retainingHtml(o);
   if (o.kind === 'stairs-out') {
     const st = stairsInfo(o);
     const blondel = Math.round(2 * st.riser + st.tread);
@@ -1047,6 +1084,33 @@ function bindBuildProps(panel, o) {
     }, 'click');
   }
   on('#lsUnparent', () => mutate(() => { delete o.parent; }), 'click');
+  if (o.kind === 'retaining-wall') {
+    const setMeta = (patch) => mutate(() => { o.meta = { ...(o.meta || {}), ...patch }; });
+    on('#lsRwH', () => {
+      const v = val('#lsRwH');
+      if (Number.isFinite(v) && v > 0) mutate(() => { o.height = Math.min(6000, Math.max(100, Math.round(v))); });
+    });
+    // Перепад, равный высоте, хранится как 0 (следует за высотой).
+    on('#lsRwDrop', () => {
+      const v = val('#lsRwDrop');
+      if (Number.isFinite(v) && v >= 0) setMeta({ drop: v >= (o.height || 0) ? 0 : Math.round(v) });
+    });
+    on('#lsRwUpper', (e) => setMeta({ upper: e.target.value === 'right' ? 'right' : 'left' }));
+    on('#lsRwCap', (e) => setMeta({ cap: e.target.checked }));
+    on('#lsRwCapH', () => {
+      const v = val('#lsRwCapH');
+      if (v > 0) setMeta({ capH: Math.min(300, Math.max(20, Math.round(v))) });
+    });
+  }
+  if (ELEV_KINDS.has(o.kind)) {
+    const setElev = (key, raw) => mutate(() => {
+      const v = normalizeElev(String(raw).trim());
+      if (v === null) delete o[key]; else o[key] = v;
+    });
+    on('#lsElev', (e) => setElev('elev', e.target.value));
+    on('#lsElevTo', (e) => setElev('elevTo', e.target.value));
+    on('#lsStDrop', () => mutate(() => { applyStairsDrop(o); }), 'click');
+  }
   if (CURB_HOSTS.has(o.kind)) {
     on('#lsCurb', (e) => mutate(() => { if (e.target.checked) o.curb = normalizeCurb(true); else delete o.curb; }));
     const setCurb = (patch) => mutate(() => { o.curb = normalizeCurb({ ...(o.curb || {}), ...patch }); });
@@ -1074,14 +1138,14 @@ export function renderLandscapeProps(panel) {
   const def = landscapeDef(o.kind);
   const shape = isPathShape(def);
   const notes = currentWarnings().get(o.id) || [];
-  const built = o.kind === 'stairs-out' || isPlanter(o);
+  const built = o.kind === 'stairs-out' || o.kind === 'retaining-wall' || isPlanter(o);
   const variants = def.variants.length > 1
     ? `<label class="prop-field"><span>${built || o.kind === 'curb' ? 'Материал' : shape ? 'Материал / вариант' : 'Вариант'}</span><select id="lsVariant">${variantOptions(def, o.variant)}</select></label>`
     : '';
   let size;
   if (shape) {
     size = `
-      ${def.shape === 'line' ? `<label class="prop-field"><span>Ширина, м</span><input id="lsWidth" type="number" step="0.05" min="0.05" max="10" value="${m(o.width || def.h)}"></label>` : ''}
+      ${def.shape === 'line' ? `<label class="prop-field"><span>${o.kind === 'retaining-wall' ? 'Толщина' : 'Ширина'}, м</span><input id="lsWidth" type="number" step="0.05" min="0.05" max="10" value="${m(o.width || def.h)}"></label>` : ''}
       <label class="check-row"><input type="checkbox" id="lsSmooth" ${o.smooth ? 'checked' : ''}><span>Сглаженная (изогнутая)</span></label>
       <div class="prop-row"><span>${def.shape === 'line' ? 'Длина × ширина' : 'Площадь · периметр'}</span><strong id="lsMeasure">${landscapeMeasure(o, def)}</strong></div>
       <div class="prop-row"><span>Вершин</span><strong>${o.points.length}</strong></div>`;
@@ -1284,6 +1348,7 @@ function renderLandscapeSummary(panel) {
       <div class="prop-row"><span>Объектов</span><strong>${sum.count}</strong></div>
       <div class="prop-row"><span>Деревьев</span><strong>${sum.trees}</strong></div>
       <div class="prop-row"><span>Покрытия и площадки</span><strong>${fmt(sum.coverM2)} м²</strong></div>
+      ${retainingRows(retainingTotals(objs)).map(([k, v]) => `<div class="prop-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}
       ${near ? `<p class="ls-note">Деревья ближе ${TREE_HOUSE_MIN / 1000} м к дому: ${near}</p>` : ''}
       ${site.boundary?.length ? '' : '<p class="hint">Границу участка можно начертить в режиме «Участок».</p>'}
       <p class="hint">Выберите объект слева: клик — ставить курсором (Esc — выйти), или перетащите на участок. Дорожки, ограждения и контуры — рисуются по точкам. Shift — несколько, рамка — выделить группу.</p>

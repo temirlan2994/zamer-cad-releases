@@ -226,6 +226,13 @@ const RAW = [
   { kind: 'curb', title: 'Бордюр', cat: 'site', group: 'Лестницы и бордюры', shape: 'line', w: 6000, h: 100, min: [50, 50], max: [500000, 400], height: 150, look: 'curb', colors: 'concrete',
     variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('metal', 'Сталь', ['#7a7c80', '#5d5f63', '#9a9ca0']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
     keywords: 'бордюр поребрик кромка газона обрамление рисовать линия' },
+  // Подпорная стенка (по линии): width — толщина, height — высота над низом
+  // (видна со стороны низа). meta: upper — сторона верха по ходу рисования
+  // ('left' | 'right', ось Y вниз), drop — перепад грунта, мм (0 — равен
+  // высоте; меньше высоты — над верхом парапет), cap — капа, capH — её толщина.
+  { kind: 'retaining-wall', layer: 'low', title: 'Подпорная стенка', cat: 'site', group: 'Подпорные стенки', shape: 'line', w: 6000, h: 300, min: [100, 100], max: [500000, 1500], height: 1200, look: 'retaining', colors: 'concrete',
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfc9bd', '#a09a8c', '#e1ddd4']), v('gabion', 'Габион', ['#b8b2a4', '#8f897c', '#d2cdc2']), v('corten', 'Кортен', LS_COLORS.corten)],
+    meta: { upper: 'left', drop: 0, cap: false, capH: 60 }, keywords: 'подпорная стенка стена перепад терраса уровень откос габион кортен рисовать линия' },
   { kind: 'fence-line', title: 'Ограждение (по линии)', cat: 'site', group: 'Ограждение', shape: 'line', w: 6000, h: 150, min: [300, 50], max: [500000, 1500], height: 1800, look: 'fence-line', colors: 'wood',
     variants: [v('picket', 'Штакетник'), v('mesh', 'Сетка', ['#8b8e92', '#6c6f73', '#a9acb0']), v('hedge', 'Живая изгородь', ['#6f8063', '#86967a', '#a5b298'])], keywords: 'забор штакетник сетка рисовать линия' },
   { kind: 'paving-area', title: 'Мощение (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'area-paving', colors: 'tiles',
@@ -246,7 +253,7 @@ const RAW = [
 const WATER_KINDS = new Set(['pool', 'jacuzzi', 'pond', 'fountain', 'pond-area', 'pool-area']);
 // Конструктивы (короба, лестница, бордюр) — в группе «Малые формы».
 export const PLANTER_KINDS = new Set(['planter-box', 'planter-area']);
-const BUILT_KINDS = new Set([...PLANTER_KINDS, 'stairs-out', 'curb']);
+const BUILT_KINDS = new Set([...PLANTER_KINDS, 'stairs-out', 'curb', 'retaining-wall']);
 function surfaceOf(raw) {
   if (WATER_KINDS.has(raw.kind)) return 'water';
   if ((raw.cat === 'green' && raw.kind !== 'boulder') || raw.kind === 'vegbeds' || raw.kind === 'parking-guest') return 'green';
@@ -369,7 +376,58 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
   if (PLANTER_KINDS.has(kind)) obj.meta = planterMeta(obj.meta);
   const curb = CURB_HOSTS.has(kind) ? normalizeCurb(opts.curb) : null;
   if (curb) obj.curb = curb;
+  applyElev(obj, opts);
   return syncRadius(clampSize(obj, def), def);
+}
+
+// ------------------------------------------------ Отметки уровня площадок
+
+// Необязательное поле elev — отметка, мм, относительно нуля участка (верх
+// покрытия; у лестницы и стенки — низ). У лестницы ещё elevTo — отметка
+// верха. Нет поля — объект на земле, как раньше.
+export const ELEV_KINDS = new Set(['paving-area', 'gravel-area', 'deck-area', 'lawn-area', 'path', 'stairs-out', 'retaining-wall']);
+export const ELEV_LIMIT = 20000;
+
+export function normalizeElev(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? Math.min(ELEV_LIMIT, Math.max(-ELEV_LIMIT, Math.round(n))) : null;
+}
+
+function applyElev(obj, opts) {
+  if (!ELEV_KINDS.has(obj.kind)) return;
+  const e = normalizeElev(opts.elev);
+  if (e !== null) obj.elev = e;
+  if (obj.kind === 'stairs-out') {
+    const t = normalizeElev(opts.elevTo);
+    if (t !== null) obj.elevTo = t;
+  }
+}
+
+// Отметка для подписи: +0.45, −0.30, ±0.00 (м, две цифры, точка).
+export function fmtElev(mm) {
+  const n = Math.round(Number(mm) || 0);
+  if (n === 0) return '±0.00';
+  return `${n > 0 ? '+' : '−'}${(Math.abs(n) / 1000).toFixed(2)}`;
+}
+
+// Подъём объекта над нулём участка, мм (0 — нет отметки).
+export const elevOf = (o) => (Number.isFinite(o?.elev) ? o.elev : 0);
+
+// Перепад лестницы между отметками низа и верха (null — не задан).
+export function stairsDrop(o) {
+  if (!Number.isFinite(o?.elev) || !Number.isFinite(o?.elevTo)) return null;
+  const d = o.elevTo - o.elev;
+  return d > 0 ? d : null;
+}
+
+// «Взять перепад»: высота подъёма = отметка верха − отметка низа.
+export function applyStairsDrop(o) {
+  const d = stairsDrop(o);
+  if (d === null) return false;
+  o.height = Math.min(6000, d);
+  syncStairs(o);
+  return true;
 }
 
 // ------------------------------------------------- Лестница, короб, бордюр
@@ -478,6 +536,50 @@ export function insetPolygon(poly, d) {
   });
 }
 
+// ------------------------------------------------------- Подпорная стенка
+
+export const RETAINING_CAP_OVER = 30; // свес капы с каждой стороны, мм
+export const RETAINING_SIDES = [{ id: 'left', title: 'Слева по ходу линии' }, { id: 'right', title: 'Справа по ходу линии' }];
+
+function retainingMeta(meta = {}) {
+  return {
+    ...meta,
+    upper: meta.upper === 'right' ? 'right' : 'left',
+    drop: clampNum(meta.drop, 0, 6000, 0),
+    cap: meta.cap === true,
+    capH: clampNum(meta.capH, 20, 300, 60),
+  };
+}
+
+// Расчёт стенки: толщина, высота над низом, перепад грунта, парапет, капа,
+// длина по оси (мм) и объём кладки/бетона тела + капы (м³). Фундамент не считается.
+export function retainingInfo(o) {
+  const m = retainingMeta(o.meta || {});
+  const height = Math.max(0, Number(o.height) || 0);
+  const thick = Math.max(1, o.width || landscapeDef('retaining-wall').h);
+  const drop = m.drop > 0 ? Math.min(m.drop, height) : height;
+  const capW = m.cap ? thick + RETAINING_CAP_OVER * 2 : 0;
+  const capH = m.cap ? m.capH : 0;
+  const length = polylineLength(objectPath(o));
+  const bodyM3 = (length * thick * height) / 1e9;
+  const capM3 = (length * capW * capH) / 1e9;
+  return { thick, height, drop, parapet: height - drop, cap: m.cap, capW, capH, upper: m.upper, length, bodyM3, capM3, volume: bodyM3 + capM3 };
+}
+
+// Кромки стенки (мир, по ходу линии): upper — со стороны верха, lower — низа;
+// lowSign — знак нормали (−u.y, u.x) в сторону низа. Ось Y вниз: кромка
+// plus раскладки — справа по ходу.
+export function retainingEdges(o, width = o.width) {
+  const lay = lineLayout({ ...o, width: width || o.width });
+  const upperRight = retainingMeta(o.meta || {}).upper === 'right';
+  return {
+    upper: upperRight ? lay.plus : lay.minus,
+    lower: upperRight ? lay.minus : lay.plus,
+    lowSign: upperRight ? -1 : 1,
+    outline: lay.outline,
+  };
+}
+
 // Линейный/площадной: точки в мире; без точек — заготовка по габариту типа
 // с центром (x, y).
 function createShapeObject(def, x, y, opts) {
@@ -511,8 +613,10 @@ function createShapeObject(def, x, y, opts) {
   if (opts.color) obj.color = opts.color;
   if (opts.locked) obj.locked = true;
   if (PLANTER_KINDS.has(def.kind)) obj.meta = planterMeta(obj.meta);
+  if (def.kind === 'retaining-wall') obj.meta = retainingMeta(obj.meta);
   const curb = CURB_HOSTS.has(def.kind) ? normalizeCurb(opts.curb) : null;
   if (curb) obj.curb = curb;
+  applyElev(obj, opts);
   return syncShape(obj);
 }
 
@@ -883,6 +987,7 @@ export function normalizeLandscapeObject(raw) {
       smooth: raw.smooth === true,
       locked: raw.locked === true,
       curb: raw.curb,
+      elev: raw.elev,
       ...(def.shape === 'line' ? pathParams(raw, points.length) : {}),
     });
   }
@@ -898,6 +1003,8 @@ export function normalizeLandscapeObject(raw) {
     locked: raw.locked === true,
     parent: raw.parent,
     curb: raw.curb,
+    elev: raw.elev,
+    elevTo: raw.elevTo,
   });
   return obj;
 }

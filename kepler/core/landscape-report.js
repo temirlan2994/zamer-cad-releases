@@ -8,7 +8,7 @@
 
 import {
   curbLines, isPathShape, landscapeDef, objectAreaM2, objectLengthM, objectOutline, objectPath, planterInner, planterWall,
-  pointInObject, polylineLength, stairsInfo, steppingSlabs, toWorld, variantOf,
+  fmtElev, pointAlong, pointInObject, polylineLength, retainingEdges, retainingInfo, stairsInfo, steppingSlabs, toWorld, variantOf,
 } from './landscape.js';
 import { LANDSCAPE_NORMS } from './norms.js';
 import { buildingFootprint } from './site-check.js';
@@ -103,6 +103,10 @@ export function hostCurbLengthM(o) {
 }
 
 const sizeText = (o, def) => {
+  if (o.kind === 'retaining-wall') {
+    const ri = retainingInfo(o);
+    return `${Math.round(ri.thick)}×${Math.round(ri.height)} мм${ri.parapet > 0 ? `, парапет ${Math.round(ri.parapet)}` : ''}${ri.cap ? ', с капой' : ''}`;
+  }
   if (o.kind === 'stairs-out') {
     const st = stairsInfo(o);
     return `${st.steps} ступ. ${Math.round(st.riser)}×${st.tread} мм, марш ${fmt(st.flight / 1000, 2)} м, подъём ${fmt(st.rise / 1000, 2)} м${st.cheek ? ', с бортами' : ''}`;
@@ -127,17 +131,21 @@ export function landscapeSchedule(objects) {
     const shape = isPathShape(def);
     // Плиты и доски («Разорвать») — одной строкой «N шт» по типу и материалу.
     const piece = PIECE_KINDS.has(o.kind);
-    const key = shape || piece ? `${o.kind}|${variant?.id}` : `${o.kind}|${variant?.id}|${size}`;
+    // Подпорные стенки — по материалу и сечению (толщина × высота).
+    const wall = o.kind === 'retaining-wall';
+    const key = wall ? `${o.kind}|${variant?.id}|${size}` : shape || piece ? `${o.kind}|${variant?.id}` : `${o.kind}|${variant?.id}|${size}`;
     if (!rows.has(key)) {
       rows.set(key, {
         kind: o.kind, title: def.title, variant: def.variants.length > 1 ? variant?.title || '' : '', group: def.group, cat: def.cat,
-        count: 0, size: shape ? '' : size, sizes: new Set(), area: 0, length: 0, unit: def.shape === 'line' ? 'м' : def.shape === 'poly' ? 'м²' : 'шт',
+        count: 0, size: shape && !wall ? '' : size, sizes: new Set(), area: 0, length: 0, unit: def.shape === 'line' ? 'м' : def.shape === 'poly' ? 'м²' : 'шт',
+        ...(wall ? { volume: 0 } : {}),
       });
     }
     const r = rows.get(key);
     r.count += 1;
     if (piece) r.sizes.add(size);
-    if (def.cover || shape) r.area += objectAreaM2(o);
+    if (wall) r.volume += retainingInfo(o).volume;
+    if ((def.cover || shape) && !wall) r.area += objectAreaM2(o);
     if (def.shape === 'line') r.length += objectLengthM(o);
     if (o.curb) {
       // Бордюр по периметру дорожки/площади — отдельной строкой (длина).
@@ -156,7 +164,27 @@ export function landscapeSchedule(objects) {
   const order = (r) => (r.cat === 'green' ? 0 : 1);
   return [...rows.values()]
     .sort((a, b) => order(a) - order(b) || a.group.localeCompare(b.group, 'ru') || a.title.localeCompare(b.title, 'ru'))
-    .map(({ sizes, ...r }, i) => ({ pos: i + 1, ...r, size: sizes.size > 1 ? 'разные' : r.size }));
+    .map(({ sizes, ...r }, i) => ({
+      pos: i + 1, ...r,
+      // Объём стенок — в графе «Размер» (колонки CSV прежние).
+      size: sizes.size > 1 ? 'разные' : r.volume != null ? `${r.size}, V ${fmt(r.volume, 2)} м³` : r.size,
+    }));
+}
+
+// Подпорные стенки для ТЭП: число, длина (м), объём кладки/бетона (м³).
+export function retainingTotals(objects) {
+  let count = 0; let length = 0; let volume = 0;
+  for (const o of objects || []) {
+    if (o.kind !== 'retaining-wall') continue;
+    const ri = retainingInfo(o);
+    count += 1; length += ri.length / 1000; volume += ri.volume;
+  }
+  return { count, length, volume };
+}
+
+export function retainingRows(t) {
+  if (!t?.count) return [];
+  return [['Подпорные стенки', `${fmt(t.length, 1)} м · ${fmt(t.volume, 2)} м³ (${t.count} шт.)`]];
 }
 
 export function buildLandscapeCsv(project) {
@@ -189,6 +217,7 @@ export const LANDSCAPE_DXF_LAYERS = [
   { key: 'lsPaths', name: 'LANDSCAPE_PATHS', color: 8 },
   { key: 'lsAreas', name: 'LANDSCAPE_AREAS', color: 52 },
   { key: 'lsFurniture', name: 'LANDSCAPE_FURNITURE', color: 30 },
+  { key: 'lsWalls', name: 'LANDSCAPE_WALLS', color: 9 },
 ];
 
 const closedLines = (pts, layer, closed = true) => {
@@ -219,6 +248,11 @@ export function landscapeDxfEntities(site) {
     if (o.curb) {
       for (const l of curbLines(o)) out.push(...closedLines(l.pts, 'lsPaths', l.closed));
     }
+    // Отметка уровня площадки/лестницы — текстом у центра (необязательное поле elev).
+    if (Number.isFinite(o.elev) && o.kind !== 'retaining-wall') {
+      const text = o.kind === 'stairs-out' && Number.isFinite(o.elevTo) ? `${fmtElev(o.elev)} / ${fmtElev(o.elevTo)}` : fmtElev(o.elev);
+      out.push({ type: 'text', layer: 'lsAreas', x: o.x, y: o.y, height: 250, text });
+    }
     if (o.kind === 'stairs-out') {
       // Лестница: габарит + рёбра ступеней.
       out.push(...closedLines(objectOutline(o), 'lsPaths'));
@@ -238,6 +272,7 @@ export function landscapeDxfEntities(site) {
       continue;
     }
     if (o.kind === 'curb') { out.push(...closedLines(objectOutline(o), 'lsPaths')); continue; }
+    if (o.kind === 'retaining-wall') { out.push(...retainingDxf(o)); continue; }
     if (o.kind === 'path') {
       if (o.variant === 'stepping') {
         for (const sl of steppingSlabsOf(o)) out.push(...closedLines(sl, 'lsPaths'));
@@ -253,6 +288,34 @@ export function landscapeDxfEntities(site) {
     if (def.group === 'Дорожки') { out.push(...closedLines(objectOutline(o, 24), 'lsPaths')); continue; }
     const layer = plant ? 'lsTrees' : def.shape === 'poly' || def.layer === 'ground' || def.surface === 'water' ? 'lsAreas' : 'lsFurniture';
     out.push(...closedLines(objectOutline(o, 24), layer));
+  }
+  return out;
+}
+
+// Подпорная стенка в DXF: двойная линия (кромки) + торцы, штрихи от кромки
+// низа в сторону низа (условный знак откоса/стенки) через ~600 мм,
+// длинный/короткий поочерёдно; отметка низа — текстом.
+function retainingDxf(o) {
+  const out = [];
+  const e = retainingEdges(o);
+  out.push(...closedLines(e.upper, 'lsWalls', false), ...closedLines(e.lower, 'lsWalls', false));
+  for (const k of [0, e.upper.length - 1]) {
+    const a = e.upper[k]; const b = e.lower[k === 0 ? 0 : e.lower.length - 1];
+    if (a && b) out.push({ type: 'line', layer: 'lsWalls', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+  }
+  const ri = retainingInfo(o);
+  const total = polylineLength(e.lower);
+  const tick = Math.max(150, Math.min(600, ri.height * 0.4));
+  let i = 0;
+  for (let s = 300; s < total - 100; s += 600, i += 1) {
+    const p = pointAlong(e.lower, s);
+    const nx = -Math.sin(p.angle) * e.lowSign; const ny = Math.cos(p.angle) * e.lowSign;
+    const len = i % 2 ? tick * 0.5 : tick;
+    out.push({ type: 'line', layer: 'lsWalls', x1: p.x, y1: p.y, x2: p.x + nx * len, y2: p.y + ny * len });
+  }
+  if (Number.isFinite(o.elev)) {
+    const m = pointAlong(e.upper, polylineLength(e.upper) / 2);
+    out.push({ type: 'text', layer: 'lsWalls', x: m.x, y: m.y, height: 250, text: `${fmtElev(o.elev)} / ${fmtElev(o.elev + ri.height)}` });
   }
   return out;
 }

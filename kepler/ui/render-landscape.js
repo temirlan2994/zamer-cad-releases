@@ -11,7 +11,7 @@
 import {
   LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, landscapeHandles, objectAreaM2, objectColors,
   lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
-  seededRandom, steppingSlabs, variantOf,
+  seededRandom, steppingSlabs, variantOf, fmtElev, retainingEdges, retainingInfo,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { sunPosition } from '../core/site.js';
@@ -2271,7 +2271,105 @@ const BUILD_LOOKS = {
   },
 };
 
+// Шаг швов верха стенки по материалу, мм (камень — неровный).
+const WALL_JOINT = { concrete: 3000, corten: 2000, gabion: 1000, stone: 0 };
+
+// Подпорная стенка (мир). «Эскиз»: со стороны низа — видимая грань
+// (притенена, штриховка) и мягкая тень у подножия, верх светлый с фактурой,
+// капа шире тела; «Чертёж»: двойная линия, кромка низа толще, штрихи от неё
+// в сторону низа (длинный/короткий поочерёдно) — условный знак перепада.
+function drawRetaining(ctx, o, C, rc) {
+  const ri = retainingInfo(o);
+  const e = retainingEdges(o);
+  if (e.lower.length < 2 || e.upper.length < 2) return;
+  const H = ri.height;
+  const lowN = (angle) => ({ x: -Math.sin(angle) * e.lowSign, y: Math.cos(angle) * e.lowSign });
+  if (!rc.mono && H > 0) {
+    const face = Math.min(320, Math.max(60, H * 0.16));
+    const far = retainingEdges(o, ri.thick + face * 2).lower;
+    // Тень у подножия — полосой за гранью, затухает наружу.
+    const sh = Math.min(900, Math.max(150, H * 0.45));
+    for (const [k, alpha] of [[1, 0.1], [0.55, 0.12]]) {
+      const farSh = retainingEdges(o, ri.thick + (face + sh * k) * 2).lower;
+      tracePath(ctx, [...far, ...[...farSh].reverse()], true);
+      ctx.fillStyle = rgba(rc.pal.shadow, alpha);
+      ctx.fill();
+    }
+    // Видимая грань: цвет боковины, притенение, штриховка.
+    const poly = [...e.lower, ...[...far].reverse()];
+    tracePath(ctx, poly, true);
+    ctx.fillStyle = C[1];
+    ctx.fill();
+    ctx.fillStyle = rgba(rc.pal.shadow, 0.22);
+    ctx.fill();
+    hatch(ctx, rc, ptsBox(poly), Math.max(rc.px(3.5), 30), 0.45, 0.5);
+    tracePath(ctx, far, false);
+    ink(ctx, rc, 0.5, 0.55);
+  }
+  // Верх (капа — шире тела на свес).
+  const top = ri.cap ? retainingEdges(o, ri.capW).outline : e.outline;
+  tracePath(ctx, top, true);
+  ctx.fillStyle = rc.mono ? rc.pal.paper : C[2] || C[0];
+  ctx.fill();
+  if (!rc.mono && rc.lod >= 4) {
+    ctx.save();
+    tracePath(ctx, top, true);
+    ctx.clip();
+    if (o.variant === 'gabion' || o.variant === 'corten' || o.variant === 'concrete') {
+      tracePath(ctx, top, true);
+      fillGrain(ctx, rc, 'gravel', o.variant === 'gabion' ? 0.9 : o.variant === 'corten' ? 0.45 : 0.25);
+    }
+    const axis = objectPath(o);
+    const total = polylineLength(axis);
+    const hw = (ri.cap ? ri.capW : ri.thick) / 2 + 20;
+    ctx.strokeStyle = seam(rc, o.variant === 'gabion' ? 0.5 : 0.35);
+    ctx.lineWidth = rc.px(0.5);
+    ctx.beginPath();
+    const R = seededRandom(`${o.id}:wall`);
+    const step = WALL_JOINT[o.variant] || 0;
+    for (let s = step || 350 + R() * 300; s < total - 80; s += step || 350 + R() * 350) {
+      const [p, q] = crossAt(axis, s, hw);
+      ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+    }
+    if (o.variant === 'gabion') { // сетка корзин: продольный шов по оси
+      axis.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (ri.cap) {
+    tracePath(ctx, top, true);
+    ink(ctx, rc, rc.mono ? 0.6 : 0.5, 0.7);
+  }
+  // Графика: кромка верха тоньше, кромка низа толще, торцы.
+  tracePath(ctx, e.upper, false);
+  ink(ctx, rc, rc.mono ? 0.9 : 0.8, 0.9);
+  tracePath(ctx, e.lower, false);
+  ink(ctx, rc, rc.mono ? 1.5 : 1.1, 0.95);
+  ctx.beginPath();
+  ctx.moveTo(e.upper[0].x, e.upper[0].y); ctx.lineTo(e.lower[0].x, e.lower[0].y);
+  const ul = e.upper[e.upper.length - 1]; const ll = e.lower[e.lower.length - 1];
+  ctx.moveTo(ul.x, ul.y); ctx.lineTo(ll.x, ll.y);
+  ink(ctx, rc, rc.mono ? 0.9 : 0.8, 0.9);
+  if (rc.mono && H > 0) {
+    // Штрихи в сторону низа (как у откоса): шаг и длина — с запасом по масштабу.
+    const total = polylineLength(e.lower);
+    const step = Math.max(rc.px(9), 300);
+    const long = Math.max(rc.px(8), Math.min(700, Math.max(250, H * 0.35)));
+    ctx.beginPath();
+    let i = 0;
+    for (let s = step / 2; s < total - step * 0.2; s += step, i += 1) {
+      const p = pointAlong(e.lower, s);
+      const n = lowN(p.angle);
+      const len = i % 2 ? long * 0.5 : long;
+      ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + n.x * len, p.y + n.y * len);
+    }
+    ink(ctx, rc, 0.7, 0.95);
+  }
+}
+
 const BUILD_SHAPE_LOOKS = {
+  retaining(ctx, o, pts, C, rc) { drawRetaining(ctx, o, C, rc); },
   'planter-area'(ctx, o, pts, C, rc) {
     const outer = pts.map(({ x, y }) => ({ x, y }));
     const inner = insetPolygon(outer, planterWall(o));
@@ -2352,7 +2450,7 @@ function shadowOffset(height, shadow) {
 // Мягкая длинная тень: силуэт, протянутый по направлению от солнца, с
 // размытием — спрайт в кеше; серо-зелёная, полупрозрачная. В «Чертеже» — нет.
 function drawShadow(ctx, o, def, shadow, rc) {
-  if (rc.mono) return;
+  if (rc.mono || def.look === 'retaining') return; // у стенки тень — в её рисунке (к низу)
   const off = shadowOffset(o.height || def.height, shadow);
   const color = rc.pal.shadow;
   if (def.shape === 'line') {
@@ -2666,6 +2764,10 @@ export function landscapeMeasure(o, def = landscapeDef(o.kind)) {
     const st = stairsInfo(o);
     return `${st.steps} ступ. · ${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м · h ${Math.round(st.rise)}`;
   }
+  if (o.kind === 'retaining-wall') {
+    const ri = retainingInfo(o);
+    return `L ${fmtM(ri.length / 1000, 2)} м · ${Math.round(ri.thick)}×${Math.round(ri.height)} мм · V ${fmtM(ri.volume, 2)} м³`;
+  }
   if (def?.shape === 'line') return `L ${fmtM(objectLengthM(o), 2)} м · ${fmtM((o.width || def.h) / 1000, 2)} м`;
   if (def?.shape === 'poly') return `S ${fmtM(objectAreaM2(o), 1)} м² · P ${fmtM(objectLengthM(o), 1)} м`;
   return def?.lockAspect ? `⌀ ${(o.w / 1000).toFixed(2)} м` : `${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м`;
@@ -2713,6 +2815,11 @@ function drawLabels(ctx, objects, w2s, tokens, style) {
       ? `${shortTitle(def)} · ${def.shape === 'line' ? `${fmtM(objectLengthM(o))} м` : `${fmtM(objectAreaM2(o))} м²`}`
       : shortTitle(def);
     if (o.kind === 'stairs-out') text = `${stairsInfo(o).steps} ступ.`;
+    if (o.kind === 'retaining-wall') text = `Подп. стенка h ${fmtM(retainingInfo(o).height / 1000, 2)} м`;
+    // Отметка уровня: «+0.45»; у лестницы — низ → верх.
+    if (Number.isFinite(o.elev)) {
+      text += ` ${fmtElev(o.elev)}${o.kind === 'stairs-out' && Number.isFinite(o.elevTo) ? `…${fmtElev(o.elevTo)}` : ''}`;
+    }
     if (o.parent) continue; // посадки в коробе — без подписей
     ctx.strokeStyle = tokens.surface;
     ctx.globalAlpha = 0.85;
@@ -2743,6 +2850,44 @@ function warnBadge(ctx, x, y, color, tokens) {
   ctx.textBaseline = 'alphabetic';
 }
 
+// Отметки уровня без слоя «Подписи»: знак ▽ и «+0.45» у центра площадки
+// (у линии — у середины оси). Подписи включены — отметка уже в подписи.
+function drawElevTags(ctx, objects, w2s, tokens, style) {
+  const list = objects.filter((o) => Number.isFinite(o.elev));
+  if (!list.length) return;
+  ctx.save();
+  ctx.font = style !== 'drawing' ? `12px ${HAND_FONT}` : `500 10.5px ${PLAIN_FONT}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  for (const o of list) {
+    const def = landscapeDef(o.kind);
+    if (!def) continue;
+    let at = w2s(o.x, o.y);
+    if (def.shape === 'line') {
+      const path = objectPath(o);
+      const p = pointAlong(path, polylineLength(path) / 2);
+      at = w2s(p.x, p.y);
+    }
+    const text = `${fmtElev(o.elev)}${o.kind === 'stairs-out' && Number.isFinite(o.elevTo) ? `…${fmtElev(o.elevTo)}` : ''}`;
+    const color = tokens.text || tokens.muted;
+    // ▽ — вершиной на точку отметки.
+    ctx.beginPath();
+    ctx.moveTo(at.x, at.y); ctx.lineTo(at.x - 5, at.y - 8); ctx.lineTo(at.x + 5, at.y - 8); ctx.closePath();
+    ctx.fillStyle = tokens.surface; ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.1; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(at.x - 5, at.y - 8); ctx.lineTo(at.x + 40, at.y - 8); ctx.stroke();
+    ctx.strokeStyle = tokens.surface;
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 3.5;
+    ctx.strokeText(text, at.x + 7, at.y - 16);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.fillText(text, at.x + 7, at.y - 16);
+  }
+  ctx.restore();
+}
+
 function handle(ctx, p, tokens, active = false) {
   ctx.fillStyle = active ? tokens.accent : '#ffffff';
   ctx.strokeStyle = tokens.accent;
@@ -2757,6 +2902,7 @@ export function drawLandscapeOverlay(ctx, objects, {
   sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor = '#d08a1e', labels = false, vertex = null, style = 'sketch',
 }) {
   if (labels) drawLabels(ctx, objects, w2s, tokens, style);
+  else drawElevTags(ctx, objects, w2s, tokens, style);
   const screenPts = (o, inflate = 0) => {
     const shape = isPathShape(landscapeDef(o.kind));
     return objectOutline(inflate && !shape ? { ...o, w: o.w + inflate * 2, h: o.h + inflate * 2 } : o).map((p) => w2s(p.x, p.y));

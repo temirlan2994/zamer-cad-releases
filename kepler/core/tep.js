@@ -9,7 +9,7 @@ import { levelProject, sortedLevels } from './model.js';
 import { buildingFootprintM2 } from './rooms.js';
 import { roomSchedule, scheduleTotals } from './schedule.js';
 import { polygonAreaM2 } from './site.js';
-import { balanceRows, landscapeBalance } from './landscape-report.js';
+import { balanceRows, landscapeBalance, retainingRows, retainingTotals } from './landscape-report.js';
 
 export function tepReport(project) {
   const levels = sortedLevels(project);
@@ -31,6 +31,8 @@ export function tepReport(project) {
     height: Math.max(...levels.map((l) => l.elevation + l.height)) / 1000,
     // Баланс территории (благоустройство): только при границе участка.
     landscape: plot ? landscapeBalance(project) : null,
+    // Подпорные стенки: длина и объём кладки/бетона (если есть).
+    retaining: retainingTotals(project.site?.landscape?.objects),
   };
 }
 
@@ -49,5 +51,6 @@ export function tepRows(t) {
   rows.push(['Строительный объём', `${fmt(t.volume, 0)} м³`]);
   rows.push(['Этажность / высота', `${t.storeys} · ${fmt(t.height, 2)} м`]);
   rows.push(...balanceRows(t.landscape));
+  rows.push(...retainingRows(t.retaining));
   return rows;
 }
