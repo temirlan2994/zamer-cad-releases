@@ -3,9 +3,11 @@
 import { isUpperLevel } from '../core/model.js';
 import { analyzeConnectivity, suggestAccess } from '../core/rooms.js';
 import { refs } from './dom.js';
+import { renderGapBar } from './gaps.js';
 import { state } from './state.js';
 
 export function updateConnectivity() {
+  renderGapBar();
   const bar = refs.connectivity;
   if (!state.project.rooms.length) { bar.hidden = true; return; }
   const analysis = analyzeConnectivity(state.project, state.walls);

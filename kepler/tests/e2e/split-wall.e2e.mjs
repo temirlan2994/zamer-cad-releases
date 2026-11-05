@@ -14,13 +14,19 @@ describe('разделить стену: отступ от торца', () => {
     k.select({ type: 'wall', key: w.key, from: w.from });
     return { key: w.key, from: w.from, to: w.to, room: w.rooms[0] };
   });
+  // Панель выделения перерисовывается асинхронно — ждём кнопку, а не кликаем вслепую.
+  const pickWallReady = async () => {
+    const w = await pickWall();
+    await app.page.waitForSelector('[data-selection-action="split-wall"]:not([disabled])', { timeout: 5000 });
+    return w;
+  };
   const verts = (id) => app.page.evaluate((rid) => {
     const r = window.__kepler.state.project.rooms.find((x) => x.id === rid);
     return r.outline ? r.outline.length : 4;
   }, id);
 
   it('«Разделить» открывает плашку, Enter делит по введённому расстоянию', async () => {
-    const w = await pickWall();
+    const w = await pickWallReady();
     const v0 = await verts(w.room);
     await app.page.click('[data-selection-action="split-wall"]');
     await app.page.waitForSelector('#splitInput', { state: 'visible' });
@@ -32,7 +38,7 @@ describe('разделить стену: отступ от торца', () => {
 
   it('Esc отменяет без изменений, расстояние вне диапазона не делит', async () => {
     await app.page.keyboard.press('Escape');
-    const w = await pickWall();
+    const w = await pickWallReady();
     const v0 = await verts(w.room);
     await app.page.click('[data-selection-action="split-wall"]');
     await app.page.waitForSelector('#splitInput', { state: 'visible' });

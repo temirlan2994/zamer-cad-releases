@@ -48,6 +48,8 @@ function cssTokens(style = getComputedStyle(document.documentElement)) {
     hover: token('--hover', '#1d4ed8'),
     danger: token('--danger', '#e14b4b'),
     ok: token('--ok-text', '#0e7a4e'),
+    warn: token('--warn-text', '#8a5a00'),
+    warnBg: token('--warn-bg', '#fff4e0'),
     wall: token('--wall-fill', '#39434f'),
     wallBearing: token('--wall-bearing', '#1d242c'),
     furniture: token('--furniture', '#5b6b7e'),
@@ -492,6 +494,14 @@ export function createRenderer(canvas) {
       }
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
       if (text.dims) drawAllRoomDims(ctx, state, walls, p2s, tokens);
+    }
+    // Маркеры нестандартных зазоров «≠ N мм» (core/gaps.js) — только на экране
+    // и при читаемом масштабе подписей.
+    state._gapBoxes = [];
+    if (detail && !print && text.labels && state.modeName !== 'site') {
+      for (const gap of state.gaps || []) {
+        state._gapBoxes.push(drawGapMarker(ctx, gap, p2s(gap.at.x, gap.at.y), tokens, gap.key === state.gapFocus));
+      }
     }
     state._wallUI = null;
     const selWall = state.selection?.type === 'wall'
@@ -1856,6 +1866,27 @@ function drawTextPill(ctx, label, x, y, tokens, color, font = '11px system-ui, s
   ctx.globalAlpha = 1;
   ctx.fillStyle = color;
   ctx.fillText(label, x, y);
+}
+
+// Янтарная метка «≠ N мм» у середины нестандартного зазора. Возвращает
+// экранную рамку для попадания кликом.
+function drawGapMarker(ctx, gap, p, tokens, focused) {
+  const label = `≠ ${Math.round(gap.gap)} мм`;
+  ctx.font = '600 11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const w = ctx.measureText(label).width + 12;
+  const box = { key: gap.key, x: p.x - w / 2, y: p.y - 9, w, h: 18 };
+  ctx.fillStyle = tokens.warnBg;
+  ctx.strokeStyle = tokens.warn;
+  ctx.lineWidth = focused ? 2 : 1;
+  ctx.beginPath();
+  roundRectPath(ctx, box.x, box.y, box.w, box.h, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = tokens.warn;
+  ctx.fillText(label, p.x, p.y + 4);
+  return box;
 }
 
 // Размерные линии всех комнат: внутренние размеры внутри комнаты, габарит со

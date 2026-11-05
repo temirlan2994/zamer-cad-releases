@@ -6,6 +6,7 @@ import {
   deserializeProject, levelBelow, levelProject, roomById, serializeProject,
 } from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
+import { findNearMissGaps } from '../core/gaps.js';
 import { el } from './dom.js';
 import { renderLevelBar } from './levels.js';
 import { applyModeRotation } from './modes.js';
@@ -25,6 +26,7 @@ let autosaveTimer = null;
 
 export function refreshDerived() {
   state.walls = deriveWalls(state.project);
+  state.gaps = findNearMissGaps(state.project, { move: false });
   // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
   const below = levelBelow(state.project);
   state.belowWalls = below ? deriveWalls(levelProject(state.project, below.id)) : null;

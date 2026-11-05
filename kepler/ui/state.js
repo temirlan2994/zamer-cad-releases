@@ -3,6 +3,8 @@
 export const state = {
   project: null,
   walls: [],
+  gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
+  gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site'
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)
   views: {

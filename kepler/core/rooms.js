@@ -120,12 +120,15 @@ export function siteWarning(project) {
 
 // Привязка позиции при перетаскивании: стыковка к соседям (зазор = стена),
 // выравнивание кромок, затем сетка. Возвращает новые x, y и направляющие.
+// Радиус магнита стыковки для пары с зазором target: любой зазор 0…MAX_SHARED_GAP
+// притягивается к target (помещение перескакивает сразу в корректный зазор,
+// не проходя через временные «двойные стены» 400, 300, 200 мм).
+export function dockSnapRadius(target, snapDist = 0) {
+  return Math.max(snapDist, MAX_SHARED_GAP - target, target);
+}
+
 export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
-  // Магнит стыковки включается раньше старого порога общей стены. Поэтому
-  // помещение перескакивает сразу в корректный зазор перегородки, не проходя
-  // через временные стены толщиной 400, 300, 200 мм.
-  const dockSnapDist = Math.max(snapDist, Math.max(0, MAX_SHARED_GAP - partition));
   const guides = [];
   let bestX = null;
   let bestY = null;
@@ -144,6 +147,7 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
     const overlapX = Math.min(x + moving.w, o.x + o.w) - Math.max(x, o.x) > 1;
     // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
     const gap = sharedWallThickness(project, moving.id, other.id);
+    const dockSnapDist = dockSnapRadius(gap, snapDist);
     if (overlapY) {
       considerX(o.x + o.w + gap, Math.abs(x - (o.x + o.w + gap)), { type: 'dock', other }, dockSnapDist);
       considerX(o.x - moving.w - gap, Math.abs(x - (o.x - moving.w - gap)), { type: 'dock', other }, dockSnapDist);

@@ -4,6 +4,7 @@ import { roomType } from '../core/catalog.js';
 import { roomById } from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
 import { el, refs } from './dom.js';
+import { renderGapBar } from './gaps.js';
 import { renderLibrary } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
@@ -27,6 +28,7 @@ export function selectObject(selection) {
     state.pendingRoomSplit = null;
   }
   state.selection = selection;
+  renderGapBar(); // кнопка «Пристыковать» — только пока пара выделена
   renderProps();
   updateWallButtons();
   renderSelectionToolbar();

@@ -21,6 +21,7 @@ import {
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
 import { hideSplitInput } from './split-input.js';
+import { focusGap, gapMarkerAt } from './gaps.js';
 import {
   KITCHEN_ELEMENTS, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenHandleDrag, kitchenProject, withDefaultComp,
 } from '../core/composite.js';
@@ -486,6 +487,10 @@ export function bindCanvasInput() {
       }
     }
 
+    // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
+    const gapHit = gapMarkerAt(screen.x, screen.y);
+    if (gapHit) { focusGap(gapHit); return; }
+
     // Кнопки «+» выделенного дивана-конструктора — раньше ручек и перетаскивания.
     if (state.selection?.type === 'item' && state._sofaUI?.itemId === state.selection.id) {
       const tolPx = state.coarsePointer ? 6 : 3;
@@ -696,7 +701,10 @@ export function bindCanvasInput() {
       const candidateParent = isOpenRoom(room)
         ? null : determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
       room.parentId = candidateParent;
-      const snapped = snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent);
+      // Shift — без магнита стыковки и выравнивания: только сетка.
+      const snapped = event.shiftKey
+        ? { x: Math.round(rawX / GRID_STEP) * GRID_STEP, y: Math.round(rawY / GRID_STEP) * GRID_STEP, guides: [] }
+        : snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent);
       const dx = snapped.x - drag.start.x;
       const dy = snapped.y - drag.start.y;
       // Абсолютные позиции от стартовых: груз зафиксирован при захвате.
@@ -773,6 +781,7 @@ export function bindCanvasInput() {
       const room = roomById(state.project, drag.roomId);
       if (!room) return;
       drag.moved = true;
+      drag.noSnap = event.shiftKey; // Shift — без магнита стыковки
       applyResize(room, drag, plan);
       if (drag.start.notch) room.notch = structuredClone(drag.start.notch);
       clampRoomNotch(room);

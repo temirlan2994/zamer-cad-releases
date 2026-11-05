@@ -1,9 +1,9 @@
 // Привязки и проверки при изменении размеров комнат и мебели.
 
-import { DEFAULT_PARTITION, GRID_STEP, isOpenRoom, isShaft } from '../core/catalog.js';
+import { GRID_STEP, isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemRect } from '../core/furnish.js';
-import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, validateRoomPlacement } from '../core/rooms.js';
-import { MAX_SHARED_GAP, sharedWallThickness } from '../core/walls.js';
+import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, dockSnapRadius, validateRoomPlacement } from '../core/rooms.js';
+import { sharedWallThickness } from '../core/walls.js';
 import { state } from './state.js';
 
 // Линии привязки: грани стен и кромки других комнат.
@@ -35,6 +35,16 @@ function snapValue(value, candidates, tol) {
   return best ? best.c : null;
 }
 
+// Стыковка с радиусом своей пары: ближайший кандидат { c, r } в пределах r.
+function snapDock(value, candidates) {
+  let best = null;
+  for (const { c, r } of candidates) {
+    const d = Math.abs(value - c);
+    if (d <= r && (!best || d < best.d)) best = { c, d };
+  }
+  return best ? best.c : null;
+}
+
 export function applyResize(room, dragState, plan) {
   const start = dragState.start;
   const dx = plan.x - dragState.plan.x;
@@ -49,8 +59,13 @@ export function applyResize(room, dragState, plan) {
   if (h.includes('s')) { hh = snap(start.h + dy); }
   // Привязка подвижной грани к стенам/кромкам соседних комнат.
   const tol = 14 / state.view.scale;
-  const partition = state.project.settings?.partition || DEFAULT_PARTITION;
-  const dockTol = Math.max(tol, Math.max(0, MAX_SHARED_GAP - partition));
+  // Shift — без магнита: только сетка.
+  if (dragState.noSnap) {
+    if (w < minSize) { if (h.includes('w')) x -= minSize - w; w = minSize; }
+    if (hh < minSize) { if (h.includes('n')) y -= minSize - hh; hh = minSize; }
+    room.x = x; room.y = y; room.w = w; room.h = hh;
+    return;
+  }
   const dockXs = [];
   const dockYs = [];
   for (const other of state.project.rooms) {
@@ -60,29 +75,31 @@ export function applyResize(room, dragState, plan) {
     const overlapX = Math.min(x + w, other.x + other.w) - Math.max(x, other.x) > 1;
     // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
     const gap = sharedWallThickness(state.project, room.id, other.id);
-    if (overlapY && h.includes('e') && other.x > x) dockXs.push(other.x - gap);
-    if (overlapY && h.includes('w') && other.x + other.w < x + w) dockXs.push(other.x + other.w + gap);
-    if (overlapX && h.includes('s') && other.y > y) dockYs.push(other.y - gap);
-    if (overlapX && h.includes('n') && other.y + other.h < y + hh) dockYs.push(other.y + other.h + gap);
+    // Радиус магнита — на всю зону поиска стыковки (0…MAX_SHARED_GAP).
+    const r = dockSnapRadius(gap, tol);
+    if (overlapY && h.includes('e') && other.x > x) dockXs.push({ c: other.x - gap, r });
+    if (overlapY && h.includes('w') && other.x + other.w < x + w) dockXs.push({ c: other.x + other.w + gap, r });
+    if (overlapX && h.includes('s') && other.y > y) dockYs.push({ c: other.y - gap, r });
+    if (overlapX && h.includes('n') && other.y + other.h < y + hh) dockYs.push({ c: other.y + other.h + gap, r });
   }
   const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(room.id));
   if (h.includes('w')) {
-    const dock = snapValue(x, dockXs, dockTol);
+    const dock = snapDock(x, dockXs);
     const s = dock ?? snapValue(x, lines.xs, tol);
     if (s !== null) { w += x - s; x = s; }
   }
   if (h.includes('e')) {
-    const dock = snapValue(x + w, dockXs, dockTol);
+    const dock = snapDock(x + w, dockXs);
     const s = dock ?? snapValue(x + w, lines.xs, tol);
     if (s !== null) w = s - x;
   }
   if (h.includes('n')) {
-    const dock = snapValue(y, dockYs, dockTol);
+    const dock = snapDock(y, dockYs);
     const s = dock ?? snapValue(y, lines.ys, tol);
     if (s !== null) { hh += y - s; y = s; }
   }
   if (h.includes('s')) {
-    const dock = snapValue(y + hh, dockYs, dockTol);
+    const dock = snapDock(y + hh, dockYs);
     const s = dock ?? snapValue(y + hh, lines.ys, tol);
     if (s !== null) hh = s - y;
   }

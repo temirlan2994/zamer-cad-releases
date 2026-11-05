@@ -7,6 +7,7 @@ import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
+import { planGapMove } from '../core/gaps.js';
 import {
   captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
@@ -279,6 +280,22 @@ export function moveMultiBy(dx, dy) {
   if (sel?.type !== 'multi') return false;
   const ok = applyGroupChange((project) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy), 'Так сдвинуть нельзя');
   if (ok) selectObject(sel);
+  return ok;
+}
+
+// «Пристыковать»: сдвиг одной комнаты пары с нестандартным зазором так, чтобы
+// зазор стал толщиной общей стены. Комната едет с вложенными, мебелью и
+// проёмами; одна запись истории.
+export function dockGapPair(gap) {
+  const plan = planGapMove(state.project, gap);
+  if (!plan.move) { toast(`Пристыковать нельзя: ${plan.reason}`, true); return false; }
+  const { roomId, dx, dy, name, distance } = plan.move;
+  const ok = applyGroupChange((project) => moveRoomGroup(project, [roomId], [], dx, dy), 'Так сдвинуть нельзя');
+  if (ok) {
+    state.gapFocus = null;
+    selectObject({ type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] });
+    toast(`«${name}» сдвинута на ${Math.round(distance)} мм — общая стена ${gap.target} мм · Ctrl+Z — отменить`);
+  }
   return ok;
 }
 
