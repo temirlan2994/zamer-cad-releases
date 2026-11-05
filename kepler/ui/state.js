@@ -22,6 +22,8 @@ export const state = {
   // { mode: 'off'|'default'|'sun', date, time, analysis }; dragging — тянут ползунок.
   lsSun: { mode: 'default', date: '2026-06-21', time: 900, analysis: false },
   lsSunDragging: false,
+  touchDeferSelect: false,
+  touchDeferred: null,
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
   selection: null,
   hover: null,

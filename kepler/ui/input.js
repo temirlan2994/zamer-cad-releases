@@ -692,15 +692,25 @@ export function bindCanvasInput() {
   // перетаскивание — панорама (иначе объекты уезжают при случайных касаниях).
   // Ручки (размер, поворот, вершины) срабатывают сразу.
   canvas.addEventListener('pointerdown', (event) => {
-    onCanvasPointerDown(event);
-    if (event.pointerType !== 'touch' || !drag || !TOUCH_HOLD_KINDS.has(drag.kind)) return;
-    const hold = { kind: 'touch-hold', inner: drag, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
-    hold.timer = setTimeout(() => {
-      if (drag !== hold) return;
-      drag = hold.inner;
-      canvas.parentElement?.classList.add('move-armed');
-      try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
-    }, TOUCH_HOLD_MS);
+    const touch = event.pointerType === 'touch';
+    state.touchDeferSelect = touch;
+    state.touchDeferred = null;
+    try { onCanvasPointerDown(event); } finally { state.touchDeferSelect = false; }
+    const pending = state.touchDeferred;
+    state.touchDeferred = null;
+    const holdable = touch && drag && (TOUCH_HOLD_KINDS.has(drag.kind) || drag.kind === 'pan');
+    if (!holdable) { if (pending) selectObject(pending.selection); return; }
+    // Касанием выбор — только тапом, перемещение — после долгого нажатия.
+    const hold = { kind: 'touch-hold', inner: drag, pending, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
+    if (drag.kind !== 'pan') {
+      hold.timer = setTimeout(() => {
+        if (drag !== hold) return;
+        if (pending) selectObject(pending.selection);
+        drag = hold.inner;
+        canvas.parentElement?.classList.add('move-armed');
+        try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
+      }, TOUCH_HOLD_MS);
+    }
     drag = hold;
   });
   canvas.addEventListener('pointermove', (event) => {
@@ -1130,7 +1140,13 @@ export function bindCanvasInput() {
       return;
     }
     canvas.parentElement?.classList.remove('move-armed');
-    if (drag?.kind === 'touch-hold') { clearTimeout(drag.timer); drag = null; return; } // тап: выбор уже сделан
+    if (drag?.kind === 'touch-hold') { // тап: выбираем то, на что нажали
+      clearTimeout(drag.timer);
+      const pending = drag.pending;
+      drag = null;
+      if (pending) selectObject(pending.selection);
+      return;
+    }
     if (!drag) return;
     const finished = drag;
     drag = null;

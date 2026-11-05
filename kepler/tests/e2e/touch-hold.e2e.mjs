@@ -42,4 +42,28 @@ describe('касание: долгое нажатие для перемещен�
     assert.equal(await panX(), pan0, 'панорамы нет');
     assert.deepEqual(app.errors, []);
   });
+
+  const sel = () => app.page.evaluate(() => window.__kepler.state.selection?.id ?? null);
+  async function tapRoom(holdMs = 0, move = false) {
+    const r = await room();
+    const p = await worldToClient(app.page, r.cx, r.cy);
+    await touch('touchStart', p.x, p.y);
+    await app.page.waitForTimeout(holdMs);
+    if (move) { for (let i = 1; i <= 5; i++) { await touch('touchMove', p.x + i * 8, p.y); await app.page.waitForTimeout(16); } }
+    await touch('touchEnd');
+    await app.page.waitForTimeout(100);
+  }
+
+  it('выбор: свайп по комнате не выбирает, тап выбирает, пустое место тапом снимает', async () => {
+    await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
+    await tapRoom(0, true);
+    assert.equal(await sel(), null, 'после свайпа ничего не выбрано');
+    await tapRoom(0, false);
+    const id = (await app.page.evaluate(() => window.__kepler.state.project.rooms[0].id));
+    assert.equal(await sel(), id, 'тап выбрал комнату');
+    // свайп по выбранному — выбор остаётся
+    await tapRoom(0, true);
+    assert.equal(await sel(), id, 'панорама не снимает выбор');
+    assert.deepEqual(app.errors, []);
+  });
 });

@@ -15,6 +15,9 @@ import { requestDraw } from './view.js';
 import { clearDrawSnap } from './draw-snap-ui.js';
 
 export function selectObject(selection) {
+  // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
+  // ничего не выделяла.
+  if (state.touchDeferSelect) { state.touchDeferred = { selection }; return; }
   const split = state.splitEdit;
   if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
     Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();

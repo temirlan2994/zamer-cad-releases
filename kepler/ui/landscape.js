@@ -447,7 +447,7 @@ export function landscapePointerDown(event, screen, world) {
       ids = [hit.id];
       selectLandscape(ids);
     }
-    const own = editable(selectedObjects());
+    const own = editable(landscapeObjects().filter((o) => ids.includes(o.id)));
     if (!own.length) return null; // закреплённые — только выбор
     // Короб едет вместе со своими растениями.
     const group = withChildren(landscapeObjects(), own.map((o) => o.id));
