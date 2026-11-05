@@ -15,6 +15,8 @@ import { buildZonePolygon, neighborRectCorners, polygonAreaM2 } from '../core/si
 import { deriveWalls } from '../core/walls.js';
 import { createRenderer, projectPoint, underlayHandles } from '../render.js';
 import { state } from './state.js';
+import { sheetLandscapeStyle } from './landscape-style.js';
+import { lsPalette } from './render-landscape-kit.js';
 
 export const SHEET = { w: 420, h: 297 }; // мм
 const DPI = 150;
@@ -71,7 +73,7 @@ function renderArea(project, { kind, scales, points, rotation, underlayImg = nul
   };
   createRenderer(canvas).draw(printState, {
     width: areaW * CSS, height: areaH * CSS, dpr: DPI / 96, print: true,
-    site: kind === 'site', detail: kind !== 'site',
+    site: kind === 'site', detail: kind !== 'site', lsStyle: sheetLandscapeStyle(),
   });
   return { canvas, denominator: d };
 }
@@ -207,7 +209,9 @@ function siteTable(ctx, project) {
 }
 
 // Условные обозначения ландшафта (генплан): только группы, что есть на участке.
-export function landscapeLegend(objects) {
+// Краски — в стиле листа («Чертёж» — оттенки серого).
+export function landscapeLegend(objects, style = 'sketch') {
+  const c = lsPalette(style, false).c;
   const has = { plants: false, green: false, hard: false, water: false, small: false, fence: false };
   for (const o of objects || []) {
     const def = landscapeDef(o.kind);
@@ -226,7 +230,7 @@ export function landscapeLegend(objects) {
     ['water', 'Бассейн, пруд', 'rect', LS_COLORS.water[0]],
     ['small', 'Малые архитектурные формы', 'rect', LS_COLORS.wood[0]],
     ['fence', 'Ограждения', 'line', LS_COLORS.metal[0]],
-  ].filter(([k]) => has[k]).map(([, title, mark, color]) => ({ title, mark, color }));
+  ].filter(([k]) => has[k]).map(([, title, mark, color]) => ({ title, mark, color: c(color) }));
 }
 
 function legendBox(ctx, items) {
@@ -299,7 +303,7 @@ export function renderSheet(project, spec, sheetNo, sheetCount) {
       ctx.drawImage(canvas, AREA.x0, AREA.y0, AREA.x1 - AREA.x0, AREA.y1 - AREA.y0);
       frameAndStamp(ctx, { project, title: 'Генплан (схема планировочной организации участка)', denominator, sheetNo, sheetCount, subtitle: 'Север вверх · дом — нижний этаж' });
       siteTable(ctx, project);
-      legendBox(ctx, landscapeLegend(project.site?.landscape?.objects));
+      legendBox(ctx, landscapeLegend(project.site?.landscape?.objects, sheetLandscapeStyle()));
     });
   }
   const lp = levelProject(project, spec.levelId);

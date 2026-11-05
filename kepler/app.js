@@ -27,6 +27,7 @@ import { state } from './ui/state.js';
 import { updateConnectivity } from './ui/status.js';
 import { AUTOSAVE_KEY, refreshDerived, refreshNorms } from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
+import { loadLandscapeStyle } from './ui/landscape-style.js';
 import { bindToolbar } from './ui/toolbar.js';
 import { bindSelectionToolbar, renderSelectionToolbar } from './ui/selection-toolbar.js';
 import { bindSplitInput } from './ui/split-input.js';
@@ -52,6 +53,7 @@ bindSnapBar();
 
 (function boot() {
   loadTheme();
+  loadLandscapeStyle();
   let restored = null;
   try {
     const saved = localStorage.getItem(AUTOSAVE_KEY);

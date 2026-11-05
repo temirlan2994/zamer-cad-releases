@@ -1219,7 +1219,26 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.ls-chip canvas { background: color-mix(in srgb, #76a858 14%, var(--chip-paper)); }
+.ls-chip canvas { background: color-mix(in srgb, #d2dbbd 35%, var(--chip-paper)); }
+/* Переключатель стиля графики ландшафта («Эскиз» / «Чертёж»). */
+.seg {
+  display: inline-flex;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.seg-opt {
+  position: relative;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--border); }
+.seg-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.seg-opt.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+.seg-opt:focus-within { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -2px; }
 .ls-chip.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .ls-note {
   margin: 8px 0 0;

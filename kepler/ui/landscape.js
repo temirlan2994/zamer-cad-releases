@@ -17,7 +17,8 @@ import {
 } from '../core/landscape-tools.js';
 import { buildingSiteCheck } from '../core/site-check.js';
 import { saveFile } from './cloud.js';
-import { drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
+import { LS_STYLES, drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
+import { setLandscapeStyle, setSheetStylePref, sheetStylePref } from './landscape-style.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
@@ -707,7 +708,7 @@ function renderLandscapeItems() {
       ? (def.shape === 'line' ? `рисовать · ${(def.h / 1000).toFixed(2)} м` : 'рисовать контур')
       : def.lockAspect ? `⌀ ${(def.w / 1000).toFixed(1)} м` : `${(def.w / 1000).toFixed(1)}×${(def.h / 1000).toFixed(1)} м`;
     chip.appendChild(size);
-    try { drawLandscapePreview(preview, def.kind); } catch { /* превью не критично */ }
+    try { drawLandscapePreview(preview, def.kind, { style: state.lsStyle }); } catch { /* превью не критично */ }
     chip.addEventListener('dragstart', (e) => {
       chip.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'copy';
@@ -958,7 +959,13 @@ function renderLandscapeSummary(panel) {
     </div>` : ''}
     <h3>Слои</h3>
     <div class="prop-block ls-vis">
+      <div class="prop-field"><span>Графика</span>
+        <div class="seg ls-style" role="radiogroup" aria-label="Стиль графики ландшафта">
+          ${LS_STYLES.map((st) => `<label class="seg-opt${state.lsStyle === st.id ? ' active' : ''}"><input type="radio" name="lsStyle" value="${st.id}" ${state.lsStyle === st.id ? 'checked' : ''}><span>${st.title}</span></label>`).join('')}
+        </div>
+      </div>
       ${LANDSCAPE_VIS.map((g) => `<label class="check-row"><input type="checkbox" data-ls-vis="${g.id}" ${vis[g.id] !== false ? 'checked' : ''}><span>${g.title}</span></label>`).join('')}
+      <label class="check-row"><input type="checkbox" id="lsSheetScreen" ${sheetStylePref() === 'screen' ? 'checked' : ''}><span>Генплан на листе — как на экране (иначе «Чертёж»)</span></label>
     </div>
     <h3>Помощники</h3>
     <div class="prop-block">
@@ -989,6 +996,14 @@ function renderLandscapeSummary(panel) {
     <div class="prop-actions">
       <button type="button" id="lsCsv">Ведомость (CSV)</button>
     </div>`;
+  panel.querySelectorAll('input[name="lsStyle"]').forEach((r) => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    setLandscapeStyle(r.value);
+    panel.querySelectorAll('.ls-style .seg-opt').forEach((l) => l.classList.toggle('active', l.querySelector('input').checked));
+    renderLandscapeLibrary();
+    requestDraw();
+  }));
+  panel.querySelector('#lsSheetScreen')?.addEventListener('change', (e) => setSheetStylePref(e.target.checked ? 'screen' : 'drawing'));
   panel.querySelectorAll('[data-ls-vis]').forEach((box) => box.addEventListener('change', () => {
     state.lsVis = { ...state.lsVis, [box.dataset.lsVis]: box.checked };
     requestDraw();

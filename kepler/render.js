@@ -30,8 +30,9 @@ import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anc
 import { landscapeWarnings } from './core/landscape.js';
 import {
   drawHouseShadow, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
-  landscapeShadow, visibleLandscape,
+  drawLandscapeSiteBase, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
+import { luminance } from './ui/render-landscape-kit.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -178,15 +179,24 @@ export function createRenderer(canvas) {
     // Слои ландшафта (панель «Ландшафт»): скрытые группы не рисуются.
     const lsVis = state.lsVis || null;
     const lsObjects = site && state.modeName !== 'plan' ? visibleLandscape(site.landscape?.objects || [], lsVis) : [];
-    const lsOpts = { px, lod: scale * 1000, shadow: landscapeShadow(site), noShadows: lsVis?.shadows === false };
+    // Стиль ландшафта: «Эскиз» (акварель + графика) или «Чертёж» (монохром);
+    // лист печати передаёт свой (opts.lsStyle). Тема — по цвету холста.
+    const lsStyle = opts.lsStyle || state.lsStyle || 'sketch';
+    const lsDark = !print && luminance(tokens.canvas) < 0.4;
+    const lsPal = lsPalette(lsStyle, lsDark);
+    const lsOpts = {
+      px, lod: scale * 1000, shadow: landscapeShadow(site), noShadows: lsVis?.shadows === false,
+      style: lsStyle, dark: lsDark, pal: lsPal, dpr,
+    };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
-    if (landscape && site?.boundary?.length >= 3) {
-      // Участок — газоном (палитра «вид сверху», читается в обеих темах).
-      ctx.fillStyle = 'rgba(118,168,88,0.2)';
-      ctx.beginPath();
-      polyPath(ctx, site.boundary);
-      ctx.fill();
-    }
+    // Участок — газоном (светлая зелень с зерном; в «Чертеже» — пунктир).
+    if (landscape && site?.boundary?.length >= 3) drawLandscapeSiteBase(ctx, site.boundary, lsOpts);
+    // В «Ландшафте» дом — «белое пятно с планом»: светлые полы, тёмные стены.
+    const houseTokens = landscape ? {
+      ...tokens,
+      tints: Object.fromEntries(Object.keys(tokens.tints).map((k) => [k, lsPal.paper])),
+      wall: lsPal.ink, wallBearing: lsPal.ink,
+    } : tokens;
     if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
     if (landscape && houseFootprints.length) {
       // Тень дома; сам дом ниже рисуется настоящим планом этажа (полы, стены, проёмы).
@@ -250,7 +260,7 @@ export function createRenderer(canvas) {
           ctx.restore();
           return;
         }
-        ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
         if (selected) ctx.fillStyle = tokens.accent;
         else if (hovered) ctx.fillStyle = tokens.hover;
         if (wall.hidden) ctx.globalAlpha = 0.22;
@@ -264,15 +274,15 @@ export function createRenderer(canvas) {
       };
       const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
       for (const room of roomPaintOrder) {
-        drawFloor(ctx, room, tokens, px);
-        if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, tokens, px);
+        drawFloor(ctx, room, houseTokens, px);
+        if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, houseTokens, px);
         for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
       }
       // Общие стыковочные стены — поверх всех полов.
       for (const wall of sharedWalls) paintWall(wall);
       // Фаски на переходах толщины — заполняют ступеньку треугольником.
       for (const wall of chamferWalls) {
-        ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
+        ctx.fillStyle = wall.wallType === 'bearing' ? houseTokens.wallBearing : houseTokens.wall;
         ctx.beginPath();
         ctx.moveTo(wall.poly[0].x, wall.poly[0].y);
         for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
@@ -283,7 +293,7 @@ export function createRenderer(canvas) {
       // Шахта — верхний технический проём: она перекрывает полы и любые
       // перегородки помещений под ней, затем поверх остаются только её стены.
       for (const room of roomPaintOrder.filter((candidate) => isShaft(candidate))) {
-        drawFloor(ctx, room, tokens, px);
+        drawFloor(ctx, room, houseTokens, px);
         for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
       }
 
@@ -301,7 +311,7 @@ export function createRenderer(canvas) {
 
       // 5. Проёмы.
       for (const opening of state.project.openings) {
-        drawOpening(ctx, state, opening, walls, tokens, px);
+        drawOpening(ctx, state, opening, walls, houseTokens, px);
       }
 
       // 6. Мебель (на генплане — без неё: opts.detail === false).
@@ -563,8 +573,8 @@ export function createRenderer(canvas) {
       drawLandscapeOverlay(ctx, lsObjects, {
         sel: state.selection?.type === 'landscape' ? state.selection.ids : [],
         hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
-        warnings, w2s, tokens, scale, warnColor: '#e08c1e',
-        labels: lsVis?.labels === true, vertex: state.lsVertex || null,
+        warnings, w2s, tokens, scale, warnColor: '#d08a1e',
+        labels: lsVis?.labels === true, vertex: state.lsVertex || null, style: lsStyle,
       });
     }
     if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });

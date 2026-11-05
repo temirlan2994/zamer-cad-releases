@@ -1,11 +1,12 @@
-// Отрисовка ландшафта «вид сверху» (генплан-рендер): кроны с тенями,
-// покрытия с текстурами, вода, парковка с машинами, костровая яма.
+// Отрисовка ландшафта «вид сверху» (генплан-эскиз): кроны-акварель с
+// графикой ветвей, мягкие длинные тени, покрытия с тонкими текстурами.
 //
 // Мир — координаты участка в мм, преобразование вида уже задано (render.js).
 // Слои: покрытия (ground) → дом (рисует render.js) → тени → низкие объекты
 // → высокие (кроны) сверху. Мелкие детали скрываются при отдалении (lod —
-// пикселей на метр). Цвета растительности и материалов — палитра LS_COLORS
-// (средние тона, читаются в обеих темах); выделение — токены темы.
+// пикселей на метр). Два стиля (ui/render-landscape-kit.js): «Эскиз» —
+// приглушённые краски + тонкая чёрная графика; «Чертёж» — монохром для
+// печати. Кроны и тени — спрайты в кеше (drawImage), текстуры — узоры.
 
 import {
   LS_COLORS, SHAPE_RANK, isPathShape, isRoundObject, landscapeDef, landscapeHandles, objectAreaM2, objectColors,
@@ -14,9 +15,14 @@ import {
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { sunPosition } from '../core/site.js';
+import {
+  LS_STYLES, TAU, branches, cachedSprite, clearLandscapeSprites, grainPattern, hashStr, lsPalette, needlePath,
+  luminance, physicalPattern, rgba, scallopPath, shadowSprite, sizeBucket, spriteStats,
+} from './render-landscape-kit.js';
 
-const TAU = Math.PI * 2;
-const HANDLE = 9;
+export { LS_STYLES, clearLandscapeSprites, lsPalette, spriteStats };
+
+const HANDLE = 7;
 
 // ------------------------------------------------------------ Помощники
 
@@ -42,7 +48,7 @@ function rrect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Мягкий неровный контур (крона, пруд): точки по эллипсу с разбросом,
+// Мягкий неровный контур (пятно, пруд): точки по эллипсу с разбросом,
 // сглаженные квадратичными кривыми через середины.
 function blobPath(ctx, cx, cy, rx, ry, rand, n = 10, jitter = 0.1) {
   const pts = [];
@@ -62,7 +68,7 @@ function blobPath(ctx, cx, cy, rx, ry, rand, n = 10, jitter = 0.1) {
   ctx.closePath();
 }
 
-// Зубчатая «звезда» — хвоя сверху.
+// Зубчатая «звезда» (силуэт тени хвойных).
 function starPath(ctx, rx, ry, n, inner, phase = 0) {
   for (let i = 0; i < n * 2; i += 1) {
     const t = phase + (i / (n * 2)) * TAU;
@@ -74,90 +80,14 @@ function starPath(ctx, rx, ry, n, inner, phase = 0) {
   ctx.closePath();
 }
 
-// Объём кроны: свет с юго-запада экрана (вверх-влево), тень к краю.
-function volume(ctx, rx, ry, rc, strength = 1) {
-  const r = Math.max(rx, ry);
-  const g = ctx.createRadialGradient(rc.light.x * rx * 0.45, rc.light.y * ry * 0.45, 0, 0, 0, r);
-  g.addColorStop(0, `rgba(255,255,250,${0.26 * strength})`);
-  g.addColorStop(0.45, 'rgba(255,255,250,0)');
-  g.addColorStop(1, `rgba(0,20,0,${0.28 * strength})`);
-  ctx.fillStyle = g;
-  ctx.fill();
-}
-
-function gravel(ctx, x, y, w, h, colors, rand, rc, density = 1) {
-  ctx.fillStyle = colors[0];
-  ctx.fillRect(x, y, w, h);
-  if (rc.lod < 8) return;
-  const grain = Math.max(rc.px(1.2), 22);
-  const count = Math.min(2600, Math.round(((w * h) / (grain * grain * 9)) * density));
-  for (let i = 0; i < count; i += 1) {
-    ctx.fillStyle = i % 3 === 0 ? colors[1] : colors[2];
-    ctx.globalAlpha = 0.55 + rand() * 0.45;
-    ctx.fillRect(x + rand() * w, y + rand() * h, grain, grain);
-  }
-  ctx.globalAlpha = 1;
-}
-
-function tiles(ctx, x, y, w, h, module, colors, rc, rand = null) {
-  ctx.fillStyle = colors[0];
-  ctx.fillRect(x, y, w, h);
-  if (rc.lod < 6) return;
-  if (rand && rc.lod >= 10) {
-    // Лёгкий разнобой тона плит.
-    for (let ty = y; ty < y + h; ty += module) {
-      for (let tx = x; tx < x + w; tx += module) {
-        ctx.fillStyle = rand() > 0.5 ? colors[2] : colors[1];
-        ctx.globalAlpha = 0.18 + rand() * 0.18;
-        ctx.fillRect(tx, ty, module, module);
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
-  ctx.strokeStyle = 'rgba(70,64,56,0.35)';
-  ctx.lineWidth = Math.max(rc.px(0.7), 12);
-  ctx.beginPath();
-  for (let tx = x + module; tx < x + w; tx += module) { ctx.moveTo(tx, y); ctx.lineTo(tx, y + h); }
-  for (let ty = y + module; ty < y + h; ty += module) { ctx.moveTo(x, ty); ctx.lineTo(x + w, ty); }
-  ctx.stroke();
-}
-
-// Доски вдоль длинной стороны, со сдвигом стыков.
-function boards(ctx, x, y, w, h, colors, rand, rc, board = 145) {
-  ctx.fillStyle = colors[0];
-  ctx.fillRect(x, y, w, h);
-  if (rc.lod < 5) return;
-  const alongX = w >= h;
-  const len = alongX ? w : h;
-  const across = alongX ? h : w;
-  const rows = Math.max(1, Math.round(across / board));
-  const step = across / rows;
-  for (let i = 0; i < rows; i += 1) {
-    const tone = rand();
-    ctx.fillStyle = tone > 0.66 ? colors[2] : tone > 0.33 ? colors[1] : colors[0];
-    ctx.globalAlpha = 0.55;
-    if (alongX) ctx.fillRect(x, y + i * step, w, step); else ctx.fillRect(x + i * step, y, step, h);
-  }
-  ctx.globalAlpha = 1;
-  if (rc.lod < 10) return;
-  ctx.strokeStyle = 'rgba(40,24,12,0.35)';
-  ctx.lineWidth = Math.max(rc.px(0.6), 10);
-  ctx.beginPath();
-  for (let i = 1; i < rows; i += 1) {
-    if (alongX) { ctx.moveTo(x, y + i * step); ctx.lineTo(x + w, y + i * step); }
-    else { ctx.moveTo(x + i * step, y); ctx.lineTo(x + i * step, y + h); }
-  }
-  // Торцевые стыки досок — вразбежку.
-  const plank = 3000;
-  for (let i = 0; i < rows; i += 1) {
-    const off = (i % 3) * (plank / 3);
-    for (let s = off; s < len; s += plank) {
-      if (s <= 0) continue;
-      if (alongX) { ctx.moveTo(x + s, y + i * step); ctx.lineTo(x + s, y + (i + 1) * step); }
-      else { ctx.moveTo(x + i * step, y + s); ctx.lineTo(x + (i + 1) * step, y + s); }
-    }
-  }
-  ctx.stroke();
+// Тонкая графика: текущий путь (или path) — чернилами, w — экранные px.
+function ink(ctx, rc, w = 0.8, alpha = 0.85, path = null) {
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha;
+  ctx.strokeStyle = rc.ink;
+  ctx.lineWidth = rc.px(w);
+  if (path) ctx.stroke(path); else ctx.stroke();
+  ctx.globalAlpha = prev;
 }
 
 function edge(ctx, color, width) {
@@ -166,20 +96,211 @@ function edge(ctx, color, width) {
   ctx.stroke();
 }
 
-// Машина сверху: кузов, стёкла, крыша, зеркала, фары.
+// Швы и линии материала: в «Эскизе» — полупрозрачные чернила, в «Чертеже» — серые.
+const seam = (rc, alpha = 0.22) => rgba(rc.ink, rc.mono ? Math.min(1, alpha * 2.2) : alpha);
+
+// ------------------------------------------------------------ Текстуры
+
+// Тайлы «зерна» в экранных пикселях (рисуются один раз на стиль/тему).
+const GRAIN = {
+  grain(g, n, rand) { // газон: мелкое зерно и редкие штрихи травы
+    for (let i = 0; i < (n * n) / 7; i += 1) {
+      g.fillStyle = rand() > 0.55 ? 'rgba(66,80,52,0.11)' : 'rgba(255,255,248,0.20)';
+      g.fillRect(rand() * n, rand() * n, 0.8 + rand() * 0.9, 0.8 + rand() * 0.9);
+    }
+    g.strokeStyle = 'rgba(66,80,52,0.12)';
+    g.lineWidth = 0.7;
+    for (let i = 0; i < n / 2; i += 1) {
+      const x = rand() * n; const y = rand() * n;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + rand() * 2 - 1, y - 1.5 - rand() * 2); g.stroke();
+    }
+  },
+  gravel(g, n, rand) { // гравий: светлые и тёмные крапинки
+    for (let i = 0; i < (n * n) / 9; i += 1) {
+      const t = rand();
+      g.fillStyle = t > 0.62 ? 'rgba(255,255,255,0.6)' : t > 0.25 ? 'rgba(122,114,102,0.30)' : 'rgba(70,66,60,0.32)';
+      const s = 0.8 + rand() * 1.6;
+      g.beginPath(); g.ellipse(rand() * n, rand() * n, s, s * (0.6 + rand() * 0.4), rand() * 3, 0, TAU); g.fill();
+    }
+  },
+  stipple(g, n, rand) { // «Чертёж»: газон — редкий пунктир
+    g.fillStyle = 'rgba(0,0,0,0.42)';
+    for (let i = 0; i < (n * n) / 220; i += 1) g.fillRect(rand() * n, rand() * n, 1, 1);
+  },
+  stippleD(g, n, rand) {
+    g.fillStyle = 'rgba(255,255,255,0.4)';
+    for (let i = 0; i < (n * n) / 220; i += 1) g.fillRect(rand() * n, rand() * n, 1, 1);
+  },
+  monoGravel(g, n, rand) { // «Чертёж»: гравий — кружки
+    g.strokeStyle = 'rgba(0,0,0,0.42)';
+    g.lineWidth = 0.7;
+    for (let i = 0; i < (n * n) / 110; i += 1) {
+      g.beginPath(); g.arc(rand() * n, rand() * n, 0.8 + rand() * 1.4, 0, TAU); g.stroke();
+    }
+  },
+  monoGravelD(g, n, rand) {
+    g.strokeStyle = 'rgba(255,255,255,0.4)';
+    g.lineWidth = 0.7;
+    for (let i = 0; i < (n * n) / 110; i += 1) {
+      g.beginPath(); g.arc(rand() * n, rand() * n, 0.8 + rand() * 1.4, 0, TAU); g.stroke();
+    }
+  },
+};
+
+// Заливка текущего пути «зерном»: name — газон/гравий (в «Чертеже» — пунктир).
+function fillGrain(ctx, rc, name, alpha = 1) {
+  let key = name;
+  if (rc.mono) key = (name === 'gravel' ? 'monoGravel' : 'stipple') + (rc.pal.dark ? 'D' : '');
+  const pat = grainPattern(ctx, key, rc.pal, rc.k, GRAIN[key]);
+  if (!pat) return;
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha * (rc.pal.dark && !rc.mono ? 0.55 : 1);
+  ctx.fillStyle = pat;
+  ctx.fill();
+  ctx.globalAlpha = prev;
+}
+
+// Каустика воды (физический тайл): светлые изогнутые линии.
+function causticPattern(ctx, rc) {
+  return physicalPattern(ctx, 'caustic', rc.pal, rc.k, 1800, (g, T, rand, s) => {
+    g.lineCap = 'round';
+    // Сеть коротких изогнутых бликов: широкий мягкий + узкий яркий проход.
+    const strokes = Array.from({ length: 26 }, () => {
+      const x = rand() * T; const y = rand() * T;
+      const len = 160 + rand() * 260; const ang = rand() * TAU; const bend = 0.6 + rand() * 0.8;
+      return { x, y, len, ang, bend };
+    });
+    for (let pass = 0; pass < 2; pass += 1) {
+      g.strokeStyle = rc.mono ? rgba(rc.ink, 0.3) : pass ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.18)';
+      g.lineWidth = Math.max(0.8 / s, pass ? 9 : 26);
+      for (const { x, y, len, ang, bend } of strokes) {
+        for (const [dx, dy] of [[0, 0], [-T, 0], [T, 0], [0, -T], [0, T]]) {
+          g.beginPath();
+          g.moveTo(x + dx, y + dy);
+          g.quadraticCurveTo(x + dx + Math.cos(ang + bend) * len * 0.6, y + dy + Math.sin(ang + bend) * len * 0.6,
+            x + dx + Math.cos(ang) * len, y + dy + Math.sin(ang) * len);
+          g.stroke();
+        }
+      }
+    }
+  });
+}
+
+// Вода «Чертежа»: горизонтальная штриховка волнами.
+function waterHatch(ctx, rc) {
+  return physicalPattern(ctx, 'water-hatch', rc.pal, rc.k, 1200, (g, T, rand, s) => {
+    g.strokeStyle = rgba(rc.ink, 0.45);
+    g.lineWidth = Math.max(0.7 / s, 12);
+    for (let y = 150; y < T; y += 300) {
+      g.beginPath();
+      for (let x = 0; x <= T; x += 60) {
+        const yy = y + Math.sin((x / T) * TAU * 2) * 35;
+        if (x) g.lineTo(x, yy); else g.moveTo(x, yy);
+      }
+      g.stroke();
+    }
+  });
+}
+
+// Заливка воды: основа + каустика/штриховка по текущему пути.
+function waterFill(ctx, rc, base) {
+  ctx.fillStyle = base;
+  ctx.fill();
+  if (rc.lod < 4) return;
+  const pat = rc.mono ? waterHatch(ctx, rc) : causticPattern(ctx, rc);
+  if (!pat) return;
+  ctx.fillStyle = pat;
+  ctx.fill();
+}
+
+function gravel(ctx, x, y, w, h, colors, rand, rc) {
+  ctx.fillStyle = colors[0];
+  ctx.fillRect(x, y, w, h);
+  if (rc.lod < 4) return;
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  fillGrain(ctx, rc, 'gravel');
+}
+
+function tiles(ctx, x, y, w, h, module, colors, rc, rand = null) {
+  ctx.fillStyle = colors[0];
+  ctx.fillRect(x, y, w, h);
+  const modPx = (module * rc.lod) / 1000;
+  if (modPx < 3.5) return;
+  if (rand && modPx >= 12 && !rc.mono) {
+    // Лёгкий разнобой тона плит.
+    for (let ty = y; ty < y + h; ty += module) {
+      for (let tx = x; tx < x + w; tx += module) {
+        ctx.fillStyle = rand() > 0.5 ? colors[2] : colors[1];
+        ctx.globalAlpha = 0.12 + rand() * 0.16;
+        ctx.fillRect(tx, ty, module, module);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = seam(rc, modPx < 8 ? 0.12 : 0.2);
+  ctx.lineWidth = rc.px(0.5);
+  ctx.beginPath();
+  for (let tx = x + module; tx < x + w; tx += module) { ctx.moveTo(tx, y); ctx.lineTo(tx, y + h); }
+  for (let ty = y + module; ty < y + h; ty += module) { ctx.moveTo(x, ty); ctx.lineTo(x + w, ty); }
+  ctx.stroke();
+}
+
+// Доски вдоль длинной стороны: чередование тонов + тонкая «нить» швов.
+function boards(ctx, x, y, w, h, colors, rand, rc, board = 145) {
+  ctx.fillStyle = colors[0];
+  ctx.fillRect(x, y, w, h);
+  const boardPx = (board * rc.lod) / 1000;
+  if (boardPx < 1.4) return;
+  const alongX = w >= h;
+  const len = alongX ? w : h;
+  const across = alongX ? h : w;
+  const rows = Math.max(1, Math.round(across / board));
+  const step = across / rows;
+  if (!rc.mono) {
+    for (let i = 0; i < rows; i += 1) {
+      const tone = rand();
+      ctx.fillStyle = tone > 0.66 ? colors[2] : tone > 0.33 ? colors[1] : colors[0];
+      ctx.globalAlpha = 0.6;
+      if (alongX) ctx.fillRect(x, y + i * step, w, step); else ctx.fillRect(x + i * step, y, step, h);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (boardPx < 3) return;
+  ctx.strokeStyle = seam(rc, 0.24);
+  ctx.lineWidth = rc.px(0.45);
+  ctx.beginPath();
+  for (let i = 1; i < rows; i += 1) {
+    if (alongX) { ctx.moveTo(x, y + i * step); ctx.lineTo(x + w, y + i * step); }
+    else { ctx.moveTo(x + i * step, y); ctx.lineTo(x + i * step, y + h); }
+  }
+  if (boardPx >= 9) {
+    // Торцевые стыки досок — вразбежку.
+    const plank = 3000;
+    for (let i = 0; i < rows; i += 1) {
+      const off = (i % 3) * (plank / 3);
+      for (let s = off; s < len; s += plank) {
+        if (s <= 0) continue;
+        if (alongX) { ctx.moveTo(x + s, y + i * step); ctx.lineTo(x + s, y + (i + 1) * step); }
+        else { ctx.moveTo(x + i * step, y + s); ctx.lineTo(x + (i + 1) * step, y + s); }
+      }
+    }
+  }
+  ctx.stroke();
+}
+
+// Машина сверху: кузов, стёкла, крыша, зеркала — приглушённо, тонкий контур.
 function car(ctx, cx, cy, w, l, color, rc) {
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fillStyle = rgba(rc.pal.shadow, 0.22);
   ctx.beginPath(); rrect(ctx, -w / 2 + 90, -l / 2 + 120, w, l, 420); ctx.fill();
-  ctx.fillStyle = color;
+  ctx.fillStyle = rc.mono ? rc.pal.paper : color;
   ctx.beginPath(); rrect(ctx, -w / 2, -l / 2, w, l, 420); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.lineWidth = Math.max(rc.px(0.8), 18);
-  ctx.stroke();
+  ink(ctx, rc, 0.7, 0.8);
   if (rc.lod >= 6) {
-    const glass = '#26303b';
-    ctx.fillStyle = glass;
+    ctx.fillStyle = rc.c('#5f656c');
+    ctx.globalAlpha = rc.mono ? 0.35 : 0.85;
     ctx.beginPath(); // лобовое (перед — вверх, −y)
     ctx.moveTo(-w * 0.4, -l * 0.17); ctx.lineTo(w * 0.4, -l * 0.17);
     ctx.lineTo(w * 0.33, -l * 0.03); ctx.lineTo(-w * 0.33, -l * 0.03);
@@ -188,17 +309,12 @@ function car(ctx, cx, cy, w, l, color, rc) {
     ctx.moveTo(-w * 0.34, l * 0.25); ctx.lineTo(w * 0.34, l * 0.25);
     ctx.lineTo(w * 0.38, l * 0.34); ctx.lineTo(-w * 0.38, l * 0.34);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.16)'; // крыша
-    ctx.beginPath(); rrect(ctx, -w * 0.33, -l * 0.03, w * 0.66, l * 0.28, 150); ctx.fill();
-    ctx.fillStyle = color; // зеркала
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); rrect(ctx, -w * 0.33, -l * 0.03, w * 0.66, l * 0.28, 150);
+    ink(ctx, rc, 0.5, 0.45);
+    ctx.fillStyle = rc.mono ? rc.pal.paper : color; // зеркала
     ctx.fillRect(-w / 2 - 120, -l * 0.16, 130, 160);
     ctx.fillRect(w / 2 - 10, -l * 0.16, 130, 160);
-    ctx.fillStyle = '#fff6c8'; // фары
-    ctx.fillRect(-w * 0.42, -l / 2 + 40, w * 0.18, 70);
-    ctx.fillRect(w * 0.24, -l / 2 + 40, w * 0.18, 70);
-    ctx.fillStyle = '#c0392b';
-    ctx.fillRect(-w * 0.42, l / 2 - 100, w * 0.16, 60);
-    ctx.fillRect(w * 0.26, l / 2 - 100, w * 0.16, 60);
   }
   ctx.restore();
 }
@@ -209,276 +325,523 @@ function chair(ctx, x, y, angle, size, color) {
   ctx.rotate(angle);
   ctx.fillStyle = color;
   ctx.beginPath(); rrect(ctx, -size / 2, -size / 2, size, size, size * 0.18); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.fillRect(-size / 2, size / 2 - size * 0.2, size, size * 0.2); // спинка — от центра
   ctx.restore();
 }
 
-function flame(ctx, r, rand) {
+// Тлеющий очаг: приглушённые «языки» без яркого пламени.
+function flame(ctx, r, rand, rc) {
+  if (rc.mono) return;
+  ctx.globalAlpha = 0.55;
   for (let i = 0; i < 6; i += 1) {
     const t = (i / 6) * TAU + rand() * 0.5;
     ctx.save();
     ctx.rotate(t);
-    ctx.fillStyle = i % 2 ? LS_COLORS.fire[1] : LS_COLORS.fire[0];
+    ctx.fillStyle = i % 2 ? rc.P.fire[1] : rc.P.fire[0];
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(r * 0.5, r * 0.25, r * (0.85 + rand() * 0.3), 0);
-    ctx.quadraticCurveTo(r * 0.5, -r * 0.25, 0, 0);
+    ctx.quadraticCurveTo(r * 0.5, r * 0.22, r * (0.75 + rand() * 0.25), 0);
+    ctx.quadraticCurveTo(r * 0.5, -r * 0.22, 0, 0);
     ctx.fill();
     ctx.restore();
   }
-  circle(ctx, 0, 0, r * 0.35, LS_COLORS.fire[2]);
+  ctx.globalAlpha = 1;
+  circle(ctx, 0, 0, r * 0.3, rc.P.fire[2]);
+}
+
+// Ряд «облачков» (живая изгородь): единый контур чернилами, внутри — дуги
+// между облачками, тени/блики и точечная штриховка. pts — центры, r — радиус.
+function cloudRow(ctx, pts, r, C, rc, trim = true) {
+  const rPx = r * rc.k;
+  const R = rc.rand;
+  const radii = pts.map(() => r * (trim ? 0.93 + R() * 0.1 : 0.82 + R() * 0.28));
+  const lw = rc.px(0.8);
+  const union = (grow) => {
+    const p = new Path2D();
+    pts.forEach((c, i) => { p.moveTo(c.x + radii[i] + grow, c.y); p.arc(c.x, c.y, radii[i] + grow, 0, TAU); });
+    return p;
+  };
+  const body = union(0);
+  if (rPx >= 2.5) {
+    ctx.fillStyle = rc.ink;
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * 0.8;
+    ctx.fill(union(lw));
+    ctx.globalAlpha = prev;
+  }
+  ctx.fillStyle = rc.mono ? rc.pal.paper : C[1];
+  ctx.fill(body);
+  if (rPx < 5) return;
+  ctx.save();
+  ctx.clip(body);
+  const lx = rc.light?.x ?? -Math.SQRT1_2; const ly = rc.light?.y ?? -Math.SQRT1_2;
+  if (!rc.mono) {
+    ctx.fillStyle = C[0];
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    pts.forEach((c, i) => { const rr = radii[i] * 0.78; ctx.moveTo(c.x - lx * rr * 0.45 + rr, c.y - ly * rr * 0.45); ctx.arc(c.x - lx * rr * 0.45, c.y - ly * rr * 0.45, rr, 0, TAU); });
+    ctx.fill();
+    ctx.fillStyle = C[2];
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    pts.forEach((c, i) => { const rr = radii[i] * 0.42; ctx.moveTo(c.x + lx * rr * 0.9 + rr, c.y + ly * rr * 0.9); ctx.arc(c.x + lx * rr * 0.9, c.y + ly * rr * 0.9, rr, 0, TAU); });
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // Границы облачков — короткие дуги к соседу.
+  ctx.strokeStyle = rc.ink;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = rc.px(0.6);
+  ctx.beginPath();
+  for (let i = 1; i < pts.length; i += 1) {
+    const p = pts[i]; const q = pts[i - 1];
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    ctx.moveTo(p.x + Math.cos(ang - 0.9) * radii[i], p.y + Math.sin(ang - 0.9) * radii[i]);
+    ctx.arc(p.x, p.y, radii[i], ang - 0.9, ang + 0.9);
+  }
+  ctx.stroke();
+  if (rPx >= 9) {
+    // Точечная штриховка.
+    ctx.fillStyle = rc.ink;
+    ctx.globalAlpha = 0.38;
+    const dot = rc.px(0.9);
+    for (let i = 0; i < pts.length; i += 1) {
+      const n = Math.min(10, Math.round(rPx / 3));
+      for (let j = 0; j < n; j += 1) {
+        const t = R() * TAU; const d = Math.sqrt(R()) * radii[i] * 0.85;
+        ctx.fillRect(pts[i].x + Math.cos(t) * d, pts[i].y + Math.sin(t) * d, dot, dot);
+      }
+    }
+  }
+  ctx.restore();
 }
 
 // ------------------------------------------------------------ Виды
 
-const FRUIT = { apple: '#d9402f', pear: '#e5c03a', cherry: '#9e1c35', apricot: '#f08a3c' };
-const BLOOM = { lilac: '#a47fd0', spiraea: '#f6f3ea', hydrangea: '#8fb2e6' };
+// Плоды и цветение — спокойные пастельные акценты.
+const FRUIT = { apple: '#c58f7e', pear: '#d6be80', cherry: '#b48089', apricot: '#d6a37a' };
+const BLOOM = { lilac: '#b3a4c8', spiraea: '#f1ede6', hydrangea: '#a9b8c9' };
+
+// Крона в «Чертеже»: бумага + контур + центр.
+function monoCrown(ctx, rc, path, r) {
+  ctx.fillStyle = rc.pal.paper;
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * 0.6;
+  ctx.fill(path);
+  ctx.globalAlpha = prev;
+  ink(ctx, rc, 0.9, 0.95, path);
+  circle(ctx, 0, 0, Math.max(rc.px(1.1), r * 0.035), rc.ink);
+}
+
+// Акварельная заливка кроны: основной тон, пятна, пигмент по краю.
+function wash(ctx, rc, path, a, b, C, alpha) {
+  const R = rc.rand;
+  const r = Math.min(a, b);
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * alpha;
+  ctx.fillStyle = C[1];
+  ctx.fill(path);
+  ctx.save();
+  ctx.clip(path);
+  for (let i = 0; i < 5; i += 1) {
+    const t = R() * TAU; const d = R() * 0.55;
+    ctx.globalAlpha = prev * alpha * (0.22 + R() * 0.16);
+    ctx.fillStyle = i % 2 ? C[0] : C[2];
+    ctx.beginPath(); blobPath(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, a * (0.3 + R() * 0.3), b * (0.28 + R() * 0.3), R, 9, 0.25);
+    ctx.fill();
+  }
+  const g = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.05);
+  g.addColorStop(0, rgba(C[0], 0));
+  g.addColorStop(1, rgba(C[0], 0.5));
+  ctx.globalAlpha = prev * alpha;
+  ctx.fillStyle = g;
+  ctx.fillRect(-a * 1.2, -b * 1.2, a * 2.4, b * 2.4);
+  ctx.restore();
+  ctx.globalAlpha = prev;
+}
+
+const SWIRL = [0, 0.55, 0.1, -0.5];
+
+// Кромка чаши: внутренняя тень от борта и тонкий контур (по текущему пути).
+function waterEdge(ctx, rc, C) {
+  if (!rc.mono) {
+    ctx.save();
+    ctx.clip();
+    ctx.strokeStyle = rgba(C[1], 0.55);
+    ctx.lineWidth = rc.px(5);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ink(ctx, rc, 0.6, 0.75);
+}
+
+// Камень берега: серый, с тонким контуром.
+function pebble(ctx, rc, x, y, r, color) {
+  ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.8, (x + y) * 0.001, 0, TAU);
+  ctx.fillStyle = color; ctx.fill();
+  ink(ctx, rc, 0.45, 0.7);
+}
+
+// Кувшинки: листья-«пакмены» приглушённо-оливковые, редкие бледные цветки.
+function lilies(ctx, rc, pts) {
+  pts.forEach((p, i) => {
+    const lr = 170 + ((i * 53) % 90); const t = (i * 2.4) % TAU;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.arc(p.x, p.y, lr, t + 0.35, t + TAU - 0.35); ctx.closePath();
+    ctx.fillStyle = rc.mono ? rc.pal.paper : rc.c('#9aa982'); ctx.fill();
+    ink(ctx, rc, 0.45, 0.75);
+    if (i % 2 === 0 && !rc.mono) circle(ctx, p.x, p.y, lr * 0.3, rc.c('#e2c9cf'));
+  });
+}
+
+// Мавританский газон: редкие пастельные точки цветов (узор по пути shape).
+function meadowDots(ctx, rc, shape) {
+  const pat = physicalPattern(ctx, 'meadow', rc.pal, rc.k, 2400, (g, T, rand) => {
+    for (let i = 0; i < 50; i += 1) {
+      g.globalAlpha = rc.mono ? 0.5 : 0.85;
+      g.fillStyle = rc.mono ? rc.ink : rc.P.flowers[Math.floor(rand() * 4)];
+      g.beginPath(); g.arc(rand() * T, rand() * T, rc.mono ? 12 : 30 + rand() * 20, 0, TAU); g.fill();
+    }
+  });
+  if (!pat) return;
+  shape();
+  ctx.fillStyle = pat;
+  ctx.fill();
+}
 
 const LOOKS = {
   deciduous(ctx, o, a, b, C, rc) {
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, rc.rand, 11, 0.07);
-    ctx.fillStyle = C[0]; ctx.fill();
-    ctx.save(); ctx.clip();
-    if (rc.lod >= 3) {
-      const birch = o.kind === 'tree-birch';
-      const n = birch ? 11 : 7;
-      for (let i = 0; i < n; i += 1) {
-        const t = (i / n) * TAU + rc.rand() * 0.6;
-        const d = birch ? 0.5 : 0.42;
-        const rr = (birch ? 0.32 : 0.46) * (0.85 + rc.rand() * 0.3);
-        ctx.globalAlpha = 0.9;
-        circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, rr * Math.min(a, b), C[1]);
+    const birch = o.kind === 'tree-birch';
+    const R = rc.rand;
+    const r = Math.min(a, b);
+    const seed = rc.seed ?? 0;
+    const crown = new Path2D();
+    const detail = rc.dpx ?? (2 * r * rc.lod) / 1000;
+    // Чем крупнее на экране, тем мельче и чаще «волна» края.
+    const bumps = birch ? 18 + Math.min(10, Math.round(detail / 30)) : 12 + (seed % 4) + Math.min(10, Math.round(detail / 45));
+    scallopPath(crown, 0, 0, a * 0.93, b * 0.93, bumps, birch ? 0.04 : 0.06, R);
+    if (rc.mono) {
+      monoCrown(ctx, rc, crown, r);
+      if (detail >= 16) {
+        ctx.strokeStyle = rc.ink; ctx.lineCap = 'round'; ctx.globalAlpha = 0.55;
+        branches(ctx, r * 0.9, R, { mains: 5, depth: detail > 60 ? 2 : 1, width: rc.px(0.7), reach: 0.75 });
+        ctx.globalAlpha = 1; ctx.lineCap = 'butt';
       }
-      for (let i = 0; i < 4; i += 1) {
-        ctx.globalAlpha = 0.7;
-        const t = Math.atan2(rc.light.y, rc.light.x) + (rc.rand() - 0.5) * 1.6;
-        circle(ctx, Math.cos(t) * a * 0.35, Math.sin(t) * b * 0.35, (0.2 + rc.rand() * 0.1) * Math.min(a, b), C[2]);
-      }
-      ctx.globalAlpha = 1;
+      return;
     }
-    ctx.restore();
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, seededRandom(o.id), 11, 0.07);
-    volume(ctx, a, b, rc);
-    edge(ctx, 'rgba(10,40,10,0.35)', rc.px(1));
+    wash(ctx, rc, crown, a, b, C, birch ? 0.7 : 0.84);
+    if (detail >= 16) {
+      ctx.strokeStyle = rc.ink;
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = birch ? 0.5 : 0.82;
+      branches(ctx, r, R, {
+        mains: birch ? 7 : 5 + (seed % 3), depth: detail > 170 ? 4 : detail > 70 ? 3 : 2, swirl: birch ? 0.15 : SWIRL[seed % 4],
+        width: Math.max(rc.px(birch ? 0.7 : 1.2), r * (birch ? 0.012 : 0.026)), spread: birch ? 0.45 : 0.6, reach: 0.82,
+      });
+      ctx.globalAlpha = 1;
+      ctx.lineCap = 'butt';
+    }
+    if (detail >= 90) {
+      // Пучки листвы — короткие дужки у края кроны.
+      ctx.save();
+      ctx.clip(crown);
+      ctx.strokeStyle = rc.ink;
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = rc.px(0.5);
+      ctx.beginPath();
+      for (let i = 0, m = Math.min(46, detail / 5); i < m; i += 1) {
+        const t = R() * TAU; const d = 0.5 + R() * 0.42;
+        const x = Math.cos(t) * a * d; const y = Math.sin(t) * b * d; const s = r * (0.04 + R() * 0.035);
+        ctx.moveTo(x - s, y); ctx.quadraticCurveTo(x, y + s * 0.9, x + s, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    ink(ctx, rc, birch ? 0.55 : 0.75, birch ? 0.55 : 0.8, crown);
+    circle(ctx, 0, 0, Math.max(rc.px(1), r * 0.035), rc.ink);
   },
   fruit(ctx, o, a, b, C, rc) {
     LOOKS.deciduous(ctx, o, a, b, C, rc);
-    if (rc.lod < 10) return;
-    const color = FRUIT[o.variant] || FRUIT.apple;
-    const r = Math.max(rc.px(1.6), Math.min(a, b) * 0.045);
-    for (let i = 0; i < 16; i += 1) {
+    const detail = rc.dpx ?? (2 * a * rc.lod) / 1000;
+    if (detail < 26) return;
+    const color = rc.c(FRUIT[o.variant] || FRUIT.apple);
+    const r = Math.max(rc.px(1.5), Math.min(a, b) * 0.045);
+    for (let i = 0; i < 12; i += 1) {
       const t = rc.rand() * TAU;
-      const d = Math.sqrt(rc.rand()) * 0.78;
-      circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, r, color);
+      const d = 0.25 + Math.sqrt(rc.rand()) * 0.55;
+      circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, r, rc.mono ? rc.pal.paper : color);
+      ctx.beginPath(); ctx.arc(Math.cos(t) * a * d, Math.sin(t) * b * d, r, 0, TAU);
+      ink(ctx, rc, 0.4, 0.6);
     }
   },
   pine(ctx, o, a, b, C, rc) {
-    ctx.beginPath(); starPath(ctx, a, b, 18, 0.8, rc.rand());
-    ctx.fillStyle = C[0]; ctx.fill();
-    if (rc.lod >= 3) {
-      ctx.beginPath(); starPath(ctx, a * 0.72, b * 0.72, 15, 0.78, rc.rand());
-      ctx.fillStyle = C[1]; ctx.fill();
-      ctx.beginPath(); starPath(ctx, a * 0.42, b * 0.42, 11, 0.75, rc.rand());
-      ctx.fillStyle = C[2]; ctx.fill();
-      ctx.strokeStyle = 'rgba(10,30,15,0.25)';
-      ctx.lineWidth = Math.max(rc.px(0.8), a * 0.02);
+    const R = rc.rand;
+    const r = Math.min(a, b);
+    const detail = rc.dpx ?? (2 * r * rc.lod) / 1000;
+    const crown = new Path2D();
+    needlePath(crown, a * 0.96, b * 0.96, detail > 40 ? 34 : 22, 0.1, R);
+    if (rc.mono) monoCrown(ctx, rc, crown, r);
+    else wash(ctx, rc, crown, a, b, C, 0.85);
+    if (detail >= 12) {
+      // Хвоя — лучевая штриховка ярусами.
+      const n = Math.max(16, Math.min(60, Math.round(detail * 0.45)));
+      ctx.strokeStyle = rc.ink;
+      ctx.lineWidth = rc.px(0.5);
+      ctx.globalAlpha = rc.mono ? 0.8 : 0.72;
       ctx.beginPath();
-      for (let i = 0; i < 9; i += 1) {
-        const t = (i / 9) * TAU + 0.3;
-        ctx.moveTo(0, 0); ctx.lineTo(Math.cos(t) * a * 0.88, Math.sin(t) * b * 0.88);
+      for (let i = 0; i < n; i += 1) {
+        const t = (i / n) * TAU + (R() - 0.5) * 0.12;
+        const r0 = r * (0.1 + R() * 0.22); const r1 = r * (0.78 + R() * 0.17);
+        ctx.moveTo(Math.cos(t) * a * r0 / r, Math.sin(t) * b * r0 / r);
+        ctx.lineTo(Math.cos(t) * a * r1 / r, Math.sin(t) * b * r1 / r);
+      }
+      if (detail >= 30) {
+        for (let i = 0; i < n; i += 1) {
+          const t = ((i + 0.5) / n) * TAU;
+          ctx.moveTo(Math.cos(t) * a * 0.42, Math.sin(t) * b * 0.42);
+          ctx.lineTo(Math.cos(t) * a * 0.62, Math.sin(t) * b * 0.62);
+        }
       }
       ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.beginPath(); ellipse(ctx, 0, 0, a * 0.95, b * 0.95);
-    volume(ctx, a, b, rc, 0.8);
-    circle(ctx, 0, 0, Math.min(a, b) * 0.07, '#6b4a33');
+    if (!rc.mono) ink(ctx, rc, 0.6, 0.75, crown);
+    circle(ctx, 0, 0, Math.max(rc.px(1), r * 0.04), rc.ink);
   },
   spruce(ctx, o, a, b, C, rc) {
-    const layers = rc.lod >= 3 ? [[1, 24, C[0]], [0.74, 20, C[1]], [0.46, 14, C[2]], [0.2, 9, C[2]]] : [[1, 24, C[0]]];
-    for (const [k, n, color] of layers) {
-      ctx.beginPath(); starPath(ctx, a * k, b * k, n, 0.84, rc.rand());
-      ctx.fillStyle = color; ctx.fill();
-      ctx.strokeStyle = 'rgba(0,25,15,0.25)';
-      ctx.lineWidth = rc.px(0.7);
-      ctx.stroke();
+    const R = rc.rand;
+    const r = Math.min(a, b);
+    const detail = rc.dpx ?? (2 * r * rc.lod) / 1000;
+    const tiers = [[0.97, 26, 0.2, 0], [0.66, 20, 0.22, 1], [0.36, 13, 0.26, 2]];
+    const paths = tiers.map(([k, n, d]) => { const p = new Path2D(); needlePath(p, a * k, b * k, n, d, R); return p; });
+    if (rc.mono) {
+      monoCrown(ctx, rc, paths[0], r);
+      if (detail >= 20) ink(ctx, rc, 0.5, 0.6, paths[1]);
+    } else {
+      tiers.forEach(([, , , ci], i) => {
+        ctx.globalAlpha = i ? 0.7 : 0.86;
+        ctx.fillStyle = C[ci];
+        ctx.fill(paths[i]);
+        ctx.globalAlpha = 1;
+        if (i && detail >= 20) ink(ctx, rc, 0.45, 0.5, paths[i]);
+      });
+      ink(ctx, rc, 0.6, 0.8, paths[0]);
     }
-    ctx.beginPath(); ellipse(ctx, 0, 0, a * 0.95, b * 0.95);
-    volume(ctx, a, b, rc, 0.7);
+    if (detail >= 12) {
+      ctx.strokeStyle = rc.ink;
+      ctx.lineWidth = rc.px(0.55);
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      const n = detail > 40 ? 14 : 9;
+      for (let i = 0; i < n; i += 1) {
+        const t = (i / n) * TAU + R() * 0.1;
+        ctx.moveTo(0, 0); ctx.lineTo(Math.cos(t) * a * 0.9, Math.sin(t) * b * 0.9);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    circle(ctx, 0, 0, Math.max(rc.px(1), r * 0.04), rc.ink);
   },
   thuja(ctx, o, a, b, C, rc) {
-    ctx.beginPath(); starPath(ctx, a, b, 16, 0.9, rc.rand());
-    ctx.fillStyle = C[0]; ctx.fill();
-    ctx.beginPath(); ellipse(ctx, rc.light.x * a * 0.12, rc.light.y * b * 0.12, a * 0.7, b * 0.75);
-    ctx.fillStyle = C[1]; ctx.fill();
-    ctx.beginPath(); ellipse(ctx, rc.light.x * a * 0.3, rc.light.y * b * 0.3, a * 0.3, b * 0.35);
-    ctx.fillStyle = C[2]; ctx.fill();
-    ctx.beginPath(); ellipse(ctx, 0, 0, a, b);
-    volume(ctx, a, b, rc, 0.8);
+    const R = rc.rand;
+    const crown = new Path2D();
+    scallopPath(crown, 0, 0, a * 0.95, b * 0.95, 14, 0.035, R, 0.04);
+    const detail = rc.dpx ?? (2 * Math.max(a, b) * rc.lod) / 1000;
+    if (rc.mono) monoCrown(ctx, rc, crown, Math.min(a, b));
+    else wash(ctx, rc, crown, a, b, C, 0.88);
+    if (detail >= 10) {
+      // Штриховка вдоль длинной оси.
+      ctx.save();
+      ctx.clip(crown);
+      ctx.strokeStyle = rc.ink;
+      ctx.lineWidth = rc.px(0.45);
+      ctx.globalAlpha = rc.mono ? 0.6 : 0.4;
+      const vertical = b >= a;
+      const across = vertical ? a : b; const along = vertical ? b : a;
+      const step = Math.max(rc.px(2.4), across * 0.2);
+      ctx.beginPath();
+      for (let s = -across + step / 2; s < across; s += step) {
+        const k = Math.sqrt(Math.max(0, 1 - (s / across) ** 2));
+        if (vertical) { ctx.moveTo(s, -along * k * 0.85); ctx.quadraticCurveTo(s + step * 0.3, 0, s, along * k * 0.85); }
+        else { ctx.moveTo(-along * k * 0.85, s); ctx.quadraticCurveTo(0, s + step * 0.3, along * k * 0.85, s); }
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (!rc.mono) ink(ctx, rc, 0.65, 0.8, crown);
   },
   bonsai(ctx, o, a, b, C, rc) {
+    const R = rc.rand;
     const pads = o.variant === 'cloud' ? 6 : 5;
     const pts = [];
     for (let i = 0; i < pads; i += 1) {
-      const t = (i / pads) * TAU + rc.rand() * 0.7;
-      const d = 0.45 + rc.rand() * 0.15;
-      pts.push({ x: Math.cos(t) * a * d, y: Math.sin(t) * b * d, r: (0.26 + rc.rand() * 0.1) * a, t });
+      const t = (i / pads) * TAU + R() * 0.7;
+      const d = 0.45 + R() * 0.15;
+      pts.push({ x: Math.cos(t) * a * d, y: Math.sin(t) * b * d, r: (0.26 + R() * 0.1) * a, t });
     }
-    ctx.strokeStyle = '#6b4a33';
+    ctx.strokeStyle = rc.ink;
     ctx.lineCap = 'round';
-    ctx.lineWidth = Math.max(rc.px(1.2), a * 0.07);
+    ctx.lineWidth = Math.max(rc.px(1.1), a * 0.05);
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
     for (const p of pts) { ctx.moveTo(0, 0); ctx.quadraticCurveTo(p.x * 0.2 + p.y * 0.25, p.y * 0.2 - p.x * 0.25, p.x, p.y); }
     ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.lineCap = 'butt';
     for (const p of pts) {
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(p.t);
-      ctx.beginPath(); blobPath(ctx, 0, 0, p.r, p.r * 0.72, rc.rand, 9, 0.12);
-      ctx.fillStyle = C[1]; ctx.fill();
-      edge(ctx, 'rgba(10,30,15,0.35)', rc.px(0.8));
-      ctx.beginPath(); ellipse(ctx, -p.r * 0.2, -p.r * 0.15, p.r * 0.5, p.r * 0.32);
-      ctx.fillStyle = C[2]; ctx.globalAlpha = 0.8; ctx.fill(); ctx.globalAlpha = 1;
+      const pad = new Path2D();
+      scallopPath(pad, 0, 0, p.r, p.r * 0.72, 8, 0.1, R);
+      if (rc.mono) { ctx.fillStyle = rc.pal.paper; ctx.fill(pad); } else wash(ctx, rc, pad, p.r, p.r * 0.72, C, 0.92);
+      ink(ctx, rc, 0.6, 0.85, pad);
       ctx.restore();
     }
-    circle(ctx, 0, 0, a * 0.18, C[0]);
   },
   ball(ctx, o, a, b, C, rc) {
-    const g = ctx.createRadialGradient(rc.light.x * a * 0.4, rc.light.y * b * 0.4, a * 0.05, 0, 0, a);
-    g.addColorStop(0, C[2]); g.addColorStop(0.55, C[1]); g.addColorStop(1, C[0]);
-    ctx.fillStyle = g;
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, rc.rand, 14, 0.04); ctx.fill();
-    edge(ctx, 'rgba(10,40,10,0.35)', rc.px(0.8));
-    if (rc.lod >= 25) {
-      ctx.fillStyle = 'rgba(10,40,10,0.22)';
-      for (let i = 0; i < 18; i += 1) {
-        const t = rc.rand() * TAU; const d = Math.sqrt(rc.rand()) * 0.85;
-        ctx.fillRect(Math.cos(t) * a * d, Math.sin(t) * b * d, a * 0.06, a * 0.06);
+    const R = rc.rand;
+    const crown = new Path2D();
+    scallopPath(crown, 0, 0, a * 0.93, b * 0.93, 9 + (rc.seed ?? 0) % 3, 0.08, R);
+    const detail = rc.dpx ?? (2 * a * rc.lod) / 1000;
+    if (rc.mono) { monoCrown(ctx, rc, crown, Math.min(a, b) * 0.6); return; }
+    wash(ctx, rc, crown, a, b, C, 0.9);
+    if (detail >= 10) {
+      ctx.save(); ctx.clip(crown);
+      ctx.fillStyle = rc.ink; ctx.globalAlpha = 0.42;
+      const dot = rc.px(0.9);
+      const n = Math.max(5, Math.min(40, Math.round(detail * 0.5)));
+      for (let i = 0; i < n; i += 1) {
+        const t = R() * TAU; const d = Math.sqrt(R()) * 0.85;
+        ctx.fillRect(Math.cos(t) * a * d, Math.sin(t) * b * d, dot, dot);
       }
+      ctx.restore();
     }
+    ink(ctx, rc, 0.7, 0.85, crown);
   },
   juniper(ctx, o, a, b, C, rc) {
-    const n = Math.max(2, Math.round(a / b * 2));
-    for (let pass = 0; pass < 2; pass += 1) {
-      for (let i = 0; i < n; i += 1) {
-        const x = -a + b * 0.8 + (i / Math.max(1, n - 1)) * (2 * a - b * 1.6);
-        const k = pass ? 0.62 : 1;
-        ctx.save();
-        ctx.translate(x + (pass ? rc.light.x * b * 0.15 : 0), pass ? rc.light.y * b * 0.15 : (rc.rand() - 0.5) * b * 0.2);
-        ctx.beginPath(); starPath(ctx, b * 0.85 * k, b * 0.85 * k, 13, 0.7, rc.rand());
-        ctx.fillStyle = pass ? C[2] : C[0];
-        ctx.globalAlpha = pass ? 0.75 : 1;
-        ctx.fill();
-        ctx.restore();
+    const R = rc.rand;
+    const n = Math.max(2, Math.round((a / b) * 2));
+    const centers = [];
+    for (let i = 0; i < n; i += 1) {
+      centers.push({ x: -a + b * 0.8 + (i / Math.max(1, n - 1)) * (2 * a - b * 1.6), y: (R() - 0.5) * b * 0.25, r: b * (0.8 + R() * 0.15) });
+    }
+    const body = new Path2D();
+    for (const c of centers) {
+      const p = new Path2D();
+      needlePath(p, c.r, c.r, 15, 0.34, R);
+      body.addPath(p, new DOMMatrix([1, 0, 0, 1, c.x, c.y]));
+    }
+    if (rc.mono) { ctx.fillStyle = rc.pal.paper; ctx.fill(body); } else wash(ctx, rc, body, a, b, C, 0.82);
+    ctx.strokeStyle = rc.ink;
+    ctx.lineWidth = rc.px(0.5);
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    for (const c of centers) {
+      for (let i = 0; i < 16; i += 1) {
+        const t = (i / 16) * TAU + R() * 0.2;
+        const k = 0.65 + R() * 0.3;
+        ctx.moveTo(c.x + Math.cos(t) * c.r * 0.12, c.y + Math.sin(t) * c.r * 0.12);
+        ctx.lineTo(c.x + Math.cos(t) * c.r * k, c.y + Math.sin(t) * c.r * k);
       }
     }
+    ctx.stroke();
     ctx.globalAlpha = 1;
-    ctx.beginPath(); ellipse(ctx, 0, 0, a * 0.9, b * 0.85);
-    ctx.fillStyle = C[1]; ctx.globalAlpha = 0.35; ctx.fill(); ctx.globalAlpha = 1;
   },
   shrub(ctx, o, a, b, C, rc) {
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, rc.rand, 12, 0.12);
-    ctx.fillStyle = C[0]; ctx.fill();
-    ctx.save(); ctx.clip();
-    for (let i = 0; i < 6; i += 1) {
-      const t = rc.rand() * TAU;
-      circle(ctx, Math.cos(t) * a * 0.4, Math.sin(t) * b * 0.4, a * 0.38, C[1]);
+    const R = rc.rand;
+    const crown = new Path2D();
+    scallopPath(crown, 0, 0, a * 0.93, b * 0.93, 10 + (rc.seed ?? 0) % 3, 0.1, R);
+    const detail = rc.dpx ?? (2 * a * rc.lod) / 1000;
+    if (rc.mono) { monoCrown(ctx, rc, crown, Math.min(a, b) * 0.6); return; }
+    wash(ctx, rc, crown, a, b, C, 0.86);
+    if (detail >= 12) {
+      ctx.save(); ctx.clip(crown);
+      ctx.fillStyle = rc.ink; ctx.globalAlpha = 0.35;
+      const dot = rc.px(0.9);
+      for (let i = 0; i < Math.min(40, detail * 0.4); i += 1) {
+        const t = R() * TAU; const d = Math.sqrt(R()) * 0.85;
+        ctx.fillRect(Math.cos(t) * a * d, Math.sin(t) * b * d, dot, dot);
+      }
+      ctx.globalAlpha = 0.9;
+      const bloom = rc.c(BLOOM[o.variant] || BLOOM.lilac);
+      for (let i = 0; i < Math.min(26, detail * 0.35); i += 1) {
+        const t = R() * TAU; const d = Math.sqrt(R()) * 0.78;
+        circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, Math.max(rc.px(1), a * (0.04 + R() * 0.03)), bloom);
+      }
+      ctx.restore();
     }
-    ctx.restore();
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, seededRandom(o.id), 12, 0.12);
-    volume(ctx, a, b, rc, 0.8);
-    edge(ctx, 'rgba(10,40,10,0.3)', rc.px(0.8));
-    if (rc.lod < 8) return;
-    const bloom = BLOOM[o.variant] || BLOOM.lilac;
-    for (let i = 0; i < 22; i += 1) {
-      const t = rc.rand() * TAU; const d = Math.sqrt(rc.rand()) * 0.8;
-      ctx.globalAlpha = 0.85;
-      circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, a * (0.06 + rc.rand() * 0.05), bloom);
-    }
-    ctx.globalAlpha = 1;
+    ink(ctx, rc, 0.7, 0.85, crown);
   },
   hedge(ctx, o, a, b, C, rc) {
     const trim = o.variant !== 'free';
-    ctx.beginPath();
-    if (trim) rrect(ctx, -a, -b, a * 2, b * 2, b * 0.35); else blobPath(ctx, 0, 0, a, b, rc.rand, 16, 0.08);
-    ctx.fillStyle = C[0]; ctx.fill();
-    ctx.save(); ctx.clip();
-    if (rc.lod >= 4) {
-      const step = b * 1.1;
-      for (let x = -a; x <= a; x += step) {
-        circle(ctx, x + (rc.rand() - 0.5) * step * 0.3, (rc.rand() - 0.5) * b * 0.3, b * (trim ? 0.7 : 0.95), C[1]);
-      }
-      ctx.fillStyle = C[2];
-      ctx.globalAlpha = 0.6;
-      ctx.fillRect(-a, -b * 0.75, a * 2, b * 0.35);
-      ctx.globalAlpha = 1;
-    }
-    ctx.restore();
-    ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, b * 0.35);
-    edge(ctx, 'rgba(10,40,10,0.35)', rc.px(0.9));
+    const r = b * (trim ? 0.95 : 1);
+    const n = Math.max(1, Math.round((a * 2 - r * 2) / (r * 1.05)));
+    const pts = [];
+    for (let i = 0; i <= n; i += 1) pts.push({ x: -a + r + ((a * 2 - r * 2) * i) / Math.max(1, n), y: trim ? 0 : (rc.rand() - 0.5) * b * 0.2 });
+    cloudRow(ctx, pts, r, C, rc, trim);
   },
   flowerbed(ctx, o, a, b, C, rc) {
     const def = landscapeDef(o.kind);
     const round = isRoundObject(o, def);
     const shape = () => { ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a, b); else rrect(ctx, -a, -b, a * 2, b * 2, Math.min(a, b) * 0.25); };
     shape();
-    ctx.fillStyle = def.colors[0]; ctx.fill();
-    ctx.save(); ctx.clip();
-    if (rc.lod >= 5) {
-      const area = (a * b * 4) / 1e6;
-      const flowers = variantOf(o, def)?.colors || LS_COLORS.flowers;
-      const leaves = Math.min(500, Math.round(area * 28));
-      for (let i = 0; i < leaves; i += 1) {
-        ctx.globalAlpha = 0.85;
-        circle(ctx, (rc.rand() * 2 - 1) * a, (rc.rand() * 2 - 1) * b, 70 + rc.rand() * 60, rc.rand() > 0.5 ? LS_COLORS.leaf[1] : LS_COLORS.leaf[0]);
-      }
-      if (rc.lod >= 9) {
-        const count = Math.min(700, Math.round(area * 45));
-        for (let i = 0; i < count; i += 1) {
-          ctx.globalAlpha = 0.95;
-          circle(ctx, (rc.rand() * 2 - 1) * a, (rc.rand() * 2 - 1) * b, 45 + rc.rand() * 35, flowers[Math.floor(rc.rand() * flowers.length)]);
+    ctx.fillStyle = rc.mono ? rc.pal.paper : rc.P.leafDark[1];
+    ctx.fill();
+    if (rc.lod >= 3) {
+      const flowers = (variantOf(o, def)?.colors || LS_COLORS.flowers);
+      const pat = physicalPattern(ctx, `flowers:${flowers.join(',')}`, rc.pal, rc.k, 1600, (g, T, rand) => {
+        const dot = (x, y, r, color, alpha) => {
+          g.globalAlpha = alpha; g.fillStyle = color;
+          for (const [dx, dy] of [[0, 0], [-T, 0], [T, 0], [0, -T], [0, T]]) { g.beginPath(); g.arc(x + dx, y + dy, r, 0, TAU); g.fill(); }
+        };
+        if (rc.mono) {
+          g.strokeStyle = rgba(rc.ink, 0.5); g.lineWidth = 10;
+          for (let i = 0; i < 40; i += 1) { g.beginPath(); g.arc(rand() * T, rand() * T, 30 + rand() * 25, 0, TAU); g.stroke(); }
+          return;
         }
-      }
-      ctx.globalAlpha = 1;
+        for (let i = 0; i < 70; i += 1) dot(rand() * T, rand() * T, 70 + rand() * 60, rand() > 0.5 ? rc.P.leafDark[0] : rc.P.leaf[2], 0.45);
+        for (let i = 0; i < 120; i += 1) dot(rand() * T, rand() * T, 28 + rand() * 30, rc.c(flowers[Math.floor(rand() * flowers.length)]), 0.9);
+        for (let i = 0; i < 40; i += 1) dot(rand() * T, rand() * T, 12, rc.ink, 0.3);
+      });
+      if (pat) { shape(); ctx.fillStyle = pat; ctx.fill(); }
     }
-    ctx.restore();
     shape();
-    edge(ctx, LS_COLORS.stone[1], Math.max(rc.px(1.2), 60));
+    ink(ctx, rc, 0.6, rc.mono ? 0.9 : 0.6);
   },
   lawn(ctx, o, a, b, C, rc) {
     const round = isRoundObject(o);
-    ctx.beginPath(); if (round) blobPath(ctx, 0, 0, a, b, rc.rand, 14, 0.04); else rrect(ctx, -a, -b, a * 2, b * 2, 300);
-    ctx.fillStyle = C[0]; ctx.fill();
-    ctx.save(); ctx.clip();
-    if (rc.lod >= 3 && o.variant !== 'meadow') {
-      ctx.fillStyle = 'rgba(255,255,255,0.09)';
+    const shape = () => { ctx.beginPath(); if (round) blobPath(ctx, 0, 0, a, b, seededRandom(o.id), 14, 0.04); else rrect(ctx, -a, -b, a * 2, b * 2, 300); };
+    shape();
+    ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+    ctx.fill();
+    if (rc.lod >= 2) fillGrain(ctx, rc, 'grain');
+    if (!rc.mono && rc.lod >= 3 && o.variant !== 'meadow') {
+      ctx.save(); ctx.clip();
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
       for (let x = -a; x < a; x += 1600) ctx.fillRect(x, -b, 800, b * 2);
+      ctx.restore();
     }
-    if (o.variant === 'meadow' && rc.lod >= 8) {
-      for (let i = 0; i < Math.min(400, (a * b) / 2e5); i += 1) {
-        circle(ctx, (rc.rand() * 2 - 1) * a, (rc.rand() * 2 - 1) * b, 40, LS_COLORS.flowers[Math.floor(rc.rand() * 4)]);
-      }
-    }
-    ctx.restore();
-    edge(ctx, C[2], rc.px(1));
+    if (o.variant === 'meadow' && rc.lod >= 8) meadowDots(ctx, rc, shape);
+    shape();
+    if (rc.mono) ink(ctx, rc, 0.5, 0.6); else edge(ctx, rgba(C[2], 0.7), rc.px(0.6));
   },
   grass(ctx, o, a, b, C, rc) {
     ctx.lineCap = 'round';
-    ctx.lineWidth = Math.max(rc.px(0.9), a * 0.035);
-    const n = rc.lod >= 6 ? 46 : 18;
+    ctx.lineWidth = Math.max(rc.px(0.6), a * 0.025);
+    const n = rc.lod >= 6 ? 34 : 14;
     for (let i = 0; i < n; i += 1) {
       const t = rc.rand() * TAU;
       const r = a * (0.55 + rc.rand() * 0.45);
-      ctx.strokeStyle = C[i % 3];
+      ctx.strokeStyle = rc.mono || i % 4 === 0 ? rgba(rc.ink, 0.6) : C[i % 3];
       ctx.beginPath();
       ctx.moveTo(0, 0);
       ctx.quadraticCurveTo(Math.cos(t + 0.3) * r * 0.5, Math.sin(t + 0.3) * r * 0.5 * (b / a), Math.cos(t) * r, Math.sin(t) * r * (b / a));
       ctx.stroke();
     }
     ctx.lineCap = 'butt';
-    circle(ctx, 0, 0, a * 0.2, C[2]);
   },
+
   boulder(ctx, o, a, b, C, rc) {
     const stones = o.variant === 'trio' ? [[-0.3, -0.15, 0.62], [0.42, 0.1, 0.48], [-0.05, 0.55, 0.36]] : [[0, 0, 1]];
     for (const [sx, sy, k] of stones) {
@@ -493,7 +856,7 @@ const LOOKS = {
       }
       ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
       ctx.fillStyle = C[0]; ctx.fill();
-      edge(ctx, C[2], rc.px(1));
+      ink(ctx, rc, 0.7, 0.85);
       // Освещённая грань.
       ctx.beginPath();
       ctx.moveTo(pts[4].x * 0.9, pts[4].y * 0.9);
@@ -510,15 +873,17 @@ const LOOKS = {
     else { ctx.fillStyle = C[0]; ctx.fillRect(-a, -b, a * 2, b * 2); }
     const spaces = Math.max(1, Math.round(Number(o.meta?.spaces) || (o.kind === 'parking-2' ? 2 : 1)));
     const sw = (a * 2) / spaces;
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = Math.max(rc.px(1), 100);
+    ctx.strokeStyle = rc.mono ? rgba(rc.ink, 0.6) : 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = rc.mono ? rc.px(0.6) : Math.max(rc.px(0.8), 80);
     ctx.beginPath();
     for (let i = 0; i <= spaces; i += 1) { ctx.moveTo(-a + i * sw, -b + 150); ctx.lineTo(-a + i * sw, b - 150); }
     ctx.stroke();
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
+    ink(ctx, rc, 0.6, 0.6);
     const empty = o.variant === 'empty' || o.meta?.cars === 0;
     if (!empty && rc.lod >= 2) {
       for (let i = 0; i < spaces; i += 1) {
-        const color = LS_COLORS.car[Math.floor(seededRandom(`${o.id}:${i}`)() * LS_COLORS.car.length)];
+        const color = rc.P.car[Math.floor(seededRandom(`${o.id}:${i}`)() * rc.P.car.length)];
         car(ctx, -a + sw * (i + 0.5), 0, Math.min(1850, sw * 0.74), Math.min(4600, b * 2 * 0.87), color, rc);
       }
     }
@@ -526,26 +891,26 @@ const LOOKS = {
   'parking-grass'(ctx, o, a, b, C, rc) {
     ctx.fillStyle = C[0]; ctx.fillRect(-a, -b, a * 2, b * 2);
     if (rc.lod >= 6) {
-      ctx.strokeStyle = 'rgba(200,198,190,0.75)';
-      ctx.lineWidth = 70;
+      ctx.strokeStyle = rc.mono ? rgba(rc.ink, 0.35) : rgba(rc.P.stone[1], 0.75);
+      ctx.lineWidth = rc.mono ? rc.px(0.5) : 70;
       ctx.beginPath();
       for (let x = -a; x <= a; x += 400) { ctx.moveTo(x, -b); ctx.lineTo(x, b); }
       for (let y = -b; y <= b; y += 400) { ctx.moveTo(-a, y); ctx.lineTo(a, y); }
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = Math.max(rc.px(1), 100);
+    ctx.strokeStyle = rc.mono ? rgba(rc.ink, 0.6) : 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = rc.mono ? rc.px(0.6) : Math.max(rc.px(0.8), 80);
     ctx.setLineDash([400, 300]);
     ctx.strokeRect(-a + 60, -b + 60, a * 2 - 120, b * 2 - 120);
     ctx.setLineDash([]);
   },
   carport(ctx, o, a, b, C, rc) {
-    if (rc.lod >= 3) car(ctx, 0, 0, Math.min(1850, a * 1.3), Math.min(4600, b * 1.6), '#9aa3ad', rc);
+    if (rc.lod >= 3) car(ctx, 0, 0, Math.min(1850, a * 1.3), Math.min(4600, b * 1.6), rc.c('#9aa3ad'), rc);
     const wood = o.variant === 'wood';
     ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, 80);
-    ctx.fillStyle = wood ? 'rgba(168,113,74,0.82)' : 'rgba(214,232,242,0.62)';
+    ctx.fillStyle = rc.mono ? rgba(rc.pal.paper, 0.6) : wood ? rgba(C[0], 0.8) : 'rgba(220,228,230,0.6)';
     ctx.fill();
-    edge(ctx, C[0], Math.max(rc.px(1.4), 80));
+    ink(ctx, rc, 0.8, 0.85);
     if (rc.lod >= 4) {
       ctx.strokeStyle = wood ? C[1] : C[0];
       ctx.globalAlpha = wood ? 0.9 : 0.5;
@@ -563,20 +928,19 @@ const LOOKS = {
     ctx.save();
     ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a, b); else rrect(ctx, -a, -b, a * 2, b * 2, 60);
     ctx.clip();
-    if (o.variant === 'tiles') tiles(ctx, -a, -b, a * 2, b * 2, 500, LS_COLORS.tiles, rc, rc.rand);
-    else if (o.variant === 'deck') boards(ctx, -a, -b, a * 2, b * 2, LS_COLORS.deck, rc.rand, rc);
-    else gravel(ctx, -a, -b, a * 2, b * 2, LS_COLORS.gravel, rc.rand, rc);
+    if (o.variant === 'tiles') tiles(ctx, -a, -b, a * 2, b * 2, 500, rc.P.tiles, rc, rc.rand);
+    else if (o.variant === 'deck') boards(ctx, -a, -b, a * 2, b * 2, rc.P.deck, rc.rand, rc);
+    else gravel(ctx, -a, -b, a * 2, b * 2, rc.P.gravel, rc.rand, rc);
     ctx.restore();
     ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a, b); else rrect(ctx, -a, -b, a * 2, b * 2, 60);
-    edge(ctx, 'rgba(90,80,66,0.6)', Math.max(rc.px(1), 50));
+    ink(ctx, rc, 0.7, 0.8);
   },
   deck(ctx, o, a, b, C, rc) {
     boards(ctx, -a, -b, a * 2, b * 2, C, rc.rand, rc);
     ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
-    edge(ctx, C[1], Math.max(rc.px(1.2), 90));
+    ink(ctx, rc, 0.8, 0.85);
   },
   gazebo(ctx, o, a, b, C, rc) {
-    const dark = 'rgba(30,15,5,0.35)';
     if (o.variant === 'flat') {
       ctx.fillStyle = C[0]; ctx.fillRect(-a, -b, a * 2, b * 2);
       const g = ctx.createLinearGradient(-a, -b, a, b);
@@ -584,6 +948,8 @@ const LOOKS = {
       ctx.fillStyle = g; ctx.fillRect(-a, -b, a * 2, b * 2);
       ctx.strokeStyle = C[2]; ctx.lineWidth = 120;
       ctx.strokeRect(-a + 60, -b + 60, a * 2 - 120, b * 2 - 120);
+      ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
+      ink(ctx, rc, 0.8, 0.85);
       return;
     }
     const facets = [];
@@ -610,7 +976,7 @@ const LOOKS = {
       ctx.beginPath(); f.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
       ctx.fillStyle = lit > 0.3 ? C[1] : lit < -0.3 ? C[2] : C[0];
       ctx.fill();
-      edge(ctx, dark, rc.px(0.9));
+      ink(ctx, rc, 0.6, 0.8);
     });
     if (rc.lod >= 12) {
       // Черепица: линии параллельно карнизу.
@@ -638,47 +1004,76 @@ const LOOKS = {
     else for (let y = -b + 150; y <= b - 100; y += step) ctx.fillRect(-a, y, a * 2, 70);
     ctx.fillStyle = C[1];
     for (const [x, y] of [[-a + 100, -b + 100], [a - 100, -b + 100], [a - 100, b - 100], [-a + 100, b - 100]]) ctx.fillRect(x - 90, y - 90, 180, 180);
+    ctx.beginPath();
+    if (along) { ctx.rect(-a, -b + 100, a * 2, beam); ctx.rect(-a, b - 100 - beam, a * 2, beam); }
+    else { ctx.rect(-a + 100, -b, beam, b * 2); ctx.rect(a - 100 - beam, -b, beam, b * 2); }
+    ink(ctx, rc, 0.5, 0.7);
     if (rc.lod >= 6) {
       // Вьющиеся растения по углам.
       for (const [x, y] of [[-a + 300, -b + 300], [a - 300, b - 300]]) {
         ctx.globalAlpha = 0.85;
         ctx.beginPath(); blobPath(ctx, x, y, 650, 520, rc.rand, 9, 0.2);
-        ctx.fillStyle = LS_COLORS.leaf[1]; ctx.fill();
+        ctx.fillStyle = rc.P.leaf[1]; ctx.fill();
         ctx.globalAlpha = 1;
       }
     }
   },
   bbq(ctx, o, a, b, C, rc) {
     tiles(ctx, -a, -b, a * 2, b * 2, 600, C, rc, rc.rand);
-    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2); edge(ctx, 'rgba(90,80,66,0.6)', 50);
-    ctx.save(); ctx.translate(-a + 700, -b + 450); LOOKS.grill(ctx, o, 550, 280, LS_COLORS.metal, rc); ctx.restore();
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2); ink(ctx, rc, 0.7, 0.8);
+    ctx.save(); ctx.translate(-a + 700, -b + 450); LOOKS.grill(ctx, o, 550, 280, rc.P.metal, rc); ctx.restore();
     const tr = Math.min(a, b) * 0.4;
     ctx.save(); ctx.translate(a * 0.25, b * 0.1);
-    for (let i = 0; i < 6; i += 1) { const t = (i / 6) * TAU; chair(ctx, Math.cos(t) * (tr + 330), Math.sin(t) * (tr + 330), t + Math.PI / 2, 450, LS_COLORS.wood[2]); }
-    circle(ctx, 0, 0, tr, LS_COLORS.wood[0]);
+    for (let i = 0; i < 6; i += 1) { const t = (i / 6) * TAU; chair(ctx, Math.cos(t) * (tr + 330), Math.sin(t) * (tr + 330), t + Math.PI / 2, 450, rc.P.wood[2]); }
+    circle(ctx, 0, 0, tr, rc.P.wood[0]);
     ctx.restore();
   },
   firepit(ctx, o, a, b, C, rc) {
+    // Круг гравия, мощёная площадка с радиальными швами, тёмная сердцевина.
     const r = Math.min(a, b);
     ctx.save();
     ctx.beginPath(); ellipse(ctx, 0, 0, r, r); ctx.clip();
     gravel(ctx, -r, -r, r * 2, r * 2, C, rc.rand, rc);
     ctx.restore();
-    // Мощёный круг вокруг очага с радиальными швами.
+    ctx.beginPath(); ellipse(ctx, 0, 0, r, r);
+    ink(ctx, rc, 0.6, 0.55);
     const inner = r * 0.56;
-    circle(ctx, 0, 0, inner, LS_COLORS.tiles[0]);
-    if (rc.lod >= 8) {
-      ctx.strokeStyle = 'rgba(70,64,56,0.3)';
-      ctx.lineWidth = 15;
+    circle(ctx, 0, 0, inner, rc.P.tiles[0]);
+    if (rc.lod >= 6) {
+      // Мощение «веером»: кольца и радиальные швы, тон камней чуть разный.
+      const rings = [0.45, 0.72, 1];
+      if (!rc.mono && rc.lod >= 10) {
+        for (let k = 1; k < rings.length; k += 1) {
+          const n = Math.round(10 + k * 8);
+          for (let i = 0; i < n; i += 1) {
+            const t0 = (i / n) * TAU; const t1 = ((i + 1) / n) * TAU;
+            ctx.beginPath();
+            ctx.arc(0, 0, inner * rings[k], t0, t1);
+            ctx.arc(0, 0, inner * rings[k - 1], t1, t0, true);
+            ctx.closePath();
+            ctx.fillStyle = rc.rand() > 0.5 ? rc.P.tiles[1] : rc.P.tiles[2];
+            ctx.globalAlpha = 0.5;
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = seam(rc, 0.3);
+      ctx.lineWidth = rc.px(0.5);
       ctx.beginPath();
-      for (let k = 0.45; k < 1; k += 0.27) { ctx.moveTo(inner * k, 0); ctx.arc(0, 0, inner * k, 0, TAU); }
-      for (let i = 0; i < 16; i += 1) { const t = (i / 16) * TAU; ctx.moveTo(Math.cos(t) * inner * 0.45, Math.sin(t) * inner * 0.45); ctx.lineTo(Math.cos(t) * inner, Math.sin(t) * inner); }
+      for (const k of rings) { ctx.moveTo(inner * k, 0); ctx.arc(0, 0, inner * k, 0, TAU); }
+      for (let k = 1; k < rings.length; k += 1) {
+        const n = Math.round(10 + k * 8);
+        for (let i = 0; i < n; i += 1) {
+          const t = (i / n) * TAU;
+          ctx.moveTo(Math.cos(t) * inner * rings[k - 1], Math.sin(t) * inner * rings[k - 1]);
+          ctx.lineTo(Math.cos(t) * inner * rings[k], Math.sin(t) * inner * rings[k]);
+        }
+      }
       ctx.stroke();
     }
-    // Тёплое свечение.
-    const glow = ctx.createRadialGradient(0, 0, r * 0.05, 0, 0, r * 0.62);
-    glow.addColorStop(0, 'rgba(255,170,60,0.55)'); glow.addColorStop(1, 'rgba(255,170,60,0)');
-    ctx.fillStyle = glow; ctx.beginPath(); ellipse(ctx, 0, 0, r * 0.62, r * 0.62); ctx.fill();
+    ctx.beginPath(); ellipse(ctx, 0, 0, inner, inner);
+    ink(ctx, rc, 0.7, 0.85);
     // Круговая скамья (дуга с проходом к «низу» объекта) или кольцо камней.
     const rb = r * 0.78;
     const t = Math.max(420, r * 0.15);
@@ -687,54 +1082,58 @@ const LOOKS = {
       for (let i = 0; i < n; i += 1) {
         const ang = (i / n) * TAU;
         ctx.save(); ctx.translate(Math.cos(ang) * rb, Math.sin(ang) * rb); ctx.rotate(ang);
-        LOOKS.boulder(ctx, { ...o, variant: 'one' }, t * 0.55, t * 0.42, LS_COLORS.stone, rc);
+        LOOKS.boulder(ctx, { ...o, variant: 'one' }, t * 0.55, t * 0.42, rc.P.stone, rc);
         ctx.restore();
       }
     } else {
       const gap = 0.55;
       const s = Math.PI / 2 + gap / 2;
       const e = Math.PI / 2 - gap / 2 + TAU;
-      ctx.lineCap = 'butt';
-      ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-      ctx.lineWidth = t;
-      ctx.beginPath(); ctx.arc(rc.shadowLocal.x * 120, rc.shadowLocal.y * 120, rb, s, e); ctx.stroke();
-      ctx.strokeStyle = LS_COLORS.wood[0];
-      ctx.beginPath(); ctx.arc(0, 0, rb, s, e); ctx.stroke();
-      ctx.strokeStyle = LS_COLORS.wood[2];
-      ctx.lineWidth = t * 0.3;
-      ctx.beginPath(); ctx.arc(0, 0, rb - t * 0.2, s, e); ctx.stroke();
-      if (rc.lod >= 8) {
-        ctx.strokeStyle = 'rgba(40,22,10,0.45)';
-        ctx.lineWidth = Math.max(rc.px(0.6), 14);
+      const seat = () => {
         ctx.beginPath();
-        for (let ang = s; ang <= e; ang += 0.07) {
-          ctx.moveTo(Math.cos(ang) * (rb - t / 2), Math.sin(ang) * (rb - t / 2));
-          ctx.lineTo(Math.cos(ang) * (rb + t / 2), Math.sin(ang) * (rb + t / 2));
-        }
-        ctx.stroke();
+        ctx.arc(0, 0, rb + t / 2, s, e);
+        ctx.arc(0, 0, rb - t / 2, e, s, true);
+        ctx.closePath();
+      };
+      if (!rc.mono) {
+        ctx.save();
+        ctx.translate(rc.shadowLocal.x * 140, rc.shadowLocal.y * 140);
+        seat();
+        ctx.fillStyle = rgba(rc.pal.shadow, 0.2);
+        ctx.fill();
+        ctx.restore();
       }
-      // Подушки на скамье.
+      seat();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = rc.mono ? rc.pal.paper : rc.P.wood[0];
+      ctx.fillRect(-rb - t, -rb - t, (rb + t) * 2, (rb + t) * 2);
       if (rc.lod >= 6) {
-        for (let i = 0; i < 5; i += 1) {
-          const ang = s + 0.4 + i * ((e - s - 0.8) / 4);
-          ctx.save(); ctx.translate(Math.cos(ang) * rb, Math.sin(ang) * rb); ctx.rotate(ang);
-          ctx.fillStyle = ['#e9e2d0', '#c9b79a', '#d97b4a'][i % 3];
-          ctx.beginPath(); rrect(ctx, -t * 0.3, -t * 0.32, t * 0.6, t * 0.64, t * 0.12); ctx.fill();
-          ctx.restore();
+        // Доски сиденья — концентрические полосы тонов.
+        for (let i = 0; i < 4; i += 1) {
+          ctx.strokeStyle = rc.mono ? seam(rc, 0.25) : i % 2 ? rc.P.wood[2] : rc.P.wood[1];
+          ctx.globalAlpha = rc.mono ? 1 : 0.6;
+          ctx.lineWidth = rc.mono ? rc.px(0.4) : t / 5;
+          ctx.beginPath(); ctx.arc(0, 0, rb - t / 2 + (t / 4) * (i + 0.5), 0, TAU); ctx.stroke();
         }
+        ctx.globalAlpha = 1;
       }
+      ctx.restore();
+      seat();
+      ink(ctx, rc, 0.7, 0.85);
     }
-    // Очаг: каменное кольцо, угли, пламя.
+    // Очаг: каменное кольцо и тёмная сердцевина с тлеющими углями.
     const fr = Math.max(380, r * 0.17);
-    circle(ctx, 0, 0, fr, LS_COLORS.stone[2]);
-    circle(ctx, 0, 0, fr * 0.78, '#3a2c25');
-    if (rc.lod >= 3) flame(ctx, fr * 0.72, rc.rand);
+    circle(ctx, 0, 0, fr, rc.P.stone[2]);
+    ctx.beginPath(); ellipse(ctx, 0, 0, fr, fr); ink(ctx, rc, 0.6, 0.8);
+    circle(ctx, 0, 0, fr * 0.74, rc.mono ? rc.ink : rc.c('#3a332e'));
+    if (rc.lod >= 4) flame(ctx, fr * 0.55, rc.rand, rc);
   },
   grill(ctx, o, a, b, C, rc) {
     ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, Math.min(a, b) * 0.2);
     ctx.fillStyle = C[1]; ctx.fill();
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(a, b));
-    g.addColorStop(0, 'rgba(255,120,40,0.85)'); g.addColorStop(1, 'rgba(120,30,10,0.4)');
+    g.addColorStop(0, 'rgba(200,150,110,0.55)'); g.addColorStop(1, 'rgba(90,70,60,0.45)');
     ctx.fillStyle = g;
     ctx.fillRect(-a * 0.82, -b * 0.7, a * 1.64, b * 1.4);
     if (rc.lod >= 10) {
@@ -749,10 +1148,10 @@ const LOOKS = {
     const loungers = o.variant !== 'plain';
     // Кайма-плитка.
     ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, 120);
-    ctx.fillStyle = LS_COLORS.coping[0]; ctx.fill();
+    ctx.fillStyle = rc.P.coping[0]; ctx.fill();
     if (rc.lod >= 8) {
       ctx.save(); ctx.clip();
-      tiles(ctx, -a, -b, a * 2, b * 2, 600, LS_COLORS.coping, rc, rc.rand);
+      tiles(ctx, -a, -b, a * 2, b * 2, 600, rc.P.coping, rc, rc.rand);
       ctx.restore();
     }
     const m = Math.min(450, Math.min(a, b) * 0.16);
@@ -761,28 +1160,18 @@ const LOOKS = {
     const ww = a * 2 - m * 2; const wh = b * 2 - m * 2 - strip;
     if (wh > 0) {
       const g = ctx.createLinearGradient(wx, wy, wx + ww * 0.3, wy + wh);
-      g.addColorStop(0, C[2]); g.addColorStop(0.35, C[0]); g.addColorStop(1, C[1]);
+      g.addColorStop(0, C[2]); g.addColorStop(0.4, C[0]); g.addColorStop(1, C[1]);
       ctx.beginPath(); rrect(ctx, wx, wy, ww, wh, 60);
-      ctx.fillStyle = g; ctx.fill();
-      edge(ctx, 'rgba(20,80,120,0.55)', Math.max(rc.px(1), 40));
+      waterFill(ctx, rc, rc.mono ? C[0] : g);
+      waterEdge(ctx, rc, C);
       if (rc.lod >= 5) {
-        ctx.save(); ctx.beginPath(); ctx.rect(wx, wy, ww, wh); ctx.clip();
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = Math.max(rc.px(0.8), 30);
-        for (let y = wy + 350; y < wy + wh; y += 600) {
-          ctx.beginPath();
-          for (let x = wx; x <= wx + ww; x += 150) {
-            const yy = y + Math.sin(x / 260 + y) * 70 + Math.sin(x / 90) * 25;
-            if (x === wx) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
-          }
-          ctx.stroke();
-        }
-        ctx.restore();
         // Ступени входа в углу.
-        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillStyle = rc.mono ? rgba(rc.pal.paper, 0.7) : 'rgba(255,255,255,0.4)';
         for (let i = 0; i < 3; i += 1) ctx.fillRect(wx + ww - 900 + i * 300, wy, 300 - 40, Math.min(1200, wh));
       }
     }
+    ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, 120);
+    ink(ctx, rc, 0.7, 0.8);
     if (loungers && strip > 0 && rc.lod >= 3) {
       const n = Math.max(1, Math.min(5, Math.floor(ww / 1150)));
       const y0 = b - strip + 120;
@@ -802,9 +1191,12 @@ const LOOKS = {
           ctx.beginPath(); ctx.moveTo(0, 0);
           ctx.arc(0, 0, ur, (i / 8) * TAU, ((i + 1) / 8) * TAU);
           ctx.closePath();
-          ctx.fillStyle = i % 2 ? '#f1ece2' : '#e1d6c3';
+          ctx.fillStyle = i % 2 ? rc.c('#f1ece2') : rc.c('#e1d6c3');
           ctx.fill();
         }
+        ctx.beginPath(); ctx.arc(0, 0, ur, 0, TAU);
+        for (let i = 0; i < 8; i += 1) { ctx.moveTo(0, 0); ctx.lineTo(Math.cos((i / 8) * TAU) * ur, Math.sin((i / 8) * TAU) * ur); }
+        ink(ctx, rc, 0.5, 0.7);
         ctx.restore();
       }
     }
@@ -812,83 +1204,77 @@ const LOOKS = {
   loungerOne(ctx, a, b, rc) {
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.beginPath(); rrect(ctx, -a + 60, -b + 80, a * 2, b * 2, 90); ctx.fill();
-    ctx.fillStyle = '#f6f3ec';
+    ctx.fillStyle = rc.c('#f6f3ec');
     ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, 90); ctx.fill();
-    ctx.strokeStyle = 'rgba(80,70,60,0.45)'; ctx.lineWidth = Math.max(rc.px(0.7), 20); ctx.stroke();
-    ctx.fillStyle = '#dcd3c2';
+    ink(ctx, rc, 0.55, 0.8);
+    ctx.fillStyle = rc.c('#dcd3c2');
     ctx.beginPath(); rrect(ctx, -a * 0.8, -b * 0.92, a * 1.6, b * 0.32, 60); ctx.fill();
   },
   jacuzzi(ctx, o, a, b, C, rc) {
     const round = o.variant === 'round';
     ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a, b); else rrect(ctx, -a, -b, a * 2, b * 2, Math.min(a, b) * 0.25);
-    ctx.fillStyle = LS_COLORS.coping[1]; ctx.fill();
-    edge(ctx, 'rgba(60,60,60,0.4)', rc.px(1));
+    ctx.fillStyle = rc.P.coping[1]; ctx.fill();
+    ink(ctx, rc, 0.7, 0.8);
     const k = 0.78;
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(a, b) * k);
-    g.addColorStop(0, C[2]); g.addColorStop(1, C[1]);
+    g.addColorStop(0, C[2]); g.addColorStop(1, C[0]);
     ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a * k, b * k); else rrect(ctx, -a * k, -b * k, a * 2 * k, b * 2 * k, Math.min(a, b) * 0.35);
-    ctx.fillStyle = g; ctx.fill();
-    if (rc.lod >= 8) {
-      for (let i = 0; i < 26; i += 1) {
-        const t = rc.rand() * TAU; const d = Math.sqrt(rc.rand()) * 0.65;
-        ctx.globalAlpha = 0.7;
-        circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, 30 + rc.rand() * 40, '#ffffff');
+    waterFill(ctx, rc, rc.mono ? C[0] : g);
+    waterEdge(ctx, rc, C);
+    if (rc.lod >= 8 && !rc.mono) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      for (let i = 0; i < 18; i += 1) {
+        const t = rc.rand() * TAU; const d = Math.sqrt(rc.rand()) * 0.6;
+        ctx.beginPath(); ctx.arc(Math.cos(t) * a * d, Math.sin(t) * b * d, 25 + rc.rand() * 30, 0, TAU); ctx.fill();
       }
-      ctx.globalAlpha = 1;
     }
   },
   pond(ctx, o, a, b, C, rc) {
-    ctx.beginPath(); blobPath(ctx, 0, 0, a, b, rc.rand, 12, 0.08);
+    const shape = () => { ctx.beginPath(); blobPath(ctx, 0, 0, a, b, seededRandom(o.id), 12, 0.08); };
+    shape();
     const g = ctx.createRadialGradient(-a * 0.2, -b * 0.2, 0, 0, 0, Math.max(a, b));
-    g.addColorStop(0, C[0]); g.addColorStop(0.7, C[1]); g.addColorStop(1, '#24525a');
-    ctx.fillStyle = g; ctx.fill();
+    g.addColorStop(0, C[2]); g.addColorStop(0.6, C[0]); g.addColorStop(1, C[1]);
+    waterFill(ctx, rc, rc.mono ? C[0] : g);
+    shape();
+    ink(ctx, rc, 0.7, 0.8);
     if (rc.lod >= 5) {
-      // Камни по берегу.
+      // Камни по берегу — серые, с тонким контуром.
       const n = Math.max(10, Math.round((Math.PI * (a + b)) / 380));
       for (let i = 0; i < n; i += 1) {
         const t = (i / n) * TAU;
-        const sr = 120 + rc.rand() * 140;
-        circle(ctx, Math.cos(t) * (a - 40), Math.sin(t) * (b - 40), sr, LS_COLORS.stone[i % 3]);
-      }
-      // Блики.
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = Math.max(rc.px(0.9), 40);
-      ctx.beginPath(); ctx.ellipse(-a * 0.2, -b * 0.25, a * 0.45, b * 0.3, 0, Math.PI * 1.1, Math.PI * 1.6); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(a * 0.15, b * 0.1, a * 0.3, b * 0.18, 0, Math.PI * 1.15, Math.PI * 1.5); ctx.stroke();
-    }
-    if (o.variant !== 'mirror' && rc.lod >= 6) {
-      for (let i = 0; i < 6; i += 1) {
-        const t = rc.rand() * TAU; const d = 0.25 + rc.rand() * 0.45;
-        const x = Math.cos(t) * a * d; const y = Math.sin(t) * b * d;
-        const lr = 160 + rc.rand() * 120;
-        ctx.fillStyle = '#5f9e4a';
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, lr, t + 0.35, t + TAU - 0.35); ctx.closePath(); ctx.fill();
-        if (i % 2 === 0) circle(ctx, x, y, lr * 0.32, '#f2a7c3');
+        pebble(ctx, rc, Math.cos(t) * (a - 40), Math.sin(t) * (b - 40), 120 + rc.rand() * 140, rc.P.stone[i % 3]);
       }
     }
+    if (o.variant !== 'mirror' && rc.lod >= 6) lilies(ctx, rc, Array.from({ length: 6 }, () => {
+      const t = rc.rand() * TAU; const d = 0.25 + rc.rand() * 0.45;
+      return { x: Math.cos(t) * a * d, y: Math.sin(t) * b * d };
+    }));
   },
   fountain(ctx, o, a, b, C, rc) {
-    circle(ctx, 0, 0, a, LS_COLORS.stone[1]);
-    ctx.beginPath(); ellipse(ctx, 0, 0, a, b); edge(ctx, LS_COLORS.stone[2], rc.px(1));
+    circle(ctx, 0, 0, a, rc.P.stone[1]);
+    ctx.beginPath(); ellipse(ctx, 0, 0, a, b); ink(ctx, rc, 0.7, 0.85);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, a * 0.82);
-    g.addColorStop(0, C[2]); g.addColorStop(1, C[1]);
-    circle(ctx, 0, 0, a * 0.82, g);
+    g.addColorStop(0, C[2]); g.addColorStop(1, C[0]);
+    circle(ctx, 0, 0, a * 0.82, rc.mono ? C[0] : g);
+    ctx.beginPath(); ellipse(ctx, 0, 0, a * 0.82, a * 0.82); ink(ctx, rc, 0.5, 0.6);
     if (rc.lod >= 6) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.strokeStyle = rc.mono ? seam(rc, 0.3) : 'rgba(255,255,255,0.5)';
       ctx.lineWidth = Math.max(rc.px(0.8), 20);
       for (const k of [0.3, 0.5, 0.7]) { ctx.beginPath(); ctx.arc(0, 0, a * k, 0, TAU); ctx.stroke(); }
     }
-    circle(ctx, 0, 0, a * 0.16, LS_COLORS.stone[1]);
-    circle(ctx, 0, 0, a * 0.08, '#ffffff');
+    circle(ctx, 0, 0, a * 0.16, rc.P.stone[1]);
+    circle(ctx, 0, 0, a * 0.08, rc.c('#ffffff'));
   },
   sandbox(ctx, o, a, b, C, rc) {
-    ctx.fillStyle = LS_COLORS.wood[0]; ctx.fillRect(-a, -b, a * 2, b * 2);
+    ctx.fillStyle = rc.P.wood[0]; ctx.fillRect(-a, -b, a * 2, b * 2);
     const t = Math.min(160, Math.min(a, b) * 0.15);
     ctx.fillStyle = C[0]; ctx.fillRect(-a + t, -b + t, a * 2 - t * 2, b * 2 - t * 2);
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2); ctx.rect(-a + t, -b + t, a * 2 - t * 2, b * 2 - t * 2);
+    ink(ctx, rc, 0.55, 0.75);
     if (rc.lod >= 8) {
       for (let i = 0; i < 120; i += 1) circle(ctx, (rc.rand() * 2 - 1) * (a - t), (rc.rand() * 2 - 1) * (b - t), 25, rc.rand() > 0.5 ? C[1] : C[2]);
-      circle(ctx, a * 0.35, b * 0.3, Math.min(a, b) * 0.12, '#e2553f');
-      circle(ctx, -a * 0.3, -b * 0.25, Math.min(a, b) * 0.09, '#3f7fd1');
+      circle(ctx, a * 0.35, b * 0.3, Math.min(a, b) * 0.12, rc.c('#b98f80'));
+      circle(ctx, -a * 0.3, -b * 0.25, Math.min(a, b) * 0.09, rc.c('#8c9fb0'));
     }
   },
   playground(ctx, o, a, b, C, rc) {
@@ -896,23 +1282,29 @@ const LOOKS = {
     else {
       ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, 300);
       ctx.fillStyle = C[0]; ctx.fill();
-      edge(ctx, C[1], 80);
+      ink(ctx, rc, 0.7, 0.8);
     }
     if (rc.lod < 3) return;
     // Башня с горкой.
     const s = Math.min(1300, Math.min(a, b) * 0.5);
     const tx = -a + s * 0.9; const ty = -b + s * 0.9;
-    ctx.fillStyle = LS_COLORS.wood[0]; ctx.fillRect(tx - s / 2, ty - s / 2, s, s);
-    ctx.fillStyle = '#e2553f'; ctx.fillRect(tx - s / 2 + 60, ty - s / 2 + 60, s - 120, s - 120);
+    ctx.fillStyle = rc.P.wood[0]; ctx.fillRect(tx - s / 2, ty - s / 2, s, s);
+    ctx.fillStyle = rc.c('#b98f80'); ctx.fillRect(tx - s / 2 + 60, ty - s / 2 + 60, s - 120, s - 120);
     const sl = ctx.createLinearGradient(tx + s / 2, 0, tx + s / 2 + s * 1.8, 0);
-    sl.addColorStop(0, '#f2b134'); sl.addColorStop(1, '#f7d27a');
+    sl.addColorStop(0, rc.c('#d4bf8f')); sl.addColorStop(1, rc.c('#e2d3a6'));
     ctx.fillStyle = sl; ctx.beginPath(); rrect(ctx, tx + s / 2, ty - s * 0.22, s * 1.8, s * 0.44, s * 0.15); ctx.fill();
     // Качели.
     const bx = a * 0.35; const by = b * 0.35;
-    ctx.fillStyle = '#3f7fd1'; ctx.fillRect(bx - s * 1.1, by - 70, s * 2.2, 140);
-    ctx.fillStyle = '#2c3440';
+    ctx.fillStyle = rc.c('#8c9fb0'); ctx.fillRect(bx - s * 1.1, by - 70, s * 2.2, 140);
+    ctx.fillStyle = rc.c('#5c6168');
     ctx.fillRect(bx - s * 0.6, by + 120, s * 0.4, 160); ctx.fillRect(bx + s * 0.2, by + 120, s * 0.4, 160);
-    circle(ctx, -a * 0.35, b * 0.4, Math.min(a, b) * 0.22, LS_COLORS.sand[0]);
+    circle(ctx, -a * 0.35, b * 0.4, Math.min(a, b) * 0.22, rc.P.sand[0]);
+    ctx.beginPath();
+    ctx.rect(tx - s / 2, ty - s / 2, s, s);
+    rrect(ctx, tx + s / 2, ty - s * 0.22, s * 1.8, s * 0.44, s * 0.15);
+    ctx.rect(bx - s * 1.1, by - 70, s * 2.2, 140);
+    ctx.moveTo(-a * 0.35 + Math.min(a, b) * 0.22, b * 0.4); ctx.arc(-a * 0.35, b * 0.4, Math.min(a, b) * 0.22, 0, TAU);
+    ink(ctx, rc, 0.55, 0.75);
   },
   swing(ctx, o, a, b, C, rc) {
     ctx.strokeStyle = C[1]; ctx.lineWidth = 120; ctx.lineCap = 'round';
@@ -922,9 +1314,9 @@ const LOOKS = {
     ctx.stroke();
     ctx.lineCap = 'butt';
     ctx.fillStyle = C[0]; ctx.fillRect(-a + 100, -80, a * 2 - 200, 160);
-    ctx.fillStyle = '#e2553f';
+    ctx.fillStyle = rc.c('#b98f80');
     ctx.fillRect(-a * 0.45 - 230, 220, 460, 200);
-    ctx.fillStyle = '#3f7fd1';
+    ctx.fillStyle = rc.c('#8c9fb0');
     ctx.fillRect(a * 0.45 - 230, 220, 460, 200);
   },
   greenhouse(ctx, o, a, b, C, rc) {
@@ -932,15 +1324,15 @@ const LOOKS = {
     const g = ctx.createLinearGradient(-a, 0, a, 0);
     g.addColorStop(0, C[1]); g.addColorStop(0.5, C[2]); g.addColorStop(1, C[1]);
     ctx.fillStyle = g; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
-    edge(ctx, LS_COLORS.metal[2], Math.max(rc.px(1), 50));
+    ink(ctx, rc, 0.8, 0.85);
     if (rc.lod >= 6) {
       // Грядки внутри.
-      ctx.fillStyle = 'rgba(80,140,70,0.35)';
+      ctx.fillStyle = 'rgba(120,140,100,0.3)';
       ctx.fillRect(-a * 0.75, -b * 0.85, a * 0.5, b * 1.7);
       ctx.fillRect(a * 0.25, -b * 0.85, a * 0.5, b * 1.7);
     }
-    ctx.strokeStyle = LS_COLORS.metal[2];
-    ctx.lineWidth = Math.max(rc.px(0.7), 30);
+    ctx.strokeStyle = seam(rc, 0.45);
+    ctx.lineWidth = rc.px(0.5);
     ctx.beginPath();
     const along = b >= a;
     if (along) for (let y = -b + 700; y < b; y += 700) { ctx.moveTo(-a, y); ctx.lineTo(a, y); }
@@ -949,7 +1341,7 @@ const LOOKS = {
     ctx.stroke();
   },
   vegbeds(ctx, o, a, b, C, rc) {
-    gravel(ctx, -a, -b, a * 2, b * 2, LS_COLORS.gravel, rc.rand, rc, 0.4);
+    gravel(ctx, -a, -b, a * 2, b * 2, rc.P.gravel, rc.rand, rc, 0.4);
     const along = a >= b;
     const len = along ? a * 2 : b * 2;
     const n = Math.max(1, Math.floor((along ? b * 2 : a * 2) / 1500));
@@ -957,14 +1349,15 @@ const LOOKS = {
     for (let i = 0; i < n; i += 1) {
       const c = (along ? -b : -a) + ((along ? b * 2 : a * 2) / n) * (i + 0.5);
       const [x, y, w, h] = along ? [-a + 200, c - bedW / 2, len - 400, bedW] : [c - bedW / 2, -b + 200, bedW, len - 400];
-      ctx.fillStyle = LS_COLORS.wood[1]; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = rc.P.wood[1]; ctx.fillRect(x, y, w, h);
       ctx.fillStyle = C[0]; ctx.fillRect(x + 50, y + 50, w - 100, h - 100);
+      ctx.beginPath(); ctx.rect(x, y, w, h); ink(ctx, rc, 0.5, 0.75);
       if (rc.lod >= 8) {
         for (let k = 250; k < (along ? w : h) - 150; k += 300) {
           for (const off of [0.3, 0.7]) {
             const px = along ? x + k : x + w * off;
             const py = along ? y + h * off : y + k;
-            circle(ctx, px, py, 90 + rc.rand() * 40, rc.rand() > 0.3 ? LS_COLORS.leaf[1] : LS_COLORS.leaf[2]);
+            circle(ctx, px, py, 90 + rc.rand() * 40, rc.rand() > 0.3 ? rc.P.leaf[1] : rc.P.leaf[2]);
           }
         }
       }
@@ -972,12 +1365,13 @@ const LOOKS = {
   },
   compost(ctx, o, a, b, C, rc) {
     ctx.fillStyle = C[0]; ctx.fillRect(-a, -b, a * 2, b * 2);
-    ctx.fillStyle = '#3d2e22'; ctx.fillRect(-a + 80, -b + 80, a * 2 - 160, b * 2 - 160);
+    ctx.fillStyle = rc.c('#5a4d42'); ctx.fillRect(-a + 80, -b + 80, a * 2 - 160, b * 2 - 160);
     ctx.strokeStyle = C[1]; ctx.lineWidth = 40;
     ctx.beginPath(); ctx.moveTo(0, -b); ctx.lineTo(0, b); ctx.stroke();
   },
   well(ctx, o, a, b, C, rc) {
     circle(ctx, 0, 0, a, C[0]);
+    ctx.beginPath(); ellipse(ctx, 0, 0, a, a); ink(ctx, rc, 0.6, 0.85);
     if (rc.lod >= 8) {
       const n = 14;
       for (let i = 0; i < n; i += 1) {
@@ -985,27 +1379,27 @@ const LOOKS = {
         circle(ctx, Math.cos(t) * a * 0.82, Math.sin(t) * a * 0.82, a * 0.15, C[i % 2 ? 1 : 2]);
       }
     }
-    circle(ctx, 0, 0, a * 0.6, '#1f3a44');
+    circle(ctx, 0, 0, a * 0.6, rc.c('#3e5559'));
     if (o.variant !== 'open') {
-      ctx.fillStyle = LS_COLORS.roof[1];
+      ctx.fillStyle = rc.P.roof[1];
       ctx.fillRect(-a * 1.05, -a * 0.55, a * 1.05, a * 1.1);
-      ctx.fillStyle = LS_COLORS.roof[2];
+      ctx.fillStyle = rc.P.roof[2];
       ctx.fillRect(0, -a * 0.55, a * 1.05, a * 1.1);
       ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = rc.px(1);
       ctx.beginPath(); ctx.moveTo(0, -a * 0.55); ctx.lineTo(0, a * 0.55); ctx.stroke();
     } else {
-      ctx.fillStyle = LS_COLORS.wood[1]; ctx.fillRect(-a * 1.1, -60, a * 2.2, 120);
+      ctx.fillStyle = rc.P.wood[1]; ctx.fillRect(-a * 1.1, -60, a * 2.2, 120);
     }
   },
   septic(ctx, o, a, b, C, rc) {
     ctx.beginPath(); ellipse(ctx, 0, 0, a, b);
-    ctx.fillStyle = 'rgba(127,127,121,0.18)'; ctx.fill();
-    ctx.setLineDash([300, 200]);
-    edge(ctx, C[2], Math.max(rc.px(1.2), 50));
+    ctx.fillStyle = 'rgba(127,127,121,0.12)'; ctx.fill();
+    ctx.setLineDash([rc.px(5), rc.px(3)]);
+    ink(ctx, rc, 0.8, 0.8);
     ctx.setLineDash([]);
     circle(ctx, 0, 0, Math.min(a, b) * 0.3, C[1]);
     if (rc.lod >= 6) {
-      ctx.fillStyle = '#4a4f57';
+      ctx.fillStyle = rc.c('#4a4f57');
       ctx.font = `600 ${Math.round(a * 0.4)}px system-ui, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('С', 0, 0);
@@ -1018,14 +1412,14 @@ const LOOKS = {
       ctx.save(); ctx.translate(sx * a * 0.5, 0);
       ctx.fillStyle = 'rgba(0,0,0,0.18)';
       ctx.beginPath(); rrect(ctx, -lw + 60, -b + 80, lw * 2, b * 2, 90); ctx.fill();
-      ctx.fillStyle = o.variant === 'teak' ? C[0] : '#f6f3ec';
+      ctx.fillStyle = o.variant === 'teak' ? C[0] : rc.c('#f6f3ec');
       ctx.beginPath(); rrect(ctx, -lw, -b, lw * 2, b * 2, 90); ctx.fill();
-      ctx.strokeStyle = 'rgba(80,70,60,0.45)'; ctx.lineWidth = Math.max(rc.px(0.7), 20); ctx.stroke();
-      ctx.fillStyle = o.variant === 'teak' ? C[2] : '#dcd3c2';
+      ink(ctx, rc, 0.55, 0.8);
+      ctx.fillStyle = o.variant === 'teak' ? C[2] : rc.c('#dcd3c2');
       ctx.beginPath(); rrect(ctx, -lw * 0.8, -b * 0.92, lw * 1.6, b * 0.3, 60); ctx.fill();
       ctx.restore();
     }
-    circle(ctx, 0, -b * 0.5, Math.min(220, a * 0.15), LS_COLORS.wood[0]);
+    circle(ctx, 0, -b * 0.5, Math.min(220, a * 0.15), rc.P.wood[0]);
   },
   bench(ctx, o, a, b, C, rc) {
     ctx.fillStyle = 'rgba(0,0,0,0.2)';
@@ -1036,8 +1430,10 @@ const LOOKS = {
     ctx.beginPath();
     for (let y = -b + b * 0.45 + b * 0.38; y < b; y += b * 0.38) { ctx.moveTo(-a, y); ctx.lineTo(a, y); }
     ctx.stroke();
-    ctx.fillStyle = LS_COLORS.metal[1];
+    ctx.fillStyle = rc.P.metal[1];
     ctx.fillRect(-a + 60, -b, 70, b * 2); ctx.fillRect(a - 130, -b, 70, b * 2);
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
+    ink(ctx, rc, 0.6, 0.85);
   },
   'table-set'(ctx, o, a, b, C, rc) {
     const chairS = Math.min(480, Math.min(a, b) * 0.28);
@@ -1063,16 +1459,20 @@ const LOOKS = {
     }
     circle(ctx, 70, 80, tr, 'rgba(0,0,0,0.2)');
     circle(ctx, 0, 0, tr, C[0]);
+    ctx.beginPath(); ctx.arc(0, 0, tr, 0, TAU); ink(ctx, rc, 0.6, 0.85);
     ctx.beginPath(); ctx.arc(0, 0, tr * 0.8, 0, TAU); edge(ctx, 'rgba(40,22,10,0.3)', 15);
   },
   lamp(ctx, o, a, b, C, rc) {
     const pole = o.variant === 'pole';
     const gr = Math.max(a * (pole ? 7 : 4), 900);
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
-    g.addColorStop(0, 'rgba(255,214,120,0.5)'); g.addColorStop(1, 'rgba(255,214,120,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ellipse(ctx, 0, 0, gr, gr); ctx.fill();
+    if (!rc.mono) {
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
+      g.addColorStop(0, 'rgba(240,224,180,0.35)'); g.addColorStop(1, 'rgba(240,224,180,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ellipse(ctx, 0, 0, gr, gr); ctx.fill();
+    }
     circle(ctx, 0, 0, a, C[1]);
-    circle(ctx, 0, 0, a * 0.6, LS_COLORS.fire[2]);
+    ctx.beginPath(); ellipse(ctx, 0, 0, a, a); ink(ctx, rc, 0.6, 0.85);
+    circle(ctx, 0, 0, a * 0.6, rc.P.fire[2]);
     if (pole) {
       ctx.strokeStyle = C[1]; ctx.lineWidth = a * 0.25;
       ctx.beginPath(); ctx.moveTo(-a * 2, 0); ctx.lineTo(a * 2, 0); ctx.stroke();
@@ -1186,17 +1586,18 @@ const SHAPE_LOOKS = {
     const total = polylineLength(path);
     const ribbon = ribbonOutline(path, width);
     if (o.variant === 'stepping') {
+      // Плиты-ступени: светло-серые прямоугольники с тонкой тёмной обводкой.
       for (const sl of steppingSlabs(o)) {
         ctx.save();
         ctx.translate(sl.x, sl.y);
         ctx.rotate(sl.angle);
-        if (rc.lod >= 4) {
-          ctx.fillStyle = 'rgba(20,30,15,0.22)';
-          ctx.beginPath(); rrect(ctx, -sl.along / 2 + 40, -sl.across / 2 + 50, sl.along, sl.across, 50); ctx.fill();
+        if (rc.lod >= 4 && !rc.mono) {
+          ctx.fillStyle = rgba(rc.pal.shadow, 0.16);
+          ctx.beginPath(); rrect(ctx, -sl.along / 2 + 40, -sl.across / 2 + 50, sl.along, sl.across, 40); ctx.fill();
         }
-        ctx.fillStyle = sl.tone > 0.66 ? C[2] : sl.tone > 0.33 ? C[0] : C[1];
-        ctx.beginPath(); rrect(ctx, -sl.along / 2, -sl.across / 2, sl.along, sl.across, 50); ctx.fill();
-        if (rc.lod >= 6) edge(ctx, 'rgba(70,64,56,0.45)', Math.max(rc.px(0.7), 14));
+        ctx.fillStyle = rc.mono ? rc.pal.paper : sl.tone > 0.66 ? C[2] : sl.tone > 0.33 ? C[0] : C[1];
+        ctx.beginPath(); rrect(ctx, -sl.along / 2, -sl.across / 2, sl.along, sl.across, 40); ctx.fill();
+        ink(ctx, rc, 0.6, 0.85);
         ctx.restore();
       }
       return;
@@ -1208,44 +1609,35 @@ const SHAPE_LOOKS = {
     ctx.clip();
     const rand = rc.rand;
     if (o.variant === 'gravel') {
-      if (rc.lod >= 8) {
-        const grain = Math.max(rc.px(1.2), 22);
-        const count = Math.min(4000, Math.round((total * width) / (grain * grain * 9)));
-        for (let i = 0; i < count; i += 1) {
-          const p = pointAlong(path, rand() * total);
-          const off = (rand() - 0.5) * width;
-          ctx.fillStyle = i % 3 === 0 ? C[1] : C[2];
-          ctx.globalAlpha = 0.55 + rand() * 0.45;
-          ctx.fillRect(p.x - Math.sin(p.angle) * off, p.y + Math.cos(p.angle) * off, grain, grain);
-        }
-        ctx.globalAlpha = 1;
-      }
+      tracePath(ctx, ribbon, true);
+      if (rc.lod >= 4) fillGrain(ctx, rc, 'gravel');
     } else {
       // Поперечные полосы: доски (145), брусчатка (200), швы бетона (2000).
       const step = o.variant === 'deck' ? 145 : o.variant === 'pavers' ? 200 : 2000;
       const concrete = o.variant === 'concrete';
-      if (rc.lod >= (concrete ? 2 : 6)) {
+      const stepPx = (step * rc.lod) / 1000;
+      if (stepPx >= (concrete ? 4 : 1.6)) {
         let prev = crossAt(path, 0, hw * 1.2);
+        const tone = !concrete && !rc.mono && stepPx >= 2.5;
+        const lines = stepPx >= (concrete ? 4 : 3.5);
+        ctx.strokeStyle = seam(rc, o.variant === 'deck' ? 0.26 : 0.2);
+        ctx.lineWidth = rc.px(0.45);
         for (let s = step; s < total + step; s += step) {
           const cur = crossAt(path, Math.min(s, total), hw * 1.2);
-          if (!concrete && rc.lod >= 9) {
+          if (tone) {
             ctx.fillStyle = rand() > 0.6 ? C[2] : C[1];
-            ctx.globalAlpha = o.variant === 'deck' ? 0.5 : 0.28;
+            ctx.globalAlpha = o.variant === 'deck' ? 0.55 : 0.3;
             ctx.beginPath(); ctx.moveTo(prev[0].x, prev[0].y); ctx.lineTo(cur[0].x, cur[0].y);
             ctx.lineTo(cur[1].x, cur[1].y); ctx.lineTo(prev[1].x, prev[1].y); ctx.closePath(); ctx.fill();
             ctx.globalAlpha = 1;
           }
-          if (rc.lod >= (concrete ? 2 : 10)) {
-            ctx.strokeStyle = o.variant === 'deck' ? 'rgba(40,24,12,0.4)' : 'rgba(60,56,50,0.35)';
-            ctx.lineWidth = Math.max(rc.px(0.6), concrete ? 20 : 10);
+          if (lines) {
             ctx.beginPath(); ctx.moveTo(cur[0].x, cur[0].y); ctx.lineTo(cur[1].x, cur[1].y); ctx.stroke();
           }
           prev = cur;
         }
-        if (o.variant === 'pavers' && rc.lod >= 10) {
+        if (o.variant === 'pavers' && stepPx >= 3.5) {
           // Продольные швы брусчатки.
-          ctx.strokeStyle = 'rgba(60,56,50,0.3)';
-          ctx.lineWidth = Math.max(rc.px(0.5), 10);
           for (const k of [-1 / 3, 1 / 3]) {
             const off = path.map((p, j) => {
               const a = path[Math.max(0, j - 1)]; const b = path[Math.min(path.length - 1, j + 1)];
@@ -1258,110 +1650,105 @@ const SHAPE_LOOKS = {
       }
     }
     ctx.restore();
-    // Бордюр/кромка.
+    // Кромка — тонкая линия.
     tracePath(ctx, ribbon, true);
-    const curb = o.variant === 'deck' ? C[1] : o.variant === 'gravel' ? 'rgba(70,70,70,0.6)' : 'rgba(90,84,74,0.65)';
-    edge(ctx, curb, Math.max(rc.px(1), o.variant === 'deck' ? 70 : o.variant === 'gravel' ? 25 : 60));
+    ink(ctx, rc, 0.7, o.variant === 'gravel' ? 0.55 : 0.8);
   },
   'fence-line'(ctx, o, path, C, rc) {
     if (o.variant === 'hedge') { SHAPE_LOOKS['hedge-line'](ctx, { ...o, width: Math.max(o.width || 0, 600) }, path, C, rc); return; }
     const width = o.width || 150;
     const total = polylineLength(path);
     ctx.lineJoin = 'miter';
-    tracePath(ctx, path, false);
     if (o.variant === 'mesh') {
-      ctx.strokeStyle = C[0];
-      ctx.lineWidth = Math.max(rc.px(1.2), Math.min(width, 50));
+      tracePath(ctx, path, false);
+      ctx.strokeStyle = rc.ink;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = rc.px(0.8);
+      ctx.setLineDash([rc.px(6), rc.px(3)]);
       ctx.stroke();
-      if (rc.lod >= 8) {
-        ctx.setLineDash([60, 60]);
-        ctx.strokeStyle = C[2];
-        ctx.lineWidth = Math.max(rc.px(0.8), 20);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
     } else {
-      ctx.strokeStyle = C[0];
-      ctx.lineWidth = Math.max(rc.px(1.5), width);
-      ctx.stroke();
-      if (rc.lod >= 8) {
-        ctx.strokeStyle = 'rgba(30,20,10,0.4)';
-        ctx.lineWidth = Math.max(rc.px(0.5), 10);
+      // Штакетник: полоса цвета дерева с двойным контуром.
+      const ribbon = ribbonOutline(path, Math.max(width, rc.px(2.5)));
+      tracePath(ctx, ribbon, true);
+      ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+      ctx.fill();
+      ink(ctx, rc, 0.6, 0.9);
+      if ((120 * rc.lod) / 1000 >= 3) {
+        ctx.save();
+        tracePath(ctx, ribbon, true);
+        ctx.clip();
+        ctx.strokeStyle = seam(rc, 0.3);
+        ctx.lineWidth = rc.px(0.4);
         ctx.beginPath();
         for (let s = 60; s < total; s += 120) {
-          const [a, b] = crossAt(path, s, width / 2);
+          const [a, b] = crossAt(path, s, width);
           ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         }
         ctx.stroke();
+        ctx.restore();
       }
     }
     // Столбы через ~2,5 м.
-    const post = Math.max(width * 1.4, 100);
+    const post = Math.max(width * 1.4, 100, rc.px(2.5));
     const n = Math.max(1, Math.round(total / 2500));
-    ctx.fillStyle = C[1];
     for (let i = 0; i <= n; i += 1) {
       const p = pointAlong(path, (total * i) / n);
-      if (o.variant === 'mesh') circle(ctx, p.x, p.y, post / 2, C[1]);
-      else ctx.fillRect(p.x - post / 2, p.y - post / 2, post, post);
+      ctx.beginPath();
+      if (o.variant === 'mesh') ellipse(ctx, p.x, p.y, post / 2, post / 2);
+      else ctx.rect(p.x - post / 2, p.y - post / 2, post, post);
+      ctx.fillStyle = rc.mono ? rc.ink : C[1];
+      ctx.fill();
+      ink(ctx, rc, 0.5, 0.9);
     }
   },
   'hedge-line'(ctx, o, path, C, rc) {
     const width = o.width || 800;
     const b = width / 2;
     const total = polylineLength(path);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    tracePath(ctx, path, false);
-    ctx.strokeStyle = C[0];
-    ctx.lineWidth = width;
-    ctx.stroke();
-    if (rc.lod >= 4) {
-      const step = b * 1.1;
-      const trim = o.variant !== 'free';
-      for (let s = 0; s <= total; s += step) {
-        const p = pointAlong(path, s);
-        const off = (rc.rand() - 0.5) * b * 0.3;
-        circle(ctx, p.x - Math.sin(p.angle) * off, p.y + Math.cos(p.angle) * off, b * (trim ? 0.7 : 0.95), C[1]);
-      }
+    const trim = o.variant !== 'free';
+    if (b * rc.k < 2.5) {
+      // Далеко: просто полоса.
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       tracePath(ctx, path, false);
-      ctx.strokeStyle = C[2];
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = width * 0.3;
+      ctx.strokeStyle = rc.mono ? rc.ink : C[1];
+      ctx.lineWidth = Math.max(width, rc.px(1));
       ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.lineCap = 'butt';
+      return;
     }
-    ctx.lineCap = 'butt';
+    const step = b * (trim ? 1.05 : 1.15);
+    const pts = [];
+    const R = seededRandom(`${o.id}:hedge`);
+    for (let s = 0; s <= total + 1; s += step) {
+      const p = pointAlong(path, Math.min(s, total));
+      const off = trim ? 0 : (R() - 0.5) * b * 0.3;
+      pts.push({ x: p.x - Math.sin(p.angle) * off, y: p.y + Math.cos(p.angle) * off });
+    }
+    cloudRow(ctx, pts, b, C, rc, trim);
   },
   'lawn-area'(ctx, o, pts, C, rc) {
     tracePath(ctx, pts, true);
-    ctx.fillStyle = C[0];
+    ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
     ctx.fill();
-    ctx.save();
-    ctx.clip();
-    const box = boxOf(pts);
-    if (o.variant === 'mown' && rc.lod >= 3) {
+    if (rc.lod >= 2) fillGrain(ctx, rc, 'grain');
+    if (!rc.mono && o.variant === 'mown' && rc.lod >= 3) {
+      ctx.save();
+      ctx.clip();
       alignedFill(ctx, pts, (c, x, y, w, h) => {
-        c.fillStyle = 'rgba(255,255,255,0.08)';
+        c.fillStyle = 'rgba(255,255,255,0.06)';
         for (let xx = x; xx < x + w; xx += 1600) c.fillRect(xx, y, 800, h);
       });
+      ctx.restore();
     }
-    if (rc.lod >= 6) {
-      // Лёгкая текстура травы/мха: пятна тона.
-      const moss = o.variant === 'moss';
-      const n = Math.min(900, Math.round((box.w * box.h) / (moss ? 5e5 : 1.2e6)));
-      for (let i = 0; i < n; i += 1) {
-        ctx.globalAlpha = moss ? 0.5 : 0.25;
-        circle(ctx, box.x + rc.rand() * box.w, box.y + rc.rand() * box.h, (moss ? 250 : 160) + rc.rand() * 300, rc.rand() > 0.5 ? C[1] : C[2]);
-      }
-      ctx.globalAlpha = 1;
+    if (o.variant === 'moss' && rc.lod >= 4) {
+      tracePath(ctx, pts, true);
+      fillGrain(ctx, rc, 'grain', 0.8);
     }
-    if (o.variant === 'meadow' && rc.lod >= 8) {
-      const n = Math.min(500, (box.w * box.h) / 2e5);
-      for (let i = 0; i < n; i += 1) circle(ctx, box.x + rc.rand() * box.w, box.y + rc.rand() * box.h, 40, LS_COLORS.flowers[Math.floor(rc.rand() * 4)]);
-    }
-    ctx.restore();
+    if (o.variant === 'meadow' && rc.lod >= 8) meadowDots(ctx, rc, () => tracePath(ctx, pts, true));
     tracePath(ctx, pts, true);
-    edge(ctx, C[2], rc.px(1));
+    if (rc.mono) ink(ctx, rc, 0.5, 0.6); else edge(ctx, rgba(C[2], 0.8), rc.px(0.6));
   },
   'area-paving'(ctx, o, pts, C, rc) {
     tracePath(ctx, pts, true);
@@ -1372,17 +1759,20 @@ const SHAPE_LOOKS = {
     alignedFill(ctx, pts, (c, x, y, w, h) => tiles(c, x, y, w, h, module, C, rc, o.variant === 'concrete' ? null : rc.rand));
     ctx.restore();
     tracePath(ctx, pts, true);
-    edge(ctx, 'rgba(90,84,74,0.7)', Math.max(rc.px(1), 80));
+    ink(ctx, rc, 0.8, 0.85);
   },
   'area-gravel'(ctx, o, pts, C, rc) {
     tracePath(ctx, pts, true);
-    ctx.save(); ctx.clip();
-    const b = boxOf(pts);
-    gravel(ctx, b.x, b.y, b.w, b.h, C, rc.rand, rc);
+    ctx.fillStyle = C[0];
+    ctx.fill();
+    if (rc.lod >= 4) fillGrain(ctx, rc, 'gravel');
     if (o.variant === 'white' && rc.lod >= 5) {
       // Японский гравий: следы грабель — волны вдоль длинной стороны.
-      ctx.strokeStyle = 'rgba(120,112,98,0.35)';
-      ctx.lineWidth = Math.max(rc.px(0.6), 18);
+      ctx.save();
+      tracePath(ctx, pts, true);
+      ctx.clip();
+      ctx.strokeStyle = seam(rc, 0.28);
+      ctx.lineWidth = rc.px(0.5);
       alignedFill(ctx, pts, (c, x, y, w, h) => {
         for (let yy = y + 150; yy < y + h; yy += 220) {
           c.beginPath();
@@ -1393,10 +1783,10 @@ const SHAPE_LOOKS = {
           c.stroke();
         }
       });
+      ctx.restore();
     }
-    ctx.restore();
     tracePath(ctx, pts, true);
-    edge(ctx, 'rgba(70,70,70,0.55)', Math.max(rc.px(0.8), 25));
+    ink(ctx, rc, 0.6, 0.55);
   },
   'area-deck'(ctx, o, pts, C, rc) {
     tracePath(ctx, pts, true);
@@ -1405,7 +1795,7 @@ const SHAPE_LOOKS = {
     alignedFill(ctx, pts, (c, x, y, w, h) => boards(c, x, y, w, h, C, rc.rand, rc));
     ctx.restore();
     tracePath(ctx, pts, true);
-    edge(ctx, C[1], Math.max(rc.px(1.2), 90));
+    ink(ctx, rc, 0.8, 0.85);
   },
   'area-pond'(ctx, o, pts, C, rc) {
     const c = centroid(pts);
@@ -1413,83 +1803,83 @@ const SHAPE_LOOKS = {
     const r = Math.max(b.w, b.h) / 2;
     tracePath(ctx, pts, true);
     const g = ctx.createRadialGradient(c.x - r * 0.2, c.y - r * 0.2, 0, c.x, c.y, r);
-    g.addColorStop(0, C[0]); g.addColorStop(0.7, C[1]); g.addColorStop(1, '#24525a');
-    ctx.fillStyle = g;
-    ctx.fill();
-    if (rc.lod < 5) { edge(ctx, LS_COLORS.stone[2], rc.px(1)); return; }
-    ctx.save();
-    ctx.clip();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = Math.max(rc.px(0.9), 40);
-    ctx.beginPath(); ctx.ellipse(c.x - b.w * 0.1, c.y - b.h * 0.12, b.w * 0.25, b.h * 0.16, 0, Math.PI * 1.1, Math.PI * 1.6); ctx.stroke();
+    g.addColorStop(0, C[2]); g.addColorStop(0.6, C[0]); g.addColorStop(1, C[1]);
+    waterFill(ctx, rc, rc.mono ? C[0] : g);
+    tracePath(ctx, pts, true);
+    waterEdge(ctx, rc, C);
+    if (rc.lod < 5) return;
     if (o.variant !== 'mirror' && rc.lod >= 6) {
-      let placed = 0;
-      for (let i = 0; i < 40 && placed < 8; i += 1) {
+      const lily = [];
+      for (let i = 0; i < 40 && lily.length < 8; i += 1) {
         const x = b.x + rc.rand() * b.w; const y = b.y + rc.rand() * b.h;
-        if (!pointInPolygon({ x, y }, pts)) continue;
-        placed += 1;
-        const lr = 160 + rc.rand() * 120; const t = rc.rand() * TAU;
-        ctx.fillStyle = '#5f9e4a';
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, lr, t + 0.35, t + TAU - 0.35); ctx.closePath(); ctx.fill();
-        if (placed % 2) circle(ctx, x, y, lr * 0.32, '#f2a7c3');
+        if (pointInPolygon({ x, y }, pts)) lily.push({ x, y });
       }
+      ctx.save();
+      tracePath(ctx, pts, true);
+      ctx.clip();
+      lilies(ctx, rc, lily);
+      ctx.restore();
     }
-    ctx.restore();
     // Берег из камней по контуру.
     const closed = [...pts, pts[0]];
     const total = polylineLength(closed);
     const n = Math.max(10, Math.round(total / 360));
     for (let i = 0; i < n; i += 1) {
       const p = pointAlong(closed, (total * i) / n);
-      circle(ctx, p.x, p.y, 120 + rc.rand() * 150, LS_COLORS.stone[i % 3]);
+      pebble(ctx, rc, p.x, p.y, 120 + rc.rand() * 150, rc.P.stone[i % 3]);
     }
   },
   'area-pool'(ctx, o, pts, C, rc) {
     const coping = 350;
     ctx.lineJoin = 'miter';
     tracePath(ctx, pts, true);
-    ctx.strokeStyle = LS_COLORS.coping[0];
+    // Внешний край каймы — тонкий контур (кайма ляжет сверху).
+    ctx.strokeStyle = rgba(rc.ink, 0.75);
+    ctx.lineWidth = coping * 2 + rc.px(0.7) * 2;
+    ctx.stroke();
+    ctx.strokeStyle = rc.P.coping[0];
     ctx.lineWidth = coping * 2;
     ctx.stroke();
     if (rc.lod >= 8) {
       // Швы плитки каймы.
-      ctx.strokeStyle = 'rgba(120,110,95,0.3)';
+      ctx.strokeStyle = seam(rc, 0.25);
       ctx.setLineDash([12, 588]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
     const b = boxOf(pts);
     const g = ctx.createLinearGradient(b.x, b.y, b.x + b.w * 0.3, b.y + b.h);
-    g.addColorStop(0, C[2]); g.addColorStop(0.35, C[0]); g.addColorStop(1, C[1]);
+    g.addColorStop(0, C[2]); g.addColorStop(0.4, C[0]); g.addColorStop(1, C[1]);
     tracePath(ctx, pts, true);
-    ctx.fillStyle = g;
-    ctx.fill();
-    edge(ctx, 'rgba(20,80,120,0.55)', Math.max(rc.px(1), 40));
-    if (rc.lod >= 5) {
-      ctx.save(); ctx.clip();
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = Math.max(rc.px(0.8), 30);
-      for (let y = b.y + 350; y < b.y + b.h; y += 600) {
-        ctx.beginPath();
-        for (let x = b.x; x <= b.x + b.w; x += 150) {
-          const yy = y + Math.sin(x / 260 + y) * 70 + Math.sin(x / 90) * 25;
-          if (x === b.x) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
-        }
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
+    waterFill(ctx, rc, rc.mono ? C[0] : g);
+    tracePath(ctx, pts, true);
+    waterEdge(ctx, rc, C);
   },
 };
+
+// Общая часть контекста рисования: стиль, палитра, плотность пикселей.
+// opts: { px, lod, shadow, style?, dark?, pal?, dpr? }.
+function baseContext(opts) {
+  const pal = opts.pal || lsPalette(opts.style || 'sketch', Boolean(opts.dark));
+  const dpr = opts.dpr || globalThis.devicePixelRatio || 1;
+  return {
+    px: opts.px, lod: opts.lod, pal, P: pal.P, c: pal.c, ink: pal.ink, mono: pal.mono, dpr,
+    k: (opts.lod / 1000) * dpr, // device px на мм
+  };
+}
 
 function drawShapeObject(ctx, o, def, opts) {
   const look = SHAPE_LOOKS[def.look] || SHAPE_LOOKS[def.shape === 'line' ? 'path' : 'area-paving'];
   const pts = objectPath(o);
   if (pts.length < 2) return;
-  const rc = { px: opts.px, lod: opts.lod, rand: seededRandom(o.id), light: { x: -Math.SQRT1_2, y: -Math.SQRT1_2 } };
+  const base = baseContext(opts);
+  const lightWorld = opts.shadow ? { x: -opts.shadow.x, y: -opts.shadow.y } : { x: -Math.SQRT1_2, y: -Math.SQRT1_2 };
+  const rc = { ...base, rand: seededRandom(o.id), light: lightWorld };
   ctx.save();
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
   try {
-    look(ctx, o, pts, objectColors(o, def), rc);
+    look(ctx, o, pts, objectColors(o, def).map(base.c), rc);
   } finally {
     ctx.restore();
   }
@@ -1498,7 +1888,7 @@ function drawShapeObject(ctx, o, def, opts) {
 // Силуэт для тени (локальные оси объекта).
 function silhouette(ctx, o, def, a, b) {
   ctx.beginPath();
-  if (def.look === 'pine' || def.look === 'spruce') starPath(ctx, a, b, 16, 0.85);
+  if (def.look === 'pine' || def.look === 'spruce') starPath(ctx, a, b, 16, 0.88);
   else if (def.look === 'lamp' || def.look === 'grass') ellipse(ctx, 0, 0, a * 0.6, b * 0.6);
   else if (isRoundObject(o, def) || def.shape === 'point') ellipse(ctx, 0, 0, a, b);
   else if (def.look === 'fence' || def.look === 'gate') ctx.rect(-a, -Math.max(b, 60), a * 2, Math.max(b, 60) * 2);
@@ -1526,22 +1916,25 @@ export function landscapeShadow(site) {
 }
 
 function shadowOffset(height, shadow) {
-  const len = Math.min(4500, Math.max(120, height * shadow.k));
+  const len = Math.min(5000, Math.max(120, height * shadow.k));
   return { x: shadow.x * len, y: shadow.y * len };
 }
 
-// Мягкая тень: силуэт несколько раз с растущим размером и малой плотностью.
-function drawShadow(ctx, o, def, shadow) {
+// Мягкая длинная тень: силуэт, протянутый по направлению от солнца, с
+// размытием — спрайт в кеше; серо-зелёная, полупрозрачная. В «Чертеже» — нет.
+function drawShadow(ctx, o, def, shadow, rc) {
+  if (rc.mono) return;
   const off = shadowOffset(o.height || def.height, shadow);
+  const color = rc.pal.shadow;
   if (def.shape === 'line') {
     // Линия (изгородь, забор): тень — сдвинутая ось той же толщины.
     const path = objectPath(o);
     ctx.save();
-    ctx.translate(off.x * 0.6, off.y * 0.6);
-    ctx.strokeStyle = 'rgb(18,32,18)';
+    ctx.translate(off.x * 0.5, off.y * 0.5);
+    ctx.strokeStyle = color;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    for (const [k, alpha] of [[1.6, 0.06], [1.2, 0.09]]) {
+    for (const [k, alpha] of [[1.6, 0.05], [1.15, 0.08]]) {
       ctx.globalAlpha = alpha;
       ctx.lineWidth = Math.max(o.width || def.h, 120) * k;
       ctx.beginPath();
@@ -1551,15 +1944,43 @@ function drawShadow(ctx, o, def, shadow) {
     ctx.restore();
     return;
   }
-  ctx.save();
-  ctx.translate(o.x + off.x, o.y + off.y);
-  ctx.rotate(((o.rotation || 0) * Math.PI) / 180);
-  ctx.fillStyle = 'rgb(18,32,18)';
-  for (const [k, alpha] of [[1.1, 0.06], [1.02, 0.08], [0.94, 0.1]]) {
-    ctx.globalAlpha = alpha;
-    silhouette(ctx, o, def, (o.w / 2) * k, (o.h / 2) * k);
+  const a = o.w / 2; const b = o.h / 2;
+  const A = Math.max(a, b);
+  const dev = 2 * A * rc.k;
+  const rot = ((o.rotation || 0) * Math.PI) / 180;
+  if (dev < 6 || typeof document === 'undefined') {
+    ctx.save();
+    ctx.translate(o.x + off.x * 0.6, o.y + off.y * 0.6);
+    ctx.rotate(rot);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.14;
+    silhouette(ctx, o, def, a, b);
     ctx.fill();
+    ctx.restore();
+    return;
   }
+  const round = isRoundObject(o, def) || def.shape === 'point';
+  const { b: bk, px: bpx } = sizeBucket(dev);
+  const sk = bpx / (2 * A);
+  const len = Math.hypot(off.x, off.y) * sk;
+  const ang = Math.atan2(off.y, off.x);
+  const angQ = Math.round(ang / (Math.PI / 30)) * (Math.PI / 30);
+  const lenQ = Math.max(1, Math.round(Math.log(Math.max(len, 1)) / Math.log(1.15)));
+  const lenPx = 1.15 ** lenQ;
+  const rotQ = round ? 0 : Math.round(rot / (Math.PI / 36)) * (Math.PI / 36);
+  const aspect = Math.round((b / a) * 20) / 20;
+  const key = `sh|${def.look}|${round ? 'r' : 'q'}|${aspect}|${bk}|${angQ.toFixed(3)}|${lenQ}|${rotQ.toFixed(3)}|${rc.pal.dark ? 1 : 0}`;
+  const offPx = { x: Math.cos(angQ) * lenPx, y: Math.sin(angQ) * lenPx };
+  const diag = 2 * Math.hypot(a, b) * sk * 1.05;
+  const sp = shadowSprite(key, round ? 2 * a * sk * 1.1 : diag, round ? 2 * b * sk * 1.1 : diag, offPx, color, (g) => {
+    g.rotate(rotQ);
+    g.scale(sk, sk);
+    silhouette(g, o, def, a * 0.96, b * 0.96);
+  });
+  if (!sp) return;
+  ctx.save();
+  ctx.globalAlpha *= 0.26;
+  ctx.drawImage(sp.cv, o.x - sp.ox / sk, o.y - sp.oy / sk, sp.cv.width / sk, sp.cv.height / sk);
   ctx.restore();
 }
 
@@ -1568,12 +1989,56 @@ function renderContext(o, opts) {
   const rot = (x, y) => ({ x: x * Math.cos(a) - y * Math.sin(a), y: x * Math.sin(a) + y * Math.cos(a) });
   const lightWorld = opts.shadow ? { x: -opts.shadow.x, y: -opts.shadow.y } : { x: -Math.SQRT1_2, y: -Math.SQRT1_2 };
   return {
-    px: opts.px,
-    lod: opts.lod,
+    ...baseContext(opts),
     rand: seededRandom(o.id),
     light: rot(lightWorld.x, lightWorld.y),
     shadowLocal: rot(-lightWorld.x, -lightWorld.y),
   };
+}
+
+// Растения сверху — спрайты: крона рисуется один раз на (вид, вариант,
+// размер в px, вариант рисунка, стиль, тема) и ставится drawImage.
+// Рисунок ветвей — 4 варианта по id, поворот — свой у каждого дерева.
+const SPRITE_LOOKS = new Set(['deciduous', 'fruit', 'pine', 'spruce', 'thuja', 'bonsai', 'ball', 'shrub', 'juniper', 'grass']);
+const hasSprites = typeof document !== 'undefined' || typeof OffscreenCanvas !== 'undefined';
+
+function drawPlant(ctx, o, def, C, rc) {
+  const look = LOOKS[def.look];
+  const a = o.w / 2; const b = o.h / 2;
+  const A = Math.max(a, b);
+  const dev = 2 * A * rc.k;
+  if (dev < 6) {
+    // Далеко: простое пятно.
+    ctx.beginPath(); ellipse(ctx, 0, 0, a, b);
+    ctx.fillStyle = rc.mono ? rc.pal.paper : C[1];
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * (rc.mono ? 1 : 0.85);
+    ctx.fill();
+    ctx.globalAlpha = prev;
+    if (rc.mono || dev >= 3) ink(ctx, rc, 0.5, 0.7);
+    return;
+  }
+  const h = hashStr(o.id);
+  const seed = h % 4;
+  const round = Math.abs(a - b) < 1;
+  const { b: bk, px: bpx } = sizeBucket(dev);
+  const aspect = round ? 1 : Math.round((b / a) * 20) / 20;
+  const key = `p|${def.look}|${o.kind}|${o.variant}|${C.join(',')}|${aspect}|${bk}|${seed}|${rc.pal.style}${rc.pal.dark ? 1 : 0}`;
+  const sk = bpx / (2 * A); // device px на мм в спрайте
+  const W = 2 * a * sk * 1.16 + 6;
+  const H = 2 * b * sk * 1.16 + 6;
+  const cv = hasSprites ? cachedSprite(key, W, H, (g, w, hh) => {
+    g.translate(w / 2, hh / 2);
+    g.scale(sk, sk);
+    const src = {
+      ...rc, px: (v) => (v * rc.dpr) / sk, dpx: bpx / rc.dpr, seed,
+      rand: seededRandom(`${def.look}:${o.kind}:${o.variant}:${seed}`), light: { x: -Math.SQRT1_2, y: -Math.SQRT1_2 },
+    };
+    look(g, o, a, b, C, src);
+  }) : null;
+  if (!cv) { look(ctx, o, a, b, C, { ...rc, seed }); return; }
+  if (round) ctx.rotate((((h >>> 8) % 360) * Math.PI) / 180);
+  ctx.drawImage(cv, -cv.width / 2 / sk, -cv.height / 2 / sk, cv.width / sk, cv.height / sk);
 }
 
 export function drawLandscapeObject(ctx, o, opts) {
@@ -1581,11 +2046,16 @@ export function drawLandscapeObject(ctx, o, opts) {
   if (!def) return;
   if (isPathShape(def)) { drawShapeObject(ctx, o, def, opts); return; }
   const look = LOOKS[def.look] || LOOKS.pad;
+  const rc = renderContext(o, opts);
+  const C = objectColors(o, def).map(rc.c);
   ctx.save();
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
   ctx.translate(o.x, o.y);
   ctx.rotate(((o.rotation || 0) * Math.PI) / 180);
   try {
-    look(ctx, o, o.w / 2, o.h / 2, objectColors(o, def), renderContext(o, opts));
+    if (SPRITE_LOOKS.has(def.look) && opts.sprites !== false) drawPlant(ctx, o, def, C, rc);
+    else look(ctx, o, o.w / 2, o.h / 2, C, rc);
   } finally {
     ctx.restore();
   }
@@ -1606,33 +2076,56 @@ export function visibleLandscape(objects, vis) {
   return objects.filter((o) => vis[landscapeDef(o.kind)?.vis] !== false);
 }
 
-// Покрытия — до дома; opts: { px, lod, shadow }.
+// Газон-основа участка («Эскиз» — светлая зелень с зерном; «Чертёж» —
+// редкий пунктир). Полупрозрачно: подложка-съёмка остаётся видна.
+export function drawLandscapeSiteBase(ctx, boundary, opts) {
+  if (!boundary || boundary.length < 3) return;
+  const rc = baseContext(opts);
+  ctx.save();
+  ctx.beginPath();
+  boundary.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.globalAlpha = rc.mono ? 0.8 : 0.72;
+  ctx.fillStyle = rc.pal.ground;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  if (rc.lod >= 2) fillGrain(ctx, rc, 'grain', rc.mono ? 0.7 : 1);
+  ctx.restore();
+}
+
+// Покрытия — до дома; opts: { px, lod, shadow, style, dark }.
 export function drawLandscapeGround(ctx, objects, opts) {
   for (const o of layerObjects(objects, 'ground')) drawLandscapeObject(ctx, o, opts);
 }
 
 // Тень дома на землю — до заливки пятна дома (render.js), иначе ляжет на крышу.
+// Протянута от стены (несколько сдвигов одним путём), серо-зелёная.
 export function drawHouseShadow(ctx, footprints, opts, height = 6000) {
-  if (!footprints.length || opts.lod < 1.5) return;
+  const rc = baseContext(opts);
+  if (!footprints.length || opts.lod < 1.5 || rc.mono) return;
   const off = shadowOffset(height, opts.shadow);
   ctx.save();
-  ctx.fillStyle = 'rgb(18,32,18)';
-  ctx.globalAlpha = 0.14;
+  ctx.fillStyle = rc.pal.shadow;
+  ctx.globalAlpha = 0.16;
   ctx.beginPath();
-  for (const f of footprints) {
-    f.forEach((p, i) => (i ? ctx.lineTo(p.x + off.x, p.y + off.y) : ctx.moveTo(p.x + off.x, p.y + off.y)));
-    ctx.closePath();
+  for (let i = 1; i <= 10; i += 1) {
+    const t = i / 10;
+    for (const f of footprints) {
+      f.forEach((p, i) => (i ? ctx.lineTo(p.x + off.x * t, p.y + off.y * t) : ctx.moveTo(p.x + off.x * t, p.y + off.y * t)));
+      ctx.closePath();
+    }
   }
-  ctx.fill(); // одним путём: перекрытия комнат не темнеют дважды
+  ctx.fill('nonzero'); // одним путём: перекрытия не темнеют дважды
   ctx.restore();
 }
 
 // Тени объектов, низкие объекты, кроны — после дома.
 export function drawLandscapeRaised(ctx, objects, opts) {
   if (opts.lod >= 1.5 && !opts.noShadows) {
+    const rc = baseContext(opts);
     for (const o of objects) {
       const def = landscapeDef(o.kind);
-      if (def?.shadow) drawShadow(ctx, o, def, opts.shadow);
+      if (def?.shadow) drawShadow(ctx, o, def, opts.shadow, rc);
     }
   }
   for (const layer of ['low', 'tall']) {
@@ -1751,10 +2244,20 @@ export function shapeHandles(o, w2s) {
 
 const shortTitle = (def) => def.title.replace(/ \(.*\)$/, '');
 
+// Шрифт подписей: в «Эскизе» — аккуратный рукописный (системный), в
+// «Чертеже» — строгий.
+const HAND_FONT = "'Segoe Print', 'Bradley Hand', 'Noteworthy', 'Comic Neue', cursive";
+const PLAIN_FONT = 'system-ui, sans-serif';
+
 // Подписи позиций на плане (слой «Подписи»): площади и линии — название с
-// мерой, деревья — без подписи (их много).
-function drawLabels(ctx, objects, w2s, tokens) {
+// мерой, деревья — без подписи (их много). Текст с «ореолом» цвета холста.
+function drawLabels(ctx, objects, w2s, tokens, style) {
   ctx.save();
+  const hand = style !== 'drawing';
+  ctx.font = hand ? `12px ${HAND_FONT}` : `500 10.5px ${PLAIN_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
   for (const o of objects) {
     const def = landscapeDef(o.kind);
     if (!def || (def.group === 'Деревья' || def.group === 'Кустарники') && !isPathShape(def)) continue;
@@ -1767,55 +2270,87 @@ function drawLabels(ctx, objects, w2s, tokens) {
     const text = isPathShape(def)
       ? `${shortTitle(def)} · ${def.shape === 'line' ? `${fmtM(objectLengthM(o))} м` : `${fmtM(objectAreaM2(o))} м²`}`
       : shortTitle(def);
-    ctx.font = '600 10.5px system-ui, sans-serif';
-    const w = ctx.measureText(text).width + 10;
+    ctx.strokeStyle = tokens.surface;
     ctx.globalAlpha = 0.85;
-    ctx.fillStyle = tokens.surface;
-    ctx.beginPath(); rrect(ctx, at.x - w / 2, at.y - 8, w, 16, 8); ctx.fill();
+    ctx.lineWidth = 3.5;
+    ctx.strokeText(text, at.x, at.y + 0.5);
     ctx.globalAlpha = 1;
     ctx.fillStyle = tokens.text || tokens.muted;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     ctx.fillText(text, at.x, at.y + 0.5);
   }
   ctx.restore();
   ctx.textBaseline = 'alphabetic';
 }
 
-export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor, labels = false, vertex = null }) {
-  if (labels) drawLabels(ctx, objects, w2s, tokens);
-  const screenPath = (o, inflate = 0) => {
+// Значок замечания «!» — маленький янтарный кружок у угла объекта.
+function warnBadge(ctx, x, y, color, tokens) {
+  ctx.beginPath();
+  ctx.arc(x, y, 6, 0, TAU);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = tokens.surface;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `700 9px ${PLAIN_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('!', x, y + 0.5);
+  ctx.textBaseline = 'alphabetic';
+}
+
+function handle(ctx, p, tokens, active = false) {
+  ctx.fillStyle = active ? tokens.accent : '#ffffff';
+  ctx.strokeStyle = tokens.accent;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.rect(Math.round(p.x - HANDLE / 2) + 0.5, Math.round(p.y - HANDLE / 2) + 0.5, HANDLE, HANDLE); ctx.fill(); ctx.stroke();
+}
+
+// Экранный слой: замечания, наведение, выделение, ручки.
+// sel — массив id; warnings — Map id → [текст]. Замечания: у объекта —
+// маленький значок «!», янтарный пунктир — только у выделенного/наведённого.
+export function drawLandscapeOverlay(ctx, objects, {
+  sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor = '#d08a1e', labels = false, vertex = null, style = 'sketch',
+}) {
+  if (labels) drawLabels(ctx, objects, w2s, tokens, style);
+  const screenPts = (o, inflate = 0) => {
     const shape = isPathShape(landscapeDef(o.kind));
-    const pts = objectOutline(inflate && !shape ? { ...o, w: o.w + inflate * 2, h: o.h + inflate * 2 } : o).map((p) => w2s(p.x, p.y));
-    outlinePath(ctx, pts);
+    return objectOutline(inflate && !shape ? { ...o, w: o.w + inflate * 2, h: o.h + inflate * 2 } : o).map((p) => w2s(p.x, p.y));
   };
   const selected = new Set(sel);
+  ctx.save();
   for (const o of objects) {
     const notes = warnings.get(o.id);
-    if (notes?.length) {
-      const outside = notes.some((t) => t.startsWith('За границей'));
-      screenPath(o, 3 / scale);
-      ctx.strokeStyle = outside ? tokens.danger : warnColor;
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([6, 4]);
+    const focus = o.id === hoverId || selected.has(o.id);
+    if (o.id === hoverId && !selected.has(o.id)) {
+      outlinePath(ctx, screenPts(o));
+      ctx.strokeStyle = tokens.hover;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    if (!notes?.length) continue;
+    const pts = screenPts(o, 3 / scale);
+    if (focus) {
+      outlinePath(ctx, pts);
+      ctx.strokeStyle = warnColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (o.id === hoverId && !selected.has(o.id)) {
-      screenPath(o);
-      ctx.strokeStyle = tokens.hover;
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-    }
+    let maxX = -Infinity; let minY = Infinity;
+    for (const p of pts) { if (p.x > maxX) maxX = p.x; if (p.y < minY) minY = p.y; }
+    warnBadge(ctx, maxX - 1, minY + 1, warnColor, tokens);
   }
+  ctx.restore();
   const chosen = objects.filter((o) => selected.has(o.id));
   for (const o of chosen) {
     const shape = isPathShape(landscapeDef(o.kind));
     const corners = (shape ? objectOutline(o) : objectCorners(o)).map((c) => w2s(c.x, c.y));
     outlinePath(ctx, corners);
     ctx.strokeStyle = tokens.accent;
-    ctx.lineWidth = 1.5;
-    if (chosen.length > 1) ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.2;
+    if (chosen.length > 1) ctx.setLineDash([5, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -1833,16 +2368,10 @@ export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, w
     for (const p of mids) {
       ctx.fillStyle = tokens.surface;
       ctx.strokeStyle = tokens.accent;
-      ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, TAU); ctx.fill(); ctx.stroke();
     }
-    vertices.forEach((p, i) => {
-      const active = vertex && vertex.id === o.id && vertex.index === i;
-      ctx.fillStyle = active ? tokens.accent : '#ffffff';
-      ctx.strokeStyle = tokens.accent;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.rect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE); ctx.fill(); ctx.stroke();
-    });
+    vertices.forEach((p, i) => handle(ctx, p, tokens, vertex && vertex.id === o.id && vertex.index === i));
     return null;
   }
   pill(ctx, `${landscapeMeasure(o, def)} · ${Math.round(o.rotation || 0)}°${lock}`, mid, top - 14, tokens, tokens.accent);
@@ -1852,21 +2381,26 @@ export function drawLandscapeOverlay(ctx, objects, { sel = [], hoverId = null, w
     const p = w2s(r.x, r.y);
     ctx.fillStyle = tokens.surface;
     ctx.strokeStyle = tokens.accent;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE / 2 + 1, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2, -0.6, Math.PI * 1.2); ctx.stroke();
   }
-  for (const p of corners) {
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = tokens.accent;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.rect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE); ctx.fill(); ctx.stroke();
-  }
+  for (const p of corners) handle(ctx, p, tokens);
   return null;
 }
 
-// Миниатюра для карточки каталога (тот же рисовальщик).
-export function drawLandscapePreview(canvas, kind) {
+// Тёмная ли тема холста (для миниатюр, где нет токенов отрисовки).
+function canvasIsDark() {
+  try {
+    const c = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim();
+    return c ? luminance(c) < 0.4 : false;
+  } catch {
+    return false;
+  }
+}
+
+// Миниатюра для карточки каталога (тот же рисовальщик и стиль).
+export function drawLandscapePreview(canvas, kind, { style = 'sketch', dark = canvasIsDark() } = {}) {
   const def = landscapeDef(kind);
   if (!def) return;
   const ctx = canvas.getContext('2d');
@@ -1895,10 +2429,10 @@ export function drawLandscapePreview(canvas, kind) {
   }
   // Длинные узкие объекты (изгородь, забор) — по ширине карточки.
   const scale = Math.min((W * 0.78) / o.w, (H * 0.74) / o.h);
-  const shadow = { x: Math.SQRT1_2, y: Math.SQRT1_2, k: 0.18 };
+  const shadow = { x: Math.SQRT1_2, y: Math.SQRT1_2, k: 0.12 };
   ctx.setTransform(scale, 0, 0, scale, W / 2 - (def.shadow ? 4 : 0), H / 2 - (def.shadow ? 4 : 0));
-  const opts = { px: (v) => v / scale, lod: Math.max(scale * 1000, 30), shadow };
-  if (def.shadow) drawShadow(ctx, o, def, shadow);
+  const opts = { px: (v) => (v * 1.6) / scale, lod: Math.max(scale * 1000, 30), shadow, style, dark, dpr: 1 };
+  if (def.shadow) drawShadow(ctx, o, def, shadow, baseContext(opts));
   drawLandscapeObject(ctx, o, opts);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }

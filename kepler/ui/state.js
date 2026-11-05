@@ -16,6 +16,8 @@ export const state = {
   lsVertex: null, // { id, index } — активная вершина линии/контура ландшафта (Delete удалит её)
   // Видимость групп ландшафта (core/landscape.js LANDSCAPE_VIS).
   lsVis: { shadows: true, plants: true, covers: true, objects: true, labels: false },
+  // Стиль графики ландшафта: 'sketch' | 'drawing' (ui/landscape-style.js).
+  lsStyle: 'sketch',
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
   selection: null,
   hover: null,
