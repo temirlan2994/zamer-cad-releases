@@ -10,7 +10,7 @@
 
 import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
 import {
-  roomBoundaryEdges, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon,
+  roomBoundaryEdges, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
 
 // Радиус поиска соседней стены для магнитной стыковки. Самой общей стеной
@@ -241,16 +241,20 @@ export function deriveWalls(project) {
       // становятся тонкой перегородкой.
       const covered = [];
       if (!internal) {
-        for (const o of topRooms) {
-          if (o.id === room.id) continue;
-          const pLo = edge.orient === 'h' ? o.y : o.x;
-          const pHi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
-          if (edge.edge <= pLo + 1 || edge.edge >= pHi - 1) continue; // грань не внутри o
-          const aLo = edge.orient === 'h' ? o.x : o.y;
-          const aHi = edge.orient === 'h' ? o.x + o.w : o.y + o.h;
-          const f = Math.max(edge.from, aLo);
-          const t = Math.min(edge.to, aHi);
-          if (t - f > 1) covered.push({ from: f, to: t });
+        for (const other of topRooms) {
+          if (other.id === room.id) continue;
+          // По фактической форме соседа (Г, ступени, контур), а не по габариту:
+          // вырез ступенчатой комнаты не «перекрывает» чужие стены.
+          for (const o of roomRects(other)) {
+            const pLo = edge.orient === 'h' ? o.y : o.x;
+            const pHi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
+            if (edge.edge <= pLo + 1 || edge.edge >= pHi - 1) continue; // грань не внутри o
+            const aLo = edge.orient === 'h' ? o.x : o.y;
+            const aHi = edge.orient === 'h' ? o.x + o.w : o.y + o.h;
+            const f = Math.max(edge.from, aLo);
+            const t = Math.min(edge.to, aHi);
+            if (t - f > 1) covered.push({ from: f, to: t });
+          }
         }
       }
 
@@ -349,11 +353,11 @@ function addThicknessChamfers(walls, allRooms = []) {
   const rooms = allRooms.filter((r) => !isOpenRoom(r));
   // Заплатку нельзя заводить внутрь комнаты — только в наружное/зазорное
   // пространство. Иначе «ровная» стена полезет внутрь помещения бугром.
-  const intrudesRoom = (x, y, w, h) => rooms.some((r) => {
+  const intrudesRoom = (x, y, w, h) => rooms.some((room) => roomRects(room).some((r) => {
     const ox = Math.min(x + w, r.x + r.w) - Math.max(x, r.x);
     const oy = Math.min(y + h, r.y + r.h) - Math.max(y, r.y);
     return ox > 10 && oy > 10;
-  });
+  }));
   const EPS = 2;
   const MIN_STEP = 20; // меньше — не считаем ступенькой
   const out = [];
