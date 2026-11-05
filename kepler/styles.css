@@ -1136,6 +1136,12 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
     pointer-events: auto;
     transition: transform 0.2s ease, visibility 0s; /* показать — сразу */
   }
+  /* Клавиатура открыта: панель — над ней, поле ввода остаётся видимым */
+  body.kb-open.sheet-props .props, body.kb-open.sheet-library .library {
+    position: fixed;
+    bottom: var(--kb, 0px);
+    max-height: calc(var(--vvh, 100dvh) * 0.62);
+  }
   .mobile-bar {
     display: flex;
     gap: 6px;

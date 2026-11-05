@@ -52,7 +52,31 @@ export function syncMobileBar() {
   btn('props').classList.toggle('dot', Boolean(state.selection)); // есть что смотреть
 }
 
+// Экранная клавиатура на телефоне перекрывает нижнюю панель: считаем её высоту
+// по visualViewport и поднимаем панель над клавиатурой (--kb, --vvh в CSS),
+// а выбранное поле прокручиваем в видимую часть.
+function bindKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const update = () => {
+    const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    root.style.setProperty('--kb', `${kb}px`);
+    root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+    document.body.classList.toggle('kb-open', kb > 80);
+  };
+  vv.addEventListener('resize', update);
+  vv.addEventListener('scroll', update);
+  update();
+  document.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || !t.closest('.props, .library')) return;
+    setTimeout(() => { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* старый браузер */ } }, 320);
+  });
+}
+
 export function bindMobile() {
+  bindKeyboardInset();
   el('mobileBar')?.querySelectorAll('[data-sheet]').forEach((b) => {
     b.addEventListener('click', () => toggleSheet(b.dataset.sheet));
   });

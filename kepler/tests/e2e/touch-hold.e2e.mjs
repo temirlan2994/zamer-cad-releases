@@ -81,4 +81,16 @@ describe('касание: долгое нажатие для перемещен�
     assert.ok(await app.page.evaluate(() => Boolean(window.__kepler.state.selection)), 'рамка выбрала объекты');
     assert.deepEqual(app.errors, []);
   });
+
+  it('«+» мебели в свойствах комнаты: выделение остаётся на комнате', async () => {
+    const id = await app.page.evaluate(async () => { const k = window.__kepler; const r = k.state.project.rooms[0]; (await import('./ui/tools.js')).selectObject({ type: 'room', id: r.id }); return r.id; });
+    const n0 = await app.page.evaluate(() => window.__kepler.state.project.items.length);
+    await app.page.evaluate(() => document.body.classList.add('sheet-props'));
+    const btns = app.page.locator('#propsPanel [data-add]');
+    assert.ok(await btns.count() > 1, 'есть кнопки мебели');
+    await btns.nth(0).click(); await btns.nth(1).click();
+    assert.equal(await app.page.evaluate(() => window.__kepler.state.project.items.length), n0 + 2);
+    const selNow = await app.page.evaluate(() => window.__kepler.state.selection);
+    assert.deepEqual([selNow.type, selNow.id], ['room', id]);
+  });
 });

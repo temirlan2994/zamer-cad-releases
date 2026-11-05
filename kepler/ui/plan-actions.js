@@ -165,8 +165,8 @@ export function addFurniture(kind, room) {
     Math.round((room.y + room.h / 2) / GRID_STEP) * GRID_STEP, fd.w, fd.h);
   withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   mutate(() => { state.project.items.push(item); });
-  selectObject({ type: 'item', id: item.id });
-  toast(`«${fd.title}» в центре комнаты — перетащите на место`);
+  // Выделение остаётся на комнате: можно сразу добавлять следующую мебель «+».
+  toast(`«${fd.title}» добавлена в центр комнаты — выберите её на плане, чтобы переместить`);
 }
 
 export function deleteSelection() {
