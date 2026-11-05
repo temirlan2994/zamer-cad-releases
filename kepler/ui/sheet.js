@@ -215,7 +215,7 @@ export function landscapeLegend(objects, style = 'sketch') {
   const has = { plants: false, green: false, hard: false, water: false, small: false, fence: false };
   for (const o of objects || []) {
     const def = landscapeDef(o.kind);
-    if (!def) continue;
+    if (!def || def.shape === 'note') continue;
     if (def.group === 'Деревья' || def.group === 'Кустарники' || o.kind === 'grass-clump') has.plants = true;
     else if (def.group === 'Ограждение') has.fence = true;
     else if (def.surface === 'green') has.green = true;

@@ -10,7 +10,10 @@ import {
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
   syncStairs, ELEV_KINDS, RETAINING_SIDES, applyStairsDrop, normalizeElev, retainingInfo, stairsDrop,
+  objectAreaM2, objectLengthM, pointAlong,
 } from '../core/landscape.js';
+import { CALLOUT_SIZE_MAX, CALLOUT_SIZE_MIN, CALLOUT_TEXT_MAX, calloutLayout, syncCallout } from '../core/landscape-callout.js';
+import { fmtMoney, fmtQty, plantDefaults, plantGroupOf, plantKey, plantSchedule, setPlantEntry } from '../core/landscape-plants.js';
 import { balanceRows, buildLandscapeCsv, landscapeBalance, retainingRows, retainingTotals } from '../core/landscape-report.js';
 import {
   PLANTER_PLANTS, childrenOf, plantInPlanter, cloneGroup, isPlanter, pruneParents, refitChildren, rotateChildren, settleInPlanter, settleMoved,
@@ -115,10 +118,14 @@ export function startPlaceLandscape(kind) {
   requestDraw();
 }
 
+// Угол, при котором текст выноски горизонтален на экране (вид может быть повёрнут).
+const screenDeg = () => Math.round(((-(state.view.rotation || 0) * 180) / Math.PI) * 100) / 100;
+const placeRotation = (kind, rotation) => (kind === 'callout' ? screenDeg() + (rotation || 0) : rotation);
+
 export function placeLandscapeAt(kind, world, rotation = 0) {
   const def = landscapeDef(kind);
   if (!def || def.stage !== 1) return null;
-  const obj = createLandscapeObject(kind, snap(world.x), snap(world.y), { rotation, ...(isPathShape(def) ? drawOptions(kind) : {}) });
+  const obj = createLandscapeObject(kind, snap(world.x), snap(world.y), { rotation: placeRotation(kind, rotation), ...(isPathShape(def) ? drawOptions(kind) : {}) });
   mutate(() => {
     // Растение на коробе — садится внутрь и привязывается к нему.
     settleInPlanter(landscapeObjects(), obj);
@@ -130,7 +137,7 @@ export function placeLandscapeAt(kind, world, rotation = 0) {
 
 function ghostAt(world) {
   const tool = state.tool;
-  state.ghostLandscape = createLandscapeObject(tool.lsKind, snap(world.x), snap(world.y), { id: '__ghost-ls__', rotation: tool.rotation || 0 });
+  state.ghostLandscape = createLandscapeObject(tool.lsKind, snap(world.x), snap(world.y), { id: '__ghost-ls__', rotation: placeRotation(tool.lsKind, tool.rotation || 0) });
 }
 
 // Пробел во время постановки — поворот призрака на 90°.
@@ -310,7 +317,7 @@ export function landscapeHover(world, canvas, event) {
   const handle = hitLandscapeHandle(screen);
   const hit = handle ? null : hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
   const next = hit ? { type: 'landscape', id: hit.id } : null;
-  canvas.style.cursor = handle ? (handle.mode === 'rotate' ? 'grab' : 'nwse-resize') : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
+  canvas.style.cursor = handle ? (handle.mode === 'rotate' ? 'grab' : handle.mode.startsWith('note') ? 'move' : 'nwse-resize') : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
   if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
   return true;
 }
@@ -322,6 +329,15 @@ export function hitLandscapeHandle(screen) {
   if (objs.length !== 1) return null;
   const o = objs[0];
   if (o.locked || isShapeKind(o.kind)) return null;
+  if (o.kind === 'callout') {
+    // Выноска: ручки «указатель» (круг) и «текст» (квадрат у излома).
+    const L = calloutLayout(o);
+    for (const [mode, p] of [['note-anchor', L.anchor], ['note-text', L.elbow]]) {
+      const s = worldToScreen(p.x, p.y);
+      if (Math.hypot(s.x - screen.x, s.y - screen.y) <= HANDLE_TOL() + 1) return { mode, obj: o };
+    }
+    return null;
+  }
   const { corners, rotators } = landscapeHandles(o, 20, state.view.scale);
   for (const c of corners) {
     const p = worldToScreen(c.x, c.y);
@@ -387,6 +403,9 @@ export function landscapePointerDown(event, screen, world) {
   const handle = hitLandscapeHandle(screen);
   if (handle) {
     const o = handle.obj;
+    if (handle.mode.startsWith('note')) {
+      return { kind: 'ls-note', id: o.id, part: handle.mode === 'note-anchor' ? 'anchor' : 'text', before: snapshot(), moved: false, screen };
+    }
     if (handle.mode === 'rotate') {
       return {
         kind: 'ls-rotate', id: o.id, startRot: o.rotation || 0, center: { x: o.x, y: o.y },
@@ -471,6 +490,20 @@ export function landscapeDragMove(drag, world, screen, event) {
     drag.moved = true;
     state.lsVertex = { id: o.id, index: drag.index };
     updateLiveMeasure(o);
+  } else if (drag.kind === 'ls-note') {
+    // Выноска: указатель — с привязкой к объектам, текст (излом) — по сетке.
+    const o = objects.find((x) => x.id === drag.id);
+    if (!o) return;
+    if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
+    drag.moved = true;
+    if (drag.part === 'anchor') {
+      const p = snapLs(world, event, { exclude: { landscapeId: o.id } });
+      o.points = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+    } else {
+      o.x = snap(world.x);
+      o.y = snap(world.y);
+    }
+    syncCallout(o);
   } else if (drag.kind === 'ls-move') {
     if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
     drag.moved = true;
@@ -727,6 +760,8 @@ export function handleLandscapeKey(event) {
   }
   if (event.code === 'KeyR') { rotateLandscape90(); return true; }
   if (event.code === 'KeyX' && selectedObjects().some(canExplode)) { explodeLandscapeSelection(); return true; }
+  // T — «Подписать»: выноска к выделенным объектам.
+  if (event.code === 'KeyT' && !state.tool && selectedIds().length) { labelLandscapeSelection(); return true; }
   if (event.code === 'KeyM') return true; // зеркало ландшафту не нужно
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
   if (nudge && selectedIds().length) {
@@ -736,6 +771,137 @@ export function handleLandscapeKey(event) {
     return true;
   }
   return false;
+}
+
+// ------------------------------------------------------------ Выноски
+
+// Текст выноски по умолчанию: название вида/объекта, у площадей — площадь,
+// у линий — длина (как пишут на эскизах генплана).
+export function calloutTextFor(o) {
+  const def = landscapeDef(o.kind);
+  if (!def) return 'Выноска';
+  // Вид растения (Яблоня, Сирень) — по справочнику, иначе короткое название типа.
+  const d = plantGroupOf(o.kind) ? plantDefaults(plantKey(o)) : null;
+  const name = d?.species ? d.name : def.title.replace(/ \(.*\)$/, '');
+  if (def.shape === 'poly') return `${name}\n${fmt(objectAreaM2(o))} м²`;
+  if (def.shape === 'line') return `${name}\nL ${fmt(objectLengthM(o))} м`;
+  return name;
+}
+
+// Точка указания на объекте: середина оси линии, иначе центр.
+function anchorOf(o) {
+  const def = landscapeDef(o.kind);
+  if (def?.shape === 'line') {
+    const path = objectPath(o);
+    const p = pointAlong(path, polylineLength(path) / 2);
+    return { x: p.x, y: p.y };
+  }
+  return { x: o.x, y: o.y };
+}
+
+// «Подписать» (T): выноска к каждому выделенному объекту, одним шагом
+// истории; новые выноски выделяются (текст — правится в панели).
+export function labelLandscapeSelection() {
+  const targets = selectedObjects().filter((o) => o.kind !== 'callout').slice(0, 50);
+  if (!targets.length) { toast('Выберите объект, который нужно подписать'); return []; }
+  const deg = screenDeg();
+  const t = (deg * Math.PI) / 180;
+  const list = targets.map((o) => {
+    const a = anchorOf(o);
+    const box = isShapeKind(o.kind) ? { w: 0, h: 0 } : o;
+    // Текст — вверх-вправо от объекта на экране (смещение в осях экрана).
+    const dx = Math.max(1500, Math.min(6000, box.w * 0.5 + 900));
+    const dy = -Math.max(1200, Math.min(6000, box.h * 0.5 + 700));
+    const ex = a.x + dx * Math.cos(t) - dy * Math.sin(t);
+    const ey = a.y + dx * Math.sin(t) + dy * Math.cos(t);
+    return createLandscapeObject('callout', snap(ex), snap(ey), { points: [a], rotation: deg, meta: { text: calloutTextFor(o) } });
+  });
+  addLandscapeObjects(list);
+  toast(list.length > 1 ? `Выносок: ${list.length} · Ctrl+Z — отменить` : 'Выноска добавлена — текст правится справа');
+  return list;
+}
+
+function renderCalloutProps(panel, o) {
+  const def = landscapeDef(o.kind);
+  panel.innerHTML = `
+    <h2>Выноска</h2>
+    <div class="prop-block">
+      <label class="prop-field"><span>Текст (Enter — новая строка)</span><textarea id="lsNoteText" rows="3" maxlength="${CALLOUT_TEXT_MAX}" ${o.locked ? 'disabled' : ''}>${escapeHtml(o.meta?.text || '')}</textarea></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Знак на конце</span><select id="lsVariant">${variantOptions(def, o.variant)}</select></label>
+        <label class="prop-field"><span>Высота букв, мм</span><input id="lsNoteSize" type="number" step="10" min="${CALLOUT_SIZE_MIN}" max="${CALLOUT_SIZE_MAX}" value="${Math.round(o.meta?.size || 300)}"></label>
+      </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Наклон текста, °</span><input id="lsRot" type="number" step="5" value="${Math.round(o.rotation || 0)}"></label>
+        <button type="button" id="lsNoteLevel" class="ls-note-level" title="Текст горизонтально при текущем повороте вида">По экрану</button>
+      </div>
+      <label class="check-row"><input type="checkbox" id="lsLock" ${o.locked ? 'checked' : ''}><span>Замок</span></label>
+      <p class="hint">Тяните круг — точку указания, квадрат — текст с полкой; за текст или линию — всю выноску. В 3D, ведомость и ТЭП выноска не входит.</p>
+    </div>`;
+  const text = panel.querySelector('#lsNoteText');
+  text?.addEventListener('change', () => mutate(() => {
+    o.meta = { ...(o.meta || {}), text: text.value.replace(/\r\n?/g, '\n').slice(0, CALLOUT_TEXT_MAX) };
+    syncCallout(o);
+  }));
+  panel.querySelector('#lsVariant')?.addEventListener('change', (e) => mutate(() => { o.variant = e.target.value; }));
+  panel.querySelector('#lsNoteSize')?.addEventListener('change', (e) => {
+    const v = Number(e.target.value);
+    if (!(v > 0)) return;
+    mutate(() => {
+      o.meta = { ...(o.meta || {}), size: Math.min(CALLOUT_SIZE_MAX, Math.max(CALLOUT_SIZE_MIN, Math.round(v))) };
+      syncCallout(o);
+    });
+  });
+  const setRot = (deg) => mutate(() => { o.rotation = deg; syncCallout(o); });
+  panel.querySelector('#lsRot')?.addEventListener('change', (e) => {
+    const v = Number(e.target.value);
+    if (Number.isFinite(v)) setRot(Math.round(v));
+  });
+  panel.querySelector('#lsNoteLevel')?.addEventListener('click', () => setRot(screenDeg()));
+  panel.querySelector('#lsLock')?.addEventListener('change', (e) => mutate(() => {
+    if (e.target.checked) o.locked = true; else delete o.locked;
+  }));
+}
+
+// ------------------------------------------------------------ Ведомость растений
+
+// Раскрытая строка ведомости (переживает перерисовку панели).
+let openPlant = null;
+
+function plantTableHtml(sch) {
+  if (!sch.rows.length) return '<p class="hint">Растений пока нет — ведомость заполнится сама.</p>';
+  const unitPrice = (r) => (r.unit === 'шт' ? 'Цена за шт.' : `Цена за ${r.unit}`);
+  const groups = sch.groups.map((g) => `
+    <div class="ls-plant-group"><span>${escapeHtml(g.title)}</span>${g.total ? `<strong>${fmtMoney(g.total)}</strong>` : ''}</div>
+    ${g.rows.map((r) => `
+    <details class="ls-plant" data-plant="${escapeHtml(r.key)}" ${openPlant === r.key ? 'open' : ''}>
+      <summary>
+        <span class="ls-plant-name">${escapeHtml(r.title)}${r.note ? `<small>${escapeHtml(r.note)}</small>` : ''}</span>
+        <span class="ls-plant-qty">${fmtQty(r)} ${r.unit}</span>
+        <span class="ls-plant-sum">${r.sum != null ? fmtMoney(r.sum) : '—'}</span>
+      </summary>
+      <div class="prop-grid">
+        <label class="prop-field"><span>${r.unit === 'м²' ? 'Размер посадки' : 'Высота посадки'}, мм</span><input type="number" data-pf="size" min="0" step="50" placeholder="—" value="${r.size ?? ''}"></label>
+        <label class="prop-field"><span>${unitPrice(r)}</span><input type="number" data-pf="price" min="0" step="any" placeholder="нет" value="${r.price ?? ''}"></label>
+      </div>
+      <label class="prop-field"><span>Цветение / примечание</span><input type="text" data-pf="note" maxlength="200" placeholder="${escapeHtml(r.noteDefault || '')}" value="${escapeHtml(r.note || '')}"></label>
+    </details>`).join('')}`).join('');
+  return `${groups}
+    <div class="prop-row ls-plant-total"><span>Итого озеленение</span><strong id="lsPlantTotal">${fmtMoney(sch.total)}</strong></div>
+    ${sch.unpriced ? `<p class="hint">Без цены: ${sch.unpriced} поз. — откройте строку и впишите цену.</p>` : ''}`;
+}
+
+function bindPlantTable(panel) {
+  panel.querySelectorAll('details.ls-plant').forEach((d) => d.addEventListener('toggle', () => {
+    if (d.open) openPlant = d.dataset.plant; else if (openPlant === d.dataset.plant) openPlant = null;
+  }));
+  panel.querySelectorAll('details.ls-plant [data-pf]').forEach((input) => input.addEventListener('change', () => {
+    const key = input.closest('details').dataset.plant;
+    openPlant = key;
+    const field = input.dataset.pf;
+    const raw = input.value.trim();
+    mutate(() => { setPlantEntry(state.project.site.landscape, key, { [field]: field === 'note' ? raw : raw === '' ? null : Number(raw) }); });
+  }));
 }
 
 // ------------------------------------------------------------ Каталог слева
@@ -1139,12 +1305,13 @@ export function renderLandscapeProps(panel) {
   if (state.tool?.kind === 'ls-array') { renderArrayProps(panel); return; }
   const objs = selectedObjects();
   if (!objs.length) { renderLandscapeSummary(panel); return; }
+  if (objs.length === 1 && objs[0].kind === 'callout') { renderCalloutProps(panel, objs[0]); return; }
   if (objs.length > 1) {
     panel.innerHTML = `
       <h2>Ландшафт</h2>
       <div class="prop-block">
         <div class="prop-row"><span>Выбрано объектов</span><strong>${objs.length}</strong></div>
-        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия · Shift+A — массив${objs.some(canExplode) ? ' · X — разорвать дорожки' : ''}</p>
+        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия · Shift+A — массив · T — подписать выносками${objs.some(canExplode) ? ' · X — разорвать дорожки' : ''}</p>
       </div>`;
     bindCommon(panel);
     return;
@@ -1211,6 +1378,7 @@ export function renderLandscapeProps(panel) {
         <label class="check-row"><input type="checkbox" id="lsLock" ${o.locked ? 'checked' : ''}><span>Замок</span></label>
       </div>
       ${o.color ? '<button type="button" class="link" id="lsColorReset">Цвет по умолчанию</button>' : ''}
+      <button type="button" id="lsLabel" title="Выноска с названием объекта (T)">Подписать выноской</button>
       ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик по ребру — новая вершина · двойной клик по вершине, Alt+клик или Delete — удалить</p>' : ''}
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
@@ -1259,6 +1427,7 @@ export function renderLandscapeProps(panel) {
   });
   panel.querySelector('#lsColor')?.addEventListener('change', (e) => mutate(() => { o.color = e.target.value; }));
   panel.querySelector('#lsColorReset')?.addEventListener('click', () => mutate(() => { delete o.color; }));
+  panel.querySelector('#lsLabel')?.addEventListener('click', () => labelLandscapeSelection());
   panel.querySelector('#lsLock')?.addEventListener('change', (e) => mutate(() => {
     if (e.target.checked) o.locked = true; else delete o.locked;
     state.lsVertex = null;
@@ -1375,6 +1544,10 @@ function renderLandscapeSummary(panel) {
     <div class="prop-block" id="lsBalance">
       ${balanceRows(balance).map(([k, v]) => `<div class="prop-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}
     </div>` : ''}
+    <h3>Ведомость растений</h3>
+    <div class="prop-block ls-plants" id="lsPlants">
+      ${plantTableHtml(plantSchedule(objs, site.landscape?.plants))}
+    </div>
     <h3>Слои</h3>
     <div class="prop-block ls-vis">
       <div class="prop-field"><span>Графика</span>
@@ -1422,6 +1595,7 @@ function renderLandscapeSummary(panel) {
     requestDraw();
   }));
   panel.querySelector('#lsSheetScreen')?.addEventListener('change', (e) => setSheetStylePref(e.target.checked ? 'screen' : 'drawing'));
+  bindPlantTable(panel);
   panel.querySelectorAll('[data-ls-vis]').forEach((box) => box.addEventListener('change', () => {
     state.lsVis = { ...state.lsVis, [box.dataset.lsVis]: box.checked };
     requestDraw();

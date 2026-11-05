@@ -26,7 +26,7 @@ test('каталог валиден: id уникальны, размеры > 0, 
     assert.ok(d.max.w >= d.w && d.max.h >= d.h, `${d.kind}: максимум`);
     assert.ok(d.variants.length >= 1, `${d.kind}: варианты`);
     assert.equal(new Set(d.variants.map((v) => v.id)).size, d.variants.length, `${d.kind}: id вариантов`);
-    assert.ok(['ground', 'low', 'tall'].includes(d.layer), `${d.kind}: слой`);
+    assert.ok((d.shape === 'note' ? ['note'] : ['ground', 'low', 'tall']).includes(d.layer), `${d.kind}: слой`);
     assert.ok(d.colors.length >= 3 && d.colors.every((c) => /^#[0-9a-f]{6}$/i.test(c)), `${d.kind}: краски`);
     if (d.shape === 'point' || d.shape === 'circle') assert.equal(d.w, d.h, `${d.kind}: круглый`);
   }

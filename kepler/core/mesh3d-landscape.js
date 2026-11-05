@@ -461,7 +461,7 @@ export function landscapeFaces(project, hz = null) {
     .map((o) => [o.id, Math.max(0, (o.height || 0) - 60)]));
   for (const o0 of objects) {
     const def = landscapeDef(o0.kind);
-    if (!def) continue;
+    if (!def || def.shape === 'note') continue; // выноски — только на плане
     const c = local(o0);
     // Копия объекта в осях дома: центр, поворот, вершины.
     const o = { ...o0, x: c.x, y: c.y, rotation: (o0.rotation || 0) - rotB };

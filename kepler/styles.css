@@ -1247,6 +1247,42 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .ls-corner .seg-opt:nth-child(n + 3) { border-top: 1px solid var(--border); }
 .ls-corner svg { flex: none; }
 .ls-chip.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* Выноска: многострочный текст в панели. */
+.prop-field textarea {
+  font: inherit;
+  color: var(--text);
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  width: 100%;
+  resize: vertical;
+  min-height: 54px;
+}
+.ls-note-level { align-self: end; }
+/* Ведомость растений: группа → строки-«раскрывашки» (вид · кол-во · сумма). */
+.ls-plants { gap: 2px; }
+.ls-plant-group {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin: 6px 0 2px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted);
+}
+.ls-plant-group:first-child { margin-top: 0; }
+.ls-plant-group strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.ls-plant { border-radius: 7px; }
+.ls-plant[open] { background: var(--surface); padding: 0 6px 8px; margin: 2px -6px; }
+.ls-plant summary {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline;
+  padding: 5px 0; font-size: 12.5px; cursor: pointer; list-style: none;
+  border-bottom: 1px dashed var(--border);
+}
+.ls-plant summary::-webkit-details-marker { display: none; }
+.ls-plant[open] summary { border-bottom-color: transparent; }
+.ls-plant-name { min-width: 0; overflow-wrap: anywhere; }
+.ls-plant-name small { display: block; font-size: 11px; color: var(--muted); }
+.ls-plant-qty { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ls-plant-sum { min-width: 52px; text-align: right; white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ls-plant .prop-grid, .ls-plant > .prop-field { margin-top: 6px; }
+.ls-plant-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-weight: 600; }
 .ls-note {
   margin: 8px 0 0;
   padding: 6px 8px;

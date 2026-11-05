@@ -27,13 +27,18 @@
 
 import { pointInPolygon, pointToSegmentDistance } from './zamer/geometry.js';
 import { CORNER_IDS, areaOf, layoutBoards, layoutSlabs, pathLayout } from './path-geometry.js';
+import {
+  CALLOUT_ENDS, CALLOUT_OFFSET, calloutHit, calloutLayout, calloutOutline, normalizeCalloutMeta, syncCallout,
+} from './landscape-callout.js';
 
 export const LANDSCAPE_CATEGORIES = [
   { id: 'green', title: 'Озеленение' },
   { id: 'site', title: 'Ландшафт и площадки' },
 ];
 
-export const LANDSCAPE_SHAPES = ['point', 'circle', 'rect', 'line', 'poly'];
+export const LANDSCAPE_SHAPES = ['point', 'circle', 'rect', 'line', 'poly', 'note'];
+// 'note' — выноска (core/landscape-callout.js): не растение и не покрытие.
+export const isNoteShape = (def) => def?.shape === 'note';
 
 // Дерево ближе этого расстояния к стене дома — мягкое предупреждение.
 export const TREE_HOUSE_MIN = 3000;
@@ -245,6 +250,11 @@ const RAW = [
     variants: [v('lilies', 'С кувшинками'), v('mirror', 'Зеркальный')], keywords: 'вода рисовать контур' },
   { kind: 'pool-area', title: 'Бассейн-чаша (контур)', cat: 'site', group: 'Вода', shape: 'poly', w: 6000, h: 3000, height: 0, cover: true, look: 'area-pool', colors: 'water',
     variants: [v('mosaic', 'Голубая мозаика'), v('dark', 'Тёмная чаша', ['#6f9aa2', '#5c868f', '#93b6bc'])], keywords: 'вода бассейн рисовать контур' },
+
+  // ------------------------------------------------------------ Пояснения
+  // Выноска: точка указания + полка с текстом (core/landscape-callout.js).
+  { kind: 'callout', layer: 'note', title: 'Выноска', cat: 'site', group: 'Пояснения', shape: 'note', w: 2000, h: 600, min: [1, 1], max: [1e7, 1e7], height: 0, look: 'callout', colors: 'metal',
+    variants: CALLOUT_ENDS.map((e) => v(e.id, e.title)), meta: { text: 'Выноска', size: 300 }, keywords: 'подпись текст надпись пояснение примечание выноска лидер' },
 ];
 
 // Поверхность для баланса территории (ТЭП): green — озеленение (газон,
@@ -267,8 +277,10 @@ export const LANDSCAPE_VIS = [
   { id: 'covers', title: 'Покрытия и дорожки' },
   { id: 'objects', title: 'Малые формы' },
   { id: 'labels', title: 'Подписи' },
+  { id: 'notes', title: 'Выноски' },
 ];
 function visGroupOf(raw, layer) {
+  if (raw.shape === 'note') return 'notes';
   if (BUILT_KINDS.has(raw.kind)) return 'objects';
   if (raw.kind === 'hedge-line' || (raw.cat === 'green' && layer !== 'ground' && raw.shape !== 'poly')) return 'plants';
   if (layer === 'ground' || raw.shape === 'poly' || raw.kind === 'path') return 'covers';
@@ -354,6 +366,7 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
   const def = landscapeDef(kind);
   if (!def) throw new Error(`Неизвестный объект ландшафта: ${kind}`);
   if (isPathShape(def)) return createShapeObject(def, x, y, opts);
+  if (isNoteShape(def)) return createCallout(def, x, y, opts);
   const obj = {
     id: opts.id || makeLandscapeId(),
     kind,
@@ -378,6 +391,32 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
   if (curb) obj.curb = curb;
   applyElev(obj, opts);
   return syncRadius(clampSize(obj, def), def);
+}
+
+// Выноска: (x, y) — точка указания, текст — со смещением CALLOUT_OFFSET;
+// с opts.points = [указатель] x, y — излом полки (как в файле).
+function createCallout(def, x, y, opts) {
+  const p = Array.isArray(opts.points) && opts.points[0];
+  const anchor = p ? { x: Math.round(p.x), y: Math.round(p.y) } : { x: Math.round(x), y: Math.round(y) };
+  const t = rad(opts.rotation);
+  const off = { x: CALLOUT_OFFSET.x * Math.cos(t) - CALLOUT_OFFSET.y * Math.sin(t), y: CALLOUT_OFFSET.x * Math.sin(t) + CALLOUT_OFFSET.y * Math.cos(t) };
+  const elbow = p ? { x: Math.round(x), y: Math.round(y) } : { x: Math.round(anchor.x + off.x), y: Math.round(anchor.y + off.y) };
+  const obj = {
+    id: opts.id || makeLandscapeId(),
+    kind: def.kind,
+    x: elbow.x,
+    y: elbow.y,
+    rotation: normDeg(opts.rotation || 0), // угол текста и полки (0 — горизонтально в мире)
+    w: 1,
+    h: 1,
+    height: 0,
+    variant: def.variants.some((e) => e.id === opts.variant) ? opts.variant : def.variants[0].id,
+    meta: normalizeCalloutMeta({ ...(def.meta || {}), ...(opts.meta || {}) }),
+    points: [anchor],
+  };
+  if (opts.color) obj.color = opts.color;
+  if (opts.locked) obj.locked = true;
+  return syncCallout(obj);
 }
 
 // ------------------------------------------------ Отметки уровня площадок
@@ -723,6 +762,13 @@ export function rotateObjectAbout(o, cx, cy, deg) {
     o.points = o.points.map(rot);
     return syncShape(o);
   }
+  if (isNoteShape(landscapeDef(o.kind))) {
+    // Выноска: поворачиваются указатель, излом и текст с полкой.
+    if (Array.isArray(o.points)) o.points = o.points.map(rot);
+    Object.assign(o, rot(o));
+    o.rotation = normDeg((o.rotation || 0) + deg);
+    return syncCallout(o);
+  }
   const c = rot(o);
   o.x = c.x;
   o.y = c.y;
@@ -927,7 +973,7 @@ function normDeg(d) {
 
 // Размер в пределах типа; у круглых — w = h.
 export function clampSize(obj, def = landscapeDef(obj.kind)) {
-  if (!def || isPathShape(def)) return obj;
+  if (!def || isPathShape(def) || isNoteShape(def)) return obj;
   const cl = (val, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(val) || lo)));
   obj.w = cl(obj.w, def.min.w, def.max.w);
   obj.h = def.lockAspect ? obj.w : cl(obj.h, def.min.h, def.max.h);
@@ -943,6 +989,7 @@ function syncRadius(obj, def) {
 // Новый размер (из панели или ручкой): пределы типа + радиус кроны.
 export function resizeObject(obj, w, h = w) {
   const def = landscapeDef(obj.kind);
+  if (isNoteShape(def)) return syncCallout(obj); // размер выноски — от текста
   if (isPathShape(def)) {
     // Фигура: вершины масштабируются от центра габарита.
     const pad = obj.width || 0;
@@ -973,6 +1020,18 @@ export function normalizeLandscapeObject(raw) {
   const y = num(raw.y);
   if (x == null || y == null) return null;
   const r = num(raw.r);
+  if (isNoteShape(def)) {
+    const p = Array.isArray(raw.points) ? raw.points.find((q) => Number.isFinite(q?.x) && Number.isFinite(q?.y)) : null;
+    return createLandscapeObject(raw.kind, x, y, {
+      id: typeof raw.id === 'string' && raw.id ? raw.id : undefined,
+      rotation: num(raw.rotation) || 0,
+      variant: raw.variant,
+      color: typeof raw.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(raw.color) ? raw.color : undefined,
+      meta: raw.meta && typeof raw.meta === 'object' ? raw.meta : undefined,
+      points: [p || { x: x - CALLOUT_OFFSET.x, y: y - CALLOUT_OFFSET.y }],
+      locked: raw.locked === true,
+    });
+  }
   if (isPathShape(def)) {
     const points = Array.isArray(raw.points) ? raw.points.filter((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y)) : [];
     if (points.length < (def.shape === 'poly' ? 3 : 2)) return null;
@@ -1024,7 +1083,34 @@ export function normalizeLandscape(raw) {
   // Привязка к коробу (parent) — только к существующему коробу.
   const planters = new Set(objects.filter((o) => PLANTER_KINDS.has(o.kind)).map((o) => o.id));
   for (const o of objects) if (o.parent && (!planters.has(o.parent) || o.parent === o.id)) delete o.parent;
-  return { objects };
+  // Справочник растений проекта (core/landscape-plants.js) — необязательное поле.
+  const plants = normalizePlantBook(raw?.plants);
+  return Object.keys(plants).length ? { objects, plants } : { objects };
+}
+
+// Справочник растений: { 'kind|variant': { size?, price?, note? } } —
+// размер посадки (мм), цена за единицу, примечание (цветение). Пустые
+// значения не хранятся; ключи — только известных типов каталога.
+export const PLANT_NOTE_MAX = 200;
+export function normalizePlantEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  const size = Number(raw.size);
+  if (raw.size !== '' && raw.size != null && Number.isFinite(size) && size > 0) out.size = Math.min(100000, Math.round(size));
+  const price = Number(raw.price);
+  if (raw.price !== '' && raw.price != null && Number.isFinite(price) && price >= 0) out.price = Math.round(price * 100) / 100;
+  if (typeof raw.note === 'string' && raw.note.trim()) out.note = raw.note.trim().slice(0, PLANT_NOTE_MAX);
+  return Object.keys(out).length ? out : null;
+}
+export function normalizePlantBook(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, val] of Object.entries(raw)) {
+    if (!landscapeDef(String(key).split('|')[0])) continue;
+    const e = normalizePlantEntry(val);
+    if (e) out[key] = e;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- Геометрия
@@ -1052,6 +1138,10 @@ export function isRoundObject(obj, def = landscapeDef(obj.kind)) {
 
 // Углы габарита (с поворотом): nw, ne, se, sw.
 export function objectCorners(obj) {
+  if (obj.kind === 'callout') {
+    const ids = ['nw', 'ne', 'se', 'sw'];
+    return calloutLayout(obj).corners.map((p, i) => ({ id: ids[i], x: p.x, y: p.y }));
+  }
   const a = obj.w / 2;
   const b = obj.h / 2;
   return [
@@ -1067,6 +1157,7 @@ export function objectOutline(obj, segments = 24) {
   const def = landscapeDef(obj.kind);
   if (def?.shape === 'poly') return objectPath(obj).map(({ x, y }) => ({ x, y }));
   if (def?.shape === 'line') return lineLayout(obj).outline;
+  if (isNoteShape(def)) return calloutOutline(obj);
   if (!isRoundObject(obj)) return objectCorners(obj).map(({ x, y }) => ({ x, y }));
   const out = [];
   for (let i = 0; i < segments; i += 1) {
@@ -1086,6 +1177,7 @@ export function objectBox(obj) {
 // Попадание точки (мир) в объект; tol — запас в мм (клик по мелочи).
 export function pointInObject(obj, p, tol = 0) {
   const def = landscapeDef(obj.kind);
+  if (isNoteShape(def)) return calloutHit(obj, p, tol);
   if (def?.shape === 'line') {
     const path = objectPath(obj);
     const half = (obj.width || def.h) / 2 + tol;
@@ -1106,11 +1198,11 @@ export function pointInObject(obj, p, tol = 0) {
 }
 
 // Порядок внутри слоя: площади → линии → остальные (и в отрисовке).
-export const SHAPE_RANK = { poly: 0, line: 1, point: 2, circle: 2, rect: 2 };
+export const SHAPE_RANK = { poly: 0, line: 1, point: 2, circle: 2, rect: 2, note: 6 };
 
 // Верхний объект под точкой: высокие (кроны) поверх, затем позже добавленные.
 export function hitLandscape(objects, p, tol = 0) {
-  const order = { tall: 2, low: 1, ground: 0 };
+  const order = { note: 3, tall: 2, low: 1, ground: 0 };
   let best = null;
   objects.forEach((obj, index) => {
     if (!pointInObject(obj, p, tol)) return;
@@ -1165,6 +1257,7 @@ export function landscapeWarnings(objects, { boundary = null, footprints = [] } 
 // Площадь объекта, м² (для сводки и ТЭП этапа 2).
 export function objectAreaM2(obj) {
   const def = landscapeDef(obj.kind);
+  if (isNoteShape(def)) return 0;
   if (def?.shape === 'poly') return polygonArea(objectPath(obj)) / 1e6;
   if (def?.shape === 'line') {
     if (obj.kind === 'path' && obj.variant === 'stepping') {
@@ -1190,12 +1283,15 @@ export function planterInner(o) {
 export function landscapeSummary(objects) {
   let trees = 0;
   let cover = 0;
+  let notes = 0;
   for (const obj of objects || []) {
     const def = landscapeDef(obj.kind);
+    if (isNoteShape(def)) { notes += 1; continue; }
     if (isTree(def)) trees += 1;
     if (def?.cover) cover += objectAreaM2(obj);
   }
-  return { count: (objects || []).length, trees, coverM2: cover };
+  // Выноски — не объекты благоустройства (в count не входят).
+  return { count: (objects || []).length - notes, trees, coverM2: cover, notes };
 }
 
 // Ручки выбранного объекта (мир): квадраты на углах (размер) и круги снаружи

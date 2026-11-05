@@ -10,6 +10,8 @@ import {
   curbLines, isPathShape, landscapeDef, objectAreaM2, objectLengthM, objectOutline, objectPath, planterInner, planterWall,
   fmtElev, pointAlong, pointInObject, polylineLength, retainingEdges, retainingInfo, stairsInfo, steppingSlabs, toWorld, variantOf,
 } from './landscape.js';
+import { calloutDxf } from './landscape-callout.js';
+import { plantCsvLines, plantSchedule, plantScheduleDxf } from './landscape-plants.js';
 import { LANDSCAPE_NORMS } from './norms.js';
 import { buildingFootprint } from './site-check.js';
 import { polygonAreaM2 } from './site.js';
@@ -125,7 +127,7 @@ export function landscapeSchedule(objects) {
   const rows = new Map();
   for (const o of objects || []) {
     const def = landscapeDef(o.kind);
-    if (!def) continue;
+    if (!def || def.shape === 'note') continue; // выноски — не позиции ведомости
     const variant = variantOf(o, def);
     const size = sizeText(o, def);
     const shape = isPathShape(def);
@@ -206,6 +208,9 @@ export function buildLandscapeCsv(project) {
     lines.push('');
     for (const [k, v] of balanceRows(b)) lines.push(['', '', '', cell(k), '', '', '', '', '', cell(v)].join(';'));
   }
+  // Ведомость растений (core/landscape-plants.js) — отдельным блоком.
+  const land = project.site?.landscape || {};
+  lines.push(...plantCsvLines(plantSchedule(land.objects, land.plants), cell));
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
@@ -218,6 +223,8 @@ export const LANDSCAPE_DXF_LAYERS = [
   { key: 'lsAreas', name: 'LANDSCAPE_AREAS', color: 52 },
   { key: 'lsFurniture', name: 'LANDSCAPE_FURNITURE', color: 30 },
   { key: 'lsWalls', name: 'LANDSCAPE_WALLS', color: 9 },
+  { key: 'lsNotes', name: 'LANDSCAPE_NOTES', color: 7 },
+  { key: 'lsPlantTable', name: 'LANDSCAPE_PLANT_SCHEDULE', color: 7 },
 ];
 
 const closedLines = (pts, layer, closed = true) => {
@@ -238,6 +245,8 @@ export function landscapeDxfEntities(site) {
   for (const o of site?.landscape?.objects || []) {
     const def = landscapeDef(o.kind);
     if (!def) continue;
+    // Выноска: линия указателя, полка, знак и текст — слой LANDSCAPE_NOTES.
+    if (def.shape === 'note') { out.push(...calloutDxf(o, 'lsNotes')); continue; }
     const plant = def.group === 'Деревья' || def.group === 'Кустарники' || def.kind === 'grass-clump';
     if (def.shape === 'point') {
       const layer = plant ? 'lsTrees' : 'lsFurniture';
@@ -289,7 +298,19 @@ export function landscapeDxfEntities(site) {
     const layer = plant ? 'lsTrees' : def.shape === 'poly' || def.layer === 'ground' || def.surface === 'water' ? 'lsAreas' : 'lsFurniture';
     out.push(...closedLines(objectOutline(o, 24), layer));
   }
+  out.push(...plantTableDxf(site));
   return out;
+}
+
+// Ведомость растений текстом справа от участка (ниже стрелки севера).
+function plantTableDxf(site) {
+  const land = site?.landscape || {};
+  const sch = plantSchedule(land.objects, land.plants);
+  if (!sch.rows.length) return [];
+  const pts = site.boundary?.length >= 3 ? site.boundary : (land.objects || []).map((o) => ({ x: o.x, y: o.y }));
+  const x = Math.max(...pts.map((p) => p.x)) + 8000;
+  const y = Math.min(...pts.map((p) => p.y)) + 7000;
+  return plantScheduleDxf(sch, x, y, 'lsPlantTable');
 }
 
 // Подпорная стенка в DXF: двойная линия (кромки) + торцы, штрихи от кромки

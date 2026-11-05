@@ -263,7 +263,9 @@ test('ведомость: позиции с количеством, CSV для E
   pr.site.landscape.objects.push(...objs);
   const csv = buildLandscapeCsv(pr);
   assert.ok(csv.startsWith('﻿Поз.;'));
-  assert.equal(csv.trim().split('\r\n').length, rows.length + 1);
+  // Первый блок — ведомость; за пустой строкой — ведомость растений.
+  assert.equal(csv.trim().split('\r\n\r\n')[0].split('\r\n').length, rows.length + 1);
+  assert.match(csv, /Ведомость растений/);
   assert.match(csv, /Дорожка;Брусчатка;1;шт;;9,00;9,00/);
 });
 

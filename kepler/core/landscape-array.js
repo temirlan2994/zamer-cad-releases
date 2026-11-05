@@ -301,7 +301,7 @@ export function fillPolygonOf(o) {
 export function plantFillObject(objects, host, opts = {}, footprints = []) {
   const polygon = fillPolygonOf(host);
   const planter = isPlanter(host);
-  const plantLike = (x) => !isPathShape(landscapeDef(x.kind)) && !landscapeDef(x.kind)?.cover;
+  const plantLike = (x) => !isPathShape(landscapeDef(x.kind)) && !landscapeDef(x.kind)?.cover && landscapeDef(x.kind)?.shape !== 'note';
   const inside = (x) => pointInPolygon(x, polygon) || distanceToPolygon(x, polygon) < crownR(x.kind, Math.max(x.w, x.h));
   // Уже стоящие растения/малые формы рядом с контуром — обходим по кроне.
   const circles = (planter ? childrenOf(objects, host.id) : objects.filter((x) => x.id !== host.id && plantLike(x) && inside(x)))

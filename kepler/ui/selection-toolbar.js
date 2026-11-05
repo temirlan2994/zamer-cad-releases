@@ -97,6 +97,7 @@ function contentForSelection(sel) {
         ${chosen.some((o) => !o.locked) ? button('array', '⁙', 'Массив', 'Shift+A') : ''}
         ${fillable ? button('plant-fill', '✿', 'Засадить') : ''}
         ${paths.length ? button('explode', '⁂', 'Разорвать', 'X') : ''}
+        ${chosen.some((o) => o.kind !== 'callout') ? button('callout', '✎', 'Подписать', 'T') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
@@ -133,6 +134,7 @@ export function bindSelectionToolbar() {
       else if (action === 'rotate') ls.rotateLandscape90();
       else if (action === 'delete') ls.deleteLandscapeSelection();
       else if (action === 'explode') ls.explodeLandscapeSelection();
+      else if (action === 'callout') ls.labelLandscapeSelection();
       else if (action === 'array' || action === 'plant-fill') {
         const la = await import('./landscape-array.js');
         if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();

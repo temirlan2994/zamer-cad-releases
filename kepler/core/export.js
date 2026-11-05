@@ -22,6 +22,7 @@ import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, retainingInfo, stairsInfo } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
+import { plantSchedule, plantScheduleExport } from './landscape-plants.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
@@ -233,7 +234,12 @@ function retainingExport(o) {
 function buildLandscapeExport(site) {
   const objects = site?.landscape?.objects;
   if (!objects?.length) return null;
+  // Справочник и ведомость растений (необязательные поля, версия та же).
+  const book = site.landscape.plants;
+  const plants = plantScheduleExport(plantSchedule(objects, book));
   return {
+    ...(book && Object.keys(book).length ? { plant_book: book } : {}),
+    ...(plants ? { plant_schedule: plants } : {}),
     objects: objects.map((o) => {
       const def = landscapeDef(o.kind);
       return {

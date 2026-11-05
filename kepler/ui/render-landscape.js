@@ -14,6 +14,7 @@ import {
   seededRandom, steppingSlabs, variantOf, fmtElev, retainingEdges, retainingInfo,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
+import { calloutArrow, calloutDotRadius, calloutLayout, setCalloutMeasure } from '../core/landscape-callout.js';
 import { sunPosition } from '../core/site.js';
 import {
   LS_STYLES, TAU, branches, cachedSprite, clearLandscapeSprites, grainPattern, hashStr, lsPalette, needlePath,
@@ -2572,6 +2573,7 @@ export function drawLandscapeObject(ctx, o, opts) {
   const def = landscapeDef(o.kind);
   if (!def) return;
   if (isPathShape(def)) { drawShapeObject(ctx, o, def, opts); return; }
+  if (def.shape === 'note') { drawCallout(ctx, o, opts); return; }
   const look = LOOKS[def.look] || LOOKS.pad;
   const rc = renderContext(o, opts);
   const C = objectColors(o, def).map(rc.c);
@@ -2667,6 +2669,96 @@ export function drawLandscapeRaised(ctx, objects, opts) {
   }
   if (shadows && !kids) for (const c of objects) if (c.parent) shadowOf(c);
   for (const o of layerObjects(objects, 'tall')) drawLandscapeObject(ctx, o, opts);
+  // Выноски — поверх всего ландшафта (и на листе генплана).
+  for (const o of layerObjects(objects, 'note')) drawLandscapeObject(ctx, o, opts);
+}
+
+// ------------------------------------------------------------ Выноски
+
+// Шрифт выноски по стилю: «Эскиз» — рукописный, «Чертёж» — строгий.
+const calloutFont = (style, size) => (style === 'drawing' ? `400 ${size}px ${PLAIN_FONT}` : `${size}px ${HAND_FONT}`);
+let calloutStyle = 'sketch';
+const widthCache = new Map();
+let measureCtx = null;
+// Замер строки для core/landscape-callout.js (полка, рамка, попадание —
+// по тому же шрифту, что и рисунок). Ширина ∝ размеру: мерим при 100 px.
+function measureCallout(text, size) {
+  const key = `${calloutStyle}|${text}`;
+  let w = widthCache.get(key);
+  if (w == null) {
+    if (!measureCtx) {
+      try {
+        // Холст документа: шрифты те же, что у основного холста (OffscreenCanvas их может не видеть).
+        measureCtx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : new OffscreenCanvas(4, 4).getContext('2d');
+      } catch { measureCtx = null; }
+    }
+    if (!measureCtx) return String(text).length * size * 0.6;
+    measureCtx.font = calloutFont(calloutStyle, 100);
+    w = measureCtx.measureText(String(text)).width / 100;
+    if (widthCache.size > 2000) widthCache.clear();
+    widthCache.set(key, w);
+  }
+  return w * size;
+}
+if (typeof document !== 'undefined' || typeof OffscreenCanvas !== 'undefined') setCalloutMeasure(measureCallout);
+
+// Выноска в мире (мм): указатель → излом → полка, знак на конце, текст над
+// полкой. «Эскиз» — рукописно, линии с лёгким перехлёстом на концах полки;
+// «Чертёж» — тонкая линия, строгий шрифт.
+function drawCallout(ctx, o, opts) {
+  const rc = baseContext(opts);
+  const style = opts.style === 'drawing' ? 'drawing' : 'sketch';
+  if (style !== calloutStyle) { calloutStyle = style; }
+  const L = calloutLayout(o);
+  const ink = o.color ? rc.c(o.color) : rc.ink;
+  const hand = style !== 'drawing';
+  ctx.save();
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = opts.px(hand ? 1.3 : 0.9);
+  const over = hand ? L.size * 0.3 : 0;
+  // Дальше — в осях текста: начало — излом, X — вдоль полки.
+  ctx.translate(L.elbow.x, L.elbow.y);
+  ctx.rotate(L.angle);
+  const A = L.local.anchor;
+  ctx.beginPath();
+  ctx.moveTo(A.x, A.y);
+  if (hand) {
+    // Лёгкий изгиб указателя — «от руки».
+    ctx.quadraticCurveTo(A.x / 2 + A.y * 0.04, A.y / 2 - A.x * 0.04, 0, 0);
+  } else {
+    ctx.lineTo(0, 0);
+  }
+  ctx.lineTo(L.dir * (L.local.len + over), 0);
+  ctx.stroke();
+  const back = (p) => {
+    const dx = p.x - L.elbow.x; const dy = p.y - L.elbow.y;
+    const c = Math.cos(L.angle); const s = Math.sin(L.angle);
+    return { x: dx * c + dy * s, y: -dx * s + dy * c };
+  };
+  if (o.variant === 'arrow') {
+    const t = calloutArrow(L).map(back);
+    ctx.beginPath(); t.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
+    ctx.fill();
+  } else if (o.variant !== 'none') {
+    ctx.beginPath(); ctx.arc(A.x, A.y, calloutDotRadius(L), 0, TAU); ctx.fill();
+  }
+  ctx.font = calloutFont(style, L.size);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  for (const ln of L.local.lines) {
+    if (!ln.text) continue;
+    // Ореол цвета бумаги — текст читается поверх крон и покрытий.
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = rc.pal.paper;
+    ctx.lineWidth = L.size * 0.22;
+    ctx.strokeText(ln.text, ln.x, ln.y);
+    ctx.globalAlpha = 1;
+    ctx.fillText(ln.text, ln.x, ln.y);
+  }
+  ctx.restore();
 }
 
 // Черновик рисования линии/контура (инструмент draw-landscape): объект по
@@ -2819,6 +2911,7 @@ const fmtM = (v, d = 1) => v.toFixed(d).replace('.', ',');
 
 // Подпись размера: линия — длина × ширина, площадь — м², прочие — габарит.
 export function landscapeMeasure(o, def = landscapeDef(o.kind)) {
+  if (def?.shape === 'note') return `${(o.meta?.text || '').split('\n').length} стр. · h ${Math.round(o.meta?.size || 0)} мм`;
   if (o.kind === 'stairs-out') {
     const st = stairsInfo(o);
     return `${st.steps} ступ. · ${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м · h ${Math.round(st.rise)}`;
@@ -2863,7 +2956,7 @@ function drawLabels(ctx, objects, w2s, tokens, style) {
   ctx.lineJoin = 'round';
   for (const o of objects) {
     const def = landscapeDef(o.kind);
-    if (!def || (def.group === 'Деревья' || def.group === 'Кустарники') && !isPathShape(def)) continue;
+    if (!def || def.shape === 'note' || (def.group === 'Деревья' || def.group === 'Кустарники') && !isPathShape(def)) continue;
     let at = w2s(o.x, o.y);
     if (def.shape === 'line') {
       const path = objectPath(o);
@@ -3006,6 +3099,18 @@ export function drawLandscapeOverlay(ctx, objects, {
   if (chosen.length !== 1) return null;
   const o = chosen[0];
   const def = landscapeDef(o.kind);
+  if (def?.shape === 'note') {
+    // Выноска: две ручки — указатель (круг) и текст (квадрат у излома).
+    if (o.locked) return null;
+    const L = calloutLayout(o);
+    const a = w2s(L.anchor.x, L.anchor.y);
+    ctx.fillStyle = tokens.surface;
+    ctx.strokeStyle = tokens.accent;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, TAU); ctx.fill(); ctx.stroke();
+    handle(ctx, w2s(L.elbow.x, L.elbow.y), tokens);
+    return null;
+  }
   const corners = objectCorners(o).map((c) => w2s(c.x, c.y));
   const top = Math.min(...corners.map((p) => p.y));
   const mid = corners.reduce((s, p) => s + p.x, 0) / 4;
@@ -3058,6 +3163,10 @@ export function drawLandscapePreview(canvas, kind, { style = 'sketch', dark = ca
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const o = { id: `preview-${kind}`, kind, x: 0, y: 0, rotation: 0, w: def.w, h: def.h, height: def.height, variant: def.variants[0].id, meta: { ...(def.meta || {}) } };
+  if (def.shape === 'note') {
+    // Карточка выноски: точка слева внизу, текст в две строки.
+    Object.assign(o, { x: -900, y: 300, points: [{ x: -2400, y: 1300 }], meta: { text: 'Самшит\nшар 400', size: 420 }, w: 5200, h: 2600 });
+  }
   if (def.shape === 'line') {
     // Линия на карточке — S-образная, сглаженная.
     const width = def.h;
