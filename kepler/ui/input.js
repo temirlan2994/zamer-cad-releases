@@ -20,7 +20,9 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
-import { KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenProject, withDefaultComp } from '../core/composite.js';
+import {
+  KITCHEN_ELEMENTS, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenHandleDrag, kitchenProject, withDefaultComp,
+} from '../core/composite.js';
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
@@ -72,6 +74,7 @@ function startPinch() {
   state.marquee = null;
   state.ghost = null;
   state.guides = [];
+  state.kitchenLabel = null;
   const [a, b] = [...touches.values()];
   drag = {
     kind: 'pinch',
@@ -494,7 +497,20 @@ export function bindCanvasInput() {
     if (state.selection?.type === 'item' && state._kitchenUI?.itemId === state.selection.id) {
       const item = state.project.items.find((i) => i.id === state.selection.id);
       const tolPx = state.coarsePointer ? 6 : 3;
-      const h = state._kitchenUI.handles.find((hh) => Math.hypot(hh.x - screen.x, hh.y - screen.y) <= hh.r + tolPx);
+      let h = null; let hd = Infinity;
+      for (const hh of state._kitchenUI.handles) {
+        const d = Math.hypot(hh.x - screen.x, hh.y - screen.y);
+        if (d <= hh.r + tolPx && d < hd) { h = hh; hd = d; }
+      }
+      // Длина стороны, глубина, ширина элемента — правка по смещению указателя.
+      if (item && h && h.op !== 'move') {
+        drag = {
+          kind: 'kitchen-handle', id: item.id, handle: h.h, plan,
+          start: { comp: structuredClone(item.comp), x: item.x, y: item.y },
+          before: snapshot(), moved: false,
+        };
+        return;
+      }
       const type = h?.type || (item && kitchenElementAt(item, plan.x, plan.y)?.type);
       const el = type && item.comp.items.find((e) => e.type === type);
       const at = el && kitchenProject(item, plan.x, plan.y);
@@ -785,11 +801,33 @@ export function bindCanvasInput() {
       if (!item) return;
       const base = { ...item, comp: drag.start.comp, x: drag.start.x, y: drag.start.y };
       const at = kitchenProject(base, plan.x, plan.y);
-      const x = Math.round((at.t - drag.grab) / KITCHEN_SNAP) * KITCHEN_SNAP;
+      const step = event.shiftKey ? 1 : KITCHEN_SNAP; // Shift — без привязки
+      const x = Math.round((at.t - drag.grab) / step) * step;
       const next = editKitchen(base, { op: 'move', type: drag.type, side: at.side, x });
       if (next) {
         Object.assign(item, next);
         drag.moved = JSON.stringify(next.comp) !== JSON.stringify(drag.start.comp);
+      }
+      const el = item.comp.items.find((e) => e.type === drag.type);
+      if (el) {
+        const side = item.comp.shape === 'line' ? '' : `${KITCHEN_SIDES[el.side].toLowerCase()}, `;
+        state.kitchenLabel = { itemId: item.id, x: plan.x, y: plan.y, text: `${KITCHEN_ELEMENTS[el.type].title}: ${side}${el.x} мм от начала`, stop: !next };
+      }
+      requestDraw();
+      return;
+    }
+
+    if (drag.kind === 'kitchen-handle') {
+      const item = state.project.items.find((i) => i.id === drag.id);
+      if (!item) return;
+      const base = { ...item, comp: drag.start.comp, x: drag.start.x, y: drag.start.y };
+      const step = event.shiftKey ? 1 : KITCHEN_SNAP; // Shift — без привязки
+      const res = kitchenHandleDrag(base, drag.handle, plan.x - drag.plan.x, plan.y - drag.plan.y, step);
+      if (res) {
+        const { comp, x, y, w, h } = res.next;
+        Object.assign(item, { comp, x, y, w, h });
+        drag.moved = JSON.stringify(comp) !== JSON.stringify(drag.start.comp);
+        state.kitchenLabel = { itemId: item.id, x: plan.x, y: plan.y, text: res.label, stop: res.stop };
       }
       requestDraw();
       return;
@@ -1020,6 +1058,7 @@ export function bindCanvasInput() {
     const finished = drag;
     drag = null;
     state.guides = [];
+    state.kitchenLabel = null;
 
     if (finished.kind === 'pan') { requestDraw(); return; }
 
@@ -1137,6 +1176,7 @@ export function bindCanvasInput() {
     drag = null;
     state.marquee = null;
     state.ghost = null;
+    state.kitchenLabel = null;
     state.guides = [];
     requestDraw();
   });

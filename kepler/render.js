@@ -592,8 +592,10 @@ export function createRenderer(canvas) {
       const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
       drawTextPill(ctx, `${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`,
         midX, topY - 12, tokens, tokens.accent);
+      const rotatorsPx = [];
       for (const r of itemRotators(selItem, 20, scale)) {
         const p = p2s(r.x, r.y);
+        rotatorsPx.push({ x: p.x, y: p.y, r: HANDLE_SIZE / 2 + 1 });
         ctx.fillStyle = tokens.surface;
         ctx.strokeStyle = tokens.accent;
         ctx.lineWidth = 1.5;
@@ -601,7 +603,7 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
       }
       // Диван-конструктор не растягивается: вместо квадратов — «+» на торцах.
-      if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens);
+      if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens, rotatorsPx);
       else if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
       else for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
     }
@@ -1360,33 +1362,79 @@ function drawKitchenSymbol(ctx, type, w, h, lw) {
   }
 }
 
-// Ручки элементов выделенной кухни (экранный слой): круг со стрелками
-// вдоль стороны. Зоны — в state._kitchenUI для pointerdown (ui/input.js).
-function drawKitchenHandles(ctx, state, item, p2s, tokens) {
+// Двойная стрелка в (x, y) вдоль (ux, uy): полудлина k, усы a.
+function doubleArrowPath(ctx, x, y, ux, uy, k, a) {
+  ctx.moveTo(x - ux * k, y - uy * k); ctx.lineTo(x + ux * k, y + uy * k);
+  for (const sgn of [1, -1]) {
+    const tx = x + ux * k * sgn; const ty = y + uy * k * sgn;
+    ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn - uy * a, ty - uy * a * sgn + ux * a);
+    ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn + uy * a, ty - uy * a * sgn - ux * a);
+  }
+}
+
+// Ручки выделенной кухни (экранный слой). Элементы — светлый круг с ↔
+// вдоль стороны; длина стороны — залитый круг за торцом; глубина — залитый
+// квадрат перед передней кромкой (стрелка от стены); ширина элемента —
+// ромб на его конце. Длина/глубина/ширина показываются, только когда кухня
+// на экране достаточно крупная и ручка не налезает на другие (и на круги
+// поворота occupied). Зоны — в state._kitchenUI для pointerdown (ui/input.js).
+const KITCHEN_DEPTH_PX = { length: 14, depth: 34, width: 44 }; // мин. глубина кухни на экране, px
+function drawKitchenHandles(ctx, state, item, p2s, tokens, occupied = []) {
   const touch = Boolean(state.coarsePointer);
-  const r = touch ? 15 : 9;
+  const R = touch ? 15 : 9;
   const handles = [];
-  for (const h of kitchenHandles(item)) {
-    const p = p2s(h.x, h.y);
-    const q = p2s(h.x + h.ux * 1000, h.y + h.uy * 1000);
+  const taken = [...occupied];
+  const all = kitchenHandles(item);
+  const p0 = p2s(0, 0); const p1 = p2s(1000, 0);
+  const pxPerMm = Math.hypot(p1.x - p0.x, p1.y - p0.y) / 1000;
+  const depthPx = (item.comp?.depth || 600) * pxPerMm;
+  const dir = (h, ax, ay) => {
+    const p = p2s(h.x, h.y); const q = p2s(h.x + ax * 1000, h.y + ay * 1000);
     const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
-    const ux = (q.x - p.x) / len; const uy = (q.y - p.y) / len;
-    handles.push({ type: h.type, x: p.x, y: p.y, r, ux, uy });
-    ctx.fillStyle = tokens.surface;
-    ctx.strokeStyle = tokens.accent;
+    return { x: (q.x - p.x) / len, y: (q.y - p.y) / len };
+  };
+  for (const h of all) {
+    if (h.op !== 'move' && depthPx < KITCHEN_DEPTH_PX[h.op]) continue;
+    const r = h.op === 'move' ? R : h.op === 'width' ? R * 0.8 : R * 0.9;
+    const u = dir(h, h.ux, h.uy);
+    const v = dir(h, h.vx, h.vy);
+    const n = h.nx || h.ny ? dir(h, h.nx, h.ny) : { x: 0, y: 0 };
+    const base = p2s(h.x, h.y);
+    const x = base.x + n.x * (r + 4); const y = base.y + n.y * (r + 4);
+    if (h.op !== 'move' && taken.some((t) => Math.hypot(t.x - x, t.y - y) < t.r + r + 2)) continue;
+    taken.push({ x, y, r });
+    handles.push({ op: h.op, type: h.op === 'move' ? h.type : undefined, elem: h.elem, side: h.side, end: h.end, x, y, r, ux: u.x, uy: u.y, h });
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    const k = r * 0.6; const a = r * 0.3;
-    ctx.beginPath();
-    ctx.moveTo(p.x - ux * k, p.y - uy * k); ctx.lineTo(p.x + ux * k, p.y + uy * k);
-    for (const sgn of [1, -1]) {
-      const tx = p.x + ux * k * sgn; const ty = p.y + uy * k * sgn;
-      ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn - uy * a, ty - uy * a * sgn + ux * a);
-      ctx.moveTo(tx, ty); ctx.lineTo(tx - ux * a * sgn + uy * a, ty - uy * a * sgn - ux * a);
+    if (h.op === 'move' || h.op === 'width') {
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      ctx.beginPath();
+      if (h.op === 'move') ctx.arc(x, y, r, 0, Math.PI * 2);
+      else { ctx.moveTo(x + u.x * r, y + u.y * r); ctx.lineTo(x + v.x * r, y + v.y * r); ctx.lineTo(x - u.x * r, y - u.y * r); ctx.lineTo(x - v.x * r, y - v.y * r); ctx.closePath(); }
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath(); doubleArrowPath(ctx, x, y, u.x, u.y, r * (h.op === 'move' ? 0.6 : 0.5), r * 0.3); ctx.stroke();
+    } else {
+      ctx.fillStyle = tokens.accent;
+      ctx.strokeStyle = tokens.surface;
+      ctx.beginPath();
+      if (h.op === 'length') ctx.arc(x, y, r, 0, Math.PI * 2);
+      else {
+        const k = r * 0.85;
+        for (const [a, b] of [[1, 1], [1, -1], [-1, -1], [-1, 1]]) ctx.lineTo(x + (u.x * a + v.x * b) * k, y + (u.y * a + v.y * b) * k);
+        ctx.closePath();
+      }
+      ctx.fill(); ctx.stroke();
+      const w = h.op === 'length' ? u : v;
+      ctx.beginPath(); doubleArrowPath(ctx, x, y, w.x, w.y, r * 0.55, r * 0.3); ctx.stroke();
     }
-    ctx.stroke();
   }
   state._kitchenUI = { itemId: item.id, handles };
+  // Живая подпись значения во время перетаскивания ручки.
+  const lab = state.kitchenLabel;
+  if (lab?.itemId === item.id) {
+    const p = p2s(lab.x, lab.y);
+    drawTextPill(ctx, lab.text, p.x, p.y - R - 16, tokens, lab.stop ? tokens.danger : tokens.accent, '600 12px system-ui, sans-serif');
+  }
 }
 
 // Кнопки «+» у свободных торцов выделенного дивана-конструктора (экранный

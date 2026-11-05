@@ -32,7 +32,7 @@ import { kitchen } from './kitchen.js';
 
 export {
   KITCHEN_ELEMENTS, KITCHEN_KINDS, KITCHEN_PARTS, KITCHEN_SHAPES, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen,
-  kitchenElementAt, kitchenFrames, kitchenHandles, kitchenProject, shapeSides,
+  kitchenElementAt, kitchenFrames, kitchenHandleDrag, kitchenHandles, kitchenProject, shapeSides,
 } from './kitchen.js';
 
 export const DINING_KINDS = ['dining-table', 'dining-table-6', 'table-round', 'conference-table'];

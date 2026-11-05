@@ -492,20 +492,124 @@ export function kitchenElementAt(item, px, py) {
   return el ? { type: el.type, side: el.side, x: el.x } : null;
 }
 
-// Ручки элементов выделенной кухни (в осях дома): середина передней кромки
-// нижних элементов, у вытяжки — ближе к стене (не налезает на ручку плиты).
+// Точка стороны side (t — вдоль хода, s — от стены вперёд) в осях дома.
+function housePoint(item, l, side, t, s) {
+  const f = l.frames.find((q) => q.side === side);
+  const p = rot(f.ox + f.ux * t + f.vx * s - l.cx, f.oy + f.uy * t + f.vy * s - l.cy, item.rotation || 0);
+  return { x: item.x + p.x, y: item.y + p.y };
+}
+
+// Ручки выделенной кухни (в осях дома), по важности:
+//   op 'move'   { type } — середина передней кромки элемента (у вытяжки —
+//               ближе к стене, не налезает на ручку плиты); тянуть вдоль стороны;
+//   op 'length' { side, end } — середина свободного торца стороны (у основной
+//               стороны П — торец у правого угла); тянуть вдоль стороны;
+//   op 'depth'  { side } — передняя кромка в самом широком месте без элементов;
+//   op 'width'  { elem, side } — конец элемента (если ширина меняется).
+// ux, uy — ход стороны, vx, vy — «вперёд» (от стены), nx, ny — наружу от
+// кухни (куда UI отодвигает значок ручки), all — в осях дома.
 export function kitchenHandles(item) {
   const comp = compOf(item);
   if (!comp) return [];
   const l = centeredLayout(comp);
   const deg = item.rotation || 0;
-  return comp.items.map((e) => {
-    const f = l.frames.find((q) => q.side === e.side);
-    const s = e.type === 'hood' ? comp.depth * 0.25 : comp.depth;
-    const x = f.ox + f.ux * (e.x + e.w / 2) + f.vx * s - l.cx;
-    const y = f.oy + f.uy * (e.x + e.w / 2) + f.vy * s - l.cy;
-    const p = rot(x, y, deg);
+  const D = comp.depth;
+  const out = [];
+  const add = (f, t, s, n, extra) => {
+    const p = housePoint(item, l, f.side, t, s);
     const u = rot(f.ux, f.uy, deg);
-    return { type: e.type, side: e.side, x: r3(item.x + p.x), y: r3(item.y + p.y), ux: r3(u.x), uy: r3(u.y) };
-  });
+    const v = rot(f.vx, f.vy, deg);
+    const nn = n === 'u+' ? u : n === 'u-' ? { x: -u.x, y: -u.y } : n === 'v' ? v : { x: 0, y: 0 };
+    out.push({
+      ...extra, side: f.side, x: r3(p.x), y: r3(p.y),
+      ux: r3(u.x), uy: r3(u.y), vx: r3(v.x), vy: r3(v.y), nx: r3(nn.x), ny: r3(nn.y),
+    });
+  };
+  const frameOf = (side) => l.frames.find((q) => q.side === side);
+  for (const e of comp.items) {
+    add(frameOf(e.side), e.x + e.w / 2, e.type === 'hood' ? D * 0.25 : D, null, { op: 'move', type: e.type });
+  }
+  for (const f of l.frames) {
+    // Свободный торец (у основной стороны — конец, если свободны оба или ни один).
+    const end = !f.ce || f.cs ? 'end' : 'start';
+    add(f, end === 'end' ? f.len : 0, D / 2, end === 'end' ? 'u+' : 'u-', { op: 'length', end });
+  }
+  // Глубина одна на всю кухню; ручка — на каждой стороне (основная первой).
+  for (const f of [...l.frames].sort((a, b) => (b.side === 'main') - (a.side === 'main'))) {
+    const spans = freeSpans(f, comp.items, null, ['base']);
+    const [a, b] = spans.reduce((m, q) => (q[1] - q[0] > m[1] - m[0] ? q : m), [f.start, f.start]);
+    add(f, b > a ? (a + b) / 2 : (f.start + f.end) / 2, D, 'v', { op: 'depth' });
+  }
+  for (const e of comp.items) {
+    const def = KITCHEN_ELEMENTS[e.type];
+    if (def.min === def.max) continue;
+    add(frameOf(e.side), e.x + e.w, e.type === 'hood' ? D * 0.25 : D / 2, null, { op: 'width', elem: e.type });
+  }
+  return out;
+}
+
+const snapTo = (v, step) => (step > 1 ? Math.round(v / step) * step : Math.round(v));
+
+// Правка кухни перетаскиванием ручки h (из kitchenHandles того же предмета в
+// начале жеста; для op 'length' | 'depth' | 'width'). dx, dy — смещение
+// указателя в осях дома от начала жеста, step — шаг привязки, мм (≤ 1 — без
+// привязки). Значение ограничено как в панели (editKitchen); если элементы
+// не помещаются — ближайшее допустимое между прежним и желаемым.
+// Возвращает { next, value, label, stop } (next — как у editKitchen; stop —
+// упёрлись в предел) или null.
+export function kitchenHandleDrag(item, h, dx, dy, step = KITCHEN_SNAP) {
+  const comp = compOf(item);
+  if (!comp || !h) return null;
+  const du = dx * h.ux + dy * h.uy;
+  const dv = dx * h.vx + dy * h.vy;
+  let old; let want; let make; let read; let title;
+  if (h.op === 'length') {
+    if (!comp.len[h.side] || !kitchenFrames(comp).some((f) => f.side === h.side)) return null;
+    old = comp.len[h.side];
+    want = snapTo(old + (h.end === 'start' ? -du : du), step);
+    make = (value) => ({ op: 'length', side: h.side, value });
+    read = (c) => c.len[h.side];
+    title = comp.shape === 'line' || h.side === 'main' ? 'Длина' : `${KITCHEN_SIDES[h.side]} сторона`;
+  } else if (h.op === 'depth') {
+    old = comp.depth;
+    want = snapTo(old + dv, step);
+    make = (value) => ({ op: 'depth', value });
+    read = (c) => c.depth;
+    title = 'Глубина';
+  } else if (h.op === 'width') {
+    const el = comp.items.find((e) => e.type === h.elem);
+    if (!el) return null;
+    old = el.w;
+    want = snapTo(old + du, step);
+    make = (value) => ({ op: 'width', type: h.elem, value });
+    read = (c) => c.items.find((e) => e.type === h.elem)?.w;
+    title = KITCHEN_ELEMENTS[h.elem].title;
+  } else return null;
+  const run = (value) => editKitchen(item, make(value));
+  let next = run(want);
+  if (!next && want !== old) {
+    // Граница допустимого между old (годится) и want (нет).
+    let lo = old; let hi = want;
+    while (Math.abs(hi - lo) > 1) {
+      const mid = Math.round((lo + hi) / 2);
+      if (run(mid)) lo = mid; else hi = mid;
+    }
+    let value = lo;
+    if (step > 1) {
+      const s = want > old ? Math.floor(lo / step) * step : Math.ceil(lo / step) * step;
+      if ((want > old ? s > old : s < old) && run(s)) value = s;
+    }
+    next = run(value);
+  }
+  if (!next) return null;
+  if (h.op === 'length') {
+    // Неподвижен противоположный торец тянущейся стороны (у стены).
+    const lo = centeredLayout(comp);
+    const ln = centeredLayout(next.comp);
+    const a = housePoint(item, lo, h.side, h.end === 'start' ? comp.len[h.side] : 0, 0);
+    const b = housePoint({ ...item, x: next.x, y: next.y }, ln, h.side, h.end === 'start' ? next.comp.len[h.side] : 0, 0);
+    next = { ...next, x: r3(next.x + a.x - b.x), y: r3(next.y + a.y - b.y) };
+  }
+  const got = read(next.comp);
+  return { next, value: got, label: `${title}: ${got} мм`, stop: got !== want };
 }

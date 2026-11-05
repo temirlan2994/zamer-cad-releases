@@ -174,7 +174,7 @@ test('повороты 0/90/180/270: габарит, попадание, эле�
       near(at.t, el.x + el.w / 2, `${rotation}°: положение ${p.element}`);
     }
     // Ручки — у передней кромки своих элементов.
-    for (const hd of kitchenHandles(it)) assert.ok(pointInComposite(it, hd.x, hd.y));
+    for (const hd of kitchenHandles(it).filter((q) => q.op === 'move')) assert.ok(pointInComposite(it, hd.x, hd.y));
     // Пустой внутренний угол Г — не кухня.
     const inner = partsInHouse(it).find((p) => p.kind === 'kitchen:corner');
     const cx = 2 * it.x - inner.x; const cy = 2 * it.y - inner.y;
