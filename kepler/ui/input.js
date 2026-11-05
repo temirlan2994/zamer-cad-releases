@@ -339,6 +339,7 @@ function updateHoverAndGhost(world, plan, event) {
 
 export function bindCanvasInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Перетаскивание мебели из панели на план.
   canvas.addEventListener('dragover', (e) => {
     if (state.modeName === 'landscape' && (e.dataTransfer?.types || []).includes(LANDSCAPE_MIME)) {

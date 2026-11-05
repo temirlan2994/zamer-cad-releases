@@ -465,7 +465,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   overflow: hidden;
 }
 .furniture-chip .chip-size { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.canvas-wrap { -webkit-tap-highlight-color: transparent; }
 
 .canvas-hint {
   position: absolute;
@@ -1349,4 +1350,4 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 }
 
 /* Телефон: объект «взят» долгим нажатием — можно двигать. */
-.canvas-wrap.move-armed { box-shadow: inset 0 0 0 3px #2d7ff9; }
+.canvas-wrap.move-armed::after { content: ""; position: absolute; inset: 0; border: 3px solid #2d7ff9; pointer-events: none; z-index: 5; }
