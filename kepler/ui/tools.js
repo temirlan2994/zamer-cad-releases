@@ -31,6 +31,7 @@ export function selectObject(selection) {
     }
     state.pendingRoomSplit = null;
   }
+  if (!(selection?.type === 'item' && state.itemHandle?.id === selection.id)) state.itemHandle = null;
   state.selection = selection;
   renderGapBar(); // кнопка «Пристыковать» — только пока пара выделена
   renderProps();

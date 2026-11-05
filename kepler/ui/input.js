@@ -19,6 +19,7 @@ import { moveWallBy } from '../core/wall-edit.js';
 import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
+import { ITEM_HANDLE_TITLES, nextItemHandle, stretchItem } from '../core/item-handles.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
 import { hideSplitInput } from './split-input.js';
 import { focusGap, gapMarkerAt } from './gaps.js';
@@ -63,6 +64,13 @@ const TOUCH_HOLD_MS = 420;
 const TOUCH_HOLD_SLOP = 9;
 const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'group', 'wall', 'ls-move']);
 let drag = null;
+
+// Повторный клик по выбранной мебели — следующий режим ручек.
+function cycleItemHandle(id) {
+  state.itemHandle = nextItemHandle(state.itemHandle, id);
+  toast(ITEM_HANDLE_TITLES[state.itemHandle.mode]);
+  requestDraw();
+}
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
 
@@ -606,6 +614,8 @@ export function bindCanvasInput() {
           startAngle: Math.atan2(plan.y - item.y, plan.x - item.x), center: { x: item.x, y: item.y },
           before: snapshot(), moved: false,
         };
+      } else if (itemHandleHit.mode === 'stretch') {
+        drag = { kind: 'item-stretch', id: item.id, edge: itemHandleHit.edge, before: snapshot(), moved: false };
       } else {
         const opposite = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[itemHandleHit.corner];
         const anchor = itemCorners(item).find((c) => c.id === opposite);
@@ -632,8 +642,9 @@ export function bindCanvasInput() {
         return;
       }
       if (item.group) { selectGroup(item.group); startMultiDrag(plan); return; }
+      const wasSelected = state.selection?.type === 'item' && state.selection.id === item.id;
       selectObject({ type: 'item', id: item.id });
-      drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan, before: snapshot(), moved: false };
+      drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan, before: snapshot(), moved: false, wasSelected };
       return;
     }
 
@@ -998,6 +1009,15 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'item-stretch') {
+      const item = state.project.items.find((i) => i.id === drag.id);
+      if (!item) return;
+      drag.moved = true;
+      Object.assign(item, stretchItem(item, drag.edge, plan));
+      requestDraw();
+      return;
+    }
+
     if (drag.kind === 'item-resize') {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
@@ -1151,7 +1171,9 @@ export function bindCanvasInput() {
       clearTimeout(drag.timer);
       const pending = drag.pending;
       drag = null;
-      if (pending) selectObject(pending.selection);
+      const sel = pending?.selection;
+      if (sel?.type === 'item' && state.selection?.type === 'item' && state.selection.id === sel.id) cycleItemHandle(sel.id);
+      else if (pending) selectObject(sel);
       return;
     }
     if (!drag) return;
@@ -1162,6 +1184,7 @@ export function bindCanvasInput() {
     if (finished.kind === 'site-vertex' || finished.kind === 'ls-vertex') state.drawSnap = null;
 
     if (finished.kind === 'pan') { requestDraw(); return; }
+    if (finished.kind === 'item' && !finished.moved && finished.wasSelected) { cycleItemHandle(finished.id); return; }
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {

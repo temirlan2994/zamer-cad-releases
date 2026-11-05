@@ -93,4 +93,15 @@ describe('касание: долгое нажатие для перемещен�
     const selNow = await app.page.evaluate(() => window.__kepler.state.selection);
     assert.deepEqual([selNow.type, selNow.id], ['room', id]);
   });
+
+  it('касание: тап по мебели выбирает, второй тап — ручки поворота', async () => {
+    const it = await app.page.evaluate(() => { const i = window.__kepler.state.project.items[0]; return { x: i.x, y: i.y }; });
+    await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
+    const p = await worldToClient(app.page, it.x, it.y);
+    const modeNow = () => app.page.evaluate(async () => { const m = await import('./core/item-handles.js'); const k = window.__kepler.state; return k.selection?.type === 'item' ? m.itemHandleMode(k.itemHandle, k.selection.id) : null; });
+    await touch('touchStart', p.x, p.y); await touch('touchEnd'); await app.page.waitForTimeout(120);
+    assert.equal(await modeNow(), 'select');
+    await touch('touchStart', p.x, p.y); await touch('touchEnd'); await app.page.waitForTimeout(120);
+    assert.equal(await modeNow(), 'rotate');
+  });
 });

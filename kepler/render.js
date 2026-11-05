@@ -5,6 +5,7 @@
 import {
   deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge,
 } from './core/walls.js';
+import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './core/catalog.js';
 import {
@@ -687,8 +688,9 @@ export function createRenderer(canvas) {
       const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
       drawTextPill(ctx, `${selItem.w} × ${selItem.h} мм · ${Math.round(selItem.rotation || 0)}°`,
         midX, topY - 12, tokens, tokens.accent);
+      const handleMode = itemHandleMode(state.itemHandle, selItem.id);
       const rotatorsPx = [];
-      for (const r of itemRotators(selItem, 20, scale)) {
+      for (const r of handleMode === 'rotate' ? itemRotators(selItem, 20, scale) : []) {
         const p = p2s(r.x, r.y);
         rotatorsPx.push({ x: p.x, y: p.y, r: HANDLE_SIZE / 2 + 1 });
         ctx.fillStyle = tokens.surface;
@@ -700,7 +702,8 @@ export function createRenderer(canvas) {
       // Диван-конструктор не растягивается: вместо квадратов — «+» на торцах.
       if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens, rotatorsPx);
       else if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
-      else for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
+      else if (handleMode === 'scale') for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
+      else if (handleMode === 'stretch') for (const e of itemEdgeHandles(selItem)) drawHandleSquare(ctx, p2s(e.x, e.y), tokens);
     }
 
     if (state.ghost?.rect) {

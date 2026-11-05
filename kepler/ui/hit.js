@@ -12,6 +12,7 @@ import {
   HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
 } from '../render.js';
+import { itemEdgeHandles, itemHandleMode } from '../core/item-handles.js';
 import { state } from './state.js';
 import { planToScreen, worldToScreen } from './view.js';
 
@@ -66,15 +67,26 @@ export function hitItemHandle(screen) {
   if (state.selection?.type !== 'item') return null;
   const item = state.project.items.find((i) => i.id === state.selection.id);
   if (!item) return null;
-  for (const r of itemRotators(item, 20, state.view.scale)) {
-    const p = planToScreen(r.x, r.y);
-    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
+  const mode = itemHandleMode(state.itemHandle, item.id);
+  if (mode === 'rotate') {
+    for (const r of itemRotators(item, 20, state.view.scale)) {
+      const p = planToScreen(r.x, r.y);
+      if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id };
+    }
   }
   if (isFixedSizeComp(item)) return null; // диван-конструктор не растягивается
-  for (const c of itemCorners(item)) {
-    const p = planToScreen(c.x, c.y);
-    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
-      return { mode: 'resize', corner: c.id };
+  if (mode === 'stretch') {
+    for (const e of itemEdgeHandles(item)) {
+      const p = planToScreen(e.x, e.y);
+      if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) return { mode: 'stretch', edge: e.id };
+    }
+  }
+  if (mode === 'scale') {
+    for (const c of itemCorners(item)) {
+      const p = planToScreen(c.x, c.y);
+      if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
+        return { mode: 'resize', corner: c.id };
+      }
     }
   }
   return null;
