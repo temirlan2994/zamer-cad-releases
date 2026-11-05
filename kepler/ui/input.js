@@ -1,6 +1,6 @@
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
-import { GRID_STEP, furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
+import { furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
 import { pickStackHit } from '../core/hit-stack.js';
 import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
@@ -40,7 +40,7 @@ import {
 import {
   addAlignPoint, addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt,
 } from './site-actions.js';
-import { applyResize, resizeVerdict, snapItemToWalls } from './snap.js';
+import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
@@ -179,8 +179,8 @@ function updateHoverAndGhost(world, plan) {
     if (!def) return;
     const item = {
       id: '__ghost-item__', kind: state.tool.itemKind,
-      x: Math.round(plan.x / GRID_STEP) * GRID_STEP,
-      y: Math.round(plan.y / GRID_STEP) * GRID_STEP,
+      x: Math.round(plan.x / gridStep()) * gridStep(),
+      y: Math.round(plan.y / gridStep()) * gridStep(),
       w: def.w, h: def.h, rotation: state.tool.rotation || 0,
     };
     withDefaultComp(item);
@@ -196,7 +196,7 @@ function updateHoverAndGhost(world, plan) {
     let x = plan.x - w / 2;
     let y = plan.y - h / 2;
     const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
-    const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId);
+    const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
     x = snapped.x; y = snapped.y;
     const verdict = validateRoomPlacement(state.project, { type: def.type, x, y, w, h, parentId }, null);
     state.guides = snapped.guides;
@@ -703,8 +703,8 @@ export function bindCanvasInput() {
       room.parentId = candidateParent;
       // Shift — без магнита стыковки и выравнивания: только сетка.
       const snapped = event.shiftKey
-        ? { x: Math.round(rawX / GRID_STEP) * GRID_STEP, y: Math.round(rawY / GRID_STEP) * GRID_STEP, guides: [] }
-        : snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent);
+        ? { x: Math.round(rawX / gridStep()) * gridStep(), y: Math.round(rawY / gridStep()) * gridStep(), guides: [] }
+        : snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent, gridStep());
       const dx = snapped.x - drag.start.x;
       const dy = snapped.y - drag.start.y;
       // Абсолютные позиции от стартовых: груз зафиксирован при захвате.
@@ -733,8 +733,8 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'multi') {
       drag.moved = true;
-      const dx = Math.round((plan.x - drag.plan.x) / GRID_STEP) * GRID_STEP;
-      const dy = Math.round((plan.y - drag.plan.y) / GRID_STEP) * GRID_STEP;
+      const dx = Math.round((plan.x - drag.plan.x) / gridStep()) * gridStep();
+      const dy = Math.round((plan.y - drag.plan.y) / gridStep()) * gridStep();
       for (const [id, start] of drag.roomStarts) {
         const room = roomById(state.project, id);
         if (room) { room.x = start.x + dx; room.y = start.y + dy; }
@@ -762,9 +762,9 @@ export function bindCanvasInput() {
       if (!room?.notch && !room?.outline) return;
       drag.moved = true;
       if (state.pendingRoomSplit?.roomId === room.id) state.pendingRoomSplit.moved = true;
-      const snap = (value) => Math.round(value / GRID_STEP) * GRID_STEP;
+      const snap = (value) => Math.round(value / gridStep()) * gridStep();
       const result = applyRoomShapeHandle(room, drag.handle, { x: snap(plan.x), y: snap(plan.y) }, {
-        mergeTolerance: Math.max(GRID_STEP, 14 / state.view.scale),
+        mergeTolerance: Math.max(gridStep(), 14 / state.view.scale),
       });
       drag.merged = result.merged;
       drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
@@ -800,8 +800,8 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       drag.moved = true;
-      item.x = Math.round((drag.start.x + (plan.x - drag.plan.x)) / GRID_STEP) * GRID_STEP;
-      item.y = Math.round((drag.start.y + (plan.y - drag.plan.y)) / GRID_STEP) * GRID_STEP;
+      item.x = Math.round((drag.start.x + (plan.x - drag.plan.x)) / gridStep()) * gridStep();
+      item.y = Math.round((drag.start.y + (plan.y - drag.plan.y)) / gridStep()) * gridStep();
       if (!event.shiftKey) snapItemToWalls(item); // Shift отключает привязку к стенам
       requestDraw();
       return;
@@ -812,7 +812,7 @@ export function bindCanvasInput() {
       if (!item) return;
       const base = { ...item, comp: drag.start.comp, x: drag.start.x, y: drag.start.y };
       const at = kitchenProject(base, plan.x, plan.y);
-      const step = event.shiftKey ? 1 : KITCHEN_SNAP; // Shift — без привязки
+      const step = event.shiftKey ? 1 : Math.min(KITCHEN_SNAP, gridStep()); // Shift — без привязки
       const x = Math.round((at.t - drag.grab) / step) * step;
       const next = editKitchen(base, { op: 'move', type: drag.type, side: at.side, x });
       if (next) {
@@ -832,7 +832,7 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       const base = { ...item, comp: drag.start.comp, x: drag.start.x, y: drag.start.y };
-      const step = event.shiftKey ? 1 : KITCHEN_SNAP; // Shift — без привязки
+      const step = event.shiftKey ? 1 : Math.min(KITCHEN_SNAP, gridStep()); // Shift — без привязки
       const res = kitchenHandleDrag(base, drag.handle, plan.x - drag.plan.x, plan.y - drag.plan.y, step);
       if (res) {
         const { comp, x, y, w, h } = res.next;
@@ -854,7 +854,7 @@ export function bindCanvasInput() {
       const desired = (edge.orient === 'h' ? plan.x : plan.y) - base;
       // Сначала шаг сетки, потом поиск свободного места: округление не должно
       // загонять проём на соседний (зазор ≥ OPENING_GAP).
-      const clamped = fitOpeningOffset(state.project, opening, state.walls, Math.round(desired / GRID_STEP) * GRID_STEP);
+      const clamped = fitOpeningOffset(state.project, opening, state.walls, Math.round(desired / gridStep()) * gridStep());
       if (clamped !== null) opening.offset = clamped;
       requestDraw();
       return;
@@ -862,7 +862,7 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'wall') {
       const raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
-      const delta = Math.round(raw / GRID_STEP) * GRID_STEP;
+      const delta = Math.round(raw / gridStep()) * gridStep();
       restoreWallDragRooms(drag);
       drag.moved = delta !== 0;
       if (!drag.moved) {
@@ -1030,7 +1030,7 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'building') {
       // Сдвиг дома целиком: шаг сетки, с Shift — 0,5 м. Поворот не меняется.
-      const step = event.shiftKey ? GRID_STEP * 10 : GRID_STEP;
+      const step = event.shiftKey ? gridStep() * 10 : gridStep();
       const dx = Math.round((world.x - drag.world.x) / step) * step;
       const dy = Math.round((world.y - drag.world.y) / step) * step;
       if (!dx && !dy && !drag.moved) return;

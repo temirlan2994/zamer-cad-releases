@@ -8,7 +8,16 @@ export const DEFAULT_BEARING = 200; // внутренняя несущая ст�
 export const DOOR_WIDTH = 800;
 export const WINDOW_WIDTH = 1200;
 export const MIN_PASSAGE = 700; // минимальный проход, мм
-export const GRID_STEP = 50; // шаг привязки, мм
+export const GRID_STEP = 50; // шаг привязки, мм (крупный масштаб экрана — см. gridStepForScale)
+
+// Шаг привязки зависит от приближения камеры: чем крупнее план на экране, тем
+// мельче шаг — объекты двигаются точнее. scale — пикселей на мм (по умолчанию
+// 0,08: шаг 50 мм). Берётся самый мелкий шаг, который на экране не меньше 8 px.
+export function gridStepForScale(scale) {
+  if (!(scale > 0)) return GRID_STEP;
+  for (const step of [1, 5, 10, 25, 50]) if (step * scale >= 8) return step;
+  return GRID_STEP;
+}
 
 // Категории мебели для нижней панели (порядок = порядок вкладок).
 export const FURNITURE_CATEGORIES = [

@@ -1,6 +1,6 @@
 // Привязки и проверки при изменении размеров комнат и мебели.
 
-import { GRID_STEP, isOpenRoom, isShaft } from '../core/catalog.js';
+import { gridStepForScale, isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemRect } from '../core/furnish.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, dockSnapRadius, validateRoomPlacement } from '../core/rooms.js';
 import { sharedWallThickness } from '../core/walls.js';
@@ -26,6 +26,11 @@ function collectSnapLines(excludeRoomId) {
   return { xs, ys };
 }
 
+// Шаг привязки по текущему приближению камеры (мельче при крупном плане).
+export function gridStep() {
+  return gridStepForScale(state.view?.scale);
+}
+
 function snapValue(value, candidates, tol) {
   let best = null;
   for (const c of candidates) {
@@ -49,7 +54,8 @@ export function applyResize(room, dragState, plan) {
   const start = dragState.start;
   const dx = plan.x - dragState.plan.x;
   const dy = plan.y - dragState.plan.y;
-  const snap = (v) => Math.round(v / GRID_STEP) * GRID_STEP;
+  const grid = gridStep();
+  const snap = (v) => Math.round(v / grid) * grid;
   const h = dragState.handle;
   const minSize = isShaft(room) ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
   let { x, y, w, h: hh } = start;

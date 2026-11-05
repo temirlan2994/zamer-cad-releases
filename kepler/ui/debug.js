@@ -3,6 +3,7 @@
 import { openingRect } from '../core/walls.js';
 import { loadSample, loadTemplate, newProject } from './files.js';
 import { setEditorMode } from './modes.js';
+import { gridStep } from './snap.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
 import { debug3d } from './view3d.js';
@@ -22,6 +23,7 @@ export function exposeDebugApi() {
     debug3d,
     screenToPlan,
     fitView,
+    gridStep,
     loadSample,
     loadTemplate,
     newProject,

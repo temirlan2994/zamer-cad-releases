@@ -127,7 +127,7 @@ export function dockSnapRadius(target, snapDist = 0) {
   return Math.max(snapDist, MAX_SHARED_GAP - target, target);
 }
 
-export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
+export function snapRoomPosition(project, moving, x, y, snapDist, parentId, grid = GRID_STEP) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   const guides = [];
   let bestX = null;
@@ -174,8 +174,8 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
     }
   }
 
-  const outX = bestX ? bestX.value : Math.round(x / GRID_STEP) * GRID_STEP;
-  const outY = bestY ? bestY.value : Math.round(y / GRID_STEP) * GRID_STEP;
+  const outX = bestX ? bestX.value : Math.round(x / grid) * grid;
+  const outY = bestY ? bestY.value : Math.round(y / grid) * grid;
   if (bestX?.guide) guides.push(bestX.guide);
   if (bestY?.guide) guides.push(bestY.guide);
   return { x: outX, y: outY, guides };

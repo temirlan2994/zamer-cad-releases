@@ -1,6 +1,6 @@
 // Клавиатура: горячие клавиши, пробел для панорамы.
 
-import { GRID_STEP } from '../core/catalog.js';
+import { gridStep } from './snap.js';
 import { roomById } from '../core/model.js';
 import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
 import { moveBuilding } from '../core/site-check.js';
@@ -92,7 +92,7 @@ export function bindKeyboard() {
     const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
     if (nudge && state.selection) {
       event.preventDefault();
-      const step = event.shiftKey ? GRID_STEP * 10 : GRID_STEP;
+      const step = event.shiftKey ? gridStep() * 10 : gridStep();
       const [dx, dy] = [nudge[0] * step, nudge[1] * step];
       if (state.selection.type === 'site' && state.selection.kind === 'building') {
         // Дом целиком по участку (в координатах съёмки): одна запись истории.
