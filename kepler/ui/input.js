@@ -58,6 +58,10 @@ import {
   zoomAt,
 } from './view.js';
 
+// Перемещение объекта пальцем: долгое нажатие (мс), допуск дрожания (px).
+const TOUCH_HOLD_MS = 420;
+const TOUCH_HOLD_SLOP = 9;
+const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'group', 'wall', 'ls-move']);
 let drag = null;
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
@@ -373,7 +377,7 @@ export function bindCanvasInput() {
     const at = screenToPlan(e.clientX - rect.left, e.clientY - rect.top);
     addFurnitureAt(kind, at.x, at.y);
   });
-  canvas.addEventListener('pointerdown', (event) => {
+  const onCanvasPointerDown = (event) => {
     const screen = pointerScreen(event);
     state.coarsePointer = event.pointerType === 'touch';
     closeLibrarySheet(); // телефон: нажали на план — библиотека уезжает
@@ -683,11 +687,31 @@ export function bindCanvasInput() {
     }
     drag = { kind: 'marquee', start: screen };
     state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y };
+  };
+  // Касанием объект двигается только после долгого нажатия: быстрое
+  // перетаскивание — панорама (иначе объекты уезжают при случайных касаниях).
+  // Ручки (размер, поворот, вершины) срабатывают сразу.
+  canvas.addEventListener('pointerdown', (event) => {
+    onCanvasPointerDown(event);
+    if (event.pointerType !== 'touch' || !drag || !TOUCH_HOLD_KINDS.has(drag.kind)) return;
+    const hold = { kind: 'touch-hold', inner: drag, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
+    hold.timer = setTimeout(() => {
+      if (drag !== hold) return;
+      drag = hold.inner;
+      canvas.parentElement?.classList.add('move-armed');
+      try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
+    }, TOUCH_HOLD_MS);
+    drag = hold;
   });
   canvas.addEventListener('pointermove', (event) => {
     const screen = pointerScreen(event);
     if (event.pointerType === 'touch' && touches.has(event.pointerId)) touches.set(event.pointerId, screen);
     if (drag?.kind === 'pinch') { movePinch(); return; }
+    if (drag?.kind === 'touch-hold') {
+      if (Math.hypot(screen.x - drag.start.x, screen.y - drag.start.y) < TOUCH_HOLD_SLOP) return;
+      clearTimeout(drag.timer);
+      drag = { kind: 'pan', start: drag.start, view: drag.view };
+    }
     const world = pointerWorld(event);
     const plan = worldToPlan(world);
     // В «Плане» — координаты в осях дома, в «Участке» — координаты съёмки.
@@ -1105,6 +1129,8 @@ export function bindCanvasInput() {
       if (touches.size < 2) { drag = null; requestDraw(); }
       return;
     }
+    canvas.parentElement?.classList.remove('move-armed');
+    if (drag?.kind === 'touch-hold') { clearTimeout(drag.timer); drag = null; return; } // тап: выбор уже сделан
     if (!drag) return;
     const finished = drag;
     drag = null;
@@ -1225,6 +1251,8 @@ export function bindCanvasInput() {
   });
   canvas.addEventListener('pointercancel', (event) => {
     touches.delete(event.pointerId);
+    canvas.parentElement?.classList.remove('move-armed');
+    if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
     if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) restoreFrom(drag.before);
     drag = null;
     state.marquee = null;
