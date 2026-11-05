@@ -703,15 +703,21 @@ export function bindCanvasInput() {
     if (!holdable) { if (pending) selectObject(pending.selection); return; }
     // Касанием выбор — только тапом, перемещение — после долгого нажатия.
     const hold = { kind: 'touch-hold', inner: drag, pending, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
-    if (drag.kind !== 'pan') {
-      hold.timer = setTimeout(() => {
-        if (drag !== hold) return;
+    hold.timer = setTimeout(() => {
+      if (drag !== hold) return;
+      if (hold.inner.kind === 'pan') {
+        // Долгое нажатие на пустом месте — рамка выделения (затем копировать, удалить, двигать).
+        const p = hold.start;
+        drag = { kind: 'marquee', start: p };
+        state.marquee = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+        requestDraw();
+      } else {
         if (pending) selectObject(pending.selection);
         drag = hold.inner;
-        canvas.parentElement?.classList.add('move-armed');
-        try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
-      }, TOUCH_HOLD_MS);
-    }
+      }
+      canvas.parentElement?.classList.add('move-armed');
+      try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
+    }, TOUCH_HOLD_MS);
     drag = hold;
   });
   canvas.addEventListener('pointermove', (event) => {

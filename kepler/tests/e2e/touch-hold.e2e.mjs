@@ -66,4 +66,19 @@ describe('касание: долгое нажатие для перемещен�
     assert.equal(await sel(), id, 'панорама не снимает выбор');
     assert.deepEqual(app.errors, []);
   });
+
+  it('долгое нажатие на пустом месте — рамка выделения, она выбирает комнату', async () => {
+    await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
+    const r = await app.page.evaluate(() => { const k = window.__kepler; const rs = k.state.project.rooms; const x0 = Math.min(...rs.map((q) => q.x)); const y0 = Math.min(...rs.map((q) => q.y)); const x1 = Math.max(...rs.map((q) => q.x + q.w)); const y1 = Math.max(...rs.map((q) => q.y + q.h)); return { x0, y0, x1, y1 }; });
+    const a = await worldToClient(app.page, r.x0 - 1500, r.y0 - 1500);
+    const b = await worldToClient(app.page, r.x1 + 1500, r.y1 + 1500);
+    await touch('touchStart', a.x, a.y);
+    await app.page.waitForTimeout(650);
+    assert.ok(await app.page.evaluate(() => Boolean(window.__kepler.state.marquee)), 'рамка появилась');
+    for (let i = 1; i <= 8; i++) { await touch('touchMove', a.x + ((b.x - a.x) * i) / 8, a.y + ((b.y - a.y) * i) / 8); await app.page.waitForTimeout(16); }
+    await touch('touchEnd');
+    await app.page.waitForTimeout(100);
+    assert.ok(await app.page.evaluate(() => Boolean(window.__kepler.state.selection)), 'рамка выбрала объекты');
+    assert.deepEqual(app.errors, []);
+  });
 });
