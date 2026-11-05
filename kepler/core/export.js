@@ -20,7 +20,7 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
-import { isPathShape, landscapeDef, objectAreaM2, objectLengthM } from './landscape.js';
+import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
@@ -230,6 +230,8 @@ function buildLandscapeExport(site) {
         ...(o.points ? { points: o.points } : {}),
         ...(o.width ? { width: o.width } : {}),
         ...(o.smooth ? { smooth: true } : {}),
+        // Углы и укладка линейного объекта (необязательные поля).
+        ...(def?.shape === 'line' ? pathParams(o, o.points?.length || 0) : {}),
         ...(isPathShape(def) ? { length_m: Number(objectLengthM(o).toFixed(3)) } : {}),
         ...(def?.cover || isPathShape(def) ? { area_m2: Number(objectAreaM2(o).toFixed(3)) } : {}),
         ...(o.color ? { color: o.color } : {}),

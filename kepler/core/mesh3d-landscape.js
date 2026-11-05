@@ -8,7 +8,7 @@
 
 import { toLocal } from './building.js';
 import {
-  LS_COLORS, isPathShape, isRoundObject, landscapeDef, objectColors, objectOutline, objectPath, ribbonOutline,
+  LS_COLORS, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline, objectPath,
   seededRandom, steppingSlabs,
 } from './landscape.js';
 
@@ -224,14 +224,14 @@ function objectFaces(o, def, outline, path, hz) {
     return faces;
   }
   if (look === 'hedge' || look === 'hedge-line' || (look === 'fence-line' && o.variant === 'hedge')) {
-    const poly = look === 'hedge' ? outline : ribbonOutline(path, Math.max(o.width || def.h, 500));
+    const poly = look === 'hedge' ? outline : lineLayout({ ...o, width: Math.max(o.width || def.h, 500) }).outline;
     return prism(poly, 0, Math.max(400, h), C[0], hz, { side: C[1] || C[0] });
   }
   // --- Ограждения: полотно + столбы.
   if (look === 'fence-line' || look === 'fence' || look === 'gate') {
     const H = Math.max(600, h);
     const mesh = o.variant === 'mesh';
-    const poly = look === 'fence-line' ? ribbonOutline(path, Math.min(o.width || def.h, mesh ? 40 : 200)) : outline;
+    const poly = look === 'fence-line' ? lineLayout({ ...o, width: Math.min(o.width || def.h, mesh ? 40 : 200) }).outline : outline;
     faces.push(...prism(poly, mesh ? 50 : 100, H, C[0], hz).map((f) => (mesh ? { ...f, alpha: 0.45 } : f)));
     const line = look === 'fence-line' ? path : [outline[0], outline[1]].map((p, i) => ({ x: (p.x + outline[3 - i].x) / 2, y: (p.y + outline[3 - i].y) / 2 }));
     let total = 0;
@@ -246,11 +246,12 @@ function objectFaces(o, def, outline, path, hz) {
   // --- Покрытия-линии: дорожки.
   if (def.shape === 'line') {
     if (o.kind === 'path' && o.variant === 'stepping') {
-      for (const sl of steppingSlabs(o)) faces.push(...prism(rectPoly(sl.x, sl.y, sl.along, sl.across, sl.angle), 0, 40, sl.tone > 0.5 ? C[0] : C[1], hz));
+      for (const sl of steppingSlabs(o)) faces.push(...prism(rectPoly(sl.x, sl.y, sl.along, sl.across, sl.angle), 0, 40, C[sl.ci ?? 0] || C[0], hz));
       return faces;
     }
     const z = o.variant === 'deck' ? 120 : 25;
-    return o.variant === 'deck' ? prism(ribbonOutline(path, o.width || def.h), 0, z, C[0], hz, { side: C[1] }) : flat(ribbonOutline(path, o.width || def.h), z, C[0], hz);
+    // Контур — с углами по типу (срез/встык/угловая/скругление).
+    return o.variant === 'deck' ? prism(outline, 0, z, C[0], hz, { side: C[1] }) : flat(outline, z, C[0], hz);
   }
   // --- Вода.
   if (look === 'pool' || look === 'area-pool' || look === 'jacuzzi') {

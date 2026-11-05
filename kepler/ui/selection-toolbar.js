@@ -83,10 +83,14 @@ function contentForSelection(sel) {
   }
   if (sel.type === 'landscape') {
     const many = sel.ids.length > 1;
+    // «Разорвать» — дорожка на отдельные плиты/доски/участки (как EXPLODE).
+    const ids = new Set(sel.ids);
+    const paths = (state.project.site?.landscape?.objects || []).filter((o) => ids.has(o.id) && o.kind === 'path' && !o.locked);
     return {
       label: many ? `Выбрано: ${sel.ids.length}` : 'Ландшафт',
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${button('rotate', '↻', 'Повернуть 90°', 'R')}
+        ${paths.length ? button('explode', '⁂', 'Разорвать', 'X') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
@@ -122,6 +126,7 @@ export function bindSelectionToolbar() {
       if (action === 'duplicate') ls.duplicateLandscapeSelection();
       else if (action === 'rotate') ls.rotateLandscape90();
       else if (action === 'delete') ls.deleteLandscapeSelection();
+      else if (action === 'explode') ls.explodeLandscapeSelection();
       return;
     }
     const actions = await actionsReady;

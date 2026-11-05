@@ -94,6 +94,8 @@ export function balanceRows(b) {
 
 // ------------------------------------------------------------ Ведомость
 
+const PIECE_KINDS = new Set(['slab', 'board']);
+
 const sizeText = (o, def) => {
   if (def.shape === 'line') return `L ${fmt(objectLengthM(o), 1)} м × ${fmt((o.width || def.h) / 1000, 2)} м`;
   if (def.shape === 'poly') return `контур ${fmt(objectLengthM(o), 1)} м`;
@@ -111,22 +113,25 @@ export function landscapeSchedule(objects) {
     const variant = variantOf(o, def);
     const size = sizeText(o, def);
     const shape = isPathShape(def);
-    const key = shape ? `${o.kind}|${variant?.id}` : `${o.kind}|${variant?.id}|${size}`;
+    // Плиты и доски («Разорвать») — одной строкой «N шт» по типу и материалу.
+    const piece = PIECE_KINDS.has(o.kind);
+    const key = shape || piece ? `${o.kind}|${variant?.id}` : `${o.kind}|${variant?.id}|${size}`;
     if (!rows.has(key)) {
       rows.set(key, {
         kind: o.kind, title: def.title, variant: def.variants.length > 1 ? variant?.title || '' : '', group: def.group, cat: def.cat,
-        count: 0, size: shape ? '' : size, area: 0, length: 0, unit: def.shape === 'line' ? 'м' : def.shape === 'poly' ? 'м²' : 'шт',
+        count: 0, size: shape ? '' : size, sizes: new Set(), area: 0, length: 0, unit: def.shape === 'line' ? 'м' : def.shape === 'poly' ? 'м²' : 'шт',
       });
     }
     const r = rows.get(key);
     r.count += 1;
+    if (piece) r.sizes.add(size);
     if (def.cover || shape) r.area += objectAreaM2(o);
     if (def.shape === 'line') r.length += objectLengthM(o);
   }
   const order = (r) => (r.cat === 'green' ? 0 : 1);
   return [...rows.values()]
     .sort((a, b) => order(a) - order(b) || a.group.localeCompare(b.group, 'ru') || a.title.localeCompare(b.title, 'ru'))
-    .map((r, i) => ({ pos: i + 1, ...r }));
+    .map(({ sizes, ...r }, i) => ({ pos: i + 1, ...r, size: sizes.size > 1 ? 'разные' : r.size }));
 }
 
 export function buildLandscapeCsv(project) {
@@ -198,6 +203,7 @@ export function landscapeDxfEntities(site) {
       out.push(...closedLines(objectPath(o), plant || o.variant === 'hedge' ? 'lsTrees' : 'lsFurniture', false));
       continue;
     }
+    if (def.group === 'Дорожки') { out.push(...closedLines(objectOutline(o, 24), 'lsPaths')); continue; }
     const layer = plant ? 'lsTrees' : def.shape === 'poly' || def.layer === 'ground' || def.surface === 'water' ? 'lsAreas' : 'lsFurniture';
     out.push(...closedLines(objectOutline(o, 24), layer));
   }

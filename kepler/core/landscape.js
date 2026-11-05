@@ -26,6 +26,7 @@
 //   'poly'   — площадной (газон, гравий, плитка, пруд произвольной формы).
 
 import { pointInPolygon, pointToSegmentDistance } from './zamer/geometry.js';
+import { CORNER_IDS, areaOf, layoutBoards, layoutSlabs, pathLayout } from './path-geometry.js';
 
 export const LANDSCAPE_CATEGORIES = [
   { id: 'green', title: 'Озеленение' },
@@ -194,6 +195,11 @@ const RAW = [
       v('deck', 'Настил-доски', ['#b19b85', '#9b8571', '#c5b19c']), v('gravel', 'Гравий', ['#dfdbd1', '#c6c1b4', '#ece9e2']),
       v('concrete', 'Бетон', ['#d3d3cf', '#c2c2be', '#e0e0dc']),
     ], keywords: 'тропинка плиты ступени настил гравий брусчатка рисовать линия' },
+  // Плита и доска — отдельные элементы («Разорвать» дорожку) или поштучно.
+  { kind: 'slab', layer: 'ground', title: 'Плита', cat: 'site', group: 'Дорожки', shape: 'rect', w: 450, h: 900, min: [100, 100], max: [5000, 5000], height: 40, cover: true, look: 'slab', colors: ['#d6d4ce', '#c5c3bc', '#e3e1dc'],
+    variants: [v('stone', 'Камень'), v('concrete', 'Бетон', ['#d3d3cf', '#c2c2be', '#e0e0dc']), v('pavers', 'Брусчатка', ['#b9b7b1', '#a8a6a0', '#c9c7c1'])], keywords: 'плита ступень дорожка камень' },
+  { kind: 'board', layer: 'ground', title: 'Доска', cat: 'site', group: 'Дорожки', shape: 'rect', w: 145, h: 1200, min: [40, 100], max: [400, 6000], height: 40, cover: true, look: 'board', colors: 'deck',
+    variants: [v('larch', 'Лиственница'), v('wpc', 'ДПК графит', ['#7b7570', '#69645f', '#8d8782']), v('teak', 'Тик', ['#bba184', '#a58b70', '#cdb598'])], keywords: 'доска настил дорожка' },
   { kind: 'fence-line', title: 'Ограждение (по линии)', cat: 'site', group: 'Ограждение', shape: 'line', w: 6000, h: 150, min: [300, 50], max: [500000, 1500], height: 1800, look: 'fence-line', colors: 'wood',
     variants: [v('picket', 'Штакетник'), v('mesh', 'Сетка', ['#8b8e92', '#6c6f73', '#a9acb0']), v('hedge', 'Живая изгородь', ['#6f8063', '#86967a', '#a5b298'])], keywords: 'забор штакетник сетка рисовать линия' },
   { kind: 'paving-area', title: 'Мощение (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'area-paving', colors: 'tiles',
@@ -353,7 +359,10 @@ function createShapeObject(def, x, y, opts) {
     meta: { ...(def.meta || {}), ...(opts.meta || {}) },
     points: points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
   };
-  if (line) obj.width = clampWidth(opts.width ?? def.h);
+  if (line) {
+    obj.width = clampWidth(opts.width ?? def.h);
+    Object.assign(obj, pathParams(opts, obj.points.length));
+  }
   if (opts.smooth) obj.smooth = true;
   if (opts.color) obj.color = opts.color;
   if (opts.locked) obj.locked = true;
@@ -361,6 +370,60 @@ function createShapeObject(def, x, y, opts) {
 }
 
 export const clampWidth = (w) => Math.min(LINE_WIDTH_MAX, Math.max(LINE_WIDTH_MIN, Math.round(Number(w) || 1000)));
+
+// Необязательные поля линейного объекта (углы и укладка); без них — как
+// раньше: «естественная» укладка, угол по умолчанию для материала.
+//   corner   — тип угла: miter | butt | slab | round (core/path-geometry.js);
+//   vcorners — тип угла по вершинам (массив длиной points, null — общий);
+//   laying   — natural | strict; slabL × slabW — плита вдоль × поперёк, мм;
+//   gap      — зазор, мм; align — center | left | right; offset — шаг от начала, мм;
+//   checker  — шахматный тон (строгая); deck — straight | stagger (настил);
+//   boardW, boardL — ширина и длина доски, мм.
+export const LAYINGS = ['natural', 'strict'];
+export const ALIGNS = ['center', 'left', 'right'];
+export const DECKS = ['straight', 'stagger'];
+export function pathParams(raw, count) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const num = (v, lo, hi) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : null);
+  if (CORNER_IDS.includes(raw.corner)) out.corner = raw.corner;
+  if (Array.isArray(raw.vcorners) && raw.vcorners.length === count && raw.vcorners.some((c) => CORNER_IDS.includes(c))) {
+    out.vcorners = raw.vcorners.map((c) => (CORNER_IDS.includes(c) ? c : null));
+  }
+  if (LAYINGS.includes(raw.laying)) out.laying = raw.laying;
+  if (ALIGNS.includes(raw.align) && raw.align !== 'center') out.align = raw.align;
+  if (DECKS.includes(raw.deck)) out.deck = raw.deck;
+  if (raw.checker === true) out.checker = true;
+  const fields = { slabL: [100, 5000], slabW: [100, 6000], gap: [0, 2000], offset: [-100000, 100000], boardW: [40, 400], boardL: [200, 6000] };
+  for (const [k, [lo, hi]] of Object.entries(fields)) {
+    const val = num(raw[k], lo, hi);
+    if (val != null) out[k] = val;
+  }
+  return out;
+}
+
+// Тип угла по умолчанию: плиты-ступени — угловая плита, остальное — срез.
+export const defaultCorner = (o) => (o?.kind === 'path' && o.variant === 'stepping' ? 'slab' : 'miter');
+export const objectCorner = (o) => o?.corner || defaultCorner(o);
+
+// Тип угла в каждой вершине линии (концы — null).
+export function pathCorners(o) {
+  const n = o.points?.length || 0;
+  const base = objectCorner(o);
+  return Array.from({ length: n }, (_, i) => (i > 0 && i < n - 1 ? o.vcorners?.[i] || base : null));
+}
+
+// Геометрия полосы линейного объекта: участки, куски, контур (мир).
+export function lineLayout(o) {
+  const def = landscapeDef(o.kind);
+  const smooth = Boolean(o.smooth && (o.points?.length || 0) >= 3);
+  return pathLayout(objectPath(o), { width: o.width || def?.h || 1000, corners: smooth ? [] : pathCorners(o), smooth });
+}
+
+// Доски настила дорожки (строгая/естественная, прямая/со сдвигом).
+export function pathBoards(o) {
+  return layoutBoards(null, o, { layout: lineLayout(o) });
+}
 
 // Габарит (x, y, w, h) по точкам — после любой правки вершин.
 export function syncShape(obj) {
@@ -429,12 +492,17 @@ export function moveVertex(o, index, p) {
 // Вставка вершины после index (на ребре index → index+1).
 export function insertVertex(o, index, p) {
   o.points.splice(index + 1, 0, { x: Math.round(p.x), y: Math.round(p.y) });
+  if (Array.isArray(o.vcorners)) o.vcorners.splice(index + 1, 0, null);
   return syncShape(o);
 }
 
 export function removeVertex(o, index) {
   if (!o.points || o.points.length <= minVertices(o)) return false;
   o.points.splice(index, 1);
+  if (Array.isArray(o.vcorners)) {
+    o.vcorners.splice(index, 1);
+    if (!o.vcorners.some(Boolean)) delete o.vcorners;
+  }
   syncShape(o);
   return true;
 }
@@ -585,30 +653,13 @@ export function pointAlong(path, s) {
   return { x: p.x, y: p.y, angle: 0 };
 }
 
-// Плиты-ступени дорожки: по длине с шагом, детерминированный разброс тона,
-// поворота и сдвига. { x, y, angle (рад), along, across, tone }.
+// Плиты-ступени дорожки: { x, y, angle (рад), along, across, tone, ci
+// (номер краски 0..2), corner? }. «Естественная» укладка — детерминированный
+// разброс тона, поворота и сдвига по id (как раньше); «строгая» — ровные
+// одинаковые плиты с постоянным шагом. На изломах — по типу угла, без
+// наложений (core/path-geometry.js).
 export function steppingSlabs(o) {
-  const path = objectPath(o);
-  const total = polylineLength(path);
-  const width = o.width || 1000;
-  const along = Math.round(Math.min(650, Math.max(300, width * 0.45)));
-  const gap = Math.round(Math.min(300, Math.max(120, width * 0.18)));
-  const step = along + gap;
-  const count = Math.max(1, Math.floor((total + gap) / step));
-  const lead = (total - (count * step - gap)) / 2;
-  const rand = seededRandom(o.id);
-  const out = [];
-  for (let i = 0; i < count; i += 1) {
-    const s = lead + i * step + along / 2;
-    const p = pointAlong(path, s);
-    const jitter = (rand() - 0.5) * 0.08;
-    const shift = (rand() - 0.5) * width * 0.08;
-    out.push({
-      x: p.x - Math.sin(p.angle) * shift, y: p.y + Math.cos(p.angle) * shift, angle: p.angle + jitter,
-      along, across: Math.round(width * (0.9 + rand() * 0.1)), tone: rand(),
-    });
-  }
-  return out;
+  return layoutSlabs(null, o, { layout: lineLayout(o) });
 }
 
 // Длина (м) линейного объекта; у площадного — периметр.
@@ -678,6 +729,7 @@ export function normalizeLandscapeObject(raw) {
       width: num(raw.width) ?? undefined,
       smooth: raw.smooth === true,
       locked: raw.locked === true,
+      ...(def.shape === 'line' ? pathParams(raw, points.length) : {}),
     });
   }
   const obj = createLandscapeObject(raw.kind, x, y, {
@@ -748,7 +800,7 @@ export function objectCorners(obj) {
 export function objectOutline(obj, segments = 24) {
   const def = landscapeDef(obj.kind);
   if (def?.shape === 'poly') return objectPath(obj).map(({ x, y }) => ({ x, y }));
-  if (def?.shape === 'line') return ribbonOutline(objectPath(obj), obj.width || def.h);
+  if (def?.shape === 'line') return lineLayout(obj).outline;
   if (!isRoundObject(obj)) return objectCorners(obj).map(({ x, y }) => ({ x, y }));
   const out = [];
   for (let i = 0; i < segments; i += 1) {
@@ -851,6 +903,8 @@ export function objectAreaM2(obj) {
     if (obj.kind === 'path' && obj.variant === 'stepping') {
       return steppingSlabs(obj).reduce((s, sl) => s + sl.along * sl.across, 0) / 1e6;
     }
+    // Скругления меняют площадь — по контуру; срез/встык/угловая — длина × ширина.
+    if (!obj.smooth && pathCorners(obj).includes('round')) return areaOf(lineLayout(obj).outline) / 1e6;
     return (polylineLength(objectPath(obj)) * (obj.width || def.h)) / 1e6;
   }
   const area =isRoundObject(obj) ? (Math.PI * obj.w * obj.h) / 4 : obj.w * obj.h;

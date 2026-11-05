@@ -5,8 +5,8 @@
 
 import { toWorld } from './building.js';
 import {
-  createLandscapeObject, distanceToPolygon, isPathShape, landscapeDef, objectOutline, objectPath,
-  pointAlong, polylineLength, seededRandom,
+  createLandscapeObject, distanceToPolygon, isPathShape, landscapeDef, lineLayout, objectColors, objectOutline,
+  objectPath, pathBoards, pointAlong, polygonArea, polylineLength, seededRandom, steppingSlabs,
 } from './landscape.js';
 import { groundLevel, levelProject } from './model.js';
 import { buildingFootprint } from './site-check.js';
@@ -391,4 +391,44 @@ function inflate(poly, d) {
     const len = Math.hypot(p.x - cx, p.y - cy) || 1;
     return { x: p.x + ((p.x - cx) / len) * d * Math.SQRT2, y: p.y + ((p.y - cy) / len) * d * Math.SQRT2 };
   });
+}
+
+// ------------------------------------------------------------ Разорвать
+
+// Можно ли «разорвать» объект (дорожку) на отдельные элементы.
+export const canExplode = (o) => o?.kind === 'path' && Array.isArray(o.points) && o.points.length >= 2;
+
+// Сплошные материалы дорожки → площадной тип и вариант.
+const AREA_OF = { pavers: ['paving-area', 'pavers'], concrete: ['paving-area', 'concrete'], gravel: ['gravel-area', 'gravel'] };
+
+const deg = (rad) => ((((rad * 180) / Math.PI) % 360) + 360) % 360;
+
+// «Разорвать» (как EXPLODE): дорожка → набор самостоятельных объектов.
+// Плиты-ступени — плиты `slab`, настил — доски `board` (подрезанные у
+// стыков — куски настила `deck-area`), брусчатка/бетон/гравий — площадные
+// контуры по участкам и углам. Тон и цвет сохраняются (поле color).
+// Результат: { objects, kind: 'slab' | 'board' | 'area' } или null.
+export function explodePath(o) {
+  if (!canExplode(o)) return null;
+  const colors = objectColors(o);
+  const height = o.height || 0;
+  const round = (p) => ({ x: Math.round(p.x), y: Math.round(p.y) });
+  if (o.variant === 'stepping') {
+    const objects = steppingSlabs(o).map((s) => createLandscapeObject('slab', s.x, s.y, {
+      w: s.along, h: s.across, rotation: deg(s.angle), color: colors[s.ci ?? 0], height: 40,
+    }));
+    return { objects, kind: 'slab' };
+  }
+  if (o.variant === 'deck') {
+    const objects = pathBoards(o).map((b) => (b.poly
+      ? createLandscapeObject('deck-area', 0, 0, { points: b.poly.map(round), color: colors[b.ci ?? 0], height: 40 })
+      : createLandscapeObject('board', b.x, b.y, { w: b.along, h: b.across, rotation: deg(b.angle), color: colors[b.ci ?? 0], height: 40 })));
+    return { objects, kind: 'board' };
+  }
+  const [kind, variant] = AREA_OF[o.variant] || AREA_OF.pavers;
+  const objects = lineLayout(o).pieces
+    .map((pc) => pc.poly.map(round))
+    .filter((poly) => poly.length >= 3 && polygonArea(poly) > 100)
+    .map((poly) => createLandscapeObject(kind, 0, 0, { points: poly, variant, height, ...(o.color ? { color: o.color } : {}) }));
+  return { objects, kind: 'area' };
 }

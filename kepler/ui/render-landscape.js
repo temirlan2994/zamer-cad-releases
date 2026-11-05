@@ -10,8 +10,8 @@
 
 import {
   LS_COLORS, SHAPE_RANK, isPathShape, isRoundObject, landscapeDef, landscapeHandles, objectAreaM2, objectColors,
-  objectCorners, objectLengthM, objectOutline, objectPath, pointAlong, polylineLength, ribbonOutline, seededRandom,
-  steppingSlabs, variantOf,
+  lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
+  seededRandom, steppingSlabs, variantOf,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { sunPosition } from '../core/site.js';
@@ -935,6 +935,31 @@ const LOOKS = {
     ctx.beginPath(); if (round) ellipse(ctx, 0, 0, a, b); else rrect(ctx, -a, -b, a * 2, b * 2, 60);
     ink(ctx, rc, 0.7, 0.8);
   },
+  // Отдельная плита (после «Разорвать» или поштучно).
+  slab(ctx, o, a, b, C, rc) {
+    if (rc.lod >= 4 && !rc.mono) {
+      ctx.fillStyle = rgba(rc.pal.shadow, 0.16);
+      ctx.beginPath(); rrect(ctx, -a + 40, -b + 50, a * 2, b * 2, 40); ctx.fill();
+    }
+    ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+    ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, Math.min(40, a * 0.2, b * 0.2));
+    ctx.fill();
+    ink(ctx, rc, 0.6, 0.85);
+  },
+  // Отдельная доска: заливка, волокно вдоль длинной стороны, тонкий контур.
+  board(ctx, o, a, b, C, rc) {
+    ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+    ctx.fillRect(-a, -b, a * 2, b * 2);
+    if (!rc.mono && Math.min(a, b) * 2 * rc.k >= 4) {
+      ctx.strokeStyle = seam(rc, 0.14);
+      ctx.lineWidth = rc.px(0.35);
+      ctx.beginPath();
+      if (a >= b) { ctx.moveTo(-a * 0.9, -b * 0.2); ctx.lineTo(a * 0.9, -b * 0.25); } else { ctx.moveTo(-a * 0.2, -b * 0.9); ctx.lineTo(-a * 0.25, b * 0.9); }
+      ctx.stroke();
+    }
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
+    ink(ctx, rc, 0.45, 0.8);
+  },
   deck(ctx, o, a, b, C, rc) {
     boards(ctx, -a, -b, a * 2, b * 2, C, rc.rand, rc);
     ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
@@ -1533,6 +1558,67 @@ function crossAt(path, s, hw) {
   return [{ x: p.x + nx, y: p.y + ny }, { x: p.x - nx, y: p.y - ny }, p];
 }
 
+// Углы доски/плиты { x, y, angle, along, across } (мир).
+function boardCorners(b) {
+  const c = Math.cos(b.angle); const s = Math.sin(b.angle);
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([kx, ky]) => {
+    const x = (kx * b.along) / 2; const y = (ky * b.across) / 2;
+    return { x: b.x + x * c - y * s, y: b.y + x * s + y * c };
+  });
+}
+
+// Ось и проекции куска полосы: прямой участок и угол — по своему
+// направлению u от начала участка; дуга и кривая — по своей оси.
+function pieceFrame(layout, piece) {
+  const run = piece.kind === 'run' ? layout.runs[piece.run] : null;
+  if (run && run.kind !== 'straight') return { curve: run.pts, len: run.len };
+  const u = piece.u;
+  const n = { x: -u.y, y: u.x };
+  const origin = run ? run.pts[0] : piece.poly[0];
+  const pu = piece.poly.map((p) => (p.x - origin.x) * u.x + (p.y - origin.y) * u.y);
+  const pn = piece.poly.map((p) => (p.x - origin.x) * n.x + (p.y - origin.y) * n.y);
+  return { origin, u, n, u0: Math.min(...pu), u1: Math.max(...pu), n0: Math.min(...pn) - 20, n1: Math.max(...pn) + 20 };
+}
+
+// Поперечные полосы куска с шагом step: пары [предыдущий, текущий] отрезков.
+function pieceStrips(layout, piece, step, hw) {
+  const f = pieceFrame(layout, piece);
+  const out = [];
+  if (f.curve) {
+    let prev = crossAt(f.curve, 0, hw * 1.2);
+    for (let s = step; s < f.len + step; s += step) {
+      const cur = crossAt(f.curve, Math.min(s, f.len), hw * 1.2);
+      out.push([prev, cur]);
+      prev = cur;
+    }
+    return out;
+  }
+  const at = (s, d) => ({ x: f.origin.x + f.u.x * s + f.n.x * d, y: f.origin.y + f.u.y * s + f.n.y * d });
+  const k0 = Math.floor(f.u0 / step);
+  const k1 = Math.ceil(f.u1 / step);
+  let prev = [at(k0 * step, f.n1), at(k0 * step, f.n0)];
+  for (let k = k0 + 1; k <= k1 && k - k0 < 5000; k += 1) {
+    const cur = [at(k * step, f.n1), at(k * step, f.n0)];
+    out.push([prev, cur]);
+    prev = cur;
+  }
+  return out;
+}
+
+// Продольная линия куска на смещении d от оси.
+function pieceLongLine(layout, piece, d) {
+  const f = pieceFrame(layout, piece);
+  if (f.curve) {
+    const path = f.curve;
+    return path.map((p, j) => {
+      const a = path[Math.max(0, j - 1)]; const b = path[Math.min(path.length - 1, j + 1)];
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      return { x: p.x - Math.sin(ang) * d, y: p.y + Math.cos(ang) * d };
+    });
+  }
+  return [f.u0 - 50, f.u1 + 50].map((s) => ({ x: f.origin.x + f.u.x * s + f.n.x * d, y: f.origin.y + f.u.y * s + f.n.y * d }));
+}
+
 // Угол самого длинного ребра контура — направление досок и плитки.
 function mainAngle(pts) {
   let best = 0;
@@ -1583,8 +1669,8 @@ const SHAPE_LOOKS = {
   path(ctx, o, path, C, rc) {
     const width = o.width || 1000;
     const hw = width / 2;
-    const total = polylineLength(path);
-    const ribbon = ribbonOutline(path, width);
+    const layout = lineLayout(o);
+    const ribbon = layout.outline;
     if (o.variant === 'stepping') {
       // Плиты-ступени: светло-серые прямоугольники с тонкой тёмной обводкой.
       for (const sl of steppingSlabs(o)) {
@@ -1595,7 +1681,7 @@ const SHAPE_LOOKS = {
           ctx.fillStyle = rgba(rc.pal.shadow, 0.16);
           ctx.beginPath(); rrect(ctx, -sl.along / 2 + 40, -sl.across / 2 + 50, sl.along, sl.across, 40); ctx.fill();
         }
-        ctx.fillStyle = rc.mono ? rc.pal.paper : sl.tone > 0.66 ? C[2] : sl.tone > 0.33 ? C[0] : C[1];
+        ctx.fillStyle = rc.mono ? rc.pal.paper : C[sl.ci ?? 0];
         ctx.beginPath(); rrect(ctx, -sl.along / 2, -sl.across / 2, sl.along, sl.across, 40); ctx.fill();
         ink(ctx, rc, 0.6, 0.85);
         ctx.restore();
@@ -1611,42 +1697,63 @@ const SHAPE_LOOKS = {
     if (o.variant === 'gravel') {
       tracePath(ctx, ribbon, true);
       if (rc.lod >= 4) fillGrain(ctx, rc, 'gravel');
+    } else if (o.variant === 'deck') {
+      // Доски настила (core: строгая/естественная, прямая/со сдвигом), у стыков — подрезка.
+      const stepPx = (145 * rc.lod) / 1000;
+      if (stepPx >= 1.6) {
+        const tone = !rc.mono && stepPx >= 2.5;
+        const lines = stepPx >= 3.5;
+        ctx.strokeStyle = seam(rc, 0.26);
+        ctx.lineWidth = rc.px(0.45);
+        for (const b of pathBoards(o)) {
+          const poly = b.poly || boardCorners(b);
+          if (tone && b.ci) {
+            ctx.fillStyle = C[b.ci];
+            ctx.globalAlpha = 0.55;
+            tracePath(ctx, poly, true); ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          if (lines) { tracePath(ctx, poly, true); ctx.stroke(); }
+        }
+      }
     } else {
-      // Поперечные полосы: доски (145), брусчатка (200), швы бетона (2000).
-      const step = o.variant === 'deck' ? 145 : o.variant === 'pavers' ? 200 : 2000;
+      // Поперечные полосы по участкам: брусчатка (200), швы бетона (2000).
+      const step = o.variant === 'pavers' ? 200 : 2000;
       const concrete = o.variant === 'concrete';
       const stepPx = (step * rc.lod) / 1000;
       if (stepPx >= (concrete ? 4 : 1.6)) {
-        let prev = crossAt(path, 0, hw * 1.2);
         const tone = !concrete && !rc.mono && stepPx >= 2.5;
         const lines = stepPx >= (concrete ? 4 : 3.5);
-        ctx.strokeStyle = seam(rc, o.variant === 'deck' ? 0.26 : 0.2);
+        ctx.strokeStyle = seam(rc, 0.2);
         ctx.lineWidth = rc.px(0.45);
-        for (let s = step; s < total + step; s += step) {
-          const cur = crossAt(path, Math.min(s, total), hw * 1.2);
-          if (tone) {
-            ctx.fillStyle = rand() > 0.6 ? C[2] : C[1];
-            ctx.globalAlpha = o.variant === 'deck' ? 0.55 : 0.3;
-            ctx.beginPath(); ctx.moveTo(prev[0].x, prev[0].y); ctx.lineTo(cur[0].x, cur[0].y);
-            ctx.lineTo(cur[1].x, cur[1].y); ctx.lineTo(prev[1].x, prev[1].y); ctx.closePath(); ctx.fill();
-            ctx.globalAlpha = 1;
+        for (const piece of layout.pieces) {
+          ctx.save();
+          tracePath(ctx, piece.poly, true);
+          ctx.clip();
+          for (const [a, b] of pieceStrips(layout, piece, step, hw)) {
+            if (tone) {
+              ctx.fillStyle = rand() > 0.6 ? C[2] : C[1];
+              ctx.globalAlpha = 0.3;
+              ctx.beginPath(); ctx.moveTo(a[0].x, a[0].y); ctx.lineTo(b[0].x, b[0].y);
+              ctx.lineTo(b[1].x, b[1].y); ctx.lineTo(a[1].x, a[1].y); ctx.closePath(); ctx.fill();
+              ctx.globalAlpha = 1;
+            }
+            if (lines) { ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y); ctx.lineTo(b[1].x, b[1].y); ctx.stroke(); }
           }
-          if (lines) {
-            ctx.beginPath(); ctx.moveTo(cur[0].x, cur[0].y); ctx.lineTo(cur[1].x, cur[1].y); ctx.stroke();
+          if (o.variant === 'pavers' && stepPx >= 3.5) {
+            // Продольные швы брусчатки — параллельно оси куска.
+            for (const k of [-1 / 3, 1 / 3]) {
+              tracePath(ctx, pieceLongLine(layout, piece, hw * k * 2), false); ctx.stroke();
+            }
           }
-          prev = cur;
+          ctx.restore();
         }
-        if (o.variant === 'pavers' && stepPx >= 3.5) {
-          // Продольные швы брусчатки.
-          for (const k of [-1 / 3, 1 / 3]) {
-            const off = path.map((p, j) => {
-              const a = path[Math.max(0, j - 1)]; const b = path[Math.min(path.length - 1, j + 1)];
-              const ang = Math.atan2(b.y - a.y, b.x - a.x);
-              return { x: p.x - Math.sin(ang) * hw * k * 2, y: p.y + Math.cos(ang) * hw * k * 2 };
-            });
-            tracePath(ctx, off, false); ctx.stroke();
-          }
-        }
+      }
+      // Стыки участков и углов: срез — по диагонали, встык — поперёк, угловая — квадрат.
+      if (layout.pieces.length > 1 && stepPx >= 1.2) {
+        ctx.strokeStyle = seam(rc, concrete ? 0.4 : 0.34);
+        ctx.lineWidth = rc.px(concrete ? 0.7 : 0.6);
+        for (const piece of layout.pieces) { tracePath(ctx, piece.poly, true); ctx.stroke(); }
       }
     }
     ctx.restore();
@@ -1670,7 +1777,7 @@ const SHAPE_LOOKS = {
       ctx.globalAlpha = 1;
     } else {
       // Штакетник: полоса цвета дерева с двойным контуром.
-      const ribbon = ribbonOutline(path, Math.max(width, rc.px(2.5)));
+      const ribbon = lineLayout({ ...o, width: Math.max(width, rc.px(2.5)) }).outline;
       tracePath(ctx, ribbon, true);
       ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
       ctx.fill();

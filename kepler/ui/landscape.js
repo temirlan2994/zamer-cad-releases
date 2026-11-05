@@ -6,15 +6,16 @@
 import {
   LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, cloneLandscapeObject, createLandscapeObject,
   hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef, landscapeHandles,
-  landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorners, objectPath, objectsInPolygon,
+  landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorner, objectCorners, objectPath, objectsInPolygon,
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject,
 } from '../core/landscape.js';
 import { balanceRows, buildLandscapeCsv, landscapeBalance } from '../core/landscape-report.js';
 import {
-  GARDEN_TEMPLATES, PLANT_KINDS, composeGarden, entryPathObject, fillArea, guideOf, houseFootprints, parkingAtEntry,
-  plantAlong,
+  GARDEN_TEMPLATES, PLANT_KINDS, canExplode, composeGarden, entryPathObject, explodePath, fillArea, guideOf, houseFootprints,
+  parkingAtEntry, plantAlong,
 } from '../core/landscape-tools.js';
+import { DECK_PATTERNS, PATH_ALIGNS, PATH_CORNERS, PATH_LAYINGS, layingParams } from '../core/path-geometry.js';
 import { buildingSiteCheck } from '../core/site-check.js';
 import { saveFile } from './cloud.js';
 import { LS_STYLES, drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
@@ -361,7 +362,10 @@ export function landscapePointerDown(event, screen, world) {
       removeVertexAt(o, sh.index);
       return null;
     }
+    const prevVertex = state.lsVertex;
     state.lsVertex = sh.mode === 'vertex' ? { id: o.id, index: sh.index } : null;
+    // Панель «Угол в вершине» — для выбранной вершины дорожки.
+    if (o.kind === 'path' && (prevVertex?.index !== state.lsVertex?.index || prevVertex?.id !== state.lsVertex?.id)) selectObject(state.selection);
     requestDraw();
     return { kind: 'ls-vertex', id: o.id, index: sh.index, insert: sh.mode === 'mid', before: snapshot(), moved: false, screen };
   }
@@ -608,6 +612,31 @@ export function duplicateLandscapeSelection() {
   if (objs.length) pasteObjects(objs, 1000);
 }
 
+// «Разорвать» (как EXPLODE в AutoCAD): выбранные дорожки → отдельные плиты,
+// доски или участки покрытия; одна запись истории, результат — выделен.
+export function explodeLandscapeSelection() {
+  const targets = editable(selectedObjects()).filter(canExplode);
+  if (!targets.length) { toast('Разорвать можно дорожку (плиты, настил, брусчатку, гравий, бетон)'); return []; }
+  const parts = targets.map((o) => ({ o, res: explodePath(o) })).filter((x) => x.res?.objects.length);
+  if (!parts.length) { toast('Дорожка слишком короткая — нечего разрывать'); return []; }
+  const gone = new Set(parts.map((x) => x.o.id));
+  const added = parts.flatMap((x) => x.res.objects);
+  mutate(() => {
+    const site = state.project.site;
+    const list = landscapeObjects();
+    const at = list.findIndex((o) => gone.has(o.id));
+    const rest = list.filter((o) => !gone.has(o.id));
+    rest.splice(Math.max(0, Math.min(at, rest.length)), 0, ...added);
+    site.landscape.objects = rest;
+  });
+  state.lsVertex = null;
+  selectLandscape(added.map((o) => o.id));
+  const kinds = new Set(parts.map((x) => x.res.kind));
+  const word = kinds.size > 1 ? 'объектов' : { slab: 'плит', board: 'досок и кусков', area: 'участков' }[[...kinds][0]];
+  toast(`Разорвано: ${added.length} ${word} · Ctrl+Z — вернуть дорожку`);
+  return added;
+}
+
 // Клавиши режима; true — нажатие обработано.
 export function handleLandscapeKey(event) {
   const mod = event.ctrlKey || event.metaKey;
@@ -630,6 +659,7 @@ export function handleLandscapeKey(event) {
     return true;
   }
   if (event.code === 'KeyR') { rotateLandscape90(); return true; }
+  if (event.code === 'KeyX' && selectedObjects().some(canExplode)) { explodeLandscapeSelection(); return true; }
   if (event.code === 'KeyM') return true; // зеркало ландшафту не нужно
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
   if (nudge && selectedIds().length) {
@@ -736,6 +766,104 @@ function currentWarnings() {
 const plantOptions = (value) => PLANT_KINDS.map((k) => `<option value="${k}" ${k === value ? 'selected' : ''}>${escapeHtml(landscapeDef(k).title)}</option>`).join('');
 const variantOptions = (def, value) => def.variants.map((v) => `<option value="${v.id}" ${v.id === value ? 'selected' : ''}>${escapeHtml(v.title)}</option>`).join('');
 
+// ------------------------------------------------------------ Дорожка: углы и укладка
+
+// Мини-иконки типа угла (Г-образная полоса, 20×20).
+const CORNER_ICON = {
+  miter: '<path d="M2 4H14V18H8V10H2Z"/><path d="M8 10L14 4"/>',
+  butt: '<path d="M2 4H14V18H8V10H2Z"/><path d="M8 10H14"/>',
+  slab: '<path d="M2 4H14V18H8V10H2Z"/><path d="M8 4V10H14"/>',
+  round: '<path d="M2 4H8A6 6 0 0 1 14 10V18H8V10H2Z"/>',
+};
+const cornerIcon = (id) => `<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">${CORNER_ICON[id]}</svg>`;
+const options = (list, value) => list.map((x) => `<option value="${x.id}" ${x.id === value ? 'selected' : ''}>${escapeHtml(x.title)}</option>`).join('');
+
+const EXPLODE_TEXT = { stepping: 'Разорвать на плиты', deck: 'Разорвать на доски' };
+
+// Поля углов и укладки линейного объекта (дорожка; у ограждения — только угол).
+function pathPropsHtml(o, def) {
+  if (def.shape !== 'line' || (o.kind !== 'path' && o.kind !== 'fence-line')) return '';
+  const corner = objectCorner(o);
+  const list = o.kind === 'path' ? PATH_CORNERS : PATH_CORNERS.filter((c) => c.id === 'miter' || c.id === 'round');
+  const smooth = o.smooth && o.points.length >= 3;
+  const cornerBlock = smooth ? '<p class="hint">Сглаженная линия — углов нет</p>' : `
+    <div class="prop-field"><span>Угол</span>
+      <div class="seg ls-corner" role="radiogroup" aria-label="Тип угла">
+        ${list.map((c) => `<label class="seg-opt${c.id === corner ? ' active' : ''}" title="${escapeHtml(c.hint)}"><input type="radio" name="lsCorner" value="${c.id}" ${c.id === corner ? 'checked' : ''}>${cornerIcon(c.id)}<span>${escapeHtml(c.title)}</span></label>`).join('')}
+      </div>
+    </div>`;
+  const v = state.lsVertex?.id === o.id ? state.lsVertex.index : -1;
+  const vertexBlock = !smooth && v > 0 && v < o.points.length - 1 ? `
+    <label class="prop-field"><span>Угол в вершине ${v + 1}</span><select id="lsVCorner">
+      <option value="">Как у всей линии</option>${options(list, o.vcorners?.[v] || '')}
+    </select></label>` : '';
+  if (o.kind !== 'path') return cornerBlock + vertexBlock;
+  const P = layingParams(o, o.width || def.h);
+  const strict = P.strict;
+  let laying = '';
+  if (o.variant === 'stepping') {
+    laying = `
+      <div class="prop-grid">
+        <label class="prop-field"><span>Плита вдоль, мм</span><input id="lsSlabL" type="number" step="10" min="100" max="5000" value="${P.along}"></label>
+        <label class="prop-field"><span>Поперёк, мм</span><input id="lsSlabW" type="number" step="10" min="100" max="6000" value="${P.across ?? o.width}"></label>
+      </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Зазор, мм</span><input id="lsGap" type="number" step="10" min="0" max="2000" value="${P.gap}"></label>
+        <label class="prop-field"><span>Шаг от начала, мм</span><input id="lsOffset" type="number" step="10" value="${P.offset}" ${strict ? '' : 'disabled title="Только для строгой укладки"'}></label>
+      </div>
+      <label class="prop-field"><span>Выравнивание</span><select id="lsAlign">${options(PATH_ALIGNS, P.align)}</select></label>
+      ${strict ? `<label class="check-row"><input type="checkbox" id="lsChecker" ${P.checker ? 'checked' : ''}><span>Тон в шахматном порядке</span></label>` : ''}`;
+  } else if (o.variant === 'deck') {
+    laying = `
+      <label class="prop-field"><span>Раскладка досок</span><select id="lsDeck">${options(DECK_PATTERNS, P.pattern)}</select></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Доска, мм</span><input id="lsBoardW" type="number" step="5" min="40" max="400" value="${P.along}"></label>
+        <label class="prop-field"><span>Длина доски, мм</span><input id="lsBoardL" type="number" step="50" min="200" max="6000" value="${P.boardL}" ${P.pattern === 'stagger' ? '' : 'disabled title="Для раскладки со сдвигом стыков"'}></label>
+      </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Зазор, мм</span><input id="lsGap" type="number" step="1" min="0" max="50" value="${P.gap}"></label>
+        <label class="prop-field"><span>Шаг от начала, мм</span><input id="lsOffset" type="number" step="5" value="${P.offset}" ${strict ? '' : 'disabled title="Только для строгой укладки"'}></label>
+      </div>
+      ${strict ? `<label class="check-row"><input type="checkbox" id="lsChecker" ${P.checker ? 'checked' : ''}><span>Тон через доску</span></label>` : ''}`;
+  }
+  const layingBlock = o.variant === 'stepping' || o.variant === 'deck' ? `
+    <label class="prop-field"><span>Укладка</span><select id="lsLaying">${options(PATH_LAYINGS, strict ? 'strict' : 'natural')}</select></label>
+    ${laying}` : '';
+  return `${cornerBlock}${vertexBlock}${layingBlock}
+    ${o.locked ? '' : `<button type="button" id="lsExplode" title="Каждая плита/доска/участок станет отдельным объектом">${escapeHtml(EXPLODE_TEXT[o.variant] || 'Разорвать на участки')} (X)</button>`}`;
+}
+
+function bindPathProps(panel, o) {
+  const set = (key, value) => mutate(() => {
+    if (value === null || value === undefined || value === '') delete o[key]; else o[key] = value;
+  });
+  panel.querySelectorAll('input[name="lsCorner"]').forEach((input) => input.addEventListener('change', (e) => set('corner', e.target.value)));
+  panel.querySelector('#lsVCorner')?.addEventListener('change', (e) => mutate(() => {
+    const v = state.lsVertex?.index ?? -1;
+    if (v < 0) return;
+    if (!Array.isArray(o.vcorners) || o.vcorners.length !== o.points.length) o.vcorners = o.points.map(() => null);
+    o.vcorners[v] = e.target.value || null;
+    if (!o.vcorners.some(Boolean)) delete o.vcorners;
+  }));
+  panel.querySelector('#lsLaying')?.addEventListener('change', (e) => set('laying', e.target.value === 'strict' ? 'strict' : null));
+  panel.querySelector('#lsAlign')?.addEventListener('change', (e) => set('align', e.target.value === 'center' ? null : e.target.value));
+  panel.querySelector('#lsDeck')?.addEventListener('change', (e) => set('deck', e.target.value === 'stagger' ? 'stagger' : null));
+  panel.querySelector('#lsChecker')?.addEventListener('change', (e) => set('checker', e.target.checked ? true : null));
+  const numField = (id, key, lo, hi) => panel.querySelector(id)?.addEventListener('change', (e) => {
+    const raw = e.target.value.trim();
+    const v = Number(raw);
+    if (raw === '') set(key, null);
+    else if (Number.isFinite(v)) set(key, Math.min(hi, Math.max(lo, Math.round(v))));
+  });
+  numField('#lsSlabL', 'slabL', 100, 5000);
+  numField('#lsSlabW', 'slabW', 100, 6000);
+  numField('#lsGap', 'gap', 0, 2000);
+  numField('#lsOffset', 'offset', -100000, 100000);
+  numField('#lsBoardW', 'boardW', 40, 400);
+  numField('#lsBoardL', 'boardL', 200, 6000);
+  panel.querySelector('#lsExplode')?.addEventListener('click', () => explodeLandscapeSelection());
+}
+
 export function renderLandscapeProps(panel) {
   if (state.tool?.kind === 'draw-landscape') { renderDrawProps(panel); return; }
   const objs = selectedObjects();
@@ -745,7 +873,7 @@ export function renderLandscapeProps(panel) {
       <h2>Ландшафт</h2>
       <div class="prop-block">
         <div class="prop-row"><span>Выбрано объектов</span><strong>${objs.length}</strong></div>
-        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия</p>
+        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия${objs.some(canExplode) ? ' · X — разорвать дорожки' : ''}</p>
       </div>`;
     bindCommon(panel);
     return;
@@ -800,6 +928,7 @@ export function renderLandscapeProps(panel) {
       <div class="prop-row"><span>${escapeHtml(def.group)}</span><span>${def.tall ? 'высокий' : def.cover ? 'покрытие' : ''}</span></div>
       ${variants}
       ${size}
+      ${pathPropsHtml(o, def)}
       <label class="prop-field"><span>Высота, м</span><input id="lsHeight" type="number" step="0.1" min="0" max="40" value="${m(o.height || 0)}"></label>
       ${shape ? '' : `<label class="prop-field"><span>Поворот, °</span><input id="lsRot" type="number" step="5" value="${Math.round(o.rotation || 0)}"></label>`}
       <div class="prop-grid">
@@ -812,6 +941,7 @@ export function renderLandscapeProps(panel) {
     </div>
     ${helpers}`;
   bindCommon(panel);
+  bindPathProps(panel, o);
   const num = (id) => Number(panel.querySelector(id)?.value);
   panel.querySelector('#lsVariant')?.addEventListener('change', (e) => mutate(() => { o.variant = e.target.value; }));
   const applySize = () => {
