@@ -505,7 +505,7 @@ export function landscapeDragEnd(drag) {
   afterChange();
 }
 
-// Двойной клик: завершить рисование или вставить вершину на ребре.
+// Двойной клик: завершить рисование, удалить вершину (по ней) или вставить вершину на ребре.
 export function landscapeDblClick(world) {
   if (state.tool?.kind === 'draw-landscape') { finishLandscapeDraw(); return true; }
   if (state.tool) return false;
@@ -514,7 +514,8 @@ export function landscapeDblClick(world) {
   const o = objs[0];
   if (o.locked || !isShapeKind(o.kind)) return false;
   const tol = 8 / state.view.scale;
-  if (hitVertex(o, world, tol) >= 0) return true;
+  const vertex = hitVertex(o, world, tol);
+  if (vertex >= 0) { removeVertexAt(o, vertex); requestDraw(); return true; }
   const seg = hitEdge(o, world, Math.max(tol, (o.width || 0) / 2));
   if (seg < 0) return false;
   const p = snapPoint(world, false, o.id);
@@ -805,7 +806,7 @@ export function renderLandscapeProps(panel) {
         <label class="check-row"><input type="checkbox" id="lsLock" ${o.locked ? 'checked' : ''}><span>Замок</span></label>
       </div>
       ${o.color ? '<button type="button" class="link" id="lsColorReset">Цвет по умолчанию</button>' : ''}
-      ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик — новая вершина · Alt+клик или Delete — удалить вершину</p>' : ''}
+      ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик по ребру — новая вершина · двойной клик по вершине, Alt+клик или Delete — удалить</p>' : ''}
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
     ${helpers}`;

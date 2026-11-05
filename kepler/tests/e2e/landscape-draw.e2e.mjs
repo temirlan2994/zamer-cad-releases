@@ -100,6 +100,15 @@ describe('ландшафт: рисование и помощники', () => {
     now = (await objects(page)).find((o) => o.id === lawn.id);
     assert.ok(now, 'газон на месте');
     assert.equal(now.points.length, 4);
+    // Двойной клик по самой вершине удаляет её; Ctrl+Z возвращает.
+    const v2 = now.points[2];
+    const onVertex = await worldToClient(page, v2.x, v2.y);
+    await page.mouse.dblclick(onVertex.x, onVertex.y);
+    now = (await objects(page)).find((o) => o.id === lawn.id);
+    assert.equal(now.points.length, 3, 'вершина удалена двойным кликом');
+    await page.keyboard.press('Control+z');
+    now = (await objects(page)).find((o) => o.id === lawn.id);
+    assert.equal(now.points.length, 4, 'отмена вернула вершину');
   });
 
   it('перетаскивание вершины — одна запись истории, Ctrl+Z возвращает', async () => {
