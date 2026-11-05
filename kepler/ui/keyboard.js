@@ -13,8 +13,11 @@ import {
   copySelection, deleteSelection, duplicateSelection, mirrorSelection, moveMultiBy, pasteSelection,
   reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
-import { handleLandscapeKey, rotateLandscapeGhost } from './landscape.js';
-import { finishDraft } from './site-actions.js';
+import {
+  addLandscapeDraftExact, handleLandscapeKey, landscapeDraftPrev, rotateLandscapeGhost,
+} from './landscape.js';
+import { addDraftPoint, finishDraft } from './site-actions.js';
+import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
 import { state } from './state.js';
 import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
@@ -48,6 +51,16 @@ export function bindKeyboard() {
     }
     const tag = event.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    // Привязки черчения: F8 — орто; Shift/Ctrl — пересчитать привязку на месте.
+    if (event.key === 'F8') { event.preventDefault(); toggleOrtho(); return; }
+    if ((event.key === 'Shift' || event.key === 'Control') && !event.repeat) {
+      rehoverSnap({ shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
+    }
+    // Динамический ввод: число (+ Tab — угол) и Enter — следующая точка.
+    const dynPrev = state.draft?.points?.length ? state.draft.points[state.draft.points.length - 1] : landscapeDraftPrev();
+    if (handleDynamicKey(event, dynPrev, (p) => {
+      if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
+    })) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
       event.preventDefault();
       if (event.shiftKey) redo(); else undo();
@@ -123,5 +136,6 @@ export function bindKeyboard() {
   });
   window.addEventListener('keyup', (event) => {
     if (event.code === 'Space') { spaceDown = false; canvas.style.cursor = 'crosshair'; }
+    if (event.key === 'Shift' || event.key === 'Control') rehoverSnap({ shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
   });
 }

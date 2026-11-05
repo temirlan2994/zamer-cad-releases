@@ -32,6 +32,7 @@ import { bindSelectionToolbar, renderSelectionToolbar } from './ui/selection-too
 import { bindSplitInput } from './ui/split-input.js';
 import { syncUnderlayImage } from './ui/underlay.js';
 import { bindView, fitView, requestDraw, scaleLabel } from './ui/view.js';
+import { bindSnapBar } from './ui/draw-snap-ui.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -47,6 +48,7 @@ bindCompare();
 bindFurnitureSearch();
 bindView();
 bindTheme();
+bindSnapBar();
 
 (function boot() {
   loadTheme();

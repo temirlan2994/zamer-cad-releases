@@ -29,6 +29,11 @@ export const state = {
   draft: null, // рисуемая ломаная участка
   marquee: null,
   guides: [],
+  // Привязки черчения линий (ui/draw-snap-ui.js, core/draw-snap.js):
+  // настройки мини-панели «Привязки», текущий результат и динамический ввод.
+  snapSettings: null, // { ortho, polar, polarStep, objects, tracking }
+  drawSnap: null, // { point, kind, label, guides, markers, tooltip, prev }
+  dynInput: null, // { field: 'length'|'angle', length, angle }
   rejected: new Map(), // roomId -> причины отказов расстановки
   calibration: null, // {p1, p2, measured}
   underlayImg: null,

@@ -5,6 +5,7 @@ import { siteWarning } from '../core/rooms.js';
 import { DEFAULT_ROAD_WIDTH, nearestPointOnPolyline, polygonAreaM2 } from '../core/site.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import { canvas, toast } from './dom.js';
+import { snapAt } from './draw-snap-ui.js';
 import { applyModeRotation } from './modes.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
@@ -45,17 +46,52 @@ export function finishDraft() {
   cancelTool();
 }
 
-export function addDraftPoint(world) {
+// Сетка черчения контуров участка — 100 мм (как раньше).
+const DRAFT_GRID = 100;
+
+// Курсор у первой точки (от 3 точек) — замыкание контура.
+function nearFirst(draft, world) {
+  if (draft.points.length < 3) return false;
+  const first = worldToScreen(draft.points[0].x, draft.points[0].y);
+  const here = worldToScreen(world.x, world.y);
+  return Math.hypot(first.x - here.x, first.y - here.y) < 15;
+}
+
+// Привязка точки черновика (core/draw-snap.js): лучи, выравнивание, объекты, сетка.
+function snapDraft(world, event) {
   const draft = state.draft;
-  const snap = (v) => Math.round(v / 100) * 100;
-  const point = { x: snap(world.x), y: snap(world.y) };
-  // Клик по начальной точке (когда к ней привязались) — замкнуть контур.
-  if (draft.points.length >= 3) {
-    const first = worldToScreen(draft.points[0].x, draft.points[0].y);
-    const here = worldToScreen(point.x, point.y);
-    if (Math.hypot(first.x - here.x, first.y - here.y) < 15) { draft.closed = true; finishDraft(); return; }
+  const pts = draft.points;
+  return snapAt(world, event, {
+    prev: pts[pts.length - 1] || null, points: pts, grid: DRAFT_GRID,
+    exclude: { siteKind: draft.kind === 'redline' ? 'redline' : draft.kind === 'boundary' ? 'boundary' : '' },
+  }).point;
+}
+
+// Наведение при черчении: курсор черновика с привязкой.
+export function updateDraftCursor(world, event) {
+  const draft = state.draft;
+  draft.snapStart = false;
+  draft.snapLabel = 'Замкнуть';
+  if (!event?.shiftKey && nearFirst(draft, world)) {
+    draft.cursor = { x: draft.points[0].x, y: draft.points[0].y };
+    draft.snapStart = true;
+    state.drawSnap = null;
+  } else {
+    draft.cursor = snapDraft(world, event);
   }
-  draft.points.push(point);
+  requestDraw();
+}
+
+// exact — точка уже вычислена (динамический ввод), без привязки.
+export function addDraftPoint(world, event = null, { exact = false } = {}) {
+  const draft = state.draft;
+  // Клик по начальной точке (когда к ней привязались) — замкнуть контур.
+  if (!exact && !event?.shiftKey && nearFirst(draft, world)) { draft.closed = true; finishDraft(); return; }
+  const point = exact ? { x: world.x, y: world.y } : snapDraft(world, event);
+  const last = draft.points[draft.points.length - 1];
+  if (last && Math.hypot(last.x - point.x, last.y - point.y) < 1) return; // повторный клик (двойной)
+  draft.points.push({ x: point.x, y: point.y });
+  if (!exact) snapDraft(world, event); // направляющие — уже от новой точки
   requestDraw();
 }
 

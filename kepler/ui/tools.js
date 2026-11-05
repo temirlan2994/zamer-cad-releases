@@ -12,6 +12,7 @@ import { renderSelectionToolbar } from './selection-toolbar.js';
 import { closeLibrarySheet } from './mobile.js';
 import { hideSplitInput, positionSplitInput } from './split-input.js';
 import { requestDraw } from './view.js';
+import { clearDrawSnap } from './draw-snap-ui.js';
 
 export function selectObject(selection) {
   const split = state.splitEdit;
@@ -54,6 +55,7 @@ export function setHint(text) {
 export function setTool(tool, hint) {
   state.tool = tool;
   state.draft = null;
+  clearDrawSnap();
   state.ghostLandscape = null;
   state.ghost = null;
   state.ghostItem = null;
@@ -68,6 +70,7 @@ export function setTool(tool, hint) {
 export function cancelTool() {
   state.tool = null;
   state.draft = null;
+  clearDrawSnap();
   state.ghost = null;
   state.ghostItem = null;
   state.ghostOpening = null;
@@ -142,7 +145,7 @@ export function startDraw(target) {
   const finish = target === 'boundary'
     ? 'клик по первой точке или Enter — замкнуть'
     : 'двойной клик или Enter — завершить';
-  setTool({ kind: 'draw', target }, `Кликами наметьте ${names[target]} · ${finish} · Esc — отмена`);
+  setTool({ kind: 'draw', target }, `Кликами наметьте ${names[target]} · ${finish} · Shift — без привязки, F8 — орто, число + Enter — длина · Esc — отмена`);
   state.draft = { kind: target, points: [], cursor: null, closeHint: target === 'boundary' };
 }
 

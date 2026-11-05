@@ -42,8 +42,9 @@ import {
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
-  addAlignPoint, addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt,
+  addAlignPoint, addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
 } from './site-actions.js';
+import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
@@ -179,7 +180,33 @@ function applyMarquee() {
   selectObject({ type: 'multi', roomIds, itemIds });
 }
 
+// Калибровка и «Север по 2 точкам»: привязка второй точки к лучам от первой.
+function snapTwoPointTool(world, event) {
+  const pts = state.tool.points;
+  return snapAt(world, event, { prev: pts[0] || null, points: pts, grid: 0 }).point;
+}
+
+// Перетаскивание вершины границы/красной линии/дороги — с привязками.
+function snapSiteVertex(d, world, event) {
+  const site = state.project.site;
+  const closed = d.siteKind === 'boundary' ? true
+    : d.siteKind === 'redline' ? Boolean(site.redLineClosed)
+      : Boolean(site.roads.find((r) => r.id === d.id)?.closed);
+  return snapAt(world, event, {
+    prev: dragPrev(d.points, d.index, closed), grid: 100,
+    exclude: { siteKind: d.siteKind, siteId: d.id }, extraShapes: chainsWithout(d.points, d.index, closed),
+  }).point;
+}
+
+// Последнее положение указателя — для пересчёта привязки по Shift/Ctrl/F8.
+let lastHover = null;
+setSnapRehover((mods) => {
+  if (!lastHover || drag) return;
+  updateHoverAndGhost(lastHover.world, lastHover.plan, mods);
+});
+
 function updateHoverAndGhost(world, plan, event) {
+  lastHover = { world, plan };
   if (state.modeName === 'landscape' && landscapeHover(world, canvas, event)) return;
   if (state.tool?.kind === 'place-furniture') {
     const def = furnitureDef(state.tool.itemKind);
@@ -217,19 +244,17 @@ function updateHoverAndGhost(world, plan, event) {
     requestDraw();
     return;
   }
-  if (state.tool?.kind === 'calibrate' && state.tool.points.length === 1) {
-    state.calCursor = { x: world.x, y: world.y };
+  if (state.tool?.kind === 'calibrate' || state.tool?.kind === 'north') {
+    // Две точки по клику — с привязками черчения (лучи, объекты; без сетки).
+    const p = snapTwoPointTool(world, event);
+    if (state.tool.kind === 'calibrate') state.calCursor = state.tool.points.length === 1 ? p : null;
+    else state.northCursor = state.tool.points.length === 1 ? p : null;
     requestDraw();
     return;
   }
   if (state.tool?.kind === 'entry') {
     // Предпросмотр: стрелка скользит по границе за курсором.
     state.entryGhost = computeEntryAt(world);
-    requestDraw();
-    return;
-  }
-  if (state.tool?.kind === 'north' && state.tool.points.length === 1) {
-    state.northCursor = { x: world.x, y: world.y };
     requestDraw();
     return;
   }
@@ -254,22 +279,8 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
   if (state.draft) {
-    const snap = (v) => Math.round(v / 100) * 100;
-    let cursor = { x: snap(world.x), y: snap(world.y) };
-    const pts = state.draft.points;
-    state.draft.snapStart = false;
-    // Возврат к первой точке (от 3 точек) — привязка и замыкание контура.
-    if (pts.length >= 3) {
-      const first = worldToScreen(pts[0].x, pts[0].y);
-      const cur = worldToScreen(cursor.x, cursor.y);
-      if (Math.hypot(first.x - cur.x, first.y - cur.y) < 15) {
-        cursor = { x: pts[0].x, y: pts[0].y };
-        state.draft.snapStart = true;
-      }
-    }
-    state.draft.cursor = cursor;
-    state.draft.snapLabel = 'Замкнуть';
-    requestDraw();
+    // Возврат к первой точке (от 3 точек) — замыкание; иначе привязки черчения.
+    updateDraftCursor(world, event);
     return;
   }
   if (state.tool?.kind === 'terrain') {
@@ -456,7 +467,7 @@ export function bindCanvasInput() {
         drag = { kind: 'site-vertex', siteKind: v.kind, id: v.id, index: v.index, points: v.points, before: snapshot(), moved: false };
         return;
       }
-      if (state.draft) { addDraftPoint(world); return; } // режим черчения нового контура
+      if (state.draft) { addDraftPoint(world, event); return; } // режим черчения нового контура
       return;
     }
 
@@ -471,9 +482,9 @@ export function bindCanvasInput() {
         return;
       }
       if (t.kind === 'place-opening') { placeOpeningAt(plan); return; }
-      if (t.kind === 'north') { addNorthPoint(world); return; }
+      if (t.kind === 'north') { addNorthPoint(snapTwoPointTool(world, event)); return; }
       if (t.kind === 'align-underlay') { addAlignPoint(world); return; }
-      if (t.kind === 'calibrate') { addCalibratePoint(world); return; }
+      if (t.kind === 'calibrate') { addCalibratePoint(snapTwoPointTool(world, event)); return; }
       return;
     }
 
@@ -1033,8 +1044,9 @@ export function bindCanvasInput() {
     if (drag.kind === 'site-vertex') {
       drag.moved = true;
       const point = drag.points[drag.index];
-      point.x = Math.round(world.x / 100) * 100;
-      point.y = Math.round(world.y / 100) * 100;
+      const p = snapSiteVertex(drag, world, event);
+      point.x = p.x;
+      point.y = p.y;
       requestDraw();
       return;
     }
@@ -1098,6 +1110,7 @@ export function bindCanvasInput() {
     drag = null;
     state.guides = [];
     state.kitchenLabel = null;
+    if (finished.kind === 'site-vertex' || finished.kind === 'ls-vertex') state.drawSnap = null;
 
     if (finished.kind === 'pan') { requestDraw(); return; }
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }

@@ -830,6 +830,28 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+/* Мини-панель «Привязки» (ui/draw-snap-ui.js): Орто, Полярка, Объекты, Выравнивание. */
+.snap-bar { display: flex; align-items: center; gap: 4px; pointer-events: auto; }
+.statusbar .snap-btn,
+.statusbar .snap-step {
+  height: 19px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 17px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+.statusbar .snap-step { padding: 0 2px; }
+.statusbar .snap-btn.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 600;
+}
 
 /* --- Панель свойств --- */
 .props {

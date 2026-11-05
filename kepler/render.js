@@ -21,6 +21,7 @@ import {
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
+import { drawSnapOverlay } from './ui/render-guides.js';
 import { facadeDimensionStations } from './core/dimensions.js';
 import { roomRects, roomShapeArea, roomShapeHandles, wallSplitAt } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
@@ -188,16 +189,8 @@ export function createRenderer(canvas) {
     }
     if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
     if (landscape && houseFootprints.length) {
+      // Тень дома; сам дом ниже рисуется настоящим планом этажа (полы, стены, проёмы).
       drawHouseShadow(ctx, houseFootprints, lsOpts, site?.buildingHeight || 6000);
-      // Дом — приглушённым пятном застройки: обводка, затем заливка поверх
-      // (внутренние швы между комнатами закрываются).
-      ctx.strokeStyle = tokens.muted;
-      ctx.lineWidth = px(3);
-      ctx.beginPath();
-      for (const f of houseFootprints) polyPath(ctx, f);
-      ctx.stroke();
-      ctx.fillStyle = tokens.surface;
-      ctx.fill();
     }
 
     // 3–6. Дом — в своих осях.
@@ -205,9 +198,9 @@ export function createRenderer(canvas) {
 
     // 6. Мебель (на генплане и в «Ландшафте» — без неё).
     const detail = opts.detail !== false && !landscape;
-    if (!landscape) {
+    {
       // Этаж ниже — бледные стены (подложка для выравнивания этажей).
-      if (state.belowWalls?.length) {
+      if (!landscape && state.belowWalls?.length) {
         ctx.save();
         ctx.globalAlpha = 0.16;
         ctx.fillStyle = tokens.wall;
@@ -295,7 +288,7 @@ export function createRenderer(canvas) {
       }
 
       // Подсветка комнаты под курсором.
-      if (state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
+      if (!landscape && state.hover?.type === 'room' && state.selection?.id !== state.hover.id) {
         const hoverRoom = state.project.rooms.find((r) => r.id === state.hover.id);
         if (hoverRoom) {
           ctx.strokeStyle = tokens.hover;
@@ -321,7 +314,7 @@ export function createRenderer(canvas) {
       }
 
       // Мебель с замечаниями (пересечение, дверь, нет прохода) — красный пунктир.
-      if (state.norms?.flagged?.size) {
+      if (!landscape && state.norms?.flagged?.size) {
         ctx.strokeStyle = tokens.danger;
         ctx.lineWidth = px(1.6);
         ctx.setLineDash([px(5), px(4)]);
@@ -591,6 +584,8 @@ export function createRenderer(canvas) {
       ctx.textAlign = 'center';
       ctx.fillText(state._calLabelAt.text, p.x, p.y - 14);
     }
+    // Привязки черчения линий: лучи, выравнивание, значки, «длина · угол».
+    if (!print && state.drawSnap) drawSnapOverlay(ctx, state, w2s, tokens, width);
     // Ручки топосъёмки: круги вращения снаружи углов + квадраты (масштаб).
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
       for (const r of underlayRotators(site.underlay, 22, scale)) {

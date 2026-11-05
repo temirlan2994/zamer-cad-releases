@@ -16,11 +16,11 @@ import {
   plantAlong,
 } from '../core/landscape-tools.js';
 import { buildingSiteCheck } from '../core/site-check.js';
-import { pointToSegmentDistance } from '../core/zamer/geometry.js';
 import { saveFile } from './cloud.js';
 import { drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { gridStep } from './snap.js';
+import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
@@ -66,39 +66,16 @@ const snapStep = () => Math.max(gridStep(), 1);
 const snap = (val) => Math.round(val / snapStep()) * snapStep();
 const isShapeKind = (kind) => isPathShape(landscapeDef(kind));
 
-// Привязка точки рисования/вершины: вершины границы участка, углы дома и
-// вершины других фигур, затем рёбра границы и дома (10 px), затем сетка.
-// free (Shift) — без привязки.
+// Привязка точки рисования/вершины — общий модуль (core/draw-snap.js):
+// конец/середина/пересечение/центр, перпендикуляр и параллель, выравнивание
+// по X/Y, полярные лучи и орто от последней точки, затем сетка.
+// Shift — без привязки, Ctrl — временно орто.
+function snapLs(world, event, opts = {}) {
+  return snapAt(world, event, { grid: snapStep(), ...opts }).point;
+}
+
 export function snapPoint(world, free = false, excludeId = null) {
-  if (free) return { x: Math.round(world.x), y: Math.round(world.y) };
-  const tol = 10 / state.view.scale;
-  const site = state.project.site;
-  const polys = [];
-  if (site.boundary?.length >= 3) polys.push(site.boundary);
-  polys.push(...houseFootprints(state.project));
-  const verts = polys.flat();
-  for (const o of landscapeObjects()) if (o.id !== excludeId && o.points && isShapeKind(o.kind)) verts.push(...o.points);
-  let best = null;
-  let bestD = tol;
-  for (const p of verts) {
-    const d = Math.hypot(p.x - world.x, p.y - world.y);
-    if (d < bestD) { best = p; bestD = d; }
-  }
-  if (best) return { x: Math.round(best.x), y: Math.round(best.y) };
-  for (const poly of polys) {
-    for (let i = 0; i < poly.length; i += 1) {
-      const a = poly[i]; const b = poly[(i + 1) % poly.length];
-      const d = pointToSegmentDistance(world, a, b);
-      if (d < bestD) {
-        const dx = b.x - a.x; const dy = b.y - a.y;
-        const t = Math.max(0, Math.min(1, ((world.x - a.x) * dx + (world.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-        best = { x: a.x + dx * t, y: a.y + dy * t };
-        bestD = d;
-      }
-    }
-  }
-  if (best) return { x: Math.round(best.x), y: Math.round(best.y) };
-  return { x: snap(world.x), y: snap(world.y) };
+  return snapLs(world, { shiftKey: free }, { exclude: { landscapeId: excludeId } });
 }
 
 // Новые объекты одним действием истории (помощники, шаблоны).
@@ -167,8 +144,8 @@ function drawOptions(kind) {
 }
 
 const DRAW_HINT = {
-  line: 'Кликайте точки линии · Enter или двойной клик — завершить · Backspace — убрать точку · Shift — без привязки · Esc — отмена',
-  poly: 'Кликайте вершины контура или протяните прямоугольник · клик по первой точке или Enter — замкнуть · Backspace — убрать точку · Shift — без привязки · Esc — отмена',
+  line: 'Кликайте точки линии · Enter или двойной клик — завершить · Backspace — убрать точку · Shift — без привязки, F8 — орто, число + Enter — длина · Esc — отмена',
+  poly: 'Кликайте вершины контура или протяните прямоугольник · клик по первой точке или Enter — замкнуть · Backspace — убрать точку · Shift — без привязки, F8 — орто, число + Enter — длина · Esc — отмена',
 };
 
 export function startDrawLandscape(kind) {
@@ -264,6 +241,25 @@ export function finishLandscapeDraw() {
   return obj;
 }
 
+// Привязка точки черновика: лучи — от последней поставленной точки.
+function snapDraft(world, event) {
+  const pts = state.tool.points;
+  return snapLs(world, event, { prev: pts[pts.length - 1] || null, points: pts });
+}
+
+// Последняя точка черновика (для динамического ввода) или null.
+export function landscapeDraftPrev() {
+  const tool = state.tool;
+  if (tool?.kind !== 'draw-landscape' || tool.rect || !tool.points.length) return null;
+  return tool.points[tool.points.length - 1];
+}
+
+// Точка из динамического ввода — ровно в заданном месте.
+export function addLandscapeDraftExact(p) {
+  if (state.tool?.kind !== 'draw-landscape') return;
+  addDraftPoint(p, worldToScreen(p.x, p.y));
+}
+
 function backspaceDraft() {
   const tool = state.tool;
   if (tool.points.length) tool.points.pop();
@@ -283,7 +279,7 @@ export function landscapeHover(world, canvas, event) {
     return true;
   }
   if (state.tool?.kind === 'draw-landscape') {
-    if (!state.tool.rect) state.tool.cursor = snapPoint(world, event?.shiftKey);
+    if (!state.tool.rect) state.tool.cursor = snapDraft(world, event);
     canvas.style.cursor = 'crosshair';
     updateDraftHint();
     requestDraw();
@@ -351,7 +347,7 @@ export function landscapePointerDown(event, screen, world) {
   }
   if (tool?.kind === 'draw-landscape') {
     const def = landscapeDef(tool.lsKind);
-    const p = snapPoint(world, event.shiftKey);
+    const p = snapDraft(world, event);
     if (def.shape === 'poly' && !tool.points.length) return { kind: 'ls-draw-rect', start: p, screen, moved: false };
     addDraftPoint(p, screen);
     return null;
@@ -423,14 +419,17 @@ export function landscapeDragMove(drag, world, screen, event) {
     if (tool?.kind !== 'draw-landscape') return;
     if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 6) return;
     drag.moved = true;
-    tool.rect = screenRect(drag.start, snapPoint(world, event?.shiftKey));
+    tool.rect = screenRect(drag.start, snapLs(world, event));
     tool.cursor = null;
     updateDraftHint();
   } else if (drag.kind === 'ls-vertex') {
     const o = objects.find((x) => x.id === drag.id);
     if (!o) return;
     if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
-    const p = snapPoint(world, event?.shiftKey, o.id);
+    const closed = landscapeDef(o.kind).shape === 'poly';
+    const p = drag.insert
+      ? snapLs(world, event, { prev: o.points[drag.index], exclude: { landscapeId: o.id }, extraShapes: [{ points: o.points, closed }] })
+      : snapLs(world, event, { prev: dragPrev(o.points, drag.index, closed), exclude: { landscapeId: o.id }, extraShapes: chainsWithout(o.points, drag.index, closed) });
     if (drag.insert) {
       insertVertex(o, drag.index, p);
       drag.index += 1;
@@ -519,6 +518,7 @@ export function landscapeDblClick(world) {
   const seg = hitEdge(o, world, Math.max(tol, (o.width || 0) / 2));
   if (seg < 0) return false;
   const p = snapPoint(world, false, o.id);
+  state.drawSnap = null;
   mutate(() => { insertVertex(o, seg, p); });
   state.lsVertex = { id: o.id, index: seg + 1 };
   requestDraw();
