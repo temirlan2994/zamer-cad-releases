@@ -102,7 +102,7 @@ test('выход за участок и дерево у дома — мягки�
   assert.equal(isOutsideSite(edge, null), false, 'без границы — не проверяем');
   const house = [{ x: 16000, y: 10000 }, { x: 26000, y: 10000 }, { x: 26000, y: 14000 }, { x: 16000, y: 14000 }];
   const w = landscapeWarnings([inside, edge], { boundary, footprints: [house] });
-  assert.ok(w.get(edge.id).some((t) => t.startsWith('За границей')));
+  assert.equal(w.has(edge.id), false, 'предупреждение «за границей участка» отключено');
   assert.ok(w.get(inside.id).some((t) => t.includes('от дома')), `ближе ${TREE_HOUSE_MIN} мм к дому`);
   const far = createLandscapeObject('tree-birch', 5000, 25000);
   assert.equal(landscapeWarnings([far], { boundary, footprints: [house] }).has(far.id), false);

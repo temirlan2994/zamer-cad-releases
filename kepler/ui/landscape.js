@@ -935,8 +935,7 @@ function renderLandscapeSummary(panel) {
   const objs = landscapeObjects();
   const sum = landscapeSummary(objs);
   const warn = [...currentWarnings().values()].flat();
-  const outside = warn.filter((t) => t.startsWith('За границей')).length;
-  const near = warn.length - outside;
+  const near = warn.length;
   const site = state.project.site;
   const balance = site.boundary?.length >= 3 ? landscapeBalance(state.project) : null;
   const vis = state.lsVis;
@@ -947,7 +946,6 @@ function renderLandscapeSummary(panel) {
       <div class="prop-row"><span>Объектов</span><strong>${sum.count}</strong></div>
       <div class="prop-row"><span>Деревьев</span><strong>${sum.trees}</strong></div>
       <div class="prop-row"><span>Покрытия и площадки</span><strong>${fmt(sum.coverM2)} м²</strong></div>
-      ${outside ? `<p class="ls-note">За границей участка: ${outside}</p>` : ''}
       ${near ? `<p class="ls-note">Деревья ближе ${TREE_HOUSE_MIN / 1000} м к дому: ${near}</p>` : ''}
       ${site.boundary?.length ? '' : '<p class="hint">Границу участка можно начертить в режиме «Участок».</p>'}
       <p class="hint">Выберите объект слева: клик — ставить курсором (Esc — выйти), или перетащите на участок. Дорожки, ограждения и контуры — рисуются по точкам. Shift — несколько, рамка — выделить группу.</p>

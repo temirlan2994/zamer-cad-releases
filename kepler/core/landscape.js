@@ -834,7 +834,7 @@ export function landscapeWarnings(objects, { boundary = null, footprints = [] } 
   const add = (id, text) => { if (!out.has(id)) out.set(id, []); out.get(id).push(text); };
   for (const obj of objects || []) {
     const def = landscapeDef(obj.kind);
-    if (isOutsideSite(obj, boundary)) add(obj.id, 'За границей участка');
+    // Предупреждение «за границей участка» отключено: на скошенных границах и в углах давало ложные срабатывания.
     if (isTree(def) && footprints.length) {
       const d = Math.min(...footprints.map((f) => distanceToPolygon(obj, f)));
       if (d < TREE_HOUSE_MIN) add(obj.id, `Дерево в ${(d / 1000).toFixed(1)} м от дома (рекомендуется от ${TREE_HOUSE_MIN / 1000} м)`);
