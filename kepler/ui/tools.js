@@ -9,9 +9,13 @@ import { renderProps } from './props.js';
 import { state } from './state.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
 import { closeLibrarySheet } from './mobile.js';
+import { hideSplitInput, positionSplitInput } from './split-input.js';
 import { requestDraw } from './view.js';
 
 export function selectObject(selection) {
+  const split = state.splitEdit;
+  if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
+    Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();
   const pending = state.pendingRoomSplit;
   if (pending && (!selection || selection.type !== 'room' || selection.id !== pending.roomId)) {
     const room = roomById(state.project, pending.roomId);
@@ -36,7 +40,8 @@ function updateWallButtons() {
 }
 
 export function positionWallButtons() {
-  // Панель закреплена сверху, позиционирование относительно стены не нужно.
+  // Панель закреплена сверху; у стены остаётся только плашка деления.
+  positionSplitInput();
 }
 
 export function setHint(text) {

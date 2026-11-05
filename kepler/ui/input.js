@@ -20,6 +20,7 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
+import { hideSplitInput } from './split-input.js';
 import {
   KITCHEN_ELEMENTS, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenHandleDrag, kitchenProject, withDefaultComp,
 } from '../core/composite.js';
@@ -467,6 +468,7 @@ export function bindCanvasInput() {
     // Клик мимо поля калибровки — отменяем калибровку.
     if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
     if (!el('dimInput').hidden) hideDimInput();
+    if (state.splitEdit) hideSplitInput();
     if (state.sofaMenu) hideSofaMenu();
 
     // Стрелки-перевороты и размерные подписи выбранного проёма.

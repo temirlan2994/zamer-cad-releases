@@ -580,6 +580,24 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   text-align: right;
 }
 .cal-overlay .cal-unit { font-weight: 600; }
+/* Деление стены: торец (переключатель) + расстояние от него. */
+.split-overlay .split-ends { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.split-overlay .split-ends button,
+.split-overlay .split-ok,
+.split-overlay .split-cancel {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 0;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.split-overlay .split-ends button + button { border-left: 1px solid var(--border); }
+.split-overlay .split-ends button[aria-pressed="true"] { background: var(--accent); color: var(--surface); font-weight: 600; }
+.split-overlay .split-ok,
+.split-overlay .split-cancel { border: 1px solid var(--border); border-radius: 6px; }
+.split-overlay .split-ok { color: var(--accent); font-weight: 700; }
 
 /* --- Меню «+» дивана-конструктора --- */
 .sofa-menu {

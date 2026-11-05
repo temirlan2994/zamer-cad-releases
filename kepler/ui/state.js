@@ -17,6 +17,7 @@ export const state = {
   ghostItem: null,
   ghostOpening: null,
   pendingRoomSplit: null, // временное деление стены до первого реального сдвига
+  splitEdit: null, // ввод точки деления стены: {key, from, end: 'from'|'to', distance}
   _wallUI: null, // кликабельные размеры и ручка выбранной стены
   draft: null, // рисуемая ломаная участка
   marquee: null,

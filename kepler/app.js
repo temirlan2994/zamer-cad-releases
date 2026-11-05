@@ -29,6 +29,7 @@ import { AUTOSAVE_KEY, refreshDerived, refreshNorms } from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
 import { bindToolbar } from './ui/toolbar.js';
 import { bindSelectionToolbar, renderSelectionToolbar } from './ui/selection-toolbar.js';
+import { bindSplitInput } from './ui/split-input.js';
 import { syncUnderlayImage } from './ui/underlay.js';
 import { bindView, fitView, requestDraw, scaleLabel } from './ui/view.js';
 
@@ -37,6 +38,7 @@ bindCanvasInput();
 bindKeyboard();
 bindToolbar();
 bindSelectionToolbar();
+bindSplitInput();
 bindMobile();
 bind3d();
 bindHelp();

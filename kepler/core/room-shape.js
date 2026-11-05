@@ -78,6 +78,39 @@ export function finalizeRoomOutline(room) {
   return { merged: false };
 }
 
+// Минимальный отступ точки деления от торца стены, мм.
+export const WALL_SPLIT_MIN_GAP = 100;
+
+// Торцы стены вдоль её оси: 'from' — меньшая координата (левый торец
+// горизонтальной стены, верхний — вертикальной, в осях дома), 'to' — большая.
+function wallSpan(wall) {
+  const a = Number(wall?.from); const b = Number(wall?.to);
+  return { lo: Math.min(a, b), hi: Math.max(a, b) };
+}
+
+// Точка деления по выбранному торцу и расстоянию от него. ok=false, если
+// точка ближе minGap к любому торцу; min/max — допустимый диапазон расстояния.
+export function wallSplitAt(wall, end, distance, minGap = WALL_SPLIT_MIN_GAP) {
+  const { lo, hi } = wallSpan(wall);
+  const length = hi - lo;
+  const min = minGap;
+  const max = length - minGap;
+  const d = Number(distance);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(d) || (end !== 'from' && end !== 'to')) {
+    return { ok: false, at: null, min, max, length };
+  }
+  const at = end === 'from' ? lo + d : hi - d;
+  const ok = max >= min && d >= min - 1e-6 && d <= max + 1e-6;
+  return { ok, at, min, max, length };
+}
+
+// Обратная задача: ближайший к точке at торец и расстояние до него.
+export function nearestWallSplitEnd(wall, at) {
+  const { lo, hi } = wallSpan(wall);
+  const p = Number.isFinite(at) ? Math.max(lo, Math.min(hi, at)) : (lo + hi) / 2;
+  return p - lo <= hi - p ? { end: 'from', distance: p - lo } : { end: 'to', distance: hi - p };
+}
+
 // Добавляет на стену две совпадающие вершины. Пока сегмент не сдвинут,
 // геометрия помещения остаётся совершенно прежней.
 export function splitRoomOutlineWall(room, wall, at) {

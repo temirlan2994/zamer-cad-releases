@@ -82,6 +82,14 @@
             <input id="dimInputField" type="number" step="50" min="0" inputmode="decimal" />
             <span class="cal-unit">мм</span>
           </div>
+          <div class="cal-overlay split-overlay" id="splitInput" role="group" aria-label="Точка деления стены" hidden>
+            <span class="cal-label">Делить от</span>
+            <span class="split-ends" id="splitEnds"></span>
+            <input id="splitInputField" type="number" step="50" min="0" inputmode="decimal" aria-label="Расстояние от торца, мм" />
+            <span class="cal-unit">мм</span>
+            <button type="button" class="split-ok" data-split-action="ok" title="Разделить (Enter)">✓</button>
+            <button type="button" class="split-cancel" data-split-action="cancel" title="Отмена (Esc)">✕</button>
+          </div>
           <div class="cal-overlay" id="elevOverlay" hidden>
             <span class="cal-label">Отметка:</span>
             <input id="elevInput" type="text" inputmode="decimal" placeholder="123.45" autocomplete="off" />

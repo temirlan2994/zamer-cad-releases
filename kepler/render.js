@@ -22,7 +22,7 @@ import {
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
 import { facadeDimensionStations, shapedRoomDimensionChains } from './core/dimensions.js';
-import { roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
+import { roomRects, roomShapeArea, roomShapeHandles, wallSplitAt } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
@@ -499,6 +499,10 @@ export function createRenderer(canvas) {
         (state.selection.from === undefined || Math.abs(wall.from - state.selection.from) < 1))
       : null;
     if (selWall) drawSelectedWallUI(ctx, state, selWall, p2s, tokens);
+    const splitEdit = state.splitEdit;
+    if (selWall && splitEdit?.key === selWall.key && Math.abs((splitEdit.from ?? selWall.from) - selWall.from) < 1) {
+      drawWallSplitPreview(ctx, selWall, splitEdit, p2s, tokens);
+    }
     if (selRoom) drawRoomHandles(ctx, selRoom, p2s, tokens);
     // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
     const selOpening = state.selection?.type === 'opening'
@@ -2362,6 +2366,40 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
   ctx.fillText(wall.orient === 'h' ? '↕' : '↔', grip.x, grip.y + 5);
   ui.grip = { x: grip.x, y: grip.y, r: 14 };
   state._wallUI = ui;
+  ctx.restore();
+}
+
+// Превью точки деления стены: размер от выбранного торца и маркер на оси.
+// Вне допустимого диапазона (ближе 100 мм к торцу) — цветом ошибки.
+function drawWallSplitPreview(ctx, wall, edit, w2s, tokens) {
+  const lo = Math.min(wall.from, wall.to); const hi = Math.max(wall.from, wall.to);
+  const r = wallSplitAt(wall, edit.end, edit.distance);
+  if (!Number.isFinite(r.at)) return;
+  const at = Math.max(lo, Math.min(hi, r.at));
+  const perp = wall.orient === 'h' ? (wall.center.y1 + wall.center.y2) / 2 : (wall.center.x1 + wall.center.x2) / 2;
+  const pt = (along) => (wall.orient === 'h' ? w2s(along, perp) : w2s(perp, along));
+  const color = r.ok ? tokens.accent : tokens.danger;
+  const endAlong = edit.end === 'from' ? lo : hi;
+  const half = Math.max(wall.thickness || 0, 200) / 2;
+  const tick = (along) => (wall.orient === 'h'
+    ? [w2s(along, perp - half), w2s(along, perp + half)]
+    : [w2s(perp - half, along), w2s(perp + half, along)]);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  const a = pt(endAlong); const b = pt(at);
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const along of [endAlong, at]) {
+    const [p, q] = tick(along);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+  }
+  ctx.fillStyle = tokens.surface;
+  ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 

@@ -5,13 +5,12 @@ import { reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
-import { keepOpenings } from '../core/opening-anchor.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
 import {
   captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
-import { roomContainsPoint, splitRoomOutlineWall } from '../core/room-shape.js';
+import { roomContainsPoint } from '../core/room-shape.js';
 import {
   determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -21,6 +20,7 @@ import { clampWallThickness, setSharedWallThickness, setWallKind } from '../core
 import { toast } from './dom.js';
 import { findWall, nearestWall } from './hit.js';
 import { renderProps } from './props.js';
+import { openSplitInput } from './split-input.js';
 import { state } from './state.js';
 import {
   afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot,
@@ -48,31 +48,13 @@ export function reconcileOpenings() {
   else if (spaced.moved.length) toast(`Проёмы раздвинуты, чтобы не налезали друг на друга: ${spaced.moved.length}`);
 }
 
-// Деление не меняет форму: на месте клика появляются две совпадающие вершины.
-// Уступ возникает только после того, как пользователь потянет один из сегментов.
+// «Разделить»: сначала плашка у стены — торец отсчёта и расстояние от него
+// (по умолчанию — до точки клика от ближайшего торца). Enter вставляет две
+// совпадающие вершины; уступ появляется, когда пользователь потянет половину.
 export function splitSelectedWall() {
   const sel = state.selection;
   if (sel?.type !== 'wall') return;
-  const wall = findWall(sel.key, sel.from);
-  const roomId = wall?.rooms?.[0];
-  const room = roomById(state.project, roomId);
-  if (!wall || !room || wall.kind !== 'own') {
-    toast('Разделить можно собственную наружную стену помещения', true);
-    return;
-  }
-  const along = Number.isFinite(sel.at) ? sel.at : (wall.from + wall.to) / 2;
-  const before = snapshot();
-  const outline = room.outline ? structuredClone(room.outline) : null;
-  const notch = room.notch ? structuredClone(room.notch) : null;
-  // Вставка вершин сдвигает номера сторон контура — проёмы перепривязываем.
-  if (!keepOpenings(state.project, room, () => splitRoomOutlineWall(room, wall, along)).result) {
-    toast('На этом коротком участке стену разделить нельзя', true);
-    return;
-  }
-  state.pendingRoomSplit = { roomId: room.id, before, outline, notch, moved: false };
-  refreshDerived();
-  selectObject({ type: 'room', id: room.id });
-  toast('Стена разделена без изменения формы — тяните любую половину за круглую точку');
+  openSplitInput(findWall(sel.key, sel.from), sel.at);
 }
 
 export function toggleSelectedWallHidden() {
