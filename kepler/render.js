@@ -21,7 +21,7 @@ import {
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
-import { facadeDimensionStations, shapedRoomDimensionChains } from './core/dimensions.js';
+import { facadeDimensionStations } from './core/dimensions.js';
 import { roomRects, roomShapeArea, roomShapeHandles, wallSplitAt } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
@@ -1947,86 +1947,8 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     ctx.globalAlpha = 1;
   }
 
-  // У ломаных помещений внутренние подписи дублируем двумя аккуратными
-  // наружными цепочками: по всем X сверху и по всем Y справа. Так уступы
-  // читаются снаружи комнаты, как в BIM/CAD, и не теряются среди подписей.
+  // Наружные размеры ломаных помещений — общей логикой ниже (контур дома по их реальной форме).
   const exterior = state.project.settings?.exterior || 250;
-  for (const room of state.project.rooms) {
-    // Снаружи — наружные размеры (по граням стен), внутри комнаты свои внутренние.
-    const chains = shapedRoomDimensionChains(room, exterior);
-    if (!chains || room.parentId || isOpenRoom(room) || isShaft(room)) continue;
-    const selected = room.id === selId;
-    const offset = 420;
-    const topAt = chains.minY - offset;
-    const rightAt = chains.maxX + offset;
-    const topN = outwardScreen((chains.minX + chains.maxX) / 2, topAt, 0, -1);
-    const rightN = outwardScreen(rightAt, (chains.minY + chains.maxY) / 2, 1, 0);
-    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.globalAlpha = selected ? 0.95 : 0.55;
-
-    for (const station of chains.horizontal) {
-      drawWitness(ctx, w2s(station.value, station.witness), {
-        ...w2s(station.value, topAt),
-        x: w2s(station.value, topAt).x + topN.x * 16,
-        y: w2s(station.value, topAt).y + topN.y * 16,
-      });
-    }
-    for (let i = 0; i < chains.horizontal.length - 1; i += 1) {
-      const from = chains.horizontal[i].value;
-      const to = chains.horizontal[i + 1].value;
-      const p = w2s(from, topAt); const q = w2s(to, topAt);
-      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
-      drawDim(ctx, p, q, topN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
-    }
-
-    for (const station of chains.vertical) {
-      drawWitness(ctx, w2s(station.witness, station.value), {
-        ...w2s(rightAt, station.value),
-        x: w2s(rightAt, station.value).x + rightN.x * 16,
-        y: w2s(rightAt, station.value).y + rightN.y * 16,
-      });
-    }
-    for (let i = 0; i < chains.vertical.length - 1; i += 1) {
-      const from = chains.vertical[i].value;
-      const to = chains.vertical[i + 1].value;
-      const p = w2s(rightAt, from); const q = w2s(rightAt, to);
-      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
-      drawDim(ctx, p, q, rightN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
-    }
-    // Южная цепочка: только размеры южных стен (северные подписаны сверху).
-    const bottomAt = chains.maxY + offset;
-    const bottomN = outwardScreen((chains.minX + chains.maxX) / 2, bottomAt, 0, 1);
-    for (const station of chains.bottom) {
-      const a = w2s(station.value, bottomAt);
-      drawWitness(ctx, w2s(station.value, station.witness), {
-        x: a.x + bottomN.x * 16, y: a.y + bottomN.y * 16,
-      });
-    }
-    for (let i = 0; i < chains.bottom.length - 1; i += 1) {
-      const from = chains.bottom[i].value;
-      const to = chains.bottom[i + 1].value;
-      const p = w2s(from, bottomAt); const q = w2s(to, bottomAt);
-      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
-      drawDim(ctx, p, q, bottomN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
-    }
-    const leftAt = chains.minX - offset;
-    const leftN = outwardScreen(leftAt, (chains.minY + chains.maxY) / 2, -1, 0);
-    for (const station of chains.left) {
-      const a = w2s(leftAt, station.value);
-      drawWitness(ctx, w2s(station.witness, station.value), {
-        x: a.x + leftN.x * 16, y: a.y + leftN.y * 16,
-      });
-    }
-    for (let i = 0; i < chains.left.length - 1; i += 1) {
-      const from = chains.left[i].value;
-      const to = chains.left[i + 1].value;
-      const p = w2s(leftAt, from); const q = w2s(leftAt, to);
-      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
-      drawDim(ctx, p, q, leftN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
-    }
-    ctx.globalAlpha = 1;
-  }
 
   // Наружные размеры — только для ДЕЙСТВИТЕЛЬНО внешних сторон дома.
   // Ближний пояс разбивает фасад по окнам, дверям и осям примыкающих
@@ -2034,8 +1956,9 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   const dimOuter = state.project.settings?.dimOuter !== false; // по умолчанию — снаружи
   const expand = dimOuter ? exterior : exterior / 2;
   const outline = computeBuildingOutline(state.project, expand);
+  // Реальная форма комнат (Г, ступени, контур), а не габарит: иначе вырез считается занятым.
   const rects = state.project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
-    .map((r) => ({ x: r.x - expand, y: r.y - expand, w: r.w + 2 * expand, h: r.h + 2 * expand }));
+    .flatMap((r) => roomRects(r).map((rc) => ({ x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand })));
   if (outline.length && rects.length) {
     const detailOff = 450;
     const outOff = 850;
