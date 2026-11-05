@@ -248,11 +248,15 @@ export function toggleInMulti(kind, id) {
   selectObject({ type: 'multi', roomIds: rooms, itemIds: items });
 }
 
-// Выбрать всю группу мебели как мультивыбор.
+// Выбрать всю группу мебели как мультивыбор. Возвращает этот выбор: на
+// касании selectObject откладывается, и state.selection ещё старый.
 export function selectGroup(groupId) {
   const itemIds = state.project.items.filter((i) => i.group === groupId).map((i) => i.id);
-  if (itemIds.length <= 1) { selectObject(itemIds.length ? { type: 'item', id: itemIds[0] } : null); return; }
-  selectObject({ type: 'multi', roomIds: [], itemIds });
+  const sel = itemIds.length <= 1
+    ? (itemIds.length ? { type: 'item', id: itemIds[0] } : null)
+    : { type: 'multi', roomIds: [], itemIds };
+  selectObject(sel);
+  return sel;
 }
 
 // Применить групповое действие core/room-group.js одной записью истории:

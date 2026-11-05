@@ -12,9 +12,9 @@ import {
   HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
 } from '../render.js';
-import { itemEdgeHandles, itemHandleMode } from '../core/item-handles.js';
+import { inItemCore, itemEdgeHandles, itemHandleMode } from '../core/item-handles.js';
 import { state } from './state.js';
-import { planToScreen, worldToScreen } from './view.js';
+import { planToScreen, screenToPlan, worldToScreen } from './view.js';
 
 // Допуск попадания по ручкам: палец (сенсор) — крупнее, мышь — по ручке.
 const tol = () => (state.coarsePointer ? 22 : HANDLE_SIZE);
@@ -68,6 +68,10 @@ export function hitItemHandle(screen) {
   const item = state.project.items.find((i) => i.id === state.selection.id);
   if (!item) return null;
   const mode = itemHandleMode(state.itemHandle, item.id);
+  if (mode === 'select') return null;
+  // Тело предмета важнее ручек: у малого предмета ручки с допуском пальца
+  // иначе перекрывают его целиком, и режим нельзя ни сменить, ни выйти.
+  if (inItemCore(item, screenToPlan(screen.x, screen.y), tol() / state.view.scale)) return null;
   if (mode === 'rotate') {
     for (const r of itemRotators(item, 20, state.view.scale)) {
       const p = planToScreen(r.x, r.y);

@@ -384,16 +384,17 @@ export function hitShapeHandle(screen) {
 // (kind 'ls-*', 'marquee', 'pan') или null.
 export function landscapePointerDown(event, screen, world) {
   const tool = state.tool;
+  // Касание: объект или точка ставятся на тапе, свайп — панорама (ui/input.js, kind 'tap').
+  const touch = event.pointerType === 'touch';
+  const tap = (run) => (touch ? { kind: 'tap', run, start: screen, view: { ...state.view } } : (run(), null));
   if (tool?.kind === 'place-landscape') {
-    placeLandscapeAt(tool.lsKind, world, tool.rotation || 0);
-    return null;
+    return tap(() => placeLandscapeAt(tool.lsKind, world, tool.rotation || 0));
   }
   if (tool?.kind === 'draw-landscape') {
     const def = landscapeDef(tool.lsKind);
     const p = snapDraft(world, event);
     if (def.shape === 'poly' && !tool.points.length) return { kind: 'ls-draw-rect', start: p, screen, moved: false };
-    addDraftPoint(p, screen);
-    return null;
+    return tap(() => { if (state.tool === tool) addDraftPoint(p, screen); });
   }
   if (tool?.kind === 'ls-array') { arrayPointerDown(event, screen, world); return null; }
   if (isSectionTool()) { sectionPointerDown(event, screen, world); return null; }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { itemEdgeHandles, itemHandleMode, nextItemHandle, stretchItem } from '../core/item-handles.js';
+import { inItemCore, itemEdgeHandles, itemHandleMode, nextItemHandle, stretchItem } from '../core/item-handles.js';
 
 test('режимы ручек идут по кругу: выбор → поворот → растяжение → масштаб → выбор', () => {
   let h = null;
@@ -33,4 +33,20 @@ test('минимальный размер и защита от переворо�
   const item = { x: 0, y: 0, w: 800, h: 400, rotation: 0 };
   const r = stretchItem(item, 'e', { x: -2000, y: 0 }); // потянули за противоположную сторону
   assert.ok(r.w >= 200);
+});
+
+test('сердцевина предмета: у большого — всё, кроме полосы допуска; у малого ручки не закрывают тело', () => {
+  const big = { x: 0, y: 0, w: 2000, h: 1000, rotation: 0 };
+  assert.equal(inItemCore(big, { x: 0, y: 0 }, 100), true);
+  assert.equal(inItemCore(big, { x: 950, y: 0 }, 100), false, 'полоса ручки у края');
+  assert.equal(inItemCore(big, { x: 850, y: 0 }, 100), true, 'за полосой — тело');
+  // Малый: сторона 300 мм, допуск 220 мм (палец при мелком масштабе) — центр всё равно тело.
+  const small = { x: 0, y: 0, w: 300, h: 300, rotation: 0 };
+  assert.equal(inItemCore(small, { x: 0, y: 0 }, 220), true);
+  assert.equal(inItemCore(small, { x: 60, y: -60 }, 220), true, 'центральная половина — тело');
+  assert.equal(inItemCore(small, { x: 140, y: 0 }, 220), false, 'у края — ручка');
+  // Поворот учитывается: точка вдоль длинной стороны повёрнутого на 90° предмета.
+  const rot = { x: 0, y: 0, w: 2000, h: 400, rotation: 90 };
+  assert.equal(inItemCore(rot, { x: 0, y: 700 }, 50), true);
+  assert.equal(inItemCore(rot, { x: 700, y: 0 }, 50), false);
 });

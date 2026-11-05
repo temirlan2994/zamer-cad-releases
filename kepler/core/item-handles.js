@@ -32,6 +32,25 @@ export function itemEdgeHandles(item) {
   }));
 }
 
+// Сердцевина предмета: точка в ней — тело, а не ручка. У большого предмета
+// это всё, кроме полосы ширины допуска у краёв (поведение ручек прежнее);
+// у малого (сторона < 4 допусков на экране) полоса сужается до четверти
+// стороны, чтобы ручки не закрывали предмет целиком и по нему можно было
+// кликнуть — переключить режим или потащить. tolMm — допуск ручки в мм плана.
+export function inItemCore(item, point, tolMm) {
+  const rot = ((item.rotation || 0) * Math.PI) / 180;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  const dx = point.x - item.x;
+  const dy = point.y - item.y;
+  const lx = dx * c + dy * s;
+  const ly = -dx * s + dy * c;
+  const hw = item.w / 2;
+  const hh = item.h / 2;
+  const band = Math.min(tolMm, Math.min(hw, hh) / 2);
+  return Math.abs(lx) < hw - band && Math.abs(ly) < hh - band;
+}
+
 // Растяжение с одной стороны: противоположная сторона неподвижна.
 // edge — 'n'|'e'|'s'|'w'; point — положение курсора в мире; snap — шаг (мм), min — минимум.
 export function stretchItem(item, edge, point, { snap = 50, min = 200 } = {}) {

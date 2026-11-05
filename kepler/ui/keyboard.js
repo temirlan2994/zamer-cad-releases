@@ -26,10 +26,34 @@ import {
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
 import { closeCompare, isCompareOpen } from './variants.js';
 import { close3d, is3dOpen } from './view3d.js';
+import { requestDraw } from './view.js';
 
 export let spaceDown = false;
 
+// Поверх плана открыто окно (3D, справка, «Проекты», сравнение, разрез,
+// стартовое меню) — план под ним клавишами не правится.
+export function planCovered() {
+  return is3dOpen() || isSectionOpen() || Boolean(document.querySelector('.start-screen:not([hidden])'));
+}
+
+// Элемент, которому Enter/Space нужны самому (кнопка, ссылка, флажок…).
+function ownsActivationKeys(target) {
+  if (!target || target === document.body || !target.tagName) return false;
+  const tag = target.tagName;
+  if (tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  const role = target.getAttribute?.('role');
+  return role === 'button' || role === 'menuitem' || role === 'tab' || role === 'checkbox' || role === 'switch' || role === 'option';
+}
+
 export function bindKeyboard() {
+  // Кнопка, нажатая мышью или пальцем, не держит фокус: иначе следующий
+  // Enter «нажмёт» её ещё раз вместо завершения чертежа. Нажатая с клавиатуры
+  // (detail === 0) фокус сохраняет.
+  document.addEventListener('click', (event) => {
+    const btn = event.target?.closest?.('button, [role="button"]');
+    if (btn && event.detail > 0 && document.activeElement === btn) btn.blur();
+  });
   window.addEventListener('keydown', (event) => {
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
@@ -42,6 +66,14 @@ export function bindKeyboard() {
       if (event.key === 'Escape') { closeSection(); return; }
       if (!((event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY'))) return;
     }
+    // Под 3D, справкой, «Проектами», сравнением — только Ctrl+Z/Y и F1/«?».
+    if (planCovered()) {
+      const undoKey = (event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY');
+      const helpKey = (event.key === '?' || event.key === 'F1') && isHelpOpen();
+      if (!undoKey && !helpKey) return;
+    }
+    // Enter и Space на кнопке в фокусе — её собственные (нажать кнопку).
+    if ((event.key === 'Enter' || event.code === 'Space') && ownsActivationKeys(event.target)) return;
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
@@ -101,7 +133,16 @@ export function bindKeyboard() {
       return;
     }
     if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
-    if (event.key === 'Escape') { cancelTool(); selectObject(null); return; }
+    if (event.key === 'Escape') {
+      // Сначала Esc выходит из режима ручек мебели (поворот, растяжение, масштаб) —
+      // предмет остаётся выбранным; следующий Esc снимает выбор.
+      if (!state.tool && state.selection?.type === 'item' && state.itemHandle && state.itemHandle.mode !== 'select') {
+        state.itemHandle = null;
+        requestDraw();
+        return;
+      }
+      cancelTool(); selectObject(null); return;
+    }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
     if (event.code === 'KeyR') {
       rotateSelection90();

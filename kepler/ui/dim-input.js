@@ -9,6 +9,7 @@ import { state } from './state.js';
 import { mutate } from './store.js';
 import { selectObject } from './tools.js';
 import { applyTempDim } from './temp-dims.js';
+import { planToScreen, screenToPlan } from './view.js';
 
 // Инлайн-ввод размера (отступа до стены) прямо на размерной линии.
 export function openDimInput(dim) {
@@ -18,10 +19,27 @@ export function openDimInput(dim) {
   else if (dim.type === 'wall') state.dimEdit = { type: 'wall', wallKey: dim.wallKey, wallFrom: dim.wallFrom, roomId: dim.roomId };
   else state.dimEdit = { type: 'opening', openingId: state.selection.id, kind: dim.kind };
   input.value = Math.round(dim.gap);
+  // Точка подписи в осях дома: поле следует за панорамой и масштабом.
+  state.dimEdit.anchor = screenToPlan(dim.x, dim.y);
   overlay.style.left = `${dim.x}px`;
   overlay.style.top = `${dim.y}px`;
   overlay.hidden = false;
-  setTimeout(() => { input.focus(); input.select(); }, 20);
+  // focus() — синхронно, внутри жеста пользователя: иначе на телефоне не
+  // откроется клавиатура. Мышью mousedown по холсту сразу после pointerdown
+  // снимает фокус — тогда возвращаем его следом.
+  const focus = () => { input.focus({ preventScroll: true }); input.select(); };
+  focus();
+  setTimeout(() => { if (!overlay.hidden && document.activeElement !== input) focus(); }, 20);
+}
+
+// Пересчитать положение поля после панорамы, щипка или колеса.
+export function positionDimInput() {
+  const overlay = el('dimInput');
+  const anchor = state.dimEdit?.anchor;
+  if (!overlay || overlay.hidden || !anchor) return;
+  const p = planToScreen(anchor.x, anchor.y);
+  overlay.style.left = `${p.x}px`;
+  overlay.style.top = `${p.y}px`;
 }
 
 export function hideDimInput() {

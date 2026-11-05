@@ -19,7 +19,8 @@ describe('шаг привязки и приближение', () => {
     const it = await firstItem();
     assert.equal(await app.page.evaluate(() => window.__kepler.gridStep()), 50);
     await app.page.evaluate((id) => window.__kepler.select({ type: 'item', id }), it.id);
-    const c = await worldToClient(app.page, it.x + it.w / 2, it.y + it.h / 2);
+    // item.x/y — центр предмета (не левый верхний угол).
+    const c = await worldToClient(app.page, it.x, it.y);
     await app.page.mouse.move(c.x, c.y);
     await app.page.mouse.down();
     await app.page.mouse.move(c.x + 13, c.y, { steps: 6 });

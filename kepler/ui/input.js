@@ -20,7 +20,7 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { ITEM_HANDLE_TITLES, nextItemHandle, stretchItem } from '../core/item-handles.js';
-import { hideDimInput, openDimInput } from './dim-input.js';
+import { hideDimInput, openDimInput, positionDimInput } from './dim-input.js';
 import { hitTempDim } from './temp-dims.js';
 import { hideSplitInput } from './split-input.js';
 import { focusGap, gapMarkerAt } from './gaps.js';
@@ -63,8 +63,28 @@ import {
 // Перемещение объекта пальцем: долгое нажатие (мс), допуск дрожания (px).
 const TOUCH_HOLD_MS = 420;
 const TOUCH_HOLD_SLOP = 9;
-const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'group', 'wall', 'ls-move']);
+const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move']);
 let drag = null;
+
+// Касание: действие (поставить объект, точку, открыть поле ввода) — только на
+// тапе (отпускание без сдвига), свайп отдаётся панораме. Мышь — сразу.
+function tapOrNow(event, screen, run) {
+  if (event.pointerType !== 'touch') { run(); return; }
+  drag = { kind: 'tap', run, start: screen, view: { ...state.view } };
+}
+
+// Номер объекта в стопке под курсором. Серия быстрых кликов (event.detail)
+// перебирает стопку, но не по уже выбранному предмету сверху: повторный клик
+// по нему переключает режим ручек. Alt — следующий под текущим выбором.
+function stackPickNumber(stack, event) {
+  if (event.shiftKey) return 1;
+  const sel = state.selection;
+  const at = sel ? stack.findIndex((h) => h.type === sel.type && (h.id ?? h.key) === (sel.id ?? sel.key)
+    && (h.type !== 'wall' || Math.abs(h.from - sel.from) < 1)) : -1;
+  if (event.altKey) return at >= 0 ? at + 2 : 1;
+  if (at === 0 && sel.type === 'item') return 1;
+  return Math.max(1, event.detail || 1);
+}
 
 // Повторный клик по выбранной мебели — следующий режим ручек.
 function cycleItemHandle(id) {
@@ -123,6 +143,7 @@ function movePinch() {
   refs.statusScale.textContent = scaleLabel();
   positionCalInput();
   positionElevInput();
+  positionDimInput();
   if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
   requestDraw();
 }
@@ -145,8 +166,10 @@ function startEntryDrag(world) {
   if (created) requestDraw();
 }
 
-function startMultiDrag(plan) {
-  const sel = state.selection;
+// sel — выбор, который тянем: передаётся явно, потому что на касании
+// selectObject откладывается до тапа и state.selection ещё старый.
+function startMultiDrag(plan, sel = state.selection) {
+  if (sel?.type !== 'multi') return;
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
   // Состав груза — как у стрелок и поворота группы (core/room-group.js).
@@ -435,9 +458,12 @@ export function bindCanvasInput() {
         drag = { kind: 'neighbor', id: hit.id, start: { x: n.x, y: n.y }, world, before: snapshot(), moved: false };
         return;
       }
-      placeNeighborAt(world); // пустое место — новый дом
+      tapOrNow(event, screen, () => placeNeighborAt(world)); // пустое место — новый дом
       return;
     }
+    const touchPan = () => {
+      if (event.pointerType === 'touch') drag = { kind: 'pan', start: screen, view: { ...state.view } };
+    };
     if (layer === 'underlay') {
       const hh = hitUnderlayHandle(screen);
       if (hh) {
@@ -461,19 +487,28 @@ export function bindCanvasInput() {
         return;
       }
       selectObject({ type: 'site', kind: 'underlay' });
+      touchPan();
       return;
     }
-    if (layer === 'entry') { startEntryDrag(world); return; }
+    if (layer === 'entry') {
+      // Касанием: новый въезд — тапом, существующий двигается после удержания.
+      if (state.project.site.entry) startEntryDrag(world);
+      else tapOrNow(event, screen, () => startEntryDrag(world));
+      return;
+    }
     if (layer === 'terrain') {
-      // Открытое поле с введённым числом — сохраняем, пустое — закрываем.
-      if (state.elevEdit) applyElevInput({ quiet: true });
       const tp = hitTerrainPoint(screen);
       if (tp) {
+        // Открытое поле с введённым числом — сохраняем, пустое — закрываем.
+        if (state.elevEdit) applyElevInput({ quiet: true });
         selectObject({ type: 'site', kind: 'terrain-point', id: tp.id });
         drag = { kind: 'terrain-point', id: tp.id, start: { x: tp.x, y: tp.y }, world, screen, before: snapshot(), moved: false };
         return;
       }
-      openElevInput(world);
+      tapOrNow(event, screen, () => {
+        if (state.elevEdit) applyElevInput({ quiet: true });
+        openElevInput(world);
+      });
       return;
     }
     if (layer === 'boundary' || layer === 'redline' || layer === 'road') {
@@ -482,24 +517,26 @@ export function bindCanvasInput() {
         drag = { kind: 'site-vertex', siteKind: v.kind, id: v.id, index: v.index, points: v.points, before: snapshot(), moved: false };
         return;
       }
-      if (state.draft) { addDraftPoint(world, event); return; } // режим черчения нового контура
+      // Режим черчения нового контура: точка — на тапе.
+      if (state.draft) { tapOrNow(event, screen, () => { if (state.draft) addDraftPoint(world, event); }); return; }
+      touchPan();
       return;
     }
 
-    // --- Прочие инструменты плана ---
+    // --- Прочие инструменты плана (на касании — по тапу) ---
     if (state.tool) {
       const t = state.tool;
-      if (t.kind === 'place-room') { placeRoomAt(plan); return; }
+      if (t.kind === 'place-room') { tapOrNow(event, screen, () => placeRoomAt(plan)); return; }
       if (t.kind === 'place-furniture') {
         const { itemKind, rotation = 0 } = t;
-        cancelTool();
-        addFurnitureAt(itemKind, plan.x, plan.y, rotation);
+        tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation); });
         return;
       }
-      if (t.kind === 'place-opening') { placeOpeningAt(plan); return; }
-      if (t.kind === 'north') { addNorthPoint(snapTwoPointTool(world, event)); return; }
-      if (t.kind === 'align-underlay') { addAlignPoint(world); return; }
-      if (t.kind === 'calibrate') { addCalibratePoint(snapTwoPointTool(world, event)); return; }
+      if (t.kind === 'place-opening') { tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
+      if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
+      if (t.kind === 'align-underlay') { tapOrNow(event, screen, () => addAlignPoint(world)); return; }
+      if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
+      touchPan();
       return;
     }
 
@@ -527,21 +564,22 @@ export function bindCanvasInput() {
     // Стрелки-перевороты и размерные подписи выбранного проёма.
     if (state.selection?.type === 'opening' && state._openingUI) {
       for (const f of state._openingUI.flips) {
-        if (Math.hypot(f.x - screen.x, f.y - screen.y) <= 15) { toggleOpeningFlip(f.kind); return; }
+        if (Math.hypot(f.x - screen.x, f.y - screen.y) <= 15) { tapOrNow(event, screen, () => toggleOpeningFlip(f.kind)); return; }
       }
       for (const d of state._openingUI.dims) {
-        if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
+        if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { tapOrNow(event, screen, () => openDimInput(d)); return; }
       }
     }
     if (state.selection?.type === 'wall' && state._wallUI) {
       for (const d of state._wallUI.dims) {
-        if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
+        if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { tapOrNow(event, screen, () => openDimInput(d)); return; }
       }
     }
-    // Подпись временного размера мебели — раньше ручек и перетаскивания предмета
-    // (на телефоне — сразу по касанию, без удержания).
+    // Подпись временного размера мебели — раньше ручек и перетаскивания предмета.
+    // На телефоне поле открывается на тапе (отпускании пальца): focus() из
+    // жеста открывает клавиатуру, а свайп по подписи — панорама.
     const tempDimHit = hitTempDim(screen);
-    if (tempDimHit) { openDimInput(tempDimHit); return; }
+    if (tempDimHit) { tapOrNow(event, screen, () => openDimInput(tempDimHit)); return; }
 
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
     const gapHit = gapMarkerAt(screen.x, screen.y);
@@ -637,8 +675,7 @@ export function bindCanvasInput() {
     // Серия кликов в одной точке перебирает все лежащие здесь объекты:
     // первый — верхний, второй — следующий под ним, третий — ещё ниже.
     const stack = hitPlanStack(plan);
-    const clickNumber = event.shiftKey ? 1 : Math.max(1, event.detail || 1);
-    const picked = pickStackHit(stack, clickNumber);
+    const picked = pickStackHit(stack, stackPickNumber(stack, event));
 
     if (picked?.type === 'item') {
       const item = picked.entity;
@@ -647,8 +684,9 @@ export function bindCanvasInput() {
         startMultiDrag(plan);
         return;
       }
-      if (item.group) { selectGroup(item.group); startMultiDrag(plan); return; }
       const wasSelected = state.selection?.type === 'item' && state.selection.id === item.id;
+      const groupSel = item.group ? selectGroup(item.group) : null;
+      if (groupSel?.type === 'multi') { startMultiDrag(plan, groupSel); return; }
       selectObject({ type: 'item', id: item.id });
       drag = { kind: 'item', id: item.id, start: { x: item.x, y: item.y }, plan, before: snapshot(), moved: false, wasSelected };
       return;
@@ -741,9 +779,9 @@ export function bindCanvasInput() {
     const screen = pointerScreen(event);
     if (event.pointerType === 'touch' && touches.has(event.pointerId)) touches.set(event.pointerId, screen);
     if (drag?.kind === 'pinch') { movePinch(); return; }
-    if (drag?.kind === 'touch-hold') {
+    if (drag?.kind === 'touch-hold' || drag?.kind === 'tap') {
       if (Math.hypot(screen.x - drag.start.x, screen.y - drag.start.y) < TOUCH_HOLD_SLOP) return;
-      clearTimeout(drag.timer);
+      clearTimeout(drag.timer); // свайп — панорама, отложенное действие отменяется
       drag = { kind: 'pan', start: drag.start, view: drag.view };
     }
     const world = pointerWorld(event);
@@ -761,6 +799,7 @@ export function bindCanvasInput() {
       state.view.panY = drag.view.panY + (screen.y - drag.start.y);
       positionCalInput();
       positionElevInput();
+      positionDimInput();
       if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
       requestDraw();
       return;
@@ -1182,6 +1221,13 @@ export function bindCanvasInput() {
       else if (pending) selectObject(sel);
       return;
     }
+    if (drag?.kind === 'tap') { // тап без сдвига — выполняем отложенное действие
+      const { run } = drag;
+      drag = null;
+      run();
+      // Действие могло начать перетаскивание (новый въезд) — завершаем его ниже.
+      if (!drag) { requestDraw(); return; }
+    }
     if (!drag) return;
     const finished = drag;
     drag = null;
@@ -1322,5 +1368,6 @@ export function bindCanvasInput() {
     const screen = pointerScreen(event);
     const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
     zoomAt(screen, factor);
+    positionDimInput();
   }, { passive: false });
 }
