@@ -163,20 +163,55 @@ export async function saveVersion(db, root, projectText, {
   const chunks = await writeChunks(db, `${root}/${pid}/c`, vid, body);
   const version = { id: vid, at, note, hash, chunks, bytes: body.length, blobs: Object.keys(blobs), stats };
 
-  // 2) карточка — после данных: оборванное сохранение не портит прежние версии
-  meta.versions = [version, ...meta.versions];
-  const dropped = meta.versions.slice(keep);
-  meta.versions = meta.versions.slice(0, keep);
-  const live = new Set(meta.versions.flatMap((v) => v.blobs || []));
-  const deadBlobs = Object.entries(meta.blobs).filter(([h]) => !live.has(h));
-  for (const [h] of deadBlobs) delete meta.blobs[h];
-  Object.assign(meta, { name: name || meta.name || 'Без названия', updatedAt: at, head: vid });
-  await retry(() => metaRef.set(meta));
+  // 2) карточка — после данных: оборванное сохранение не портит прежние версии.
+  // Проверка ревизии: пока писались данные, другая вкладка могла сохранить
+  // свою версию — тогда берём свежую карточку, а свою версию кладём сверху
+  // (иначе последняя запись стёрла бы чужую версию).
+  // После записи — проверка, что наша версия в карточке осталась (запись
+  // другой вкладки могла лечь сверху); нет — сливаем ещё раз.
+  const written = { ...meta.blobs };
+  let base = meta;
+  let result = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const fresh = await retry(() => metaRef.get());
+    const latest = fresh.exists ? clone(fresh.data()) : null;
+    if (latest && (attempt > 0 || latest.head !== meta.head || latest.updatedAt !== meta.updatedAt)) {
+      base = rebaseMeta(latest, blobs, written);
+    }
+    result = buildMeta(base, version, keep, name, at);
+    await retry(() => metaRef.set(result.meta));
+    const check = await retry(() => metaRef.get());
+    if (!check.exists || (check.data()?.versions || []).some((v) => v?.id === vid)) break;
+    base = result.meta;
+  }
+  const { meta: saved, dropped, deadBlobs } = result;
 
   // 3) уборка вытесненных версий и ненужных картинок
   for (const v of dropped) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
   for (const [h, n] of deadBlobs) await deleteChunks(db, `${root}/${pid}/b`, h, n);
-  return { meta: { id: pid, ...meta }, version, unchanged: false };
+  return { meta: { id: pid, ...saved }, version, unchanged: false };
+}
+
+// Свежая карточка (её записала другая вкладка) + картинки, которые записали мы.
+function rebaseMeta(latest, blobs, written) {
+  const meta = { ...latest };
+  meta.versions = Array.isArray(latest.versions) ? latest.versions : [];
+  meta.blobs = latest.blobs && typeof latest.blobs === 'object' ? { ...latest.blobs } : {};
+  for (const h of Object.keys(blobs)) if (!meta.blobs[h] && written[h]) meta.blobs[h] = written[h];
+  return meta;
+}
+
+// Карточка с новой версией сверху: лишние версии и ненужные картинки — на уборку.
+function buildMeta(base, version, keep, name, at) {
+  const meta = { ...base, blobs: { ...base.blobs } };
+  const versions = [version, ...(base.versions || []).filter((v) => v?.id !== version.id)];
+  const dropped = versions.slice(keep);
+  meta.versions = versions.slice(0, keep);
+  const live = new Set(meta.versions.flatMap((v) => v.blobs || []));
+  const deadBlobs = Object.entries(meta.blobs).filter(([h]) => !live.has(h));
+  for (const [h] of deadBlobs) delete meta.blobs[h];
+  Object.assign(meta, { name: name || meta.name || 'Без названия', updatedAt: at, head: version.id });
+  return { meta, dropped, deadBlobs };
 }
 
 // Текст проекта нужной версии (по умолчанию — последней).

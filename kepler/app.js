@@ -6,7 +6,7 @@
 // Точка входа: подключает модули ui/*.js, вешает обработчики и запускает
 // редактор. Ядро без DOM — в core/, отрисовка — в render.js.
 
-import { createProject, deserializeProject } from './core/model.js';
+import { createProject, serializeProject } from './core/model.js';
 import { exposeDebugApi } from './ui/debug.js';
 import { refs } from './ui/dom.js';
 import { bindCanvasInput } from './ui/input.js';
@@ -25,7 +25,9 @@ import { renderProps } from './ui/props.js';
 import { openStartMenu } from './ui/start-menu.js';
 import { state } from './ui/state.js';
 import { updateConnectivity } from './ui/status.js';
-import { AUTOSAVE_KEY, refreshDerived, refreshNorms } from './ui/store.js';
+import {
+  BROKEN_KEY, bindAutosaveLifecycle, loadAutosave, refreshDerived, refreshNorms, restoreHeavyRefs,
+} from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
 import { loadLandscapeStyle, loadLandscapeSun } from './ui/landscape-style.js';
 import { bindLandscapeSun } from './ui/landscape-sun.js';
@@ -57,36 +59,44 @@ bindSnapBar();
   loadLandscapeStyle();
   loadLandscapeSun();
   bindLandscapeSun(requestDraw);
-  let restored = null;
+  bindAutosaveLifecycle();
+  // Автосохранение: проект с любым содержимым (комнаты, ландшафт, рельеф,
+  // подложка…) продолжается. Битое не роняет запуск: копия — в резерв,
+  // старт с пустого проекта и предупреждение в стартовом меню.
+  const saved = loadAutosave();
+  let broken = saved.broken ? { text: saved.broken, error: saved.error } : null;
+  const start = (project) => {
+    state.project = project;
+    refreshDerived();
+    applyModeRotation();
+    syncUnderlayImage();
+    refs.projectName.value = state.project.name;
+    updateConnectivity();
+    refreshNorms();
+    renderLibrary();
+    renderLevelBar();
+    renderFurnitureBar();
+    applyLibraryTab();
+    renderProps();
+    renderSelectionToolbar();
+  };
+  let showStart = !saved.project;
   try {
-    const saved = localStorage.getItem(AUTOSAVE_KEY);
-    if (saved) restored = deserializeProject(saved);
-  } catch { /* нет сохранения */ }
-  let showStart = false;
-  if (restored && (restored.levels.some((l) => l.rooms.length) || restored.site?.boundary)) {
-    // Есть сохранённый проект — продолжаем его.
-    state.project = restored;
-  } else {
-    // Пустой старт: чистый проект и стартовое меню поверх.
-    state.project = createProject();
+    start(saved.project || createProject());
+    restoreHeavyRefs(saved.project, saved.refs);
+  } catch (error) {
+    if (!saved.project) throw error; // пустой проект не открылся — это ошибка кода
+    console.error('Автосохранение не открылось:', error);
+    const text = serializeProject(saved.project, { pretty: false });
+    try { localStorage.setItem(BROKEN_KEY, text); } catch { /* нет места */ }
+    broken = { text, error };
     showStart = true;
+    start(createProject());
   }
-  refreshDerived();
-  applyModeRotation();
-  syncUnderlayImage();
-  refs.projectName.value = state.project.name;
-  updateConnectivity();
-  refreshNorms();
-  renderLibrary();
-  renderLevelBar();
-  renderFurnitureBar();
-  applyLibraryTab();
-  renderProps();
-  renderSelectionToolbar();
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);
   requestDraw();
-  if (showStart) openStartMenu({ initial: true });
+  if (showStart) openStartMenu({ initial: true, broken });
 })();
 
 exposeDebugApi();

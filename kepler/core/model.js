@@ -3,7 +3,7 @@
 
 import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
 import { SCHEMA, migrateProject, normDeg } from './migrate.js';
-import { createSite, ensureSite } from './site.js';
+import { DEFAULT_ROAD_WIDTH, createSite, ensureSite } from './site.js';
 import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
@@ -142,8 +142,23 @@ export function cloneProject(project) {
   return attachLevelAccessors(JSON.parse(JSON.stringify(project)));
 }
 
-export function serializeProject(project) {
-  return JSON.stringify(project, null, 2);
+// pretty: false — без отступов (автосохранение, снимки истории): в 2–3 раза короче.
+export function serializeProject(project, { pretty = true } = {}) {
+  return pretty ? JSON.stringify(project, null, 2) : JSON.stringify(project);
+}
+
+// Есть ли в проекте что терять: комнаты, мебель, проёмы, этажи, участок,
+// ландшафт, рельеф, подложка, варианты. Пустой «Новый дом» — false.
+export function hasContent(project) {
+  if (!project || typeof project !== 'object') return false;
+  const levels = Array.isArray(project.levels) ? project.levels : [];
+  if (levels.length > 1) return true;
+  if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length)) return true;
+  if (Array.isArray(project.variants) && project.variants.length) return true;
+  const s = project.site;
+  if (!s || typeof s !== 'object') return false;
+  return Boolean(s.boundary?.length || s.redLine?.length || s.roads?.length || s.neighbors?.length
+    || s.entry || s.underlay || s.terrain?.points?.length || s.landscape?.objects?.length);
 }
 
 // Открытие файла любой поддерживаемой версии: разбор → миграции до текущей
@@ -155,29 +170,156 @@ export function deserializeProject(text) {
   } catch {
     throw new Error('Файл не является JSON-проектом Kepler Plan');
   }
+  return projectFromData(raw);
+}
+
+// То же для уже разобранного JSON (снимки истории собираются с reviver).
+export function projectFromData(raw) {
   const data = migrateProject(raw);
-  const levelOk = (l) => l && Array.isArray(l.rooms) && Array.isArray(l.openings) && Array.isArray(l.items);
-  if (!Array.isArray(data.levels) || !data.levels.length || !data.levels.every(levelOk)) {
+  const levelOk = (l) => isObj(l) && Array.isArray(l.rooms) && Array.isArray(l.openings) && Array.isArray(l.items);
+  if (!Array.isArray(data.levels) || !data.levels.some(levelOk)) {
     throw new Error('Файл повреждён: нет этажей со списками rooms/openings/items');
   }
+  data.levels = data.levels.filter(levelOk);
   return normalizeProject(data);
 }
 
-// Заполняет необязательные поля текущей схемы значениями по умолчанию.
+// ---------------------------------------------------------------- Чистка
+//
+// Битые элементы (null, строки, NaN-координаты) отбрасываются, числа-строки
+// приводятся к числам: дальше по коду (стены, нормы, экспорт) данные
+// считаются правильными, и один мусорный элемент ронял бы весь проект.
+
+const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const num = (v) => {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+};
+const pos = (v) => { const n = num(v); return n != null && n > 0 ? n : null; };
+const str = (v) => (typeof v === 'string' && v ? v : null);
+
+function cleanPoint(p) {
+  if (!isObj(p)) return null;
+  const x = num(p.x);
+  const y = num(p.y);
+  return x == null || y == null ? null : { ...p, x, y };
+}
+
+// Список точек; меньше min правильных — null.
+function cleanPoints(list, min) {
+  if (!Array.isArray(list)) return null;
+  const out = list.map(cleanPoint).filter(Boolean);
+  return out.length >= min ? out : null;
+}
+
+export function normalizeRoom(r) {
+  if (!isObj(r)) return null;
+  const x = num(r.x);
+  const y = num(r.y);
+  const w = pos(r.w);
+  const h = pos(r.h);
+  if (x == null || y == null || w == null || h == null) return null;
+  const type = str(r.type) || 'living';
+  const room = { ...r, id: str(r.id) || makeId('room'), type, x, y, w, h };
+  if (typeof room.name !== 'string') room.name = roomType(type)?.title || type;
+  if ('parentId' in room) room.parentId = str(room.parentId);
+  if ('outline' in room) {
+    const outline = cleanPoints(room.outline, 4);
+    if (outline) room.outline = outline; else delete room.outline;
+  }
+  if ('notch' in room && !isObj(room.notch)) delete room.notch;
+  if ('ceiling' in room) {
+    const c = pos(room.ceiling);
+    if (c) room.ceiling = c; else delete room.ceiling;
+  }
+  return room;
+}
+
+export function normalizeOpening(o) {
+  if (!isObj(o) || !str(o.kind) || !str(o.roomId)) return null;
+  const side = num(o.side);
+  const offset = num(o.offset);
+  const width = pos(o.width);
+  if (side == null || !Number.isInteger(side) || side < 0 || side > 3 || offset == null || width == null) return null;
+  const out = { ...o, id: str(o.id) || makeId(o.kind), side, offset, width };
+  for (const key of ['height', 'sill']) {
+    if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
+  }
+  return out;
+}
+
+export function normalizeItem(it) {
+  if (!isObj(it) || !str(it.kind)) return null;
+  const x = num(it.x);
+  const y = num(it.y);
+  const w = pos(it.w);
+  const h = pos(it.h);
+  if (x == null || y == null || w == null || h == null) return null;
+  return { ...it, id: str(it.id) || makeId('item'), x, y, w, h, rotation: num(it.rotation) ?? 0 };
+}
+
+const cleanList = (list, fn) => (Array.isArray(list) ? list.map(fn).filter(Boolean) : []);
+
+function normalizeLevelContent(l) {
+  const rooms = cleanList(l.rooms, normalizeRoom);
+  const ids = new Set(rooms.map((r) => r.id));
+  for (const r of rooms) if (r.parentId && !ids.has(r.parentId)) r.parentId = null;
+  return {
+    ...l,
+    rooms,
+    openings: cleanList(l.openings, normalizeOpening),
+    items: normalizeItemsComp(cleanList(l.items, normalizeItem)),
+    wallOverrides: isObj(l.wallOverrides) ? l.wallOverrides : {},
+  };
+}
+
+function cleanSite(site) {
+  if (!isObj(site)) return null;
+  const s = { ...site };
+  s.boundary = cleanPoints(site.boundary, 3);
+  s.redLine = cleanPoints(site.redLine, 2);
+  s.roads = cleanList(site.roads, (r) => {
+    const points = isObj(r) ? cleanPoints(r.points, 2) : null;
+    return points ? { ...r, points, width: pos(r.width) ?? DEFAULT_ROAD_WIDTH } : null;
+  });
+  s.neighbors = cleanList(site.neighbors, (n) => {
+    if (!isObj(n)) return null;
+    const x = num(n.x); const y = num(n.y); const w = pos(n.w); const h = pos(n.h);
+    if (x == null || y == null || w == null || h == null) return null;
+    return { ...n, x, y, w, h };
+  });
+  const entry = cleanPoint(site.entry);
+  s.entry = entry ? { ...entry, angle: num(entry.angle) ?? 0 } : null;
+  s.underlay = isObj(site.underlay) ? site.underlay : null;
+  for (const key of ['location', 'sun', 'norms']) if (!isObj(s[key])) delete s[key];
+  for (const key of ['north', 'buildingHeight', 'setbackBoundary', 'setbackNeighbor']) {
+    const n = num(s[key]);
+    if (n == null) delete s[key]; else s[key] = n;
+  }
+  return s;
+}
+
+// Заполняет необязательные поля текущей схемы значениями по умолчанию и
+// чистит содержимое этажей и участка от битых элементов.
 export function normalizeProject(data) {
   data.name = typeof data.name === 'string' && data.name ? data.name : 'Без названия';
   data.revision = Number(data.revision) || 0;
-  data.levels = data.levels.map((l, i) => ({
-    ...l,
+  const levels = Array.isArray(data.levels) ? data.levels.filter(isObj) : [];
+  data.levels = levels.map((l, i) => ({
+    ...normalizeLevelContent(l),
     id: typeof l.id === 'string' && l.id ? l.id : makeId('level'),
     name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
     elevation: Number(l.elevation) || 0,
     height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
-    wallOverrides: l.wallOverrides || {},
-    items: normalizeItemsComp(l.items),
   }));
+  if (!data.levels.length) data.levels = [createLevel('1 этаж', 0, DEFAULT_LEVEL_HEIGHT, 'L1')];
   if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;
-  data.variants = Array.isArray(data.variants) ? data.variants.filter((v) => v?.house?.levels) : [];
+  data.variants = Array.isArray(data.variants)
+    ? data.variants.filter((v) => Array.isArray(v?.house?.levels)).map((v) => ({
+      ...v, house: { ...v.house, levels: v.house.levels.filter(isObj).map(normalizeLevelContent) },
+    }))
+    : [];
+  data.site = cleanSite(data.site);
   const b = data.building || {};
   data.building = {
     rotation: normDeg(b.rotation),
@@ -185,7 +327,7 @@ export function normalizeProject(data) {
   };
   data.settings = {
     partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, bearing: DEFAULT_BEARING,
-    dimOuter: true, units: 'mm', ...(data.settings || {}),
+    dimOuter: true, units: 'mm', ...(isObj(data.settings) ? data.settings : {}),
   };
   ensureSite(data);
   return attachLevelAccessors(data);

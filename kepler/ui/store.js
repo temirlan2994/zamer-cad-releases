@@ -3,11 +3,13 @@
 import { arrangeRoom } from '../core/furnish.js';
 import { normsReport } from '../core/norms.js';
 import {
-  deserializeProject, levelBelow, levelProject, roomById, serializeProject,
+  deserializeProject, hasContent, levelBelow, levelProject, projectFromData, roomById, serializeProject,
 } from '../core/model.js';
+import { hashText, newId } from '../core/storage.js';
 import { deriveWalls } from '../core/walls.js';
 import { findNearMissGaps } from '../core/gaps.js';
-import { el } from './dom.js';
+import { el, toast } from './dom.js';
+import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
 import { applyModeRotation } from './modes.js';
 import { renderProps } from './props.js';
@@ -21,29 +23,75 @@ import { refresh3d } from './view3d.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
+export const BROKEN_KEY = `${AUTOSAVE_KEY}-broken`; // резерв битого автосохранения
+const OWNER_KEY = `${AUTOSAVE_KEY}-tab`; // какая вкладка записала автосохранение последней
+const TAB_ID = newId('tab');
 
 let autosaveTimer = null;
+let autosaveDirty = false;
+let heavyPending = false; // подложка из автосохранения ещё читается из IndexedDB
+const warned = new Set();
+
+// Стены, зазоры и стены этажа ниже — без записи в state (проверка до замены).
+function deriveAll(project) {
+  const below = levelBelow(project);
+  return {
+    walls: deriveWalls(project),
+    gaps: findNearMissGaps(project, { move: false }),
+    // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
+    belowWalls: below ? deriveWalls(levelProject(project, below.id)) : null,
+  };
+}
 
 export function refreshDerived() {
-  state.walls = deriveWalls(state.project);
-  state.gaps = findNearMissGaps(state.project, { move: false });
-  // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
-  const below = levelBelow(state.project);
-  state.belowWalls = below ? deriveWalls(levelProject(state.project, below.id)) : null;
+  Object.assign(state, deriveAll(state.project));
+}
+
+// ---------------------------------------------------------------- Снимки истории
+//
+// Снимок — JSON без отступов, а тяжёлые строки data:… (подложка в base64)
+// заменены ссылкой kmem:<хеш> на одну копию в памяти: 40 шагов отмены не
+// держат 40 копий картинки. restoreFrom понимает такие ссылки.
+
+const HEAVY_MIN = 4096;
+const MEM_REF = 'kmem:';
+const IDB_REF = 'kidb:';
+const heavyIds = new Map(); // строка → хеш
+const heavyById = new Map(); // хеш → строка
+const isHeavy = (v) => typeof v === 'string' && v.length > HEAVY_MIN && v.startsWith('data:');
+
+function heavyId(s) {
+  let id = heavyIds.get(s);
+  if (!id) {
+    id = hashText(s);
+    heavyIds.set(s, id);
+    heavyById.set(id, s);
+  }
+  return id;
 }
 
 export function snapshot() {
-  return serializeProject(state.project);
+  return JSON.stringify(state.project, (_k, v) => (isHeavy(v) ? MEM_REF + heavyId(v) : v));
+}
+
+// Текст проекта (файл, автосохранение или снимок истории) → проект.
+export function parseProjectText(text) {
+  if (!String(text).includes(`"${MEM_REF}`)) return deserializeProject(text);
+  let raw;
+  try {
+    raw = JSON.parse(text, (_k, v) => (typeof v === 'string' && v.startsWith(MEM_REF) ? heavyById.get(v.slice(MEM_REF.length)) ?? null : v));
+  } catch {
+    throw new Error('Файл не является JSON-проектом Kepler Plan');
+  }
+  return projectFromData(raw);
 }
 
 // Снимок для истории при замене проекта целиком (пример, шаблон, файл,
 // «Новый»). Пустой проект в историю не кладём: Ctrl+Z после загрузки не
-// должен подменять результат пустым «Новым домом».
+// должен подменять результат пустым «Новым домом». Содержимое — не только
+// комнаты: ландшафт, граница, рельеф, подложка тоже (core/model.js hasContent).
 export function snapshotIfContent() {
-  const p = state.project;
-  if (!p) return null;
-  const filled = (p.levels || []).some((l) => l.rooms?.length || l.items?.length) || p.rooms?.length;
-  return filled ? snapshot() : null;
+  return hasContent(state.project) ? snapshot() : null;
 }
 
 // Запись истории = снимок + идентификатор проекта из «Проектов»: отмена после
@@ -98,38 +146,207 @@ export function afterChange() {
   scheduleAutosave();
 }
 
+// ---------------------------------------------------------------- Автосохранение
+//
+// localStorage, JSON без отступов, через 500 мс после правки; на pagehide и
+// при сворачивании вкладки — сразу (flushAutosave). Не хватает места —
+// тяжёлое (подложка) уходит в IndexedDB, в localStorage — ссылки kidb:<хеш>;
+// не помогло — предупреждение один раз за сессию.
+
+function warnOnce(kind, message) {
+  if (warned.has(kind)) return;
+  warned.add(kind);
+  toast(message, true);
+}
+
 function scheduleAutosave() {
+  autosaveDirty = true;
   clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(AUTOSAVE_KEY, serializeProject(state.project));
-      localStorage.setItem(PID_KEY, state.pid || '');
-    } catch { /* тихо */ }
-  }, 500);
+  autosaveTimer = setTimeout(flushAutosave, 500);
 }
 
+function trySet(text) {
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, text);
+  } catch {
+    return false;
+  }
+  try {
+    localStorage.setItem(PID_KEY, state.pid || '');
+    localStorage.setItem(OWNER_KEY, TAB_ID);
+  } catch { /* главное записано */ }
+  return true;
+}
+
+const storedBlobs = new Set();
+
+// Немедленная запись (без дебаунса). true — записано.
+export function flushAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  if (!autosaveDirty || !state.project) return false;
+  if (heavyPending) { // подложка ещё не вернулась из IndexedDB — не затирать её
+    autosaveTimer = setTimeout(flushAutosave, 300);
+    return false;
+  }
+  autosaveDirty = false;
+  let text;
+  try {
+    text = serializeProject(state.project, { pretty: false });
+  } catch (error) {
+    console.error('Автосохранение: проект не сериализуется', error);
+    return false;
+  }
+  if (trySet(text)) return true;
+  const blobs = {};
+  const lite = JSON.stringify(state.project, (_k, v) => {
+    if (!isHeavy(v)) return v;
+    const h = heavyId(v);
+    blobs[h] = v;
+    return IDB_REF + h;
+  });
+  if (lite.length < text.length && trySet(lite)) {
+    for (const [h, s] of Object.entries(blobs)) {
+      if (storedBlobs.has(h)) continue;
+      storedBlobs.add(h);
+      putBlob(h, s).catch(() => {
+        storedBlobs.delete(h);
+        warnOnce('blob', 'Подложка не автосохраняется: в браузере нет места. Сохраните проект файлом.');
+      });
+    }
+    warnOnce('lite', 'Мало места в браузере: подложка автосохраняется отдельно. Надёжнее сохранить версию или файл.');
+    return true;
+  }
+  warnOnce('quota', 'Автосохранение не работает: в браузере кончилось место. Сохраните версию («Проекты») или файл.');
+  return false;
+}
+
+// Запись при закрытии/сворачивании вкладки и предупреждение о второй вкладке.
+export function bindAutosaveLifecycle() {
+  window.addEventListener('pagehide', () => { flushAutosave(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushAutosave();
+  });
+  window.addEventListener('storage', (e) => {
+    if (e.key === OWNER_KEY && e.newValue && e.newValue !== TAB_ID) {
+      warnOnce('tabs', 'Проект открыт ещё в одной вкладке: автосохранение у них общее, и последняя правка перезапишет другую. Работайте в одной вкладке.');
+    }
+  });
+}
+
+// Битое автосохранение — в резервный ключ (место освобождаем, если нужно);
+// не вышло — в IndexedDB.
+function backupBroken(text) {
+  try {
+    localStorage.setItem(BROKEN_KEY, text);
+    return;
+  } catch { /* нет места — ниже */ }
+  try {
+    localStorage.removeItem(AUTOSAVE_KEY);
+    localStorage.setItem(BROKEN_KEY, text);
+    return;
+  } catch { /* и так нет */ }
+  putBlob(BROKEN_KEY, text).catch(() => {});
+}
+
+// Ссылки kidb:<хеш> → null; держатели запоминаются, чтобы вернуть данные
+// из IndexedDB после старта.
+function detachIdbRefs(node, out) {
+  if (!node || typeof node !== 'object') return;
+  for (const [k, v] of Object.entries(node)) {
+    if (typeof v === 'string' && v.startsWith(IDB_REF)) {
+      out.push({ holder: node, key: k, id: v.slice(IDB_REF.length) });
+      node[k] = null;
+    } else if (v && typeof v === 'object') detachIdbRefs(v, out);
+  }
+}
+
+// Чтение автосохранения при запуске. Ничего не бросает:
+// { project } — проект (или null, если сохранения нет/оно пустое);
+// { broken, error } — сохранение не открылось, копия убрана в резерв.
+export function loadAutosave() {
+  let saved;
+  try { saved = localStorage.getItem(AUTOSAVE_KEY); } catch { return { project: null }; }
+  if (!saved) return { project: null };
+  try {
+    const project = deserializeProject(saved);
+    const refs = [];
+    detachIdbRefs(project, refs);
+    deriveAll(project); // упадёт здесь, а не после замены проекта
+    if (!hasContent(project) && !refs.length) return { project: null };
+    return { project, refs };
+  } catch (error) {
+    console.error('Автосохранение не открылось:', error);
+    backupBroken(saved);
+    return { project: null, broken: saved, error };
+  }
+}
+
+// Вернуть подложку из IndexedDB в открытый при запуске проект.
+export function restoreHeavyRefs(project, refs) {
+  if (!refs?.length) return;
+  heavyPending = true;
+  Promise.all(refs.map((r) => getBlob(r.id).then((s) => ({ ...r, s }), () => ({ ...r, s: null }))))
+    .then((list) => {
+      heavyPending = false;
+      if (state.project !== project) return;
+      let lost = false;
+      for (const r of list) {
+        if (r.s) { r.holder[r.key] = r.s; storedBlobs.add(r.id); } else lost = true;
+      }
+      if (lost) toast('Картинка подложки из автосохранения не нашлась — загрузите её заново', true);
+      syncUnderlayImage();
+      requestDraw();
+    });
+}
+
+// Замена проекта текстом (файл, версия, отмена). Сначала разбор и расчёт
+// стен на новом проекте; бросило — текущий проект не тронут. Сломалось
+// уже после замены — откат к прежнему и ошибка наружу.
 export function restoreFrom(text) {
-  state.project = deserializeProject(text);
-  const name = el('projectName');
-  if (name) name.value = state.project.name;
+  const project = parseProjectText(text);
+  const derived = deriveAll(project);
+  const prev = { project: state.project, selection: state.selection };
+  state.project = project;
+  Object.assign(state, derived);
   state.selection = null;
-  refreshDerived();
-  applyModeRotation();
-  afterChange();
+  try {
+    const name = el('projectName');
+    if (name) name.value = state.project.name;
+    applyModeRotation();
+    afterChange();
+  } catch (error) {
+    state.project = prev.project;
+    state.selection = prev.selection;
+    try {
+      refreshDerived();
+      const name = el('projectName');
+      if (name) name.value = state.project.name;
+      applyModeRotation();
+      afterChange();
+    } catch { /* прежний проект рисовался — должен и сейчас */ }
+    throw error;
+  }
 }
 
-export function undo() {
-  if (!history.undo.length) return;
-  history.redo.push({ text: snapshot(), pid: state.pid });
-  const entry = history.undo.pop();
-  restoreFrom(entry.text);
+// Шаг истории: текущее — в стек to, запись из from — в проект. Не открылась
+// запись — стеки как были.
+function step(from, to) {
+  if (!from.length) return;
+  const current = { text: snapshot(), pid: state.pid };
+  const entry = from.pop();
+  try {
+    restoreFrom(entry.text);
+  } catch (error) {
+    from.push(entry);
+    console.error('Шаг истории не применился:', error);
+    toast(`Не удалось: ${error.message}`, true);
+    return;
+  }
+  to.push(current);
   state.pid = entry.pid;
 }
 
-export function redo() {
-  if (!history.redo.length) return;
-  history.undo.push({ text: snapshot(), pid: state.pid });
-  const entry = history.redo.pop();
-  restoreFrom(entry.text);
-  state.pid = entry.pid;
-}
+export function undo() { step(history.undo, history.redo); }
+
+export function redo() { step(history.redo, history.undo); }

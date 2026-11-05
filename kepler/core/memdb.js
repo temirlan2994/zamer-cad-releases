@@ -86,10 +86,21 @@ export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
     }
   }
 
+  // onWrite может вернуть промис (запись на диск): set/delete ждут его, и
+  // ошибка записи (квота IndexedDB) доходит до вызывающего.
   function write(path, body) {
     if (body === null) docs.delete(path); else docs.set(path, freeze(body));
-    onWrite?.(path, body === null ? null : freeze(body));
+    const pending = onWrite?.(path, body === null ? null : freeze(body));
     notify(path);
+    return pending;
+  }
+
+  // Изменение, пришедшее извне (другая вкладка): без onWrite, только память
+  // и подписчики.
+  function applyRemote(path, body) {
+    const p = checkPath(path, true);
+    if (body === null || body === undefined) docs.delete(p); else docs.set(p, freeze(body));
+    notify(p);
   }
 
   function makeQuery(collPath, filters = [], order = null, max = 0) {
@@ -115,13 +126,13 @@ export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
       get: async () => docSnapshot(p, docs.get(p)),
       set: async (data) => {
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw Object.assign(new Error('тело — объект'), { code: 'invalid_argument' });
-        write(p, data);
+        await write(p, data);
       },
       update: async (data) => {
         if (!docs.has(p)) throw Object.assign(new Error('нет документа'), { code: 'invalid_argument' });
-        write(p, { ...docs.get(p), ...data });
+        await write(p, { ...docs.get(p), ...data });
       },
-      delete: async () => { if (docs.has(p)) write(p, null); },
+      delete: async () => { if (docs.has(p)) await write(p, null); },
       onSnapshot(next) {
         const l = { kind: 'doc', path: p, fire: () => next(docSnapshot(p, docs.get(p))) };
         listeners.add(l);
@@ -143,5 +154,5 @@ export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
     };
   }
 
-  return { doc, collection, dump: () => Object.fromEntries(docs) };
+  return { doc, collection, applyRemote, dump: () => Object.fromEntries(docs) };
 }
