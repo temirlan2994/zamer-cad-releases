@@ -744,10 +744,6 @@ export function renderLandscapeProps(panel) {
       <div class="prop-block">
         <div class="prop-row"><span>Выбрано объектов</span><strong>${objs.length}</strong></div>
         <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия</p>
-      </div>
-      <div class="prop-actions">
-        <button type="button" id="lsDup">Копировать</button>
-        <button type="button" class="danger" id="lsDel">Удалить</button>
       </div>`;
     bindCommon(panel);
     return;
@@ -812,11 +808,6 @@ export function renderLandscapeProps(panel) {
       ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик — новая вершина · Alt+клик или Delete — удалить вершину</p>' : ''}
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
-    <div class="prop-actions">
-      <button type="button" id="lsDup" title="Ctrl+D">Копировать</button>
-      <button type="button" id="lsRot90" title="R">↻ 90°</button>
-      <button type="button" class="danger" id="lsDel" title="Del">Удалить</button>
-    </div>
     ${helpers}`;
   bindCommon(panel);
   const num = (id) => Number(panel.querySelector(id)?.value);
@@ -851,7 +842,6 @@ export function renderLandscapeProps(panel) {
     if (e.target.checked) o.locked = true; else delete o.locked;
     state.lsVertex = null;
   }));
-  panel.querySelector('#lsRot90')?.addEventListener('click', rotateLandscape90);
   // Помощники фигуры.
   const readHelper = () => {
     helper.plant = panel.querySelector('#lsAlongKind')?.value || helper.plant;
@@ -914,8 +904,6 @@ function renderDrawProps(panel) {
 }
 
 function bindCommon(panel) {
-  panel.querySelector('#lsDup')?.addEventListener('click', duplicateLandscapeSelection);
-  panel.querySelector('#lsDel')?.addEventListener('click', deleteLandscapeSelection);
 }
 
 function safeName() {
