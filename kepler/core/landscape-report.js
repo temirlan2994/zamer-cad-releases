@@ -7,8 +7,8 @@
 // застройка + покрытия + вода + озеленение + «не благоустроено» = участок.
 
 import {
-  isPathShape, landscapeDef, objectAreaM2, objectLengthM, objectOutline, objectPath, pointInObject, steppingSlabs,
-  variantOf,
+  curbLines, isPathShape, landscapeDef, objectAreaM2, objectLengthM, objectOutline, objectPath, planterInner, planterWall,
+  pointInObject, polylineLength, stairsInfo, steppingSlabs, toWorld, variantOf,
 } from './landscape.js';
 import { LANDSCAPE_NORMS } from './norms.js';
 import { buildingFootprint } from './site-check.js';
@@ -95,8 +95,20 @@ export function balanceRows(b) {
 // ------------------------------------------------------------ Ведомость
 
 const PIECE_KINDS = new Set(['slab', 'board']);
+const CURB_TITLE = { concrete: 'бетон', stone: 'камень', metal: 'сталь', wood: 'дерево' };
+
+// Длина бордюра по периметру хозяина (поле curb), м.
+export function hostCurbLengthM(o) {
+  return curbLines(o).reduce((s, l) => s + polylineLength(l.pts, l.closed), 0) / 1000;
+}
 
 const sizeText = (o, def) => {
+  if (o.kind === 'stairs-out') {
+    const st = stairsInfo(o);
+    return `${st.steps} ступ. ${Math.round(st.riser)}×${st.tread} мм, марш ${fmt(st.flight / 1000, 2)} м, подъём ${fmt(st.rise / 1000, 2)} м${st.cheek ? ', с бортами' : ''}`;
+  }
+  if (o.kind === 'planter-box') return `${fmt(o.w / 1000, 1)} × ${fmt(o.h / 1000, 1)} м, борт ${planterWall(o)}×${Math.round(o.height || 0)} мм`;
+  if (o.kind === 'planter-area') return `контур ${fmt(objectLengthM(o), 1)} м, борт ${planterWall(o)}×${Math.round(o.height || 0)} мм`;
   if (def.shape === 'line') return `L ${fmt(objectLengthM(o), 1)} м × ${fmt((o.width || def.h) / 1000, 2)} м`;
   if (def.shape === 'poly') return `контур ${fmt(objectLengthM(o), 1)} м`;
   if (def.lockAspect) return `⌀ ${fmt(o.w / 1000, 1)} м`;
@@ -127,6 +139,19 @@ export function landscapeSchedule(objects) {
     if (piece) r.sizes.add(size);
     if (def.cover || shape) r.area += objectAreaM2(o);
     if (def.shape === 'line') r.length += objectLengthM(o);
+    if (o.curb) {
+      // Бордюр по периметру дорожки/площади — отдельной строкой (длина).
+      const ck = `curb-host|${o.curb.variant}|${o.curb.width}|${o.curb.height}`;
+      if (!rows.has(ck)) {
+        rows.set(ck, {
+          kind: 'curb', title: 'Бордюр по периметру', variant: CURB_TITLE[o.curb.variant] || '', group: 'Лестницы и бордюры', cat: 'site',
+          count: 0, size: `${o.curb.width}×${o.curb.height} мм`, sizes: new Set(), area: 0, length: 0, unit: 'м',
+        });
+      }
+      const c = rows.get(ck);
+      c.count += 1;
+      c.length += hostCurbLengthM(o);
+    }
   }
   const order = (r) => (r.cat === 'green' ? 0 : 1);
   return [...rows.values()]
@@ -191,6 +216,28 @@ export function landscapeDxfEntities(site) {
       if (def.group === 'Деревья') out.push({ type: 'circle', layer, cx: o.x, cy: o.y, radius: Math.max(80, o.w * 0.04) });
       continue;
     }
+    if (o.curb) {
+      for (const l of curbLines(o)) out.push(...closedLines(l.pts, 'lsPaths', l.closed));
+    }
+    if (o.kind === 'stairs-out') {
+      // Лестница: габарит + рёбра ступеней.
+      out.push(...closedLines(objectOutline(o), 'lsPaths'));
+      const st = stairsInfo(o);
+      const t = o.h / st.steps;
+      for (let i = 1; i < st.steps; i += 1) {
+        const y = o.h / 2 - i * t;
+        const a = toWorld(o, -o.w / 2 + st.cheek, y); const b = toWorld(o, o.w / 2 - st.cheek, y);
+        out.push({ type: 'line', layer: 'lsPaths', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+      }
+      continue;
+    }
+    if (o.kind === 'planter-box' || o.kind === 'planter-area') {
+      // Короб: наружный и внутренний контуры борта.
+      out.push(...closedLines(objectOutline(o, 24), 'lsAreas'));
+      out.push(...closedLines(planterInner(o), 'lsAreas'));
+      continue;
+    }
+    if (o.kind === 'curb') { out.push(...closedLines(objectOutline(o), 'lsPaths')); continue; }
     if (o.kind === 'path') {
       if (o.variant === 'stepping') {
         for (const sl of steppingSlabsOf(o)) out.push(...closedLines(sl, 'lsPaths'));

@@ -20,7 +20,7 @@ import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
-import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams } from './landscape.js';
+import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, stairsInfo } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
@@ -215,6 +215,11 @@ function buildSiteExport(site, project) {
   };
 }
 
+function stairsExport(o) {
+  const st = stairsInfo(o);
+  return { steps: st.steps, riser_mm: Math.round(st.riser), tread_mm: st.tread, flight_mm: Math.round(st.flight), rise_mm: Math.round(st.rise), cheek_mm: st.cheek };
+}
+
 // Ландшафт (core/landscape.js): объекты с типом, размерами и признаками.
 function buildLandscapeExport(site) {
   const objects = site?.landscape?.objects;
@@ -236,6 +241,12 @@ function buildLandscapeExport(site) {
         ...(def?.cover || isPathShape(def) ? { area_m2: Number(objectAreaM2(o).toFixed(3)) } : {}),
         ...(o.color ? { color: o.color } : {}),
         ...(o.locked ? { locked: true } : {}),
+        // Необязательные поля (версия схемы та же): параметры вида, привязка
+        // растения к коробу, бордюр по периметру, расчёт лестницы.
+        ...(o.meta && Object.keys(o.meta).length ? { meta: o.meta } : {}),
+        ...(o.parent ? { parent: o.parent } : {}),
+        ...(o.curb ? { curb: { ...o.curb } } : {}),
+        ...(o.kind === 'stairs-out' ? { stairs: stairsExport(o) } : {}),
       };
     }),
   };

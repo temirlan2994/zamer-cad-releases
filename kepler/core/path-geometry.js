@@ -250,8 +250,9 @@ export function pathLayout(points, opts = {}) {
       plus.push(r.capEnd[0]); minus.push(r.capEnd[r.capEnd.length - 1]);
     }
   });
-  const outline = [...plus, ...minus.reverse()];
-  return { runs, joints: geo, hw, width, pieces, outline };
+  const outline = [...plus, ...[...minus].reverse()];
+  // plus / minus — кромки слева и справа от оси (бордюр вдоль дорожки).
+  return { runs, joints: geo, hw, width, pieces, outline, plus, minus };
 }
 
 // Контур полосы (замкнутый многоугольник).

@@ -9,7 +9,7 @@
 // печати. Кроны и тени — спрайты в кеше (drawImage), текстуры — узоры.
 
 import {
-  LS_COLORS, SHAPE_RANK, isPathShape, isRoundObject, landscapeDef, landscapeHandles, objectAreaM2, objectColors,
+  LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, landscapeHandles, objectAreaM2, objectColors,
   lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
   seededRandom, steppingSlabs, variantOf,
 } from '../core/landscape.js';
@@ -1964,6 +1964,327 @@ const SHAPE_LOOKS = {
   },
 };
 
+// ------------------------------------------------------------ Конструктивы
+// Клумба-короб, наружная лестница, бордюр. В «Эскизе» — верх борта светлый,
+// боковая грань (условный «отброс» в сторону тени) с тёмной штриховкой,
+// тень борта на засыпку; в «Чертеже» — двойная линия борта, без теней.
+
+const FILL_COLORS = { soil: 'soil', mulch: 'mulch', gravel: 'gravel' };
+const FLOWER_COLORS = {
+  mixed: ['#c9a2b6', '#d8c08c', '#b3a4c8', '#f1ede6', '#d5b39b'],
+  lavender: ['#a99cc4', '#9b8fbf', '#bdb3d4'],
+  roses: ['#c08b98', '#d3a3ad', '#b07685'],
+  echinacea: ['#c98fa6', '#d6a0b3', '#b7798f'],
+  white: ['#f4f1ea', '#e9e5da', '#ffffff'],
+};
+
+const shiftPts = (pts, d, k = 1) => pts.map((p) => ({ x: p.x + d.x * k, y: p.y + d.y * k }));
+
+// Штриховка текущего пути (clip) параллельными линиями под 45°.
+function hatch(ctx, rc, box, step, alpha = 0.35, w = 0.5) {
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = rgba(rc.ink, alpha);
+  ctx.lineWidth = rc.px(w);
+  ctx.beginPath();
+  const span = box.w + box.h;
+  for (let s = 0; s <= span; s += step) {
+    ctx.moveTo(box.x + s, box.y);
+    ctx.lineTo(box.x + s - box.h, box.y + box.h);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+const ptsBox = (pts) => {
+  const xs = pts.map((p) => p.x); const ys = pts.map((p) => p.y);
+  const x = Math.min(...xs); const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+};
+
+// Боковая грань стенки: четырёхугольники от рёбра контура к сдвинутому на d.
+function sideFace(ctx, rc, pts, d, color) {
+  ctx.beginPath();
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i += 1) area += pts[i].x * pts[(i + 1) % n].y - pts[(i + 1) % n].x * pts[i].y;
+  const out = area > 0 ? 1 : -1; // знак внешней нормали (b.y - a.y, -(b.x - a.x)), ось Y вниз
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % n];
+    // Только рёбра, обращённые к тени (видимые грани).
+    const nx = (b.y - a.y) * out; const ny = -(b.x - a.x) * out;
+    if (nx * d.x + ny * d.y <= 0) continue;
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(b.x + d.x, b.y + d.y); ctx.lineTo(a.x + d.x, a.y + d.y); ctx.closePath();
+  }
+  ctx.fillStyle = color;
+  ctx.fill('nonzero');
+  // Грань в тени: притенение и штриховка, как на эскизе от руки.
+  ctx.fillStyle = rgba(rc.pal.shadow, 0.2);
+  ctx.fill('nonzero');
+  const box = ptsBox([...pts, ...shiftPts(pts, d)]);
+  hatch(ctx, rc, box, Math.max(rc.px(3.5), 30), 0.48, 0.5);
+  tracePath(ctx, shiftPts(pts, d), true);
+  ink(ctx, rc, 0.5, 0.55);
+}
+
+// Короб по контуру outer (верх борта) и inner (засыпка) в текущих осях;
+// sd — направление тени (единичный вектор в этих осях).
+function drawPlanterBody(ctx, o, outer, inner, C, rc, sd) {
+  const H = Math.max(0, o.height || 0);
+  const fillKey = FILL_COLORS[o.meta?.fill] || 'soil';
+  const F = rc.P[fillKey] || rc.P.soil;
+  const wall = Math.abs(outer[0].x - inner[0].x) + Math.abs(outer[0].y - inner[0].y);
+  if (!rc.mono && H > 0) {
+    const lift = Math.min(220, Math.max(40, H * 0.32));
+    const d = { x: sd.x * lift, y: sd.y * lift };
+    // Падающая тень у подножия (низкому коробу — без длинной тени).
+    if (H < 400) {
+      ctx.save();
+      ctx.fillStyle = rc.pal.shadow;
+      ctx.globalAlpha = 0.14;
+      tracePath(ctx, shiftPts(outer, d, 1.6), true);
+      ctx.fill();
+      ctx.restore();
+    }
+    sideFace(ctx, rc, outer, d, C[1]);
+  }
+  // Верх борта — кольцо между outer и inner.
+  ctx.beginPath();
+  outer.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  inner.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+  ctx.fill('evenodd');
+  if (!rc.mono && rc.lod >= 6) {
+    ctx.save();
+    ctx.clip('evenodd');
+    if (o.variant === 'stone' || o.variant === 'wood') {
+      // Швы камня поперёк борта / доски вдоль борта.
+      ctx.strokeStyle = seam(rc, 0.3);
+      ctx.lineWidth = rc.px(0.45);
+      ctx.beginPath();
+      const n = outer.length;
+      for (let i = 0; i < n; i += 1) {
+        const a = outer[i]; const b = outer[(i + 1) % n];
+        const ia = inner[i]; const ib = inner[(i + 1) % n];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (o.variant === 'wood') {
+          ctx.moveTo((a.x + ia.x) / 2, (a.y + ia.y) / 2); ctx.lineTo((b.x + ib.x) / 2, (b.y + ib.y) / 2);
+        } else {
+          const k = Math.max(1, Math.round(len / 450));
+          for (let j = 1; j < k; j += 1) {
+            const t = j / k + (j % 2 ? 0.02 : -0.02);
+            ctx.moveTo(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+            ctx.lineTo(ia.x + (ib.x - ia.x) * t, ia.y + (ib.y - ia.y) * t);
+          }
+        }
+      }
+      ctx.stroke();
+    } else {
+      fillGrain(ctx, rc, 'gravel', o.variant === 'corten' ? 0.5 : 0.25);
+    }
+    ctx.restore();
+  }
+  // Засыпка.
+  tracePath(ctx, inner, true);
+  ctx.fillStyle = rc.mono ? rc.pal.paper : F[0];
+  ctx.fill();
+  if (rc.lod >= 3) {
+    tracePath(ctx, inner, true);
+    fillGrain(ctx, rc, fillKey === 'gravel' ? 'gravel' : 'grain', rc.mono ? 0.8 : fillKey === 'soil' ? 0.9 : 0.7);
+  }
+  if (!rc.mono && H > 0) {
+    // Тень борта на засыпку: засыпка минус её сдвиг от стенки к тени.
+    const sh = Math.min(H * 0.45, 260, Math.max(30, wall * 2));
+    ctx.save();
+    tracePath(ctx, inner, true);
+    ctx.clip();
+    ctx.beginPath();
+    const big = ptsBox(inner);
+    ctx.rect(big.x - 1e4, big.y - 1e4, big.w + 2e4, big.h + 2e4);
+    const sp = shiftPts(inner, sd, sh);
+    sp.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = rc.pal.shadow;
+    ctx.globalAlpha = 0.3;
+    ctx.fill('evenodd');
+    ctx.restore();
+  }
+  // Графика: двойная линия борта.
+  tracePath(ctx, outer, true);
+  ink(ctx, rc, rc.mono ? 1 : 0.9, 0.95);
+  tracePath(ctx, inner, true);
+  ink(ctx, rc, rc.mono ? 0.7 : 0.6, 0.85);
+}
+
+const rectPts = (x0, y0, x1, y1) => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+
+// Лента бордюра по линиям [{ pts, closed }], ширина w, высота h, краски C.
+function drawCurbLines(ctx, lines, w, h, C, rc, sd) {
+  ctx.save();
+  ctx.lineJoin = 'miter';
+  ctx.miterLimit = 3;
+  ctx.lineCap = 'butt';
+  for (const { pts, closed } of lines) {
+    if (!rc.mono && h > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = rc.pal.shadow;
+      ctx.lineWidth = w;
+      tracePath(ctx, shiftPts(pts, sd, Math.min(160, Math.max(25, h * 0.5))), closed);
+      ctx.stroke();
+      ctx.restore();
+    }
+    tracePath(ctx, pts, closed);
+    ctx.strokeStyle = rc.ink;
+    ctx.lineWidth = w + rc.px(rc.mono ? 1.6 : 1.3);
+    ctx.stroke();
+    ctx.strokeStyle = rc.mono ? rc.pal.paper : C[0];
+    ctx.lineWidth = Math.max(w - rc.px(0.2), rc.px(0.6));
+    ctx.stroke();
+    // Швы через ~1 м (бетонный/каменный бордюр).
+    if (rc.lod >= 8 && w * rc.k >= 3) {
+      const total = polylineLength(pts, closed);
+      const path = closed ? [...pts, pts[0]] : pts;
+      ctx.strokeStyle = seam(rc, 0.45);
+      ctx.lineWidth = rc.px(0.45);
+      ctx.beginPath();
+      for (let s = 1000; s < total - 200; s += 1000) {
+        const [p, q] = crossAt(path, s, w / 2);
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// Бордюр по периметру дорожки/площади (поле curb хозяина), мир.
+function drawHostCurb(ctx, o, opts) {
+  const lines = curbLines(o);
+  if (!lines.length) return;
+  const base = baseContext(opts);
+  const sd = opts.shadow ? { x: opts.shadow.x, y: opts.shadow.y } : { x: Math.SQRT1_2, y: Math.SQRT1_2 };
+  const C = objectColors({ kind: 'curb', variant: o.curb.variant }).map(base.c);
+  drawCurbLines(ctx, lines, o.curb.width, o.curb.height, C, base, sd);
+}
+
+const BUILD_LOOKS = {
+  planter(ctx, o, a, b, C, rc) {
+    const wall = planterWall(o);
+    drawPlanterBody(ctx, o, rectPts(-a, -b, a, b), rectPts(-a + wall, -b + wall, a - wall, b - wall), C, rc, rc.shadowLocal);
+  },
+  // Наружная лестница: ступени поперёк, «вверх» — к −Y (стрелка), борта по бокам.
+  stairs(ctx, o, a, b, C, rc) {
+    const st = stairsInfo(o);
+    const n = Math.max(1, st.steps);
+    const t = (b * 2) / n;
+    const cw = st.cheek;
+    const x0 = -a + cw; const x1 = a - cw;
+    const sd = rc.shadowLocal;
+    // Ступени: снизу (+Y) вверх, выше — чуть светлее.
+    for (let i = 0; i < n; i += 1) {
+      const yb = b - i * t; const yt = yb - t;
+      ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
+      ctx.fillRect(x0, yt, x1 - x0, t);
+      if (!rc.mono) {
+        ctx.fillStyle = `rgba(255,255,255,${(0.22 * i) / n})`;
+        ctx.fillRect(x0, yt, x1 - x0, t);
+        // Притенение у подступенка следующей ступени (мягкий градиент).
+        if (i < n - 1) {
+          const g = ctx.createLinearGradient(0, yt, 0, yt + t * 0.45);
+          g.addColorStop(0, rgba(rc.pal.shadow, 0.32));
+          g.addColorStop(1, rgba(rc.pal.shadow, 0));
+          ctx.fillStyle = g;
+          ctx.fillRect(x0, yt, x1 - x0, t * 0.45);
+        }
+        if (rc.lod >= 6) {
+          ctx.strokeStyle = seam(rc, 0.28);
+          ctx.lineWidth = rc.px(0.4);
+          ctx.beginPath();
+          if (o.variant === 'wood') {
+            for (const k of [1 / 3, 2 / 3]) { ctx.moveTo(x0, yt + t * k); ctx.lineTo(x1, yt + t * k); }
+          } else if (o.variant === 'stone') {
+            const R = seededRandom(`${o.id}:${i}`);
+            for (let x = x0 + 450 + R() * 300; x < x1 - 200; x += 500 + R() * 400) { ctx.moveTo(x, yt); ctx.lineTo(x, yb); }
+          }
+          ctx.stroke();
+        }
+      }
+    }
+    if (!rc.mono && rc.lod >= 4 && o.variant === 'concrete') {
+      ctx.beginPath(); ctx.rect(x0, -b, x1 - x0, b * 2);
+      fillGrain(ctx, rc, 'gravel', 0.22);
+    }
+    // Тень борта на ступени.
+    if (cw > 0 && !rc.mono && Math.abs(sd.x) > 0.1) {
+      const ws = Math.min((x1 - x0) * 0.25, 200);
+      ctx.fillStyle = rgba(rc.pal.shadow, 0.22);
+      if (sd.x > 0) ctx.fillRect(x0, -b, ws, b * 2); else ctx.fillRect(x1 - ws, -b, ws, b * 2);
+    }
+    // Рёбра ступеней (носики).
+    ctx.beginPath();
+    for (let i = 1; i < n; i += 1) { const y = b - i * t; ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+    ink(ctx, rc, 0.8, 0.95);
+    // Борта — как стенка короба: верх, боковая грань, двойная линия.
+    if (cw > 0) {
+      for (const [l, r] of [[-a, x0], [x1, a]]) {
+        const top = rectPts(l, -b, r, b);
+        if (!rc.mono) sideFace(ctx, rc, top, { x: sd.x * 60, y: sd.y * 60 }, C[1]);
+        ctx.beginPath(); ctx.rect(l, -b, r - l, b * 2);
+        ctx.fillStyle = rc.mono ? rc.pal.paper : C[2];
+        ctx.fill();
+        ink(ctx, rc, 0.8, 0.9);
+      }
+    }
+    ctx.beginPath(); ctx.rect(-a, -b, a * 2, b * 2);
+    ink(ctx, rc, rc.mono ? 1 : 0.9, 0.95);
+    // Стрелка «вверх»: точка у нижней ступени, остриё у верхней.
+    const fw = x1 - x0;
+    const y0 = b - Math.min(t * 0.5, b * 0.4);
+    const yEnd = -b + Math.min(t * 0.3, b * 0.2);
+    const head = Math.min(fw * 0.18, t * 0.7, 220);
+    ctx.strokeStyle = rc.ink;
+    ctx.fillStyle = rc.ink;
+    ctx.lineWidth = rc.px(0.9);
+    ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(0, yEnd + head * 0.8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, yEnd); ctx.lineTo(-head * 0.45, yEnd + head); ctx.lineTo(head * 0.45, yEnd + head); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, y0, Math.max(rc.px(1.8), Math.min(60, fw * 0.03)), 0, TAU); ctx.fill();
+  },
+  // Куртина цветов: зелёная подушка с цветками.
+  flowers(ctx, o, a, b, C, rc) {
+    const R = rc.rand;
+    const mound = new Path2D();
+    scallopPath(mound, 0, 0, a * 0.95, b * 0.95, 9, 0.12, R);
+    if (rc.mono) { monoCrown(ctx, rc, mound, Math.min(a, b) * 0.6); return; }
+    wash(ctx, rc, mound, a, b, C, 0.82);
+    const colors = (FLOWER_COLORS[o.variant] || FLOWER_COLORS.mixed).map(rc.c);
+    ctx.save(); ctx.clip(mound);
+    const n = Math.max(10, Math.min(46, Math.round((a * b) / 9000)));
+    for (let i = 0; i < n; i += 1) {
+      const t = R() * TAU; const d = Math.sqrt(R()) * 0.82;
+      circle(ctx, Math.cos(t) * a * d, Math.sin(t) * b * d, Math.max(rc.px(0.9), a * (0.05 + R() * 0.05)), colors[i % colors.length]);
+    }
+    ctx.restore();
+    ink(ctx, rc, 0.55, 0.7, mound);
+  },
+};
+
+const BUILD_SHAPE_LOOKS = {
+  'planter-area'(ctx, o, pts, C, rc) {
+    const outer = pts.map(({ x, y }) => ({ x, y }));
+    const inner = insetPolygon(outer, planterWall(o));
+    drawPlanterBody(ctx, o, outer, inner, C, rc, { x: -rc.light.x, y: -rc.light.y });
+  },
+  curb(ctx, o, pts, C, rc) {
+    drawCurbLines(ctx, [{ pts, closed: false }], o.width || 100, o.height || 0, C, rc, { x: -rc.light.x, y: -rc.light.y });
+  },
+};
+
+Object.assign(LOOKS, BUILD_LOOKS);
+Object.assign(SHAPE_LOOKS, BUILD_SHAPE_LOOKS);
+
 // Общая часть контекста рисования: стиль, палитра, плотность пикселей.
 // opts: { px, lod, shadow, style?, dark?, pal?, dpr? }.
 function baseContext(opts) {
@@ -1990,6 +2311,7 @@ function drawShapeObject(ctx, o, def, opts) {
   } finally {
     ctx.restore();
   }
+  if (o.curb) drawHostCurb(ctx, o, opts);
 }
 
 // Силуэт для тени (локальные оси объекта).
@@ -2106,7 +2428,7 @@ function renderContext(o, opts) {
 // Растения сверху — спрайты: крона рисуется один раз на (вид, вариант,
 // размер в px, вариант рисунка, стиль, тема) и ставится drawImage.
 // Рисунок ветвей — 4 варианта по id, поворот — свой у каждого дерева.
-const SPRITE_LOOKS = new Set(['deciduous', 'fruit', 'pine', 'spruce', 'thuja', 'bonsai', 'ball', 'shrub', 'juniper', 'grass']);
+const SPRITE_LOOKS = new Set(['deciduous', 'fruit', 'pine', 'spruce', 'thuja', 'bonsai', 'ball', 'shrub', 'juniper', 'grass', 'flowers']);
 const hasSprites = typeof document !== 'undefined' || typeof OffscreenCanvas !== 'undefined';
 
 function drawPlant(ctx, o, def, C, rc) {
@@ -2166,14 +2488,17 @@ export function drawLandscapeObject(ctx, o, opts) {
   } finally {
     ctx.restore();
   }
+  if (o.curb) drawHostCurb(ctx, o, opts);
 }
 
-// Порядок внутри слоя: площади → линии → прочие (SHAPE_RANK), затем порядок добавления.
+// Порядок внутри слоя: площади → линии → прочие (SHAPE_RANK), затем порядок
+// добавления; посадки в коробе (parent) — после всего слоя, поверх короба.
+const rankOf = (x) => (SHAPE_RANK[x.def.shape] ?? 2) + (x.o.parent ? 3 : 0);
 function layerObjects(objects, layer) {
   return objects
     .map((o, i) => ({ o, i, def: landscapeDef(o.kind) }))
     .filter((x) => x.def?.layer === layer)
-    .sort((a, b) => (SHAPE_RANK[a.def.shape] ?? 2) - (SHAPE_RANK[b.def.shape] ?? 2) || a.i - b.i)
+    .sort((a, b) => rankOf(a) - rankOf(b) || a.i - b.i)
     .map((x) => x.o);
 }
 
@@ -2228,16 +2553,22 @@ export function drawHouseShadow(ctx, footprints, opts, height = 6000) {
 
 // Тени объектов, низкие объекты, кроны — после дома.
 export function drawLandscapeRaised(ctx, objects, opts) {
-  if (opts.lod >= 1.5 && !opts.noShadows) {
-    const rc = baseContext(opts);
-    for (const o of objects) {
-      const def = landscapeDef(o.kind);
-      if (def?.shadow) drawShadow(ctx, o, def, opts.shadow, rc);
-    }
+  const shadows = opts.lod >= 1.5 && !opts.noShadows;
+  const rc = shadows ? baseContext(opts) : null;
+  const shadowOf = (o) => {
+    const def = landscapeDef(o.kind);
+    if (def?.shadow) drawShadow(ctx, o, def, opts.shadow, rc);
+  };
+  // Тени посадок в коробе — после коробов (иначе их закроет засыпка).
+  if (shadows) for (const o of objects) if (!o.parent) shadowOf(o);
+  const low = layerObjects(objects, 'low');
+  let kids = false;
+  for (const o of low) {
+    if (o.parent && !kids && shadows) { kids = true; for (const c of objects) if (c.parent) shadowOf(c); }
+    drawLandscapeObject(ctx, o, opts);
   }
-  for (const layer of ['low', 'tall']) {
-    for (const o of layerObjects(objects, layer)) drawLandscapeObject(ctx, o, opts);
-  }
+  if (shadows && !kids) for (const c of objects) if (c.parent) shadowOf(c);
+  for (const o of layerObjects(objects, 'tall')) drawLandscapeObject(ctx, o, opts);
 }
 
 // Черновик рисования линии/контура (инструмент draw-landscape): объект по
@@ -2331,6 +2662,10 @@ const fmtM = (v, d = 1) => v.toFixed(d).replace('.', ',');
 
 // Подпись размера: линия — длина × ширина, площадь — м², прочие — габарит.
 export function landscapeMeasure(o, def = landscapeDef(o.kind)) {
+  if (o.kind === 'stairs-out') {
+    const st = stairsInfo(o);
+    return `${st.steps} ступ. · ${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м · h ${Math.round(st.rise)}`;
+  }
   if (def?.shape === 'line') return `L ${fmtM(objectLengthM(o), 2)} м · ${fmtM((o.width || def.h) / 1000, 2)} м`;
   if (def?.shape === 'poly') return `S ${fmtM(objectAreaM2(o), 1)} м² · P ${fmtM(objectLengthM(o), 1)} м`;
   return def?.lockAspect ? `⌀ ${(o.w / 1000).toFixed(2)} м` : `${(o.w / 1000).toFixed(2)} × ${(o.h / 1000).toFixed(2)} м`;
@@ -2374,9 +2709,11 @@ function drawLabels(ctx, objects, w2s, tokens, style) {
       const p = pointAlong(path, polylineLength(path) / 2);
       at = w2s(p.x, p.y);
     }
-    const text = isPathShape(def)
+    let text = isPathShape(def)
       ? `${shortTitle(def)} · ${def.shape === 'line' ? `${fmtM(objectLengthM(o))} м` : `${fmtM(objectAreaM2(o))} м²`}`
       : shortTitle(def);
+    if (o.kind === 'stairs-out') text = `${stairsInfo(o).steps} ступ.`;
+    if (o.parent) continue; // посадки в коробе — без подписей
     ctx.strokeStyle = tokens.surface;
     ctx.globalAlpha = 0.85;
     ctx.lineWidth = 3.5;
@@ -2541,5 +2878,11 @@ export function drawLandscapePreview(canvas, kind, { style = 'sketch', dark = ca
   const opts = { px: (v) => (v * 1.6) / scale, lod: Math.max(scale * 1000, 30), shadow, style, dark, dpr: 1 };
   if (def.shadow) drawShadow(ctx, o, def, shadow, baseContext(opts));
   drawLandscapeObject(ctx, o, opts);
+  if (kind === 'planter-box') {
+    // Карточка короба — с посадками внутри.
+    for (const [k, x, w] of [['shrub-box', -900, 700], ['grass-clump', 0, 800], ['flowers-clump', 850, 750]]) {
+      drawLandscapeObject(ctx, { id: `preview-in-${k}`, kind: k, x, y: 0, rotation: 0, w, h: w, height: 500, variant: landscapeDef(k).variants[0].id, meta: {} }, opts);
+    }
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }

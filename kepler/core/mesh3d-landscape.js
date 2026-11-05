@@ -8,8 +8,8 @@
 
 import { toLocal } from './building.js';
 import {
-  LS_COLORS, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline, objectPath,
-  seededRandom, steppingSlabs,
+  LS_COLORS, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, lineLayout, objectColors, objectOutline,
+  objectPath, planterInner, ribbonOutline, seededRandom, stairsInfo, steppingSlabs,
 } from './landscape.js';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -243,6 +243,37 @@ function objectFaces(o, def, outline, path, hz) {
     }
     return faces;
   }
+  // --- Клумба-короб: стенки-кольцо, засыпка чуть ниже верха борта.
+  if (look === 'planter' || look === 'planter-area') {
+    const H = Math.max(0, h);
+    const inner = planterInner(o);
+    if (H > 0) faces.push(...wallRing(outline, inner, 0, H, C[0], C[1], hz));
+    const fill = { soil: LS_COLORS.soil[0], mulch: LS_COLORS.mulch[0], gravel: LS_COLORS.gravel[1] }[o.meta?.fill] || LS_COLORS.soil[0];
+    faces.push(...flat(inner, Math.max(10, H - 60), fill, hz));
+    return faces;
+  }
+  // --- Наружная лестница: ступени-блоки реальной высоты, борта по бокам.
+  if (look === 'stairs') {
+    const st = stairsInfo(o);
+    const n = Math.max(1, st.steps);
+    const t = o.h / n;
+    const fw = Math.max(100, st.flight);
+    const at2 = (lx, ly) => ({ x: o.x + lx * Math.cos(rot) - ly * Math.sin(rot), y: o.y + lx * Math.sin(rot) + ly * Math.cos(rot) });
+    for (let i = 0; i < n; i += 1) {
+      const ly = o.h / 2 - (i + 0.5) * t; // снизу (+Y) вверх
+      const zTop = Math.max(20, (i + 1) * st.riser);
+      const c = at2(0, ly);
+      faces.push(...prism(rectPoly(c.x, c.y, fw, t, rot), 0, zTop, C[0], hz, { side: C[1] }));
+      if (st.cheek > 0) {
+        for (const sx of [-1, 1]) {
+          const cc = at2(sx * (o.w / 2 - st.cheek / 2), ly);
+          faces.push(...prism(rectPoly(cc.x, cc.y, st.cheek, t, rot), 0, zTop + 150, C[2] || C[0], hz, { side: C[1] }));
+        }
+      }
+    }
+    return faces;
+  }
+  if (look === 'curb') return prism(outline, 0, Math.max(20, h), C[0], hz, { side: C[1] || C[0] });
   // --- Покрытия-линии: дорожки.
   if (def.shape === 'line') {
     if (o.kind === 'path' && o.variant === 'stepping') {
@@ -360,6 +391,31 @@ function objectFaces(o, def, outline, path, hz) {
   return prism(isRoundObject(o, def) ? circlePoly(o.x, o.y, o.w / 2, o.h / 2, 10, rot) : outline, 0, Math.max(150, Math.min(h || 400, 1200)), C[0], hz, { side: C[1] || C[0] });
 }
 
+// Стенка-кольцо между контурами outer и inner (одинаковое число вершин):
+// верх — четырёхугольники рёбер, бока — наружу и внутрь.
+function wallRing(outer, inner, z0, z1, top, side, hz) {
+  const faces = [];
+  const n = Math.min(outer.length, inner.length);
+  for (let i = 0; i < n; i += 1) {
+    const j = (i + 1) % n;
+    faces.push(...prism([outer[i], outer[j], inner[j], inner[i]], z0, z1, top, hz, { side }));
+  }
+  return faces;
+}
+
+// Бордюр по периметру хозяина (поле curb): лента ширины width, высоты height.
+function curbFaces(o, hz) {
+  const c = o.curb;
+  const C = objectColors({ kind: 'curb', variant: c.variant });
+  const z1 = Math.max(20, c.height);
+  const faces = [];
+  for (const { pts, closed } of curbLines(o)) {
+    if (closed) faces.push(...wallRing(insetPolygon(pts, -c.width / 2), insetPolygon(pts, c.width / 2), 0, z1, C[0], C[1], hz));
+    else faces.push(...prism(ribbonOutline(pts, c.width), 0, z1, C[0], hz, { side: C[1] }));
+  }
+  return faces;
+}
+
 function variantOf(o, def) {
   const variant = def.variants.find((x) => x.id === o.variant);
   return variant?.colors?.[0] || null;
@@ -392,6 +448,9 @@ export function landscapeFaces(project, hz = null) {
   const rotB = b?.rotation || 0;
   const ground = hz || (() => 0);
   const faces = [];
+  // Посадки в коробе стоят на засыпке: подъём = высота борта − 60.
+  const lift = new Map(objects.filter((o) => o.kind === 'planter-box' || o.kind === 'planter-area')
+    .map((o) => [o.id, Math.max(0, (o.height || 0) - 60)]));
   for (const o0 of objects) {
     const def = landscapeDef(o0.kind);
     if (!def) continue;
@@ -401,7 +460,10 @@ export function landscapeFaces(project, hz = null) {
     if (o0.points) o.points = o0.points.map(local);
     const outline = objectOutline(o, 16);
     const path = isPathShape(def) ? objectPath(o) : [];
-    for (const f of objectFaces(o, def, outline, path, ground)) faces.push(f);
+    const up = o0.parent ? lift.get(o0.parent) || 0 : 0;
+    const hz2 = up ? (x, y) => ground(x, y) + up : ground;
+    for (const f of objectFaces(o, def, outline, path, hz2)) faces.push(f);
+    if (o.curb) for (const f of curbFaces(o, ground)) faces.push(f);
   }
   return faces;
 }

@@ -68,6 +68,10 @@ export const LS_COLORS = {
   wood: ['#a48c75', '#8d7562', '#baa38c'],
   metal: ['#6c6f73', '#595c60', '#8b8e92'],
   fire: ['#d9a46e', '#c27f58', '#f0d6b0'],
+  // Конструктивы: верх борта/ступени, боковая грань, блик.
+  concrete: ['#d6d3cb', '#aaa69c', '#e8e6e0'],
+  corten: ['#a9714f', '#7f4d34', '#c48c68'],
+  mulch: ['#8b6f58', '#765c48', '#a08670'],
   coping: ['#e6e1d6', '#cfc8ba', '#f3efe7'],
   glass: ['#d8e3e4', '#bdd0d2', '#eef4f4'],
   car: ['#e3e3e0', '#5c6168', '#9b9088', '#8b98a3', '#cac5b9', '#7e8779'],
@@ -116,6 +120,18 @@ const RAW = [
     variants: [v('mixed', 'Пёстрая'), v('roses', 'Розы', ['#c08b98']), v('lavender', 'Лаванда', ['#a99cc4'])], keywords: 'цветы' },
   { kind: 'bed-strip', title: 'Цветочная полоса', cat: 'green', group: 'Цветники', shape: 'rect', w: 6000, h: 600, min: [1000, 300], max: [30000, 2000], height: 400, cover: true, look: 'flowerbed', colors: 'soil',
     variants: [v('mixed', 'Пёстрая'), v('lavender', 'Лаванда', ['#a99cc4']), v('tulips', 'Тюльпаны', ['#c99187', '#d8c08c'])], keywords: 'бордюр миксбордер' },
+  { kind: 'flowers-clump', title: 'Цветы (куртина)', cat: 'green', group: 'Цветники', shape: 'point', w: 800, min: 300, max: 3000, height: 500, look: 'flowers', colors: 'leaf',
+    variants: [v('mixed', 'Пёстрые'), v('lavender', 'Лаванда'), v('roses', 'Розы'), v('echinacea', 'Эхинацея'), v('white', 'Белые')], keywords: 'многолетники цветы лаванда розы короб' },
+  // Клумба-короб: борт (meta.wall — толщина, height — высота над землёй),
+  // засыпка meta.fill; растения внутри привязаны полем parent (core/landscape-build.js).
+  { kind: 'planter-box', layer: 'low', title: 'Клумба-короб', cat: 'green', group: 'Цветники', shape: 'rect', w: 3000, h: 1200, min: [600, 600], max: [20000, 8000], height: 450, cover: true, look: 'planter', colors: 'concrete',
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#c9c4b8', '#9f998c', '#ddd8ce']), v('corten', 'Кортен', LS_COLORS.corten), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
+    meta: { wall: 180, fill: 'soil' }, keywords: 'короб приподнятая клумба подпорная стенка кашпо борт' },
+  { kind: 'planter-area', layer: 'low', title: 'Клумба-короб (контур)', cat: 'green', group: 'Цветники', shape: 'poly', w: 5000, h: 3000, height: 450, cover: true, look: 'planter-area', colors: 'concrete',
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#c9c4b8', '#9f998c', '#ddd8ce']), v('corten', 'Кортен', LS_COLORS.corten), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
+    meta: { wall: 180, fill: 'soil' }, keywords: 'короб приподнятая клумба подпорная стенка рисовать контур' },
+  { kind: 'hedge-box', title: 'Самшит бордюрный', cat: 'green', group: 'Кустарники', shape: 'rect', w: 2000, h: 350, min: [300, 200], max: [20000, 1000], height: 400, look: 'hedge', colors: 'box',
+    variants: [v('trim', 'Стриженый')], keywords: 'бордюр самшит низкая изгородь короб' },
   { kind: 'lawn-patch', title: 'Газон (пятно)', cat: 'green', group: 'Газон', shape: 'rect', round: true, w: 5000, h: 3500, min: [1000, 1000], max: [40000, 40000], height: 0, cover: true, look: 'lawn', colors: 'lawn',
     variants: [v('mown', 'Стриженый, полосы'), v('meadow', 'Мавританский', ['#cdd8b3', '#bfcca2', '#dbe3c6'])], keywords: 'трава' },
   { kind: 'grass-clump', title: 'Декоративные злаки', cat: 'green', group: 'Газон', shape: 'point', w: 1000, min: 400, max: 3000, height: 1000, look: 'grass', colors: 'grass',
@@ -200,6 +216,16 @@ const RAW = [
     variants: [v('stone', 'Камень'), v('concrete', 'Бетон', ['#d3d3cf', '#c2c2be', '#e0e0dc']), v('pavers', 'Брусчатка', ['#b9b7b1', '#a8a6a0', '#c9c7c1'])], keywords: 'плита ступень дорожка камень' },
   { kind: 'board', layer: 'ground', title: 'Доска', cat: 'site', group: 'Дорожки', shape: 'rect', w: 145, h: 1200, min: [40, 100], max: [400, 6000], height: 40, cover: true, look: 'board', colors: 'deck',
     variants: [v('larch', 'Лиственница'), v('wpc', 'ДПК графит', ['#7b7570', '#69645f', '#8d8782']), v('teak', 'Тик', ['#bba184', '#a58b70', '#cdb598'])], keywords: 'доска настил дорожка' },
+  // Наружная лестница: w — общая ширина (марш + борта), h — длина в плане
+  // (ступени × проступь), height — высота подъёма; «вверх» — к −Y в осях
+  // объекта. meta: steps (0 — авто по подступенку ~150), tread, cheeks, cheekW.
+  { kind: 'stairs-out', layer: 'low', title: 'Лестница наружная', cat: 'site', group: 'Лестницы и бордюры', shape: 'rect', w: 1500, h: 1500, min: [500, 200], max: [12000, 15000], height: 750, cover: true, look: 'stairs', colors: 'concrete',
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
+    meta: { steps: 0, tread: 300, cheeks: false, cheekW: 150 }, keywords: 'ступени лестница терраса подъём марш' },
+  // Бордюр (лента по линии): width — ширина, height — над землёй.
+  { kind: 'curb', title: 'Бордюр', cat: 'site', group: 'Лестницы и бордюры', shape: 'line', w: 6000, h: 100, min: [50, 50], max: [500000, 400], height: 150, look: 'curb', colors: 'concrete',
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('metal', 'Сталь', ['#7a7c80', '#5d5f63', '#9a9ca0']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
+    keywords: 'бордюр поребрик кромка газона обрамление рисовать линия' },
   { kind: 'fence-line', title: 'Ограждение (по линии)', cat: 'site', group: 'Ограждение', shape: 'line', w: 6000, h: 150, min: [300, 50], max: [500000, 1500], height: 1800, look: 'fence-line', colors: 'wood',
     variants: [v('picket', 'Штакетник'), v('mesh', 'Сетка', ['#8b8e92', '#6c6f73', '#a9acb0']), v('hedge', 'Живая изгородь', ['#6f8063', '#86967a', '#a5b298'])], keywords: 'забор штакетник сетка рисовать линия' },
   { kind: 'paving-area', title: 'Мощение (контур)', cat: 'site', group: 'Площадки', shape: 'poly', w: 6000, h: 4000, height: 0, cover: true, look: 'area-paving', colors: 'tiles',
@@ -218,6 +244,9 @@ const RAW = [
 // цветники, проекции крон), hard — твёрдые покрытия, water — вода, null —
 // не покрытие (малые формы, ограждения).
 const WATER_KINDS = new Set(['pool', 'jacuzzi', 'pond', 'fountain', 'pond-area', 'pool-area']);
+// Конструктивы (короба, лестница, бордюр) — в группе «Малые формы».
+export const PLANTER_KINDS = new Set(['planter-box', 'planter-area']);
+const BUILT_KINDS = new Set([...PLANTER_KINDS, 'stairs-out', 'curb']);
 function surfaceOf(raw) {
   if (WATER_KINDS.has(raw.kind)) return 'water';
   if ((raw.cat === 'green' && raw.kind !== 'boulder') || raw.kind === 'vegbeds' || raw.kind === 'parking-guest') return 'green';
@@ -233,6 +262,7 @@ export const LANDSCAPE_VIS = [
   { id: 'labels', title: 'Подписи' },
 ];
 function visGroupOf(raw, layer) {
+  if (BUILT_KINDS.has(raw.kind)) return 'objects';
   if (raw.kind === 'hedge-line' || (raw.cat === 'green' && layer !== 'ground' && raw.shape !== 'poly')) return 'plants';
   if (layer === 'ground' || raw.shape === 'poly' || raw.kind === 'path') return 'covers';
   return 'objects';
@@ -331,7 +361,121 @@ export function createLandscapeObject(kind, x, y, opts = {}) {
   };
   if (opts.color) obj.color = opts.color;
   if (opts.locked) obj.locked = true;
+  if (typeof opts.parent === 'string' && opts.parent) obj.parent = opts.parent;
+  if (kind === 'stairs-out') {
+    obj.meta = stairsMeta(obj.meta);
+    if (opts.h == null) syncStairs(obj);
+  }
+  if (PLANTER_KINDS.has(kind)) obj.meta = planterMeta(obj.meta);
+  const curb = CURB_HOSTS.has(kind) ? normalizeCurb(opts.curb) : null;
+  if (curb) obj.curb = curb;
   return syncRadius(clampSize(obj, def), def);
+}
+
+// ------------------------------------------------- Лестница, короб, бордюр
+
+const clampNum = (val, lo, hi, dflt) => (Number.isFinite(Number(val)) && val !== null && val !== ''
+  ? Math.min(hi, Math.max(lo, Math.round(Number(val)))) : dflt);
+
+export const STAIR_RISER = 150; // подступенок по умолчанию, мм
+export const STAIR_TREAD = 300; // проступь по умолчанию, мм
+
+function stairsMeta(meta = {}) {
+  return {
+    ...meta,
+    steps: clampNum(meta.steps, 0, 60, 0),
+    tread: clampNum(meta.tread, 200, 800, STAIR_TREAD),
+    cheeks: meta.cheeks === true,
+    cheekW: clampNum(meta.cheekW, 50, 600, 150),
+  };
+}
+
+// Параметры лестницы: число ступеней (авто — по подступенку ~150 мм),
+// подступенок, проступь, борт, ширина марша (мм).
+export function stairsInfo(o) {
+  const m = stairsMeta(o.meta || {});
+  const rise = Math.max(0, Number(o.height) || 0);
+  const steps = m.steps > 0 ? m.steps : Math.max(1, Math.round(rise / STAIR_RISER));
+  const cheek = m.cheeks ? Math.min(m.cheekW, Math.max(0, (o.w - 300) / 2)) : 0;
+  return { steps, riser: rise / steps, tread: m.tread, cheek, flight: o.w - cheek * 2, auto: !(m.steps > 0), rise };
+}
+
+// Длина лестницы в плане = ступени × проступь.
+export function syncStairs(o) {
+  const def = landscapeDef(o.kind);
+  const { steps, tread } = stairsInfo(o);
+  o.h = Math.min(def.max.h, Math.max(def.min.h, steps * tread));
+  return o;
+}
+
+export const PLANTER_FILLS = [
+  { id: 'soil', title: 'Почва' }, { id: 'mulch', title: 'Мульча (кора)' }, { id: 'gravel', title: 'Гравий' },
+];
+
+function planterMeta(meta = {}) {
+  return {
+    ...meta,
+    wall: clampNum(meta.wall, 40, 600, 180),
+    fill: PLANTER_FILLS.some((f) => f.id === meta.fill) ? meta.fill : 'soil',
+  };
+}
+
+// Толщина борта короба (не толще трети меньшей стороны).
+export function planterWall(o) {
+  const wall = planterMeta(o.meta || {}).wall;
+  if (o.kind === 'planter-box') return Math.max(20, Math.min(wall, Math.min(o.w, o.h) / 3));
+  return wall;
+}
+
+// Бордюр по периметру дорожки/площади: { width, height, variant }.
+export const CURB_HOSTS = new Set(['path', 'lawn-area', 'paving-area', 'gravel-area', 'lawn-patch']);
+export const CURB_MATERIALS = ['concrete', 'stone', 'metal', 'wood'];
+export function normalizeCurb(raw) {
+  if (!raw) return null;
+  const c = raw === true ? {} : raw;
+  if (typeof c !== 'object') return null;
+  return {
+    width: clampNum(c.width, 20, 400, 100),
+    height: clampNum(c.height, 0, 600, 100),
+    variant: CURB_MATERIALS.includes(c.variant) ? c.variant : 'concrete',
+  };
+}
+
+// Линии бордюра по периметру хозяина (мир): дорожка — две кромки (торцы
+// открыты), площадь — замкнутый контур. [{ pts, closed }].
+export function curbLines(o) {
+  if (!o?.curb) return [];
+  if (o.kind === 'path') {
+    const lay = lineLayout(o);
+    return [lay.plus, lay.minus].filter((p) => p?.length >= 2).map((pts) => ({ pts, closed: false }));
+  }
+  const pts = objectOutline(o, 32);
+  return pts.length >= 3 ? [{ pts, closed: true }] : [];
+}
+
+// Многоугольник, смещённый внутрь на d (d < 0 — наружу), рёбра — с митрой.
+export function insetPolygon(poly, d) {
+  const n = poly.length;
+  if (n < 3) return poly.map((p) => ({ x: p.x, y: p.y }));
+  let area = 0;
+  for (let i = 0; i < n; i += 1) {
+    const a = poly[i]; const b = poly[(i + 1) % n];
+    area += a.x * b.y - b.x * a.y;
+  }
+  const sgn = area > 0 ? 1 : -1; // внутрь
+  const nrm = (a, b) => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
+  };
+  return poly.map((p, i) => {
+    const n1 = nrm(poly[(i + n - 1) % n], p);
+    const n2 = nrm(p, poly[(i + 1) % n]);
+    let nx = n1.x + n2.x; let ny = n1.y + n2.y;
+    const len = Math.hypot(nx, ny) || 1;
+    nx /= len; ny /= len;
+    const cos = Math.max(0.35, nx * n1.x + ny * n1.y);
+    return { x: p.x + nx * (d / cos) * sgn, y: p.y + ny * (d / cos) * sgn };
+  });
 }
 
 // Линейный/площадной: точки в мире; без точек — заготовка по габариту типа
@@ -366,6 +510,9 @@ function createShapeObject(def, x, y, opts) {
   if (opts.smooth) obj.smooth = true;
   if (opts.color) obj.color = opts.color;
   if (opts.locked) obj.locked = true;
+  if (PLANTER_KINDS.has(def.kind)) obj.meta = planterMeta(obj.meta);
+  const curb = CURB_HOSTS.has(def.kind) ? normalizeCurb(opts.curb) : null;
+  if (curb) obj.curb = curb;
   return syncShape(obj);
 }
 
@@ -704,6 +851,12 @@ export function resizeObject(obj, w, h = w) {
   obj.w = w;
   obj.h = h;
   clampSize(obj, def);
+  if (obj.kind === 'stairs-out') {
+    // Длина лестницы меняет проступь; длина — снова кратна ступеням.
+    const { steps } = stairsInfo(obj);
+    obj.meta = { ...stairsMeta(obj.meta), tread: clampNum(obj.h / steps, 200, 800, STAIR_TREAD) };
+    syncStairs(obj);
+  }
   return syncRadius(obj, def);
 }
 
@@ -729,6 +882,7 @@ export function normalizeLandscapeObject(raw) {
       width: num(raw.width) ?? undefined,
       smooth: raw.smooth === true,
       locked: raw.locked === true,
+      curb: raw.curb,
       ...(def.shape === 'line' ? pathParams(raw, points.length) : {}),
     });
   }
@@ -742,6 +896,8 @@ export function normalizeLandscapeObject(raw) {
     color: typeof raw.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(raw.color) ? raw.color : undefined,
     meta: raw.meta && typeof raw.meta === 'object' ? raw.meta : undefined,
     locked: raw.locked === true,
+    parent: raw.parent,
+    curb: raw.curb,
   });
   return obj;
 }
@@ -758,6 +914,9 @@ export function normalizeLandscape(raw) {
     seen.add(obj.id);
     objects.push(obj);
   }
+  // Привязка к коробу (parent) — только к существующему коробу.
+  const planters = new Set(objects.filter((o) => PLANTER_KINDS.has(o.kind)).map((o) => o.id));
+  for (const o of objects) if (o.parent && (!planters.has(o.parent) || o.parent === o.id)) delete o.parent;
   return { objects };
 }
 
@@ -849,7 +1008,8 @@ export function hitLandscape(objects, p, tol = 0) {
   objects.forEach((obj, index) => {
     if (!pointInObject(obj, p, tol)) return;
     const def = landscapeDef(obj.kind);
-    const z = (order[def?.layer] ?? 1) * 1e6 + (SHAPE_RANK[def?.shape] ?? 2) * 1e5 + index;
+    // Посадки в коробе — поверх короба.
+    const z = (order[def?.layer] ?? 1) * 1e6 + ((SHAPE_RANK[def?.shape] ?? 2) + (obj.parent ? 3 : 0)) * 1e5 + index;
     if (!best || z > best.z) best = { obj, z };
   });
   return best?.obj || null;
@@ -909,6 +1069,15 @@ export function objectAreaM2(obj) {
   }
   const area =isRoundObject(obj) ? (Math.PI * obj.w * obj.h) / 4 : obj.w * obj.h;
   return area / 1e6;
+}
+
+// Внутренний контур короба (мир): прямоугольник или контур минус толщина борта.
+export function planterInner(o) {
+  const wall = planterWall(o);
+  if (o.kind === 'planter-area') return insetPolygon(objectPath(o).map(({ x, y }) => ({ x, y })), wall);
+  const a = Math.max(1, o.w / 2 - wall);
+  const b = Math.max(1, o.h / 2 - wall);
+  return [toWorld(o, -a, -b), toWorld(o, a, -b), toWorld(o, a, b), toWorld(o, -a, b)];
 }
 
 export function landscapeSummary(objects) {

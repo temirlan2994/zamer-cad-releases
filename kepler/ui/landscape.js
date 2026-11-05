@@ -4,13 +4,18 @@
 // координаты участка (съёмки).
 
 import {
-  LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, cloneLandscapeObject, createLandscapeObject,
+  LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, createLandscapeObject,
   hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef, landscapeHandles,
   landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorner, objectCorners, objectPath, objectsInPolygon,
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
-  translateObject,
+  translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
+  syncStairs,
 } from '../core/landscape.js';
 import { balanceRows, buildLandscapeCsv, landscapeBalance } from '../core/landscape-report.js';
+import {
+  PLANTER_PLANTS, childrenOf, plantInPlanter, cloneGroup, isPlanter, pruneParents, refitChildren, rotateChildren, settleInPlanter, settleMoved,
+  withChildren,
+} from '../core/landscape-build.js';
 import {
   GARDEN_TEMPLATES, PLANT_KINDS, canExplode, composeGarden, entryPathObject, explodePath, fillArea, guideOf, houseFootprints,
   parkingAtEntry, plantAlong,
@@ -36,6 +41,7 @@ let clipboard = null;
 const drawOpts = new Map();
 // Параметры помощников панели — запоминаются между перерисовками.
 const helper = {
+  inside: 'flowers-clump', insideDensity: 0.6,
   plant: 'tree-thuja', step: 3, offset: 1, sides: 'left', density: 0.5,
   pathVariant: 'pavers', curved: false, spaces: 2, template: GARDEN_TEMPLATES[0].id,
 };
@@ -110,6 +116,8 @@ export function placeLandscapeAt(kind, world, rotation = 0) {
   if (!def || def.stage !== 1) return null;
   const obj = createLandscapeObject(kind, snap(world.x), snap(world.y), { rotation, ...(isPathShape(def) ? drawOptions(kind) : {}) });
   mutate(() => {
+    // Растение на коробе — садится внутрь и привязывается к нему.
+    settleInPlanter(landscapeObjects(), obj);
     landscapeObjects().push(obj);
     state.selection = { type: 'landscape', ids: [obj.id] };
   });
@@ -376,13 +384,16 @@ export function landscapePointerDown(event, screen, world) {
     if (handle.mode === 'rotate') {
       return {
         kind: 'ls-rotate', id: o.id, startRot: o.rotation || 0, center: { x: o.x, y: o.y },
-        startAngle: Math.atan2(world.y - o.y, world.x - o.x), before: snapshot(), moved: false,
+        startAngle: Math.atan2(world.y - o.y, world.x - o.x), before: snapshot(), moved: false, kids: childStarts(o),
       };
     }
     const opp = { nw: 'se', ne: 'sw', se: 'nw', sw: 'ne' }[handle.corner];
     const anchor = objectCorners(o).find((c) => c.id === opp);
     const sign = { nw: [-1, -1], ne: [1, -1], se: [1, 1], sw: [-1, 1] }[handle.corner];
-    return { kind: 'ls-resize', id: o.id, anchor: { x: anchor.x, y: anchor.y }, sign, before: snapshot(), moved: false };
+    return {
+      kind: 'ls-resize', id: o.id, anchor: { x: anchor.x, y: anchor.y }, sign, before: snapshot(), moved: false,
+      box0: { ...o }, kids: childStarts(o),
+    };
   }
   const hit = hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
   if (hit) {
@@ -395,8 +406,11 @@ export function landscapePointerDown(event, screen, world) {
       ids = [hit.id];
       selectLandscape(ids);
     }
-    const movable = editable(selectedObjects());
-    if (!movable.length) return null; // закреплённые — только выбор
+    const own = editable(selectedObjects());
+    if (!own.length) return null; // закреплённые — только выбор
+    // Короб едет вместе со своими растениями.
+    const group = withChildren(landscapeObjects(), own.map((o) => o.id));
+    const movable = landscapeObjects().filter((o) => group.has(o.id));
     const starts = new Map(movable.map((o) => [o.id, { x: o.x, y: o.y, points: o.points ? o.points.map((p) => ({ ...p })) : null }]));
     const primary = starts.has(hit.id) ? hit.id : movable[0].id;
     return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false };
@@ -405,6 +419,12 @@ export function landscapePointerDown(event, screen, world) {
   if (event.pointerType === 'touch') return { kind: 'pan', start: screen, view: { ...state.view } };
   state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y, add: event.shiftKey };
   return { kind: 'marquee', start: screen };
+}
+
+// Исходные положения растений короба (поворот, размер).
+function childStarts(o) {
+  if (!isPlanter(o)) return null;
+  return new Map(childrenOf(landscapeObjects(), o.id).map((c) => [c.id, { x: c.x, y: c.y, rotation: c.rotation || 0 }]));
 }
 
 const rotate = (x, y, deg) => {
@@ -466,6 +486,7 @@ export function landscapeDragMove(drag, world, screen, event) {
     const raw = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
     const step = event?.shiftKey ? 1 : 15;
     o.rotation = ((Math.round(raw / step) * step) % 360 + 360) % 360;
+    if (drag.kids) rotateChildren(objects, o, o.rotation - drag.startRot, drag.kids);
   } else if (drag.kind === 'ls-resize') {
     const o = objects.find((x) => x.id === drag.id);
     if (!o) return;
@@ -479,6 +500,7 @@ export function landscapeDragMove(drag, world, screen, event) {
     const c = rotate((drag.sign[0] * o.w) / 2, (drag.sign[1] * o.h) / 2, o.rotation || 0);
     o.x = drag.anchor.x + c.x;
     o.y = drag.anchor.y + c.y;
+    if (drag.kids) refitChildren(objects, o, drag.box0, drag.kids);
   }
   requestDraw();
 }
@@ -505,6 +527,13 @@ export function landscapeDragEnd(drag) {
     return;
   }
   if (!drag.moved) { requestDraw(); return; }
+  const objects = landscapeObjects();
+  // Растение, перетащенное на короб, садится в него; за борт — отвязывается.
+  if (drag.kind === 'ls-move') settleMoved(objects, [...drag.starts.keys()]);
+  if (drag.kind === 'ls-vertex') {
+    const o = objects.find((x) => x.id === drag.id);
+    if (isPlanter(o)) refitChildren(objects, o);
+  }
   pushHistory(drag.before);
   afterChange();
 }
@@ -561,43 +590,67 @@ export function dropLandscape(kind, world) {
 export function deleteLandscapeSelection() {
   const all = selectedObjects();
   if (!all.length) return;
-  const gone = new Set(editable(all).map((o) => o.id));
-  if (!gone.size) { toast('Объект закреплён — снимите замок в свойствах'); return; }
+  const own = editable(all).map((o) => o.id);
+  if (!own.length) { toast('Объект закреплён — снимите замок в свойствах'); return; }
+  // Короб удаляется вместе с растениями внутри.
+  const gone = withChildren(landscapeObjects(), own);
   mutate(() => {
     const site = state.project.site;
     site.landscape.objects = landscapeObjects().filter((o) => !gone.has(o.id));
+    pruneParents(site.landscape.objects);
   });
   state.lsVertex = null;
   selectLandscape(all.filter((o) => !gone.has(o.id)).map((o) => o.id));
 }
 
-export function nudgeLandscape(dx, dy) {
+// Выделение + растения выбранных коробов.
+function selectionGroup() {
   const objs = editable(selectedObjects());
+  const ids = withChildren(landscapeObjects(), objs.map((o) => o.id));
+  return { objs, all: landscapeObjects().filter((o) => ids.has(o.id)) };
+}
+
+export function nudgeLandscape(dx, dy) {
+  const { objs, all } = selectionGroup();
   if (!objs.length) return;
-  mutate(() => { for (const o of objs) translateObject(o, dx, dy); });
+  mutate(() => {
+    for (const o of all) translateObject(o, dx, dy);
+    settleMoved(landscapeObjects(), all.map((o) => o.id));
+  });
 }
 
 // R — поворот на 90°: одиночный — вокруг центра, группа — вокруг центра группы.
 export function rotateLandscape90() {
-  const objs = editable(selectedObjects());
+  const { objs, all } = selectionGroup();
   if (!objs.length) return;
   const cx = objs.reduce((s, o) => s + o.x, 0) / objs.length;
   const cy = objs.reduce((s, o) => s + o.y, 0) / objs.length;
-  mutate(() => { for (const o of objs) rotateObjectAbout(o, cx, cy, 90); });
+  mutate(() => { for (const o of all) rotateObjectAbout(o, cx, cy, 90); });
+}
+
+// Выделенные + растения выбранных коробов (копирование).
+function withPlantings(objs) {
+  const ids = withChildren(landscapeObjects(), objs.map((o) => o.id));
+  return landscapeObjects().filter((o) => ids.has(o.id));
 }
 
 export function copyLandscapeSelection() {
   const objs = selectedObjects();
   if (!objs.length) return false;
-  clipboard = { objects: JSON.parse(JSON.stringify(objs)), pastes: 0 };
+  clipboard = { objects: JSON.parse(JSON.stringify(withPlantings(objs))), pastes: 0 };
   toast(objs.length > 1 ? `Скопировано объектов: ${objs.length}` : 'Скопировано — Ctrl+V вставит рядом');
   return true;
 }
 
 function pasteObjects(list, offset) {
-  const copies = list.map((o) => cloneLandscapeObject(o, offset, offset));
-  mutate(() => { landscapeObjects().push(...copies); });
-  selectLandscape(copies.map((o) => o.id));
+  const copies = cloneGroup(list, offset, offset);
+  mutate(() => {
+    landscapeObjects().push(...copies);
+    settleMoved(landscapeObjects(), copies.map((o) => o.id));
+  });
+  // Выделяются верхние объекты (растения едут с коробом).
+  const ids = new Set(copies.map((o) => o.id));
+  selectLandscape(copies.filter((o) => !o.parent || !ids.has(o.parent)).map((o) => o.id));
 }
 
 export function pasteLandscape() {
@@ -609,7 +662,7 @@ export function pasteLandscape() {
 
 export function duplicateLandscapeSelection() {
   const objs = selectedObjects();
-  if (objs.length) pasteObjects(objs, 1000);
+  if (objs.length) pasteObjects(withPlantings(objs), 1000);
 }
 
 // «Разорвать» (как EXPLODE в AutoCAD): выбранные дорожки → отдельные плиты,
@@ -864,6 +917,145 @@ function bindPathProps(panel, o) {
   panel.querySelector('#lsExplode')?.addEventListener('click', () => explodeLandscapeSelection());
 }
 
+// ---------------------------------------- Лестница, короб, бордюр, посадки
+
+const CURB_TITLES = { concrete: 'Бетон', stone: 'Камень', metal: 'Сталь', wood: 'Дерево' };
+const mmField = (id, title, value, min, max, step = 10) => `<label class="prop-field"><span>${title}</span><input id="${id}" type="number" step="${step}" min="${min}" max="${max}" value="${Math.round(value)}"></label>`;
+
+function buildPropsHtml(o, def) {
+  const objects = landscapeObjects();
+  if (o.kind === 'stairs-out') {
+    const st = stairsInfo(o);
+    const blondel = Math.round(2 * st.riser + st.tread);
+    return `
+      <div class="prop-grid">
+        ${mmField('lsStRise', 'Высота подъёма, мм', o.height || 0, 0, 6000)}
+        ${mmField('lsStSteps', 'Ступеней', st.steps, 1, 60, 1)}
+        ${mmField('lsStTread', 'Проступь, мм', st.tread, 200, 800)}
+        ${mmField('lsStFlight', 'Ширина марша, мм', st.flight, 300, 12000, 50)}
+      </div>
+      <label class="check-row"><input type="checkbox" id="lsStAuto" ${st.auto ? 'checked' : ''}><span>Число ступеней — авто (подступенок ≈ 150 мм)</span></label>
+      <label class="check-row"><input type="checkbox" id="lsStCheeks" ${st.cheek ? 'checked' : ''}><span>Боковые подпорные борта</span></label>
+      ${st.cheek ? mmField('lsStCheekW', 'Толщина борта, мм', st.cheek, 50, 600) : ''}
+      <div class="prop-row"><span>Подступенок</span><strong id="lsStRiser">${Math.round(st.riser)} мм</strong></div>
+      <div class="prop-row"><span>Длина в плане × ширина</span><strong>${m(o.h)} × ${m(o.w)} м</strong></div>
+      <p class="hint">2h + b = ${blondel} мм${blondel < 600 || blondel > 680 ? ' — удобно 600–660' : ' — удобно'} · стрелка — «вверх»</p>`;
+  }
+  if (isPlanter(o)) {
+    const fill = o.meta?.fill || 'soil';
+    const kids = childrenOf(objects, o.id).length;
+    return `
+      <div class="prop-grid">
+        ${mmField('lsPlWall', 'Толщина борта, мм', planterWall(o), 40, 600)}
+        ${mmField('lsPlHeight', 'Высота борта, мм', o.height || 0, 0, 1500)}
+      </div>
+      <label class="prop-field"><span>Засыпка</span><select id="lsPlFill">${options(PLANTER_FILLS, fill)}</select></label>
+      <div class="prop-row"><span>Растений внутри</span><strong id="lsPlKids">${kids}</strong></div>`;
+  }
+  let out = '';
+  if (o.parent) {
+    const box = objects.find((x) => x.id === o.parent);
+    if (box) {
+      out += `<div class="prop-row"><span>В коробе</span><strong>${escapeHtml(landscapeDef(box.kind).title)}</strong></div>
+        <button type="button" class="link" id="lsUnparent">Отвязать от короба</button>`;
+    }
+  }
+  if (CURB_HOSTS.has(o.kind)) {
+    const c = o.curb;
+    out += `<label class="check-row"><input type="checkbox" id="lsCurb" ${c ? 'checked' : ''}><span>Бордюр по ${def.shape === 'line' ? 'краям' : 'периметру'}</span></label>`;
+    if (c) {
+      out += `<div class="prop-grid">
+          ${mmField('lsCurbW', 'Ширина бордюра, мм', c.width, 20, 400)}
+          ${mmField('lsCurbH', 'Над землёй, мм', c.height, 0, 600)}
+        </div>
+        <label class="prop-field"><span>Материал бордюра</span><select id="lsCurbVar">${options(CURB_MATERIALS.map((id) => ({ id, title: CURB_TITLES[id] })), c.variant)}</select></label>`;
+    }
+  }
+  return out;
+}
+
+function planterFillHtml(o) {
+  if (!isPlanter(o)) return '';
+  const plants = PLANTER_PLANTS.map((id) => ({ id, title: landscapeDef(id).title }));
+  return `
+    <h3>Посадить внутрь</h3>
+    <div class="prop-block">
+      <label class="prop-field"><span>Растение</span><select id="lsInKind">${options(plants, helper.inside)}</select></label>
+      <label class="prop-field"><span>Густота</span><input id="lsInDensity" type="range" min="0.1" max="1" step="0.05" value="${helper.insideDensity}"></label>
+      <button type="button" id="lsInGo">Посадить в короб</button>
+      <p class="hint">Перетащите растение из каталога на короб — оно сядет внутрь и будет двигаться, поворачиваться и удаляться вместе с коробом. Вытащите за борт — отвяжется.</p>
+    </div>`;
+}
+
+function bindBuildProps(panel, o) {
+  const val = (id) => Number(panel.querySelector(id)?.value);
+  const on = (id, fn, ev = 'change') => panel.querySelector(id)?.addEventListener(ev, fn);
+  if (o.kind === 'stairs-out') {
+    const setMeta = (patch) => { o.meta = { ...(o.meta || {}), ...patch }; };
+    // Ширина марша сохраняется при смене бортов.
+    const keepFlight = (fn) => mutate(() => {
+      const flight = stairsInfo(o).flight;
+      fn();
+      o.w = flight + stairsInfo(o).cheek * 2;
+      clampSize(o);
+    });
+    on('#lsStRise', () => {
+      const v = val('#lsStRise');
+      if (Number.isFinite(v) && v >= 0) mutate(() => { o.height = Math.min(6000, Math.round(v)); syncStairs(o); });
+    });
+    on('#lsStSteps', () => {
+      const v = Math.round(val('#lsStSteps'));
+      if (v >= 1) mutate(() => { setMeta({ steps: Math.min(60, v) }); syncStairs(o); });
+    });
+    on('#lsStAuto', (e) => mutate(() => { setMeta({ steps: e.target.checked ? 0 : stairsInfo(o).steps }); syncStairs(o); }));
+    on('#lsStTread', () => {
+      const v = val('#lsStTread');
+      if (v > 0) mutate(() => { setMeta({ tread: Math.min(800, Math.max(200, Math.round(v))) }); syncStairs(o); });
+    });
+    on('#lsStFlight', () => {
+      const v = val('#lsStFlight');
+      if (v > 0) mutate(() => { o.w = Math.round(v) + stairsInfo(o).cheek * 2; clampSize(o); });
+    });
+    on('#lsStCheeks', (e) => keepFlight(() => setMeta({ cheeks: e.target.checked })));
+    on('#lsStCheekW', () => {
+      const v = val('#lsStCheekW');
+      if (v > 0) keepFlight(() => setMeta({ cheekW: Math.min(600, Math.max(50, Math.round(v))) }));
+    });
+  }
+  if (isPlanter(o)) {
+    on('#lsPlWall', () => {
+      const v = val('#lsPlWall');
+      if (v > 0) {
+        mutate(() => {
+          o.meta = { ...(o.meta || {}), wall: Math.min(600, Math.max(40, Math.round(v))) };
+          refitChildren(landscapeObjects(), o);
+        });
+      }
+    });
+    on('#lsPlHeight', () => {
+      const v = val('#lsPlHeight');
+      if (Number.isFinite(v) && v >= 0) mutate(() => { o.height = Math.min(1500, Math.round(v)); });
+    });
+    on('#lsPlFill', (e) => mutate(() => { o.meta = { ...(o.meta || {}), fill: e.target.value }; }));
+    on('#lsInGo', () => {
+      helper.inside = panel.querySelector('#lsInKind')?.value || helper.inside;
+      helper.insideDensity = val('#lsInDensity') || helper.insideDensity;
+      const list = plantInPlanter(landscapeObjects(), o, { kind: helper.inside, density: helper.insideDensity });
+      if (!list.length) { toast('Нет места — уменьшите растение или густоту'); return; }
+      mutate(() => { landscapeObjects().push(...list); });
+      toast(`Посажено в короб: ${list.length}`);
+    }, 'click');
+  }
+  on('#lsUnparent', () => mutate(() => { delete o.parent; }), 'click');
+  if (CURB_HOSTS.has(o.kind)) {
+    on('#lsCurb', (e) => mutate(() => { if (e.target.checked) o.curb = normalizeCurb(true); else delete o.curb; }));
+    const setCurb = (patch) => mutate(() => { o.curb = normalizeCurb({ ...(o.curb || {}), ...patch }); });
+    on('#lsCurbW', () => setCurb({ width: val('#lsCurbW') }));
+    on('#lsCurbH', () => setCurb({ height: val('#lsCurbH') }));
+    on('#lsCurbVar', (e) => setCurb({ variant: e.target.value }));
+  }
+}
+
 export function renderLandscapeProps(panel) {
   if (state.tool?.kind === 'draw-landscape') { renderDrawProps(panel); return; }
   const objs = selectedObjects();
@@ -882,8 +1074,9 @@ export function renderLandscapeProps(panel) {
   const def = landscapeDef(o.kind);
   const shape = isPathShape(def);
   const notes = currentWarnings().get(o.id) || [];
+  const built = o.kind === 'stairs-out' || isPlanter(o);
   const variants = def.variants.length > 1
-    ? `<label class="prop-field"><span>${shape ? 'Материал / вариант' : 'Вариант'}</span><select id="lsVariant">${variantOptions(def, o.variant)}</select></label>`
+    ? `<label class="prop-field"><span>${built || o.kind === 'curb' ? 'Материал' : shape ? 'Материал / вариант' : 'Вариант'}</span><select id="lsVariant">${variantOptions(def, o.variant)}</select></label>`
     : '';
   let size;
   if (shape) {
@@ -892,6 +1085,8 @@ export function renderLandscapeProps(panel) {
       <label class="check-row"><input type="checkbox" id="lsSmooth" ${o.smooth ? 'checked' : ''}><span>Сглаженная (изогнутая)</span></label>
       <div class="prop-row"><span>${def.shape === 'line' ? 'Длина × ширина' : 'Площадь · периметр'}</span><strong id="lsMeasure">${landscapeMeasure(o, def)}</strong></div>
       <div class="prop-row"><span>Вершин</span><strong>${o.points.length}</strong></div>`;
+  } else if (o.kind === 'stairs-out') {
+    size = '';
   } else if (def.lockAspect) {
     size = `<label class="prop-field"><span>${def.shape === 'point' && def.group === 'Деревья' ? 'Диаметр кроны, м' : 'Диаметр, м'}</span>
         <input id="lsW" type="number" step="0.1" min="${m(def.min.w)}" max="${m(def.max.w)}" value="${m(o.w)}"></label>`;
@@ -902,7 +1097,7 @@ export function renderLandscapeProps(panel) {
       </div>`;
   }
   const color = o.color || def.colors[0];
-  const helpers = shape ? `
+  const helpers = shape && !isPlanter(o) ? `
     <h3>Посадить вдоль</h3>
     <div class="prop-block">
       <label class="prop-field"><span>Растение</span><select id="lsAlongKind">${plantOptions(helper.plant)}</select></label>
@@ -929,7 +1124,8 @@ export function renderLandscapeProps(panel) {
       ${variants}
       ${size}
       ${pathPropsHtml(o, def)}
-      <label class="prop-field"><span>Высота, м</span><input id="lsHeight" type="number" step="0.1" min="0" max="40" value="${m(o.height || 0)}"></label>
+      ${buildPropsHtml(o, def)}
+      ${built ? '' : `<label class="prop-field"><span>Высота, м</span><input id="lsHeight" type="number" step="0.1" min="0" max="40" value="${m(o.height || 0)}"></label>`}
       ${shape ? '' : `<label class="prop-field"><span>Поворот, °</span><input id="lsRot" type="number" step="5" value="${Math.round(o.rotation || 0)}"></label>`}
       <div class="prop-grid">
         <label class="prop-field"><span>Цвет</span><input id="lsColor" type="color" value="${/^#[0-9a-f]{6}$/i.test(color) ? color : '#6aa84f'}"></label>
@@ -939,16 +1135,22 @@ export function renderLandscapeProps(panel) {
       ${shape && !o.locked ? '<p class="hint">Тяните вершины · «+» на ребре или двойной клик по ребру — новая вершина · двойной клик по вершине, Alt+клик или Delete — удалить</p>' : ''}
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
-    ${helpers}`;
+    ${helpers}
+    ${planterFillHtml(o)}`;
   bindCommon(panel);
   bindPathProps(panel, o);
+  bindBuildProps(panel, o);
   const num = (id) => Number(panel.querySelector(id)?.value);
   panel.querySelector('#lsVariant')?.addEventListener('change', (e) => mutate(() => { o.variant = e.target.value; }));
   const applySize = () => {
     const w = Math.round(num('#lsW') * 1000);
     const h = def.lockAspect ? w : Math.round(num('#lsH') * 1000);
     if (!(w > 0) || !(h > 0)) return;
-    mutate(() => { resizeObject(o, w, h); });
+    mutate(() => {
+      const before = { ...o };
+      resizeObject(o, w, h);
+      if (isPlanter(o)) refitChildren(landscapeObjects(), o, before);
+    });
   };
   panel.querySelector('#lsW')?.addEventListener('change', applySize);
   panel.querySelector('#lsH')?.addEventListener('change', applySize);
@@ -966,7 +1168,13 @@ export function renderLandscapeProps(panel) {
   });
   panel.querySelector('#lsRot')?.addEventListener('change', () => {
     const v = num('#lsRot');
-    if (Number.isFinite(v)) mutate(() => { o.rotation = ((Math.round(v) % 360) + 360) % 360; });
+    if (!Number.isFinite(v)) return;
+    mutate(() => {
+      const rot = ((Math.round(v) % 360) + 360) % 360;
+      // Растения короба поворачиваются вместе с ним.
+      if (isPlanter(o)) rotateChildren(landscapeObjects(), o, rot - (o.rotation || 0));
+      o.rotation = rot;
+    });
   });
   panel.querySelector('#lsColor')?.addEventListener('change', (e) => mutate(() => { o.color = e.target.value; }));
   panel.querySelector('#lsColorReset')?.addEventListener('click', () => mutate(() => { delete o.color; }));
