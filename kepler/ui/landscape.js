@@ -38,6 +38,11 @@ import {
   arrayDblClick, arrayHover, arrayPointerDown, bindPlantFill, handleArrayKey, plantFillHtml, renderArrayProps, startLandscapeArray,
 } from './landscape-array.js';
 import { canFill } from '../core/landscape-array.js';
+import {
+  bindSectionsBlock, finishSection, handleSectionKey, isSectionTool, landscapeSections, openSection, refreshSectionView,
+  renderSectionToolProps, sectionHover, sectionPointerDown, sectionsBlockHtml,
+} from './landscape-section.js';
+import { hitSection } from './render-section.js';
 import { requestDraw, screenToWorld, worldToScreen } from './view.js';
 
 export const LANDSCAPE_MIME = 'application/x-kepler-landscape';
@@ -307,6 +312,7 @@ export function landscapeHover(world, canvas, event) {
     return true;
   }
   if (state.tool?.kind === 'ls-array') return arrayHover(world, canvas, event);
+  if (isSectionTool()) return sectionHover(world, canvas, event);
   if (state.tool) return false;
   const screen = worldToScreen(world.x, world.y);
   const sh = hitShapeHandle(screen);
@@ -384,6 +390,7 @@ export function landscapePointerDown(event, screen, world) {
     return null;
   }
   if (tool?.kind === 'ls-array') { arrayPointerDown(event, screen, world); return null; }
+  if (isSectionTool()) { sectionPointerDown(event, screen, world); return null; }
   if (tool) return null;
   const sh = hitShapeHandle(screen);
   if (sh) {
@@ -440,6 +447,9 @@ export function landscapePointerDown(event, screen, world) {
     const primary = starts.has(hit.id) ? hit.id : movable[0].id;
     return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false };
   }
+  // Клик по линии разреза — открыть разрез.
+  const sec = hitSection(landscapeSections(), screen, worldToScreen, state.coarsePointer ? 12 : 6);
+  if (sec && !event.shiftKey) { openSection(sec.id); return null; }
   if (!event.shiftKey) selectLandscape([]);
   if (event.pointerType === 'touch') return { kind: 'pan', start: screen, view: { ...state.view } };
   state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y, add: event.shiftKey };
@@ -581,6 +591,7 @@ export function landscapeDragEnd(drag) {
 export function landscapeDblClick(world) {
   if (state.tool?.kind === 'draw-landscape') { finishLandscapeDraw(); return true; }
   if (state.tool?.kind === 'ls-array') return arrayDblClick();
+  if (isSectionTool()) { finishSection(); return true; }
   if (state.tool) return false;
   const objs = selectedObjects();
   if (objs.length !== 1) return false;
@@ -734,6 +745,7 @@ export function explodeLandscapeSelection() {
 export function handleLandscapeKey(event) {
   const mod = event.ctrlKey || event.metaKey;
   if (state.tool?.kind === 'ls-array' && !mod) return handleArrayKey(event);
+  if (isSectionTool() && !mod) return handleSectionKey(event);
   if (state.tool?.kind === 'draw-landscape' && !mod) {
     if (event.key === 'Enter') { event.preventDefault(); finishLandscapeDraw(); return true; }
     if (event.key === 'Backspace') { event.preventDefault(); backspaceDraft(); return true; }
@@ -1301,6 +1313,8 @@ function bindBuildProps(panel, o) {
 }
 
 export function renderLandscapeProps(panel) {
+  refreshSectionView();
+  if (isSectionTool()) { renderSectionToolProps(panel); return; }
   if (state.tool?.kind === 'draw-landscape') { renderDrawProps(panel); return; }
   if (state.tool?.kind === 'ls-array') { renderArrayProps(panel); return; }
   const objs = selectedObjects();
@@ -1548,6 +1562,7 @@ function renderLandscapeSummary(panel) {
     <div class="prop-block ls-plants" id="lsPlants">
       ${plantTableHtml(plantSchedule(objs, site.landscape?.plants))}
     </div>
+    ${sectionsBlockHtml()}
     <h3>Слои</h3>
     <div class="prop-block ls-vis">
       <div class="prop-field"><span>Графика</span>
@@ -1596,6 +1611,7 @@ function renderLandscapeSummary(panel) {
   }));
   panel.querySelector('#lsSheetScreen')?.addEventListener('change', (e) => setSheetStylePref(e.target.checked ? 'screen' : 'drawing'));
   bindPlantTable(panel);
+  bindSectionsBlock(panel);
   panel.querySelectorAll('[data-ls-vis]').forEach((box) => box.addEventListener('change', () => {
     state.lsVis = { ...state.lsVis, [box.dataset.lsVis]: box.checked };
     requestDraw();

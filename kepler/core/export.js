@@ -232,14 +232,17 @@ function retainingExport(o) {
 
 // Ландшафт (core/landscape.js): объекты с типом, размерами и признаками.
 function buildLandscapeExport(site) {
-  const objects = site?.landscape?.objects;
-  if (!objects?.length) return null;
+  const objects = site?.landscape?.objects || [];
+  const sections = site?.landscape?.sections || [];
+  if (!objects.length && !sections.length) return null;
   // Справочник и ведомость растений (необязательные поля, версия та же).
   const book = site.landscape.plants;
   const plants = plantScheduleExport(plantSchedule(objects, book));
   return {
     ...(book && Object.keys(book).length ? { plant_book: book } : {}),
     ...(plants ? { plant_schedule: plants } : {}),
+    // Разрезы участка (необязательное поле): ломаная, сторона взгляда, глубина, мм.
+    ...(sections.length ? { sections: sections.map((s) => ({ ...s, points: s.points.map((p) => ({ ...p })) })) } : {}),
     objects: objects.map((o) => {
       const def = landscapeDef(o.kind);
       return {

@@ -17,6 +17,7 @@ import {
   addLandscapeDraftExact, handleLandscapeKey, landscapeDraftPrev, rotateLandscapeGhost,
 } from './landscape.js';
 import { addDraftPoint, finishDraft } from './site-actions.js';
+import { closeSection, isSectionOpen } from './landscape-section.js';
 import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
 import { state } from './state.js';
 import {
@@ -36,6 +37,11 @@ export function bindKeyboard() {
     if (event.key === 'Escape' && isCompareOpen()) { closeCompare(); return; }
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }
+    // Окно разреза: Esc закрывает, правка плана под ним не идёт (кроме Ctrl+Z/Y).
+    if (isSectionOpen()) {
+      if (event.key === 'Escape') { closeSection(); return; }
+      if (!((event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY'))) return;
+    }
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {

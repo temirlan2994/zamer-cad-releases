@@ -11,6 +11,7 @@ import {
   fmtElev, pointAlong, pointInObject, polylineLength, retainingEdges, retainingInfo, stairsInfo, steppingSlabs, toWorld, variantOf,
 } from './landscape.js';
 import { calloutDxf } from './landscape-callout.js';
+import { SECTION_DXF_LAYER, sectionPlanDxfEntities } from './landscape-section.js';
 import { plantCsvLines, plantSchedule, plantScheduleDxf } from './landscape-plants.js';
 import { LANDSCAPE_NORMS } from './norms.js';
 import { buildingFootprint } from './site-check.js';
@@ -225,6 +226,7 @@ export const LANDSCAPE_DXF_LAYERS = [
   { key: 'lsWalls', name: 'LANDSCAPE_WALLS', color: 9 },
   { key: 'lsNotes', name: 'LANDSCAPE_NOTES', color: 7 },
   { key: 'lsPlantTable', name: 'LANDSCAPE_PLANT_SCHEDULE', color: 7 },
+  SECTION_DXF_LAYER,
 ];
 
 const closedLines = (pts, layer, closed = true) => {
@@ -299,6 +301,8 @@ export function landscapeDxfEntities(site) {
     out.push(...closedLines(objectOutline(o, 24), layer));
   }
   out.push(...plantTableDxf(site));
+  // Линии разрезов (необязательное поле sections) — слой LANDSCAPE_SECTION.
+  out.push(...sectionPlanDxfEntities(site?.landscape?.sections || []));
   return out;
 }
 

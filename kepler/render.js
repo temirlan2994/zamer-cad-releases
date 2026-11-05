@@ -33,6 +33,7 @@ import {
   drawLandscapeSiteBase, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
 import { luminance } from './ui/render-landscape-kit.js';
+import { drawSectionDraft, drawSectionMarks } from './ui/render-section.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -577,6 +578,12 @@ export function createRenderer(canvas) {
         warnings, w2s, tokens, scale, warnColor: '#d08a1e',
         labels: lsVis?.labels === true, vertex: state.lsVertex || null, style: lsStyle,
       });
+    }
+    // Линии разрезов «А–А» и черновик инструмента «Разрез».
+    if (landscape && !print) {
+      const sections = state.project.site?.landscape?.sections;
+      if (sections?.length) drawSectionMarks(ctx, sections, { w2s, tokens, scale, activeId: state.lsSectionId || null });
+      if (state.tool?.kind === 'ls-section') drawSectionDraft(ctx, state.tool, { w2s, tokens });
     }
     if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });
     // Подпись «замкнуть/завершить» у первой точки черновика.

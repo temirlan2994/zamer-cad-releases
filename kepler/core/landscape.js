@@ -1085,7 +1085,57 @@ export function normalizeLandscape(raw) {
   for (const o of objects) if (o.parent && (!planters.has(o.parent) || o.parent === o.id)) delete o.parent;
   // Справочник растений проекта (core/landscape-plants.js) — необязательное поле.
   const plants = normalizePlantBook(raw?.plants);
-  return Object.keys(plants).length ? { objects, plants } : { objects };
+  const out = Object.keys(plants).length ? { objects, plants } : { objects };
+  // Разрезы участка (core/landscape-section.js) — необязательное поле.
+  const sections = normalizeSections(raw?.sections);
+  if (sections.length) out.sections = sections;
+  return out;
+}
+
+// ------------------------------------------------------ Разрезы участка
+
+// Разрез: { id, name ('А'), points (ломаная, мир, ≥ 2), side ('left' |
+// 'right' — куда смотрим по ходу линии, ось Y вниз), depth (глубина вида, мм) }.
+export const SECTION_LETTERS = 'АБВГДЕЖИКЛМНПРСТУФЦШЭЮЯ';
+export const SECTION_DEPTH = 15000;
+export const SECTION_DEPTH_MIN = 1000;
+export const SECTION_DEPTH_MAX = 100000;
+
+export function normalizeSection(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const points = (Array.isArray(raw.points) ? raw.points : [])
+    .filter((p) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
+    .map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+  if (points.length < 2 || polylineLength(points) < 100) return null;
+  const depth = Number(raw.depth);
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 4) : '';
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : `sec-${makeLandscapeId().slice(3)}`,
+    name: name || SECTION_LETTERS[0],
+    points: points.slice(0, 50),
+    side: raw.side === 'right' ? 'right' : 'left',
+    depth: Number.isFinite(depth) ? Math.min(SECTION_DEPTH_MAX, Math.max(SECTION_DEPTH_MIN, Math.round(depth))) : SECTION_DEPTH,
+  };
+}
+
+export function normalizeSections(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of list.slice(0, 26)) {
+    const s = normalizeSection(raw);
+    if (!s) continue;
+    if (seen.has(s.id)) s.id = `sec-${makeLandscapeId().slice(3)}`;
+    seen.add(s.id);
+    out.push(s);
+  }
+  return out;
+}
+
+// Следующая свободная буква разреза: А, Б, В… (без Й, О, Х, Ъ, Ы, Ь, Ё, З, Ч, Щ).
+export function nextSectionName(sections = []) {
+  const used = new Set(sections.map((s) => s.name));
+  return [...SECTION_LETTERS].find((c) => !used.has(c)) || String(sections.length + 1);
 }
 
 // Справочник растений: { 'kind|variant': { size?, price?, note? } } —
