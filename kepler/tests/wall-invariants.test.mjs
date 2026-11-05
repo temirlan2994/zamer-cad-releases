@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 
 import * as wallsModule from '../core/walls.js';
 import { buildTemplate, TEMPLATES } from '../core/templates.js';
-import { levelProject } from '../core/model.js';
+import { readFileSync } from 'node:fs';
+import { deserializeProject, levelProject } from '../core/model.js';
 import { WALL_FIXTURES } from './wall-fixtures.mjs';
 import { checkWallInvariants } from './wall-invariants-lib.mjs';
 
@@ -43,6 +44,13 @@ const cases = Object.entries(WALL_FIXTURES).map(([name, build]) => [name, build(
 for (const t of TEMPLATES) {
   const p = buildTemplate(t.id);
   for (const lv of p.levels) cases.push([`шаблон ${t.id}/${lv.name}`, levelProject(p, lv.id)]);
+}
+// Реальный проект пользователя (подложка, рельеф и варианты вырезаны):
+// «Гостиная 3» над Лестницей на зазоре 50, стены спина к спине (483/500),
+// балкон и терраса в 100 от наружных стен.
+{
+  const p = deserializeProject(readFileSync(new URL('./fixtures/user-house-2026-11.json', import.meta.url), 'utf8'));
+  for (const lv of p.levels) cases.push([`проект user-house-2026-11/${lv.name}`, levelProject(p, lv.id)]);
 }
 
 test('реализация стен доступна', { skip: !derive && 'deriveWallsV2 ещё нет' }, () => {

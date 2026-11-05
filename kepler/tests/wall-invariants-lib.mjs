@@ -234,9 +234,23 @@ export function checkWallInvariants(project, walls) {
           measured = (k + 1) * G;
         }
         if (measured === 0) continue; // это уже нарушение (b)
+        // Луч стартует в теле перпендикулярной стены той же комнаты (у
+        // вогнутого угла) — он идёт вдоль её оси, это не толщина.
+        const inPerp = roomBoundaryEdges(r).some((e2) => {
+          if (e2.orient === e.orient) return false;
+          const along = e2.orient === 'h' ? p0.x : p0.y;
+          const across = ((e2.orient === 'h' ? p0.y : p0.x) - e2.edge) * e2.outward;
+          return along > e2.from && along < e2.to && across > 0 && across < assignedThickness(project, r, e2.side) + G;
+        });
+        if (inPerp) continue;
         // Луч на всю длину — он идёт вдоль оси перпендикулярной стены (угол,
         // Т-узел), это не толщина. Стены шахты — отдельная конструкция.
         if (measured >= RAY * G || nearShaft) continue;
+        // Две собственные стены спина к спине ровно заполняют зазор между
+        // комнатами (зазор > перегородки, ≤ сумме их толщин) — не бугор.
+        const stopAt = Number.isFinite(dist) ? stops.find((o) => { const p = at(dist / G); const kk = cell(p.x, p.y); return kk >= 0 && masks.get(o.id)[kk]; }) : null;
+        if (stopAt && Math.abs(measured - dist) <= G &&
+          dist <= assignedThickness(project, r, e.side) + maxAssigned(project, stopAt) + G) continue;
         let expected;
         if (dist <= MAX_GAP) expected = dist;
         else {

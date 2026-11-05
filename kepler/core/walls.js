@@ -258,6 +258,26 @@ export function deriveWalls(project) {
         }
       }
 
+      // Напротив грани ближе толщины стены стоит другая комната того же уровня:
+      // терраса/балкон (общей стены с ними нет) или комната на нестандартном
+      // зазоре (не равном перегородке — тогда это не общая стена). Стена
+      // сужается до зазора: иначе она заходит внутрь соседа бугром.
+      const facing = [];
+      for (const other of project.rooms) {
+        if (other.id === room.id || isShaft(other) || (other.parentId || null) !== (room.parentId || null)) continue;
+        for (const o of roomRects(other)) {
+          const lo = edge.orient === 'h' ? o.y : o.x;
+          const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
+          const gap = edge.outward > 0 ? lo - edge.edge : edge.edge - hi;
+          if (gap <= 1 || gap >= baseThick - 1) continue;
+          const aLo = edge.orient === 'h' ? o.x : o.y;
+          const aHi = edge.orient === 'h' ? o.x + o.w : o.y + o.h;
+          const f = Math.max(edge.from, aLo);
+          const t = Math.min(edge.to, aHi);
+          if (t - f > 1) facing.push({ from: f, to: t, thickness: gap });
+        }
+      }
+
       const emit = (segFrom, segTo, thickness, type) => {
         const inner = edge.edge;
         const outer = inner + edge.outward * thickness;
@@ -277,13 +297,34 @@ export function deriveWalls(project) {
         });
       };
 
+      // Полная толщина, кроме участков напротив близкого соседа (facing).
+      const emitThick = (segFrom, segTo) => {
+        const cuts = facing
+          .map((c) => ({ from: Math.max(segFrom, c.from), to: Math.min(segTo, c.to), thickness: c.thickness }))
+          .filter((c) => c.to - c.from > 1);
+        if (!cuts.length) { emit(segFrom, segTo, baseThick, baseType); return; }
+        const xs = [...new Set([segFrom, segTo, ...cuts.flatMap((c) => [c.from, c.to])])].sort((a, b) => a - b);
+        const parts = [];
+        for (let i = 0; i + 1 < xs.length; i += 1) {
+          const a = xs[i];
+          const b = xs[i + 1];
+          const mid = (a + b) / 2;
+          let thick = baseThick;
+          for (const c of cuts) if (mid > c.from && mid < c.to) thick = Math.min(thick, c.thickness);
+          const last = parts[parts.length - 1];
+          if (last && (last.thick === thick || b - a <= 1)) last.to = b;
+          else parts.push({ from: a, to: b, thick });
+        }
+        for (const p of parts) emit(p.from, p.to, p.thick, baseType);
+      };
+
       for (const seg of rest) {
-        if (!covered.length) { emit(seg.from, seg.to, baseThick, baseType); continue; }
+        if (!covered.length) { emitThick(seg.from, seg.to); continue; }
         const thinParts = covered
           .map((c) => ({ from: Math.max(seg.from, c.from), to: Math.min(seg.to, c.to) }))
           .filter((c) => c.to - c.from > 1);
         const thickParts = subtractIntervals(seg.from, seg.to, thinParts);
-        for (const p of thickParts) emit(p.from, p.to, baseThick, baseType);
+        for (const p of thickParts) emitThick(p.from, p.to);
         for (const p of thinParts) emit(p.from, p.to, Math.min(baseThick, partition), 'partition');
       }
     }
@@ -350,8 +391,9 @@ function cutWallsInsideShafts(walls, rooms) {
 // линия стены остаётся прямой, без ступеньки-бугорка и без скоса.
 function addThicknessChamfers(walls, allRooms = []) {
   const solid = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared'));
-  const rooms = allRooms.filter((r) => !isOpenRoom(r));
-  // Заплатку нельзя заводить внутрь комнаты — только в наружное/зазорное
+  const rooms = allRooms;
+  // Заплатку нельзя заводить внутрь комнаты (в том числе террасы/балкона:
+  // стена напротив них сужена до зазора) — только в наружное/зазорное
   // пространство. Иначе «ровная» стена полезет внутрь помещения бугром.
   const intrudesRoom = (x, y, w, h) => rooms.some((room) => roomRects(room).some((r) => {
     const ox = Math.min(x + w, r.x + r.w) - Math.max(x, r.x);
@@ -461,6 +503,49 @@ function fillWallJoints(walls) {
     }
   }
   for (const f of fillers) walls.push(f);
+}
+
+// Прямоугольник a минус прямоугольник b — до четырёх непересекающихся кусков.
+function rectMinus(a, b) {
+  const x0 = Math.max(a.x, b.x);
+  const y0 = Math.max(a.y, b.y);
+  const x1 = Math.min(a.x + a.w, b.x + b.w);
+  const y1 = Math.min(a.y + a.h, b.y + b.h);
+  if (x1 - x0 <= 0.5 || y1 - y0 <= 0.5) return [a];
+  const out = [];
+  if (y0 - a.y > 0.5) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y });
+  if (a.y + a.h - y1 > 0.5) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 });
+  if (x0 - a.x > 0.5) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 });
+  if (a.x + a.w - x1 > 0.5) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 });
+  return out;
+}
+
+// Заплатки стыков (joint/chamfer) для объёмных выводов (IFC, 3D): только та
+// часть, что не покрыта видимыми полосами own/shared и предыдущими заплатками
+// (без двойного объёма), с «хозяином» — видимой стеной own/shared, к которой
+// кусок примыкает (предпочтительно того же типа). → [{ rect, wallType, host }]
+export function wallJoinPatches(walls) {
+  const solid = walls.filter((w) => !w.hidden && w.band && (w.kind === 'own' || w.kind === 'shared'));
+  const taken = solid.map((w) => w.band);
+  const result = [];
+  const touches = (a, b) => {
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return (ox > 0.5 && oy > -0.5) || (oy > 0.5 && ox > -0.5);
+  };
+  for (const w of walls) {
+    if (w.hidden || !w.band || (w.kind !== 'joint' && w.kind !== 'chamfer')) continue;
+    let pieces = [w.band];
+    for (const t of taken) pieces = pieces.flatMap((p) => rectMinus(p, t));
+    for (const rect of pieces) {
+      if (rect.w <= 0.5 || rect.h <= 0.5) continue;
+      taken.push(rect);
+      const near = solid.filter((s) => touches(rect, s.band));
+      const host = near.find((s) => s.wallType === w.wallType) || near[0] || null;
+      result.push({ rect, wallType: w.wallType, host });
+    }
+  }
+  return result;
 }
 
 // Удлиняет собственные стены на углах комнаты, чтобы угол замыкался без щели.

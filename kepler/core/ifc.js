@@ -19,7 +19,7 @@ import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
-import { deriveWalls, openingRect } from './walls.js';
+import { deriveWalls, openingRect, wallJoinPatches } from './walls.js';
 
 const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 
@@ -162,7 +162,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     const refs = ifcPts.map((p) => pt(p.x, p.y));
     return add(`IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,${add(`IFCPOLYLINE(${list([...refs, refs[0]])})`)})`);
   };
-  const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list([item])})`)])})`);
+  const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list(Array.isArray(item) ? item : [item])})`)])})`);
 
   // Наборы свойств стен — по одному на тип, общие для всех этажей.
   const wallPsets = new Map();
@@ -193,14 +193,22 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     const walls = deriveWalls(lp);
     const wallRef = new Map();
     const wallsByType = new Map(); // тип стены → ссылки IFCWALL (для Pset_WallCommon)
+    // Заплатки стыков/фасок — не отдельные IfcWall, а дополнительные тела
+    // стены-хозяина (только непокрытая полосами часть, без двойного объёма).
+    const patchesByHost = new Map();
+    for (const p of wallJoinPatches(walls)) {
+      if (!p.host) continue;
+      if (!patchesByHost.has(p.host)) patchesByHost.set(p.host, []);
+      patchesByHost.get(p.host).push(p.rect);
+    }
+    const wallBody = (r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), 0, level.height);
     walls.forEach((w, i) => {
-      if (w.hidden) return;
+      if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared')) return;
       const band = w.band;
       if (band.w < 1 || band.h < 1) return;
-      const profile = rectProfile(band.x + band.w / 2, -(band.y + band.h / 2), band.w, band.h);
-      const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая')
-        : w.kind === 'own' ? 'Стена' : 'Стена (стык)';
-      const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(solid(profile, 0, level.height))},$,.STANDARD.)`);
+      const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая') : 'Стена';
+      const items = [band, ...(patchesByHost.get(w) || [])].map(wallBody);
+      const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(items)},$,.STANDARD.)`);
       wallRef.set(w, ref);
       contained.push(ref);
       counts.walls += 1;

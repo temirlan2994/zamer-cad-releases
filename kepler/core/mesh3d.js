@@ -14,7 +14,7 @@ import { toLocal, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
-import { deriveWalls, openingRect } from './walls.js';
+import { deriveWalls, openingRect, wallJoinPatches } from './walls.js';
 import { roomRects } from './room-shape.js';
 import { stairCalculation } from './stairs.js';
 
@@ -68,11 +68,7 @@ function wallRuns(walls, cuts) {
     if (wall.hidden) continue;
     const b = wall.band;
     if (!b) continue;
-    if (!['own', 'shared'].includes(wall.kind)) {
-      const orient = wall.kind === 'chamfer' ? 'h' : wall.orient;
-      extras.push({ band: b, orient, start: orient === 'h' ? b.x : b.y, end: orient === 'h' ? b.x + b.w : b.y + b.h, holes: [], outlined: false });
-      continue;
-    }
+    if (!['own', 'shared'].includes(wall.kind)) continue; // заплатки — ниже, без двойного объёма
     const cross0 = wall.orient === 'h' ? b.y : b.x;
     const cross1 = cross0 + (wall.orient === 'h' ? b.h : b.w);
     const key = `${wall.orient}|${round(cross0)}|${round(cross1)}|${wall.wallType}`;
@@ -84,6 +80,12 @@ function wallRuns(walls, cuts) {
       cross0,
       cross1,
     });
+  }
+
+  // Стыки/фаски: только непокрытая полосами часть (иначе двойной объём).
+  for (const { rect: b } of wallJoinPatches(walls)) {
+    const orient = b.w >= b.h ? 'h' : 'v';
+    extras.push({ band: b, orient, start: orient === 'h' ? b.x : b.y, end: orient === 'h' ? b.x + b.w : b.y + b.h, holes: [], outlined: false });
   }
 
   const runs = [];

@@ -178,6 +178,23 @@ export function diagonalCorners() {
   return project('углы по диагонали', [a, b]);
 }
 
+// 19. Терраса в 100 от наружной стены, короче её (из проекта пользователя):
+// стена напротив террасы сужается до зазора, не заходит на террасу.
+export function terraceAtPartitionGap() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const t = room('terrace', 1000, 4100, 3000, 2000);
+  return project('терраса на зазоре 100', [a, t]);
+}
+
+// 20. Две комнаты на нестандартном зазоре 50 (не общая стена) и спина к
+// спине на зазоре 480 (две наружные стены почти сходятся) — «Гостиная 3».
+export function nearGapRooms() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('stairs-room', 1000, 3050, 4000, 3000);
+  const c = room('bedroom', 5480, 3050, 3000, 3000);
+  return project('зазоры 50 и 480', [a, b, c]);
+}
+
 export const WALL_FIXTURES = {
   twoRooms,
   teeJoint,
@@ -197,4 +214,6 @@ export const WALL_FIXTURES = {
   centeredNeighbourAndL,
   courtyardBetweenL,
   diagonalCorners,
+  terraceAtPartitionGap,
+  nearGapRooms,
 };

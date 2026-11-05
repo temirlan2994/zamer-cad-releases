@@ -143,3 +143,32 @@ test('пол террасы в 3D лежит ниже пола дома', () => 
   assert.equal(floors.find((face) => face.roomId === room.id).pts[0].z, 1);
   assert.equal(floors.find((face) => face.roomId === terrace.id).pts[0].z, 0);
 });
+
+test('3D/IFC: заплатки стыков без двойного объёма и без потери покрытия', async () => {
+  const { deriveWalls, wallJoinPatches } = await import('../core/walls.js');
+  const { WALL_FIXTURES } = await import('./wall-fixtures.mjs');
+  const inside = (r, x, y) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h;
+  const cross = (a, b) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.5 &&
+    Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0.5;
+  let checked = 0;
+  for (const name of ['teeJoint', 'crossJoint', 'mixedThicknessNode', 'nestedAtSharedWall', 'steppedWithKitchenAndShaft']) {
+    const walls = deriveWalls(WALL_FIXTURES[name]());
+    const solid = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared')).map((w) => w.band);
+    const patches = wallJoinPatches(walls).map((p) => p.rect);
+    for (const [i, p] of patches.entries()) {
+      assert.ok(!solid.some((s) => cross(p, s)), `${name}: заплатка ${JSON.stringify(p)} поверх полосы`);
+      assert.ok(!patches.some((q, j) => j !== i && cross(p, q)), `${name}: заплатки перекрываются`);
+    }
+    // Всё, что покрывали joint/chamfer, по-прежнему покрыто (полосой или заплаткой).
+    for (const w of walls.filter((x) => !x.hidden && (x.kind === 'joint' || x.kind === 'chamfer'))) {
+      const b = w.band;
+      for (let x = b.x + 5; x < b.x + b.w; x += 10) {
+        for (let y = b.y + 5; y < b.y + b.h; y += 10) {
+          checked += 1;
+          assert.ok([...solid, ...patches].some((r) => inside(r, x, y)), `${name}: дыра в (${x}, ${y})`);
+        }
+      }
+    }
+  }
+  assert.ok(checked > 0, 'в фикстурах есть заплатки');
+});
