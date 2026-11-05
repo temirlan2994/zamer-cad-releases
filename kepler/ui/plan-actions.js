@@ -8,6 +8,9 @@ import { editKitchen } from '../core/kitchen.js';
 import { keepOpenings } from '../core/opening-anchor.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
+import {
+  captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
+} from '../core/room-group.js';
 import { roomContainsPoint, splitRoomOutlineWall } from '../core/room-shape.js';
 import {
   determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
@@ -268,9 +271,45 @@ export function selectGroup(groupId) {
   selectObject({ type: 'multi', roomIds: [], itemIds });
 }
 
+// Применить групповое действие core/room-group.js одной записью истории:
+// проёмы приводятся к стенам, стены и связность пересчитываются.
+function applyGroupChange(action, failText) {
+  const before = snapshot();
+  const res = action(state.project);
+  if (!res.ok) {
+    restoreFrom(before);
+    toast(res.reason || failText, true);
+    return false;
+  }
+  reconcileOpenings();
+  refreshDerived();
+  pushHistory(before);
+  afterChange();
+  if (res.warning) toast(`⚠ ${res.warning}`, true);
+  return true;
+}
+
+// Сдвиг мультивыделения (стрелки): помещения с вложенными, мебелью,
+// лестницами и проёмами.
+export function moveMultiBy(dx, dy) {
+  const sel = state.selection;
+  if (sel?.type !== 'multi') return false;
+  const ok = applyGroupChange((project) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy), 'Так сдвинуть нельзя');
+  if (ok) selectObject(sel);
+  return ok;
+}
+
 // Повернуть выбранную мебель группой на 90° вокруг общего центра.
+// С помещениями — поворот всей группы (core/room-group.js).
 export function rotateMulti90() {
   const sel = state.selection;
+  if (sel?.type === 'multi' && sel.roomIds.length) {
+    if (applyGroupChange((project) => rotateRoomGroup(project, sel.roomIds, sel.itemIds), 'Так повернуть нельзя')) {
+      selectObject(sel);
+      toast('Группа повёрнута на 90° · Ctrl+Z — отменить');
+    }
+    return;
+  }
   if (sel?.type !== 'multi' || !sel.itemIds.length) return;
   const items = sel.itemIds.map((id) => state.project.items.find((i) => i.id === id)).filter(Boolean);
   const cx = items.reduce((s, i) => s + i.x, 0) / items.length;
@@ -317,6 +356,41 @@ function selectedItems(sel) {
   return [];
 }
 
+function groupClipboard(sel) {
+  return {
+    kind: 'group',
+    ...cloneData(captureRoomGroup(state.project, sel.roomIds, sel.itemIds)),
+    selectedRoomIds: [...sel.roomIds],
+    selectedItemIds: [...sel.itemIds],
+    pastes: 0,
+  };
+}
+
+// Вставка группы: место — как у копии помещения (рядом, без окон в общих
+// стенах), взаимное положение сохраняется. Одна запись истории.
+function pasteGroup(clipboard) {
+  const plan = planGroupCopy(state.project, clipboard);
+  if (!plan.ok) { toast(plan.reason, true); return false; }
+  mutate(() => {
+    state.project.rooms.push(...plan.rooms);
+    state.project.openings.push(...plan.openings);
+    state.project.items.push(...plan.items);
+    reconcileOpenings();
+  });
+  clipboard.pastes += 1;
+  const itemIndex = new Map(clipboard.items.map((item, index) => [item.id, index]));
+  const roomIds = clipboard.selectedRoomIds.map((id) => plan.roomMap.get(id)).filter(Boolean);
+  const itemIds = clipboard.selectedItemIds.filter((id) => itemIndex.has(id)).map((id) => plan.items[itemIndex.get(id)].id);
+  selectObject({ type: 'multi', roomIds, itemIds });
+  const where = plan.detached ? 'отдельно справа от дома (вплотную места нет)'
+    : plan.dx > 0 ? 'справа' : plan.dx < 0 ? 'слева' : plan.dy > 0 ? 'снизу' : 'сверху';
+  const notes = [];
+  if (plan.removedOpenings) notes.push(`проёмов удалено: ${plan.removedOpenings}`);
+  if (plan.movedOpenings) notes.push(`сдвинуто: ${plan.movedOpenings}`);
+  toast(`Копия группы — ${where}${notes.length ? ` · ${notes.join(', ')}` : ''}`, plan.removedOpenings > 0);
+  return true;
+}
+
 function roomClipboard(room) {
   const rooms = [room, ...state.project.rooms.filter((candidate) => !room.parentId && candidate.parentId === room.id)];
   const roomIds = new Set(rooms.map((candidate) => candidate.id));
@@ -344,6 +418,10 @@ export function copySelection() {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
     objectClipboard = roomClipboard(room);
+  } else if (sel.type === 'multi' && sel.roomIds.length) {
+    objectClipboard = groupClipboard(sel);
+    toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
+    return true;
   } else {
     toast('Этот тип выделения нельзя скопировать', true);
     return false;
@@ -450,6 +528,7 @@ export function pasteSelection() {
   if (objectClipboard.kind === 'items') return pasteItems(objectClipboard);
   if (objectClipboard.kind === 'opening') return pasteOpening(objectClipboard);
   if (objectClipboard.kind === 'room') return pasteRoom(objectClipboard);
+  if (objectClipboard.kind === 'group') return pasteGroup(objectClipboard);
   return false;
 }
 
@@ -526,6 +605,7 @@ export function duplicateSelection() {
   if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length)) duplicateItemSelection(sel);
   else if (sel.type === 'opening') duplicateOpeningSelection(sel);
   else if (sel.type === 'room') duplicateRoomSelection(sel);
+  else if (sel.type === 'multi' && sel.roomIds.length) pasteGroup(groupClipboard(sel));
 }
 
 export function rotateSelection90() {

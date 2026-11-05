@@ -1,5 +1,6 @@
 // Клавиатура: горячие клавиши, пробел для панорамы.
 
+import { GRID_STEP } from '../core/catalog.js';
 import { roomById } from '../core/model.js';
 import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
 import { canvas, toast } from './dom.js';
@@ -8,7 +9,7 @@ import { closeProjects, isProjectsOpen } from './projects.js';
 import { hideSofaMenu } from './props-composite.js';
 import { stepLevel } from './levels.js';
 import {
-  copySelection, deleteSelection, duplicateSelection, mirrorSelection, pasteSelection,
+  copySelection, deleteSelection, duplicateSelection, mirrorSelection, moveMultiBy, pasteSelection,
   reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
 import { finishDraft } from './site-actions.js';
@@ -90,7 +91,7 @@ export function bindKeyboard() {
     const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
     if (nudge && state.selection) {
       event.preventDefault();
-      const step = (event.shiftKey ? 500 : 50);
+      const step = event.shiftKey ? GRID_STEP * 10 : GRID_STEP;
       const [dx, dy] = [nudge[0] * step, nudge[1] * step];
       if (state.selection.type === 'room') {
         const room = roomById(state.project, state.selection.id);
@@ -107,6 +108,9 @@ export function bindKeyboard() {
         const item = state.project.items.find((i) => i.id === state.selection.id);
         if (!item) return;
         mutate(() => { item.x += dx; item.y += dy; });
+      } else if (state.selection.type === 'multi') {
+        // Группа: помещения с мебелью, лестницами и проёмами — одной записью истории.
+        moveMultiBy(dx, dy);
       }
     }
   });

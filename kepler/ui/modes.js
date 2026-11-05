@@ -5,7 +5,7 @@ import { applyLibraryTab, renderFurnitureBar } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
 import { cancelTool } from './tools.js';
-import { requestDraw, rotateViewTo, scaleLabel } from './view.js';
+import { fitViewOnce, requestDraw, rotateViewTo, scaleLabel } from './view.js';
 
 // Поворот камеры режима: «План» идёт по осям дома (комнаты всегда прямые),
 // «Участок» — север вверх. Связь дома и участка одна и та же — это данные
@@ -22,7 +22,9 @@ export function applyModeRotation(pivot = null) {
 
 export function setEditorMode(mode) {
   if (state.modeName === mode) return;
+  // Флаги touched/fitted (view.js) сохраняются вместе с видом.
   state.views[state.modeName] = {
+    ...state.views[state.modeName],
     scale: state.view.scale, panX: state.view.panX, panY: state.view.panY, rotation: state.view.rotation,
   };
   state.modeName = mode;
@@ -32,6 +34,9 @@ export function setEditorMode(mode) {
   state.view.panY = saved.panY;
   state.view.rotation = saved.rotation ?? modeRotation(mode);
   applyModeRotation(); // если поворот дома/север поменялся — докрутить вокруг центра
+  // «Участок» при первом входе вписывается целиком (граница, дороги, соседи),
+  // если пользователь ещё не двигал там вид.
+  if (mode === 'site') fitViewOnce();
   cancelTool();
   state.selection = null;
   refs.modePlan.classList.toggle('active', mode === 'plan');

@@ -70,10 +70,12 @@ function contentForSelection(sel) {
     const groups = new Set(items.map((item) => item.group).filter(Boolean));
     const grouped = items.length >= 2 && groups.size === 1 && items.every((item) => item.group);
     const canMirror = onlyItems && items.every(itemCanMirror);
+    // Группа с помещениями: копия, поворот вокруг центра группы, удаление.
+    const canMove = onlyItems || sel.roomIds.length > 0;
     return {
       label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length}`,
-      html: `${onlyItems ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
-        ${onlyItems ? button('rotate', '↻', 'Повернуть 90°', 'R') : ''}
+      html: `${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
+        ${canMove ? button('rotate', '↻', 'Повернуть 90°', 'R') : ''}
         ${onlyItems ? button('mirror', '⇋', 'Зеркально', 'M', canMirror ? '' : 'disabled') : ''}
         ${items.length >= 2 ? button(grouped ? 'ungroup' : 'group', grouped ? '⊘' : '⊞', grouped ? 'Разгруппировать' : 'Сгруппировать') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,

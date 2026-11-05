@@ -13,6 +13,7 @@ import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
 import { applyRoomShapeHandle, clampRoomNotch } from '../core/room-shape.js';
+import { groupCargo } from '../core/room-group.js';
 import { moveWallBy } from '../core/wall-edit.js';
 import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
@@ -43,7 +44,7 @@ import {
   applyElevInput, hitTerrainPoint, openElevInput, positionElevInput, terrainStatus,
 } from './terrain.js';
 import {
-  pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, worldToPlan, worldToScreen, zoomAt,
+  markViewTouched, pointerScreen, pointerWorld, requestDraw, scaleLabel, screenToPlan, worldToPlan, worldToScreen, zoomAt,
 } from './view.js';
 
 let drag = null;
@@ -88,6 +89,7 @@ function movePinch() {
   const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
   const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
   const v0 = drag.view;
+  markViewTouched();
   const anchor = unprojectPoint(v0, drag.mid.x, drag.mid.y);
   state.view.scale = Math.min(0.6, Math.max(0.004, (v0.scale * dist) / drag.dist));
   const p = projectPoint({ ...state.view, panX: 0, panY: 0 }, anchor.x, anchor.y);
@@ -122,27 +124,10 @@ function startMultiDrag(plan) {
   const sel = state.selection;
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
-  const roomIds = new Set(sel.roomIds);
-  const movedRooms = new Map(); // id -> старт
-  for (const id of sel.roomIds) {
-    const room = roomById(state.project, id);
-    if (!room) continue;
-    movedRooms.set(id, { x: room.x, y: room.y });
-    for (const child of state.project.rooms) {
-      if (child.parentId === id && !movedRooms.has(child.id)) movedRooms.set(child.id, { x: child.x, y: child.y });
-    }
-  }
-  const movedItems = new Map(); // id -> старт
-  for (const item of state.project.items) {
-    if (sel.itemIds.includes(item.id)) { movedItems.set(item.id, { x: item.x, y: item.y }); continue; }
-    for (const id of roomIds) {
-      const room = roomById(state.project, id);
-      if (room && item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) {
-        movedItems.set(item.id, { x: item.x, y: item.y });
-        break;
-      }
-    }
-  }
+  // Состав груза — как у стрелок и поворота группы (core/room-group.js).
+  const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
+  const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
+  const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
   drag = {
     kind: 'multi',
     plan,
@@ -624,6 +609,7 @@ export function bindCanvasInput() {
     if (!drag) { updateHoverAndGhost(world, plan); return; }
 
     if (drag.kind === 'pan') {
+      markViewTouched();
       state.view.panX = drag.view.panX + (screen.x - drag.start.x);
       state.view.panY = drag.view.panY + (screen.y - drag.start.y);
       positionCalInput();
