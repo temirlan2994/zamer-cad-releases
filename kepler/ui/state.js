@@ -18,6 +18,10 @@ export const state = {
   lsVis: { shadows: true, plants: true, covers: true, objects: true, labels: false, notes: true },
   // Стиль графики ландшафта: 'sketch' | 'drawing' (ui/landscape-style.js).
   lsStyle: 'sketch',
+  // Тени ландшафта по солнцу (ui/landscape-style.js, ui/landscape-sun.js):
+  // { mode: 'off'|'default'|'sun', date, time, analysis }; dragging — тянут ползунок.
+  lsSun: { mode: 'default', date: '2026-06-21', time: 900, analysis: false },
+  lsSunDragging: false,
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },
   selection: null,
   hover: null,

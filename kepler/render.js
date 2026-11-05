@@ -30,8 +30,10 @@ import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anc
 import { landscapeWarnings } from './core/landscape.js';
 import {
   drawHouseShadow, drawLandscapeArrayPreview, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
-  drawLandscapeSiteBase, landscapeShadow, lsPalette, visibleLandscape,
+  drawLandscapeSiteBase, drawSunGrid, drawSunShadows, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
+import { landscapeSunFrame, landscapeSunGrid } from './ui/landscape-sun.js';
+import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 
@@ -185,8 +187,15 @@ export function createRenderer(canvas) {
     const lsStyle = opts.lsStyle || state.lsStyle || 'sketch';
     const lsDark = !print && luminance(tokens.canvas) < 0.4;
     const lsPal = lsPalette(lsStyle, lsDark);
+    // Тени (плашка «Тени» в «Ландшафте»): 'off' — нет, 'default' — условные
+    // (как раньше), 'sun' — по солнцу (core/landscape-shadow.js, кеш в ui/landscape-sun.js).
+    const sunMode = landscape ? (state.lsSun?.mode || 'default') : 'default';
+    const shadowsOn = lsVis?.shadows !== false && sunMode !== 'off';
+    const sunFrame = landscape && shadowsOn && sunMode === 'sun' ? landscapeSunFrame(state.project, lsObjects) : null;
+    const sunDir = sunFrame?.sun.up ? { x: sunFrame.sun.dir.x, y: sunFrame.sun.dir.y, k: 0.3 } : null;
     const lsOpts = {
-      px, lod: scale * 1000, shadow: landscapeShadow(site), noShadows: lsVis?.shadows === false,
+      px, lod: scale * 1000, shadow: sunDir || landscapeShadow(site), noShadows: !shadowsOn || sunMode === 'sun',
+      sunShadows: landscape && sunMode !== 'default',
       style: lsStyle, dark: lsDark, pal: lsPal, dpr,
     };
     const houseFootprints = landscape ? buildingSiteCheck(state.project).footprint.map((f) => f.corners) : [];
@@ -199,7 +208,12 @@ export function createRenderer(canvas) {
       wall: lsPal.ink, wallBearing: lsPal.ink,
     } : tokens;
     if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
-    if (landscape && houseFootprints.length) {
+    if (landscape && sunMode === 'sun') {
+      // Анализ освещённости — под тенями; тени по солнцу — на земле, до дома и объектов.
+      const grid = state.lsSun?.analysis ? landscapeSunGrid(state.project, lsObjects) : null;
+      if (grid) drawSunGrid(ctx, grid, lsOpts);
+      if (sunFrame) drawSunShadows(ctx, sunFrame.polys, lsOpts, { simple: sunFrame.simple });
+    } else if (landscape && shadowsOn && houseFootprints.length) {
       // Тень дома; сам дом ниже рисуется настоящим планом этажа (полы, стены, проёмы).
       drawHouseShadow(ctx, houseFootprints, lsOpts, site?.buildingHeight || 6000);
     }
@@ -864,7 +878,9 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
 
   // Тени (инсоляция): дом + соседи — в координатах съёмки, поэтому тени
   // совпадают со стенами при любом повороте дома и вида.
-  if (site.sun?.enabled) {
+  // В «Ландшафте» при тенях «Солнце»/«Выкл» тени инсоляции участка не дублируются.
+  const lsMode = state.modeName === 'landscape' ? (state.lsSun?.mode || 'default') : 'default';
+  if (site.sun?.enabled && lsMode === 'default') {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
     const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
     if (vector) {
@@ -1112,8 +1128,42 @@ function drawCompass(ctx, state, site, width, tokens) {
   ctx.font = '700 10px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('С', 0, -r + 4);
-  // Солнце на лимбе.
-  if (site.sun?.enabled) {
+  // Солнце на лимбе: в «Ландшафте» с тенями «Солнце» — лучистое, по
+  // времени плашки, и подпись даты/времени под компасом.
+  const lsSun = state.modeName === 'landscape' && state.lsSun?.mode === 'sun' ? state.lsSun : null;
+  if (lsSun) {
+    const sun = sunForSite({ ...site, north: 0 }, lsSun.date, lsSun.time);
+    ctx.save();
+    ctx.rotate((sun.azimuth * Math.PI) / 180);
+    const sy = -r - 2;
+    ctx.globalAlpha = sun.up ? 1 : 0.45;
+    ctx.strokeStyle = '#e39a16';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i * Math.PI) / 4;
+      ctx.moveTo(Math.cos(a) * 7.5, sy + Math.sin(a) * 7.5);
+      ctx.lineTo(Math.cos(a) * 10.5, sy + Math.sin(a) * 10.5);
+    }
+    ctx.stroke();
+    ctx.fillStyle = sun.up ? '#f6b52c' : '#9aa1a8';
+    ctx.beginPath();
+    ctx.arc(0, sy, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    ctx.rotate(-angle);
+    const text = formatSunLabel(lsSun.date, lsSun.time) + (sun.up ? '' : ' · солнце за горизонтом');
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = tokens.surface;
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(r + 2 - tw - 10, r + 16, tw + 10, 18);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tokens.text;
+    ctx.fillText(text, r - 3, r + 25);
+  } else if (site.sun?.enabled) {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
     if (sun.altitude > 0.5) {
       const sunAngle = (sun.azimuth * Math.PI) / 180;

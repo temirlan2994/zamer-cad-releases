@@ -2039,7 +2039,7 @@ function drawPlanterBody(ctx, o, outer, inner, C, rc, sd) {
     const lift = Math.min(220, Math.max(40, H * 0.32));
     const d = { x: sd.x * lift, y: sd.y * lift };
     // Падающая тень у подножия (низкому коробу — без длинной тени).
-    if (H < 400) {
+    if (H < 400 && rc.cast) {
       ctx.save();
       ctx.fillStyle = rc.pal.shadow;
       ctx.globalAlpha = 0.14;
@@ -2290,7 +2290,7 @@ function drawRetaining(ctx, o, C, rc) {
     const far = retainingEdges(o, ri.thick + face * 2).lower;
     // Тень у подножия — полосой за гранью, затухает наружу.
     const sh = Math.min(900, Math.max(150, H * 0.45));
-    for (const [k, alpha] of [[1, 0.1], [0.55, 0.12]]) {
+    for (const [k, alpha] of rc.cast ? [[1, 0.1], [0.55, 0.12]] : []) {
       const farSh = retainingEdges(o, ri.thick + (face + sh * k) * 2).lower;
       tracePath(ctx, [...far, ...[...farSh].reverse()], true);
       ctx.fillStyle = rgba(rc.pal.shadow, alpha);
@@ -2391,6 +2391,9 @@ function baseContext(opts) {
   const dpr = opts.dpr || globalThis.devicePixelRatio || 1;
   return {
     px: opts.px, lod: opts.lod, pal, P: pal.P, c: pal.c, ink: pal.ink, mono: pal.mono, dpr,
+    // Падающие тени считает core/landscape-shadow.js (режим «Солнце» или
+    // «Выкл») — свои условные тени у подножия объекты не рисуют.
+    cast: !opts.sunShadows,
     k: (opts.lod / 1000) * dpr, // device px на мм
   };
 }
@@ -2569,9 +2572,35 @@ function drawPlant(ctx, o, def, C, rc) {
   ctx.drawImage(cv, -cv.width / 2 / sk, -cv.height / 2 / sk, cv.width / sk, cv.height / sk);
 }
 
+// Объект целиком вне холста? Габарит в мире → экран по текущей матрице ctx.
+// extra — запас (мм) на тень и выступы. Без getTransform — считаем видимым.
+export function isOffscreen(ctx, o, def, extra = 0) {
+  if (!ctx.getTransform || !ctx.canvas || !(ctx.canvas.width > 0)) return false;
+  let x0; let x1; let y0; let y1;
+  if (Array.isArray(o.points) && o.points.length) {
+    x0 = y0 = Infinity; x1 = y1 = -Infinity;
+    for (const p of o.points) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    const pad = (o.width || 0) + extra;
+    x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+  } else {
+    const r = Math.hypot(o.w || 0, o.h || o.w || 0) / 2 + extra + (def?.height || 0) * 0.5;
+    x0 = o.x - r; x1 = o.x + r; y0 = o.y - r; y1 = o.y + r;
+  }
+  if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
+  const m = ctx.getTransform();
+  let sx0 = Infinity; let sx1 = -Infinity; let sy0 = Infinity; let sy1 = -Infinity;
+  for (const [x, y] of [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) {
+    const px = m.a * x + m.c * y + m.e;
+    const py = m.b * x + m.d * y + m.f;
+    sx0 = Math.min(sx0, px); sx1 = Math.max(sx1, px); sy0 = Math.min(sy0, py); sy1 = Math.max(sy1, py);
+  }
+  return sx1 < 0 || sy1 < 0 || sx0 > ctx.canvas.width || sy0 > ctx.canvas.height;
+}
+
 export function drawLandscapeObject(ctx, o, opts) {
   const def = landscapeDef(o.kind);
   if (!def) return;
+  if (def.shape !== 'note' && isOffscreen(ctx, o, def, 1500)) return;
   if (isPathShape(def)) { drawShapeObject(ctx, o, def, opts); return; }
   if (def.shape === 'note') { drawCallout(ctx, o, opts); return; }
   const look = LOOKS[def.look] || LOOKS.pad;
@@ -2651,13 +2680,124 @@ export function drawHouseShadow(ctx, footprints, opts, height = 6000) {
   ctx.restore();
 }
 
+// ------------------------------------------------------------ Тени по солнцу
+
+// Узор штриховки тени для «Чертежа» — в пикселях экрана (не масштабируется).
+const hatchCache = new Map();
+function shadowHatch(ctx, ink, dpr) {
+  const step = Math.max(4, Math.round(5 * dpr));
+  const key = `${ink}|${step}`;
+  let pat = hatchCache.get(key);
+  if (pat) return pat;
+  let cv;
+  try {
+    cv = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(step, step) : document.createElement('canvas');
+  } catch { return null; }
+  cv.width = step; cv.height = step;
+  const g = cv.getContext('2d');
+  g.strokeStyle = ink;
+  g.lineWidth = Math.max(0.7, 0.6 * dpr);
+  g.beginPath();
+  // Диагональ 45° с продолжением в соседние плитки — без разрывов.
+  for (const o of [-step, 0, step]) { g.moveTo(o, step); g.lineTo(o + step, 0); }
+  g.stroke();
+  pat = ctx.createPattern(cv, 'repeat');
+  if (hatchCache.size > 16) hatchCache.clear();
+  hatchCache.set(key, pat);
+  return pat;
+}
+
+// Тени по солнцу (core/landscape-shadow.js): все полигоны одним путём
+// (одна ориентация → nonzero объединяет, перекрытия не темнеют дважды).
+// Рисуются после покрытий и до дома/объектов — только на земле.
+// «Эскиз» — полупрозрачно и мягко (размытие края, пока не тянут ползунок);
+// «Чертёж» — светлая заливка и сплошная штриховка 45°.
+export function drawSunShadows(ctx, polys, opts, { simple = false } = {}) {
+  if (!polys?.length) return;
+  const rc = baseContext(opts);
+  ctx.save();
+  ctx.beginPath();
+  for (const s of polys) {
+    const p = s.poly;
+    ctx.moveTo(p[0].x, p[0].y);
+    for (let i = 1; i < p.length; i += 1) ctx.lineTo(p[i].x, p[i].y);
+    ctx.closePath();
+  }
+  if (rc.mono) {
+    // Путь уже в пикселях: узор — в осях экрана.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = rc.pal.dark ? 0.22 : 0.1;
+    ctx.fillStyle = rc.ink;
+    ctx.fill('nonzero');
+    const pat = shadowHatch(ctx, rc.ink, rc.dpr);
+    if (pat) {
+      ctx.globalAlpha = rc.pal.dark ? 0.6 : 0.55;
+      ctx.fillStyle = pat;
+      ctx.fill('nonzero');
+    }
+  } else {
+    const blur = simple ? 0 : Math.min(6, Math.max(0, rc.k * 90));
+    if (blur >= 0.8 && 'filter' in ctx) ctx.filter = `blur(${blur.toFixed(1)}px)`;
+    ctx.globalAlpha = rc.pal.dark ? 0.42 : 0.3;
+    ctx.fillStyle = rc.pal.shadow;
+    ctx.fill('nonzero');
+  }
+  ctx.restore();
+}
+
+// Тепловая карта «часов солнца» (core/landscape-shadow.js sunHoursGrid):
+// тень — сине-лиловая, солнце — тёплая жёлтая; вне участка — пусто.
+const gridImages = new WeakMap();
+function sunHeatColor(t) {
+  const stops = [[0, [74, 82, 170]], [0.35, [92, 160, 196]], [0.6, [150, 204, 120]], [0.8, [244, 214, 92]], [1, [246, 150, 62]]];
+  for (let i = 1; i < stops.length; i += 1) {
+    if (t <= stops[i][0]) {
+      const [t0, a] = stops[i - 1];
+      const [t1, b] = stops[i];
+      const u = (t - t0) / (t1 - t0 || 1);
+      return a.map((v, k) => Math.round(v + (b[k] - v) * u));
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+export function sunHeatCss(t) {
+  const [r, g, b] = sunHeatColor(Math.max(0, Math.min(1, t)));
+  return `rgb(${r},${g},${b})`;
+}
+export function drawSunGrid(ctx, grid, opts) {
+  if (!grid) return;
+  let img = gridImages.get(grid);
+  if (!img) {
+    try {
+      img = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(grid.cols, grid.rows) : document.createElement('canvas');
+    } catch { return; }
+    img.width = grid.cols; img.height = grid.rows;
+    const g = img.getContext('2d');
+    const data = g.createImageData(grid.cols, grid.rows);
+    const full = grid.dayHours || 1;
+    for (let i = 0; i < grid.hours.length; i += 1) {
+      const v = grid.hours[i];
+      if (Number.isNaN(v)) continue;
+      const [r, gg, b] = sunHeatColor(v / full);
+      data.data[i * 4] = r; data.data[i * 4 + 1] = gg; data.data[i * 4 + 2] = b; data.data[i * 4 + 3] = 255;
+    }
+    g.putImageData(data, 0, 0);
+    gridImages.set(grid, img);
+  }
+  ctx.save();
+  ctx.globalAlpha = opts.dark ? 0.5 : 0.58;
+  ctx.imageSmoothingEnabled = (opts.lod || 0) < 60; // вблизи — ячейки видны
+  ctx.drawImage(img, grid.x0, grid.y0, grid.cols * grid.cell, grid.rows * grid.cell);
+  ctx.restore();
+}
+
 // Тени объектов, низкие объекты, кроны — после дома.
 export function drawLandscapeRaised(ctx, objects, opts) {
   const shadows = opts.lod >= 1.5 && !opts.noShadows;
   const rc = shadows ? baseContext(opts) : null;
   const shadowOf = (o) => {
     const def = landscapeDef(o.kind);
-    if (def?.shadow) drawShadow(ctx, o, def, opts.shadow, rc);
+    if (def?.shadow && !isOffscreen(ctx, o, def, 1500 + (def.height || 0) * 1.5)) drawShadow(ctx, o, def, opts.shadow, rc);
   };
   // Тени посадок в коробе — после коробов (иначе их закроет засыпка).
   if (shadows) for (const o of objects) if (!o.parent) shadowOf(o);

@@ -102,6 +102,8 @@ export function hashStr(s) {
 // ------------------------------------------------------------ Кеш
 
 const LIMIT = 700;
+const SPRITE_MAX_SIDE = 1400;
+const SPRITE_MAX_AREA = 1_300_000;
 const sprites = new Map();
 const stats = { hits: 0, misses: 0 };
 export const spriteStats = () => ({ ...stats, size: sprites.size });
@@ -127,6 +129,9 @@ export function cachedSprite(key, w, h, draw) {
   stats.misses += 1;
   const cw = Math.max(1, Math.ceil(w));
   const ch = Math.max(1, Math.ceil(h));
+  // Огромный спрайт (сильное приближение) дороже прямой отрисовки и съедает
+  // память: вызывающий рисует вектором или пропускает.
+  if (cw > SPRITE_MAX_SIDE || ch > SPRITE_MAX_SIDE || cw * ch > SPRITE_MAX_AREA) return null;
   s = makeCanvas(cw, ch);
   if (!s) return null;
   const g = s.getContext('2d');

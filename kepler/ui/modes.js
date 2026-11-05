@@ -3,6 +3,7 @@
 import { panForMovedBuilding } from '../core/site-check.js';
 import { refs } from './dom.js';
 import { renderLandscapeLibrary } from './landscape.js';
+import { refreshLandscapeSun } from './landscape-sun.js';
 import { renderLevelBar } from './levels.js';
 import { applyLibraryTab, renderFurnitureBar } from './library.js';
 import { renderProps } from './props.js';
@@ -64,6 +65,7 @@ export function setEditorMode(mode) {
   refs.libraryTitle.hidden = mode === 'plan'; // в «Плане» заголовок задаёт вкладка
   refs.libraryTitle.textContent = mode === 'plan' ? 'Помещения' : 'Участок';
   document.body.classList.toggle('mode-landscape', mode === 'landscape');
+  if (mode === 'landscape') refreshLandscapeSun(); // участок мог смениться (широта, граница)
   refs.libraryHint.textContent = mode === 'plan'
     ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'
     : 'Топосъёмка, граница, красная линия, въезд, дорога, север.';
