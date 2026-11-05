@@ -2281,7 +2281,7 @@ const WALL_JOINT = { concrete: 3000, corten: 2000, gabion: 1000, stone: 0 };
 function drawRetaining(ctx, o, C, rc) {
   const ri = retainingInfo(o);
   const e = retainingEdges(o);
-  if (e.lower.length < 2 || e.upper.length < 2) return;
+  if (!e.lower || !e.upper || e.lower.length < 2 || e.upper.length < 2) return;
   const H = ri.height;
   const lowN = (angle) => ({ x: -Math.sin(angle) * e.lowSign, y: Math.cos(angle) * e.lowSign });
   if (!rc.mono && H > 0) {
@@ -2731,6 +2731,65 @@ export function drawLandscapeGhost(ctx, o, opts, color) {
   ctx.setLineDash([opts.px(7), opts.px(5)]);
   ctx.stroke();
   ctx.setLineDash([]);
+}
+
+// Предпросмотр «Массива» (инструмент ls-array): копии-призраки, линия пути
+// или центр с окружностью, опорная точка. Призраков — не больше 400.
+export function drawLandscapeArrayPreview(ctx, tool, opts, color) {
+  const list = tool.preview?.objects || [];
+  const n = Math.min(list.length, 400);
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  for (let i = 0; i < n; i += 1) if (!list[i].parent) drawLandscapeObject(ctx, list[i], opts);
+  for (let i = 0; i < n; i += 1) if (list[i].parent) drawLandscapeObject(ctx, list[i], opts);
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = opts.px(1.2);
+  ctx.setLineDash([opts.px(6), opts.px(4)]);
+  for (let i = 0; i < n; i += 1) {
+    if (list[i].parent) continue;
+    outlinePath(ctx, objectOutline(list[i]));
+    ctx.stroke();
+  }
+  const dot = (p, r = 4, fill = '#ffffff') => {
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.fillStyle = fill;
+    ctx.beginPath(); ctx.arc(p.x, p.y, opts.px(r), 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  };
+  ctx.lineWidth = opts.px(1.6);
+  if (tool.mode === 'path') {
+    const pts = [...(tool.points || []), ...(tool.cursor ? [tool.cursor] : [])];
+    if (pts.length >= 2) {
+      ctx.beginPath();
+      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.stroke();
+    }
+    for (const p of tool.points || []) dot(p);
+  }
+  if (tool.mode === 'polar') {
+    const c = tool.center || tool.cursor;
+    const first = tool.preview?.positions?.[0];
+    if (c && first) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, Math.hypot(first.x - c.x, first.y - c.y), 0, TAU);
+      ctx.stroke();
+    }
+    if (c) {
+      const r = opts.px(7);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(c.x - r, c.y); ctx.lineTo(c.x + r, c.y);
+      ctx.moveTo(c.x, c.y - r); ctx.lineTo(c.x, c.y + r);
+      ctx.stroke();
+      if (tool.center) dot(c, 3, color);
+    }
+  }
+  if (tool.preview?.base) dot(tool.preview.base, 3.5, color);
+  ctx.restore();
 }
 
 function outlinePath(ctx, pts) {

@@ -2,6 +2,7 @@
 // для комнат, стен, проёмов, мебели и групп, как в BIM-редакторах.
 
 import { isShaft } from '../core/catalog.js';
+import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
 import { el, escapeHtml } from './dom.js';
 import { findWall } from './hit.js';
@@ -85,11 +86,16 @@ function contentForSelection(sel) {
     const many = sel.ids.length > 1;
     // «Разорвать» — дорожка на отдельные плиты/доски/участки (как EXPLODE).
     const ids = new Set(sel.ids);
-    const paths = (state.project.site?.landscape?.objects || []).filter((o) => ids.has(o.id) && o.kind === 'path' && !o.locked);
+    const chosen = (state.project.site?.landscape?.objects || []).filter((o) => ids.has(o.id));
+    const paths = chosen.filter((o) => o.kind === 'path' && !o.locked);
+    // «Засадить» — один газон/клумба/короб; «Массив» — копии рядом, по кругу, по линии.
+    const fillable = !many && chosen.length === 1 && canFill(chosen[0]) && !chosen[0].locked;
     return {
       label: many ? `Выбрано: ${sel.ids.length}` : 'Ландшафт',
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}
         ${button('rotate', '↻', 'Повернуть 90°', 'R')}
+        ${chosen.some((o) => !o.locked) ? button('array', '⁙', 'Массив', 'Shift+A') : ''}
+        ${fillable ? button('plant-fill', '✿', 'Засадить') : ''}
         ${paths.length ? button('explode', '⁂', 'Разорвать', 'X') : ''}
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
@@ -127,6 +133,10 @@ export function bindSelectionToolbar() {
       else if (action === 'rotate') ls.rotateLandscape90();
       else if (action === 'delete') ls.deleteLandscapeSelection();
       else if (action === 'explode') ls.explodeLandscapeSelection();
+      else if (action === 'array' || action === 'plant-fill') {
+        const la = await import('./landscape-array.js');
+        if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();
+      }
       return;
     }
     const actions = await actionsReady;

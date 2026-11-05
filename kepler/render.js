@@ -29,7 +29,7 @@ import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
 import { landscapeWarnings } from './core/landscape.js';
 import {
-  drawHouseShadow, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
+  drawHouseShadow, drawLandscapeArrayPreview, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
   drawLandscapeSiteBase, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
 import { luminance } from './ui/render-landscape-kit.js';
@@ -348,6 +348,7 @@ export function createRenderer(canvas) {
     if (lsObjects.length) drawLandscapeRaised(ctx, lsObjects, lsOpts);
     if (landscape && state.ghostLandscape) drawLandscapeGhost(ctx, state.ghostLandscape, lsOpts, tokens.accent);
     if (landscape && state.tool?.kind === 'draw-landscape') drawLandscapeDraft(ctx, state.tool, lsOpts, tokens.accent);
+    if (landscape && state.tool?.kind === 'ls-array') drawLandscapeArrayPreview(ctx, state.tool, lsOpts, tokens.accent);
     if (site) drawSiteOver(ctx, state, site, tokens, px);
 
     state._calLabelAt = null;

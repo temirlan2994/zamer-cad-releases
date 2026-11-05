@@ -31,6 +31,10 @@ import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
+import {
+  arrayDblClick, arrayHover, arrayPointerDown, bindPlantFill, handleArrayKey, plantFillHtml, renderArrayProps, startLandscapeArray,
+} from './landscape-array.js';
+import { canFill } from '../core/landscape-array.js';
 import { requestDraw, screenToWorld, worldToScreen } from './view.js';
 
 export const LANDSCAPE_MIME = 'application/x-kepler-landscape';
@@ -295,6 +299,7 @@ export function landscapeHover(world, canvas, event) {
     requestDraw();
     return true;
   }
+  if (state.tool?.kind === 'ls-array') return arrayHover(world, canvas, event);
   if (state.tool) return false;
   const screen = worldToScreen(world.x, world.y);
   const sh = hitShapeHandle(screen);
@@ -362,6 +367,7 @@ export function landscapePointerDown(event, screen, world) {
     addDraftPoint(p, screen);
     return null;
   }
+  if (tool?.kind === 'ls-array') { arrayPointerDown(event, screen, world); return null; }
   if (tool) return null;
   const sh = hitShapeHandle(screen);
   if (sh) {
@@ -541,6 +547,7 @@ export function landscapeDragEnd(drag) {
 // Двойной клик: завершить рисование, удалить вершину (по ней) или вставить вершину на ребре.
 export function landscapeDblClick(world) {
   if (state.tool?.kind === 'draw-landscape') { finishLandscapeDraw(); return true; }
+  if (state.tool?.kind === 'ls-array') return arrayDblClick();
   if (state.tool) return false;
   const objs = selectedObjects();
   if (objs.length !== 1) return false;
@@ -693,6 +700,7 @@ export function explodeLandscapeSelection() {
 // Клавиши режима; true — нажатие обработано.
 export function handleLandscapeKey(event) {
   const mod = event.ctrlKey || event.metaKey;
+  if (state.tool?.kind === 'ls-array' && !mod) return handleArrayKey(event);
   if (state.tool?.kind === 'draw-landscape' && !mod) {
     if (event.key === 'Enter') { event.preventDefault(); finishLandscapeDraw(); return true; }
     if (event.key === 'Backspace') { event.preventDefault(); backspaceDraft(); return true; }
@@ -709,6 +717,12 @@ export function handleLandscapeKey(event) {
     const o = v && selectedIds().length === 1 ? landscapeObjects().find((x) => x.id === v.id && selectedIds()[0] === x.id) : null;
     if (o && !o.locked && o.points?.[v.index]) { removeVertexAt(o, v.index); return true; }
     deleteLandscapeSelection();
+    return true;
+  }
+  // Shift+A — «Массив» выделенного (A и Shift+A больше нигде не заняты).
+  if (event.shiftKey && event.code === 'KeyA' && !state.tool && selectedIds().length) {
+    event.preventDefault();
+    startLandscapeArray();
     return true;
   }
   if (event.code === 'KeyR') { rotateLandscape90(); return true; }
@@ -1122,6 +1136,7 @@ function bindBuildProps(panel, o) {
 
 export function renderLandscapeProps(panel) {
   if (state.tool?.kind === 'draw-landscape') { renderDrawProps(panel); return; }
+  if (state.tool?.kind === 'ls-array') { renderArrayProps(panel); return; }
   const objs = selectedObjects();
   if (!objs.length) { renderLandscapeSummary(panel); return; }
   if (objs.length > 1) {
@@ -1129,7 +1144,7 @@ export function renderLandscapeProps(panel) {
       <h2>Ландшафт</h2>
       <div class="prop-block">
         <div class="prop-row"><span>Выбрано объектов</span><strong>${objs.length}</strong></div>
-        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия${objs.some(canExplode) ? ' · X — разорвать дорожки' : ''}</p>
+        <p class="hint">Тяните мышью или стрелками · R — повернуть группу · Ctrl+D — копия · Shift+A — массив${objs.some(canExplode) ? ' · X — разорвать дорожки' : ''}</p>
       </div>`;
     bindCommon(panel);
     return;
@@ -1174,7 +1189,7 @@ export function renderLandscapeProps(panel) {
       </select></label>
       <button type="button" id="lsAlongGo">Посадить вдоль</button>
     </div>
-    ${def.shape === 'poly' ? `
+    ${def.shape === 'poly' && !canFill(o) ? `
     <h3>Заполнить растениями</h3>
     <div class="prop-block">
       <label class="prop-field"><span>Растение</span><select id="lsFillKind">${plantOptions(helper.plant)}</select></label>
@@ -1200,10 +1215,12 @@ export function renderLandscapeProps(panel) {
       ${notes.map((t) => `<p class="ls-note">${escapeHtml(t)}</p>`).join('')}
     </div>
     ${helpers}
-    ${planterFillHtml(o)}`;
+    ${planterFillHtml(o)}
+    ${plantFillHtml(o)}`;
   bindCommon(panel);
   bindPathProps(panel, o);
   bindBuildProps(panel, o);
+  bindPlantFill(panel, o);
   const num = (id) => Number(panel.querySelector(id)?.value);
   panel.querySelector('#lsVariant')?.addEventListener('change', (e) => mutate(() => { o.variant = e.target.value; }));
   const applySize = () => {
