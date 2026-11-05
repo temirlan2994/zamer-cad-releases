@@ -34,6 +34,7 @@ describe('3D', () => {
     assert.ok(Math.abs(after.cam.yaw - before.cam.yaw) > 0.5);
     assert.ok(after.cam.pitch > before.cam.pitch);
     assert.ok(after.cam.dist < before.cam.dist);
+    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'приближение не двигает камеру внутрь модели');
   });
 
   it('крыша добавляет грани; Esc закрывает 3D', async () => {

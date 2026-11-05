@@ -4,6 +4,7 @@
 
 export const DEFAULT_PARTITION = 100; // перегородка между помещениями
 export const DEFAULT_EXTERIOR = 250; // наружная стена
+export const DEFAULT_BEARING = 200; // внутренняя несущая стена
 export const DOOR_WIDTH = 800;
 export const WINDOW_WIDTH = 1200;
 export const MIN_PASSAGE = 700; // минимальный проход, мм
@@ -256,9 +257,12 @@ export const ROOM_TYPES = [
     { kind: 'coat-rack', default: true }, { kind: 'shoe-bench', default: true },
   ] },
   { type: 'corridor', title: 'Коридор', w: 3000, h: 1200, tint: 'neutral', furniture: [] },
-  { type: 'stairs-room', title: 'Лестница', w: 2400, h: 3200, tint: 'neutral', furniture: [
+  { type: 'stairs-room', title: 'Лестница', w: 2600, h: 3650, tint: 'neutral', furniture: [
     { kind: 'stairs', default: true },
   ] },
+  // Вертикальный проём через перекрытие. Размещается только внутри помещения,
+  // не имеет пола и не входит в полезную площадь.
+  { type: 'shaft', title: 'Шахта', w: 1200, h: 1200, tint: 'neutral', shaft: true, furniture: [] },
   { type: 'garage', title: 'Гараж', w: 3600, h: 6000, tint: 'cool', furniture: [
     { kind: 'car', default: true }, { kind: 'workbench', default: false },
   ] },
@@ -278,6 +282,10 @@ export function roomType(type) {
 // типом помещения; room.open, если есть, имеет приоритет.
 export function isOpenRoom(room) {
   return Boolean(room.open ?? roomType(room.type)?.open);
+}
+
+export function isShaft(room) {
+  return Boolean(room?.shaft ?? roomType(room?.type)?.shaft);
 }
 
 export function furnitureDef(kind) {

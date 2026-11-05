@@ -335,8 +335,8 @@ export function sofaSpots(item) {
   if (!comp || comp.type !== 'sofa') return [];
   const r = item.rotation || 0;
   return centered(sofaLayout(comp)).ends.map((e) => {
-    const p = rot(e.x, e.y, r);
-    const n = rot(e.nx, e.ny, r);
+    const p = rot(item.mirrored ? -e.x : e.x, e.y, r);
+    const n = rot(item.mirrored ? -e.nx : e.nx, e.ny, r);
     const r3 = (v) => Math.round(v * 1000) / 1000 + 0; // + 0: без «-0»
     return { end: e.end, at: e.at, x: r3(item.x + p.x), y: r3(item.y + p.y), nx: r3(n.x), ny: r3(n.y) };
   });
@@ -346,6 +346,7 @@ export function sofaSpots(item) {
 // внутренний угол Г/П. Для прочих предметов — в их прямоугольник.
 export function pointInComposite(item, px, py) {
   const local = rot(px - item.x, py - item.y, -(item.rotation || 0));
+  if (item.mirrored) local.x = -local.x;
   const inRect = (r) => local.x >= r.x - 1e-6 && local.x <= r.x + r.w + 1e-6 && local.y >= r.y - 1e-6 && local.y <= r.y + r.h + 1e-6;
   if (isFixedSizeComp(item)) return compositeParts(item).some((p) => inRect(partRect(p)));
   return inRect({ x: -item.w / 2, y: -item.h / 2, w: item.w, h: item.h });
@@ -561,8 +562,10 @@ const rotate = (x, y, deg) => {
 export function partsInHouse(item, parts = compositeParts(item)) {
   const rot = item.rotation || 0;
   return parts.map((p) => {
-    const q = rotate(p.x, p.y, rot);
-    return { ...p, x: item.x + q.x, y: item.y + q.y, rotation: (((p.rotation || 0) + rot) % 360 + 360) % 360 };
+    const localX = item.mirrored ? -p.x : p.x;
+    const localRotation = item.mirrored ? 180 - (p.rotation || 0) : (p.rotation || 0);
+    const q = rotate(localX, p.y, rot);
+    return { ...p, x: item.x + q.x, y: item.y + q.y, rotation: ((localRotation + rot) % 360 + 360) % 360 };
   });
 }
 

@@ -90,6 +90,30 @@ describe('телефон', () => {
     assert.ok(Math.abs(v1.panX - v0.panX - 120) < 2 && Math.abs(v1.panY - v0.panY + 80) < 2, `сдвиг ${v1.panX - v0.panX}, ${v1.panY - v0.panY}`);
   });
 
+  it('«Экспорт» открывается целиком поверх холста и закрывается по Esc', async () => {
+    await app.page.evaluate(() => window.scrollTo(0, 0));
+    await app.page.click('#exportBtn');
+    await app.page.waitForSelector('#exportDropdown', { state: 'visible' });
+    const box = await (await app.page.$('#exportDropdown')).boundingBox();
+    const vp = app.page.viewportSize();
+    assert.ok(box.x >= 0 && box.x + box.width <= vp.width + 1, 'меню экспорта вылезает за экран по ширине');
+    const first = await (await app.page.$('#exportDropdown button')).boundingBox();
+    const top = await app.page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('#exportDropdown') !== null, { x: first.x + 10, y: first.y + 10 });
+    assert.equal(top, true, 'первый пункт перекрыт шапкой');
+    await app.page.keyboard.press('Escape');
+    assert.equal(await app.page.isHidden('#exportDropdown'), true);
+  });
+
+  it('выбор инструмента участка закрывает нижнюю панель', async () => {
+    await app.page.click('#modeSiteBtn');
+    await app.page.tap('#mobileBar [data-sheet="rooms"]');
+    await app.page.waitForSelector('#siteTools .room-card', { state: 'visible' });
+    await app.page.tap('#siteTools .room-card >> nth=3');
+    await app.page.waitForFunction(() => !document.body.classList.contains('sheet-library'));
+    await app.page.keyboard.press('Escape');
+    await app.page.click('#modePlanBtn');
+  });
+
   it('без ошибок в консоли', () => {
     assert.deepEqual(app.errors, []);
   });

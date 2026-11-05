@@ -1,11 +1,12 @@
 // Модель проекта Kepler Plan: создание, сериализация, идентификаторы.
 // Чистый модуль без DOM. Все размеры в миллиметрах, ось Y вниз.
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
+import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
 import { SCHEMA, migrateProject, normDeg } from './migrate.js';
 import { createSite, ensureSite } from './site.js';
 import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
+import { roomContainsPoint } from './room-shape.js';
 
 export { SCHEMA };
 
@@ -86,6 +87,7 @@ export function createProject(name = 'Новый дом') {
     settings: {
       partition: DEFAULT_PARTITION,
       exterior: DEFAULT_EXTERIOR,
+      bearing: DEFAULT_BEARING, // внутренняя несущая стена по умолчанию
       dimOuter: true, // наружные размеры по внешней грани стен (иначе — по оси)
       units: 'mm', // подписи размеров на плане: 'mm' (5000) или 'm' (5,00)
     },
@@ -182,7 +184,8 @@ export function normalizeProject(data) {
     origin: { x: Number(b.origin?.x) || 0, y: Number(b.origin?.y) || 0 },
   };
   data.settings = {
-    partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, dimOuter: true, units: 'mm', ...(data.settings || {}),
+    partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, bearing: DEFAULT_BEARING,
+    dimOuter: true, units: 'mm', ...(data.settings || {}),
   };
   ensureSite(data);
   return attachLevelAccessors(data);
@@ -204,13 +207,10 @@ export function removeRoom(project, roomId) {
   const doomed = new Set([roomId]);
   // Вложенные помещения удаляются вместе с родителем.
   for (const r of project.rooms) if (r.parentId === roomId) doomed.add(r.id);
-  const rects = project.rooms
-    .filter((r) => doomed.has(r.id))
-    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+  // Копии форм (с outline/notch): мебель соседа в вырезе Г-комнаты не трогаем.
+  const shapes = project.rooms.filter((r) => doomed.has(r.id)).map((r) => ({ ...r }));
   project.rooms = project.rooms.filter((r) => !doomed.has(r.id));
   project.openings = project.openings.filter((o) => !doomed.has(o.roomId));
-  // Мебель, стоявшая внутри удалённых помещений, удаляется вместе с ними.
-  project.items = project.items.filter((i) => !rects.some(
-    (r) => i.x >= r.x && i.x <= r.x + r.w && i.y >= r.y && i.y <= r.y + r.h,
-  ));
+  // Мебель, центр которой внутри контура удалённых помещений, удаляется с ними.
+  project.items = project.items.filter((i) => !shapes.some((r) => roomContainsPoint(r, i.x, i.y)));
 }

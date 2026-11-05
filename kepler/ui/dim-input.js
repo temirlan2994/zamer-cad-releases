@@ -1,6 +1,7 @@
 // Поле ввода размера по клику на размерную линию.
 
-import { roomById } from '../core/model.js';
+import { cloneProject, roomById } from '../core/model.js';
+import { moveWallBy, wallRoomDimensions } from '../core/wall-edit.js';
 import { clampOpeningOffset, deriveWalls, openingRect } from '../core/walls.js';
 import { el, toast } from './dom.js';
 import { state } from './state.js';
@@ -11,7 +12,9 @@ import { selectObject } from './tools.js';
 export function openDimInput(dim) {
   const overlay = el('dimInput');
   const input = el('dimInputField');
-  state.dimEdit = { openingId: state.selection.id, kind: dim.kind };
+  state.dimEdit = dim.type === 'wall'
+    ? { type: 'wall', wallKey: dim.wallKey, wallFrom: dim.wallFrom, roomId: dim.roomId }
+    : { type: 'opening', openingId: state.selection.id, kind: dim.kind };
   input.value = Math.round(dim.gap);
   overlay.style.left = `${dim.x}px`;
   overlay.style.top = `${dim.y}px`;
@@ -27,6 +30,44 @@ export function hideDimInput() {
 export function applyDimInput() {
   const edit = state.dimEdit;
   if (!edit) return;
+  if (edit.type === 'wall') {
+    const value = Math.max(0, Number(el('dimInputField').value) || 0);
+    const walls = deriveWalls(state.project);
+    const wall = walls.find((candidate) => candidate.key === edit.wallKey &&
+      (edit.wallFrom === undefined || Math.abs(candidate.from - edit.wallFrom) < 1));
+    const dim = wall && wallRoomDimensions(state.project, wall).find((candidate) => candidate.roomId === edit.roomId);
+    if (!wall || !dim) { hideDimInput(); return; }
+    const target = dim.opposite.edge + dim.edge.outward * value;
+    const delta = target - dim.edge.edge;
+
+    // Сначала проверяем на копии, чтобы неверное число не создавало пустую
+    // запись Undo и не оставляло промежуточную геометрию.
+    // project.rooms/openings/items — скрытые аксессоры активного этажа.
+    // Обычный structuredClone их теряет, поэтому копируем через модель.
+    const probe = cloneProject(state.project);
+    const probeWall = deriveWalls(probe).find((candidate) => candidate.key === edit.wallKey &&
+      (edit.wallFrom === undefined || Math.abs(candidate.from - edit.wallFrom) < 1));
+    const verdict = moveWallBy(probe, probeWall, delta, { finalize: true });
+    if (!verdict.ok) {
+      toast(verdict.reason || 'Так переместить стену нельзя');
+      return;
+    }
+
+    if (verdict.clamped?.length) toast(`Проёмы прижаты к краю укороченной стены: ${verdict.clamped.length}`, true);
+    mutate(() => {
+      moveWallBy(state.project, wall, delta, { finalize: true });
+      const nextWalls = deriveWalls(state.project);
+      state.project.openings = state.project.openings.filter((opening) => {
+        const clamped = clampOpeningOffset(state.project, opening, nextWalls, opening.offset);
+        if (clamped === null) return false;
+        opening.offset = clamped;
+        return true;
+      });
+    });
+    hideDimInput();
+    selectObject({ type: 'wall', key: edit.wallKey, from: edit.wallFrom });
+    return;
+  }
   const opening = state.project.openings.find((o) => o.id === edit.openingId);
   if (!opening) { hideDimInput(); return; }
   const value = Math.max(0, Number(el('dimInputField').value) || 0);

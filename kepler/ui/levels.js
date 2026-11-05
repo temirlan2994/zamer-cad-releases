@@ -45,6 +45,7 @@ export function switchLevel(id) {
   state.selection = null;
   state.hover = null;
   state.ghost = null;
+  state.ghostItem = null;
   project.activeLevel = id;
   refreshDerived();
   afterChange();
@@ -79,6 +80,10 @@ export function addLevel() {
         if (!inside(it, s)) continue;
         const copyItem = createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0);
         if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
+        if (it.kind === 'stairs') {
+          copyItem.stairShape = it.stairShape;
+          copyItem.floorHeight = level.height;
+        }
         level.items.push(copyItem);
       }
     }

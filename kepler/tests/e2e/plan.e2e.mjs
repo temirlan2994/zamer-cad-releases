@@ -21,15 +21,26 @@ describe('план', () => {
     assert.equal(p.sel?.type, 'room');
   });
 
-  it('клик по карточке мебели кладёт её в комнату, панель не прыгает', async () => {
+  it('клик по карточке даёт предмет на курсоре, пробел поворачивает до установки', async () => {
     await app.page.click('#libTabFurniture');
     const chip = await app.page.$('#furnitureItems .furniture-chip');
     // Метим DOM-узел: если панель перерисуется, метка пропадёт.
     await chip.evaluate((n) => { n.dataset.probe = '1'; });
+    const center = await app.page.evaluate(() => {
+      const r = window.__kepler.state.project.rooms[0];
+      return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    });
+    const at = await worldToClient(app.page, center.x, center.y);
     await chip.click();
+    await app.page.mouse.move(at.x, at.y);
+    await app.page.keyboard.press('Space');
+    await app.page.mouse.click(at.x, at.y);
     await chip.click();
+    await app.page.mouse.move(at.x + 35, at.y + 35);
+    await app.page.mouse.click(at.x + 35, at.y + 35);
     const p = await project(app.page);
     assert.equal(p.items, 2);
+    assert.deepEqual(await app.page.evaluate(() => window.__kepler.state.project.items.map((i) => i.rotation)), [90, 0]);
     assert.ok(await app.page.$('#furnitureItems .furniture-chip[data-probe="1"]'), 'панель мебели не перерисовывалась');
     // Оба предмета внутри комнаты.
     const inside = await app.page.evaluate(() => {

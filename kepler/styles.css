@@ -245,6 +245,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   text-overflow: ellipsis;
   cursor: default;
 }
+/* Панель действий выделения занимает верхнюю строку — плашка уходит ниже. */
+.canvas-wrap:has(.selection-toolbar:not([hidden])) .status-strip { top: 66px; }
 .status-strip.ok { background: var(--ok-bg); color: var(--ok-text); }
 .status-strip.warn { background: var(--warn-bg); color: var(--warn-text); }
 
@@ -457,6 +459,62 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   max-width: 85%;
 }
 
+.selection-toolbar {
+  position: absolute;
+  z-index: 24;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 5px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
+.selection-toolbar[hidden] { display: none; }
+.selection-toolbar-label {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  border-right: 1px solid var(--border);
+}
+.selection-toolbar-group { display: flex; gap: 3px; }
+.selection-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+}
+.selection-toolbar button:hover { color: var(--accent); background: var(--surface-2); border-color: var(--border); }
+.selection-toolbar button.danger:hover { color: var(--danger); }
+.selection-toolbar .tool-icon { font-size: 16px; line-height: 1; }
+.selection-toolbar .tool-key { color: var(--muted); font-size: 9px; }
+
+@media (max-width: 760px) {
+  .selection-toolbar { top: 6px; max-width: calc(100% - 12px); overflow-x: auto; justify-content: flex-start; }
+  .selection-toolbar-label { display: none; }
+  .selection-toolbar button { min-width: 42px; min-height: 42px; padding: 5px 8px; flex-direction: column; gap: 1px; }
+  .selection-toolbar .tool-text { font-size: 9px; }
+  .selection-toolbar .tool-key { display: none; }
+}
+
 .wall-buttons {
   position: absolute;
   z-index: 20;
@@ -562,10 +620,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .kitchen-shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 6px; }
 .kitchen-shape button { min-width: 0; padding: 6px 4px; font-size: 12.5px; }
 .kitchen-shape button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stair-shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 0 0 6px; }
+.stair-shape button { min-width: 0; padding: 7px 3px; font-size: 12px; }
+.stair-shape button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .kitchen-els { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .kitchen-el-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px; margin: 0 0 4px 24px; }
 .kitchen-el-row select, .kitchen-el-row input { width: 100%; min-width: 0; }
-@media (pointer: coarse) { .kitchen-shape button { min-height: 40px; } }
+@media (pointer: coarse) { .kitchen-shape button, .stair-shape button { min-height: 40px; } }
 
 /* --- 3D-просмотр поверх плана --- */
 .view3d { position: absolute; inset: 0; z-index: 45; background: var(--canvas); }
@@ -947,6 +1008,9 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   .app { height: 100dvh; }
   .topbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 10px; scrollbar-width: none; }
   .topbar::-webkit-scrollbar { display: none; }
+  /* шапка прокручивается и обрезает absolute-потомков — меню экспорта выносим на fixed */
+  .export-dropdown { position: fixed; left: 8px; right: 8px; top: 52px; z-index: 200; min-width: 0; max-height: calc(100dvh - 64px); overflow-y: auto; }
+  .export-dropdown button { padding: 13px 14px; }
   .topbar > *, .top-actions > * { flex: none; }
   .top-actions { flex-wrap: nowrap; }
   .brand small { display: none; }

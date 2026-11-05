@@ -17,6 +17,7 @@ import { FURNITURE, isRoundItem, isStructural } from './catalog.js';
 import { KITCHEN_PARTS, SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
 import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
+import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect } from './walls.js';
 
@@ -152,7 +153,30 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
   const solid = (profile, z0, depth) => add(`IFCEXTRUDEDAREASOLID(${profile},${add(`IFCAXIS2PLACEMENT3D(${pt(0, 0, z0)},$,$)`)},${zUp},${real(depth)})`);
   const rectProfile = (cx, cy, w, h, angle = 0) => add(`IFCRECTANGLEPROFILEDEF(.AREA.,$,${add(`IFCAXIS2PLACEMENT2D(${pt(cx, cy)},${dir(Math.cos(angle), Math.sin(angle))})`)},${real(w)},${real(h)})`);
   const circleProfile = (cx, cy, r) => add(`IFCCIRCLEPROFILEDEF(.AREA.,$,${add(`IFCAXIS2PLACEMENT2D(${pt(cx, cy)},$)`)},${real(r)})`);
+  // Многоугольный профиль (Г/контур комнаты): точки плана, Y вниз → Y вверх,
+  // обход против часовой стрелки.
+  const polyProfile = (points) => {
+    let ifcPts = points.map((p) => ({ x: p.x, y: -p.y }));
+    const twice = ifcPts.reduce((s, a, i) => { const b = ifcPts[(i + 1) % ifcPts.length]; return s + a.x * b.y - b.x * a.y; }, 0);
+    if (twice < 0) ifcPts = ifcPts.reverse();
+    const refs = ifcPts.map((p) => pt(p.x, p.y));
+    return add(`IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,${add(`IFCPOLYLINE(${list([...refs, refs[0]])})`)})`);
+  };
   const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list([item])})`)])})`);
+
+  // Наборы свойств стен — по одному на тип, общие для всех этажей.
+  const wallPsets = new Map();
+  const wallPset = (type) => {
+    if (!wallPsets.has(type)) {
+      const bool = (v) => (v ? 'IFCBOOLEAN(.T.)' : 'IFCBOOLEAN(.F.)');
+      const props = [
+        add(`IFCPROPERTYSINGLEVALUE('LoadBearing',$,${bool(type !== 'partition')},$)`),
+        add(`IFCPROPERTYSINGLEVALUE('IsExternal',$,${bool(type === 'exterior')},$)`),
+      ];
+      wallPsets.set(type, add(`IFCPROPERTYSET(${guid(`pset-wall-${type}`)},${owner},'Pset_WallCommon',$,${list(props)})`));
+    }
+    return wallPsets.get(type);
+  };
 
   const storeys = [];
   const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, furniture: 0, furnitureParts: 0 };
@@ -168,16 +192,26 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     // Стены: каждая полоса плана — прямоугольник, выдавленный на высоту этажа.
     const walls = deriveWalls(lp);
     const wallRef = new Map();
+    const wallsByType = new Map(); // тип стены → ссылки IFCWALL (для Pset_WallCommon)
     walls.forEach((w, i) => {
+      if (w.hidden) return;
       const band = w.band;
       if (band.w < 1 || band.h < 1) return;
       const profile = rectProfile(band.x + band.w / 2, -(band.y + band.h / 2), band.w, band.h);
-      const name = w.kind === 'shared' ? 'Перегородка общая' : w.kind === 'own' ? 'Стена' : 'Стена (стык)';
+      const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая')
+        : w.kind === 'own' ? 'Стена' : 'Стена (стык)';
       const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(solid(profile, 0, level.height))},$,.STANDARD.)`);
       wallRef.set(w, ref);
       contained.push(ref);
       counts.walls += 1;
+      const type = w.wallType || 'partition';
+      if (!wallsByType.has(type)) wallsByType.set(type, []);
+      wallsByType.get(type).push(ref);
     });
+    // Pset_WallCommon: несущая (наружная и внутренняя несущая) и наружная.
+    for (const [type, refs] of wallsByType) {
+      add(`IFCRELDEFINESBYPROPERTIES(${guid(`rel-pset-wall-${level.id}-${type}`)},${owner},$,$,${list(refs)},${wallPset(type)})`);
+    }
 
     // Проёмы: вычитание из стены + дверь/окно в проёме.
     for (const o of lp.openings) {
@@ -209,10 +243,14 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       contained.push(filler);
     }
 
-    // Помещения: внутренний прямоугольник на высоту потолка; номер — из экспликации.
+    // Помещения: внутренний контур (прямоугольник или Г/контур) на высоту
+    // потолка; номер — из экспликации.
     const numbers = new Map((schedule.find((s) => s.level.id === level.id)?.rows || []).map((row) => [row.id, row.number]));
     for (const room of lp.rooms) {
-      const profile = rectProfile(room.x + room.w / 2, -(room.y + room.h / 2), room.w, room.h);
+      const outline = roomPolygon(room);
+      const profile = outline.length > 4
+        ? polyProfile(outline)
+        : rectProfile(room.x + room.w / 2, -(room.y + room.h / 2), room.w, room.h);
       const sp = add(`IFCSPACE(${guid(`space-${room.id}`)},${owner},${stepString(numbers.get(room.id) || room.name)},$,$,${placement},${shape(solid(profile, 0, roomCeiling(room, level)))},${stepString(room.name)},.ELEMENT.,.SPACE.,$)`);
       spaces.push(sp);
       counts.spaces += 1;

@@ -14,7 +14,10 @@ export const state = {
   hover: null,
   tool: null, // активный инструмент (размещение, рисование, калибровка...)
   ghost: null,
+  ghostItem: null,
   ghostOpening: null,
+  pendingRoomSplit: null, // временное деление стены до первого реального сдвига
+  _wallUI: null, // кликабельные размеры и ручка выбранной стены
   draft: null, // рисуемая ломаная участка
   marquee: null,
   guides: [],

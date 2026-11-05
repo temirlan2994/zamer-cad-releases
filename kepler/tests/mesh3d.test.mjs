@@ -30,6 +30,8 @@ test('окно режет стену: подоконник, перемычка �
   const over = faces.filter((f) => f.kind === 'wall' && f.normal.z === 1 && f.pts.every((p) => p.x >= 1399 && p.x <= 2601 && p.y <= 0));
   const tops = over.map((f) => f.pts[0].z).sort((a, b) => a - b);
   assert.deepEqual(tops, [900, 3000]);
+  assert.ok(faces.filter((f) => f.kind === 'wall').every((f) => f.noEdges), 'части стены не обводятся как отдельные кубики');
+  assert.ok(faces.some((f) => f.edges?.length >= 20), 'у цельной стены есть архитектурный контур и рёбра проёма');
 });
 
 test('дверь: проём до пола, только перемычка, без стекла', () => {
@@ -53,4 +55,14 @@ test('этажи: полы на своих отметках, крыша над �
   const site = buildHouseMesh(p, { site: true });
   assert.equal(site.filter((f) => f.kind === 'ground').length, 1);
   assert.equal(site.filter((f) => f.kind === 'neighbor').length, 5);
+});
+
+test('пол террасы в 3D лежит ниже пола дома', () => {
+  const p = createProject();
+  const room = createRoom('living', 0, 0, 5000, 4000);
+  const terrace = createRoom('terrace', 3000, 0, 4000, 4000);
+  p.rooms.push(room, terrace);
+  const floors = buildHouseMesh(p).filter((face) => face.kind === 'floor');
+  assert.equal(floors.find((face) => face.roomId === room.id).pts[0].z, 1);
+  assert.equal(floors.find((face) => face.roomId === terrace.id).pts[0].z, 0);
 });

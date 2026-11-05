@@ -14,6 +14,7 @@ import { roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls } from './walls.js';
@@ -43,7 +44,9 @@ export function roomChecks(project, room, level) {
   }
   const minWidth = SP55.minWidth[room.type];
   if (minWidth) {
-    const width = Math.min(room.w, room.h);
+    // Г/контур: ширина основной части (самый широкий из прямоугольников формы),
+    // а не габарит — иначе узкий рукав маскируется широким габаритом.
+    const width = Math.max(...roomRects(room).map((r) => Math.min(r.w, r.h)));
     out.push({
       kind: 'width', ok: width >= minWidth,
       text: `Ширина ${fmt(width / 1000, 2)} м ${width >= minWidth ? '≥' : '<'} ${fmt(minWidth / 1000, 2)} м`,

@@ -52,11 +52,15 @@ describe('шаблоны и удобства', () => {
     assert.equal(await app.page.evaluate(() => window.__kepler.state.project.settings.units), 'm');
   });
 
-  it('отмена возвращает прежний проект', async () => {
+  it('отмена не подменяет загруженный шаблон пустым проектом', async () => {
     await app.page.keyboard.press('Control+z'); // единицы
-    await app.page.keyboard.press('Control+z'); // шаблон
-    const name = await app.page.evaluate(() => window.__kepler.state.project.name);
-    assert.equal(name, 'Новый дом');
+    await app.page.keyboard.press('Control+z'); // загрузка шаблона в пустой проект — в историю не попадает
+    const state = await app.page.evaluate(() => ({
+      name: window.__kepler.state.project.name,
+      rooms: window.__kepler.state.project.rooms.length,
+    }));
+    assert.notEqual(state.name, 'Новый дом');
+    assert.ok(state.rooms > 0);
   });
 
   it('без ошибок в консоли', () => {

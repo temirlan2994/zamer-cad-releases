@@ -13,6 +13,7 @@ import { renderProps } from './props.js';
 import { history, state } from './state.js';
 import { updateConnectivity } from './status.js';
 import { updateDimModeBtn } from './toolbar.js';
+import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
@@ -33,8 +34,21 @@ export function snapshot() {
   return serializeProject(state.project);
 }
 
-export function pushHistory(before) {
-  history.undo.push(before);
+// Снимок для истории при замене проекта целиком (пример, шаблон, файл,
+// «Новый»). Пустой проект в историю не кладём: Ctrl+Z после загрузки не
+// должен подменять результат пустым «Новым домом».
+export function snapshotIfContent() {
+  const p = state.project;
+  if (!p) return null;
+  const filled = (p.levels || []).some((l) => l.rooms?.length || l.items?.length) || p.rooms?.length;
+  return filled ? snapshot() : null;
+}
+
+// Запись истории = снимок + идентификатор проекта из «Проектов»: отмена после
+// открытия другого проекта возвращает и содержимое, и привязку (pid), иначе
+// «Сохранить версию» записала бы чужой проект поверх своего.
+export function pushHistory(before, pid = state.pid) {
+  history.undo.push({ text: before, pid });
   if (history.undo.length > 40) history.undo.shift();
   history.redo.length = 0;
 }
@@ -73,6 +87,7 @@ export function afterChange() {
   updateConnectivity();
   refreshNorms();
   renderProps();
+  renderSelectionToolbar();
   updateDimModeBtn();
   renderLevelBar();
   refresh3d(); // открытый 3D-вид следует за правками
@@ -93,6 +108,8 @@ function scheduleAutosave() {
 
 export function restoreFrom(text) {
   state.project = deserializeProject(text);
+  const name = el('projectName');
+  if (name) name.value = state.project.name;
   state.selection = null;
   refreshDerived();
   applyModeRotation();
@@ -101,12 +118,16 @@ export function restoreFrom(text) {
 
 export function undo() {
   if (!history.undo.length) return;
-  history.redo.push(snapshot());
-  restoreFrom(history.undo.pop());
+  history.redo.push({ text: snapshot(), pid: state.pid });
+  const entry = history.undo.pop();
+  restoreFrom(entry.text);
+  state.pid = entry.pid;
 }
 
 export function redo() {
   if (!history.redo.length) return;
-  history.undo.push(snapshot());
-  restoreFrom(history.redo.pop());
+  history.undo.push({ text: snapshot(), pid: state.pid });
+  const entry = history.redo.pop();
+  restoreFrom(entry.text);
+  state.pid = entry.pid;
 }

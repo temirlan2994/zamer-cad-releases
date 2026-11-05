@@ -10,7 +10,10 @@ import { buildHouseMesh } from '../core/mesh3d.js';
 import { el } from './dom.js';
 import { state } from './state.js';
 
-const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, target: { x: 0, y: 0, z: 1500 } };
+// dist — масштаб ортографического вида; eyeDist — физическое расстояние до
+// камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
+// дом, и ближняя плоскость начинает срезать стены.
+const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000, target: { x: 0, y: 0, z: 1500 } };
 const opts = { roof: false, site: true, terrainScale: 1 };
 let faces = [];
 let active = false;
@@ -35,10 +38,11 @@ function hexRgb(hex) {
 
 function camera(width, height) {
   const cp = Math.cos(cam.pitch);
+  const eyeDist = cam.eyeDist || Math.max(25000, cam.dist);
   const eye = {
-    x: cam.target.x + cam.dist * cp * Math.cos(cam.yaw),
-    y: cam.target.y + cam.dist * cp * Math.sin(cam.yaw),
-    z: cam.target.z + cam.dist * Math.sin(cam.pitch),
+    x: cam.target.x + eyeDist * cp * Math.cos(cam.yaw),
+    y: cam.target.y + eyeDist * cp * Math.sin(cam.yaw),
+    z: cam.target.z + eyeDist * Math.sin(cam.pitch),
   };
   const f = norm(sub(cam.target, eye));
   const r = norm(cross(f, { x: 0, y: 0, z: 1 }));
@@ -118,7 +122,13 @@ function uploadGeometry() {
     for (let i = 1; i < P.length - 1; i += 1) {
       for (const p of [P[0], P[i], P[i + 1]]) out.push(p.x, p.y, p.z, r, g, b, a);
     }
-    if (EDGE_KINDS.has(face.kind)) {
+    if (Array.isArray(face.edges)) {
+      for (const [a0, b0] of face.edges) {
+        const p = W(a0);
+        const q = W(b0);
+        lines.push(p.x, p.y, p.z, 0.12, 0.16, 0.21, 0.48, q.x, q.y, q.z, 0.12, 0.16, 0.21, 0.48);
+      }
+    } else if (EDGE_KINDS.has(face.kind) && !face.noEdges) {
       for (let i = 0; i < P.length; i += 1) {
         const p = P[i];
         const q = P[(i + 1) % P.length];
@@ -136,10 +146,13 @@ function uploadGeometry() {
   glState.buffers = { opaque: make(opaque), glass: make(glass), lines: make(lines) };
 }
 
-function perspective(fovy, aspect, near, far) {
-  const f = 1 / Math.tan(fovy / 2);
-  const nf = 1 / (near - far);
-  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+function orthographic(left, right, bottom, top, near, far) {
+  return [
+    2 / (right - left), 0, 0, 0,
+    0, 2 / (top - bottom), 0, 0,
+    0, 0, -2 / (far - near), 0,
+    -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1,
+  ];
 }
 
 function lookAt(eye, target) {
@@ -170,9 +183,13 @@ function renderGl(canvas) {
     canvas.height = Math.round(height * dpr);
   }
   const c = camera(width, height);
-  // Тот же угол обзора, что у запасного пути: focal = 0.95·min(w, h).
-  const fovy = 2 * Math.atan(height / 2 / c.focal);
-  const mvp = mul(perspective(fovy, width / Math.max(1, height), 100, 2e6), lookAt(c.eye, cam.target));
+  // Аксонометрия без перспективных искажений — стандартный рабочий 3D-вид,
+  // близкий к Revit. cam.dist здесь управляет масштабом, а не перспективой.
+  const worldPerPx = cam.dist / c.focal;
+  const halfW = (width * worldPerPx) / 2;
+  const halfH = (height * worldPerPx) / 2;
+  const far = Math.max(2e6, cam.eyeDist * 4);
+  const mvp = mul(orthographic(-halfW, halfW, -halfH, halfH, 10, far), lookAt(c.eye, cam.target));
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0.9, 0.93, 0.96, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -239,17 +256,22 @@ function render2d(canvas) {
     const pts = [];
     let depth = 0;
     let behind = false;
+    const scale = c.focal / cam.dist;
     for (const p of P) {
       const d = sub(p, c.eye);
       const zc = dot(d, c.f);
       if (zc < near) { behind = true; break; }
-      pts.push({ x: c.cx + (c.focal * dot(d, c.r)) / zc, y: c.cy - (c.focal * dot(d, c.u)) / zc });
+      pts.push({ x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale });
       depth += zc;
     }
     if (behind) continue;
     const light = 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
     const [r, g, b] = hexRgb(face.color);
-    list.push({ pts, depth: depth / P.length, fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${face.alpha ?? 1})`, kind: face.kind });
+    const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
+      const d = sub(W(raw), c.eye);
+      return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
+    })) : null;
+    list.push({ pts, edgePts, noEdges: face.noEdges, depth: depth / P.length, fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${face.alpha ?? 1})`, kind: face.kind });
   }
   const layer = (k) => (k === 'ground' ? 0 : k === 'boundary' ? 1 : 2);
   list.sort((a, b) => layer(a.kind) - layer(b.kind) || b.depth - a.depth);
@@ -260,7 +282,13 @@ function render2d(canvas) {
     ctx.closePath();
     ctx.fillStyle = it.fill;
     ctx.fill();
-    if (EDGE_KINDS.has(it.kind)) {
+    if (it.edgePts) {
+      ctx.strokeStyle = 'rgba(30,38,48,0.48)';
+      ctx.lineWidth = 0.75;
+      ctx.beginPath();
+      for (const [a, b] of it.edgePts) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+      ctx.stroke();
+    } else if (EDGE_KINDS.has(it.kind) && !it.noEdges) {
       ctx.strokeStyle = 'rgba(30,38,48,0.22)';
       ctx.lineWidth = 0.6;
       ctx.stroke();
@@ -284,7 +312,8 @@ function frameHouse() {
   const max = (k) => Math.max(...pts.map((p) => p[k]));
   cam.target = { x: (min('x') + max('x')) / 2, y: (min('y') + max('y')) / 2, z: max('z') / 3 };
   const span = Math.hypot(max('x') - min('x'), max('y') - min('y'), max('z') - min('z'));
-  cam.dist = Math.min(400000, Math.max(8000, span * 1.7));
+  cam.dist = Math.min(400000, Math.max(8000, span * 1.1));
+  cam.eyeDist = Math.max(25000, span * 3);
 }
 
 // Ползунок рельефа виден, только когда есть отметки высот.

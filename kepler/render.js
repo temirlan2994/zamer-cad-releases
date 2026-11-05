@@ -2,9 +2,11 @@
 // Геометрия рисуется в мировых координатах (мм) через transform (масштаб +
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
-import { deriveWalls, doorLeaves, doorSymbol, openingRect } from './core/walls.js';
+import {
+  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge,
+} from './core/walls.js';
 import { roomNetAreaM2 } from './core/rooms.js';
-import { isOpenRoom, isRoundItem, isStructural, roomType } from './core/catalog.js';
+import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygonFromCorners,
@@ -18,6 +20,10 @@ import {
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
+import { facadeDimensionStations, shapedRoomDimensionChains } from './core/dimensions.js';
+import { roomLabelPoint, roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
+import { stairCalculation } from './core/stairs.js';
+import { wallRoomDimensions } from './core/wall-edit.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -165,6 +171,7 @@ export function createRenderer(canvas) {
       ctx.globalAlpha = 0.16;
       ctx.fillStyle = tokens.wall;
       for (const wall of state.belowWalls) {
+        if (wall.hidden) continue;
         if (wall.kind === 'chamfer') {
           ctx.beginPath();
           wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
@@ -193,14 +200,23 @@ export function createRenderer(canvas) {
       const selected = state.selection?.type === 'wall' && state.selection.key === wall.key &&
         (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
       const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
+      if (wall.hidden && !selected && !hovered) return;
       ctx.fillStyle = wall.wallType === 'bearing' ? tokens.wallBearing : tokens.wall;
       if (selected) ctx.fillStyle = tokens.accent;
       else if (hovered) ctx.fillStyle = tokens.hover;
+      if (wall.hidden) ctx.globalAlpha = 0.22;
       ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+      ctx.globalAlpha = 1;
     };
-    for (const room of state.project.rooms) {
-      drawFloor(ctx, room, tokens);
-      if (isOpenRoom(room)) drawRailing(ctx, room, tokens, px);
+    const roomLayer = (room) => {
+      if (isOpenRoom(room)) return 0; // террасы и балконы всегда под домом
+      if (isShaft(room)) return 3;
+      return room.parentId ? 2 : 1;
+    };
+    const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
+    for (const room of roomPaintOrder) {
+      drawFloor(ctx, room, tokens, px);
+      if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, tokens, px);
       for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
     }
     // Общие стыковочные стены — поверх всех полов.
@@ -213,6 +229,13 @@ export function createRenderer(canvas) {
       for (let i = 1; i < wall.poly.length; i += 1) ctx.lineTo(wall.poly[i].x, wall.poly[i].y);
       ctx.closePath();
       ctx.fill();
+    }
+
+    // Шахта — верхний технический проём: она перекрывает полы и любые
+    // перегородки помещений под ней, затем поверх остаются только её стены.
+    for (const room of roomPaintOrder.filter((candidate) => isShaft(candidate))) {
+      drawFloor(ctx, room, tokens, px);
+      for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
     }
 
     // Подсветка комнаты под курсором.
@@ -234,10 +257,11 @@ export function createRenderer(canvas) {
 
     // 6. Мебель (на генплане — без неё: opts.detail === false).
     const detail = opts.detail !== false;
+    const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
     for (const item of detail ? state.project.items : []) {
       const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
         (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
-      const hovered = state.hover?.type === 'item' && state.hover.id === item.id;
+      const hovered = hoveredItems.has(item.id);
       drawItem(ctx, item, tokens, px, selected, hovered);
     }
 
@@ -375,6 +399,13 @@ export function createRenderer(canvas) {
       ctx.strokeRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
       ctx.setLineDash([]);
     }
+    if (state.ghostItem) {
+      ctx.save();
+      ctx.globalAlpha = 0.58;
+      drawItem(ctx, state.ghostItem, tokens, px, false, true);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
     if (state.ghostOpening) {
       const r = state.ghostOpening.rect;
       ctx.fillStyle = 'rgba(29,180,168,0.5)';
@@ -438,6 +469,12 @@ export function createRenderer(canvas) {
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
       drawAllRoomDims(ctx, state, walls, p2s, tokens);
     }
+    state._wallUI = null;
+    const selWall = state.selection?.type === 'wall'
+      ? walls.find((wall) => wall.key === state.selection.key &&
+        (state.selection.from === undefined || Math.abs(wall.from - state.selection.from) < 1))
+      : null;
+    if (selWall) drawSelectedWallUI(ctx, state, selWall, p2s, tokens);
     if (selRoom) drawRoomHandles(ctx, selRoom, p2s, tokens);
     // Ручки на торцах выбранного проёма — тянуть, меняя ширину с шагом 50 мм.
     const selOpening = state.selection?.type === 'opening'
@@ -578,6 +615,16 @@ export function createRenderer(canvas) {
   }
 
   return { draw };
+}
+
+// Наведение на любой предмет пользовательской группы подсвечивает всю группу.
+// Для несгруппированного предмета набор по-прежнему содержит только его самого.
+export function hoveredFurnitureIds(items, hover) {
+  if (hover?.type !== 'item') return new Set();
+  const hovered = items.find((item) => item.id === hover.id);
+  if (!hovered) return new Set();
+  if (!hovered.group) return new Set([hovered.id]);
+  return new Set(items.filter((item) => item.group === hovered.group).map((item) => item.id));
 }
 
 function drawGrid(ctx, box, scale, px, tokens) {
@@ -952,45 +999,76 @@ function drawCompass(ctx, state, site, width, tokens) {
 }
 
 // Перила открытого помещения (терраса/балкон): двойная линия + стойки.
-function drawRailing(ctx, room, tokens, px) {
+function drawRailing(ctx, room, rooms, tokens, px) {
   const inset = 70;
   ctx.strokeStyle = tokens.line;
   ctx.lineWidth = px(2);
-  ctx.strokeRect(room.x, room.y, room.w, room.h);
-  ctx.lineWidth = px(1.2);
-  ctx.strokeRect(room.x + inset, room.y + inset, room.w - inset * 2, room.h - inset * 2);
-  // Стойки по периметру.
   ctx.fillStyle = tokens.line;
   const step = 700;
   const post = px(2.5);
-  const edges = [
-    [room.x, room.y, room.x + room.w, room.y],
-    [room.x + room.w, room.y, room.x + room.w, room.y + room.h],
-    [room.x + room.w, room.y + room.h, room.x, room.y + room.h],
-    [room.x, room.y + room.h, room.x, room.y],
-  ];
-  for (const [x1, y1, x2, y2] of edges) {
-    const len = Math.hypot(x2 - x1, y2 - y1);
+  for (const segment of openRoomRailingSegments(room, rooms)) {
+    const full = sideEdge(room, segment.side);
+    const startCut = segment.from > full.from + 1;
+    const endCut = segment.to < full.to - 1;
+    const innerFrom = segment.from + (startCut ? 0 : inset);
+    const innerTo = segment.to - (endCut ? 0 : inset);
+    const innerEdge = segment.edge - segment.outward * inset;
+    const line = (edge, from, to) => {
+      if (to - from <= 1) return;
+      ctx.beginPath();
+      if (segment.orient === 'h') { ctx.moveTo(from, edge); ctx.lineTo(to, edge); }
+      else { ctx.moveTo(edge, from); ctx.lineTo(edge, to); }
+      ctx.stroke();
+    };
+    ctx.lineWidth = px(2);
+    line(segment.edge, segment.from, segment.to);
+    ctx.lineWidth = px(1.2);
+    line(innerEdge, innerFrom, innerTo);
+
+    // У стыка со стеной стойку немного отодвигаем, чтобы на стене не оставалась точка.
+    const postFrom = segment.from + (startCut ? inset : 0);
+    const postTo = segment.to - (endCut ? inset : 0);
+    const len = postTo - postFrom;
+    if (len <= 1) continue;
     const n = Math.max(1, Math.round(len / step));
     for (let i = 0; i <= n; i += 1) {
       const t = i / n;
+      const along = postFrom + len * t;
       ctx.beginPath();
-      ctx.arc(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, post, 0, Math.PI * 2);
+      ctx.arc(segment.orient === 'h' ? along : segment.edge,
+        segment.orient === 'h' ? segment.edge : along, post, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 }
 
-function drawFloor(ctx, room, tokens) {
+function drawFloor(ctx, room, tokens, px) {
   const def = roomType(room.type);
   const tint = tokens.tints[def?.tint || 'neutral'] || tokens.tints.neutral;
+  if (isShaft(room)) {
+    ctx.save();
+    ctx.fillStyle = tokens.canvas;
+    ctx.strokeStyle = tokens.muted;
+    ctx.lineWidth = px(1.2);
+    ctx.setLineDash([px(7), px(5)]);
+    for (const rect of roomRects(room)) {
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.beginPath();
+      ctx.moveTo(rect.x, rect.y); ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+      ctx.moveTo(rect.x + rect.w, rect.y); ctx.lineTo(rect.x, rect.y + rect.h);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+    return;
+  }
   ctx.fillStyle = tint;
-  ctx.fillRect(room.x, room.y, room.w, room.h);
+  for (const rect of roomRects(room)) ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 }
 
 function drawOpening(ctx, state, opening, walls, tokens, px) {
   const placed = openingRect(state.project, opening, walls);
-  if (!placed) return;
+  if (!placed || placed.wall.hidden) return;
   const { rect, wall } = placed;
   const selected = state.selection?.type === 'opening' && state.selection.id === opening.id;
   const hovered = state.hover?.type === 'opening' && state.hover.id === opening.id;
@@ -1073,6 +1151,7 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   ctx.save();
   ctx.translate(item.x, item.y);
   ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
+  if (item.mirrored) ctx.scale(-1, 1);
   if (isStructural(item.kind)) {
     // Свободная стена или колонна — заливка цветом стен.
     ctx.fillStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.wall;
@@ -1089,7 +1168,7 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   const whole = isFixedSizeComp(item);
   // Части составной мебели (стулья у стола) — под основой.
   drawParts(ctx, parts, item, whole);
-  if (!whole) drawGlyph(ctx, item.kind, item.w, item.h);
+  if (!whole) drawGlyph(ctx, item.kind, item.w, item.h, item);
   if (selected && parts.length && !whole) {
     // Рамка группы: основа выделена ручками, части — пунктиром вокруг.
     const b = compositeBounds({ ...item, x: 0, y: 0, rotation: 0 });
@@ -1360,7 +1439,7 @@ const GLYPH_ALIAS = {
 // Параметрические top-view символы мебели в духе ArchiCAD: чистые контуры,
 // скруглённые углы, аккуратные детали. Всё рисуется из размеров w×h, поэтому
 // масштабируется без искажений. Центр в (0,0).
-function drawGlyph(ctx, kindRaw, w, h) {
+function drawGlyph(ctx, kindRaw, w, h, options = null) {
   const kind = GLYPH_ALIAS[kindRaw] || kindRaw;
   const x = -w / 2;
   const y = -h / 2;
@@ -1549,14 +1628,49 @@ function drawGlyph(ctx, kindRaw, w, h) {
     case 'bbq': { circle(0, 0, mn * 0.42); circle(0, 0, mn * 0.24); break; }
     case 'column': { circle(0, 0, mn / 2); ctx.fill(); break; }
     case 'stairs': {
-      rrFill(x, y, w, h, 0);
-      // Число ступеней — из длины марша при проступи ≈ 280 мм.
-      const steps = Math.max(2, Math.round(h / 280));
-      const step = h / steps;
-      for (let i = 1; i < steps; i += 1) line(x, y + step * i, x + w, y + step * i);
-      line(0, y + h - step, 0, y + step); // стрелка подъёма
-      line(0, y + step, -w * 0.18, y + step * 2.2);
-      line(0, y + step, w * 0.18, y + step * 2.2);
+      const calc = stairCalculation({ ...options, w, h });
+      const stepsAlong = (x0, y0, sw, sh, count, horizontal = true) => {
+        for (let i = 1; i < count; i += 1) {
+          const t = i / count;
+          if (horizontal) line(x0, y0 + sh * t, x0 + sw, y0 + sh * t);
+          else line(x0 + sw * t, y0, x0 + sw * t, y0 + sh);
+        }
+      };
+      if (calc.shape === 'u') {
+        const gap = Math.min(200, w * 0.1);
+        const flightW = (w - gap) / 2;
+        const landingD = Math.min(flightW, h * 0.36);
+        const runH = h - landingD;
+        rrFill(x, y + landingD, flightW, runH, 0);
+        rrFill(x + flightW + gap, y + landingD, flightW, runH, 0);
+        rrFill(x, y, w, landingD, 0);
+        stepsAlong(x, y + landingD, flightW, runH, Math.max(1, calc.firstTreads));
+        stepsAlong(x + flightW + gap, y + landingD, flightW, runH, Math.max(1, calc.secondTreads));
+        const lx = x + flightW / 2;
+        const rx = x + flightW + gap + flightW / 2;
+        ctx.beginPath(); ctx.moveTo(lx, y + h - 120); ctx.lineTo(lx, y + landingD / 2); ctx.lineTo(rx, y + landingD / 2); ctx.lineTo(rx, y + h - 160); ctx.stroke();
+        line(rx, y + h - 160, rx - flightW * 0.16, y + h - 320);
+        line(rx, y + h - 160, rx + flightW * 0.16, y + h - 320);
+      } else if (calc.shape === 'l') {
+        const flightW = Math.min(1000, w * 0.42, h * 0.42);
+        rrFill(x, y + flightW, flightW, h - flightW, 0);
+        rrFill(x, y, w, flightW, 0);
+        stepsAlong(x, y + flightW, flightW, h - flightW, Math.max(1, calc.firstTreads));
+        stepsAlong(x + flightW, y, w - flightW, flightW, Math.max(1, calc.secondTreads), false);
+        const cx = x + flightW / 2;
+        const cy = y + flightW / 2;
+        ctx.beginPath(); ctx.moveTo(cx, y + h - 120); ctx.lineTo(cx, cy); ctx.lineTo(x + w - 160, cy); ctx.stroke();
+        line(x + w - 160, cy, x + w - 320, cy - flightW * 0.16);
+        line(x + w - 160, cy, x + w - 320, cy + flightW * 0.16);
+      } else {
+        rrFill(x, y, w, h, 0);
+        const steps = Math.max(2, calc.treads);
+        const step = h / steps;
+        for (let i = 1; i < steps; i += 1) line(x, y + step * i, x + w, y + step * i);
+        line(0, y + h - step, 0, y + step);
+        line(0, y + step, -w * 0.18, y + step * 2.2);
+        line(0, y + step, w * 0.18, y + step * 2.2);
+      }
       break;
     }
     default: { rrFill(x, y, w, h, Math.min(60, mn * 0.12)); }
@@ -1574,12 +1688,15 @@ function roundRectPath(ctx, x, y, w, h, r) {
 }
 
 function drawRoomLabel(ctx, state, room, w2s, tokens) {
-  const center = w2s(room.x + room.w / 2, room.y + room.h / 2);
-  const area = roomNetAreaM2(state.project, room);
+  const label = roomLabelPoint(room);
+  const center = w2s(label.x, label.y);
+  const shaft = isShaft(room);
+  const area = shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room);
   ctx.textAlign = 'center';
   ctx.fillStyle = tokens.text;
   ctx.font = '600 13px system-ui, sans-serif';
-  ctx.fillText(room.name, center.x, center.y - 4);
+  ctx.fillText(room.name, center.x, center.y + (shaft ? 4 : -4));
+  if (shaft) return;
   ctx.fillStyle = tokens.muted;
   ctx.font = '12px system-ui, sans-serif';
   ctx.fillText(`${area.toFixed(1)} м²`, center.x, center.y + 13);
@@ -1650,16 +1767,80 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
     ctx.globalAlpha = 1;
   }
 
-  // Общие наружные размеры — только для ДЕЙСТВИТЕЛЬНО внешних сторон дома,
-  // вынесенные единой цепочкой за габарит (вогнутые уступы/ниши пропускаются,
-  // чтобы размерные линии не шли внутри комнат).
+  // У ломаных помещений внутренние подписи дублируем двумя аккуратными
+  // наружными цепочками: по всем X сверху и по всем Y справа. Так уступы
+  // читаются снаружи комнаты, как в BIM/CAD, и не теряются среди подписей.
   const exterior = state.project.settings?.exterior || 250;
+  for (const room of state.project.rooms) {
+    const chains = shapedRoomDimensionChains(room);
+    if (!chains || room.parentId || isOpenRoom(room) || isShaft(room)) continue;
+    const selected = room.id === selId;
+    const offset = exterior + 420;
+    const topAt = chains.minY - offset;
+    const rightAt = chains.maxX + offset;
+    const topN = outwardScreen((chains.minX + chains.maxX) / 2, topAt, 0, -1);
+    const rightN = outwardScreen(rightAt, (chains.minY + chains.maxY) / 2, 1, 0);
+    ctx.strokeStyle = selected ? tokens.accent : tokens.muted;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = selected ? 0.95 : 0.55;
+
+    for (const station of chains.horizontal) {
+      drawWitness(ctx, w2s(station.value, station.witness), {
+        ...w2s(station.value, topAt),
+        x: w2s(station.value, topAt).x + topN.x * 16,
+        y: w2s(station.value, topAt).y + topN.y * 16,
+      });
+    }
+    for (let i = 0; i < chains.horizontal.length - 1; i += 1) {
+      const from = chains.horizontal[i].value;
+      const to = chains.horizontal[i + 1].value;
+      const p = w2s(from, topAt); const q = w2s(to, topAt);
+      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
+      drawDim(ctx, p, q, topN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
+    }
+
+    for (const station of chains.vertical) {
+      drawWitness(ctx, w2s(station.witness, station.value), {
+        ...w2s(rightAt, station.value),
+        x: w2s(rightAt, station.value).x + rightN.x * 16,
+        y: w2s(rightAt, station.value).y + rightN.y * 16,
+      });
+    }
+    for (let i = 0; i < chains.vertical.length - 1; i += 1) {
+      const from = chains.vertical[i].value;
+      const to = chains.vertical[i + 1].value;
+      const p = w2s(rightAt, from); const q = w2s(rightAt, to);
+      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
+      drawDim(ctx, p, q, rightN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
+    }
+    const leftAt = chains.minX - offset;
+    const leftN = outwardScreen(leftAt, (chains.minY + chains.maxY) / 2, -1, 0);
+    for (const station of chains.left) {
+      const a = w2s(leftAt, station.value);
+      drawWitness(ctx, w2s(station.witness, station.value), {
+        x: a.x + leftN.x * 16, y: a.y + leftN.y * 16,
+      });
+    }
+    for (let i = 0; i < chains.left.length - 1; i += 1) {
+      const from = chains.left[i].value;
+      const to = chains.left[i + 1].value;
+      const p = w2s(leftAt, from); const q = w2s(leftAt, to);
+      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
+      drawDim(ctx, p, q, leftN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Наружные размеры — только для ДЕЙСТВИТЕЛЬНО внешних сторон дома.
+  // Ближний пояс разбивает фасад по окнам, дверям и осям примыкающих
+  // перегородок; дальний пояс показывает общий габарит.
   const dimOuter = state.project.settings?.dimOuter !== false; // по умолчанию — снаружи
   const expand = dimOuter ? exterior : exterior / 2;
   const outline = computeBuildingOutline(state.project, expand);
   const rects = state.project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
     .map((r) => ({ x: r.x - expand, y: r.y - expand, w: r.w + 2 * expand, h: r.h + 2 * expand }));
   if (outline.length && rects.length) {
+    const detailOff = 450;
     const outOff = 850;
     const bb = {
       minX: Math.min(...rects.map((r) => r.x)),
@@ -1693,6 +1874,36 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
         chainPerp = bb.maxX + outOff; dir = { x: 1, y: 0 };
       }
       if (!external) continue;
+
+      // Второй, ближний к фасаду пояс: косяки наружных проёмов и оси
+      // внутренних стен. Если фасад не разбит ни одним элементом, не
+      // дублируем на нём общий габарит.
+      const stations = facadeDimensionStations(state.project, walls, edge, expand);
+      if (stations.length > 2) {
+        const detailPerp = edge.at + (horiz ? dir.y : dir.x) * detailOff;
+        const detailN = horiz
+          ? outwardScreen((edge.from + edge.to) / 2, detailPerp, 0, dir.y)
+          : outwardScreen(detailPerp, (edge.from + edge.to) / 2, dir.x, 0);
+        for (const station of stations) {
+          const fromWall = horiz ? w2s(station, edge.at) : w2s(edge.at, station);
+          const onChain = horiz ? w2s(station, detailPerp) : w2s(detailPerp, station);
+          drawWitness(ctx, fromWall, {
+            x: onChain.x + detailN.x * 16,
+            y: onChain.y + detailN.y * 16,
+          });
+        }
+        for (let i = 0; i < stations.length - 1; i += 1) {
+          const from = stations[i];
+          const to = stations[i + 1];
+          const len = Math.round(to - from);
+          if (len < 1) continue;
+          const a = horiz ? w2s(from, detailPerp) : w2s(detailPerp, from);
+          const b = horiz ? w2s(to, detailPerp) : w2s(detailPerp, to);
+          const screenLen = Math.hypot(b.x - a.x, b.y - a.y);
+          drawDim(ctx, a, b, detailN, 13, screenLen >= 28 ? dimLabel(state, len) : '');
+        }
+      }
+
       const p = horiz ? w2s(edge.from, chainPerp) : w2s(chainPerp, edge.from);
       const q = horiz ? w2s(edge.to, chainPerp) : w2s(chainPerp, edge.to);
       if (Math.hypot(q.x - p.x, q.y - p.y) < 40) continue;
@@ -1925,6 +2136,64 @@ function drawSelectedOpeningUI(ctx, state, opening, walls, w2s, scale, tokens) {
   state._openingUI = ui;
 }
 
+// Размер от выбранной стены до противоположной внутренней грани помещения.
+// У общей стены показываются оба помещения. Подписи кликабельны и используют
+// тот же инлайн-ввод, что размеры дверей и окон.
+function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
+  const ui = { dims: [] };
+  ctx.save();
+  ctx.strokeStyle = tokens.accent;
+  ctx.fillStyle = tokens.accent;
+  ctx.lineWidth = 1.25;
+  for (const dim of wallRoomDimensions(state.project, wall)) {
+    const a = dim.orient === 'h' ? w2s(dim.along, dim.edge.edge) : w2s(dim.edge.edge, dim.along);
+    const b = dim.orient === 'h' ? w2s(dim.along, dim.opposite.edge) : w2s(dim.opposite.edge, dim.along);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len; const ny = dx / len;
+    for (const point of [a, b]) {
+      ctx.beginPath();
+      ctx.moveTo(point.x - nx * 5, point.y - ny * 5);
+      ctx.lineTo(point.x + nx * 5, point.y + ny * 5);
+      ctx.stroke();
+    }
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const label = String(Math.round(dim.distance));
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const tw = ctx.measureText(label).width + 12;
+    ctx.fillStyle = tokens.surface;
+    ctx.fillRect(mx - tw / 2, my - 10, tw, 20);
+    ctx.strokeStyle = tokens.accent;
+    ctx.strokeRect(mx - tw / 2, my - 10, tw, 20);
+    ctx.fillStyle = tokens.accent;
+    ctx.fillText(label, mx, my + 4);
+    ui.dims.push({
+      type: 'wall', x: mx, y: my, gap: dim.distance,
+      wallKey: wall.key, wallFrom: wall.from, roomId: dim.roomId,
+    });
+  }
+
+  const cx = (wall.center.x1 + wall.center.x2) / 2;
+  const cy = (wall.center.y1 + wall.center.y2) / 2;
+  const grip = w2s(cx, cy);
+  ctx.fillStyle = tokens.surface;
+  ctx.strokeStyle = tokens.accent;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(grip.x, grip.y, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = tokens.accent;
+  ctx.font = '700 15px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(wall.orient === 'h' ? '↕' : '↔', grip.x, grip.y + 5);
+  ui.grip = { x: grip.x, y: grip.y, r: 14 };
+  state._wallUI = ui;
+  ctx.restore();
+}
+
 function drawHandleSquare(ctx, p, tokens) {
   ctx.fillStyle = '#ffffff';
   ctx.strokeStyle = tokens.accent;
@@ -1933,6 +2202,15 @@ function drawHandleSquare(ctx, p, tokens) {
   ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
   ctx.fill();
   ctx.stroke();
+}
+
+// Угол подписи вдоль размерной линии. Текст всегда остаётся читаемым снизу
+// или справа листа: вертикальные размеры идут снизу вверх, как в Revit.
+export function dimTextAngle(p, q) {
+  let angle = Math.atan2(q.y - p.y, q.x - p.x);
+  if (angle >= Math.PI / 2 - 1e-9) angle -= Math.PI;
+  if (angle < -Math.PI / 2 - 1e-9) angle += Math.PI;
+  return angle;
 }
 
 function drawDim(ctx, p, q, n, off, label) {
@@ -1959,7 +2237,13 @@ function drawDim(ctx, p, q, n, off, label) {
   ctx.moveTo(b.x - ux, b.y - uy); ctx.lineTo(b.x + ux, b.y + uy); // засечка справа
   ctx.stroke();
   const mid = { x: (a.x + b.x) / 2 + n.x * 10, y: (a.y + b.y) / 2 + n.y * 10 };
-  ctx.fillText(label, mid.x, mid.y + 3);
+  if (label) {
+    ctx.save();
+    ctx.translate(mid.x, mid.y);
+    ctx.rotate(dimTextAngle(a, b));
+    ctx.fillText(label, 0, 3);
+    ctx.restore();
+  }
 }
 
 // Выноска от стены к размерной линии — бледнее основной линии.
@@ -1975,6 +2259,8 @@ function drawWitness(ctx, a, b) {
 export const HANDLE_SIZE = 9;
 
 export function roomHandles(room) {
+  const shapeHandles = roomShapeHandles(room);
+  if (shapeHandles.length) return shapeHandles;
   const { x, y, w, h } = room;
   return [
     { id: 'nw', x, y }, { id: 'n', x: x + w / 2, y }, { id: 'ne', x: x + w, y },
@@ -1990,7 +2276,8 @@ function drawRoomHandles(ctx, room, w2s, tokens) {
     ctx.strokeStyle = tokens.accent;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+    if (handle.kind === 'edge') ctx.arc(p.x, p.y, HANDLE_SIZE / 2, 0, Math.PI * 2);
+    else ctx.rect(p.x - HANDLE_SIZE / 2, p.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
     ctx.fill();
     ctx.stroke();
   }

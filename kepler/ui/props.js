@@ -1,13 +1,16 @@
 // Правая панель свойств: проект, комната, стена, проём, мебель, группа.
 
-import { furnitureDef, roomType } from '../core/catalog.js';
+import { furnitureDef, isShaft, roomType } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, levelProject, roomById } from '../core/model.js';
 import { SP55 } from '../core/norms.js';
-import { MIN_ROOM_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
+import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
 import {
-  DOOR_TYPES, MAX_SHARED_GAP, WINDOW_TYPES, clampOpeningOffset, deriveWalls, openingRect,
+  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, clampOpeningOffset, deriveWalls, openingRect,
+  wallClassThickness,
 } from '../core/walls.js';
+import { roomShapeArea } from '../core/room-shape.js';
+import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
@@ -16,19 +19,19 @@ import {
   bindNormLinks, normsSection, roomNormsBlock, tepSection,
 } from './norms-view.js';
 import {
-  addFurniture, changeWallThickness, deleteSelection, overlappingTopRooms, reconcileOpenings,
-  rotateMulti90, rotateSelectedItem,
+  addFurniture, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
 } from './plan-actions.js';
 import {
   bindBuildingRotation, buildingRotationField, renderSiteObjectProps, renderSiteSettings,
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
+import { STAIR_SHAPES, applyStairPreset, stairCalculation, stairShape } from '../core/stairs.js';
 import { state } from './state.js';
 import { bindVariants, variantsSection } from './variants.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
-import { selectObject, startPlaceOpening } from './tools.js';
+import { selectObject } from './tools.js';
 
 export function renderProps() {
   syncMobileBar();
@@ -78,6 +81,18 @@ function renderProjectProps(panel) {
           <option value="m" ${state.project.settings.units === 'm' ? 'selected' : ''}>в метрах — 5,00</option>
         </select></label>
     </div>
+    <h3>Стены по умолчанию, мм</h3>
+    <div class="prop-block">
+      <div class="prop-grid">
+        <label class="prop-field"><span>Наружные</span>
+          <input id="defExterior" data-wall-default="exterior" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'exterior')}"></label>
+        <label class="prop-field"><span>Несущие</span>
+          <input id="defBearing" data-wall-default="bearing" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'bearing')}"></label>
+        <label class="prop-field"><span>Перегородки</span>
+          <input id="defPartition" data-wall-default="partition" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'partition')}"></label>
+      </div>
+      <p class="empty-hint">Наружные стены без своей толщины меняются сразу. Новая перегородка — для новых стыковок: уже построенные сохраняют свою толщину.</p>
+    </div>
     <h3>Этаж</h3>
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
@@ -98,6 +113,7 @@ function renderProjectProps(panel) {
     <ul class="hotkeys">
       <li><b>ЛКМ</b> — выделение, рамка по пустому месту</li>
       <li><b>ПКМ / средняя / пробел</b> — панорама, <b>колесо</b> — масштаб</li>
+      <li><b>Ctrl+C / Ctrl+V</b> — копировать / вставить объект</li>
       <li><b>Del</b> — удалить, <b>R</b> — повернуть мебель</li>
       <li><b>Ctrl+Z / Ctrl+Shift+Z</b> — отмена / повтор</li>
       <li><b>Стрелки</b> — сдвиг на 50 мм (Shift — 500)</li>
@@ -109,6 +125,11 @@ function renderProjectProps(panel) {
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
+  });
+  panel.querySelectorAll('[data-wall-default]').forEach((input) => {
+    input.addEventListener('change', (e) => {
+      mutate(() => { setWallDefaults(state.project, { [input.dataset.wallDefault]: e.target.value }); });
+    });
   });
   panel.querySelector('#levelName').addEventListener('change', (e) => {
     const name = e.target.value.trim();
@@ -128,6 +149,8 @@ function renderProjectProps(panel) {
 function renderRoomProps(panel, room) {
   if (!room) { renderProjectProps(panel); return; }
   const def = roomType(room.type);
+  const shaft = isShaft(room);
+  const minRoomSize = shaft ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
   const parent = room.parentId ? roomById(state.project, room.parentId) : null;
   const rejected = state.rejected.get(room.id) || [];
   const insideCount = itemsInRoom(state.project, room).length;
@@ -140,7 +163,7 @@ function renderRoomProps(panel, room) {
     </div>`;
   }).join('');
 
-  const areaControl = parent ? `
+  const areaControl = parent && !shaft ? `
     <h3>Площадь</h3>
     <div class="prop-block">
       <label class="check-row"><input type="radio" name="areaFrom" id="areaFromParent" ${room.takesArea !== false ? 'checked' : ''}>
@@ -173,32 +196,28 @@ function renderRoomProps(panel, room) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${MIN_ROOM_SIZE}" value="${room.w}"></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${MIN_ROOM_SIZE}" value="${room.h}"></label>
+        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"></label>
+        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"></label>
       </div>
-      <label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
+      ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
         <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
-      <div class="prop-row"><span>Площадь (чистая)</span><strong>${roomNetAreaM2(state.project, room).toFixed(2)} м²</strong></div>
+      `}
+      <div class="prop-row"><span>${shaft ? 'Площадь отверстия' : 'Площадь (чистая)'}</span><strong>${(shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room)).toFixed(2)} м²</strong></div>
     </div>
     ${areaControl}
     ${overlapControl}
-    ${roomNormsBlock(room.id)}
-    <h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
-    <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>
+    ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : roomNormsBlock(room.id)}
+    ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
+    <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
     ${rejectedHtml}
-    <div class="prop-actions">
-      <button id="arrangeBtn">Расставить мебель автоматически</button>
-      <button id="addDoorBtn">+ Дверь</button>
-      <button id="addWindowBtn">+ Окно</button>
-      <button id="deleteRoomBtn" class="danger">Удалить комнату</button>
-    </div>`;
+    ${shaft ? '' : '<div class="prop-actions"><button id="arrangeBtn">Расставить мебель автоматически</button></div>'}`;
 
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
   const applySize = () => {
-    const w = Math.max(MIN_ROOM_SIZE, Number(panel.querySelector('#roomW').value) || room.w);
-    const h = Math.max(MIN_ROOM_SIZE, Number(panel.querySelector('#roomH').value) || room.h);
+    const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || room.w);
+    const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || room.h);
     if (w === room.w && h === room.h) return;
     const before = snapshot();
     const old = { w: room.w, h: room.h };
@@ -217,22 +236,19 @@ function renderRoomProps(panel, room) {
   };
   panel.querySelector('#roomW').addEventListener('change', applySize);
   panel.querySelector('#roomH').addEventListener('change', applySize);
-  panel.querySelector('#roomCeil').addEventListener('change', (e) => {
+  panel.querySelector('#roomCeil')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
     mutate(() => { room.ceiling = v >= 2 ? Math.round(v * 1000) : null; });
   });
   panel.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', () => addFurniture(btn.dataset.add, room));
   });
-  panel.querySelector('#arrangeBtn').addEventListener('click', () => {
+  panel.querySelector('#arrangeBtn')?.addEventListener('click', () => {
     mutate(() => {}, { arrange: [room.id] });
     const problems = state.rejected.get(room.id) || [];
     toast(problems.length ? 'Расставлено, но есть замечания — смотрите панель' : 'Мебель расставлена');
     selectObject({ type: 'room', id: room.id });
   });
-  panel.querySelector('#addDoorBtn').addEventListener('click', () => startPlaceOpening('door'));
-  panel.querySelector('#addWindowBtn').addEventListener('click', () => startPlaceOpening('window'));
-  panel.querySelector('#deleteRoomBtn').addEventListener('click', deleteSelection);
   const fromParent = panel.querySelector('#areaFromParent');
   const fromSelf = panel.querySelector('#areaFromSelf');
   if (fromParent && fromSelf) {
@@ -262,40 +278,31 @@ function renderWallProps(panel, wall) {
   const subtitle = wall.kind === 'shared'
     ? `Общая стена: «${roomA?.name}» + «${roomB?.name}»`
     : roomA?.parentId ? `Перегородка «${roomA?.name}»` : `Наружная стена «${roomA?.name}»`;
-  const maxT = wall.kind === 'shared' ? MAX_SHARED_GAP : 600;
+  const set = state.project.settings;
   panel.innerHTML = `
     <h2>Стена</h2>
     <p class="subtitle">${subtitle}</p>
     <div class="prop-block">
       <div class="prop-row"><span>Длина</span><strong>${length} мм</strong></div>
-      <label class="prop-field"><span>Толщина, мм (50–${maxT})</span>
-        <input id="wallT" type="number" step="10" min="50" max="${maxT}" value="${Math.round(wall.thickness)}"></label>
+      <label class="prop-field"><span>Толщина, мм (${WALL_T_MIN}–${WALL_T_MAX})</span>
+        <input id="wallT" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(wall.thickness)}"></label>
       <label class="prop-field"><span>Тип</span>
         <select id="wallKind">
-          <option value="partition" ${wall.wallType === 'partition' ? 'selected' : ''}>Перегородка</option>
-          <option value="bearing" ${wall.wallType === 'bearing' ? 'selected' : ''}>Несущая</option>
-          <option value="exterior" ${wall.wallType === 'exterior' ? 'selected' : ''}>Наружная</option>
+          <option value="partition" ${wall.wallType === 'partition' ? 'selected' : ''}>Перегородка (${wallClassThickness(set, 'partition')})</option>
+          <option value="bearing" ${wall.wallType === 'bearing' ? 'selected' : ''}>Несущая (${wallClassThickness(set, 'bearing')})</option>
+          <option value="exterior" ${wall.wallType === 'exterior' ? 'selected' : ''}>Наружная (${wallClassThickness(set, 'exterior')})</option>
         </select></label>
     </div>
-    <div class="prop-actions">
-      <button id="wallDoorBtn">+ Дверь в этой стене</button>
-      <button id="wallWindowBtn" ${wall.kind === 'shared' || roomA?.parentId ? 'disabled title="Окна — только на наружных стенах"' : ''}>+ Окно в этой стене</button>
-    </div>
-    <p class="empty-hint">Общая стена двух комнат — единый объект: толщина меняется сразу для обеих, соседняя комната сдвигается.</p>`;
+    <p class="empty-hint">${wall.kind === 'shared'
+    ? 'Общая стена двух комнат — единый объект: толщина меняется сразу для обеих, соседняя комната (и всё за ней) сдвигается, стыковка сохраняется.'
+    : 'Смена типа даёт толщину этого класса, если толщина не задавалась вручную.'}</p>`;
 
   panel.querySelector('#wallT').addEventListener('change', (e) => {
-    const newT = Math.min(maxT, Math.max(50, Number(e.target.value) || wall.thickness));
-    changeWallThickness(wall, newT);
+    changeWallThickness(wall, Number(e.target.value) || wall.thickness);
   });
   panel.querySelector('#wallKind').addEventListener('change', (e) => {
-    mutate(() => {
-      state.project.wallOverrides[wall.key] = { ...(state.project.wallOverrides[wall.key] || {}), kind: e.target.value };
-    });
-    selectObject({ type: 'wall', key: wall.key, from: wall.from });
+    changeWallKind(wall, e.target.value);
   });
-  panel.querySelector('#wallDoorBtn').addEventListener('click', () => startPlaceOpening('door', { key: wall.key, from: wall.from }));
-  const windowBtn = panel.querySelector('#wallWindowBtn');
-  if (!windowBtn.disabled) windowBtn.addEventListener('click', () => startPlaceOpening('window', { key: wall.key, from: wall.from }));
 }
 
 // Фасад проёма (вид на стену) — SVG с размерами ширины, высоты и отступа
@@ -376,14 +383,7 @@ function renderOpeningProps(panel, opening) {
       <label class="prop-field"><span>От начала стены, мм</span>
         <input id="openOff" type="number" step="50" value="${Math.round(opening.offset)}"></label>
     </div>
-    ${isDoor && ['single', 'double', undefined].includes(opening.type) ? `
-    <div class="prop-actions">
-      <button id="flipSwing">Открывание: ${opening.swingIn ? 'внутрь' : 'наружу'}</button>
-      <button id="flipHinge">Петли: ${opening.hingeStart ? 'слева' : 'справа'}</button>
-    </div>` : ''}
-    <div class="prop-actions">
-      <button id="deleteOpening" class="danger">Удалить ${isDoor ? 'дверь' : 'окно'}</button>
-    </div>`;
+    ${isDoor ? '<p class="empty-hint">Петли и направление открывания меняются в единой панели над планом.</p>' : ''}`;
 
   const commitOpening = (fn) => {
     mutate(fn);
@@ -442,28 +442,19 @@ function renderOpeningProps(panel, opening) {
       else toast('Сюда проём не помещается');
     });
   });
-  if (isDoor) {
-    panel.querySelector('#flipSwing').addEventListener('click', () => commitOpening(() => { opening.swingIn = !opening.swingIn; }));
-    panel.querySelector('#flipHinge').addEventListener('click', () => commitOpening(() => { opening.hingeStart = !opening.hingeStart; }));
-  }
-  panel.querySelector('#deleteOpening').addEventListener('click', deleteSelection);
 }
 
-// Расчёт лестницы по высоте этажа и длине марша (как калькулятор в Revit).
-function stairCalc(item) {
-  const floorH = item.floorHeight || 3000;
-  const run = item.h; // длина марша (глубина предмета)
-  const idealRiser = 170; // комфортный подступенок
-  const risers = Math.max(2, Math.round(floorH / idealRiser));
-  const riserH = floorH / risers;
-  const treads = risers - 1; // проступей на один меньше подступенков
-  const treadD = treads > 0 ? run / treads : run;
-  // Правило удобства: 2·подступенок + проступь ≈ 600–640 мм.
-  const comfort = 2 * riserH + treadD;
-  const neededRun = treads * 280; // при проступи 280 мм
-  const okRiser = riserH >= 150 && riserH <= 190;
-  const okTread = treadD >= 230 && treadD <= 340;
-  return { floorH, run, risers, riserH, treads, treadD, comfort, neededRun, okRiser, okTread };
+// Лестничная зона следует за габаритом марша: смена формы остаётся операцией
+// в один клик и никогда не выпускает ступени сквозь стены.
+function fitStairRoom(item, margin = 200) {
+  const room = state.project.rooms.find((candidate) => candidate.type === 'stairs-room'
+    && item.x >= candidate.x && item.x <= candidate.x + candidate.w
+    && item.y >= candidate.y && item.y <= candidate.y + candidate.h);
+  if (!room) return;
+  room.w = item.w + margin * 2;
+  room.h = item.h + margin * 2;
+  room.x = item.x - room.w / 2;
+  room.y = item.y - room.h / 2;
 }
 
 function renderItemProps(panel, item) {
@@ -472,12 +463,15 @@ function renderItemProps(panel, item) {
   const fixed = isFixedSizeComp(item);
   let stairsBlock = '';
   if (isStairs) {
-    const c = stairCalc(item);
-    const diff = Math.round(c.neededRun - c.run);
-    const diffText = Math.abs(diff) < 50 ? 'длина марша оптимальна'
-      : diff > 0 ? `марш короче нужного на ${diff} мм — добавьте длину` : `марш длиннее нужного на ${-diff} мм`;
+    const c = stairCalculation(item, activeLevel(state.project)?.height || 3000);
+    const comfortable = c.okRiser && c.okTread && c.okComfort;
     stairsBlock = `
-      <h3>Расчёт лестницы</h3>
+      <h3>Форма лестницы</h3>
+      <div class="stair-shape">
+        ${STAIR_SHAPES.map((shape) => `<button type="button" data-stair-shape="${shape.id}" class="${c.shape === shape.id ? 'active' : ''}">${shape.title}</button>`).join('')}
+      </div>
+      <button id="stairFit" type="button">Подогнать автоматически</button>
+      <h3>Простой расчёт</h3>
       <div class="prop-block">
         <label class="prop-field"><span>Высота этажа, мм</span>
           <input id="floorH" type="number" step="50" min="2000" value="${c.floorH}"></label>
@@ -485,76 +479,72 @@ function renderItemProps(panel, item) {
         <div class="prop-row"><span>Проступей</span><strong>${c.treads}</strong></div>
         <div class="prop-row"><span>Высота ступени</span><strong class="${c.okRiser ? '' : 'bad'}">${Math.round(c.riserH)} мм</strong></div>
         <div class="prop-row"><span>Глубина проступи</span><strong class="${c.okTread ? '' : 'bad'}">${Math.round(c.treadD)} мм</strong></div>
-        <div class="prop-row"><span>Формула удобства</span><strong>${Math.round(c.comfort)} мм</strong></div>
-        <p class="empty-hint">${diffText}. Комфортно: ступень 150–190, проступь 230–340, формула 600–640 мм.</p>
+        <div class="prop-row"><span>Формула удобства</span><strong class="${c.okComfort ? '' : 'bad'}">${Math.round(c.comfort)} мм</strong></div>
+        <p class="empty-hint">${comfortable ? '✓ Размеры лестницы удобные.' : 'Нажмите «Подогнать автоматически» — размеры станут удобными.'} Норма: ступень 150–190, проступь 230–340 мм.</p>
       </div>`;
   }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">${isStairs ? 'Длина предмета = длина марша; тяните углы или меняйте ниже' : fixed && item.comp?.type === 'kitchen' ? 'Кухня-конструктор: форма, длины и элементы — ниже; элементы тянутся на плане' : fixed ? 'Собирается из модулей: «+» на концах дивана или список ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
+    <p class="subtitle">${isStairs ? 'Выберите форму — размеры и ступени рассчитаются автоматически. Стрелка показывает подъём.' : fixed && item.comp?.type === 'kitchen' ? 'Кухня-конструктор: форма, длины и элементы — ниже; элементы тянутся на плане' : fixed ? 'Собирается из модулей: «+» на концах дивана или список ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
     <div class="prop-block">
       <div class="prop-grid">
-        <label class="prop-field"><span>${fixed ? 'Общая ширина, мм' : 'Ширина, мм'}</span><input id="itemW" type="number" step="50" min="200" value="${item.w}" ${fixed ? 'readonly' : ''}></label>
-        <label class="prop-field"><span>${isStairs ? 'Длина марша, мм' : fixed ? 'Общая глубина, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}" ${fixed ? 'readonly' : ''}></label>
+        <label class="prop-field"><span>${isStairs ? 'Габарит по X, мм' : fixed ? 'Общая ширина, мм' : 'Ширина, мм'}</span><input id="itemW" type="number" step="50" min="200" value="${item.w}" ${fixed ? 'readonly' : ''}></label>
+        <label class="prop-field"><span>${isStairs ? 'Габарит по Y, мм' : fixed ? 'Общая глубина, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}" ${fixed ? 'readonly' : ''}></label>
       </div>
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
     </div>
     ${stairsBlock}
     ${compositeSection(item)}
-    <div class="prop-actions">
-      <button id="rotateItem">Повернуть на 90° (R)</button>
-      <button id="deleteItem" class="danger">Удалить</button>
-    </div>`;
+    <p class="empty-hint">Копирование, поворот, отражение и удаление — в единой панели над планом.</p>`;
   const applySize = () => {
     if (fixed) return; // диван-конструктор: размер — по модулям
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
-    mutate(() => { item.w = w; item.h = h; });
+    mutate(() => {
+      item.w = w; item.h = h;
+      if (isStairs) fitStairRoom(item);
+    });
     if (isStairs || item.comp) selectObject({ type: 'item', id: item.id });
   };
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
   const fh = panel.querySelector('#floorH');
   if (fh) fh.addEventListener('change', (e) => {
-    mutate(() => { item.floorHeight = Math.max(2000, Number(e.target.value) || 3000); });
+    mutate(() => {
+      applyStairPreset(item, stairShape(item), Math.max(2000, Number(e.target.value) || 3000));
+      fitStairRoom(item);
+      reconcileOpenings();
+    });
     selectObject({ type: 'item', id: item.id });
   });
+  panel.querySelectorAll('[data-stair-shape]').forEach((button) => {
+    button.addEventListener('click', () => {
+      mutate(() => {
+        applyStairPreset(item, button.dataset.stairShape, item.floorHeight || activeLevel(state.project)?.height || 3000);
+        fitStairRoom(item);
+        reconcileOpenings();
+      });
+      selectObject({ type: 'item', id: item.id });
+    });
+  });
+  panel.querySelector('#stairFit')?.addEventListener('click', () => {
+    mutate(() => {
+      applyStairPreset(item, stairShape(item), item.floorHeight || activeLevel(state.project)?.height || 3000);
+      fitStairRoom(item);
+      reconcileOpenings();
+    });
+    selectObject({ type: 'item', id: item.id });
+    toast('Лестница подогнана под высоту этажа');
+  });
   bindCompositeSection(panel, item);
-  panel.querySelector('#rotateItem').addEventListener('click', rotateSelectedItem);
-  panel.querySelector('#deleteItem').addEventListener('click', deleteSelection);
 }
 
 function renderMultiProps(panel, sel) {
-  const items = sel.itemIds.map((id) => state.project.items.find((i) => i.id === id)).filter(Boolean);
-  const groups = new Set(items.map((i) => i.group).filter(Boolean));
-  const grouped = items.length >= 2 && groups.size === 1 && items.every((i) => i.group) && groups.size;
   panel.innerHTML = `
     <h2>Выделено</h2>
     <div class="prop-block">
       <div class="prop-row"><span>Комнат</span><strong>${sel.roomIds.length}</strong></div>
       <div class="prop-row"><span>Мебели</span><strong>${sel.itemIds.length}</strong></div>
     </div>
-    <p class="empty-hint">Shift-клик добавляет/убирает объект. Перетащите любой — поедут все. R — повернуть мебель группой на 90°. Del — удалить.</p>
-    <div class="prop-actions">
-      ${items.length >= 2 ? `<button id="rotateMulti">Повернуть мебель на 90° (R)</button>` : ''}
-      ${items.length >= 2 && !grouped ? `<button id="groupBtn">Объединить в группу</button>` : ''}
-      ${grouped ? `<button id="ungroupBtn">Разгруппировать</button>` : ''}
-      <button id="deleteMulti" class="danger">Удалить выделенное</button>
-    </div>`;
-  const rot = panel.querySelector('#rotateMulti');
-  if (rot) rot.addEventListener('click', rotateMulti90);
-  const groupBtn = panel.querySelector('#groupBtn');
-  if (groupBtn) groupBtn.addEventListener('click', () => {
-    const gid = `grp-${Date.now().toString(36)}`;
-    mutate(() => { for (const i of items) i.group = gid; });
-    selectObject(sel);
-    toast('Мебель объединена в группу — клик по любому выделит всю группу');
-  });
-  const ungroupBtn = panel.querySelector('#ungroupBtn');
-  if (ungroupBtn) ungroupBtn.addEventListener('click', () => {
-    mutate(() => { for (const i of items) delete i.group; });
-    selectObject(sel);
-    toast('Группа расформирована');
-  });
-  panel.querySelector('#deleteMulti').addEventListener('click', deleteSelection);
+    <p class="empty-hint">Shift-клик добавляет или убирает объект. Все действия с выделением находятся в панели над планом.</p>`;
 }

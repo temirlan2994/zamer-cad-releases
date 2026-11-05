@@ -105,8 +105,9 @@ function render() {
 
 function openText(text, pid, missing) {
   const before = snapshot();
+  const beforePid = state.pid;
   restoreFrom(text);
-  pushHistory(before);
+  pushHistory(before, beforePid);
   state.pid = pid;
   refs.projectName.value = state.project.name;
   tweak(() => {});

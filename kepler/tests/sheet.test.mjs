@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createProject, createRoom, createLevel } from '../core/model.js';
 import { roomSchedule, scheduleTotals, buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildImagePdf, pdfTextString } from '../core/pdf.js';
-import { deriveWalls } from '../core/walls.js';
+import { deriveWalls, openRoomRailingSegments } from '../core/walls.js';
 
 function house() {
   const p = createProject('Дом; «тест»');
@@ -46,6 +46,35 @@ test('терраса — открытое помещение: без собст�
   const terrace = p.rooms.find((r) => r.type === 'terrace');
   const own = deriveWalls(p).filter((w) => w.kind === 'own' && w.rooms[0] === terrace.id);
   assert.equal(own.length, 0);
+});
+
+test('терраса не меняет наружную стену дома', () => {
+  const p = createProject('Примыкание');
+  const living = createRoom('living', 1000, 0, 3000, 4000);
+  const terrace = createRoom('terrace', 0, 4250, 5000, 2000);
+  p.rooms.push(living);
+  const before = deriveWalls(p);
+  p.rooms.push(terrace);
+  const walls = deriveWalls(p);
+  assert.deepEqual(walls, before, 'вся геометрия стен осталась без изменений');
+  assert.equal(walls.some((wall) => wall.kind === 'shared' && wall.rooms.includes(terrace.id)), false);
+  const houseWall = walls.find((wall) => wall.kind === 'own' && wall.rooms[0] === living.id && wall.sides[living.id] === 2);
+  assert.ok(houseWall, 'стена дома на стыке с террасой сохранена');
+  assert.equal(houseWall.wallType, 'exterior');
+  assert.equal(houseWall.thickness, p.settings.exterior);
+});
+
+test('перила исчезают только на стыке со стеной и соседним балконом', () => {
+  const living = createRoom('living', 1000, 0, 3000, 4000);
+  const terrace = createRoom('terrace', 0, 4250, 5000, 2000);
+  const balcony = createRoom('balcony', 5000, 4250, 1200, 2000);
+  const rooms = [living, terrace, balcony];
+  const terraceSegments = openRoomRailingSegments(terrace, rooms);
+  assert.deepEqual(terraceSegments.filter((segment) => segment.side === 0).map(({ from, to }) => ({ from, to })), [
+    { from: 0, to: 1000 }, { from: 4000, to: 5000 },
+  ]);
+  assert.equal(terraceSegments.some((segment) => segment.side === 1), false, 'на стыке с балконом перил нет');
+  assert.equal(openRoomRailingSegments(balcony, rooms).some((segment) => segment.side === 3), false);
 });
 
 test('PDF: страницы-картинки, верная таблица xref, кириллица в заголовке', () => {

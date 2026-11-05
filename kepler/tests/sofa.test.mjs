@@ -252,6 +252,25 @@ test('попадание по дивану — только по модулям,
   assert.ok(pointInComposite(createItem('bed-double', 0, 0, 1600, 2000), 700, 900));
 });
 
+test('зеркало дивана отражает модули, точки «+» и область попадания', () => {
+  const it = sofaWith(['arm', 'seat', 'corner', 'seat'], { x: 4000, y: 3000 });
+  const beforeParts = partsInHouse(it);
+  const beforeSpots = sofaSpots(it);
+  it.mirrored = true;
+  const afterParts = partsInHouse(it);
+  const afterSpots = sofaSpots(it);
+  for (let i = 0; i < beforeParts.length; i += 1) {
+    near(afterParts[i].x, it.x * 2 - beforeParts[i].x, `часть ${i}: x`);
+    near(afterParts[i].y, beforeParts[i].y, `часть ${i}: y`);
+    assert.ok(pointInComposite(it, afterParts[i].x, afterParts[i].y));
+  }
+  for (let i = 0; i < beforeSpots.length; i += 1) {
+    near(afterSpots[i].x, it.x * 2 - beforeSpots[i].x, `точка ${i}: x`);
+    near(afterSpots[i].y, beforeSpots[i].y, `точка ${i}: y`);
+    near(afterSpots[i].nx, -beforeSpots[i].nx, `точка ${i}: nx`);
+  }
+});
+
 test('автоподбор ставит диван конструктором того же размера', () => {
   const room = createRoom('living', 0, 0, 5000, 4000);
   const sofaItem = defaultItemsFor(room).find((i) => i.kind === 'sofa');

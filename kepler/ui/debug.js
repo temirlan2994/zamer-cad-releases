@@ -1,7 +1,7 @@
 // Отладочный доступ для автотестов (window.__kepler).
 
 import { openingRect } from '../core/walls.js';
-import { loadSample } from './files.js';
+import { loadSample, loadTemplate, newProject } from './files.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
@@ -23,6 +23,8 @@ export function exposeDebugApi() {
     screenToPlan,
     fitView,
     loadSample,
+    loadTemplate,
+    newProject,
     setEditorMode,
     selectRoom: (id) => selectObject({ type: 'room', id }),
     select: (sel) => selectObject(sel),

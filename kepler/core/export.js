@@ -18,7 +18,7 @@ import { buildDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
-import { isRoundItem, isStructural } from './catalog.js';
+import { isRoundItem, isShaft, isStructural } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { structuralOutline } from './mesh3d.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
@@ -27,6 +27,7 @@ import {
   contours, formatElevation, houseTerrain, terrainModel, terrainSummary,
 } from './terrain.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
 
@@ -40,21 +41,17 @@ function buildLevelExport(project, level) {
     id: room.id,
     number: numbers.get(room.id) || null, // как в экспликации и на листах
     type: room.type,
+    void: isShaft(room),
     name: room.name,
     parent: room.parentId || null,
-    polygon: [
-      { x: room.x, y: room.y },
-      { x: room.x + room.w, y: room.y },
-      { x: room.x + room.w, y: room.y + room.h },
-      { x: room.x, y: room.y + room.h },
-    ],
+    polygon: roomPolygon(room),
     size: { w: room.w, h: room.h },
     ceiling_height: roomCeiling(room, level), // чистая высота, мм
-    area_m2: Number(((room.w * room.h) / 1_000_000).toFixed(3)),
+    area_m2: Number((roomShapeArea(room) / 1_000_000).toFixed(3)),
     net_area_m2: Number(roomNetAreaM2(project, room).toFixed(3)),
   }));
 
-  const wallsOut = walls.filter((w) => w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({
+  const wallsOut = walls.filter((w) => !w.hidden && w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({
     id: `${wall.key}#${index}`,
     key: wall.key,
     shared: wall.kind === 'shared',
@@ -62,6 +59,8 @@ function buildLevelExport(project, level) {
     to: { x: wall.center.x2, y: wall.center.y2 },
     thickness: wall.thickness,
     type: wall.wallType,
+    // Несущая: внутренняя несущая и наружная; перегородка — нет.
+    load_bearing: wall.wallType !== 'partition',
     rooms: wall.rooms,
   }));
 
@@ -91,7 +90,7 @@ function buildLevelExport(project, level) {
     const nested = project.rooms.filter((r) => r.parentId);
     const top = project.rooms.filter((r) => !r.parentId);
     for (const room of [...nested, ...top]) {
-      if (item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) return room.id;
+      if (roomContainsPoint(room, item.x, item.y)) return room.id;
     }
     return null;
   };
@@ -112,6 +111,7 @@ function buildLevelExport(project, level) {
     center: { x: item.x, y: item.y },
     size: { w: item.w, h: item.h },
     rotation_deg: item.rotation || 0,
+    mirrored: Boolean(item.mirrored || item.comp?.mirror),
     // Составная мебель: параметры и готовые части (стулья у стола) в осях дома.
     ...(item.comp ? {
       comp: item.comp,
@@ -218,7 +218,7 @@ export function planEntities(project, { dims = true } = {}) {
   const entities = [];
 
   for (const wall of walls) {
-    if (wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски в DXF не нужны
+    if (wall.hidden || wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски в DXF не нужны
     entities.push({
       type: 'wall',
       layer: 'walls',

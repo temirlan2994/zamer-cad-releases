@@ -8,7 +8,7 @@ import { buildStructuredExport } from '../core/export.js';
 import { buildTemplate } from '../core/templates.js';
 import { createItem } from '../core/model.js';
 
-const cs = readFileSync(new URL('../revit/src/KeplerExport.cs', import.meta.url), 'utf8');
+const cs = readFileSync(new URL('../revit/src/KeplerExport.cs', import.meta.url), 'utf8').split('\r\n').join('\n');
 
 // Класс C# → имена JSON-полей.
 function fields(className) {

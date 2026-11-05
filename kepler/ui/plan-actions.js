@@ -2,13 +2,18 @@
 
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, roomType } from '../core/catalog.js';
 import { reclaimItemsFromChild } from '../core/furnish.js';
-import { createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
+import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
+import { editKitchen } from '../core/kitchen.js';
+import { keepOpenings } from '../core/opening-anchor.js';
+import { roomContainsPoint, splitRoomOutlineWall } from '../core/room-shape.js';
 import {
-  determineParent, moveRoomBy, rectsOverlap, snapRoomPosition, validateRoomPlacement,
+  determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
-import { clampOpeningOffset, deriveWalls, sideEdge } from '../core/walls.js';
-import { canvas, toast } from './dom.js';
+import { clampOpeningOffset, deriveWalls, doorPlacementVariant, sideEdge } from '../core/walls.js';
+import { applyStairPreset } from '../core/stairs.js';
+import { clampWallThickness, setSharedWallThickness, setWallKind } from '../core/wall-thickness.js';
+import { toast } from './dom.js';
 import { findWall, nearestWall } from './hit.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
@@ -16,7 +21,7 @@ import {
   afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
-import { requestDraw, screenToPlan } from './view.js';
+import { requestDraw } from './view.js';
 
 export function reconcileOpenings() {
   const walls = deriveWalls(state.project);
@@ -33,33 +38,83 @@ export function reconcileOpenings() {
   if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`);
 }
 
+// Деление не меняет форму: на месте клика появляются две совпадающие вершины.
+// Уступ возникает только после того, как пользователь потянет один из сегментов.
+export function splitSelectedWall() {
+  const sel = state.selection;
+  if (sel?.type !== 'wall') return;
+  const wall = findWall(sel.key, sel.from);
+  const roomId = wall?.rooms?.[0];
+  const room = roomById(state.project, roomId);
+  if (!wall || !room || wall.kind !== 'own') {
+    toast('Разделить можно собственную наружную стену помещения', true);
+    return;
+  }
+  const along = Number.isFinite(sel.at) ? sel.at : (wall.from + wall.to) / 2;
+  const before = snapshot();
+  const outline = room.outline ? structuredClone(room.outline) : null;
+  const notch = room.notch ? structuredClone(room.notch) : null;
+  // Вставка вершин сдвигает номера сторон контура — проёмы перепривязываем.
+  if (!keepOpenings(state.project, room, () => splitRoomOutlineWall(room, wall, along)).result) {
+    toast('На этом коротком участке стену разделить нельзя', true);
+    return;
+  }
+  state.pendingRoomSplit = { roomId: room.id, before, outline, notch, moved: false };
+  refreshDerived();
+  selectObject({ type: 'room', id: room.id });
+  toast('Стена разделена без изменения формы — тяните любую половину за круглую точку');
+}
+
+export function toggleSelectedWallHidden() {
+  const sel = state.selection;
+  if (sel?.type !== 'wall') return;
+  const wall = findWall(sel.key, sel.from);
+  if (!wall || !['own', 'shared'].includes(wall.kind)) return;
+  const hidden = !wall.hidden;
+  mutate(() => {
+    const current = state.project.wallOverrides[wall.key] || {};
+    state.project.wallOverrides[wall.key] = { ...current, hidden };
+  });
+  selectObject({ ...sel });
+  toast(hidden ? 'Стена скрыта · Ctrl+Z — вернуть' : 'Стена снова показана');
+}
+
 // Точки — в локальных координатах дома (см. core/building.js).
 export function placeRoomAt(at, typeOverride = null) {
   const type = typeOverride || state.tool.type;
   const def = roomType(type);
-  const w = def.w;
-  const h = def.h;
+  const turned = !typeOverride && (state.tool?.rotation || 0) % 180 !== 0;
+  const w = turned ? def.h : def.w;
+  const h = turned ? def.w : def.h;
   let x = at.x - w / 2;
   let y = at.y - h / 2;
-  const parentId = determineParent(state.project, { x, y, w, h }, null);
-  const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId);
+  const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
+  const snapped = snapRoomPosition(state.project, { id: '__ghost__', type, w, h }, x, y, 14 / state.view.scale, parentId);
   x = snapped.x; y = snapped.y;
-  const verdict = validateRoomPlacement(state.project, { x, y, w, h, parentId }, null);
+  const verdict = validateRoomPlacement(state.project, { type, x, y, w, h, parentId }, null);
   if (!verdict.ok) { toast(verdict.reason, true); return; }
   const room = createRoom(type, x, y, w, h);
   room.parentId = parentId;
+  if (def.shaft) room.takesArea = true;
   const sameType = state.project.rooms.filter((r) => r.type === room.type).length;
   if (sameType > 0) room.name = `${def.title} ${sameType + 1}`;
+  let stair = null;
+  if (type === 'stairs-room') {
+    stair = createItem('stairs', room.x + room.w / 2, room.y + room.h / 2, 2200, 3200);
+    applyStairPreset(stair, 'u', activeLevel(state.project)?.height || 3000);
+  }
   mutate(() => {
     state.project.rooms.push(room);
+    if (stair) state.project.items.push(stair);
     // Мебель родителя из-под нового помещения вытаскивается.
     if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
     // Новая комната создаётся ПУСТОЙ — мебель пользователь добавляет сам из
     // панели «Мебель» (клик по карточке или перетаскиванием).
-  }, { arrange: parentId ? [room.id, parentId] : [room.id] });
+  }, { arrange: stair ? (parentId ? [parentId] : []) : parentId ? [room.id, parentId] : [room.id] });
   cancelTool();
-  selectObject({ type: 'room', id: room.id });
-  if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
+  selectObject(stair ? { type: 'item', id: stair.id } : { type: 'room', id: room.id });
+  if (stair) toast('Лестница создана и рассчитана по высоте этажа — выберите форму справа');
+  else if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
   else if (verdict.warning) toast(`⚠ ${verdict.warning} — поставлено, проверьте отступы`, true);
 }
 
@@ -92,6 +147,7 @@ export function computeOpeningParams(at) {
     // Петли — на дальнем от курсора конце, створка «смотрит» к курсору.
     const center = base + opening.offset;
     opening.hingeStart = along > center;
+    Object.assign(opening, doorPlacementVariant(opening, state.tool?.doorTurns || 0));
   }
   return { opening, wall };
 }
@@ -228,15 +284,339 @@ export function rotateSelectedItem() {
   mutate(() => { item.rotation = ((item.rotation || 0) + 90) % 360; });
 }
 
+// Единые действия контекстной панели ---------------------------------------
+
+function cloneItem(item, dx, dy, group = null) {
+  const copy = createItem(item.kind, item.x + dx, item.y + dy, item.w, item.h, item.rotation || 0);
+  const id = copy.id;
+  Object.assign(copy, JSON.parse(JSON.stringify(item)), { id, x: item.x + dx, y: item.y + dy });
+  if (group) copy.group = group; else delete copy.group;
+  return copy;
+}
+
+const cloneData = (value) => JSON.parse(JSON.stringify(value));
+let objectClipboard = null;
+
+function selectedItems(sel) {
+  if (sel.type === 'item') {
+    return [state.project.items.find((item) => item.id === sel.id)].filter(Boolean);
+  }
+  if (sel.type === 'multi' && !sel.roomIds.length) {
+    return sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
+  }
+  return [];
+}
+
+function roomClipboard(room) {
+  const rooms = [room, ...state.project.rooms.filter((candidate) => !room.parentId && candidate.parentId === room.id)];
+  const roomIds = new Set(rooms.map((candidate) => candidate.id));
+  return {
+    kind: 'room',
+    rooms: cloneData(rooms),
+    openings: cloneData(state.project.openings.filter((opening) => roomIds.has(opening.roomId))),
+    items: cloneData(state.project.items.filter((item) => roomContainsPoint(room, item.x, item.y))),
+    pastes: 0,
+  };
+}
+
+// Внутренний буфер объектов редактора: не затрагивает системный буфер текста.
+export function copySelection() {
+  const sel = state.selection;
+  if (!sel) return false;
+  const items = selectedItems(sel);
+  if (items.length) {
+    objectClipboard = { kind: 'items', items: cloneData(items), pastes: 0 };
+  } else if (sel.type === 'opening') {
+    const opening = state.project.openings.find((candidate) => candidate.id === sel.id);
+    if (!opening) return false;
+    objectClipboard = { kind: 'opening', opening: cloneData(opening), pastes: 0 };
+  } else if (sel.type === 'room') {
+    const room = roomById(state.project, sel.id);
+    if (!room) return false;
+    objectClipboard = roomClipboard(room);
+  } else {
+    toast('Этот тип выделения нельзя скопировать', true);
+    return false;
+  }
+  toast(items.length > 1 ? `Скопировано объектов: ${items.length}` : 'Объект скопирован · Ctrl+V — вставить');
+  return true;
+}
+
+function pasteItems(clipboard) {
+  const offset = 300 * (clipboard.pastes + 1);
+  const groupMap = new Map();
+  const copies = clipboard.items.map((item) => {
+    let group = null;
+    if (clipboard.items.length > 1 && item.group) {
+      if (!groupMap.has(item.group)) groupMap.set(item.group, `grp-${Date.now().toString(36)}-${groupMap.size}`);
+      group = groupMap.get(item.group);
+    }
+    return cloneItem(item, offset, offset, group);
+  });
+  mutate(() => { state.project.items.push(...copies); });
+  clipboard.pastes += 1;
+  selectObject(copies.length === 1
+    ? { type: 'item', id: copies[0].id }
+    : { type: 'multi', roomIds: [], itemIds: copies.map((item) => item.id) });
+  return true;
+}
+
+function pasteOpening(clipboard) {
+  const source = clipboard.opening;
+  if (!roomById(state.project, source.roomId)) {
+    toast('Исходного помещения уже нет — проём вставить некуда', true);
+    return false;
+  }
+  const copy = createOpening(source.kind, source.roomId, source.side, source.offset, source.width);
+  const id = copy.id;
+  Object.assign(copy, cloneData(source), { id });
+  const walls = deriveWalls(state.project);
+  const step = (source.width + 300) * (clipboard.pastes + 1);
+  const right = clampOpeningOffset(state.project, copy, walls, source.offset + step);
+  const left = clampOpeningOffset(state.project, copy, walls, source.offset - step);
+  copy.offset = right !== null && Math.abs(right - source.offset) > 1 ? right
+    : left !== null ? left : source.offset;
+  mutate(() => { state.project.openings.push(copy); });
+  clipboard.pastes += 1;
+  selectObject({ type: 'opening', id: copy.id });
+  return true;
+}
+
+function pasteRoom(clipboard) {
+  const source = clipboard.rooms[0];
+  const partition = state.project.settings?.partition || 100;
+  const distance = (source.w + partition) * (clipboard.pastes + 1);
+  let dx = distance;
+  if (source.parentId) {
+    let candidate = { ...source, id: '', x: source.x + dx };
+    if (!validateRoomPlacement(state.project, candidate, null).ok) {
+      dx = -distance;
+      candidate = { ...source, id: '', x: source.x + dx };
+      if (!validateRoomPlacement(state.project, candidate, null).ok) {
+        toast('В родительском помещении нет места для вставки', true);
+        return false;
+      }
+    }
+  }
+  const roomMap = new Map();
+  const rooms = clipboard.rooms.map((room) => {
+    const copy = createRoom(room.type, room.x + dx, room.y, room.w, room.h);
+    const id = copy.id;
+    Object.assign(copy, cloneData(room), { id, x: room.x + dx });
+    roomMap.set(room.id, copy.id);
+    return copy;
+  });
+  rooms.forEach((room, index) => {
+    const oldParent = clipboard.rooms[index].parentId;
+    room.parentId = roomMap.get(oldParent) || oldParent || null;
+  });
+  rooms[0].name = `${source.name} — копия`;
+  const openings = clipboard.openings.map((opening) => {
+    const roomId = roomMap.get(opening.roomId);
+    const copy = createOpening(opening.kind, roomId, opening.side, opening.offset, opening.width);
+    const id = copy.id;
+    return Object.assign(copy, cloneData(opening), { id, roomId });
+  });
+  const items = clipboard.items.map((item) => cloneItem(item, dx, 0));
+  mutate(() => {
+    state.project.rooms.push(...rooms);
+    state.project.openings.push(...openings);
+    state.project.items.push(...items);
+  });
+  clipboard.pastes += 1;
+  selectObject({ type: 'room', id: rooms[0].id });
+  return true;
+}
+
+export function pasteSelection() {
+  if (!objectClipboard) {
+    toast('Сначала выберите объект и нажмите Ctrl+C');
+    return false;
+  }
+  if (objectClipboard.kind === 'items') return pasteItems(objectClipboard);
+  if (objectClipboard.kind === 'opening') return pasteOpening(objectClipboard);
+  if (objectClipboard.kind === 'room') return pasteRoom(objectClipboard);
+  return false;
+}
+
+function duplicateItemSelection(sel) {
+  const source = sel.type === 'item'
+    ? [state.project.items.find((item) => item.id === sel.id)].filter(Boolean)
+    : sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
+  if (!source.length) return;
+  const groupMap = new Map();
+  const copies = source.map((item) => {
+    let group = null;
+    if (source.length > 1 && item.group) {
+      if (!groupMap.has(item.group)) groupMap.set(item.group, `grp-${Date.now().toString(36)}-${groupMap.size}`);
+      group = groupMap.get(item.group);
+    }
+    return cloneItem(item, 300, 300, group);
+  });
+  mutate(() => { state.project.items.push(...copies); });
+  selectObject(copies.length === 1
+    ? { type: 'item', id: copies[0].id }
+    : { type: 'multi', roomIds: [], itemIds: copies.map((item) => item.id) });
+  toast(copies.length === 1 ? 'Создана копия — перетащите её на место' : `Создано копий: ${copies.length}`);
+}
+
+function duplicateOpeningSelection(sel) {
+  const source = state.project.openings.find((opening) => opening.id === sel.id);
+  if (!source) return;
+  const copy = createOpening(source.kind, source.roomId, source.side, source.offset, source.width);
+  const id = copy.id;
+  Object.assign(copy, JSON.parse(JSON.stringify(source)), { id });
+  const walls = deriveWalls(state.project);
+  const step = source.width + 300;
+  const right = clampOpeningOffset(state.project, copy, walls, source.offset + step);
+  const left = clampOpeningOffset(state.project, copy, walls, source.offset - step);
+  copy.offset = right !== null && Math.abs(right - source.offset) > 1 ? right
+    : left !== null ? left : source.offset;
+  mutate(() => { state.project.openings.push(copy); });
+  selectObject({ type: 'opening', id: copy.id });
+  toast(`Создана копия ${source.kind === 'door' ? 'двери' : 'окна'}`);
+}
+
+function duplicateRoomSelection(sel) {
+  const source = roomById(state.project, sel.id);
+  if (!source) return;
+  const partition = state.project.settings?.partition || 100;
+  let dx = source.parentId ? source.w + partition : source.w + partition;
+  let candidate = { ...source, x: source.x + dx };
+  if (source.parentId && !validateRoomPlacement(state.project, candidate, null).ok) {
+    dx = -(source.w + partition);
+    candidate = { ...source, x: source.x + dx };
+    if (!validateRoomPlacement(state.project, candidate, null).ok) {
+      toast('Рядом нет места для копии вложенного помещения', true);
+      return;
+    }
+  }
+  const sourceRooms = [source, ...state.project.rooms.filter((room) => !source.parentId && room.parentId === source.id)];
+  const roomMap = new Map();
+  const copies = sourceRooms.map((room) => {
+    const copy = createRoom(room.type, room.x + dx, room.y, room.w, room.h);
+    const id = copy.id;
+    Object.assign(copy, JSON.parse(JSON.stringify(room)), { id, x: room.x + dx });
+    roomMap.set(room.id, copy.id);
+    return copy;
+  });
+  for (let i = 0; i < sourceRooms.length; i += 1) {
+    const oldParent = sourceRooms[i].parentId;
+    copies[i].parentId = roomMap.get(oldParent) || oldParent || null;
+  }
+  copies[0].name = `${source.name} — копия`;
+  const openings = state.project.openings.filter((opening) => roomMap.has(opening.roomId)).map((opening) => {
+    const copy = createOpening(opening.kind, roomMap.get(opening.roomId), opening.side, opening.offset, opening.width);
+    const id = copy.id;
+    return Object.assign(copy, JSON.parse(JSON.stringify(opening)), { id, roomId: roomMap.get(opening.roomId) });
+  });
+  const items = state.project.items.filter((item) => roomContainsPoint(source, item.x, item.y))
+    .map((item) => cloneItem(item, dx, 0));
+  mutate(() => {
+    state.project.rooms.push(...copies);
+    state.project.openings.push(...openings);
+    state.project.items.push(...items);
+  });
+  selectObject({ type: 'room', id: copies[0].id });
+  toast('Создана копия помещения справа от исходного');
+}
+
+export function duplicateSelection() {
+  const sel = state.selection;
+  if (!sel) return;
+  if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length)) duplicateItemSelection(sel);
+  else if (sel.type === 'opening') duplicateOpeningSelection(sel);
+  else if (sel.type === 'room') duplicateRoomSelection(sel);
+}
+
+export function rotateSelection90() {
+  if (state.selection?.type === 'multi') rotateMulti90();
+  else rotateSelectedItem();
+}
+
+function mirrorItem(item) {
+  if (item.comp?.type === 'kitchen') {
+    const next = editKitchen(item, { op: 'mirror', value: !item.comp.mirror });
+    if (next) Object.assign(item, next);
+    return Boolean(next);
+  }
+  item.mirrored = !item.mirrored;
+  return true;
+}
+
+export function mirrorSelection() {
+  const sel = state.selection;
+  if (sel?.type === 'item') {
+    const item = state.project.items.find((candidate) => candidate.id === sel.id);
+    if (!item) return;
+    let ok = false;
+    mutate(() => { ok = mirrorItem(item); });
+    if (!ok) toast('Этот конструктор пока нельзя отразить', true);
+    selectObject(sel);
+    return;
+  }
+  if (sel?.type !== 'multi' || sel.roomIds.length) return;
+  const items = sel.itemIds.map((id) => state.project.items.find((item) => item.id === id)).filter(Boolean);
+  if (!items.length) return;
+  const cx = items.reduce((sum, item) => sum + item.x, 0) / items.length;
+  mutate(() => {
+    for (const item of items) {
+      item.x = cx * 2 - item.x;
+      mirrorItem(item);
+    }
+  });
+  selectObject(sel);
+}
+
+export function flipSelectedOpening(part) {
+  const opening = state.selection?.type === 'opening'
+    ? state.project.openings.find((candidate) => candidate.id === state.selection.id) : null;
+  if (!opening || opening.kind !== 'door') return;
+  mutate(() => {
+    if (part === 'hinge') opening.hingeStart = !opening.hingeStart;
+    else opening.swingIn = !opening.swingIn;
+  });
+  selectObject({ type: 'opening', id: opening.id });
+}
+
+export function reverseSelectedStair() {
+  const item = state.selection?.type === 'item'
+    ? state.project.items.find((candidate) => candidate.id === state.selection.id) : null;
+  if (!item || item.kind !== 'stairs') return;
+  mutate(() => { item.rotation = ((item.rotation || 0) + 180) % 360; });
+  selectObject({ type: 'item', id: item.id });
+}
+
+export function groupSelectedItems() {
+  const sel = state.selection;
+  if (sel?.type !== 'multi' || sel.itemIds.length < 2) return;
+  const gid = `grp-${Date.now().toString(36)}`;
+  mutate(() => {
+    for (const item of state.project.items) if (sel.itemIds.includes(item.id)) item.group = gid;
+  });
+  selectObject(sel);
+  toast('Объекты сгруппированы');
+}
+
+export function ungroupSelectedItems() {
+  const sel = state.selection;
+  if (sel?.type !== 'multi') return;
+  mutate(() => {
+    for (const item of state.project.items) if (sel.itemIds.includes(item.id)) delete item.group;
+  });
+  selectObject(sel);
+  toast('Группа расформирована');
+}
+
 // Добавляет предмет мебели в указанную мировую точку (центр предмета).
-export function addFurnitureAt(kind, x, y) {
+export function addFurnitureAt(kind, x, y, rotation = 0) {
   const fd = furnitureDef(kind);
   if (!fd) return;
   const item = createItem(
     kind,
     Math.round(x / GRID_STEP) * GRID_STEP,
     Math.round(y / GRID_STEP) * GRID_STEP,
-    fd.w, fd.h,
+    fd.w, fd.h, rotation,
   );
   withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   mutate(() => { state.project.items.push(item); });
@@ -248,51 +628,39 @@ export function addFurnitureAt(kind, x, y) {
     : `«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
 }
 
-// Клик по карточке мебели: кладём в выбранную комнату (или центр экрана),
-// каскадом — чтобы можно было быстро накликать много и потом растащить.
-// Панель мебели при этом не перерисовывается, список остаётся на месте.
-export function addFurnitureToSelection(kind) {
-  const sel = state.selection;
-  const room = sel?.type === 'room' ? roomById(state.project, sel.id)
-    : sel?.type === 'item' ? containingRoom(state.project.items.find((i) => i.id === sel.id)) : null;
-  let cx;
-  let cy;
-  if (room) { cx = room.x + room.w / 2; cy = room.y + room.h / 2; }
-  else { const c = screenToPlan(canvas.clientWidth / 2, canvas.clientHeight / 2); cx = c.x; cy = c.y; }
-  const k = state.project.items.length % 6; // каскад, чтобы не ложились стопкой
-  addFurnitureAt(kind, cx + k * 180, cy + k * 180);
-}
-
-function containingRoom(item) {
-  if (!item) return null;
-  const nested = state.project.rooms.filter((r) => r.parentId);
-  const top = state.project.rooms.filter((r) => !r.parentId);
-  for (const room of [...nested, ...top]) {
-    if (item.x >= room.x && item.x <= room.x + room.w && item.y >= room.y && item.y <= room.y + room.h) return room;
-  }
-  return null;
-}
-
+// Толщина стены. Общая стена остаётся общей: сторона соседа сдвигается так,
+// чтобы зазор был равен новой толщине (core/wall-thickness.js).
 export function changeWallThickness(wall, newT) {
+  applyWallChange(wall, (project) => (wall.kind === 'shared'
+    ? setSharedWallThickness(project, wall, newT)
+    : (setOwnWallThickness(project, wall, newT), { ok: true })));
+}
+
+// Тип стены: наружная / несущая / перегородка; толщина по умолчанию — класса.
+export function changeWallKind(wall, kind) {
+  applyWallChange(wall, (project) => setWallKind(project, wall, kind));
+}
+
+function setOwnWallThickness(project, wall, newT) {
+  const t = clampWallThickness(newT, wall.thickness);
+  project.wallOverrides[wall.key] = { ...(project.wallOverrides[wall.key] || {}), thickness: t };
+}
+
+function applyWallChange(wall, apply) {
   const before = snapshot();
-  if (wall.kind === 'shared') {
-    const delta = newT - wall.thickness;
-    const mover = roomById(state.project, wall.rooms[1]);
-    moveRoomBy(state.project, mover.id, wall.orient === 'v' ? delta : 0, wall.orient === 'h' ? delta : 0);
-    const verdict = validateRoomPlacement(state.project, mover, mover.id);
-    if (!verdict.ok) {
-      restoreFrom(before);
-      toast(`Нельзя: ${verdict.reason}`, true);
-      return;
-    }
-  } else {
-    state.project.wallOverrides[wall.key] = { ...(state.project.wallOverrides[wall.key] || {}), thickness: newT };
+  const result = apply(state.project);
+  if (!result.ok) {
+    restoreFrom(before);
+    toast(`Нельзя: ${result.reason}`, true);
+    return;
   }
   reconcileOpenings();
   refreshDerived();
   pushHistory(before);
   afterChange();
-  selectObject({ type: 'wall', key: wall.key, from: wall.from });
+  if (result.broken?.length) toast(`Внимание: разорвано стыковок — ${result.broken.length}, проверьте план`, true);
+  const moved = state.walls.find((w) => w.key === wall.key) || wall;
+  selectObject({ type: 'wall', key: wall.key, from: moved.from });
 }
 
 export function toggleOpeningFlip(kind) {

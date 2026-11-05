@@ -1,8 +1,9 @@
 // Привязки и проверки при изменении размеров комнат и мебели.
 
-import { GRID_STEP } from '../core/catalog.js';
+import { DEFAULT_PARTITION, GRID_STEP, isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemRect } from '../core/furnish.js';
-import { MIN_ROOM_SIZE, validateRoomPlacement } from '../core/rooms.js';
+import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, validateRoomPlacement } from '../core/rooms.js';
+import { MAX_SHARED_GAP, sharedWallThickness } from '../core/walls.js';
 import { state } from './state.js';
 
 // Линии привязки: грани стен и кромки других комнат.
@@ -10,7 +11,10 @@ function collectSnapLines(excludeRoomId) {
   const xs = [];
   const ys = [];
   for (const wall of state.walls) {
-    if (excludeRoomId && wall.rooms.includes(excludeRoomId) && wall.kind === 'own') continue;
+    // Не привязываем редактируемое помещение к его же общей стене: иначе
+    // после первого соединения ручка липнет к старому положению и двигается
+    // ступенями.
+    if (excludeRoomId && wall.rooms.includes(excludeRoomId)) continue;
     xs.push(wall.band.x, wall.band.x + wall.band.w);
     ys.push(wall.band.y, wall.band.y + wall.band.h);
   }
@@ -37,6 +41,7 @@ export function applyResize(room, dragState, plan) {
   const dy = plan.y - dragState.plan.y;
   const snap = (v) => Math.round(v / GRID_STEP) * GRID_STEP;
   const h = dragState.handle;
+  const minSize = isShaft(room) ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
   let { x, y, w, h: hh } = start;
   if (h.includes('w')) { const nx = snap(start.x + dx); w = start.x + start.w - nx; x = nx; }
   if (h.includes('e')) { w = snap(start.w + dx); }
@@ -44,13 +49,45 @@ export function applyResize(room, dragState, plan) {
   if (h.includes('s')) { hh = snap(start.h + dy); }
   // Привязка подвижной грани к стенам/кромкам соседних комнат.
   const tol = 14 / state.view.scale;
+  const partition = state.project.settings?.partition || DEFAULT_PARTITION;
+  const dockTol = Math.max(tol, Math.max(0, MAX_SHARED_GAP - partition));
+  const dockXs = [];
+  const dockYs = [];
+  for (const other of state.project.rooms) {
+    if (other.id === room.id || isOpenRoom(other)) continue;
+    if ((other.parentId || null) !== (room.parentId || null)) continue;
+    const overlapY = Math.min(y + hh, other.y + other.h) - Math.max(y, other.y) > 1;
+    const overlapX = Math.min(x + w, other.x + other.w) - Math.max(x, other.x) > 1;
+    // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
+    const gap = sharedWallThickness(state.project, room.id, other.id);
+    if (overlapY && h.includes('e') && other.x > x) dockXs.push(other.x - gap);
+    if (overlapY && h.includes('w') && other.x + other.w < x + w) dockXs.push(other.x + other.w + gap);
+    if (overlapX && h.includes('s') && other.y > y) dockYs.push(other.y - gap);
+    if (overlapX && h.includes('n') && other.y + other.h < y + hh) dockYs.push(other.y + other.h + gap);
+  }
   const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(room.id));
-  if (h.includes('w')) { const s = snapValue(x, lines.xs, tol); if (s !== null) { w += x - s; x = s; } }
-  if (h.includes('e')) { const s = snapValue(x + w, lines.xs, tol); if (s !== null) w = s - x; }
-  if (h.includes('n')) { const s = snapValue(y, lines.ys, tol); if (s !== null) { hh += y - s; y = s; } }
-  if (h.includes('s')) { const s = snapValue(y + hh, lines.ys, tol); if (s !== null) hh = s - y; }
-  if (w < MIN_ROOM_SIZE) { if (h.includes('w')) x -= MIN_ROOM_SIZE - w; w = MIN_ROOM_SIZE; }
-  if (hh < MIN_ROOM_SIZE) { if (h.includes('n')) y -= MIN_ROOM_SIZE - hh; hh = MIN_ROOM_SIZE; }
+  if (h.includes('w')) {
+    const dock = snapValue(x, dockXs, dockTol);
+    const s = dock ?? snapValue(x, lines.xs, tol);
+    if (s !== null) { w += x - s; x = s; }
+  }
+  if (h.includes('e')) {
+    const dock = snapValue(x + w, dockXs, dockTol);
+    const s = dock ?? snapValue(x + w, lines.xs, tol);
+    if (s !== null) w = s - x;
+  }
+  if (h.includes('n')) {
+    const dock = snapValue(y, dockYs, dockTol);
+    const s = dock ?? snapValue(y, lines.ys, tol);
+    if (s !== null) { hh += y - s; y = s; }
+  }
+  if (h.includes('s')) {
+    const dock = snapValue(y + hh, dockYs, dockTol);
+    const s = dock ?? snapValue(y + hh, lines.ys, tol);
+    if (s !== null) hh = s - y;
+  }
+  if (w < minSize) { if (h.includes('w')) x -= minSize - w; w = minSize; }
+  if (hh < minSize) { if (h.includes('n')) y -= minSize - hh; hh = minSize; }
   room.x = x; room.y = y; room.w = w; room.h = hh;
 }
 

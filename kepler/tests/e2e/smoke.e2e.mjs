@@ -30,9 +30,9 @@ describe('smoke', () => {
     assert.equal(await hidden('#libraryTop'), false);
   });
 
-  it('карточки помещений: 14 типов, перетаскиваемые', async () => {
+  it('карточки помещений: 15 типов, перетаскиваемые', async () => {
     const chips = await app.page.$$eval('#roomCards .room-card', (ns) => ns.map((n) => n.draggable));
-    assert.equal(chips.length, 14);
+    assert.equal(chips.length, 15);
     assert.ok(chips.every(Boolean));
   });
 

@@ -9,12 +9,14 @@
 //
 // face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind }
 
-import { isOpenRoom, isRoundItem, isStructural, roomType } from './catalog.js';
+import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './catalog.js';
 import { toLocal, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect } from './walls.js';
+import { roomRects } from './room-shape.js';
+import { stairCalculation } from './stairs.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -22,6 +24,7 @@ export const DOOR_COLOR = '#b98a5a';
 const FLOOR_COLORS = {
   warm: '#efe1cb', calm: '#d9e0f2', wet: '#d3e8ec', neutral: '#e3e7ec', cool: '#dde1e8', green: '#d9ead3',
 };
+const STAIR_COLOR = '#c9c2b7';
 
 const v = (x, y, z) => ({ x, y, z });
 
@@ -39,9 +42,12 @@ export function boxFaces(x0, y0, x1, y1, z0, z1, color, kind) {
 
 // Кусок стены по оси: для горизонтальной стены ось — X, иначе — Y.
 function wallPiece(band, orient, a0, a1, z0, z1) {
-  return orient === 'h'
+  const faces = orient === 'h'
     ? boxFaces(a0, band.y, a1, band.y + band.h, z0, z1, WALL_COLOR, 'wall')
     : boxFaces(band.x, a0, band.x + band.w, a1, z0, z1, WALL_COLOR, 'wall');
+  // Контуры задаются один раз для всей стены: границы отдельных частей вокруг
+  // проёма не должны превращать её в набор обведённых «кубиков».
+  return faces.map((face) => ({ ...face, noEdges: true }));
 }
 
 // Стекло (окно) или полотно (дверь) посередине толщины стены, двустороннее.
@@ -52,6 +58,112 @@ function paneFace(band, orient, a0, a1, z0, z1, color, alpha, kind) {
   }
   const x = band.x + band.w / 2;
   return { pts: [v(x, a0, z0), v(x, a1, z0), v(x, a1, z1), v(x, a0, z1)], normal: v(1, 0, 0), color, alpha, kind, twoSided: true };
+}
+
+function wallRuns(walls, cuts) {
+  const groups = new Map();
+  const extras = [];
+  const round = (n) => Math.round(n * 10) / 10;
+  for (const wall of walls) {
+    if (wall.hidden) continue;
+    const b = wall.band;
+    if (!b) continue;
+    if (!['own', 'shared'].includes(wall.kind)) {
+      const orient = wall.kind === 'chamfer' ? 'h' : wall.orient;
+      extras.push({ band: b, orient, start: orient === 'h' ? b.x : b.y, end: orient === 'h' ? b.x + b.w : b.y + b.h, holes: [], outlined: false });
+      continue;
+    }
+    const cross0 = wall.orient === 'h' ? b.y : b.x;
+    const cross1 = cross0 + (wall.orient === 'h' ? b.h : b.w);
+    const key = `${wall.orient}|${round(cross0)}|${round(cross1)}|${wall.wallType}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({
+      wall,
+      start: wall.orient === 'h' ? b.x : b.y,
+      end: wall.orient === 'h' ? b.x + b.w : b.y + b.h,
+      cross0,
+      cross1,
+    });
+  }
+
+  const runs = [];
+  for (const entries of groups.values()) {
+    entries.sort((a, b) => a.start - b.start);
+    let run = null;
+    for (const entry of entries) {
+      if (!run || entry.start > run.end + 2) {
+        if (run) runs.push(run);
+        run = { orient: entry.wall.orient, wallType: entry.wall.wallType, start: entry.start, end: entry.end, cross0: entry.cross0, cross1: entry.cross1, members: [entry.wall] };
+      } else {
+        run.end = Math.max(run.end, entry.end);
+        run.members.push(entry.wall);
+      }
+    }
+    if (run) runs.push(run);
+  }
+
+  const crossesEnd = (run, at) => runs.some((other) => {
+    if (other === run || other.orient === run.orient) return false;
+    if (run.orient === 'h') {
+      const crossesX = at >= other.cross0 - 2 && at <= other.cross1 + 2;
+      const overlapsY = Math.min(run.cross1, other.end) - Math.max(run.cross0, other.start) > 2;
+      return crossesX && overlapsY;
+    }
+    const crossesY = at >= other.cross0 - 2 && at <= other.cross1 + 2;
+    const overlapsX = Math.min(run.cross1, other.end) - Math.max(run.cross0, other.start) > 2;
+    return crossesY && overlapsX;
+  });
+  for (const run of runs) {
+    // Revit-подобная очистка Т-стыка: торец внутренней стены, входящей в
+    // другую стену, не оставляет линию на её поверхности. Наружные углы
+    // сохраняем — их стены имеют тип exterior.
+    run.joinedStart = run.wallType !== 'exterior' && crossesEnd(run, run.start);
+    run.joinedEnd = run.wallType !== 'exterior' && crossesEnd(run, run.end);
+  }
+
+  return [...runs.map((run) => {
+    const band = run.orient === 'h'
+      ? { x: run.start, y: run.cross0, w: run.end - run.start, h: run.cross1 - run.cross0 }
+      : { x: run.cross0, y: run.start, w: run.cross1 - run.cross0, h: run.end - run.start };
+    const holes = run.members.flatMap((wall) => cuts.get(wall) || [])
+      .sort((a, b) => a.a0 - b.a0);
+    return { ...run, band, holes, outlined: true };
+  }), ...extras];
+}
+
+function wallOutlineEdges(band, orient, start, end, z0, z1, holes, { joinedStart = false, joinedEnd = false } = {}) {
+  const cross0 = orient === 'h' ? band.y : band.x;
+  const cross1 = cross0 + (orient === 'h' ? band.h : band.w);
+  const p = (along, cross, z) => orient === 'h' ? v(along, cross, z) : v(cross, along, z);
+  const edges = [];
+  const add = (a0, c0, zz0, a1, c1, zz1) => edges.push([p(a0, c0, zz0), p(a1, c1, zz1)]);
+
+  // Цельный внешний контур стены: верх, низ и четыре угловые вертикали.
+  for (const z of [z0, z1]) {
+    add(start, cross0, z, end, cross0, z);
+    if (!joinedEnd) add(end, cross0, z, end, cross1, z);
+    add(end, cross1, z, start, cross1, z);
+    if (!joinedStart) add(start, cross1, z, start, cross0, z);
+  }
+  if (!joinedStart) for (const cross of [cross0, cross1]) add(start, cross, z0, start, cross, z1);
+  if (!joinedEnd) for (const cross of [cross0, cross1]) add(end, cross, z0, end, cross, z1);
+
+  // Реальные рёбра проёмов: периметр с обеих сторон и глубина откосов.
+  for (const hole of holes) {
+    const a0 = Math.max(start, hole.a0);
+    const a1 = Math.min(end, hole.a1);
+    const bottom = z0 + hole.bottom;
+    const top = z0 + hole.top;
+    if (a1 <= a0 || top <= bottom) continue;
+    for (const cross of [cross0, cross1]) {
+      add(a0, cross, bottom, a1, cross, bottom);
+      add(a1, cross, bottom, a1, cross, top);
+      add(a1, cross, top, a0, cross, top);
+      add(a0, cross, top, a0, cross, bottom);
+    }
+    for (const along of [a0, a1]) for (const z of [bottom, top]) add(along, cross0, z, along, cross1, z);
+  }
+  return edges;
 }
 
 // Стены этажа с проёмами.
@@ -69,26 +181,42 @@ function levelWalls(lp, z0, height) {
     if (!cuts.has(placed.wall)) cuts.set(placed.wall, []);
     cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind });
   }
-  for (const wall of walls) {
-    const b = wall.band;
-    const orient = wall.kind === 'chamfer' ? 'h' : wall.orient;
-    const start = orient === 'h' ? b.x : b.y;
-    const end = orient === 'h' ? b.x + b.w : b.y + b.h;
-    const holes = (cuts.get(wall) || []).sort((p, q) => p.a0 - q.a0);
+  for (const run of wallRuns(walls, cuts)) {
+    const { band: b, orient, start, end, holes } = run;
+    const wallFaces = [];
+    const addPiece = (a0, a1, pieceZ0, pieceZ1) => wallFaces.push(...wallPiece(b, orient, a0, a1, pieceZ0, pieceZ1));
     let cursor = start;
     for (const h of holes) {
       const a0 = Math.max(start, h.a0);
       const a1 = Math.min(end, h.a1);
       if (a1 <= a0) continue;
-      if (a0 > cursor) faces.push(...wallPiece(b, orient, cursor, a0, z0, z0 + height));
-      if (h.bottom > 0) faces.push(...wallPiece(b, orient, a0, a1, z0, z0 + h.bottom));
-      if (h.top < height) faces.push(...wallPiece(b, orient, a0, a1, z0 + h.top, z0 + height));
+      if (a0 > cursor) addPiece(cursor, a0, z0, z0 + height);
+      if (h.bottom > 0) addPiece(a0, a1, z0, z0 + h.bottom);
+      if (h.top < height) addPiece(a0, a1, z0 + h.top, z0 + height);
       if (h.kind === 'window') faces.push(paneFace(b, orient, a0, a1, z0 + h.bottom, z0 + h.top, GLASS_COLOR, 0.45, 'glass'));
       cursor = Math.max(cursor, a1);
     }
-    if (cursor < end) faces.push(...wallPiece(b, orient, cursor, end, z0, z0 + height));
+    if (cursor < end) addPiece(cursor, end, z0, z0 + height);
+    if (run.outlined && wallFaces.length) {
+      wallFaces[0].edges = wallOutlineEdges(b, orient, start, end, z0, z0 + height, holes, run);
+    }
+    faces.push(...wallFaces);
   }
   return faces;
+}
+
+function subtractFloorRect(base, cut) {
+  const x0 = Math.max(base.x, cut.x);
+  const y0 = Math.max(base.y, cut.y);
+  const x1 = Math.min(base.x + base.w, cut.x + cut.w);
+  const y1 = Math.min(base.y + base.h, cut.y + cut.h);
+  if (x1 <= x0 || y1 <= y0) return [base];
+  return [
+    { x: base.x, y: base.y, w: base.w, h: y0 - base.y },
+    { x: base.x, y: y1, w: base.w, h: base.y + base.h - y1 },
+    { x: base.x, y: y0, w: x0 - base.x, h: y1 - y0 },
+    { x: x1, y: y0, w: base.x + base.w - x1, h: y1 - y0 },
+  ].filter((rect) => rect.w > 0.5 && rect.h > 0.5);
 }
 
 function levelFloors(lp, z) {
@@ -96,12 +224,19 @@ function levelFloors(lp, z) {
   // Сначала комнаты верхнего уровня, вложенные — чуть выше (видны поверх).
   const order = [...lp.rooms].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)));
   for (const r of order) {
-    const zz = z + (r.parentId ? 2 : 1);
+    if (isShaft(r)) continue;
+    const zz = z + (isOpenRoom(r) ? 0 : r.parentId ? 2 : 1);
     const color = FLOOR_COLORS[roomType(r.type)?.tint] || FLOOR_COLORS.neutral;
-    faces.push({
-      pts: [v(r.x, r.y, zz), v(r.x + r.w, r.y, zz), v(r.x + r.w, r.y + r.h, zz), v(r.x, r.y + r.h, zz)],
-      normal: v(0, 0, 1), color, kind: 'floor', roomId: r.id,
-    });
+    const shaftCuts = lp.rooms.filter((shaft) => isShaft(shaft) &&
+      (shaft.parentId === r.id || (!shaft.parentId && !r.parentId))).flatMap(roomRects);
+    let floorParts = roomRects(r);
+    for (const cut of shaftCuts) floorParts = floorParts.flatMap((part) => subtractFloorRect(part, cut));
+    for (const part of floorParts) {
+      faces.push({
+        pts: [v(part.x, part.y, zz), v(part.x + part.w, part.y, zz), v(part.x + part.w, part.y + part.h, zz), v(part.x, part.y + part.h, zz)],
+        normal: v(0, 0, 1), color, kind: 'floor', roomId: r.id,
+      });
+    }
   }
   return faces;
 }
@@ -143,11 +278,65 @@ function levelStructures(lp, z0, height) {
     .flatMap((i) => prismFaces(structuralOutline(i), z0, z0 + height, WALL_COLOR, 'wall'));
 }
 
+function stairBox(item, x0, y0, x1, y1, z0, z1) {
+  const angle = ((item.rotation || 0) * Math.PI) / 180;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return boxFaces(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), z0, z1, STAIR_COLOR, 'stairs').map((face) => ({
+    ...face,
+    itemId: item.id,
+    pts: face.pts.map((p) => ({ x: item.x + p.x * c - p.y * s, y: item.y + p.x * s + p.y * c, z: p.z })),
+    normal: { x: face.normal.x * c - face.normal.y * s, y: face.normal.x * s + face.normal.y * c, z: face.normal.z },
+  }));
+}
+
+// Ступени в 3D: прямая, Г- или П-образная лестница из параметров плана.
+function levelStairs(lp, z0, levelHeight) {
+  const faces = [];
+  for (const item of lp.items.filter((candidate) => candidate.kind === 'stairs')) {
+    const calc = stairCalculation(item, levelHeight);
+    const w = item.w;
+    const h = item.h;
+    const addFlightY = (x0, x1, yStart, yEnd, count, startStep) => {
+      const depth = (yEnd - yStart) / Math.max(1, count);
+      for (let i = 0; i < count; i += 1) {
+        const top = z0 + Math.min(calc.floorH - calc.riserH, (startStep + i + 1) * calc.riserH);
+        faces.push(...stairBox(item, x0, yStart + i * depth, x1, yStart + (i + 1) * depth, z0, top));
+      }
+    };
+    const addFlightX = (xStart, xEnd, y0, y1, count, startStep) => {
+      const depth = (xEnd - xStart) / Math.max(1, count);
+      for (let i = 0; i < count; i += 1) {
+        const top = z0 + Math.min(calc.floorH - calc.riserH, (startStep + i + 1) * calc.riserH);
+        faces.push(...stairBox(item, xStart + i * depth, y0, xStart + (i + 1) * depth, y1, z0, top));
+      }
+    };
+    if (calc.shape === 'u') {
+      const gap = Math.min(200, w * 0.1);
+      const flightW = (w - gap) / 2;
+      const landingD = Math.min(flightW, h * 0.36);
+      addFlightY(-w / 2, -gap / 2, h / 2, -h / 2 + landingD, calc.firstTreads, 0);
+      const landingTop = z0 + (calc.firstTreads + 1) * calc.riserH;
+      faces.push(...stairBox(item, -w / 2, -h / 2, w / 2, -h / 2 + landingD, z0, landingTop));
+      addFlightY(gap / 2, w / 2, -h / 2 + landingD, h / 2, calc.secondTreads, calc.firstTreads + 1);
+    } else if (calc.shape === 'l') {
+      const flightW = Math.min(1000, w * 0.42, h * 0.42);
+      addFlightY(-w / 2, -w / 2 + flightW, h / 2, -h / 2 + flightW, calc.firstTreads, 0);
+      const landingTop = z0 + (calc.firstTreads + 1) * calc.riserH;
+      faces.push(...stairBox(item, -w / 2, -h / 2, -w / 2 + flightW, -h / 2 + flightW, z0, landingTop));
+      addFlightX(-w / 2 + flightW, w / 2, -h / 2, -h / 2 + flightW, calc.secondTreads, calc.firstTreads + 1);
+    } else {
+      addFlightY(-w / 2, w / 2, h / 2, -h / 2, calc.treads, 0);
+    }
+  }
+  return faces;
+}
+
 // Крыша: плоское перекрытие над комнатами верхнего этажа.
 function roofFaces(lp, z) {
   const t = lp.settings?.exterior || 250;
-  return lp.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
-    .flatMap((r) => boxFaces(r.x - t, r.y - t, r.x + r.w + t, r.y + r.h + t, z, z + 250, '#9aa3ad', 'roof'));
+  return lp.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
+    .flatMap((r) => roomRects(r).flatMap((part) => boxFaces(part.x - t, part.y - t, part.x + part.w + t, part.y + part.h + t, z, z + 250, '#9aa3ad', 'roof')));
 }
 
 const GROUND_LOW = [0xb9, 0xc9, 0xa6];
@@ -224,7 +413,7 @@ function plinthFaces(project, hz) {
   const ground = sortedLevels(project)[0];
   if (!ground) return faces;
   const t = project.settings?.exterior || 250;
-  for (const r of ground.rooms.filter((room) => !room.parentId)) {
+  for (const r of ground.rooms.filter((room) => !room.parentId && !isOpenRoom(room) && !isShaft(room))) {
     const poly = [
       { x: r.x - t, y: r.y - t }, { x: r.x + r.w + t, y: r.y - t },
       { x: r.x + r.w + t, y: r.y + r.h + t }, { x: r.x - t, y: r.y + r.h + t },
@@ -307,6 +496,7 @@ export function buildHouseMesh(project, { roof = false, site = false, terrainSca
     faces.push(...levelFloors(lp, level.elevation));
     faces.push(...levelWalls(lp, level.elevation, level.height));
     faces.push(...levelStructures(lp, level.elevation, level.height));
+    faces.push(...levelStairs(lp, level.elevation, level.height));
   }
   const top = levels[levels.length - 1];
   if (roof && top) faces.push(...roofFaces(levelProject(project, top.id), top.elevation + top.height));

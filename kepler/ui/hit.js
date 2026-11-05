@@ -1,10 +1,13 @@
 // Поиск объектов под курсором: ручки, комнаты, стены, проёмы, мебель, участок.
 
 import { isFixedSizeComp, pointInComposite } from '../core/composite.js';
+import { isOpenRoom, isShaft } from '../core/catalog.js';
+import { planHitStack } from '../core/hit-stack.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
 import { openingRect } from '../core/walls.js';
+import { roomContainsPoint } from '../core/room-shape.js';
 import {
   HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
@@ -22,7 +25,7 @@ export function hitRoomHandle(screen) {
   for (const handle of roomHandles(room)) {
     const p = planToScreen(handle.x, handle.y);
     if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
-      return { room, handle: handle.id };
+      return { room, handle: handle.id, shapeHandle: handle };
     }
   }
   return null;
@@ -127,15 +130,23 @@ export function hitItem(p) {
   return null;
 }
 
-export function hitOpening(p) {
+function openingContains(opening, p) {
+  const placed = openingRect(state.project, opening, state.walls);
+  if (!placed) return false;
   const pad = 8 / state.view.scale + 40;
+  const rect = placed.rect;
+  return p.x >= rect.x - pad && p.x <= rect.x + rect.w + pad && p.y >= rect.y - pad && p.y <= rect.y + rect.h + pad;
+}
+
+// Все объекты под одной точкой — от верхнего к нижнему. Используется для
+// циклического выбора двойным/тройным кликом, как в графических редакторах.
+export function hitPlanStack(p) {
+  return planHitStack(state.project, state.walls, state.view.scale, p);
+}
+
+export function hitOpening(p) {
   for (const opening of state.project.openings) {
-    const placed = openingRect(state.project, opening, state.walls);
-    if (!placed) continue;
-    const r = placed.rect;
-    if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) {
-      return opening;
-    }
+    if (openingContains(opening, p)) return opening;
   }
   return null;
 }
@@ -150,12 +161,12 @@ export function hitWall(p) {
 }
 
 export function hitRoom(p) {
-  const nested = state.project.rooms.filter((r) => r.parentId);
-  const top = state.project.rooms.filter((r) => !r.parentId);
-  for (const room of [...nested, ...top]) {
-    if (p.x >= room.x && p.x <= room.x + room.w && p.y >= room.y && p.y <= room.y + room.h) {
-      return room;
-    }
+  const roomLayer = (room) => (isShaft(room) ? 3 : room.parentId ? 2 : isOpenRoom(room) ? 0 : 1);
+  const order = state.project.rooms.map((room, index) => ({ room, index }))
+    .sort((a, b) => roomLayer(a.room) - roomLayer(b.room) || a.index - b.index)
+    .reverse();
+  for (const { room } of order) {
+    if (roomContainsPoint(room, p.x, p.y)) return room;
   }
   return null;
 }

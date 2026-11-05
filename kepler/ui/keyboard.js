@@ -8,14 +8,15 @@ import { closeProjects, isProjectsOpen } from './projects.js';
 import { hideSofaMenu } from './props-composite.js';
 import { stepLevel } from './levels.js';
 import {
-  deleteSelection, reconcileOpenings, rotateMulti90, rotateSelectedItem,
+  copySelection, deleteSelection, duplicateSelection, mirrorSelection, pasteSelection,
+  reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
 import { finishDraft } from './site-actions.js';
 import { state } from './state.js';
 import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
 } from './store.js';
-import { cancelTool, selectObject } from './tools.js';
+import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
 import { closeCompare, isCompareOpen } from './variants.js';
 import { close3d, is3dOpen } from './view3d.js';
 
@@ -32,6 +33,10 @@ export function bindKeyboard() {
     if (event.code === 'Space') {
       const tag = event.target.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        if (!event.repeat && rotatePlacementPreview()) {
+          event.preventDefault();
+          return;
+        }
         spaceDown = true;
         canvas.style.cursor = 'grab';
         event.preventDefault();
@@ -46,6 +51,21 @@ export function bindKeyboard() {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyY') { event.preventDefault(); redo(); return; }
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyC' && state.selection) {
+      event.preventDefault();
+      copySelection();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyV') {
+      event.preventDefault();
+      pasteSelection();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyD' && state.selection) {
+      event.preventDefault();
+      duplicateSelection();
+      return;
+    }
     if (event.key === '?' || event.key === 'F1') {
       event.preventDefault();
       if (isHelpOpen()) closeHelp(); else openHelp();
@@ -60,7 +80,11 @@ export function bindKeyboard() {
     if (event.key === 'Escape') { cancelTool(); selectObject(null); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
     if (event.code === 'KeyR') {
-      if (state.selection?.type === 'multi') rotateMulti90(); else rotateSelectedItem();
+      rotateSelection90();
+      return;
+    }
+    if (event.code === 'KeyM' && state.selection) {
+      mirrorSelection();
       return;
     }
     const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];

@@ -40,9 +40,9 @@ describe('правка через интерфейс', () => {
     assert.equal(r.name, 'Зал');
   });
 
-  it('«+ Дверь» в свойствах и клик по стене добавляют дверь', async () => {
+  it('«Дверь» в контекстной панели и клик по стене добавляют дверь', async () => {
     const r = (await proj(app.page)).rooms[0];
-    await app.page.click('#addDoorBtn');
+    await app.page.click('[data-selection-action="add-door"]');
     await clickWorld(app.page, r.x + r.w / 2, r.y - 60);
     assert.equal((await proj(app.page)).openings, 1);
   });
@@ -105,7 +105,7 @@ describe('правка через интерфейс', () => {
     const boundary = await app.page.evaluate(() => window.__kepler.state.project.site.boundary);
     assert.equal(boundary?.length, 4);
 
-    await app.page.click('#siteTools button:nth-child(7)'); // «Север по 2 точкам»
+    await app.page.click('#siteTools button:nth-child(8)'); // «Север по 2 точкам»
     await clickWorld(app.page, pts[0].x, pts[0].y);
     await clickWorld(app.page, pts[1].x, pts[1].y); // стрелка вправо по экрану
     const north = await app.page.evaluate(() => window.__kepler.state.project.site.north);
@@ -148,7 +148,7 @@ describe('типы проёмов и высота потолка', () => {
 
   it('дверь → двустворчатая (ширина не меньше 1200), окно → панорамное', async () => {
     const r = (await proj(app.page)).rooms[0];
-    await app.page.click('#addDoorBtn');
+    await app.page.click('[data-selection-action="add-door"]');
     await clickWorld(app.page, r.x + r.w / 2, r.y - 60);
     const d = await opening(app.page, 'door');
     await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), d.id);
@@ -158,7 +158,7 @@ describe('типы проёмов и высота потолка', () => {
     assert.ok(d2.width >= 1200);
 
     await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
-    await app.page.click('#addWindowBtn');
+    await app.page.click('[data-selection-action="add-window"]');
     await clickWorld(app.page, r.x - 60, r.y + r.h / 2);
     const w = await opening(app.page, 'window');
     await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), w.id);
@@ -179,6 +179,49 @@ describe('типы проёмов и высота потолка', () => {
     await app.page.fill('#roomCeil', '');
     await app.page.locator('#roomCeil').blur();
     assert.equal(await ceil(), null);
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+// Блокер Б2: толщина общей стены из панели свойств не рвёт стыковку.
+describe('толщина и тип общей стены', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openNew(app.page);
+    await dropOnCanvas(app.page, 'application/x-kepler-room', 'living');
+  });
+  after(async () => { await app?.close(); });
+
+  const sharedWalls = (page) => page.evaluate(() => window.__kepler.state.walls
+    .filter((w) => w.kind === 'shared')
+    .map((w) => ({ key: w.key, from: w.from, thickness: w.thickness, type: w.wallType })));
+
+  it('300 мм и «Несущая»: стена остаётся общей, сосед сдвигается', async () => {
+    const id = (await proj(app.page)).rooms[0].id;
+    await app.page.evaluate((rid) => window.__kepler.selectRoom(rid), id);
+    await app.page.keyboard.press('Control+c');
+    await app.page.keyboard.press('Control+v');
+    const [wall] = await sharedWalls(app.page);
+    assert.ok(wall, 'копия пристыкована общей стеной');
+    await app.page.evaluate((w) => window.__kepler.select({ type: 'wall', key: w.key, from: w.from }), wall);
+    await app.page.fill('#wallT', '300');
+    await app.page.locator('#wallT').blur();
+    let list = await sharedWalls(app.page);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].thickness, 300);
+    await app.page.selectOption('#wallKind', 'bearing');
+    list = await sharedWalls(app.page);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].type, 'bearing');
+    assert.equal(list[0].thickness, 300, 'ручная толщина сохраняется при смене типа');
+    await app.page.keyboard.press('Control+z');
+    await app.page.keyboard.press('Control+z');
+    list = await sharedWalls(app.page);
+    assert.deepEqual([list.length, list[0].thickness], [1, 100]);
   });
 
   it('без ошибок в консоли', () => {

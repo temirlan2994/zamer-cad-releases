@@ -1,6 +1,7 @@
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
-import { GRID_STEP, furnitureDef, roomType } from '../core/catalog.js';
+import { GRID_STEP, furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
+import { pickStackHit } from '../core/hit-stack.js';
 import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
@@ -8,15 +9,20 @@ import { nearestPointOnPolyline } from '../core/site.js';
 import { clampOpeningOffset, openingRect, sideEdge } from '../core/walls.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
+  captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
+} from '../core/opening-anchor.js';
+import { applyRoomShapeHandle, clampRoomNotch } from '../core/room-shape.js';
+import { moveWallBy } from '../core/wall-edit.js';
+import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { hideDimInput, openDimInput } from './dim-input.js';
-import { KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenProject } from '../core/composite.js';
+import { KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenProject, withDefaultComp } from '../core/composite.js';
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
   findWall, hitItem, hitItemHandle, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
-  hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
+  hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
 import { closeLibrarySheet } from './mobile.js';
@@ -42,6 +48,20 @@ import {
 let drag = null;
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
+
+function restoreWallDragRooms(wallDrag) {
+  for (const entry of wallDrag.roomStarts) {
+    const room = roomById(state.project, entry.id);
+    if (!room) continue;
+    for (const key of Object.keys(room)) delete room[key];
+    Object.assign(room, structuredClone(entry.room));
+  }
+  // moveWallBy пересчитывает отступы проёмов — откатываем и их.
+  for (const start of wallDrag.openingStarts || []) {
+    const opening = state.project.openings.find((o) => o.id === start.id);
+    if (opening) { opening.side = start.side; opening.offset = start.offset; }
+  }
+}
 
 // Второй палец: всё начатое одним пальцем отменяется, начинается щипок.
 function startPinch() {
@@ -162,17 +182,34 @@ function applyMarquee() {
 }
 
 function updateHoverAndGhost(world, plan) {
+  if (state.tool?.kind === 'place-furniture') {
+    const def = furnitureDef(state.tool.itemKind);
+    if (!def) return;
+    const item = {
+      id: '__ghost-item__', kind: state.tool.itemKind,
+      x: Math.round(plan.x / GRID_STEP) * GRID_STEP,
+      y: Math.round(plan.y / GRID_STEP) * GRID_STEP,
+      w: def.w, h: def.h, rotation: state.tool.rotation || 0,
+    };
+    withDefaultComp(item);
+    state.ghostItem = item;
+    requestDraw();
+    return;
+  }
   if (state.tool?.kind === 'place-room') {
     const def = roomType(state.tool.type);
-    let x = plan.x - def.w / 2;
-    let y = plan.y - def.h / 2;
-    const parentId = determineParent(state.project, { x, y, w: def.w, h: def.h }, null);
-    const snapped = snapRoomPosition(state.project, { id: '__ghost__', w: def.w, h: def.h }, x, y, 14 / state.view.scale, parentId);
+    const turned = (state.tool.rotation || 0) % 180 !== 0;
+    const w = turned ? def.h : def.w;
+    const h = turned ? def.w : def.h;
+    let x = plan.x - w / 2;
+    let y = plan.y - h / 2;
+    const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
+    const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId);
     x = snapped.x; y = snapped.y;
-    const verdict = validateRoomPlacement(state.project, { x, y, w: def.w, h: def.h, parentId }, null);
+    const verdict = validateRoomPlacement(state.project, { type: def.type, x, y, w, h, parentId }, null);
     state.guides = snapped.guides;
     state.ghost = {
-      rect: { x, y, w: def.w, h: def.h },
+      rect: { x, y, w, h },
       valid: verdict.ok,
       warn: Boolean(verdict.warning),
       label: parentId ? `Вложить в «${roomById(state.project, parentId)?.name}»` : undefined,
@@ -396,6 +433,12 @@ export function bindCanvasInput() {
     if (state.tool) {
       const t = state.tool;
       if (t.kind === 'place-room') { placeRoomAt(plan); return; }
+      if (t.kind === 'place-furniture') {
+        const { itemKind, rotation = 0 } = t;
+        cancelTool();
+        addFurnitureAt(itemKind, plan.x, plan.y, rotation);
+        return;
+      }
       if (t.kind === 'place-opening') { placeOpeningAt(plan); return; }
       if (t.kind === 'north') { addNorthPoint(world); return; }
       if (t.kind === 'align-underlay') { addAlignPoint(world); return; }
@@ -414,6 +457,11 @@ export function bindCanvasInput() {
         if (Math.hypot(f.x - screen.x, f.y - screen.y) <= 15) { toggleOpeningFlip(f.kind); return; }
       }
       for (const d of state._openingUI.dims) {
+        if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
+      }
+    }
+    if (state.selection?.type === 'wall' && state._wallUI) {
+      for (const d of state._wallUI.dims) {
         if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { openDimInput(d); return; }
       }
     }
@@ -454,7 +502,19 @@ export function bindCanvasInput() {
     }
     const handleHit = hitRoomHandle(screen);
     if (handleHit) {
-      drag = { kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: { ...handleHit.room }, before: snapshot(), plan, valid: true };
+      if (handleHit.shapeHandle?.kind) {
+        const pending = state.pendingRoomSplit?.roomId === handleHit.room.id ? state.pendingRoomSplit : null;
+        drag = {
+          kind: 'shape-resize', roomId: handleHit.room.id, handle: handleHit.shapeHandle,
+          before: pending?.before || snapshot(), moved: false, valid: true, merged: false,
+          anchors: captureOpeningAnchors(state.project, handleHit.room),
+        };
+      } else {
+        drag = {
+          kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: structuredClone(handleHit.room),
+          before: snapshot(), plan, valid: true, anchors: captureOpeningAnchors(state.project, handleHit.room),
+        };
+      }
       return;
     }
     const itemHandleHit = hitItemHandle(screen);
@@ -478,8 +538,14 @@ export function bindCanvasInput() {
       return;
     }
 
-    const item = hitItem(plan);
-    if (item) {
+    // Серия кликов в одной точке перебирает все лежащие здесь объекты:
+    // первый — верхний, второй — следующий под ним, третий — ещё ниже.
+    const stack = hitPlanStack(plan);
+    const clickNumber = event.shiftKey ? 1 : Math.max(1, event.detail || 1);
+    const picked = pickStackHit(stack, clickNumber);
+
+    if (picked?.type === 'item') {
+      const item = picked.entity;
       if (event.shiftKey) { toggleInMulti('item', item.id); return; }
       if (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id)) {
         startMultiDrag(plan);
@@ -491,21 +557,28 @@ export function bindCanvasInput() {
       return;
     }
 
-    const opening = hitOpening(plan);
-    if (opening) {
+    if (picked?.type === 'opening') {
+      const opening = picked.entity;
       selectObject({ type: 'opening', id: opening.id });
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
       return;
     }
 
-    const wall = hitWall(plan);
-    if (wall) {
-      selectObject({ type: 'wall', key: wall.key, from: wall.from });
+    if (picked?.type === 'wall') {
+      const wall = picked.entity;
+      selectObject({ type: 'wall', key: wall.key, from: wall.from, at: wall.orient === 'h' ? plan.x : plan.y });
+      drag = {
+        kind: 'wall', key: wall.key, from: wall.from, wall: structuredClone(wall),
+        plan, before: snapshot(), moved: false, valid: true,
+        roomStarts: wall.rooms.map((id) => ({ id, room: structuredClone(roomById(state.project, id)) })).filter((entry) => entry.room),
+        openingStarts: state.project.openings.filter((o) => wall.rooms.includes(o.roomId))
+          .map((o) => ({ id: o.id, side: o.side, offset: o.offset })),
+      };
       return;
     }
 
-    const room = hitRoom(plan);
-    if (room) {
+    if (picked?.type === 'room') {
+      const room = picked.entity;
       if (event.shiftKey) { toggleInMulti('room', room.id); return; }
       if (state.selection?.type === 'multi' && state.selection.roomIds.includes(room.id)) {
         startMultiDrag(plan);
@@ -586,7 +659,8 @@ export function bindCanvasInput() {
       const rawY = drag.start.y + (plan.y - drag.plan.y);
       // Вложение перетаскиванием: родителем становится комната, внутрь которой
       // попадает прямоугольник; вытащили наружу — комната снова самостоятельная.
-      const candidateParent = determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
+      const candidateParent = isOpenRoom(room)
+        ? null : determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
       room.parentId = candidateParent;
       const snapped = snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent);
       const dx = snapped.x - drag.start.x;
@@ -641,11 +715,35 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'shape-resize') {
+      const room = roomById(state.project, drag.roomId);
+      if (!room?.notch && !room?.outline) return;
+      drag.moved = true;
+      if (state.pendingRoomSplit?.roomId === room.id) state.pendingRoomSplit.moved = true;
+      const snap = (value) => Math.round(value / GRID_STEP) * GRID_STEP;
+      const result = applyRoomShapeHandle(room, drag.handle, { x: snap(plan.x), y: snap(plan.y) }, {
+        mergeTolerance: Math.max(GRID_STEP, 14 / state.view.scale),
+      });
+      drag.merged = result.merged;
+      drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
+      if (result.merged) reconcileOpenings();
+      const verdict = resizeVerdict(room);
+      drag.valid = verdict.ok;
+      drag.reason = verdict.reason;
+      refreshDerived();
+      requestDraw();
+      return;
+    }
+
     if (drag.kind === 'resize') {
       const room = roomById(state.project, drag.roomId);
       if (!room) return;
       drag.moved = true;
       applyResize(room, drag, plan);
+      if (drag.start.notch) room.notch = structuredClone(drag.start.notch);
+      clampRoomNotch(room);
+      // Отступы проёмов — от room.x/y: пересчёт от снимка начала (Б3).
+      drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
       const verdict = resizeVerdict(room);
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
@@ -691,6 +789,26 @@ export function bindCanvasInput() {
       const desired = (edge.orient === 'h' ? plan.x : plan.y) - base;
       const clamped = clampOpeningOffset(state.project, opening, state.walls, desired);
       if (clamped !== null) opening.offset = Math.round(clamped / GRID_STEP) * GRID_STEP;
+      requestDraw();
+      return;
+    }
+
+    if (drag.kind === 'wall') {
+      const raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
+      const delta = Math.round(raw / GRID_STEP) * GRID_STEP;
+      restoreWallDragRooms(drag);
+      drag.moved = delta !== 0;
+      if (!drag.moved) {
+        drag.valid = true;
+        refreshDerived();
+        requestDraw();
+        return;
+      }
+      const verdict = moveWallBy(state.project, drag.wall, delta);
+      drag.clamped = verdict.clamped || [];
+      drag.valid = verdict.ok;
+      drag.reason = verdict.reason;
+      refreshDerived();
       requestDraw();
       return;
     }
@@ -882,9 +1000,42 @@ export function bindCanvasInput() {
       return;
     }
 
-    if (finished.kind === 'room' || finished.kind === 'resize' || finished.kind === 'multi') {
-      state.ghost = null;
+    if (finished.kind === 'wall') {
       if (!finished.moved) { requestDraw(); return; }
+      if (!finished.valid) {
+        restoreFrom(finished.before);
+        toast(finished.reason || 'Так переместить стену нельзя', true);
+        return;
+      }
+      for (const entry of finished.roomStarts) {
+        const room = roomById(state.project, entry.id);
+        if (room?.outline) finalizeRoomOutlineKeepOpenings(state.project, room);
+      }
+      reconcileOpenings();
+      refreshDerived();
+      pushHistory(finished.before);
+      afterChange();
+      if (finished.clamped?.length) toast(`Проёмы прижаты к краю укороченной стены: ${finished.clamped.length}`, true);
+      return;
+    }
+
+    if (finished.kind === 'room' || finished.kind === 'resize' || finished.kind === 'shape-resize' || finished.kind === 'multi') {
+      state.ghost = null;
+      if (!finished.moved) {
+        if (finished.kind === 'shape-resize' && state.pendingRoomSplit?.roomId === finished.roomId) {
+          const pending = state.pendingRoomSplit;
+          const room = roomById(state.project, pending.roomId);
+          if (room) {
+            keepOpenings(state.project, room, () => {
+              if (pending.outline) room.outline = structuredClone(pending.outline); else delete room.outline;
+              if (pending.notch) room.notch = structuredClone(pending.notch); else delete room.notch;
+            });
+          }
+          state.pendingRoomSplit = null;
+          refreshDerived();
+        }
+        requestDraw(); return;
+      }
       if (!finished.valid) {
         restoreFrom(finished.before);
         toast(finished.reason || 'Так разместить нельзя', true);
@@ -915,10 +1066,21 @@ export function bindCanvasInput() {
           }
         }
       }
+      if (finished.kind === 'shape-resize') {
+        const room = roomById(state.project, finished.roomId);
+        const finalized = room?.outline ? finalizeRoomOutlineKeepOpenings(state.project, room) : { merged: finished.merged };
+        finished.merged = finished.merged || finalized.merged;
+        state.pendingRoomSplit = null;
+      }
       reconcileOpenings();
       refreshDerived();
       pushHistory(finished.before);
       afterChange();
+      if (finished.kind === 'shape-resize' && finished.merged) {
+        toast('Стены выровнены и объединены в одну');
+      } else if (finished.clamped?.length) {
+        toast(`Проёмы прижаты к краю укороченной стены: ${finished.clamped.length}`, true);
+      }
       return;
     }
 

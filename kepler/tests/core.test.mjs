@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createProject, createRoom, createOpening, createItem, serializeProject, deserializeProject } from '../core/model.js';
-import { deriveWalls, doorLink, doorSymbol, clampOpeningOffset } from '../core/walls.js';
+import { deriveWalls, doorLink, doorPlacementVariant, doorSymbol, clampOpeningOffset } from '../core/walls.js';
 import {
   validateRoomPlacement, snapRoomPosition, determineParent, moveRoomBy,
   roomNetAreaM2, analyzeConnectivity, suggestAccess, rectsOverlap,
@@ -35,6 +35,17 @@ test('общая стена двух состыкованных комнат —
   assert.equal(ownOnSharedSide.length, 0);
 });
 
+test('скрытая общая стена соединяет помещения', () => {
+  const { project, a, b } = makeTwoDockedRooms();
+  const shared = deriveWalls(project).find((wall) => wall.kind === 'shared');
+  project.wallOverrides[shared.key] = { hidden: true };
+  const walls = deriveWalls(project);
+  assert.equal(walls.find((wall) => wall.kind === 'shared').hidden, true);
+  const connectivity = analyzeConnectivity(project, walls);
+  assert.equal(connectivity.reachable.has(a.id), true);
+  assert.equal(connectivity.reachable.has(b.id), true);
+});
+
 test('комнаты верхнего уровня могут перекрываться (одна съедает другую)', () => {
   const { project, b } = makeTwoDockedRooms();
   // Перекрытие верхнеуровневых комнат теперь разрешено.
@@ -54,6 +65,25 @@ test('eat-площадь: верхняя комната отнимает пер�
   project.rooms = [b, a];
   assert.ok(Math.abs(roomNetAreaM2(project, a) - 20) < 0.01);
   assert.ok(Math.abs(roomNetAreaM2(project, b) - 8) < 0.01);
+});
+
+test('терраса и балкон никогда не съедают площадь дома', () => {
+  const project = createProject();
+  const room = createRoom('living', 0, 0, 5000, 4000); // 20 м²
+  const terrace = createRoom('terrace', 3000, 0, 4000, 4000); // 16 м², перекрытие 8 м²
+  project.rooms.push(room, terrace);
+  assert.equal(roomNetAreaM2(project, room), 20);
+  assert.equal(roomNetAreaM2(project, terrace), 8);
+  project.rooms = [terrace, room];
+  assert.equal(roomNetAreaM2(project, room), 20);
+  assert.equal(roomNetAreaM2(project, terrace), 8);
+  terrace.parentId = room.id; // старый/импортированный файл с ошибочной вложенностью
+  project.rooms = [room, terrace];
+  assert.equal(roomNetAreaM2(project, room), 20);
+
+  const onlyTerrace = createProject();
+  onlyTerrace.rooms.push(createRoom('terrace', 0, 0, 5000, 5000));
+  assert.equal(determineParent(onlyTerrace, { x: 1000, y: 1000, w: 1000, h: 1000 }, null), null);
 });
 
 test('привязка при перетаскивании стыкует комнаты через толщину стены', () => {
@@ -134,6 +164,15 @@ test('символ двери: створка и дуга согласованы
   assert.ok(symbol);
   assert.equal(Math.round(symbol.open.x - symbol.hinge.x), 0);
   assert.equal(Math.round(symbol.open.y - symbol.hinge.y), 800);
+});
+
+test('пробел при установке двери перебирает петли и открывание по кругу', () => {
+  const base = { hingeStart: true, swingIn: true };
+  assert.deepEqual(doorPlacementVariant(base, 0), { hingeStart: true, swingIn: true });
+  assert.deepEqual(doorPlacementVariant(base, 1), { hingeStart: false, swingIn: true });
+  assert.deepEqual(doorPlacementVariant(base, 2), { hingeStart: false, swingIn: false });
+  assert.deepEqual(doorPlacementVariant(base, 3), { hingeStart: true, swingIn: false });
+  assert.deepEqual(doorPlacementVariant(base, 4), { hingeStart: true, swingIn: true });
 });
 
 // --- Сценарий MVP: спальня 5×4, мебель, вложенный санузел, перестройка ---

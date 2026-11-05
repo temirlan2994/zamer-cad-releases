@@ -12,6 +12,7 @@ import { DEFAULT_PARTITION, isOpenRoom } from './catalog.js';
 import { northInBuilding } from './building.js';
 import { createOpening, createRoom, levelProject } from './model.js';
 import { normsReport } from './norms.js';
+import { roomShapeArea } from './room-shape.js';
 import { LIVING_TYPES } from './schedule.js';
 import { projectWithHouse, snapshotHouse } from './variants.js';
 
@@ -27,7 +28,7 @@ const round100 = (v) => Math.round(v / 100) * 100;
 export function roomProgram(lp) {
   return lp.rooms
     .filter((r) => !r.parentId && r.type !== 'corridor' && !isOpenRoom(r))
-    .map((r) => ({ type: r.type, name: r.name, area: r.w * r.h }));
+    .map((r) => ({ type: r.type, name: r.name, area: roomShapeArea(r) }));
 }
 
 // Солнечная сторона плана: «top» — если юг ближе к верху плана.

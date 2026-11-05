@@ -1,13 +1,19 @@
 // Операции над комнатами: проверка размещения, привязка/стыковка, вложение,
 // перемещение, площади и анализ связности помещений. Чистый модуль.
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP, isOpenRoom } from './catalog.js';
-import { deriveWalls, doorLink, findAdjacencies } from './walls.js';
+import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP, isOpenRoom, isShaft } from './catalog.js';
+import {
+  deriveWalls, doorLink, MAX_SHARED_GAP, projectAdjacencies, sharedWallThickness,
+} from './walls.js';
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
 import { isUpperLevel } from './model.js';
+import {
+  roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
+} from './room-shape.js';
 
 export const MIN_ROOM_SIZE = 900;
+export const MIN_SHAFT_SIZE = 200;
 
 export function rectsOverlap(a, b, eps = 1) {
   return a.x + a.w > b.x + eps && b.x + b.w > a.x + eps && a.y + a.h > b.y + eps && b.y + b.h > a.y + eps;
@@ -36,10 +42,9 @@ function siblings(project, parentId, excludeId) {
 export function determineParent(project, rect, excludeId, partition = DEFAULT_PARTITION) {
   const margin = partition;
   for (const room of project.rooms) {
-    if (room.id === excludeId || room.parentId) continue;
-    const inner = roomRect(room);
+    if (room.id === excludeId || room.parentId || isOpenRoom(room)) continue;
     const needed = { x: rect.x - margin, y: rect.y - margin, w: rect.w + margin * 2, h: rect.h + margin * 2 };
-    if (rectInside(needed, inner)) return room.id;
+    if (rectInsideRoomShape(needed, room)) return room.id;
   }
   return null;
 }
@@ -47,8 +52,9 @@ export function determineParent(project, rect, excludeId, partition = DEFAULT_PA
 // Проверка размещения комнаты. candidate: {x, y, w, h, parentId}.
 export function validateRoomPlacement(project, candidate, excludeId) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
-  if (candidate.w < MIN_ROOM_SIZE || candidate.h < MIN_ROOM_SIZE) {
-    return { ok: false, reason: `Минимальный размер помещения — ${MIN_ROOM_SIZE} мм` };
+  const minSize = isShaft(candidate) ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
+  if (candidate.w < minSize || candidate.h < minSize) {
+    return { ok: false, reason: `Минимальный размер ${isShaft(candidate) ? 'шахты' : 'помещения'} — ${minSize} мм` };
   }
   const rect = { x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h };
 
@@ -57,7 +63,7 @@ export function validateRoomPlacement(project, candidate, excludeId) {
     if (!parent) return { ok: false, reason: 'Родительская комната не найдена' };
     if (parent.parentId) return { ok: false, reason: 'Вложенность глубже одного уровня не поддерживается' };
     const outer = nestedOuterRect(candidate, partition);
-    if (!rectInside(outer, roomRect(parent))) {
+    if (!rectInsideRoomShape(outer, parent)) {
       return { ok: false, reason: `Не помещается внутри «${parent.name}» вместе со стенами` };
     }
   }
@@ -76,17 +82,19 @@ export function validateRoomPlacement(project, candidate, excludeId) {
     const gapY = Math.max(o.y - (rect.y + rect.h), rect.y - (o.y + o.h));
     const overlapX = Math.min(rect.x + rect.w, o.x + o.w) - Math.max(rect.x, o.x);
     const overlapY = Math.min(rect.y + rect.h, o.y + o.h) - Math.max(rect.y, o.y);
-    if (overlapY > 1 && gapX > 0.5 && gapX < partition - 0.5) {
-      return { ok: false, reason: `Слишком узкий зазор до «${other.name}» (минимум ${partition} мм — толщина стены)` };
+    // Минимум — толщина общей стены этой пары (своя или перегородка).
+    const wallT = sharedWallThickness(project, candidate.id || excludeId, other.id);
+    if (overlapY > 1 && gapX > 0.5 && gapX < wallT - 0.5) {
+      return { ok: false, reason: `Слишком узкий зазор до «${other.name}» (минимум ${wallT} мм — толщина стены)` };
     }
-    if (overlapX > 1 && gapY > 0.5 && gapY < partition - 0.5) {
-      return { ok: false, reason: `Слишком узкий зазор до «${other.name}» (минимум ${partition} мм — толщина стены)` };
+    if (overlapX > 1 && gapY > 0.5 && gapY < wallT - 0.5) {
+      return { ok: false, reason: `Слишком узкий зазор до «${other.name}» (минимум ${wallT} мм — толщина стены)` };
     }
   }
 
   // Зона застройки участка: дом (комнаты верхнего уровня вместе с наружными
   // стенами) можно чертить только внутри неё.
-  if (!candidate.parentId && project.site?.boundary) {
+  if (!candidate.parentId && !isShaft(candidate) && project.site?.boundary) {
     const t = project.settings?.exterior || DEFAULT_EXTERIOR;
     const outer = { x: rect.x - t, y: rect.y - t, w: rect.w + t * 2, h: rect.h + t * 2 };
     // Комнаты — в осях дома, участок — в координатах съёмки: проверяем
@@ -114,24 +122,36 @@ export function siteWarning(project) {
 // выравнивание кромок, затем сетка. Возвращает новые x, y и направляющие.
 export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
+  // Магнит стыковки включается раньше старого порога общей стены. Поэтому
+  // помещение перескакивает сразу в корректный зазор перегородки, не проходя
+  // через временные стены толщиной 400, 300, 200 мм.
+  const dockSnapDist = Math.max(snapDist, Math.max(0, MAX_SHARED_GAP - partition));
   const guides = [];
   let bestX = null;
   let bestY = null;
 
-  const considerX = (value, dist, guide) => {
-    if (dist <= snapDist && (!bestX || dist < bestX.dist)) bestX = { value, dist, guide };
+  const considerX = (value, dist, guide, limit = snapDist) => {
+    if (dist <= limit && (!bestX || dist < bestX.dist)) bestX = { value, dist, guide };
   };
-  const considerY = (value, dist, guide) => {
-    if (dist <= snapDist && (!bestY || dist < bestY.dist)) bestY = { value, dist, guide };
+  const considerY = (value, dist, guide, limit = snapDist) => {
+    if (dist <= limit && (!bestY || dist < bestY.dist)) bestY = { value, dist, guide };
   };
 
   for (const other of siblings(project, parentId, moving.id)) {
     const o = roomRect(other);
     // Стыковка: кромка к кромке через толщину стены.
-    considerX(o.x + o.w + partition, Math.abs(x - (o.x + o.w + partition)), { type: 'dock', other });
-    considerX(o.x - moving.w - partition, Math.abs(x - (o.x - moving.w - partition)), { type: 'dock', other });
-    considerY(o.y + o.h + partition, Math.abs(y - (o.y + o.h + partition)), { type: 'dock', other });
-    considerY(o.y - moving.h - partition, Math.abs(y - (o.y - moving.h - partition)), { type: 'dock', other });
+    const overlapY = Math.min(y + moving.h, o.y + o.h) - Math.max(y, o.y) > 1;
+    const overlapX = Math.min(x + moving.w, o.x + o.w) - Math.max(x, o.x) > 1;
+    // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
+    const gap = sharedWallThickness(project, moving.id, other.id);
+    if (overlapY) {
+      considerX(o.x + o.w + gap, Math.abs(x - (o.x + o.w + gap)), { type: 'dock', other }, dockSnapDist);
+      considerX(o.x - moving.w - gap, Math.abs(x - (o.x - moving.w - gap)), { type: 'dock', other }, dockSnapDist);
+    }
+    if (overlapX) {
+      considerY(o.y + o.h + gap, Math.abs(y - (o.y + o.h + gap)), { type: 'dock', other }, dockSnapDist);
+      considerY(o.y - moving.h - gap, Math.abs(y - (o.y - moving.h - gap)), { type: 'dock', other }, dockSnapDist);
+    }
     // Выравнивание кромок.
     considerX(o.x, Math.abs(x - o.x), { type: 'align', axis: 'v', at: o.x });
     considerX(o.x + o.w - moving.w, Math.abs(x - (o.x + o.w - moving.w)), { type: 'align', axis: 'v', at: o.x + o.w });
@@ -164,14 +184,14 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId) {
 export function moveRoomBy(project, roomId, dx, dy) {
   const moved = new Set([roomId]);
   for (const r of project.rooms) if (r.parentId === roomId) moved.add(r.id);
-  const rects = project.rooms
+  const movedRooms = project.rooms
     .filter((r) => moved.has(r.id))
-    .map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+    .map((r) => ({ ...r, notch: r.notch ? { ...r.notch } : null }));
   for (const r of project.rooms) {
     if (moved.has(r.id)) { r.x += dx; r.y += dy; }
   }
   for (const item of project.items) {
-    const inside = rects.some((r) => item.x >= r.x && item.x <= r.x + r.w && item.y >= r.y && item.y <= r.y + r.h);
+    const inside = movedRooms.some((r) => roomContainsPoint(r, item.x, item.y));
     if (inside) { item.x += dx; item.y += dy; }
   }
 }
@@ -213,17 +233,47 @@ function intersectRect(a, b) {
   return w > 0 && h > 0 ? { x, y, w, h } : null;
 }
 
-// Комнаты верхнего уровня, которые «съедают» данную (идут выше по z = позже в
-// массиве и перекрываются с ней).
+// Прямоугольник целиком внутри формы комнаты (с учётом выреза Г/контура).
+export function rectInsideRoomShape(rect, room, eps = 1) {
+  if (!rectInside(rect, roomRect(room), eps)) return false;
+  if (!room.outline && !room.notch) return true;
+  const grown = roomRects(room).map((p) => ({ x: p.x - eps, y: p.y - eps, w: p.w + eps * 2, h: p.h + eps * 2 }));
+  return rectUnionArea(shapeClips([rect], grown)) >= rect.w * rect.h - eps * (rect.w + rect.h) * 2;
+}
+
+// Пересечения формы комнаты (Г/контур — набор прямоугольников) с другой
+// формой: вырез габарита не участвует.
+function shapeClips(roomParts, otherParts) {
+  const out = [];
+  for (const a of roomParts) {
+    for (const b of otherParts) {
+      const clip = intersectRect(a, b);
+      if (clip) out.push(clip);
+    }
+  }
+  return out;
+}
+
+// Комнаты верхнего уровня, которые «съедают» данную. Обычно выше стоит более
+// поздняя комната, но дом всегда выше открытых террас и балконов.
 export function eatersOf(project, room) {
   const idx = project.rooms.indexOf(room);
-  const rect = roomRect(room);
+  const parts = roomRects(room);
   const result = [];
-  for (let i = idx + 1; i < project.rooms.length; i += 1) {
+  const open = isOpenRoom(room);
+  for (let i = 0; i < project.rooms.length; i += 1) {
     const other = project.rooms[i];
+    if (other.id === room.id) continue;
     if (other.parentId || room.parentId) continue;
-    const clip = intersectRect(rect, roomRect(other));
-    if (clip) result.push(other);
+    // Закрытое помещение всегда выше террасы/балкона независимо от порядка
+    // создания. Открытые площадки никогда не отнимают площадь дома.
+    if (open && !isOpenRoom(other)) {
+      if (shapeClips(parts, roomRects(other)).length) result.push(other);
+      continue;
+    }
+    if (!open && isOpenRoom(other)) continue;
+    if (i <= idx) continue;
+    if (shapeClips(parts, roomRects(other)).length) result.push(other);
   }
   return result;
 }
@@ -231,20 +281,30 @@ export function eatersOf(project, room) {
 // Чистая площадь: внутренняя минус габариты вложенных помещений (со стенами)
 // и минус область, «съеденная» перекрывающими комнатами поверх этой.
 export function roomNetAreaM2(project, room) {
+  if (isShaft(room)) return 0;
   const partition = project.settings?.partition || DEFAULT_PARTITION;
-  let area = room.w * room.h;
+  let area = roomShapeArea(room);
+  const parts = roomRects(room);
   const subtractRects = [];
   for (const child of project.rooms) {
     if (child.parentId !== room.id) continue;
+    if (isOpenRoom(child)) continue;
     if (child.takesArea === false) continue; // площадь родителя не уменьшается
-    const outer = nestedOuterRect(child, partition);
-    const clip = intersectRect(roomRect(room), outer);
-    if (clip) subtractRects.push(clip);
+    subtractRects.push(...shapeClips(parts, [nestedOuterRect(child, partition)]));
+  }
+  // Шахта верхнего уровня может проходить сразу через несколько помещений.
+  // Она вырезает площадь каждого пересечённого помещения независимо от
+  // порядка комнат в массиве.
+  if (!room.parentId) {
+    for (const shaft of project.rooms) {
+      if (shaft.id === room.id || shaft.parentId || !isShaft(shaft)) continue;
+      subtractRects.push(...shapeClips(parts, roomRects(shaft)));
+    }
   }
   // Перекрытие комнатами, стоящими поверх (eaters).
   for (const eater of eatersOf(project, room)) {
-    const clip = intersectRect(roomRect(room), roomRect(eater));
-    if (clip) subtractRects.push(clip);
+    if (isShaft(eater)) continue; // уже учтена выше независимо от z-порядка
+    subtractRects.push(...shapeClips(parts, roomRects(eater)));
   }
   area -= rectUnionArea(subtractRects);
   return Math.max(0, area) / 1_000_000;
@@ -267,6 +327,9 @@ export function analyzeConnectivity(project, walls = null) {
     graph.get(b).add(a);
   };
   const resolvedWalls = walls || deriveWalls(project);
+  for (const wall of resolvedWalls) {
+    if (wall.hidden && wall.kind === 'shared' && wall.rooms.length === 2) addEdge(wall.rooms[0], wall.rooms[1]);
+  }
   for (const opening of project.openings) {
     const link = doorLink(project, opening, resolvedWalls);
     if (link) addEdge(link[0], link[1]);
@@ -292,7 +355,7 @@ export function analyzeConnectivity(project, walls = null) {
     }
   }
 
-  const unreachable = project.rooms.filter((r) => !reachable.has(r.id)).map((r) => r.id);
+  const unreachable = project.rooms.filter((r) => !isShaft(r) && !reachable.has(r.id)).map((r) => r.id);
   return { hasEntrance, reachable, unreachable, graph };
 }
 
@@ -301,17 +364,33 @@ export function analyzeConnectivity(project, walls = null) {
 // Т-образных комнат даёт все стороны с их настоящими длинами.
 // Возвращает { rectangular, edges:[{orient:'v'|'h', at, from, to, inSide}] }.
 export function computeRoomEdges(project, room) {
+  if (room.outline) {
+    return {
+      rectangular: false,
+      edges: roomBoundaryEdges(room).map((edge) => ({
+        orient: edge.orient, at: edge.edge, from: edge.from, to: edge.to, inSide: -edge.outward,
+      })),
+    };
+  }
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   const rect = roomRect(room);
   const subs = [];
+  const notch = roomNotchRect(room);
+  if (notch) subs.push(notch);
   if (!room.parentId) {
+    for (const shaft of project.rooms) {
+      if (shaft.id === room.id || shaft.parentId || !isShaft(shaft)) continue;
+      const clip = intersectRect(rect, roomRect(shaft));
+      if (clip) subs.push(clip);
+    }
     for (const eater of eatersOf(project, room)) {
+      if (isShaft(eater)) continue;
       const clip = intersectRect(rect, roomRect(eater));
       if (clip) subs.push(clip);
     }
   }
   for (const child of project.rooms) {
-    if (child.parentId !== room.id || child.takesArea === false) continue;
+    if (child.parentId !== room.id || isOpenRoom(child) || child.takesArea === false) continue;
     const clip = intersectRect(rect, nestedOuterRect(child, partition));
     if (clip) subs.push(clip);
   }
@@ -409,20 +488,19 @@ export function rectsUnionArea(rects) {
 // (без террас и балконов), м².
 export function buildingFootprintM2(project) {
   const t = project.settings?.exterior || DEFAULT_EXTERIOR;
-  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
-    .map((r) => ({ x: r.x - t, y: r.y - t, w: r.w + t * 2, h: r.h + t * 2 }));
+  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
+    .flatMap((r) => roomRects(r).map((part) => ({ x: part.x - t, y: part.y - t, w: part.w + t * 2, h: part.h + t * 2 })));
   return rectsUnionArea(rects) / 1_000_000;
 }
 
 export function computeBuildingOutline(project, expand = 0) {
   const rects = project.rooms
-    .filter((r) => !r.parentId && !isOpenRoom(r))
-    .map((r) => {
-      const rc = roomRect(r);
+    .filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
+    .flatMap((r) => roomRects(r).map((rc) => {
       return expand
         ? { x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand }
         : rc;
-    });
+    }));
   if (!rects.length) return [];
   return unionEdges(rects);
 }
@@ -491,7 +569,7 @@ export function suggestAccess(project, roomId, analysis) {
     const parent = project.rooms.find((r) => r.id === room.parentId);
     return { targetId: room.parentId, text: `Добавьте дверь между «${room.name}» и «${parent?.name || 'родителем'}»` };
   }
-  const adjacencies = findAdjacencies(project.rooms)
+  const adjacencies = projectAdjacencies(project)
     .filter((a) => a.a.id === roomId || a.b.id === roomId)
     .sort((p, q) => (q.to - q.from) - (p.to - p.from));
   for (const adj of adjacencies) {

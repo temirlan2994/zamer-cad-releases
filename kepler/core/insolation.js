@@ -18,7 +18,7 @@ import { isOpenRoom } from './catalog.js';
 import { rectCornersWorld, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners, sunPosition } from './site.js';
-import { deriveWalls, openingRect } from './walls.js';
+import { deriveWalls, openingRect, sideEdge } from './walls.js';
 import { LIVING_TYPES } from './schedule.js';
 
 export const STEP_MIN = 5;
@@ -116,7 +116,18 @@ export function obstaclesOf(project) {
   return out;
 }
 
-const NORMALS = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+// Внешняя нормаль и точка на наружной грани стены проёма — в осях дома.
+// Сторона может быть числом 0–3 или строкой стены выреза Г/контура
+// ('notch-h', 'outline-N'): единый вид даёт sideEdge (orient + outward).
+export function openingFacade(room, side, wall, absCenter) {
+  const edge = sideEdge(room, side);
+  if (!edge) return null;
+  const b = wall.band;
+  if (edge.orient === 'h') {
+    return { normal: { x: 0, y: edge.outward }, at: { x: absCenter, y: edge.outward < 0 ? b.y : b.y + b.h } };
+  }
+  return { normal: { x: edge.outward, y: 0 }, at: { x: edge.outward > 0 ? b.x + b.w : b.x, y: absCenter } };
+}
 
 // Окна всех этажей: середина снаружи (мир), внешняя нормаль (мир), высота.
 export function windowsOf(project) {
@@ -131,14 +142,10 @@ export function windowsOf(project) {
       if (o.kind !== 'window') continue;
       const placed = openingRect(lp, o, walls);
       if (!placed) continue;
-      const b = placed.wall.band;
-      const at = [
-        { x: placed.absCenter, y: b.y },
-        { x: b.x + b.w, y: placed.absCenter },
-        { x: placed.absCenter, y: b.y + b.h },
-        { x: b.x, y: placed.absCenter },
-      ][o.side];
-      const n = NORMALS[o.side];
+      const room = lp.rooms.find((r) => r.id === o.roomId);
+      const facade = openingFacade(room, o.side, placed.wall, placed.absCenter);
+      if (!facade) continue;
+      const { at, normal: n } = facade;
       const normal = { x: n.x * c - n.y * s, y: n.x * s + n.y * c };
       const p = toWorld(project.building, at);
       out.push({

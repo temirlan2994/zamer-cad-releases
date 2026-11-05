@@ -5,12 +5,19 @@ import {
   toWorld, toLocal, rectCornersWorld, rotateBuildingAbout, composeView,
   rotationAlongLine, buildingCenter, northInBuilding,
 } from '../core/building.js';
-import { projectPoint } from '../render.js';
+import { dimTextAngle, projectPoint } from '../render.js';
 import { createProject, createRoom } from '../core/model.js';
 import { validateRoomPlacement, siteWarning } from '../core/rooms.js';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
 const nearPt = (p, q, eps = 1e-6) => near(p.x, q.x, eps) && near(p.y, q.y, eps);
+
+test('подписи размеров идут вдоль линии и вертикальные читаются снизу вверх', () => {
+  assert.ok(near(dimTextAngle({ x: 0, y: 0 }, { x: 100, y: 0 }), 0));
+  assert.ok(near(dimTextAngle({ x: 0, y: 0 }, { x: 0, y: 100 }), -Math.PI / 2));
+  assert.ok(near(dimTextAngle({ x: 0, y: 100 }, { x: 0, y: 0 }), -Math.PI / 2));
+  assert.ok(near(dimTextAngle({ x: 100, y: 0 }, { x: 0, y: 0 }), 0));
+});
 
 test('мир ↔ оси дома: туда и обратно', () => {
   const b = { rotation: 30, origin: { x: 5000, y: -2000 } };

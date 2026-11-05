@@ -8,13 +8,40 @@
 //   s|<idA>|<idB>'      — общая стена пары комнат,
 //   'e|<roomId>|<side>' — собственные стены стороны комнаты (для overrides).
 
-import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom } from './catalog.js';
+import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
+import {
+  roomBoundaryEdges, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon,
+} from './room-shape.js';
 
-export const MAX_SHARED_GAP = 450; // максимальный зазор, считающийся общей стеной
+// Радиус поиска соседней стены для магнитной стыковки. Самой общей стеной
+// становится только точный конструктивный зазор — толщина этой стены
+// (sharedWallThickness: своя толщина пары или перегородка по умолчанию).
+export const MAX_SHARED_GAP = 450;
+const SHARED_GAP_EPS = 1;
+
+// Допустимая толщина любой стены, мм.
+export const WALL_T_MIN = 50;
+export const WALL_T_MAX = 600;
+
+// Три класса толщины: наружная, внутренняя несущая, перегородка.
+// Значения по умолчанию — в project.settings (exterior / bearing / partition).
+export function wallClassThickness(settings, kind) {
+  if (kind === 'exterior') return settings?.exterior || DEFAULT_EXTERIOR;
+  if (kind === 'bearing') return settings?.bearing || DEFAULT_BEARING;
+  return settings?.partition || DEFAULT_PARTITION;
+}
+
+// Толщина общей стены пары комнат — единственный источник правды для
+// зазора стыковки: своя толщина в wallOverrides[s|a|b], иначе перегородка.
+export function sharedWallThickness(project, idA, idB) {
+  const own = project.wallOverrides?.[sharedKey(idA, idB)]?.thickness;
+  return Number(own) > 0 ? Number(own) : (project.settings?.partition || DEFAULT_PARTITION);
+}
 
 // Каноническое описание стороны: горизонтальные — интервал по X, вертикальные — по Y.
 // side: 0 верх, 1 право, 2 низ, 3 лево.
 export function sideEdge(room, side) {
+  if (typeof side === 'string') return roomBoundaryEdges(room).find((edge) => edge.side === side) || null;
   if (side === 0) return { orient: 'h', edge: room.y, from: room.x, to: room.x + room.w, outward: -1 };
   if (side === 1) return { orient: 'v', edge: room.x + room.w, from: room.y, to: room.y + room.h, outward: 1 };
   if (side === 2) return { orient: 'h', edge: room.y + room.h, from: room.x, to: room.x + room.w, outward: 1 };
@@ -56,24 +83,70 @@ export function ownKey(roomId, side) {
 
 // Находит стыковки: пары комнат-соседей с перекрытием проекций и малым зазором.
 // Соседями считаются комнаты одного уровня вложенности (одинаковый parentId).
-export function findAdjacencies(rooms) {
+// overrides — wallOverrides этажа: если у пары задана своя толщина общей
+// стены, зазором стыковки считается она, а не перегородка по умолчанию.
+export function findAdjacencies(rooms, sharedGap = DEFAULT_PARTITION, overrides = null) {
   const result = [];
   for (let i = 0; i < rooms.length; i += 1) {
     for (let j = i + 1; j < rooms.length; j += 1) {
       const a = rooms[i];
       const b = rooms[j];
       if ((a.parentId || null) !== (b.parentId || null)) continue;
-      for (const side of [1, 2]) { // достаточно проверить право и низ комнаты A в обе стороны
-        for (const [first, second] of [[a, b], [b, a]]) {
-          const edgeA = sideEdge(first, side);
-          const edgeB = sideEdge(second, oppositeSide(side));
-          const gap = edgeB.edge - edgeA.edge;
-          if (gap <= 1 || gap > MAX_SHARED_GAP) continue;
-          const span = overlap1d(edgeA.from, edgeA.to, edgeB.from, edgeB.to);
-          if (!span) continue;
-          result.push({ a: first, b: second, sideA: side, gap, from: span.from, to: span.to });
+      const own = Number(overrides?.[sharedKey(a.id, b.id)]?.thickness);
+      const pairGap = own > 0 ? own : sharedGap;
+      for (const [first, second] of [[a, b], [b, a]]) {
+        for (const edgeA of roomBoundaryEdges(first)) {
+          for (const edgeB of roomBoundaryEdges(second)) {
+            if (edgeA.orient !== edgeB.orient || edgeA.outward === edgeB.outward) continue;
+            const gap = (edgeB.edge - edgeA.edge) * edgeA.outward;
+            // Общая стена существует только при настоящем конструктивном
+            // зазоре. Раньше любой зазор 2…450 мм превращался в перегородку
+            // переменной толщины, а при нулевом зазоре снова возникали две
+            // наружные стены. Это и давало ступени при приближении помещений.
+            if (Math.abs(gap - pairGap) > SHARED_GAP_EPS) continue;
+            const span = overlap1d(edgeA.from, edgeA.to, edgeB.from, edgeB.to);
+            if (!span) continue;
+            result.push({
+              a: first, b: second, sideA: edgeA.side, sideB: edgeB.side,
+              edgeA, edgeB, gap, from: span.from, to: span.to,
+            });
+          }
         }
       }
+    }
+  }
+  return result;
+}
+
+// Стыковки активного этажа проекта с учётом своих толщин общих стен.
+export function projectAdjacencies(project) {
+  return findAdjacencies(project.rooms, project.settings?.partition || DEFAULT_PARTITION, project.wallOverrides);
+}
+
+// Свободные участки ограждения террасы/балкона. Там, где открытое помещение
+// примыкает к любой комнате (включая другую террасу), перила не нужны: стена
+// закрытой комнаты при этом остаётся обычной наружной стеной.
+export function openRoomRailingSegments(room, rooms) {
+  if (!isOpenRoom(room)) return [];
+  const cutsBySide = new Map();
+  for (const other of rooms) {
+    if (other.id === room.id || (other.parentId || null) !== (room.parentId || null)) continue;
+    for (const side of [0, 1, 2, 3]) {
+      const edge = sideEdge(room, side);
+      const facing = sideEdge(other, oppositeSide(side));
+      const gap = (facing.edge - edge.edge) * edge.outward;
+      if (gap < -1 || gap > MAX_SHARED_GAP) continue;
+      const span = overlap1d(edge.from, edge.to, facing.from, facing.to);
+      if (!span) continue;
+      if (!cutsBySide.has(side)) cutsBySide.set(side, []);
+      cutsBySide.get(side).push(span);
+    }
+  }
+  const result = [];
+  for (const side of [0, 1, 2, 3]) {
+    const edge = sideEdge(room, side);
+    for (const segment of subtractIntervals(edge.from, edge.to, cutsBySide.get(side) || [])) {
+      result.push({ side, ...edge, from: segment.from, to: segment.to });
     }
   }
   return result;
@@ -89,7 +162,7 @@ export function deriveWalls(project) {
   const overrides = project.wallOverrides || {};
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
-  const adjacencies = findAdjacencies(project.rooms);
+  const adjacencies = findAdjacencies(project.rooms, partition, overrides);
   const sharedByRoomSide = new Map(); // `${roomId}|${side}` -> intervals
 
   const noteShared = (roomId, side, from, to) => {
@@ -100,22 +173,33 @@ export function deriveWalls(project) {
 
   const seenPairs = new Set();
   for (const adj of adjacencies) {
+    // Терраса/балкон не участвует в конструкции стен: её примыкание лишь
+    // убирает перила на этом участке, но не заменяет стену дома перегородкой.
+    if (isOpenRoom(adj.a) || isOpenRoom(adj.b)) continue;
     const key = sharedKey(adj.a.id, adj.b.id);
-    if (seenPairs.has(key)) continue;
-    seenPairs.add(key);
-    const edgeA = sideEdge(adj.a, adj.sideA);
+    const edgeA = adj.edgeA || sideEdge(adj.a, adj.sideA);
+    const edgeB = adj.edgeB || sideEdge(adj.b, adj.sideB);
+    const seenKey = `${key}|${edgeA.orient}|${Math.round(Math.min(edgeA.edge, edgeB.edge))}|` +
+      `${Math.round(Math.max(edgeA.edge, edgeB.edge))}|${Math.round(adj.from)}|${Math.round(adj.to)}`;
+    if (seenPairs.has(seenKey)) continue;
+    seenPairs.add(seenKey);
     const override = overrides[key];
     const orient = edgeA.orient;
+    const oppositeEdge = edgeA.edge + edgeA.outward * adj.gap;
+    const acrossFrom = Math.min(edgeA.edge, oppositeEdge);
     const band = orient === 'h'
-      ? { x: adj.from, y: edgeA.edge, w: adj.to - adj.from, h: adj.gap }
-      : { x: edgeA.edge, y: adj.from, w: adj.gap, h: adj.to - adj.from };
-    const mid = edgeA.edge + adj.gap / 2;
+      ? { x: adj.from, y: acrossFrom, w: adj.to - adj.from, h: adj.gap }
+      : { x: acrossFrom, y: adj.from, w: adj.gap, h: adj.to - adj.from };
+    // edgeA может принадлежать как левому/верхнему, так и правому/нижнему
+    // помещению. Направление outward обязательно: без него стена для второй
+    // ориентации уезжала внутрь комнаты и оставляла белую щель в зазоре.
+    const mid = edgeA.edge + edgeA.outward * (adj.gap / 2);
     walls.push({
       key,
       kind: 'shared',
       orient,
       rooms: [adj.a.id, adj.b.id],
-      sides: { [adj.a.id]: adj.sideA, [adj.b.id]: oppositeSide(adj.sideA) },
+      sides: { [adj.a.id]: adj.sideA, [adj.b.id]: adj.sideB },
       from: adj.from,
       to: adj.to,
       edge: edgeA.edge,
@@ -125,30 +209,38 @@ export function deriveWalls(project) {
         ? { x1: adj.from, y1: mid, x2: adj.to, y2: mid }
         : { x1: mid, y1: adj.from, x2: mid, y2: adj.to },
       wallType: wallTypeOf(override, 'partition'),
+      hidden: Boolean(override?.hidden),
     });
     noteShared(adj.a.id, adj.sideA, adj.from, adj.to);
-    noteShared(adj.b.id, oppositeSide(adj.sideA), adj.from, adj.to);
+    noteShared(adj.b.id, adj.sideB, adj.from, adj.to);
   }
 
   // Собственные стены: стороны комнат за вычетом общих участков.
   const byId = new Map(project.rooms.map((r) => [r.id, r]));
-  const topRooms = project.rooms.filter((r) => !r.parentId);
+  const topRooms = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r));
   for (const room of project.rooms) {
     if (isOpenRoom(room)) continue; // открытые помещения (терраса/балкон) — без стен
     const nested = Boolean(room.parentId && byId.has(room.parentId));
-    for (let side = 0; side < 4; side += 1) {
-      const edge = sideEdge(room, side);
-      const subs = sharedByRoomSide.get(`${room.id}|${side}`) || [];
+    const internal = nested || isShaft(room);
+    const notchCuts = roomNotchSideCuts(room);
+    const edges = room.outline
+      ? roomBoundaryEdges(room)
+      : [0, 1, 2, 3, ...roomNotchEdges(room).map((edge) => edge.side)]
+        .map((side) => ({ ...sideEdge(room, side), side }));
+    for (const edge of edges) {
+      if (!edge) continue;
+      const side = edge.side;
+      const subs = [...(sharedByRoomSide.get(`${room.id}|${side}`) || []), ...(notchCuts[side] || [])];
       const rest = subtractIntervals(edge.from, edge.to, subs);
       const key = ownKey(room.id, side);
       const override = overrides[key];
-      const baseThick = (override && override.thickness) || (nested ? partition : exterior);
-      const baseType = wallTypeOf(override, nested ? 'partition' : 'exterior');
+      const baseThick = (override && override.thickness) || (internal ? partition : exterior);
+      const baseType = wallTypeOf(override, internal ? 'partition' : 'exterior');
 
       // Участки, попадающие внутрь другой комнаты верхнего уровня (перекрытие),
       // становятся тонкой перегородкой.
       const covered = [];
-      if (!nested) {
+      if (!internal) {
         for (const o of topRooms) {
           if (o.id === room.id) continue;
           const pLo = edge.orient === 'h' ? o.y : o.x;
@@ -177,6 +269,7 @@ export function deriveWalls(project) {
             ? { x1: segFrom, y1: mid, x2: segTo, y2: mid }
             : { x1: mid, y1: segFrom, x2: mid, y2: segTo },
           wallType: type,
+          hidden: Boolean(override?.hidden),
         });
       };
 
@@ -193,9 +286,58 @@ export function deriveWalls(project) {
   }
 
   extendOwnCorners(walls, byId);
+  cutWallsInsideShafts(walls, project.rooms);
   fillWallJoints(walls);
   addThicknessChamfers(walls, project.rooms);
   return walls;
+}
+
+// Шахта находится выше помещений в плане и проходит через этаж насквозь.
+// Поэтому стены комнат, пересекающие её внутренний прямоугольник, физически
+// обрываются у граней шахты. Стены самой шахты сохраняются целиком.
+function cutWallsInsideShafts(walls, rooms) {
+  const shafts = rooms.filter((room) => isShaft(room));
+  if (!shafts.length) return;
+  const shaftIds = new Set(shafts.map((room) => room.id));
+  const result = [];
+
+  for (const wall of walls) {
+    if (!['own', 'shared'].includes(wall.kind) || wall.rooms.some((id) => shaftIds.has(id))) {
+      result.push(wall);
+      continue;
+    }
+    const band = wall.band;
+    const alongFrom = wall.orient === 'h' ? band.x : band.y;
+    const alongTo = alongFrom + (wall.orient === 'h' ? band.w : band.h);
+    const cuts = [];
+    for (const shaft of shafts) {
+      const crossOverlap = wall.orient === 'h'
+        ? Math.min(band.y + band.h, shaft.y + shaft.h) - Math.max(band.y, shaft.y)
+        : Math.min(band.x + band.w, shaft.x + shaft.w) - Math.max(band.x, shaft.x);
+      if (crossOverlap <= 1) continue;
+      cuts.push(wall.orient === 'h'
+        ? { from: shaft.x, to: shaft.x + shaft.w }
+        : { from: shaft.y, to: shaft.y + shaft.h });
+    }
+    const parts = subtractIntervals(alongFrom, alongTo, cuts);
+    for (const part of parts) {
+      const clone = { ...wall, band: { ...band }, center: { ...wall.center }, from: part.from, to: part.to };
+      if (wall.orient === 'h') {
+        clone.band.x = part.from;
+        clone.band.w = part.to - part.from;
+        clone.center.x1 = part.from;
+        clone.center.x2 = part.to;
+      } else {
+        clone.band.y = part.from;
+        clone.band.h = part.to - part.from;
+        clone.center.y1 = part.from;
+        clone.center.y2 = part.to;
+      }
+      result.push(clone);
+    }
+  }
+
+  walls.splice(0, walls.length, ...result);
 }
 
 // Выравнивает ступеньку на стыке колинеарных стен разной толщины (например
@@ -203,7 +345,7 @@ export function deriveWalls(project) {
 // стену «добирают» прямоугольной заплаткой до наружной грани толстой — так
 // линия стены остаётся прямой, без ступеньки-бугорка и без скоса.
 function addThicknessChamfers(walls, allRooms = []) {
-  const solid = walls.filter((w) => w.kind === 'own' || w.kind === 'shared');
+  const solid = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared'));
   const rooms = allRooms.filter((r) => !isOpenRoom(r));
   // Заплатку нельзя заводить внутрь комнаты — только в наружное/зазорное
   // пространство. Иначе «ровная» стена полезет внутрь помещения бугром.
@@ -282,11 +424,12 @@ function fillWallJoints(walls) {
   const fillers = [];
   const seen = new Set();
   for (const wall of walls) {
+    if (wall.hidden) continue;
     // Перпендикулярные полосы, чья грань совпадает с концом этой стены.
     const perpOrient = wall.orient === 'h' ? 'v' : 'h';
     for (const end of [wall.from, wall.to]) {
       for (const other of walls) {
-        if (other === wall || other.orient !== perpOrient) continue;
+        if (other === wall || other.hidden || other.orient !== perpOrient) continue;
         // Грань перпендикулярной стены на уровне конца нашей стены.
         if (Math.abs(other.edge - end) > 2) continue;
         const b = other.band;
@@ -327,18 +470,21 @@ function extendOwnCorners(walls, roomsById) {
   for (const [roomId, list] of ownByRoom) {
     const room = roomsById.get(roomId);
     if (!room) continue;
-    const corners = [
-      { x: room.x, y: room.y },
-      { x: room.x + room.w, y: room.y },
-      { x: room.x + room.w, y: room.y + room.h },
-      { x: room.x, y: room.y + room.h },
-    ];
+    const corners = roomPolygon(room);
+    const legacyConcave = roomNotchInnerPoint(room);
+    const concaves = corners.filter((point, index) => {
+      const prev = corners[(index - 1 + corners.length) % corners.length];
+      const next = corners[(index + 1) % corners.length];
+      return (point.x - prev.x) * (next.y - point.y) - (point.y - prev.y) * (next.x - point.x) < 0;
+    });
+    if (legacyConcave) concaves.push(legacyConcave);
     for (const wall of list) {
       for (const end of ['from', 'to']) {
         const pos = wall[end];
         const point = wall.orient === 'h' ? { x: pos, y: wall.edge } : { x: wall.edge, y: pos };
         const isCorner = corners.some((c) => Math.abs(c.x - point.x) < 1 && Math.abs(c.y - point.y) < 1);
-        if (!isCorner) continue;
+        const isConcave = concaves.some((c) => Math.abs(c.x - point.x) < 1 && Math.abs(c.y - point.y) < 1);
+        if (!isCorner || isConcave) continue;
         // Перпендикулярная собственная стена, касающаяся того же угла.
         const perp = list.find((w) => w !== wall && w.orient !== wall.orient &&
           (Math.abs(w.from - (wall.orient === 'h' ? point.y : point.x)) < 1 ||
@@ -371,6 +517,7 @@ export function openingRect(project, opening, walls) {
   const room = project.rooms.find((r) => r.id === opening.roomId);
   if (!room) return null;
   const edge = sideEdge(room, opening.side);
+  if (!edge) return null;
   const absCenter = (edge.orient === 'h' ? room.x : room.y) + opening.offset;
   const wall = wallAt(walls, opening.roomId, opening.side, absCenter);
   if (!wall) return null;
@@ -427,6 +574,17 @@ export const WINDOW_TYPES = {
   standard: 'Обычное',
   panoramic: 'Панорамное (в пол)',
 };
+
+// Четыре варианта двери при установке пробелом: петли с двух сторон ×
+// открывание внутрь/наружу. Вариант 4 снова равен исходному.
+export function doorPlacementVariant(opening, turns = 0) {
+  const variant = ((turns % 4) + 4) % 4;
+  return {
+    ...opening,
+    hingeStart: variant === 1 || variant === 2 ? !opening.hingeStart : opening.hingeStart,
+    swingIn: variant === 2 || variant === 3 ? !opening.swingIn : opening.swingIn,
+  };
+}
 
 // Распашные створки двери: одна (single) или две половины от обоих косяков
 // (double); у раздвижной и проёма без двери створок-дуг нет.
@@ -487,6 +645,7 @@ export function clampOpeningOffset(project, opening, walls, desiredOffset) {
   const room = project.rooms.find((r) => r.id === opening.roomId);
   if (!room) return desiredOffset;
   const edge = sideEdge(room, opening.side);
+  if (!edge) return null;
   const base = edge.orient === 'h' ? room.x : room.y;
   const abs = base + desiredOffset;
   // Ищем сегмент, которому принадлежит желаемая позиция (или ближайший).

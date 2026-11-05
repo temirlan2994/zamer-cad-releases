@@ -4,11 +4,11 @@ import { FURNITURE_CATEGORIES, ROOM_TYPES, allFurniture, furnitureByCategory } f
 import { polygonAreaM2 } from '../core/site.js';
 import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
-import { addFurnitureToSelection } from './plan-actions.js';
 import { state } from './state.js';
 import { startTerrainTool } from './terrain.js';
+import { closeLibrarySheet } from './mobile.js';
 import {
-  activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceRoom,
+  activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceFurniture, startPlaceRoom,
 } from './tools.js';
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
@@ -86,7 +86,10 @@ export function renderLibrary() {
     const active = layer === tool.id || (tool.id === 'north' && state.tool?.kind === 'north');
     if (active) btn.classList.add('active');
     btn.innerHTML = `<span class="room-card-name">${tool.title}</span><span class="room-card-size">${tool.note}</span>`;
-    btn.addEventListener('click', () => { if (active) cancelTool(); else tool.action(); });
+    btn.addEventListener('click', () => {
+      if (active) cancelTool();
+      else { tool.action(); closeLibrarySheet(); } // телефон: панель уезжает, план свободен для касаний
+    });
     refs.siteTools.appendChild(btn);
   }
 }
@@ -153,7 +156,10 @@ function renderFurnitureItems() {
       e.dataTransfer.setData('text/plain', item.kind);
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
-    chip.addEventListener('click', () => addFurnitureToSelection(item.kind));
+    chip.addEventListener('click', () => {
+      if (state.tool?.kind === 'place-furniture' && state.tool.itemKind === item.kind) cancelTool();
+      else startPlaceFurniture(item.kind, item.title);
+    });
     refs.furnitureItems.appendChild(chip);
   }
 }

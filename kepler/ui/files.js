@@ -12,7 +12,9 @@ import { applyModeRotation } from './modes.js';
 import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
-import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
+import {
+  afterChange, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
+} from './store.js';
 import { fitView } from './view.js';
 
 const download = (filename, data, mime) => saveFile(filename, data, mime);
@@ -83,10 +85,11 @@ export function openProjectFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const before = snapshot();
+      const before = snapshotIfContent();
+      const beforePid = state.pid;
       restoreFrom(String(reader.result));
       state.pid = null;
-      pushHistory(before);
+      if (before) pushHistory(before, beforePid);
       fitView();
       refs.projectName.value = state.project.name;
       toast(`Открыт проект «${state.project.name}»`);
@@ -100,21 +103,23 @@ export function openProjectFile(file) {
 // Шаблон дома (core/templates.js) — как пример: текущий проект уходит в
 // историю (Ctrl+Z вернёт).
 export function loadTemplate(id) {
-  const before = state.project ? snapshot() : null;
+  const before = snapshotIfContent();
+  const beforePid = state.pid;
   state.project = buildTemplate(id);
   state.pid = null;
   state.rejected = new Map();
   state.selection = null;
   refreshDerived();
   applyModeRotation();
-  if (before) pushHistory(before);
+  if (before) pushHistory(before, beforePid);
   refs.projectName.value = state.project.name;
   afterChange();
   fitView();
 }
 
 export function loadSample() {
-  const before = state.project ? snapshot() : null;
+  const before = snapshotIfContent();
+  const beforePid = state.pid;
   const { project, rejected } = buildSample();
   state.project = project;
   state.pid = null;
@@ -122,14 +127,15 @@ export function loadSample() {
   state.selection = null;
   refreshDerived();
   applyModeRotation();
-  if (before) pushHistory(before);
+  if (before) pushHistory(before, beforePid);
   refs.projectName.value = project.name;
   afterChange();
   fitView();
 }
 
 export function newProject() {
-  const before = state.project ? snapshot() : null;
+  const before = snapshotIfContent();
+  const beforePid = state.pid;
   state.pid = null;
   state.project = createProject(); // чистый участок: без топосъёмки, границы, соседей
   state.selection = null;
@@ -151,7 +157,7 @@ export function newProject() {
   applyLibraryTab();
   refreshDerived();
   applyModeRotation();
-  if (before) pushHistory(before);
+  if (before) pushHistory(before, beforePid);
   refs.projectName.value = state.project.name;
   afterChange();
   fitView();

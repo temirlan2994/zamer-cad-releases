@@ -10,6 +10,7 @@
 
 import { FURNITURE, furnitureDef, roomType, DEFAULT_PARTITION } from './catalog.js';
 import { nestedOuterRect } from './rooms.js';
+import { roomContainsPoint } from './room-shape.js';
 import { doorSwingRect, openingRect } from './walls.js';
 import { compTypeFor, withDefaultComp } from './composite.js';
 import { createItem } from './model.js';
@@ -42,9 +43,9 @@ export function itemTitle(kind) {
 export function itemsInRoom(project, room) {
   const children = project.rooms.filter((r) => r.parentId === room.id);
   return project.items.filter((item) => {
-    if (item.x < room.x || item.x > room.x + room.w || item.y < room.y || item.y > room.y + room.h) return false;
+    if (!roomContainsPoint(room, item.x, item.y)) return false;
     for (const child of children) {
-      if (item.x >= child.x && item.x <= child.x + child.w && item.y >= child.y && item.y <= child.y + child.h) return false;
+      if (roomContainsPoint(child, item.x, item.y)) return false;
     }
     return true;
   });

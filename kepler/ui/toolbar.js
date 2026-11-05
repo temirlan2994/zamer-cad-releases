@@ -10,7 +10,7 @@ import { closeStartMenu, openStartMenu, requestNewProject } from './start-menu.j
 import { state } from './state.js';
 import { mutate, redo, tweak, undo } from './store.js';
 import { cycleTheme } from './theme.js';
-import { setTool, startPlaceOpening } from './tools.js';
+import { setTool } from './tools.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
 import { bindElevInput } from './terrain.js';
 import { fitView, zoomAt } from './view.js';
@@ -54,13 +54,6 @@ export function bindToolbar() {
     if (e.key === 'Enter') { e.preventDefault(); applyDimInput(); }
     else if (e.key === 'Escape') { e.preventDefault(); hideDimInput(); }
   });
-  el('wallAddDoor').addEventListener('click', () => {
-    if (state.selection?.type === 'wall') startPlaceOpening('door', { key: state.selection.key, from: state.selection.from });
-  });
-  el('wallAddWindow').addEventListener('click', () => {
-    if (el('wallAddWindow').disabled) return;
-    if (state.selection?.type === 'wall') startPlaceOpening('window', { key: state.selection.key, from: state.selection.from });
-  });
   el('draftDone').addEventListener('click', () => finishDraft());
   bindElevInput();
   el('calInput').addEventListener('keydown', (e) => {
@@ -91,6 +84,9 @@ export function bindToolbar() {
     if (!refs.exportDropdown.hidden && !refs.exportDropdown.contains(event.target)) {
       refs.exportDropdown.hidden = true;
     }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !refs.exportDropdown.hidden) refs.exportDropdown.hidden = true;
   });
   refs.exportDropdown.querySelectorAll('[data-export]').forEach((btn) => {
     btn.addEventListener('click', () => handleExport(btn.dataset.export));
