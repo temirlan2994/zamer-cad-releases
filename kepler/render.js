@@ -339,24 +339,6 @@ export function createRenderer(canvas) {
         const hovered = hoveredItems.has(item.id);
         drawItem(ctx, item, tokens, px, selected, hovered);
       }
-
-      // Мебель с замечаниями (пересечение, дверь, нет прохода) — красный пунктир.
-      if (!landscape && state.norms?.flagged?.size) {
-        ctx.strokeStyle = tokens.danger;
-        ctx.lineWidth = px(1.6);
-        ctx.setLineDash([px(5), px(4)]);
-        for (const item of state.project.items) {
-          if (!state.norms.flagged.has(item.id)) continue;
-          ctx.save();
-          ctx.translate(item.x, item.y);
-          ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
-          // Как в расчёте проходов (clearance.itemBounds): со стульями/модулями.
-          const b = item.comp ? compositeBounds({ ...item, x: 0, y: 0, rotation: 0 }) : { x: -item.w / 2, y: -item.h / 2, w: item.w, h: item.h };
-          ctx.strokeRect(b.x - px(3), b.y - px(3), b.w + px(6), b.h + px(6));
-          ctx.restore();
-        }
-        ctx.setLineDash([]);
-      }
     }
 
     // 7. Участок поверх полов (граница, красная линия, въезд) и
