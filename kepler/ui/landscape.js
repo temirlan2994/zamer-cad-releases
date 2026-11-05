@@ -40,7 +40,8 @@ import {
 import { canFill } from '../core/landscape-array.js';
 import {
   bindSectionsBlock, finishSection, handleSectionKey, isSectionTool, landscapeSections, openSection, refreshSectionView,
-  renderSectionToolProps, sectionHover, sectionPointerDown, sectionsBlockHtml,
+  renderSectionToolProps, sectionDblClick, sectionDragEnd, sectionDragMove, sectionHandleAt, sectionHandlePointerDown,
+  sectionHover, sectionPointerDown, sectionsBlockHtml,
 } from './landscape-section.js';
 import { hitSection } from './render-section.js';
 import { requestDraw, screenToWorld, worldToScreen } from './view.js';
@@ -90,7 +91,7 @@ const isShapeKind = (kind) => isPathShape(landscapeDef(kind));
 // конец/середина/пересечение/центр, перпендикуляр и параллель, выравнивание
 // по X/Y, полярные лучи и орто от последней точки, затем сетка.
 // Shift — без привязки, Ctrl — временно орто.
-function snapLs(world, event, opts = {}) {
+export function snapLs(world, event, opts = {}) {
   return snapAt(world, event, { grid: snapStep(), ...opts }).point;
 }
 
@@ -315,6 +316,11 @@ export function landscapeHover(world, canvas, event) {
   if (isSectionTool()) return sectionHover(world, canvas, event);
   if (state.tool) return false;
   const screen = worldToScreen(world.x, world.y);
+  const secH = sectionHandleAt(screen);
+  if (secH) {
+    canvas.style.cursor = secH.mode === 'mid' ? 'copy' : secH.mode === 'flip' ? 'pointer' : 'move';
+    return true;
+  }
   const sh = hitShapeHandle(screen);
   if (sh) {
     canvas.style.cursor = sh.mode === 'mid' ? 'copy' : 'move';
@@ -392,6 +398,9 @@ export function landscapePointerDown(event, screen, world) {
   if (tool?.kind === 'ls-array') { arrayPointerDown(event, screen, world); return null; }
   if (isSectionTool()) { sectionPointerDown(event, screen, world); return null; }
   if (tool) return null;
+  // Ручки открытого разреза — раньше объектов.
+  const secDrag = sectionHandlePointerDown(event, screen);
+  if (secDrag !== undefined) return secDrag;
   const sh = hitShapeHandle(screen);
   if (sh) {
     const o = sh.obj;
@@ -473,6 +482,7 @@ function updateLiveMeasure(o) {
 }
 
 export function landscapeDragMove(drag, world, screen, event) {
+  if (drag.kind === 'ls-sec-vertex') { sectionDragMove(drag, world, screen, event); return; }
   const objects = landscapeObjects();
   if (drag.kind === 'ls-draw-rect') {
     const tool = state.tool;
@@ -555,6 +565,7 @@ export function landscapeDragMove(drag, world, screen, event) {
 }
 
 export function landscapeDragEnd(drag) {
+  if (drag.kind === 'ls-sec-vertex') { sectionDragEnd(drag); return; }
   if (drag.kind === 'ls-draw-rect') {
     const tool = state.tool;
     if (tool?.kind !== 'draw-landscape') return;
@@ -593,6 +604,7 @@ export function landscapeDblClick(world) {
   if (state.tool?.kind === 'ls-array') return arrayDblClick();
   if (isSectionTool()) { finishSection(); return true; }
   if (state.tool) return false;
+  if (sectionDblClick(world)) return true;
   const objs = selectedObjects();
   if (objs.length !== 1) return false;
   const o = objs[0];

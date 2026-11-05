@@ -36,12 +36,16 @@ export function handleExport(kind) {
     download(`${safeFileName()}.dxf`, buildProjectDxf(state.project), 'application/dxf');
     toast('DXF сохраняется');
   } else if (kind === 'sheet-pdf') {
-    const pdf = buildSheetsPdf(state.project);
-    if (!pdf) { toast('Нечего печатать: добавьте комнаты или границу участка', true); return; }
-    download(`${safeFileName()}-листы.pdf`, pdf, 'application/pdf');
-    toast('PDF: листы A3 с рамкой, штампом и экспликацией');
+    const name = safeFileName();
+    buildSheetsPdf(state.project).then((pdf) => {
+      if (!pdf) { toast('Нечего печатать: добавьте комнаты или границу участка', true); return; }
+      download(`${name}-листы.pdf`, pdf, 'application/pdf');
+      toast('PDF: листы A3 с рамкой, штампом и экспликацией');
+    });
   } else if (kind === 'sheet-png') {
-    const png = buildCurrentSheetPng(state.project, state.modeName === 'landscape' ? 'site' : state.modeName);
+    const png = buildCurrentSheetPng(state.project, state.modeName === 'landscape' ? 'site' : state.modeName, {
+      sectionId: state.modeName === 'landscape' ? state.lsSectionId : null,
+    });
     if (!png) { toast(state.modeName !== 'plan' ? 'Для генплана нужна граница участка' : 'На этом этаже нет комнат', true); return; }
     png.then((blob) => download(`${safeFileName()}-лист.png`, blob, 'image/png'));
     toast('PNG: лист A3, 150 dpi');

@@ -35,3 +35,15 @@ export function setSheetStylePref(pref) {
 export function sheetLandscapeStyle() {
   return sheetStylePref() === 'screen' ? (state.lsStyle || 'sketch') : 'drawing';
 }
+
+// Разрезы на листе: { on, off: [id исключённых] } — по умолчанию все.
+const SEC_KEY = 'kepler-ls-sheet-sections';
+export function sheetSectionsPref() {
+  try {
+    const v = JSON.parse(read(SEC_KEY) || 'null');
+    return { on: v?.on !== false, off: Array.isArray(v?.off) ? v.off.filter((id) => typeof id === 'string') : [] };
+  } catch { return { on: true, off: [] }; }
+}
+export function setSheetSectionsPref(pref) {
+  write(SEC_KEY, JSON.stringify({ on: pref.on !== false, off: [...new Set(pref.off || [])] }));
+}

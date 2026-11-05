@@ -33,7 +33,7 @@ import {
   drawLandscapeSiteBase, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
 import { luminance } from './ui/render-landscape-kit.js';
-import { drawSectionDraft, drawSectionMarks } from './ui/render-section.js';
+import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 
 const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
 
@@ -580,10 +580,15 @@ export function createRenderer(canvas) {
       });
     }
     // Линии разрезов «А–А» и черновик инструмента «Разрез».
+    // На листе генплана — только разрезы, вынесенные на лист (чёрным).
     if (landscape && !print) {
       const sections = state.project.site?.landscape?.sections;
       if (sections?.length) drawSectionMarks(ctx, sections, { w2s, tokens, scale, activeId: state.lsSectionId || null });
       if (state.tool?.kind === 'ls-section') drawSectionDraft(ctx, state.tool, { w2s, tokens });
+      const open = state.lsSectionId && sections?.find((s) => s.id === state.lsSectionId);
+      if (open && !state.tool) drawSectionHandles(ctx, open, { w2s, tokens, scale, vertex: state.lsSecVertex ?? -1 });
+    } else if (print && opts.sectionMarks?.length) {
+      drawSectionMarks(ctx, opts.sectionMarks, { w2s, tokens: { ...tokens, danger: '#000000', surface: '#ffffff' }, scale });
     }
     if (site) drawTerrainLabels(ctx, state, site, w2s, tokens, { width, height });
     // Подпись «замкнуть/завершить» у первой точки черновика.

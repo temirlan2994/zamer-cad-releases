@@ -28,26 +28,41 @@ const SKETCH_FILL = {
 };
 const OWN_COLOR = new Set(['tiles', 'wood', 'gravel', 'stone', 'concrete', 'metal', 'object', 'shelter', 'leaf', 'asphalt', 'rubber']);
 
-// Штриховки «Чертежа» (мм листа).
-function patterns(id, ink, op = 1) {
-  const line = (d, w = 0.13) => `<path d="${d}" stroke="${ink}" stroke-width="${w}" stroke-opacity="${op}" fill="none"/>`;
-  const dot = (x, y, r = 0.14) => `<circle cx="${x}" cy="${y}" r="${r}" fill="${ink}" fill-opacity="${op}"/>`;
-  const pat = (name, w, h, body, rot = 0) => `<pattern id="${id}-${name}" patternUnits="userSpaceOnUse" width="${w}" height="${h}"${rot ? ` patternTransform="rotate(${rot})"` : ''}>${body}</pattern>`;
+// Штриховки «Чертежа» (мм листа). На мелком масштабе (1:100 и мельче)
+// шаг крупнее, а линии не тоньше minW — иначе при печати 150 dpi и в панели
+// штриховка сливается в серое пятно.
+export function hatchScale(den) {
+  if (den >= 200) return { step: 1.6, minW: 0.18 };
+  if (den >= 100) return { step: 1.25, minW: 0.14 };
+  return { step: 1, minW: 0 };
+}
+function patterns(id, ink, op = 1, den = 50) {
+  const { step, minW } = hatchScale(den);
+  const sw = (w) => (Math.ceil(Math.max(w, minW / step) * 1000) / 1000).toString();
+  const line = (d, w = 0.13) => `<path d="${d}" stroke="${ink}" stroke-width="${sw(w)}" stroke-opacity="${op}" fill="none"/>`;
+  const dot = (x, y, r = 0.14) => `<circle cx="${x}" cy="${y}" r="${f(Math.max(r, minW / step * 0.7))}" fill="${ink}" fill-opacity="${op}"/>`;
+  const ring = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}" stroke="${ink}" stroke-opacity="${op}" stroke-width="${sw(0.08)}" fill="none"/>`;
+  const pat = (name, w, h, body, rot = 0) => {
+    const tf = [rot ? `rotate(${rot})` : '', step !== 1 ? `scale(${step})` : ''].filter(Boolean).join(' ');
+    return `<pattern id="${id}-${name}" patternUnits="userSpaceOnUse" width="${w}" height="${h}"${tf ? ` patternTransform="${tf}"` : ''}>${body}</pattern>`;
+  };
   return [
     pat('soil', 2.2, 2.2, `${line('M0 0V2.2', 0.12)}${dot(1.1, 1.1, 0.12)}`, 45),
     pat('earth', 1.6, 1.6, line('M0 0V1.6', 0.11), 45),
     pat('concrete', 3, 3, `${dot(0.6, 0.7)}${dot(2.1, 1.4, 0.1)}${dot(1.2, 2.4, 0.17)}${line('M2.2 2.1l0.5 0.6h-0.9z', 0.1)}`),
     pat('stone', 1.4, 1.4, line('M0 0V1.4M0 0H1.4', 0.11), 45),
     pat('wood', 1, 1, line('M0 0.5H1', 0.1), 0),
-    pat('gravel', 1.6, 1.6, `<circle cx="0.5" cy="0.5" r="0.3" stroke="${ink}" stroke-opacity="${op}" stroke-width="0.08" fill="none"/><circle cx="1.25" cy="1.2" r="0.22" stroke="${ink}" stroke-opacity="${op}" stroke-width="0.08" fill="none"/>`),
+    pat('gravel', 1.6, 1.6, `${ring(0.5, 0.5, 0.3)}${ring(1.25, 1.2, 0.22)}`),
     pat('tiles', 0.8, 0.8, line('M0 0V0.8', 0.09), 45),
     pat('water', 3, 1.2, line('M0.2 0.6H1.6', 0.1)),
     pat('brick', 0.9, 0.9, line('M0 0V0.9', 0.1), 45),
     pat('mulch', 1.4, 1.4, `${dot(0.4, 0.5, 0.18)}${line('M0.8 1.1l0.4 -0.2', 0.1)}`),
     pat('sand', 1.2, 1.2, `${dot(0.3, 0.3, 0.08)}${dot(0.9, 0.8, 0.08)}`),
-    pat('leaf', 1.6, 1.6, `<path d="M0.2 1.2q0.4-0.8 0.8 0" stroke="${ink}" stroke-opacity="${op}" stroke-width="0.08" fill="none"/>`),
+    pat('leaf', 1.6, 1.6, `<path d="M0.2 1.2q0.4-0.8 0.8 0" stroke="${ink}" stroke-opacity="${op}" stroke-width="${sw(0.08)}" fill="none"/>`),
   ].join('');
 }
+// Сечение тоньше этого (мм листа) не штрихуется, а зачерняется (ГОСТ 2.306).
+export const THIN_CUT = 1.2;
 const HATCH = { soil: 'soil', fill: 'soil', concrete: 'concrete', stone: 'stone', wood: 'wood', gravel: 'gravel', tiles: 'tiles', water: 'water', brick: 'brick', mulch: 'mulch', sand: 'sand', leaf: 'leaf', asphalt: 'tiles', rubber: 'sand', metal: 'tiles' };
 
 const mix = (a, b, t) => {
@@ -57,6 +72,43 @@ const mix = (a, b, t) => {
 };
 const hex6 = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : null);
 
+const hit = (r, list) => list.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+
+// Раскладка полок отметок (мм листа): marks [{x, y, text}] → [{x, y, ty, tw,
+// dir}]. busy — занятые прямоугольники (кроны); дополняется полками.
+export function placeMarks(marks, busy = [], { width = Infinity, msz = 2.4, top = 4 } = {}) {
+  const out = [];
+  for (const m of marks) {
+    const tw = textW(m.text, msz) + 1;
+    const box = (ty, dir) => ({
+      x0: dir > 0 ? m.x : m.x - tw - 1, x1: dir > 0 ? m.x + tw + 1 : m.x, y0: ty - msz - 0.4, y1: ty + 0.3,
+    });
+    let best = null;
+    for (const dir of [1, -1]) {
+      if (dir > 0 && m.x + tw + 3 > width - 2) continue;
+      if (dir < 0 && m.x - tw - 3 < 2 && best) continue;
+      let ty = m.y - 2.2;
+      while (ty > top && hit(box(ty, dir), busy)) ty -= 0.8;
+      if (ty <= top) ty = Math.max(top, m.y - 2.2); // некуда — как было
+      if (!best || ty > best.ty + 0.01) best = { ty, dir };
+    }
+    best ||= { ty: m.y - 2.2, dir: -1 };
+    busy.push(box(best.ty, best.dir));
+    out.push({ x: m.x, y: m.y, ty: best.ty, tw, dir: best.dir, text: m.text });
+  }
+  return out;
+}
+
+const labelRows = 3;
+const rowH = 5.2;
+const M = { l: 24, r: 16, t: 12 + labelRows * rowH, b: 26 };
+
+// Размер SVG разреза в мм листа при масштабе 1:den.
+export function sectionSvgSize(profile, den) {
+  const { box } = profile;
+  return { width: (box.x1 - box.x0) / den + M.l + M.r, height: (box.z1 - box.z0) / den + M.t + M.b };
+}
+
 // SVG разреза. opts: style ('sketch' | 'drawing'), scale (знаменатель).
 export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   const sketch = style !== 'drawing';
@@ -65,11 +117,7 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   const { box } = profile;
   const W = (box.x1 - box.x0) * k;
   const Hd = (box.z1 - box.z0) * k;
-  const labelRows = 3;
-  const rowH = 5.2;
-  const M = { l: 24, r: 16, t: 12 + labelRows * rowH, b: 26 };
-  const width = W + M.l + M.r;
-  const height = Hd + M.t + M.b;
+  const { width, height } = sectionSvgSize(profile, den);
   const X = (x) => M.l + (x - box.x0) * k;
   const Y = (z) => M.t + (box.z1 - z) * k;
   const id = `ks-${sketch ? 's' : 'd'}`;
@@ -94,7 +142,7 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${f(width)}mm" height="${f(height)}mm" viewBox="0 0 ${f(width)} ${f(height)}" font-family="${esc(font)}" data-scale="${den}" data-style="${sketch ? 'sketch' : 'drawing'}">`);
   out.push(`<title>Разрез ${esc(profile.name)}–${esc(profile.name)}</title>`);
   out.push('<defs>');
-  out.push(patterns(id, ink, sketch ? 0.35 : 1));
+  out.push(patterns(id, ink, sketch ? 0.35 : 1, den));
   if (sketch) {
     out.push(`<filter id="${id}-rough" x="-2%" y="-2%" width="104%" height="104%"><feTurbulence type="fractalNoise" baseFrequency="0.3" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="0.55" xChannelSelector="R" yChannelSelector="G"/></filter>`);
     out.push(`<filter id="${id}-wc" x="-3%" y="-3%" width="106%" height="106%"><feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="3" seed="3" result="t"/><feDisplacementMap in="SourceGraphic" in2="t" scale="1.4" xChannelSelector="R" yChannelSelector="G" result="d"/><feGaussianBlur in="d" stdDeviation="0.12"/></filter>`);
@@ -115,6 +163,7 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   } else out.push(`<path d="${path(groundBand)}" fill="url(#${id}-earth)" stroke="none"/>`);
 
   // --- Примитивы: от дальних к ближним.
+  const busy = []; // занятые прямоугольники листа (кроны, полки отметок)
   const strokeW = (p) => (p.cut ? (sketch ? 0.35 : 0.5) : (sketch ? 0.22 : 0.18));
   const strokeC = (p) => (p.cut ? ink : mix(ink, sketch ? '#b9b2a6' : '#b5b5b5', Math.min(1, 0.25 + (p.fade || 0) * 0.75)));
   for (const p of profile.prims) {
@@ -124,6 +173,14 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
     const rough = sketch ? ` filter="url(#${id}-rough)"` : '';
     if (p.shape === 'plant') {
       const sh = plantShape(p);
+      // Габарит кроны на листе — занятая область для подписей отметок.
+      const cpts = [...sh.crown, ...(sh.crown2 || [])];
+      if (!p.fade || p.fade < 0.55) {
+        busy.push({
+          x0: Math.min(...cpts.map((q) => X(q.x))), x1: Math.max(...cpts.map((q) => X(q.x))),
+          y0: Math.min(...cpts.map((q) => Y(q.z))), y1: Math.max(...cpts.map((q) => Y(q.z))),
+        });
+      }
       const base = hex6(p.color) || SKETCH_FILL.leaf;
       const fill = sketch ? mix(mix(base, '#9fb3bf', fade * 0.35), paper, 0.1 + fade * 0.55) : '#ffffff';
       const crownD = sketch ? smooth(sh.crown) : path(sh.crown);
@@ -151,7 +208,13 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
     } else fill = '#ffffff';
     if (sketch && fill !== 'none') out.push(`<path d="${d}" fill="${fill}" fill-opacity="${f(0.9 - fade * 0.2)}" filter="url(#${id}-wc)"/>`);
     else if (fill !== 'none') out.push(`<path d="${d}" fill="${fill}"/>`);
-    if (p.cut && HATCH[p.mat]) out.push(`<path d="${d}" fill="url(#${id}-${HATCH[p.mat]})"/>`);
+    if (p.cut && HATCH[p.mat]) {
+      const zs = p.pts.map((q) => q.z);
+      const xs = p.pts.map((q) => q.x);
+      const thin = Math.min(Math.max(...zs) - Math.min(...zs), Math.max(...xs) - Math.min(...xs)) * k < THIN_CUT;
+      if (thin) out.push(`<path d="${d}" fill="${ink}" fill-opacity="${sketch ? 0.55 : 1}" data-solid="1"/>`);
+      else out.push(`<path d="${d}" fill="url(#${id}-${HATCH[p.mat]})"/>`);
+    }
     if (p.mat === 'void') {
       // Опоры настила: стойки через ~1,2 м.
       const xs = p.pts.map((q) => q.x);
@@ -192,23 +255,19 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   out.push(`<path d="${path(g, false)}" fill="none" stroke="${sketch ? '#5e5140' : ink}" stroke-width="${sketch ? 0.45 : 0.6}" stroke-linecap="round"${sketch ? ` filter="url(#${id}-rough)"` : ''} data-kind="ground"/>`);
   out.push('</g>');
 
-  // --- Отметки высот: треугольник + полка с текстом.
-  const placed = [];
+  // --- Отметки высот: треугольник + полка с текстом. Полка поднимается,
+  // пока текст пересекает кроны или другие отметки; сторона (вправо/влево)
+  // — та, где подъём меньше.
   const msz = 2.4;
-  for (const m of profile.marks) {
-    const x = X(m.x);
-    const y = Y(m.z);
-    const tw = textW(m.text, msz) + 1;
-    const left = x + tw + 3 > width - 2;
-    let ty = y - 2.2;
-    while (placed.some((q) => Math.abs(q.ty - ty) < 3.2 && Math.abs(q.x - x) < tw + 3)) ty -= 3.4;
-    placed.push({ x, ty });
-    const dir = left ? -1 : 1;
+  const top = M.t - labelRows * rowH + msz;
+  const marksOut = placeMarks(profile.marks.map((m) => ({ x: X(m.x), y: Y(m.z), text: m.text })), busy, { width, msz, top });
+  for (const m of marksOut) {
+    const { x, y, ty, tw, dir } = m;
     out.push(`<g class="sec-mark" stroke="${ink}" stroke-width="0.18" fill="none">`);
     out.push(`<path d="M${f(x)} ${f(y)}l-1 -1.7h2z" fill="${sketch ? 'none' : ink}"/>`);
     out.push(`<path d="M${f(x)} ${f(y - 1.7)}V${f(ty)}h${f(dir * (tw + 1))}"/>`);
     out.push('</g>');
-    out.push(`<text x="${f(x + dir * 0.6)}" y="${f(ty - 0.5)}" font-size="${msz}" fill="${ink}" text-anchor="${left ? 'end' : 'start'}" class="sec-mark-text">${esc(m.text)}</text>`);
+    out.push(`<text x="${f(x + dir * 0.6)}" y="${f(ty - 0.5)}" font-size="${msz}" fill="${ink}" text-anchor="${dir < 0 ? 'end' : 'start'}" class="sec-mark-text">${esc(m.text)}</text>`);
   }
 
   // --- Подписи объектов: выноски вверх, к рядам над разрезом.
@@ -234,7 +293,8 @@ export function sectionSvg(profile, { style = 'sketch', scale = null } = {}) {
   for (const c of cands) {
     const tw = textW(c.text, lsz);
     const tx = Math.max(M.l, Math.min(width - M.r - tw, c.x - tw / 2));
-    const r = rows.findIndex((end) => tx > end + 3);
+    const rowBox = (i) => ({ x0: tx, x1: tx + tw, y0: M.t - 2 - i * rowH - lsz, y1: M.t - 2 - i * rowH + 0.8 });
+    const r = rows.findIndex((end, i) => tx > end + 3 && !hit(rowBox(i), busy));
     if (r < 0) continue; // нет места — без подписи
     rows[r] = tx + tw;
     const ry = M.t - 2 - r * rowH;

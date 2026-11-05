@@ -10,7 +10,13 @@ import {
 } from '../core/landscape-section.js';
 import { buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { createOpening, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
-import { sectionSvg, pickSectionScale } from '../ui/landscape-section-svg.js';
+import {
+  THIN_CUT, hatchScale, placeMarks, sectionSvg, sectionSvgSize, pickSectionScale,
+} from '../ui/landscape-section-svg.js';
+import { hitSectionHandle, sectionHandlePoints } from '../ui/render-section.js';
+import {
+  packSectionSheets, pickSheetSections, sheetSectionItems, sheetSectionScale, svgAtDpi,
+} from '../ui/sheet-sections.js';
 
 const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
 const project = (...objects) => {
@@ -208,4 +214,93 @@ test('DXF: разрез на слое LANDSCAPE_SECTION; линия разрез
   p.site.boundary = [{ x: -10000, y: -10000 }, { x: 10000, y: -10000 }, { x: 10000, y: 10000 }, { x: -10000, y: 10000 }];
   p.site.landscape.sections = [sec];
   assert.match(buildSitePlanDxf(p), /LANDSCAPE_SECTION/);
+});
+
+test('отметки: полка поднимается над кроной и не налезает на соседнюю', () => {
+  const crown = { x0: 10, x1: 30, y0: 20, y1: 48 };
+  const busy = [crown];
+  const out = placeMarks([{ x: 12, y: 50, text: '+0.45' }, { x: 13, y: 50, text: '+0.50' }], busy, { width: 200, top: 4 });
+  const box = (m) => ({ x0: m.dir > 0 ? m.x : m.x - m.tw - 1, x1: m.dir > 0 ? m.x + m.tw + 1 : m.x, y0: m.ty - 2.8, y1: m.ty + 0.3 });
+  const over = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  for (const m of out) assert.ok(!over(box(m), crown), `полка ${m.text} не на кроне`);
+  assert.ok(!over(box(out[0]), box(out[1])), 'полки разведены');
+  // Справа нет места (край листа) — налево.
+  const left = placeMarks([{ x: 198, y: 50, text: '+1.20' }], [], { width: 200 });
+  assert.equal(left[0].dir, -1);
+  // Свободно — как раньше: 2,2 мм над точкой, вправо.
+  const free = placeMarks([{ x: 50, y: 50, text: '±0.00' }], [], { width: 200 });
+  assert.deepEqual([free[0].dir, free[0].ty], [1, 47.8]);
+});
+
+test('SVG на мелком масштабе: отметки не на кронах, штриховка крупнее, тонкие сечения зачернены', () => {
+  const trees = [3000, 4000, 5000].map((y) => createLandscapeObject('tree-oak', 2500, y));
+  const pv = createLandscapeObject('paving-area', 0, 0, { points: [{ x: 1500, y: 2500 }, { x: 3500, y: 2500 }, { x: 3500, y: 5500 }, { x: 1500, y: 5500 }], elev: 450 });
+  const w = createLandscapeObject('retaining-wall', 0, 0, { points: [{ x: 0, y: -3000 }, { x: 5000, y: -3000 }], height: 1200 });
+  const prof = sectionProfile(project(pv, w, ...trees), { points: NS, name: 'А' }, 'left');
+  const svg = sectionSvg(prof, { style: 'drawing', scale: 200 });
+  assert.match(svg, /patternTransform="rotate\(45\) scale\(1\.6\)"/);
+  assert.deepEqual(hatchScale(50), { step: 1, minW: 0 });
+  // Линии штриховки на 1:200 после масштаба — не тоньше 0,18 мм.
+  const widths = [...svg.matchAll(/<pattern[^>]*scale\(([\d.]+)\)[^>]*>(.*?)<\/pattern>/g)]
+    .flatMap(([, k, body]) => [...body.matchAll(/stroke-width="([\d.]+)"/g)].map(([, v]) => Number(v) * Number(k)));
+  assert.ok(widths.length && widths.every((v) => v >= 0.179), `min ${Math.min(...widths)}`);
+  assert.ok(THIN_CUT > 0 && /data-solid="1"/.test(svg), 'плитка 1:200 — тоньше 1,2 мм, зачернена');
+  assert.doesNotMatch(sectionSvg(prof, { style: 'drawing', scale: 20 }), /data-solid/);
+  // Полки отметок (текст) не пересекают кроны деревьев.
+  const crowns = prof.prims.filter((q) => q.shape === 'plant').map((q) => plantShape(q));
+  const { box } = prof;
+  const k = 1 / 200;
+  const X = (x) => 24 + (x - box.x0) * k;
+  const Y = (z) => 27.6 + (box.z1 - z) * k;
+  const cb = crowns.map((sh) => ({ x0: Math.min(...sh.crown.map((q) => X(q.x))), x1: Math.max(...sh.crown.map((q) => X(q.x))), y0: Math.min(...sh.crown.map((q) => Y(q.z))), y1: Math.max(...sh.crown.map((q) => Y(q.z))) }));
+  const texts = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="2.4"[^>]*text-anchor="(start|end)" class="sec-mark-text">([^<]+)</g)];
+  assert.ok(texts.length >= 2);
+  for (const [, x, y, anchor, t] of texts) {
+    const w2 = t.length * 2.4 * 0.6;
+    const r = { x0: anchor === 'start' ? +x : +x - w2, x1: anchor === 'start' ? +x + w2 : +x, y0: +y - 2.4, y1: +y };
+    assert.ok(!cb.some((c) => r.x0 < c.x1 && r.x1 > c.x0 && r.y0 < c.y1 && r.y1 > c.y0), `отметка ${t} на кроне`);
+  }
+});
+
+test('ручки линии разреза: вершины, «+» на длинных звеньях, переключатель взгляда', () => {
+  const sec = normalizeSection({ name: 'А', points: [{ x: 0, y: 0 }, { x: 10000, y: 0 }, { x: 10000, y: 300 }], side: 'left' });
+  const w2s = (x, y) => ({ x: x / 100, y: y / 100 }); // 1 px = 100 мм
+  const h = sectionHandlePoints(sec, w2s, 0.01);
+  assert.equal(h.vertices.length, 3);
+  assert.equal(h.mids.length, 1, 'звено 3 px — без «+»');
+  assert.equal(h.flips.length, 1);
+  assert.ok(h.flips[0].y > 0, 'переключатель — с обратной стороны от взгляда (взгляд — север, −Y)');
+  assert.deepEqual(hitSectionHandle(sec, { x: 100, y: 1 }, w2s, 0.01), { mode: 'vertex', index: 1 });
+  assert.deepEqual(hitSectionHandle(sec, { x: 50, y: 0 }, w2s, 0.01), { mode: 'mid', index: 0 });
+  assert.equal(hitSectionHandle(sec, h.flips[0], w2s, 0.01).mode, 'flip');
+  assert.equal(hitSectionHandle(sec, { x: 30, y: 40 }, w2s, 0.01), null);
+});
+
+test('лист разрезов: отбор, масштаб по ширине поля, раскладка столбиком', () => {
+  const a = normalizeSection({ id: 'a', name: 'А', points: NS });
+  const b = normalizeSection({ id: 'b', name: 'Б', points: [{ x: -30000, y: 0 }, { x: 30000, y: 0 }] });
+  assert.deepEqual(pickSheetSections([a, b], { on: true, off: ['a'] }).map((s) => s.id), ['b']);
+  assert.deepEqual(pickSheetSections([a, b], { on: false, off: [] }), []);
+  const p = project(createLandscapeObject('tree-spruce', 5000, 2000));
+  const items = sheetSectionItems(p, [a, b], { areaW: 385, areaH: 222 });
+  assert.equal(items.length, 2);
+  for (const it of items) {
+    assert.ok(it.width <= 385 && it.height <= 222, `${it.name}: ${it.width}×${it.height}`);
+    assert.match(it.svg, new RegExp(`Разрез ${it.name}–${it.name}`));
+    assert.match(it.svg, new RegExp(`М 1:${it.den}`));
+  }
+  // 60 м линии: 1:200 даёт > 385 мм — значит 1:250.
+  const profB = sectionProfile(p, b, 'left');
+  assert.equal(sheetSectionScale(profB, 385, 222), items[1].den);
+  assert.ok(sectionSvgSize(profB, items[1].den).width <= 385);
+  const pages = packSectionSheets([{ width: 300, height: 120 }, { width: 200, height: 90 }, { width: 380, height: 100 }], { x0: 25, y0: 10, areaW: 385, areaH: 222 });
+  assert.equal(pages.length, 2);
+  assert.deepEqual(pages[0].map((q) => [q.x, q.y]), [[25 + 42.5, 10], [25 + 92.5, 10 + 124]]);
+  assert.equal(pages[1][0].y, 10);
+  // Без деревьев два разреза встают на один лист в общем масштабе.
+  const low = sheetSectionItems(project(createLandscapeObject('retaining-wall', 0, 0, { points: [{ x: 0, y: -3000 }, { x: 5000, y: -3000 }], height: 1200 })), [a, b], { areaW: 385, areaH: 222 });
+  assert.equal(low[0].den, low[1].den, 'общий масштаб');
+  assert.equal(packSectionSheets(low, { x0: 25, y0: 10, areaW: 385, areaH: 222 }).length, 1);
+  const px = svgAtDpi(items[0].svg, items[0], 150 / 25.4);
+  assert.match(px, new RegExp(`^<svg[^>]+width="${Math.round(items[0].width * 150 / 25.4)}" height="`));
 });

@@ -88,3 +88,73 @@ export function hitSection(sections, screen, w2s, tol = 6) {
   }
   return best?.section || null;
 }
+
+// Ручки открытого разреза (экран): вершины, «+» в серединах звеньев и
+// переключатели стороны взгляда на концах стрелок.
+export function sectionHandlePoints(sec, w2s, scale) {
+  const P = (sec?.points || []).map((p) => w2s(p.x, p.y));
+  const vertices = P.map((p, index) => ({ x: p.x, y: p.y, index }));
+  const mids = [];
+  for (let i = 0; i < P.length - 1; i += 1) {
+    if (Math.hypot(P[i + 1].x - P[i].x, P[i + 1].y - P[i].y) < 28) continue; // короткое звено — без «+»
+    mids.push({ x: (P[i].x + P[i + 1].x) / 2, y: (P[i].y + P[i + 1].y) / 2, index: i });
+  }
+  // Переключатель — с обратной стороны от первой стрелки: «смотреть туда».
+  const size = 26 / Math.max(scale, 1e-6);
+  const m = sec ? sectionPlanMarks(sec, size) : null;
+  const flips = (m?.ends || []).slice(0, 1).map((e) => w2s(e.at.x - e.dir.x * size * 0.8, e.at.y - e.dir.y * size * 0.8));
+  return { vertices, mids, flips };
+}
+
+// Ручка под точкой экрана: { mode: 'vertex' | 'mid' | 'flip', index } или null.
+export function hitSectionHandle(sec, screen, w2s, scale, tol = 9) {
+  if (!sec) return null;
+  const { vertices, mids, flips } = sectionHandlePoints(sec, w2s, scale);
+  let best = null;
+  for (const v of vertices) {
+    const d = Math.hypot(v.x - screen.x, v.y - screen.y);
+    if (Math.abs(v.x - screen.x) <= tol && Math.abs(v.y - screen.y) <= tol && (!best || d < best.d)) best = { d, index: v.index };
+  }
+  if (best) return { mode: 'vertex', index: best.index };
+  for (const f of flips) {
+    if (Math.hypot(f.x - screen.x, f.y - screen.y) <= tol + 2) return { mode: 'flip', index: 0 };
+  }
+  for (const m of mids) {
+    if (Math.hypot(m.x - screen.x, m.y - screen.y) <= tol - 2) return { mode: 'mid', index: m.index };
+  }
+  return null;
+}
+
+export function drawSectionHandles(ctx, sec, { w2s, tokens, scale, vertex = -1 }) {
+  const color = tokens.danger || '#c0392b';
+  const { vertices, mids, flips } = sectionHandlePoints(sec, w2s, scale);
+  ctx.save();
+  ctx.lineWidth = 1.4;
+  for (const v of vertices) {
+    ctx.fillStyle = v.index === vertex ? color : (tokens.surface || '#fff');
+    ctx.strokeStyle = color;
+    ctx.fillRect(v.x - 4.5, v.y - 4.5, 9, 9);
+    ctx.strokeRect(v.x - 4.5, v.y - 4.5, 9, 9);
+  }
+  for (const m of mids) {
+    ctx.fillStyle = tokens.surface || '#fff';
+    ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 5, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(m.x - 2.6, m.y); ctx.lineTo(m.x + 2.6, m.y);
+    ctx.moveTo(m.x, m.y - 2.6); ctx.lineTo(m.x, m.y + 2.6);
+    ctx.stroke();
+  }
+  // Переключатель стороны взгляда: кружок с двойной стрелкой на остриях.
+  for (const f of flips) {
+    ctx.fillStyle = tokens.surface || '#fff';
+    ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.arc(f.x, f.y, 7, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = '700 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⇄', f.x, f.y + 0.5);
+  }
+  ctx.restore();
+}

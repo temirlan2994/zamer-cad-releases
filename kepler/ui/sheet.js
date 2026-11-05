@@ -1,6 +1,8 @@
 // Печатные листы A3 (альбомный): план каждого этажа в стандартном масштабе,
 // рамка, штамп и экспликация помещений; генплан — если есть граница участка.
 // PDF — все листы альбомом, PNG — лист текущего этажа (или генплан).
+// Разрезы участка (site.landscape.sections), отмеченные «на лист», — свои
+// листы после генплана: SVG разреза в масштабе по ширине поля, столбиком.
 //
 // Лист рисуется как экран с 96 CSS px на дюйм и плотностью 150 dpi: шрифты
 // и линии плана выходят того же размера, что на экране (≈3 мм текст).
@@ -15,7 +17,8 @@ import { buildZonePolygon, neighborRectCorners, polygonAreaM2 } from '../core/si
 import { deriveWalls } from '../core/walls.js';
 import { createRenderer, projectPoint, underlayHandles } from '../render.js';
 import { state } from './state.js';
-import { sheetLandscapeStyle } from './landscape-style.js';
+import { sheetLandscapeStyle, sheetSectionsPref } from './landscape-style.js';
+import { packSectionSheets, pickSheetSections, sheetSectionItems, svgAtDpi } from './sheet-sections.js';
 import { lsPalette } from './render-landscape-kit.js';
 
 export const SHEET = { w: 420, h: 297 }; // мм
@@ -47,7 +50,7 @@ function rotatedBox(points, rot) {
 }
 
 // Чертёж в поле листа: возвращает canvas поля и знаменатель масштаба.
-function renderArea(project, { kind, scales, points, rotation, underlayImg = null }) {
+function renderArea(project, { kind, scales, points, rotation, underlayImg = null, sectionMarks = null }) {
   const areaW = AREA.x1 - AREA.x0;
   const areaH = AREA.y1 - AREA.y0;
   const box = rotatedBox(points, rotation);
@@ -74,6 +77,7 @@ function renderArea(project, { kind, scales, points, rotation, underlayImg = nul
   createRenderer(canvas).draw(printState, {
     width: areaW * CSS, height: areaH * CSS, dpr: DPI / 96, print: true,
     site: kind === 'site', detail: kind !== 'site', lsStyle: sheetLandscapeStyle(),
+    sectionMarks,
   });
   return { canvas, denominator: d };
 }
@@ -282,22 +286,81 @@ function composeSheet(build) {
   return sheet;
 }
 
-// Описание всех листов альбома: генплан (если есть граница) и этажи с комнатами.
-export function sheetPlan(project) {
+// Разрезы, выбранные на лист (см. «Разрезы» в сводке «Ландшафта»).
+export function sheetSectionList(project, pref = sheetSectionsPref()) {
+  return pickSheetSections(project.site?.landscape?.sections, pref);
+}
+
+function sectionStyle() {
+  return sheetLandscapeStyle() === 'drawing' ? 'drawing' : 'sketch';
+}
+
+// Листы разрезов: [{ kind: 'sections', place: [{ item, x, y }…] }…].
+function sectionSheets(project, pref) {
+  const list = sheetSectionList(project, pref);
+  if (!list.length) return [];
+  const areaW = AREA.x1 - AREA.x0;
+  const areaH = AREA.y1 - AREA.y0;
+  const ground = levelProject(project, groundLevel(project).id);
+  const items = sheetSectionItems(ground, list, { areaW, areaH, style: sectionStyle() });
+  return packSectionSheets(items, { x0: AREA.x0, y0: AREA.y0, areaW, areaH }).map((place) => ({ kind: 'sections', place }));
+}
+
+// Описание всех листов альбома: генплан (если есть граница), разрезы
+// участка и этажи с комнатами.
+export function sheetPlan(project, { sectionsPref = sheetSectionsPref() } = {}) {
   const list = [];
   if (project.site?.boundary?.length >= 3) list.push({ kind: 'site' });
+  list.push(...sectionSheets(project, sectionsPref));
   for (const level of sortedLevels(project)) {
     if (level.rooms.length) list.push({ kind: 'level', levelId: level.id });
   }
   return list;
 }
 
+// Растр SVG разрезов листа (async): spec.images — Image по порядку place.
+export function loadSheetImages(spec) {
+  if (spec.kind !== 'sections' || spec.images) return Promise.resolve(spec);
+  return Promise.all(spec.place.map(({ item }) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgAtDpi(item.svg, item, PX))}`;
+  }))).then((images) => { spec.images = images; return spec; });
+}
+
+function sectionsSheet(project, spec, sheetNo, sheetCount) {
+  const dens = [...new Set(spec.place.map((p) => p.item.den))];
+  const names = spec.place.map((p) => `${p.item.name}–${p.item.name}`).join(', ');
+  return composeSheet((ctx) => {
+    spec.place.forEach((p, i) => {
+      const img = spec.images?.[i];
+      if (img) ctx.drawImage(img, p.x, p.y, p.item.width, p.item.height);
+      else {
+        ctx.strokeStyle = '#999'; ctx.lineWidth = 0.2;
+        ctx.strokeRect(p.x, p.y, p.item.width, p.item.height);
+      }
+    });
+    frameAndStamp(ctx, {
+      project, title: spec.place.length > 1 ? `Разрезы участка ${names}` : `Разрез участка ${names}`,
+      denominator: dens.join(', 1:'), sheetNo, sheetCount, subtitle: 'Положение линий разреза — на генплане',
+    });
+    ctx.fillStyle = '#000';
+    ctx.font = '400 3px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText('Отметки — в метрах от нуля участка; глубина вида указана под каждым разрезом.', FRAME.x0 + 2, STAMP.y0 + 4);
+  });
+}
+
 export function renderSheet(project, spec, sheetNo, sheetCount) {
+  if (spec.kind === 'sections') return sectionsSheet(project, spec, sheetNo, sheetCount);
   if (spec.kind === 'site') {
     const ground = levelProject(project, groundLevel(project).id);
     const { canvas, denominator } = renderArea(ground, {
       kind: 'site', scales: SITE_SCALES, points: sitePoints(ground),
       rotation: -((project.site.north || 0) * Math.PI) / 180, underlayImg: state.underlayImg,
+      sectionMarks: sheetSectionList(project),
     });
     return composeSheet((ctx) => {
       ctx.drawImage(canvas, AREA.x0, AREA.y0, AREA.x1 - AREA.x0, AREA.y1 - AREA.y0);
@@ -331,10 +394,12 @@ function jpegBytes(canvas) {
   return out;
 }
 
-// Альбом PDF: все листы. null — если рисовать нечего.
-export function buildSheetsPdf(project) {
+// Альбом PDF: все листы (Promise — растр разрезов асинхронный). null — если
+// рисовать нечего.
+export async function buildSheetsPdf(project) {
   const specs = sheetPlan(project);
   if (!specs.length) return null;
+  await Promise.all(specs.map(loadSheetImages));
   const pages = specs.map((spec, i) => {
     const sheet = renderSheet(project, spec, i + 1, specs.length);
     return { jpeg: jpegBytes(sheet), widthPx: sheet.width, heightPx: sheet.height, widthMm: SHEET.w, heightMm: SHEET.h };
@@ -342,14 +407,18 @@ export function buildSheetsPdf(project) {
   return buildImagePdf(pages, { title: project.name });
 }
 
-// Один лист PNG: генплан в режиме «Участок», иначе текущий этаж.
-export function buildCurrentSheetPng(project, modeName) {
+// Один лист PNG: генплан в режиме «Участок», иначе текущий этаж; при
+// открытом разрезе (sectionId) — лист разрезов, на котором он стоит.
+export function buildCurrentSheetPng(project, modeName, { sectionId = null } = {}) {
   const specs = sheetPlan(project);
-  const want = modeName === 'site'
-    ? specs.find((s) => s.kind === 'site')
-    : specs.find((s) => s.kind === 'level' && s.levelId === project.activeLevel);
+  const want = (sectionId && specs.find((s) => s.kind === 'sections' && s.place.some((p) => p.item.id === sectionId)))
+    || (modeName === 'site'
+      ? specs.find((s) => s.kind === 'site')
+      : specs.find((s) => s.kind === 'level' && s.levelId === project.activeLevel));
   if (!want) return null;
-  const sheet = renderSheet(project, want, specs.indexOf(want) + 1, specs.length);
-  return new Promise((resolve) => sheet.toBlob(resolve, 'image/png'));
+  return loadSheetImages(want).then(() => {
+    const sheet = renderSheet(project, want, specs.indexOf(want) + 1, specs.length);
+    return new Promise((resolve) => sheet.toBlob(resolve, 'image/png'));
+  });
 }
 
