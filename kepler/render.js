@@ -13,6 +13,7 @@ import {
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
+import { buildingSiteCheck } from './core/site-check.js';
 import { formatDuration } from './core/insolation.js';
 import {
   compositeBounds, compositeParts, defaultComp, isFixedSizeComp, isRoundTable, kitchenHandles, kitchenLines, sofaLines,
@@ -887,6 +888,25 @@ function drawSiteOver(ctx, state, site, tokens, px) {
     ctx.moveTo(e.x - Math.sin(rad) * 1500, e.y + Math.cos(rad) * 1500);
     ctx.lineTo(e.x + Math.sin(rad) * 1500, e.y - Math.cos(rad) * 1500);
     ctx.stroke();
+  }
+
+  // Дом на участке: красный пунктир — выходит за зону застройки или ближе
+  // нормы к соседу (постоянно, не разовым тостом); выделен/под курсором — контур.
+  if (state.modeName === 'site') {
+    const check = buildingSiteCheck(state.project);
+    const bad = !check.ok;
+    const color = bad ? tokens.danger
+      : selectedKind === 'building' ? tokens.accent
+        : hov?.kind === 'building' ? tokens.hover : null;
+    if (color && check.footprint.length) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = px(bad ? 2.4 : 2);
+      if (bad) ctx.setLineDash([px(8), px(5)]);
+      ctx.beginPath();
+      for (const f of check.footprint) polyPath(ctx, f.corners);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 }
 

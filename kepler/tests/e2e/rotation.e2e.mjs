@@ -46,39 +46,29 @@ describe('повёрнутый дом', () => {
     assert.deepEqual(await living(app.page), r);
   });
 
-  it('в «Участке» (север вверх) повёрнутая комната выбирается кликом', async () => {
+  it('в «Участке» (север вверх) клик по повёрнутой комнате выбирает дом, а не комнату', async () => {
     await app.page.click('#modeSiteBtn');
     await app.page.evaluate(() => window.__kepler.fitView());
     const r = await living(app.page);
     const c = await planClient(app.page, r.x + r.w / 2, r.y + r.h * 0.8);
     await app.page.mouse.click(c.x, c.y);
     const sel = await app.page.evaluate(() => window.__kepler.state.selection);
-    assert.deepEqual(sel, { type: 'room', id: r.id });
+    assert.deepEqual(sel, { type: 'site', kind: 'building' });
   });
 
-  it('рамка в «Участке» выделяет повёрнутые комнаты', async () => {
-    await app.page.keyboard.press('Escape');
-    const corners = await app.page.evaluate(() => {
-      const k = window.__kepler;
-      const pts = [];
-      for (const r of k.state.project.rooms) {
-        for (const [x, y] of [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]) pts.push(k.planToScreen(x, y));
-      }
-      return {
-        minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)),
-        minY: Math.min(...pts.map((p) => p.y)), maxY: Math.max(...pts.map((p) => p.y)),
-      };
-    });
-    const box = await (await app.page.$('#canvas')).boundingBox();
-    // Сначала выключаем слой участка, чтобы клик по пустому месту начал рамку.
-    await app.page.mouse.move(box.x + corners.minX - 30, box.y + corners.minY - 30);
+  it('в «Участке» дом тянется мышью целиком, одна отмена возвращает', async () => {
+    const r = await living(app.page);
+    const o0 = await app.page.evaluate(() => ({ ...window.__kepler.state.project.building.origin }));
+    const a = await planClient(app.page, r.x + r.w / 2, r.y + r.h * 0.8);
+    await app.page.mouse.move(a.x, a.y);
     await app.page.mouse.down();
-    await app.page.mouse.move(box.x + corners.maxX + 30, box.y + corners.maxY + 30, { steps: 6 });
+    await app.page.mouse.move(a.x + 60, a.y + 40, { steps: 6 });
     await app.page.mouse.up();
-    const sel = await app.page.evaluate(() => window.__kepler.state.selection);
-    const rooms = await app.page.evaluate(() => window.__kepler.state.project.rooms.length);
-    assert.equal(sel?.type, 'multi');
-    assert.equal(sel.roomIds.length, rooms);
+    const o1 = await app.page.evaluate(() => ({ ...window.__kepler.state.project.building.origin }));
+    assert.ok(o1.x !== o0.x || o1.y !== o0.y, 'дом не сдвинулся');
+    await app.page.keyboard.press('Control+z');
+    const o2 = await app.page.evaluate(() => ({ ...window.__kepler.state.project.building.origin }));
+    assert.deepEqual(o2, o0);
   });
 
   it('без ошибок в консоли', () => {

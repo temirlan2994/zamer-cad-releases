@@ -81,6 +81,9 @@ function contentForSelection(sel) {
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'site' && sel.kind === 'building') {
+    return { label: 'Дом: тяните мышью или стрелками', html: '' };
+  }
   if (sel.type === 'site') {
     return { label: 'Объект участка', html: button('delete', '⌫', 'Удалить', 'Del', 'class="danger"') };
   }

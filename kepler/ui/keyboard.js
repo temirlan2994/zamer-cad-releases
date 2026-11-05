@@ -3,6 +3,7 @@
 import { GRID_STEP } from '../core/catalog.js';
 import { roomById } from '../core/model.js';
 import { moveRoomBy, validateRoomPlacement } from '../core/rooms.js';
+import { moveBuilding } from '../core/site-check.js';
 import { canvas, toast } from './dom.js';
 import { closeHelp, isHelpOpen, openHelp } from './help.js';
 import { closeProjects, isProjectsOpen } from './projects.js';
@@ -93,7 +94,10 @@ export function bindKeyboard() {
       event.preventDefault();
       const step = event.shiftKey ? GRID_STEP * 10 : GRID_STEP;
       const [dx, dy] = [nudge[0] * step, nudge[1] * step];
-      if (state.selection.type === 'room') {
+      if (state.selection.type === 'site' && state.selection.kind === 'building') {
+        // Дом целиком по участку (в координатах съёмки): одна запись истории.
+        mutate(() => { state.project.building = moveBuilding(state.project.building, dx, dy); });
+      } else if (state.selection.type === 'room') {
         const room = roomById(state.project, state.selection.id);
         if (!room) return;
         const before = snapshot();

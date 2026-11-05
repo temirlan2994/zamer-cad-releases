@@ -6,6 +6,7 @@ import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { nearestPointOnPolyline } from '../core/site.js';
+import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import { openingRect, sideEdge } from '../core/walls.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
@@ -269,6 +270,19 @@ function updateHoverAndGhost(world, plan) {
   }
   if (state.tool) return;
 
+  // «Участок»: внутренности дома не подсвечиваются — дом целиком (тянуть).
+  if (state.modeName === 'site') {
+    const onHouse = pointInBuilding(state.project, world);
+    let next = onHouse ? { type: 'site-obj', kind: 'building' } : null;
+    if (!next) {
+      const site = hitSiteObject(world);
+      if (site) next = { type: 'site-obj', kind: site.kind, id: site.id };
+    }
+    canvas.style.cursor = onHouse ? 'move' : 'grab';
+    if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
+    return;
+  }
+
   // Подсветка под курсором: мебель, проёмы, стены, комнаты, объекты участка.
   let nextHover = null;
   const item = hitItem(plan);
@@ -429,6 +443,21 @@ export function bindCanvasInput() {
       if (t.kind === 'north') { addNorthPoint(world); return; }
       if (t.kind === 'align-underlay') { addAlignPoint(world); return; }
       if (t.kind === 'calibrate') { addCalibratePoint(world); return; }
+      return;
+    }
+
+    // «Участок» без инструмента: мебель, комнаты и проёмы не выбираются —
+    // дом хватается только целиком (за любую комнату) и едет по участку.
+    if (state.modeName === 'site') {
+      if (state.calibration && !el('calOverlay').hidden) hideCalInput();
+      if (pointInBuilding(state.project, world)) {
+        selectObject({ type: 'site', kind: 'building' });
+        const o = state.project.building?.origin || { x: 0, y: 0 };
+        drag = { kind: 'building', start: { x: o.x, y: o.y }, world, before: snapshot(), moved: false };
+        return;
+      }
+      selectObject(null);
+      drag = { kind: 'pan', start: screen, view: { ...state.view } };
       return;
     }
 
@@ -947,6 +976,18 @@ export function bindCanvasInput() {
         site.entry = { x: near.x, y: near.y, dir };
         requestDraw();
       }
+      return;
+    }
+
+    if (drag.kind === 'building') {
+      // Сдвиг дома целиком: шаг сетки, с Shift — 0,5 м. Поворот не меняется.
+      const step = event.shiftKey ? GRID_STEP * 10 : GRID_STEP;
+      const dx = Math.round((world.x - drag.world.x) / step) * step;
+      const dy = Math.round((world.y - drag.world.y) / step) * step;
+      if (!dx && !dy && !drag.moved) return;
+      drag.moved = true;
+      state.project.building = setBuildingOrigin(state.project.building, drag.start.x + dx, drag.start.y + dy);
+      requestDraw();
       return;
     }
 

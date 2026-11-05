@@ -2,6 +2,7 @@
 
 import { insolationZone } from '../core/insolation.js';
 import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
+import { buildingSiteCheck, setBuildingOrigin } from '../core/site-check.js';
 import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
 import { bindNormLinks, normsSection } from './norms-view.js';
@@ -33,6 +34,39 @@ export function bindBuildingRotation(panel) {
   });
 }
 
+// Поля «X, Y дома» (м, координаты съёмки): где на участке лежит точка 0;0
+// плана. Меняют building.origin — дом едет по участку целиком.
+function buildingPositionFields() {
+  const o = state.project.building?.origin || { x: 0, y: 0 };
+  return `<div class="prop-grid">
+        <label class="prop-field"><span>X дома, м</span>
+          <input id="buildingX" type="number" step="0.05" value="${(o.x / 1000).toFixed(2)}"></label>
+        <label class="prop-field"><span>Y дома, м</span>
+          <input id="buildingY" type="number" step="0.05" value="${(o.y / 1000).toFixed(2)}"></label>
+      </div>`;
+}
+
+// Постоянный индикатор положения дома: зона застройки и отступ до соседа.
+function buildingCheckBlock() {
+  const site = state.project.site;
+  const check = buildingSiteCheck(state.project);
+  if (!check.footprint.length || (!site.boundary && !site.neighbors?.length)) return '';
+  if (check.ok) return '<div class="site-check ok" role="status">✓ Дом в зоне застройки, отступы соблюдены</div>';
+  return `<div class="site-check bad" role="status">⚠ ${check.issues.join('<br>⚠ ')}</div>`;
+}
+
+function bindBuildingPosition(panel) {
+  for (const axis of ['x', 'y']) {
+    panel.querySelector(`#building${axis.toUpperCase()}`)?.addEventListener('change', (e) => {
+      const v = Number(String(e.target.value).replace(',', '.'));
+      if (!Number.isFinite(v)) return;
+      const o = state.project.building?.origin || { x: 0, y: 0 };
+      const next = { ...o, [axis]: Math.round(v * 1000) };
+      mutate(() => { state.project.building = setBuildingOrigin(state.project.building, next.x, next.y); });
+    });
+  }
+}
+
 export function renderSiteSettings(panel) {
   const site = state.project.site;
   const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
@@ -52,6 +86,8 @@ export function renderSiteSettings(panel) {
       <label class="prop-field"><span>Север, ° по часовой (0 = вверх съёмки)</span>
         <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
       ${buildingRotationField()}
+      ${buildingPositionFields()}
+      ${buildingCheckBlock()}
     </div>
     ${terrainSection()}
     <h3>Отступы застройки</h3>
@@ -90,6 +126,7 @@ export function renderSiteSettings(panel) {
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   bindBuildingRotation(panel);
+  bindBuildingPosition(panel);
   bindTerrainSection(panel);
   panel.querySelector('#northDeg').addEventListener('change', (e) => {
     mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
@@ -146,6 +183,19 @@ export function renderSiteSettings(panel) {
 export function renderSiteObjectProps(panel, sel) {
   const site = state.project.site;
   if (sel.kind === 'terrain-point' && renderTerrainPointProps(panel, sel)) return;
+  if (sel.kind === 'building') {
+    panel.innerHTML = `
+      <h2>Дом на участке</h2>
+      <div class="prop-block">
+        ${buildingRotationField()}
+        ${buildingPositionFields()}
+        ${buildingCheckBlock()}
+      </div>
+      <p class="empty-hint">Тяните дом мышью за любую комнату или двигайте стрелками (шаг 50 мм, Shift — 0,5 м). Мебель и комнаты правятся в «Плане».</p>`;
+    bindBuildingRotation(panel);
+    bindBuildingPosition(panel);
+    return;
+  }
   if (sel.kind === 'boundary' && site.boundary) {
     panel.innerHTML = `
       <h2>Граница участка</h2>

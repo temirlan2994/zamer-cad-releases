@@ -189,6 +189,7 @@ export function addFurniture(kind, room) {
 export function deleteSelection() {
   const sel = state.selection;
   if (!sel) return;
+  if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;

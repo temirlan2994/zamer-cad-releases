@@ -1,5 +1,6 @@
 // Режимы «План» / «Участок» и поворот вида («Выровнять», север).
 
+import { panForMovedBuilding } from '../core/site-check.js';
 import { refs } from './dom.js';
 import { applyLibraryTab, renderFurnitureBar } from './library.js';
 import { renderProps } from './props.js';
@@ -23,9 +24,13 @@ export function applyModeRotation(pivot = null) {
 export function setEditorMode(mode) {
   if (state.modeName === mode) return;
   // Флаги touched/fitted (view.js) сохраняются вместе с видом.
+  // origin — где стоял дом: если в «Участке» его сдвинули, вид «Плана»
+  // едет следом, и дом остаётся на том же месте экрана.
+  const origin = state.project.building?.origin || { x: 0, y: 0 };
   state.views[state.modeName] = {
     ...state.views[state.modeName],
     scale: state.view.scale, panX: state.view.panX, panY: state.view.panY, rotation: state.view.rotation,
+    origin: { x: origin.x, y: origin.y },
   };
   state.modeName = mode;
   const saved = state.views[mode];
@@ -33,6 +38,11 @@ export function setEditorMode(mode) {
   state.view.panX = saved.panX;
   state.view.panY = saved.panY;
   state.view.rotation = saved.rotation ?? modeRotation(mode);
+  if (mode === 'plan' && saved.origin && Number.isFinite(saved.scale)) {
+    const pan = panForMovedBuilding(state.view, origin.x - saved.origin.x, origin.y - saved.origin.y);
+    state.view.panX = pan.panX;
+    state.view.panY = pan.panY;
+  }
   applyModeRotation(); // если поворот дома/север поменялся — докрутить вокруг центра
   // «Участок» при первом входе вписывается целиком (граница, дороги, соседи),
   // если пользователь ещё не двигал там вид.
