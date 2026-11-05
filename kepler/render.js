@@ -1994,6 +1994,22 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
       const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
       drawDim(ctx, p, q, rightN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
     }
+    // Южная цепочка: только размеры южных стен (северные подписаны сверху).
+    const bottomAt = chains.maxY + offset;
+    const bottomN = outwardScreen((chains.minX + chains.maxX) / 2, bottomAt, 0, 1);
+    for (const station of chains.bottom) {
+      const a = w2s(station.value, bottomAt);
+      drawWitness(ctx, w2s(station.value, station.witness), {
+        x: a.x + bottomN.x * 16, y: a.y + bottomN.y * 16,
+      });
+    }
+    for (let i = 0; i < chains.bottom.length - 1; i += 1) {
+      const from = chains.bottom[i].value;
+      const to = chains.bottom[i + 1].value;
+      const p = w2s(from, bottomAt); const q = w2s(to, bottomAt);
+      const visible = Math.hypot(q.x - p.x, q.y - p.y) >= (selected ? 25 : 38);
+      drawDim(ctx, p, q, bottomN, 13, visible ? dimLabel(state, Math.round(to - from)) : '');
+    }
     const leftAt = chains.minX - offset;
     const leftN = outwardScreen(leftAt, (chains.minY + chains.maxY) / 2, -1, 0);
     for (const station of chains.left) {

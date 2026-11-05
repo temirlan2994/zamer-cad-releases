@@ -54,10 +54,13 @@ test('Г-образное помещение получает наружные �
   ];
 
   const chains = shapedRoomDimensionChains(room);
-  assert.deepEqual(chains.horizontal.map((station) => station.value), [1000, 2800, 3200, 4400, 6000]);
+  // Верхняя цепочка — только северные стены, нижняя — только южные.
+  assert.deepEqual(chains.horizontal.map((station) => station.value), [1000, 2800, 4400, 6000]);
+  assert.deepEqual(chains.bottom.map((station) => station.value), [1000, 3200, 6000]);
   assert.deepEqual(chains.vertical.map((station) => station.value), [2000, 3200, 4600, 6000]);
   assert.deepEqual(chains.left.map((station) => station.value), [2000, 5000, 6000]);
-  assert.deepEqual(chains.horizontal.map((station) => station.witness), [2000, 2000, 5000, 3200, 4600]);
+  assert.deepEqual(chains.horizontal.map((station) => station.witness), [2000, 2000, 3200, 4600]);
+  assert.deepEqual(chains.bottom.map((station) => station.witness), [5000, 6000, 6000]);
   assert.deepEqual(chains.vertical.map((station) => station.witness), [2800, 4400, 6000, 6000]);
   assert.deepEqual(chains.left.map((station) => station.witness), [1000, 1000, 3200]);
 });
@@ -76,14 +79,15 @@ test('наружные цепочки Г-комнаты — по наружны�
   ];
   const inner = shapedRoomDimensionChains(room);
   const outer = shapedRoomDimensionChains(room, 250);
-  assert.deepEqual(outer.horizontal.map((s) => s.value), [750, 2950, 3050, 4650, 6250]);
+  assert.deepEqual(outer.horizontal.map((s) => s.value), [750, 3050, 4650, 6250]);
+  assert.deepEqual(outer.bottom.map((s) => s.value), [750, 2950, 6250]);
   assert.deepEqual(outer.vertical.map((s) => s.value), [1750, 2950, 4350, 6250]);
   assert.deepEqual(outer.left.map((s) => s.value), [1750, 5250, 6250]);
   // общий габарит больше внутреннего ровно на две толщины стены
   assert.equal(outer.maxX - outer.minX, inner.maxX - inner.minX + 500);
   assert.equal(outer.maxY - outer.minY, inner.maxY - inner.minY + 500);
   // ни одна наружная станция не совпадает с внутренней — размеры не повторяются
-  for (const key of ['horizontal', 'vertical', 'left']) {
+  for (const key of ['horizontal', 'bottom', 'vertical', 'left']) {
     for (const s of outer[key]) assert.ok(!inner[key].some((i) => Math.abs(i.value - s.value) < 1), `${key}: ${s.value}`);
   }
   // совпавшие вершины после деления стены не ломают смещение

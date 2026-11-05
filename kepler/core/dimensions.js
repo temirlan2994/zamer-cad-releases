@@ -101,7 +101,6 @@ export function shapedRoomDimensionChains(room, expand = 0) {
   const xs = unique(points.map((point) => point.x));
   const ys = unique(points.map((point) => point.y));
   if (xs.length <= 2 && ys.length <= 2) return null;
-  const atX = (x) => points.filter((point) => Math.abs(point.x - x) < 0.5);
   // Вертикальные рёбра: левые (внутренность справа) и правые. Левая цепочка
   // размеров берёт только левые стены, правая — только правые.
   let area = 0;
@@ -127,12 +126,29 @@ export function shapedRoomDimensionChains(room, expand = 0) {
     return [...map.entries()].sort((p, q) => p[0] - q[0])
       .map(([value, witness]) => ({ value, witness }));
   };
+  // Горизонтальные рёбра: северные (внутренность снизу) и южные. Верхняя цепочка
+  // берёт только северные стены, нижняя — только южные.
+  const edgeStations = (wantTop) => {
+    const map = new Map(); // x -> y стены (самой удалённой от центра)
+    const put = (x, y) => {
+      const key = Math.round(x * 1000) / 1000;
+      const prev = map.get(key);
+      if (prev === undefined || (wantTop ? y < prev : y > prev)) map.set(key, y);
+    };
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i]; const b = points[(i + 1) % points.length];
+      if (Math.abs(a.y - b.y) > 0.5 || Math.abs(a.x - b.x) < 0.5) continue;
+      const interiorPlusY = ((b.x - a.x) * sign) > 0;
+      if (interiorPlusY !== wantTop) continue;
+      put(a.x, a.y); put(b.x, b.y);
+    }
+    return [...map.entries()].sort((p, q) => p[0] - q[0])
+      .map(([value, witness]) => ({ value, witness }));
+  };
   return {
     minX: xs[0], maxX: xs.at(-1), minY: ys[0], maxY: ys.at(-1),
-    horizontal: xs.map((value) => ({
-      value,
-      witness: Math.min(...atX(value).map((point) => point.y)),
-    })),
+    horizontal: edgeStations(true), // север
+    bottom: edgeStations(false), // юг
     vertical: sideStations(false),
     left: sideStations(true),
   };
