@@ -332,11 +332,128 @@ function levelStairs(lp, z0, levelHeight) {
   return faces;
 }
 
-// Крыша: плоское перекрытие над комнатами верхнего этажа.
-function roofFaces(lp, z) {
-  const t = lp.settings?.exterior || 250;
+const ROOF_COLOR = '#9aa3ad';
+const SLAB_COLOR = '#b9b4ab';
+const ROOF_T = 250;
+const SLAB_T = 200;
+const SLAB_OUTSET = 20; // торец перекрытия чуть выступает из стены (без мерцания)
+
+// Пятно этажа: прямоугольники комнат (с частями Г/outline) с наружной стеной.
+function levelFootprint(lp, offset) {
   return lp.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
-    .flatMap((r) => roomRects(r).flatMap((part) => boxFaces(part.x - t, part.y - t, part.x + part.w + t, part.y + part.h + t, z, z + 250, '#9aa3ad', 'roof')));
+    .flatMap(roomRects)
+    .map((p) => ({ x0: p.x - offset, y0: p.y - offset, x1: p.x + p.w + offset, y1: p.y + p.h + offset }));
+}
+
+// Проём в перекрытии: лестничные помещения и шахты обоих этажей, марши нижнего.
+function slabCuts(lower, upper) {
+  const cuts = [];
+  for (const lp of [lower, upper]) {
+    for (const r of lp.rooms.filter((room) => isShaft(room) || room.type === 'stairs-room')) {
+      for (const p of roomRects(r)) cuts.push({ x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h });
+    }
+  }
+  for (const item of lower.items.filter((i) => i.kind === 'stairs')) {
+    const o = structuralOutline(item);
+    cuts.push({
+      x0: Math.min(...o.map((p) => p.x)), y0: Math.min(...o.map((p) => p.y)),
+      x1: Math.max(...o.map((p) => p.x)), y1: Math.max(...o.map((p) => p.y)),
+    });
+  }
+  return cuts;
+}
+
+const snap = (a) => Math.round(a * 10) / 10;
+const uniqSorted = (list) => [...new Set(list.map(snap))].sort((a, b) => a - b);
+const inRects = (rects, x, y) => rects.some((r) => x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
+
+// Область на общей сетке: клетка входит, если лежит во всех группах all и ни в
+// одном прямоугольнике none. Сетка — по всем координатам прямоугольников.
+export function regionGrid(all, none = []) {
+  const rects = [...all.flat(), ...none];
+  const xs = uniqSorted(rects.flatMap((r) => [r.x0, r.x1]));
+  const ys = uniqSorted(rects.flatMap((r) => [r.y0, r.y1]));
+  const nx = Math.max(0, xs.length - 1);
+  const ny = Math.max(0, ys.length - 1);
+  const mask = new Uint8Array(nx * ny);
+  if (!all.length || all.some((g) => !g.length)) return { xs, ys, nx, ny, mask };
+  for (let j = 0; j < ny; j += 1) {
+    const cy = (ys[j] + ys[j + 1]) / 2;
+    for (let i = 0; i < nx; i += 1) {
+      const cx = (xs[i] + xs[i + 1]) / 2;
+      if (xs[i + 1] - xs[i] < 0.5 || ys[j + 1] - ys[j] < 0.5) continue;
+      if (all.every((g) => inRects(g, cx, cy)) && !inRects(none, cx, cy)) mask[j * nx + i] = 1;
+    }
+  }
+  return { xs, ys, nx, ny, mask };
+}
+
+// Плита по области без швов: верх (и низ) — из слитых прямоугольников сетки
+// без собственных рёбер; торцы и рёбра — только по контуру области.
+export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
+  const { xs, ys, nx, ny, mask } = grid;
+  const at = (i, j) => (i >= 0 && j >= 0 && i < nx && j < ny ? mask[j * nx + i] : 0);
+  const faces = [];
+  const edges = [];
+  // Слитые прямоугольники: полосы по строкам, одинаковые полосы — вниз.
+  const used = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j += 1) {
+    for (let i = 0; i < nx; i += 1) {
+      if (!at(i, j) || used[j * nx + i]) continue;
+      let i1 = i;
+      while (i1 + 1 < nx && at(i1 + 1, j) && !used[j * nx + i1 + 1]) i1 += 1;
+      let j1 = j;
+      const rowFree = (jj) => { for (let k = i; k <= i1; k += 1) if (!at(k, jj) || used[jj * nx + k]) return false; return true; };
+      while (j1 + 1 < ny && rowFree(j1 + 1)) j1 += 1;
+      for (let jj = j; jj <= j1; jj += 1) for (let k = i; k <= i1; k += 1) used[jj * nx + k] = 1;
+      const x0 = xs[i]; const x1 = xs[i1 + 1]; const y0 = ys[j]; const y1 = ys[j1 + 1];
+      faces.push({ pts: [v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1)], normal: v(0, 0, 1), color, kind, edges: [] });
+      if (bottom) faces.push({ pts: [v(x0, y1, z0), v(x1, y1, z0), v(x1, y0, z0), v(x0, y0, z0)], normal: v(0, 0, -1), color, kind, edges: [] });
+    }
+  }
+  if (!faces.length) return faces;
+  const side = (a, b, normal) => {
+    faces.push({ pts: [v(a.x, a.y, z0), v(b.x, b.y, z0), v(b.x, b.y, z1), v(a.x, a.y, z1)], normal, color, kind, edges: [] });
+    edges.push([v(a.x, a.y, z1), v(b.x, b.y, z1)], [v(a.x, a.y, z0), v(b.x, b.y, z0)],
+      [v(a.x, a.y, z0), v(a.x, a.y, z1)], [v(b.x, b.y, z0), v(b.x, b.y, z1)]);
+  };
+  // Горизонтальные торцы: граница между строками j-1 и j; соседние — сливаются.
+  for (let j = 0; j <= ny; j += 1) {
+    let run = null;
+    const flush = () => { if (run) side(v(xs[run.i0], ys[j], 0), v(xs[run.i1], ys[j], 0), v(0, run.s, 0)); run = null; };
+    for (let i = 0; i < nx; i += 1) {
+      const s = at(i, j) && !at(i, j - 1) ? -1 : (!at(i, j) && at(i, j - 1) ? 1 : 0);
+      if (s && run?.s === s) run.i1 = i + 1;
+      else { flush(); if (s) run = { s, i0: i, i1: i + 1 }; }
+    }
+    flush();
+  }
+  for (let i = 0; i <= nx; i += 1) {
+    let run = null;
+    const flush = () => { if (run) side(v(xs[i], ys[run.j0], 0), v(xs[i], ys[run.j1], 0), v(run.s, 0, 0)); run = null; };
+    for (let j = 0; j < ny; j += 1) {
+      const s = at(i, j) && !at(i - 1, j) ? -1 : (!at(i, j) && at(i - 1, j) ? 1 : 0);
+      if (s && run?.s === s) run.j1 = j + 1;
+      else { flush(); if (s) run = { s, j0: j, j1: j + 1 }; }
+    }
+    flush();
+  }
+  faces[0].edges = edges;
+  return faces;
+}
+
+// Крыша этажа: плоская плита над частью этажа, не закрытой этажом выше.
+function roofFaces(lp, above, z) {
+  const t = lp.settings?.exterior || 250;
+  const grid = regionGrid([levelFootprint(lp, t)], above ? levelFootprint(above, t) : []);
+  return slabFaces(grid, z, z + ROOF_T, ROOF_COLOR, 'roof');
+}
+
+// Перекрытие под этажом: где он стоит на нижнем, кроме проёмов лестниц и шахт.
+function interfloorFaces(lower, upper, z) {
+  const t = (upper.settings?.exterior || 250) + SLAB_OUTSET;
+  const grid = regionGrid([levelFootprint(lower, t), levelFootprint(upper, t)], slabCuts(lower, upper));
+  return slabFaces(grid, z - SLAB_T, z - 1, SLAB_COLOR, 'slab', { bottom: true });
 }
 
 const GROUND_LOW = [0xb9, 0xc9, 0xa6];
@@ -485,7 +602,8 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
   return faces;
 }
 
-// Все грани дома: этажи снизу вверх; roof — крыша над верхним этажом,
+// Все грани дома: этажи снизу вверх, перекрытия между ними; roof — плоская
+// кровля над каждой частью этажа, не закрытой этажом выше;
 // site — земля (с рельефом, если есть отметки), граница и соседи;
 // terrainScale — вертикальное усиление рельефа (1×–5×).
 export function buildHouseMesh(project, { roof = false, site = false, terrainScale = 1 } = {}) {
@@ -498,8 +616,11 @@ export function buildHouseMesh(project, { roof = false, site = false, terrainSca
     faces.push(...levelStructures(lp, level.elevation, level.height));
     faces.push(...levelStairs(lp, level.elevation, level.height));
   }
-  const top = levels[levels.length - 1];
-  if (roof && top) faces.push(...roofFaces(levelProject(project, top.id), top.elevation + top.height));
+  const lps = levels.map((level) => levelProject(project, level.id));
+  for (let k = 1; k < levels.length; k += 1) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
+  if (roof) {
+    levels.forEach((level, k) => faces.push(...roofFaces(lps[k], lps[k + 1], level.elevation + level.height)));
+  }
   if (site) faces.push(...siteFaces(project, { terrainScale }));
   return faces;
 }

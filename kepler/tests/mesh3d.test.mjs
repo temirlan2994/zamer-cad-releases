@@ -57,6 +57,83 @@ test('этажи: полы на своих отметках, крыша над �
   assert.equal(site.filter((f) => f.kind === 'neighbor').length, 5);
 });
 
+// Верх плиты: площадь горизонтальных граней с нормалью вверх.
+const topArea = (faces) => faces.filter((f) => f.normal.z === 1).reduce((t, f) => {
+  const xs = f.pts.map((p) => p.x); const ys = f.pts.map((p) => p.y);
+  return t + (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}, 0);
+const sides = (faces) => faces.filter((f) => f.normal.z === 0);
+
+function twoStorey() {
+  // 1 этаж: 10×6 м из двух комнат; 2 этаж — только над левой (5×6 м).
+  const p = createProject();
+  p.settings.exterior = 250;
+  p.rooms.push(createRoom('living', 0, 0, 5000, 6000), createRoom('kitchen', 5000, 0, 5000, 6000));
+  p.levels.push(createLevel('2 этаж', 3000, 2800, 'L2'));
+  p.activeLevel = 'L2';
+  p.rooms.push(createRoom('bedroom', 0, 0, 5000, 6000));
+  return p;
+}
+
+test('одноэтажный дом: одна кровля без швов по внешнему контуру', () => {
+  const p = createProject();
+  p.settings.exterior = 250;
+  p.rooms.push(createRoom('living', 0, 0, 5000, 4000), createRoom('kitchen', 5000, 0, 3000, 4000));
+  const faces = buildHouseMesh(p, { roof: true });
+  const roof = faces.filter((f) => f.kind === 'roof');
+  assert.equal(faces.filter((f) => f.kind === 'slab').length, 0, 'перекрытий нет');
+  const tops = roof.filter((f) => f.normal.z === 1);
+  assert.equal(tops.length, 1, 'смежные комнаты — одна плита');
+  assert.equal(topArea(roof), 8500 * 4500);
+  assert.equal(sides(roof).length, 4, 'торцы только по контуру');
+  assert.ok(roof.every((f) => zRange(f)[0] >= 3000 && zRange(f)[1] <= 3250));
+  // Рёбра — только по контуру: ни одно не лежит на шве x = 5000.
+  const edges = roof.flatMap((f) => f.edges || []);
+  assert.ok(edges.length && edges.every(([a, b]) => !(a.x === 5000 && b.x === 5000)));
+});
+
+test('Г-образная комната: кровля без внутренних швов, внутренний угол на месте', () => {
+  const p = createProject();
+  p.settings.exterior = 250;
+  // Две смежные комнаты буквой Г: 6×3 и 3×3 под левой частью.
+  p.rooms.push(createRoom('living', 0, 0, 6000, 3000), createRoom('hall', 0, 3000, 3000, 3000));
+  const roof = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof');
+  assert.equal(topArea(roof), 6500 * 3500 + 3500 * 3000);
+  assert.equal(sides(roof).length, 6, 'шесть торцов Г-контура');
+  assert.ok(roof.filter((f) => f.normal.z === 1).length <= 2);
+});
+
+test('два этажа с неполным верхним: кровля над каждой открытой частью', () => {
+  const p = twoStorey();
+  const roof = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof');
+  const low = roof.filter((f) => zRange(f)[1] === 3250);
+  const high = roof.filter((f) => zRange(f)[1] === 6050);
+  assert.equal(low.length + high.length, roof.length, 'кровли только на отметках верха этажей');
+  // Над 1 этажом — правая часть x 5250…10250 (левую закрывает 2 этаж со стеной).
+  const lowTops = low.filter((f) => f.normal.z === 1);
+  assert.equal(lowTops.length, 1);
+  const xs = lowTops[0].pts.map((p0) => p0.x);
+  assert.deepEqual([Math.min(...xs), Math.max(...xs)], [5250, 10250]);
+  assert.equal(topArea(low), 5000 * 6500);
+  assert.equal(topArea(high), 5500 * 6500);
+  // Без кровли — открыто сверху, как раньше.
+  assert.equal(buildHouseMesh(p).filter((f) => f.kind === 'roof').length, 0);
+});
+
+test('перекрытие между этажами: под верхним этажом, толщина 200, лестница вырезана', () => {
+  const p = twoStorey();
+  let slab = buildHouseMesh(p).filter((f) => f.kind === 'slab');
+  assert.ok(slab.length);
+  assert.ok(slab.every((f) => zRange(f)[0] >= 2800 && zRange(f)[1] <= 3000));
+  assert.ok(slab.some((f) => zRange(f)[0] === 2800) && slab.some((f) => zRange(f)[1] === 2999));
+  assert.equal(topArea(slab), 5540 * 6540, 'пятно 2 этажа ∩ 1 этажа, со стеной и выступом 20');
+  // Лестница на 2 этаже — проём в перекрытии.
+  p.rooms.push(createRoom('stairs-room', 1000, 1000, 2000, 3000));
+  slab = buildHouseMesh(p).filter((f) => f.kind === 'slab');
+  assert.equal(topArea(slab), 5540 * 6540 - 2000 * 3000);
+  assert.equal(sides(slab).length, 8, 'внешний контур и проём');
+});
+
 test('пол террасы в 3D лежит ниже пола дома', () => {
   const p = createProject();
   const room = createRoom('living', 0, 0, 5000, 4000);

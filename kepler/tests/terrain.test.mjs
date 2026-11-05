@@ -152,6 +152,11 @@ test('отметки под домом: углы, перепад, предупр
   const faces = buildHouseMesh(project, { site: true });
   assert.ok(faces.filter((f) => f.kind === 'ground').length > 100);
   assert.ok(faces.some((f) => f.kind === 'plinth'));
+  // Граница участка идёт по рельефу: куски на разных отметках.
+  project.site.boundary = [{ x: 0, y: 0 }, { x: 50000, y: 0 }, { x: 50000, y: 50000 }, { x: 0, y: 50000 }];
+  const border = buildHouseMesh(project, { site: true }).filter((f) => f.kind === 'boundary');
+  assert.ok(border.length > 4);
+  assert.ok(new Set(border.map((f) => Math.round(f.pts[0].z))).size > 4, 'граница не плоская');
   const flatFaces = buildHouseMesh(createProject(), { site: true });
   assert.ok(!flatFaces.some((f) => f.kind === 'plinth'));
 });
