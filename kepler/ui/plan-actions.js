@@ -12,8 +12,9 @@ import {
   captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
+import { eatOverlaps, eatSummary, roomsIntersect } from '../core/room-eat.js';
 import {
-  determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
+  determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
 import {
   clampOpeningOffset, deriveWalls, doorPlacementVariant, openingPos, setOpeningPos, sideEdge,
@@ -104,19 +105,24 @@ export function placeRoomAt(at, typeOverride = null) {
     stair = createItem('stairs', room.x + room.w / 2, room.y + room.h / 2, 2200, 3200);
     applyStairPreset(stair, 'u', activeLevel(state.project)?.height || 3000);
   }
+  let eaten = null;
   mutate(() => {
     state.project.rooms.push(room);
     if (stair) state.project.items.push(stair);
     // Мебель родителя из-под нового помещения вытаскивается.
     if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
+    // Поверх другой комнаты — новая «съедает» её (перегородка между ними).
+    else eaten = eatOverlapsAfter([room.id], { silent: true });
     // Новая комната создаётся ПУСТОЙ — мебель пользователь добавляет сам из
     // панели «Мебель» (клик по карточке или перетаскиванием).
   }, { arrange: stair ? (parentId ? [parentId] : []) : parentId ? [room.id, parentId] : [room.id] });
   cancelTool();
   selectObject(stair ? { type: 'item', id: stair.id } : { type: 'room', id: room.id });
-  if (stair) toast('Лестница создана и рассчитана по высоте этажа — выберите форму справа');
+  const eatText = eatSummary(eaten);
+  if (verdict.warning) toast(`⚠ ${verdict.warning} — поставлено, проверьте отступы${eatText ? `. ${eatText}` : ''}`, true);
+  else if (eatText) toast(eatText, Boolean(eaten.failed.length || eaten.lost.length));
+  else if (stair) toast('Лестница создана и рассчитана по высоте этажа — выберите форму справа');
   else if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
-  else if (verdict.warning) toast(`⚠ ${verdict.warning} — поставлено, проверьте отступы`, true);
 }
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
@@ -252,12 +258,23 @@ export function deleteSelection() {
   requestDraw();
 }
 
-// Комнаты верхнего уровня, перекрывающиеся с данной (любой порядок z).
+// Комнаты верхнего уровня, чья форма перекрывается с данной (любой порядок z).
+// После съедания (eatOverlapsAfter) обычно пусто: остаются несъедаемые.
 export function overlappingTopRooms(room) {
   if (room.parentId) return [];
-  const rect = { x: room.x, y: room.y, w: room.w, h: room.h };
-  return state.project.rooms.filter((o) => o !== room && !o.parentId
-    && rectsOverlap(rect, { x: o.x, y: o.y, w: o.w, h: o.h }));
+  return state.project.rooms.filter((o) => o !== room && !o.parentId && roomsIntersect(room, o));
+}
+
+// Конец жеста над комнатами roomIds (поставлены, сдвинуты, растянуты): они
+// «съедают» перекрытые комнаты — форма нижней уменьшается, между ними
+// перегородка (core/room-eat.js). Вызывать до pushHistory: один шаг отмены.
+// Тост — итог (что уменьшено / почему не получилось). → результат eatOverlaps.
+export function eatOverlapsAfter(roomIds, { silent = false } = {}) {
+  const res = eatOverlaps(state.project, roomIds);
+  if (res.eaten.length || res.failed.length) reconcileOpenings();
+  const text = eatSummary(res);
+  if (text && !silent) toast(text, Boolean(res.failed.length || res.lost.length));
+  return res;
 }
 
 // Переместить комнату в конец массива (поверх всех по z — она «съедает»).

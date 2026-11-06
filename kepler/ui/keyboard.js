@@ -10,8 +10,8 @@ import { closeProjects, isProjectsOpen } from './projects.js';
 import { hideSofaMenu } from './props-composite.js';
 import { stepLevel } from './levels.js';
 import {
-  copySelection, deleteSelection, duplicateSelection, mirrorSelection, moveMultiBy, pasteSelection,
-  reconcileOpenings, rotateSelection90,
+  copySelection, deleteSelection, duplicateSelection, eatOverlapsAfter, mirrorSelection, moveMultiBy,
+  pasteSelection, reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
 import {
   addLandscapeDraftExact, handleLandscapeKey, landscapeDraftPrev, rotateLandscapeGhost,
@@ -174,6 +174,7 @@ export function bindKeyboard() {
         moveRoomBy(state.project, room.id, dx, dy);
         const verdict = validateRoomPlacement(state.project, room, room.id);
         if (!verdict.ok) { restoreFrom(before); toast(verdict.reason); return; }
+        if (!room.parentId) eatOverlapsAfter([room.id]);
         reconcileOpenings();
         refreshDerived();
         pushHistory(before);

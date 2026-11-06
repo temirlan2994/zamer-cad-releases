@@ -20,7 +20,8 @@ import { syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
 import { renderToolstrip } from './toolstrip.js';
 import {
-  addFurniture, changeManualWall, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
+  addFurniture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
+  reconcileOpenings,
 } from './plan-actions.js';
 import {
   bindBuildingRotation, buildingRotationField, renderSiteObjectProps, renderSiteSettings,
@@ -241,6 +242,7 @@ function renderRoomProps(panel, room) {
       renderProps();
       return;
     }
+    if (!room.parentId) eatOverlapsAfter([room.id]);
     reconcileOpenings();
     refreshDerived();
     pushHistory(before);

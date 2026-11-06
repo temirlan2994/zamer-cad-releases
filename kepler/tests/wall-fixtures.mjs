@@ -9,6 +9,7 @@
 import { createProject, createRoom } from '../core/model.js';
 import { deriveWalls, ownKey, sharedKey } from '../core/walls.js';
 import { createLoopRoom } from '../core/bound-rooms.js';
+import { eatOverlaps } from '../core/room-eat.js';
 
 let seq = 0;
 function room(type, x, y, w, h, extra = {}) {
@@ -206,6 +207,48 @@ export function hiddenWallTee() {
   return project('скрытая стена в Т-стыке', [a, b, c], { [sharedKey(a.id, c.id)]: { hidden: true } });
 }
 
+// ---------------------------------------------------------------- Съедание перекрытых комнат
+// Комната, поставленная поверх другой, «съедает» её (core/room-eat.js):
+// нижняя теряет пересечение и зазор под перегородку 100 — между ними обычная
+// общая стена. Фикстура — модель ПОСЛЕ съедания (как в конце жеста).
+
+function eaten(name, rooms, order) {
+  const p = project(name, rooms);
+  for (const id of order) eatOverlaps(p, [id]);
+  return p;
+}
+
+// Угловое налезание: нижняя становится Г.
+export function eatCorner() {
+  const a = room('living', 0, 0, 4000, 4000);
+  const b = room('bedroom', 3000, 3000, 3000, 3000);
+  return eaten('съедание: угол', [a, b], [b.id]);
+}
+
+// Верхняя заходит в нижнюю с края: у нижней вырез (П).
+export function eatEdgeBite() {
+  const a = room('living', 0, 0, 6000, 4000);
+  const b = room('kitchen', 2000, 3000, 2000, 2500);
+  return eaten('съедание: вырез с края', [a, b], [b.id]);
+}
+
+// Вплотную по всей стороне: нижняя просто укорачивается.
+export function eatFullSide() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const b = room('bedroom', 4000, 0, 3000, 4000);
+  return eaten('съедание: по всей стороне', [a, b], [b.id]);
+}
+
+// Три комнаты цепочкой: b съедает a, затем c — b.
+export function eatChain() {
+  const a = room('living', 0, 0, 4000, 4000);
+  const b = room('bedroom', 3000, 1000, 4000, 4000);
+  const c = room('kitchen', 6000, 2000, 3000, 3000);
+  return eaten('съедание: цепочка из трёх', [a, b, c], [b.id, c.id]);
+}
+
+export const EAT_FIXTURES = { eatCorner, eatEdgeBite, eatFullSide, eatChain };
+
 // ---------------------------------------------------------------- Ручные стены (этап B)
 // project.walls — ручные стены активного этажа; проект с ними всегда идёт
 // на движок v2 (wallsEngine). Ось — в осях дома, толщина 200/100.
@@ -342,4 +385,5 @@ export const WALL_FIXTURES = {
   diagonalCorners,
   terraceAtPartitionGap,
   nearGapRooms,
+  ...EAT_FIXTURES,
 };

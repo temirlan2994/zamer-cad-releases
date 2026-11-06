@@ -14,9 +14,9 @@ import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { rectsCycles } from './ortho-grid.js';
 import { finalizeRoomOutline, roomRects } from './room-shape.js';
-import { MIN_ROOM_SIZE, roomNetAreaM2 } from './rooms.js';
+import { roomNetAreaM2 } from './rooms.js';
+import { eatFailText, eatPlan, eatRoom, eatShape } from './room-eat.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls, openingOwnerId } from './walls.js';
 import { wallsInsideRooms } from './bound-rooms.js';
@@ -86,11 +86,14 @@ export function roomChecks(project, room, level, walls = null) {
   return out;
 }
 
-// Перекрывающиеся помещения — ошибка планировки (docs/walls-v2-architecture.md,
-// раздел 5): в движке стен v2 стена внутри чужой комнаты не рисуется. Пары
-// комнат верхнего уровня; вложенные (parentId), шахты и открытые площадки
-// (терраса всегда под домом) — не перекрытие. Нижняя (раньше в массиве)
-// «съедена» верхней. → [{ lower, upper, rects, areaM2 }].
+// Оставшиеся перекрытия помещений (docs/walls-v2-architecture.md, раздел 5).
+// Обычно перекрытия в модели нет: комната, поставленная поверх другой,
+// «съедает» её в конце жеста (core/room-eat.js) — между ними перегородка.
+// Остаются только несъедаемые (нижняя целиком под верхней, распалась бы на
+// части, слишком мала) и перекрытия из старых файлов. Пары комнат верхнего
+// уровня; вложенные (parentId), шахты и открытые площадки (терраса всегда под
+// домом) — не перекрытие. Нижняя (раньше в массиве) «съедена» верхней.
+// → [{ lower, upper, rects, areaM2 }].
 export function roomOverlaps(project) {
   const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r));
   const out = [];
@@ -116,31 +119,17 @@ export function roomOverlaps(project) {
   return out;
 }
 
-// Разность прямоугольников a \ b (до четырёх кусков).
-function rectMinus(a, b) {
-  const x0 = Math.max(a.x, b.x); const y0 = Math.max(a.y, b.y);
-  const x1 = Math.min(a.x + a.w, b.x + b.w); const y1 = Math.min(a.y + a.h, b.y + b.h);
-  if (x1 - x0 <= 0.5 || y1 - y0 <= 0.5) return [a];
-  const out = [];
-  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y });
-  if (y1 < a.y + a.h) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 });
-  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 });
-  if (x1 < a.x + a.w) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 });
-  return out.filter((r) => r.w > 0.5 && r.h > 0.5);
-}
-
-// Действие «Обрезать»: нижняя комната теряет зону перекрытия (её чистая
-// площадь не меняется — эта зона и так «съедена»). Получается, только если
+// Действие «Обрезать» (старые перекрытия): нижняя комната теряет зону
+// перекрытия и зазор gap под перегородку. С project — как съедание в конце
+// жеста (толщина общей стены пары, проёмы на месте). Получается, только если
 // остаток — одна связная область без дыр и не меньше минимального размера;
 // иначе false и комната не тронута.
-export function trimRoomBy(room, by) {
-  let rest = roomRects(room);
-  for (const q of roomRects(by)) rest = rest.flatMap((r) => rectMinus(r, q));
-  if (!rest.length || !rest.some((r) => r.w >= MIN_ROOM_SIZE && r.h >= MIN_ROOM_SIZE)) return false;
-  const cycles = rectsCycles(rest);
-  if (cycles.length !== 1 || cycles[0].area <= 0) return false;
-  const pts = cycles[0].pts;
-  room.outline = pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+export function trimRoomBy(room, by, project = null) {
+  if (project) return eatRoom(project, room, by).ok;
+  const shape = eatShape(room, by, 0);
+  if (!shape.ok) return false;
+  room.outline = shape.pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+  delete room.notch;
   finalizeRoomOutline(room);
   return true;
 }
@@ -172,12 +161,14 @@ export function normsReport(project) {
       }
       // Перекрытие — одно замечание на пару, у верхней комнаты.
       for (const o of levelOverlaps.filter((q) => q.upper === room)) {
-        const canTrim = trimRoomBy(structuredClone(o.lower), o.upper);
+        const plan = eatPlan(lp, o.lower, o.upper);
         checks.push({
           kind: 'overlap', ok: false,
-          text: `Помещения «${o.lower.name}» и «${o.upper.name}» перекрываются (${fmt(o.areaM2, 2)} м²)`,
+          text: plan.ok
+            ? `«${o.upper.name}» лежит на «${o.lower.name}» (${fmt(o.areaM2, 2)} м²) — обрежьте «${o.lower.name}», между ними встанет перегородка`
+            : eatFailText(plan.why, o.lower, o.upper, plan.child),
           otherId: o.lower.id, rects: o.rects,
-          trim: canTrim ? { roomId: o.lower.id, byId: o.upper.id, label: `Обрезать «${o.lower.name}» по «${o.upper.name}»` } : null,
+          trim: plan.ok ? { roomId: o.lower.id, byId: o.upper.id, label: `Обрезать «${o.lower.name}» по «${o.upper.name}»` } : null,
         });
       }
       rooms.push({ id: room.id, levelId: level.id, name: room.name, checks });

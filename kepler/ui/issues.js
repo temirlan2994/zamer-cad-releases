@@ -158,7 +158,7 @@ function runAction(entry, action) {
     const by = roomById(state.project, action.byId);
     if (!room || !by) return;
     let done = false;
-    mutate(() => { done = trimRoomBy(room, by); });
+    mutate(() => { done = trimRoomBy(room, by, state.project); });
     if (!done) toast('Обрезать не получилось: останется несколько частей или слишком мало');
   } else if (action.kind === 'split') {
     splitByWallAction(action.roomId, action.wallId);

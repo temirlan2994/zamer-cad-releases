@@ -50,7 +50,7 @@ import {
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
-  addFurnitureAt, bringRoomToTop, computeOpeningParams, overlappingTopRooms, placeOpeningAt,
+  addFurnitureAt, computeOpeningParams, eatOverlapsAfter, placeOpeningAt,
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
@@ -1480,14 +1480,6 @@ export function bindCanvasInput() {
           } else {
             toast(`«${room.name}» отделена — снова самостоятельная комната`);
           }
-        } else if (room && !room.parentId) {
-          // Перетащенная комната, перекрывшая другую, становится «съедающей»
-          // (наверх по z). Кто у кого забирает площадь — переключается в панели.
-          const over = overlappingTopRooms(room);
-          if (over.length) {
-            bringRoomToTop(room.id);
-            toast(`«${room.name}» перекрывает «${over[0].name}» и забирает площадь — поменять можно в панели`, true);
-          }
         }
       }
       if (finished.kind === 'shape-resize') {
@@ -1496,6 +1488,13 @@ export function bindCanvasInput() {
         finished.merged = finished.merged || finalized.merged;
         state.pendingRoomSplit = null;
       }
+      // Сдвинутая/растянутая комната «съедает» перекрытые: нижняя
+      // уменьшается, между ними перегородка (core/room-eat.js). Тот же шаг
+      // отмены, что и сам жест.
+      const movedIds = finished.kind === 'multi' ? finished.roomIds
+        : [finished.kind === 'room' ? finished.id : finished.roomId];
+      const eaten = eatOverlapsAfter(movedIds.filter(Boolean));
+      if (eaten.eaten.length || eaten.failed.length) finished.clamped = null;
       reconcileOpenings();
       refreshDerived();
       pushHistory(finished.before);

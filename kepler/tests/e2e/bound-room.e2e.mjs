@@ -1,7 +1,7 @@
 // e2e «Помещение» из петли стен: нарисовать 4 стены, кнопкой «Помещение»
 // кликнуть внутри петли — вместо стен обычная комната. Дальше она ведёт
 // себя как нарисованная: ручка стороны, магнит к соседу (общая стена),
-// наезд — замечание «перекрытие», копия Ctrl+D, отмена/повтор, перезагрузка.
+// наезд — «съедает» соседа, копия Ctrl+D, отмена/повтор, перезагрузка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew, clickWorld, worldToClient } from './helpers.mjs';
@@ -98,16 +98,23 @@ describe('помещение из петли стен — обычная ком�
     const shared = await page.evaluate((rid) => window.__kepler.state.walls
       .some((w) => w.kind === 'shared' && w.rooms.includes(rid) && w.rooms.includes('N')), id);
     assert.ok(shared, 'общая стена с соседом');
-    // Наезд — как у нарисованной комнаты: перенос разрешён, замечание
-    // «перекрытие» в нормах; Ctrl+Z возвращает.
+    // Наезд — как у нарисованной комнаты: перенос разрешён, сдвинутая
+    // «съедает» соседа (он короче, между ними перегородка, замечания нет);
+    // Ctrl+Z возвращает обоих.
+    const n0 = (await plan(page)).rooms.find((x) => x.id === 'N');
     await drag(page, [docked.x + 800, cy], [docked.x + 2800, cy]);
-    const over = (await plan(page)).rooms.find((x) => x.id === id);
+    const s1 = await plan(page);
+    const over = s1.rooms.find((x) => x.id === id);
+    const n1 = s1.rooms.find((x) => x.id === 'N');
     assert.ok(over.x > docked.x, 'комната сдвинута');
+    assert.equal(n1.x, over.x + over.w + partition, 'сосед уменьшен до перегородки');
     const overlap = await page.evaluate(() => window.__kepler.state.norms.problems.some((x) => x.kind === 'overlap'));
-    assert.ok(overlap, 'замечание о перекрытии');
+    assert.ok(!overlap, 'замечания о перекрытии нет');
     await page.keyboard.press('Control+z');
-    const back = (await plan(page)).rooms.find((x) => x.id === id);
+    const s2 = await plan(page);
+    const back = s2.rooms.find((x) => x.id === id);
     assert.deepEqual([back.x, back.y], [docked.x, docked.y]);
+    assert.deepEqual(s2.rooms.find((x) => x.id === 'N'), n0, 'сосед восстановлен');
   });
 
   it('копия Ctrl+D — обычная копия; отмена и повтор', async () => {

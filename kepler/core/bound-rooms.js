@@ -172,7 +172,17 @@ export function findLoopAt(project, walls, p) {
   if (info.open) return { ok: false, reason: LEAK };
   if (tooSmall(info)) return { ok: false, reason: 'Петля слишком узкая для помещения' };
   const shape = compShape(field, c);
-  return shape ? { ok: true, shape } : { ok: false, reason: 'Контур не найден' };
+  if (!shape) return { ok: false, reason: 'Контур не найден' };
+  // Комнаты — препятствия заливки, поэтому петля с ними не перекрывается:
+  // соседняя комната «съедает» петлю, на зазоре её стены — общая стена
+  // (loopToRoom, п. 6). Комната внутри петли целиком (дыра в заливке)
+  // оказалась бы под новой — такое помещение не создаём.
+  if (shape.holes.length) {
+    const outer = { x: 0, y: 0, w: 0, h: 0, outline: shape.poly };
+    const inner = (project.rooms || []).find((r) => !r.parentId && roomRects(r).every((q) => roomContainsPoint(outer, q.x + q.w / 2, q.y + q.h / 2)));
+    if (inner) return { ok: false, reason: `Внутри петли уже есть помещение «${inner.name}» — новое легло бы поверх него` };
+  }
+  return { ok: true, shape };
 }
 
 // ---------------------------------------------------------------- Петля → комната

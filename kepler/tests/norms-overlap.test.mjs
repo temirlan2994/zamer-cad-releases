@@ -1,4 +1,5 @@
-// Норма «Помещения перекрываются» (docs/walls-v2-architecture.md, раздел 5).
+// Оставшееся перекрытие помещений (старые файлы, несъедаемое) — замечание норм
+// (docs/walls-v2-architecture.md, раздел 5). Съедание в конце жеста — tests/room-eat.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -20,7 +21,7 @@ test('перекрытие: ровно одно замечание у верхн
   const overlaps = report.problems.filter((x) => x.kind === 'overlap');
   assert.equal(overlaps.length, 1);
   assert.equal(overlaps[0].room.id, b.id);
-  assert.match(overlaps[0].text, /перекрываются \(3,00 м²\)/);
+  assert.match(overlaps[0].text, /«Кухня» лежит на «Гостиная» \(3,00 м²\) — обрежьте «Гостиная», между ними встанет перегородка/);
   assert.deepEqual(overlaps[0].rects, [{ x: 4000, y: 1000, w: 1000, h: 3000 }]);
   assert.equal(overlaps[0].trim.roomId, a.id);
   assert.equal(report.overlaps.length, 1);
