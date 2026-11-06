@@ -63,7 +63,9 @@ export const MIGRATIONS = Object.freeze({
   // v5 → v6: ручные стены (docs/walls-v2-architecture.md, раздел 4). У каждого
   // этажа (и этажей вариантов) появляется массив walls[] — пустой: стены
   // комнат по-прежнему выводятся, геометрия и проёмы не меняются. Новые
-  // необязательные поля: opening.host { wallId, t } — проём на ручной стене.
+  // необязательные поля: opening.host { wallId, t } — проём на ручной стене;
+  // room.bound { mode: 'walls', seed } + кеш poly/holes — помещение по стенам
+  // (core/bound-rooms.js). Из v5 их нет — преобразование не нужно.
   5(data) {
     const level = (l) => (l && typeof l === 'object' ? { ...l, walls: Array.isArray(l.walls) ? l.walls : [] } : l);
     const out = { ...data };

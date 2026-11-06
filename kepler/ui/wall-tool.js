@@ -5,6 +5,7 @@
 // Esc, Enter, двойной клик или клик в ту же точку — конец цепочки.
 
 import { addManualWall, snapWallPoint, wallAxisVerdict } from '../core/wall-manual.js';
+import { createBoundRoom, findLoopAt, splitRoomByWall, unbindRoomWalls } from '../core/bound-rooms.js';
 import { wallClassThickness } from '../core/walls.js';
 import { toast } from './dom.js';
 import { gridStep } from './snap.js';
@@ -73,6 +74,59 @@ export function wallToolClick(plan, event) {
   t.count += 1;
   t.start = p; // цепочка: следующая стена от конца предыдущей
   requestDraw();
+}
+
+// ---------------------------------------------------------------- Помещение по стенам
+//
+// Инструмент «Помещение по стенам» (core/bound-rooms.js): клик внутри
+// замкнутой петли стен создаёт помещение; контур дальше следует за стенами.
+
+const HINT_ROOM = 'Помещение по стенам: кликните внутри замкнутой петли стен · Esc — отмена';
+
+export function startBoundRoomTool() {
+  if (state.modeName !== 'plan') return;
+  setTool({ kind: 'bound-room', preview: null, reason: null }, HINT_ROOM);
+  state.selection = null;
+}
+
+export function boundRoomHover(plan) {
+  const t = state.tool;
+  if (t?.kind !== 'bound-room') return;
+  const found = findLoopAt(state.project, state.walls || [], plan);
+  t.preview = found.ok ? found.shape : null;
+  t.reason = found.ok ? null : found.reason;
+  requestDraw();
+}
+
+export function boundRoomClick(plan) {
+  const t = state.tool;
+  if (t?.kind !== 'bound-room') return;
+  let res = null;
+  const found = findLoopAt(state.project, state.walls || [], plan);
+  if (!found.ok) { toast(found.reason, true); return; }
+  mutate(() => { res = createBoundRoom(state.project, state.walls || [], plan); });
+  if (!res?.ok) { toast(res?.reason || 'Помещение не создано', true); return; }
+  cancelTool();
+  selectObject({ type: 'room', id: res.room.id });
+  toast(`Помещение «${res.room.name}» создано по стенам · тип и имя — в свойствах`);
+}
+
+// «Отвязать стены»: стены блок-комнаты → ручные, комната → помещение по стенам.
+export function unbindWallsAction(roomId) {
+  let res = null;
+  mutate(() => { res = unbindRoomWalls(state.project, state.walls || [], roomId); });
+  if (!res?.ok) { toast(res?.reason || 'Не получилось', true); return; }
+  selectObject({ type: 'room', id: roomId });
+  toast(`Стены отвязаны: ${res.wallIds.length} ручных${res.lost.length ? ` · проёмов без места: ${res.lost.length}` : ''} · Ctrl+Z — отменить`);
+}
+
+// «Разделить на два»: блок-комната по ручной стене → две блок-комнаты.
+export function splitByWallAction(roomId, wallId) {
+  let res = null;
+  mutate(() => { res = splitRoomByWall(state.project, state.walls || [], roomId, wallId); });
+  if (!res?.ok) { toast(res?.reason || 'Разделить не получилось', true); return; }
+  selectObject({ type: 'room', id: res.roomIds[1] });
+  toast(`Комната разделена на две${res.lost.length ? ` · проёмов удалено: ${res.lost.length}` : ''} · Ctrl+Z — отменить`);
 }
 
 // Конец цепочки: инструмент выключается, последняя стена выбирается.

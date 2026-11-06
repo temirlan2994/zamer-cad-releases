@@ -3,6 +3,7 @@
 export const state = {
   project: null,
   walls: [],
+  freeLoops: [], // замкнутые петли стен без помещения (core/bound-rooms.js)
   gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)

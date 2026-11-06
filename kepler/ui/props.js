@@ -217,8 +217,8 @@ function renderRoomProps(panel, room) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"></label>
+        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}" ${room.bound ? 'readonly title="Размер помещения по стенам задают стены"' : ''}></label>
+        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}" ${room.bound ? 'readonly' : ''}></label>
       </div>
       ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
         <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
@@ -239,7 +239,7 @@ function renderRoomProps(panel, room) {
   const applySize = () => {
     const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || room.w);
     const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || room.h);
-    if (w === room.w && h === room.h) return;
+    if (room.bound || (w === room.w && h === room.h)) return;
     const before = snapshot();
     const old = { w: room.w, h: room.h };
     room.w = w; room.h = h;

@@ -165,7 +165,8 @@ export function checkWallInvariants(project, walls) {
 
   const rooms = project.rooms;
   const masks = new Map(rooms.map((r) => [r.id, roomMask(grid, r)]));
-  const closed = rooms.filter((r) => !isOpenRoom(r));
+  // Помещение по стенам без своей петли (boundIssue) — грань не обязана быть покрыта.
+  const closed = rooms.filter((r) => !isOpenRoom(r) && !r.boundIssue);
   const shafts = rooms.filter((r) => isShaft(r));
   const shaftZone = new Uint8Array(N); // шахта вместе со своими стенами
   for (const s of shafts) {
@@ -256,6 +257,8 @@ export function checkWallInvariants(project, walls) {
         const inShaft = shafts.some((s) => s !== r && masks.get(s.id)[k0]);
         if (inShaft) continue; // стену здесь «съела» шахта — проверяем только (c)
         if (!wall(k0)) uncovered.push(`${r.id}/${e.side} ${fmt(grid, k0)}`);
+        // Помещение по стенам своих стен не имеет — толщину (d) не меряем.
+        if (r.bound) continue;
         // d — замер толщины лучом наружу.
         const hosts = rooms.filter((o) => masks.get(o.id)[k0]); // комнаты, где стартует луч (родитель)
         const stops = rooms.filter((o) => o !== r && !hosts.includes(o));

@@ -18,7 +18,7 @@ import { isOpenRoom } from './catalog.js';
 import { rectCornersWorld, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners, sunPosition } from './site.js';
-import { deriveWalls, openingRect, sideEdge } from './walls.js';
+import { deriveWalls, hostOpeningRoom, openingRect, sideEdge } from './walls.js';
 import { LIVING_TYPES } from './schedule.js';
 
 export const STEP_MIN = 5;
@@ -120,7 +120,7 @@ export function obstaclesOf(project) {
 // Сторона может быть числом 0–3 или строкой стены выреза Г/контура
 // ('notch-h', 'outline-N'): единый вид даёт sideEdge (orient + outward).
 export function openingFacade(room, side, wall, absCenter) {
-  if (!room) return null; // окно ручной стены (host) — без помещения-владельца (этап C)
+  if (!room) return null; // окно ручной стены (host) — см. hostOpeningFacade
   const edge = sideEdge(room, side);
   if (!edge) return null;
   const b = wall.band;
@@ -128,6 +128,15 @@ export function openingFacade(room, side, wall, absCenter) {
     return { normal: { x: 0, y: edge.outward }, at: { x: absCenter, y: edge.outward < 0 ? b.y : b.y + b.h } };
   }
   return { normal: { x: edge.outward, y: 0 }, at: { x: edge.outward > 0 ? b.x + b.w : b.x, y: absCenter } };
+}
+
+// То же для проёма ручной стены: own — hostOpeningRoom (core/walls.js).
+export function hostOpeningFacade(own) {
+  const b = own.wall.band;
+  if (own.wall.orient === 'h') {
+    return { normal: { x: 0, y: own.outward }, at: { x: own.absCenter, y: own.outward < 0 ? b.y : b.y + b.h } };
+  }
+  return { normal: { x: own.outward, y: 0 }, at: { x: own.outward > 0 ? b.x + b.w : b.x, y: own.absCenter } };
 }
 
 // Окна всех этажей: середина снаружи (мир), внешняя нормаль (мир), высота.
@@ -143,14 +152,24 @@ export function windowsOf(project) {
       if (o.kind !== 'window') continue;
       const placed = openingRect(lp, o, walls);
       if (!placed) continue;
-      const room = lp.rooms.find((r) => r.id === o.roomId);
-      const facade = openingFacade(room, o.side, placed.wall, placed.absCenter);
+      let facade; let roomId = o.roomId;
+      if (o.host) {
+        // Окно ручной стены: помещение — со стороны дома (помещение по стенам
+        // или блок-комната), фасад — противоположная грань стены.
+        const own = hostOpeningRoom(lp, o, walls);
+        if (!own) continue;
+        roomId = own.room.id;
+        facade = hostOpeningFacade(own);
+      } else {
+        const room = lp.rooms.find((r) => r.id === o.roomId);
+        facade = openingFacade(room, o.side, placed.wall, placed.absCenter);
+      }
       if (!facade) continue;
       const { at, normal: n } = facade;
       const normal = { x: n.x * c - n.y * s, y: n.x * s + n.y * c };
       const p = toWorld(project.building, at);
       out.push({
-        roomId: o.roomId,
+        roomId,
         levelId: level.id,
         // Чуть наружу от фасада, чтобы не задеть собственную стену.
         at: { x: p.x + normal.x * 20, y: p.y + normal.y * 20 },

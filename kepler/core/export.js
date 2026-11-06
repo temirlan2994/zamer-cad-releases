@@ -30,13 +30,15 @@ import {
   contours, formatElevation, houseTerrain, terrainModel, terrainSummary,
 } from './terrain.js';
 import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
+import { isBoundRoom, roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
+import { resolveBoundRooms } from './bound-rooms.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
   const walls = deriveWalls(project);
+  resolveBoundRooms(project, walls); // контуры помещений по стенам — по текущим стенам
   const connectivity = analyzeConnectivity(project, walls);
 
   const numbers = new Map((roomSchedule(project).find((x) => x.level.id === level.id)?.rows || []).map((r) => [r.id, r.number]));
@@ -52,6 +54,8 @@ function buildLevelExport(project, level) {
     ceiling_height: roomCeiling(room, level), // чистая высота, мм
     area_m2: Number((roomShapeArea(room) / 1_000_000).toFixed(3)),
     net_area_m2: Number(roomNetAreaM2(project, room).toFixed(3)),
+    // Помещение по стенам: контур — из петли стен; enclosed: false — петля разомкнута/слита.
+    ...(isBoundRoom(room) ? { bound: 'walls', enclosed: !room.boundIssue, ...(room.holes?.length ? { holes: room.holes } : {}) } : {}),
   }));
 
   const wallsOut = walls.filter((w) => !w.hidden && w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({

@@ -7,7 +7,8 @@
 // Общая стена возникает только при зазоре, равном её толщине (100 или override).
 
 import { createProject, createRoom } from '../core/model.js';
-import { ownKey, sharedKey } from '../core/walls.js';
+import { deriveWalls, ownKey, sharedKey } from '../core/walls.js';
+import { createBoundRoom, resolveBoundRooms } from '../core/bound-rooms.js';
 
 let seq = 0;
 function room(type, x, y, w, h, extra = {}) {
@@ -259,6 +260,56 @@ export function manualClosesCorridor() {
   ]);
 }
 
+// ---------------------------------------------------------------- Помещения по стенам (этап C)
+// room.bound — помещение из петли; контур — заливкой (core/bound-rooms.js).
+
+function withBound(p, seeds, { drop = [] } = {}) {
+  for (const [x, y, type = 'living'] of seeds) {
+    const res = createBoundRoom(p, deriveWalls(p), { x, y }, { type });
+    if (!res.ok) throw new Error(`фикстура ${p.name}: ${res.reason}`);
+  }
+  if (drop.length) p.walls = p.walls.filter((w) => !drop.includes(w.id));
+  resolveBoundRooms(p, deriveWalls(p));
+  return p;
+}
+
+const loop = (pts, t = 200) => pts.map((a, i) => {
+  const b = pts[(i + 1) % pts.length];
+  return [a[0], a[1], b[0], b[1], t];
+});
+
+// Прямоугольная петля из 4 ручных стен.
+export function boundRect() {
+  return withBound(manualProject('помещение: прямоугольник', [], loop([[0, 0], [5000, 0], [5000, 4000], [0, 4000]])), [[2500, 2000]]);
+}
+
+// Г-образная петля.
+export function boundL() {
+  return withBound(manualProject('помещение: Г', [], loop([[0, 0], [6000, 0], [6000, 3000], [3000, 3000], [3000, 5000], [0, 5000]])), [[1000, 1000]]);
+}
+
+// Петля разомкнулась: помещение с последним контуром, статус open.
+export function boundOpen() {
+  return withBound(manualProject('помещение: разомкнуто', [], loop([[0, 0], [5000, 0], [5000, 4000], [0, 4000]])), [[2500, 2000]], { drop: ['mw2'] });
+}
+
+// Две комнаты через общую ручную стену.
+export function boundTwo() {
+  return withBound(manualProject('помещения: два через стену', [], [
+    ...loop([[0, 0], [8000, 0], [8000, 4000], [0, 4000]]), [4000, 0, 4000, 4000, 100],
+  ]), [[2000, 2000], [6000, 2000, 'bedroom']]);
+}
+
+// Смешанная петля: кольцо блок-комнаты + три ручные стены (коридор).
+export function boundMixed() {
+  const a = room('bedroom', 0, 0, 4000, 4000);
+  return withBound(manualProject('помещение: блок + ручные', [a], [
+    [4000, -100, 7000, -100], [7000, -100, 7000, 4100], [7000, 4100, 4000, 4100],
+  ]), [[5500, 2000, 'corridor']]);
+}
+
+export const BOUND_ROOM_FIXTURES = { boundRect, boundL, boundOpen, boundTwo, boundMixed };
+
 export const MANUAL_WALL_FIXTURES = {
   manualWallAlone,
   manualCorner,
@@ -266,6 +317,7 @@ export const MANUAL_WALL_FIXTURES = {
   manualCrossesRoomWall,
   manualThroughRoom,
   manualClosesCorridor,
+  ...BOUND_ROOM_FIXTURES,
 };
 
 export const WALL_FIXTURES = {

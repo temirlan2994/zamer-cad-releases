@@ -41,7 +41,9 @@ export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, 
 
 // Есть ли в проекте ручные стены (на любом этаже, в т. ч. в вариантах).
 export function hasManualWalls(project) {
-  const inLevels = (levels) => Array.isArray(levels) && levels.some((l) => Array.isArray(l?.walls) && l.walls.length > 0);
+  // Помещение по стенам (room.bound) — тоже содержимое схемы 6.
+  const inLevels = (levels) => Array.isArray(levels) && levels.some((l) => (Array.isArray(l?.walls) && l.walls.length > 0)
+    || (Array.isArray(l?.rooms) && l.rooms.some((r) => r?.bound)));
   return inLevels(project?.levels)
     || (Array.isArray(project?.variants) && project.variants.some((v) => inLevels(v?.house?.levels)));
 }
@@ -264,6 +266,23 @@ export function normalizeRoom(r) {
     if (outline) room.outline = outline; else delete room.outline;
   }
   if ('notch' in room && !isObj(room.notch)) delete room.notch;
+  // Помещение по стенам (схема 6): bound { mode: 'walls', seed }, кеш контура
+  // poly/holes (абсолютные точки). Битый bound — обычная блок-комната.
+  if ('bound' in room) {
+    const seed = isObj(room.bound) && room.bound.mode === 'walls' ? cleanPoint(room.bound.seed) : null;
+    if (seed) {
+      room.bound = { mode: 'walls', seed: { x: seed.x, y: seed.y } };
+      delete room.outline;
+      delete room.notch;
+      const poly = cleanPoints(room.poly, 4);
+      if (poly) room.poly = poly.map((p) => ({ x: p.x, y: p.y })); else delete room.poly;
+      const holes = Array.isArray(room.holes) ? room.holes.map((h) => cleanPoints(h, 4)).filter(Boolean) : [];
+      if (holes.length && room.poly) room.holes = holes; else delete room.holes;
+    } else {
+      delete room.bound; delete room.poly; delete room.holes;
+    }
+    if (typeof room.boundIssue !== 'string') delete room.boundIssue;
+  }
   if ('ceiling' in room) {
     const c = pos(room.ceiling);
     if (c) room.ceiling = c; else delete room.ceiling;

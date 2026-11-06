@@ -18,7 +18,8 @@ import { rectsCycles } from './ortho-grid.js';
 import { finalizeRoomOutline, roomRects } from './room-shape.js';
 import { MIN_ROOM_SIZE, roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
-import { deriveWalls } from './walls.js';
+import { deriveWalls, openingOwnerId } from './walls.js';
+import { isBoundRoom, wallsInsideRooms } from './bound-rooms.js';
 
 export const SP55 = {
   minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, kitchen: 6 },
@@ -39,8 +40,20 @@ export const LANDSCAPE_NORMS = {
 const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
 
 // Проверки одной комнаты: [{ kind, ok, text }].
-export function roomChecks(project, room, level) {
+export function roomChecks(project, room, level, walls = null) {
   const out = [];
+  if (room.boundIssue) {
+    // Помещение по стенам без своей петли: площадь не считается (ТЭП), прочие
+    // проверки бессмысленны, пока контур не замкнут.
+    const other = room.boundWith && project.rooms.find((r) => r.id === room.boundWith);
+    out.push({
+      kind: 'bound', ok: false,
+      text: room.boundIssue === 'merged'
+        ? `Два помещения в одном контуре: «${room.name}» и «${other?.name || '…'}» — удалите одно или поставьте стену между ними`
+        : `Помещение «${room.name}» не замкнуто — стены не образуют петлю`,
+    });
+    return out;
+  }
   const title = roomType(room.type)?.title || room.name;
   const area = roomNetAreaM2(project, room);
   const minArea = SP55.minArea[room.type];
@@ -61,8 +74,11 @@ export function roomChecks(project, room, level) {
     });
   }
   if (SP55.lightTypes.has(room.type) && area > 0) {
+    // Окна ручных стен (host) — по помещению со стороны дома (hostOpeningRoom).
+    const hosted = project.openings.some((o) => o.kind === 'window' && o.host);
+    const w = hosted ? (walls || deriveWalls(project)) : null;
     const glass = project.openings
-      .filter((o) => o.kind === 'window' && o.roomId === room.id)
+      .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === room.id)
       .reduce((s, o) => s + (o.width * (o.height ?? 1500)) / 1e6, 0);
     const ok = glass / area >= SP55.lightRatio - 1e-9;
     out.push({
@@ -88,7 +104,7 @@ export function roomChecks(project, room, level) {
 // (терраса всегда под домом) — не перекрытие. Нижняя (раньше в массиве)
 // «съедена» верхней. → [{ lower, upper, rects, areaM2 }].
 export function roomOverlaps(project) {
-  const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r));
+  const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r) && !isBoundRoom(r));
   const out = [];
   for (let i = 0; i < list.length; i += 1) {
     const a = list[i];
@@ -151,8 +167,17 @@ export function normsReport(project) {
     const lp = levelProject(project, level.id);
     const walls = deriveWalls(lp);
     const levelOverlaps = roomOverlaps(lp);
+    const crossed = wallsInsideRooms(lp);
     for (const room of lp.rooms) {
-      const checks = roomChecks(lp, room, level);
+      const checks = roomChecks(lp, room, level, walls);
+      // Ручная стена через блок-комнату (раздел 2.5): «Разделить на два».
+      for (const c of crossed.filter((q) => q.roomId === room.id)) {
+        checks.push({
+          kind: 'wall-divides', ok: false, wallId: c.wallId,
+          text: c.divides ? `Стена делит помещение «${room.name}»` : `Стена внутри помещения «${room.name}»`,
+          split: c.divides ? { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` } : null,
+        });
+      }
       for (const f of furnitureIssues(lp, room, walls)) {
         checks.push({ kind: 'furniture', ok: false, text: f.text, itemIds: f.itemIds });
         for (const id of f.itemIds) flagged.add(id);

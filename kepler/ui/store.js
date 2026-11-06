@@ -7,6 +7,7 @@ import {
 } from '../core/model.js';
 import { hashText, newId } from '../core/storage.js';
 import { deriveWalls } from '../core/walls.js';
+import { resolveBoundRooms } from '../core/bound-rooms.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { el, toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
@@ -35,8 +36,12 @@ const warned = new Set();
 // Стены, зазоры и стены этажа ниже — без записи в state (проверка до замены).
 function deriveAll(project) {
   const below = levelBelow(project);
+  const walls = deriveWalls(project);
+  // Помещения по стенам: контуры следуют за стенами (кеш в room.poly).
+  const loops = resolveBoundRooms(project, walls);
   return {
-    walls: deriveWalls(project),
+    walls,
+    freeLoops: loops.free,
     gaps: findNearMissGaps(project, { move: false }),
     // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
     belowWalls: below ? deriveWalls(levelProject(project, below.id)) : null,

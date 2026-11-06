@@ -3,7 +3,35 @@
 
 const CORNERS = new Set(['nw', 'ne', 'se', 'sw']);
 
+// Помещение по стенам (схема 6): room.bound = { mode: 'walls', seed } —
+// контур не хранится как истина, а вычисляется заливкой (core/bound-rooms.js)
+// и кешируется в room.poly (абсолютные точки в осях дома) и room.holes.
+export function isBoundRoom(room) {
+  return room?.bound?.mode === 'walls';
+}
+
+function boundPoly(room) {
+  if (!isBoundRoom(room) || !Array.isArray(room.poly) || room.poly.length < 4) return null;
+  return room.poly;
+}
+
+function boundHoles(room) {
+  return boundPoly(room) && Array.isArray(room.holes) ? room.holes.filter((h) => Array.isArray(h) && h.length >= 4) : [];
+}
+
+function polyArea(points) {
+  let twice = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i]; const b = points[(i + 1) % points.length];
+    twice += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(twice) / 2;
+}
+
 function outlinePoints(room) {
+  const bound = boundPoly(room);
+  if (bound) return bound.map((p) => ({ x: p.x, y: p.y }));
+  if (isBoundRoom(room)) return null;
   if (!Array.isArray(room?.outline) || room.outline.length < 4) return null;
   const points = room.outline.map((p) => ({ x: room.x + Number(p.x), y: room.y + Number(p.y) }));
   return points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) ? points : null;
@@ -27,16 +55,18 @@ function pointInPolygon(points, x, y) {
   return inside;
 }
 
-function polygonRects(points) {
-  const xs = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b);
-  const ys = [...new Set(points.map((p) => p.y))].sort((a, b) => a - b);
+function polygonRects(points, holes = []) {
+  const all = [...points, ...holes.flat()];
+  const xs = [...new Set(all.map((p) => p.x))].sort((a, b) => a - b);
+  const ys = [...new Set(all.map((p) => p.y))].sort((a, b) => a - b);
   const rows = [];
   for (let yi = 0; yi < ys.length - 1; yi += 1) {
     const y = ys[yi]; const h = ys[yi + 1] - y;
     let run = null;
     for (let xi = 0; xi < xs.length - 1; xi += 1) {
       const x = xs[xi]; const w = xs[xi + 1] - x;
-      const inside = w > 0.5 && h > 0.5 && pointInPolygon(points, x + w / 2, y + h / 2);
+      const inside = w > 0.5 && h > 0.5 && pointInPolygon(points, x + w / 2, y + h / 2)
+        && !holes.some((hole) => pointInPolygon(hole, x + w / 2, y + h / 2));
       if (inside && run && Math.abs(run.x + run.w - x) < 0.5) run.w += w;
       else {
         if (run) rows.push(run);
@@ -55,6 +85,7 @@ function polygonRects(points) {
 }
 
 export function finalizeRoomOutline(room) {
+  if (isBoundRoom(room)) return { merged: false }; // контур помещения по стенам — от стен
   let points = outlinePoints(room);
   if (!points) return { merged: false };
   points = points.filter((point, index) => !samePoint(point, points[(index - 1 + points.length) % points.length]));
@@ -163,7 +194,7 @@ export function roomNotchRect(room) {
 // Два неперекрывающихся прямоугольника, объединение которых равно комнате.
 export function roomRects(room) {
   const outline = outlinePoints(room);
-  if (outline) return polygonRects(outline);
+  if (outline) return polygonRects(outline, boundHoles(room));
   const cut = roomNotchRect(room);
   if (!cut) return [{ x: room.x, y: room.y, w: room.w, h: room.h }];
   const c = room.notch.corner;
@@ -187,7 +218,7 @@ export function roomRects(room) {
 
 export function roomContainsPoint(room, x, y) {
   const outline = outlinePoints(room);
-  if (outline) return pointInPolygon(outline, x, y);
+  if (outline) return pointInPolygon(outline, x, y) && !boundHoles(room).some((hole) => pointInPolygon(hole, x, y));
   if (x < room.x || x > room.x + room.w || y < room.y || y > room.y + room.h) return false;
   const cut = roomNotchRect(room);
   return !cut || x < cut.x || x > cut.x + cut.w || y < cut.y || y > cut.y + cut.h;
@@ -195,14 +226,7 @@ export function roomContainsPoint(room, x, y) {
 
 export function roomShapeArea(room) {
   const outline = outlinePoints(room);
-  if (outline) {
-    let twice = 0;
-    for (let i = 0; i < outline.length; i += 1) {
-      const a = outline[i]; const b = outline[(i + 1) % outline.length];
-      twice += a.x * b.y - b.x * a.y;
-    }
-    return Math.abs(twice) / 2;
-  }
+  if (outline) return polyArea(outline) - boundHoles(room).reduce((s, hole) => s + polyArea(hole), 0);
   return roomRects(room).reduce((sum, rect) => sum + rect.w * rect.h, 0);
 }
 
@@ -240,6 +264,7 @@ function shapeVertexTokens(corner) {
 // Для Г-комнаты: шесть вершин + шесть середин стен. moveX/moveY указывают,
 // какую координатную линию двигает ручка.
 export function roomShapeHandles(room) {
+  if (isBoundRoom(room)) return []; // форму помещения по стенам меняют стены
   const outline = outlinePoints(room);
   if (outline) {
     const handles = outline.map((point, index) => ({

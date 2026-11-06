@@ -11,7 +11,9 @@ import {
   openingFrame, openingPosAt, openingRect, setOpeningPos,
 } from '../core/walls.js';
 import { dragManualWallEnd, snapWallPoint } from '../core/wall-manual.js';
-import { finishWallChain, wallToolClick, wallToolHover } from './wall-tool.js';
+import {
+  boundRoomClick, boundRoomHover, finishWallChain, wallToolClick, wallToolHover,
+} from './wall-tool.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
@@ -328,6 +330,7 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
   if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
+  if (state.tool?.kind === 'bound-room') { boundRoomHover(plan); return; }
   if (state.tool?.kind === 'terrain') {
     const s = worldToScreen(world.x, world.y);
     const tp = hitTerrainPoint(s);
@@ -547,6 +550,7 @@ export function bindCanvasInput() {
         tapOrNow(event, screen, () => wallToolClick(plan, mods));
         return;
       }
+      if (t.kind === 'bound-room') { tapOrNow(event, screen, () => boundRoomClick(plan)); return; }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
       if (t.kind === 'align-underlay') { tapOrNow(event, screen, () => addAlignPoint(world)); return; }
       if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
@@ -747,6 +751,8 @@ export function bindCanvasInput() {
         return;
       }
       selectObject({ type: 'room', id: room.id });
+      // Помещение по стенам не двигается: его контур следует за стенами.
+      if (room.bound) return;
       // Перевозимый груз фиксируется в момент захвата: вложенные помещения и
       // мебель, стоящая внутри, — чтобы комната не «сметала» чужую мебель по пути.
       const children = state.project.rooms.filter((r) => r.parentId === room.id);

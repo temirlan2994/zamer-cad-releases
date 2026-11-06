@@ -11,7 +11,7 @@
 import { FURNITURE, furnitureDef, roomType, DEFAULT_PARTITION } from './catalog.js';
 import { nestedOuterRect } from './rooms.js';
 import { roomContainsPoint } from './room-shape.js';
-import { doorSwingRect, openingRect } from './walls.js';
+import { doorSwingRect, openingOwnerId, openingRect } from './walls.js';
 import { compTypeFor, withDefaultComp } from './composite.js';
 import { createItem } from './model.js';
 
@@ -134,7 +134,8 @@ export function buildRoomContext(project, room, walls) {
 
   const windowZones = [];
   for (const opening of project.openings) {
-    if (opening.kind !== 'window' || opening.roomId !== room.id) continue;
+    if (opening.kind !== 'window') continue;
+    if ((opening.host ? openingOwnerId(project, opening, walls) : opening.roomId) !== room.id) continue;
     const placed = openingRect(project, opening, walls);
     if (!placed) continue;
     windowZones.push(thresholdRect(placed.rect, inner, 250));

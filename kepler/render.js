@@ -304,6 +304,7 @@ export function createRenderer(canvas) {
         return room.parentId ? 2 : 1;
       };
       const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
+      drawFreeLoops(ctx, state.freeLoops, houseTokens, px);
       for (const room of roomPaintOrder) {
         drawFloor(ctx, room, houseTokens, px);
         if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, houseTokens, px);
@@ -544,6 +545,7 @@ export function createRenderer(canvas) {
     }
     // Инструмент «Стена»: тело будущей стены от начала до курсора и линии привязки.
     if (state.tool?.kind === 'wall' && state.tool.cursor) drawWallToolPreview(ctx, state.tool, tokens, px);
+    if (state.tool?.kind === 'bound-room' && state.tool.preview) drawLoopShape(ctx, state.tool.preview, tokens.accent, px, 0.18);
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
       ctx.lineWidth = px(1);
@@ -1291,6 +1293,31 @@ function drawFloor(ctx, room, tokens, px) {
   }
   ctx.fillStyle = tint;
   for (const rect of roomRects(room)) ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  // Помещение по стенам без своей петли — красный пунктир (как Revit «Not Enclosed»).
+  if (room.bound && room.boundIssue && Array.isArray(room.poly)) {
+    drawLoopShape(ctx, { poly: room.poly, holes: room.holes }, tokens.danger || '#d33', px, 0);
+  }
+}
+
+// Замкнутые петли стен без помещения — штриховка «не назначено».
+function drawFreeLoops(ctx, loops, tokens, px) {
+  for (const loop of loops || []) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(loop.poly[0].x, loop.poly[0].y);
+    for (let i = 1; i < loop.poly.length; i += 1) ctx.lineTo(loop.poly[i].x, loop.poly[i].y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.strokeStyle = tokens.muted;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = px(1);
+    const { x, y, w, h } = loop.bbox;
+    const step = px(14);
+    ctx.beginPath();
+    for (let d = -h; d < w; d += step) { ctx.moveTo(x + d, y); ctx.lineTo(x + d + h, y + h); }
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawOpening(ctx, state, opening, walls, tokens, px) {
@@ -2525,6 +2552,28 @@ function drawManualWallAxis(ctx, state, wall, w2s, tokens) {
   ctx.restore();
 }
 
+// Петля стен: заливка (alpha) и пунктир контура; дыры — вырезаны.
+function drawLoopShape(ctx, shape, color, px, alpha) {
+  const path = (pts) => {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+  };
+  ctx.save();
+  ctx.beginPath();
+  path(shape.poly);
+  for (const h of shape.holes || []) path(h);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.fill('evenodd');
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = px(1.5);
+  ctx.setLineDash([px(6), px(4)]);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawWallToolPreview(ctx, tool, tokens, px) {
   const c = tool.cursor;
   ctx.save();
@@ -2745,6 +2794,7 @@ function drawWitness(ctx, a, b) {
 export const HANDLE_SIZE = 9;
 
 export function roomHandles(room) {
+  if (room.bound) return []; // форма помещения по стенам — от стен
   const shapeHandles = roomShapeHandles(room);
   if (shapeHandles.length) return shapeHandles;
   const { x, y, w, h } = room;

@@ -13,7 +13,7 @@ import { cycleTheme } from './theme.js';
 import { setTool } from './tools.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
 import { bindElevInput } from './terrain.js';
-import { startWallTool } from './wall-tool.js';
+import { startBoundRoomTool, startWallTool } from './wall-tool.js';
 import { fitView, zoomAt } from './view.js';
 
 export function updateDimModeBtn() {
@@ -36,6 +36,10 @@ export function bindToolbar() {
   el('wallToolBtn')?.addEventListener('click', () => {
     if (state.modeName !== 'plan') setEditorMode('plan');
     startWallTool();
+  });
+  el('boundRoomBtn')?.addEventListener('click', () => {
+    if (state.modeName !== 'plan') setEditorMode('plan');
+    startBoundRoomTool();
   });
   el('alignBtn').addEventListener('click', () => {
     const site = state.project.site;

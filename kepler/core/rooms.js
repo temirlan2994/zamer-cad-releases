@@ -9,7 +9,7 @@ import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
 import { isUpperLevel } from './model.js';
 import {
-  roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
+  isBoundRoom, roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
 } from './room-shape.js';
 
 export const MIN_ROOM_SIZE = 900;
@@ -269,6 +269,7 @@ export function eatersOf(project, room) {
     const other = project.rooms[i];
     if (other.id === room.id) continue;
     if (other.parentId || room.parentId) continue;
+    if (isBoundRoom(other) || isBoundRoom(room)) continue; // контур в свету — перекрытий нет
     // Закрытое помещение всегда выше террасы/балкона независимо от порядка
     // создания. Открытые площадки никогда не отнимают площадь дома.
     if (open && !isOpenRoom(other)) {
@@ -286,6 +287,8 @@ export function eatersOf(project, room) {
 // и минус область, «съеденная» перекрывающими комнатами поверх этой.
 export function roomNetAreaM2(project, room) {
   if (isShaft(room)) return 0;
+  // Помещение по стенам без своей петли (разомкнуто/слито) в площади не входит.
+  if (isBoundRoom(room) && room.boundIssue) return 0;
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   let area = roomShapeArea(room);
   const parts = roomRects(room);
@@ -368,7 +371,7 @@ export function analyzeConnectivity(project, walls = null) {
 // Т-образных комнат даёт все стороны с их настоящими длинами.
 // Возвращает { rectangular, edges:[{orient:'v'|'h', at, from, to, inSide}] }.
 export function computeRoomEdges(project, room) {
-  if (room.outline) {
+  if (room.outline || isBoundRoom(room)) {
     return {
       rectangular: false,
       edges: roomBoundaryEdges(room).map((edge) => ({
@@ -492,14 +495,14 @@ export function rectsUnionArea(rects) {
 // (без террас и балконов), м².
 export function buildingFootprintM2(project) {
   const t = project.settings?.exterior || DEFAULT_EXTERIOR;
-  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
+  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue)
     .flatMap((r) => roomRects(r).map((part) => ({ x: part.x - t, y: part.y - t, w: part.w + t * 2, h: part.h + t * 2 })));
   return rectsUnionArea(rects) / 1_000_000;
 }
 
 export function computeBuildingOutline(project, expand = 0) {
   const rects = project.rooms
-    .filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r))
+    .filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue)
     .flatMap((r) => roomRects(r).map((rc) => {
       return expand
         ? { x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand }

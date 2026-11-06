@@ -11,6 +11,7 @@ import { switchLevel } from './levels.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { selectObject } from './tools.js';
+import { splitByWallAction } from './wall-tool.js';
 
 const fmtDay = (day) => day.split('-').reverse().join('.');
 const mark = (ok) => (ok ? '✓' : '✗');
@@ -44,7 +45,8 @@ export function normsSection() {
   const problems = report.problems.map((p) => `
       <li class="bad"><button class="link" data-norm-room="${p.room.id}" data-level="${p.room.levelId}">${escapeHtml(p.room.name)}</button>
         <span>${escapeHtml(p.text)}</span>${p.trim ? `
-        <button class="link" data-norm-trim="${p.trim.roomId}" data-by="${p.trim.byId}" data-level="${p.room.levelId}">${escapeHtml(p.trim.label)}</button>` : ''}</li>`).join('');
+        <button class="link" data-norm-trim="${p.trim.roomId}" data-by="${p.trim.byId}" data-level="${p.room.levelId}">${escapeHtml(p.trim.label)}</button>` : ''}${p.split ? `
+        <button class="link" data-norm-split="${p.split.roomId}" data-wall="${p.split.wallId}" data-level="${p.room.levelId}">${escapeHtml(p.split.label)}</button>` : ''}</li>`).join('');
   return `
     <h3>Нормы <span class="badge ${issues ? 'warn' : 'ok'}">${issues ? `замечаний: ${issues}` : 'в порядке'}</span></h3>
     <div class="prop-block norms">
@@ -88,6 +90,13 @@ export function bindNormLinks(panel) {
       let done = false;
       mutate(() => { done = trimRoomBy(room, by); });
       if (!done) toast('Обрезать не получилось: останется несколько частей или слишком мало');
+    });
+  });
+  // «Разделить на два»: ручная стена через блок-комнату → две комнаты.
+  panel.querySelectorAll('[data-norm-split]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.level !== state.project.activeLevel) switchLevel(btn.dataset.level);
+      splitByWallAction(btn.dataset.normSplit, btn.dataset.wall);
     });
   });
 }

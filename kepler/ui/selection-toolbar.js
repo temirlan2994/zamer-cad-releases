@@ -1,7 +1,8 @@
 // Единая контекстная панель действий над выделением — одно и то же место
 // для комнат, стен, проёмов, мебели и групп, как в BIM-редакторах.
 
-import { isShaft } from '../core/catalog.js';
+import { isOpenRoom, isShaft } from '../core/catalog.js';
+import { isBoundRoom, wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
 import { el, escapeHtml } from './dom.js';
@@ -23,19 +24,26 @@ function contentForSelection(sel) {
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
+    if (isBoundRoom(room)) {
+      // Помещение по стенам: двери и окна — на стенах вокруг, форма — от стен.
+      return { label: 'Помещение по стенам', html: button('delete', '⌫', 'Удалить', 'Del', 'class="danger"') };
+    }
     const common = button('duplicate', '⧉', 'Копировать', 'Ctrl+D');
     const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}`;
-    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
+    const unbind = isShaft(room) || isOpenRoom(room) || room.parentId ? '' : button('unbind-walls', '⛶', 'Отвязать стены');
+    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${unbind}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
   }
   if (sel.type === 'wall') {
     const wall = findWall(sel.key, sel.from);
     if (!wall) return null;
     if (wall.kind === 'manual') {
+      const divides = wallsInsideRooms(state.project).find((q) => q.wallId === wall.wallId && q.divides);
       return {
         label: 'Стена (ручная)',
         html: `${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
           ${button('add-door', '◱', 'Дверь')}
           ${button('add-window', '▦', 'Окно')}
+          ${divides ? button('split-room', '⊟', 'Разделить на два', '', `data-room="${divides.roomId}"`) : ''}
           ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
       };
     }
@@ -148,6 +156,13 @@ export function bindSelectionToolbar() {
         const la = await import('./landscape-array.js');
         if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();
       }
+      return;
+    }
+    if (action === 'unbind-walls' || action === 'split-room') {
+      const wt = await import('./wall-tool.js');
+      const sel = state.selection;
+      if (action === 'unbind-walls' && sel?.type === 'room') wt.unbindWallsAction(sel.id);
+      if (action === 'split-room' && sel?.type === 'wall') wt.splitByWallAction(target.dataset.room, sel.key.slice(2));
       return;
     }
     const actions = await actionsReady;
