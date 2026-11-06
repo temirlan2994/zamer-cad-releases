@@ -161,7 +161,8 @@ function wallTypeOf(override, fallback) {
 }
 
 // Выбор движка стен: KEPLER_WALLS (тесты, node) → ?walls=v1|v2 (URL) →
-// project.settings.wallsEngine → v1. v2 — core/walls-v2.js (стена = область).
+// project.settings.wallsEngine → v2 (по умолчанию). v2 — core/walls-v2.js
+// (стена = область); v1 — устаревший движок с заплатками, будет удалён.
 export function wallsEngine(project) {
   // Ручные стены существуют только в v2: проект с ними — всегда v2.
   if (projectHasManualWalls(project)) return 'v2';
@@ -173,7 +174,7 @@ export function wallsEngine(project) {
     if (m) return m[1];
   }
   const own = project?.settings?.wallsEngine;
-  return own === 'v2' ? 'v2' : 'v1';
+  return own === 'v1' ? 'v1' : 'v2';
 }
 
 // Есть ли ручные стены на каком-либо этаже (активный этаж — project.walls).

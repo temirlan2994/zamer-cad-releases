@@ -6,10 +6,10 @@ import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomByI
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
-import { planRoomDuplicate } from '../core/duplicate-room.js';
+import { BOUND_COPY_REASON, planRoomDuplicate } from '../core/duplicate-room.js';
 import { planGapMove } from '../core/gaps.js';
 import {
-  captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
+  captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import {
@@ -459,8 +459,14 @@ export function copySelection() {
   } else if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
-    objectClipboard = roomClipboard(room);
+    const clip = roomClipboard(room);
+    if (clip.rooms.some((r) => r.bound)) { toast(BOUND_COPY_REASON, true); return false; }
+    objectClipboard = clip;
   } else if (sel.type === 'multi' && sel.roomIds.length) {
+    if (groupCargo(state.project, sel.roomIds, sel.itemIds).rooms.some((r) => r.bound)) {
+      toast(BOUND_COPY_REASON, true);
+      return false;
+    }
     objectClipboard = groupClipboard(sel);
     toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
     return true;

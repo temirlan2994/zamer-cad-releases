@@ -13,7 +13,7 @@ import {
 import { fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { moveWallBy } from '../core/wall-edit.js';
 import { setWallKind } from '../core/wall-thickness.js';
-import { buildIfc } from '../core/ifc.js';
+import { buildIfc, stepString } from '../core/ifc.js';
 import { buildStructuredExport, planEntities } from '../core/export.js';
 import { buildHouseMesh } from '../core/mesh3d.js';
 
@@ -156,7 +156,18 @@ test('потребители: 3D, IFC, DXF, JSON выводят ручную с�
   const ifc = buildIfc(p);
   assert.equal(ifc.counts.walls, 5, '4 наружные + ручная');
   assert.equal(ifc.counts.doors, 1);
-  assert.match(ifc.text, /IFCRECTANGLEPROFILEDEF\(\.AREA\.,\$,#\d+,100\.,4000\.\)/);
+  // Тело ручной стены 100×4000 (x 2950…3050, y 0…4000; в IFC y вверх):
+  // в v2 — многоугольный профиль по контуру.
+  const defs = new Map([...ifc.text.matchAll(/^(#\d+)=(.*);$/gm)].map((m) => [m[1], m[2]]));
+  const refs = (id) => [...defs.get(id).matchAll(/#\d+/g)].map((m) => m[0]);
+  const manualId = [...defs.entries()].find(([, b]) => b.startsWith('IFCWALL(') && b.includes(stepString('Стена (ручная)')))[0];
+  const solids = refs(refs(refs(manualId).at(-1)).at(-1)).slice(1);
+  assert.equal(solids.length, 1, 'одно тело');
+  const profile = defs.get(refs(solids[0])[0]);
+  assert.ok(profile.startsWith('IFCARBITRARYCLOSEDPROFILEDEF'), profile);
+  const pts = refs(/#\d+/.exec(profile)[0]).slice(0, -1).map((id) => /\(\(([^)]*)\)\)/.exec(defs.get(id))[1].split(',').map(Number));
+  const xs = pts.map((q) => q[0]); const ys = pts.map((q) => q[1]);
+  assert.deepEqual([pts.length, Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], [4, 2950, 3050, -4000, 0]);
   const json = buildStructuredExport(p);
   const lvl = json.levels ? json.levels[0] : json;
   const mw = lvl.walls.find((x) => x.source === 'manual');
@@ -165,7 +176,11 @@ test('потребители: 3D, IFC, DXF, JSON выводят ручную с�
   assert.deepEqual(mw.axis, { a: { x: 3000, y: 0 }, b: { x: 3000, y: 4000 } });
   assert.ok(lvl.openings.some((o) => o.host?.wall_id === w.id && o.center));
   const ents = planEntities(p);
-  assert.ok(ents.some((e) => e.type === 'wall' && e.x1 === 3000 && e.x2 === 3000 && e.width === 100));
+  // DXF v2: ось ручной стены — на слое осей, грани (2950 и 3050) — в контуре стен.
+  assert.ok(ents.some((e) => e.layer === 'axes' && e.x1 === 3000 && e.x2 === 3000 && Math.abs(e.y2 - e.y1) === 4000));
+  for (const x of [2950, 3050]) {
+    assert.ok(ents.some((e) => e.type === 'line' && e.layer === 'walls' && e.x1 === x && e.x2 === x && Math.abs(e.y2 - e.y1) > 3000), `грань ${x}`);
+  }
   const faces = buildHouseMesh(p);
   assert.ok(faces.some((f) => f.kind === 'wall' && f.pts.some((pt) => Math.abs(pt.x - 2950) < 1)), '3D-тело стены');
 });

@@ -54,8 +54,13 @@ function trialProject(project, rooms, openings) {
 // снимком из буфера (Ctrl+V) — в проекте их может уже не быть.
 // Возвращает { ok, reason?, dx, dy, rooms, openings, roomMap, removedWindows,
 // removedOpenings, movedOpenings, detached }. Проект не меняется.
+// Помещение по стенам (room.bound) не копируется: его контур задают ручные
+// стены, а копия без стен стала бы «не замкнутой».
+export const BOUND_COPY_REASON = 'Помещение по стенам нельзя копировать; скопируйте стены';
+
 export function planRoomsCopy(project, sourceRooms, sourceOpenings = project.openings || []) {
   if (!sourceRooms?.length) return { ok: false, reason: 'Нет помещений для копии' };
+  if (sourceRooms.some((r) => r.bound)) return { ok: false, reason: BOUND_COPY_REASON };
   const partition = project.settings?.partition || 100;
   const ids = new Set(sourceRooms.map((r) => r.id));
   // «Опорные» — помещения, родитель которых вне набора: по ним ищем место.

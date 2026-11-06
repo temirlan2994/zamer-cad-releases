@@ -144,9 +144,10 @@ test('пол террасы в 3D лежит ниже пола дома', () => 
   assert.equal(floors.find((face) => face.roomId === terrace.id).pts[0].z, 0);
 });
 
-// Только v1: в v2 заплаток нет, наложения проверяет инвариант e (wall-invariants).
-test('3D/IFC: заплатки стыков без двойного объёма и без потери покрытия', { skip: process.env.KEPLER_WALLS === 'v2' && 'v2 без заплаток' }, async () => {
-  const { deriveWalls, wallJoinPatches } = await import('../core/walls.js');
+// Устаревший v1 (явно, при любом движке): в v2 заплаток нет, наложения
+// проверяет инвариант e (wall-invariants).
+test('v1: заплатки стыков без двойного объёма и без потери покрытия', async () => {
+  const { deriveWallsV1: deriveWalls, wallJoinPatches } = await import('../core/walls.js');
   const { WALL_FIXTURES } = await import('./wall-fixtures.mjs');
   const inside = (r, x, y) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h;
   const cross = (a, b) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.5 &&

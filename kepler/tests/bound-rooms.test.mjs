@@ -188,6 +188,7 @@ test('смешанная петля: кольцо блок-комнаты + 3 р
 test('v1/v2: двор между блок-комнатами — петля в обоих движках', () => {
   const P = DEFAULT_PARTITION;
   const results = {};
+  const env = process.env.KEPLER_WALLS;
   for (const engine of ['v1', 'v2']) {
     process.env.KEPLER_WALLS = engine;
     try {
@@ -204,7 +205,7 @@ test('v1/v2: двор между блок-комнатами — петля в �
       assert.ok(!res.room.boundIssue);
       results[engine] = roomNetAreaM2(p, res.room);
     } finally {
-      delete process.env.KEPLER_WALLS;
+      if (env === undefined) delete process.env.KEPLER_WALLS; else process.env.KEPLER_WALLS = env;
     }
   }
   assert.ok(results.v2 > 5, `площадь двора ${results.v2}`);
@@ -367,4 +368,74 @@ test('«Отвязать стены»: блок → помещение по ст
 
 test('поле петель: пустой проект — нет поля', () => {
   assert.equal(loopField(createProject('пусто'), []), null);
+});
+
+test('DXF и IFC v2: помещение по стенам — дыра в контуре стен, тела по контуру', async () => {
+  const { planEntities } = await import('../core/export.js');
+  const { buildIfc } = await import('../core/ifc.js');
+  const p = createProject('петля');
+  wallLoop(p, rectPts(0, 0, 5000, 4000));
+  make(p, { x: 2500, y: 2000 });
+  const ents = planEntities(p, { dims: false });
+  const wallLines = ents.filter((e) => e.type === 'line' && e.layer === 'walls');
+  // Контур W: внешний прямоугольник 5200×4200 и дыра 4800×3800 — 8 рёбер,
+  // без трёх линий на каждую стену и без швов в углах.
+  assert.equal(ents.filter((e) => e.type === 'wall').length, 0);
+  assert.equal(wallLines.length, 8);
+  const len = wallLines.reduce((s, e) => s + Math.hypot(e.x2 - e.x1, e.y2 - e.y1), 0);
+  assert.equal(Math.round(len), 2 * (5200 + 4200) + 2 * (4800 + 3800));
+  // Оси ручных стен — на слое осей.
+  const axes = ents.filter((e) => e.layer === 'axes');
+  assert.equal(axes.length, 4);
+  assert.equal(Math.round(axes.reduce((s, e) => s + Math.hypot(e.x2 - e.x1, e.y2 - e.y1), 0)), 2 * (5000 + 4000));
+  // IFC: тела стен — многоугольные профили, площадь = площадь W.
+  const { text } = buildIfc(p, { timestamp: new Date(0) });
+  assert.equal((text.match(/=IFCWALL\(/g) || []).length, 4);
+  assert.ok((text.match(/=IFCARBITRARYCLOSEDPROFILEDEF\(/g) || []).length >= 4);
+});
+
+test('помещение по стенам: копия (Ctrl+D/Ctrl+V) и групповой сдвиг/поворот запрещены', async () => {
+  const { BOUND_COPY_REASON, planRoomDuplicate } = await import('../core/duplicate-room.js');
+  const { BOUND_MOVE_REASON, captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup } = await import('../core/room-group.js');
+  const p = createProject('петля');
+  wallLoop(p, rectPts(0, 0, 5000, 4000));
+  const room = make(p, { x: 2500, y: 2000 });
+  const block = createRoom('bedroom', 8000, 0, 3000, 3000);
+  p.rooms.push(block);
+  const before = JSON.stringify(p);
+  assert.deepEqual(planRoomDuplicate(p, room.id), { ok: false, reason: BOUND_COPY_REASON });
+  assert.equal(BOUND_COPY_REASON, 'Помещение по стенам нельзя копировать; скопируйте стены');
+  const group = planGroupCopy(p, captureRoomGroup(p, [room.id, block.id]));
+  assert.equal(group.ok, false);
+  assert.equal(group.reason, BOUND_COPY_REASON);
+  for (const res of [moveRoomGroup(p, [room.id, block.id], [], 500, 0), rotateRoomGroup(p, [room.id, block.id], [])]) {
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, BOUND_MOVE_REASON);
+  }
+  assert.equal(JSON.stringify(p), before, 'проект не изменился');
+  // Обычная комната по-прежнему копируется и двигается.
+  assert.equal(planRoomDuplicate(p, block.id).ok, true);
+  assert.equal(moveRoomGroup(p, [block.id], [], 500, 0).ok, true);
+});
+
+test('пятно дома из ручных стен — по объединению W, а не помещение + наружная толщина', async () => {
+  const { buildingFootprintM2 } = await import('../core/rooms.js');
+  const p = createProject('пятно');
+  // Наружные ручные стены 400 (а не settings.exterior = 250 по умолчанию).
+  wallLoop(p, rectPts(0, 0, 6000, 4000), 400);
+  make(p, { x: 3000, y: 2000 });
+  // Наружная грань: −200…6200 × −200…4200.
+  assert.equal(buildingFootprintM2(p).toFixed(4), (6.4 * 4.4).toFixed(4));
+  const ext = p.settings.exterior || DEFAULT_EXTERIOR;
+  const edges = computeBuildingOutline(p, ext);
+  const xs = edges.filter((e) => e.orient === 'v').map((e) => e.at);
+  const ys = edges.filter((e) => e.orient === 'h').map((e) => e.at);
+  assert.deepEqual([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], [-200, 6200, -200, 4200]);
+  // Выдвижение сверх наружной грани — на разницу.
+  const far = computeBuildingOutline(p, ext + 100).filter((e) => e.orient === 'v').map((e) => e.at);
+  assert.deepEqual([Math.min(...far), Math.max(...far)], [-300, 6300]);
+  // Дом из блоков — как раньше (помещение + наружная толщина).
+  const q = createProject('блок');
+  q.rooms.push(createRoom('living', 0, 0, 6000, 4000));
+  assert.equal(Number(buildingFootprintM2(q).toFixed(4)), Number((((6000 + 2 * ext) * (4000 + 2 * ext)) / 1e6).toFixed(4)));
 });

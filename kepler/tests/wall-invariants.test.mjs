@@ -2,9 +2,8 @@
 // (см. docs/walls-geometry-design.md). Фикстуры — tests/wall-fixtures.mjs,
 // проверки — tests/wall-invariants-lib.mjs (растеризация 10 мм).
 //
-// По умолчанию проверяется текущая deriveWalls; известные дефекты старой
-// схемы помечены { todo } — `npm test` зелёный, а список виден в выводе.
-// KEPLER_WALLS=v2 — проверить deriveWallsV2 (когда появится) без поблажек.
+// Проверяется текущая deriveWalls: по умолчанию движок v2 — без поблажек.
+// KEPLER_WALLS=v1 — устаревший движок; его известные дефекты помечены { todo }.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -15,8 +14,8 @@ import { deserializeProject, levelProject } from '../core/model.js';
 import { MANUAL_WALL_FIXTURES, WALL_FIXTURES } from './wall-fixtures.mjs';
 import { checkWallInvariants } from './wall-invariants-lib.mjs';
 
-const V2 = process.env.KEPLER_WALLS === 'v2';
-const derive = V2 ? wallsModule.deriveWallsV2 : wallsModule.deriveWalls;
+const V2 = wallsModule.wallsEngine({ settings: {} }) === 'v2';
+const derive = V2 ? wallsModule.deriveWallsV2 : wallsModule.deriveWallsV1;
 
 const INVARIANTS = {
   holes: 'a: нет щелей и дыр',

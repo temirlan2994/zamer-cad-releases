@@ -61,18 +61,19 @@ function defaultCeiling() {
   return activeLevel(state.project).height - SP55.slab;
 }
 
-// Движок стен: v1 — полосы с заплатками стыков, v2 — стена как область.
-// Параметр адреса ?walls=v1|v2 главнее настройки проекта — тогда выбор заблокирован.
+// Движок стен: v2 — стена как область (по умолчанию), v1 — устаревшие полосы
+// с заплатками стыков (будет удалён). Параметр адреса ?walls=v1|v2 главнее
+// настройки проекта — тогда выбор заблокирован.
 function wallsEngineField() {
   // Ручные стены существуют только в v2: с ними выбор заблокирован.
   const manualLocked = projectHasManualWalls(state.project);
-  const own = manualLocked || state.project.settings.wallsEngine === 'v2' ? 'v2' : 'v1';
+  const own = !manualLocked && state.project.settings.wallsEngine === 'v1' ? 'v1' : 'v2';
   const urlLocked = !manualLocked && /[?&]walls=(v1|v2)(?:&|$)/.test(globalThis.location?.search || '');
   const active = wallsEngine(state.project);
   return `<label class="prop-field"><span>Движок стен</span>
         <select id="wallsEngineSel" ${urlLocked || manualLocked ? 'disabled' : ''}>
-          <option value="v1" ${own === 'v1' ? 'selected' : ''}>v1 — полосы и стыки</option>
-          <option value="v2" ${own === 'v2' ? 'selected' : ''}>v2 — стена как область (опытный)</option>
+          <option value="v2" ${own === 'v2' ? 'selected' : ''}>v2 — стена как область</option>
+          <option value="v1" ${own === 'v1' ? 'selected' : ''}>v1 — старый, будет удалён</option>
         </select></label>
       ${manualLocked ? '<p class="empty-hint">В проекте есть ручные стены — они строятся только движком v2.</p>' : ''}
       ${urlLocked ? `<p class="empty-hint">Задан адресом страницы (?walls=${active}).</p>` : ''}`;
@@ -143,8 +144,8 @@ function renderProjectProps(panel) {
   });
   panel.querySelector('#wallsEngineSel')?.addEventListener('change', (e) => {
     mutate(() => {
-      if (e.target.value === 'v2') state.project.settings.wallsEngine = 'v2';
-      else delete state.project.settings.wallsEngine; // v1 — по умолчанию
+      if (e.target.value === 'v1') state.project.settings.wallsEngine = 'v1';
+      else delete state.project.settings.wallsEngine; // v2 — по умолчанию
     });
   });
   panel.querySelectorAll('[data-wall-default]').forEach((input) => {

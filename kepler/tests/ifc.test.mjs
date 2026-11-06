@@ -100,6 +100,79 @@ test('IfcWall — только стены own/shared: стыки и фаски �
   assert.equal((text.match(/=IFCWALL\(/g) || []).length, expected);
   assert.equal(counts.walls, expected);
   assert.ok(!text.includes(stepString('Стена (стык)')), 'нет отдельных «Стена (стык)»');
-  // Хотя бы у одной стены несколько тел (заплатка стыка).
-  assert.match(text, /IFCSHAPEREPRESENTATION\([^)]*'Body','SweptSolid',\(#\d+,#\d+/);
+  // v1: хотя бы у одной стены несколько тел (заплатка стыка).
+  if (wallsEngine(p) === 'v1') assert.match(text, /IFCSHAPEREPRESENTATION\([^)]*'Body','SweptSolid',\(#\d+,#\d+/);
+});
+
+// Разбор STEP: #id → тело записи; профиль тела стены → кольца точек (IFC, Y вверх).
+function stepIndex(text) {
+  const map = new Map();
+  for (const m of text.matchAll(/^#(\d+)=(.*);$/gm)) map.set(`#${m[1]}`, m[2]);
+  const refs = (s) => [...s.matchAll(/#\d+/g)].map((m) => m[0]);
+  const point = (id) => { const [x, y] = /\(\(([^)]*)\)\)/.exec(map.get(id))[1].split(',').map(Number); return { x, y }; };
+  const ring = (polyline) => refs(map.get(polyline)).map(point).slice(0, -1);
+  const area = (pts) => pts.reduce((s, a, i) => { const b = pts[(i + 1) % pts.length]; return s + a.x * b.y - b.x * a.y; }, 0) / 2;
+  // Профили тел стены: [{ kind, outer, holes }].
+  const wallProfiles = (wallId) => {
+    const shapeId = refs(map.get(wallId)).at(-1);
+    const repId = refs(map.get(shapeId)).at(-1);
+    const solids = refs(map.get(repId)).slice(1);
+    return solids.map((s) => {
+      const prof = refs(map.get(s))[0];
+      const body = map.get(prof);
+      if (body.startsWith('IFCRECTANGLEPROFILEDEF')) return { kind: 'rect' };
+      const [outer, ...holes] = refs(body).map(ring);
+      return { kind: body.startsWith('IFCARBITRARYPROFILEDEFWITHVOIDS') ? 'voids' : 'poly', outer, holes };
+    });
+  };
+  return { map, wallProfiles, area };
+}
+
+test('v2: тело IfcWall — контур области стены (не куски), площадь профилей = площадь кусков', { skip: process.env.KEPLER_WALLS === 'v1' && 'проверка движка v2' }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const { deserializeProject, levelProject } = await import('../core/model.js');
+  const { deriveWalls, wallRects } = await import('../core/walls.js');
+  const p = deserializeProject(readFileSync(new URL('./fixtures/user-house-2026-11.json', import.meta.url), 'utf8'));
+  const { text } = buildIfc(p, { timestamp: new Date(0) });
+  const { map, wallProfiles, area } = stepIndex(text);
+  const wallIds = [...map.entries()].filter(([, b]) => b.startsWith('IFCWALL(')).map(([id]) => id);
+  let rectArea = 0;
+  for (const lv of p.levels) {
+    for (const w of deriveWalls(levelProject(p, lv.id))) {
+      if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared' && w.kind !== 'manual')) continue;
+      rectArea += wallRects(w).filter((r) => r.w >= 1 && r.h >= 1).reduce((s, r) => s + r.w * r.h, 0);
+    }
+  }
+  let profArea = 0;
+  let multiPiece = 0;
+  for (const id of wallIds) {
+    const profiles = wallProfiles(id);
+    for (const pr of profiles) {
+      if (pr.kind === 'rect') continue; // свободная стена (wall-free) — брусок
+      assert.ok(area(pr.outer) > 0, 'внешний контур против часовой');
+      for (const h of pr.holes) assert.ok(area(h) < 0, 'дыра по часовой');
+      profArea += area(pr.outer) + pr.holes.reduce((s, h) => s + area(h), 0);
+    }
+    if (profiles.length > 1) multiPiece += 1;
+  }
+  // Площадь контуров совпадает с площадью кусков (без наложений и потерь).
+  assert.ok(Math.abs(profArea - rectArea) < 1, `${profArea} ≠ ${rectArea}`);
+  // В доме много Г/Т-узлов: куски каждой стены сливаются в один профиль.
+  assert.ok(multiPiece < wallIds.length / 4, `несвязных стен ${multiPiece} из ${wallIds.length}`);
+});
+
+test('v2: дыра в теле стены вырезается (IfcArbitraryProfileDefWithVoids)', async () => {
+  const { wallContours } = await import('../core/ifc.js');
+  // Рамка 1000×1000 из 4 кусков толщиной 200 вокруг дыры 600×600.
+  const rects = [
+    { x: 0, y: 0, w: 1000, h: 200 }, { x: 0, y: 800, w: 1000, h: 200 },
+    { x: 0, y: 200, w: 200, h: 600 }, { x: 800, y: 200, w: 200, h: 600 },
+  ];
+  const c = wallContours(rects);
+  assert.equal(c.length, 1);
+  assert.equal(c[0].holes.length, 1);
+  // Остров в дыре — отдельная область без дыр.
+  const withIsland = wallContours([...rects, { x: 400, y: 400, w: 200, h: 200 }]);
+  assert.equal(withIsland.length, 2);
+  assert.equal(withIsland.filter((x) => x.holes.length === 1).length, 1);
 });

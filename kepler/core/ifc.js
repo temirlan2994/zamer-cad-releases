@@ -3,7 +3,8 @@
 //
 // Состав: проект → участок → здание (с настоящим поворотом относительно
 // съёмки и направлением на север) → этажи на своих отметках. На этаже:
-// стены (полосы плана, выдавленные на высоту этажа) с проёмами
+// стены (движок v2 — контур области стены с вырезанными дырами, v1 —
+// полосы плана; выдавлены на высоту этажа) с проёмами
 // (IfcOpeningElement вычитается из стены, в него вставлены IfcDoor /
 // IfcWindow), помещения (IfcSpace на высоту потолка), колонны и свободные
 // стены. Мебель не выгружается — её проще расставить заново семействами.
@@ -20,6 +21,46 @@ import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
+import { rectsCycles } from './ortho-grid.js';
+
+// Удвоенная ориентированная площадь кольца.
+function ringArea(pts) {
+  let s = 0;
+  pts.forEach((a, i) => { const b = pts[(i + 1) % pts.length]; s += a.x * b.y - b.x * a.y; });
+  return s;
+}
+
+function pointInRing(p, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    const a = pts[i]; const b = pts[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+// Тело стены v2 по контуру её кусков: связные области [{ outer, holes }]
+// (дыра — в той внешней границе, что её содержит). Точки — в плане (Y вниз).
+export function wallContours(rects) {
+  const cycles = rectsCycles(rects);
+  const outers = cycles.filter((c) => c.area > 0).map((c) => ({ outer: c.pts, holes: [], area: c.area }));
+  // Вложенные области (остров в дыре): дыру относим к наименьшей содержащей.
+  outers.sort((a, b) => a.area - b.area);
+  for (const c of cycles.filter((x) => x.area < 0)) {
+    // Пробная точка — середина первого ребра дыры, сдвинутая на 0,1 мм в
+    // тело стены (наружу от дыры): она точно внутри своей внешней границы.
+    const [a, b] = c.pts;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len; const ny = (b.x - a.x) / len;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const probes = [{ x: mid.x + nx * 0.1, y: mid.y + ny * 0.1 }, { x: mid.x - nx * 0.1, y: mid.y - ny * 0.1 }];
+    // Точка тела стены — та, что не внутри дыры.
+    const probe = probes.find((p) => !pointInRing(p, c.pts)) || probes[0];
+    const host = outers.find((o) => pointInRing(probe, o.outer));
+    if (host) host.holes.push(c.pts);
+  }
+  return outers.map(({ outer, holes }) => ({ outer, holes }));
+}
 
 const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 
@@ -162,6 +203,16 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     const refs = ifcPts.map((p) => pt(p.x, p.y));
     return add(`IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,${add(`IFCPOLYLINE(${list([...refs, refs[0]])})`)})`);
   };
+  // Профиль с дырами: внешний контур против часовой, дыры — по часовой (IFC).
+  const ifcRing = (points, ccw) => {
+    let ifcPts = points.map((p) => ({ x: p.x, y: -p.y }));
+    if ((ringArea(ifcPts) > 0) !== ccw) ifcPts = ifcPts.reverse();
+    const refs = ifcPts.map((p) => pt(p.x, p.y));
+    return add(`IFCPOLYLINE(${list([...refs, refs[0]])})`);
+  };
+  const voidsProfile = (outer, holes) => (holes.length
+    ? add(`IFCARBITRARYPROFILEDEFWITHVOIDS(.AREA.,$,${ifcRing(outer, true)},${list(holes.map((h) => ifcRing(h, false)))})`)
+    : polyProfile(outer));
   const shape = (item) => add(`IFCPRODUCTDEFINITIONSHAPE($,$,${list([add(`IFCSHAPEREPRESENTATION(${body},'Body','SweptSolid',${list(Array.isArray(item) ? item : [item])})`)])})`);
 
   // Наборы свойств стен — по одному на тип, общие для всех этажей.
@@ -201,18 +252,21 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       if (!patchesByHost.has(p.host)) patchesByHost.set(p.host, []);
       patchesByHost.get(p.host).push(p.rect);
     }
-    const wallBody = (r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), 0, level.height);
     walls.forEach((w, i) => {
       if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared' && w.kind !== 'manual')) return;
-      // v1 — полоса + заплатки-хозяева, v2 — непересекающиеся куски области.
       const body = wallRects(w).filter((r) => r.w >= 1 && r.h >= 1);
       if (!body.length) return;
       const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая')
         : w.kind === 'manual' ? 'Стена (ручная)' : 'Стена';
       // Ручная стена — своя высота (низ/верх от пола этажа), комнатные — на этаж.
-      const items = w.kind === 'manual'
-        ? body.map((r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), w.z0 || 0, Math.max(1, (w.z1 ?? level.height) - (w.z0 || 0))))
-        : [...body, ...(patchesByHost.get(w) || [])].map(wallBody);
+      const z0 = w.kind === 'manual' ? (w.z0 || 0) : 0;
+      const depth = w.kind === 'manual' ? Math.max(1, (w.z1 ?? level.height) - z0) : level.height;
+      // v2 (есть rects) — тело по контуру области записи: один профиль на
+      // связный кусок, дыры вырезаны. v1 — полоса + заплатки-хозяева.
+      const items = w.rects
+        ? wallContours(body).map((c) => solid(voidsProfile(c.outer, c.holes), z0, depth))
+        : [...body, ...(patchesByHost.get(w) || [])]
+          .map((r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), z0, depth));
       const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(items)},$,.STANDARD.)`);
       wallRef.set(w, ref);
       contained.push(ref);

@@ -3,7 +3,7 @@
 
 import { DEFAULT_PARTITION, DEFAULT_EXTERIOR, GRID_STEP, isOpenRoom, isShaft } from './catalog.js';
 import {
-  deriveWalls, doorLink, MAX_SHARED_GAP, projectAdjacencies, sharedWallThickness,
+  deriveWalls, doorLink, MAX_SHARED_GAP, projectAdjacencies, projectHasManualWalls, sharedWallThickness, wallRects,
 } from './walls.js';
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
@@ -493,16 +493,43 @@ export function rectsUnionArea(rects) {
 
 // Пятно застройки этажа: комнаты верхнего уровня вместе с наружными стенами
 // (без террас и балконов), м².
-export function buildingFootprintM2(project) {
+// Дом из ручных стен: толщина наружных стен своя у каждой стены, поэтому
+// пятно — объединение области стен W и помещений (комнаты + куски rects
+// движка v2), а не контур помещения + settings.exterior.
+const footprintRooms = (project) => project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue);
+
+function wallAreaRects(project, walls) {
+  if (!projectHasManualWalls(project)) return null;
+  const list = walls || deriveWalls(project);
+  if (!list.some((w) => w.rects)) return null;
+  return list.flatMap((w) => wallRects(w)).filter((r) => r.w > 0 && r.h > 0);
+}
+
+export function buildingFootprintM2(project, walls = null) {
+  const own = wallAreaRects(project, walls);
+  if (own) {
+    return rectsUnionArea([...own, ...footprintRooms(project).flatMap((r) => roomRects(r))]) / 1_000_000;
+  }
   const t = project.settings?.exterior || DEFAULT_EXTERIOR;
-  const rects = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue)
+  const rects = footprintRooms(project)
     .flatMap((r) => roomRects(r).map((part) => ({ x: part.x - t, y: part.y - t, w: part.w + t * 2, h: part.h + t * 2 })));
   return rectsUnionArea(rects) / 1_000_000;
 }
 
-export function computeBuildingOutline(project, expand = 0) {
-  const rects = project.rooms
-    .filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue)
+// walls — готовые стены (render передаёт state.walls), иначе выводятся.
+// Дом из ручных стен при expand ≥ exterior — по наружной грани объединения W
+// и помещений (плюс выдвижение сверх exterior); меньший expand (ось стен) —
+// по-старому от помещений.
+export function computeBuildingOutline(project, expand = 0, walls = null) {
+  const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
+  const own = expand > 0 && expand >= exterior ? wallAreaRects(project, walls) : null;
+  if (own) {
+    const d = expand - exterior;
+    const grow = (rc) => (d > 0 ? { x: rc.x - d, y: rc.y - d, w: rc.w + 2 * d, h: rc.h + 2 * d } : rc);
+    const rects = [...own, ...footprintRooms(project).flatMap((r) => roomRects(r))].map(grow);
+    return rects.length ? unionEdges(rects) : [];
+  }
+  const rects = footprintRooms(project)
     .flatMap((r) => roomRects(r).map((rc) => {
       return expand
         ? { x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand }

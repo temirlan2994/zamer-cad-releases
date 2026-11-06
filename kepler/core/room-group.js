@@ -25,6 +25,10 @@ export function groupCargo(project, roomIds = [], itemIds = []) {
   return { rooms, items };
 }
 
+// Помещение по стенам (room.bound) следует за стенами: группой его не двигают
+// и не поворачивают — двигают стены.
+export const BOUND_MOVE_REASON = 'Помещение по стенам нельзя сдвинуть или повернуть; двигайте его стены';
+
 function validateGroup(project, roomIds) {
   let warning = null;
   for (const id of roomIds) {
@@ -66,6 +70,7 @@ function rollback(project, saved) {
 export function moveRoomGroup(project, roomIds, itemIds, dx, dy) {
   const cargo = groupCargo(project, roomIds, itemIds);
   if (!cargo.rooms.length && !cargo.items.length) return { ok: false, reason: 'Нечего сдвигать' };
+  if (cargo.rooms.some((r) => r.bound)) return { ok: false, reason: BOUND_MOVE_REASON, rooms: [], items: [] };
   const saved = remember(project, cargo);
   for (const room of cargo.rooms) { room.x += dx; room.y += dy; }
   for (const item of cargo.items) { item.x += dx; item.y += dy; }
@@ -140,6 +145,7 @@ export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP } 
   const cargo = groupCargo(project, roomIds, itemIds);
   const center = groupCenter(cargo, grid);
   if (!center) return { ok: false, reason: 'Нечего поворачивать' };
+  if (cargo.rooms.some((r) => r.bound)) return { ok: false, reason: BOUND_MOVE_REASON, rooms: [], items: [] };
   const { x: cx, y: cy } = center;
   const saved = remember(project, cargo);
   const cargoIds = new Set(cargo.rooms.map((r) => r.id));

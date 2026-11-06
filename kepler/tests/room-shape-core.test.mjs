@@ -84,7 +84,19 @@ for (const outline of [false, true]) {
     const { project, living } = lWithNeighbour({ outline });
     const ifc = buildIfc(project, { timestamp: new Date(0) }).text;
     assert.match(ifc, /IFCARBITRARYCLOSEDPROFILEDEF/);
-    assert.equal((ifc.match(/IFCPOLYLINE\(/g) || []).length, 1, 'одна Г-комната — один полилинейный профиль');
+    // Профиль IfcSpace Г-комнаты — одна полилиния из 6 вершин (стены v2 —
+    // тоже полилинии, поэтому считаем только профили помещений).
+    const defs = new Map([...ifc.matchAll(/^(#\d+)=(.*);$/gm)].map((m) => [m[1], m[2]]));
+    const refs = (id) => [...defs.get(id).matchAll(/#\d+/g)].map((m) => m[0]);
+    const polySpaces = [...defs.entries()].filter(([, b]) => b.startsWith('IFCSPACE(')).map(([id]) => {
+      const shapeId = refs(id).at(-1);
+      const repId = refs(shapeId).at(-1);
+      const solidId = refs(repId).at(-1);
+      return defs.get(refs(solidId)[0]);
+    }).filter((b) => b.startsWith('IFCARBITRARYCLOSEDPROFILEDEF'));
+    assert.equal(polySpaces.length, 1, 'одна Г-комната — один полилинейный профиль');
+    const polyline = /#\d+/.exec(polySpaces[0])[0];
+    assert.equal(refs(polyline).length, 7, '6 вершин + замыкание');
     const json = buildStructuredExport(project);
     const room = (json.levels?.[0]?.rooms || json.rooms).find((r) => r.id === living.id);
     assert.equal(room.polygon.length, 6);

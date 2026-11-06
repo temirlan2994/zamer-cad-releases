@@ -15,7 +15,7 @@
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
 import { buildDxf } from './zamer/dxf.js';
-import { deriveWalls, doorLeaves, doorLink, openingRect } from './walls.js';
+import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
 import { isRoundItem, isShaft, isStructural } from './catalog.js';
@@ -294,7 +294,22 @@ export function planEntities(project, { dims = true } = {}) {
   const walls = deriveWalls(project);
   const entities = [];
 
+  // Движок v2 (у записей есть rects): стены — единый контур области W
+  // (наружные циклы и дыры: дворы, помещения по стенам), без швов между
+  // кусками; оси ручных стен — на слой осей.
+  const v2 = walls.some((w) => w.rects);
+  if (v2) {
+    for (const c of wallOutline(walls)) entities.push(...polyLines(c.pts, 'walls', true));
+    for (const w of walls) {
+      if (w.hidden || w.kind !== 'manual' || !Number.isFinite(w.edge)) continue;
+      // Ось ручной стены: edge — линия оси (с учётом привязки к грани), from…to — длина.
+      entities.push(w.orient === 'h'
+        ? { type: 'line', layer: 'axes', x1: w.from, y1: w.edge, x2: w.to, y2: w.edge }
+        : { type: 'line', layer: 'axes', x1: w.edge, y1: w.from, x2: w.edge, y2: w.to });
+    }
+  }
   for (const wall of walls) {
+    if (v2) break;
     if (wall.hidden || wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски в DXF не нужны
     entities.push({
       type: 'wall',

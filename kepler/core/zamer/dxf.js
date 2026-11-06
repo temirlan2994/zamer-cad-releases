@@ -9,6 +9,7 @@ const DEFAULT_LAYER_DEFS = [
   { key: "dimensions", name: "dimensions", color: 5 },
   { key: "furniture", name: "furniture", color: 3 },
   { key: "measure", name: "measure", color: 4 },
+  { key: "axes", name: "axes", color: 1 },
 ];
 
 const REVIT_LAYER_DEFS = [
@@ -16,6 +17,7 @@ const REVIT_LAYER_DEFS = [
   { key: "dimensions", name: "ZAMER_DIMENSIONS", color: 7 },
   { key: "furniture", name: "ZAMER_FURNITURE", color: 7 },
   { key: "measure", name: "ZAMER_MEASURE", color: 7 },
+  { key: "axes", name: "ZAMER_AXES", color: 7 },
 ];
 
 export function roundDxf(value) {

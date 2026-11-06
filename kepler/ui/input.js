@@ -20,7 +20,7 @@ import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
 import { applyRoomShapeHandle, clampRoomNotch } from '../core/room-shape.js';
-import { groupCargo } from '../core/room-group.js';
+import { BOUND_MOVE_REASON, groupCargo } from '../core/room-group.js';
 import { moveWallBy } from '../core/wall-edit.js';
 import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
@@ -185,6 +185,8 @@ function startMultiDrag(plan, sel = state.selection) {
   // помещениями и мебелью внутри + отдельно выбранная мебель.
   // Состав груза — как у стрелок и поворота группы (core/room-group.js).
   const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
+  // Помещение по стенам следует за стенами — группу с ним не тащат.
+  if (cargo.rooms.some((room) => room.bound)) { toast(BOUND_MOVE_REASON, true); return; }
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
   drag = {

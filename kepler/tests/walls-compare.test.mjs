@@ -38,17 +38,36 @@ test('v2: куски не пересекаются и у каждой запис
   assert.ok(outline.some((c) => !c.hole), 'есть внешний контур');
 });
 
-test('переключатель: по умолчанию v1, settings.wallsEngine / KEPLER_WALLS — v2', () => {
+test('переключатель: по умолчанию v2, settings.wallsEngine / KEPLER_WALLS — v1 (устаревший)', () => {
   const p = cases[0][1];
   const env = process.env.KEPLER_WALLS;
+  const own = p.settings.wallsEngine;
+  // Проект с геттерами активного этажа: настройку меняем на месте.
+  const withEngine = (engine, fn) => {
+    if (engine) p.settings.wallsEngine = engine; else delete p.settings.wallsEngine;
+    try { return fn(); } finally { if (own === undefined) delete p.settings.wallsEngine; else p.settings.wallsEngine = own; }
+  };
   try {
     delete process.env.KEPLER_WALLS;
-    assert.equal(wallsEngine(p), 'v1');
-    assert.equal(deriveWalls(p).some((w) => w.rects), false);
-    assert.equal(wallsEngine({ ...p, settings: { ...p.settings, wallsEngine: 'v2' } }), 'v2');
+    withEngine(null, () => {
+      assert.equal(wallsEngine(p), 'v2');
+      assert.ok(deriveWalls(p).every((w) => w.rects));
+    });
+    withEngine('v1', () => {
+      assert.equal(wallsEngine(p), 'v1');
+      assert.equal(deriveWalls(p).some((w) => w.rects), false);
+    });
+    withEngine('v2', () => assert.equal(wallsEngine(p), 'v2'));
+    process.env.KEPLER_WALLS = 'v1';
+    withEngine(null, () => {
+      assert.equal(wallsEngine(p), 'v1');
+      assert.equal(deriveWalls(p).some((w) => w.rects), false);
+    });
     process.env.KEPLER_WALLS = 'v2';
-    assert.equal(wallsEngine(p), 'v2');
-    assert.ok(deriveWalls(p).every((w) => w.rects));
+    withEngine('v1', () => {
+      assert.equal(wallsEngine(p), 'v2');
+      assert.ok(deriveWalls(p).every((w) => w.rects));
+    });
   } finally {
     if (env === undefined) delete process.env.KEPLER_WALLS; else process.env.KEPLER_WALLS = env;
   }

@@ -2147,7 +2147,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   // перегородок; дальний пояс показывает общий габарит.
   const dimOuter = state.project.settings?.dimOuter !== false; // по умолчанию — снаружи
   const expand = dimOuter ? exterior : exterior / 2;
-  const outline = computeBuildingOutline(state.project, expand);
+  const outline = computeBuildingOutline(state.project, expand, walls);
   // Реальная форма комнат (Г, ступени, контур), а не габарит: иначе вырез считается занятым.
   const rects = state.project.rooms.filter((r) => !r.parentId && !isOpenRoom(r))
     .flatMap((r) => roomRects(r).map((rc) => ({ x: rc.x - expand, y: rc.y - expand, w: rc.w + 2 * expand, h: rc.h + 2 * expand })));
