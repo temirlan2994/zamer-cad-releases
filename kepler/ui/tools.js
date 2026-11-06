@@ -91,6 +91,7 @@ export function cancelTool() {
   state.ghostDoor = null;
   state.ghostLandscape = null;
   state.guides = [];
+  state.objGuides = null;
   state.elevEdit = null;
   if (!el('calOverlay').hidden) el('calOverlay').hidden = true;
   if (!el('elevOverlay').hidden) el('elevOverlay').hidden = true;

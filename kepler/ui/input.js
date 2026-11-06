@@ -60,6 +60,7 @@ import {
 import { addAlignViewPoint, snapAlignPoint } from './view-align.js';
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
+import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
@@ -148,6 +149,7 @@ function startPinch() {
   state.marquee = null;
   state.ghost = null;
   state.guides = [];
+  state.objGuides = null;
   state.kitchenLabel = null;
   const [a, b] = [...touches.values()];
   drag = {
@@ -225,6 +227,22 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
     itemStarts: movedItems,
     wasSelected, // клик без сдвига по уже выбранной группе мебели — смена режима ручек
   };
+}
+
+// Направляющие группы (комнаты + мебель) в осях дома. bound — помещения по
+// стенам: только оси дома, стены их петель не цели.
+function groupGuideSession(d, bound) {
+  const rooms = d.kind === 'bound-move' ? [d.id] : [...(d.roomStarts?.keys() || [])];
+  const items = d.kind === 'bound-move' ? [] : [...(d.itemStarts?.keys() || [])];
+  const roomSet = new Set(rooms);
+  const moving = [
+    ...state.project.rooms.filter((r) => roomSet.has(r.id)).map((r) => roomShape(r)),
+    ...state.project.items.filter((i) => items.includes(i.id)).map((i) => itemShape(i)),
+  ];
+  return startGuideSession({
+    space: 'plan', moving, frames: bound || rooms.length ? [0] : null, ownAngles: [0],
+    exclude: { rooms: roomSet, items: new Set(items), walls: (w) => (w.rooms || []).some((id) => roomSet.has(id)) },
+  });
 }
 
 function applyMarquee() {
@@ -931,6 +949,25 @@ export function bindCanvasInput() {
       const snapped = event.shiftKey
         ? { x: Math.round(rawX / gridStep()) * gridStep(), y: Math.round(rawY / gridStep()) * gridStep(), guides: [] }
         : snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent, gridStep());
+      // Умные направляющие — по осям, не занятым магнитом стыковки/выравнивания
+      // комнат (он приоритетнее), к мебели, стенам, ландшафту и границе.
+      if (!drag.guides) {
+        drag.guides = startGuideSession({
+          space: 'plan', moving: [roomShape(room, drag.start)], frames: [0],
+          exclude: {
+            rooms: new Set([room.id, ...drag.childStarts.map((c) => c.id)]),
+            items: new Set(drag.carried.map((c) => c.id)),
+            walls: (w) => w.rooms?.includes(room.id),
+          },
+        });
+      }
+      {
+        const g = { x: snapped.x - drag.start.x, y: snapped.y - drag.start.y };
+        const gd = guideDelta(drag.guides, { x: rawX - drag.start.x, y: rawY - drag.start.y }, g, event,
+          { x: Boolean(snapped.snappedX), y: Boolean(snapped.snappedY) });
+        snapped.x = Math.round(drag.start.x + gd.x);
+        snapped.y = Math.round(drag.start.y + gd.y);
+      }
       const dx = snapped.x - drag.start.x;
       const dy = snapped.y - drag.start.y;
       // Абсолютные позиции от стартовых: груз зафиксирован при захвате.
@@ -958,9 +995,14 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind === 'bound-move' || (drag.kind === 'multi' && drag.levelStart)) {
-      const dx = Math.round((plan.x - drag.plan.x) / gridStep()) * gridStep();
-      const dy = Math.round((plan.y - drag.plan.y) / gridStep()) * gridStep();
-      if (!dx && !dy && !drag.moved) return; // дрожание при клике — не перенос
+      const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
+      const grid = { x: Math.round(raw.x / gridStep()) * gridStep(), y: Math.round(raw.y / gridStep()) * gridStep() };
+      if (!grid.x && !grid.y && !drag.moved) return; // дрожание при клике — не перенос
+      // Помещение по стенам — направляющие только по осям дома (стены петли едут с ним).
+      if (!drag.guides) drag.guides = groupGuideSession(drag, true);
+      const gd = guideDelta(drag.guides, raw, grid, event);
+      const dx = Math.round(gd.x);
+      const dy = Math.round(gd.y);
       drag.moved = true;
       restoreLevel(state.project, drag.levelStart);
       const res = dx || dy
@@ -1002,9 +1044,13 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind === 'multi') {
-      const dx = Math.round((plan.x - drag.plan.x) / gridStep()) * gridStep();
-      const dy = Math.round((plan.y - drag.plan.y) / gridStep()) * gridStep();
-      if (!dx && !dy && !drag.moved) return; // дрожание при клике — не перенос
+      const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
+      const grid = { x: Math.round(raw.x / gridStep()) * gridStep(), y: Math.round(raw.y / gridStep()) * gridStep() };
+      if (!grid.x && !grid.y && !drag.moved) return; // дрожание при клике — не перенос
+      if (!drag.guides) drag.guides = groupGuideSession(drag, false);
+      const gd = guideDelta(drag.guides, raw, grid, event);
+      const dx = Math.round(gd.x);
+      const dy = Math.round(gd.y);
       drag.moved = true;
       for (const [id, start] of drag.roomStarts) {
         const room = roomById(state.project, id);
@@ -1071,9 +1117,20 @@ export function bindCanvasInput() {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
       drag.moved = true;
-      item.x = Math.round((drag.start.x + (plan.x - drag.plan.x)) / gridStep()) * gridStep();
-      item.y = Math.round((drag.start.y + (plan.y - drag.plan.y)) / gridStep()) * gridStep();
-      if (!event.shiftKey) snapItemToWalls(item); // Shift отключает привязку к стенам
+      const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
+      const g = gridStep();
+      const grid = { x: Math.round((drag.start.x + raw.x) / g) * g - drag.start.x, y: Math.round((drag.start.y + raw.y) / g) * g - drag.start.y };
+      // Умные направляющие (ui/guides-ui.js) приоритетнее сетки и магнита стен.
+      if (!drag.guides) {
+        drag.guides = startGuideSession({
+          space: 'plan', moving: [itemShape(item, drag.start)], exclude: { items: new Set([item.id]) },
+          ownAngles: [((item.rotation || 0) * Math.PI) / 180],
+        });
+      }
+      const d = guideDelta(drag.guides, raw, grid, event);
+      item.x = drag.start.x + d.x;
+      item.y = drag.start.y + d.y;
+      if (!event.shiftKey && !d.snapped) snapItemToWalls(item); // Shift отключает привязку к стенам
       requestDraw();
       return;
     }
@@ -1407,6 +1464,7 @@ export function bindCanvasInput() {
     const finished = drag;
     drag = null;
     state.guides = [];
+    state.objGuides = null;
     state.kitchenLabel = null;
     if (finished.kind === 'site-vertex' || finished.kind === 'ls-vertex') state.drawSnap = null;
 
@@ -1559,6 +1617,7 @@ export function bindCanvasInput() {
     state.kitchenLabel = null;
     state.groupRotateDeg = null;
     state.guides = [];
+    state.objGuides = null;
     requestDraw();
   });
   canvas.addEventListener('dblclick', (event) => {

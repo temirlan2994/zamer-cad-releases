@@ -45,6 +45,7 @@ export const state = {
   snapSettings: null, // { ortho, polar, polarStep, objects, tracking }
   drawSnap: null, // { point, kind, label, guides, markers, tooltip, prev }
   dynInput: null, // { field: 'length'|'angle', length, angle }
+  objGuides: null, // умные направляющие перемещения (ui/guides-ui.js): [{ type, from, to, label }]
   rejected: new Map(), // roomId -> причины отказов расстановки
   calibration: null, // {p1, p2, measured}
   underlayImg: null,

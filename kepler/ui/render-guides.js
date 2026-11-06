@@ -86,6 +86,53 @@ function guideLine(ctx, g, w2s) {
   ctx.stroke();
 }
 
+// Отрезок размера: линия с засечками и подпись посередине.
+function gapSegment(ctx, a, b, label, tokens, color, width) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 2) return;
+  const nx = -(b.y - a.y) / len * 4; const ny = (b.x - a.x) / len * 4;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.moveTo(a.x - nx, a.y - ny); ctx.lineTo(a.x + nx, a.y + ny);
+  ctx.moveTo(b.x - nx, b.y - ny); ctx.lineTo(b.x + nx, b.y + ny);
+  ctx.stroke();
+  if (label && len > 24) {
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    pill(ctx, label, m.x + 6, m.y + 4, tokens, color, width);
+  }
+}
+
+// «Умные направляющие» перемещения объектов (core/guides.js, ui/guides-ui.js):
+// штриховые линии выравнивания через цели, крестики на концах, подписи
+// расстояния до ближайшего объекта и равных промежутков.
+export function drawObjectGuides(ctx, guides, w2s, tokens, width = Infinity) {
+  if (!guides?.length) return;
+  const color = tokens.accent2;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  for (const g of guides) {
+    const a = w2s(g.from.x, g.from.y);
+    const b = w2s(g.to.x, g.to.y);
+    if (g.type === 'gap') { gapSegment(ctx, a, b, g.label, tokens, color, width); continue; }
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of [a, b]) {
+      ctx.beginPath();
+      ctx.moveTo(p.x - 3, p.y - 3); ctx.lineTo(p.x + 3, p.y + 3); ctx.moveTo(p.x + 3, p.y - 3); ctx.lineTo(p.x - 3, p.y + 3);
+      ctx.stroke();
+    }
+    if (g.gapFrom && g.label) {
+      ctx.globalAlpha = 0.85;
+      gapSegment(ctx, w2s(g.gapFrom.x, g.gapFrom.y), w2s(g.gapTo.x, g.gapTo.y), g.label, tokens, color, width);
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+}
+
 export function drawSnapOverlay(ctx, state, w2s, tokens, width = Infinity) {
   const snap = state.drawSnap;
   if (!snap?.point) return;

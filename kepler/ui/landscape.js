@@ -37,6 +37,7 @@ import { setLandscapeStyle, setSheetStylePref, sheetStylePref } from './landscap
 import { el, escapeHtml, toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
+import { guideDelta, landscapeShape, startGuideSession } from './guides-ui.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
@@ -534,6 +535,17 @@ function applyFrameResult(objects, list) {
   }
 }
 
+// Направляющие перемещения: набор — движущиеся объекты в начале жеста,
+// оси — экран и сам главный объект (если он повёрнут).
+function landscapeGuideSession(objects, drag) {
+  const moving = objects.filter((o) => drag.starts.has(o.id)).map(landscapeShape).filter(Boolean);
+  if (!moving.length) return null; // одни выноски — только сетка
+  const main = objects.find((o) => o.id === drag.primary);
+  const own = main && !['point', 'circle'].includes(landscapeDef(main.kind)?.shape) && !isShapeKind(main.kind)
+    ? [((main.rotation || 0) * Math.PI) / 180] : [];
+  return startGuideSession({ space: 'world', moving, exclude: { ls: new Set(drag.starts.keys()) }, ownAngles: own });
+}
+
 // Исходные положения растений короба (поворот, размер).
 function childStarts(o) {
   if (!isPlanter(o)) return null;
@@ -597,8 +609,11 @@ export function landscapeDragMove(drag, world, screen, event) {
     if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
     drag.moved = true;
     const p0 = drag.starts.get(drag.primary);
-    const dx = snap(p0.x + world.x - drag.world.x) - p0.x;
-    const dy = snap(p0.y + world.y - drag.world.y) - p0.y;
+    const raw = { x: world.x - drag.world.x, y: world.y - drag.world.y };
+    const grid = { x: snap(p0.x + raw.x) - p0.x, y: snap(p0.y + raw.y) - p0.y };
+    // Умные направляющие (core/guides.js) приоритетнее сетки; Shift — без них.
+    if (drag.guides === undefined) drag.guides = landscapeGuideSession(objects, drag);
+    const { x: dx, y: dy } = guideDelta(drag.guides, raw, grid, event);
     for (const o of objects) {
       const s = drag.starts.get(o.id);
       if (!s) continue;

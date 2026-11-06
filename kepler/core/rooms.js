@@ -178,7 +178,7 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId, grid
   const outY = bestY ? bestY.value : Math.round(y / grid) * grid;
   if (bestX?.guide) guides.push(bestX.guide);
   if (bestY?.guide) guides.push(bestY.guide);
-  return { x: outX, y: outY, guides };
+  return { x: outX, y: outY, guides, snappedX: Boolean(bestX), snappedY: Boolean(bestY) };
 }
 
 // Перемещение комнаты вместе с вложенными помещениями и мебелью, которая

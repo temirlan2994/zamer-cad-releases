@@ -39,7 +39,7 @@ import {
 } from './core/composite.js';
 import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
-import { drawSnapOverlay } from './ui/render-guides.js';
+import { drawObjectGuides, drawSnapOverlay } from './ui/render-guides.js';
 import { facadeDimensionStations } from './core/dimensions.js';
 import { roomRects, roomShapeArea, roomShapeHandles, wallSplitAt } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
@@ -669,6 +669,7 @@ export function createRenderer(canvas) {
     }
     // Привязки черчения линий: лучи, выравнивание, значки, «длина · угол».
     if (!print && state.drawSnap) drawSnapOverlay(ctx, state, w2s, tokens, width);
+    if (!print && state.objGuides) drawObjectGuides(ctx, state.objGuides, w2s, tokens, width);
     // Ручки топосъёмки: круги вращения снаружи углов + квадраты (масштаб).
     if (site?.underlay && state.selection?.type === 'site' && state.selection.kind === 'underlay' && !site.underlay.locked) {
       for (const r of underlayRotators(site.underlay, 22, scale)) {

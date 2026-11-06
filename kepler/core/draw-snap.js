@@ -22,6 +22,7 @@ export const DEFAULT_SNAP_OPTS = {
   polarStep: 45, // шаг лучей, °
   objects: true, // объектные привязки
   tracking: true, // выравнивание по X/Y от вершин
+  guides: true, // умные направляющие при перемещении объектов (core/guides.js)
 };
 
 const DEG = Math.PI / 180;
