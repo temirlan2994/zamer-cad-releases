@@ -1988,31 +1988,6 @@ const ptsBox = (pts) => {
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
 };
 
-// Боковая грань стенки: четырёхугольники от рёбра контура к сдвинутому на d.
-function sideFace(ctx, rc, pts, d, color) {
-  ctx.beginPath();
-  const n = pts.length;
-  let area = 0;
-  for (let i = 0; i < n; i += 1) area += pts[i].x * pts[(i + 1) % n].y - pts[(i + 1) % n].x * pts[i].y;
-  const out = area > 0 ? 1 : -1; // знак внешней нормали (b.y - a.y, -(b.x - a.x)), ось Y вниз
-  for (let i = 0; i < n; i += 1) {
-    const a = pts[i]; const b = pts[(i + 1) % n];
-    // Только рёбра, обращённые к тени (видимые грани).
-    const nx = (b.y - a.y) * out; const ny = -(b.x - a.x) * out;
-    if (nx * d.x + ny * d.y <= 0) continue;
-    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(b.x + d.x, b.y + d.y); ctx.lineTo(a.x + d.x, a.y + d.y); ctx.closePath();
-  }
-  ctx.fillStyle = color;
-  ctx.fill('nonzero');
-  // Грань в тени: притенение и штриховка, как на эскизе от руки.
-  ctx.fillStyle = rgba(rc.pal.shadow, 0.2);
-  ctx.fill('nonzero');
-  const box = ptsBox([...pts, ...shiftPts(pts, d)]);
-  hatch(ctx, rc, box, Math.max(rc.px(3.5), 30), 0.48, 0.5);
-  tracePath(ctx, shiftPts(pts, d), true);
-  ink(ctx, rc, 0.5, 0.55);
-}
-
 // Короб по контуру outer (верх борта) и inner (засыпка) в текущих осях;
 // sd — направление тени (единичный вектор в этих осях).
 function drawPlanterBody(ctx, o, outer, inner, C, rc, sd) {
@@ -2020,12 +1995,7 @@ function drawPlanterBody(ctx, o, outer, inner, C, rc, sd) {
   const fillKey = FILL_COLORS[o.meta?.fill] || 'soil';
   const F = rc.P[fillKey] || rc.P.soil;
   const wall = Math.abs(outer[0].x - inner[0].x) + Math.abs(outer[0].y - inner[0].y);
-  if (!rc.mono && H > 0) {
-    const lift = Math.min(220, Math.max(40, H * 0.32));
-    const d = { x: sd.x * lift, y: sd.y * lift };
-    // Без подложки-тени у подножия: объём — боковая грань, тень — по солнцу.
-    sideFace(ctx, rc, outer, d, C[1]);
-  }
+  // Ни подложки-тени, ни «боковой грани»: тень — только настоящая, по солнцу.
   // Верх борта — кольцо между outer и inner.
   ctx.beginPath();
   outer.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
@@ -2197,11 +2167,9 @@ const BUILD_LOOKS = {
     ctx.beginPath();
     for (let i = 1; i < n; i += 1) { const y = b - i * t; ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
     ink(ctx, rc, 0.8, 0.95);
-    // Борта — как стенка короба: верх, боковая грань, двойная линия.
+    // Борта — как стенка короба: верх и двойная линия.
     if (cw > 0) {
       for (const [l, r] of [[-a, x0], [x1, a]]) {
-        const top = rectPts(l, -b, r, b);
-        if (!rc.mono) sideFace(ctx, rc, top, { x: sd.x * 60, y: sd.y * 60 }, C[1]);
         ctx.beginPath(); ctx.rect(l, -b, r - l, b * 2);
         ctx.fillStyle = rc.mono ? rc.pal.paper : C[2];
         ctx.fill();
