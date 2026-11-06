@@ -95,7 +95,8 @@ describe('ландшафт: массив и засадка', () => {
     const copies = (await objects(page)).filter((o) => o.id !== bench.id);
     assert.equal(copies.length, 4, 'на 2, 4, 6, 8 м (0 — оригинал)');
     const last = copies.find((o) => Math.abs(o.y - (bench.y + 4000)) <= 60);
-    assert.ok(last && Math.abs(last.rotation - 90) < 1, 'на втором отрезке повёрнута на 90°');
+    // Скамья ставится ровно по экрану (вид повёрнут по северу) — поворот считаем от неё.
+    assert.ok(last && Math.abs((((last.rotation - bench.rotation) % 360) + 360) % 360 - 90) < 1, 'на втором отрезке повёрнута на 90°');
     await page.keyboard.press('Control+z');
     assert.equal((await objects(page)).length, 1);
   });
@@ -113,7 +114,7 @@ describe('ландшафт: массив и засадка', () => {
     const list = await objects(page);
     assert.equal(list.length, 4);
     const opposite = list.find((o) => Math.abs(o.y - (bench.y + 6000)) <= 60);
-    assert.ok(opposite && Math.abs(opposite.x - bench.x) <= 60 && opposite.rotation === 180, 'напротив, развёрнута');
+    assert.ok(opposite && Math.abs(opposite.x - bench.x) <= 60 && Math.abs((((opposite.rotation - bench.rotation) % 360) + 360) % 360 - 180) < 0.01, 'напротив, развёрнута');
     await page.keyboard.press('Control+z');
   });
 

@@ -88,6 +88,20 @@ test('поворот группы на 90°: геометрия, проёмы, �
   assert.equal(sharedCount(project), shared);
 });
 
+test('поворот одного помещения (кнопка «Повернуть 90°», R): с мебелью и проёмами; 4 раза — исходное', () => {
+  const { project, a, win, sofa } = twoRooms();
+  const before = JSON.stringify({ rooms: project.rooms, openings: project.openings, items: project.items, o: project.wallOverrides });
+  const res = rotateRoomGroup(project, [a.id], []);
+  assert.equal(res.ok, true, res.reason);
+  assert.deepEqual([a.w, a.h], [3000, 4000], 'стороны поменялись');
+  assert.ok(res.items.includes(sofa.id), 'диван внутри — повёрнут вместе');
+  assert.equal(sofa.rotation, 90);
+  assert.equal(win.side, 1, 'окно — на повёрнутой стене');
+  for (let i = 0; i < 3; i += 1) assert.equal(rotateRoomGroup(project, [a.id], []).ok, true);
+  const after = JSON.stringify({ rooms: project.rooms, openings: project.openings, items: project.items, o: project.wallOverrides });
+  assert.equal(after, before);
+});
+
 test('четыре поворота возвращают группу в исходное состояние', () => {
   const { project, a, b } = twoRooms();
   const before = JSON.stringify({ rooms: project.rooms, openings: project.openings, items: project.items, o: project.wallOverrides });

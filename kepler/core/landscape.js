@@ -750,6 +750,19 @@ export function translateObject(o, dx, dy) {
   return o;
 }
 
+// Поворот нового объекта при постановке (клик, перетаскивание карточки,
+// призрак): ровно по экрану — компенсирует угол вида viewRad (state.view.rotation,
+// радианы; экран = R(viewRad)·мир) плюс extra° (Пробел). Линии и контуры
+// рисуются по точкам — у них 0; круглым (растения, круглые площадки) угол
+// вида не нужен. Вид не повёрнут — extra, как раньше.
+export function screenPlaceRotation(kind, viewRad = 0, extra = 0) {
+  const def = landscapeDef(kind);
+  if (!def || isPathShape(def)) return 0;
+  if (def.shape === 'point' || def.shape === 'circle') return normDeg(extra);
+  const view = Math.round(((-(viewRad || 0) * 180) / Math.PI) * 100) / 100;
+  return normDeg(view + (extra || 0));
+}
+
 // Поворот объекта вокруг точки (cx, cy) на deg: у фигур вращаются вершины.
 export function rotateObjectAbout(o, cx, cy, deg) {
   const a = (deg * Math.PI) / 180;
@@ -1251,14 +1264,16 @@ export function pointInObject(obj, p, tol = 0) {
 export const SHAPE_RANK = { poly: 0, line: 1, point: 2, circle: 2, rect: 2, note: 6 };
 
 // Верхний объект под точкой: высокие (кроны) поверх, затем позже добавленные.
-export function hitLandscape(objects, p, tol = 0) {
+// prefer — id выбранных: среди равных по слою и форме выигрывает выбранный
+// (повторный клик по нему — смена режима ручек или перенос, а не соседний).
+export function hitLandscape(objects, p, tol = 0, prefer = null) {
   const order = { note: 3, tall: 2, low: 1, ground: 0 };
   let best = null;
   objects.forEach((obj, index) => {
     if (!pointInObject(obj, p, tol)) return;
     const def = landscapeDef(obj.kind);
     // Посадки в коробе — поверх короба.
-    const z = (order[def?.layer] ?? 1) * 1e6 + ((SHAPE_RANK[def?.shape] ?? 2) + (obj.parent ? 3 : 0)) * 1e5 + index;
+    const z = (order[def?.layer] ?? 1) * 1e6 + ((SHAPE_RANK[def?.shape] ?? 2) + (obj.parent ? 3 : 0)) * 1e5 + (prefer?.has(obj.id) ? 99999 : index);
     if (!best || z > best.z) best = { obj, z };
   });
   return best?.obj || null;

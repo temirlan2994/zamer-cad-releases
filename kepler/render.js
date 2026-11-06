@@ -18,6 +18,7 @@ function cachedWallOutline(walls) {
   return outline;
 }
 import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
+import { lsHandleInfo } from './core/landscape-handles.js';
 import {
   groupBounds, groupCorners, groupEdgeHandles, groupHandleId, groupItems, groupRotators,
 } from './core/group-handles.js';
@@ -635,6 +636,7 @@ export function createRenderer(canvas) {
         hoverId: state.hover?.type === 'landscape' ? state.hover.id : null,
         warnings, w2s, tokens, scale, warnColor: '#d08a1e',
         labels: lsVis?.labels === true, vertex: state.lsVertex || null, style: lsStyle,
+        handles: lsHandleOverlay(state, lsObjects, print),
       });
     }
     // Линии разрезов «А–А» и черновик инструмента «Разрез».
@@ -2657,6 +2659,13 @@ function drawWallSplitPreview(ctx, wall, edit, w2s, tokens) {
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+}
+
+// Ручки ландшафта (core/landscape-handles.js): режим, рамка, угол жеста.
+function lsHandleOverlay(state, objects, print) {
+  if (print || state.tool) return null;
+  const info = lsHandleInfo(objects, state.selection, state.itemHandle, state.view.rotation);
+  return info ? { mode: info.mode, frame: info.frame, deg: state.lsHandleDeg ?? null } : null;
 }
 
 // Рамка группы мебели в осях дома (box — описывающий прямоугольник),

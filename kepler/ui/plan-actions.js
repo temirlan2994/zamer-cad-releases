@@ -665,7 +665,22 @@ export function duplicateSelection() {
 
 export function rotateSelection90() {
   if (state.selection?.type === 'multi') rotateMulti90();
+  else if (state.selection?.type === 'room') rotateRoom90();
   else rotateSelectedItem();
+}
+
+// Повернуть выбранное помещение на 90° по часовой вокруг его центра — с
+// вложенными, мебелью и проёмами (core/room-group.js; помещение по стенам —
+// вместе со стенами петли, core/bound-edit.js). Одна запись истории.
+export function rotateRoom90() {
+  const sel = state.selection;
+  if (sel?.type !== 'room') return false;
+  const ok = applyGroupChange((project) => rotateRoomGroup(project, [sel.id], []), 'Так повернуть нельзя');
+  if (ok) {
+    selectObject(sel);
+    toast('Помещение повёрнуто на 90° · Ctrl+Z — отменить');
+  }
+  return ok;
 }
 
 function mirrorItem(item) {

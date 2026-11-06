@@ -9,11 +9,12 @@
 // печати. Кроны и тени — спрайты в кеше (drawImage), текстуры — узоры.
 
 import {
-  LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, landscapeHandles, objectAreaM2, objectColors,
+  LS_COLORS, SHAPE_RANK, curbLines, insetPolygon, isPathShape, isRoundObject, landscapeDef, planterWall, stairsInfo, objectAreaM2, objectColors,
   lineLayout, objectCorners, objectLengthM, objectOutline, objectPath, pathBoards, pointAlong, polylineLength,
   seededRandom, steppingSlabs, variantOf, fmtElev, retainingEdges, retainingInfo,
 } from '../core/landscape.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
+import { frameCorners, frameEdges, frameRotators } from '../core/landscape-handles.js';
 import { calloutArrow, calloutDotRadius, calloutLayout, setCalloutMeasure } from '../core/landscape-callout.js';
 import { sunPosition } from '../core/site.js';
 import {
@@ -938,10 +939,6 @@ const LOOKS = {
   },
   // Отдельная плита (после «Разорвать» или поштучно).
   slab(ctx, o, a, b, C, rc) {
-    if (rc.lod >= 4 && !rc.mono) {
-      ctx.fillStyle = rgba(rc.pal.shadow, 0.16);
-      ctx.beginPath(); rrect(ctx, -a + 40, -b + 50, a * 2, b * 2, 40); ctx.fill();
-    }
     ctx.fillStyle = rc.mono ? rc.pal.paper : C[0];
     ctx.beginPath(); rrect(ctx, -a, -b, a * 2, b * 2, Math.min(40, a * 0.2, b * 0.2));
     ctx.fill();
@@ -1121,15 +1118,7 @@ const LOOKS = {
         ctx.arc(0, 0, rb - t / 2, e, s, true);
         ctx.closePath();
       };
-      if (!rc.mono) {
-        ctx.save();
-        ctx.translate(rc.shadowLocal.x * 140, rc.shadowLocal.y * 140);
-        seat();
-        ctx.fillStyle = rgba(rc.pal.shadow, 0.2);
-        ctx.fill();
-        ctx.restore();
-      }
-      seat();
+      seat(); // без подложки-тени (тень — по солнцу)
       ctx.save();
       ctx.clip();
       ctx.fillStyle = rc.mono ? rc.pal.paper : rc.P.wood[0];
@@ -1678,10 +1667,6 @@ const SHAPE_LOOKS = {
         ctx.save();
         ctx.translate(sl.x, sl.y);
         ctx.rotate(sl.angle);
-        if (rc.lod >= 4 && !rc.mono) {
-          ctx.fillStyle = rgba(rc.pal.shadow, 0.16);
-          ctx.beginPath(); rrect(ctx, -sl.along / 2 + 40, -sl.across / 2 + 50, sl.along, sl.across, 40); ctx.fill();
-        }
         ctx.fillStyle = rc.mono ? rc.pal.paper : C[sl.ci ?? 0];
         ctx.beginPath(); rrect(ctx, -sl.along / 2, -sl.across / 2, sl.along, sl.across, 40); ctx.fill();
         ink(ctx, rc, 0.6, 0.85);
@@ -2038,15 +2023,7 @@ function drawPlanterBody(ctx, o, outer, inner, C, rc, sd) {
   if (!rc.mono && H > 0) {
     const lift = Math.min(220, Math.max(40, H * 0.32));
     const d = { x: sd.x * lift, y: sd.y * lift };
-    // Падающая тень у подножия (низкому коробу — без длинной тени).
-    if (H < 400 && rc.cast) {
-      ctx.save();
-      ctx.fillStyle = rc.pal.shadow;
-      ctx.globalAlpha = 0.14;
-      tracePath(ctx, shiftPts(outer, d, 1.6), true);
-      ctx.fill();
-      ctx.restore();
-    }
+    // Без подложки-тени у подножия: объём — боковая грань, тень — по солнцу.
     sideFace(ctx, rc, outer, d, C[1]);
   }
   // Верх борта — кольцо между outer и inner.
@@ -2128,15 +2105,7 @@ function drawCurbLines(ctx, lines, w, h, C, rc, sd) {
   ctx.miterLimit = 3;
   ctx.lineCap = 'butt';
   for (const { pts, closed } of lines) {
-    if (!rc.mono && h > 0) {
-      ctx.save();
-      ctx.globalAlpha = 0.2;
-      ctx.strokeStyle = rc.pal.shadow;
-      ctx.lineWidth = w;
-      tracePath(ctx, shiftPts(pts, sd, Math.min(160, Math.max(25, h * 0.5))), closed);
-      ctx.stroke();
-      ctx.restore();
-    }
+    // Подложки-тени у бордюра нет (настоящая — по солнцу).
     tracePath(ctx, pts, closed);
     ctx.strokeStyle = rc.ink;
     ctx.lineWidth = w + rc.px(rc.mono ? 1.6 : 1.3);
@@ -2276,7 +2245,7 @@ const BUILD_LOOKS = {
 const WALL_JOINT = { concrete: 3000, corten: 2000, gabion: 1000, stone: 0 };
 
 // Подпорная стенка (мир). «Эскиз»: со стороны низа — видимая грань
-// (притенена, штриховка) и мягкая тень у подножия, верх светлый с фактурой,
+// (притенена, штриховка), верх светлый с фактурой,
 // капа шире тела; «Чертёж»: двойная линия, кромка низа толще, штрихи от неё
 // в сторону низа (длинный/короткий поочерёдно) — условный знак перепада.
 function drawRetaining(ctx, o, C, rc) {
@@ -2288,14 +2257,7 @@ function drawRetaining(ctx, o, C, rc) {
   if (!rc.mono && H > 0) {
     const face = Math.min(320, Math.max(60, H * 0.16));
     const far = retainingEdges(o, ri.thick + face * 2).lower;
-    // Тень у подножия — полосой за гранью, затухает наружу.
-    const sh = Math.min(900, Math.max(150, H * 0.45));
-    for (const [k, alpha] of rc.cast ? [[1, 0.1], [0.55, 0.12]] : []) {
-      const farSh = retainingEdges(o, ri.thick + (face + sh * k) * 2).lower;
-      tracePath(ctx, [...far, ...[...farSh].reverse()], true);
-      ctx.fillStyle = rgba(rc.pal.shadow, alpha);
-      ctx.fill();
-    }
+    // Подложки-тени у подножия нет — только видимая грань (тень — по солнцу).
     // Видимая грань: цвет боковины, притенение, штриховка.
     const poly = [...e.lower, ...[...far].reverse()];
     tracePath(ctx, poly, true);
@@ -2453,8 +2415,14 @@ function shadowOffset(height, shadow) {
 
 // Мягкая длинная тень: силуэт, протянутый по направлению от солнца, с
 // размытием — спрайт в кеше; серо-зелёная, полупрозрачная. В «Чертеже» — нет.
+// Условная тень — только у растений (крона с полутенью — часть рисунка).
+// Короба, бордюры, площадки, стенки, лестницы, мебель и постройки её не
+// рисуют: их объём — в гранях, настоящая тень — по солнцу (core/landscape-shadow.js).
+export const DROP_SHADOW_LOOKS = new Set(['deciduous', 'fruit', 'pine', 'spruce', 'thuja', 'bonsai', 'ball', 'shrub', 'juniper', 'grass', 'flowers', 'hedge', 'hedge-line']);
+export const hasDropShadow = (def) => Boolean(def?.shadow && DROP_SHADOW_LOOKS.has(def.look));
+
 function drawShadow(ctx, o, def, shadow, rc) {
-  if (rc.mono || def.look === 'retaining') return; // у стенки тень — в её рисунке (к низу)
+  if (rc.mono || !hasDropShadow(def)) return;
   const off = shadowOffset(o.height || def.height, shadow);
   const color = rc.pal.shadow;
   if (def.shape === 'line') {
@@ -2797,7 +2765,7 @@ export function drawLandscapeRaised(ctx, objects, opts) {
   const rc = shadows ? baseContext(opts) : null;
   const shadowOf = (o) => {
     const def = landscapeDef(o.kind);
-    if (def?.shadow && !isOffscreen(ctx, o, def, 1500 + (def.height || 0) * 1.5)) drawShadow(ctx, o, def, opts.shadow, rc);
+    if (hasDropShadow(def) && !isOffscreen(ctx, o, def, 1500 + (def.height || 0) * 1.5)) drawShadow(ctx, o, def, opts.shadow, rc);
   };
   // Тени посадок в коробе — после коробов (иначе их закроет засыпка).
   if (shadows) for (const o of objects) if (!o.parent) shadowOf(o);
@@ -3191,7 +3159,7 @@ function handle(ctx, p, tokens, active = false) {
 // sel — массив id; warnings — Map id → [текст]. Замечания: у объекта —
 // маленький значок «!», янтарный пунктир — только у выделенного/наведённого.
 export function drawLandscapeOverlay(ctx, objects, {
-  sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor = '#d08a1e', labels = false, vertex = null, style = 'sketch',
+  sel = [], hoverId = null, warnings = new Map(), w2s, tokens, scale, warnColor = '#d08a1e', labels = false, vertex = null, style = 'sketch', handles = null,
 }) {
   if (labels) drawLabels(ctx, objects, w2s, tokens, style);
   else drawElevTags(ctx, objects, w2s, tokens, style);
@@ -3236,6 +3204,46 @@ export function drawLandscapeOverlay(ctx, objects, {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  // Ручки режима (core/landscape-handles.js): handles = { mode, frame, deg }.
+  const mode = handles?.mode || 'select';
+  const rotatorsAt = (f) => {
+    for (const r of frameRotators(f, 20, scale)) {
+      const p = w2s(r.x, r.y);
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2, -0.6, Math.PI * 1.2); ctx.stroke();
+    }
+  };
+  const modeHandles = (f) => {
+    if (mode === 'rotate') rotatorsAt(f);
+    else if (mode === 'stretch') for (const e of frameEdges(f)) handle(ctx, w2s(e.x, e.y), tokens);
+    else if (mode === 'scale') for (const c of frameCorners(f)) handle(ctx, w2s(c.x, c.y), tokens);
+  };
+  const frameOutline = (f) => {
+    const pts = frameCorners(f).map((c) => w2s(c.x, c.y));
+    outlinePath(ctx, pts);
+    ctx.strokeStyle = tokens.accent;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([2, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return pts;
+  };
+  if (chosen.length > 1) {
+    // Группа: общая рамка (по экрану), подпись и ручки режима.
+    const f = handles?.frame;
+    if (!f || mode === 'select') return null;
+    const pts = frameOutline(f);
+    const top = Math.min(...pts.map((p) => p.y));
+    const mid = pts.reduce((s, p) => s + p.x, 0) / 4;
+    const deg = handles.deg;
+    pill(ctx, `${chosen.length} объект. · ${(f.w / 1000).toFixed(1)} × ${(f.h / 1000).toFixed(1)} м${mode === 'rotate' && deg != null ? ` · ${Math.round(deg)}°` : ''}`,
+      mid, top - 14, tokens, tokens.accent);
+    modeHandles(f);
+    return null;
+  }
   if (chosen.length !== 1) return null;
   const o = chosen[0];
   const def = landscapeDef(o.kind);
@@ -3258,6 +3266,12 @@ export function drawLandscapeOverlay(ctx, objects, {
   if (isPathShape(def)) {
     pill(ctx, `${landscapeMeasure(o, def)}${lock}`, mid, top - 14, tokens, tokens.accent);
     if (o.locked) return null;
+    if (mode !== 'select' && handles?.frame) {
+      // Поворот/масштаб линии или контура — за рамку габарита.
+      frameOutline(handle.frame);
+      modeHandles(handle.frame);
+      return null;
+    }
     const { vertices, mids } = shapeHandles(o, w2s);
     for (const p of mids) {
       ctx.fillStyle = tokens.surface;
@@ -3270,16 +3284,9 @@ export function drawLandscapeOverlay(ctx, objects, {
   }
   pill(ctx, `${landscapeMeasure(o, def)} · ${Math.round(o.rotation || 0)}°${lock}`, mid, top - 14, tokens, tokens.accent);
   if (o.locked) return null;
-  const { rotators } = landscapeHandles(o, 20, scale);
-  for (const r of rotators) {
-    const p = w2s(r.x, r.y);
-    ctx.fillStyle = tokens.surface;
-    ctx.strokeStyle = tokens.accent;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(p.x, p.y, 2, -0.6, Math.PI * 1.2); ctx.stroke();
-  }
-  for (const p of corners) handle(ctx, p, tokens);
+  // Режимы как у мебели: «Выбор» — без ручек; поворот — круги у углов;
+  // растяжение — квадраты на сторонах; масштаб — квадраты в углах.
+  modeHandles({ x: o.x, y: o.y, w: o.w, h: o.h, rotation: o.rotation || 0 });
   return null;
 }
 
@@ -3328,9 +3335,10 @@ export function drawLandscapePreview(canvas, kind, { style = 'sketch', dark = ca
   // Длинные узкие объекты (изгородь, забор) — по ширине карточки.
   const scale = Math.min((W * 0.78) / o.w, (H * 0.74) / o.h);
   const shadow = { x: Math.SQRT1_2, y: Math.SQRT1_2, k: 0.12 };
-  ctx.setTransform(scale, 0, 0, scale, W / 2 - (def.shadow ? 4 : 0), H / 2 - (def.shadow ? 4 : 0));
+  const dropShadow = hasDropShadow(def);
+  ctx.setTransform(scale, 0, 0, scale, W / 2 - (dropShadow ? 4 : 0), H / 2 - (dropShadow ? 4 : 0));
   const opts = { px: (v) => (v * 1.6) / scale, lod: Math.max(scale * 1000, 30), shadow, style, dark, dpr: 1 };
-  if (def.shadow) drawShadow(ctx, o, def, shadow, baseContext(opts));
+  if (dropShadow) drawShadow(ctx, o, def, shadow, baseContext(opts));
   drawLandscapeObject(ctx, o, opts);
   if (kind === 'planter-box') {
     // Карточка короба — с посадками внутри.

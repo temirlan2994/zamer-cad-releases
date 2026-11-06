@@ -144,7 +144,7 @@ export function bindKeyboard() {
     if (event.key === 'Escape') {
       // Сначала Esc выходит из режима ручек мебели (поворот, растяжение, масштаб) —
       // предмет остаётся выбранным; следующий Esc снимает выбор.
-      const ownsHandle = state.selection?.type === 'item' || isItemGroup(state.selection);
+      const ownsHandle = state.selection?.type === 'item' || state.selection?.type === 'landscape' || isItemGroup(state.selection);
       if (!state.tool && ownsHandle && state.itemHandle && state.itemHandle.mode !== 'select') {
         state.itemHandle = null;
         requestDraw();

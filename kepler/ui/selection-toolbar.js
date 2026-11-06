@@ -28,10 +28,10 @@ function contentForSelection(sel) {
       // Помещение по стенам: правится как обычное — правки идут в его стены.
       return {
         label: 'Помещение по стенам',
-        html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+        html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
       };
     }
-    const common = button('duplicate', '⧉', 'Копировать', 'Ctrl+D');
+    const common = `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${room.parentId ? '' : button('rotate', '↻', 'Повернуть 90°', 'R')}`;
     const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}`;
     const unbind = isShaft(room) || isOpenRoom(room) || room.parentId ? '' : button('unbind-walls', '⛶', 'Отвязать стены');
     return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${unbind}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };

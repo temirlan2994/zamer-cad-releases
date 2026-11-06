@@ -5,13 +5,19 @@
 
 import {
   LANDSCAPE_CATEGORIES, LANDSCAPE_VIS, TREE_HOUSE_MIN, clampWidth, createLandscapeObject,
-  hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef, landscapeHandles,
+  hitEdge, hitLandscape, hitVertex, insertVertex, isPathShape, landscapeByCategory, landscapeDef,
   landscapeSummary, landscapeWarnings, minVertices, moveVertex, objectCorner, objectCorners, objectPath, objectsInPolygon,
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
   syncStairs, ELEV_KINDS, RETAINING_SIDES, applyStairsDrop, normalizeElev, retainingInfo, stairsDrop,
-  objectAreaM2, objectLengthM, pointAlong,
+  objectAreaM2, objectLengthM, pointAlong, screenPlaceRotation,
 } from '../core/landscape.js';
+import {
+  LS_GROUP_TITLES, LS_HANDLE_TITLES, frameCorners, frameEdges, frameRotators, lsHandleInfo, lsStarts, nextLsHandle,
+  rotateLs, scaleLs, screenAngle, stretchLs,
+} from '../core/landscape-handles.js';
+import { inItemCore } from '../core/item-handles.js';
+import { groupRotateDeg } from '../core/group-handles.js';
 import { CALLOUT_SIZE_MAX, CALLOUT_SIZE_MIN, CALLOUT_TEXT_MAX, calloutLayout, syncCallout } from '../core/landscape-callout.js';
 import { fmtMoney, fmtQty, plantDefaults, plantGroupOf, plantKey, plantSchedule, setPlantEntry } from '../core/landscape-plants.js';
 import { balanceRows, buildLandscapeCsv, landscapeBalance, retainingRows, retainingTotals } from '../core/landscape-report.js';
@@ -124,9 +130,11 @@ export function startPlaceLandscape(kind) {
   requestDraw();
 }
 
-// Угол, при котором текст выноски горизонтален на экране (вид может быть повёрнут).
-const screenDeg = () => Math.round(((-(state.view.rotation || 0) * 180) / Math.PI) * 100) / 100;
-const placeRotation = (kind, rotation) => (kind === 'callout' ? screenDeg() + (rotation || 0) : rotation);
+// Новый объект (и призрак) стоит ровно по экрану: поворот компенсирует угол
+// вида (core/landscape.js screenPlaceRotation); вид не повёрнут — 0, как раньше.
+const placeRotation = (kind, rotation) => screenPlaceRotation(kind, state.view.rotation, rotation);
+// Угол, при котором текст выноски горизонтален на экране.
+const screenDeg = () => screenPlaceRotation('callout', state.view.rotation);
 
 export function placeLandscapeAt(kind, world, rotation = 0) {
   const def = landscapeDef(kind);
@@ -151,7 +159,7 @@ export function rotateLandscapeGhost() {
   const tool = state.tool;
   if (tool?.kind !== 'place-landscape') return false;
   tool.rotation = ((tool.rotation || 0) + 90) % 360;
-  if (state.ghostLandscape) state.ghostLandscape.rotation = tool.rotation;
+  if (state.ghostLandscape) state.ghostLandscape.rotation = placeRotation(tool.lsKind, tool.rotation);
   requestDraw();
   return true;
 }
@@ -329,19 +337,38 @@ export function landscapeHover(world, canvas, event) {
   const handle = hitLandscapeHandle(screen);
   const hit = handle ? null : hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
   const next = hit ? { type: 'landscape', id: hit.id } : null;
-  canvas.style.cursor = handle ? (handle.mode === 'rotate' ? 'grab' : handle.mode.startsWith('note') ? 'move' : 'nwse-resize') : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
+  const handleCursor = (h) => (h.mode.endsWith('rotate') ? 'grab' : h.mode.startsWith('note') ? 'move'
+    : h.edge ? (h.edge === 'n' || h.edge === 's' ? 'ns-resize' : 'ew-resize') : 'nwse-resize');
+  canvas.style.cursor = handle ? handleCursor(handle) : hit ? (hit.locked ? 'pointer' : 'move') : 'default';
   if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
   return true;
 }
 
 const HANDLE_TOL = () => (state.coarsePointer ? 22 : 9);
 
+// Режим ручек выбранного (core/landscape-handles.js): рамка, набор режимов.
+export function landscapeHandleInfo() {
+  return lsHandleInfo(landscapeObjects(), state.selection, state.itemHandle, state.view.rotation);
+}
+
+// Повторный клик по выбранному объекту (группе) — следующий режим ручек.
+function cycleLandscapeHandle() {
+  const info = landscapeHandleInfo();
+  if (!info || info.modes.length < 2) return;
+  state.itemHandle = nextLsHandle(state.itemHandle, info.key, info.modes);
+  toast((info.group ? LS_GROUP_TITLES : LS_HANDLE_TITLES)[state.itemHandle.mode]);
+  requestDraw();
+}
+
+// Ручки текущего режима. Режим «Выбор» — без ручек (у линий и контуров —
+// вершины, hitShapeHandle). Прямоугольник: поворот (rotate), растяжение
+// (frame-stretch), масштаб за угол (resize); рамка линии/группы — frame-*.
 export function hitLandscapeHandle(screen) {
   const objs = selectedObjects();
-  if (objs.length !== 1) return null;
+  if (!objs.length) return null;
   const o = objs[0];
-  if (o.locked || isShapeKind(o.kind)) return null;
-  if (o.kind === 'callout') {
+  if (objs.length === 1 && o.locked) return null;
+  if (objs.length === 1 && o.kind === 'callout') {
     // Выноска: ручки «указатель» (круг) и «текст» (квадрат у излома).
     const L = calloutLayout(o);
     for (const [mode, p] of [['note-anchor', L.anchor], ['note-text', L.elbow]]) {
@@ -350,14 +377,23 @@ export function hitLandscapeHandle(screen) {
     }
     return null;
   }
-  const { corners, rotators } = landscapeHandles(o, 20, state.view.scale);
-  for (const c of corners) {
-    const p = worldToScreen(c.x, c.y);
-    if (Math.abs(p.x - screen.x) <= HANDLE_TOL() && Math.abs(p.y - screen.y) <= HANDLE_TOL()) return { mode: 'resize', corner: c.id, obj: o };
-  }
-  for (const r of rotators) {
-    const p = worldToScreen(r.x, r.y);
-    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= HANDLE_TOL() + 1) return { mode: 'rotate', corner: r.id, obj: o };
+  const info = landscapeHandleInfo();
+  if (!info || info.mode === 'select' || !info.frame) return null;
+  const f = info.frame;
+  const tol = HANDLE_TOL();
+  // Тело объекта важнее ручек: у мелкого иначе нельзя кликнуть (сменить режим, потащить).
+  if (!info.framed && inItemCore(f, screenToWorld(screen.x, screen.y), tol / state.view.scale)) return null;
+  const near = (p) => { const s = worldToScreen(p.x, p.y); return Math.abs(s.x - screen.x) <= tol && Math.abs(s.y - screen.y) <= tol; };
+  const nearRound = (p) => { const s = worldToScreen(p.x, p.y); return Math.hypot(s.x - screen.x, s.y - screen.y) <= tol + 1; };
+  if (info.mode === 'rotate') {
+    const r = frameRotators(f, 20, state.view.scale).find(nearRound);
+    if (r) return { mode: info.framed ? 'frame-rotate' : 'rotate', corner: r.id, obj: o, info };
+  } else if (info.mode === 'stretch') {
+    const e = frameEdges(f).find(near);
+    if (e) return { mode: 'frame-stretch', edge: e.id, obj: o, info };
+  } else if (info.mode === 'scale') {
+    const c = frameCorners(f).find(near);
+    if (c) return { mode: info.framed ? 'frame-scale' : 'resize', corner: c.id, obj: o, info };
   }
   return null;
 }
@@ -368,6 +404,7 @@ export function hitShapeHandle(screen) {
   if (objs.length !== 1) return null;
   const o = objs[0];
   if (o.locked || !isShapeKind(o.kind)) return null;
+  if (landscapeHandleInfo()?.mode !== 'select') return null; // вершины — в режиме «Выбор»
   const { vertices, mids } = shapeHandles(o, worldToScreen);
   const tol = HANDLE_TOL();
   for (let i = vertices.length - 1; i >= 0; i -= 1) {
@@ -423,6 +460,7 @@ export function landscapePointerDown(event, screen, world) {
     if (handle.mode.startsWith('note')) {
       return { kind: 'ls-note', id: o.id, part: handle.mode === 'note-anchor' ? 'anchor' : 'text', before: snapshot(), moved: false, screen };
     }
+    if (handle.mode.startsWith('frame-')) return frameDrag(handle, world);
     if (handle.mode === 'rotate') {
       return {
         kind: 'ls-rotate', id: o.id, startRot: o.rotation || 0, center: { x: o.x, y: o.y },
@@ -437,9 +475,11 @@ export function landscapePointerDown(event, screen, world) {
       box0: { ...o }, kids: childStarts(o),
     };
   }
-  const hit = hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
+  const hit = hitLandscape(landscapeObjects(), world, 4 / state.view.scale, event.shiftKey ? null : new Set(selectedIds()));
   if (hit) {
     let ids = selectedIds();
+    // Клик без сдвига по уже выбранному — следующий режим ручек (landscapeDragEnd).
+    const wasSelected = !event.shiftKey && ids.includes(hit.id);
     if (event.shiftKey) {
       ids = ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id];
       selectLandscape(ids);
@@ -455,7 +495,7 @@ export function landscapePointerDown(event, screen, world) {
     const movable = landscapeObjects().filter((o) => group.has(o.id));
     const starts = new Map(movable.map((o) => [o.id, { x: o.x, y: o.y, points: o.points ? o.points.map((p) => ({ ...p })) : null }]));
     const primary = starts.has(hit.id) ? hit.id : movable[0].id;
-    return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false };
+    return { kind: 'ls-move', primary, starts, world, screen, before: snapshot(), moved: false, wasSelected, detail: event.detail || 1 };
   }
   // Клик по линии разреза — открыть разрез.
   const sec = hitSection(landscapeSections(), screen, worldToScreen, state.coarsePointer ? 12 : 6);
@@ -464,6 +504,34 @@ export function landscapePointerDown(event, screen, world) {
   if (event.pointerType === 'touch') return { kind: 'pan', start: screen, view: { ...state.view } };
   state.marquee = { x1: screen.x, y1: screen.y, x2: screen.x, y2: screen.y, add: event.shiftKey };
   return { kind: 'marquee', start: screen };
+}
+
+// Жест рамки (core/landscape-handles.js): поворот, растяжение, масштаб
+// группы или линии/контура; одного прямоугольника — растяжение. Растения
+// в коробах едут вместе с ним (только сдвиг, без изменения размера).
+function frameDrag(handle, world) {
+  const info = handle.info;
+  const objects = landscapeObjects();
+  const ids = withChildren(objects, editable(info.objs).map((o) => o.id));
+  const members = objects.filter((o) => ids.has(o.id));
+  const moveOnly = new Set(members.filter((o) => o.parent && ids.has(o.parent)).map((o) => o.id));
+  const frame = { ...info.frame };
+  return {
+    kind: 'ls-frame', op: handle.mode.slice(6), edge: handle.edge, corner: handle.corner, frame,
+    center: { x: frame.x, y: frame.y }, startPoint: { x: world.x, y: world.y },
+    starts: lsStarts(members), moveOnly, about: info.group ? 'opposite' : 'center',
+    before: snapshot(), moved: false,
+  };
+}
+
+function applyFrameResult(objects, list) {
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  for (const r of list) {
+    const live = byId.get(r.id);
+    if (!live) continue;
+    for (const key of Object.keys(live)) delete live[key];
+    Object.assign(live, r);
+  }
 }
 
 // Исходные положения растений короба (поворот, размер).
@@ -545,8 +613,24 @@ export function landscapeDragMove(drag, world, screen, event) {
     const ang = Math.atan2(world.y - drag.center.y, world.x - drag.center.x);
     const raw = drag.startRot + ((ang - drag.startAngle) * 180) / Math.PI;
     const step = event?.shiftKey ? 1 : 15;
-    o.rotation = ((Math.round(raw / step) * step) % 360 + 360) % 360;
+    // Шаг — от угла «по экрану»: объект, стоящий ровно на повёрнутом виде, им и остаётся.
+    const base = screenAngle(state.view.rotation);
+    o.rotation = Math.round(((((base + Math.round((raw - base) / step) * step) % 360) + 360) % 360) * 100) / 100;
     if (drag.kids) rotateChildren(objects, o, o.rotation - drag.startRot, drag.kids);
+  } else if (drag.kind === 'ls-frame') {
+    drag.moved = true;
+    let res;
+    if (drag.op === 'rotate') {
+      const deg = groupRotateDeg(drag.center, drag.startPoint, world, event?.shiftKey ? 1 : 15);
+      state.lsHandleDeg = deg;
+      res = { objects: rotateLs(drag.starts, drag.center, deg) };
+    } else if (drag.op === 'stretch') {
+      res = stretchLs(drag.starts, drag.frame, drag.edge, world, { snap: snapStep(), moveOnly: drag.moveOnly });
+    } else {
+      res = scaleLs(drag.starts, drag.frame, drag.corner, world, { snap: snapStep(), about: drag.about, moveOnly: drag.moveOnly });
+    }
+    applyFrameResult(objects, res.objects);
+    if (drag.starts.length === 1) updateLiveMeasure(objects.find((x) => x.id === drag.starts[0].id));
   } else if (drag.kind === 'ls-resize') {
     const o = objects.find((x) => x.id === drag.id);
     if (!o) return;
@@ -587,8 +671,24 @@ export function landscapeDragEnd(drag) {
     requestDraw();
     return;
   }
-  if (!drag.moved) { requestDraw(); return; }
+  if (drag.kind === 'ls-frame') state.lsHandleDeg = null;
+  if (!drag.moved) {
+    // Повторный клик по выбранному — следующий режим ручек (у линии/контура
+    // второй клик двойного — правка вершин, режим не меняем).
+    if (drag.kind === 'ls-move' && drag.wasSelected) {
+      const o = landscapeObjects().find((x) => x.id === drag.primary);
+      if (!(drag.detail >= 2 && o && isShapeKind(o.kind))) cycleLandscapeHandle();
+    }
+    requestDraw();
+    return;
+  }
   const objects = landscapeObjects();
+  if (drag.kind === 'ls-frame') {
+    for (const s of drag.starts) {
+      const o = objects.find((x) => x.id === s.id);
+      if (isPlanter(o)) refitChildren(objects, o);
+    }
+  }
   // Растение, перетащенное на короб, садится в него; за борт — отвязывается.
   if (drag.kind === 'ls-move') settleMoved(objects, [...drag.starts.keys()]);
   if (drag.kind === 'ls-vertex') {
@@ -611,6 +711,8 @@ export function landscapeDblClick(world) {
   const o = objs[0];
   if (o.locked || !isShapeKind(o.kind)) return false;
   const tol = 8 / state.view.scale;
+  // Двойной клик по линии/контуру — правка вершин: ручки — в режим «Выбор».
+  if (state.itemHandle?.id === `ls:${o.id}`) state.itemHandle = null;
   const vertex = hitVertex(o, world, tol);
   if (vertex >= 0) { removeVertexAt(o, vertex); requestDraw(); return true; }
   const seg = hitEdge(o, world, Math.max(tol, (o.width || 0) / 2));

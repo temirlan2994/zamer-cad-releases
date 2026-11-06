@@ -70,8 +70,10 @@ describe('ландшафт: клумба-короб и лестница', () => 
     const { page } = app;
     const before = await objects(page);
     const undo0 = await undoLen(page);
-    // Хватаем за борт (не за растение).
-    const p = await worldToClient(page, box.x, box.y - box.h / 2 + 60);
+    // Хватаем за борт (не за растение); короб стоит ровно по экрану — борт в его осях.
+    const a = ((box.rotation || 0) * Math.PI) / 180;
+    const ly = -box.h / 2 + 60;
+    const p = await worldToClient(page, box.x - ly * Math.sin(a), box.y + ly * Math.cos(a));
     await page.mouse.move(p.x, p.y);
     await page.mouse.down();
     for (let i = 1; i <= 6; i += 1) await page.mouse.move(p.x - i * 12, p.y + i * 8);
@@ -97,7 +99,7 @@ describe('ландшафт: клумба-короб и лестница', () => 
     const kids0 = (await objects(page)).filter((o) => o.parent === box.id);
     await page.keyboard.press('KeyR');
     let list = await objects(page);
-    assert.equal(list.find((o) => o.id === box.id).rotation, 90);
+    assert.equal(list.find((o) => o.id === box.id).rotation, ((box.rotation || 0) + 90) % 360);
     for (const c of kids0) {
       const n = list.find((o) => o.id === c.id);
       // Поворот на 90° по часовой вокруг центра короба: (dx, dy) → (−dy, dx).
