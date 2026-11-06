@@ -444,6 +444,12 @@ export function normalizeProject(data) {
   // Углы вида по режимам (core/view-angles.js): необязательно, без смены схемы.
   const viewAngles = cleanViewAngles(data.settings.viewAngles);
   if (viewAngles) data.settings.viewAngles = viewAngles; else delete data.settings.viewAngles;
+  // Скрытые замечания (core/issues.js): необязательно, без смены схемы —
+  // уникальные непустые строки, пустой список не хранится.
+  const dismissed = Array.isArray(data.settings.dismissedIssues)
+    ? [...new Set(data.settings.dismissedIssues.filter((x) => typeof x === 'string' && x))]
+    : [];
+  if (dismissed.length) data.settings.dismissedIssues = dismissed; else delete data.settings.dismissedIssues;
   // Старые помещения по стенам (room.bound) → обычные комнаты (core/bound-rooms.js).
   for (const levels of [data.levels, ...data.variants.map((v) => v.house.levels)]) {
     for (const level of levels) convertLevelBoundRooms(level, levels, data.settings);

@@ -5,7 +5,7 @@ import { startApp } from './helpers.mjs';
 
 describe('шаблоны и удобства', () => {
   let app;
-  before(async () => { app = await startApp(); });
+  before(async () => { app = await startApp({ issueGroups: 'all' }); });
   after(async () => { await app?.close(); });
 
   it('стартовое меню: три шаблона; двухэтажный открывается с этажами', async () => {

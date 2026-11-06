@@ -15,7 +15,7 @@ const levels = (page) => page.evaluate(() => {
 
 describe('этажи', () => {
   let app;
-  before(async () => { app = await startApp(); await openNew(app.page); });
+  before(async () => { app = await startApp({ issueGroups: 'all' }); await openNew(app.page); });
   after(async () => { await app?.close(); });
 
   it('один этаж и кнопка «+» на холсте', async () => {

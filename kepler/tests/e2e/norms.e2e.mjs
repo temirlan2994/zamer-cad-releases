@@ -6,7 +6,7 @@ import { startApp, openSample } from './helpers.mjs';
 
 describe('нормы', () => {
   let app;
-  before(async () => { app = await startApp(); await openSample(app.page); });
+  before(async () => { app = await startApp({ issueGroups: 'all' }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
   it('в свойствах проекта блока норм нет; в панели «⚠» — инсоляция жилых комнат', async () => {
@@ -18,12 +18,12 @@ describe('нормы', () => {
     const text = await app.page.textContent('#issuesPanel');
     assert.match(text, /Инсоляция/);
     assert.match(text, /(южная|центральная|северная) зона/);
-    const rows = await app.page.$$eval('#issuesPanel [data-issue-id^="light:sun:"] [data-goto]', (ns) => ns.length);
+    const rows = await app.page.$$eval('#issuesPanel [data-issue-id^="insolation:sun:"] [data-goto]', (ns) => ns.length);
     assert.ok(rows >= 2, 'жилые комнаты образца в списке');
   });
 
   it('клик по комнате в списке выделяет её; свойства — без блока норм', async () => {
-    await app.page.click('#issuesPanel [data-issue-id^="light:sun:"] [data-goto]');
+    await app.page.click('#issuesPanel [data-issue-id^="insolation:sun:"] [data-goto]');
     const sel = await app.page.evaluate(() => window.__kepler.state.selection);
     assert.equal(sel?.type, 'room');
     const props = await app.page.textContent('#propsPanel');

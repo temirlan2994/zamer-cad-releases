@@ -136,7 +136,7 @@ describe('правка через интерфейс', () => {
 describe('типы проёмов и высота потолка', () => {
   let app;
   before(async () => {
-    app = await startApp();
+    app = await startApp({ issueGroups: 'all' });
     await openNew(app.page);
     await dropOnCanvas(app.page, 'application/x-kepler-room', 'living');
   });

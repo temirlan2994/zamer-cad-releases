@@ -237,7 +237,15 @@ export function insolationReport(project) {
   const living = rooms.filter((r) => r.living);
   const need = living.length >= 4 ? 2 : living.length ? 1 : 0;
   const met = living.filter((r) => r.meets).length;
-  return { norm, rooms, need, met, ok: met >= need };
+  return { norm, rooms, need, met, ok: met >= need, siteKnown: siteKnown(site) };
+}
+
+// Есть ли данные об участке для честной оценки инсоляции: граница участка
+// или заданная вручную норма. Без них (стороны света по умолчанию, участок
+// не начерчен) итог — справка, а не замечание.
+export function siteKnown(site) {
+  const norms = site?.norms || {};
+  return Boolean((Array.isArray(site?.boundary) && site.boundary.length >= 3) || norms.hours != null || norms.day != null);
 }
 
 // «2 ч 35 мин» из минут.

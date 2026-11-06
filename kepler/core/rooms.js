@@ -341,8 +341,13 @@ export function analyzeConnectivity(project, walls = null) {
 
   // На верхних этажах вход — лестница: помещения «Лестница» ведут на этаж
   // ниже, поэтому служат точкой входа наравне с наружной дверью.
-  if (project.levels && isUpperLevel(project)) {
+  const upper = Boolean(project.levels && isUpperLevel(project));
+  if (upper) {
     for (const room of project.rooms) if (room.type === 'stairs-room') addEdge('stairs', room.id);
+  }
+  // Терраса на земле — уже улица: дверь на неё ведёт наружу.
+  if (!upper) {
+    for (const room of project.rooms) if (!room.parentId && isOpenRoom(room) && !isShaft(room)) addEdge('outside', room.id);
   }
   const sources = ['outside', 'stairs'].filter((n) => graph.has(n));
   const hasEntrance = sources.length > 0;
@@ -359,8 +364,51 @@ export function analyzeConnectivity(project, walls = null) {
     }
   }
 
-  const unreachable = project.rooms.filter((r) => !isShaft(r) && !reachable.has(r.id)).map((r) => r.id);
-  return { hasEntrance, reachable, unreachable, graph };
+  // Помещения, которым отдельный вход не нужен (needsOwnAccess), в
+  // недоступные не попадают — о них замечаний нет.
+  const exempt = [];
+  const unreachable = [];
+  for (const r of project.rooms) {
+    if (reachable.has(r.id)) continue;
+    if (needsOwnAccess(project, r)) unreachable.push(r.id); else exempt.push(r.id);
+  }
+  return { hasEntrance, reachable, unreachable, exempt, graph };
+}
+
+// Типы, которым отдельная дверь не нужна: шахта; кладовые и техпомещения
+// (если такие типы появятся) — по месту, на усмотрение автора.
+const NO_ACCESS_TYPES = new Set(['shaft', 'storage', 'pantry', 'tech', 'boiler']);
+
+// Нужен ли помещению свой вход (дверь или проём) для проверки связности.
+// Не нужен: шахте и служебным типам; террасе/балкону (открытые — выход на
+// них решает автор); вложенному помещению (parentId — внутри родителя,
+// проход в нём по месту); гардеробной, примыкающей к спальне (вход из
+// спальни аркой или без двери — обычное решение).
+export function needsOwnAccess(project, room) {
+  if (!room) return false;
+  if (isShaft(room) || NO_ACCESS_TYPES.has(room.type)) return false;
+  if (isOpenRoom(room)) return false;
+  if (room.parentId) return false;
+  if (room.type === 'wardrobe-room') {
+    const bedrooms = new Set(project.rooms.filter((r) => r.type === 'bedroom' || r.type === 'master-bedroom').map((r) => r.id));
+    if (bedrooms.size && projectAdjacencies(project).some((a) => (a.a.id === room.id && bedrooms.has(a.b.id)) || (a.b.id === room.id && bedrooms.has(a.a.id)))) return false;
+  }
+  return true;
+}
+
+// Связная группа недоступных помещений, в которую входит roomId (по дверям
+// и проёмам между ними): одна подсказка на группу, а не на каждую комнату.
+export function unreachableCluster(analysis, roomId) {
+  const bad = new Set([...(analysis.unreachable || []), ...(analysis.exempt || [])]);
+  const out = new Set([roomId]);
+  const queue = [roomId];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const next of analysis.graph?.get(id) || []) {
+      if (bad.has(next) && !out.has(next)) { out.add(next); queue.push(next); }
+    }
+  }
+  return out;
 }
 
 // Рёбра реального внутреннего контура комнаты (прямоугольник минус области,
@@ -593,19 +641,34 @@ function unionEdges(rects) {
 // Подсказка, где добавить дверь для недостижимой комнаты: самая длинная общая
 // стена с достижимой комнатой (или родителем). Коридоры программа только
 // предлагает — никогда не строит сама.
+// Недоступные помещения, связанные между собой дверями или проёмами, — одна
+// группа: дверь предлагается из любой её комнаты в ДОСТУПНУЮ (раньше бралась
+// самая длинная стена с кем угодно — и выходило «добавьте дверь» туда, где
+// проём уже есть, или в такую же недоступную комнату).
+// → { roomId, targetId, members, text } | null (помещению вход не нужен).
 export function suggestAccess(project, roomId, analysis) {
   const room = project.rooms.find((r) => r.id === roomId);
   if (!room) return null;
-  if (room.parentId) {
-    const parent = project.rooms.find((r) => r.id === room.parentId);
-    return { targetId: room.parentId, text: `Добавьте дверь между «${room.name}» и «${parent?.name || 'родителем'}»` };
-  }
+  if (!needsOwnAccess(project, room)) return null;
+  const reachable = analysis?.reachable || new Set();
+  const members = analysis ? unreachableCluster(analysis, roomId) : new Set([roomId]);
+  const nameOf = (id) => project.rooms.find((r) => r.id === id)?.name || '';
   const adjacencies = projectAdjacencies(project)
-    .filter((a) => a.a.id === roomId || a.b.id === roomId)
+    .filter((a) => members.has(a.a.id) !== members.has(a.b.id))
     .sort((p, q) => (q.to - q.from) - (p.to - p.from));
-  for (const adj of adjacencies) {
-    const other = adj.a.id === roomId ? adj.b : adj.a;
-    return { targetId: other.id, text: `Добавьте дверь между «${room.name}» и «${other.name}»` };
+  // Сначала — стена с доступной комнатой (без шахт и открытых площадок
+  // верхних этажей), иначе — с любой соседней вне группы.
+  const pick = adjacencies.find((a) => reachable.has(members.has(a.a.id) ? a.b.id : a.a.id))
+    || adjacencies.find((a) => !isShaft(members.has(a.a.id) ? a.b : a.a));
+  if (pick) {
+    const [mine, other] = members.has(pick.a.id) ? [pick.a, pick.b] : [pick.b, pick.a];
+    return { roomId: mine.id, targetId: other.id, members: [...members], text: `Добавьте дверь между «${mine.name}» и «${other.name}»` };
   }
-  return { targetId: null, text: `«${room.name}» ни с чем не граничит — пристыкуйте её к дому или добавьте коридор` };
+  const list = [...members].map(nameOf).filter(Boolean);
+  return {
+    roomId, targetId: null, members: [...members],
+    text: list.length > 1
+      ? `«${list.join('», «')}» не связаны с остальным домом — пристыкуйте их или добавьте коридор`
+      : `«${room.name}» ни с чем не граничит — пристыкуйте её к дому или добавьте коридор`,
+  };
 }

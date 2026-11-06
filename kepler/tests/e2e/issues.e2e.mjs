@@ -23,7 +23,8 @@ async function openWithIssue(page) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
     k.select(null);
   });
-  await page.waitForFunction(() => window.__kepler.state.issues.groups.some((g) => g.items.some((i) => i.severity === 'warn' && i.target?.type === 'room')));
+  // Замечание о площади/ширине (группа «Нормы» может быть выключена).
+  await page.waitForFunction(() => window.__kepler.state.norms?.problems.some((p) => p.kind === 'area' || p.kind === 'width'));
 }
 
 // Первое предупреждение с целью-комнатой или предметом.
@@ -34,7 +35,7 @@ const firstTarget = (page) => page.evaluate(() => {
 
 describe('замечания: кнопка «⚠» и панель', () => {
   let app;
-  before(async () => { app = await startApp(); await openWithIssue(app.page); });
+  before(async () => { app = await startApp({ issueGroups: 'all' }); await openWithIssue(app.page); });
   after(async () => { await app?.close(); });
 
   it('кнопка с числом замечаний; старых плашек и блоков норм нет', async () => {
@@ -113,9 +114,100 @@ describe('замечания: кнопка «⚠» и панель', () => {
   it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });
 });
 
+describe('замечания: группы и «Скрыть»', () => {
+  let app;
+  before(async () => { app = await startApp(); await openWithIssue(app.page); });
+  after(async () => { await app?.close(); });
+  const k = (page) => page.evaluate(() => {
+    const s = window.__kepler.state.issues;
+    return {
+      count: s.count, summary: s.summary, hidden: s.hidden.map((i) => i.id),
+      dismissed: window.__kepler.state.project.settings.dismissedIssues || [],
+    };
+  });
+  const areaId = (page) => page.evaluate(() => window.__kepler.state.issues.groups.flatMap((g) => g.items)
+    .find((i) => i.id.startsWith('area:') || i.id.startsWith('width:'))?.id || null);
+  const badge = async (page) => ((await page.isVisible('#issuesCount')) ? Number((await page.textContent('#issuesCount')).trim()) : 0);
+
+  it('умолчания: включены «Геометрия» и «Мебель»; бейдж — только они', async () => {
+    const s = await k(app.page);
+    assert.deepEqual(s.summary.filter((g) => g.enabled).map((g) => g.id), ['furniture', 'geometry']);
+    const on = s.summary.filter((g) => g.enabled).reduce((n, g) => n + g.count, 0);
+    assert.equal(s.count, on);
+    assert.equal(await badge(app.page), s.count);
+    await app.page.click('#issuesBtn');
+    const chips = await app.page.$$eval('#issuesPanel [data-issue-group]', (ns) => ns.map((n) => [n.dataset.issueGroup, n.getAttribute('aria-pressed'), n.textContent]));
+    assert.equal(chips.length, 6);
+    assert.deepEqual(chips.find((c) => c[0] === 'norms').slice(1), ['false', 'Нормы выкл']);
+    assert.match(chips.find((c) => c[0] === 'geometry')[2], /^Геометрия \d+$/);
+    assert.equal(await app.page.$('#issuesPanel [data-group="norms"]'), null, 'выключенной группы нет в списке');
+  });
+
+  it('тап по группе включает её: бейдж растёт, выбор в localStorage', async () => {
+    const before = await k(app.page);
+    const norms = before.summary.find((g) => g.id === 'norms').count;
+    assert.ok(norms > 0, 'в примере есть замечание о площади');
+    await app.page.click('#issuesPanel [data-issue-group="norms"]');
+    const after = await k(app.page);
+    assert.equal(after.count, before.count + norms);
+    assert.equal(await badge(app.page), after.count);
+    assert.equal(await app.page.getAttribute('#issuesPanel [data-issue-group="norms"]', 'aria-pressed'), 'true');
+    assert.ok(JSON.parse(await app.page.evaluate(() => localStorage.getItem('kepler-issues-groups'))).includes('norms'));
+    assert.equal(await app.page.isVisible('#issuesPanel'), true, 'панель не закрылась');
+  });
+
+  it('«✕» скрывает замечание; «Скрытые (N)» → «Вернуть»; отмена работает', async () => {
+    const id = await areaId(app.page);
+    const before = await k(app.page);
+    await app.page.click(`#issuesPanel [data-dismiss="${id}"]`);
+    let s = await k(app.page);
+    assert.equal(s.count, before.count - 1);
+    assert.deepEqual(s.hidden, [id]);
+    assert.deepEqual(s.dismissed, [id], 'в проекте');
+    assert.equal(await app.page.$(`#issuesPanel [data-issue-id="${id}"]`), null);
+    assert.match(await app.page.textContent('#issuesPanel [data-hidden-toggle]'), /Скрытые \(1\)/);
+    await app.page.keyboard.press('Control+z');
+    await app.page.waitForFunction(() => !window.__kepler.state.issues.hidden.length);
+    await app.page.keyboard.press('Control+Shift+z');
+    await app.page.waitForFunction(() => window.__kepler.state.issues.hidden.length === 1);
+    s = await k(app.page);
+    assert.equal(s.count, before.count - 1);
+  });
+
+  it('после перезагрузки: группы и скрытые на месте; «Вернуть» возвращает', async () => {
+    const id = (await k(app.page)).hidden[0];
+    await app.page.evaluate(async () => { (await import('./ui/store.js')).flushAutosave(); });
+    await app.page.reload();
+    await app.page.waitForFunction(() => Boolean(window.__kepler) && window.__kepler.state.project.rooms?.length > 0 && window.__kepler.state.issues);
+    let s = await k(app.page);
+    assert.deepEqual(s.hidden, [id]);
+    assert.ok(s.summary.find((g) => g.id === 'norms').enabled);
+    await app.page.click('#issuesBtn');
+    await app.page.click('#issuesPanel [data-hidden-toggle]');
+    await app.page.click(`#issuesPanel [data-hidden-id="${id}"] [data-restore]`);
+    s = await k(app.page);
+    assert.deepEqual(s.hidden, []);
+    assert.deepEqual(s.dismissed, []);
+    assert.ok(await app.page.$(`#issuesPanel [data-issue-id="${id}"]`), 'замечание снова в списке');
+  });
+
+  it('все группы выключены — спокойная кнопка и «Замечаний нет (включено групп: 0 из 6)»', async () => {
+    for (const g of (await k(app.page)).summary.filter((x) => x.enabled)) {
+      await app.page.click(`#issuesPanel [data-issue-group="${g.id}"]`);
+    }
+    assert.equal((await k(app.page)).count, 0);
+    assert.equal(await app.page.isVisible('#issuesCount'), false);
+    assert.match(await app.page.getAttribute('#issuesBtn', 'class'), /\bok\b/);
+    assert.match(await app.page.textContent('#issuesPanel'), /Замечаний нет \(включено групп: 0 из 6\)/);
+    assert.match(await app.page.getAttribute('#issuesBtn', 'title'), /включено групп: 0 из 6/);
+  });
+
+  it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });
+});
+
 describe('замечания на телефоне', () => {
   let app;
-  before(async () => { app = await startApp({ mobile: true }); await openWithIssue(app.page); });
+  before(async () => { app = await startApp({ mobile: true, issueGroups: 'all' }); await openWithIssue(app.page); });
   after(async () => { await app?.close(); });
 
   it('кнопка видна; панель — нижний лист над панелью кнопок; переход закрывает лист', async () => {
@@ -128,6 +220,15 @@ describe('замечания на телефоне', () => {
     const bar = await app.page.locator('#mobileBar').boundingBox();
     assert.ok(Math.abs(sheet.x) < 1 && Math.abs(sheet.width - vp.width) < 2, 'во всю ширину');
     assert.ok(sheet.y + sheet.height <= bar.y + 1, 'над панелью кнопок');
+    // Переключатель группы — тапом; лист остаётся открытым, чипы в экране.
+    const chip = '#issuesPanel [data-issue-group="insolation"]';
+    const cb = await app.page.locator(chip).boundingBox();
+    assert.ok(cb.x >= 0 && cb.x + cb.width <= vp.width, 'чип в экране');
+    await app.page.locator(chip).tap();
+    assert.equal(await app.page.getAttribute(chip, 'aria-pressed'), 'false');
+    await app.page.locator(chip).tap();
+    assert.equal(await app.page.getAttribute(chip, 'aria-pressed'), 'true');
+    assert.equal(await app.page.isVisible('#issuesPanel'), true);
     const entry = await firstTarget(app.page);
     await app.page.locator(`#issuesPanel [data-issue-id="${entry.id}"] [data-goto]`).tap();
     const sel = await app.page.evaluate(() => window.__kepler.state.selection);

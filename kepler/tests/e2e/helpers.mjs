@@ -7,7 +7,10 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 // (без флага отладочный API не публикуется).
 // mobile: true — телефон (390×844, касания, isMobile).
 // query — дополнительные параметры адреса (например, 'walls=v2').
-export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '' } = {}) {
+// issueGroups: 'all' | [id…] — включённые группы замечаний (localStorage
+// kepler-issues-groups до загрузки; по умолчанию — умолчания приложения).
+export const ALL_ISSUE_GROUPS = ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry'];
+export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null } = {}) {
   const server = createServer();
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
@@ -19,6 +22,16 @@ export async function startApp({ width = 1280, height = 820, debug = true, mobil
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  if (issueGroups) {
+    const ids = issueGroups === 'all' ? ALL_ISSUE_GROUPS : issueGroups;
+    // Только при первой загрузке: перезагрузка в тесте видит то, что сохранило приложение.
+    await page.addInitScript((list) => {
+      if (!sessionStorage.getItem('kepler-test-groups')) {
+        localStorage.setItem('kepler-issues-groups', JSON.stringify(list));
+        sessionStorage.setItem('kepler-test-groups', '1');
+      }
+    }, ids);
+  }
   const params = [debug ? 'debug=1' : '', query].filter(Boolean).join('&');
   await page.goto(`http://127.0.0.1:${port}/index.html${params ? `?${params}` : ''}`);
   if (debug) await page.waitForFunction(() => Boolean(window.__kepler));

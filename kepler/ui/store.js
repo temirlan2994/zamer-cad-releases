@@ -17,7 +17,7 @@ import { applyModeRotation } from './modes.js';
 import { renderViewPanel } from './view-align.js';
 import { renderProps } from './props.js';
 import { history, state } from './state.js';
-import { setIssues } from './issues.js';
+import { issueGroupsEnabled, setIssues } from './issues.js';
 import { updateDimModeBtn } from './toolbar.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
@@ -141,7 +141,9 @@ export function refreshNorms() {
 // Замечания (кнопка «⚠» на холсте): связность, нормы, зазоры — после норм.
 export function refreshIssues() {
   try {
-    setIssues(collectIssues(state.project, { norms: state.norms, walls: state.walls, gaps: state.gaps }));
+    setIssues(collectIssues(state.project, {
+      norms: state.norms, walls: state.walls, gaps: state.gaps, enabled: issueGroupsEnabled(),
+    }));
   } catch (error) {
     setIssues(null);
     console.error('Замечания не посчитались:', error);

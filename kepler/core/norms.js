@@ -14,7 +14,7 @@ import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { finalizeRoomOutline, roomRects } from './room-shape.js';
+import { finalizeRoomOutline, roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
 import { eatFailText, eatPlan, eatRoom, eatShape } from './room-eat.js';
 import { LIVING_TYPES } from './schedule.js';
@@ -24,6 +24,7 @@ import { wallsInsideRooms } from './bound-rooms.js';
 export const SP55 = {
   minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, kitchen: 6 },
   minWidth: { kitchen: 1700, hall: 1400, corridor: 850, bathroom: 1500 },
+  minWidthToilet: 800, // санузел без ванны (туалет, душевая)
   lightTypes: new Set([...LIVING_TYPES, 'kitchen']),
   lightRatio: 1 / 8,
   minClearHeight: 2500,
@@ -39,19 +40,59 @@ export const LANDSCAPE_NORMS = {
 
 const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
 
+// Открытая планировка: помещения, связанные с room скрытыми общими стенами
+// (кухня-гостиная, кухня-ниша). Свет и площадь кухни проверяются по зоне.
+export function openPlanZone(project, room, walls) {
+  const links = (walls || []).filter((w) => w.hidden && w.kind === 'shared' && w.rooms?.length === 2);
+  if (!links.length) return [room];
+  const ids = new Set([room.id]);
+  const queue = [room.id];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const w of links) {
+      const other = w.rooms[0] === id ? w.rooms[1] : w.rooms[1] === id ? w.rooms[0] : null;
+      if (other && !ids.has(other)) { ids.add(other); queue.push(other); }
+    }
+  }
+  return project.rooms.filter((r) => ids.has(r.id));
+}
+
+// Ширина санузла: с ванной — 1,5 м (ванная), без ванны — 0,8 м (туалет,
+// душевая). СП 55.13330, п. 5.3 (по аналогии с СП 54).
+function bathroomMinWidth(project, room) {
+  const hasBath = (project.items || []).some((it) => it.kind === 'bath' && roomContainsPoint(room, it.x, it.y));
+  return hasBath ? SP55.minWidth.bathroom : SP55.minWidthToilet;
+}
+
+const windowGlass = (project, roomId, walls) => {
+  const hosted = project.openings.some((o) => o.kind === 'window' && o.host);
+  const w = hosted ? (walls || deriveWalls(project)) : null;
+  return project.openings
+    .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
+    .reduce((s, o) => s + (o.width * (o.height ?? 1500)) / 1e6, 0);
+};
+
 // Проверки одной комнаты: [{ kind, ok, text }].
+// Свет и высота — только жилые комнаты и кухня (SP55.lightTypes); площадь
+// и ширина — только типы из SP55.minArea / minWidth: служебные помещения
+// (санузел без ванны, гардеробная, кладовая, лестница, шахта, терраса) —
+// без ложных замечаний.
 export function roomChecks(project, room, level, walls = null) {
   const out = [];
   const title = roomType(room.type)?.title || room.name;
   const area = roomNetAreaM2(project, room);
-  const minArea = SP55.minArea[room.type];
+  const needWalls = !walls && (room.type === 'kitchen' || SP55.lightTypes.has(room.type));
+  const zone = room.parentId || isShaft(room) ? [room] : openPlanZone(project, room, walls || (needWalls ? deriveWalls(project) : null));
+  // Кухня в открытой планировке с гостиной (кухня-ниша) — площадь по зоне.
+  const kitchenNiche = room.type === 'kitchen' && zone.some((r) => r.type === 'living');
+  const minArea = kitchenNiche ? 0 : SP55.minArea[room.type];
   if (minArea) {
     out.push({
       kind: 'area', ok: area >= minArea - 1e-9,
       text: `Площадь ${fmt(area)} м² ${area >= minArea - 1e-9 ? '≥' : '<'} ${minArea} м² (${title.toLowerCase()})`,
     });
   }
-  const minWidth = SP55.minWidth[room.type];
+  const minWidth = room.type === 'bathroom' ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
   if (minWidth) {
     // Г/контур: ширина основной части (самый широкий из прямоугольников формы),
     // а не габарит — иначе узкий рукав маскируется широким габаритом.
@@ -63,16 +104,17 @@ export function roomChecks(project, room, level, walls = null) {
   }
   if (SP55.lightTypes.has(room.type) && area > 0) {
     // Окна ручных стен (host) — по помещению со стороны дома (hostOpeningRoom).
-    const hosted = project.openings.some((o) => o.kind === 'window' && o.host);
-    const w = hosted ? (walls || deriveWalls(project)) : null;
-    const glass = project.openings
-      .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === room.id)
-      .reduce((s, o) => s + (o.width * (o.height ?? 1500)) / 1e6, 0);
-    const ok = glass / area >= SP55.lightRatio - 1e-9;
+    // Открытая планировка (скрытые общие стены) — свет общий: окна и
+    // площадь всей зоны (кухня-ниша без своего окна у гостиной с окнами).
+    const own = windowGlass(project, room.id, walls);
+    const shared = zone.length > 1;
+    const glass = shared ? zone.reduce((s, r) => s + (r.id === room.id ? own : windowGlass(project, r.id, walls)), 0) : own;
+    const zoneArea = shared ? zone.reduce((s, r) => s + (r.id === room.id ? area : roomNetAreaM2(project, r)), 0) : area;
+    const ok = zoneArea > 0 && glass / zoneArea >= SP55.lightRatio - 1e-9;
     out.push({
       kind: 'light', ok,
       text: glass
-        ? `Окна ${fmt(glass, 2)} м² = 1:${fmt(area / glass)} пола ${ok ? '(норма 1:8)' : '— меньше 1:8'}`
+        ? `Окна ${fmt(glass, 2)} м² = 1:${fmt(zoneArea / glass)} пола${shared ? ' (общая зона)' : ''} ${ok ? '(норма 1:8)' : '— меньше 1:8'}`
         : 'Нет окон — нужен естественный свет (окна ≥ 1:8 площади пола)',
     });
   }
@@ -156,7 +198,7 @@ export function normsReport(project) {
         });
       }
       for (const f of furnitureIssues(lp, room, walls)) {
-        checks.push({ kind: 'furniture', ok: false, text: f.text, itemIds: f.itemIds });
+        checks.push({ kind: 'furniture', sub: f.kind, ok: false, text: f.text, itemIds: f.itemIds });
         for (const id of f.itemIds) flagged.add(id);
       }
       // Перекрытие — одно замечание на пару, у верхней комнаты.

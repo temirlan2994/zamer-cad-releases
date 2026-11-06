@@ -4,7 +4,11 @@
 // объект, показать его на плане (этаж и режим «План» — при необходимости) и
 // на мгновение подсветить. Список считается в store после каждой правки
 // (state.issues); открыта панель или нет — не сохраняется.
+// Сверху — переключатели групп (хранятся у пользователя, localStorage
+// kepler-issues-groups); у замечания — «✕» (скрыть: id в проекте,
+// project.settings.dismissedIssues, с отменой); внизу — «Скрытые (N)».
 
+import { DEFAULT_ISSUE_GROUPS, ISSUE_GROUPS } from '../core/issues.js';
 import { roomById } from '../core/model.js';
 import { trimRoomBy } from '../core/norms.js';
 import { planGapMove } from '../core/gaps.js';
@@ -15,13 +19,45 @@ import { switchLevel } from './levels.js';
 import { setEditorMode } from './modes.js';
 import { dockGapPair } from './plan-actions.js';
 import { state } from './state.js';
-import { mutate } from './store.js';
+import { mutate, refreshIssues } from './store.js';
 import { selectObject } from './tools.js';
 import { requestDraw, showPlanRect } from './view.js';
 import { splitByWallAction } from './wall-tool.js';
 
 const narrow = () => window.matchMedia?.('(max-width: 640px)').matches;
 let flashTimers = [];
+let hiddenOpen = false;
+
+// --- Включённые группы замечаний (у пользователя, не в проекте).
+const GROUPS_KEY = 'kepler-issues-groups';
+let enabledGroups = null;
+
+export function issueGroupsEnabled() {
+  if (enabledGroups) return enabledGroups;
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(GROUPS_KEY) || 'null'); } catch { saved = null; }
+  const known = new Set(ISSUE_GROUPS.map((g) => g.id));
+  enabledGroups = Array.isArray(saved) ? saved.filter((id) => known.has(id)) : [...DEFAULT_ISSUE_GROUPS];
+  return enabledGroups;
+}
+
+export function setIssueGroupEnabled(id, on) {
+  const list = new Set(issueGroupsEnabled());
+  if (on) list.add(id); else list.delete(id);
+  enabledGroups = ISSUE_GROUPS.map((g) => g.id).filter((g) => list.has(g));
+  try { localStorage.setItem(GROUPS_KEY, JSON.stringify(enabledGroups)); } catch { /* хранилище недоступно */ }
+  refreshIssues();
+}
+
+// --- Скрытые замечания (в проекте, с отменой).
+function setDismissed(id, on) {
+  mutate(() => {
+    const s = state.project.settings || (state.project.settings = {});
+    const list = new Set(Array.isArray(s.dismissedIssues) ? s.dismissedIssues : []);
+    if (on) list.add(id); else list.delete(id);
+    if (list.size) s.dismissedIssues = [...list]; else delete s.dismissedIssues;
+  });
+}
 
 export function isIssuesOpen() {
   return el('issuesPanel') ? !el('issuesPanel').hidden : false;
@@ -59,8 +95,11 @@ function entryHtml(entry) {
   const sel = isTargetSelected(entry.target) ? ' selected' : '';
   const go = entry.target || entry.focus;
   const body = `<span class="issue-mark">${mark}</span><span class="issue-text">${entry.title ? `<b>${escapeHtml(entry.title)}</b> ` : ''}${escapeHtml(entry.text)}${entry.levelName ? ` <em>${escapeHtml(entry.levelName)}</em>` : ''}</span>`;
+  const dismiss = entry.severity === 'warn'
+    ? `<button type="button" class="issue-dismiss" data-dismiss="${escapeHtml(entry.id)}" title="Не нужно — скрыть замечание" aria-label="Скрыть замечание">✕</button>`
+    : '';
   return `<li class="issue ${entry.severity}${sel}" data-issue-id="${escapeHtml(entry.id)}">
-      ${go ? `<button type="button" class="issue-go" data-goto="${escapeHtml(entry.id)}" title="Показать на плане">${body}</button>` : `<div class="issue-go static">${body}</div>`}
+      <div class="issue-row">${go ? `<button type="button" class="issue-go" data-goto="${escapeHtml(entry.id)}" title="Показать на плане">${body}</button>` : `<div class="issue-go static">${body}</div>`}${dismiss}</div>
       ${entry.actions.length ? `<div class="issue-actions">${entry.actions.map((a, i) => actionHtml(entry, a, i)).join('')}</div>` : ''}
     </li>`;
 }
@@ -79,22 +118,38 @@ export function renderIssues() {
   const panel = el('issuesPanel');
   if (!btn || !panel) return;
   const issues = state.issues || { count: 0, severity: 'ok', groups: [] };
+  const enabled = new Set(issueGroupsEnabled());
+  const summary = issues.summary || ISSUE_GROUPS.map((g) => ({ ...g, enabled: enabled.has(g.id), count: 0 }));
+  const hidden = issues.hidden || [];
+  const onCount = summary.filter((g) => g.enabled).length;
+  const quiet = `Замечаний нет (включено групп: ${onCount} из ${summary.length})`;
   btn.classList.toggle('warn', issues.count > 0);
   btn.classList.toggle('ok', !issues.count);
   const count = el('issuesCount');
   if (count) { count.textContent = String(issues.count); count.hidden = !issues.count; }
-  btn.title = issues.count ? `Замечания: ${issues.count} — показать список` : 'Замечаний нет — нормы и связность в порядке';
+  btn.title = issues.count ? `Замечания: ${issues.count} — показать список` : quiet;
   btn.setAttribute('aria-label', btn.title);
+  const chips = summary.map((g) => {
+    const label = g.enabled ? `${g.short} ${g.count}` : `${g.short} выкл`;
+    return `<button type="button" class="issue-chip${g.enabled && g.count ? ' has-warn' : ''}" data-issue-group="${g.id}" aria-pressed="${g.enabled}" title="${escapeHtml(g.title)} — ${g.enabled ? 'выключить' : 'включить'}">${escapeHtml(label)}</button>`;
+  }).join('');
   const groups = issues.groups.map((g) => `
     <section class="issue-group" data-group="${g.id}">
       <h4>${escapeHtml(g.title)}${g.count ? ` <span class="badge warn">${g.count}</span>` : ''}</h4>
       <ul>${g.items.map(entryHtml).join('')}</ul>
     </section>`).join('');
+  const hiddenList = hidden.map((it) => `<li data-hidden-id="${escapeHtml(it.id)}"><span>${it.title ? `<b>${escapeHtml(it.title)}</b> ` : ''}${escapeHtml(it.text)}</span><button type="button" class="issue-action" data-restore="${escapeHtml(it.id)}">Вернуть</button></li>`).join('');
+  const hiddenHtml = hidden.length ? `
+      <div class="issues-hidden">
+        <button type="button" class="issues-hidden-toggle" data-hidden-toggle aria-expanded="${hiddenOpen}">${hiddenOpen ? '▾' : '▸'} Скрытые (${hidden.length})</button>
+        ${hiddenOpen ? `<ul>${hiddenList}</ul>` : ''}
+      </div>` : '';
   panel.innerHTML = `
     <div class="issues-head"><strong>Замечания</strong>
       <span class="badge ${issues.count ? 'warn' : 'ok'}">${issues.count ? `замечаний: ${issues.count}` : 'в порядке'}</span>
       <button type="button" class="icon-btn issues-close" data-issues-close title="Закрыть (Esc)" aria-label="Закрыть">✕</button></div>
-    <div class="issues-body">${groups || '<p class="empty-hint">Замечаний нет.</p>'}
+    <div class="issues-chips" role="group" aria-label="Группы замечаний">${chips}</div>
+    <div class="issues-body">${groups}${issues.count ? '' : `<p class="empty-hint issues-quiet">${quiet}.</p>`}${hiddenHtml}
       <p class="empty-hint">Ориентир: СанПиН 1.2.3685-21 (инсоляция), СП 55.13330 (дома одноквартирные). Подсказка для концепции, не экспертиза.</p>
     </div>`;
 }
@@ -181,6 +236,13 @@ export function bindIssues() {
     // цель клика уже не в документе).
     event.stopPropagation();
     if (event.target.closest('[data-issues-close]')) { setIssuesOpen(false); return; }
+    const chip = event.target.closest('[data-issue-group]');
+    if (chip) { setIssueGroupEnabled(chip.dataset.issueGroup, chip.getAttribute('aria-pressed') !== 'true'); return; }
+    const dismiss = event.target.closest('[data-dismiss]');
+    if (dismiss) { setDismissed(dismiss.dataset.dismiss, true); return; }
+    const restore = event.target.closest('[data-restore]');
+    if (restore) { setDismissed(restore.dataset.restore, false); return; }
+    if (event.target.closest('[data-hidden-toggle]')) { hiddenOpen = !hiddenOpen; renderIssues(); return; }
     const act = event.target.closest('[data-action]');
     if (act) {
       const entry = entryById(act.dataset.issue);

@@ -321,7 +321,41 @@ button.issue-go:hover { background: var(--surface-2); }
 }
 .issue-action:hover { background: var(--surface-2); }
 .issue-why { color: var(--muted); font-size: 11.5px; }
-@media (pointer: coarse) { .issue-go { min-height: 40px; } .issue-action { min-height: 34px; } }
+/* Переключатели групп и «Скрыть» / «Скрытые (N)». */
+.issues-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.issue-chip {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.issue-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--text, inherit); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.issue-chip[aria-pressed="true"].has-warn { color: var(--warn-text); }
+.issue-row { display: flex; align-items: flex-start; }
+.issue-row > .issue-go { flex: 1; min-width: 0; }
+.issue-dismiss {
+  flex: none;
+  margin: 3px 2px 0 0;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.issue-dismiss:hover { background: var(--surface-2); color: inherit; }
+.issues-hidden { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+.issues-hidden-toggle { font: inherit; font-size: 12px; border: 0; background: none; color: var(--muted); padding: 4px 0; cursor: pointer; }
+.issues-hidden ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.issues-hidden li { display: flex; align-items: center; gap: 6px; padding: 3px 0; color: var(--muted); }
+.issues-hidden li span { flex: 1; min-width: 0; }
+@media (pointer: coarse) { .issue-go { min-height: 40px; } .issue-action { min-height: 34px; } .issue-dismiss { width: 36px; height: 36px; } .issue-chip { min-height: 32px; } }
 
 /* --- Панель инструментов (ui/toolstrip.js): строка между шапкой и холстом --- */
 .toolstrip {

@@ -8,7 +8,9 @@
 //   levelName, target: selection | null, focus: {x,y,w,h} | null (оси дома),
 //   actions: [{ kind: 'trim' | 'split' | 'dock-gap', label, ... }] }.
 // severity 'ok' — справочная строка (✓ связность, инсоляция по комнатам),
-// в число замечаний не входит.
+// в число замечаний не входит. Группы включает/выключает пользователь
+// (opts.enabled), отдельные замечания он скрывает в проекте
+// (project.settings.dismissedIssues — id записей).
 
 import { itemBounds } from './clearance.js';
 import { findNearMissGaps } from './gaps.js';
@@ -18,23 +20,30 @@ import { normsReport } from './norms.js';
 import { analyzeConnectivity, suggestAccess } from './rooms.js';
 import { deriveWalls } from './walls.js';
 
+// Группы замечаний. on — включена по умолчанию (переключатели в панели «⚠»
+// хранятся у пользователя, ui/issues.js): шумные справочные проверки по
+// нормам выключены, геометрия и мебель — включены.
 export const ISSUE_GROUPS = [
-  { id: 'access', title: 'Связность и двери' },
-  { id: 'norms', title: 'Нормы и площади' },
-  { id: 'light', title: 'Свет и окна' },
-  { id: 'furniture', title: 'Проходы у мебели' },
-  { id: 'overlap', title: 'Перекрытия' },
-  { id: 'walls', title: 'Стены и др.' },
+  { id: 'access', title: 'Доступность и двери', short: 'Двери', on: false },
+  { id: 'norms', title: 'Нормы площадей и размеров', short: 'Нормы', on: false },
+  { id: 'light', title: 'Свет и окна', short: 'Свет', on: false },
+  { id: 'insolation', title: 'Инсоляция', short: 'Инсоляция', on: false },
+  { id: 'furniture', title: 'Проходы у мебели', short: 'Мебель', on: true },
+  { id: 'geometry', title: 'Геометрия', short: 'Геометрия', on: true },
 ];
+export const DEFAULT_ISSUE_GROUPS = ISSUE_GROUPS.filter((g) => g.on).map((g) => g.id);
 
 // Вид проверки normsReport → группа.
 const KIND_GROUP = {
   area: 'norms', width: 'norms', height: 'norms',
   light: 'light',
   furniture: 'furniture',
-  overlap: 'overlap',
-  bound: 'walls', 'wall-divides': 'walls',
+  overlap: 'geometry',
+  bound: 'geometry', 'wall-divides': 'geometry',
 };
+
+// Ключ пары помещений (порядок не важен).
+export const pairKey = (a, b) => [a, b].sort().join('|');
 
 const fmtDay = (day) => String(day).split('-').reverse().join('.');
 const fmtHours = (h) => String(h).replace('.', ',');
@@ -52,10 +61,24 @@ export function unionRect(rects) {
 
 const roomRect = (room) => (room ? { x: room.x, y: room.y, w: room.w, h: room.h } : null);
 
+// Скрытые пользователем замечания проекта (project.settings.dismissedIssues).
+export function dismissedIssueIds(project) {
+  const list = project?.settings?.dismissedIssues;
+  return new Set(Array.isArray(list) ? list.filter((x) => typeof x === 'string' && x) : []);
+}
+
 /**
- * project → { count, severity: 'warn' | 'ok', groups: [{ id, title, count, items }] }.
+ * project → { count, severity, groups, summary, hidden, enabledCount, total }.
+ *   groups — включённые группы с записями: [{ id, title, count, items }];
+ *   summary — все группы по порядку: [{ id, title, short, enabled, count }]
+ *     (count — предупреждения без скрытых; у выключенной группы — сколько было бы);
+ *   hidden — скрытые предупреждения (project.settings.dismissedIssues), все группы;
+ *   count — предупреждения включённых групп без скрытых (бейдж кнопки).
+ * opts.enabled — id включённых групп (по умолчанию — все);
  * opts.norms — готовый normsReport(project) (иначе посчитается);
  * opts.walls, opts.gaps — стены и зазоры активного этажа (иначе посчитаются).
+ * id записей стабильны между пересчётами (по комнатам, парам, предметам) —
+ * по ним запоминается «Скрыть».
  */
 export function collectIssues(project, opts = {}) {
   const items = [];
@@ -64,7 +87,14 @@ export function collectIssues(project, opts = {}) {
   const levelName = (id) => (multi ? levels.find((l) => l.id === id)?.name || '' : '');
   const lps = new Map(levels.map((l) => [l.id, levelProject(project, l.id)]));
   const roomOf = (levelId, id) => lps.get(levelId)?.rooms.find((r) => r.id === id) || null;
-  const push = (entry) => items.push({ severity: 'warn', title: '', actions: [], target: null, focus: null, ...entry, levelName: levelName(entry.levelId) });
+  const seen = new Map();
+  const push = (entry) => {
+    // Совпавший id (два одинаковых замечания) — с порядковым суффиксом.
+    const n = seen.get(entry.id) || 0;
+    seen.set(entry.id, n + 1);
+    const id = n ? `${entry.id}#${n + 1}` : entry.id;
+    items.push({ severity: 'warn', title: '', actions: [], target: null, focus: null, ...entry, id, levelName: levelName(entry.levelId) });
+  };
 
   // --- Связность: вход и доступ к помещениям (по этажам).
   for (const level of levels) {
@@ -85,16 +115,22 @@ export function collectIssues(project, opts = {}) {
         focus: unionRect(lp.rooms.map(roomRect)),
       });
     }
+    // Одна подсказка на связную группу недоступных помещений.
+    const covered = new Set();
     for (const roomId of analysis.unreachable) {
+      if (covered.has(roomId)) continue;
       const hint = suggestAccess(lp, roomId, analysis);
       if (!hint) continue;
+      for (const id of hint.members || [roomId]) covered.add(id);
       problems += 1;
-      const room = roomOf(level.id, roomId);
+      const own = hint.roomId || roomId;
+      const room = roomOf(level.id, own);
       const other = hint.targetId ? roomOf(level.id, hint.targetId) : null;
       push({
-        id: `access:${level.id}:${roomId}`, group: 'access', levelId: level.id,
+        id: hint.targetId ? `access:${level.id}:${pairKey(own, hint.targetId)}` : `access:${level.id}:${own}`,
+        group: 'access', levelId: level.id,
         text: hint.text,
-        target: { type: 'room', id: roomId },
+        target: { type: 'room', id: own },
         focus: unionRect([roomRect(room), roomRect(other)]),
       });
     }
@@ -113,30 +149,33 @@ export function collectIssues(project, opts = {}) {
   }
   if (norms) {
     const ins = norms.insolation;
-    const verdict = !ins.need
-      ? 'жилых комнат нет'
-      : `в норме ${ins.met}, нужно ${ins.need} ${ins.ok ? '— выполнено' : '— не хватает'}`;
-    push({
-      id: 'light:insolation', group: 'light', levelId: project.activeLevel,
-      severity: ins.ok ? 'ok' : 'warn', mark: ins.ok ? '✓' : '✗',
-      title: '☀ Инсоляция',
-      text: `${ins.norm.zone} зона: ${fmtHours(ins.norm.hours)} ч на ${fmtDay(ins.norm.day)}, ${verdict}`,
-    });
+    // Инсоляция — только жилые комнаты; без участка (граница, норма) итог
+    // справочный: стороны света и окружение не заданы.
+    const known = ins.siteKnown !== false;
+    if (ins.need) {
+      const warn = !ins.ok && known;
+      push({
+        id: 'insolation:house', group: 'insolation', levelId: project.activeLevel,
+        severity: warn ? 'warn' : 'ok', mark: ins.ok ? '✓' : (known ? '✗' : 'ℹ'),
+        title: '☀ Инсоляция',
+        text: `${ins.norm.zone} зона: ${fmtHours(ins.norm.hours)} ч на ${fmtDay(ins.norm.day)}, в норме ${ins.met}, нужно ${ins.need} ${ins.ok ? '— выполнено' : '— не хватает'}${known ? '' : ' (участок не задан — оценка ориентировочная)'}`,
+      });
+    }
     // Строки по жилым комнатам — справочные (в число входит общий итог выше).
     for (const r of ins.rooms.filter((q) => q.living)) {
       push({
-        id: `light:sun:${r.id}`, group: 'light', levelId: r.levelId, severity: 'ok', mark: r.meets ? '✓' : '✗',
+        id: `insolation:sun:${r.id}`, group: 'insolation', levelId: r.levelId, severity: 'ok', mark: r.meets ? '✓' : '✗',
         title: r.name,
         text: r.windows ? `инсоляция ${formatDuration(r.longest)} подряд` : 'инсоляция: нет окон',
         target: { type: 'room', id: r.id },
         focus: roomRect(roomOf(r.levelId, r.id)),
       });
     }
-    norms.problems.forEach((p, i) => {
+    for (const p of norms.problems) {
       const levelId = p.room.levelId;
       const room = roomOf(levelId, p.room.id);
       const entry = {
-        id: `${p.kind}:${levelId}:${p.room.id}:${i}`, group: KIND_GROUP[p.kind] || 'walls', levelId,
+        id: problemId(p, levelId), group: KIND_GROUP[p.kind] || 'geometry', levelId,
         title: p.room.name, text: p.text,
         target: { type: 'room', id: p.room.id },
         focus: roomRect(room),
@@ -159,7 +198,7 @@ export function collectIssues(project, opts = {}) {
       if (p.trim) entry.actions.push({ kind: 'trim', label: p.trim.label, roomId: p.trim.roomId, byId: p.trim.byId });
       if (p.split) entry.actions.push({ kind: 'split', label: p.split.label, roomId: p.split.roomId, wallId: p.split.wallId });
       push(entry);
-    });
+    }
   }
 
   // --- Нестандартные зазоры между комнатами (стыковка не сработала).
@@ -169,7 +208,7 @@ export function collectIssues(project, opts = {}) {
     const gaps = level.id === project.activeLevel && opts.gaps ? opts.gaps : findNearMissGaps(lp, { move: false });
     for (const gap of gaps) {
       push({
-        id: `gap:${level.id}:${gap.key}`, group: 'walls', levelId: level.id,
+        id: `gap:${level.id}:${gap.key}`, group: 'geometry', levelId: level.id,
         text: `Нестандартный зазор ${Math.round(gap.gap)} мм между «${gap.aName}» и «${gap.bName}» — стыковка не сработала`,
         target: { type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] },
         gapKey: gap.key,
@@ -179,10 +218,38 @@ export function collectIssues(project, opts = {}) {
     }
   }
 
-  const groups = ISSUE_GROUPS.map((g) => {
-    const list = items.filter((it) => it.group === g.id);
-    return { ...g, items: list, count: list.filter((it) => it.severity === 'warn').length };
+  // --- Фильтры: включённые группы и скрытые замечания (только
+  // предупреждения: справочные строки ✓ не скрываются и не считаются).
+  const enabled = new Set(opts.enabled ? [...opts.enabled] : ISSUE_GROUPS.map((g) => g.id));
+  const dismissed = dismissedIssueIds(project);
+  const hidden = [];
+  for (const it of items) {
+    it.dismissed = it.severity === 'warn' && dismissed.has(it.id);
+    if (it.dismissed) hidden.push(it);
+  }
+  const live = items.filter((it) => !it.dismissed);
+  const summary = ISSUE_GROUPS.map((g) => ({
+    id: g.id, title: g.title, short: g.short, enabled: enabled.has(g.id),
+    count: live.filter((it) => it.group === g.id && it.severity === 'warn').length,
+  }));
+  const groups = ISSUE_GROUPS.filter((g) => enabled.has(g.id)).map((g) => {
+    const list = live.filter((it) => it.group === g.id);
+    return { id: g.id, title: g.title, items: list, count: list.filter((it) => it.severity === 'warn').length };
   }).filter((g) => g.items.length);
   const count = groups.reduce((s, g) => s + g.count, 0);
-  return { count, severity: count ? 'warn' : 'ok', groups };
+  return {
+    count, severity: count ? 'warn' : 'ok', groups, summary, hidden,
+    enabledCount: summary.filter((g) => g.enabled).length, total: ISSUE_GROUPS.length,
+  };
+}
+
+// Стабильный id замечания нормы: вид, этаж, комната и что именно (предметы,
+// стена, пара комнат) — без порядкового номера в списке.
+function problemId(p, levelId) {
+  const room = p.room.id;
+  if (p.kind === 'overlap') return `overlap:${levelId}:${pairKey(p.otherId, room)}`;
+  if (p.kind === 'wall-divides') return `wall-divides:${levelId}:${room}:${p.wallId || ''}`;
+  if (p.kind === 'furniture') return `furniture:${levelId}:${room}:${p.sub || ''}:${[...(p.itemIds || [])].sort().join(',')}`;
+  if (['area', 'width', 'height', 'light'].includes(p.kind)) return `${p.kind}:${levelId}:${room}`;
+  return `${p.kind}:${levelId}:${room}:${p.text}`;
 }
