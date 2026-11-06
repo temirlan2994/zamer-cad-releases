@@ -7,7 +7,8 @@
 // Участок (по желанию): земля, граница и соседние дома — переведены из
 // координат съёмки в оси дома.
 //
-// face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind }
+// face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind,
+//   ref? — у стен и их стёкол: { type: 'wall', key, wallId, level, face } }
 
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './catalog.js';
 import { toLocal, toWorld } from './building.js';
@@ -184,76 +185,144 @@ function wallOutlineEdges(band, orient, start, end, z0, z1, holes, { joinedStart
   return edges;
 }
 
-// Стены v2 (у записей есть rects): одно тело на этаж. Сетка по кускам стен и
-// проёмам, по высоте — слои между отметками низа/верха проёмов. В каждом слое
-// область = W минус проёмы этого слоя; боковые грани — по её контуру (с
-// дырами-дворами), горизонтальные — где область слоя меняется. Внутренних
-// граней между кусками нет; рёбра — только по контуру и кромкам проёмов.
-function levelWallsV2(lp, walls, z0, height) {
-  const faces = [];
-  const rects = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared' || w.kind === 'manual')).flatMap((w) => wallRects(w));
-  if (!rects.length || height < 0.5) return faces;
+const SOLID_KINDS = new Set(['own', 'shared', 'manual']);
+
+// Высота стены в 3D от пола этажа (мм): base.offset — низ; top.level —
+// отметка другого этажа + offset; top.height — от низа; иначе — на всю
+// высоту этажа (до перекрытия). Ручная стена — из объекта (level.walls),
+// стена комнаты — из wallOverrides[key]. lp — проект на этаже стены.
+export function wallZRange(lp, rec, levelHeight) {
+  const src = rec?.kind === 'manual'
+    ? (lp.walls || []).find((w) => w.id === rec.wallId)
+    : lp.wallOverrides?.[rec?.key];
+  const z0 = Number(src?.base?.offset) || 0;
+  const top = src?.top;
+  const levels = lp.levels || [];
+  const topLevel = top?.level ? levels.find((l) => l.id === top.level) : null;
+  let z1 = levelHeight;
+  if (topLevel) {
+    const own = levels.find((l) => l.id === lp.activeLevel);
+    z1 = (Number(topLevel.elevation) || 0) - (Number(own?.elevation) || 0) + (Number(top.offset) || 0);
+  } else if (Number(top?.height) > 0) z1 = z0 + Number(top.height);
+  return { z0, z1: Math.max(z0 + 1, z1) };
+}
+
+// Тела стен этажа для 3D и выбора (core/pick3d.js): записи с прямоугольниками
+// и своей высотой, проёмы-пустоты (низ/верх от пола этажа; верх проёма — не
+// выше верха его стены − 50). В v1 высота — этажа (свои отметки — только v2).
+export function levelWallSolids(lp, walls, height) {
+  const v2 = walls.some((w) => w.rects);
+  const recs = [];
+  for (const w of walls) {
+    if (w.hidden || !SOLID_KINDS.has(w.kind)) continue;
+    const rects = wallRects(w).filter((r) => r.w >= 0.5 && r.h >= 0.5);
+    if (!rects.length) continue;
+    const z = v2 ? wallZRange(lp, w, height) : { z0: 0, z1: height };
+    recs.push({ wall: w, rects, z0: z.z0, z1: z.z1 });
+  }
+  const byWall = new Map(recs.map((q, i) => [q.wall, i]));
   const voids = [];
   for (const o of lp.openings) {
     const placed = openingRect(lp, o, walls);
     if (!placed || placed.wall.hidden) continue;
     const r = placed.rect;
-    const orient = placed.wall.orient;
+    const ri = byWall.get(placed.wall) ?? recs.findIndex((q) => q.wall.key === placed.wall.key);
+    const wallTop = ri >= 0 ? recs[ri].z1 : height;
     const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
-    const top = Math.min(height - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
+    const top = Math.min(wallTop - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
-    voids.push({ r, bottom, top });
-    if (o.kind === 'window') {
-      const a0 = orient === 'h' ? r.x : r.y;
-      const a1 = a0 + (orient === 'h' ? r.w : r.h);
-      faces.push(paneFace(placed.wall.band, orient, a0, a1, z0 + bottom, z0 + top, GLASS_COLOR, 0.45, 'glass'));
-    }
+    voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri });
   }
-  const ax = gridAxis([...rects, ...voids.map((q) => q.r)].flatMap((r) => [r.x, r.x + r.w]));
-  const ay = gridAxis([...rects, ...voids.map((q) => q.r)].flatMap((r) => [r.y, r.y + r.h]));
+  return { recs, voids };
+}
+
+// Ссылка грани на стену (выбор и подсветка в 3D): key записи, wallId ручной
+// стены, этаж и вид грани — top/bottom (горизонтальные), side (вдоль стены),
+// end (торец).
+export function wallFaceName(orient, normal) {
+  if (normal.z > 0.5) return 'top';
+  if (normal.z < -0.5) return 'bottom';
+  return (orient === 'h') === (Math.abs(normal.y) > 0.5) ? 'side' : 'end';
+}
+
+function wallRef(wall, levelId, face) {
+  return { type: 'wall', key: wall.key, wallId: wall.wallId ?? null, level: levelId ?? null, face };
+}
+
+// Стены v2 (у записей есть rects): одно тело на этаж. Сетка по кускам стен и
+// проёмам, по высоте — слои между отметками низа/верха стен и проёмов. В
+// каждом слое область = стены, чья высота покрывает слой, минус проёмы слоя;
+// боковые грани — по её контуру (с дырами-дворами), горизонтальные — где
+// область слоя меняется. Внутренних граней между кусками одной высоты нет;
+// рёбра — только по контуру и кромкам проёмов. Каждая грань — со ссылкой ref
+// на свою стену (клетка помнит запись-владельца).
+function levelWallsV2(lp, walls, z0, height, levelId) {
+  const faces = [];
+  const { recs, voids } = levelWallSolids(lp, walls, height);
+  if (!recs.length || height < 0.5) return faces;
+  for (const q of voids) {
+    if (q.kind !== 'window') continue;
+    const orient = q.wall.orient;
+    const a0 = orient === 'h' ? q.r.x : q.r.y;
+    const a1 = a0 + (orient === 'h' ? q.r.w : q.r.h);
+    faces.push({ ...paneFace(q.wall.band, orient, a0, a1, z0 + q.bottom, z0 + q.top, GLASS_COLOR, 0.45, 'glass'), ref: wallRef(q.wall, levelId, 'glass') });
+  }
+  const allRects = [...recs.flatMap((q) => q.rects), ...voids.map((q) => q.r)];
+  const ax = gridAxis(allRects.flatMap((r) => [r.x, r.x + r.w]));
+  const ay = gridAxis(allRects.flatMap((r) => [r.y, r.y + r.h]));
   const xs = ax.coords; const ys = ay.coords;
   const nx = xs.length - 1; const ny = ys.length - 1;
   if (nx < 1 || ny < 1) return faces;
   const N = nx * ny;
-  const inW = new Uint8Array(N);
-  for (const r of rects) {
-    for (let j = ay.at(r.y); j < ay.at(r.y + r.h); j += 1) {
-      for (let i = ax.at(r.x); i < ax.at(r.x + r.w); i += 1) inW[j * nx + i] = 1;
+  const owner = new Int32Array(N).fill(-1); // запись-владелец клетки
+  recs.forEach((q, ri) => {
+    for (const r of q.rects) {
+      for (let j = ay.at(r.y); j < ay.at(r.y + r.h); j += 1) {
+        for (let i = ax.at(r.x); i < ax.at(r.x + r.w); i += 1) owner[j * nx + i] = ri;
+      }
     }
-  }
-  // Профиль клетки — набор проёмов над ней: верх стены делится по проёмам.
+  });
+  // Профиль клетки — владелец и набор проёмов над ней: верх стены делится по
+  // проёмам и по стенам.
   const cellVoids = new Array(N);
   voids.forEach((q, vi) => {
     for (let j = ay.at(q.r.y); j < ay.at(q.r.y + q.r.h); j += 1) {
       for (let i = ax.at(q.r.x); i < ax.at(q.r.x + q.r.w); i += 1) {
         const k = j * nx + i;
-        if (!inW[k]) continue;
+        if (owner[k] < 0) continue;
         (cellVoids[k] ||= []).push(vi);
       }
     }
   });
   const profileIds = new Map();
+  const profileOwner = [];
   const profile = new Int32Array(N);
   for (let k = 0; k < N; k += 1) {
-    const key = cellVoids[k] ? cellVoids[k].join(',') : '';
-    if (!profileIds.has(key)) profileIds.set(key, profileIds.size);
+    const key = `${owner[k]}|${cellVoids[k] ? cellVoids[k].join(',') : ''}`;
+    if (!profileIds.has(key)) { profileIds.set(key, profileIds.size); profileOwner.push(owner[k]); }
     profile[k] = profileIds.get(key);
   }
-  const zs = [...new Set([0, height, ...voids.flatMap((q) => [q.bottom, q.top])])]
-    .filter((z) => z >= 0 && z <= height).sort((a, b) => a - b);
+  const zMin = Math.min(...recs.map((q) => q.z0));
+  const zMax = Math.max(...recs.map((q) => q.z1));
+  const zs = [...new Set([...recs.flatMap((q) => [q.z0, q.z1]), ...voids.flatMap((q) => [q.bottom, q.top])])]
+    .filter((z) => z >= zMin && z <= zMax).sort((a, b) => a - b);
   const L = zs.length - 1;
   const layers = [];
   for (let s = 0; s < L; s += 1) {
     const m = new Uint8Array(N);
     for (let k = 0; k < N; k += 1) {
-      if (!inW[k]) continue;
+      const ri = owner[k];
+      if (ri < 0 || recs[ri].z0 > zs[s] || recs[ri].z1 < zs[s + 1]) continue;
       m[k] = cellVoids[k]?.some((vi) => voids[vi].bottom <= zs[s] && voids[vi].top >= zs[s + 1]) ? 0 : 1;
     }
     layers.push(m);
   }
   const at = (m, i, j) => (m && i >= 0 && j >= 0 && i < nx && j < ny ? m[j * nx + i] : 0);
   const edges = [];
-  const wallFace = (pts, normal) => faces.push({ pts, normal, color: WALL_COLOR, kind: 'wall', noEdges: true });
+  const wallFace = (pts, normal, ri) => {
+    const wall = recs[ri].wall;
+    faces.push({ pts, normal, color: WALL_COLOR, kind: 'wall', noEdges: true, ref: wallRef(wall, levelId, wallFaceName(wall.orient, normal)) });
+  };
   const first = faces.length;
 
   // Горизонтальные грани: верх там, где слой ниже есть, а выше нет; низ
@@ -269,39 +338,52 @@ function levelWallsV2(lp, walls, z0, height) {
       if (lo && !hi) up[k] = profile[k];
       else if (hi && !lo) down[k] = profile[k];
     }
-    for (const list of mergeCells(up, xs, ys).values()) {
-      for (const r of list) wallFace([v(r.x, r.y, z), v(r.x + r.w, r.y, z), v(r.x + r.w, r.y + r.h, z), v(r.x, r.y + r.h, z)], v(0, 0, 1));
+    for (const [id, list] of mergeCells(up, xs, ys)) {
+      for (const r of list) wallFace([v(r.x, r.y, z), v(r.x + r.w, r.y, z), v(r.x + r.w, r.y + r.h, z), v(r.x, r.y + r.h, z)], v(0, 0, 1), profileOwner[id]);
     }
-    for (const list of mergeCells(down, xs, ys).values()) {
-      for (const r of list) wallFace([v(r.x, r.y + r.h, z), v(r.x + r.w, r.y + r.h, z), v(r.x + r.w, r.y, z), v(r.x, r.y, z)], v(0, 0, -1));
+    for (const [id, list] of mergeCells(down, xs, ys)) {
+      for (const r of list) wallFace([v(r.x, r.y + r.h, z), v(r.x + r.w, r.y + r.h, z), v(r.x + r.w, r.y, z), v(r.x, r.y, z)], v(0, 0, -1), profileOwner[id]);
+    }
+  }
+  // Низ стен, поднятых над полом этажа (base.offset > 0), на нижней отметке
+  // слоёв; выше неё низы даёт цикл выше (слой ниже пуст, выше — есть).
+  if (zMin > 0) {
+    const z = z0 + zs[0];
+    const down = new Int32Array(N).fill(-1);
+    for (let k = 0; k < N; k += 1) if (layers[0]?.[k]) down[k] = profile[k];
+    for (const [id, list] of mergeCells(down, xs, ys)) {
+      for (const r of list) wallFace([v(r.x, r.y + r.h, z), v(r.x + r.w, r.y + r.h, z), v(r.x + r.w, r.y, z), v(r.x, r.y, z)], v(0, 0, -1), profileOwner[id]);
     }
   }
 
-  // Боковые грани слоя — по контуру его области (слитые прямые участки).
-  // Знак границы: −1 — область по «плюсовую» сторону линии, +1 — по «минусовую».
+  // Боковые грани слоя — по контуру его области (слитые прямые участки одной
+  // стены). Знак границы: −1 — область по «плюсовую» сторону линии, +1 — по
+  // «минусовую»; владелец — клетка с областью.
   const hSign = (m, i, j) => (at(m, i, j) && !at(m, i, j - 1) ? -1 : (!at(m, i, j) && at(m, i, j - 1) ? 1 : 0));
   const vSign = (m, i, j) => (at(m, i, j) && !at(m, i - 1, j) ? -1 : (!at(m, i, j) && at(m, i - 1, j) ? 1 : 0));
   for (let s = 0; s < L; s += 1) {
     const m = layers[s];
     const za = z0 + zs[s]; const zb = z0 + zs[s + 1];
-    const side = (a, b2, normal) => wallFace([v(a.x, a.y, za), v(b2.x, b2.y, za), v(b2.x, b2.y, zb), v(a.x, a.y, zb)], normal);
+    const side = (a, b2, normal, ri) => wallFace([v(a.x, a.y, za), v(b2.x, b2.y, za), v(b2.x, b2.y, zb), v(a.x, a.y, zb)], normal, ri);
     for (let j = 0; j <= ny; j += 1) {
       let run = null;
-      const flush = () => { if (run) side({ x: xs[run.i0], y: ys[j] }, { x: xs[run.i1], y: ys[j] }, v(0, run.s, 0)); run = null; };
+      const flush = () => { if (run) side({ x: xs[run.i0], y: ys[j] }, { x: xs[run.i1], y: ys[j] }, v(0, run.s, 0), run.o); run = null; };
       for (let i = 0; i < nx; i += 1) {
         const sg = hSign(m, i, j);
-        if (sg && run?.s === sg) run.i1 = i + 1;
-        else { flush(); if (sg) run = { s: sg, i0: i, i1: i + 1 }; }
+        const o = sg ? owner[(sg < 0 ? j : j - 1) * nx + i] : -1;
+        if (sg && run?.s === sg && run.o === o) run.i1 = i + 1;
+        else { flush(); if (sg) run = { s: sg, o, i0: i, i1: i + 1 }; }
       }
       flush();
     }
     for (let i = 0; i <= nx; i += 1) {
       let run = null;
-      const flush = () => { if (run) side({ x: xs[i], y: ys[run.j0] }, { x: xs[i], y: ys[run.j1] }, v(run.s, 0, 0)); run = null; };
+      const flush = () => { if (run) side({ x: xs[i], y: ys[run.j0] }, { x: xs[i], y: ys[run.j1] }, v(run.s, 0, 0), run.o); run = null; };
       for (let j = 0; j < ny; j += 1) {
         const sg = vSign(m, i, j);
-        if (sg && run?.s === sg) run.j1 = j + 1;
-        else { flush(); if (sg) run = { s: sg, j0: j, j1: j + 1 }; }
+        const o = sg ? owner[j * nx + (sg < 0 ? i : i - 1)] : -1;
+        if (sg && run?.s === sg && run.o === o) run.j1 = j + 1;
+        else { flush(); if (sg) run = { s: sg, o, j0: j, j1: j + 1 }; }
       }
       flush();
     }
@@ -352,10 +434,10 @@ function levelWallsV2(lp, walls, z0, height) {
 }
 
 // Стены этажа с проёмами.
-function levelWalls(lp, z0, height) {
+function levelWalls(lp, z0, height, levelId) {
   const faces = [];
   const walls = deriveWalls(lp);
-  if (walls.some((w) => w.rects)) return levelWallsV2(lp, walls, z0, height);
+  if (walls.some((w) => w.rects)) return levelWallsV2(lp, walls, z0, height, levelId);
   const cuts = new Map(); // стена → [{ a0, a1, bottom, top, kind }]
   for (const o of lp.openings) {
     const placed = openingRect(lp, o, walls);
@@ -379,15 +461,35 @@ function levelWalls(lp, z0, height) {
       if (a0 > cursor) addPiece(cursor, a0, z0, z0 + height);
       if (h.bottom > 0) addPiece(a0, a1, z0, z0 + h.bottom);
       if (h.top < height) addPiece(a0, a1, z0 + h.top, z0 + height);
-      if (h.kind === 'window') faces.push(paneFace(b, orient, a0, a1, z0 + h.bottom, z0 + h.top, GLASS_COLOR, 0.45, 'glass'));
+      if (h.kind === 'window') {
+        const pane = paneFace(b, orient, a0, a1, z0 + h.bottom, z0 + h.top, GLASS_COLOR, 0.45, 'glass');
+        if (run.members?.[0]) pane.ref = wallRef(run.members[0], levelId, 'glass');
+        faces.push(pane);
+      }
       cursor = Math.max(cursor, a1);
     }
     if (cursor < end) addPiece(cursor, end, z0, z0 + height);
     if (run.outlined && wallFaces.length) {
       wallFaces[0].edges = wallOutlineEdges(b, orient, start, end, z0, z0 + height, holes, run);
     }
+    // v1: пробег может объединять несколько стен — ссылка на первую, keys — все.
+    const member = run.members?.[0];
+    if (member) {
+      const keys = run.members.map((m) => m.key);
+      for (const f of wallFaces) f.ref = { ...wallRef(member, levelId, wallFaceName(orient, f.normal)), keys };
+    }
     faces.push(...wallFaces);
   }
+  return faces;
+}
+
+// Слой стен одного этажа (для быстрой пересборки при правке в 3D): грани
+// помечены wallsOf = id этажа.
+export function buildLevelWalls(project, levelId) {
+  const level = (project.levels || []).find((l) => l.id === levelId);
+  if (!level) return [];
+  const faces = levelWalls(levelProject(project, levelId), level.elevation, level.height, levelId);
+  for (const f of faces) f.wallsOf = levelId;
   return faces;
 }
 
@@ -799,7 +901,7 @@ export function buildHouseMesh(project, { roof = false, site = false, terrainSca
   for (const level of levels) {
     const lp = levelProject(project, level.id);
     faces.push(...levelFloors(lp, level.elevation));
-    faces.push(...levelWalls(lp, level.elevation, level.height));
+    faces.push(...buildLevelWalls(project, level.id));
     faces.push(...levelStructures(lp, level.elevation, level.height));
     faces.push(...levelStairs(lp, level.elevation, level.height));
   }

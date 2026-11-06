@@ -3,12 +3,35 @@
 // правой/средней или с Shift — сдвиг. Пальцы: один — вращать, два —
 // масштаб и сдвиг. Esc или «✕» — закрыть.
 //
+// Стены — объекты (как в Revit): клик выбирает стену (общий выбор с планом,
+// state.selection), выбранная подсвечивается; её грани — ручки: верх —
+// высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина; двойной
+// клик по ручке — ввод числа. Касание: тап — выбор, удержание грани
+// выбранной стены — перетаскивание. Попадание — луч на процессоре
+// (core/pick3d.js), правка — core/wall-edit3d.js; во время жеста
+// пересобирается только слой стен этажа, в историю — одна запись.
+//
 // Модель — core/mesh3d.js (оси дома: x вправо, y вниз по плану, z вверх).
 // Здесь она переводится в правую систему: X = x, Y = −y, Z = z.
 
-import { buildHouseMesh } from '../core/mesh3d.js';
-import { el } from './dom.js';
+import { GRID_STEP } from '../core/catalog.js';
+import { buildHouseMesh, buildLevelWalls } from '../core/mesh3d.js';
+import { LEVEL_KEYS } from '../core/model.js';
+import {
+  axisDelta, cameraBasis, pickWall, projectPoint, screenRay, wallBoxes,
+} from '../core/pick3d.js';
+import {
+  GRIP_LABEL, applyGrip, applyGripValue, findWallRecord, gripFor, gripValue,
+} from '../core/wall-edit3d.js';
+import { el, toast } from './dom.js';
+import { switchLevel } from './levels.js';
+import { isSiteView } from './modes.js';
+import { reconcileOpenings } from './plan-actions.js';
 import { state } from './state.js';
+import {
+  afterChange, pushHistory, refreshDerived, restoreFrom, snapshot,
+} from './store.js';
+import { selectObject } from './tools.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
@@ -36,19 +59,36 @@ function hexRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-function camera(width, height) {
-  const cp = Math.cos(cam.pitch);
-  const eyeDist = cam.eyeDist || Math.max(25000, cam.dist);
-  const eye = {
-    x: cam.target.x + eyeDist * cp * Math.cos(cam.yaw),
-    y: cam.target.y + eyeDist * cp * Math.sin(cam.yaw),
-    z: cam.target.z + eyeDist * Math.sin(cam.pitch),
-  };
-  const f = norm(sub(cam.target, eye));
-  const r = norm(cross(f, { x: 0, y: 0, z: 1 }));
-  const u = cross(r, f);
-  const focal = 0.95 * Math.min(width, height);
-  return { eye, f, r, u, focal, cx: width / 2, cy: height / 2 };
+const camera = (width, height) => cameraBasis(cam, width, height);
+
+// ---------------------------------------------------------------- выбор стен
+
+const SEL_COLOR = '#a9c8ef'; // выбранная стена
+const GRIP_COLOR = '#5b94dd'; // грань-ручка под мышью / в жесте
+const CLICK_SLOP = 5; // px — дальше это вращение, а не клик
+const HOLD_MS = 450; // удержание пальцем — перетаскивание ручки
+let boxes = null; // коробки стен для луча (кеш до пересборки)
+let hover = null; // { key, level, face, normal, kind } — ручка выбранной стены под мышью
+let edit = null; // жест правки стены
+
+// Стены выбираются и правятся только в «Плане» (в «Участке»/«Ландшафте»
+// план стен не правится).
+const wallsEditable = () => !isSiteView();
+
+function selectedRef() {
+  const sel = state.selection;
+  return sel?.type === 'wall' && state.project ? { key: sel.key, level: state.project.activeLevel } : null;
+}
+
+const refMatches = (ref, sel) => Boolean(ref && sel && ref.level === sel.level && (ref.key === sel.key || ref.keys?.includes(sel.key)));
+const sameNormal = (a, b) => a && b && a.x === b.x && a.y === b.y && a.z === b.z;
+
+function faceColor(face) {
+  if (face.kind !== 'wall' || !face.ref) return face.color;
+  const sel = selectedRef();
+  if (!refMatches(face.ref, sel)) return face.color;
+  if (hover && refMatches(face.ref, hover) && face.ref.face === hover.face && sameNormal(face.normal, hover.normal)) return GRIP_COLOR;
+  return SEL_COLOR;
 }
 
 // Нормаль многоугольника по Ньюэллу (для двусторонних граней).
@@ -116,7 +156,7 @@ function uploadGeometry() {
     const n = face.twoSided || !(face.normal.x || face.normal.y || face.normal.z) ? polyNormal(P) : W(face.normal);
     const lit = face.twoSided ? Math.abs(dot(n, LIGHT)) : Math.max(0, dot(n, LIGHT));
     const k = (0.6 + 0.4 * lit) / 255;
-    const [r, g, b] = hexRgb(face.color).map((c) => c * k);
+    const [r, g, b] = hexRgb(faceColor(face)).map((c) => c * k);
     const a = face.alpha ?? 1;
     const out = a < 1 ? glass : opaque;
     for (let i = 1; i < P.length - 1; i += 1) {
@@ -266,7 +306,7 @@ function render2d(canvas) {
     }
     if (behind) continue;
     const light = 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
-    const [r, g, b] = hexRgb(face.color);
+    const [r, g, b] = hexRgb(faceColor(face));
     const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
       const d = sub(W(raw), c.eye);
       return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
@@ -322,12 +362,39 @@ function syncReliefControl() {
   if (wrap) wrap.hidden = !(state.project?.site?.terrain?.points?.length >= 3);
 }
 
-export function refresh3d() {
-  if (!active) return;
-  syncReliefControl();
-  faces = buildHouseMesh(state.project, opts);
+
+const HINT_IDLE = 'Клик по стене — выбрать (и на плане) · тянуть — вращать, колесо — масштаб';
+const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
+const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
+const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
+let touchUsed = false;
+
+function setHint(text) {
+  const hint = el('v3Hint');
+  if (!hint) return;
+  if (text === undefined) {
+    if (!wallsEditable()) text = HINT_SITE;
+    else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
+    else text = HINT_IDLE;
+  }
+  hint.textContent = text;
+}
+
+// Подсветка выбора и ручки: перекраска граней.
+function refreshHighlight() {
   uploadGeometry();
   requestRender();
+  setHint();
+}
+
+export function refresh3d() {
+  if (!active || edit) return;
+  syncReliefControl();
+  faces = buildHouseMesh(state.project, opts);
+  boxes = null;
+  uploadGeometry();
+  requestRender();
+  setHint();
 }
 
 export function open3d() {
@@ -336,29 +403,239 @@ export function open3d() {
   el('view3dBtn')?.classList.add('active');
   syncReliefControl();
   faces = buildHouseMesh(state.project, opts);
+  boxes = null;
+  hover = null;
   uploadGeometry();
   frameHouse();
   requestRender();
+  setHint();
 }
 
 export function close3d() {
+  if (edit) cancelEdit();
+  hideNumber();
   active = false;
+  hover = null;
   el('view3d').hidden = true;
   el('view3dBtn')?.classList.remove('active');
 }
 
 export const is3dOpen = () => active;
 
+// ---------------------------------------------------------------- луч и ручки
+
+function canvasPoint(e) {
+  const r = el('canvas3d').getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
+}
+
+function pickAt(e) {
+  if (!state.project || !wallsEditable()) return null;
+  const c = canvasPoint(e);
+  boxes ||= wallBoxes(state.project);
+  return pickWall(boxes, screenRay(cam, c.w, c.h, c.x, c.y));
+}
+
+const onSelectedWall = (hit) => {
+  const sel = selectedRef();
+  return Boolean(hit && sel && hit.key === sel.key && hit.levelId === sel.level);
+};
+
+function gripAt(hit, e) {
+  return onSelectedWall(hit) ? gripFor(hit, { alt: e.altKey }) : null;
+}
+
+const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize', length: 'ew-resize' };
+
+function updateHover(e) {
+  const hit = pickAt(e);
+  const grip = gripAt(hit, e);
+  const next = grip ? { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind } : null;
+  el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : '';
+  const same = (!next && !hover) || (next && hover && next.key === hover.key && next.face === hover.face && sameNormal(next.normal, hover.normal));
+  hover = next;
+  if (!same) { uploadGeometry(); requestRender(); }
+}
+
+// Выбор стены кликом/тапом (пусто — снять выбор стены). Стена другого
+// этажа делает его активным.
+function clickSelect(hit) {
+  if (!wallsEditable()) return;
+  const defer = state.touchDeferSelect;
+  state.touchDeferSelect = false;
+  try {
+    if (!hit) {
+      if (state.selection?.type === 'wall') selectObject(null);
+    } else {
+      if (hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
+      selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
+    }
+  } finally {
+    state.touchDeferSelect = defer;
+  }
+  hover = null;
+  refreshHighlight();
+}
+
+function restoreStart(e) {
+  for (const k of LEVEL_KEYS) state.project[k] = structuredClone(e.start[k]);
+}
+
+function startEdit(hit, grip, x0, y0) {
+  const rec = findWallRecord(state.project, hit.key, hit.kind === 'manual' ? undefined : hit.from);
+  if (!rec) return false;
+  const levelId = state.project.activeLevel;
+  edit = {
+    rec, grip, levelId, x0, y0, d: 0, snap: GRID_STEP, changed: false,
+    before: snapshot(),
+    start: Object.fromEntries(LEVEL_KEYS.map((k) => [k, structuredClone(state.project[k])])),
+    base: faces.filter((f) => f.wallsOf !== levelId),
+  };
+  hover = { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind };
+  gesture = { kind: 'edit' };
+  el('canvas3d').style.cursor = GRIP_CURSOR[grip.kind];
+  setHint(`${GRIP_LABEL[grip.kind]}: ${gripValue(state.project, rec, grip)} мм`);
+  uploadGeometry();
+  requestRender();
+  return true;
+}
+
+// Кадр жеста: модель — от состояния начала жеста + полное смещение;
+// пересобирается только слой стен этажа.
+function moveEdit(e) {
+  const c = canvasPoint(e);
+  const d = axisDelta(cam, c.w, c.h, edit.grip.axis, e.clientX - edit.x0, e.clientY - edit.y0);
+  restoreStart(edit);
+  edit.snap = e.ctrlKey || e.metaKey ? 0 : GRID_STEP;
+  const res = applyGrip(state.project, edit.rec, edit.grip, d, { snap: edit.snap });
+  edit.d = d;
+  edit.changed = res.ok && !res.unchanged;
+  faces = edit.base.concat(buildLevelWalls(state.project, edit.levelId));
+  boxes = null;
+  uploadGeometry();
+  requestRender();
+  if (!res.ok) { setHint(`Нельзя: ${res.reason}`); return; }
+  const g = edit.grip;
+  if (g.kind === 'move') {
+    const shift = Math.round(edit.snap ? Math.round(d / edit.snap) * edit.snap : d);
+    setHint(`Сдвиг: ${shift > 0 ? '+' : ''}${shift} мм`);
+  } else {
+    const rec = g.kind === 'height' ? edit.rec : findWallRecord(state.project, edit.rec.key, edit.rec.kind === 'manual' ? undefined : edit.rec.from);
+    setHint(`${GRIP_LABEL[g.kind]}: ${gripValue(state.project, rec || edit.rec, g)} мм`);
+  }
+}
+
+// Запись правки: проёмы, производные, одна запись истории, выбор той же стены.
+function commitWallChange(before, rec) {
+  reconcileOpenings();
+  refreshDerived();
+  pushHistory(before);
+  afterChange();
+  const moved = state.walls.find((w) => w.key === rec.key);
+  selectObject({ type: 'wall', key: rec.key, from: rec.kind === 'manual' ? undefined : (moved?.from ?? rec.from) });
+  refreshHighlight();
+}
+
+function finishEdit() {
+  const e = edit;
+  edit = null;
+  gesture = null;
+  restoreStart(e);
+  if (!e.changed) { refresh3d(); return; }
+  const res = applyGrip(state.project, e.rec, e.grip, e.d, { snap: e.snap, finalize: true });
+  if (!res.ok || res.unchanged) {
+    restoreStart(e);
+    if (!res.ok) toast(`Нельзя: ${res.reason}`, true);
+    refresh3d();
+    return;
+  }
+  commitWallChange(e.before, e.rec);
+}
+
+function cancelEdit() {
+  const e = edit;
+  edit = null;
+  gesture = null;
+  restoreStart(e);
+  refresh3d();
+}
+
+// ---------------------------------------------------------------- ввод числа
+
+let numTarget = null;
+
+function hideNumber() {
+  const input = el('v3Num');
+  if (input) input.hidden = true;
+  numTarget = null;
+}
+
+function openNumber(e, hit, grip) {
+  const input = el('v3Num');
+  if (!input) return;
+  const rec = findWallRecord(state.project, hit.key, hit.kind === 'manual' ? undefined : hit.from);
+  if (!rec) return;
+  numTarget = { rec, grip };
+  const c = canvasPoint(e);
+  input.style.left = `${Math.round(c.x)}px`;
+  input.style.top = `${Math.round(c.y)}px`;
+  input.title = `${GRIP_LABEL[grip.kind]}, мм — Enter применить, Esc отмена`;
+  input.setAttribute('aria-label', `${GRIP_LABEL[grip.kind]} стены, мм`);
+  input.value = String(gripValue(state.project, rec, grip));
+  input.hidden = false;
+  setHint(`${GRIP_LABEL[grip.kind]}, мм — Enter применить, Esc отмена`);
+  input.focus();
+  input.select();
+}
+
+function applyNumber() {
+  const t = numTarget;
+  const input = el('v3Num');
+  hideNumber();
+  if (!t || !input) return;
+  const before = snapshot();
+  const res = applyGripValue(state.project, t.rec, t.grip, input.value);
+  if (!res.ok) {
+    restoreFrom(before);
+    toast(`Нельзя: ${res.reason}`, true);
+    setHint();
+    return;
+  }
+  commitWallChange(before, t.rec);
+}
+
+// ---------------------------------------------------------------- жесты
+
 function onDown(e) {
   const canvas = el('canvas3d');
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (e.pointerType === 'touch') touchUsed = true;
+  hideNumber();
   const pan = e.button === 1 || e.button === 2 || e.shiftKey;
   if (pointers.size === 2) {
+    if (gesture?.hold) clearTimeout(gesture.hold);
+    if (edit) cancelEdit();
     const [a, b] = [...pointers.values()];
     gesture = { kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1, camDist: cam.dist, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
-  } else {
+    return;
+  }
+  if (pan || e.button !== 0 || pointers.size > 2) {
     gesture = { kind: pan ? 'pan' : 'orbit', x: e.clientX, y: e.clientY };
+    return;
+  }
+  const hit = pickAt(e);
+  const grip = gripAt(hit, e);
+  // Мышь: нажатие на грань выбранной стены — сразу ручка.
+  if (grip && e.pointerType === 'mouse' && startEdit(hit, grip, e.clientX, e.clientY)) return;
+  gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, hit };
+  // Палец/перо: удержание грани выбранной стены — ручка (как на плане).
+  if (grip) {
+    const g = gesture;
+    g.hold = setTimeout(() => {
+      if (gesture !== g || !g.click || pointers.size !== 1) return;
+      if (startEdit(hit, grip, g.x0, g.y0)) navigator.vibrate?.(15);
+    }, HOLD_MS);
   }
 }
 
@@ -374,8 +651,12 @@ function panBy(dx, dy) {
 }
 
 function onMove(e) {
-  if (!pointers.has(e.pointerId) || !gesture) return;
+  if (!pointers.has(e.pointerId) || !gesture) {
+    if (e.pointerType === 'mouse' && !gesture && active) updateHover(e);
+    return;
+  }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (gesture.kind === 'edit') { moveEdit(e); return; }
   if (gesture.kind === 'pinch') {
     const [a, b] = [...pointers.values()];
     if (!b) return;
@@ -385,6 +666,11 @@ function onMove(e) {
     panBy(mid.x - gesture.mid.x, mid.y - gesture.mid.y);
     gesture.mid = mid;
   } else {
+    if (gesture.click) {
+      if (Math.hypot(e.clientX - gesture.x0, e.clientY - gesture.y0) <= CLICK_SLOP) return;
+      gesture.click = false;
+      clearTimeout(gesture.hold);
+    }
     const dx = e.clientX - gesture.x;
     const dy = e.clientY - gesture.y;
     gesture.x = e.clientX;
@@ -399,12 +685,40 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  const g = gesture;
   pointers.delete(e.pointerId);
+  if (g?.kind === 'edit') {
+    if (!pointers.size) finishEdit();
+    return;
+  }
+  if (g?.hold) clearTimeout(g.hold);
+  if (g?.click && !pointers.size) {
+    gesture = null;
+    clickSelect(g.hit);
+    return;
+  }
   if (!pointers.size) gesture = null;
   else if (gesture?.kind === 'pinch') {
     const [p] = [...pointers.values()];
     gesture = { kind: 'orbit', x: p.x, y: p.y };
   }
+}
+
+function onCancel(e) {
+  if (gesture?.kind === 'edit') {
+    pointers.delete(e.pointerId);
+    cancelEdit();
+    return;
+  }
+  if (gesture?.hold) clearTimeout(gesture.hold);
+  if (gesture) gesture.click = false;
+  onUp(e);
+}
+
+function onDblClick(e) {
+  const hit = pickAt(e);
+  const grip = gripAt(hit, e);
+  if (grip) openNumber(e, hit, grip);
 }
 
 export function bind3d() {
@@ -421,11 +735,25 @@ export function bind3d() {
     refresh3d();
   });
   el('v3Fit')?.addEventListener('click', () => { frameHouse(); requestRender(); });
+  const num = el('v3Num');
+  num?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); applyNumber(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideNumber(); setHint(); }
+  });
+  num?.addEventListener('blur', () => { if (numTarget) { hideNumber(); setHint(); } });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerup', onUp);
-  canvas.addEventListener('pointercancel', onUp);
+  canvas.addEventListener('pointercancel', onCancel);
+  canvas.addEventListener('pointerleave', () => {
+    if (!hover || gesture) return;
+    hover = null;
+    canvas.style.cursor = '';
+    uploadGeometry();
+    requestRender();
+  });
+  canvas.addEventListener('dblclick', onDblClick);
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     cam.dist = Math.min(400000, Math.max(3000, cam.dist * Math.exp(e.deltaY * 0.0012)));
@@ -434,7 +762,25 @@ export function bind3d() {
   new ResizeObserver(() => requestRender()).observe(canvas);
 }
 
-// Для автотестов: камера и число граней.
+// Для автотестов: камера, число граней, выбранная стена.
 export function debug3d() {
-  return { active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } } };
+  return {
+    active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
+    selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
+    highlighted: faces.filter((f) => f.kind === 'wall' && faceColor(f) !== f.color).length,
+  };
+}
+
+// Для автотестов: что под точкой экрана (clientX/Y) — стена и грань.
+export function debug3dPick(x, y) {
+  const hit = pickAt({ clientX: x, clientY: y });
+  return hit ? { key: hit.key, face: hit.face, levelId: hit.levelId } : null;
+}
+
+// Для автотестов: точка в осях дома → экранные координаты (clientX/Y).
+export function debug3dScreen(p) {
+  const canvas = el('canvas3d');
+  const r = canvas.getBoundingClientRect();
+  const q = projectPoint(cam, r.width, r.height, p);
+  return { x: r.left + q.x, y: r.top + q.y };
 }

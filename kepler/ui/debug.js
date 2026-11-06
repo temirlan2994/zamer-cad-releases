@@ -6,7 +6,7 @@ import { setEditorMode } from './modes.js';
 import { gridStep } from './snap.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
-import { debug3d } from './view3d.js';
+import { debug3d, debug3dPick, debug3dScreen } from './view3d.js';
 import {
   fitView, planToScreen, screenToPlan, screenToWorld, worldToScreen,
 } from './view.js';
@@ -21,6 +21,8 @@ export function exposeDebugApi() {
     screenToWorld,
     planToScreen, // оси дома ↔ экран
     debug3d,
+    screen3d: debug3dScreen, // точка в осях дома → clientX/Y в 3D
+    pick3d: debug3dPick, // clientX/Y → { key, face, levelId } стены под точкой
     screenToPlan,
     fitView,
     gridStep,

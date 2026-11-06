@@ -315,6 +315,8 @@ function renderWallProps(panel, wall) {
           <option value="bearing" ${wall.wallType === 'bearing' ? 'selected' : ''}>Несущая (${wallClassThickness(set, 'bearing')})</option>
           <option value="exterior" ${wall.wallType === 'exterior' ? 'selected' : ''}>Наружная (${wallClassThickness(set, 'exterior')})</option>
         </select></label>
+      <label class="prop-field"><span>Высота, мм (пусто — по этажу)</span>
+        <input id="wallH" type="number" step="50" min="100" value="${state.project.wallOverrides?.[wall.key]?.top?.height ?? ''}"></label>
     </div>
     <p class="empty-hint">${wall.kind === 'shared'
     ? 'Общая стена двух комнат — единый объект: толщина меняется сразу для обеих, соседняя комната (и всё за ней) сдвигается, стыковка сохраняется.'
@@ -325,6 +327,11 @@ function renderWallProps(panel, wall) {
   });
   panel.querySelector('#wallKind').addEventListener('change', (e) => {
     changeWallKind(wall, e.target.value);
+  });
+  // Своя высота стены комнаты — в wallOverrides[key] (видна в 3D).
+  panel.querySelector('#wallH').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    changeManualWall(wall, (project) => setWallHeight(project, wall, { height: v === '' ? null : Number(v) }));
   });
 }
 

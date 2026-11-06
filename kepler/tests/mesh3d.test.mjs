@@ -183,7 +183,13 @@ test('v2: стены — боковые грани по контуру, без �
   p.rooms.push(createRoom('living', 0, 0, 4000, 3000));
   const walls = buildHouseMesh(p).filter((f) => f.kind === 'wall');
   const sideFaces = walls.filter((f) => f.normal.z === 0);
-  assert.equal(sideFaces.length, 8, 'наружный и внутренний контур — по 4 грани');
+  // Внутренний контур — 4 грани; наружный делится по стенам-владельцам углов
+  // (у каждой грани одна стена, ref), швов между кусками одной стены нет.
+  const inner = sideFaces.filter((f) => f.pts.every((q) => q.x >= 0 && q.x <= 4000 && q.y >= 0 && q.y <= 3000));
+  assert.equal(inner.length, 4);
+  assert.equal(sideFaces.length, 12);
+  const keyOf = (f) => `${f.ref.key}|${f.normal.x}|${f.normal.y}|${f.pts[0].x === f.pts[1].x ? f.pts[0].x : f.pts[0].y}`;
+  assert.equal(new Set(sideFaces.map(keyOf)).size, sideFaces.length, 'грань одной стены в одной плоскости — одна');
   const top = walls.filter((f) => f.normal.z === 1);
   const area = top.reduce((s, f) => s + (f.pts[2].x - f.pts[0].x) * (f.pts[2].y - f.pts[0].y), 0);
   assert.equal(area, 4500 * 3500 - 4000 * 3000, 'верх = площадь кольца стен');
