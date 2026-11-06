@@ -81,18 +81,21 @@ test('мебель в IFC: IfcFurniture, части составной — от�
 test('IfcWall — только стены own/shared: стыки и фаски входят в тело стены-хозяина', async () => {
   const { readFileSync } = await import('node:fs');
   const { deserializeProject, levelProject } = await import('../core/model.js');
-  const { deriveWalls } = await import('../core/walls.js');
+  const { deriveWalls, wallRects, wallsEngine } = await import('../core/walls.js');
   const p = deserializeProject(readFileSync(new URL('./fixtures/user-house-2026-11.json', import.meta.url), 'utf8'));
   let expected = 0;
   let patches = 0;
   for (const lv of p.levels) {
     const lp = levelProject(p, lv.id);
     const walls = deriveWalls(lp);
-    expected += walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared') && w.band.w >= 1 && w.band.h >= 1).length;
+    expected += walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared') &&
+      wallRects(w).some((r) => r.w >= 1 && r.h >= 1)).length;
     patches += walls.filter((w) => w.kind === 'joint' || w.kind === 'chamfer').length;
     expected += lp.items.filter((it) => it.kind === 'wall-free').length;
   }
-  assert.ok(patches > 0, 'в проекте есть заплатки стыков');
+  // v2 (стена = область): заплаток нет, углы — в кусках rects самих стен.
+  if (wallsEngine(p) === 'v1') assert.ok(patches > 0, 'в проекте есть заплатки стыков');
+  else assert.equal(patches, 0);
   const { text, counts } = buildIfc(p, { timestamp: new Date(0) });
   assert.equal((text.match(/=IFCWALL\(/g) || []).length, expected);
   assert.equal(counts.walls, expected);

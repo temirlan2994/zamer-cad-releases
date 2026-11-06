@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createOpening, createProject, createRoom } from '../core/model.js';
-import { deriveWalls, openingRect } from '../core/walls.js';
+import { deriveWalls, openingRect, wallRects } from '../core/walls.js';
 import {
   OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts, windowsOnSharedWalls,
 } from '../core/opening-spacing.js';
@@ -144,9 +144,10 @@ test('скрытая общая стена: наружный контур без
   const walls = deriveWalls(project);
   assert.equal(walls.find((w) => w.kind === 'shared').hidden, true);
   // Верхняя наружная линия (y < 0) покрыта от x=0 до x=9100 без разрыва.
-  const top = walls
-    .filter((w) => !w.hidden && w.band.y < 0 && w.band.y + w.band.h <= 0.5 && w.orient === 'h' || (w.kind === 'joint' && w.band.y < 0))
-    .map((w) => ({ from: w.band.x, to: w.band.x + w.band.w }))
+  // Куски тела стен (v1 — полосы и заплатки-стыки, v2 — rects области).
+  const top = walls.filter((w) => !w.hidden).flatMap(wallRects)
+    .filter((r) => r.y < 0 && r.y + r.h <= 0.5)
+    .map((r) => ({ from: r.x, to: r.x + r.w }))
     .sort((p, q) => p.from - q.from);
   let reach = 0;
   for (const seg of top) {

@@ -12,6 +12,9 @@ import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isSha
 import {
   roomBoundaryEdges, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
+import { deriveWallsV2 } from './walls-v2.js';
+
+export { deriveWallsV2, wallOutline } from './walls-v2.js';
 
 // Радиус поиска соседней стены для магнитной стыковки. Самой общей стеной
 // становится только точный конструктивный зазор — толщина этой стены
@@ -156,9 +159,50 @@ function wallTypeOf(override, fallback) {
   return (override && override.kind) || fallback;
 }
 
-// Главная функция: выводит все сегменты стен проекта.
+// Выбор движка стен: KEPLER_WALLS (тесты, node) → ?walls=v1|v2 (URL) →
+// project.settings.wallsEngine → v1. v2 — core/walls-v2.js (стена = область).
+export function wallsEngine(project) {
+  const env = globalThis.process?.env?.KEPLER_WALLS;
+  if (env === 'v1' || env === 'v2') return env;
+  const search = globalThis.location?.search;
+  if (search) {
+    const m = /[?&]walls=(v1|v2)(?:&|$)/.exec(search);
+    if (m) return m[1];
+  }
+  const own = project?.settings?.wallsEngine;
+  return own === 'v2' ? 'v2' : 'v1';
+}
+
+// Главная функция: выводит все сегменты стен проекта (движок — wallsEngine).
 export function deriveWalls(project) {
+  return wallsEngine(project) === 'v2' ? deriveWallsV2(project) : deriveWallsV1(project);
+}
+export const deriveWallsFor = deriveWalls;
+
+// Куски тела стены: у v2 — непересекающиеся rects, у v1 — полоса band.
+export function wallRects(wall) {
+  return wall.rects || (wall.band ? [wall.band] : []);
+}
+
+// Старый движок: полосы вдоль сторон + заплатки стыков.
+export function deriveWallsV1(project) {
+  const { walls } = wallSegments(project);
+  const byId = new Map(project.rooms.map((r) => [r.id, r]));
+  extendOwnCorners(walls, byId);
+  cutWallsInsideShafts(walls, project.rooms);
+  fillWallJoints(walls);
+  addThicknessChamfers(walls, project.rooms);
+  return walls;
+}
+
+// Сегменты стен до заплаток: общие (shared) и собственные (own) участки
+// сторон комнат. faces: запись → { [roomId]: { edge, outward } } — грань
+// каждой комнаты записи (нужно v2 для угловых прямоугольников и атрибуции).
+// covered: false — без истончения участков внутри чужой комнаты (v2: там
+// стену вычитает сама область).
+export function wallSegments(project, { covered: thinCovered = true } = {}) {
   const walls = [];
+  const faces = new Map();
   const overrides = project.wallOverrides || {};
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
@@ -194,6 +238,10 @@ export function deriveWalls(project) {
     // помещению. Направление outward обязательно: без него стена для второй
     // ориентации уезжала внутрь комнаты и оставляла белую щель в зазоре.
     const mid = edgeA.edge + edgeA.outward * (adj.gap / 2);
+    faces.set(walls.length, {
+      [adj.a.id]: { edge: edgeA.edge, outward: edgeA.outward },
+      [adj.b.id]: { edge: edgeB.edge, outward: edgeB.outward },
+    });
     walls.push({
       key,
       kind: 'shared',
@@ -240,7 +288,7 @@ export function deriveWalls(project) {
       // Участки, попадающие внутрь другой комнаты верхнего уровня (перекрытие),
       // становятся тонкой перегородкой.
       const covered = [];
-      if (!internal) {
+      if (!internal && thinCovered) {
         for (const other of topRooms) {
           if (other.id === room.id) continue;
           // По фактической форме соседа (Г, ступени, контур), а не по габариту:
@@ -286,6 +334,7 @@ export function deriveWalls(project) {
           ? { x: segFrom, y: lo, w: segTo - segFrom, h: thickness }
           : { x: lo, y: segFrom, w: thickness, h: segTo - segFrom };
         const mid = inner + edge.outward * (thickness / 2);
+        faces.set(walls.length, { [room.id]: { edge: inner, outward: edge.outward } });
         walls.push({
           key, kind: 'own', orient: edge.orient, rooms: [room.id], sides: { [room.id]: side },
           from: segFrom, to: segTo, edge: inner, outward: edge.outward, thickness, band,
@@ -330,17 +379,16 @@ export function deriveWalls(project) {
     }
   }
 
-  extendOwnCorners(walls, byId);
-  cutWallsInsideShafts(walls, project.rooms);
-  fillWallJoints(walls);
-  addThicknessChamfers(walls, project.rooms);
-  return walls;
+  // faces по индексу → по записи.
+  const byWall = new Map();
+  for (const [i, f] of faces) byWall.set(walls[i], f);
+  return { walls, faces: byWall };
 }
 
 // Шахта находится выше помещений в плане и проходит через этаж насквозь.
 // Поэтому стены комнат, пересекающие её внутренний прямоугольник, физически
 // обрываются у граней шахты. Стены самой шахты сохраняются целиком.
-function cutWallsInsideShafts(walls, rooms) {
+export function cutWallsInsideShafts(walls, rooms) {
   const shafts = rooms.filter((room) => isShaft(room));
   if (!shafts.length) return;
   const shaftIds = new Set(shafts.map((room) => room.id));

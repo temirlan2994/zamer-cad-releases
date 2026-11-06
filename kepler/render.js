@@ -3,7 +3,7 @@
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
 import {
-  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge,
+  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge, wallRects,
 } from './core/walls.js';
 import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
 import { tempDimensions } from './core/temp-dims.js';
@@ -239,7 +239,7 @@ export function createRenderer(canvas) {
             ctx.closePath();
             ctx.fill();
           } else {
-            ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+            for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
           }
         }
         ctx.restore();
@@ -281,7 +281,8 @@ export function createRenderer(canvas) {
         if (selected) ctx.fillStyle = tokens.accent;
         else if (hovered) ctx.fillStyle = tokens.hover;
         if (wall.hidden) ctx.globalAlpha = 0.22;
-        ctx.fillRect(wall.band.x, wall.band.y, wall.band.w, wall.band.h);
+        // v2: непересекающиеся куски области (с углами), v1: полоса.
+        for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.globalAlpha = 1;
       };
       const roomLayer = (room) => {

@@ -73,14 +73,28 @@ function wallRuns(walls, cuts) {
     const cross0 = wall.orient === 'h' ? b.y : b.x;
     const cross1 = cross0 + (wall.orient === 'h' ? b.h : b.w);
     const key = `${wall.orient}|${round(cross0)}|${round(cross1)}|${wall.wallType}`;
+    // Стены v2: куски области. Кусок на всю толщину полосы — часть пробега
+    // (с проёмами и контуром), остальные (углы, узлы) — как заплатки.
+    const pieces = wall.rects
+      ? wall.rects.filter((r) => {
+        const c0 = wall.orient === 'h' ? r.y : r.x;
+        const c1 = c0 + (wall.orient === 'h' ? r.h : r.w);
+        if (Math.abs(c0 - cross0) < 0.6 && Math.abs(c1 - cross1) < 0.6) return true;
+        const orient = r.w >= r.h ? 'h' : 'v';
+        extras.push({ band: r, orient, start: orient === 'h' ? r.x : r.y, end: orient === 'h' ? r.x + r.w : r.y + r.h, holes: [], outlined: false });
+        return false;
+      })
+      : [b];
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({
-      wall,
-      start: wall.orient === 'h' ? b.x : b.y,
-      end: wall.orient === 'h' ? b.x + b.w : b.y + b.h,
-      cross0,
-      cross1,
-    });
+    for (const r of pieces) {
+      groups.get(key).push({
+        wall,
+        start: wall.orient === 'h' ? r.x : r.y,
+        end: wall.orient === 'h' ? r.x + r.w : r.y + r.h,
+        cross0,
+        cross1,
+      });
+    }
   }
 
   // Стыки/фаски: только непокрытая полосами часть (иначе двойной объём).

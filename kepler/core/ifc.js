@@ -19,7 +19,7 @@ import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
-import { deriveWalls, openingRect, wallJoinPatches } from './walls.js';
+import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 
 const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 
@@ -204,10 +204,11 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     const wallBody = (r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), 0, level.height);
     walls.forEach((w, i) => {
       if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared')) return;
-      const band = w.band;
-      if (band.w < 1 || band.h < 1) return;
+      // v1 — полоса + заплатки-хозяева, v2 — непересекающиеся куски области.
+      const body = wallRects(w).filter((r) => r.w >= 1 && r.h >= 1);
+      if (!body.length) return;
       const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая') : 'Стена';
-      const items = [band, ...(patchesByHost.get(w) || [])].map(wallBody);
+      const items = [...body, ...(patchesByHost.get(w) || [])].map(wallBody);
       const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(items)},$,.STANDARD.)`);
       wallRef.set(w, ref);
       contained.push(ref);
