@@ -24,7 +24,6 @@
           <button id="wallToolBtn" title="Стена (W): клик — начало оси, клик — конец, цепочка продолжается; двойной клик, Enter или Esc — закончить">▭ Стена</button>
           <button id="boundRoomBtn" title="Помещение по стенам: клик внутри замкнутой петли стен создаёт помещение; контур следует за стенами">⬚ Помещение</button>
           <button id="view3dBtn" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
-          <button id="alignBtn" title="Выровнять дом по участку: кликните 2 точки вдоль ровной линии (край участка, красная линия) — дом встанет вдоль неё, вид «План» повернётся вслед за домом. Повторный клик — вернуть 0°">⟲ Выровнять</button>
           <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
           <button id="helpBtn" class="icon-btn" title="Управление и горячие клавиши (?)">?</button>
@@ -131,6 +130,18 @@
           </div>
           <div class="ls-section" id="lsSectionView" role="dialog" aria-label="Разрез участка" hidden></div>
           <div class="ls-sun" id="lsSunBar" role="group" aria-label="Тени по солнцу"></div>
+          <div class="view-ctl" id="viewCtl">
+            <button id="viewBtn" type="button" title="Поворот вида: выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой). Во время выравнивания — отмена" aria-label="Поворот вида" aria-expanded="false" aria-controls="viewPanel">⟲</button>
+            <div class="view-panel" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
+              <strong id="viewPanelTitle">Поворот вида</strong>
+              <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
+              <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
+                <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
+              <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
+              <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
+              <p class="empty-hint" id="viewPanelHint"></p>
+            </div>
+          </div>
           <div class="zoom-controls">
             <button id="zoomInBtn" title="Приблизить">+</button>
             <button id="zoomOutBtn" title="Отдалить">−</button>

@@ -864,6 +864,31 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .zoom-controls button { width: 38px; height: 38px; padding: 0; font-size: 17px; background: var(--surface); box-shadow: var(--shadow); }
 
+/* Поворот вида (ui/view-align.js): кнопка над масштабом и всплывающая панель */
+.view-ctl { position: absolute; right: 14px; bottom: 128px; z-index: 25; }
+#viewBtn { width: 38px; height: 38px; padding: 0; font-size: 17px; background: var(--surface); box-shadow: var(--shadow); }
+#viewBtn.active { color: var(--accent); border-color: var(--accent); }
+#viewBtn.armed { background: var(--accent); color: #fff; }
+.view-panel {
+  position: absolute;
+  right: calc(100% + 8px);
+  bottom: 0;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.view-panel[hidden] { display: none; }
+.view-panel button { text-align: left; }
+.view-panel #alignBtn.active { border-color: var(--accent); }
+.view-panel #alignBtn.armed { background: var(--accent); color: #fff; }
+.view-panel .empty-hint { margin: 0; }
+
 .statusbar {
   position: absolute;
   left: 0;
@@ -1211,6 +1236,8 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   }
   .mobile-bar button.active.dot::after { background: #fff; }
   .zoom-controls { display: none; } /* масштаб — щипком */
+  .view-ctl { right: 8px; bottom: 74px; }
+  .view-panel { position: fixed; left: 8px; right: 8px; bottom: 120px; width: auto; z-index: 200; }
   .level-dock { left: 8px; bottom: 30px; }
   .landscape-chip span { display: none; }
   .landscape-chip { padding: 0 10px; }

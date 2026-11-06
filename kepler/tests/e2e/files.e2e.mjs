@@ -31,7 +31,7 @@ describe('файлы проекта', () => {
     assert.deepEqual(s.building, { rotation: 0, origin: { x: 0, y: 0 } });
     assert.equal(s.rooms, 2);
     assert.ok(Math.abs(s.viewDeg) < 0.01 || Math.abs(s.viewDeg - 360) < 0.01, `поворот вида ${s.viewDeg}`);
-    assert.equal(s.aligned, false, 'дом не повёрнут — «Выровнять» не подсвечена');
+    assert.equal(s.aligned, false, 'свой угол вида не задан — «Выровнять вид» не подсвечена');
     assert.match(await app.page.textContent('#toast'), /Открыт проект/);
   });
 

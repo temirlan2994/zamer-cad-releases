@@ -1,6 +1,7 @@
 // Режимы «План» / «Участок» / «Ландшафт» и поворот вида («Выровнять», север).
 
 import { panForMovedBuilding } from '../core/site-check.js';
+import { viewRotation } from '../core/view-angles.js';
 import { refs } from './dom.js';
 import { renderLandscapeLibrary } from './landscape.js';
 import { refreshLandscapeSun } from './landscape-sun.js';
@@ -10,16 +11,17 @@ import { renderProps } from './props.js';
 import { state } from './state.js';
 import { cancelTool } from './tools.js';
 import { fitViewOnce, requestDraw, rotateViewTo, scaleLabel } from './view.js';
+import { renderViewPanel } from './view-align.js';
 
-// Поворот камеры режима: «План» идёт по осям дома (комнаты всегда прямые),
-// «Участок» — север вверх. Связь дома и участка одна и та же — это данные
-// (project.building), меняется только ракурс.
-// «Ландшафт» — вид и координаты участка, как «Участок».
+// Поворот камеры режима (core/view-angles.js): у каждого режима свой угол
+// вида (project.settings.viewAngles). Не задан — «План» идёт по осям дома
+// (комнаты прямые), «Участок» и «Ландшафт» — север вверх. Связь дома и
+// участка — данные (project.building), вид меняет только ракурс.
+// «Ландшафт» — координаты участка, как «Участок».
 export const isSiteView = (mode = state.modeName) => mode === 'site' || mode === 'landscape';
 
 export function modeRotation(mode = state.modeName) {
-  const deg = isSiteView(mode) ? state.project.site?.north || 0 : state.project.building?.rotation || 0;
-  return deg ? -(deg * Math.PI) / 180 : 0; // без «-0»
+  return viewRotation(state.project, mode);
 }
 
 // pivot — мировая точка, которая остаётся на месте экрана (по умолчанию центр).
@@ -74,6 +76,7 @@ export function setEditorMode(mode) {
   applyLibraryTab();
   renderLandscapeLibrary();
   renderLevelBar();
+  renderViewPanel(); // у режима свой угол вида
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
 }

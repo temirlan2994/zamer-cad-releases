@@ -425,8 +425,8 @@ export function createRenderer(canvas) {
       state._calLabelAt = { x: b.x, y: b.y, text: 'С' };
     }
 
-    // Предпросмотр выравнивания съёмки: линия между двумя точками.
-    const alignTool = state.tool?.kind === 'align-underlay' ? state.tool : null;
+    // Предпросмотр «Выровнять вид»: линия между двумя точками.
+    const alignTool = state.tool?.kind === 'align-view' ? state.tool : null;
     if (alignTool && alignTool.points.length === 1 && state.alignCursor) {
       const a = alignTool.points[0];
       const b = state.alignCursor;

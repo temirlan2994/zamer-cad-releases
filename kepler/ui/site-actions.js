@@ -1,6 +1,6 @@
 // Действия режима «Участок»: ломаные, въезд, соседи, север, поворот дома.
 
-import { buildingCenter, rotateBuildingAbout, rotationAlongLine } from '../core/building.js';
+import { buildingCenter, rotateBuildingAbout } from '../core/building.js';
 import { siteWarning } from '../core/rooms.js';
 import { DEFAULT_ROAD_WIDTH, nearestPointOnPolyline, polygonAreaM2 } from '../core/site.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
@@ -142,9 +142,10 @@ export function addNorthPoint(world) {
 }
 
 // Поворот дома (оси комнат относительно участка). Дом крутится НА МЕСТЕ —
-// вокруг центра своего габарита (пустой дом — вокруг центра экрана). В «Плане»
-// камера идёт по осям дома, поэтому там дом остаётся неподвижным и прямым,
-// а поворачивается участок вокруг него.
+// вокруг центра своего габарита (пустой дом — вокруг центра экрана). Если
+// у «Плана» нет своего угла вида, камера идёт по осям дома: дом остаётся
+// неподвижным и прямым, а поворачивается участок вокруг него. Поворот ВИДА
+// без изменения данных — ui/view-align.js.
 export function setBuildingRotation(deg) {
   const project = state.project;
   const pivot = buildingCenter(project)
@@ -154,25 +155,4 @@ export function setBuildingRotation(deg) {
   applyModeRotation(pivotWorld);
   requestDraw();
   return siteWarning(project);
-}
-
-// «Выровнять» по 2 точкам: оси дома встают вдоль кликнутой линии участка
-// (край участка, красная линия, дорога). Новые комнаты ставятся параллельно
-// ей, а не по диагонали; на экране «Плана» это выглядит как поворот вида.
-export function addAlignPoint(world) {
-  const points = state.tool.points;
-  points.push({ x: world.x, y: world.y });
-  state.alignCursor = { x: world.x, y: world.y };
-  if (points.length < 2) { setHint('Теперь кликните вторую точку вдоль той же линии'); requestDraw(); return; }
-  const dx = points[1].x - points[0].x;
-  const dy = points[1].y - points[0].y;
-  if (Math.hypot(dx, dy) < 10) { toast('Точки слишком близко'); state.tool.points = []; return; }
-  const lineDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
-  const rotation = rotationAlongLine(state.project.building.rotation, lineDeg);
-  state.alignCursor = null;
-  cancelTool();
-  const warning = setBuildingRotation(rotation);
-  const shown = rotation > 180 ? rotation - 360 : rotation;
-  toast(`Дом выровнен по линии участка: ${shown > 0 ? '+' : ''}${shown.toFixed(1)}°.`
-    + `${warning ? ` ⚠ ${warning}.` : ''} Повторный клик по «Выровнять» — вернуть 0°`, true);
 }

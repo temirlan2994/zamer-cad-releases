@@ -13,6 +13,7 @@ import { el, toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
 import { applyModeRotation } from './modes.js';
+import { renderViewPanel } from './view-align.js';
 import { renderProps } from './props.js';
 import { history, state } from './state.js';
 import { updateConnectivity } from './status.js';
@@ -146,7 +147,7 @@ export function afterChange() {
   updateDimModeBtn();
   renderLevelBar();
   refresh3d(); // открытый 3D-вид следует за правками
-  el('alignBtn')?.classList.toggle('active', Boolean(state.project?.building?.rotation));
+  renderViewPanel(); // угол вида режима (поле, «Сбросить», активная кнопка)
   requestDraw();
   scheduleAutosave();
 }

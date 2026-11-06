@@ -50,8 +50,9 @@ import {
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
-  addAlignPoint, addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
+  addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
 } from './site-actions.js';
+import { addAlignViewPoint, snapAlignPoint } from './view-align.js';
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { state } from './state.js';
@@ -253,6 +254,13 @@ setSnapRehover((mods) => {
 
 function updateHoverAndGhost(world, plan, event) {
   lastHover = { world, plan };
+  if (state.tool?.kind === 'align-view') {
+    // «Выровнять вид»: привязка к рёбрам/углам стен, комнат, участка, соседей.
+    const p = snapAlignPoint(world, event);
+    state.alignCursor = state.tool.points.length === 1 ? p : null;
+    requestDraw();
+    return;
+  }
   if (state.modeName === 'landscape' && landscapeHover(world, canvas, event)) return;
   if (state.tool?.kind === 'place-furniture') {
     const def = furnitureDef(state.tool.itemKind);
@@ -301,11 +309,6 @@ function updateHoverAndGhost(world, plan, event) {
   if (state.tool?.kind === 'entry') {
     // Предпросмотр: стрелка скользит по границе за курсором.
     state.entryGhost = computeEntryAt(world);
-    requestDraw();
-    return;
-  }
-  if (state.tool?.kind === 'align-underlay' && state.tool.points.length === 1) {
-    state.alignCursor = { x: world.x, y: world.y };
     requestDraw();
     return;
   }
@@ -442,6 +445,13 @@ export function bindCanvasInput() {
       return;
     }
 
+    // «Выровнять вид» — в любом режиме (на касании — по тапу).
+    if (state.tool?.kind === 'align-view') {
+      const p = snapAlignPoint(world, event);
+      tapOrNow(event, screen, () => addAlignViewPoint(p));
+      return;
+    }
+
     // --- «Ландшафт»: свои объекты, ручки, рамка (ui/landscape.js) ---
     if (state.modeName === 'landscape') {
       drag = landscapePointerDown(event, screen, world);
@@ -552,7 +562,6 @@ export function bindCanvasInput() {
       }
       if (t.kind === 'bound-room') { tapOrNow(event, screen, () => boundRoomClick(plan)); return; }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
-      if (t.kind === 'align-underlay') { tapOrNow(event, screen, () => addAlignPoint(world)); return; }
       if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
       touchPan();
       return;

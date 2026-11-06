@@ -19,7 +19,7 @@ import { requestDraw } from './view.js';
 // --- Свойства участка ---
 
 // Поле «Поворот дома»: оси комнат относительно участка (°, по часовой).
-// Дом поворачивается на месте; «Выровнять» задаёт то же по 2 точкам.
+// Дом поворачивается на месте; по виду — «Развернуть оси дома по виду» (ui/view-align.js).
 export function buildingRotationField() {
   const deg = state.project.building.rotation;
   const shown = Number((deg > 180 ? deg - 360 : deg).toFixed(2));
@@ -122,7 +122,7 @@ export function renderSiteSettings(panel) {
       <p class="empty-hint">Пусто — по широте участка: ${auto.zone} зона, ${String(auto.hours).replace('.', ',')} ч на ${auto.day.split('-').reverse().join('.')} (СанПиН). Часы по комнатам видны на плане при включённом солнце.</p>
     </div>
     ${normsSection()}
-    <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. В этом режиме север всегда вверх; вернитесь в «План» — камера станет прежней.</p>`;
+    <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. По умолчанию здесь север вверх; повернуть вид — кнопка ⟲ у правого края холста (у «Плана», «Участка» и «Ландшафта» свой угол, данные не меняются).</p>`;
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   bindBuildingRotation(panel);

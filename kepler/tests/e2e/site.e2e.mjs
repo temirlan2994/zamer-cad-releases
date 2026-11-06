@@ -1,4 +1,4 @@
-// e2e участка: импорт DXF (выбросы, блоки, proxy), поворот дома «Выровнять».
+// e2e участка: импорт DXF (выбросы, блоки, proxy), «Выровнять вид» в пустом плане.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -39,12 +39,15 @@ describe('участок', () => {
     await app.page.waitForFunction(() => /proxy/i.test(document.getElementById('toast').textContent));
   });
 
-  it('«Выровнять» ставит дом вдоль линии участка: в «Плане» комнаты прямые', async () => {
+  it('«Выровнять вид» в пустом «Плане» (вариант А): оси дома встают по линии, комнаты прямые', async () => {
     await app.page.click('#modePlanBtn');
+    await app.page.click('#viewBtn');
     await app.page.click('#alignBtn');
-    // Две точки вдоль линии участка под 30° (координаты съёмки).
+    // Две точки вдоль линии участка под 30° (координаты съёмки); Shift — без привязок.
+    await app.page.keyboard.down('Shift');
     await clickWorld(app.page, 0, 0);
     await clickWorld(app.page, 1000, 577);
+    await app.page.keyboard.up('Shift');
     const s = await app.page.evaluate(() => {
       const k = window.__kepler;
       const a = k.worldToScreen(0, 0);
@@ -52,7 +55,7 @@ describe('участок', () => {
       return { rot: k.state.project.building.rotation, view: k.state.view.rotation, lineDy: b.y - a.y };
     });
     assert.ok(Math.abs(s.rot - 30) < 0.5, `поворот дома ${s.rot}`);
-    assert.ok(Math.abs(s.view + (30 * Math.PI) / 180) < 0.01, 'вид «Плана» идёт по осям дома');
+    assert.ok(Math.abs(s.view + (30 * Math.PI) / 180) < 0.01, 'вид «Плана» повёрнут на 30°');
     assert.ok(Math.abs(s.lineDy) < 1, 'линия участка на экране горизонтальна');
     assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), true);
 
@@ -70,22 +73,21 @@ describe('участок', () => {
     assert.ok(Math.abs((await edge()) - s.rot) < 0.01, 'в «Участке» (север вверх) дом стоит под углом линии');
   });
 
-  it('повторное «Выровнять» возвращает 0°, дом крутится на месте', async () => {
-    const center = () => app.page.evaluate(() => {
-      const { building: b, rooms } = window.__kepler.state.project;
-      const r = rooms.at(-1);
-      const cx = r.x + r.w / 2;
-      const cy = r.y + r.h / 2;
-      const t = (b.rotation * Math.PI) / 180;
-      return { x: b.origin.x + cx * Math.cos(t) - cy * Math.sin(t), y: b.origin.y + cx * Math.sin(t) + cy * Math.cos(t) };
-    });
-    const before = await center();
+  it('«Сбросить» вид «Плана»: камера по осям дома, дом на участке не сдвинулся', async () => {
+    const data = () => app.page.evaluate(() => JSON.stringify({ b: window.__kepler.state.project.building, r: window.__kepler.state.project.rooms }));
+    const before = await data();
     await app.page.click('#modePlanBtn');
-    await app.page.click('#alignBtn');
-    const after = await center();
-    const s = await app.page.evaluate(() => [window.__kepler.state.project.building.rotation, window.__kepler.state.view.rotation]);
-    assert.deepEqual(s, [0, 0]);
-    assert.ok(Math.hypot(after.x - before.x, after.y - before.y) < 1, 'центр дома на участке не сдвинулся');
+    await app.page.click('#viewBtn');
+    await app.page.click('#viewAngleReset');
+    const s = await app.page.evaluate(() => ({
+      custom: window.__kepler.state.project.settings.viewAngles?.plan ?? null,
+      view: (window.__kepler.state.view.rotation * 180) / Math.PI,
+      rot: window.__kepler.state.project.building.rotation,
+    }));
+    assert.equal(s.custom, null);
+    assert.ok(Math.abs(s.view + s.rot) < 0.01, `вид ${s.view}, дом ${s.rot}`);
+    assert.equal(await data(), before, 'данные дома не изменились');
+    assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), false);
   });
 
   it('без ошибок в консоли', () => {

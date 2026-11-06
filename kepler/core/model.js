@@ -8,6 +8,7 @@ import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
 import { WALL_T_MAX, WALL_T_MIN } from './walls.js';
+import { cleanViewAngles } from './view-angles.js';
 
 export { SCHEMA };
 
@@ -440,6 +441,9 @@ export function normalizeProject(data) {
   };
   // Движок стен (core/walls.js → wallsEngine): только 'v1' | 'v2'.
   if (data.settings.wallsEngine !== 'v1' && data.settings.wallsEngine !== 'v2') delete data.settings.wallsEngine;
+  // Углы вида по режимам (core/view-angles.js): необязательно, без смены схемы.
+  const viewAngles = cleanViewAngles(data.settings.viewAngles);
+  if (viewAngles) data.settings.viewAngles = viewAngles; else delete data.settings.viewAngles;
   ensureSite(data);
   return attachLevelAccessors(data);
 }
