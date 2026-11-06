@@ -329,6 +329,8 @@ export function normalizeProject(data) {
     partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, bearing: DEFAULT_BEARING,
     dimOuter: true, units: 'mm', ...(isObj(data.settings) ? data.settings : {}),
   };
+  // Движок стен (core/walls.js → wallsEngine): только 'v1' | 'v2'.
+  if (data.settings.wallsEngine !== 'v1' && data.settings.wallsEngine !== 'v2') delete data.settings.wallsEngine;
   ensureSite(data);
   return attachLevelAccessors(data);
 }

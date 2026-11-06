@@ -7,7 +7,7 @@ import { SP55 } from '../core/norms.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
 import {
   DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingRect,
-  wallClassThickness,
+  wallClassThickness, wallsEngine,
 } from '../core/walls.js';
 import { roomShapeArea } from '../core/room-shape.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
@@ -60,6 +60,20 @@ function defaultCeiling() {
   return activeLevel(state.project).height - SP55.slab;
 }
 
+// Движок стен: v1 — полосы с заплатками стыков, v2 — стена как область.
+// Параметр адреса ?walls=v1|v2 главнее настройки проекта — тогда выбор заблокирован.
+function wallsEngineField() {
+  const own = state.project.settings.wallsEngine === 'v2' ? 'v2' : 'v1';
+  const urlLocked = /[?&]walls=(v1|v2)(?:&|$)/.test(globalThis.location?.search || '');
+  const active = wallsEngine(state.project);
+  return `<label class="prop-field"><span>Движок стен</span>
+        <select id="wallsEngineSel" ${urlLocked ? 'disabled' : ''}>
+          <option value="v1" ${own === 'v1' ? 'selected' : ''}>v1 — полосы и стыки</option>
+          <option value="v2" ${own === 'v2' ? 'selected' : ''}>v2 — стена как область (опытный)</option>
+        </select></label>
+      ${urlLocked ? `<p class="empty-hint">Задан адресом страницы (?walls=${active}).</p>` : ''}`;
+}
+
 function renderProjectProps(panel) {
   const rooms = state.project.rooms;
   const site = state.project.site;
@@ -96,6 +110,7 @@ function renderProjectProps(panel) {
           <input id="defPartition" data-wall-default="partition" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'partition')}"></label>
       </div>
       <p class="empty-hint">Наружные стены без своей толщины меняются сразу. Новая перегородка — для новых стыковок: уже построенные сохраняют свою толщину.</p>
+      ${wallsEngineField()}
     </div>
     <h3>Этаж</h3>
     <div class="prop-block">
@@ -121,6 +136,12 @@ function renderProjectProps(panel) {
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
+  });
+  panel.querySelector('#wallsEngineSel')?.addEventListener('change', (e) => {
+    mutate(() => {
+      if (e.target.value === 'v2') state.project.settings.wallsEngine = 'v2';
+      else delete state.project.settings.wallsEngine; // v1 — по умолчанию
+    });
   });
   panel.querySelectorAll('[data-wall-default]').forEach((input) => {
     input.addEventListener('change', (e) => {

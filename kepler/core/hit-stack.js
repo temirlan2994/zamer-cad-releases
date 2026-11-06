@@ -5,7 +5,7 @@ import { isOpenRoom, isShaft } from './catalog.js';
 import { isFixedSizeComp, pointInComposite } from './composite.js';
 import { itemRect } from './furnish.js';
 import { roomContainsPoint } from './room-shape.js';
-import { openingRect } from './walls.js';
+import { openingRect, wallContains } from './walls.js';
 
 function itemContains(item, point) {
   if (isFixedSizeComp(item)) return pointInComposite(item, point.x, point.y);
@@ -37,8 +37,7 @@ export function planHitStack(project, walls, scale, point) {
   for (let i = walls.length - 1; i >= 0; i -= 1) {
     const wall = walls[i];
     if (wall.kind === 'joint' || wall.kind === 'chamfer') continue;
-    const band = wall.band;
-    if (point.x >= band.x && point.x <= band.x + band.w && point.y >= band.y && point.y <= band.y + band.h) {
+    if (wallContains(wall, point)) {
       hits.push({ type: 'wall', key: wall.key, from: wall.from, entity: wall });
     }
   }

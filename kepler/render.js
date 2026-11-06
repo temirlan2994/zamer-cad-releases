@@ -3,8 +3,20 @@
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
 import {
-  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge, wallRects,
+  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge, wallOutline, wallRects,
+  wallsEngine,
 } from './core/walls.js';
+
+// Контур стен v2 считается один раз на массив стен (массив меняется при пересчёте).
+const outlineCache = new WeakMap();
+function cachedWallOutline(walls) {
+  let outline = outlineCache.get(walls);
+  if (!outline) {
+    outline = wallOutline(walls);
+    outlineCache.set(walls, outline);
+  }
+  return outline;
+}
 import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
 import { tempDimensions } from './core/temp-dims.js';
 import { roomNetAreaM2 } from './core/rooms.js';
@@ -313,6 +325,44 @@ export function createRenderer(canvas) {
       for (const room of roomPaintOrder.filter((candidate) => isShaft(candidate))) {
         drawFloor(ctx, room, houseTokens, px);
         for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
+      }
+
+      // v2: штрих по единому контуру видимых стен (без швов между кусками,
+      // с внутренними дворами-дырами). v1 — без штриха, как раньше.
+      if (wallsEngine(state.project) === 'v2') {
+        const outline = cachedWallOutline(walls);
+        if (outline.length) {
+          ctx.save();
+          ctx.strokeStyle = houseTokens.wallBearing;
+          ctx.lineWidth = px(1);
+          ctx.lineJoin = 'miter';
+          ctx.beginPath();
+          for (const cycle of outline) {
+            cycle.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+            ctx.closePath();
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.
+      const overlapZones = landscape ? [] : (state.norms?.overlaps || []).filter((o) => o.levelId === state.project.activeLevel);
+      if (overlapZones.length) {
+        ctx.save();
+        ctx.fillStyle = tokens.danger;
+        ctx.strokeStyle = tokens.danger;
+        ctx.lineWidth = px(1.5);
+        ctx.setLineDash([px(5), px(3)]);
+        for (const o of overlapZones) {
+          for (const r of o.rects) {
+            ctx.globalAlpha = 0.18;
+            ctx.fillRect(r.x, r.y, r.w, r.h);
+            ctx.globalAlpha = 0.9;
+            ctx.strokeRect(r.x, r.y, r.w, r.h);
+          }
+        }
+        ctx.restore();
       }
 
       // Подсветка комнаты под курсором.

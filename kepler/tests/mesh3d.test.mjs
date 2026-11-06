@@ -173,3 +173,27 @@ test('3D/IFC: заплатки стыков без двойного объёма
   }
   assert.ok(checked > 0, 'в фикстурах есть заплатки');
 });
+
+// Движок v2: одно тело на этаж — боковые грани только по контуру, без
+// внутренних граней между кусками; рёбра — контур и кромки проёмов.
+test('v2: стены — боковые грани по контуру, без швов между кусками', { skip: process.env.KEPLER_WALLS === 'v1' && 'проверка движка v2' }, () => {
+  const p = createProject();
+  p.settings.wallsEngine = 'v2';
+  p.rooms.push(createRoom('living', 0, 0, 4000, 3000));
+  const walls = buildHouseMesh(p).filter((f) => f.kind === 'wall');
+  const sideFaces = walls.filter((f) => f.normal.z === 0);
+  assert.equal(sideFaces.length, 8, 'наружный и внутренний контур — по 4 грани');
+  const top = walls.filter((f) => f.normal.z === 1);
+  const area = top.reduce((s, f) => s + (f.pts[2].x - f.pts[0].x) * (f.pts[2].y - f.pts[0].y), 0);
+  assert.equal(area, 4500 * 3500 - 4000 * 3000, 'верх = площадь кольца стен');
+  assert.ok(walls.every((f) => f.noEdges));
+  const edges = walls.flatMap((f) => f.edges || []);
+  assert.equal(edges.length, 8 * 2 + 8, 'рёбра: контуры низа и верха + 8 вертикалей углов');
+  // С окном: стекло, подоконник 900 и верх 3000 над проёмом.
+  p.openings.push(createOpening('window', p.rooms[0].id, 0, 2000, 1200));
+  const faces = buildHouseMesh(p);
+  assert.equal(faces.filter((f) => f.kind === 'glass').length, 1);
+  const over = faces.filter((f) => f.kind === 'wall' && f.normal.z === 1 && f.pts.every((q) => q.x >= 1399 && q.x <= 2601 && q.y <= 0));
+  assert.deepEqual(over.map((f) => f.pts[0].z).sort((x, y) => x - y), [900, 3000]);
+  assert.ok(faces.some((f) => f.kind === 'wall' && f.normal.z === -1), 'низ перемычки');
+});

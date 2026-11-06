@@ -184,6 +184,51 @@ export function wallRects(wall) {
   return wall.rects || (wall.band ? [wall.band] : []);
 }
 
+// Точка внутри тела стены (с запасом pad, мм). v1 — полоса band, v2 — куски
+// rects (угол и узел принадлежат своей записи).
+export function wallContains(wall, p, pad = 0) {
+  for (const r of wallRects(wall)) {
+    if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) return true;
+  }
+  return false;
+}
+
+// Расстояние от точки до тела стены (0 — внутри); Infinity, если тела нет.
+export function wallDistance(wall, p) {
+  let best = Infinity;
+  for (const r of wallRects(wall)) {
+    const cx = Math.min(Math.max(p.x, r.x), r.x + r.w);
+    const cy = Math.min(Math.max(p.y, r.y), r.y + r.h);
+    best = Math.min(best, Math.hypot(p.x - cx, p.y - cy));
+  }
+  return best;
+}
+
+// Габарит тела стены (null — тела нет).
+export function wallBounds(wall) {
+  const rects = wallRects(wall);
+  if (!rects.length) return null;
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const r of rects) {
+    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+// Линии привязки по телу стены: v1 — грани band, v2 — вершины контуров polys
+// (без внутренних швов между кусками).
+export function wallSnapCoords(wall) {
+  const xs = []; const ys = [];
+  if (wall.polys) {
+    for (const poly of wall.polys) for (const pt of poly) { xs.push(pt.x); ys.push(pt.y); }
+  } else if (wall.band) {
+    xs.push(wall.band.x, wall.band.x + wall.band.w);
+    ys.push(wall.band.y, wall.band.y + wall.band.h);
+  }
+  return { xs, ys };
+}
+
 // Старый движок: полосы вдоль сторон + заплатки стыков.
 export function deriveWallsV1(project) {
   const { walls } = wallSegments(project);

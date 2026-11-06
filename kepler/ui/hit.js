@@ -6,7 +6,7 @@ import { planHitStack } from '../core/hit-stack.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
-import { openingRect } from '../core/walls.js';
+import { openingRect, wallContains, wallDistance } from '../core/walls.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import {
   HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
@@ -170,8 +170,7 @@ export function hitOpening(p) {
 export function hitWall(p) {
   for (const wall of state.walls) {
     if (wall.kind === 'joint' || wall.kind === 'chamfer') continue; // заплатки/фаски не выбираются
-    const b = wall.band;
-    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return wall;
+    if (wallContains(wall, p)) return wall;
   }
   return null;
 }
@@ -234,10 +233,7 @@ export function nearestWall(p, maxScreenDist = 26) {
   let best = null;
   for (const wall of state.walls) {
     if (wall.kind === 'joint' || wall.kind === 'chamfer') continue;
-    const b = wall.band;
-    const cx = Math.min(Math.max(p.x, b.x), b.x + b.w);
-    const cy = Math.min(Math.max(p.y, b.y), b.y + b.h);
-    const d = Math.hypot(p.x - cx, p.y - cy);
+    const d = wallDistance(wall, p);
     if (d <= maxDist && (!best || d < best.dist)) best = { wall, dist: d };
   }
   return best?.wall || null;

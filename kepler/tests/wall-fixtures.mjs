@@ -195,7 +195,18 @@ export function nearGapRooms() {
   return project('зазоры 50 и 480', [a, b, c]);
 }
 
+// Скрытая стена («линия разделения»): Т-стык, где стена между левой верхней
+// и нижней комнатами скрыта. Её клетки остаются в W (дыры нет), узел Т ведёт
+// видимая стена a|b, скрытая не забирает углы (инвариант g).
+export function hiddenWallTee() {
+  const a = room('kitchen', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 0, 3900, 3000);
+  const c = room('living', 0, 3100, 8000, 3000);
+  return project('скрытая стена в Т-стыке', [a, b, c], { [sharedKey(a.id, c.id)]: { hidden: true } });
+}
+
 export const WALL_FIXTURES = {
+  hiddenWallTee,
   twoRooms,
   teeJoint,
   crossJoint,

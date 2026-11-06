@@ -2,7 +2,7 @@
 // Ближняя к фасаду цепочка проходит через грани наружных проёмов и оси
 // внутренних стен, которые примыкают к этому фасаду.
 
-import { openingRect, sideEdge } from './walls.js';
+import { openingRect, sideEdge, wallBounds } from './walls.js';
 
 const EPS = 2;
 
@@ -44,8 +44,11 @@ export function facadeDimensionStations(project, walls, edge, expand) {
   for (const wall of walls) {
     if (!wall.band || !wall.center || wall.orient === edge.orient) continue;
     if (!['own', 'shared'].includes(wall.kind) || wall.wallType === 'exterior') continue;
-    const crossFrom = horizontal ? wall.band.y : wall.band.x;
-    const crossTo = crossFrom + (horizontal ? wall.band.h : wall.band.w);
+    // v1 — полоса band; v2 — габарит кусков rects (стена без тела пропускается).
+    const body = wallBounds(wall);
+    if (!body) continue;
+    const crossFrom = horizontal ? body.y : body.x;
+    const crossTo = crossFrom + (horizontal ? body.h : body.w);
     if (!inside(innerAt, crossFrom, crossTo)) continue;
     const station = horizontal
       ? (wall.center.x1 + wall.center.x2) / 2

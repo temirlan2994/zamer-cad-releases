@@ -45,3 +45,22 @@ test('обычное помещение выбирается выше терра
     .filter((hit) => hit.type === 'room');
   assert.deepEqual(rooms.map((hit) => hit.id), [room.id, terrace.id]);
 });
+
+// Движок v2: угол и узел — куски rects своей стены; клик по ним выбирает стену.
+test('v2: клик по наружному углу и по Т-узлу выбирает стену', { skip: process.env.KEPLER_WALLS === 'v1' && 'проверка движка v2' }, async () => {
+  const { deriveWallsV2, wallContains, wallDistance, wallSnapCoords } = await import('../core/walls.js');
+  const project = createProject('Т-узел');
+  const a = createRoom('bedroom', 0, 0, 4000, 3000);
+  const b = createRoom('bedroom', 4100, 0, 3900, 3000);
+  project.rooms.push(a, b);
+  const walls = deriveWallsV2(project);
+  const corner = planHitStack(project, walls, 0.1, { x: -100, y: -100 }).filter((h) => h.type === 'wall');
+  assert.equal(corner.length, 1, 'наружный угол — ровно одна стена');
+  const node = planHitStack(project, walls, 0.1, { x: 4050, y: -100 }).filter((h) => h.type === 'wall');
+  assert.equal(node.length, 1, 'узел над общей стеной — ровно одна стена');
+  assert.ok(wallContains(node[0].entity, { x: 4050, y: -100 }));
+  assert.equal(wallDistance(node[0].entity, { x: 4050, y: -400 }), 150);
+  // Привязки — по вершинам контура: внешняя грань угла (−250) есть.
+  const xs = walls.flatMap((w) => wallSnapCoords(w).xs);
+  assert.ok(xs.includes(-250));
+});

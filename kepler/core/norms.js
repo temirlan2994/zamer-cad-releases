@@ -10,12 +10,13 @@
 // Плюс инсоляция (core/insolation.js) и проходы у мебели (core/clearance.js).
 // Это подсказка для концепции, а не экспертиза проекта.
 
-import { roomType } from './catalog.js';
+import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { roomRects } from './room-shape.js';
-import { roomNetAreaM2 } from './rooms.js';
+import { rectsCycles } from './ortho-grid.js';
+import { finalizeRoomOutline, roomRects } from './room-shape.js';
+import { MIN_ROOM_SIZE, roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls } from './walls.js';
 
@@ -81,23 +82,95 @@ export function roomChecks(project, room, level) {
   return out;
 }
 
+// Перекрывающиеся помещения — ошибка планировки (docs/walls-v2-architecture.md,
+// раздел 5): в движке стен v2 стена внутри чужой комнаты не рисуется. Пары
+// комнат верхнего уровня; вложенные (parentId), шахты и открытые площадки
+// (терраса всегда под домом) — не перекрытие. Нижняя (раньше в массиве)
+// «съедена» верхней. → [{ lower, upper, rects, areaM2 }].
+export function roomOverlaps(project) {
+  const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r));
+  const out = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const a = list[i];
+    const ra = roomRects(a);
+    for (let k = i + 1; k < list.length; k += 1) {
+      const b = list[k];
+      const rects = [];
+      for (const p of ra) {
+        for (const q of roomRects(b)) {
+          const x0 = Math.max(p.x, q.x); const y0 = Math.max(p.y, q.y);
+          const x1 = Math.min(p.x + p.w, q.x + q.w); const y1 = Math.min(p.y + p.h, q.y + q.h);
+          if (x1 - x0 > 1 && y1 - y0 > 1) rects.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        }
+      }
+      if (!rects.length) continue;
+      // Нижняя — та, что раньше в массиве (её площадь «съедает» верхняя).
+      const [lower, upper] = project.rooms.indexOf(a) < project.rooms.indexOf(b) ? [a, b] : [b, a];
+      out.push({ lower, upper, rects, areaM2: rects.reduce((s, r) => s + r.w * r.h, 0) / 1e6 });
+    }
+  }
+  return out;
+}
+
+// Разность прямоугольников a \ b (до четырёх кусков).
+function rectMinus(a, b) {
+  const x0 = Math.max(a.x, b.x); const y0 = Math.max(a.y, b.y);
+  const x1 = Math.min(a.x + a.w, b.x + b.w); const y1 = Math.min(a.y + a.h, b.y + b.h);
+  if (x1 - x0 <= 0.5 || y1 - y0 <= 0.5) return [a];
+  const out = [];
+  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y });
+  if (y1 < a.y + a.h) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 });
+  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 });
+  if (x1 < a.x + a.w) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 });
+  return out.filter((r) => r.w > 0.5 && r.h > 0.5);
+}
+
+// Действие «Обрезать»: нижняя комната теряет зону перекрытия (её чистая
+// площадь не меняется — эта зона и так «съедена»). Получается, только если
+// остаток — одна связная область без дыр и не меньше минимального размера;
+// иначе false и комната не тронута.
+export function trimRoomBy(room, by) {
+  let rest = roomRects(room);
+  for (const q of roomRects(by)) rest = rest.flatMap((r) => rectMinus(r, q));
+  if (!rest.length || !rest.some((r) => r.w >= MIN_ROOM_SIZE && r.h >= MIN_ROOM_SIZE)) return false;
+  const cycles = rectsCycles(rest);
+  if (cycles.length !== 1 || cycles[0].area <= 0) return false;
+  const pts = cycles[0].pts;
+  room.outline = pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+  finalizeRoomOutline(room);
+  return true;
+}
+
 // Полный отчёт: инсоляция + проверки всех комнат по этажам.
 export function normsReport(project) {
   const insolation = insolationReport(project);
   const rooms = [];
+  const overlaps = [];
   const flagged = new Set(); // мебель с замечаниями — подсветка на плане
   for (const level of sortedLevels(project)) {
     const lp = levelProject(project, level.id);
     const walls = deriveWalls(lp);
+    const levelOverlaps = roomOverlaps(lp);
     for (const room of lp.rooms) {
       const checks = roomChecks(lp, room, level);
       for (const f of furnitureIssues(lp, room, walls)) {
         checks.push({ kind: 'furniture', ok: false, text: f.text, itemIds: f.itemIds });
         for (const id of f.itemIds) flagged.add(id);
       }
+      // Перекрытие — одно замечание на пару, у верхней комнаты.
+      for (const o of levelOverlaps.filter((q) => q.upper === room)) {
+        const canTrim = trimRoomBy(structuredClone(o.lower), o.upper);
+        checks.push({
+          kind: 'overlap', ok: false,
+          text: `Помещения «${o.lower.name}» и «${o.upper.name}» перекрываются (${fmt(o.areaM2, 2)} м²)`,
+          otherId: o.lower.id, rects: o.rects,
+          trim: canTrim ? { roomId: o.lower.id, byId: o.upper.id, label: `Обрезать «${o.lower.name}» по «${o.upper.name}»` } : null,
+        });
+      }
       rooms.push({ id: room.id, levelId: level.id, name: room.name, checks });
     }
+    for (const o of levelOverlaps) overlaps.push({ levelId: level.id, lowerId: o.lower.id, upperId: o.upper.id, rects: o.rects, areaM2: o.areaM2 });
   }
   const problems = rooms.flatMap((r) => r.checks.filter((c) => !c.ok).map((c) => ({ ...c, room: r })));
-  return { insolation, rooms, problems, flagged, ok: insolation.ok && !problems.length };
+  return { insolation, rooms, problems, overlaps, flagged, ok: insolation.ok && !problems.length };
 }

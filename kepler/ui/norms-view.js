@@ -4,9 +4,12 @@
 
 import { formatDuration } from '../core/insolation.js';
 import { tepReport, tepRows } from '../core/tep.js';
-import { escapeHtml } from './dom.js';
+import { trimRoomBy } from '../core/norms.js';
+import { roomById } from '../core/model.js';
+import { escapeHtml, toast } from './dom.js';
 import { switchLevel } from './levels.js';
 import { state } from './state.js';
+import { mutate } from './store.js';
 import { selectObject } from './tools.js';
 
 const fmtDay = (day) => day.split('-').reverse().join('.');
@@ -40,7 +43,8 @@ export function normsSection() {
     : `В норме ${ins.met}, нужно ${ins.need} ${ins.ok ? '— выполнено' : '— не хватает'}`;
   const problems = report.problems.map((p) => `
       <li class="bad"><button class="link" data-norm-room="${p.room.id}" data-level="${p.room.levelId}">${escapeHtml(p.room.name)}</button>
-        <span>${escapeHtml(p.text)}</span></li>`).join('');
+        <span>${escapeHtml(p.text)}</span>${p.trim ? `
+        <button class="link" data-norm-trim="${p.trim.roomId}" data-by="${p.trim.byId}" data-level="${p.room.levelId}">${escapeHtml(p.trim.label)}</button>` : ''}</li>`).join('');
   return `
     <h3>Нормы <span class="badge ${issues ? 'warn' : 'ok'}">${issues ? `замечаний: ${issues}` : 'в порядке'}</span></h3>
     <div class="prop-block norms">
@@ -72,6 +76,18 @@ export function bindNormLinks(panel) {
     btn.addEventListener('click', () => {
       if (btn.dataset.level !== state.project.activeLevel) switchLevel(btn.dataset.level);
       selectObject({ type: 'room', id: btn.dataset.normRoom });
+    });
+  });
+  // «Обрезать»: нижняя комната теряет зону перекрытия.
+  panel.querySelectorAll('[data-norm-trim]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.level !== state.project.activeLevel) switchLevel(btn.dataset.level);
+      const room = roomById(state.project, btn.dataset.normTrim);
+      const by = roomById(state.project, btn.dataset.by);
+      if (!room || !by) return;
+      let done = false;
+      mutate(() => { done = trimRoomBy(room, by); });
+      if (!done) toast('Обрезать не получилось: останется несколько частей или слишком мало');
     });
   });
 }

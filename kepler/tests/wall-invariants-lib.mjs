@@ -34,10 +34,10 @@ function polyArea(poly) {
   return Math.abs(s) / 2;
 }
 
-export function wallPieces(walls) {
+export function wallPieces(walls, { hidden = false } = {}) {
   const out = [];
   for (const w of walls) {
-    if (w.hidden) continue;
+    if (w.hidden && !hidden) continue;
     // Будущий формат: wall.polys — несколько контуров (внешний + дыры не нужны:
     // область стен без дыр задаётся набором простых полигонов).
     const polys = w.polys || (w.poly ? [w.poly] : (w.band ? [rectPoly(w.band)] : []));
@@ -123,11 +123,31 @@ export function checkWallInvariants(project, walls) {
   const grid = makeGrid(project);
   const { nx, ny } = grid;
   const N = nx * ny;
-  const pieces = wallPieces(walls);
+  // Скрытая стена («линия разделения») не рисуется, но входит в область стен W:
+  // для геометрических инвариантов она — обычная стена.
+  const pieces = wallPieces(walls, { hidden: true });
   const count = new Uint16Array(N);
   let pieceArea = 0;
   for (const p of pieces) { fillPoly(grid, count, p.poly); pieceArea += polyArea(p.poly); }
   const wall = (k) => count[k] > 0;
+
+  // g — скрытая стена не забирает углы и узлы видимых: её куски — внутри её
+  // собственной полосы band (угол ведёт видимая стена).
+  const grabs = [];
+  for (const p of pieces) {
+    if (!p.wall.hidden || !p.wall.band) continue;
+    const one = new Uint8Array(N);
+    fillPoly(grid, one, p.poly);
+    const b = p.wall.band;
+    let n = 0; let first = -1;
+    for (let k = 0; k < N; k += 1) {
+      if (!one[k]) continue;
+      const x = grid.x0 + (k % nx + 0.5) * G; const y = grid.y0 + (Math.floor(k / nx) + 0.5) * G;
+      if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) { n += 1; if (first < 0) first = k; }
+    }
+    if (n) grabs.push(`${p.wall.key}: ${n * G * G / 1e6} м² у ${fmt(grid, first)}`);
+  }
+  const hiddenCheck = { ok: grabs.length === 0, count: grabs.length, sample: grabs.slice(0, 3) };
 
   const rooms = project.rooms;
   const masks = new Map(rooms.map((r) => [r.id, roomMask(grid, r)]));
@@ -142,7 +162,7 @@ export function checkWallInvariants(project, walls) {
     const i = Math.floor((x - grid.x0) / G); const j = Math.floor((y - grid.y0) / G);
     return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : j * nx + i;
   };
-  const result = {};
+  const result = { hidden: hiddenCheck };
 
   // a — дыры.
   const occupied = new Uint8Array(N);

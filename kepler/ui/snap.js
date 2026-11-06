@@ -3,7 +3,7 @@
 import { gridStepForScale, isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemRect } from '../core/furnish.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, dockSnapRadius, validateRoomPlacement } from '../core/rooms.js';
-import { sharedWallThickness } from '../core/walls.js';
+import { sharedWallThickness, wallSnapCoords } from '../core/walls.js';
 import { state } from './state.js';
 
 // Линии привязки: грани стен и кромки других комнат.
@@ -15,8 +15,9 @@ function collectSnapLines(excludeRoomId) {
     // после первого соединения ручка липнет к старому положению и двигается
     // ступенями.
     if (excludeRoomId && wall.rooms.includes(excludeRoomId)) continue;
-    xs.push(wall.band.x, wall.band.x + wall.band.w);
-    ys.push(wall.band.y, wall.band.y + wall.band.h);
+    const c = wallSnapCoords(wall);
+    xs.push(...c.xs);
+    ys.push(...c.ys);
   }
   for (const r of state.project.rooms) {
     if (r.id === excludeRoomId) continue;
