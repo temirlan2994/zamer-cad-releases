@@ -13,6 +13,7 @@ import { levelProject, roomById } from './model.js';
 import { captureOpeningAnchors, reanchorOpenings } from './opening-anchor.js';
 import { roomContainsPoint, roomNotchInnerPoint } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
+import { setManualWallKind } from './wall-manual.js';
 import {
   WALL_T_MAX, WALL_T_MIN, findAdjacencies, projectAdjacencies, sharedKey, sideEdge, wallClassThickness,
 } from './walls.js';
@@ -189,6 +190,7 @@ export function setSharedWallThickness(project, wall, newT) {
 // Меняет тип стены. Если толщина не настраивалась вручную (равна толщине
 // прежнего класса по умолчанию), стена получает толщину нового класса.
 export function setWallKind(project, wall, kind) {
+  if (wall?.kind === 'manual') return setManualWallKind(project, wall.wallId, kind);
   const current = Math.round(wall.thickness);
   const wasDefault = Math.abs(current - wallClassThickness(project.settings, wall.wallType)) <= 1;
   const target = wasDefault ? wallClassThickness(project.settings, kind) : current;

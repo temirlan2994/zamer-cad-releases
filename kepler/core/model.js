@@ -7,6 +7,7 @@ import { DEFAULT_ROAD_WIDTH, createSite, ensureSite } from './site.js';
 import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
+import { WALL_T_MAX, WALL_T_MIN } from './walls.js';
 
 export { SCHEMA };
 
@@ -30,10 +31,19 @@ export const DEFAULT_SLAB = 300; // перекрытие: чистая высо�
 export function roomCeiling(room, level) {
   return room.ceiling || (level?.height ?? DEFAULT_LEVEL_HEIGHT) - DEFAULT_SLAB;
 }
-export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides'];
+// walls — ручные стены этажа (схема 6, core/wall-manual.js); стены комнат
+// не хранятся, а выводятся (core/walls.js).
+export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides', 'walls'];
 
 export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {
-  return { id, name, elevation, height, rooms: [], openings: [], items: [], wallOverrides: {} };
+  return { id, name, elevation, height, rooms: [], openings: [], items: [], wallOverrides: {}, walls: [] };
+}
+
+// Есть ли в проекте ручные стены (на любом этаже, в т. ч. в вариантах).
+export function hasManualWalls(project) {
+  const inLevels = (levels) => Array.isArray(levels) && levels.some((l) => Array.isArray(l?.walls) && l.walls.length > 0);
+  return inLevels(project?.levels)
+    || (Array.isArray(project?.variants) && project.variants.some((v) => inLevels(v?.house?.levels)));
 }
 
 export function activeLevel(project) {
@@ -143,8 +153,34 @@ export function cloneProject(project) {
 }
 
 // pretty: false — без отступов (автосохранение, снимки истории): в 2–3 раза короче.
+// Пока в проекте нет ручных стен, файл пишется в формате 5 (без walls[]):
+// его открывают и прежние копии приложения; v6 он эквивалентен.
 export function serializeProject(project, { pretty = true } = {}) {
-  return pretty ? JSON.stringify(project, null, 2) : JSON.stringify(project);
+  const data = fileData(project);
+  return pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data);
+}
+
+export const LEGACY_SCHEMA = 'kepler-plan/5';
+
+// Формат файла проекта: 6 — есть ручные стены, иначе 5.
+export function fileSchema(project) {
+  return hasManualWalls(project) ? SCHEMA : LEGACY_SCHEMA;
+}
+
+function fileData(project) {
+  if (!project || typeof project !== 'object' || !Array.isArray(project.levels)) return project;
+  if (hasManualWalls(project)) return { ...project, schema: SCHEMA };
+  const strip = (l) => {
+    if (!l || typeof l !== 'object') return l;
+    const { walls: _walls, ...rest } = l;
+    return rest;
+  };
+  const out = { ...project, schema: LEGACY_SCHEMA, levels: project.levels.map(strip) };
+  if (Array.isArray(project.variants)) {
+    out.variants = project.variants.map((v) => (Array.isArray(v?.house?.levels)
+      ? { ...v, house: { ...v.house, levels: v.house.levels.map(strip) } } : v));
+  }
+  return out;
 }
 
 // Есть ли в проекте что терять: комнаты, мебель, проёмы, этажи, участок,
@@ -235,12 +271,62 @@ export function normalizeRoom(r) {
   return room;
 }
 
+const JUSTIFY = new Set(['center', 'left', 'right']);
+const WALL_CLASSES = new Set(['exterior', 'bearing', 'partition']);
+
+// Ручная стена (схема 6): ось — отрезок в осях дома; нулевая/битая ось —
+// стена отбрасывается, толщина зажимается в [WALL_T_MIN, WALL_T_MAX].
+export function normalizeWall(w) {
+  if (!isObj(w) || !isObj(w.axis)) return null;
+  if (w.axis.kind !== undefined && w.axis.kind !== 'line') return null; // дуги — этап F
+  const a = cleanPoint(w.axis.a);
+  const b = cleanPoint(w.axis.b);
+  if (!a || !b || Math.hypot(b.x - a.x, b.y - a.y) < 1) return null;
+  const t = num(w.thickness);
+  const thickness = t != null && t > 0 ? Math.min(WALL_T_MAX, Math.max(WALL_T_MIN, Math.round(t))) : DEFAULT_PARTITION;
+  const base = isObj(w.base) ? w.base : {};
+  const top = isObj(w.top) ? w.top : {};
+  return {
+    ...w,
+    id: str(w.id) || makeId('wall'),
+    axis: { kind: 'line', a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } },
+    justify: JUSTIFY.has(w.justify) ? w.justify : 'center',
+    thickness,
+    typeId: str(w.typeId),
+    wallType: WALL_CLASSES.has(w.wallType) ? w.wallType : 'partition',
+    base: { offset: num(base.offset) ?? 0 },
+    top: { level: str(top.level), offset: num(top.offset) ?? 0, height: pos(top.height) },
+    hidden: Boolean(w.hidden),
+    roomBounding: w.roomBounding !== false,
+  };
+}
+
+// Проём на ручной стене: host { wallId, t } — t: центр проёма от axis.a, мм.
+// roomId у такого проёма — null (сторона открывания — от направления оси).
+function normalizeHostOpening(o) {
+  const wallId = str(o.host.wallId);
+  const t = num(o.host.t);
+  const width = pos(o.width);
+  if (!wallId || t == null || width == null) return null;
+  const out = { ...o, id: str(o.id) || makeId(o.kind), roomId: null, host: { wallId, t }, width };
+  delete out.side;
+  delete out.offset;
+  for (const key of ['height', 'sill']) {
+    if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
+  }
+  return out;
+}
+
 export function normalizeOpening(o) {
+  if (isObj(o) && str(o.kind) && isObj(o.host)) return normalizeHostOpening(o);
   if (!isObj(o) || !str(o.kind) || !str(o.roomId)) return null;
-  const side = num(o.side);
+  // Сторона: 0–3 у прямоугольника или строковый id ребра контура/выреза
+  // ('outline-5', 'notch-…', см. roomBoundaryEdges).
+  const side = typeof o.side === 'string' && !/^\s*\d+\s*$/.test(o.side) ? str(o.side) : num(o.side);
   const offset = num(o.offset);
   const width = pos(o.width);
-  if (side == null || !Number.isInteger(side) || side < 0 || side > 3 || offset == null || width == null) return null;
+  const sideOk = typeof side === 'string' || (side != null && Number.isInteger(side) && side >= 0 && side <= 3);
+  if (!sideOk || offset == null || width == null) return null;
   const out = { ...o, id: str(o.id) || makeId(o.kind), side, offset, width };
   for (const key of ['height', 'sill']) {
     if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
@@ -264,12 +350,16 @@ function normalizeLevelContent(l) {
   const rooms = cleanList(l.rooms, normalizeRoom);
   const ids = new Set(rooms.map((r) => r.id));
   for (const r of rooms) if (r.parentId && !ids.has(r.parentId)) r.parentId = null;
+  const walls = cleanList(l.walls, normalizeWall);
+  const wallIds = new Set(walls.map((w) => w.id));
   return {
     ...l,
     rooms,
-    openings: cleanList(l.openings, normalizeOpening),
+    // Проём на несуществующей ручной стене удаляется (как проём без комнаты).
+    openings: cleanList(l.openings, normalizeOpening).filter((o) => !o.host || wallIds.has(o.host.wallId)),
     items: normalizeItemsComp(cleanList(l.items, normalizeItem)),
     wallOverrides: isObj(l.wallOverrides) ? l.wallOverrides : {},
+    walls,
   };
 }
 

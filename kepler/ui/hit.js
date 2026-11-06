@@ -32,6 +32,21 @@ export function hitRoomHandle(screen) {
   return null;
 }
 
+// Торцы выбранной ручной стены (на оси): перенос конца.
+export function manualWallEnds(selection = state.selection) {
+  if (selection?.type !== 'wall' || !String(selection.key).startsWith('m|')) return [];
+  const wall = (state.project.walls || []).find((w) => w.id === selection.key.slice(2));
+  return wall ? [{ end: 'a', ...wall.axis.a, wall }, { end: 'b', ...wall.axis.b, wall }] : [];
+}
+
+export function hitManualWallEnd(screen) {
+  for (const h of manualWallEnds()) {
+    const p = planToScreen(h.x, h.y);
+    if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { wall: h.wall, end: h.end };
+  }
+  return null;
+}
+
 export function hitOpeningHandle(screen) {
   if (state.selection?.type !== 'opening') return null;
   const opening = state.project.openings.find((o) => o.id === state.selection.id);

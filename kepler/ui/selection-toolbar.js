@@ -30,6 +30,15 @@ function contentForSelection(sel) {
   if (sel.type === 'wall') {
     const wall = findWall(sel.key, sel.from);
     if (!wall) return null;
+    if (wall.kind === 'manual') {
+      return {
+        label: 'Стена (ручная)',
+        html: `${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
+          ${button('add-door', '◱', 'Дверь')}
+          ${button('add-window', '▦', 'Окно')}
+          ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+      };
+    }
     const room = roomById(state.project, wall.rooms[0]);
     const canSplit = wall.kind === 'own';
     const canWindow = wall.kind !== 'shared' && !room?.parentId;

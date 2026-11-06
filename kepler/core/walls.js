@@ -10,11 +10,11 @@
 
 import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
 import {
-  roomBoundaryEdges, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
+  roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
-import { deriveWallsV2 } from './walls-v2.js';
+import { deriveWallsV2, resolveOpeningWall } from './walls-v2.js';
 
-export { deriveWallsV2, wallOutline } from './walls-v2.js';
+export { deriveWallsV2, manualWallGeometry, resolveOpeningWall, wallOutline } from './walls-v2.js';
 
 // Радиус поиска соседней стены для магнитной стыковки. Самой общей стеной
 // становится только точный конструктивный зазор — толщина этой стены
@@ -162,6 +162,8 @@ function wallTypeOf(override, fallback) {
 // Выбор движка стен: KEPLER_WALLS (тесты, node) → ?walls=v1|v2 (URL) →
 // project.settings.wallsEngine → v1. v2 — core/walls-v2.js (стена = область).
 export function wallsEngine(project) {
+  // Ручные стены существуют только в v2: проект с ними — всегда v2.
+  if (projectHasManualWalls(project)) return 'v2';
   const env = globalThis.process?.env?.KEPLER_WALLS;
   if (env === 'v1' || env === 'v2') return env;
   const search = globalThis.location?.search;
@@ -171,6 +173,12 @@ export function wallsEngine(project) {
   }
   const own = project?.settings?.wallsEngine;
   return own === 'v2' ? 'v2' : 'v1';
+}
+
+// Есть ли ручные стены на каком-либо этаже (активный этаж — project.walls).
+export function projectHasManualWalls(project) {
+  if (Array.isArray(project?.walls) && project.walls.length) return true;
+  return Array.isArray(project?.levels) && project.levels.some((l) => Array.isArray(l?.walls) && l.walls.length > 0);
 }
 
 // Главная функция: выводит все сегменты стен проекта (движок — wallsEngine).
@@ -695,8 +703,58 @@ export function wallAt(walls, roomId, side, offset) {
   return null;
 }
 
+// ---------------------------------------------------------------- Положение проёма
+//
+// Проём комнаты: offset — центр от room.x/room.y вдоль стороны side.
+// Проём ручной стены (host): host.t — центр от axis.a в сторону b.
+// Общая «рамка»: абсолютная координата вдоль стены = base + dir · pos.
+
+export function openingPos(opening) {
+  return opening?.host ? Number(opening.host.t) : Number(opening?.offset);
+}
+
+export function setOpeningPos(opening, value) {
+  if (opening.host) opening.host = { ...opening.host, t: value };
+  else opening.offset = value;
+}
+
+// { base, dir, walls } — отсчёт позиции и стены, на которых проём может
+// стоять; undefined — комнаты нет (позицию не трогать); null — стороны нет.
+export function openingFrame(project, opening, walls) {
+  if (opening.host) {
+    const placed = resolveOpeningWall(project, opening, walls);
+    if (!placed) return null;
+    return { base: placed.wall.axisStart, dir: placed.wall.axisDir, walls: [placed.wall] };
+  }
+  const room = project.rooms.find((r) => r.id === opening.roomId);
+  if (!room) return undefined;
+  const edge = sideEdge(room, opening.side);
+  if (!edge) return null;
+  return {
+    base: edge.orient === 'h' ? room.x : room.y,
+    dir: 1,
+    walls: walls.filter((w) => w.sides?.[opening.roomId] === opening.side),
+  };
+}
+
+// Позиция проёма для точки вдоль стены (координата плана along).
+export function openingPosAt(project, opening, walls, along) {
+  const f = openingFrame(project, opening, walls);
+  return f ? (along - f.base) * f.dir : null;
+}
+
 // Мировая геометрия проёма: прямоугольник поперёк полотна стены.
 export function openingRect(project, opening, walls) {
+  if (opening.host) {
+    const placed = resolveOpeningWall(project, opening, walls);
+    if (!placed) return null;
+    const { wall, absCenter } = placed;
+    const half = opening.width / 2;
+    const rect = wall.orient === 'h'
+      ? { x: absCenter - half, y: wall.band.y, w: opening.width, h: wall.band.h }
+      : { x: wall.band.x, y: absCenter - half, w: wall.band.w, h: opening.width };
+    return { rect, wall, absCenter };
+  }
   const room = project.rooms.find((r) => r.id === opening.roomId);
   if (!room) return null;
   const edge = sideEdge(room, opening.side);
@@ -717,19 +775,38 @@ export function doorSwingRect(project, opening, walls) {
   const placed = openingRect(project, opening, walls);
   if (!placed) return null;
   const { rect, wall } = placed;
-  const room = project.rooms.find((r) => r.id === opening.roomId);
+  const inwardOfOwner = ownerInward(project, opening, wall, rect);
+  if (inwardOfOwner === null) return null;
   // Куда открывается: swingIn — внутрь комнаты-владельца, иначе наружу/в соседнюю.
   let dir;
   if (wall.orient === 'h') {
-    const inwardOfOwner = room.y > rect.y ? 1 : -1; // владелец ниже стены => внутрь это +y
     dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
     const y = dir > 0 ? rect.y + rect.h : rect.y - opening.width;
     return { x: rect.x, y, w: opening.width, h: opening.width };
   }
-  const inwardOfOwner = room.x > rect.x ? 1 : -1;
   dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
   const x = dir > 0 ? rect.x + rect.w : rect.x - opening.width;
   return { x, y: rect.y, w: opening.width, h: opening.width };
+}
+
+// Знак поперёк стены (+1: +y/+x) стороны «внутрь владельца». У проёма
+// ручной стены владелец — сторона слева от оси a→b. null — нет владельца.
+function ownerInward(project, opening, wall, rect) {
+  if (opening.host) return wall.outward || 1;
+  const room = project.rooms.find((r) => r.id === opening.roomId);
+  if (!room) return null;
+  if (wall.orient === 'h') return room.y > rect.y ? 1 : -1; // владелец ниже стены => внутрь это +y
+  return room.x > rect.x ? 1 : -1;
+}
+
+// Помещение в точке (вложенное — раньше родителя), иначе null.
+function roomAtPoint(project, x, y) {
+  const rank = (r) => (r.parentId ? 2 : isOpenRoom(r) ? 0 : 1);
+  let found = null;
+  for (const r of project.rooms) {
+    if (roomContainsPoint(r, x, y) && (!found || rank(r) > rank(found))) found = r;
+  }
+  return found;
 }
 
 // Какие два пространства соединяет дверь: ['outside'|roomId, roomId].
@@ -738,6 +815,15 @@ export function doorLink(project, opening, walls) {
   const placed = openingRect(project, opening, walls);
   if (!placed) return null;
   const { wall } = placed;
+  if (opening.host) {
+    // Ручная стена: помещения по обе стороны в середине проёма.
+    const reach = wall.thickness / 2 + 60;
+    const across = (wall.orient === 'h' ? wall.band.y + wall.band.h / 2 : wall.band.x + wall.band.w / 2);
+    const at = (s) => (wall.orient === 'h'
+      ? roomAtPoint(project, placed.absCenter, across + s * reach)
+      : roomAtPoint(project, across + s * reach, placed.absCenter));
+    return [at(-1)?.id || 'outside', at(1)?.id || 'outside'];
+  }
   if (wall.kind === 'shared') return [wall.rooms[0], wall.rooms[1]];
   const room = project.rooms.find((r) => r.id === opening.roomId);
   if (room && room.parentId) return [room.id, room.parentId];
@@ -789,14 +875,13 @@ export function doorSymbol(project, opening, walls) {
   const placed = openingRect(project, opening, walls);
   if (!placed) return null;
   const { rect, wall } = placed;
-  const room = project.rooms.find((r) => r.id === opening.roomId);
-  if (!room) return null;
+  const inwardOfOwner = ownerInward(project, opening, wall, rect);
+  if (inwardOfOwner === null) return null;
   const width = opening.width;
   let hinge;
   let closed;
   let open;
   if (wall.orient === 'h') {
-    const inwardOfOwner = room.y > rect.y ? 1 : -1;
     const dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
     const faceY = dir > 0 ? rect.y + rect.h : rect.y;
     const hx = opening.hingeStart ? rect.x : rect.x + rect.w;
@@ -805,7 +890,6 @@ export function doorSymbol(project, opening, walls) {
     closed = { x: cx, y: faceY };
     open = { x: hx, y: faceY + dir * width };
   } else {
-    const inwardOfOwner = room.x > rect.x ? 1 : -1;
     const dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
     const faceX = dir > 0 ? rect.x + rect.w : rect.x;
     const hy = opening.hingeStart ? rect.y : rect.y + rect.h;
@@ -824,18 +908,17 @@ export function doorSymbol(project, opening, walls) {
 }
 
 // Допустимый диапазон offset для проёма на данной стороне (центр проёма).
+// Для проёма ручной стены (host) — позиция host.t от axis.a.
 export function clampOpeningOffset(project, opening, walls, desiredOffset) {
-  const room = project.rooms.find((r) => r.id === opening.roomId);
-  if (!room) return desiredOffset;
-  const edge = sideEdge(room, opening.side);
-  if (!edge) return null;
-  const base = edge.orient === 'h' ? room.x : room.y;
-  const abs = base + desiredOffset;
+  const frame = openingFrame(project, opening, walls);
+  if (frame === undefined) return desiredOffset;
+  if (!frame) return null;
+  const { base, dir } = frame;
+  const abs = base + dir * desiredOffset;
   // Ищем сегмент, которому принадлежит желаемая позиция (или ближайший).
   let best = null;
   let bestDist = Infinity;
-  for (const wall of walls) {
-    if (wall.sides?.[opening.roomId] !== opening.side) continue;
+  for (const wall of frame.walls) {
     const lo = wall.from + opening.width / 2 + 50;
     const hi = wall.to - opening.width / 2 - 50;
     if (lo > hi) continue;
@@ -844,5 +927,5 @@ export function clampOpeningOffset(project, opening, walls, desiredOffset) {
     if (dist < bestDist) { bestDist = dist; best = clamped; }
   }
   if (best === null) return null; // нет стены, куда помещается проём
-  return best - base;
+  return (best - base) * dir;
 }

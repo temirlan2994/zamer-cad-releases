@@ -4,7 +4,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { startApp, openNew, dropOnCanvas, clickWorld, uploadText } from './helpers.mjs';
-import { SCHEMA } from '../../core/migrate.js';
+import { LEGACY_SCHEMA } from '../../core/model.js';
 
 const proj = (page) => page.evaluate(() => {
   const p = window.__kepler.state.project;
@@ -71,7 +71,8 @@ describe('правка через интерфейс', () => {
     const before = await proj(app.page);
     const file = await download(app.page, () => app.page.click('#saveBtn'));
     assert.match(file.name, /\.kepler\.json$/);
-    assert.equal(JSON.parse(file.text).schema, SCHEMA);
+    // Без ручных стен файл пишется в формате 5 (читают и прежние версии), в памяти — текущий.
+    assert.equal(JSON.parse(file.text).schema, LEGACY_SCHEMA);
     await uploadText(app.page, '#fileInput', file.name, file.text);
     await app.page.waitForFunction(() => /Открыт проект/.test(document.getElementById('toast').textContent));
     const after = await proj(app.page);

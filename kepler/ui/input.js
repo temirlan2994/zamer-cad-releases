@@ -7,7 +7,11 @@ import { roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { nearestPointOnPolyline } from '../core/site.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
-import { openingRect, sideEdge } from '../core/walls.js';
+import {
+  openingFrame, openingPosAt, openingRect, setOpeningPos,
+} from '../core/walls.js';
+import { dragManualWallEnd, snapWallPoint } from '../core/wall-manual.js';
+import { finishWallChain, wallToolClick, wallToolHover } from './wall-tool.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
@@ -30,7 +34,7 @@ import {
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
-  findWall, hitItem, hitItemHandle, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
+  findWall, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
   hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
@@ -105,8 +109,12 @@ function restoreWallDragRooms(wallDrag) {
   // moveWallBy пересчитывает отступы проёмов — откатываем и их.
   for (const start of wallDrag.openingStarts || []) {
     const opening = state.project.openings.find((o) => o.id === start.id);
-    if (opening) { opening.side = start.side; opening.offset = start.offset; }
+    if (!opening) continue;
+    if (start.host) opening.host = { ...start.host };
+    else { opening.side = start.side; opening.offset = start.offset; }
   }
+  // Ручные стены: сдвиг двигает и примыкающие — откат всего массива.
+  if (wallDrag.wallsStart) state.project.walls = structuredClone(wallDrag.wallsStart);
 }
 
 // Второй палец: всё начатое одним пальцем отменяется, начинается щипок.
@@ -319,6 +327,7 @@ function updateHoverAndGhost(world, plan, event) {
     updateDraftCursor(world, event);
     return;
   }
+  if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
   if (state.tool?.kind === 'terrain') {
     const s = worldToScreen(world.x, world.y);
     const tp = hitTerrainPoint(s);
@@ -352,7 +361,7 @@ function updateHoverAndGhost(world, plan, event) {
   }
   if (!nextHover) {
     const wall = hitWall(plan);
-    if (wall) nextHover = { type: 'wall', key: wall.key, from: wall.from };
+    if (wall) nextHover = { type: 'wall', key: wall.key, from: wall.kind === 'manual' ? undefined : wall.from };
   }
   if (!nextHover) {
     const room = hitRoom(plan);
@@ -533,6 +542,11 @@ export function bindCanvasInput() {
         return;
       }
       if (t.kind === 'place-opening') { tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
+      if (t.kind === 'wall') {
+        const mods = { shiftKey: event.shiftKey };
+        tapOrNow(event, screen, () => wallToolClick(plan, mods));
+        return;
+      }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
       if (t.kind === 'align-underlay') { tapOrNow(event, screen, () => addAlignPoint(world)); return; }
       if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
@@ -627,6 +641,16 @@ export function bindCanvasInput() {
     }
 
     // Ручки плановых объектов.
+    const wallEndHit = hitManualWallEnd(screen);
+    if (wallEndHit) {
+      drag = {
+        kind: 'mwall-end', id: wallEndHit.wall.id, end: wallEndHit.end, before: snapshot(), moved: false,
+        start: structuredClone(wallEndHit.wall),
+        hostStarts: state.project.openings.filter((o) => o.host?.wallId === wallEndHit.wall.id)
+          .map((o) => ({ id: o.id, host: { ...o.host } })),
+      };
+      return;
+    }
     const openingHandleHit = hitOpeningHandle(screen);
     if (openingHandleHit) {
       drag = { kind: 'opening-handle', id: openingHandleHit.opening.id, end: openingHandleHit.end, before: snapshot(), moved: false };
@@ -701,13 +725,16 @@ export function bindCanvasInput() {
 
     if (picked?.type === 'wall') {
       const wall = picked.entity;
-      selectObject({ type: 'wall', key: wall.key, from: wall.from, at: wall.orient === 'h' ? plan.x : plan.y });
+      const manual = wall.kind === 'manual';
+      // Ручная стена выбирается по ключу: её начало (from) меняется при правке.
+      selectObject({ type: 'wall', key: wall.key, from: manual ? undefined : wall.from, at: wall.orient === 'h' ? plan.x : plan.y });
       drag = {
         kind: 'wall', key: wall.key, from: wall.from, wall: structuredClone(wall),
         plan, before: snapshot(), moved: false, valid: true,
         roomStarts: wall.rooms.map((id) => ({ id, room: structuredClone(roomById(state.project, id)) })).filter((entry) => entry.room),
-        openingStarts: state.project.openings.filter((o) => wall.rooms.includes(o.roomId))
-          .map((o) => ({ id: o.id, side: o.side, offset: o.offset })),
+        openingStarts: state.project.openings.filter((o) => (manual ? Boolean(o.host) : wall.rooms.includes(o.roomId)))
+          .map((o) => (o.host ? { id: o.id, host: { ...o.host } } : { id: o.id, side: o.side, offset: o.offset })),
+        wallsStart: manual ? structuredClone(state.project.walls) : null,
       };
       return;
     }
@@ -983,15 +1010,14 @@ export function bindCanvasInput() {
     if (drag.kind === 'opening') {
       const opening = state.project.openings.find((o) => o.id === drag.id);
       if (!opening) return;
+      const placedNow = openingRect(state.project, opening, state.walls);
+      if (!placedNow) return;
       drag.moved = true;
-      const room = roomById(state.project, opening.roomId);
-      const edge = sideEdge(room, opening.side);
-      const base = edge.orient === 'h' ? room.x : room.y;
-      const desired = (edge.orient === 'h' ? plan.x : plan.y) - base;
+      const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y);
       // Сначала шаг сетки, потом поиск свободного места: округление не должно
       // загонять проём на соседний (зазор ≥ OPENING_GAP).
       const clamped = fitOpeningOffset(state.project, opening, state.walls, Math.round(desired / gridStep()) * gridStep());
-      if (clamped !== null) opening.offset = clamped;
+      if (clamped !== null) setOpeningPos(opening, clamped);
       requestDraw();
       return;
     }
@@ -1019,24 +1045,47 @@ export function bindCanvasInput() {
     if (drag.kind === 'opening-handle') {
       const opening = state.project.openings.find((o) => o.id === drag.id);
       if (!opening) return;
+      const placedNow = openingRect(state.project, opening, state.walls);
+      const frame = openingFrame(state.project, opening, state.walls);
+      if (!placedNow || !frame) return;
       drag.moved = true;
-      const room = roomById(state.project, opening.roomId);
-      const edge = sideEdge(room, opening.side);
-      const base = edge.orient === 'h' ? room.x : room.y;
-      const pos = (edge.orient === 'h' ? plan.x : plan.y) - base;
-      const startEdge = opening.offset - opening.width / 2;
-      const endEdge = opening.offset + opening.width / 2;
+      // В координатах плана вдоль стены: start — нижний по оси торец проёма.
+      const base = frame.base;
+      const along = placedNow.wall.orient === 'h' ? plan.x : plan.y;
+      const startEdge = placedNow.absCenter - opening.width / 2;
+      const endEdge = placedNow.absCenter + opening.width / 2;
       const fixed = drag.end === 'start' ? endEdge : startEdge;
-      const movingEdge = Math.round(pos / 50) * 50; // шаг 50 мм
+      const movingEdge = base + Math.round((along - base) / 50) * 50; // шаг 50 мм
       let width = Math.abs(fixed - movingEdge);
       width = Math.max(300, Math.round(width / 50) * 50);
       const center = drag.end === 'start' ? fixed - width / 2 : fixed + width / 2;
       const probe = { ...opening, width };
-      const clamped = fitOpeningOffset(state.project, probe, state.walls, center);
+      const clamped = fitOpeningOffset(state.project, probe, state.walls, (center - base) * frame.dir);
       if (clamped !== null) {
         opening.width = width;
-        opening.offset = clamped;
+        setOpeningPos(opening, clamped);
       }
+      requestDraw();
+      return;
+    }
+
+    if (drag.kind === 'mwall-end') {
+      // Торец ручной стены: только вдоль оси, с привязками (Shift — без них).
+      const wall = state.project.walls.find((w) => w.id === drag.id);
+      if (!wall) return;
+      Object.assign(wall, structuredClone(drag.start));
+      for (const h of drag.hostStarts) {
+        const o = state.project.openings.find((x) => x.id === h.id);
+        if (o) o.host = { ...h.host };
+      }
+      const fixed = drag.start.axis[drag.end === 'a' ? 'b' : 'a'];
+      const others = state.project.walls.filter((w) => w.id !== wall.id);
+      const p = snapWallPoint({
+        p: plan, prev: fixed, walls: (state.walls || []).filter((w) => w.wallId !== wall.id), manual: others,
+        tol: 12 / state.view.scale, grid: gridStep(), free: event.shiftKey,
+      }).point;
+      drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;
+      refreshDerived();
       requestDraw();
       return;
     }
@@ -1265,6 +1314,15 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (finished.kind === 'mwall-end') {
+      if (!finished.moved) { requestDraw(); return; }
+      reconcileOpenings(); // проёмы за новым торцом прижимаются или удаляются
+      refreshDerived();
+      pushHistory(finished.before);
+      afterChange();
+      return;
+    }
+
     if (finished.kind === 'room' || finished.kind === 'resize' || finished.kind === 'shape-resize' || finished.kind === 'multi') {
       state.ghost = null;
       if (!finished.moved) {
@@ -1362,6 +1420,7 @@ export function bindCanvasInput() {
   canvas.addEventListener('dblclick', (event) => {
     if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
     if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
+    if (state.tool?.kind === 'wall') finishWallChain();
   });
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();

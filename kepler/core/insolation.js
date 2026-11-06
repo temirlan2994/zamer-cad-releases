@@ -120,6 +120,7 @@ export function obstaclesOf(project) {
 // Сторона может быть числом 0–3 или строкой стены выреза Г/контура
 // ('notch-h', 'outline-N'): единый вид даёт sideEdge (orient + outward).
 export function openingFacade(room, side, wall, absCenter) {
+  if (!room) return null; // окно ручной стены (host) — без помещения-владельца (этап C)
   const edge = sideEdge(room, side);
   if (!edge) return null;
   const b = wall.band;

@@ -70,7 +70,7 @@ function wallRuns(walls, cuts) {
     if (wall.hidden) continue;
     const b = wall.band;
     if (!b) continue;
-    if (!['own', 'shared'].includes(wall.kind)) continue; // заплатки — ниже, без двойного объёма
+    if (!['own', 'shared', 'manual'].includes(wall.kind)) continue; // заплатки — ниже, без двойного объёма
     const cross0 = wall.orient === 'h' ? b.y : b.x;
     const cross1 = cross0 + (wall.orient === 'h' ? b.h : b.w);
     const key = `${wall.orient}|${round(cross0)}|${round(cross1)}|${wall.wallType}`;
@@ -191,7 +191,7 @@ function wallOutlineEdges(band, orient, start, end, z0, z1, holes, { joinedStart
 // граней между кусками нет; рёбра — только по контуру и кромкам проёмов.
 function levelWallsV2(lp, walls, z0, height) {
   const faces = [];
-  const rects = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared')).flatMap((w) => wallRects(w));
+  const rects = walls.filter((w) => !w.hidden && (w.kind === 'own' || w.kind === 'shared' || w.kind === 'manual')).flatMap((w) => wallRects(w));
   if (!rects.length || height < 0.5) return faces;
   const voids = [];
   for (const o of lp.openings) {

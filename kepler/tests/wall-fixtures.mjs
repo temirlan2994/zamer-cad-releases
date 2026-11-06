@@ -205,6 +205,69 @@ export function hiddenWallTee() {
   return project('скрытая стена в Т-стыке', [a, b, c], { [sharedKey(a.id, c.id)]: { hidden: true } });
 }
 
+// ---------------------------------------------------------------- Ручные стены (этап B)
+// project.walls — ручные стены активного этажа; проект с ними всегда идёт
+// на движок v2 (wallsEngine). Ось — в осях дома, толщина 200/100.
+
+function manualProject(name, rooms, walls) {
+  const p = project(name, rooms);
+  p.walls.push(...walls.map(([ax, ay, bx, by, thickness = 200, extra = {}], i) => ({
+    id: `mw${i + 1}`, axis: { kind: 'line', a: { x: ax, y: ay }, b: { x: bx, y: by } },
+    justify: 'center', thickness, typeId: null, wallType: 'partition',
+    base: { offset: 0 }, top: { level: null, offset: 0, height: null }, hidden: false, roomBounding: true,
+    ...extra,
+  })));
+  return p;
+}
+
+// Одна стена без комнат.
+export function manualWallAlone() {
+  return manualProject('ручная стена одна', [], [[0, 0, 4000, 0]]);
+}
+
+// Две ручные стены углом: торцы сходятся в точке осей — угол без щели.
+export function manualCorner() {
+  return manualProject('ручной угол', [], [[0, 0, 3000, 0], [3000, 0, 3000, 2000, 100]]);
+}
+
+// Ручная стена Т-образно упирается снаружи в наружную стену комнаты.
+export function manualTeeIntoRoom() {
+  const a = room('living', 0, 0, 5000, 4000);
+  return manualProject('ручная стена в Т', [a], [[2500, 4250, 2500, 7000]]);
+}
+
+// Ручная стена пересекает наружную стену комнаты и кончается внутри неё.
+export function manualCrossesRoomWall() {
+  const a = room('living', 0, 0, 5000, 4000);
+  return manualProject('ручная стена крестом', [a], [[-2000, 2000, 3000, 2000, 100]]);
+}
+
+// Ручная перегородка делит комнату от грани до грани (торцы на внутренних
+// гранях наружных стен; привязка — по левой грани).
+export function manualThroughRoom() {
+  const a = room('living', 0, 0, 6000, 4000);
+  return manualProject('ручная стена через комнату', [a], [[3000, 0, 3000, 4000, 100, { justify: 'left' }]]);
+}
+
+// Две отдельные комнаты, проход между ними закрыт двумя ручными стенами по
+// осям наружных стен: внутри — замкнутый карман 1,5 × 3 м (двор).
+export function manualClosesCorridor() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('bedroom', 5500, 0, 4000, 3000);
+  return manualProject('ручные стены закрывают проход', [a, b], [
+    [4250, 3125, 5250, 3125, 250], [4250, -125, 5250, -125, 250],
+  ]);
+}
+
+export const MANUAL_WALL_FIXTURES = {
+  manualWallAlone,
+  manualCorner,
+  manualTeeIntoRoom,
+  manualCrossesRoomWall,
+  manualThroughRoom,
+  manualClosesCorridor,
+};
+
 export const WALL_FIXTURES = {
   hiddenWallTee,
   twoRooms,

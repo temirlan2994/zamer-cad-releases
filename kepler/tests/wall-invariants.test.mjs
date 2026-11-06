@@ -12,7 +12,7 @@ import * as wallsModule from '../core/walls.js';
 import { buildTemplate, TEMPLATES } from '../core/templates.js';
 import { readFileSync } from 'node:fs';
 import { deserializeProject, levelProject } from '../core/model.js';
-import { WALL_FIXTURES } from './wall-fixtures.mjs';
+import { MANUAL_WALL_FIXTURES, WALL_FIXTURES } from './wall-fixtures.mjs';
 import { checkWallInvariants } from './wall-invariants-lib.mjs';
 
 const V2 = process.env.KEPLER_WALLS === 'v2';
@@ -42,6 +42,8 @@ function isKnown(fixture, inv) {
 }
 
 const cases = Object.entries(WALL_FIXTURES).map(([name, build]) => [name, build()]);
+// Ручные стены (этап B): такой проект всегда идёт на v2 — инварианты без поблажек.
+const manualCases = Object.entries(MANUAL_WALL_FIXTURES).map(([name, build]) => [name, build()]);
 for (const t of TEMPLATES) {
   const p = buildTemplate(t.id);
   for (const lv of p.levels) cases.push([`шаблон ${t.id}/${lv.name}`, levelProject(p, lv.id)]);
@@ -64,6 +66,33 @@ for (const [name, project] of cases) {
   for (const [inv, title] of Object.entries(INVARIANTS)) {
     const known = isKnown(name, inv);
     test(`${name} — ${title}`, known ? { todo: 'дефект старой схемы стен' } : {}, () => {
+      const r = result[inv];
+      assert.ok(r.ok, `${inv}: ${r.count} — ${r.sample.join('; ')}`);
+    });
+  }
+}
+
+for (const [name, project] of manualCases) {
+  const walls = wallsModule.deriveWalls(project);
+  const result = checkWallInvariants(project, walls);
+  test(`${name} — движок v2 принудительно, ручные стены в результате`, () => {
+    assert.equal(wallsModule.wallsEngine(project), 'v2');
+    const manual = walls.filter((w) => w.source === 'manual');
+    assert.equal(manual.length, project.walls.length);
+    // Тело каждой ручной стены целиком покрыто областью W (без щелей).
+    for (const w of manual) {
+      const area = wallsModule.wallRects(w).reduce((s, r) => s + r.w * r.h, 0);
+      assert.ok(area > 0, `${w.key}: пустая`);
+      const b = w.band;
+      for (let x = b.x + 5; x < b.x + b.w; x += 10) {
+        for (let y = b.y + 5; y < b.y + b.h; y += 10) {
+          assert.ok(walls.some((o) => wallsModule.wallContains(o, { x, y })), `${w.key}: щель в (${x}, ${y})`);
+        }
+      }
+    }
+  });
+  for (const [inv, title] of Object.entries(INVARIANTS)) {
+    test(`${name} — ${title}`, () => {
       const r = result[inv];
       assert.ok(r.ok, `${inv}: ${r.count} — ${r.sample.join('; ')}`);
     });

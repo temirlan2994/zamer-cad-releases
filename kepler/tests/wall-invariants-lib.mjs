@@ -52,6 +52,14 @@ function makeGrid(project) {
     x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
     x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
   }
+  // Ручные стены (схема 6) — тоже в габарите.
+  for (const w of project.walls || []) {
+    for (const p of [w.axis?.a, w.axis?.b]) {
+      if (!p) continue;
+      x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+    }
+  }
   const pad = 1500;
   x0 = Math.floor((x0 - pad) / G) * G; y0 = Math.floor((y0 - pad) / G) * G;
   const nx = Math.ceil((x1 + pad - x0) / G); const ny = Math.ceil((y1 + pad - y0) / G);
@@ -127,9 +135,15 @@ export function checkWallInvariants(project, walls) {
   // для геометрических инвариантов она — обычная стена.
   const pieces = wallPieces(walls, { hidden: true });
   const count = new Uint16Array(N);
+  const manualCount = new Uint16Array(N); // клетки ручных стен (source: 'manual')
   let pieceArea = 0;
-  for (const p of pieces) { fillPoly(grid, count, p.poly); pieceArea += polyArea(p.poly); }
+  for (const p of pieces) {
+    fillPoly(grid, count, p.poly);
+    if (p.wall.source === 'manual') fillPoly(grid, manualCount, p.poly);
+    pieceArea += polyArea(p.poly);
+  }
   const wall = (k) => count[k] > 0;
+  const manual = (k) => manualCount[k] > 0;
 
   // g — скрытая стена не забирает углы и узлы видимых: её куски — внутри её
   // собственной полосы band (угол ведёт видимая стена).
@@ -217,7 +231,8 @@ export function checkWallInvariants(project, walls) {
     }
     let n = 0; let first = -1;
     for (let k = 0; k < N; k += 1) {
-      if (m[k] && wall(k) && !carved[k]) { n += 1; if (first < 0) first = k; }
+      // Ручная стена внутри комнаты — решение пользователя, не дефект (c).
+      if (m[k] && wall(k) && !manual(k) && !carved[k]) { n += 1; if (first < 0) first = k; }
     }
     if (n) intrusions.push(`${r.id}: ${n * G * G / 1e6} м² от ${fmt(grid, first)}`);
   }
@@ -244,16 +259,20 @@ export function checkWallInvariants(project, walls) {
         // d — замер толщины лучом наружу.
         const hosts = rooms.filter((o) => masks.get(o.id)[k0]); // комнаты, где стартует луч (родитель)
         const stops = rooms.filter((o) => o !== r && !hosts.includes(o));
-        let measured = 0; let dist = Infinity; let nearShaft = false;
+        let measured = 0; let dist = Infinity; let nearShaft = false; let viaManual = false;
         for (let k = 0; k < RAY; k += 1) {
           const p = at(k); const kk = cell(p.x, p.y);
           if (kk < 0) break;
           if (stops.some((o) => masks.get(o.id)[kk])) { dist = k * G; break; }
           if (!wall(kk)) break;
           if (shaftZone[kk]) nearShaft = true;
+          if (manual(kk)) viaManual = true;
           measured = (k + 1) * G;
         }
         if (measured === 0) continue; // это уже нарушение (b)
+        // Луч прошёл через ручную стену (узел, продолжение) — толщина комнатной
+        // стены здесь не определена.
+        if (viaManual) continue;
         // Луч стартует в теле перпендикулярной стены той же комнаты (у
         // вогнутого угла) — он идёт вдоль её оси, это не толщина.
         const inPerp = roomBoundaryEdges(r).some((e2) => {
@@ -306,6 +325,7 @@ export function checkWallInvariants(project, walls) {
       const k = stack.pop();
       if (wseen[k] || !wall(k)) continue;
       wseen[k] = 1; size += 1;
+      if (manual(k)) touches = true; // ручная стена может стоять отдельно
       const i = k % nx;
       const nb = [i > 0 ? k - 1 : -1, i < nx - 1 ? k + 1 : -1, k >= nx ? k - nx : -1, k < N - nx ? k + nx : -1];
       for (const q of nb) {

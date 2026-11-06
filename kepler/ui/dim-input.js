@@ -1,8 +1,10 @@
 // Поле ввода размера по клику на размерную линию.
 
-import { cloneProject, roomById } from '../core/model.js';
+import { cloneProject } from '../core/model.js';
 import { moveWallBy, wallRoomDimensions } from '../core/wall-edit.js';
-import { clampOpeningOffset, deriveWalls, openingRect } from '../core/walls.js';
+import {
+  clampOpeningOffset, deriveWalls, openingPos, openingPosAt, openingRect, setOpeningPos,
+} from '../core/walls.js';
 import { fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { el, toast } from './dom.js';
 import { state } from './state.js';
@@ -85,9 +87,9 @@ export function applyDimInput() {
       moveWallBy(state.project, wall, delta, { finalize: true });
       const nextWalls = deriveWalls(state.project);
       state.project.openings = state.project.openings.filter((opening) => {
-        const clamped = clampOpeningOffset(state.project, opening, nextWalls, opening.offset);
+        const clamped = clampOpeningOffset(state.project, opening, nextWalls, openingPos(opening));
         if (clamped === null) return false;
-        opening.offset = clamped;
+        setOpeningPos(opening, clamped);
         return true;
       });
       // Прижатые проёмы не должны налезать друг на друга.
@@ -105,15 +107,12 @@ export function applyDimInput() {
   const placed = openingRect(state.project, opening, walls);
   if (!placed) { hideDimInput(); return; }
   const { wall } = placed;
-  const room = roomById(state.project, opening.roomId);
-  const base = wall.orient === 'h' ? room.x : room.y;
   const half = opening.width / 2;
-  const desired = edit.kind === 'left'
-    ? (wall.from - base) + value + half
-    : (wall.to - base) - value - half;
+  const along = edit.kind === 'left' ? wall.from + value + half : wall.to - value - half;
+  const desired = openingPosAt(state.project, opening, walls, along);
   mutate(() => {
     const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
-    if (clamped !== null) opening.offset = clamped;
+    if (clamped !== null) setOpeningPos(opening, clamped);
     else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
   });
   hideDimInput();

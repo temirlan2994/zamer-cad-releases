@@ -203,12 +203,16 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     }
     const wallBody = (r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), 0, level.height);
     walls.forEach((w, i) => {
-      if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared')) return;
+      if (w.hidden || (w.kind !== 'own' && w.kind !== 'shared' && w.kind !== 'manual')) return;
       // v1 — полоса + заплатки-хозяева, v2 — непересекающиеся куски области.
       const body = wallRects(w).filter((r) => r.w >= 1 && r.h >= 1);
       if (!body.length) return;
-      const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая') : 'Стена';
-      const items = [...body, ...(patchesByHost.get(w) || [])].map(wallBody);
+      const name = w.kind === 'shared' ? (w.wallType === 'bearing' ? 'Несущая стена общая' : 'Перегородка общая')
+        : w.kind === 'manual' ? 'Стена (ручная)' : 'Стена';
+      // Ручная стена — своя высота (низ/верх от пола этажа), комнатные — на этаж.
+      const items = w.kind === 'manual'
+        ? body.map((r) => solid(rectProfile(r.x + r.w / 2, -(r.y + r.h / 2), r.w, r.h), w.z0 || 0, Math.max(1, (w.z1 ?? level.height) - (w.z0 || 0))))
+        : [...body, ...(patchesByHost.get(w) || [])].map(wallBody);
       const ref = add(`IFCWALL(${guid(`wall-${level.id}-${w.key}-${i}`)},${owner},${stepString(name)},$,$,${placement},${shape(items)},$,.STANDARD.)`);
       wallRef.set(w, ref);
       contained.push(ref);

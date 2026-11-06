@@ -7,7 +7,7 @@
 // «ломаются». На каждую версию в tests/fixtures лежит настоящий файл.
 
 export const SCHEMA_NAME = 'kepler-plan';
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const SCHEMA = `${SCHEMA_NAME}/${SCHEMA_VERSION}`;
 
 const normDeg = (value) => {
@@ -52,6 +52,20 @@ export const MIGRATIONS = Object.freeze({
   // будущих умолчаний.
   4(data) {
     const level = (l) => ({ ...l, items: (l.items || []).map((it, _i, all) => migrateTable4(it, all)) });
+    const out = { ...data };
+    if (Array.isArray(data.levels)) out.levels = data.levels.map(level);
+    if (Array.isArray(data.variants)) {
+      out.variants = data.variants.map((v) => (Array.isArray(v?.house?.levels)
+        ? { ...v, house: { ...v.house, levels: v.house.levels.map(level) } } : v));
+    }
+    return out;
+  },
+  // v5 → v6: ручные стены (docs/walls-v2-architecture.md, раздел 4). У каждого
+  // этажа (и этажей вариантов) появляется массив walls[] — пустой: стены
+  // комнат по-прежнему выводятся, геометрия и проёмы не меняются. Новые
+  // необязательные поля: opening.host { wallId, t } — проём на ручной стене.
+  5(data) {
+    const level = (l) => (l && typeof l === 'object' ? { ...l, walls: Array.isArray(l.walls) ? l.walls : [] } : l);
     const out = { ...data };
     if (Array.isArray(data.levels)) out.levels = data.levels.map(level);
     if (Array.isArray(data.variants)) {

@@ -264,7 +264,8 @@ export function createRenderer(canvas) {
       const chamferWalls = [];
       for (const wall of walls) {
         if (wall.kind === 'chamfer') { chamferWalls.push(wall); continue; }
-        if (wall.kind === 'shared' || wall.kind === 'joint') { sharedWalls.push(wall); continue; }
+        // Ручные стены (схема 6) — поверх полов, как общие.
+        if (wall.kind === 'shared' || wall.kind === 'joint' || wall.kind === 'manual') { sharedWalls.push(wall); continue; }
         const rid = wall.rooms[0];
         if (!ownByRoom.has(rid)) ownByRoom.set(rid, []);
         ownByRoom.get(rid).push(wall);
@@ -541,6 +542,8 @@ export function createRenderer(canvas) {
         ctx.globalAlpha = 1;
       }
     }
+    // Инструмент «Стена»: тело будущей стены от начала до курсора и линии привязки.
+    if (state.tool?.kind === 'wall' && state.tool.cursor) drawWallToolPreview(ctx, state.tool, tokens, px);
     if (state.guides?.length) {
       ctx.strokeStyle = tokens.accent2;
       ctx.lineWidth = px(1);
@@ -603,6 +606,7 @@ export function createRenderer(canvas) {
         (state.selection.from === undefined || Math.abs(wall.from - state.selection.from) < 1))
       : null;
     if (selWall) drawSelectedWallUI(ctx, state, selWall, p2s, tokens);
+    if (selWall?.kind === 'manual') drawManualWallAxis(ctx, state, selWall, p2s, tokens);
     const splitEdit = state.splitEdit;
     if (selWall && splitEdit?.key === selWall.key && Math.abs((splitEdit.from ?? selWall.from) - selWall.from) < 1) {
       drawWallSplitPreview(ctx, selWall, splitEdit, p2s, tokens);
@@ -2498,6 +2502,69 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
   ctx.fillText(wall.orient === 'h' ? '↕' : '↔', grip.x, grip.y + 5);
   ui.grip = { x: grip.x, y: grip.y, r: 14 };
   state._wallUI = ui;
+  ctx.restore();
+}
+
+// Ручная стена выбрана: ось пунктиром, круглые ручки на торцах (тянуть —
+// длина) и подпись длины по оси.
+function drawManualWallAxis(ctx, state, wall, w2s, tokens) {
+  const own = (state.project.walls || []).find((w) => w.id === wall.wallId);
+  if (!own) return;
+  const a = w2s(own.axis.a.x, own.axis.a.y);
+  const b = w2s(own.axis.b.x, own.axis.b.y);
+  ctx.save();
+  ctx.strokeStyle = tokens.accent;
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const p of [a, b]) {
+    ctx.fillStyle = tokens.surface;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawWallToolPreview(ctx, tool, tokens, px) {
+  const c = tool.cursor;
+  ctx.save();
+  ctx.strokeStyle = tokens.accent2;
+  ctx.lineWidth = px(1);
+  ctx.setLineDash([px(4), px(4)]);
+  if (tool.snapX != null) { ctx.beginPath(); ctx.moveTo(tool.snapX, c.y - 1e5); ctx.lineTo(tool.snapX, c.y + 1e5); ctx.stroke(); }
+  if (tool.snapY != null) { ctx.beginPath(); ctx.moveTo(c.x - 1e5, tool.snapY); ctx.lineTo(c.x + 1e5, tool.snapY); ctx.stroke(); }
+  ctx.setLineDash([]);
+  if (tool.start) {
+    const a = tool.start;
+    const t = tool.thickness || 100;
+    const horiz = Math.abs(c.y - a.y) < 0.5;
+    const x0 = Math.min(a.x, c.x); const y0 = Math.min(a.y, c.y);
+    const rect = horiz
+      ? { x: x0, y: a.y - t / 2, w: Math.abs(c.x - a.x), h: t }
+      : { x: a.x - t / 2, y: y0, w: t, h: Math.abs(c.y - a.y) };
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = tool.valid === false ? tokens.danger : tokens.accent;
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = tool.valid === false ? tokens.danger : tokens.accent;
+    ctx.lineWidth = px(1.5);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+    // Длина по оси — у середины.
+    const len = Math.round(Math.hypot(c.x - a.x, c.y - a.y));
+    if (len > 0) {
+      ctx.save();
+      ctx.translate((a.x + c.x) / 2, (a.y + c.y) / 2);
+      const k = px(1);
+      ctx.scale(k, k);
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = tokens.accent;
+      ctx.fillText(`${len}`, 0, -10);
+      ctx.restore();
+    }
+  }
+  ctx.fillStyle = tokens.accent;
+  ctx.beginPath(); ctx.arc(c.x, c.y, px(4), 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 

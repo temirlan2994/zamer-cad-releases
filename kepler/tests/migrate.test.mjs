@@ -111,3 +111,60 @@ test('битый comp при открытии отбрасывается, пре
   assert.ok(!('comp' in q.items[0]));
   assert.equal(q.items[1].comp.offset, 100);
 });
+
+// ---------------------------------------------------------------- Схема 6: ручные стены
+
+test('файл версии 5 открывается как v6: walls: [] на этажах, геометрия та же', () => {
+  const raw = JSON.parse(fixture('v5-project.kepler.json'));
+  const p = deserializeProject(JSON.stringify(raw));
+  assert.equal(p.schema, SCHEMA);
+  for (const l of p.levels) assert.deepEqual(l.walls, []);
+  assert.deepEqual(p.levels.map((l) => l.rooms), raw.levels.map((l) => l.rooms));
+  assert.deepEqual(p.levels.map((l) => l.openings), raw.levels.map((l) => l.openings));
+  // Без ручных стен файл пишется по-прежнему в формате 5 — без walls.
+  const text = serializeProject(p);
+  const saved = JSON.parse(text);
+  assert.equal(saved.schema, 'kepler-plan/5');
+  assert.ok(saved.levels.every((l) => !('walls' in l)));
+  assert.deepEqual(deserializeProject(text), p);
+});
+
+test('v5 → v6 → движок v2: стены комнат те же, что у v2 на исходном файле', async () => {
+  const { deriveWallsV2 } = await import('../core/walls.js');
+  const raw = JSON.parse(fixture('v5-project.kepler.json'));
+  const p = deserializeProject(JSON.stringify(raw));
+  const pick = (w) => [w.key, w.kind, Math.round(w.from), Math.round(w.to), w.thickness, w.wallType];
+  const v6 = deriveWallsV2(p).map(pick);
+  // Тот же проект без поля walls (как v5 в памяти).
+  for (const l of p.levels) delete l.walls;
+  const v5 = deriveWallsV2(p).map(pick);
+  assert.deepEqual(v6, v5);
+});
+
+test('шаг 5 → 6: walls только добавляется (этажи и варианты), прочее не трогается', () => {
+  const lvl = { id: 'L1', rooms: [{ id: 'r' }], openings: [], items: [], wallOverrides: { k: { thickness: 300 } } };
+  const out = MIGRATIONS[5]({ schema: 'kepler-plan/5', levels: [lvl], variants: [{ id: 'v', house: { levels: [lvl] } }] });
+  assert.deepEqual(out.levels[0], { ...lvl, walls: [] });
+  assert.deepEqual(out.variants[0].house.levels[0].walls, []);
+  const keep = MIGRATIONS[5]({ levels: [{ ...lvl, walls: [{ id: 'w' }] }] });
+  assert.deepEqual(keep.levels[0].walls, [{ id: 'w' }]);
+});
+
+test('проект с ручной стеной сохраняется в формате 6; битые стены и проёмы чистятся', () => {
+  const p = createProject('x');
+  p.walls.push({ id: 'w1', axis: { kind: 'line', a: { x: 0, y: 0 }, b: { x: 3000, y: 0 } }, thickness: 9999 });
+  p.walls.push({ id: 'w2', axis: { kind: 'line', a: { x: 5, y: 5 }, b: { x: 5, y: 5 } } }); // нулевая ось
+  p.walls.push({ id: 'w3', axis: { a: { x: 'a', y: 0 }, b: { x: 1, y: 1 } } });
+  p.openings.push({ id: 'd1', kind: 'door', host: { wallId: 'w1', t: 1000 }, width: 800 });
+  p.openings.push({ id: 'd2', kind: 'door', host: { wallId: 'нет', t: 1000 }, width: 800 });
+  const text = serializeProject(p);
+  assert.equal(JSON.parse(text).schema, SCHEMA);
+  const q = deserializeProject(text);
+  assert.deepEqual(q.walls.map((w) => w.id), ['w1']);
+  assert.equal(q.walls[0].thickness, 600, 'толщина зажата в пределы');
+  assert.equal(q.walls[0].justify, 'center');
+  assert.deepEqual(q.openings.map((o) => o.id), ['d1']);
+  assert.deepEqual(q.openings[0].host, { wallId: 'w1', t: 1000 });
+  assert.equal(q.openings[0].roomId, null);
+  assert.deepEqual(deserializeProject(serializeProject(q)), q);
+});

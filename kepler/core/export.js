@@ -65,6 +65,15 @@ function buildLevelExport(project, level) {
     // Несущая: внутренняя несущая и наружная; перегородка — нет.
     load_bearing: wall.wallType !== 'partition',
     rooms: wall.rooms,
+    // Ручная стена (схема 6): необязательные поля — ось, привязка, высота.
+    ...(wall.kind === 'manual' ? {
+      source: 'manual',
+      wall_id: wall.wallId,
+      axis: (() => { const w = project.walls?.find((x) => x.id === wall.wallId); return w ? { a: { ...w.axis.a }, b: { ...w.axis.b } } : null; })(),
+      justify: wall.justify,
+      z0: wall.z0,
+      z1: wall.z1,
+    } : {}),
   }));
 
   const openings = project.openings.map((opening) => {
@@ -74,6 +83,7 @@ function buildLevelExport(project, level) {
       kind: opening.kind,
       room: opening.roomId,
       side: opening.side,
+      ...(opening.host ? { host: { wall_id: opening.host.wallId, t: opening.host.t } } : {}),
       width: opening.width,
       center: placed
         ? { x: placed.rect.x + placed.rect.w / 2, y: placed.rect.y + placed.rect.h / 2 }

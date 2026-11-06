@@ -7,6 +7,7 @@ import {
   applyRoomShapeHandle, clampRoomNotch, roomBoundaryEdges, roomShapeHandles,
 } from './room-shape.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, validateRoomPlacement } from './rooms.js';
+import { moveManualWall } from './wall-manual.js';
 
 const clone = (value) => structuredClone(value);
 
@@ -54,6 +55,8 @@ function moveShapedEdge(room, edge, target) {
 // Перемещает стену на delta перпендикулярно её оси. Для общей стены обе
 // внутренние грани едут вместе, поэтому толщина перегородки не меняется.
 export function moveWallBy(project, wall, delta, { finalize = false } = {}) {
+  // Ручная стена — объект: сдвигается сама (core/wall-manual.js).
+  if (wall?.kind === 'manual') return moveManualWall(project, wall.wallId, delta);
   if (!wall || !['own', 'shared'].includes(wall.kind) || !Number.isFinite(delta)) {
     return { ok: false, reason: 'Эту стену нельзя переместить' };
   }

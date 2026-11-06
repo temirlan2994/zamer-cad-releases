@@ -6,9 +6,10 @@ import { activeLevel, levelProject, roomById } from '../core/model.js';
 import { SP55 } from '../core/norms.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
 import {
-  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingRect,
-  wallClassThickness, wallsEngine,
+  DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingFrame, openingPos, openingRect,
+  projectHasManualWalls, setOpeningPos, wallClassThickness, wallsEngine,
 } from '../core/walls.js';
+import { moveManualWall, setManualWallJustify, setWallHeight } from '../core/wall-manual.js';
 import { roomShapeArea } from '../core/room-shape.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
@@ -21,7 +22,7 @@ import {
   bindNormLinks, normsSection, roomNormsBlock, tepSection,
 } from './norms-view.js';
 import {
-  addFurniture, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
+  addFurniture, changeManualWall, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
 } from './plan-actions.js';
 import {
   bindBuildingRotation, buildingRotationField, renderSiteObjectProps, renderSiteSettings,
@@ -63,14 +64,17 @@ function defaultCeiling() {
 // Движок стен: v1 — полосы с заплатками стыков, v2 — стена как область.
 // Параметр адреса ?walls=v1|v2 главнее настройки проекта — тогда выбор заблокирован.
 function wallsEngineField() {
-  const own = state.project.settings.wallsEngine === 'v2' ? 'v2' : 'v1';
-  const urlLocked = /[?&]walls=(v1|v2)(?:&|$)/.test(globalThis.location?.search || '');
+  // Ручные стены существуют только в v2: с ними выбор заблокирован.
+  const manualLocked = projectHasManualWalls(state.project);
+  const own = manualLocked || state.project.settings.wallsEngine === 'v2' ? 'v2' : 'v1';
+  const urlLocked = !manualLocked && /[?&]walls=(v1|v2)(?:&|$)/.test(globalThis.location?.search || '');
   const active = wallsEngine(state.project);
   return `<label class="prop-field"><span>Движок стен</span>
-        <select id="wallsEngineSel" ${urlLocked ? 'disabled' : ''}>
+        <select id="wallsEngineSel" ${urlLocked || manualLocked ? 'disabled' : ''}>
           <option value="v1" ${own === 'v1' ? 'selected' : ''}>v1 — полосы и стыки</option>
           <option value="v2" ${own === 'v2' ? 'selected' : ''}>v2 — стена как область (опытный)</option>
         </select></label>
+      ${manualLocked ? '<p class="empty-hint">В проекте есть ручные стены — они строятся только движком v2.</p>' : ''}
       ${urlLocked ? `<p class="empty-hint">Задан адресом страницы (?walls=${active}).</p>` : ''}`;
 }
 
@@ -289,6 +293,7 @@ function renderRoomProps(panel, room) {
 
 function renderWallProps(panel, wall) {
   if (!wall) { renderProjectProps(panel); return; }
+  if (wall.kind === 'manual') { renderManualWallProps(panel, wall); return; }
   const roomA = roomById(state.project, wall.rooms[0]);
   const roomB = wall.rooms[1] ? roomById(state.project, wall.rooms[1]) : null;
   const length = Math.round(wall.to - wall.from);
@@ -319,6 +324,56 @@ function renderWallProps(panel, wall) {
   });
   panel.querySelector('#wallKind').addEventListener('change', (e) => {
     changeWallKind(wall, e.target.value);
+  });
+}
+
+// Ручная стена (схема 6): объект с осью — толщина, класс, привязка оси,
+// сдвиг оси, высота; проёмы ставятся кнопками «Дверь»/«Окно» над планом.
+function renderManualWallProps(panel, wall) {
+  const own = (state.project.walls || []).find((w) => w.id === wall.wallId);
+  if (!own) { renderProjectProps(panel); return; }
+  const set = state.project.settings;
+  const length = Math.round(wall.to - wall.from);
+  const height = own.top?.height ?? '';
+  const levelH = Math.round(wall.z1 - wall.z0);
+  panel.innerHTML = `
+    <h2>Стена</h2>
+    <p class="subtitle">Ручная стена · ${wall.orient === 'h' ? 'горизонтальная' : 'вертикальная'}</p>
+    <div class="prop-block">
+      <div class="prop-row"><span>Длина по оси</span><strong>${length} мм</strong></div>
+      <label class="prop-field"><span>Толщина, мм (${WALL_T_MIN}–${WALL_T_MAX})</span>
+        <input id="wallT" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(wall.thickness)}"></label>
+      <label class="prop-field"><span>Тип</span>
+        <select id="wallKind">
+          <option value="partition" ${wall.wallType === 'partition' ? 'selected' : ''}>Перегородка (${wallClassThickness(set, 'partition')})</option>
+          <option value="bearing" ${wall.wallType === 'bearing' ? 'selected' : ''}>Несущая (${wallClassThickness(set, 'bearing')})</option>
+          <option value="exterior" ${wall.wallType === 'exterior' ? 'selected' : ''}>Наружная (${wallClassThickness(set, 'exterior')})</option>
+        </select></label>
+      <label class="prop-field"><span>Ось стены</span>
+        <select id="wallJustify">
+          <option value="center" ${own.justify === 'center' ? 'selected' : ''}>По центру</option>
+          <option value="left" ${own.justify === 'left' ? 'selected' : ''}>По левой грани</option>
+          <option value="right" ${own.justify === 'right' ? 'selected' : ''}>По правой грани</option>
+        </select></label>
+      <label class="prop-field"><span>Сдвинуть ось на, мм (${wall.orient === 'h' ? '+ вниз' : '+ вправо'})</span>
+        <input id="wallShift" type="number" step="10" value="0"></label>
+      <label class="prop-field"><span>Высота, мм (пусто — по этажу, ${levelH})</span>
+        <input id="wallH" type="number" step="50" min="100" value="${height}"></label>
+    </div>
+    <p class="empty-hint">Тяните стену — сдвиг, круглые ручки на концах — длина. Примыкающие ручные стены едут вместе. Del — удалить вместе с проёмами.</p>`;
+
+  panel.querySelector('#wallT').addEventListener('change', (e) => changeWallThickness(wall, Number(e.target.value) || wall.thickness));
+  panel.querySelector('#wallKind').addEventListener('change', (e) => changeWallKind(wall, e.target.value));
+  panel.querySelector('#wallJustify').addEventListener('change', (e) => {
+    changeManualWall(wall, (project, id) => setManualWallJustify(project, id, e.target.value));
+  });
+  panel.querySelector('#wallShift').addEventListener('change', (e) => {
+    const delta = Number(e.target.value) || 0;
+    if (delta) changeManualWall(wall, (project, id) => moveManualWall(project, id, delta));
+  });
+  panel.querySelector('#wallH').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    changeManualWall(wall, (project) => setWallHeight(project, wall, { height: v === '' ? null : Number(v) }));
   });
 }
 
@@ -360,6 +415,7 @@ function renderOpeningProps(panel, opening) {
   const room = roomById(state.project, opening.roomId);
   const isDoor = opening.kind === 'door';
   const walls = state.walls;
+  const frame = openingFrame(state.project, opening, walls);
   const placed = openingRect(state.project, opening, walls);
   let leftGap = null;
   let rightGap = null;
@@ -373,7 +429,7 @@ function renderOpeningProps(panel, opening) {
 
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
-    <p class="subtitle">Стена «${room?.name}»</p>
+    <p class="subtitle">${opening.host ? 'Ручная стена' : `Стена «${room?.name}»`}</p>
     <div class="elev-wrap">${elevationSVG(opening)}</div>
     <div class="prop-block">
       <label class="prop-field"><span>Тип</span>
@@ -398,7 +454,7 @@ function renderOpeningProps(panel, opening) {
           <input id="gapR" type="number" step="50" value="${rightGap ?? ''}" ${rightGap === null ? 'disabled' : ''}></label>
       </div>
       <label class="prop-field"><span>От начала стены, мм</span>
-        <input id="openOff" type="number" step="50" value="${Math.round(opening.offset)}"></label>
+        <input id="openOff" type="number" step="50" value="${Math.round(openingPos(opening))}"></label>
     </div>
     ${isDoor ? '<p class="empty-hint">Петли и направление открывания меняются в единой панели над планом.</p>' : ''}`;
 
@@ -410,8 +466,8 @@ function renderOpeningProps(panel, opening) {
     const width = Math.max(300, Number(e.target.value) || opening.width);
     commitOpening(() => {
       opening.width = width;
-      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), opening.offset);
-      if (clamped !== null) opening.offset = clamped;
+      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), openingPos(opening));
+      if (clamped !== null) setOpeningPos(opening, clamped);
       else toast('Проём шире свободного участка стены (с зазором 100 мм до соседних) — уменьшите ширину');
     });
   });
@@ -436,17 +492,13 @@ function renderOpeningProps(panel, opening) {
   if (sillInput) sillInput.addEventListener('change', (e) => commitOpening(() => { opening.sill = Math.max(0, Number(e.target.value) || 0); }));
 
   const setByGap = (fromLeft) => (e) => {
-    if (!wall) return;
-    const base = wall.orient === 'h'
-      ? roomById(state.project, opening.roomId).x
-      : roomById(state.project, opening.roomId).y;
+    if (!wall || !frame) return;
     const value = Math.max(0, Number(e.target.value) || 0);
-    const desired = fromLeft
-      ? (wall.from - base) + opening.width / 2 + value
-      : (wall.to - base) - opening.width / 2 - value;
+    const along = fromLeft ? wall.from + opening.width / 2 + value : wall.to - opening.width / 2 - value;
+    const desired = (along - frame.base) * frame.dir;
     commitOpening(() => {
       const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), desired);
-      if (clamped !== null) opening.offset = clamped;
+      if (clamped !== null) setOpeningPos(opening, clamped);
       else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });
   };
@@ -454,8 +506,8 @@ function renderOpeningProps(panel, opening) {
   if (rightGap !== null) panel.querySelector('#gapR').addEventListener('change', setByGap(false));
   panel.querySelector('#openOff').addEventListener('change', (e) => {
     commitOpening(() => {
-      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || opening.offset);
-      if (clamped !== null) opening.offset = clamped;
+      const clamped = fitOpeningOffset(state.project, opening, deriveWalls(state.project), Number(e.target.value) || openingPos(opening));
+      if (clamped !== null) setOpeningPos(opening, clamped);
       else toast('Сюда проём не помещается: мало места или налезает на соседний проём');
     });
   });

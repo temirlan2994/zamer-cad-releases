@@ -13,6 +13,7 @@ import { cycleTheme } from './theme.js';
 import { setTool } from './tools.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
 import { bindElevInput } from './terrain.js';
+import { startWallTool } from './wall-tool.js';
 import { fitView, zoomAt } from './view.js';
 
 export function updateDimModeBtn() {
@@ -32,6 +33,10 @@ export function bindToolbar() {
   el('undoBtn').addEventListener('click', undo);
   el('redoBtn').addEventListener('click', redo);
   el('fitBtn').addEventListener('click', fitView);
+  el('wallToolBtn')?.addEventListener('click', () => {
+    if (state.modeName !== 'plan') setEditorMode('plan');
+    startWallTool();
+  });
   el('alignBtn').addEventListener('click', () => {
     const site = state.project.site;
     if (!site?.underlay && !(site?.boundary?.length)) { toast('Сначала загрузите топосъёмку или начертите границу участка (режим «Участок»)', true); return; }

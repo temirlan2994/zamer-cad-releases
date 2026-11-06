@@ -25,6 +25,7 @@ import {
 } from './store.js';
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
 import { closeCompare, isCompareOpen } from './variants.js';
+import { finishWallChain, startWallTool } from './wall-tool.js';
 import { close3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
 
@@ -133,6 +134,12 @@ export function bindKeyboard() {
       return;
     }
     if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
+    // Инструмент «Стена»: Enter и Esc заканчивают цепочку (стены остаются).
+    if ((event.key === 'Enter' || event.key === 'Escape') && state.tool?.kind === 'wall') { finishWallChain(); return; }
+    if (event.code === 'KeyW' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool) {
+      startWallTool();
+      return;
+    }
     if (event.key === 'Escape') {
       // Сначала Esc выходит из режима ручек мебели (поворот, растяжение, масштаб) —
       // предмет остаётся выбранным; следующий Esc снимает выбор.

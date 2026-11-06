@@ -8,7 +8,7 @@
 // Б3, вставки копии и т. п.); не помещающиеся — удаляет.
 // windowsOnSharedWalls — окна, оказавшиеся в общей стене или без стены.
 
-import { openingRect, sideEdge } from './walls.js';
+import { openingFrame, openingPos, openingRect, setOpeningPos } from './walls.js';
 
 export const OPENING_GAP = 100;
 const EDGE_MARGIN = 50; // отступ проёма от торца стены (как в clampOpeningOffset)
@@ -51,19 +51,18 @@ function occupied(project, opening, walls, others) {
   return list;
 }
 
+// Позиция — offset (проём комнаты) или host.t (проём ручной стены).
 export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap = OPENING_GAP, others = null } = {}) {
-  const room = project.rooms.find((r) => r.id === opening.roomId);
-  if (!room) return desiredOffset;
-  const edge = sideEdge(room, opening.side);
-  if (!edge) return null;
-  const base = edge.orient === 'h' ? room.x : room.y;
-  const abs = base + desiredOffset;
+  const frame = openingFrame(project, opening, walls);
+  if (frame === undefined) return desiredOffset;
+  if (!frame) return null;
+  const { base, dir } = frame;
+  const abs = base + dir * desiredOffset;
   const half = (Number(opening.width) || 0) / 2;
   const taken = occupied(project, opening, walls, others);
   let best = null;
   let bestDist = Infinity;
-  for (const wall of walls) {
-    if (wall.sides?.[opening.roomId] !== opening.side) continue;
+  for (const wall of frame.walls) {
     const lo = wall.from + half + EDGE_MARGIN;
     const hi = wall.to - half - EDGE_MARGIN;
     if (lo > hi) continue;
@@ -76,7 +75,7 @@ export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap =
       if (dist < bestDist - 1e-6) { bestDist = dist; best = at; }
     }
   }
-  return best === null ? null : best - base;
+  return best === null ? null : (best - base) * dir;
 }
 
 // Раздвигает проёмы в порядке массива: ранние стоят, поздние уступают.
@@ -92,10 +91,11 @@ export function resolveOpeningConflicts(project, walls, { gap = OPENING_GAP, ids
   const moved = [];
   const dropped = [];
   for (const opening of queue) {
-    const fitted = fitOpeningOffset(project, opening, walls, Number(opening.offset), { gap, others: settled });
+    const current = openingPos(opening);
+    const fitted = fitOpeningOffset(project, opening, walls, current, { gap, others: settled });
     if (fitted === null) { dropped.push(opening.id); continue; }
-    if (Math.abs(fitted - opening.offset) > 0.5) moved.push(opening.id);
-    opening.offset = fitted;
+    if (Math.abs(fitted - current) > 0.5) moved.push(opening.id);
+    setOpeningPos(opening, fitted);
     settled.push(opening);
   }
   if (dropped.length) {

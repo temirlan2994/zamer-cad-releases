@@ -42,6 +42,7 @@ function trialProject(project, rooms, openings) {
   return {
     ...project,
     wallOverrides: project.wallOverrides || {},
+    walls: project.walls || [],
     items: project.items || [],
     rooms: [...project.rooms, ...rooms],
     openings: [...(project.openings || []), ...openings],

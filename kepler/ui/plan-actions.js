@@ -15,7 +15,10 @@ import { roomContainsPoint } from '../core/room-shape.js';
 import {
   determineParent, rectsOverlap, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
-import { clampOpeningOffset, deriveWalls, doorPlacementVariant, sideEdge } from '../core/walls.js';
+import {
+  clampOpeningOffset, deriveWalls, doorPlacementVariant, openingPos, setOpeningPos, sideEdge,
+} from '../core/walls.js';
+import { manualWallById, removeManualWall, setManualWallThickness } from '../core/wall-manual.js';
 import { applyStairPreset } from '../core/stairs.js';
 import { clampWallThickness, setSharedWallThickness, setWallKind } from '../core/wall-thickness.js';
 import { toast } from './dom.js';
@@ -33,12 +36,12 @@ export function reconcileOpenings() {
   const walls = deriveWalls(state.project);
   const dropped = [];
   for (const opening of [...state.project.openings]) {
-    const clamped = clampOpeningOffset(state.project, opening, walls, opening.offset);
+    const clamped = clampOpeningOffset(state.project, opening, walls, openingPos(opening));
     if (clamped === null) {
       state.project.openings = state.project.openings.filter((o) => o.id !== opening.id);
       dropped.push(opening);
     } else {
-      opening.offset = clamped;
+      setOpeningPos(opening, clamped);
     }
   }
   // Прижатые к краю (Б3) или вставленные проёмы не должны налезать друг на
@@ -62,9 +65,14 @@ export function toggleSelectedWallHidden() {
   const sel = state.selection;
   if (sel?.type !== 'wall') return;
   const wall = findWall(sel.key, sel.from);
-  if (!wall || !['own', 'shared'].includes(wall.kind)) return;
+  if (!wall || !['own', 'shared', 'manual'].includes(wall.kind)) return;
   const hidden = !wall.hidden;
   mutate(() => {
+    if (wall.kind === 'manual') {
+      const own = manualWallById(state.project, wall.wallId);
+      if (own) own.hidden = hidden;
+      return;
+    }
     const current = state.project.wallOverrides[wall.key] || {};
     state.project.wallOverrides[wall.key] = { ...current, hidden };
   });
@@ -117,6 +125,7 @@ export function computeOpeningParams(at) {
   const openKind = state.tool.openKind;
   const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(at);
   if (!wall) return null;
+  if (wall.kind === 'manual') return computeHostOpening(at, wall, openKind);
   const roomId = wall.rooms[0];
   const side = wall.sides[roomId];
   const room = roomById(state.project, roomId);
@@ -143,6 +152,31 @@ export function computeOpeningParams(at) {
     // Петли — на дальнем от курсора конце, створка «смотрит» к курсору.
     const center = base + opening.offset;
     opening.hingeStart = along > center;
+    Object.assign(opening, doorPlacementVariant(opening, state.tool?.doorTurns || 0));
+  }
+  return { opening, wall };
+}
+
+// Проём на ручной стене: host { wallId, t }, t — центр от начала оси.
+function computeHostOpening(at, wall, openKind) {
+  const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
+  const opening = createOpening(openKind, null, 0, 0, width);
+  delete opening.side;
+  delete opening.offset;
+  opening.roomId = null;
+  const along = wall.orient === 'h' ? at.x : at.y;
+  opening.host = { wallId: wall.wallId, t: (along - wall.axisStart) * wall.axisDir };
+  if (clampOpeningOffset(state.project, opening, state.walls, opening.host.t) === null) return { error: 'На этой стене проём не помещается' };
+  const free = fitOpeningOffset(state.project, opening, state.walls, opening.host.t);
+  if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
+  opening.host.t = free;
+  if (openKind === 'door') {
+    // Открывание — в сторону курсора: «внутрь» — слева от оси a→b.
+    const mid = wall.orient === 'h' ? wall.band.y + wall.band.h / 2 : wall.band.x + wall.band.w / 2;
+    const mouseSign = Math.sign((wall.orient === 'h' ? at.y : at.x) - mid) || wall.outward;
+    opening.swingIn = mouseSign === wall.outward;
+    const center = wall.axisStart + wall.axisDir * free;
+    opening.hingeStart = along > center; // петли — на дальнем от курсора конце
     Object.assign(opening, doorPlacementVariant(opening, state.tool?.doorTurns || 0));
   }
   return { opening, wall };
@@ -179,6 +213,10 @@ export function deleteSelection() {
     mutate(() => { removeRoom(state.project, sel.id); reconcileOpenings(); });
     state.selection = null;
     toast(`«${room.name}» удалена`);
+  } else if (sel.type === 'wall' && String(sel.key).startsWith('m|')) {
+    mutate(() => { removeManualWall(state.project, sel.key.slice(2)); });
+    state.selection = null;
+    toast('Стена удалена вместе с её проёмами · Ctrl+Z — вернуть');
   } else if (sel.type === 'opening') {
     mutate(() => {
       state.project.openings = state.project.openings.filter((o) => o.id !== sel.id);
@@ -455,7 +493,7 @@ function pasteItems(clipboard) {
 
 function pasteOpening(clipboard) {
   const source = clipboard.opening;
-  if (!roomById(state.project, source.roomId)) {
+  if (source.host ? !manualWallById(state.project, source.host.wallId) : !roomById(state.project, source.roomId)) {
     toast('Исходного помещения уже нет — проём вставить некуда', true);
     return false;
   }
@@ -464,14 +502,15 @@ function pasteOpening(clipboard) {
   Object.assign(copy, cloneData(source), { id });
   const walls = deriveWalls(state.project);
   const step = (source.width + 300) * (clipboard.pastes + 1);
-  const right = fitOpeningOffset(state.project, copy, walls, source.offset + step);
-  const left = fitOpeningOffset(state.project, copy, walls, source.offset - step);
+  const pos = openingPos(source);
+  const right = fitOpeningOffset(state.project, copy, walls, pos + step);
+  const left = fitOpeningOffset(state.project, copy, walls, pos - step);
   if (right === null && left === null) {
     toast(`На стене нет места для копии проёма (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
     return false;
   }
-  copy.offset = right === null ? left : left === null ? right
-    : Math.abs(right - source.offset - step) <= Math.abs(left - source.offset + step) ? right : left;
+  setOpeningPos(copy, right === null ? left : left === null ? right
+    : Math.abs(right - pos - step) <= Math.abs(left - pos + step) ? right : left);
   mutate(() => { state.project.openings.push(copy); });
   clipboard.pastes += 1;
   selectObject({ type: 'opening', id: copy.id });
@@ -565,14 +604,15 @@ function duplicateOpeningSelection(sel) {
   Object.assign(copy, JSON.parse(JSON.stringify(source)), { id });
   const walls = deriveWalls(state.project);
   const step = source.width + 300;
-  const right = fitOpeningOffset(state.project, copy, walls, source.offset + step);
-  const left = fitOpeningOffset(state.project, copy, walls, source.offset - step);
+  const pos = openingPos(source);
+  const right = fitOpeningOffset(state.project, copy, walls, pos + step);
+  const left = fitOpeningOffset(state.project, copy, walls, pos - step);
   if (right === null && left === null) {
     toast(`На стене нет места для копии проёма (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
     return false;
   }
-  copy.offset = right === null ? left : left === null ? right
-    : Math.abs(right - source.offset - step) <= Math.abs(left - source.offset + step) ? right : left;
+  setOpeningPos(copy, right === null ? left : left === null ? right
+    : Math.abs(right - pos - step) <= Math.abs(left - pos + step) ? right : left);
   mutate(() => { state.project.openings.push(copy); });
   selectObject({ type: 'opening', id: copy.id });
   toast(`Создана копия ${source.kind === 'door' ? 'двери' : 'окна'}`);
@@ -714,6 +754,7 @@ export function addFurnitureAt(kind, x, y, rotation = 0) {
 // Толщина стены. Общая стена остаётся общей: сторона соседа сдвигается так,
 // чтобы зазор был равен новой толщине (core/wall-thickness.js).
 export function changeWallThickness(wall, newT) {
+  if (wall.kind === 'manual') { applyWallChange(wall, (project) => setManualWallThickness(project, wall.wallId, newT)); return; }
   applyWallChange(wall, (project) => (wall.kind === 'shared'
     ? setSharedWallThickness(project, wall, newT)
     : (setOwnWallThickness(project, wall, newT), { ok: true })));
@@ -743,7 +784,13 @@ function applyWallChange(wall, apply) {
   afterChange();
   if (result.broken?.length) toast(`Внимание: разорвано стыковок — ${result.broken.length}, проверьте план`, true);
   const moved = state.walls.find((w) => w.key === wall.key) || wall;
-  selectObject({ type: 'wall', key: wall.key, from: moved.from });
+  selectObject({ type: 'wall', key: wall.key, from: wall.kind === 'manual' ? undefined : moved.from });
+}
+
+// Правка ручной стены из панели свойств (привязка, высота, сдвиг оси):
+// apply(project, wallId) → { ok, reason? }, одна запись истории.
+export function changeManualWall(wall, apply) {
+  applyWallChange(wall, (project) => apply(project, wall.wallId));
 }
 
 export function toggleOpeningFlip(kind) {
