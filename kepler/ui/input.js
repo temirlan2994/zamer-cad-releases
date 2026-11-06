@@ -26,6 +26,10 @@ import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
 import { ITEM_HANDLE_TITLES, nextItemHandle, stretchItem } from '../core/item-handles.js';
+import {
+  GROUP_HANDLE_TITLES, groupCenter, groupHandleId, groupItems, groupRotateDeg, groupStarts, isItemGroup,
+  rotateGroup, scaleGroup, stretchGroup,
+} from '../core/group-handles.js';
 import { hideDimInput, openDimInput, positionDimInput } from './dim-input.js';
 import { hitTempDim } from './temp-dims.js';
 import { hideSplitInput } from './split-input.js';
@@ -36,7 +40,7 @@ import {
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
-  findWall, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
+  findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
   hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
@@ -98,6 +102,23 @@ function cycleItemHandle(id) {
   state.itemHandle = nextItemHandle(state.itemHandle, id);
   toast(ITEM_HANDLE_TITLES[state.itemHandle.mode]);
   requestDraw();
+}
+
+// Повторный клик по выбранной группе мебели — следующий режим ручек группы.
+function cycleGroupHandle(sel = state.selection) {
+  const id = groupHandleId(sel);
+  if (!id) return;
+  state.itemHandle = nextItemHandle(state.itemHandle, id);
+  toast(GROUP_HANDLE_TITLES[state.itemHandle.mode]);
+  requestDraw();
+}
+
+// Применить к предметам результат core/group-handles.js.
+function applyGroupItems(list) {
+  for (const r of list) {
+    const item = state.project.items.find((i) => i.id === r.id);
+    if (item) { item.x = r.x; item.y = r.y; item.w = r.w; item.h = r.h; item.rotation = r.rotation; }
+  }
 }
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
@@ -179,7 +200,7 @@ function startEntryDrag(world) {
 
 // sel — выбор, который тянем: передаётся явно, потому что на касании
 // selectObject откладывается до тапа и state.selection ещё старый.
-function startMultiDrag(plan, sel = state.selection) {
+function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   if (sel?.type !== 'multi') return;
   // Груз фиксируется при захвате: выбранные комнаты с их вложенными
   // помещениями и мебелью внутри + отдельно выбранная мебель.
@@ -198,6 +219,7 @@ function startMultiDrag(plan, sel = state.selection) {
     roomIds: [...sel.roomIds],
     roomStarts: movedRooms,
     itemStarts: movedItems,
+    wasSelected, // клик без сдвига по уже выбранной группе мебели — смена режима ручек
   };
 }
 
@@ -710,6 +732,17 @@ export function bindCanvasInput() {
       }
       return;
     }
+    const groupHandleHit = hitGroupHandle(screen);
+    if (groupHandleHit) {
+      const items = groupItems(state.project, state.selection);
+      const box = groupHandleHit.box;
+      drag = {
+        kind: `group-${groupHandleHit.mode}`, edge: groupHandleHit.edge, corner: groupHandleHit.corner,
+        box, center: groupCenter(box), startPoint: { x: plan.x, y: plan.y },
+        starts: groupStarts(items), before: snapshot(), moved: false,
+      };
+      return;
+    }
 
     // Серия кликов в одной точке перебирает все лежащие здесь объекты:
     // первый — верхний, второй — следующий под ним, третий — ещё ниже.
@@ -720,7 +753,7 @@ export function bindCanvasInput() {
       const item = picked.entity;
       if (event.shiftKey) { toggleInMulti('item', item.id); return; }
       if (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id)) {
-        startMultiDrag(plan);
+        startMultiDrag(plan, state.selection, true);
         return;
       }
       const wasSelected = state.selection?.type === 'item' && state.selection.id === item.id;
@@ -912,9 +945,10 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind === 'multi') {
-      drag.moved = true;
       const dx = Math.round((plan.x - drag.plan.x) / gridStep()) * gridStep();
       const dy = Math.round((plan.y - drag.plan.y) / gridStep()) * gridStep();
+      if (!dx && !dy && !drag.moved) return; // дрожание при клике — не перенос
+      drag.moved = true;
       for (const [id, start] of drag.roomStarts) {
         const room = roomById(state.project, id);
         if (room) { room.x = start.x + dx; room.y = start.y + dy; }
@@ -1120,6 +1154,22 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'group-rotate' || drag.kind === 'group-stretch' || drag.kind === 'group-scale') {
+      drag.moved = true;
+      if (drag.kind === 'group-rotate') {
+        const stepDeg = event.shiftKey ? 15 : 5; // как у одного предмета: 5°, Shift — 15°
+        const deg = groupRotateDeg(drag.center, drag.startPoint, plan, stepDeg);
+        state.groupRotateDeg = deg;
+        applyGroupItems(rotateGroup(drag.starts, drag.center, deg));
+      } else if (drag.kind === 'group-stretch') {
+        applyGroupItems(stretchGroup(drag.starts, drag.box, drag.edge, plan).items);
+      } else {
+        applyGroupItems(scaleGroup(drag.starts, drag.box, drag.corner, plan).items);
+      }
+      requestDraw();
+      return;
+    }
+
     if (drag.kind === 'item-stretch') {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
@@ -1280,11 +1330,13 @@ export function bindCanvasInput() {
     canvas.parentElement?.classList.remove('move-armed');
     if (drag?.kind === 'touch-hold') { // тап: выбираем то, на что нажали
       clearTimeout(drag.timer);
+      const hold = drag;
       const pending = drag.pending;
       drag = null;
       const sel = pending?.selection;
       if (sel?.type === 'item' && state.selection?.type === 'item' && state.selection.id === sel.id) cycleItemHandle(sel.id);
       else if (pending) selectObject(sel);
+      else if (hold.inner?.kind === 'multi' && hold.inner.wasSelected && isItemGroup(state.selection)) cycleGroupHandle();
       return;
     }
     if (drag?.kind === 'tap') { // тап без сдвига — выполняем отложенное действие
@@ -1303,6 +1355,8 @@ export function bindCanvasInput() {
 
     if (finished.kind === 'pan') { requestDraw(); return; }
     if (finished.kind === 'item' && !finished.moved && finished.wasSelected) { cycleItemHandle(finished.id); return; }
+    if (finished.kind === 'multi' && !finished.moved && finished.wasSelected && isItemGroup(state.selection)) { cycleGroupHandle(); return; }
+    if (finished.kind.startsWith('group-')) state.groupRotateDeg = null;
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {
@@ -1431,6 +1485,7 @@ export function bindCanvasInput() {
     state.marquee = null;
     state.ghost = null;
     state.kitchenLabel = null;
+    state.groupRotateDeg = null;
     state.guides = [];
     requestDraw();
   });

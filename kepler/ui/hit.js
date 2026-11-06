@@ -13,6 +13,9 @@ import {
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
 } from '../render.js';
 import { inItemCore, itemEdgeHandles, itemHandleMode } from '../core/item-handles.js';
+import {
+  groupBounds, groupCorners, groupEdgeHandles, groupHandleId, groupItems, groupRotators,
+} from '../core/group-handles.js';
 import { state } from './state.js';
 import { planToScreen, screenToPlan, worldToScreen } from './view.js';
 
@@ -107,6 +110,39 @@ export function hitItemHandle(screen) {
         return { mode: 'resize', corner: c.id };
       }
     }
+  }
+  return null;
+}
+
+// Ручки группы мебели (общая рамка): режим — state.itemHandle с id группы.
+export function hitGroupHandle(screen) {
+  const id = groupHandleId(state.selection);
+  if (!id) return null;
+  const mode = itemHandleMode(state.itemHandle, id);
+  if (mode === 'select') return null;
+  const items = groupItems(state.project, state.selection);
+  const box = groupBounds(items);
+  if (!box) return null;
+  // Тело любого предмета группы важнее ручек (клик — смена режима или перенос).
+  const plan = screenToPlan(screen.x, screen.y);
+  if (items.some((item) => inItemCore(item, plan, tol() / state.view.scale))) return null;
+  const near = (h) => {
+    const p = planToScreen(h.x, h.y);
+    return Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol();
+  };
+  if (mode === 'rotate') {
+    for (const r of groupRotators(box, 20, state.view.scale)) {
+      const p = planToScreen(r.x, r.y);
+      if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { mode: 'rotate', corner: r.id, box };
+    }
+  }
+  if (mode === 'stretch') {
+    const e = groupEdgeHandles(box).find(near);
+    if (e) return { mode: 'stretch', edge: e.id, box };
+  }
+  if (mode === 'scale') {
+    const c = groupCorners(box).find(near);
+    if (c) return { mode: 'scale', corner: c.id, box };
   }
   return null;
 }

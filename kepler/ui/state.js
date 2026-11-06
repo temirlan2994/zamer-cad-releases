@@ -23,7 +23,8 @@ export const state = {
   // { mode: 'off'|'default'|'sun', date, time, analysis }; dragging — тянут ползунок.
   lsSun: { mode: 'default', date: '2026-06-21', time: 900, analysis: false },
   lsSunDragging: false,
-  itemHandle: null, // { id, mode } — режим ручек мебели (core/item-handles.js)
+  itemHandle: null, // { id, mode } — режим ручек мебели (core/item-handles.js); у группы id = 'group:…' (core/group-handles.js)
+  groupRotateDeg: null, // угол текущего поворота группы мебели — для подписи
   touchDeferSelect: false,
   touchDeferred: null,
   view: { scale: 0.08, panX: 120, panY: 120, rotation: 0 },

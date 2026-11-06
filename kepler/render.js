@@ -18,6 +18,9 @@ function cachedWallOutline(walls) {
   return outline;
 }
 import { itemEdgeHandles, itemHandleMode } from './core/item-handles.js';
+import {
+  groupBounds, groupCorners, groupEdgeHandles, groupHandleId, groupItems, groupRotators,
+} from './core/group-handles.js';
 import { tempDimensions } from './core/temp-dims.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './core/catalog.js';
@@ -752,6 +755,11 @@ export function createRenderer(canvas) {
       else if (handleMode === 'scale') for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
       else if (handleMode === 'stretch') for (const e of itemEdgeHandles(selItem)) drawHandleSquare(ctx, p2s(e.x, e.y), tokens);
     }
+
+    // Группа мебели: общая рамка, подпись и ручки режима (как у одного предмета).
+    const groupId = groupHandleId(state.selection);
+    const groupBox = groupId ? groupBounds(groupItems(state.project, state.selection)) : null;
+    if (groupBox && !print) drawGroupFrame(ctx, state, groupBox, groupId, p2s, tokens, scale);
 
     if (state.ghost?.rect) {
       const g = state.ghost;
@@ -2649,6 +2657,39 @@ function drawWallSplitPreview(ctx, wall, edit, w2s, tokens) {
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+}
+
+// Рамка группы мебели в осях дома (box — описывающий прямоугольник),
+// подпись «N предм. · W × H мм» и ручки текущего режима.
+function drawGroupFrame(ctx, state, box, groupId, p2s, tokens, scale) {
+  const sc = groupCorners(box).map((c) => p2s(c.x, c.y));
+  ctx.strokeStyle = tokens.accent;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  sc.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  ctx.closePath();
+  ctx.stroke();
+  const mode = itemHandleMode(state.itemHandle, groupId);
+  const deg = state.groupRotateDeg;
+  const label = `${state.selection.itemIds.length} предм. · ${Math.round(box.w)} × ${Math.round(box.h)} мм`
+    + (mode === 'rotate' && deg != null ? ` · ${Math.round(deg)}°` : '');
+  const topY = Math.min(...sc.map((p) => p.y));
+  const midX = sc.reduce((sum, p) => sum + p.x, 0) / sc.length;
+  drawTextPill(ctx, label, midX, topY - 12, tokens, tokens.accent);
+  if (mode === 'rotate') {
+    for (const r of groupRotators(box, 20, scale)) {
+      const p = p2s(r.x, r.y);
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 + 1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
+    }
+  } else if (mode === 'stretch') {
+    for (const e of groupEdgeHandles(box)) drawHandleSquare(ctx, p2s(e.x, e.y), tokens);
+  } else if (mode === 'scale') {
+    for (const c of sc) drawHandleSquare(ctx, c, tokens);
+  }
 }
 
 function drawHandleSquare(ctx, p, tokens) {

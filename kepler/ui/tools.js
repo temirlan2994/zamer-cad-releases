@@ -13,6 +13,7 @@ import { closeLibrarySheet } from './mobile.js';
 import { hideSplitInput, positionSplitInput } from './split-input.js';
 import { requestDraw } from './view.js';
 import { clearDrawSnap } from './draw-snap-ui.js';
+import { groupHandleId } from '../core/group-handles.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
@@ -31,7 +32,8 @@ export function selectObject(selection) {
     }
     state.pendingRoomSplit = null;
   }
-  if (!(selection?.type === 'item' && state.itemHandle?.id === selection.id)) state.itemHandle = null;
+  const handleOwner = selection?.type === 'item' ? selection.id : groupHandleId(selection);
+  if (!(handleOwner && state.itemHandle?.id === handleOwner)) state.itemHandle = null;
   state.selection = selection;
   renderGapBar(); // кнопка «Пристыковать» — только пока пара выделена
   renderProps();

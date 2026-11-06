@@ -28,6 +28,7 @@ import { closeCompare, isCompareOpen } from './variants.js';
 import { finishWallChain, startWallTool } from './wall-tool.js';
 import { close3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
+import { isItemGroup } from '../core/group-handles.js';
 
 export let spaceDown = false;
 
@@ -143,7 +144,8 @@ export function bindKeyboard() {
     if (event.key === 'Escape') {
       // Сначала Esc выходит из режима ручек мебели (поворот, растяжение, масштаб) —
       // предмет остаётся выбранным; следующий Esc снимает выбор.
-      if (!state.tool && state.selection?.type === 'item' && state.itemHandle && state.itemHandle.mode !== 'select') {
+      const ownsHandle = state.selection?.type === 'item' || isItemGroup(state.selection);
+      if (!state.tool && ownsHandle && state.itemHandle && state.itemHandle.mode !== 'select') {
         state.itemHandle = null;
         requestDraw();
         return;
