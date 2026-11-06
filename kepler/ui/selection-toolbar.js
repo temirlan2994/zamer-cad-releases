@@ -25,8 +25,11 @@ function contentForSelection(sel) {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
     if (isBoundRoom(room)) {
-      // Помещение по стенам: двери и окна — на стенах вокруг, форма — от стен.
-      return { label: 'Помещение по стенам', html: button('delete', '⌫', 'Удалить', 'Del', 'class="danger"') };
+      // Помещение по стенам: правится как обычное — правки идут в его стены.
+      return {
+        label: 'Помещение по стенам',
+        html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+      };
     }
     const common = button('duplicate', '⧉', 'Копировать', 'Ctrl+D');
     const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}`;

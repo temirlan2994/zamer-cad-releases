@@ -11,6 +11,7 @@ import {
 } from '../core/walls.js';
 import { moveManualWall, setManualWallJustify, setWallHeight } from '../core/wall-manual.js';
 import { roomShapeArea } from '../core/room-shape.js';
+import { resizeBoundRoom } from '../core/bound-edit.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
@@ -218,8 +219,8 @@ function renderRoomProps(panel, room) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}" ${room.bound ? 'readonly title="Размер помещения по стенам задают стены"' : ''}></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}" ${room.bound ? 'readonly' : ''}></label>
+        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"${room.bound ? ' title="Правая сторона сдвигает свою стену"' : ''}></label>
+        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"${room.bound ? ' title="Нижняя сторона сдвигает свою стену"' : ''}></label>
       </div>
       ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
         <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
@@ -240,8 +241,18 @@ function renderRoomProps(panel, room) {
   const applySize = () => {
     const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || room.w);
     const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || room.h);
-    if (room.bound || (w === room.w && h === room.h)) return;
+    if (w === room.w && h === room.h) return;
     const before = snapshot();
+    if (room.bound) {
+      // Помещение по стенам: правая и нижняя стороны сдвигают свои стены.
+      const res = resizeBoundRoom(state.project, room.id, { w, h });
+      if (!res.ok) { toast(res.reason, true); renderProps(); return; }
+      reconcileOpenings();
+      refreshDerived();
+      pushHistory(before);
+      afterChange();
+      return;
+    }
     const old = { w: room.w, h: room.h };
     room.w = w; room.h = h;
     const verdict = resizeVerdict(room);

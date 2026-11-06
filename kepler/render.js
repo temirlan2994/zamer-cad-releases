@@ -2835,7 +2835,6 @@ function drawWitness(ctx, a, b) {
 export const HANDLE_SIZE = 9;
 
 export function roomHandles(room) {
-  if (room.bound) return []; // форма помещения по стенам — от стен
   const shapeHandles = roomShapeHandles(room);
   if (shapeHandles.length) return shapeHandles;
   const { x, y, w, h } = room;

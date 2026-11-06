@@ -6,10 +6,10 @@ import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomByI
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
-import { BOUND_COPY_REASON, planRoomDuplicate } from '../core/duplicate-room.js';
+import { planRoomDuplicate } from '../core/duplicate-room.js';
 import { planGapMove } from '../core/gaps.js';
 import {
-  captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
+  captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import {
@@ -414,6 +414,11 @@ function pasteGroup(clipboard) {
   const plan = planGroupCopy(state.project, clipboard);
   if (!plan.ok) { toast(plan.reason, true); return false; }
   mutate(() => {
+    // Помещения по стенам копируются вместе со стенами петель (plan.walls).
+    if (plan.walls?.length) {
+      if (!Array.isArray(state.project.walls)) state.project.walls = [];
+      state.project.walls.push(...plan.walls);
+    }
     state.project.rooms.push(...plan.rooms);
     state.project.openings.push(...plan.openings);
     state.project.items.push(...plan.items);
@@ -423,13 +428,16 @@ function pasteGroup(clipboard) {
   const itemIndex = new Map(clipboard.items.map((item, index) => [item.id, index]));
   const roomIds = clipboard.selectedRoomIds.map((id) => plan.roomMap.get(id)).filter(Boolean);
   const itemIds = clipboard.selectedItemIds.filter((id) => itemIndex.has(id)).map((id) => plan.items[itemIndex.get(id)].id);
-  selectObject({ type: 'multi', roomIds, itemIds });
-  const where = plan.detached ? 'отдельно справа от дома (вплотную места нет)'
-    : plan.dx > 0 ? 'справа' : plan.dx < 0 ? 'слева' : plan.dy > 0 ? 'снизу' : 'сверху';
+  const single = roomIds.length === 1 && !itemIds.length;
+  selectObject(single ? { type: 'room', id: roomIds[0] } : { type: 'multi', roomIds, itemIds });
+  const where = !plan.dx && !plan.dy ? 'на том же месте'
+    : plan.detached ? 'отдельно справа от дома (вплотную места нет)'
+      : plan.dx > 0 ? 'справа' : plan.dx < 0 ? 'слева' : plan.dy > 0 ? 'снизу' : 'сверху';
   const notes = [];
   if (plan.removedOpenings) notes.push(`проёмов удалено: ${plan.removedOpenings}`);
   if (plan.movedOpenings) notes.push(`сдвинуто: ${plan.movedOpenings}`);
-  toast(`Копия группы — ${where}${notes.length ? ` · ${notes.join(', ')}` : ''}`, plan.removedOpenings > 0);
+  if (plan.walls?.length) notes.push(`стен скопировано: ${plan.walls.length}`);
+  toast(`${single ? 'Копия помещения' : 'Копия группы'} — ${where}${notes.length ? ` · ${notes.join(', ')}` : ''}`, plan.removedOpenings > 0);
   return true;
 }
 
@@ -459,14 +467,9 @@ export function copySelection() {
   } else if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
-    const clip = roomClipboard(room);
-    if (clip.rooms.some((r) => r.bound)) { toast(BOUND_COPY_REASON, true); return false; }
-    objectClipboard = clip;
+    // Помещение по стенам — в буфер со стенами петли (как группа из одного).
+    objectClipboard = room.bound ? groupClipboard({ roomIds: [room.id], itemIds: [] }) : roomClipboard(room);
   } else if (sel.type === 'multi' && sel.roomIds.length) {
-    if (groupCargo(state.project, sel.roomIds, sel.itemIds).rooms.some((r) => r.bound)) {
-      toast(BOUND_COPY_REASON, true);
-      return false;
-    }
     objectClipboard = groupClipboard(sel);
     toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
     return true;
@@ -627,6 +630,8 @@ function duplicateOpeningSelection(sel) {
 function duplicateRoomSelection(sel) {
   const source = roomById(state.project, sel.id);
   if (!source) return;
+  // Помещение по стенам копируется со стенами своей петли (core/bound-edit.js).
+  if (source.bound) { pasteGroup(groupClipboard({ roomIds: [source.id], itemIds: [] })); return; }
   // Место копии и судьба её проёмов — в core/duplicate-room.js: окна копии
   // в общей стене удаляются, остальные проёмы раздвигаются с соседями.
   const plan = planRoomDuplicate(state.project, source.id);

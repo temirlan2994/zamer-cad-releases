@@ -394,25 +394,31 @@ test('DXF и IFC v2: помещение по стенам — дыра в кон
   assert.ok((text.match(/=IFCARBITRARYCLOSEDPROFILEDEF\(/g) || []).length >= 4);
 });
 
-test('помещение по стенам: копия (Ctrl+D/Ctrl+V) и групповой сдвиг/поворот запрещены', async () => {
-  const { BOUND_COPY_REASON, planRoomDuplicate } = await import('../core/duplicate-room.js');
-  const { BOUND_MOVE_REASON, captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup } = await import('../core/room-group.js');
+test('помещение по стенам: копия (Ctrl+D/Ctrl+V) и групповой сдвиг/поворот — вместе со стенами', async () => {
+  const { planRoomDuplicate } = await import('../core/duplicate-room.js');
+  const { captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup } = await import('../core/room-group.js');
   const p = createProject('петля');
   wallLoop(p, rectPts(0, 0, 5000, 4000));
   const room = make(p, { x: 2500, y: 2000 });
   const block = createRoom('bedroom', 8000, 0, 3000, 3000);
   p.rooms.push(block);
   const before = JSON.stringify(p);
-  assert.deepEqual(planRoomDuplicate(p, room.id), { ok: false, reason: BOUND_COPY_REASON });
-  assert.equal(BOUND_COPY_REASON, 'Помещение по стенам нельзя копировать; скопируйте стены');
+  const dup = planRoomDuplicate(p, room.id);
+  assert.equal(dup.ok, true, dup.reason);
+  assert.equal(dup.walls.length, 4);
   const group = planGroupCopy(p, captureRoomGroup(p, [room.id, block.id]));
-  assert.equal(group.ok, false);
-  assert.equal(group.reason, BOUND_COPY_REASON);
-  for (const res of [moveRoomGroup(p, [room.id, block.id], [], 500, 0), rotateRoomGroup(p, [room.id, block.id], [])]) {
-    assert.equal(res.ok, false);
-    assert.equal(res.reason, BOUND_MOVE_REASON);
-  }
-  assert.equal(JSON.stringify(p), before, 'проект не изменился');
+  assert.equal(group.ok, true, group.reason);
+  assert.equal(group.walls.length, 4);
+  assert.equal(group.rooms.length, 2);
+  assert.equal(JSON.stringify(p), before, 'план копии проект не меняет');
+  const moved = moveRoomGroup(p, [room.id, block.id], [], 500, 0);
+  assert.equal(moved.ok, true, moved.reason);
+  assert.equal(p.walls[0].axis.a.x, 500);
+  assert.equal(block.x, 8500);
+  const turned = rotateRoomGroup(p, [room.id, block.id], []);
+  assert.equal(turned.ok, true, turned.reason);
+  resolve(p);
+  assert.ok(!p.rooms.find((r) => r.id === room.id).boundIssue);
   // Обычная комната по-прежнему копируется и двигается.
   assert.equal(planRoomDuplicate(p, block.id).ok, true);
   assert.equal(moveRoomGroup(p, [block.id], [], 500, 0).ok, true);

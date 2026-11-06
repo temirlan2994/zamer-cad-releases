@@ -264,7 +264,19 @@ function shapeVertexTokens(corner) {
 // Для Г-комнаты: шесть вершин + шесть середин стен. moveX/moveY указывают,
 // какую координатную линию двигает ручка.
 export function roomShapeHandles(room) {
-  if (isBoundRoom(room)) return []; // форму помещения по стенам меняют стены
+  // Помещение по стенам: те же ручки по контуру, но тянут они стены
+  // (core/bound-edit.js, boundHandleMoves); bound — признак для ввода.
+  if (isBoundRoom(room)) {
+    const poly = boundPoly(room);
+    if (!poly || room.boundIssue) return [];
+    const handles = poly.map((point, index) => ({ id: `bound-v-${index}`, kind: 'vertex', bound: true, index, x: point.x, y: point.y }));
+    for (let index = 0; index < poly.length; index += 1) {
+      const a = poly[index]; const b = poly[(index + 1) % poly.length];
+      if (samePoint(a, b)) continue;
+      handles.push({ id: `bound-e-${index}`, kind: 'edge', bound: true, index, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    }
+    return handles;
+  }
   const outline = outlinePoints(room);
   if (outline) {
     const handles = outline.map((point, index) => ({

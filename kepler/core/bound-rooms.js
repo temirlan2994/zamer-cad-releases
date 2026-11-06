@@ -213,6 +213,31 @@ export function resolveBoundRooms(project, walls) {
   return { field, owner, free };
 }
 
+// Помещения следуют за своей площадью после правки стен: seed каждого
+// помещения по стенам переставляется в компоненту, сильнее всего
+// пересекающуюся с ожидаемым контуром (expected: Map(roomId → poly); иначе —
+// прошлый кеш room.poly). Без этого seed, оставшийся за сдвинутой стеной,
+// «перескочил» бы в соседнее помещение или на улицу.
+export function followBoundRooms(project, walls, expected = new Map()) {
+  const bound = (project.rooms || []).filter(isBoundRoom);
+  if (!bound.length) return;
+  const field = loopField(project, walls);
+  if (!field) return;
+  const taken = new Set();
+  for (const room of bound) {
+    const poly = expected.get(room.id) || room.poly;
+    const probe = { bound: room.bound, poly };
+    const best = bestOverlap(field, probe);
+    if (best < 0 || taken.has(best)) continue;
+    taken.add(best);
+    if (compAt(field, room.bound.seed) === best) continue;
+    const shape = compShape(field, best);
+    const rect = shape && [...shape.rects].sort((a, b) => b.w * b.h - a.w * a.h)[0];
+    if (!rect) continue;
+    room.bound = { ...room.bound, seed: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } };
+  }
+}
+
 // Что получится, если создать помещение в точке p.
 // → { ok, shape } | { ok: false, reason }.
 export function findLoopAt(project, walls, p) {

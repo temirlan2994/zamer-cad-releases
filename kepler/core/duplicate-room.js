@@ -6,6 +6,8 @@
 // удаляются; остальные проёмы копии раздвигаются с соседями (opening-spacing).
 
 import { createOpening, createRoom } from './model.js';
+import { captureBoundWalls, planBoundCopy } from './bound-edit.js';
+import { isBoundRoom } from './room-shape.js';
 import { rectsOverlap, validateRoomPlacement } from './rooms.js';
 import { deriveWalls } from './walls.js';
 import { resolveOpeningConflicts, windowsOnSharedWalls } from './opening-spacing.js';
@@ -54,13 +56,17 @@ function trialProject(project, rooms, openings) {
 // снимком из буфера (Ctrl+V) — в проекте их может уже не быть.
 // Возвращает { ok, reason?, dx, dy, rooms, openings, roomMap, removedWindows,
 // removedOpenings, movedOpenings, detached }. Проект не меняется.
-// Помещение по стенам (room.bound) не копируется: его контур задают ручные
-// стены, а копия без стен стала бы «не замкнутой».
-export const BOUND_COPY_REASON = 'Помещение по стенам нельзя копировать; скопируйте стены';
-
+// Помещение по стенам (room.bound) копируется вместе со стенами своей петли
+// и их проёмами (core/bound-edit.js) — тогда в плане есть ещё walls.
 export function planRoomsCopy(project, sourceRooms, sourceOpenings = project.openings || []) {
   if (!sourceRooms?.length) return { ok: false, reason: 'Нет помещений для копии' };
-  if (sourceRooms.some((r) => r.bound)) return { ok: false, reason: BOUND_COPY_REASON };
+  if (sourceRooms.some(isBoundRoom)) {
+    const bound = sourceRooms.filter(isBoundRoom);
+    const plan = planBoundCopy(project, {
+      rooms: sourceRooms, openings: sourceOpenings, ...captureBoundWalls(project, bound), levelId: project.activeLevel,
+    });
+    return plan.ok ? { ...plan, removedWindows: 0, removedOpenings: 0, movedOpenings: 0 } : plan;
+  }
   const partition = project.settings?.partition || 100;
   const ids = new Set(sourceRooms.map((r) => r.id));
   // «Опорные» — помещения, родитель которых вне набора: по ним ищем место.
