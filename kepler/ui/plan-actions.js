@@ -414,11 +414,6 @@ function pasteGroup(clipboard) {
   const plan = planGroupCopy(state.project, clipboard);
   if (!plan.ok) { toast(plan.reason, true); return false; }
   mutate(() => {
-    // Помещения по стенам копируются вместе со стенами петель (plan.walls).
-    if (plan.walls?.length) {
-      if (!Array.isArray(state.project.walls)) state.project.walls = [];
-      state.project.walls.push(...plan.walls);
-    }
     state.project.rooms.push(...plan.rooms);
     state.project.openings.push(...plan.openings);
     state.project.items.push(...plan.items);
@@ -436,7 +431,6 @@ function pasteGroup(clipboard) {
   const notes = [];
   if (plan.removedOpenings) notes.push(`проёмов удалено: ${plan.removedOpenings}`);
   if (plan.movedOpenings) notes.push(`сдвинуто: ${plan.movedOpenings}`);
-  if (plan.walls?.length) notes.push(`стен скопировано: ${plan.walls.length}`);
   toast(`${single ? 'Копия помещения' : 'Копия группы'} — ${where}${notes.length ? ` · ${notes.join(', ')}` : ''}`, plan.removedOpenings > 0);
   return true;
 }
@@ -467,8 +461,7 @@ export function copySelection() {
   } else if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return false;
-    // Помещение по стенам — в буфер со стенами петли (как группа из одного).
-    objectClipboard = room.bound ? groupClipboard({ roomIds: [room.id], itemIds: [] }) : roomClipboard(room);
+    objectClipboard = roomClipboard(room);
   } else if (sel.type === 'multi' && sel.roomIds.length) {
     objectClipboard = groupClipboard(sel);
     toast(`Скопирована группа: помещений ${sel.roomIds.length} · Ctrl+V — вставить`);
@@ -630,8 +623,6 @@ function duplicateOpeningSelection(sel) {
 function duplicateRoomSelection(sel) {
   const source = roomById(state.project, sel.id);
   if (!source) return;
-  // Помещение по стенам копируется со стенами своей петли (core/bound-edit.js).
-  if (source.bound) { pasteGroup(groupClipboard({ roomIds: [source.id], itemIds: [] })); return; }
   // Место копии и судьба её проёмов — в core/duplicate-room.js: окна копии
   // в общей стене удаляются, остальные проёмы раздвигаются с соседями.
   const plan = planRoomDuplicate(state.project, source.id);
@@ -670,8 +661,7 @@ export function rotateSelection90() {
 }
 
 // Повернуть выбранное помещение на 90° по часовой вокруг его центра — с
-// вложенными, мебелью и проёмами (core/room-group.js; помещение по стенам —
-// вместе со стенами петли, core/bound-edit.js). Одна запись истории.
+// вложенными, мебелью и проёмами (core/room-group.js). Одна запись истории.
 export function rotateRoom90() {
   const sel = state.selection;
   if (sel?.type !== 'room') return false;

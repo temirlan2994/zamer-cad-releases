@@ -22,7 +22,7 @@
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
           <button id="fitBtn" title="Вписать план в экран">Вписать</button>
           <button id="wallToolBtn" title="Стена (W): клик — начало оси, клик — конец, цепочка продолжается; двойной клик, Enter или Esc — закончить">▭ Стена</button>
-          <button id="boundRoomBtn" title="Помещение по стенам: клик внутри замкнутой петли стен создаёт помещение; контур следует за стенами">⬚ Помещение</button>
+          <button id="boundRoomBtn" title="Помещение: клик внутри замкнутой петли стен — петля становится обычной комнатой">⬚ Помещение</button>
           <button id="view3dBtn" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
           <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
@@ -81,8 +81,8 @@
 
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
-          <div class="status-strip" id="connectivityBar" hidden></div>
-          <div class="status-strip warn gap-strip" id="gapBar" role="status" hidden></div>
+          <button type="button" class="issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" title="Замечания и нормы"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-count" id="issuesCount" hidden>0</span></button>
+          <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>
           <div class="canvas-hint" id="canvasHint" hidden></div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="Действия с выбранным объектом" hidden></div>

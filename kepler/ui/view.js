@@ -191,6 +191,36 @@ export function fitView() {
   requestDraw();
 }
 
+// Показать прямоугольник плана (оси дома) без смены режима: центр — в
+// середину видимой части холста; масштаб меняется, только если объект не
+// влезает или совсем мелкий. opts.left — поле слева, px (открытая панель).
+export function showPlanRect(rect, opts = {}) {
+  if (!rect) return;
+  const pad = 400;
+  const corners = rectCornersWorld(state.project.building,
+    { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 });
+  const unit = { ...state.view, scale: 1, panX: 0, panY: 0 };
+  const proj = corners.map((p) => projectPoint(unit, p.x, p.y));
+  const minX = Math.min(...proj.map((p) => p.x));
+  const maxX = Math.max(...proj.map((p) => p.x));
+  const minY = Math.min(...proj.map((p) => p.y));
+  const maxY = Math.max(...proj.map((p) => p.y));
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const left = Math.min(opts.left ?? 24, width * 0.6);
+  const box = { left, top: 60, width: Math.max(width - left - 24, 40), height: Math.max(height - 60 - 70, 40) };
+  const fit = Math.min(box.width / Math.max(maxX - minX, 1), box.height / Math.max(maxY - minY, 1));
+  const scale = Math.min(0.6, Math.max(0.004, Math.min(fit, Math.max(state.view.scale, fit * 0.35))));
+  markViewTouched();
+  state.view.scale = scale;
+  state.view.panX = box.left + box.width / 2 - ((minX + maxX) / 2) * scale;
+  state.view.panY = box.top + box.height / 2 - ((minY + maxY) / 2) * scale;
+  refs.statusScale.textContent = scaleLabel();
+  positionCalInput();
+  positionElevInput();
+  requestDraw();
+}
+
 export function bindView() {
   new ResizeObserver(() => requestDraw()).observe(canvas);
 }

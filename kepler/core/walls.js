@@ -10,7 +10,7 @@
 
 import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
 import {
-  isBoundRoom, roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
+  roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
 import { deriveWallsV2, resolveOpeningWall } from './walls-v2.js';
 
@@ -95,7 +95,6 @@ export function findAdjacencies(rooms, sharedGap = DEFAULT_PARTITION, overrides 
       const a = rooms[i];
       const b = rooms[j];
       if ((a.parentId || null) !== (b.parentId || null)) continue;
-      if (isBoundRoom(a) || isBoundRoom(b)) continue; // помещение по стенам стен не порождает
       const own = Number(overrides?.[sharedKey(a.id, b.id)]?.thickness);
       const pairGap = own > 0 ? own : sharedGap;
       for (const [first, second] of [[a, b], [b, a]]) {
@@ -244,10 +243,9 @@ export function deriveWallsV1(project) {
   const { walls } = wallSegments(project);
   const byId = new Map(project.rooms.map((r) => [r.id, r]));
   extendOwnCorners(walls, byId);
-  const blocks = project.rooms.filter((r) => !isBoundRoom(r));
-  cutWallsInsideShafts(walls, blocks);
+  cutWallsInsideShafts(walls, project.rooms);
   fillWallJoints(walls);
-  addThicknessChamfers(walls, blocks);
+  addThicknessChamfers(walls, project.rooms);
   return walls;
 }
 
@@ -321,10 +319,9 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
 
   // Собственные стены: стороны комнат за вычетом общих участков.
   const byId = new Map(project.rooms.map((r) => [r.id, r]));
-  const topRooms = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isBoundRoom(r));
+  const topRooms = project.rooms.filter((r) => !r.parentId && !isOpenRoom(r));
   for (const room of project.rooms) {
     if (isOpenRoom(room)) continue; // открытые помещения (терраса/балкон) — без стен
-    if (isBoundRoom(room)) continue; // помещение по стенам — контур от стен, своих стен нет
     const nested = Boolean(room.parentId && byId.has(room.parentId));
     const internal = nested || isShaft(room);
     const notchCuts = roomNotchSideCuts(room);
@@ -369,7 +366,7 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
       // сужается до зазора: иначе она заходит внутрь соседа бугром.
       const facing = [];
       for (const other of project.rooms) {
-        if (other.id === room.id || isShaft(other) || isBoundRoom(other) || (other.parentId || null) !== (room.parentId || null)) continue;
+        if (other.id === room.id || isShaft(other) || (other.parentId || null) !== (room.parentId || null)) continue;
         for (const o of roomRects(other)) {
           const lo = edge.orient === 'h' ? o.y : o.x;
           const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
@@ -808,14 +805,12 @@ function roomAtPoint(project, x, y) {
   const rank = (r) => (r.parentId ? 2 : isOpenRoom(r) ? 0 : 1);
   let found = null;
   for (const r of project.rooms) {
-    if (r.boundIssue) continue; // незамкнутое/слитое помещение по стенам — контур устарел
     if (roomContainsPoint(r, x, y) && (!found || rank(r) > rank(found))) found = r;
   }
   return found;
 }
 
-// Помещения по обе стороны проёма ручной стены (−1/+1 поперёк стены) —
-// блок-комнаты или помещения по стенам (core/bound-rooms.js).
+// Помещения по обе стороны проёма ручной стены (−1/+1 поперёк стены).
 function hostOpeningSides(project, placed) {
   const { wall, absCenter } = placed;
   const reach = wall.thickness / 2 + 60;
@@ -859,14 +854,6 @@ export function doorLink(project, opening, walls) {
   if (wall.kind === 'shared') return [wall.rooms[0], wall.rooms[1]];
   const room = project.rooms.find((r) => r.id === opening.roomId);
   if (room && room.parentId) return [room.id, room.parentId];
-  // За своей стеной — помещение по стенам (его петлю замыкает эта стена).
-  if (room && wall.kind === 'own' && Number.isFinite(wall.outward)) {
-    const beyond = wall.edge + wall.outward * (wall.thickness + 60);
-    const other = wall.orient === 'h'
-      ? roomAtPoint(project, placed.absCenter, beyond)
-      : roomAtPoint(project, beyond, placed.absCenter);
-    if (other && other.id !== room.id && isBoundRoom(other)) return [opening.roomId, other.id];
-  }
   return [opening.roomId, 'outside'];
 }
 

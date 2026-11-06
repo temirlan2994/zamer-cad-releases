@@ -11,8 +11,7 @@
 import { GRID_STEP } from './catalog.js';
 import { createItem } from './model.js';
 import { planRoomsCopy } from './duplicate-room.js';
-import { captureBoundWalls, planBoundCopy, transformBoundGroup } from './bound-edit.js';
-import { isBoundRoom, roomBoundaryEdges, roomContainsPoint, roomPolygon } from './room-shape.js';
+import { roomBoundaryEdges, roomContainsPoint, roomPolygon } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -26,14 +25,11 @@ export function groupCargo(project, roomIds = [], itemIds = []) {
   return { rooms, items };
 }
 
-// Помещение по стенам (room.bound) двигается и поворачивается вместе со
-// стенами своей петли (core/bound-edit.js).
-
 function validateGroup(project, roomIds) {
   let warning = null;
   for (const id of roomIds) {
     const room = project.rooms.find((r) => r.id === id);
-    if (!room || isBoundRoom(room)) continue;
+    if (!room) continue;
     const verdict = validateRoomPlacement(project, room, room.id);
     if (!verdict.ok) return verdict;
     if (verdict.warning && !warning) warning = verdict.warning;
@@ -70,17 +66,6 @@ function rollback(project, saved) {
 export function moveRoomGroup(project, roomIds, itemIds, dx, dy) {
   const cargo = groupCargo(project, roomIds, itemIds);
   if (!cargo.rooms.length && !cargo.items.length) return { ok: false, reason: 'Нечего сдвигать' };
-  const done = { rooms: cargo.rooms.map((r) => r.id), items: cargo.items.map((i) => i.id) };
-  if (cargo.rooms.some(isBoundRoom)) {
-    const res = transformBoundGroup(project, cargo, (p) => ({ x: p.x + dx, y: p.y + dy }), {
-      apply: () => {
-        for (const room of cargo.rooms) if (!isBoundRoom(room)) { room.x += dx; room.y += dy; }
-        for (const item of cargo.items) { item.x += dx; item.y += dy; }
-      },
-      validate: () => validateGroup(project, roomIds),
-    });
-    return res.ok ? { ...res, ...done } : { ...res, rooms: [], items: [] };
-  }
   const saved = remember(project, cargo);
   for (const room of cargo.rooms) { room.x += dx; room.y += dy; }
   for (const item of cargo.items) { item.x += dx; item.y += dy; }
@@ -156,16 +141,6 @@ export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP } 
   const center = groupCenter(cargo, grid);
   if (!center) return { ok: false, reason: 'Нечего поворачивать' };
   const { x: cx, y: cy } = center;
-  if (cargo.rooms.some(isBoundRoom)) {
-    const blocks = { rooms: cargo.rooms.filter((r) => !isBoundRoom(r)), items: cargo.items };
-    const res = transformBoundGroup(project, cargo, (p) => turnPoint(p, cx, cy), {
-      apply: () => turnCargo(project, blocks, cx, cy),
-      validate: () => validateGroup(project, roomIds),
-    });
-    return res.ok
-      ? { ...res, center, rooms: cargo.rooms.map((r) => r.id), items: cargo.items.map((i) => i.id) }
-      : { ...res, rooms: [], items: [] };
-  }
   const saved = remember(project, cargo);
   turnCargo(project, cargo, cx, cy);
   const verdict = validateGroup(project, roomIds);
@@ -173,7 +148,7 @@ export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP } 
   return { ...verdict, center, rooms: cargo.rooms.map((r) => r.id), items: cargo.items.map((i) => i.id) };
 }
 
-// Поворот блок-комнат и мебели груза вокруг (cx, cy) с проёмами и
+// Поворот комнат и мебели груза вокруг (cx, cy) с проёмами и
 // переопределениями стен.
 function turnCargo(project, cargo, cx, cy) {
   const cargoIds = new Set(cargo.rooms.map((r) => r.id));
@@ -230,13 +205,10 @@ function turnCargo(project, cargo, cx, cy) {
 export function captureRoomGroup(project, roomIds, itemIds = []) {
   const cargo = groupCargo(project, roomIds, itemIds);
   const ids = new Set(cargo.rooms.map((r) => r.id));
-  const bound = cargo.rooms.filter(isBoundRoom);
   return {
     rooms: clone(cargo.rooms),
     openings: clone((project.openings || []).filter((o) => ids.has(o.roomId))),
     items: clone(cargo.items),
-    // Помещения по стенам копируются со стенами петель и их проёмами.
-    ...(bound.length ? { ...captureBoundWalls(project, bound), levelId: project.activeLevel } : {}),
   };
 }
 
@@ -245,7 +217,7 @@ export function captureRoomGroup(project, roomIds, itemIds = []) {
 // убираются, мебель едет с тем же смещением. source — снимок captureRoomGroup.
 // Проект не меняется. Возвращает план planRoomsCopy + items.
 export function planGroupCopy(project, source) {
-  const plan = source.rooms.some(isBoundRoom) ? planBoundCopy(project, source) : planRoomsCopy(project, source.rooms, source.openings);
+  const plan = planRoomsCopy(project, source.rooms, source.openings);
   if (!plan.ok) return plan;
   const ids = new Set(source.rooms.map((r) => r.id));
   const anchorIds = new Set(source.rooms.filter((r) => !r.parentId || !ids.has(r.parentId)).map((r) => plan.roomMap.get(r.id)));

@@ -9,6 +9,7 @@ import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
 import { WALL_T_MAX, WALL_T_MIN } from './walls.js';
 import { cleanViewAngles } from './view-angles.js';
+import { convertBoundRooms } from './bound-rooms.js';
 
 export { SCHEMA };
 
@@ -42,9 +43,7 @@ export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, 
 
 // Есть ли в проекте ручные стены (на любом этаже, в т. ч. в вариантах).
 export function hasManualWalls(project) {
-  // Помещение по стенам (room.bound) — тоже содержимое схемы 6.
-  const inLevels = (levels) => Array.isArray(levels) && levels.some((l) => (Array.isArray(l?.walls) && l.walls.length > 0)
-    || (Array.isArray(l?.rooms) && l.rooms.some((r) => r?.bound)));
+  const inLevels = (levels) => Array.isArray(levels) && levels.some((l) => Array.isArray(l?.walls) && l.walls.length > 0);
   return inLevels(project?.levels)
     || (Array.isArray(project?.variants) && project.variants.some((v) => inLevels(v?.house?.levels)));
 }
@@ -267,8 +266,9 @@ export function normalizeRoom(r) {
     if (outline) room.outline = outline; else delete room.outline;
   }
   if ('notch' in room && !isObj(room.notch)) delete room.notch;
-  // Помещение по стенам (схема 6): bound { mode: 'walls', seed }, кеш контура
-  // poly/holes (абсолютные точки). Битый bound — обычная блок-комната.
+  // Старое «помещение по стенам»: bound { mode: 'walls', seed } + кеш контура
+  // poly/holes — только вход для convertBoundRooms (normalizeProject), после
+  // него таких комнат нет. Битый bound — обычная комната.
   if ('bound' in room) {
     const seed = isObj(room.bound) && room.bound.mode === 'walls' ? cleanPoint(room.bound.seed) : null;
     if (seed) {
@@ -444,8 +444,22 @@ export function normalizeProject(data) {
   // Углы вида по режимам (core/view-angles.js): необязательно, без смены схемы.
   const viewAngles = cleanViewAngles(data.settings.viewAngles);
   if (viewAngles) data.settings.viewAngles = viewAngles; else delete data.settings.viewAngles;
+  // Старые помещения по стенам (room.bound) → обычные комнаты (core/bound-rooms.js).
+  for (const levels of [data.levels, ...data.variants.map((v) => v.house.levels)]) {
+    for (const level of levels) convertLevelBoundRooms(level, levels, data.settings);
+  }
   ensureSite(data);
   return attachLevelAccessors(data);
+}
+
+function convertLevelBoundRooms(level, levels, settings) {
+  if (!level.rooms.some((r) => r.bound)) return;
+  const lp = {
+    rooms: level.rooms, walls: level.walls, openings: level.openings, items: level.items,
+    wallOverrides: level.wallOverrides, settings, levels, activeLevel: level.id,
+  };
+  convertBoundRooms(lp);
+  for (const key of LEVEL_KEYS) level[key] = lp[key];
 }
 
 export function roomById(project, id) {

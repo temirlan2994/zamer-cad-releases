@@ -11,7 +11,6 @@ import {
 } from '../core/walls.js';
 import { moveManualWall, setManualWallJustify, setWallHeight } from '../core/wall-manual.js';
 import { roomShapeArea } from '../core/room-shape.js';
-import { resizeBoundRoom } from '../core/bound-edit.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
@@ -19,9 +18,7 @@ import { findWall } from './hit.js';
 import { hotkeysHtml } from './help.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
-import {
-  bindNormLinks, normsSection, roomNormsBlock, tepSection,
-} from './norms-view.js';
+import { tepSection } from './norms-view.js';
 import {
   addFurniture, changeManualWall, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
 } from './plan-actions.js';
@@ -131,7 +128,6 @@ function renderProjectProps(panel) {
     </div>
     ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
     <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
-    ${normsSection()}
     ${tepSection()}
     ${variantsSection()}
     <h3>Управление</h3>
@@ -165,7 +161,6 @@ function renderProjectProps(panel) {
     mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
   });
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
-  bindNormLinks(panel);
   bindVariants(panel);
 }
 
@@ -219,8 +214,8 @@ function renderRoomProps(panel, room) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"${room.bound ? ' title="Правая сторона сдвигает свою стену"' : ''}></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"${room.bound ? ' title="Нижняя сторона сдвигает свою стену"' : ''}></label>
+        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"></label>
+        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"></label>
       </div>
       ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
         <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
@@ -229,7 +224,7 @@ function renderRoomProps(panel, room) {
     </div>
     ${areaControl}
     ${overlapControl}
-    ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : roomNormsBlock(room.id)}
+    ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : ''}
     ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
     ${rejectedHtml}
@@ -243,16 +238,6 @@ function renderRoomProps(panel, room) {
     const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || room.h);
     if (w === room.w && h === room.h) return;
     const before = snapshot();
-    if (room.bound) {
-      // Помещение по стенам: правая и нижняя стороны сдвигают свои стены.
-      const res = resizeBoundRoom(state.project, room.id, { w, h });
-      if (!res.ok) { toast(res.reason, true); renderProps(); return; }
-      reconcileOpenings();
-      refreshDerived();
-      pushHistory(before);
-      afterChange();
-      return;
-    }
     const old = { w: room.w, h: room.h };
     room.w = w; room.h = h;
     const verdict = resizeVerdict(room);

@@ -7,8 +7,9 @@ import {
 } from '../core/model.js';
 import { hashText, newId } from '../core/storage.js';
 import { deriveWalls } from '../core/walls.js';
-import { resolveBoundRooms } from '../core/bound-rooms.js';
+import { freeLoops } from '../core/bound-rooms.js';
 import { findNearMissGaps } from '../core/gaps.js';
+import { collectIssues } from '../core/issues.js';
 import { el, toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
@@ -16,7 +17,7 @@ import { applyModeRotation } from './modes.js';
 import { renderViewPanel } from './view-align.js';
 import { renderProps } from './props.js';
 import { history, state } from './state.js';
-import { updateConnectivity } from './status.js';
+import { setIssues } from './issues.js';
 import { updateDimModeBtn } from './toolbar.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
@@ -38,11 +39,10 @@ const warned = new Set();
 function deriveAll(project) {
   const below = levelBelow(project);
   const walls = deriveWalls(project);
-  // Помещения по стенам: контуры следуют за стенами (кеш в room.poly).
-  const loops = resolveBoundRooms(project, walls);
   return {
     walls,
-    freeLoops: loops.free,
+    // Замкнутые петли ручных стен без помещения — штриховка «не назначено».
+    freeLoops: freeLoops(project, walls),
     gaps: findNearMissGaps(project, { move: false }),
     // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
     belowWalls: below ? deriveWalls(levelProject(project, below.id)) : null,
@@ -138,10 +138,20 @@ export function refreshNorms() {
   }
 }
 
+// Замечания (кнопка «⚠» на холсте): связность, нормы, зазоры — после норм.
+export function refreshIssues() {
+  try {
+    setIssues(collectIssues(state.project, { norms: state.norms, walls: state.walls, gaps: state.gaps }));
+  } catch (error) {
+    setIssues(null);
+    console.error('Замечания не посчитались:', error);
+  }
+}
+
 export function afterChange() {
   syncUnderlayImage();
-  updateConnectivity();
   refreshNorms();
+  refreshIssues();
   renderProps();
   renderSelectionToolbar();
   updateDimModeBtn();

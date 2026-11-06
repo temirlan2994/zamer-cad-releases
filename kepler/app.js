@@ -24,9 +24,8 @@ import { bindProjects } from './ui/projects.js';
 import { renderProps } from './ui/props.js';
 import { openStartMenu } from './ui/start-menu.js';
 import { state } from './ui/state.js';
-import { updateConnectivity } from './ui/status.js';
 import {
-  BROKEN_KEY, bindAutosaveLifecycle, loadAutosave, refreshDerived, refreshNorms, restoreHeavyRefs,
+  BROKEN_KEY, bindAutosaveLifecycle, loadAutosave, refreshDerived, refreshIssues, refreshNorms, restoreHeavyRefs,
 } from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
 import { loadLandscapeStyle, loadLandscapeSun } from './ui/landscape-style.js';
@@ -71,8 +70,8 @@ bindSnapBar();
     applyModeRotation();
     syncUnderlayImage();
     refs.projectName.value = state.project.name;
-    updateConnectivity();
     refreshNorms();
+    refreshIssues();
     renderLibrary();
     renderLevelBar();
     renderFurnitureBar();

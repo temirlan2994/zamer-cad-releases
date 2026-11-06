@@ -20,7 +20,6 @@ export const refs = {
   hint: el('canvasHint'),
   statusCursor: el('cursorPos'),
   statusScale: el('scaleInfo'),
-  connectivity: el('connectivityBar'),
   toast: el('toast'),
   fileInput: el('fileInput'),
   underlayInput: el('underlayInput'),

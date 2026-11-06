@@ -19,7 +19,7 @@ import { finalizeRoomOutline, roomRects } from './room-shape.js';
 import { MIN_ROOM_SIZE, roomNetAreaM2 } from './rooms.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls, openingOwnerId } from './walls.js';
-import { isBoundRoom, wallsInsideRooms } from './bound-rooms.js';
+import { wallsInsideRooms } from './bound-rooms.js';
 
 export const SP55 = {
   minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, kitchen: 6 },
@@ -42,18 +42,6 @@ const fmt = (v, d = 1) => v.toFixed(d).replace('.', ',');
 // Проверки одной комнаты: [{ kind, ok, text }].
 export function roomChecks(project, room, level, walls = null) {
   const out = [];
-  if (room.boundIssue) {
-    // Помещение по стенам без своей петли: площадь не считается (ТЭП), прочие
-    // проверки бессмысленны, пока контур не замкнут.
-    const other = room.boundWith && project.rooms.find((r) => r.id === room.boundWith);
-    out.push({
-      kind: 'bound', ok: false,
-      text: room.boundIssue === 'merged'
-        ? `Два помещения в одном контуре: «${room.name}» и «${other?.name || '…'}» — удалите одно или поставьте стену между ними`
-        : `Помещение «${room.name}» не замкнуто — стены не образуют петлю`,
-    });
-    return out;
-  }
   const title = roomType(room.type)?.title || room.name;
   const area = roomNetAreaM2(project, room);
   const minArea = SP55.minArea[room.type];
@@ -104,7 +92,7 @@ export function roomChecks(project, room, level, walls = null) {
 // (терраса всегда под домом) — не перекрытие. Нижняя (раньше в массиве)
 // «съедена» верхней. → [{ lower, upper, rects, areaM2 }].
 export function roomOverlaps(project) {
-  const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r) && !isBoundRoom(r));
+  const list = (project.rooms || []).filter((r) => !r.parentId && !isShaft(r) && !isOpenRoom(r));
   const out = [];
   for (let i = 0; i < list.length; i += 1) {
     const a = list[i];

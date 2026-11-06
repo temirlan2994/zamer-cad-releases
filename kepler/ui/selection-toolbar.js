@@ -1,8 +1,8 @@
 // Единая контекстная панель действий над выделением — одно и то же место
 // для комнат, стен, проёмов, мебели и групп, как в BIM-редакторах.
 
-import { isOpenRoom, isShaft } from '../core/catalog.js';
-import { isBoundRoom, wallsInsideRooms } from '../core/bound-rooms.js';
+import { isShaft } from '../core/catalog.js';
+import { wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
 import { el, escapeHtml } from './dom.js';
@@ -24,17 +24,9 @@ function contentForSelection(sel) {
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
-    if (isBoundRoom(room)) {
-      // Помещение по стенам: правится как обычное — правки идут в его стены.
-      return {
-        label: 'Помещение по стенам',
-        html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
-      };
-    }
     const common = `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${room.parentId ? '' : button('rotate', '↻', 'Повернуть 90°', 'R')}`;
     const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}`;
-    const unbind = isShaft(room) || isOpenRoom(room) || room.parentId ? '' : button('unbind-walls', '⛶', 'Отвязать стены');
-    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${unbind}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
+    return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
   }
   if (sel.type === 'wall') {
     const wall = findWall(sel.key, sel.from);
@@ -161,11 +153,10 @@ export function bindSelectionToolbar() {
       }
       return;
     }
-    if (action === 'unbind-walls' || action === 'split-room') {
+    if (action === 'split-room') {
       const wt = await import('./wall-tool.js');
       const sel = state.selection;
-      if (action === 'unbind-walls' && sel?.type === 'room') wt.unbindWallsAction(sel.id);
-      if (action === 'split-room' && sel?.type === 'wall') wt.splitByWallAction(target.dataset.room, sel.key.slice(2));
+      if (sel?.type === 'wall') wt.splitByWallAction(target.dataset.room, sel.key.slice(2));
       return;
     }
     const actions = await actionsReady;

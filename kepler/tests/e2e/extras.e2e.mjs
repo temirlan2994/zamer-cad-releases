@@ -19,7 +19,8 @@ describe('шаблоны и удобства', () => {
     });
     assert.deepEqual(s.levels, [5, 6]);
     assert.deepEqual(s.bar, ['1 этаж', '2 этаж', '+']);
-    assert.match(await app.page.textContent('#connectivityBar'), /доступны/);
+    const active = await app.page.evaluate(() => window.__kepler.state.project.activeLevel);
+    assert.match(await app.page.textContent(`#issuesPanel [data-issue-id="access:${active}:ok"]`), /доступны от входа/);
   });
 
   it('справка: «?» открывает, Esc закрывает, кнопка и клик мимо', async () => {

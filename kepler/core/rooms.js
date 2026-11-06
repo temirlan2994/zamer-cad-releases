@@ -9,7 +9,7 @@ import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
 import { isUpperLevel } from './model.js';
 import {
-  isBoundRoom, roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
+  roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
 } from './room-shape.js';
 
 export const MIN_ROOM_SIZE = 900;
@@ -269,7 +269,6 @@ export function eatersOf(project, room) {
     const other = project.rooms[i];
     if (other.id === room.id) continue;
     if (other.parentId || room.parentId) continue;
-    if (isBoundRoom(other) || isBoundRoom(room)) continue; // контур в свету — перекрытий нет
     // Закрытое помещение всегда выше террасы/балкона независимо от порядка
     // создания. Открытые площадки никогда не отнимают площадь дома.
     if (open && !isOpenRoom(other)) {
@@ -287,8 +286,6 @@ export function eatersOf(project, room) {
 // и минус область, «съеденная» перекрывающими комнатами поверх этой.
 export function roomNetAreaM2(project, room) {
   if (isShaft(room)) return 0;
-  // Помещение по стенам без своей петли (разомкнуто/слито) в площади не входит.
-  if (isBoundRoom(room) && room.boundIssue) return 0;
   const partition = project.settings?.partition || DEFAULT_PARTITION;
   let area = roomShapeArea(room);
   const parts = roomRects(room);
@@ -371,7 +368,7 @@ export function analyzeConnectivity(project, walls = null) {
 // Т-образных комнат даёт все стороны с их настоящими длинами.
 // Возвращает { rectangular, edges:[{orient:'v'|'h', at, from, to, inSide}] }.
 export function computeRoomEdges(project, room) {
-  if (room.outline || isBoundRoom(room)) {
+  if (room.outline) {
     return {
       rectangular: false,
       edges: roomBoundaryEdges(room).map((edge) => ({
@@ -496,7 +493,7 @@ export function rectsUnionArea(rects) {
 // Дом из ручных стен: толщина наружных стен своя у каждой стены, поэтому
 // пятно — объединение области стен W и помещений (комнаты + куски rects
 // движка v2), а не контур помещения + settings.exterior.
-const footprintRooms = (project) => project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r) && !r.boundIssue);
+const footprintRooms = (project) => project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r));
 
 function wallAreaRects(project, walls) {
   if (!projectHasManualWalls(project)) return null;

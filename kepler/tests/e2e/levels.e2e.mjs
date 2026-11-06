@@ -33,7 +33,7 @@ describe('этажи', () => {
     assert.deepEqual(s.list[1].rooms, s.list[0].rooms, 'лестница на том же месте');
     const below = await app.page.evaluate(() => window.__kepler.state.belowWalls?.length || 0);
     assert.ok(below > 0, 'стены этажа ниже видны подложкой');
-    assert.match(await app.page.textContent('#connectivityBar'), /от лестницы/);
+    assert.match(await app.page.textContent(`#issuesPanel [data-issue-id="access:${s.list[1].id}:ok"]`), /от лестницы/);
   });
 
   it('комнаты второго этажа не трогают первый', async () => {

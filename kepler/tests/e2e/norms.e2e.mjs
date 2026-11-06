@@ -1,5 +1,5 @@
-// e2e норм: сводка в свойствах проекта, блок комнаты, настройка нормы
-// инсоляции на участке, переход к комнате по клику.
+// e2e норм: сводка в панели замечаний «⚠» (не в свойствах), переход к
+// комнате по клику, настройка нормы инсоляции на участке.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
@@ -9,22 +9,28 @@ describe('нормы', () => {
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('сводка «Нормы» в свойствах проекта: инсоляция жилых комнат', async () => {
-    const text = await app.page.textContent('#propsPanel');
-    assert.match(text, /Нормы/);
-    assert.match(text, /Инсоляция — (южная|центральная|северная) зона/);
-    const rows = await app.page.$$eval('#propsPanel .norm-list [data-norm-room]', (ns) => ns.length);
+  it('в свойствах проекта блока норм нет; в панели «⚠» — инсоляция жилых комнат', async () => {
+    const props = await app.page.textContent('#propsPanel');
+    assert.doesNotMatch(props, /Инсоляция — |Площади, свет, высота/);
+    assert.equal(await app.page.$$eval('#propsPanel .norm-list', (ns) => ns.length), 0);
+    await app.page.click('#issuesBtn');
+    assert.equal(await app.page.isVisible('#issuesPanel'), true);
+    const text = await app.page.textContent('#issuesPanel');
+    assert.match(text, /Инсоляция/);
+    assert.match(text, /(южная|центральная|северная) зона/);
+    const rows = await app.page.$$eval('#issuesPanel [data-issue-id^="light:sun:"] [data-goto]', (ns) => ns.length);
     assert.ok(rows >= 2, 'жилые комнаты образца в списке');
   });
 
-  it('клик по комнате в сводке выделяет её и показывает её нормы', async () => {
-    await app.page.click('#propsPanel .norm-list [data-norm-room]');
+  it('клик по комнате в списке выделяет её; свойства — без блока норм', async () => {
+    await app.page.click('#issuesPanel [data-issue-id^="light:sun:"] [data-goto]');
     const sel = await app.page.evaluate(() => window.__kepler.state.selection);
     assert.equal(sel?.type, 'room');
-    const text = await app.page.textContent('#propsPanel');
-    assert.match(text, /Нормы/);
-    assert.match(text, /Инсоляция:|Площадь .* м²/);
+    const props = await app.page.textContent('#propsPanel');
+    assert.doesNotMatch(props, /Инсоляция:/);
+    assert.equal(await app.page.isVisible('#issuesPanel'), true, 'на компьютере панель остаётся открытой');
     await app.page.keyboard.press('Escape');
+    assert.equal(await app.page.isVisible('#issuesPanel'), false, 'Esc закрывает панель');
   });
 
   it('норма на участке: 20 ч не выполнить, пусто — снова по широте', async () => {
@@ -33,7 +39,8 @@ describe('нормы', () => {
     await app.page.locator('#normHours').blur();
     let ok = await app.page.evaluate(() => window.__kepler.state.norms.insolation.ok);
     assert.equal(ok, false);
-    assert.match(await app.page.textContent('#propsPanel'), /не хватает/);
+    assert.match(await app.page.textContent('#issuesPanel'), /не хватает/);
+    assert.match(await app.page.getAttribute('#issuesBtn', 'class'), /\bwarn\b/);
     await app.page.fill('#normHours', '');
     await app.page.locator('#normHours').blur();
     const n = await app.page.evaluate(() => window.__kepler.state.norms.insolation.norm.hours);

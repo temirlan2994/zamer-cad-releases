@@ -4,7 +4,7 @@ import { roomType } from '../core/catalog.js';
 import { roomById } from '../core/model.js';
 import { deriveWalls } from '../core/walls.js';
 import { el, refs } from './dom.js';
-import { renderGapBar } from './gaps.js';
+import { renderIssues } from './issues.js';
 import { renderLibrary } from './library.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
@@ -36,7 +36,7 @@ export function selectObject(selection) {
   const handleOwner = selection?.type === 'item' ? selection.id : selection?.type === 'landscape' ? lsHandleKey(selection) : groupHandleId(selection);
   if (!(handleOwner && state.itemHandle?.id === handleOwner)) state.itemHandle = null;
   state.selection = selection;
-  renderGapBar(); // кнопка «Пристыковать» — только пока пара выделена
+  renderIssues(); // «Пристыковать (сдвинуть …)» и отметка выбранного в списке замечаний
   renderProps();
   updateWallButtons();
   renderSelectionToolbar();

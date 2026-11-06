@@ -12,6 +12,7 @@ import { mutate, redo, tweak, undo } from './store.js';
 import { cycleTheme } from './theme.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
 import { bindViewPanel } from './view-align.js';
+import { bindIssues } from './issues.js';
 import { bindElevInput } from './terrain.js';
 import { startBoundRoomTool, startWallTool } from './wall-tool.js';
 import { fitView, zoomAt } from './view.js';
@@ -42,6 +43,7 @@ export function bindToolbar() {
     startBoundRoomTool();
   });
   bindViewPanel(); // «⟲ Поворот вида» у кнопок масштаба (ui/view-align.js)
+  bindIssues(); // «⚠ N» — замечания и нормы в левом верхнем углу холста (ui/issues.js)
   el('dimModeBtn').addEventListener('click', () => {
     const cur = state.project.settings.dimOuter !== false;
     tweak(() => { state.project.settings.dimOuter = !cur; });

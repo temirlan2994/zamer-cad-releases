@@ -176,7 +176,12 @@ describe('типы проёмов и высота потолка', () => {
     await app.page.locator('#roomCeil').blur();
     const ceil = () => app.page.evaluate(() => window.__kepler.state.project.rooms[0].ceiling);
     assert.equal(await ceil(), 2400);
-    assert.match(await app.page.textContent('#propsPanel'), /Высота ≈ 2,40 м < 2,5 м/);
+    // Замечание — в панели «⚠» (не в свойствах), с переходом к этой комнате.
+    const height = `#issuesPanel [data-issue-id^="height:"]`;
+    assert.match(await app.page.textContent(height), /Высота ≈ 2,40 м < 2,5 м/);
+    assert.doesNotMatch(await app.page.textContent('#propsPanel'), /Высота ≈/);
+    assert.ok(await app.page.evaluate((id) => window.__kepler.state.issues.groups.flatMap((g) => g.items)
+      .some((i) => i.id.startsWith('height:') && i.target?.id === id), r.id));
     await app.page.fill('#roomCeil', '');
     await app.page.locator('#roomCeil').blur();
     assert.equal(await ceil(), null);

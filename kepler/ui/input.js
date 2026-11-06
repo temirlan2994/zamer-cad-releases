@@ -20,8 +20,7 @@ import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
 import { applyRoomShapeHandle, clampRoomNotch } from '../core/room-shape.js';
-import { groupCargo, moveRoomGroup } from '../core/room-group.js';
-import { boundHandleMoves, levelSnapshot, moveBoundRoomEdges, restoreLevel } from '../core/bound-edit.js';
+import { groupCargo } from '../core/room-group.js';
 import { moveWallBy } from '../core/wall-edit.js';
 import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
@@ -76,7 +75,7 @@ import {
 // Перемещение объекта пальцем: долгое нажатие (мс), допуск дрожания (px).
 const TOUCH_HOLD_MS = 420;
 const TOUCH_HOLD_SLOP = 9;
-const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'bound-move', 'multi', 'wall', 'entry', 'ls-move']);
+const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move']);
 let drag = null;
 
 // Касание: действие (поставить объект, точку, открыть поле ввода) — только на
@@ -209,9 +208,6 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   // помещениями и мебелью внутри + отдельно выбранная мебель.
   // Состав груза — как у стрелок и поворота группы (core/room-group.js).
   const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
-  // Помещение по стенам едет со стенами петли: каждый кадр — от снимка
-  // начала через moveRoomGroup (core/bound-edit.js).
-  const bound = cargo.rooms.some((room) => room.bound);
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
   drag = {
@@ -222,25 +218,23 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
     valid: true,
     roomIds: [...sel.roomIds],
     itemIds: [...sel.itemIds],
-    levelStart: bound ? levelSnapshot(state.project) : null,
     roomStarts: movedRooms,
     itemStarts: movedItems,
     wasSelected, // клик без сдвига по уже выбранной группе мебели — смена режима ручек
   };
 }
 
-// Направляющие группы (комнаты + мебель) в осях дома. bound — помещения по
-// стенам: только оси дома, стены их петель не цели.
-function groupGuideSession(d, bound) {
-  const rooms = d.kind === 'bound-move' ? [d.id] : [...(d.roomStarts?.keys() || [])];
-  const items = d.kind === 'bound-move' ? [] : [...(d.itemStarts?.keys() || [])];
+// Направляющие группы (комнаты + мебель) в осях дома.
+function groupGuideSession(d) {
+  const rooms = [...(d.roomStarts?.keys() || [])];
+  const items = [...(d.itemStarts?.keys() || [])];
   const roomSet = new Set(rooms);
   const moving = [
     ...state.project.rooms.filter((r) => roomSet.has(r.id)).map((r) => roomShape(r)),
     ...state.project.items.filter((i) => items.includes(i.id)).map((i) => itemShape(i)),
   ];
   return startGuideSession({
-    space: 'plan', moving, frames: bound || rooms.length ? [0] : null, ownAngles: [0],
+    space: 'plan', moving, frames: rooms.length ? [0] : null, ownAngles: [0],
     exclude: { rooms: roomSet, items: new Set(items), walls: (w) => (w.rooms || []).some((id) => roomSet.has(id)) },
   });
 }
@@ -717,13 +711,7 @@ export function bindCanvasInput() {
     }
     const handleHit = hitRoomHandle(screen);
     if (handleHit) {
-      if (handleHit.shapeHandle?.bound) {
-        // Ручки помещения по стенам тянут стены (core/bound-edit.js).
-        drag = {
-          kind: 'bound-resize', roomId: handleHit.room.id, handle: handleHit.shapeHandle,
-          levelStart: levelSnapshot(state.project), before: snapshot(), moved: false, valid: true,
-        };
-      } else if (handleHit.shapeHandle?.kind) {
+      if (handleHit.shapeHandle?.kind) {
         const pending = state.pendingRoomSplit?.roomId === handleHit.room.id ? state.pendingRoomSplit : null;
         drag = {
           kind: 'shape-resize', roomId: handleHit.room.id, handle: handleHit.shapeHandle,
@@ -823,11 +811,6 @@ export function bindCanvasInput() {
         return;
       }
       selectObject({ type: 'room', id: room.id });
-      // Помещение по стенам едет вместе со стенами своей петли.
-      if (room.bound) {
-        drag = { kind: 'bound-move', id: room.id, plan, levelStart: levelSnapshot(state.project), before: snapshot(), moved: false, valid: true };
-        return;
-      }
       // Перевозимый груз фиксируется в момент захвата: вложенные помещения и
       // мебель, стоящая внутри, — чтобы комната не «сметала» чужую мебель по пути.
       const children = state.project.rooms.filter((r) => r.parentId === room.id);
@@ -994,60 +977,11 @@ export function bindCanvasInput() {
       return;
     }
 
-    if (drag.kind === 'bound-move' || (drag.kind === 'multi' && drag.levelStart)) {
-      const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
-      const grid = { x: Math.round(raw.x / gridStep()) * gridStep(), y: Math.round(raw.y / gridStep()) * gridStep() };
-      if (!grid.x && !grid.y && !drag.moved) return; // дрожание при клике — не перенос
-      // Помещение по стенам — направляющие только по осям дома (стены петли едут с ним).
-      if (!drag.guides) drag.guides = groupGuideSession(drag, true);
-      const gd = guideDelta(drag.guides, raw, grid, event);
-      const dx = Math.round(gd.x);
-      const dy = Math.round(gd.y);
-      drag.moved = true;
-      restoreLevel(state.project, drag.levelStart);
-      const res = dx || dy
-        ? moveRoomGroup(state.project, drag.kind === 'multi' ? drag.roomIds : [drag.id], drag.itemIds || [], dx, dy)
-        : { ok: true };
-      drag.valid = res.ok;
-      drag.reason = res.reason;
-      const room = drag.kind === 'bound-move' ? roomById(state.project, drag.id) : null;
-      state.ghost = room ? {
-        rect: { x: room.x + (res.ok ? 0 : dx), y: room.y + (res.ok ? 0 : dy), w: room.w, h: room.h },
-        valid: res.ok, label: ' ', reason: res.ok ? '' : res.reason,
-      } : null;
-      refreshDerived();
-      requestDraw();
-      return;
-    }
-
-    if (drag.kind === 'bound-resize') {
-      const room0 = roomById(state.project, drag.roomId);
-      if (!room0) return;
-      const snap = (value) => Math.round(value / gridStep()) * gridStep();
-      const target = event.shiftKey ? plan : { x: snap(plan.x), y: snap(plan.y) };
-      restoreLevel(state.project, drag.levelStart);
-      const room = roomById(state.project, drag.roomId);
-      const moves = boundHandleMoves(room, drag.handle, target);
-      if (!moves.length && !drag.moved) return;
-      drag.moved = true;
-      const res = moveBoundRoomEdges(state.project, room.id, moves);
-      drag.valid = res.ok;
-      drag.reason = res.reason;
-      refreshDerived();
-      const now = roomById(state.project, drag.roomId);
-      state.ghost = now ? {
-        rect: { x: now.x, y: now.y, w: now.w, h: now.h }, valid: res.ok,
-        label: `${(now.w / 1000).toFixed(2)} × ${(now.h / 1000).toFixed(2)} м`, reason: res.ok ? '' : res.reason,
-      } : null;
-      requestDraw();
-      return;
-    }
-
     if (drag.kind === 'multi') {
       const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
       const grid = { x: Math.round(raw.x / gridStep()) * gridStep(), y: Math.round(raw.y / gridStep()) * gridStep() };
       if (!grid.x && !grid.y && !drag.moved) return; // дрожание при клике — не перенос
-      if (!drag.guides) drag.guides = groupGuideSession(drag, false);
+      if (!drag.guides) drag.guides = groupGuideSession(drag);
       const gd = guideDelta(drag.guides, raw, grid, event);
       const dx = Math.round(gd.x);
       const dy = Math.round(gd.y);
@@ -1503,21 +1437,6 @@ export function bindCanvasInput() {
     if (finished.kind === 'mwall-end') {
       if (!finished.moved) { requestDraw(); return; }
       reconcileOpenings(); // проёмы за новым торцом прижимаются или удаляются
-      refreshDerived();
-      pushHistory(finished.before);
-      afterChange();
-      return;
-    }
-
-    if (finished.kind === 'bound-move' || finished.kind === 'bound-resize') {
-      state.ghost = null;
-      if (!finished.moved) { requestDraw(); return; }
-      if (!finished.valid) {
-        restoreFrom(finished.before);
-        toast(finished.reason || 'Так изменить нельзя', true);
-        return;
-      }
-      reconcileOpenings();
       refreshDerived();
       pushHistory(finished.before);
       afterChange();

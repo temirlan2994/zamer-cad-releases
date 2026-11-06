@@ -17,12 +17,19 @@ describe('нестандартный зазор между комнатами', 
   const gaps = () => app.page.evaluate(() => (window.__kepler.state.gaps || []).length);
   const roomsXY = () => app.page.evaluate(() => JSON.stringify(window.__kepler.state.project.rooms.map((r) => [r.id, r.x, r.y])));
 
-  it('плашка показывает зазор, «Пристыковать» его убирает, Ctrl+Z возвращает', async () => {
+  it('панель «⚠» показывает зазор, «Пристыковать» его убирает, Ctrl+Z возвращает', async () => {
     assert.ok((await gaps()) >= 1, 'зазор не найден в фикстуре');
-    await app.page.waitForSelector('#gapBar:not([hidden])');
-    await app.page.click('#gapBar .gap-text');
+    await app.page.click('#issuesBtn');
+    const item = '#issuesPanel [data-issue-id^="gap:"]';
+    await app.page.waitForSelector(`${item} [data-goto]`);
+    assert.match(await app.page.textContent(item), /Нестандартный зазор \d+ мм/);
+    await app.page.click(`${item} [data-goto]`);
+    const sel = await app.page.evaluate(() => window.__kepler.state.selection);
+    assert.equal(sel?.type, 'multi');
+    assert.equal(sel.roomIds.length, 2, 'выбрана пара комнат зазора');
+    assert.match(await app.page.textContent(`${item} [data-action="dock-gap"]`), /сдвинуть «.+» на \d+ мм/);
     const before = await roomsXY();
-    await app.page.click('#gapBar [data-action="dock-gap"]');
+    await app.page.click(`${item} [data-action="dock-gap"]`);
     assert.notEqual(await roomsXY(), before, 'комната не сдвинулась');
     assert.equal(await gaps(), 0, 'зазор остался');
     await app.page.keyboard.press('Control+z');

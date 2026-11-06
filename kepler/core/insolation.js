@@ -154,8 +154,7 @@ export function windowsOf(project) {
       if (!placed) continue;
       let facade; let roomId = o.roomId;
       if (o.host) {
-        // Окно ручной стены: помещение — со стороны дома (помещение по стенам
-        // или блок-комната), фасад — противоположная грань стены.
+        // Окно ручной стены: помещение — со стороны дома, фасад — противоположная грань стены.
         const own = hostOpeningRoom(lp, o, walls);
         if (!own) continue;
         roomId = own.room.id;

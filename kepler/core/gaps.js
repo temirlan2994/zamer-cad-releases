@@ -25,7 +25,7 @@ function roomsOverlapArea(a, b) {
 }
 
 function participates(room) {
-  return !isOpenRoom(room) && !isShaft(room) && !room.bound; // помещение по стенам не двигается
+  return !isOpenRoom(room) && !isShaft(room);
 }
 
 // Ближайшая пара противостоящих сторон двух комнат с промахом зазора.

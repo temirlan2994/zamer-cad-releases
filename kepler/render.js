@@ -582,6 +582,15 @@ export function createRenderer(canvas) {
       }
       ctx.setLineDash([]);
     }
+    // Подсветка места замечания (ui/issues.js) — на мгновение после перехода.
+    if (!print && state.flash?.rects && state.flash.levelId === state.project.activeLevel) {
+      ctx.save();
+      ctx.strokeStyle = '#f0a020';
+      ctx.fillStyle = 'rgba(240, 160, 32, 0.14)';
+      ctx.lineWidth = px(4);
+      for (const r of state.flash.rects) { ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h); }
+      ctx.restore();
+    }
 
     // --- Экранный слой ---
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1304,10 +1313,6 @@ function drawFloor(ctx, room, tokens, px) {
   }
   ctx.fillStyle = tint;
   for (const rect of roomRects(room)) ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  // Помещение по стенам без своей петли — красный пунктир (как Revit «Not Enclosed»).
-  if (room.bound && room.boundIssue && Array.isArray(room.poly)) {
-    drawLoopShape(ctx, { poly: room.poly, holes: room.holes }, tokens.danger || '#d33', px, 0);
-  }
 }
 
 // Замкнутые петли стен без помещения — штриховка «не назначено».

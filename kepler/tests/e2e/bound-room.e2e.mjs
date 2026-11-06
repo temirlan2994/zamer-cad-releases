@@ -1,18 +1,32 @@
-// e2e помещения по стенам (этап C): нарисовать 4 стены, кнопкой «Помещение»
-// создать помещение кликом внутри петли, сдвинуть стену — контур и площадь
-// пересчитались; отмена/повтор; перезагрузка (формат kepler-plan/6).
+// e2e «Помещение» из петли стен: нарисовать 4 стены, кнопкой «Помещение»
+// кликнуть внутри петли — вместо стен обычная комната. Дальше она ведёт
+// себя как нарисованная: ручка стороны, магнит к соседу (общая стена),
+// наезд — замечание «перекрытие», копия Ctrl+D, отмена/повтор, перезагрузка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew, clickWorld, worldToClient } from './helpers.mjs';
 
-const roomState = (page) => page.evaluate(() => {
+const plan = (page) => page.evaluate(() => {
   const { state } = window.__kepler;
-  const r = state.project.rooms.find((x) => x.bound);
-  return r ? { id: r.id, x: r.x, y: r.y, w: r.w, h: r.h, issue: r.boundIssue || null, seed: r.bound.seed, n: state.project.rooms.length } : null;
+  return {
+    rooms: state.project.rooms.map((r) => ({ id: r.id, x: r.x, y: r.y, w: r.w, h: r.h, bound: 'bound' in r })),
+    walls: state.project.walls.length,
+    selection: state.selection,
+  };
 });
 
-describe('помещение по стенам', () => {
+async function drag(page, a, b, { up = true } = {}) {
+  const from = await worldToClient(page, a[0], a[1]);
+  const to = await worldToClient(page, b[0], b[1]);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  if (up) await page.mouse.up();
+}
+
+describe('помещение из петли стен — обычная комната', () => {
   let app;
+  let id;
   before(async () => {
     app = await startApp();
     await openNew(app.page);
@@ -25,133 +39,112 @@ describe('помещение по стенам', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('4 стены → «Помещение» → клик внутри петли создаёт помещение в свету', async () => {
+  it('4 стены → «Помещение» → клик внутри: стены стали стенами комнаты', async () => {
     const { page } = app;
     await page.click('#wallToolBtn');
     for (const [x, y] of [[0, 0], [4000, 0], [4000, 3000], [0, 3000], [0, 0]]) await clickWorld(page, x, y);
     await page.keyboard.press('Enter');
+    const t = await page.evaluate(() => window.__kepler.state.project.walls[0].thickness);
+    assert.equal((await plan(page)).walls, 4);
     await page.click('#boundRoomBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'bound-room');
-    // Клик снаружи — помещение не создаётся.
-    await clickWorld(page, 6000, 1500);
-    assert.equal(await roomState(page), null);
+    await clickWorld(page, 6000, 1500); // снаружи — ничего
+    assert.equal((await plan(page)).rooms.length, 0);
     await clickWorld(page, 2000, 1500);
-    const r = await roomState(page);
-    assert.ok(r, 'помещение создано');
-    const t = await page.evaluate(() => window.__kepler.state.project.walls[0].thickness);
-    assert.deepEqual({ x: r.x, y: r.y, w: r.w, h: r.h }, { x: t / 2, y: t / 2, w: 4000 - t, h: 3000 - t });
-    assert.equal(r.issue, null);
-    const sel = await page.evaluate(() => window.__kepler.state.selection);
-    assert.deepEqual(sel, { type: 'room', id: r.id });
+    const s = await plan(page);
+    assert.equal(s.rooms.length, 1);
+    assert.equal(s.walls, 0, 'ручных стен не осталось');
+    const [r] = s.rooms;
+    id = r.id;
+    assert.deepEqual(r, { id, x: t / 2, y: t / 2, w: 4000 - t, h: 3000 - t, bound: false });
+    assert.deepEqual(s.selection, { type: 'room', id });
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
+    // Стены — стены комнаты той же толщины.
+    const own = await page.evaluate((rid) => window.__kepler.state.walls
+      .filter((w) => w.kind === 'own' && w.rooms[0] === rid).map((w) => w.thickness), id);
+    assert.equal(own.length, 4);
+    assert.ok(own.every((x) => x === t), JSON.stringify(own));
   });
 
-  it('сдвиг стены — контур и площадь пересчитываются; отмена и повтор', async () => {
+  it('ручка стороны тянет комнату; отмена и повтор', async () => {
     const { page } = app;
-    await page.keyboard.press('Escape');
-    const before = await roomState(page);
-    const from = await worldToClient(page, 4000, 1500);
-    const to = await worldToClient(page, 5000, 1500);
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.down();
-    await page.mouse.move(to.x, to.y, { steps: 6 });
-    await page.mouse.up();
-    const after1 = await roomState(page);
-    assert.equal(after1.w, before.w + 1000);
-    const area = await page.evaluate(async (id) => {
-      const { roomNetAreaM2 } = await import('./core/rooms.js');
-      const { state } = window.__kepler;
-      return roomNetAreaM2(state.project, state.project.rooms.find((x) => x.id === id));
-    }, after1.id);
-    assert.ok(Math.abs(area - (after1.w * after1.h) / 1e6) < 1e-6, `площадь ${area}`);
-    await page.keyboard.press('Control+z');
-    assert.equal((await roomState(page)).w, before.w);
-    await page.keyboard.press('Control+Shift+z');
-    assert.equal((await roomState(page)).w, before.w + 1000);
-  });
-
-  it('как обычное: ручка стороны тянет стену, перенос, копия Ctrl+D; отмена и повтор', async () => {
-    const { page } = app;
-    const drag = async (a, b) => {
-      const from = await worldToClient(page, a[0], a[1]);
-      const to = await worldToClient(page, b[0], b[1]);
-      await page.mouse.move(from.x, from.y);
-      await page.mouse.down();
-      await page.mouse.move(to.x, to.y, { steps: 8 });
-      await page.mouse.up();
-    };
-    const boundCount = () => page.evaluate(() => window.__kepler.state.project.rooms.filter((x) => x.bound).length);
-    const wallCount = () => page.evaluate(() => window.__kepler.state.project.walls.length);
-    const r0 = await roomState(page);
-    await clickWorld(page, r0.x + r0.w / 2, r0.y + r0.h / 2);
-    assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'room', id: r0.id });
-    // Ручка правой стороны: стена едет, помещение шире.
-    const eastX = r0.x + r0.w;
-    const midY = r0.y + r0.h / 2;
-    await drag([eastX, midY], [eastX + 1000, midY]);
-    const r1 = await roomState(page);
+    const [r0] = (await plan(page)).rooms;
+    await drag(page, [r0.x + r0.w, r0.y + r0.h / 2], [r0.x + r0.w + 1000, r0.y + r0.h / 2]);
+    const [r1] = (await plan(page)).rooms;
     assert.ok(Math.abs(r1.w - r0.w - 1000) <= 100, `ширина ${r0.w} → ${r1.w}`);
-    assert.equal(r1.issue, null);
     assert.equal(r1.x, r0.x);
-    // Перенос: помещение и его стены.
-    const walls0 = await page.evaluate(() => window.__kepler.state.project.walls.map((w) => w.axis.a.x));
-    await drag([r1.x + 800, midY], [r1.x + 1800, midY + 500]);
-    const r2 = await roomState(page);
-    assert.deepEqual([r2.x - r1.x, r2.y - r1.y, r2.w, r2.h], [1000, 500, r1.w, r1.h]);
-    const walls1 = await page.evaluate(() => window.__kepler.state.project.walls.map((w) => w.axis.a.x));
-    assert.deepEqual(walls1, walls0.map((x) => x + 1000));
-    // Копия: стены петли + новое помещение.
-    await page.keyboard.press('Control+d');
-    assert.equal(await boundCount(), 2);
-    assert.equal(await wallCount(), 8);
-    const copy = await page.evaluate(() => {
+    await page.keyboard.press('Control+z');
+    assert.equal((await plan(page)).rooms[0].w, r0.w);
+    await page.keyboard.press('Control+Shift+z');
+    assert.equal((await plan(page)).rooms[0].w, r1.w);
+  });
+
+  it('магнит к соседу — общая стена; наезд — замечание, как у обычной', async () => {
+    const { page } = app;
+    const [r] = (await plan(page)).rooms;
+    const nx = r.x + r.w + 1500;
+    await page.evaluate(async ({ x, y, h }) => {
+      const { mutate } = await import('./ui/store.js');
+      const { createRoom } = await import('./core/model.js');
       const { state } = window.__kepler;
-      const r = state.project.rooms.filter((x) => x.bound)[1];
-      return { w: r.w, h: r.h, issue: r.boundIssue || null, selected: state.selection?.id === r.id };
-    });
-    assert.deepEqual(copy, { w: r2.w, h: r2.h, issue: null, selected: true });
+      mutate(() => { const n = createRoom('bedroom', x, y, 3000, h); n.id = 'N'; state.project.rooms.push(n); });
+    }, { x: nx, y: r.y, h: r.h });
+    const partition = await page.evaluate(() => window.__kepler.state.project.settings.partition);
+    // Тянем на 1440: магнит ставит зазор ровно в перегородку.
+    const cy = r.y + r.h / 2;
+    await drag(page, [r.x + 800, cy], [r.x + 800 + 1440, cy]);
+    const docked = (await plan(page)).rooms.find((x) => x.id === id);
+    assert.equal(nx - (docked.x + docked.w), partition, `зазор ${nx - (docked.x + docked.w)}`);
+    const shared = await page.evaluate((rid) => window.__kepler.state.walls
+      .some((w) => w.kind === 'shared' && w.rooms.includes(rid) && w.rooms.includes('N')), id);
+    assert.ok(shared, 'общая стена с соседом');
+    // Наезд — как у нарисованной комнаты: перенос разрешён, замечание
+    // «перекрытие» в нормах; Ctrl+Z возвращает.
+    await drag(page, [docked.x + 800, cy], [docked.x + 2800, cy]);
+    const over = (await plan(page)).rooms.find((x) => x.id === id);
+    assert.ok(over.x > docked.x, 'комната сдвинута');
+    const overlap = await page.evaluate(() => window.__kepler.state.norms.problems.some((x) => x.kind === 'overlap'));
+    assert.ok(overlap, 'замечание о перекрытии');
     await page.keyboard.press('Control+z');
-    assert.equal(await boundCount(), 1);
-    assert.equal(await wallCount(), 4);
+    const back = (await plan(page)).rooms.find((x) => x.id === id);
+    assert.deepEqual([back.x, back.y], [docked.x, docked.y]);
+  });
+
+  it('копия Ctrl+D — обычная копия; отмена и повтор', async () => {
+    const { page } = app;
+    await clickWorld(page, ...(await page.evaluate((rid) => {
+      const r = window.__kepler.state.project.rooms.find((x) => x.id === rid);
+      return [r.x + r.w / 2, r.y + r.h / 2];
+    }, id)));
+    assert.deepEqual((await plan(page)).selection, { type: 'room', id });
+    const n0 = (await plan(page)).rooms.length;
+    await page.keyboard.press('Control+d');
+    const s = await plan(page);
+    assert.equal(s.rooms.length, n0 + 1);
+    assert.equal(s.walls, 0);
+    const src = s.rooms.find((x) => x.id === id);
+    const copy = s.rooms.find((x) => x.id === s.selection.id);
+    assert.notEqual(copy.id, id);
+    assert.deepEqual([copy.w, copy.h, copy.bound], [src.w, src.h, false]);
+    await page.keyboard.press('Control+z');
+    assert.equal((await plan(page)).rooms.length, n0);
     await page.keyboard.press('Control+Shift+z');
-    assert.equal(await boundCount(), 2);
-    await page.keyboard.press('Control+z');
-    await page.keyboard.press('Control+z');
-    assert.deepEqual(await roomState(page), { ...r1, seed: (await roomState(page)).seed });
-    await page.keyboard.press('Control+Shift+z');
-    assert.equal((await roomState(page)).x, r2.x);
+    assert.equal((await plan(page)).rooms.length, n0 + 1);
     await page.keyboard.press('Escape');
   });
 
-  it('удаление стены — помещение не замкнуто, замечание в нормах; отмена возвращает', async () => {
+  it('сохранение и перезагрузка: комнаты на месте', async () => {
     const { page } = app;
-    const wallId = await page.evaluate(() => window.__kepler.state.project.walls[2].id);
-    await page.evaluate(async (id) => {
-      const { mutate } = await import('./ui/store.js');
-      const { removeManualWall } = await import('./core/wall-manual.js');
-      const { state } = window.__kepler;
-      mutate(() => removeManualWall(state.project, id));
-    }, wallId);
-    assert.equal((await roomState(page)).issue, 'open');
-    const problem = await page.evaluate(() => window.__kepler.state.norms.problems.some((p) => p.kind === 'bound'));
-    assert.ok(problem);
-    await page.keyboard.press('Control+z');
-    assert.equal((await roomState(page)).issue, null);
-  });
-
-  it('сохранение и перезагрузка: помещение и контур на месте, формат 6', async () => {
-    const { page } = app;
-    const before = await roomState(page);
-    const schema = await page.evaluate(async () => {
+    const before = await plan(page);
+    await page.evaluate(async () => {
       const store = await import('./ui/store.js');
       store.flushAutosave();
-      return JSON.parse(localStorage.getItem('kepler-plan-autosave')).schema;
     });
-    assert.equal(schema, 'kepler-plan/6');
     await page.reload();
-    await page.waitForFunction(() => Boolean(window.__kepler) && window.__kepler.state.project.rooms?.some((r) => r.bound));
-    const r = await roomState(page);
-    assert.deepEqual({ x: r.x, y: r.y, w: r.w, h: r.h, issue: r.issue }, { x: before.x, y: before.y, w: before.w, h: before.h, issue: null });
+    await page.waitForFunction(() => Boolean(window.__kepler) && window.__kepler.state.project.rooms?.length > 0);
+    const after = await plan(page);
+    assert.deepEqual(after.rooms, before.rooms);
+    assert.equal(after.walls, 0);
   });
 
   it('без ошибок в консоли', () => {

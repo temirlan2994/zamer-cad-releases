@@ -5,6 +5,8 @@ export const state = {
   walls: [],
   freeLoops: [], // замкнутые петли стен без помещения (core/bound-rooms.js)
   gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
+  issues: null, // замечания для кнопки «⚠» (core/issues.js, ui/issues.js)
+  flash: null, // { rects, levelId } — мгновенная подсветка места замечания
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)

@@ -1,35 +1,42 @@
-// Помещения по стенам (этап C, docs/walls-v2-architecture.md, раздел 2).
-// Чистый модуль без DOM.
+// Петли ручных стен → обычные комнаты (docs/walls-v2-architecture.md,
+// раздел 2). Чистый модуль без DOM.
 //
-// Помещение с room.bound = { mode: 'walls', seed } своих стен не порождает:
-// его контур — связная компонента свободных клеток сжатой сетки
-// (core/ortho-grid.js), содержащая seed. Препятствия — тела стен (комнатных и
-// ручных, кроме roomBounding: false; «линии разделения» hidden — входят) и
-// блок-комнаты. Компонента, касающаяся края сетки, — улица. Контур сразу
-// «в свету»: площадь чистая, как у блок-комнат.
+// Замкнутая петля ручных стен ищется заливкой сжатой сетки
+// (core/ortho-grid.js): препятствия — тела стен (кроме roomBounding: false)
+// и комнаты; компонента свободных клеток, касающаяся края сетки, — улица.
+// Контур петли сразу «в свету».
 //
-// Кеш в комнате (пересчитывается resolveBoundRooms после каждого
-// deriveWalls): room.poly — внешний контур (абсолютные точки, оси дома),
-// room.holes — дыры (колонна-стена внутри), x/y/w/h — габарит,
-// room.boundIssue — 'open' (петля разомкнулась) | 'merged' (две петли
-// слились, площадь — первому помещению) | нет. Всё, что читает комнату
-// (нормы, ТЭП, площади, мебель), идёт через roomPolygon/roomRects
-// (core/room-shape.js) — там единственная ветка.
+// Инструмент «Помещение» (createLoopRoom) превращает петлю в ОБЫЧНУЮ
+// комнату — такую же, как нарисованная инструментом «Комната»: контур «в
+// свету» (прямоугольник или outline), стены дальше выводит движок. Ручные
+// стены, чьё тело целиком лежит в кольце стен контура (той же толщины, что и
+// сторона), удаляются: их толщина, класс, скрытие и высота переходят в
+// wallOverrides стороны комнаты, проёмы host — в обычные проёмы комнаты
+// (side/offset). Стены, выходящие за кольцо (торчащие концы, Т-примыкания),
+// остаются ручными; сторона комнаты получает их толщину — тела совпадают,
+// объединение v2 их не удваивает. Сосед-комната на зазоре толщины стены —
+// общая стена (wallOverrides[s|a|b]), как у состыкованных магнитом комнат.
+//
+// Старые «помещения по стенам» (room.bound, схема 6 до этой правки)
+// конвертируются тем же алгоритмом при открытии файла (convertBoundRooms из
+// normalizeProject).
 
-import { makeId } from './model.js';
+import { createRoom, makeId } from './model.js';
 import { gridAxis, mergeCells, rectsCycles, traceCycles } from './ortho-grid.js';
 import {
-  isBoundRoom, roomBoundaryEdges, roomContainsPoint, roomLabelPoint, roomPolygon, roomRects,
+  finalizeRoomOutline, roomBoundaryEdges, roomContainsPoint, roomPolygon, roomRects,
 } from './room-shape.js';
-import { isOpenRoom, isShaft, roomType } from './catalog.js';
+import { DEFAULT_EXTERIOR, DEFAULT_PARTITION, isOpenRoom, isShaft } from './catalog.js';
 import {
-  manualWallGeometry, openingRect, ownKey, sharedKey, sideEdge, wallRects, wallSegments,
+  MAX_SHARED_GAP, deriveWalls, manualWallGeometry, openingRect, ownKey, sharedKey, sideEdge, wallRects,
 } from './walls.js';
-
-export { isBoundRoom };
 
 export const MIN_LOOP_SIZE = 200; // мм — уже по любой оси — щель, а не помещение (MIN_SHAFT_SIZE)
 const MARGIN = 1000; // поле вокруг всех препятствий: компонента улицы касается края
+const EPS = 1; // мм
+
+// Только для миграции старых файлов: признак устаревшего «помещения по стенам».
+const isBoundRoom = (room) => room?.bound?.mode === 'walls';
 
 // ---------------------------------------------------------------- Поле петель
 
@@ -40,7 +47,6 @@ function obstacleRects(project, walls) {
     for (const r of wallRects(w)) if (r.w > 0.25 && r.h > 0.25) out.push(r);
   }
   for (const room of project.rooms || []) {
-    if (isBoundRoom(room)) continue;
     for (const r of roomRects(room)) if (r.w > 0.25 && r.h > 0.25) out.push(r);
   }
   return out;
@@ -134,142 +140,286 @@ export function compShape(field, c) {
   };
 }
 
-function applyShape(room, shape) {
-  room.poly = shape.poly.map((p) => ({ x: p.x, y: p.y }));
-  if (shape.holes.length) room.holes = shape.holes.map((h) => h.map((p) => ({ x: p.x, y: p.y })));
-  else delete room.holes;
-  room.x = shape.bbox.x; room.y = shape.bbox.y; room.w = shape.bbox.w; room.h = shape.bbox.h;
-  delete room.outline;
-  delete room.notch;
-  delete room.boundIssue;
-  delete room.boundWith;
-}
+const tooSmall = (info) => info.x1 - info.x0 < MIN_LOOP_SIZE || info.y1 - info.y0 < MIN_LOOP_SIZE;
 
-// Компонента с наибольшим пересечением с прошлым контуром помещения (seed
-// попал в стену). −1 — пересечения нет.
-function bestOverlap(field, room) {
-  if (!Array.isArray(room.poly) || room.poly.length < 4) return -1;
-  const { xs, ys, nx, comp, comps } = field;
-  const xMin = Math.min(...room.poly.map((p) => p.x)); const xMax = Math.max(...room.poly.map((p) => p.x));
-  const yMin = Math.min(...room.poly.map((p) => p.y)); const yMax = Math.max(...room.poly.map((p) => p.y));
-  const score = new Map();
-  for (let j = 0; j < ys.length - 1; j += 1) {
-    const cy = (ys[j] + ys[j + 1]) / 2;
-    if (cy < yMin || cy > yMax) continue;
-    for (let i = 0; i < nx; i += 1) {
-      const cx = (xs[i] + xs[i + 1]) / 2;
-      if (cx < xMin || cx > xMax) continue;
-      const c = comp[j * nx + i];
-      if (c < 0 || comps[c].open || !roomContainsPoint(room, cx, cy)) continue;
-      score.set(c, (score.get(c) || 0) + (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]));
-    }
-  }
-  let best = -1; let bestArea = 0;
-  for (const [c, a] of score) if (a > bestArea) { bestArea = a; best = c; }
-  return best;
-}
-
-function setIssue(room, issue, withId = null) {
-  room.boundIssue = issue;
-  if (withId) room.boundWith = withId; else delete room.boundWith;
-}
-
-// Пересчёт контуров всех помещений по стенам активного этажа (вызывается
-// после deriveWalls). Мутирует кеш комнат (poly/holes/x/y/w/h/boundIssue);
-// seed, попавший в стену, переставляется в новую компоненту.
-// → { field, owner: Map(comp → roomId), free: [shape] — замкнутые петли без помещения }.
-export function resolveBoundRooms(project, walls) {
-  const bound = (project.rooms || []).filter(isBoundRoom);
-  const field = (bound.length || (project.walls || []).length) ? loopField(project, walls) : null;
-  const owner = new Map();
-  for (const room of bound) {
-    let c = compAt(field, room.bound.seed);
-    let moved = false;
-    if (c < 0 && field) { c = bestOverlap(field, room); moved = c >= 0; }
-    if (c < 0) { setIssue(room, 'open'); continue; }
-    if (field.comps[c].open) { setIssue(room, 'open'); continue; }
-    if (owner.has(c)) { setIssue(room, 'merged', owner.get(c)); continue; }
-    const shape = compShape(field, c);
-    if (!shape) { setIssue(room, 'open'); continue; }
-    owner.set(c, room.id);
-    applyShape(room, shape);
-    if (moved) {
-      const p = roomLabelPoint(room);
-      room.bound = { ...room.bound, seed: { x: p.x, y: p.y } };
-    }
-  }
-  const free = [];
-  if (field) {
-    for (const info of field.comps) {
-      if (info.open || owner.has(info.id)) continue;
-      if (info.x1 - info.x0 < MIN_LOOP_SIZE || info.y1 - info.y0 < MIN_LOOP_SIZE) continue;
-      // Петля только из блок-комнат (двор между ними) тоже «свободна» — но
-      // показываем её, лишь если её касается ручная стена.
-      if (!(project.walls || []).length) continue;
-      const shape = compShape(field, info.id);
-      if (shape) free.push({ comp: info.id, ...shape });
-    }
-  }
-  return { field, owner, free };
-}
-
-// Помещения следуют за своей площадью после правки стен: seed каждого
-// помещения по стенам переставляется в компоненту, сильнее всего
-// пересекающуюся с ожидаемым контуром (expected: Map(roomId → poly); иначе —
-// прошлый кеш room.poly). Без этого seed, оставшийся за сдвинутой стеной,
-// «перескочил» бы в соседнее помещение или на улицу.
-export function followBoundRooms(project, walls, expected = new Map()) {
-  const bound = (project.rooms || []).filter(isBoundRoom);
-  if (!bound.length) return;
+// Замкнутые петли ручных стен без комнаты — для штриховки «не назначено».
+// → [{ comp, poly, holes, rects, area, bbox }].
+export function freeLoops(project, walls) {
+  if (!(project.walls || []).length) return [];
   const field = loopField(project, walls);
-  if (!field) return;
-  const taken = new Set();
-  for (const room of bound) {
-    const poly = expected.get(room.id) || room.poly;
-    const probe = { bound: room.bound, poly };
-    const best = bestOverlap(field, probe);
-    if (best < 0 || taken.has(best)) continue;
-    taken.add(best);
-    if (compAt(field, room.bound.seed) === best) continue;
-    const shape = compShape(field, best);
-    const rect = shape && [...shape.rects].sort((a, b) => b.w * b.h - a.w * a.h)[0];
-    if (!rect) continue;
-    room.bound = { ...room.bound, seed: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } };
+  if (!field) return [];
+  const out = [];
+  for (const info of field.comps) {
+    if (info.open || tooSmall(info)) continue;
+    const shape = compShape(field, info.id);
+    if (shape) out.push({ comp: info.id, ...shape });
   }
+  return out;
 }
+
+const LEAK = 'Стены здесь не замкнуты — помещение «вытечет» на улицу';
 
 // Что получится, если создать помещение в точке p.
 // → { ok, shape } | { ok: false, reason }.
 export function findLoopAt(project, walls, p) {
-  const block = (project.rooms || []).find((r) => !isBoundRoom(r) && roomContainsPoint(r, p.x, p.y));
+  const block = (project.rooms || []).find((r) => roomContainsPoint(r, p.x, p.y));
   if (block) return { ok: false, reason: `Здесь уже помещение «${block.name}»` };
   const field = loopField(project, walls);
+  if (!field || span(field.xs, p.x) < 0 || span(field.ys, p.y) < 0) return { ok: false, reason: LEAK };
   const c = compAt(field, p);
-  const outside = !field || span(field.xs, p.x) < 0 || span(field.ys, p.y) < 0;
-  if (outside) return { ok: false, reason: 'Стены здесь не замкнуты — помещение «вытечет» на улицу' };
   if (c < 0) return { ok: false, reason: 'Кликните внутри петли стен, а не по стене' };
   const info = field.comps[c];
-  if (info.open) return { ok: false, reason: 'Стены здесь не замкнуты — помещение «вытечет» на улицу' };
-  if (info.x1 - info.x0 < MIN_LOOP_SIZE || info.y1 - info.y0 < MIN_LOOP_SIZE) return { ok: false, reason: 'Петля слишком узкая для помещения' };
-  const taken = (project.rooms || []).find((r) => isBoundRoom(r) && compAt(field, r.bound.seed) === c);
-  if (taken) return { ok: false, reason: `Здесь уже есть помещение «${taken.name}»` };
+  if (info.open) return { ok: false, reason: LEAK };
+  if (tooSmall(info)) return { ok: false, reason: 'Петля слишком узкая для помещения' };
   const shape = compShape(field, c);
   return shape ? { ok: true, shape } : { ok: false, reason: 'Контур не найден' };
 }
 
-// Создаёт помещение по стенам в точке p (тип и имя — как у новой комнаты по
-// умолчанию). → { ok, room } | { ok: false, reason }.
-export function createBoundRoom(project, walls, p, { type = 'living', name = null } = {}) {
+// ---------------------------------------------------------------- Петля → комната
+
+const overlapLen = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+const distToRange = (v, from, to) => (v < from ? from - v : v > to ? v - to : 0);
+const alongBase = (room, orient) => (orient === 'h' ? room.x : room.y);
+
+// Контур (абсолютные точки) → x/y/w/h + outline; коллинеарные точки
+// убираются, прямоугольник — без outline (как у нарисованной комнаты).
+function setContour(room, pts) {
+  const xs = pts.map((p) => p.x); const ys = pts.map((p) => p.y);
+  room.x = Math.min(...xs); room.y = Math.min(...ys);
+  room.w = Math.max(...xs) - room.x; room.h = Math.max(...ys) - room.y;
+  delete room.notch;
+  room.outline = pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+  finalizeRoomOutline(room);
+}
+
+// Ручные стены, чья грань лежит на стороне e (тело — снаружи комнаты).
+function faceWalls(project, e) {
+  const out = [];
+  for (const wall of project.walls || []) {
+    if (wall.roomBounding === false) continue;
+    const g = manualWallGeometry(wall);
+    if (!g || g.orient !== e.orient) continue;
+    if (Math.abs((e.outward > 0 ? g.lo : g.hi) - e.edge) > EPS) continue;
+    const len = overlapLen(g.from, g.to, e.from, e.to);
+    if (len > EPS) out.push({ wall, g, len });
+  }
+  return out;
+}
+
+// Внешний контур кольца стен: каждая сторона сдвинута наружу на свою толщину
+// (ортогональный контур — вершина = пересечение двух сдвинутых линий).
+function ringOuter(room, edges, thick) {
+  const pts = roomPolygon(room);
+  const n = pts.length;
+  const byIndex = new Map(edges.map((e) => [e.index, e]));
+  const line = (e) => e.edge + e.outward * thick.get(e.index);
+  return pts.map((p, i) => {
+    const prev = byIndex.get((i - 1 + n) % n); const next = byIndex.get(i);
+    if (!prev || !next || prev.orient === next.orient) return { x: p.x, y: p.y };
+    const h = prev.orient === 'h' ? prev : next;
+    const v = prev.orient === 'v' ? prev : next;
+    return { x: line(v), y: line(h) };
+  });
+}
+
+// Прямоугольник целиком внутри объединения прямоугольников (допуск 1 мм по краю).
+function rectInside(rect, rects) {
+  let covered = 0;
+  for (const r of rects) {
+    const w = overlapLen(rect.x, rect.x + rect.w, r.x, r.x + r.w);
+    const h = overlapLen(rect.y, rect.y + rect.h, r.y, r.y + r.h);
+    if (w > 0 && h > 0) covered += w * h;
+  }
+  return covered >= rect.w * rect.h - (rect.w + rect.h) * EPS;
+}
+
+// Параметры стены комнаты из ручной стены; null — всё по умолчанию.
+function overrideFrom(wall, t, project) {
+  const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
+  const kind = wall.wallType || 'partition';
+  const out = {};
+  if (Math.abs(t - exterior) > 0.5) out.thickness = Math.round(t);
+  if (kind !== 'exterior') out.kind = kind;
+  if (wall.hidden) out.hidden = true;
+  if (wall.top?.level || Number(wall.top?.height) > 0) {
+    out.top = wall.top.level
+      ? { level: wall.top.level, offset: Number(wall.top.offset) || 0 }
+      : { height: Number(wall.top.height) };
+  }
+  if (Number(wall.base?.offset)) out.base = { offset: Number(wall.base.offset) };
+  return Object.keys(out).length ? out : null;
+}
+
+// Своя стена комнаты-соседа на стороне f (как в wallSegments): толщина и класс.
+function ownWall(project, other, f) {
+  const own = project.wallOverrides?.[ownKey(other.id, f.side)];
+  const t = Number(own?.thickness) > 0 ? Number(own.thickness) : (project.settings?.exterior || DEFAULT_EXTERIOR);
+  return { thickness: t, kind: own?.kind || 'exterior' };
+}
+
+// Соседи стороны e: стороны других комнат напротив на зазоре, который
+// занимает стена (своя стена соседа или ручная стена этой стороны, mine).
+// → [{ other, f, gap, kind }].
+function edgeNeighbours(project, room, e, mine) {
+  const out = [];
+  for (const other of project.rooms || []) {
+    if (other.id === room.id || other.parentId || isOpenRoom(other) || isShaft(other)) continue;
+    for (const f of roomBoundaryEdges(other)) {
+      if (f.orient !== e.orient || f.outward !== -e.outward) continue;
+      const gap = (f.edge - e.edge) * e.outward;
+      if (gap <= EPS || gap > MAX_SHARED_GAP || overlapLen(e.from, e.to, f.from, f.to) <= EPS) continue;
+      const theirs = ownWall(project, other, f);
+      if (mine && Math.abs(mine.g.thickness - gap) <= EPS) out.push({ other, f, gap, kind: mine.wall.wallType || 'partition' });
+      else if (Math.abs(theirs.thickness - gap) <= EPS) out.push({ other, f, gap, kind: theirs.kind });
+    }
+  }
+  return out;
+}
+
+// Общие стены с соседями: пара получает wallOverrides[s|a|b] с толщиной
+// зазора и классом стены — findAdjacencies признаёт стыковку (перегородка
+// по умолчанию на зазоре перегородки — общая и без записи).
+function linkNeighbours(project, room, neighbours) {
+  const overrides = project.wallOverrides;
+  const partition = project.settings?.partition || DEFAULT_PARTITION;
+  for (const list of neighbours.values()) {
+    for (const { other, gap, kind } of list) {
+      const key = sharedKey(room.id, other.id);
+      if (overrides[key]) continue;
+      if (Math.abs(gap - partition) > EPS || kind !== 'partition') overrides[key] = { thickness: Math.round(gap), kind };
+    }
+  }
+}
+
+// Петля ручных стен с контуром poly («в свету», ортогональный) → обычная
+// комната (base — поля комнаты: id, type, name…). Мутирует project.
+// walls — выведенные стены до правки (позиции проёмов host).
+// → { room, removed: [wallId], lost: [openingId] }.
+export function loopToRoom(project, walls, poly, base) {
+  const room = { ...base, parentId: null };
+  setContour(room, poly);
+  const edges = roomBoundaryEdges(room);
+  if (!project.wallOverrides) project.wallOverrides = {};
+  const overrides = project.wallOverrides;
+
+  // Стена каждой стороны — ручная с гранью на ней (самая длинная по стороне).
+  const onEdge = new Map(edges.map((e) => [e.index, faceWalls(project, e)]));
+  const chosen = new Map();
+  for (const e of edges) {
+    const best = [...onEdge.get(e.index)].sort((a, b) => b.len - a.len)[0];
+    if (best) chosen.set(e.index, best);
+  }
+  // Кольцо будущих стен комнаты: ручная стена стороны, иначе стена соседа
+  // на зазоре, иначе своя наружная стена по умолчанию.
+  const neighbours = new Map(edges.map((e) => [e.index, edgeNeighbours(project, room, e, chosen.get(e.index))]));
+  const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
+  const thick = new Map();
+  for (const e of edges) {
+    const c = chosen.get(e.index);
+    const gaps = neighbours.get(e.index).map((n) => n.gap);
+    thick.set(e.index, c ? c.g.thickness : (gaps.length ? Math.max(...gaps) : exterior));
+  }
+  const ring = roomRects({ x: 0, y: 0, w: 0, h: 0, outline: ringOuter(room, edges, thick) });
+
+  // Стены кольца: тело целиком в кольце и та же толщина, что у стороны.
+  const removed = new Map(); // wallId → { g, edges }
+  for (const e of edges) {
+    for (const { wall, g } of onEdge.get(e.index)) {
+      if (Math.abs(g.thickness - thick.get(e.index)) > 0.5 || !rectInside(g.band, ring)) continue;
+      if (!removed.has(wall.id)) removed.set(wall.id, { g, edges: [] });
+      removed.get(wall.id).edges.push(e);
+    }
+  }
+
+  // Своя стена стороны — параметры её ручной стены.
+  for (const e of edges) {
+    const c = chosen.get(e.index);
+    const key = ownKey(room.id, e.side);
+    if (!c || overrides[key]) continue;
+    const value = overrideFrom(c.wall, c.g.thickness, project);
+    if (value) overrides[key] = value;
+  }
+
+  // Проёмы удаляемых стен → проёмы комнаты на той же мировой позиции.
+  const lost = [];
+  for (const o of project.openings || []) {
+    const hit = o.host && removed.get(o.host.wallId);
+    if (!hit) continue;
+    const { g } = hit;
+    const abs = g.axisStart + g.dir * Number(o.host.t);
+    const e = [...hit.edges].sort((a, b) => distToRange(abs, a.from, a.to) - distToRange(abs, b.from, b.to))[0];
+    if (!e || distToRange(abs, e.from, e.to) > Number(o.width) / 2) { lost.push(o.id); continue; }
+    if (o.kind === 'door') {
+      // Открывание — в ту же сторону мира: у проёма host «внутрь» — по оси стены.
+      const placed = openingRect(project, o, walls);
+      if (placed) {
+        const inward = placed.wall.outward || 1;
+        const dir = o.swingIn ? inward : -inward;
+        o.swingIn = dir === -e.outward;
+      }
+    }
+    o.roomId = room.id;
+    o.side = e.side;
+    o.offset = abs - alongBase(room, e.orient);
+    delete o.host;
+  }
+  project.openings = (project.openings || []).filter((o) => !lost.includes(o.id));
+  project.walls = (project.walls || []).filter((w) => !removed.has(w.id));
+  project.rooms.push(room);
+  linkNeighbours(project, room, neighbours);
+  return { room, removed: [...removed.keys()], lost };
+}
+
+// Инструмент «Помещение»: петля в точке p → обычная комната (тип и имя — как
+// у новой комнаты по умолчанию). → { ok, room, removed, lost } | { ok: false, reason }.
+export function createLoopRoom(project, walls, p, { type = 'living', name = null } = {}) {
   const found = findLoopAt(project, walls, p);
   if (!found.ok) return found;
-  const room = {
-    id: makeId('room'), type, name: name || roomType(type)?.title || type,
-    x: 0, y: 0, w: 1, h: 1, parentId: null,
-    bound: { mode: 'walls', seed: { x: p.x, y: p.y } },
-  };
-  applyShape(room, found.shape);
-  project.rooms.push(room);
-  return { ok: true, room };
+  const fresh = createRoom(type, 0, 0, 1, 1);
+  if (name) fresh.name = name;
+  return { ok: true, ...loopToRoom(project, walls, found.shape.poly, fresh) };
+}
+
+// ---------------------------------------------------------------- Старые помещения по стенам
+
+// Ортогональный контур из ≥ 4 точек.
+function orthoPoly(pts) {
+  if (!Array.isArray(pts) || pts.length < 4) return null;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    if (Math.abs(a.x - b.x) > 0.5 && Math.abs(a.y - b.y) > 0.5) return null;
+  }
+  return pts;
+}
+
+// Миграция: помещения room.bound этажа lp (вид проекта: rooms, walls,
+// openings, wallOverrides, settings, levels, activeLevel) → обычные комнаты.
+// Замкнутая петля у seed — по ней; разомкнутая/слитая или seed в стене — по
+// последнему кешу контура room.poly (иначе габарит x/y/w/h): недостающие
+// стороны получают обычные стены комнаты — комната становится замкнутой.
+// Порядок комнат сохраняется. → число конвертированных.
+export function convertBoundRooms(lp) {
+  const bound = (lp.rooms || []).filter(isBoundRoom);
+  if (!bound.length) return 0;
+  const order = new Map(lp.rooms.map((r, i) => [r.id, i]));
+  // Неконвертированные не мешают заливке (как и раньше, они не препятствия).
+  lp.rooms = lp.rooms.filter((r) => !isBoundRoom(r));
+  if (!Array.isArray(lp.walls)) lp.walls = [];
+  if (!Array.isArray(lp.openings)) lp.openings = [];
+  for (const old of bound) {
+    const walls = deriveWalls(lp);
+    const found = findLoopAt(lp, walls, old.bound.seed);
+    const poly = found.ok ? found.shape.poly : orthoPoly(old.poly) || [
+      { x: old.x, y: old.y }, { x: old.x + old.w, y: old.y },
+      { x: old.x + old.w, y: old.y + old.h }, { x: old.x, y: old.y + old.h },
+    ];
+    const {
+      bound: _bound, poly: _poly, holes: _holes, boundIssue: _issue, boundWith: _with, outline: _outline, notch: _notch, ...base
+    } = old;
+    loopToRoom(lp, walls, poly, { ...base, id: base.id || makeId('room') });
+  }
+  lp.rooms.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+  return bound.length;
 }
 
 // ---------------------------------------------------------------- Стена через блок-комнату
@@ -283,7 +433,7 @@ function overlapRect(a, b) {
 // Ручные стены, проходящие через блок-комнаты. → [{ wallId, roomId, divides }].
 export function wallsInsideRooms(project) {
   const out = [];
-  const blocks = (project.rooms || []).filter((r) => !isBoundRoom(r) && !isShaft(r) && !isOpenRoom(r));
+  const blocks = (project.rooms || []).filter((r) => !isShaft(r) && !isOpenRoom(r));
   for (const w of project.walls || []) {
     if (w.roomBounding === false) continue;
     const g = manualWallGeometry(w);
@@ -340,7 +490,6 @@ function setRoomPolygon(room, pts) {
   else room.outline = pts.map((p) => ({ x: p.x - minX, y: p.y - minY }));
 }
 
-const alongBase = (room, orient) => (orient === 'h' ? room.x : room.y);
 
 // Ребро комнаты на линии (orient, edge, outward), содержащее координату at.
 function edgeAt(room, orient, edge, outward, at) {
@@ -356,7 +505,7 @@ function edgeAt(room, orient, edge, outward, at) {
 export function splitRoomByWall(project, walls, roomId, wallId) {
   const room = (project.rooms || []).find((r) => r.id === roomId);
   const wall = (project.walls || []).find((w) => w.id === wallId);
-  if (!room || isBoundRoom(room) || !wall) return { ok: false, reason: 'Комната или стена не найдена' };
+  if (!room || !wall) return { ok: false, reason: 'Комната или стена не найдена' };
   const g = manualWallGeometry(wall);
   const plan = g && splitPlan(room, g);
   if (!plan) return { ok: false, reason: 'Стена не делит комнату насквозь на две части' };
@@ -414,102 +563,4 @@ export function splitRoomByWall(project, walls, roomId, wallId) {
   project.openings = (project.openings || []).filter((o) => !lost.includes(o.id));
   project.walls = project.walls.filter((w) => w.id !== wall.id);
   return { ok: true, roomIds: [room.id, second.id], lost };
-}
-
-// ---------------------------------------------------------------- Отвязать стены
-
-// «Отвязать стены»: стены блок-комнаты становятся ручными, комната —
-// помещением по стенам (контур — тот же «в свету»). Свои стены → ручные
-// (ось по грани комнаты, тело наружу, та же толщина и класс). Общие стены с
-// соседом остаются его стенами: у соседа своя стена этой стороны получает
-// толщину и класс общей. Проёмы своих стен → host той же мировой позиции;
-// проёмы общих стен → проёмы соседа.
-// → { ok, wallIds } | { ok: false, reason }.
-export function unbindRoomWalls(project, walls, roomId) {
-  const room = (project.rooms || []).find((r) => r.id === roomId);
-  if (!room) return { ok: false, reason: 'Комната не найдена' };
-  if (isBoundRoom(room)) return { ok: false, reason: 'Стены уже отвязаны' };
-  if (isShaft(room) || isOpenRoom(room) || room.parentId) return { ok: false, reason: 'У шахты, террасы и вложенного помещения стены не отвязываются' };
-  const { walls: segs } = wallSegments(project, { covered: false });
-  const own = segs.filter((s) => s.kind === 'own' && s.rooms[0] === room.id && s.to - s.from > 1);
-  const shared = segs.filter((s) => s.kind === 'shared' && s.rooms.includes(room.id));
-  const overrides = project.wallOverrides || (project.wallOverrides = {});
-  if (!Array.isArray(project.walls)) project.walls = [];
-
-  // Проёмы — до правки (мир).
-  const anchors = [];
-  for (const o of project.openings || []) {
-    if (o.roomId !== room.id) continue;
-    const placed = openingRect(project, o, walls);
-    const e = sideEdge(room, o.side);
-    if (!placed || !e) continue;
-    anchors.push({ o, abs: placed.absCenter, orient: e.orient, edge: e.edge, outward: e.outward });
-  }
-
-  const made = [];
-  for (const s of own) {
-    const a = s.orient === 'h' ? { x: s.from, y: s.edge } : { x: s.edge, y: s.from };
-    const b = s.orient === 'h' ? { x: s.to, y: s.edge } : { x: s.edge, y: s.to };
-    const wall = {
-      id: makeId('wall'), axis: { kind: 'line', a, b }, justify: 'left', thickness: Math.round(s.thickness),
-      typeId: null, wallType: s.wallType || 'exterior', base: { offset: 0 }, top: { level: null, offset: 0, height: null },
-      hidden: Boolean(s.hidden), roomBounding: true,
-    };
-    // Тело — наружу от комнаты (по outward грани).
-    const g = manualWallGeometry(wall);
-    const bodySide = Math.sign((g.lo + g.hi) / 2 - s.edge);
-    if (bodySide !== s.outward) wall.justify = 'right';
-    const key = ownKey(room.id, s.sides[room.id]);
-    const top = overrides[key]?.top;
-    if (top?.height) wall.top.height = top.height;
-    project.walls.push(wall);
-    made.push({ wall, seg: s });
-  }
-  for (const s of shared) {
-    const other = s.rooms.find((id) => id !== room.id);
-    const key = ownKey(other, s.sides[other]);
-    if (!overrides[key]) overrides[key] = { thickness: Math.round(s.thickness), kind: s.wallType || 'partition', ...(s.hidden ? { hidden: true } : {}) };
-  }
-
-  const lost = [];
-  for (const a of anchors) {
-    const o = a.o;
-    const hit = made.find(({ seg }) => seg.orient === a.orient && Math.abs(seg.edge - a.edge) < 1
-      && a.abs >= seg.from - 1 && a.abs <= seg.to + 1);
-    if (hit) {
-      const g = manualWallGeometry(hit.wall);
-      // Владелец host-проёма — сторона слева от оси; комната — со стороны −outward.
-      const roomOnLeft = g.leftSign === -hit.seg.outward;
-      if (!roomOnLeft && o.kind === 'door') o.swingIn = !o.swingIn;
-      o.host = { wallId: hit.wall.id, t: (a.abs - g.axisStart) * g.dir };
-      o.roomId = null;
-      delete o.side;
-      delete o.offset;
-      continue;
-    }
-    const sh = shared.find((s) => s.orient === a.orient && a.abs >= s.from - 1 && a.abs <= s.to + 1
-      && Math.abs(s.edge - a.edge) < s.thickness + 1);
-    const other = sh && project.rooms.find((r) => r.id === sh.rooms.find((id) => id !== room.id));
-    const e = other && sideEdge(other, sh.sides[other.id]);
-    if (other && e) {
-      o.roomId = other.id;
-      o.side = sh.sides[other.id];
-      o.offset = a.abs - alongBase(other, e.orient);
-      if (o.kind === 'door') o.swingIn = !o.swingIn;
-      continue;
-    }
-    lost.push(o.id);
-  }
-  project.openings = (project.openings || []).filter((o) => !lost.includes(o.id));
-  for (const k of Object.keys(overrides)) {
-    const parts = k.split('|');
-    if ((parts[0] === 'e' && parts[1] === room.id) || (parts[0] === 's' && parts.slice(1).includes(room.id))) delete overrides[k];
-  }
-  const poly = roomPolygon(room).map((p) => ({ x: p.x, y: p.y }));
-  const seed = roomLabelPoint(room);
-  room.bound = { mode: 'walls', seed: { x: seed.x, y: seed.y } };
-  room.poly = poly;
-  delete room.outline;
-  delete room.notch;
-  return { ok: true, wallIds: made.map((m) => m.wall.id), lost };
 }

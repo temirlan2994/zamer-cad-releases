@@ -18,7 +18,7 @@
 // этого сегмента) и polys (их контуры).
 
 import { isShaft } from './catalog.js';
-import { isBoundRoom, roomRects } from './room-shape.js';
+import { roomRects } from './room-shape.js';
 import { cutWallsInsideShafts, wallRects, wallSegments } from './walls.js';
 import { gridAxis, mergeCells, rectsCycles, snapHalf } from './ortho-grid.js';
 
@@ -145,9 +145,7 @@ function extendManualEnds(seg, others) {
 }
 
 export function deriveWallsV2(project) {
-  // Помещения по стенам (room.bound) стен не порождают и W не режут: их
-  // контур сам вычисляется из W (core/bound-rooms.js).
-  const rooms = (project.rooms || []).filter((r) => !isBoundRoom(r));
+  const rooms = project.rooms || [];
   const n = rooms.length;
   const roomIndex = new Map(rooms.map((r, i) => [r.id, i]));
   const { walls: roomSegs, faces } = wallSegments(project, { covered: false });

@@ -5,7 +5,6 @@ import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../
 import { setBuildingOrigin } from '../core/site-check.js';
 import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
-import { bindNormLinks, normsSection } from './norms-view.js';
 import { deleteSelection } from './plan-actions.js';
 import { setBuildingRotation } from './site-actions.js';
 import { state } from './state.js';
@@ -111,7 +110,6 @@ export function renderSiteSettings(panel) {
       </div>
       <p class="empty-hint">Пусто — по широте участка: ${auto.zone} зона, ${String(auto.hours).replace('.', ',')} ч на ${auto.day.split('-').reverse().join('.')} (СанПиН). Часы по комнатам видны на плане при включённом солнце.</p>
     </div>
-    ${normsSection()}
     <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. По умолчанию здесь север вверх; повернуть вид — кнопка ⟲ у правого края холста (у «Плана», «Участка» и «Ландшафта» свой угол, данные не меняются).</p>`;
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
@@ -160,7 +158,6 @@ export function renderSiteSettings(panel) {
     const v = e.target.value.trim();
     mutate(() => { site.norms = { ...site.norms, day: /^\d\d-\d\d$/.test(v) ? v : null }; });
   });
-  bindNormLinks(panel);
   panel.querySelector('#sunTime').addEventListener('input', (e) => {
     tweak(() => { site.sun.time = Number(e.target.value); });
     const h = Math.floor(site.sun.time / 60);
