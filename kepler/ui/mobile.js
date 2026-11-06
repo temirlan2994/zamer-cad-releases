@@ -6,6 +6,7 @@
 import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { state } from './state.js';
+import { renderToolstrip } from './toolstrip.js';
 
 const LIB = 'sheet-library';
 const PROPS = 'sheet-props';
@@ -30,6 +31,17 @@ export function toggleSheet(kind) {
     document.body.classList.add(kind === 'props' ? PROPS : LIB);
   }
   syncMobileBar();
+  renderToolstrip(); // «Мебель» на панели инструментов — по открытому каталогу
+}
+
+// Телефонная раскладка (как @media (max-width: 640px) в styles.css).
+export const isPhone = () => Boolean(globalThis.matchMedia?.('(max-width: 640px)').matches);
+
+// Выбрали инструмент на панели инструментов — обе выдвижные панели уезжают.
+export function closeSheets() {
+  if (!has(LIB) && !has(PROPS)) return;
+  document.body.classList.remove(LIB, PROPS);
+  syncMobileBar();
 }
 
 // Нажали на план или выбрали помещение для размещения — библиотека уезжает,
@@ -47,6 +59,8 @@ export function syncMobileBar() {
   const btn = (kind) => bar.querySelector(`[data-sheet="${kind}"]`);
   btn('rooms').textContent = state.modeName === 'landscape' ? 'Ландшафт' : site ? 'Участок' : 'Помещения';
   btn('furniture').hidden = site;
+  // «Участок»: инструменты — на панели инструментов, каталога нет.
+  btn('rooms').hidden = state.modeName === 'site';
   for (const kind of ['rooms', 'furniture']) btn(kind).classList.toggle('active', libraryKindActive(kind));
   btn('props').classList.toggle('active', has(PROPS));
   btn('props').classList.toggle('dot', Boolean(state.selection)); // есть что смотреть

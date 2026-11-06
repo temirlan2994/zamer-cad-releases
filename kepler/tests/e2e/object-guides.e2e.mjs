@@ -77,11 +77,13 @@ describe('умные направляющие перемещения', () => {
     assert.ok(Math.abs(B3.minX - A.minX) > 0.6, 'Shift — край не прилип');
     await undo();
     // Выключатель «Направляющие» в строке привязок.
+    if (await page.isHidden('#snapPanel')) await page.click('#snapMenuBtn');
     await page.click('#snapBar [data-snap="guides"]');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-draw-snap')).guides), false);
     const shownOff = await drag(grab, dx, 0);
     assert.equal(shownOff, 0, 'выключено — без направляющих');
     await undo();
+    if (await page.isHidden('#snapPanel')) await page.click('#snapMenuBtn');
     await page.click('#snapBar [data-snap="guides"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.guides), true);
     assert.deepEqual(app.errors, []);

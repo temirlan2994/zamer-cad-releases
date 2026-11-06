@@ -82,6 +82,7 @@ describe('без ?debug', () => {
     assert.equal(await app.page.evaluate(() => typeof window.__kepler), 'undefined');
     await app.page.click('#startSample');
     await app.page.waitForSelector('#startScreen', { state: 'hidden' });
+    await app.page.click('#propsTabTep'); // площади — на вкладке «ТЭП и площади»
     assert.match(await app.page.textContent('#propsPanel'), /м²/);
     assert.deepEqual(app.errors, []);
   });

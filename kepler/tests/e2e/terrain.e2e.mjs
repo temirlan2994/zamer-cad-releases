@@ -23,7 +23,7 @@ describe('рельеф', () => {
 
   it('4 отметки кликом с вводом числа → горизонтали и сводка', async () => {
     const { page } = app;
-    await page.click('#siteTools button:has-text("Отметка высоты")');
+    await page.click('#siteTools button[aria-label="Отметка высоты"]');
     const marks = [[-6000, -6000, '100.00'], [6000, -6000, '100,50'], [6000, 6000, '101.50'], [-6000, 6000, '101.00']];
     for (const [dx, dy, z] of marks) {
       await clickWorld(page, c.x + dx, c.y + dy);

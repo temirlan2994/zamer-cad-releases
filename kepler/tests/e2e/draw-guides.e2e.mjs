@@ -37,8 +37,11 @@ describe('привязки черчения: лучи, орто, выравни�
   });
   after(async () => { await app?.close(); });
 
-  it('мини-панель «Привязки» в строке состояния; F8 переключает орто', async () => {
+  it('меню «Привязки» на панели инструментов; F8 и кнопка «Орто» переключают орто', async () => {
     const { page } = app;
+    assert.equal(await page.isHidden('#snapPanel'), true);
+    await page.click('#snapMenuBtn');
+    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true);
     assert.ok(await page.$('#snapBar [data-snap="ortho"]'));
     assert.ok(await page.$('#snapBar [data-snap="polar"]'));
     assert.ok(await page.$('#snapBar [data-snap="objects"]'));
@@ -46,8 +49,16 @@ describe('привязки черчения: лучи, орто, выравни�
     await page.keyboard.press('F8');
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), true);
     assert.equal(await page.$eval('#snapBar [data-snap="ortho"]', (n) => n.classList.contains('on')), true);
+    assert.equal(await page.getAttribute('#orthoBtn', 'aria-pressed'), 'true');
     await page.keyboard.press('F8');
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), false);
+    await page.click('#orthoBtn');
+    assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), true);
+    assert.equal(await page.$eval('#snapBar [data-snap="ortho"]', (n) => n.classList.contains('on')), true);
+    await page.click('#orthoBtn');
+    assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), false);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isHidden('#snapPanel'), true);
   });
 
   it('«Участок», граница: почти вертикаль → 90°, Ctrl → орто, Enter — замкнуть', async () => {
@@ -123,7 +134,7 @@ describe('привязки черчения: лучи, орто, выравни�
     const p = last(await toolPoints(page));
     assert.ok(Math.abs(p.x - a.x) < 0.5, `выравнивание: x ${p.x} ≠ ${a.x}`);
     // Направление — вниз по лучу 270°, длина 3000 мм набрана с клавиатуры.
-    await page.mouse.move(...Object.values(await client(page, p, 3, 100)));
+    await page.mouse.move(...Object.values(await client(page, p, 3, 60)));
     await page.keyboard.type('3000');
     assert.equal(await page.evaluate(() => window.__kepler.state.dynInput?.length), '3000');
     await page.keyboard.press('Enter');

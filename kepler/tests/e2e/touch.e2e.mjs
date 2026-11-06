@@ -51,7 +51,8 @@ describe('телефон', () => {
     await app.page.tap('#roomCards .room-card >> text=Терраса');
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
-    assert.ok(Math.abs(box0.y - 52) < 30, `холст не уехал прокруткой: y=${box0.y}`);
+    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — сразу под панелью инструментов
+    assert.ok(Math.abs(box0.y - (strip.y + strip.height)) < 2 && strip.y > 30 && strip.y < 70, `холст не уехал прокруткой: y=${box0.y}`);
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {
       const k = window.__kepler;
@@ -106,10 +107,13 @@ describe('телефон', () => {
 
   it('выбор инструмента участка закрывает нижнюю панель', async () => {
     await app.page.click('#modeSiteBtn');
-    await app.page.tap('#mobileBar [data-sheet="rooms"]');
-    await app.page.waitForSelector('#siteTools .room-card', { state: 'visible' });
-    await app.page.tap('#siteTools .room-card >> nth=3');
-    await app.page.waitForFunction(() => !document.body.classList.contains('sheet-library'));
+    assert.equal(await app.page.isHidden('#mobileBar [data-sheet="rooms"]'), true, 'в «Участке» каталога нет');
+    await app.page.tap('#mobileBar [data-sheet="props"]');
+    await app.page.waitForFunction(() => document.body.classList.contains('sheet-props'));
+    await app.page.waitForSelector('#siteTools .tb-btn', { state: 'visible' });
+    await app.page.tap('#siteTools .tb-btn >> nth=3');
+    await app.page.waitForFunction(() => !document.body.classList.contains('sheet-props'));
+    assert.equal(await app.page.evaluate(() => window.__kepler.state.tool?.target), 'road', '«Дорога» — черчение или правка оси');
     await app.page.keyboard.press('Escape');
     await app.page.click('#modePlanBtn');
   });

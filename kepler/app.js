@@ -14,7 +14,6 @@ import { bindHelp } from './ui/help.js';
 import { bindKeyboard } from './ui/keyboard.js';
 import { renderLevelBar } from './ui/levels.js';
 import { bindMobile } from './ui/mobile.js';
-import { bindCompare } from './ui/variants.js';
 import { bind3d } from './ui/view3d.js';
 import {
   applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
@@ -47,7 +46,6 @@ bindMobile();
 bind3d();
 bindHelp();
 bindProjects();
-bindCompare();
 bindFurnitureSearch();
 bindView();
 bindTheme();

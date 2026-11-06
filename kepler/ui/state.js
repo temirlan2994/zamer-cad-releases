@@ -10,6 +10,7 @@ export const state = {
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)
+  propsTab: 'props', // 'props' | 'tep' — вкладка правой панели (ui/props.js)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },
     site: { scale: 0.03, panX: 120, panY: 120 },

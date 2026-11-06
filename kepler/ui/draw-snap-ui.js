@@ -1,5 +1,5 @@
 // Привязки черчения в интерфейсе: настройки (Орто, Полярка, Объекты,
-// Выравнивание — мини-панель в строке состояния, localStorage), сбор
+// Выравнивание — меню «Привязки» на панели инструментов, localStorage), сбор
 // окружения для core/draw-snap.js (участок, дом, ландшафт), задержка
 // наведения для «Параллели», динамический ввод длины/угла с клавиатуры.
 
@@ -54,9 +54,14 @@ const BUTTONS = [
 ];
 
 export function renderSnapBar() {
+  const s = snapSettings();
+  const ortho = document.getElementById('orthoBtn'); // «Орто» на панели инструментов
+  if (ortho) {
+    ortho.classList.toggle('active', Boolean(s.ortho));
+    ortho.setAttribute('aria-pressed', String(Boolean(s.ortho)));
+  }
   const bar = document.getElementById('snapBar');
   if (!bar) return;
-  const s = snapSettings();
   bar.title = 'Привязки при черчении линий · Shift — временно без привязок · во время черчения наберите число и Enter — длина, Tab — угол';
   bar.innerHTML = BUTTONS.map((b) => `<button type="button" class="snap-btn${s[b.key] ? ' on' : ''}" data-snap="${b.key}" aria-pressed="${s[b.key]}" title="${b.title}">${b.text}</button>`
     + (b.key === 'polar'

@@ -47,7 +47,9 @@ describe('замечания: кнопка «⚠» и панель', () => {
     assert.equal(await app.page.$('#connectivityBar'), null);
     assert.equal(await app.page.$$eval('#propsPanel .norms, #propsPanel .norm-list', (ns) => ns.length), 0);
     assert.doesNotMatch(await app.page.textContent('#propsPanel'), /Площади, свет, высота|Инсоляция — /);
-    assert.match(await app.page.textContent('#propsPanel'), /ТЭП/, 'ТЭП остаётся в свойствах');
+    await app.page.click('#propsTabTep');
+    assert.match(await app.page.textContent('#tepRows'), /Площадь застройки/, 'ТЭП — на вкладке «ТЭП и площади»');
+    await app.page.click('#propsTabMain');
   });
 
   it('панель: группы и все замечания из расчёта', async () => {

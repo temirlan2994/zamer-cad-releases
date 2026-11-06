@@ -2,12 +2,12 @@
 
 import { furnitureDef, isShaft, roomType } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
-import { activeLevel, levelProject, roomById } from '../core/model.js';
+import { activeLevel, roomById } from '../core/model.js';
 import { SP55 } from '../core/norms.js';
-import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2, totalAreaM2 } from '../core/rooms.js';
+import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2 } from '../core/rooms.js';
 import {
   DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingFrame, openingPos, openingRect,
-  projectHasManualWalls, setOpeningPos, wallClassThickness, wallsEngine,
+  setOpeningPos, wallClassThickness,
 } from '../core/walls.js';
 import { moveManualWall, setManualWallJustify, setWallHeight } from '../core/wall-manual.js';
 import { roomShapeArea } from '../core/room-shape.js';
@@ -15,10 +15,10 @@ import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
-import { hotkeysHtml } from './help.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
-import { tepSection } from './norms-view.js';
+import { renderTepPanel } from './props-tep.js';
+import { renderToolstrip } from './toolstrip.js';
 import {
   addFurniture, changeManualWall, changeWallKind, changeWallThickness, overlappingTopRooms, reconcileOpenings,
 } from './plan-actions.js';
@@ -28,17 +28,53 @@ import {
 import { resizeVerdict } from './snap.js';
 import { STAIR_SHAPES, applyStairPreset, stairCalculation, stairShape } from '../core/stairs.js';
 import { state } from './state.js';
-import { bindVariants, variantsSection } from './variants.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 
+// Вкладки над панелью: «Свойства» (выбранный объект или проект) и «ТЭП и
+// площади» (показатели дома и экспликация, ui/props-tep.js). Выбор нового
+// объекта возвращает вкладку «Свойства».
+let lastSelKey = null;
+
+function propsBody() {
+  const root = refs.props;
+  let tabs = root.querySelector(':scope > .props-tabs');
+  let body = root.querySelector(':scope > .props-body');
+  if (!tabs || !body) {
+    root.innerHTML = `<div class="props-tabs" role="tablist" aria-label="Панель свойств">
+        <button type="button" role="tab" id="propsTabMain" data-props-tab="props">Свойства</button>
+        <button type="button" role="tab" id="propsTabTep" data-props-tab="tep">ТЭП и площади</button>
+      </div><div class="props-body" id="propsBody"></div>`;
+    tabs = root.querySelector('.props-tabs');
+    body = root.querySelector('.props-body');
+    tabs.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-props-tab]');
+      if (!btn || btn.dataset.propsTab === state.propsTab) return;
+      state.propsTab = btn.dataset.propsTab;
+      renderProps();
+    });
+  }
+  for (const btn of tabs.querySelectorAll('[data-props-tab]')) {
+    const on = btn.dataset.propsTab === state.propsTab;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', String(on));
+  }
+  return body;
+}
+
 export function renderProps() {
   syncMobileBar();
+  renderToolstrip(); // «Массив», «Выноска» ландшафта зависят от выделения
   const sel = state.selection;
-  const panel = refs.props;
+  const selKey = sel ? JSON.stringify(sel) : null;
+  if (selKey && selKey !== lastSelKey) state.propsTab = 'props';
+  lastSelKey = selKey;
+  if (state.propsTab !== 'tep') state.propsTab = 'props';
+  const panel = propsBody();
+  if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
   if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
   if (!sel) {
     if (state.modeName === 'site') renderSiteSettings(panel);
@@ -59,42 +95,15 @@ function defaultCeiling() {
   return activeLevel(state.project).height - SP55.slab;
 }
 
-// Движок стен: v2 — стена как область (по умолчанию), v1 — устаревшие полосы
-// с заплатками стыков (будет удалён). Параметр адреса ?walls=v1|v2 главнее
-// настройки проекта — тогда выбор заблокирован.
-function wallsEngineField() {
-  // Ручные стены существуют только в v2: с ними выбор заблокирован.
-  const manualLocked = projectHasManualWalls(state.project);
-  const own = !manualLocked && state.project.settings.wallsEngine === 'v1' ? 'v1' : 'v2';
-  const urlLocked = !manualLocked && /[?&]walls=(v1|v2)(?:&|$)/.test(globalThis.location?.search || '');
-  const active = wallsEngine(state.project);
-  return `<label class="prop-field"><span>Движок стен</span>
-        <select id="wallsEngineSel" ${urlLocked || manualLocked ? 'disabled' : ''}>
-          <option value="v2" ${own === 'v2' ? 'selected' : ''}>v2 — стена как область</option>
-          <option value="v1" ${own === 'v1' ? 'selected' : ''}>v1 — старый, будет удалён</option>
-        </select></label>
-      ${manualLocked ? '<p class="empty-hint">В проекте есть ручные стены — они строятся только движком v2.</p>' : ''}
-      ${urlLocked ? `<p class="empty-hint">Задан адресом страницы (?walls=${active}).</p>` : ''}`;
-}
-
 function renderProjectProps(panel) {
   const rooms = state.project.rooms;
   const site = state.project.site;
   const hasSite = Boolean(site?.boundary?.length || site?.underlay);
   const level = activeLevel(state.project);
   const multi = state.project.levels.length > 1;
-  const allArea = state.project.levels.reduce((sum, l) => sum + totalAreaM2(levelProject(state.project, l.id)), 0);
-  const list = rooms.map((r) => {
-    const area = roomNetAreaM2(state.project, r).toFixed(1);
-    const nested = r.parentId ? ' ↳ ' : '';
-    return `<li><button class="link" data-room="${r.id}">${nested}${escapeHtml(r.name)}</button><span>${area} м²</span></li>`;
-  }).join('');
   panel.innerHTML = `
     <h2>Проект</h2>
     <div class="prop-block">
-      <div class="prop-row"><span>Помещений${multi ? ' на этаже' : ''}</span><strong>${rooms.length}</strong></div>
-      <div class="prop-row"><span>${multi ? 'Площадь этажа' : 'Общая площадь'}</span><strong>${totalAreaM2(state.project).toFixed(1)} м²</strong></div>
-      ${multi ? `<div class="prop-row"><span>Всего (${state.project.levels.length} эт.)</span><strong>${allArea.toFixed(1)} м²</strong></div>` : ''}
       ${hasSite ? buildingRotationField() : ''}
       <label class="prop-field"><span>Размеры на плане</span>
         <select id="unitsSel">
@@ -113,7 +122,6 @@ function renderProjectProps(panel) {
           <input id="defPartition" data-wall-default="partition" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'partition')}"></label>
       </div>
       <p class="empty-hint">Наружные стены без своей толщины меняются сразу. Новая перегородка — для новых стыковок: уже построенные сохраняют свою толщину.</p>
-      ${wallsEngineField()}
     </div>
     <h3>Этаж</h3>
     <div class="prop-block">
@@ -126,24 +134,11 @@ function renderProjectProps(panel) {
       </div>
       ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : '<p class="empty-hint">Второй этаж — кнопка «+» внизу слева на плане.</p>'}
     </div>
-    ${rooms.length ? `<h3>Состав</h3><ul class="room-list">${list}</ul>` : `
-    <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}
-    ${tepSection()}
-    ${variantsSection()}
-    <h3>Управление</h3>
-    ${hotkeysHtml()}`;
-  panel.querySelectorAll('[data-room]').forEach((btn) => {
-    btn.addEventListener('click', () => selectObject({ type: 'room', id: btn.dataset.room }));
-  });
+    ${rooms.length ? '<p class="empty-hint">Площади, ТЭП и экспликация — вкладка «ТЭП и площади» вверху панели.</p>' : `
+    <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}`;
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
-  });
-  panel.querySelector('#wallsEngineSel')?.addEventListener('change', (e) => {
-    mutate(() => {
-      if (e.target.value === 'v1') state.project.settings.wallsEngine = 'v1';
-      else delete state.project.settings.wallsEngine; // v2 — по умолчанию
-    });
   });
   panel.querySelectorAll('[data-wall-default]').forEach((input) => {
     input.addEventListener('change', (e) => {
@@ -161,7 +156,6 @@ function renderProjectProps(panel) {
     mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
   });
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
-  bindVariants(panel);
 }
 
 function renderRoomProps(panel, room) {

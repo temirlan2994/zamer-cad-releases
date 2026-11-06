@@ -107,7 +107,7 @@ export function createProject(name = 'Новый дом') {
     activeLevel: level.id,
     building: createBuilding(), // оси дома относительно съёмки (core/building.js)
     site: createSite(),
-    variants: [], // сохранённые варианты планировки (core/variants.js)
+    variants: [], // варианты планировки из старых файлов: хранятся как есть, интерфейса нет
   });
 }
 

@@ -24,7 +24,6 @@ import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
 } from './store.js';
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
-import { closeCompare, isCompareOpen } from './variants.js';
 import { finishWallChain, startWallTool } from './wall-tool.js';
 import { close3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
@@ -32,7 +31,7 @@ import { isItemGroup } from '../core/group-handles.js';
 
 export let spaceDown = false;
 
-// Поверх плана открыто окно (3D, справка, «Проекты», сравнение, разрез,
+// Поверх плана открыто окно (3D, справка, «Проекты», разрез,
 // стартовое меню) — план под ним клавишами не правится.
 export function planCovered() {
   return is3dOpen() || isSectionOpen() || Boolean(document.querySelector('.start-screen:not([hidden])'));
@@ -60,7 +59,6 @@ export function bindKeyboard() {
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }
-    if (event.key === 'Escape' && isCompareOpen()) { closeCompare(); return; }
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }
     // Окно разреза: Esc закрывает, правка плана под ним не идёт (кроме Ctrl+Z/Y).
@@ -68,7 +66,7 @@ export function bindKeyboard() {
       if (event.key === 'Escape') { closeSection(); return; }
       if (!((event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY'))) return;
     }
-    // Под 3D, справкой, «Проектами», сравнением — только Ctrl+Z/Y и F1/«?».
+    // Под 3D, справкой, «Проектами» — только Ctrl+Z/Y и F1/«?».
     if (planCovered()) {
       const undoKey = (event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY');
       const helpKey = (event.key === '?' || event.key === 'F1') && isHelpOpen();

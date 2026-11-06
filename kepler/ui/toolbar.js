@@ -1,4 +1,4 @@
-// Шапка и кнопки поверх канваса.
+// Шапка, панель инструментов и кнопки поверх канваса.
 
 import { applyDimInput, hideDimInput } from './dim-input.js';
 import { canvas, el, refs, toast } from './dom.js';
@@ -14,15 +14,24 @@ import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js'
 import { bindViewPanel } from './view-align.js';
 import { bindIssues } from './issues.js';
 import { bindElevInput } from './terrain.js';
-import { startBoundRoomTool, startWallTool } from './wall-tool.js';
+import { finishWallChain, startBoundRoomTool, startWallTool } from './wall-tool.js';
+import { closeSheets } from './mobile.js';
+import { cancelTool } from './tools.js';
+import { bindToolstrip } from './toolstrip.js';
 import { fitView, zoomAt } from './view.js';
 
+// Кнопка на панели инструментов: иконка и короткая подпись режима.
 export function updateDimModeBtn() {
   const outer = state.project?.settings?.dimOuter !== false;
   const b = el('dimModeBtn');
   if (!b) return;
-  b.textContent = outer ? '⟺ Снаружи' : '⟺ По оси';
+  const label = b.querySelector('.tb-label');
+  if (label) label.textContent = outer ? 'Снаружи' : 'Ось';
+  b.title = outer
+    ? 'Наружные размеры — по внешней грани стен (клик — по оси)'
+    : 'Наружные размеры — по оси стен (клик — по внешней грани)';
   b.classList.toggle('active', outer);
+  b.setAttribute('aria-pressed', String(outer));
 }
 
 export function bindToolbar() {
@@ -34,15 +43,19 @@ export function bindToolbar() {
   el('undoBtn').addEventListener('click', undo);
   el('redoBtn').addEventListener('click', redo);
   el('fitBtn').addEventListener('click', fitView);
+  // Повторный клик по активному инструменту — выйти из него.
   el('wallToolBtn')?.addEventListener('click', () => {
     if (state.modeName !== 'plan') setEditorMode('plan');
-    startWallTool();
+    if (!finishWallChain()) startWallTool();
+    closeSheets();
   });
   el('boundRoomBtn')?.addEventListener('click', () => {
     if (state.modeName !== 'plan') setEditorMode('plan');
-    startBoundRoomTool();
+    if (state.tool?.kind === 'bound-room') cancelTool(); else startBoundRoomTool();
+    closeSheets();
   });
-  bindViewPanel(); // «⟲ Поворот вида» у кнопок масштаба (ui/view-align.js)
+  bindToolstrip(); // остальные кнопки панели инструментов (ui/toolstrip.js)
+  bindViewPanel(); // «Вид» на панели инструментов — поворот вида (ui/view-align.js)
   bindIssues(); // «⚠ N» — замечания и нормы в левом верхнем углу холста (ui/issues.js)
   el('dimModeBtn').addEventListener('click', () => {
     const cur = state.project.settings.dimOuter !== false;

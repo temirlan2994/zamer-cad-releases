@@ -1,22 +1,19 @@
 // Левая панель: вкладки, карточки помещений, каталог мебели.
 
 import { FURNITURE_CATEGORIES, ROOM_TYPES, allFurniture, furnitureByCategory } from '../core/catalog.js';
-import { polygonAreaM2 } from '../core/site.js';
 import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { state } from './state.js';
 import { bindLandscapeLibrary, renderLandscapeLibrary } from './landscape.js';
-import { startTerrainTool } from './terrain.js';
-import { closeLibrarySheet } from './mobile.js';
-import {
-  activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceFurniture, startPlaceRoom,
-} from './tools.js';
+import { renderToolstrip } from './toolstrip.js';
+import { cancelTool, startPlaceFurniture, startPlaceRoom } from './tools.js';
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
 
 // Вкладки левой панели: в режиме «План» переключают «Помещения» / «Мебель»
-// (как вкладки обозревателя в Revit). В режиме «Участок» вкладок нет — там
-// только инструменты участка.
+// (как вкладки обозревателя в Revit). В режиме «Участок» каталога нет —
+// инструменты участка на панели инструментов (ui/toolstrip.js), левая
+// панель скрыта.
 export function bindFurnitureSearch() {
   el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
   bindLandscapeLibrary();
@@ -31,6 +28,7 @@ export function applyLibraryTab() {
   if (!plan) {
     refs.libraryTop.hidden = landscape; // «Ландшафт» — свой каталог (ui/landscape.js)
     refs.furnitureBar.hidden = true;
+    renderToolstrip();
     return;
   }
   const furn = state.libraryTab === 'furniture';
@@ -38,6 +36,7 @@ export function applyLibraryTab() {
   refs.libTabFurniture.classList.toggle('active', furn);
   refs.libraryTop.hidden = furn;
   refs.furnitureBar.hidden = !furn;
+  renderToolstrip(); // кнопка «Мебель» подсвечена, пока открыт каталог
 }
 
 export function renderLibrary() {
@@ -64,40 +63,7 @@ export function renderLibrary() {
     refs.roomCards.appendChild(card);
   }
 
-  // Участок: инструменты-слои. Правка слоя доступна, только пока его кнопка
-  // активна (подсвечена). Повторный клик по активной — выключает.
-  const site = state.project?.site;
-  const layer = activeSiteLayer();
-  const editHint = (name) => `Правка: ${name}. Тяните точки/объект. Esc — выйти`;
-  const tools = [
-    { id: 'underlay', title: 'Топосъёмка', note: site?.underlay ? 'двигать / масштаб' : 'импорт PDF/JPG/DXF',
-      action: () => setTool({ kind: 'underlay-edit' }, site?.underlay
-        ? editHint('топосъёмка — двигайте, тяните углы')
-        : 'Нажмите «Импортировать топосъёмку» в панели справа · PDF / JPG / PNG / DXF') },
-    { id: 'boundary', title: 'Граница участка', note: site?.boundary ? `${polygonAreaM2(site.boundary).toFixed(0)} м² · правка` : 'полигон по точкам',
-      action: () => (site?.boundary ? startEditLayer('boundary', { type: 'site', kind: 'boundary' }, editHint('граница — тяните вершины')) : startDraw('boundary')) },
-    { id: 'redline', title: 'Красная линия', note: site?.redLine ? 'правка' : 'линия застройки',
-      action: () => (site?.redLine ? startEditLayer('redline', { type: 'site', kind: 'redline' }, editHint('красная линия — тяните вершины')) : startDraw('redline')) },
-    { id: 'road', title: 'Дорога', note: site?.roads?.length ? 'правка / новая' : 'ось + ширина',
-      action: () => (site?.roads?.length ? startEditLayer('road', { type: 'site', kind: 'road', id: site.roads[site.roads.length - 1].id }, editHint('дорога — тяните вершины')) : startDraw('road')) },
-    { id: 'entry', title: 'Въезд', note: 'точка на границе', action: () => setTool({ kind: 'entry' }, 'Кликните/тяните по границе участка — там будет въезд · Esc — выйти') },
-    { id: 'neighbor', title: 'Соседний дом', note: 'зона 6 м вокруг', action: () => setTool({ kind: 'neighbor' }, 'Кликните — новый дом; тяните углы для размера и поворота · Esc — выйти') },
-    { id: 'terrain', title: 'Отметка высоты', note: site?.terrain?.points?.length ? `${site.terrain.points.length} отм. · правка` : 'рельеф по точкам', action: startTerrainTool },
-    { id: 'north', title: 'Север по 2 точкам', note: `сейчас ${Math.round(site?.north || 0)}°`, action: () => setTool({ kind: 'north', points: [] }, 'Кликните первую точку стрелки на север') },
-  ];
-  refs.siteTools.innerHTML = '';
-  for (const tool of tools) {
-    const btn = document.createElement('button');
-    btn.className = 'room-card';
-    const active = layer === tool.id || (tool.id === 'north' && state.tool?.kind === 'north');
-    if (active) btn.classList.add('active');
-    btn.innerHTML = `<span class="room-card-name">${tool.title}</span><span class="room-card-size">${tool.note}</span>`;
-    btn.addEventListener('click', () => {
-      if (active) cancelTool();
-      else { tool.action(); closeLibrarySheet(); } // телефон: панель уезжает, план свободен для касаний
-    });
-    refs.siteTools.appendChild(btn);
-  }
+  renderToolstrip(); // инструменты участка и подсветка активного — на панели инструментов
 }
 
 // Смена темы: миниатюры на canvas (мебель — цвет --muted, ландшафт — тёмная

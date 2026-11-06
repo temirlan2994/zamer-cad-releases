@@ -20,13 +20,8 @@
         <div class="top-actions">
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
-          <button id="fitBtn" title="Вписать план в экран">Вписать</button>
-          <button id="wallToolBtn" title="Стена (W): клик — начало оси, клик — конец, цепочка продолжается; двойной клик, Enter или Esc — закончить">▭ Стена</button>
-          <button id="boundRoomBtn" title="Помещение: клик внутри замкнутой петли стен — петля становится обычной комнатой">⬚ Помещение</button>
-          <button id="view3dBtn" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
-          <button id="dimModeBtn" title="Наружные размеры: по внешней грани стен или по оси">⟺ Снаружи</button>
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
-          <button id="helpBtn" class="icon-btn" title="Управление и горячие клавиши (?)">?</button>
+          <button id="helpBtn" class="icon-btn" title="Справка: управление и горячие клавиши (? или F1)">?</button>
           <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
           <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
           <input type="file" id="fileInput" accept=".json,application/json" hidden />
@@ -49,6 +44,50 @@
           </div>
         </div>
       </header>
+      <!-- Панель инструментов (ui/toolstrip.js): общие кнопки и наборы режимов «План» / «Участок» / «Ландшафт». -->
+      <div class="toolstrip" id="toolStrip" role="toolbar" aria-label="Инструменты">
+        <div class="tb-group" id="commonTools">
+          <button type="button" class="tb-btn" id="selectToolBtn" aria-label="Выбор" title="Выбор (Esc): курсор — выбрать, тянуть, рамка выделения"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3.5l13 6.3-5.6 1.9-2.1 5.8z"/><path d="M13 12l5 6"/></svg></button>
+        </div>
+        <div class="tb-group" id="planTools">
+          <button type="button" class="tb-btn" id="wallToolBtn" aria-label="Стена" title="Стена (W): клик — начало оси, клик — конец, цепочка продолжается; двойной клик, Enter или Esc — закончить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="7" rx="1"/><path d="M9 8v7M15 8v7"/></svg><span class="tb-label">Стена</span></button>
+          <button type="button" class="tb-btn" id="boundRoomBtn" aria-label="Помещение" title="Помещение: клик внутри замкнутой петли стен — петля становится обычной комнатой"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z" stroke-dasharray="3 2.2"/><path d="M9 12h6M12 9v6"/></svg><span class="tb-label">Помещение</span></button>
+          <button type="button" class="tb-btn" id="doorToolBtn" aria-label="Проём: дверь" title="Проём: дверь — клик по стене; Пробел — петли и открывание; Esc — отмена"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M6 20V5"/><path d="M6 5a15 15 0 0 1 14 15"/></svg></button>
+          <button type="button" class="tb-btn" id="windowToolBtn" aria-label="Проём: окно" title="Проём: окно — клик по наружной стене; Esc — отмена"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8.5" width="18" height="7" rx="1"/><path d="M3 12h18M12 8.5v7"/></svg></button>
+          <button type="button" class="tb-btn" id="furnitureToolBtn" aria-label="Мебель" title="Мебель: открыть каталог мебели (клик — поставить, Пробел — повернуть)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V11"/><path d="M4 11.5A1.5 1.5 0 0 1 5.5 13v3h13v-3A1.5 1.5 0 0 1 20 11.5"/><path d="M6.5 16v2M17.5 16v2"/></svg></button>
+          <button type="button" class="tb-btn" id="dimModeBtn" aria-label="Размеры" title="Наружные размеры: по внешней грани стен или по оси"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7v10M20 7v10M4 12h16"/><path d="M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/></svg><span class="tb-label">Снаружи</span></button>
+        </div>
+        <div class="tb-group" id="siteTools" hidden></div>
+        <div class="tb-group" id="landscapeTools" hidden></div>
+        <span class="tb-sep" aria-hidden="true"></span>
+        <div class="tb-group" id="viewTools">
+          <div class="view-ctl tb-pop-wrap" id="viewCtl">
+            <button type="button" class="tb-btn" id="viewBtn" aria-label="Поворот вида" title="Поворот вида: выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой). Во время выравнивания — отмена" aria-expanded="false" aria-controls="viewPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/><path d="M8 14h8"/></svg><span class="tb-label">Вид</span></button>
+            <div class="view-panel tb-pop" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
+              <strong id="viewPanelTitle">Поворот вида</strong>
+              <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
+              <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
+                <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
+              <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
+              <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
+              <p class="empty-hint" id="viewPanelHint"></p>
+            </div>
+          </div>
+          <button type="button" class="tb-btn" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg><span class="tb-label">3D</span></button>
+          <button type="button" class="tb-btn" id="fitBtn" aria-label="Вписать" title="Вписать план в экран"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg></button>
+        </div>
+        <div class="tb-group" id="snapTools">
+          <button type="button" class="tb-btn" id="orthoBtn" aria-label="Орто" title="Орто (F8): строго 0/90° от последней точки; удерживать Ctrl — временно" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4v14h14"/><path d="M6 13h5v5"/></svg></button>
+          <div class="tb-pop-wrap" id="snapCtl">
+            <button type="button" class="tb-btn" id="snapMenuBtn" aria-label="Привязки" title="Привязки черчения и направляющие: Орто, Полярка, Объекты, Выравнивание, Направляющие · Shift — временно без привязок" aria-expanded="false" aria-controls="snapPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h4v8a2 2 0 0 0 4 0V3h4v8a6 6 0 0 1-12 0z"/><path d="M6 7h4M14 7h4"/></svg></button>
+            <div class="snap-panel tb-pop" id="snapPanel" role="dialog" aria-label="Привязки" hidden>
+              <strong>Привязки</strong>
+              <span class="snap-bar" id="snapBar" role="group" aria-label="Привязки"></span>
+                <p class="empty-hint">Во время черчения наберите число и Enter — длина, Tab — угол. Shift — без привязок.</p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <main class="workspace">
         <aside class="library">
@@ -60,7 +99,6 @@
             <h2 id="libraryTitle" hidden>Помещения</h2>
             <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
             <div class="room-cards" id="roomCards"></div>
-            <div class="room-cards" id="siteTools" hidden></div>
             <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
           </div>
           <div class="library-furniture" id="furnitureBar">
@@ -132,25 +170,12 @@
           </div>
           <div class="ls-section" id="lsSectionView" role="dialog" aria-label="Разрез участка" hidden></div>
           <div class="ls-sun" id="lsSunBar" role="group" aria-label="Тени по солнцу"></div>
-          <div class="view-ctl" id="viewCtl">
-            <button id="viewBtn" type="button" title="Поворот вида: выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой). Во время выравнивания — отмена" aria-label="Поворот вида" aria-expanded="false" aria-controls="viewPanel">⟲ Вид</button>
-            <div class="view-panel" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
-              <strong id="viewPanelTitle">Поворот вида</strong>
-              <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
-              <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
-                <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
-              <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
-              <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
-              <p class="empty-hint" id="viewPanelHint"></p>
-            </div>
-          </div>
           <div class="zoom-controls">
             <button id="zoomInBtn" title="Приблизить">+</button>
             <button id="zoomOutBtn" title="Отдалить">−</button>
           </div>
           <div class="statusbar">
             <span id="cursorPos"></span>
-            <span class="snap-bar" id="snapBar" role="group" aria-label="Привязки"></span>
             <span id="scaleInfo"></span>
           </div>
         </section>
@@ -213,20 +238,8 @@
           <b class="help-title">Управление</b>
           <button class="icon-btn" id="helpClose" title="Закрыть (Esc)">✕</button>
         </div>
-        <!-- Содержимое — из ui/help.js (HELP_SECTIONS), там же список для панели «Свойства». -->
+        <!-- Содержимое — из ui/help.js (HELP_SECTIONS). -->
         <div class="help-grid" id="helpGrid"></div>
-      </div>
-    </div>
-
-    <div class="start-screen" id="compareScreen" hidden>
-      <div class="start-card compare-card">
-        <div class="start-head">
-          <b class="help-title" id="compareTitle">Сравнение вариантов</b>
-          <button class="icon-btn" id="compareClose" title="Закрыть (Esc)">✕</button>
-        </div>
-        <div class="compare-thumbs" id="compareThumbs"></div>
-        <table class="compare-table" id="compareTable"></table>
-        <div class="prop-actions"><button id="compareOpen" class="primary">Открыть этот вариант</button></div>
       </div>
     </div>
 
