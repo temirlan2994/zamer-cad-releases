@@ -2,7 +2,7 @@
 
 import { insolationZone } from '../core/insolation.js';
 import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
-import { buildingSiteCheck, setBuildingOrigin } from '../core/site-check.js';
+import { setBuildingOrigin } from '../core/site-check.js';
 import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
 import { bindNormLinks, normsSection } from './norms-view.js';
@@ -46,15 +46,6 @@ function buildingPositionFields() {
       </div>`;
 }
 
-// Постоянный индикатор положения дома: зона застройки и отступ до соседа.
-function buildingCheckBlock() {
-  const site = state.project.site;
-  const check = buildingSiteCheck(state.project);
-  if (!check.footprint.length || (!site.boundary && !site.neighbors?.length)) return '';
-  if (check.ok) return '<div class="site-check ok" role="status">✓ Дом в зоне застройки, отступы соблюдены</div>';
-  return `<div class="site-check bad" role="status">⚠ ${check.issues.join('<br>⚠ ')}</div>`;
-}
-
 function bindBuildingPosition(panel) {
   for (const axis of ['x', 'y']) {
     panel.querySelector(`#building${axis.toUpperCase()}`)?.addEventListener('change', (e) => {
@@ -87,7 +78,6 @@ export function renderSiteSettings(panel) {
         <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
       ${buildingRotationField()}
       ${buildingPositionFields()}
-      ${buildingCheckBlock()}
     </div>
     ${terrainSection()}
     <h3>Отступы застройки</h3>
@@ -189,7 +179,6 @@ export function renderSiteObjectProps(panel, sel) {
       <div class="prop-block">
         ${buildingRotationField()}
         ${buildingPositionFields()}
-        ${buildingCheckBlock()}
       </div>
       <p class="empty-hint">Тяните дом мышью за любую комнату или двигайте стрелками (шаг 50 мм, Shift — 0,5 м). Мебель и комнаты правятся в «Плане».</p>`;
     bindBuildingRotation(panel);
