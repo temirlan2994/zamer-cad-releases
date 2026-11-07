@@ -21,12 +21,12 @@ function edgeForWall(room, wall) {
   })[0];
 }
 
-function restoreRoom(room, backup) {
+export function restoreRoom(room, backup) {
   for (const key of Object.keys(room)) delete room[key];
   Object.assign(room, clone(backup));
 }
 
-function moveRectEdge(room, side, target) {
+export function moveRectEdge(room, side, target) {
   const right = room.x + room.w;
   const bottom = room.y + room.h;
   if (side === 0) { room.y = target; room.h = bottom - target; }
@@ -38,7 +38,7 @@ function moveRectEdge(room, side, target) {
   return true;
 }
 
-function moveShapedEdge(room, edge, target) {
+export function moveShapedEdge(room, edge, target) {
   const handle = roomShapeHandles(room).find((candidate) => candidate.kind === 'edge' &&
     (candidate.index === edge.index || candidate.id.endsWith(`-${edge.index}`)));
   if (!handle) return false;

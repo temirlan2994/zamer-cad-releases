@@ -6,9 +6,12 @@
 //   во время жеста, а не в конце.
 // • Магнит блоков (core/v7/magnet.js): 300 мм, тумблер «Примагничивание
 //   блоков» в «Привязках»; Shift или Alt — временно без магнита.
+// • Ручка грани на общей стене двигает и встречные грани соседей
+//   (core/wall-follow.js) — стена остаётся одной; Alt — оторвать.
 
 import { activeLevel } from '../core/model.js';
-import { eatState, liftRoom, reconcileEats } from '../core/v7/eat-bridge.js';
+import { eatState, liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
+import { applyFollow, findFollowers, startFollow } from '../core/wall-follow.js';
 import { magnetEdges, magnetSnap } from '../core/v7/magnet.js';
 import { migrateLevel } from '../core/v7/migrate.js';
 import { state } from './state.js';
@@ -51,7 +54,8 @@ export function magnetResize(drag, id, rect, handle, event) {
   if (!magnetOn(event)) return { rect, guides: [], edges: [] };
   if (!drag.magnet) drag.magnet = magnetProject();
   const edges = ['w', 'e', 'n', 's'].filter((e) => handle.includes(e));
-  const m = magnetEdges(drag.magnet, id, rect, edges, { distance: MAGNET_MM });
+  const skip = (drag.follow || []).map((f) => f.id); // попутчики общей стены едут с гранью
+  const m = magnetEdges(drag.magnet, id, rect, edges, { distance: MAGNET_MM, skip });
   return { rect: m.rect, guides: m.guides.map(planGuide), edges: m.guides.map((g) => g.edge) };
 }
 
@@ -66,6 +70,25 @@ export function liftForGesture(drag, ids) {
   let changed = false;
   for (const id of ids) changed = liftRoom(state.project, id) || changed;
   return changed;
+}
+
+// Общая стена при растяжении ручкой (core/wall-follow.js): попутчики —
+// встречные грани соседей — ищутся один раз за жест по номиналам, съеденным
+// из них возвращается номинал. movingEdges — подвижные грани (номинал).
+export function captureFollow(drag, roomId, movingEdges) {
+  if (drag.follow) return drag.follow;
+  const found = findFollowers(state.project.rooms, roomId, movingEdges, { shapeOf: nominalShape });
+  for (const f of found) liftRoom(state.project, f.id);
+  drag.follow = startFollow(state.project, found);
+  return drag.follow;
+}
+
+// Кадр: попутчики сдвигаются на delta { x, y } от снимка начала; null —
+// «оторвать» (Alt): соседи стоят на месте. → отчёт applyFollow.
+export function followFrame(drag, delta) {
+  // Съели на прошлом кадре — снова номинал и проёмы-сироты (как у растягиваемой).
+  for (const f of drag.follow || []) liftRoom(state.project, f.id);
+  return applyFollow(state.project, drag.follow || [], delta);
 }
 
 // Съедание на кадре жеста. opts — как у reconcileEats (touched, under).

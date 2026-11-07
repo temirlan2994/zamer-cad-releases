@@ -34,10 +34,10 @@ function across(rect, t, axis, pad) {
   return rect[p] <= t[p] + t[s] + pad && t[p] <= rect[p] + rect[s] + pad;
 }
 
-function magnetTargets(level, movingId) {
+function magnetTargets(level, movingId, extraSkip = null) {
   const moving = blockById(level, movingId);
   if (!moving) return null;
-  const skip = new Set([movingId]);
+  const skip = new Set([movingId, ...(extraSkip || [])]);
   for (const b of level.blocks) if (b.parentId === movingId) skip.add(b.id);
   const ctx = moving.parentId || null;
   return { moving, ctx, targets: level.blocks.filter((b) => !skip.has(b.id) && ((b.parentId || null) === ctx || b.id === ctx)) };
@@ -46,12 +46,14 @@ function magnetTargets(level, movingId) {
 // Примагничивание подвижных граней при растяжении: edges — подмножество
 // 'w','e','n','s' (как ручки комнаты). Грань прижимается к грани соседа с
 // зазором перегородки или выравнивается с одноимённой гранью.
+// skip — ids блоков, к которым не прижимать (попутчики общей стены,
+// core/wall-follow.js: они едут вместе с гранью).
 // → { rect, guides } (rect — новый габарит; guides — как у magnetSnap).
-export function magnetEdges(project, movingId, rect, edges, { distance = 300, enabled = true, levelId } = {}) {
+export function magnetEdges(project, movingId, rect, edges, { distance = 300, enabled = true, levelId, skip = null } = {}) {
   const out = { rect: { ...rect }, guides: [] };
   if (!enabled || !(distance > 0) || !edges?.length) return out;
   const level = activeLevel7(project, levelId);
-  const found = magnetTargets(level, movingId);
+  const found = magnetTargets(level, movingId, skip);
   if (!found) return out;
   const r = out.rect;
   for (const edge of edges) {

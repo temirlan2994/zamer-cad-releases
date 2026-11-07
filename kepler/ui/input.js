@@ -19,9 +19,10 @@ import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
-import { applyRoomShapeHandle, clampRoomNotch, roomContainsPoint } from '../core/room-shape.js';
+import { applyRoomShapeHandle, clampRoomNotch, roomBoundaryEdges, roomContainsPoint } from '../core/room-shape.js';
 import { groupCargo } from '../core/room-group.js';
 import { moveWallBy } from '../core/wall-edit.js';
+import { clampDelta, edgeAtPoint, followLimits, followVerdict, handleEdges } from '../core/wall-follow.js';
 import {
   itemCorners, neighborCorners, projectPoint, rotateVec, underlayCenter, underlayHandles, unprojectPoint,
 } from '../render.js';
@@ -60,7 +61,7 @@ import { addAlignViewPoint, snapAlignPoint } from './view-align.js';
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { liftForGesture, liveEat, magnetMove, magnetResize } from './block-gesture.js';
+import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize } from './block-gesture.js';
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
@@ -1043,15 +1044,35 @@ export function bindCanvasInput() {
       if (!room.notch && !room.outline) return;
       drag.moved = true;
       if (state.pendingRoomSplit?.roomId === room.id) state.pendingRoomSplit.moved = true;
+      // Ребро Г-комнаты на общей стене: встречные грани соседей едут с ним
+      // (core/wall-follow.js); угловая ручка Г-контура — без попутчиков.
+      if (drag.followEdge === undefined) {
+        drag.followEdge = drag.handle.kind === 'edge' ? edgeAtPoint(room, drag.handle) : null;
+        captureFollow(drag, room.id, drag.followEdge ? [drag.followEdge] : []);
+      }
       const snap = (value) => Math.round(value / gridStep()) * gridStep();
-      const result = applyRoomShapeHandle(room, drag.handle, { x: snap(plan.x), y: snap(plan.y) }, {
+      const target = { x: snap(plan.x), y: snap(plan.y) };
+      const result = applyRoomShapeHandle(room, drag.handle, target, {
         mergeTolerance: Math.max(gridStep(), 14 / state.view.scale),
       });
       drag.merged = result.merged;
       drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
       if (result.merged) reconcileOpenings();
+      let followVerdictNow = { ok: true };
+      if (drag.follow.length) {
+        const e0 = drag.followEdge;
+        const at = e0.orient === 'v' ? target.x : target.y;
+        const cur = roomBoundaryEdges(room).filter((e) => e.orient === e0.orient && e.outward === e0.outward &&
+          Math.min(e.to, e0.to) - Math.max(e.from, e0.from) > 1)
+          .sort((a, b) => Math.abs(a.edge - at) - Math.abs(b.edge - at))[0];
+        const d = cur ? cur.edge - e0.edge : 0;
+        const rep = followFrame(drag, event.altKey ? null : (e0.orient === 'v' ? { x: d, y: 0 } : { x: 0, y: d }));
+        drag.clamped.push(...rep.clamped);
+        followVerdictNow = rep.ok ? followVerdict(state.project, drag.follow)
+          : { ok: false, reason: 'Соседнее помещение сложной формы так не растянуть — Alt: оторвать стену' };
+      }
       liveEat(drag, { touched: [room.id], under: drag.under });
-      const verdict = resizeVerdict(room);
+      const verdict = followVerdictNow.ok ? resizeVerdict(room) : followVerdictNow;
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
       refreshDerived();
@@ -1069,6 +1090,11 @@ export function bindCanvasInput() {
       liftRoom(state.project, room.id); // съели на прошлом кадре — снова номинал
       drag.moved = true;
       drag.noSnap = event.shiftKey; // Shift — без привязок: только сетка
+      // Общая стена: встречные грани соседей едут вместе с гранью ручки
+      // (core/wall-follow.js) — перегородка остаётся одной, зазор не меняется.
+      // Alt — «оторвать»: тянется только эта комната (и без магнита).
+      captureFollow(drag, room.id, handleEdges(drag.start, drag.handle));
+      const detach = event.altKey;
       applyResize(room, drag, plan);
       // Магнит блоков: подвижные грани — к граням соседей (Alt/Shift — без).
       if (!drag.noSnap) {
@@ -1076,12 +1102,43 @@ export function bindCanvasInput() {
         Object.assign(room, m.rect);
         state.guides = m.guides;
       } else state.guides = [];
+      let followDelta = null;
+      if (drag.follow.length && !detach) {
+        // Сдвиг грани ограничен минимумом соседей — грань упирается, а не рвёт стену.
+        const s = drag.start;
+        const h = drag.handle;
+        const lim = followLimits(drag.follow);
+        followDelta = { x: 0, y: 0 };
+        if (h.includes('e')) {
+          followDelta.x = clampDelta(room.x + room.w - (s.x + s.w), lim.x);
+          room.w = s.x + s.w + followDelta.x - room.x;
+        } else if (h.includes('w')) {
+          followDelta.x = clampDelta(room.x - s.x, lim.x);
+          const right = room.x + room.w;
+          room.x = s.x + followDelta.x; room.w = right - room.x;
+        }
+        if (h.includes('s')) {
+          followDelta.y = clampDelta(room.y + room.h - (s.y + s.h), lim.y);
+          room.h = s.y + s.h + followDelta.y - room.y;
+        } else if (h.includes('n')) {
+          followDelta.y = clampDelta(room.y - s.y, lim.y);
+          const bottom = room.y + room.h;
+          room.y = s.y + followDelta.y; room.h = bottom - room.y;
+        }
+      }
       if (drag.start.notch) room.notch = structuredClone(drag.start.notch);
       clampRoomNotch(room);
       // Отступы проёмов — от room.x/y: пересчёт от снимка начала (Б3).
       drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
+      let followVerdictNow = { ok: true };
+      if (drag.follow.length) {
+        const rep = followFrame(drag, followDelta);
+        drag.clamped.push(...rep.clamped);
+        followVerdictNow = rep.ok ? followVerdict(state.project, drag.follow)
+          : { ok: false, reason: 'Соседнее помещение сложной формы так не растянуть — Alt: оторвать стену' };
+      }
       liveEat(drag, { touched: [room.id], under: drag.under });
-      const verdict = resizeVerdict(room);
+      const verdict = followVerdictNow.ok ? resizeVerdict(room) : followVerdictNow;
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
       state.ghost = { rect: { x: room.x, y: room.y, w: room.w, h: room.h }, valid: verdict.ok, label: `${(room.w / 1000).toFixed(2)} × ${(room.h / 1000).toFixed(2)} м`, reason: verdict.ok ? '' : verdict.reason };
@@ -1524,6 +1581,10 @@ export function bindCanvasInput() {
             toast(`«${room.name}» отделена — снова самостоятельная комната`);
           }
         }
+      }
+      for (const f of finished.follow || []) {
+        const r = roomById(state.project, f.id);
+        if (r?.outline && !r.eatBase) finalizeRoomOutlineKeepOpenings(state.project, r);
       }
       if (finished.kind === 'shape-resize') {
         const room = roomById(state.project, finished.roomId);

@@ -7,20 +7,22 @@ import { wallSnapCoords } from '../core/walls.js';
 import { state } from './state.js';
 
 // Линии привязки: грани стен и кромки других комнат.
-function collectSnapLines(excludeRoomId) {
+// exclude — id комнаты или Set id (растягиваемая + попутчики общей стены).
+function collectSnapLines(exclude) {
   const xs = [];
   const ys = [];
+  const skip = exclude instanceof Set ? exclude : new Set(exclude ? [exclude] : []);
   for (const wall of state.walls) {
     // Не привязываем редактируемое помещение к его же общей стене: иначе
     // после первого соединения ручка липнет к старому положению и двигается
     // ступенями.
-    if (excludeRoomId && wall.rooms.includes(excludeRoomId)) continue;
+    if (wall.rooms?.some((id) => skip.has(id))) continue;
     const c = wallSnapCoords(wall);
     xs.push(...c.xs);
     ys.push(...c.ys);
   }
   for (const r of state.project.rooms) {
-    if (r.id === excludeRoomId) continue;
+    if (skip.has(r.id)) continue;
     xs.push(r.x, r.x + r.w);
     ys.push(r.y, r.y + r.h);
   }
@@ -65,7 +67,8 @@ export function applyResize(room, dragState, plan) {
   }
   // Стыковка к соседним блокам — магнит блоков (ui/block-gesture.js,
   // core/v7/magnet.js) поверх этого результата; здесь — линии стен и кромок.
-  const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(room.id));
+  const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(
+    new Set([room.id, ...(dragState.follow || []).map((f) => f.id)])));
   if (h.includes('w')) {
     const s = snapValue(x, lines.xs, tol);
     if (s !== null) { w += x - s; x = s; }
