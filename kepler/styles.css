@@ -2001,6 +2001,30 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .sheet-view-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
 .sheet-view-body img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25); }
 .sheet-view-body .hint { color: var(--muted); }
+
+/* Открытый фасад на холсте (ui/elevation-view.js): под листом, над 3D и разрезом. */
+.elev-view {
+  position: absolute; inset: 0; z-index: 47; display: flex; flex-direction: column; background: var(--canvas);
+}
+.elev-view[hidden] { display: none; }
+.elev-view-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.elev-view-title { font-size: 14px; }
+.elev-view-meta { font-size: 12.5px; color: var(--muted); }
+.elev-view-gap { flex: 1; }
+.elev-view-bar button { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
+.elev-view-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+#elevCanvas { position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; }
+#elevCanvas:active { cursor: grabbing; }
+.elev-scale { display: flex; gap: 4px; }
+.elev-scale button { flex: 1; }
+.elev-scale button.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+@media (max-width: 640px) {
+  .elev-view-bar { padding: 6px 8px; gap: 6px; }
+  .elev-view-meta, .elev-view-gap { display: none; }
+}
 @media (max-width: 640px) {
   .sheet-view-bar { padding: 6px 8px; gap: 6px; }
   .sheet-view-gap { display: none; }

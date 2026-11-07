@@ -24,6 +24,7 @@ import {
   GRIP_LABEL, applyGrip, applyGripValue, findWallRecord, gripFor, gripValue,
 } from '../core/wall-edit3d.js';
 import { el, toast } from './dom.js';
+import { closeElevation } from './elevation-view.js';
 import { switchLevel } from './levels.js';
 import { isSiteView } from './modes.js';
 import { reconcileOpenings } from './plan-actions.js';
@@ -398,6 +399,7 @@ export function refresh3d() {
 }
 
 export function open3d() {
+  closeElevation(); // фасад на холсте уступает 3D
   active = true;
   el('view3d').hidden = false;
   el('view3dBtn')?.classList.add('active');

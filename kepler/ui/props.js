@@ -1,5 +1,6 @@
 // Правая панель свойств: проект, комната, стена, проём, мебель, группа.
 
+import { isElevationOpen, refreshElevationView } from './elevation-view.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
@@ -112,11 +113,14 @@ export function renderProps() {
   if (!PROPS_TABS.includes(state.propsTab)) state.propsTab = 'props';
   const panel = propsBody();
   refreshSheetView();
+  refreshElevationView();
   if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
   if (state.propsTab === 'views') { renderViewsPanel(panel); return; }
   if (state.propsTab === 'sheets') { renderSheetsPanel(panel); return; }
   // Лист открыт или выбран в «Листах» — его настройки.
   if (!sel && (state.sheetOpen || state.sheetSel) && renderSheetProps(panel)) return;
+  // Открыт фасад — его настройки (масштаб, отметки).
+  if (!sel && isElevationOpen()) { renderElevationProps(panel); return; }
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
   if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) {
     if (sel || landscapeToolActive()) renderLandscapeProps(panel);
@@ -158,6 +162,14 @@ function withViewSection(panel, renderMode) {
 // Чистая высота по умолчанию: высота этажа минус перекрытие (core/norms.js).
 function defaultCeiling() {
   return activeLevel(state.project).height - SP55.slab;
+}
+
+function renderElevationProps(panel) {
+  panel.innerHTML = `
+    <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
+    <p class="subtitle">Фасад · свойства вида</p>
+    ${viewSettingsHtml()}`;
+  bindViewSettings(panel, renderProps);
 }
 
 function renderProjectProps(panel) {

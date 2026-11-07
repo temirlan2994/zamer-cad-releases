@@ -1,8 +1,8 @@
 // Виды проекта, как диспетчер проекта Revit.
 // Вкладка «Виды» правой панели — дерево видов: «Планы этажей» (по виду на
 // этаж), «Участок», «Ландшафт», «3D», «Разрезы» (разрезы участка из
-// «Ландшафта»), «Фасады» (заготовка). Клик (и двойной клик) открывает вид;
-// активный подсвечен.
+// «Ландшафта»), «Фасады» (Север, Юг, Запад, Восток — ui/elevation-view.js).
+// Клик (и двойной клик) открывает вид; активный подсвечен.
 // Настройки активного вида — во вкладке «Свойства», когда ничего не выбрано
 // (ui/props.js): поворот вида (те же команды, что и панель ⟲ на колонке
 // инструментов — ui/view-align.js), подложка-съёмка, наружные размеры,
@@ -10,8 +10,12 @@
 // меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
 import { sortedLevels } from '../core/model.js';
+import { VIEW_SCALES, facadeViews, viewScale } from '../core/views.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
+import {
+  closeElevation, elevationView, isElevationOpen, openElevation, openElevationId, setElevationMarks, setElevationScale,
+} from './elevation-view.js';
 import { landscapeSections, openSection, closeSection, openSectionId } from './landscape-section.js';
 import { switchLevel } from './levels.js';
 import { closeSheets, isPhone } from './mobile.js';
@@ -27,14 +31,15 @@ import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from
 
 const MODE_TITLES = { plan: '«План»', site: '«Участок»', landscape: '«Ландшафт»' };
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
-const openGroups = { plans: true, site: true, landscape: true, '3d': true, sections: true, facades: false };
+const openGroups = { plans: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
 
 const sectionName = (sec) => `Разрез ${sec.name}–${sec.name}`;
 
 // Идентификатор активного вида: 'plan:<этаж>' | 'site' | 'landscape' |
-// 'section:<id>' | '3d'; открытый лист — null (активен лист, не вид).
+// 'section:<id>' | '3d' | 'elev-N'…; открытый лист — null (активен лист, не вид).
 export function activeViewId() {
   if (isSheetOpen()) return null;
+  if (isElevationOpen()) return openElevationId();
   if (is3dOpen()) return '3d';
   const mode = state.modeName || 'plan';
   if (mode === 'plan') return `plan:${state.project.activeLevel}`;
@@ -46,6 +51,7 @@ export function activeViewId() {
 export function activeViewTitle() {
   const id = activeViewId() || `plan:${state.project.activeLevel}`;
   if (id === '3d') return '3D';
+  if (id.startsWith('elev-')) return elevationView(id)?.name || 'Фасад';
   if (id === 'site') return 'Участок';
   if (id === 'landscape') return 'Ландшафт';
   if (id.startsWith('section:')) {
@@ -61,6 +67,12 @@ export function openView(id) {
   if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
   closeSheet();
   state.sheetSel = null;
+  if (id.startsWith('elev-')) {
+    if (is3dOpen()) close3d();
+    openElevation(id);
+    return;
+  }
+  closeElevation();
   if (id === '3d') {
     if (!is3dOpen()) open3d();
     notifyViewChange();
@@ -111,7 +123,7 @@ export function renderViewsPanel(panel) {
       ${treeGroup('3d', '3D', [treeItem('3d', '3D-вид', active)])}
       ${treeGroup('sections', 'Разрезы', sections.map((s) => treeItem(`section:${s.id}`, sectionName(s), active)),
     'Разрезов нет: инструмент «Разрез» в режиме «Ландшафт».', true)}
-      ${treeGroup('facades', 'Фасады', [], 'Скоро: фасады по сторонам света.')}
+      ${treeGroup('facades', 'Фасады', facadeViews(project).map((v) => treeItem(v.id, v.name, active)), 'Фасадов нет')}
     </div>`;
   panel.querySelectorAll('[data-vt-group]').forEach((d) => d.addEventListener('toggle', () => { openGroups[d.dataset.vtGroup] = d.open; }));
   panel.querySelectorAll('[data-view]').forEach((b) => {
@@ -140,6 +152,20 @@ function landscapeBlock() {
 // Настройки активного вида (разметка). У 3D — свои настройки над видом.
 export function viewSettingsHtml() {
   const project = state.project;
+  if (isElevationOpen()) {
+    const view = elevationView();
+    const scale = viewScale(view);
+    return `
+    <div class="prop-block" id="viewsSettings">
+      <div class="prop-row"><span>Масштаб</span><strong id="elevScaleVal">1:${scale}</strong></div>
+      <div class="elev-scale" id="elevScale" role="radiogroup" aria-label="Масштаб фасада">
+        ${VIEW_SCALES.map((s) => `<button type="button" role="radio" data-elev-scale="${s}" aria-checked="${s === scale}"${s === scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
+      </div>
+      <label class="check-row"><input type="checkbox" id="elevMarks" ${view?.marks !== false ? 'checked' : ''}><span>Отметки уровней</span></label>
+      <p class="hint">Только просмотр: колесо — масштаб, тяните — сдвиг. Сторона — по северу участка и повороту дома.</p>
+      <button type="button" id="elevCloseBtn">✕ Закрыть вид</button>
+    </div>`;
+  }
   if (is3dOpen()) {
     return `
     <div class="prop-block" id="viewsSettings">
@@ -188,6 +214,12 @@ export function refreshViewsPanel() {
 
 // rerender — перерисовать панель целиком (после смены угла, флажков ландшафта).
 export function bindViewSettings(panel, rerender) {
+  panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
+    setElevationScale(Number(b.dataset.elevScale));
+    rerender();
+  }));
+  panel.querySelector('#elevMarks')?.addEventListener('change', (e) => { setElevationMarks(e.target.checked); rerender(); });
+  panel.querySelector('#elevCloseBtn')?.addEventListener('click', () => closeElevation());
   panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => { startAlignView(); refreshViewsPanel(); });
   panel.querySelector('#viewsAngleInput')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));

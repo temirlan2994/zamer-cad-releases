@@ -27,7 +27,7 @@ describe('дерево видов, свойства вида, листы, ТЭП
     assert.deepEqual(groups, ['Планы этажей', 'Участок', 'Ландшафт', '3D', 'Разрезы', 'Фасады']);
     const { level } = await st(page);
     assert.deepEqual(await activeView(page), [`plan:${level}`]);
-    assert.match(await page.textContent('[data-vt-group="facades"]'), /Скоро/);
+    assert.match(await page.textContent('[data-vt-group="facades"]'), /Фасад Север/);
   });
 
   it('двойной клик по «2 этаж» — этаж и режим «План»', async () => {

@@ -20,6 +20,7 @@ import {
 import { addDraftPoint, finishDraft } from './site-actions.js';
 import { closeSection, isSectionOpen } from './landscape-section.js';
 import { closeSheet, isSheetOpen } from './sheet-view.js';
+import { closeElevation, isElevationOpen } from './elevation-view.js';
 import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
 import { splitLiveKey } from './split-input.js';
 import { state } from './state.js';
@@ -37,7 +38,7 @@ export let spaceDown = false;
 // Поверх плана открыто окно (3D, справка, «Проекты», разрез,
 // стартовое меню) — план под ним клавишами не правится.
 export function planCovered() {
-  return is3dOpen() || isSectionOpen() || isSheetOpen() || Boolean(document.querySelector('.start-screen:not([hidden])'));
+  return is3dOpen() || isSectionOpen() || isSheetOpen() || isElevationOpen() || Boolean(document.querySelector('.start-screen:not([hidden])'));
 }
 
 // Элемент, которому Enter/Space нужны самому (кнопка, ссылка, флажок…).
@@ -66,6 +67,8 @@ export function bindKeyboard() {
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     // Открытый лист (ui/sheet-view.js): Esc возвращает предыдущий вид.
     if (event.key === 'Escape' && isSheetOpen()) { closeSheet(); return; }
+    // Открытый фасад (ui/elevation-view.js): Esc — «Закрыть вид».
+    if (event.key === 'Escape' && isElevationOpen()) { closeElevation(); return; }
     if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }
     // Окно разреза: Esc закрывает, правка плана под ним не идёт (кроме Ctrl+Z/Y).
     if (isSectionOpen()) {

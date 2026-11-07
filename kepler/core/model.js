@@ -13,6 +13,7 @@ import { fileV7, isV7Data, toV6Data } from './v7/file.js';
 import { reconcileEats } from './v7/eat-bridge.js';
 import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
+import { normalizeViewsAndSheets } from './views.js';
 
 export { SCHEMA };
 
@@ -474,6 +475,8 @@ export function normalizeProject(data) {
   for (const levels of [data.levels, ...data.variants.map((v) => v.house.levels)]) {
     for (const level of levels) convertLevelBoundRooms(level, levels, data.settings);
   }
+  // Виды и листы (core/views.js): необязательно, без смены схемы.
+  normalizeViewsAndSheets(data);
   ensureSite(data);
   return attachLevelAccessors(data);
 }
