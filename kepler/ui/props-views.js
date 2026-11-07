@@ -1,20 +1,126 @@
-// Вкладка «Виды» правой панели: что и как видно на плане. Поворот вида
-// (те же команды, что и в панели ⟲ на колонке инструментов — ui/view-align.js),
-// подложка-съёмка, наружные размеры, ландшафт под домом (ui/plan-landscape.js),
-// 3D. Только вид: данные проекта меняет лишь «Развернуть оси дома по виду» и
-// размеры (как кнопка «Размеры» на колонке).
+// Виды проекта, как диспетчер проекта Revit.
+// Вкладка «Виды» правой панели — дерево видов: «Планы этажей» (по виду на
+// этаж), «Участок», «Ландшафт», «3D», «Разрезы» (разрезы участка из
+// «Ландшафта»), «Фасады» (заготовка). Клик (и двойной клик) открывает вид;
+// активный подсвечен.
+// Настройки активного вида — во вкладке «Свойства», когда ничего не выбрано
+// (ui/props.js): поворот вида (те же команды, что и панель ⟲ на колонке
+// инструментов — ui/view-align.js), подложка-съёмка, наружные размеры,
+// ландшафт под домом (ui/plan-landscape.js), 3D. Только вид: данные проекта
+// меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
+import { sortedLevels } from '../core/model.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
+import { landscapeSections, openSection, closeSection, openSectionId } from './landscape-section.js';
+import { switchLevel } from './levels.js';
+import { closeSheets, isPhone } from './mobile.js';
+import { setEditorMode } from './modes.js';
 import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
+import { closeSheet, isSheetOpen, notifyViewChange } from './sheet-view.js';
 import { state } from './state.js';
 import { requestDraw } from './view.js';
+import { close3d, is3dOpen, open3d } from './view3d.js';
 import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from './view-align.js';
 
 const MODE_TITLES = { plan: '«План»', site: '«Участок»', landscape: '«Ландшафт»' };
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
+const openGroups = { plans: true, site: true, landscape: true, '3d': true, sections: true, facades: false };
+
+const sectionName = (sec) => `Разрез ${sec.name}–${sec.name}`;
+
+// Идентификатор активного вида: 'plan:<этаж>' | 'site' | 'landscape' |
+// 'section:<id>' | '3d'; открытый лист — null (активен лист, не вид).
+export function activeViewId() {
+  if (isSheetOpen()) return null;
+  if (is3dOpen()) return '3d';
+  const mode = state.modeName || 'plan';
+  if (mode === 'plan') return `plan:${state.project.activeLevel}`;
+  if (mode === 'landscape' && openSectionId()) return `section:${openSectionId()}`;
+  return mode;
+}
+
+// Название активного вида — для заголовка «Вид: …» в «Свойствах».
+export function activeViewTitle() {
+  const id = activeViewId() || `plan:${state.project.activeLevel}`;
+  if (id === '3d') return '3D';
+  if (id === 'site') return 'Участок';
+  if (id === 'landscape') return 'Ландшафт';
+  if (id.startsWith('section:')) {
+    const sec = landscapeSections().find((s) => s.id === id.slice(8));
+    return sec ? sectionName(sec) : 'Разрез';
+  }
+  const level = state.project.levels.find((l) => l.id === id.slice(5));
+  return level?.name || 'План этажа';
+}
+
+// Открыть вид из дерева: этаж и режим «План», «Участок», «Ландшафт», разрез, 3D.
+export function openView(id) {
+  if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
+  closeSheet();
+  state.sheetSel = null;
+  if (id === '3d') {
+    if (!is3dOpen()) open3d();
+    notifyViewChange();
+    return;
+  }
+  if (is3dOpen()) close3d();
+  if (id.startsWith('plan:')) {
+    setEditorMode('plan');
+    switchLevel(id.slice(5));
+  } else if (id === 'site') {
+    setEditorMode('site');
+  } else if (id === 'landscape') {
+    setEditorMode('landscape');
+    if (openSectionId()) closeSection();
+  } else if (id.startsWith('section:')) {
+    setEditorMode('landscape');
+    openSection(id.slice(8));
+  }
+  notifyViewChange();
+}
+
+// ------------------------------------------------------------ дерево видов
+
+function treeItem(id, name, active, extra = '') {
+  return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}"
+    aria-selected="${active === id}"${active === id ? ' aria-current="page"' : ''}>${extra}<span class="vt-name">${escapeHtml(name)}</span></button></li>`;
+}
+
+function treeGroup(key, title, items, empty, count = false) {
+  return `<details class="vt-group" data-vt-group="${key}"${openGroups[key] ? ' open' : ''}>
+    <summary class="vt-head">${escapeHtml(title)}${count && items.length ? ` <small>${items.length}</small>` : ''}</summary>
+    ${items.length ? `<ul class="vt-list" role="group">${items.join('')}</ul>` : `<p class="vt-empty hint">${escapeHtml(empty)}</p>`}
+  </details>`;
+}
+
+export function renderViewsPanel(panel) {
+  const project = state.project;
+  const active = activeViewId();
+  const levels = sortedLevels(project);
+  const sections = landscapeSections();
+  panel.innerHTML = `
+    <h2>Виды</h2>
+    <p class="subtitle">Виды проекта, как в диспетчере Revit: клик — открыть. Настройки вида — во вкладке «Свойства».</p>
+    <div class="view-tree" id="viewTree" role="tree" aria-label="Виды проекта">
+      ${treeGroup('plans', 'Планы этажей', levels.map((l) => treeItem(`plan:${l.id}`, l.name, active)), 'Этажей нет', true)}
+      ${treeGroup('site', 'Участок', [treeItem('site', 'Участок', active)])}
+      ${treeGroup('landscape', 'Ландшафт', [treeItem('landscape', 'Ландшафт', active)])}
+      ${treeGroup('3d', '3D', [treeItem('3d', '3D-вид', active)])}
+      ${treeGroup('sections', 'Разрезы', sections.map((s) => treeItem(`section:${s.id}`, sectionName(s), active)),
+    'Разрезов нет: инструмент «Разрез» в режиме «Ландшафт».', true)}
+      ${treeGroup('facades', 'Фасады', [], 'Скоро: фасады по сторонам света.')}
+    </div>`;
+  panel.querySelectorAll('[data-vt-group]').forEach((d) => d.addEventListener('toggle', () => { openGroups[d.dataset.vtGroup] = d.open; }));
+  panel.querySelectorAll('[data-view]').forEach((b) => {
+    b.addEventListener('click', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
+    b.addEventListener('dblclick', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
+  });
+}
+
+// ------------------------------------------------------------ настройки вида
 
 function landscapeBlock() {
   const pref = planLandscapePref();
@@ -31,14 +137,21 @@ function landscapeBlock() {
     </div>`;
 }
 
-export function renderViewsPanel(panel) {
+// Настройки активного вида (разметка). У 3D — свои настройки над видом.
+export function viewSettingsHtml() {
   const project = state.project;
+  if (is3dOpen()) {
+    return `
+    <div class="prop-block" id="viewsSettings">
+      <p class="hint">Слои, рельеф и «Вписать» — на панели над 3D-видом.</p>
+      <button type="button" id="views3dBtn">Закрыть 3D-вид</button>
+    </div>`;
+  }
   const mode = state.modeName || 'plan';
   const custom = customViewAngle(project, mode);
-  const site = project.site;
   const outer = project.settings?.dimOuter !== false;
-  panel.innerHTML = `
-    <h2>Виды</h2>
+  return `
+    <div id="viewsSettings">
     <h3>Поворот вида ${MODE_TITLES[mode] || ''}</h3>
     <div class="prop-block" id="viewsRotation">
       <button type="button" id="viewsAlignBtn"${state.tool?.kind === 'align-view' ? ' class="armed"' : ''}>⟲ Выровнять вид по двум точкам</button>
@@ -52,19 +165,19 @@ export function renderViewsPanel(panel) {
     </div>
     <h3>Отображение</h3>
     <div class="prop-block">
-      ${site?.underlay ? `<label class="check-row"><input type="checkbox" id="viewsUnderlay" ${state.underlayHidden ? '' : 'checked'}><span>Подложка (съёмка)</span></label>` : ''}
+      ${project.site?.underlay ? `<label class="check-row"><input type="checkbox" id="viewsUnderlay" ${state.underlayHidden ? '' : 'checked'}><span>Подложка (съёмка)</span></label>` : ''}
       <label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
-    ${landscapeBlock()}`;
-  bindViews(panel);
+    ${mode === 'plan' ? landscapeBlock() : ''}
+    </div>`;
 }
 
 // Поворот вида поменялся снаружи (панель ⟲, выравнивание по точкам).
 export function refreshViewsPanel() {
-  if (state.propsTab !== 'views' || !state.project) return;
+  if (!state.project) return;
   const mode = state.modeName || 'plan';
-  // Узлы — из вкладки (их нет в index.html, панель рисуется кодом).
+  // Узлы — из «Свойств» (их нет в index.html, панель рисуется кодом).
   const $ = (sel) => document.querySelector(`#propsBody ${sel}`);
   const input = $('#viewsAngleInput');
   if (input && document.activeElement !== input) input.value = fmtAngle(viewAngle(state.project, mode));
@@ -73,8 +186,8 @@ export function refreshViewsPanel() {
   $('#viewsAlignBtn')?.classList.toggle('armed', state.tool?.kind === 'align-view');
 }
 
-function bindViews(panel) {
-  const rerender = () => renderViewsPanel(panel);
+// rerender — перерисовать панель целиком (после смены угла, флажков ландшафта).
+export function bindViewSettings(panel, rerender) {
   panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => { startAlignView(); refreshViewsPanel(); });
   panel.querySelector('#viewsAngleInput')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
@@ -92,7 +205,7 @@ function bindViews(panel) {
     const outer = state.project.settings?.dimOuter !== false;
     if (outer !== e.target.checked) el('dimModeBtn')?.click();
   });
-  panel.querySelector('#views3dBtn')?.addEventListener('click', () => el('view3dBtn')?.click());
+  panel.querySelector('#views3dBtn')?.addEventListener('click', () => openView(is3dOpen() ? activeBaseView() : '3d'));
   panel.querySelector('#viewsLsOn')?.addEventListener('change', (e) => {
     const pref = planLandscapePref();
     // Включили после «Только планировки» — вернуть группы по умолчанию.
@@ -112,4 +225,10 @@ function bindViews(panel) {
     requestDraw();
     rerender();
   });
+}
+
+// Вид под 3D (режим редактора): куда вернуться, закрыв 3D.
+function activeBaseView() {
+  const mode = state.modeName || 'plan';
+  return mode === 'plan' ? `plan:${state.project.activeLevel}` : mode;
 }

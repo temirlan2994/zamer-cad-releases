@@ -353,8 +353,32 @@ function sectionsSheet(project, spec, sheetNo, sheetCount) {
   });
 }
 
+// Масштаб, выбранный для листа (знаменатель: 100 — «1:100»), — для «Свойств» листа.
+function withScale(sheet, denominator) {
+  sheet.denominator = denominator;
+  return sheet;
+}
+
+// Ключ листа — устойчивый между перерисовками (выбор и открытый лист).
+export function sheetKey(spec) {
+  if (spec.kind === 'level') return `level:${spec.levelId}`;
+  if (spec.kind === 'sections') return `sections:${spec.place.map((p) => p.item.id).join(',')}`;
+  return spec.kind;
+}
+
+// Название листа — как в списке «Листы».
+export function sheetTitle(project, spec) {
+  if (spec.kind === 'site') return 'Генплан';
+  if (spec.kind === 'sections') return `Разрезы участка (${spec.place.length})`;
+  const level = project.levels.find((l) => l.id === spec.levelId);
+  return `План: ${level?.name || 'этаж'}`;
+}
+
 export function renderSheet(project, spec, sheetNo, sheetCount) {
-  if (spec.kind === 'sections') return sectionsSheet(project, spec, sheetNo, sheetCount);
+  if (spec.kind === 'sections') {
+    const dens = [...new Set(spec.place.map((p) => p.item.den))];
+    return withScale(sectionsSheet(project, spec, sheetNo, sheetCount), dens.join(', 1:'));
+  }
   if (spec.kind === 'site') {
     const ground = levelProject(project, groundLevel(project).id);
     const { canvas, denominator } = renderArea(ground, {
@@ -362,12 +386,12 @@ export function renderSheet(project, spec, sheetNo, sheetCount) {
       rotation: -((project.site.north || 0) * Math.PI) / 180, underlayImg: state.underlayImg,
       sectionMarks: sheetSectionList(project),
     });
-    return composeSheet((ctx) => {
+    return withScale(composeSheet((ctx) => {
       ctx.drawImage(canvas, AREA.x0, AREA.y0, AREA.x1 - AREA.x0, AREA.y1 - AREA.y0);
       frameAndStamp(ctx, { project, title: 'Генплан (схема планировочной организации участка)', denominator, sheetNo, sheetCount, subtitle: 'Север вверх · дом — нижний этаж' });
       siteTable(ctx, project);
       legendBox(ctx, landscapeLegend(project.site?.landscape?.objects, sheetLandscapeStyle()));
-    });
+    }), denominator);
   }
   const lp = levelProject(project, spec.levelId);
   const level = lp.levels.find((l) => l.id === spec.levelId);
@@ -376,14 +400,14 @@ export function renderSheet(project, spec, sheetNo, sheetCount) {
     rotation: -((project.building?.rotation || 0) * Math.PI) / 180,
   });
   const schedule = roomSchedule(project).find((s) => s.level.id === spec.levelId);
-  return composeSheet((ctx) => {
+  return withScale(composeSheet((ctx) => {
     ctx.drawImage(canvas, AREA.x0, AREA.y0, AREA.x1 - AREA.x0, AREA.y1 - AREA.y0);
     frameAndStamp(ctx, {
       project, title: `План: ${level.name}`, denominator, sheetNo, sheetCount,
       subtitle: `Отметка пола ${(level.elevation / 1000).toFixed(3)} · высота этажа ${(level.height / 1000).toFixed(2)} м`,
     });
     scheduleTable(ctx, schedule);
-  });
+  }), denominator);
 }
 
 function jpegBytes(canvas) {

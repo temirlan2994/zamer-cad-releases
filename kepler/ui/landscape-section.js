@@ -169,6 +169,7 @@ export function openSection(id) {
   renderSectionView();
   revealLine(landscapeSections().find((s) => s.id === id));
   requestDraw();
+  document.dispatchEvent(new CustomEvent('kepler:view')); // дерево видов: разрез — активный вид
   return true;
 }
 
@@ -179,6 +180,7 @@ export function closeSection() {
   const box = document.getElementById('lsSectionView');
   if (box) { box.hidden = true; box.innerHTML = ''; }
   requestDraw();
+  document.dispatchEvent(new CustomEvent('kepler:view'));
 }
 
 export const openSectionId = () => view?.id || null;

@@ -409,6 +409,7 @@ export function open3d() {
   frameHouse();
   requestRender();
   setHint();
+  document.dispatchEvent(new CustomEvent('kepler:view')); // дерево видов, «Свойства»
 }
 
 export function close3d() {
@@ -418,6 +419,7 @@ export function close3d() {
   hover = null;
   el('view3d').hidden = true;
   el('view3dBtn')?.classList.remove('active');
+  document.dispatchEvent(new CustomEvent('kepler:view'));
 }
 
 export const is3dOpen = () => active;

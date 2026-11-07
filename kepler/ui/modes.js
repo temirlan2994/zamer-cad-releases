@@ -12,6 +12,7 @@ import { state } from './state.js';
 import { cancelTool } from './tools.js';
 import { fitViewOnce, requestDraw, rotateViewTo, scaleLabel } from './view.js';
 import { renderViewPanel } from './view-align.js';
+import { closeSheet } from './sheet-view.js';
 
 // Поворот камеры режима (core/view-angles.js): у каждого режима свой угол
 // вида (project.settings.viewAngles). Не задан — «План» идёт по осям дома
@@ -30,6 +31,7 @@ export function applyModeRotation(pivot = null) {
 }
 
 export function setEditorMode(mode) {
+  closeSheet(); // лист на холсте закрывается при переходе к виду
   if (state.modeName === mode) return;
   // Флаги touched/fitted (view.js) сохраняются вместе с видом.
   // origin — где стоял дом: если в «Участке» его сдвинули, вид «Плана»

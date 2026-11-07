@@ -21,7 +21,7 @@ import { fitView } from './view.js';
 
 const download = (filename, data, mime) => saveFile(filename, data, mime);
 
-function safeFileName() {
+export function safeFileName() {
   return (state.project.name || 'kepler-plan').replace(/[^\wа-яА-ЯёЁ -]/g, '').trim().replace(/\s+/g, '-') || 'kepler-plan';
 }
 

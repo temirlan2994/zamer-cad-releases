@@ -75,9 +75,9 @@ describe('ландшафт на плане этажа', () => {
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
   });
 
-  it('«Виды»: переключатель, группы и «Только планировки»', async () => {
+  it('«Свойства» вида (ничего не выбрано): переключатель, группы и «Только планировки»', async () => {
     const { page } = app;
-    await page.click('#propsTabViews');
+    await page.click('#propsTabMain');
     assert.equal(await page.isChecked('#viewsLsOn'), true, 'по умолчанию — вкл');
     const groups = await page.$$eval('[data-plan-ls]', (ns) => ns.map((n) => [n.dataset.planLs, n.checked]));
     assert.deepEqual(groups, [['shadows', false], ['plants', true], ['covers', true], ['objects', true], ['labels', false], ['notes', false]]);

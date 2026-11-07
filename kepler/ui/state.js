@@ -12,6 +12,9 @@ export const state = {
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка библиотеки (в режиме «План»)
   libraryPinned: false, // библиотека открыта кнопкой «Помещение»/«Мебель» (без активного размещения)
   propsTab: 'props', // 'props' | 'views' | 'sheets' | 'tep' — вкладка правой панели (ui/props.js)
+  tepTab: 'tep', // 'rooms' (экспликация) | 'tep' (показатели) — подвкладка «ТЭП» (ui/props-tep.js)
+  sheetSel: null, // ключ листа, выбранного в «Листах» (ui/props-sheets.js): «Свойства» без выбора — его настройки
+  sheetOpen: null, // ключ листа, открытого на холсте (ui/sheet-view.js)
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

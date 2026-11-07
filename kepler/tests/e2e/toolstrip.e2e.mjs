@@ -165,7 +165,7 @@ describe('свойства: вкладка «ТЭП и площади», уда�
     assert.ok(await page.$('#unitsSel'), 'единицы остаются');
   });
 
-  it('вкладка: показатели дома, ТЭП и экспликация вместе; строка выбирает помещение', async () => {
+  it('вкладка: подвкладки «ТЭП» (показатели дома) и «Экспликация»; строка выбирает помещение', async () => {
     const { page } = app;
     await page.click('#propsTabTep');
     assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true');
@@ -175,10 +175,13 @@ describe('свойства: вкладка «ТЭП и площади», уда�
     const tep = await page.textContent('#tepRows');
     assert.match(tep, /Площадь застройки/);
     assert.match(tep, /Общая площадь дома/);
+    assert.equal(await page.$('#schedTable'), null, 'экспликация — на своей подвкладке');
+    await page.click('#tepTabRooms');
+    assert.equal(await page.$('#tepRows'), null);
     const rooms = await page.evaluate(() => window.__kepler.state.project.levels.reduce((n, l) => n + l.rooms.length, 0));
     assert.equal(await page.$$eval('#schedTable [data-sched-room]', (ns) => ns.length), rooms);
     assert.match(await page.textContent('#schedTable tfoot'), /Общая/);
-    // Перерисовка панели (правка) не сбрасывает вкладку.
+    // Перерисовка панели (правка) не сбрасывает вкладку и подвкладку.
     await page.evaluate(() => window.__kepler.select(null));
     assert.equal(await page.isVisible('#schedTable'), true);
     const id = await page.$eval('#schedTable [data-sched-room]', (n) => n.dataset.schedRoom);

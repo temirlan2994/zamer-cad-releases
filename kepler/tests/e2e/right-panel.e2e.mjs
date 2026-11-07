@@ -1,9 +1,10 @@
 // e2e: правая панель — ряд из 5 значков (Свойства, Виды, Листы, ТЭП,
 // Замечания): без title и без подписей, у каждого — aria-label, role=tab и
 // мгновенная подсказка «название · что делает», не выходящая за экран;
-// клик переключает панели и aria-selected. «Виды» — поворот вида (те же
-// команды, что панель ⟲) и ландшафт на плане; «Листы» — список листов,
-// предпросмотр и PDF. Телефон: «Виды» и «Листы» есть в нижнем листе.
+// клик переключает панели и aria-selected. «Виды» — дерево видов; настройки
+// вида (поворот — те же команды, что панель ⟲; ландшафт на плане) — во
+// «Свойствах» без выбора; «Листы» — список листов, двойной клик открывает
+// лист на холсте, PDF. Телефон: «Виды» и «Листы» есть в нижнем листе.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -11,7 +12,7 @@ import { startApp, openSample } from './helpers.mjs';
 
 const TABS = [
   { id: 'propsTabMain', label: 'Свойства', body: '#projectSection' },
-  { id: 'propsTabViews', label: 'Виды', body: '#viewsLsOn' },
+  { id: 'propsTabViews', label: 'Виды', body: '#viewTree' },
   { id: 'propsTabSheets', label: 'Листы', body: '#sheetsList' },
   { id: 'propsTabTep', label: 'ТЭП', body: '#tepHouse' },
   { id: 'issuesBtn', label: 'Замечания', body: '#issuesPanel' },
@@ -77,9 +78,9 @@ describe('правая панель — 5 значков, компьютер 128
     assert.deepEqual(app.errors, []);
   });
 
-  it('«Виды»: поворот вида — те же команды, что панель ⟲', async () => {
+  it('«Свойства» вида: поворот вида — те же команды, что панель ⟲', async () => {
     const { page } = app;
-    await page.click('#propsTabViews');
+    await page.click('#propsTabMain');
     await page.fill('#viewsAngleInput', '15');
     await page.press('#viewsAngleInput', 'Tab');
     await page.click('#viewBtn');
@@ -92,14 +93,16 @@ describe('правая панель — 5 значков, компьютер 128
     assert.deepEqual(app.errors, []);
   });
 
-  it('«Листы»: список, предпросмотр, PDF', async () => {
+  it('«Листы»: список, лист на холсте, PDF', async () => {
     const { page } = app;
     await page.click('#propsTabSheets');
     const names = await page.$$eval('#sheetsList .sheets-name', (ns) => ns.map((n) => n.textContent));
     assert.deepEqual(names, ['Генплан', 'План: 1 этаж']);
-    await page.click('[data-sheet-preview="1"]');
-    await page.waitForFunction(() => document.getElementById('sheetsPreviewImg')?.naturalWidth > 0);
-    assert.equal(await page.$eval('#sheetsPreviewImg', (n) => n.naturalWidth), 2480);
+    await page.dblclick('#sheetsList [data-sheet="level:' + await page.evaluate(() => window.__kepler.state.project.activeLevel) + '"] .sheets-name');
+    await page.waitForFunction(() => document.getElementById('sheetViewImg')?.naturalWidth > 0);
+    assert.equal(await page.$eval('#sheetViewImg', (n) => n.naturalWidth), 2480);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isHidden('#sheetView'), true);
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#sheetsPdfBtn')]);
     assert.match(dl.suggestedFilename(), /\.pdf$/);
     assert.match((await readFile(await dl.path())).toString('latin1'), /\/Count 2/);
@@ -123,7 +126,7 @@ describe('правая панель — телефон 390', () => {
     }
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     await page.tap('#propsTabViews');
-    assert.equal(await page.isVisible('#viewsLsOn'), true);
+    assert.equal(await page.isVisible('#viewTree'), true);
     await page.tap('#propsTabSheets');
     assert.equal(await page.isVisible('#sheetsPdfBtn'), true);
     assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);

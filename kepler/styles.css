@@ -1947,7 +1947,62 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .sheets-item.active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .sheets-no { flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 650; display: inline-flex; align-items: center; justify-content: center; }
 .sheets-name { flex: 1; min-width: 0; }
-.sheets-preview { margin: 4px 0 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #fff; }
-.sheets-preview[hidden] { display: none; }
-.sheets-preview img { display: block; width: 100%; height: auto; }
-.sheets-preview .hint { margin: 8px; color: #555; }
+.sheets-item { cursor: pointer; border-radius: 6px; }
+.sheets-item:hover:not(.active) { background: var(--surface-2); }
+.sheets-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheets-item.current .sheets-no { background: var(--accent); color: #fff; }
+
+/* Дерево видов, как диспетчер проекта Revit (ui/props-views.js). */
+.view-tree { display: flex; flex-direction: column; gap: 2px; }
+.vt-group > summary { padding: 5px 2px; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); cursor: pointer; list-style-position: inside; }
+.vt-group > summary small { margin-left: 4px; font-weight: 500; letter-spacing: 0; }
+.vt-list { list-style: none; margin: 0 0 4px; padding: 0 0 0 14px; }
+.vt-item {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 30px; padding: 4px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text); box-shadow: none;
+  font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.vt-item:hover:not(.active) { background: var(--surface-2); }
+.vt-item.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 650; }
+.vt-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vt-empty { margin: 0 0 6px 16px; font-size: 12px; color: var(--muted); }
+
+/* Секция «Вид: …» в «Участке»/«Ландшафте» без выбора (ui/props.js). */
+.view-section { margin-top: 12px; padding-top: 6px; border-top: 1px solid var(--border); }
+.view-section > summary { padding: 6px 0; font-weight: 650; font-size: 13px; cursor: pointer; }
+.view-section > summary small { margin-left: 4px; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+#sheetPropBack { margin-top: 8px; color: var(--accent); }
+
+/* Подвкладки «ТЭП» — значки, подсказка .ptab-tip (ui/props-tep.js). */
+.tep-tabs { position: relative; display: flex; gap: 4px; margin: 0 0 12px; padding: 3px; border-radius: 8px; background: var(--surface-2); }
+.tep-tabs .tep-tab {
+  position: static; flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center;
+  height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); box-shadow: none;
+}
+.tep-tabs .tep-tab:hover:not(.active) { color: var(--text); }
+.tep-tabs .tep-tab.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.tep-tabs .tep-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Открытый лист на холсте (ui/sheet-view.js). */
+.sheet-view {
+  position: absolute; inset: 0; z-index: 48; display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--canvas) 70%, #8a94a3);
+}
+.sheet-view[hidden] { display: none; }
+.sheet-view-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.sheet-view-title { font-size: 14px; }
+.sheet-view-meta { font-size: 12.5px; color: var(--muted); }
+.sheet-view-gap { flex: 1; }
+.sheet-view-bar button { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
+.sheet-view-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
+.sheet-view-body img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25); }
+.sheet-view-body .hint { color: var(--muted); }
+@media (max-width: 640px) {
+  .sheet-view-bar { padding: 6px 8px; gap: 6px; }
+  .sheet-view-gap { display: none; }
+  .sheet-view-body { padding: 8px; }
+}

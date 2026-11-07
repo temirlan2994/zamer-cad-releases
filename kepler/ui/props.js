@@ -18,8 +18,11 @@ import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
-import { renderViewsPanel } from './props-views.js';
-import { renderSheetsPanel } from './props-sheets.js';
+import {
+  activeViewTitle, bindViewSettings, renderViewsPanel, viewSettingsHtml,
+} from './props-views.js';
+import { renderSheetProps, renderSheetsPanel } from './props-sheets.js';
+import { refreshSheetView } from './sheet-view.js';
 import { renderToolstrip } from './toolstrip.js';
 import {
   addFurniture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
@@ -40,14 +43,18 @@ import { liftForEdit, liftRoom, nominalShape, reconcileEats } from '../core/v7/e
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
+import { is3dOpen } from './view3d.js';
 
-// Вкладки над панелью (ряд значков): «Свойства» (выбранный объект или
-// проект), «Виды» (что видно на плане, ui/props-views.js), «Листы» (альбом A3,
-// ui/props-sheets.js), «ТЭП» (показатели дома и экспликация, ui/props-tep.js).
-// Выбор нового объекта возвращает вкладку «Свойства».
+// Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
+// объект; ничего не выбрано — настройки активного вида или выбранного листа,
+// внизу — свёрнутая секция «Проект»), «Виды» (дерево видов,
+// ui/props-views.js), «Листы» (список листов, ui/props-sheets.js), «ТЭП»
+// (экспликация и показатели, ui/props-tep.js). Выбор нового объекта
+// возвращает вкладку «Свойства».
 const PROPS_TABS = ['props', 'views', 'sheets', 'tep'];
 let lastSelKey = null;
 let projectOpen = false; // секция «Проект» раскрыта
+let viewOpen = false; // секция «Вид: …» в «Участке»/«Ландшафте» раскрыта
 
 // Вкладки и тело — в разметке (index.html); третья вкладка «⚠ Замечания» —
 // ui/issues.js (пока открыта, «Свойства»/«ТЭП» не подсвечены).
@@ -66,6 +73,22 @@ function propsBody() {
       state.propsTab = btn.dataset.propsTab;
       renderProps();
     });
+    // Сменился активный вид или лист (дерево видов, 3D, разрез, лист на холсте).
+    // Поле, в котором печатают, не перерисовываем. Несколько событий подряд —
+    // одна перерисовка, после текущего обработчика (не внутри renderProps).
+    let queued = false;
+    document.addEventListener('kepler:view', () => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        const a = document.activeElement;
+        const typing = a && body.contains(a) && (/^(SELECT|TEXTAREA)$/.test(a.tagName)
+          || (a.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes(a.type)));
+        if (typing) return;
+        renderProps();
+      });
+    });
   }
   const issues = isIssuesOpen() && Boolean(root.querySelector('#issuesPanel'));
   for (const btn of tabs.querySelectorAll('[data-props-tab]')) {
@@ -81,17 +104,27 @@ export function renderProps() {
   renderToolstrip(); // «Массив», «Выноска» ландшафта зависят от выделения
   const sel = state.selection;
   const selKey = sel ? JSON.stringify(sel) : null;
-  if (selKey && selKey !== lastSelKey) state.propsTab = 'props';
+  if (selKey && selKey !== lastSelKey) {
+    state.propsTab = 'props';
+    state.sheetSel = state.sheetOpen; // выбран объект — «Свойства» уже не про лист
+  }
   lastSelKey = selKey;
   if (!PROPS_TABS.includes(state.propsTab)) state.propsTab = 'props';
   const panel = propsBody();
+  refreshSheetView();
   if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
   if (state.propsTab === 'views') { renderViewsPanel(panel); return; }
   if (state.propsTab === 'sheets') { renderSheetsPanel(panel); return; }
+  // Лист открыт или выбран в «Листах» — его настройки.
+  if (!sel && (state.sheetOpen || state.sheetSel) && renderSheetProps(panel)) return;
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
-  if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
+  if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) {
+    if (sel || landscapeToolActive()) renderLandscapeProps(panel);
+    else withViewSection(panel, renderLandscapeProps);
+    return;
+  }
   if (!sel) {
-    if (state.modeName === 'site') renderSiteSettings(panel);
+    if (state.modeName === 'site') withViewSection(panel, renderSiteSettings);
     else renderProjectProps(panel);
     return;
   }
@@ -102,6 +135,24 @@ export function renderProps() {
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
   if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
   renderProjectProps(panel);
+}
+
+const landscapeToolActive = () => ['ls-section', 'draw-landscape', 'ls-array'].includes(state.tool?.kind);
+
+// «Участок» и «Ландшафт» без выбора: свои настройки режима, а настройки вида —
+// свёрнутой секцией «Вид: …» под ними (раскрыта ли — помнится).
+function withViewSection(panel, renderMode) {
+  const prev = panel.querySelector(':scope > #viewSection');
+  if (prev) viewOpen = prev.open;
+  panel.innerHTML = '<div class="mode-props" id="modeProps"></div>';
+  renderMode(panel.firstElementChild);
+  panel.insertAdjacentHTML('beforeend', `
+    <details class="view-section" id="viewSection"${viewOpen ? ' open' : ''}>
+      <summary id="viewSummary">Вид: ${escapeHtml(activeViewTitle())} <small>поворот, отображение</small></summary>
+      ${viewSettingsHtml()}
+    </details>`);
+  panel.querySelector('#viewSection').addEventListener('toggle', (e) => { viewOpen = e.target.open; });
+  bindViewSettings(panel.querySelector('#viewSection'), renderProps);
 }
 
 // Чистая высота по умолчанию: высота этажа минус перекрытие (core/norms.js).
@@ -120,6 +171,9 @@ function renderProjectProps(panel) {
   const prev = panel.querySelector('#projectSection');
   if (prev) projectOpen = prev.open; // событие toggle приходит позже — читаем сразу
   panel.innerHTML = `
+    <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
+    <p class="subtitle">${is3dOpen() ? '3D-вид дома' : 'План этажа'} · свойства вида</p>
+    ${viewSettingsHtml()}
     <div class="props-empty">
       <p class="empty-hint">Ничего не выбрано. Кликните помещение, стену, проём или мебель на плане — здесь будут их свойства.</p>
       ${rooms.length ? '<p class="empty-hint">Площади и экспликация — вкладка «ТЭП».</p>' : `
@@ -160,6 +214,7 @@ function renderProjectProps(panel) {
     </div>
     </details>`;
   panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
+  bindViewSettings(panel, renderProps);
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });

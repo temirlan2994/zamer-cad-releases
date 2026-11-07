@@ -87,9 +87,11 @@ describe('свойства съеденной комнаты — по номин
     const { page } = app;
     const ref = reference(4000);
     await page.click('#propsTabTep');
+    await page.click('#tepTabRooms');
     const total = await page.$eval('#schedTable tfoot tr td.area', (td) => td.textContent);
     assert.ok(Math.abs(num(total) - ref.area) < 0.01, `«Общая» ${total} = видимая ${ref.area.toFixed(2)}`);
     assert.ok(num(total) < 25 - 1, 'без двойного счёта перекрытия');
+    await page.click('#tepTabTep');
     const tep = await page.$eval('#tepRows', (el) => el.textContent);
     const m = tep.match(/Общая площадь дома\s*([\d\s,]+)/);
     assert.ok(m, tep);
