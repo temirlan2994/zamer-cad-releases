@@ -465,6 +465,24 @@ export function bindCanvasInput() {
       requestDraw();
       return;
     }
+    // Esc во время растяжения комнаты ручкой — отмена жеста целиком (и
+    // соседей по общей стене, и уступа у них): проект — как до жеста.
+    if (e.key === 'Escape' && (drag?.kind === 'resize' || drag?.kind === 'shape-resize')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const finished = drag;
+      drag = null;
+      state.ghost = null;
+      state.guides = [];
+      if (finished.moved) {
+        if (finished.kind === 'shape-resize') state.pendingRoomSplit = null; // снимок до деления
+        restoreFrom(finished.before);
+        if (roomById(state.project, finished.roomId)) selectObject({ type: 'room', id: finished.roomId });
+      } else if (finished.kind === 'shape-resize' && pendingSplitHas(finished.roomId)) revertPendingSplit();
+      refreshDerived();
+      requestDraw();
+      return;
+    }
     if (e.key !== 'Escape' || !drag || !cancelLandscapeDrag(drag)) return;
     e.preventDefault();
     e.stopImmediatePropagation();

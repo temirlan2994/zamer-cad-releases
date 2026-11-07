@@ -59,17 +59,20 @@ test('путь-независимость: кадр зависит только 
   assert.deepEqual(one.project.rooms.map((r) => [r.x, r.w]), two.project.rooms.map((r) => [r.x, r.w]));
 });
 
-test('сосед длиннее по стыку тянет и тех, кто стоит напротив него (транзитивно)', () => {
+test('сосед длиннее по стыку: уступ только напротив стыка, дальше никто не едет', () => {
   // A и D слева друг над другом, B справа во всю высоту.
   const { project, follow } = setup([
     room('bedroom', 0, 0, 4000, 3000, 'A'), room('kitchen', 0, 3100, 4000, 3000, 'D'),
     room('living', 4100, 0, 5000, 6100, 'B'), room('hall', 9200, 0, 2000, 6100, 'C'),
   ], 'A', 'e');
-  assert.deepEqual(follow.map((f) => f.id).sort(), ['B', 'D'], 'C (за B) не попутчик');
+  assert.deepEqual(follow.map((f) => f.id), ['B'], 'D (напротив B) и C (за B) не попутчики');
   stretch(project, project.rooms[0], 'e', { x: 600, y: 0 }, follow);
   const [A, D, B, C] = project.rooms;
-  assert.equal(D.w, 4600);
-  assert.equal(B.x, 4700); assert.equal(B.x + B.w, 9100);
+  assert.equal(D.w, 4000, 'D на месте');
+  assert.ok(B.outline, 'B — Г-образная');
+  assert.equal(B.x + B.w, 9100);
+  assert.ok(edgeAtPoint(B, { x: 4700, y: 1500 }), 'участок напротив A сдвинут');
+  assert.ok(edgeAtPoint(B, { x: 4100, y: 4500 }), 'остальная грань B на месте');
   assert.equal(C.x, 9200, 'C на месте');
   assert.equal(A.w, 4600);
 });
