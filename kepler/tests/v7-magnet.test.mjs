@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addBlock, createBlock, createProject7 } from '../core/v7/model.js';
-import { magnetSnap } from '../core/v7/magnet.js';
+import { magnetEdges, magnetSnap } from '../core/v7/magnet.js';
 import { derive } from '../core/v7/derive.js';
 
 function project() {
@@ -44,4 +44,23 @@ test('вложенный блок — к внутренним граням ро�
   const r = magnetSnap(p, 'kid', { x: 200, y: 5250, w: 1500, h: 1500 });
   assert.equal(r.x, 100, 'родитель x=0 + перегородка');
   assert.equal(r.y, 5100);
+});
+
+test('растяжение: подвижная грань — к соседу с зазором перегородки, неподвижная на месте', () => {
+  const p = project();
+  // Правую грань «a» тянем к «m» (m.x = 4300): 4250 → 4200 (зазор 100).
+  const r = magnetEdges(p, 'a', { x: 0, y: 0, w: 4250, h: 3000 }, ['e']);
+  assert.deepEqual(r.rect, { x: 0, y: 0, w: 4200, h: 3000 });
+  assert.equal(r.guides[0].kind, 'contact');
+  assert.equal(r.guides[0].edge, 'e');
+  // Левую грань «m» — к «a» (a: 0…4000): 4050 → 4100.
+  const l = magnetEdges(p, 'm', { x: 4050, y: 200, w: 3250, h: 2600 }, ['w']);
+  assert.equal(l.rect.x, 4100);
+  assert.equal(l.rect.x + l.rect.w, 7300, 'правая грань не двигается');
+  // Дальше радиуса и выключенный магнит — без изменений.
+  assert.deepEqual(magnetEdges(p, 'a', { x: 0, y: 0, w: 3000, h: 3000 }, ['e']).rect, { x: 0, y: 0, w: 3000, h: 3000 });
+  assert.deepEqual(magnetEdges(p, 'a', { x: 0, y: 0, w: 4250, h: 3000 }, ['e'], { enabled: false }).rect.w, 4250);
+  // Вложенный — к внутренней грани родителя.
+  const k = magnetEdges(p, 'kid', { x: 1000, y: 6000, w: 6750, h: 1500 }, ['e']);
+  assert.equal(k.rect.x + k.rect.w, 7900);
 });

@@ -89,6 +89,31 @@ export function nominalizeLevel(level) {
   }
 }
 
+// Начало жеста над съеденной комнатой (срез 3): ей возвращается номинальная
+// форма и «сироты»-проёмы — ручки и перенос работают по номиналу, а видимую
+// форму на каждом кадре заново даёт reconcileEats. → true, если менялось.
+export function liftRoom(project, roomId) {
+  const level = activeLevelOf(project);
+  const room = (level.rooms || []).find((r) => r.id === roomId);
+  const eb = room?.eatBase;
+  if (!eb) return false;
+  delete room.eatBase;
+  if (!Array.isArray(level.openings)) level.openings = [];
+  if (eb.base) keepOpenings(level, room, () => setShape(room, eb.base));
+  for (const o of eb.openings || []) {
+    if (!level.openings.some((x) => x.id === o.id)) level.openings.push(clone(o));
+  }
+  return true;
+}
+
+// Снимок «кто кого ест»: Map id → 'id|id' (для итога жеста, см. prev).
+export function eatState(project) {
+  return new Map((activeLevelOf(project).rooms || []).map((r) => [r.id, (r.eatBase?.by || []).join('|')]));
+}
+
+// Кто съедает комнату сейчас (ids верхних) — для растяжения «под ними».
+export const eatersOf = (room) => [...(room?.eatBase?.by || [])];
+
 // Съесть: видимая форма = результат carve. → { ok, why, orphans }.
 function applyCarved(level, room, ring, cutters, partition) {
   const local = orientRing(ring, 1).map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
@@ -119,9 +144,12 @@ function applyCarved(level, room, ring, cutters, partition) {
 // Пересчитать съедание активного этажа с нуля.
 // touched — комнаты, которые жест только что поставил/сдвинул/растянул:
 // они поднимаются наверх (если пересекаются с кем-то, с зазором перегородки).
+// under — { [id]: [ids верхних] }: растянутая съеденная комната остаётся
+//   ПОД теми, кто её ел в начале жеста (встаёт прямо под нижнего из них), а
+//   не поднимается наверх: тянули дальнюю грань — соседа она не съедает.
 // → { eaten: [{lower, upper}], failed: [{lower, upper, why, child}], restored: [{lower}], lost: [] }
 //   (eaten/restored — только изменения против прежнего состояния).
-export function reconcileEats(project, { touched = [] } = {}) {
+export function reconcileEats(project, { touched = [], under = null, prev = null } = {}) {
   const out = { eaten: [], failed: [], restored: [], lost: [] };
   const level = activeLevelOf(project);
   const rooms = level.rooms;
@@ -129,7 +157,9 @@ export function reconcileEats(project, { touched = [] } = {}) {
   if (!Array.isArray(level.openings)) level.openings = [];
   const settings = project.settings || {};
   const partition = settings.partition || DEFAULT_PARTITION;
-  const prevBy = new Map(rooms.map((r) => [r.id, (r.eatBase?.by || []).join('|')]));
+  // prev — снимок «кто кого ел» на начало жеста (eatState): итог жеста
+  // сравнивается с ним, а не с прошлым кадром.
+  const prevBy = prev || eatState(project);
 
   nominalizeLevel(level);
 
@@ -147,7 +177,14 @@ export function reconcileEats(project, { touched = [] } = {}) {
     .sort((a, b) => rooms.indexOf(a) - rooms.indexOf(b))
     .filter((r) => live.some((o) => o !== r &&
       area(intersection(geom(r.id), buffer(geom(o.id), pairGap(v7, settings, blockOf.get(r.id), blockOf.get(o.id))))) > HIT_MM2));
-  for (const r of raise) { rooms.splice(rooms.indexOf(r), 1); rooms.push(r); }
+  for (const r of raise) {
+    const eaters = (under?.[r.id] || []).map((id) => rooms.find((o) => o.id === id)).filter(Boolean);
+    rooms.splice(rooms.indexOf(r), 1);
+    if (eaters.length) {
+      const at = Math.min(...eaters.map((o) => rooms.indexOf(o)));
+      rooms.splice(at, 0, r);
+    } else rooms.push(r);
+  }
 
   const blocks = live.map((r) => ({ ...blockOf.get(r.id), z: rooms.indexOf(r) }));
   const carved = carveLevel({ ...v7, blocks }, settings);

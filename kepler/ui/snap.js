@@ -1,9 +1,9 @@
 // Привязки и проверки при изменении размеров комнат и мебели.
 
-import { gridStepForScale, isOpenRoom, isShaft } from '../core/catalog.js';
+import { gridStepForScale, isShaft } from '../core/catalog.js';
 import { itemRect } from '../core/furnish.js';
-import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, dockSnapRadius, validateRoomPlacement } from '../core/rooms.js';
-import { sharedWallThickness, wallSnapCoords } from '../core/walls.js';
+import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, validateRoomPlacement } from '../core/rooms.js';
+import { wallSnapCoords } from '../core/walls.js';
 import { state } from './state.js';
 
 // Линии привязки: грани стен и кромки других комнат.
@@ -41,16 +41,6 @@ function snapValue(value, candidates, tol) {
   return best ? best.c : null;
 }
 
-// Стыковка с радиусом своей пары: ближайший кандидат { c, r } в пределах r.
-function snapDock(value, candidates) {
-  let best = null;
-  for (const { c, r } of candidates) {
-    const d = Math.abs(value - c);
-    if (d <= r && (!best || d < best.d)) best = { c, d };
-  }
-  return best ? best.c : null;
-}
-
 export function applyResize(room, dragState, plan) {
   const start = dragState.start;
   const dx = plan.x - dragState.plan.x;
@@ -73,41 +63,23 @@ export function applyResize(room, dragState, plan) {
     room.x = x; room.y = y; room.w = w; room.h = hh;
     return;
   }
-  const dockXs = [];
-  const dockYs = [];
-  for (const other of state.project.rooms) {
-    if (other.id === room.id || isOpenRoom(other)) continue;
-    if ((other.parentId || null) !== (room.parentId || null)) continue;
-    const overlapY = Math.min(y + hh, other.y + other.h) - Math.max(y, other.y) > 1;
-    const overlapX = Math.min(x + w, other.x + other.w) - Math.max(x, other.x) > 1;
-    // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
-    const gap = sharedWallThickness(state.project, room.id, other.id);
-    // Радиус магнита — на всю зону поиска стыковки (0…MAX_SHARED_GAP).
-    const r = dockSnapRadius(gap, tol);
-    if (overlapY && h.includes('e') && other.x > x) dockXs.push({ c: other.x - gap, r });
-    if (overlapY && h.includes('w') && other.x + other.w < x + w) dockXs.push({ c: other.x + other.w + gap, r });
-    if (overlapX && h.includes('s') && other.y > y) dockYs.push({ c: other.y - gap, r });
-    if (overlapX && h.includes('n') && other.y + other.h < y + hh) dockYs.push({ c: other.y + other.h + gap, r });
-  }
+  // Стыковка к соседним блокам — магнит блоков (ui/block-gesture.js,
+  // core/v7/magnet.js) поверх этого результата; здесь — линии стен и кромок.
   const lines = dragState.snapLines || (dragState.snapLines = collectSnapLines(room.id));
   if (h.includes('w')) {
-    const dock = snapDock(x, dockXs);
-    const s = dock ?? snapValue(x, lines.xs, tol);
+    const s = snapValue(x, lines.xs, tol);
     if (s !== null) { w += x - s; x = s; }
   }
   if (h.includes('e')) {
-    const dock = snapDock(x + w, dockXs);
-    const s = dock ?? snapValue(x + w, lines.xs, tol);
+    const s = snapValue(x + w, lines.xs, tol);
     if (s !== null) w = s - x;
   }
   if (h.includes('n')) {
-    const dock = snapDock(y, dockYs);
-    const s = dock ?? snapValue(y, lines.ys, tol);
+    const s = snapValue(y, lines.ys, tol);
     if (s !== null) { hh += y - s; y = s; }
   }
   if (h.includes('s')) {
-    const dock = snapDock(y + hh, dockYs);
-    const s = dock ?? snapValue(y + hh, lines.ys, tol);
+    const s = snapValue(y + hh, lines.ys, tol);
     if (s !== null) hh = s - y;
   }
   if (w < minSize) { if (h.includes('w')) x -= minSize - w; w = minSize; }

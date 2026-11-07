@@ -97,7 +97,7 @@ describe('панель инструментов', () => {
     await page.click('#snapMenuBtn');
     assert.equal(await page.isHidden('#viewPanel'), true, 'открыта одна панель');
     assert.equal(await page.isVisible('#snapPanel'), true);
-    assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 5);
+    assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Примагничивание блоков, Направляющие');
     await page.keyboard.press('Escape');
     assert.equal(await page.isHidden('#snapPanel'), true);
     // Размеры: подпись и подсветка меняются.

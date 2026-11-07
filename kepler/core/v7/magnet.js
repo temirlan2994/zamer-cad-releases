@@ -34,16 +34,67 @@ function across(rect, t, axis, pad) {
   return rect[p] <= t[p] + t[s] + pad && t[p] <= rect[p] + rect[s] + pad;
 }
 
+function magnetTargets(level, movingId) {
+  const moving = blockById(level, movingId);
+  if (!moving) return null;
+  const skip = new Set([movingId]);
+  for (const b of level.blocks) if (b.parentId === movingId) skip.add(b.id);
+  const ctx = moving.parentId || null;
+  return { moving, ctx, targets: level.blocks.filter((b) => !skip.has(b.id) && ((b.parentId || null) === ctx || b.id === ctx)) };
+}
+
+// Примагничивание подвижных граней при растяжении: edges — подмножество
+// 'w','e','n','s' (как ручки комнаты). Грань прижимается к грани соседа с
+// зазором перегородки или выравнивается с одноимённой гранью.
+// → { rect, guides } (rect — новый габарит; guides — как у magnetSnap).
+export function magnetEdges(project, movingId, rect, edges, { distance = 300, enabled = true, levelId } = {}) {
+  const out = { rect: { ...rect }, guides: [] };
+  if (!enabled || !(distance > 0) || !edges?.length) return out;
+  const level = activeLevel7(project, levelId);
+  const found = magnetTargets(level, movingId);
+  if (!found) return out;
+  const r = out.rect;
+  for (const edge of edges) {
+    const axis = edge === 'w' || edge === 'e' ? 'x' : 'y';
+    const [p, s] = axis === 'x' ? ['x', 'w'] : ['y', 'h'];
+    const hiSide = edge === 'e' || edge === 's';
+    const at0 = hiSide ? r[p] + r[s] : r[p];
+    let best = null;
+    for (const t of found.targets) {
+      const box = blockBox(t);
+      const inner = t.id === found.ctx;
+      if (!inner && !across(r, box, axis, distance)) continue;
+      const gap = pairGap(level, project.settings, found.moving, t);
+      const tlo = box[p]; const thi = box[p] + box[s];
+      const list = inner
+        ? [{ at: hiSide ? thi - gap : tlo + gap, kind: 'contact' }]
+        : [
+          { at: hiSide ? tlo - gap : thi + gap, kind: 'contact' },
+          { at: tlo, kind: 'align' }, { at: thi, kind: 'align' },
+        ];
+      for (const c of list) {
+        const d = Math.abs(c.at - at0);
+        if (d > distance) continue;
+        const score = d + (c.kind === 'align' ? 0.01 : 0);
+        if (!best || score < best.score) best = { ...c, score, box, target: t.id };
+      }
+    }
+    if (!best) continue;
+    if (hiSide) r[s] = best.at - r[p];
+    else { r[s] += r[p] - best.at; r[p] = best.at; }
+    const [q, z] = axis === 'x' ? ['y', 'h'] : ['x', 'w'];
+    out.guides.push({ axis, at: best.at, from: Math.min(r[q], best.box[q]), to: Math.max(r[q] + r[z], best.box[q] + best.box[z]), kind: best.kind, target: best.target, edge });
+  }
+  return out;
+}
+
 export function magnetSnap(project, movingId, rect, { distance = 300, enabled = true, levelId } = {}) {
   const none = { x: rect.x, y: rect.y, dx: 0, dy: 0, guides: [] };
   if (!enabled || !(distance > 0)) return none;
   const level = activeLevel7(project, levelId);
-  const moving = blockById(level, movingId);
-  if (!moving) return none;
-  const skip = new Set([movingId]);
-  for (const b of level.blocks) if (b.parentId === movingId) skip.add(b.id);
-  const ctx = moving.parentId || null;
-  const targets = level.blocks.filter((b) => !skip.has(b.id) && ((b.parentId || null) === ctx || b.id === ctx));
+  const found = magnetTargets(level, movingId);
+  if (!found) return none;
+  const { moving, ctx, targets } = found;
   const best = { x: null, y: null };
   for (const t of targets) {
     const box = blockBox(t);

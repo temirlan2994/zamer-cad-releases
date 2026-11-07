@@ -23,6 +23,7 @@ export const DEFAULT_SNAP_OPTS = {
   objects: true, // объектные привязки
   tracking: true, // выравнивание по X/Y от вершин
   guides: true, // умные направляющие при перемещении объектов (core/guides.js)
+  magnet: true, // примагничивание блоков 300 мм (core/v7/magnet.js, ui/block-gesture.js)
 };
 
 const DEG = Math.PI / 180;

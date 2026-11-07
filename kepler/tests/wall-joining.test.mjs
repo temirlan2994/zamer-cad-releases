@@ -6,6 +6,7 @@ import { createProject, createRoom } from '../core/model.js';
 import { snapRoomPosition } from '../core/rooms.js';
 import { deriveWalls } from '../core/walls.js';
 import { applyResize } from '../ui/snap.js';
+import { magnetResize } from '../ui/block-gesture.js';
 import { state } from '../ui/state.js';
 
 function twoRooms(width = 2700) {
@@ -67,9 +68,10 @@ test('растягивание стены не проходит через пр�
     state.project = project;
     state.walls = deriveWalls(project);
     state.view.scale = 0.1;
-    applyResize(left, {
-      start: { ...left }, plan: { x: 0, y: 0 }, handle: 'e',
-    }, { x: 180, y: 0 });
+    // Растяжение = сетка/линии (applyResize) + магнит блоков (срез 3 этапа 2).
+    const drag = { start: { ...left }, plan: { x: 0, y: 0 }, handle: 'e' };
+    applyResize(left, drag, { x: 180, y: 0 });
+    Object.assign(left, magnetResize(drag, left.id, { x: left.x, y: left.y, w: left.w, h: left.h }, 'e', {}).rect);
 
     assert.equal(left.w, 3200);
     assert.equal(stair.x - (left.x + left.w), 100);

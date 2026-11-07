@@ -557,6 +557,18 @@ export function createRenderer(canvas) {
       ctx.lineWidth = px(1);
       ctx.setLineDash([px(6), px(6)]);
       for (const guide of state.guides) {
+        if (guide.type === 'magnet') {
+          // Магнит блоков (core/v7/magnet.js): отрезок вдоль общей грани.
+          ctx.save();
+          ctx.setLineDash(guide.kind === 'contact' ? [] : [px(4), px(4)]);
+          ctx.lineWidth = px(guide.kind === 'contact' ? 2 : 1);
+          ctx.beginPath();
+          if (guide.axis === 'v') { ctx.moveTo(guide.at, guide.from); ctx.lineTo(guide.at, guide.to); }
+          else { ctx.moveTo(guide.from, guide.at); ctx.lineTo(guide.to, guide.at); }
+          ctx.stroke();
+          ctx.restore();
+          continue;
+        }
         if (guide.type !== 'align') continue;
         ctx.beginPath();
         if (guide.axis === 'v') { ctx.moveTo(guide.at, -1e6); ctx.lineTo(guide.at, 1e6); }
@@ -2917,7 +2929,10 @@ function drawWitness(ctx, a, b) {
 
 export const HANDLE_SIZE = 9;
 
-export function roomHandles(room) {
+// Ручки съеденной комнаты — на её НОМИНАЛЬНОЙ форме (core/v7/eat-bridge.js):
+// жест правит номинал, видимая форма пересчитывается (срез 3 этапа 2).
+export function roomHandles(visible) {
+  const room = nominalShape(visible);
   const shapeHandles = roomShapeHandles(room);
   if (shapeHandles.length) return shapeHandles;
   const { x, y, w, h } = room;

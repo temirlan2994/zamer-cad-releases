@@ -10,11 +10,11 @@ import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/
 import { planRoomDuplicate } from '../core/duplicate-room.js';
 import { planGapMove } from '../core/gaps.js';
 import {
-  captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
+  captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import { eatSummary, roomsIntersect } from '../core/room-eat.js';
-import { reconcileEats } from '../core/v7/eat-bridge.js';
+import { liftRoom, reconcileEats } from '../core/v7/eat-bridge.js';
 import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -276,8 +276,8 @@ export function overlappingTopRooms(room) {
 // нуля по номинальным формам (core/v7/eat-bridge.js, ядро v7 carve) — нижняя
 // уменьшается, между ними перегородка; ушла верхняя — нижняя снова целая.
 // Вызывать до pushHistory: один шаг отмены. Тост — итог.
-export function eatOverlapsAfter(roomIds, { silent = false } = {}) {
-  const res = reconcileEats(state.project, { touched: roomIds });
+export function eatOverlapsAfter(roomIds, { silent = false, under = null, prev = null } = {}) {
+  const res = reconcileEats(state.project, { touched: roomIds, under, prev });
   if (res.eaten.length || res.failed.length || res.restored.length) reconcileOpenings();
   const text = eatSummary(res);
   if (text && !silent) toast(text, Boolean(res.failed.length || res.lost.length));
@@ -323,14 +323,20 @@ export function selectGroup(groupId) {
 
 // Применить групповое действие core/room-group.js одной записью истории:
 // проёмы приводятся к стенам, стены и связность пересчитываются.
-function applyGroupChange(action, failText) {
+// roomIds — комнаты, которые действие двигает/поворачивает: съеденным из них
+// возвращается номинал (жест над блоком — по номиналу), мебель — по видимой
+// форме (carry), после действия съедание считается заново (тронутые — наверх).
+function applyGroupChange(action, failText, roomIds = []) {
   const before = snapshot();
-  const res = action(state.project);
+  const carry = new Set(groupCargo(state.project, roomIds, []).items.map((i) => i.id));
+  for (const id of roomIds) liftRoom(state.project, id);
+  const res = action(state.project, carry);
   if (!res.ok) {
     restoreFrom(before);
     toast(res.reason || failText, true);
     return false;
   }
+  reconcileEats(state.project, { touched: roomIds });
   reconcileOpenings();
   refreshDerived();
   pushHistory(before);
@@ -344,7 +350,7 @@ function applyGroupChange(action, failText) {
 export function moveMultiBy(dx, dy) {
   const sel = state.selection;
   if (sel?.type !== 'multi') return false;
-  const ok = applyGroupChange((project) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy), 'Так сдвинуть нельзя');
+  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, sel.roomIds, sel.itemIds, dx, dy, { carry }), 'Так сдвинуть нельзя', sel.roomIds);
   if (ok) selectObject(sel);
   return ok;
 }
@@ -356,7 +362,7 @@ export function dockGapPair(gap) {
   const plan = planGapMove(state.project, gap);
   if (!plan.move) { toast(`Пристыковать нельзя: ${plan.reason}`, true); return false; }
   const { roomId, dx, dy, name, distance } = plan.move;
-  const ok = applyGroupChange((project) => moveRoomGroup(project, [roomId], [], dx, dy), 'Так сдвинуть нельзя');
+  const ok = applyGroupChange((project, carry) => moveRoomGroup(project, [roomId], [], dx, dy, { carry }), 'Так сдвинуть нельзя', [roomId]);
   if (ok) {
     state.gapFocus = null;
     selectObject({ type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] });
@@ -370,7 +376,7 @@ export function dockGapPair(gap) {
 export function rotateMulti90() {
   const sel = state.selection;
   if (sel?.type === 'multi' && sel.roomIds.length) {
-    if (applyGroupChange((project) => rotateRoomGroup(project, sel.roomIds, sel.itemIds), 'Так повернуть нельзя')) {
+    if (applyGroupChange((project, carry) => rotateRoomGroup(project, sel.roomIds, sel.itemIds, { carry }), 'Так повернуть нельзя', sel.roomIds)) {
       selectObject(sel);
       toast('Группа повёрнута на 90° · Ctrl+Z — отменить');
     }
@@ -647,19 +653,29 @@ function duplicateOpeningSelection(sel) {
 function duplicateRoomSelection(sel) {
   const source = roomById(state.project, sel.id);
   if (!source) return;
+  // Мебель — по видимой форме; копия — с НОМИНАЛЬНОЙ формы съеденной
+  // (копируется блок, а не его остаток). Видимую форму вернёт reconcileEats.
+  const items = state.project.items.filter((item) => roomContainsPoint(source, item.x, item.y));
+  const before = snapshot();
+  const lifted = liftRoom(state.project, source.id);
   // Место копии и судьба её проёмов — в core/duplicate-room.js: окна копии
   // в общей стене удаляются, остальные проёмы раздвигаются с соседями.
   const plan = planRoomDuplicate(state.project, source.id);
-  if (!plan.ok) { toast(plan.reason, true); return; }
+  if (!plan.ok) {
+    if (lifted) { reconcileEats(state.project); refreshDerived(); }
+    toast(plan.reason, true);
+    return;
+  }
   const { dx, dy, rooms: copies, openings } = plan;
   copies[0].name = `${source.name} — копия`;
-  const items = state.project.items.filter((item) => roomContainsPoint(source, item.x, item.y))
-    .map((item) => cloneItem(item, dx, dy));
+  for (const c of copies) delete c.eatBase;
+  const copiedItems = items.map((item) => cloneItem(item, dx, dy));
   mutate(() => {
     state.project.rooms.push(...copies);
     state.project.openings.push(...openings);
-    state.project.items.push(...items);
-  });
+    state.project.items.push(...copiedItems);
+  }, { skipHistory: true });
+  pushHistory(before);
   selectObject({ type: 'room', id: copies[0].id });
   const where = plan.detached ? 'отдельно справа от дома (вплотную места нет)'
     : dx > 0 ? 'справа от исходного' : dx < 0 ? 'слева от исходного' : dy > 0 ? 'снизу от исходного' : 'сверху от исходного';
@@ -689,7 +705,7 @@ export function rotateSelection90() {
 export function rotateRoom90() {
   const sel = state.selection;
   if (sel?.type !== 'room') return false;
-  const ok = applyGroupChange((project) => rotateRoomGroup(project, [sel.id], []), 'Так повернуть нельзя');
+  const ok = applyGroupChange((project, carry) => rotateRoomGroup(project, [sel.id], [], { carry }), 'Так повернуть нельзя', [sel.id]);
   if (ok) {
     selectObject(sel);
     toast('Помещение повёрнуто на 90° · Ctrl+Z — отменить');

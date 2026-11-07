@@ -19,7 +19,7 @@ import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
-import { applyRoomShapeHandle, clampRoomNotch } from '../core/room-shape.js';
+import { applyRoomShapeHandle, clampRoomNotch, roomContainsPoint } from '../core/room-shape.js';
 import { groupCargo } from '../core/room-group.js';
 import { moveWallBy } from '../core/wall-edit.js';
 import {
@@ -60,6 +60,8 @@ import { addAlignViewPoint, snapAlignPoint } from './view-align.js';
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
+import { liftForGesture, liveEat, magnetMove, magnetResize } from './block-gesture.js';
+import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
@@ -722,11 +724,13 @@ export function bindCanvasInput() {
           kind: 'shape-resize', roomId: handleHit.room.id, handle: handleHit.shapeHandle,
           before: pending?.before || snapshot(), moved: false, valid: true, merged: false,
           anchors: captureOpeningAnchors(state.project, handleHit.room),
+          under: { [handleHit.room.id]: eatersOf(handleHit.room) },
         };
       } else {
         drag = {
           kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: structuredClone(handleHit.room),
           before: snapshot(), plan, valid: true, anchors: captureOpeningAnchors(state.project, handleHit.room),
+          under: { [handleHit.room.id]: eatersOf(handleHit.room) },
         };
       }
       return;
@@ -819,8 +823,11 @@ export function bindCanvasInput() {
       // Перевозимый груз фиксируется в момент захвата: вложенные помещения и
       // мебель, стоящая внутри, — чтобы комната не «сметала» чужую мебель по пути.
       const children = state.project.rooms.filter((r) => r.parentId === room.id);
+      // Внутри — по видимой форме (у Г/съеденной габарит шире формы: мебель
+      // верхней комнаты, стоящая в «вырезе», не должна уезжать) и вложенных.
+      const carriers = [room, ...children];
       const carried = state.project.items
-        .filter((i) => i.x >= room.x && i.x <= room.x + room.w && i.y >= room.y && i.y <= room.y + room.h)
+        .filter((i) => carriers.some((r) => roomContainsPoint(r, i.x, i.y)))
         .map((i) => ({ id: i.id, x: i.x, y: i.y }));
       drag = {
         kind: 'room', id: room.id, plan, start: { x: room.x, y: room.y },
@@ -927,6 +934,9 @@ export function bindCanvasInput() {
       const room = roomById(state.project, drag.id);
       if (!room) return;
       drag.moved = true;
+      // Съеденная — едет её номинальная форма (целая); видимые формы
+      // соседей пересчитываются на каждом кадре (ui/block-gesture.js).
+      if (liftForGesture(drag, [room.id])) drag.start = { x: room.x, y: room.y };
       const rawX = drag.start.x + (plan.x - drag.plan.x);
       const rawY = drag.start.y + (plan.y - drag.plan.y);
       // Вложение перетаскиванием: родителем становится комната, внутрь которой
@@ -934,10 +944,12 @@ export function bindCanvasInput() {
       const candidateParent = isOpenRoom(room)
         ? null : determineParent(state.project, { x: rawX, y: rawY, w: room.w, h: room.h }, room.id);
       room.parentId = candidateParent;
-      // Shift — без магнита стыковки и выравнивания: только сетка.
-      const snapped = event.shiftKey
-        ? { x: Math.round(rawX / gridStep()) * gridStep(), y: Math.round(rawY / gridStep()) * gridStep(), guides: [] }
-        : snapRoomPosition(state.project, room, rawX, rawY, 14 / state.view.scale, candidateParent, gridStep());
+      // Магнит блоков (core/v7/magnet.js, 300 мм): грань к грани соседа с
+      // зазором перегородки или выравнивание; Shift/Alt — без магнита.
+      // Свободные от магнита оси — по сетке.
+      const snapped = magnetMove(drag, room.id, { x: rawX, y: rawY, w: room.w, h: room.h }, candidateParent, event);
+      if (!snapped.snappedX) snapped.x = Math.round(rawX / gridStep()) * gridStep();
+      if (!snapped.snappedY) snapped.y = Math.round(rawY / gridStep()) * gridStep();
       // Умные направляющие — по осям, не занятым магнитом стыковки/выравнивания
       // комнат (он приоритетнее), к мебели, стенам, ландшафту и границе.
       if (!drag.guides) {
@@ -971,6 +983,7 @@ export function bindCanvasInput() {
         if (item) { item.x = entry.x + dx; item.y = entry.y + dy; }
       }
       state.guides = snapped.guides;
+      liveEat(drag, { touched: [room.id] });
       const verdict = validateRoomPlacement(state.project, room, room.id);
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
@@ -987,6 +1000,12 @@ export function bindCanvasInput() {
       const raw = { x: plan.x - drag.plan.x, y: plan.y - drag.plan.y };
       const grid = { x: Math.round(raw.x / gridStep()) * gridStep(), y: Math.round(raw.y / gridStep()) * gridStep() };
       if (!grid.x && !grid.y && !drag.moved) return; // дрожание при клике — не перенос
+      if (liftForGesture(drag, [...drag.roomStarts.keys()])) {
+        for (const id of drag.roomStarts.keys()) {
+          const r = roomById(state.project, id);
+          if (r) drag.roomStarts.set(id, { x: r.x, y: r.y });
+        }
+      }
       if (!drag.guides) drag.guides = groupGuideSession(drag);
       const gd = guideDelta(drag.guides, raw, grid, event);
       const dx = Math.round(gd.x);
@@ -1000,6 +1019,7 @@ export function bindCanvasInput() {
         const item = state.project.items.find((i) => i.id === id);
         if (item) { item.x = start.x + dx; item.y = start.y + dy; }
       }
+      liveEat(drag, { touched: drag.roomIds });
       let valid = true;
       let reason = '';
       for (const id of drag.roomIds) {
@@ -1016,7 +1036,11 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'shape-resize') {
       const room = roomById(state.project, drag.roomId);
-      if (!room?.notch && !room?.outline) return;
+      if (!room) return;
+      // Ручки — на номинальной форме (render.js roomHandles): жест правит номинал.
+      if (liftForGesture(drag, [room.id])) drag.anchors = captureOpeningAnchors(state.project, room);
+      liftRoom(state.project, room.id); // съели на прошлом кадре — снова номинал
+      if (!room.notch && !room.outline) return;
       drag.moved = true;
       if (state.pendingRoomSplit?.roomId === room.id) state.pendingRoomSplit.moved = true;
       const snap = (value) => Math.round(value / gridStep()) * gridStep();
@@ -1026,6 +1050,7 @@ export function bindCanvasInput() {
       drag.merged = result.merged;
       drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
       if (result.merged) reconcileOpenings();
+      liveEat(drag, { touched: [room.id], under: drag.under });
       const verdict = resizeVerdict(room);
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
@@ -1037,13 +1062,25 @@ export function bindCanvasInput() {
     if (drag.kind === 'resize') {
       const room = roomById(state.project, drag.roomId);
       if (!room) return;
+      if (liftForGesture(drag, [room.id])) {
+        drag.start = structuredClone(room);
+        drag.anchors = captureOpeningAnchors(state.project, room);
+      }
+      liftRoom(state.project, room.id); // съели на прошлом кадре — снова номинал
       drag.moved = true;
-      drag.noSnap = event.shiftKey; // Shift — без магнита стыковки
+      drag.noSnap = event.shiftKey; // Shift — без привязок: только сетка
       applyResize(room, drag, plan);
+      // Магнит блоков: подвижные грани — к граням соседей (Alt/Shift — без).
+      if (!drag.noSnap) {
+        const m = magnetResize(drag, room.id, { x: room.x, y: room.y, w: room.w, h: room.h }, drag.handle, event);
+        Object.assign(room, m.rect);
+        state.guides = m.guides;
+      } else state.guides = [];
       if (drag.start.notch) room.notch = structuredClone(drag.start.notch);
       clampRoomNotch(room);
       // Отступы проёмов — от room.x/y: пересчёт от снимка начала (Б3).
       drag.clamped = reanchorOpenings(state.project, room, drag.anchors).clamped;
+      liveEat(drag, { touched: [room.id], under: drag.under });
       const verdict = resizeVerdict(room);
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
@@ -1499,7 +1536,7 @@ export function bindCanvasInput() {
       // отмены, что и сам жест.
       const movedIds = finished.kind === 'multi' ? finished.roomIds
         : [finished.kind === 'room' ? finished.id : finished.roomId];
-      const eaten = eatOverlapsAfter(movedIds.filter(Boolean));
+      const eaten = eatOverlapsAfter(movedIds.filter(Boolean), { under: finished.under, prev: finished.eatPrev });
       if (eaten.eaten.length || eaten.failed.length || eaten.restored.length) finished.clamped = null;
       reconcileOpenings();
       refreshDerived();

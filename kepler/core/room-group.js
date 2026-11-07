@@ -16,12 +16,15 @@ import { validateRoomPlacement } from './rooms.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
-export function groupCargo(project, roomIds = [], itemIds = []) {
+// carry — готовый набор мебели комнат (Set id): жест над съеденной комнатой
+// берёт мебель по ВИДИМОЙ форме до того, как ей вернули номинал (иначе
+// уехала бы мебель верхней комнаты, стоящая над «вырезом»).
+export function groupCargo(project, roomIds = [], itemIds = [], carry = null) {
   const selected = new Set(roomIds);
   const rooms = project.rooms.filter((r) => selected.has(r.id) || (r.parentId && selected.has(r.parentId)));
   const pickedItems = new Set(itemIds);
   const items = (project.items || []).filter((item) => pickedItems.has(item.id)
-    || rooms.some((room) => roomContainsPoint(room, item.x, item.y)));
+    || (carry ? carry.has(item.id) : rooms.some((room) => roomContainsPoint(room, item.x, item.y))));
   return { rooms, items };
 }
 
@@ -63,8 +66,8 @@ function rollback(project, saved) {
 
 // Сдвиг группы на (dx, dy). Возвращает { ok, reason?, warning?, rooms, items };
 // при ok=false проект возвращается в исходное состояние.
-export function moveRoomGroup(project, roomIds, itemIds, dx, dy) {
-  const cargo = groupCargo(project, roomIds, itemIds);
+export function moveRoomGroup(project, roomIds, itemIds, dx, dy, { carry = null } = {}) {
+  const cargo = groupCargo(project, roomIds, itemIds, carry);
   if (!cargo.rooms.length && !cargo.items.length) return { ok: false, reason: 'Нечего сдвигать' };
   const saved = remember(project, cargo);
   for (const room of cargo.rooms) { room.x += dx; room.y += dy; }
@@ -136,8 +139,8 @@ export function groupCenter(cargo, grid = GRID_STEP) {
 // Поворот группы на 90° по часовой вокруг центра группы. Проёмы остаются на
 // тех же (повёрнутых) местах стен, переопределения своих стен (толщина,
 // тип, скрытие) переходят на повёрнутые стороны. Возвращает как moveRoomGroup.
-export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP } = {}) {
-  const cargo = groupCargo(project, roomIds, itemIds);
+export function rotateRoomGroup(project, roomIds, itemIds, { grid = GRID_STEP, carry = null } = {}) {
+  const cargo = groupCargo(project, roomIds, itemIds, carry);
   const center = groupCenter(cargo, grid);
   if (!center) return { ok: false, reason: 'Нечего поворачивать' };
   const { x: cx, y: cy } = center;

@@ -3,7 +3,8 @@
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { buildIfc } from '../core/ifc.js';
 import { buildLandscapeCsv } from '../core/landscape-report.js';
-import { createProject, serializeProject } from '../core/model.js';
+import { createProject, levelProject, serializeProject } from '../core/model.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
 import { buildTemplate } from '../core/templates.js';
 import { saveFile, saveZip } from './cloud.js';
@@ -116,6 +117,8 @@ export function loadTemplate(id) {
   const before = snapshotIfContent();
   const beforePid = state.pid;
   state.project = buildTemplate(id);
+  // Шаблон — как любая правка: съедание по номиналам (core/v7/eat-bridge.js).
+  for (const l of state.project.levels || []) reconcileEats(levelProject(state.project, l.id));
   state.pid = null;
   state.rejected = new Map();
   state.selection = null;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import { createOpening, createProject, createRoom, removeRoom } from '../core/model.js';
 import { roomShapeArea } from '../core/room-shape.js';
-import { reconcileEats } from '../core/v7/eat-bridge.js';
+import { eatState, eatersOf, liftRoom, reconcileEats } from '../core/v7/eat-bridge.js';
 
 const shape = (r) => ({ x: r.x, y: r.y, w: r.w, h: r.h, outline: r.outline || null });
 
@@ -102,4 +102,38 @@ test('старый файл: съевшая раньше в массиве — �
   reconcileEats(p);
   assert.deepEqual(p.rooms.map((r) => r.id), [a.id, b.id]);
   assert.ok(a.eatBase);
+});
+
+test('жест по номиналу: liftRoom возвращает съеденной целую форму и проёмы-сироты', () => {
+  const { p, a, b } = pair();
+  const door = createOpening('door', a.id, 1, 3500, 900); // правая сторона нижней — под b
+  p.openings.push(door);
+  reconcileEats(p, { touched: [b.id] });
+  assert.ok(a.eatBase);
+  assert.equal(p.openings.length, 0, 'дверь ушла под верхнюю (сирота)');
+  assert.deepEqual(eatersOf(a), [b.id]);
+  assert.equal(liftRoom(p, a.id), true);
+  assert.deepEqual(shape(a), { x: 0, y: 0, w: 4000, h: 4000, outline: null });
+  assert.equal(p.openings.length, 1, 'сирота вернулась');
+  assert.equal(liftRoom(p, a.id), false, 'уже номинал');
+});
+
+test('растяжение съеденной (under): остаётся под съевшей, номинал растёт', () => {
+  const { p, a, b } = pair();
+  reconcileEats(p, { touched: [b.id] });
+  const prev = eatState(p);
+  const under = { [a.id]: eatersOf(a) };
+  liftRoom(p, a.id);
+  a.w = 5000; // тянем правую грань съеденной — дальше под b
+  const res = reconcileEats(p, { touched: [a.id], under, prev });
+  assert.deepEqual(p.rooms.map((r) => r.id), [a.id, b.id], 'b по-прежнему выше');
+  assert.deepEqual(a.eatBase.base, { x: 0, y: 0, w: 5000, h: 4000 });
+  assert.equal(res.eaten.length, 0, 'итог против начала жеста: та же пара');
+  // Без under тронутая поднимается и съедает b.
+  const { p: p2, a: a2, b: b2 } = pair();
+  reconcileEats(p2, { touched: [b2.id] });
+  liftRoom(p2, a2.id);
+  a2.w = 5000;
+  reconcileEats(p2, { touched: [a2.id] });
+  assert.ok(b2.eatBase, 'без under — съедена b');
 });

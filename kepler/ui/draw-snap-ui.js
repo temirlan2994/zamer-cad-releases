@@ -19,7 +19,7 @@ export function loadSnapSettings() {
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch { saved = null; }
   const s = { ...DEFAULT_SNAP_OPTS };
   if (saved && typeof saved === 'object') {
-    for (const k of ['ortho', 'polar', 'objects', 'tracking', 'guides']) if (typeof saved[k] === 'boolean') s[k] = saved[k];
+    for (const k of ['ortho', 'polar', 'objects', 'tracking', 'guides', 'magnet']) if (typeof saved[k] === 'boolean') s[k] = saved[k];
     if (POLAR_STEPS.includes(Number(saved.polarStep))) s.polarStep = Number(saved.polarStep);
   }
   state.snapSettings = s;
@@ -50,6 +50,7 @@ const BUTTONS = [
   { key: 'polar', text: 'Полярка', title: 'Полярное отслеживание: лучи от последней точки с шагом угла' },
   { key: 'objects', text: 'Объекты', title: 'Объектная привязка: конец, середина, пересечение, центр, перпендикуляр, параллель' },
   { key: 'tracking', text: 'Выравнивание', title: 'Отслеживание: линии выравнивания по X/Y от вершин' },
+  { key: 'magnet', text: 'Примагничивание блоков', title: 'Примагничивание блоков: при переносе и растяжении помещение прижимается к соседу с зазором перегородки или выравнивается по его грани (радиус 300 мм; Alt или Shift — временно без магнита)' },
   { key: 'guides', text: 'Направляющие', title: 'Направляющие объектов: при перемещении края и центры липнут к соседним объектам, стенам, дому и границе (Shift — временно без привязки)' },
 ];
 
