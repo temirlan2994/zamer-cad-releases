@@ -33,7 +33,7 @@ function nominalRoom(room) {
   return r;
 }
 
-function roomToBlock(room, index) {
+export function roomToBlock(room, index) {
   const nom = nominalRoom(room);
   const block = { id: room.id, name: room.name, type: room.type };
   for (const [k, v] of Object.entries(room)) if (!DROP_ROOM_KEYS.has(k) && !(k in block)) block[k] = v;
@@ -108,7 +108,7 @@ function migrateOpening(o, rooms, blocks, warnings) {
 // Порядок «кто выше»: индекс в rooms, но съевшая (eatBase.by) — всегда выше
 // съеденной (в v6 съеденная не уходила вниз по массиву). Топологическая
 // сортировка с наименьшим индексом первым; цикл — остаток по индексу.
-function zOrder(rooms) {
+export function zOrder(rooms) {
   const idx = new Map(rooms.map((r, i) => [r.id, i]));
   const above = rooms.map(() => new Set());
   const below = rooms.map(() => 0);
@@ -131,7 +131,7 @@ function zOrder(rooms) {
   return z;
 }
 
-function migrateLevel(l, settings, warnings) {
+export function migrateLevel(l, settings, warnings = []) {
   const rooms = l.rooms || [];
   const z = zOrder(rooms);
   const blocks = rooms.map((r, i) => roomToBlock(r, z[i]));

@@ -42,7 +42,8 @@ import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
 import { drawObjectGuides, drawSnapOverlay } from './ui/render-guides.js';
 import { facadeDimensionStations } from './core/dimensions.js';
 import { openingGaps } from './core/opening-spacing.js';
-import { roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
+import { roomPolygon, roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
+import { nominalShape } from './core/v7/eat-bridge.js';
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
@@ -572,6 +573,19 @@ export function createRenderer(canvas) {
       ctx.strokeStyle = tokens.accent;
       ctx.lineWidth = px(2);
       ctx.strokeRect(selRoom.x, selRoom.y, selRoom.w, selRoom.h);
+      // Съеденная (core/v7/eat-bridge.js): пунктиром — её полная номинальная
+      // форма; видимая — номинал минус верхние комнаты и перегородка.
+      if (selRoom.eatBase?.base && !print) {
+        const pts = roomPolygon(nominalShape(selRoom));
+        ctx.save();
+        ctx.setLineDash([px(7), px(5)]);
+        ctx.lineWidth = px(1.4);
+        ctx.beginPath();
+        pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
     if (state.selection?.type === 'multi') {
       ctx.strokeStyle = tokens.accent;

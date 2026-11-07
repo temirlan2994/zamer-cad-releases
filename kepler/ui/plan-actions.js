@@ -13,7 +13,8 @@ import {
   captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
-import { eatOverlaps, eatSummary, restoreEaten, roomsIntersect } from '../core/room-eat.js';
+import { eatSummary, roomsIntersect } from '../core/room-eat.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -220,7 +221,7 @@ export function deleteSelection() {
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;
-    mutate(() => { removeRoom(state.project, sel.id); restoreEaten(state.project, new Set([sel.id])); reconcileOpenings(); });
+    mutate(() => { removeRoom(state.project, sel.id); reconcileEats(state.project); reconcileOpenings(); });
     state.selection = null;
     toast(`«${room.name}» удалена`);
   } else if (sel.type === 'wall' && String(sel.key).startsWith('m|')) {
@@ -241,7 +242,7 @@ export function deleteSelection() {
     mutate(() => {
       state.project.items = state.project.items.filter((i) => !sel.itemIds.includes(i.id));
       for (const roomId of sel.roomIds) removeRoom(state.project, roomId);
-      restoreEaten(state.project, new Set(sel.roomIds));
+      reconcileEats(state.project);
       reconcileOpenings();
     });
     state.selection = null;
@@ -271,11 +272,12 @@ export function overlappingTopRooms(room) {
 }
 
 // Конец жеста над комнатами roomIds (поставлены, сдвинуты, растянуты): они
-// «съедают» перекрытые комнаты — форма нижней уменьшается, между ними
-// перегородка (core/room-eat.js). Вызывать до pushHistory: один шаг отмены.
-// Тост — итог (что уменьшено / почему не получилось). → результат eatOverlaps.
+// поднимаются наверх и «съедают» перекрытые комнаты. Съедание считается с
+// нуля по номинальным формам (core/v7/eat-bridge.js, ядро v7 carve) — нижняя
+// уменьшается, между ними перегородка; ушла верхняя — нижняя снова целая.
+// Вызывать до pushHistory: один шаг отмены. Тост — итог.
 export function eatOverlapsAfter(roomIds, { silent = false } = {}) {
-  const res = eatOverlaps(state.project, roomIds);
+  const res = reconcileEats(state.project, { touched: roomIds });
   if (res.eaten.length || res.failed.length || res.restored.length) reconcileOpenings();
   const text = eatSummary(res);
   if (text && !silent) toast(text, Boolean(res.failed.length || res.lost.length));

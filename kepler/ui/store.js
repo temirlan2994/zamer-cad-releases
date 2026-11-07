@@ -8,6 +8,7 @@ import {
 import { hashText, newId } from '../core/storage.js';
 import { deriveWalls } from '../core/walls.js';
 import { freeLoops } from '../core/bound-rooms.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { collectIssues } from '../core/issues.js';
 import { el, toast } from './dom.js';
@@ -112,6 +113,9 @@ export function pushHistory(before, pid = state.pid) {
 export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   const before = snapshot();
   fn();
+  // Съедание — производное номинальных форм: после любой правки считается
+  // заново (core/v7/eat-bridge.js), результат не зависит от порядка действий.
+  if (state.project) reconcileEats(state.project);
   refreshDerived();
   for (const roomId of new Set(arrange)) {
     const room = roomById(state.project, roomId);
