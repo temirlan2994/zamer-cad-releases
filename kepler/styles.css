@@ -2006,3 +2006,8 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .sheet-view-gap { display: none; }
   .sheet-view-body { padding: 8px; }
 }
+
+/* Библиотека на компьютере: тип выбирается инструментом в колонке слева — вкладки и подсказки не нужны (на телефоне это нижний лист с вкладками). */
+@media (min-width: 641px) {
+  .library .library-tabs, .library #libraryHint, .library .furn-hint { display: none; }
+}

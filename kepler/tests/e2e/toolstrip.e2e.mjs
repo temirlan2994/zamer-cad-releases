@@ -84,7 +84,7 @@ describe('панель инструментов', () => {
     await page.click('#furnitureToolBtn');
     assert.equal(await page.isVisible('#furnitureBar'), true);
     assert.equal(await active(page, '#furnitureToolBtn'), true);
-    await page.click('#libTabRooms');
+    await page.$eval('#libTabRooms', (n) => n.click());
     assert.equal(await active(page, '#furnitureToolBtn'), false);
     assert.equal(await page.isVisible('#roomCards'), true);
   });

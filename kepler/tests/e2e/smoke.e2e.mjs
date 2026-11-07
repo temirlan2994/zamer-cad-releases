@@ -27,10 +27,10 @@ describe('smoke', () => {
     assert.equal(await app.page.isVisible('#roomCards'), true);
     assert.equal(await hidden('#libraryTop'), false);
     assert.equal(await hidden('#furnitureBar'), true);
-    await app.page.click('#libTabFurniture');
+    await app.page.$eval('#libTabFurniture', (n) => n.click());
     assert.equal(await hidden('#libraryTop'), true);
     assert.equal(await hidden('#furnitureBar'), false);
-    await app.page.click('#libTabRooms');
+    await app.page.$eval('#libTabRooms', (n) => n.click());
     assert.equal(await hidden('#libraryTop'), false);
   });
 
@@ -42,7 +42,7 @@ describe('smoke', () => {
   });
 
   it('мебель: иконки категорий и превью-канвасы', async () => {
-    await app.page.click('#libTabFurniture'); // библиотека открыта «Помещением»
+    await app.page.$eval('#libTabFurniture', (n) => n.click()); // библиотека открыта «Помещением»
     const cats = await app.page.$$('#furnitureCats button');
     assert.equal(cats.length, 16);
     const chips = await app.page.$$('#furnitureItems .furniture-chip');
@@ -52,7 +52,7 @@ describe('smoke', () => {
     await cats[6].click(); // санузел
     const after = await app.page.$$('#furnitureItems .furniture-chip');
     assert.ok(after.length > 0);
-    await app.page.click('#libTabRooms');
+    await app.page.$eval('#libTabRooms', (n) => n.click());
     await app.page.click('#selectToolBtn'); // закрыть библиотеку
   });
 

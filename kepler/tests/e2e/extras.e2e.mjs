@@ -44,7 +44,7 @@ describe('шаблоны и удобства', () => {
     await app.page.click('#furnitureCats button >> nth=0');
     assert.equal(await app.page.inputValue('#furnSearch'), '');
     assert.ok(await app.page.$$eval('#furnitureItems .furniture-chip', (ns) => ns.length) > 0);
-    await app.page.click('#libTabRooms');
+    await app.page.$eval('#libTabRooms', (n) => n.click());
   });
 
   it('размеры в метрах', async () => {
