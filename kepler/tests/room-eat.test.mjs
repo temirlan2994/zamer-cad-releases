@@ -149,3 +149,38 @@ test('петля стен вокруг комнаты целиком — пом�
   assert.match(res.reason, /уже есть помещение «Санузел»/);
   assert.equal(p.rooms.length, 1);
 });
+
+test('съеденная комната возвращает форму, когда верхняя отъезжает', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  assert.ok(a.outline, 'нижняя стала Г-образной');
+  b.x = 8000; b.y = 8000; // отъехала
+  const res = eatOverlaps(p, [b.id]);
+  assert.equal(res.restored.length, 1);
+  assert.equal(a.outline, undefined);
+  assert.deepEqual([a.x, a.y, a.w, a.h], [0, 0, 4000, 4000]);
+  assert.equal(a.eatBase, undefined);
+});
+
+test('частичный возврат: верхняя сдвинулась, но ещё перекрывает', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  b.x = 3500; b.y = 3500;
+  eatOverlaps(p, [b.id]);
+  const areaNow = roomShapeArea(a);
+  b.x = 3000; b.y = 3000;
+  eatOverlaps(p, [b.id]);
+  assert.ok(roomShapeArea(a) < 4000 * 4000);
+  assert.ok(areaNow > roomShapeArea(a));
+});
+
+test('нижнюю подвинули сами — база забывается, форма не «телепортируется»', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  a.x -= 2000;
+  eatOverlaps(p, [a.id]);
+  b.x = 9000;
+  eatOverlaps(p, [b.id]);
+  assert.equal(a.eatBase, undefined);
+  assert.equal(a.x, -2000);
+});

@@ -126,11 +126,62 @@ function applyEat(project, lower, shape) {
   return { lost: [...drop] };
 }
 
+// Снимок формы комнаты: по нему «съеденная» комната возвращает исходную форму,
+// когда съедающая уезжает (room.eatBase = { base, now, by }).
+const snapShape = (r) => {
+  const o = { x: r.x, y: r.y, w: r.w, h: r.h };
+  if (r.outline) o.outline = r.outline.map((p) => ({ x: p.x, y: p.y }));
+  if (r.notch) o.notch = { ...r.notch };
+  return o;
+};
+const sameShape = (a, b) => JSON.stringify(a) === JSON.stringify(snapShape(b));
+
 // Съесть одной комнатой другую. → { ok, why, lost }.
 export function eatRoom(project, lower, upper) {
   const plan = eatPlan(project, lower, upper);
   if (!plan.ok) return { ok: false, why: plan.why, child: plan.child, lost: [] };
-  return { ok: true, ...applyEat(project, lower, plan.shape) };
+  // База — форма до первого съедания; если комнату после него правили руками
+  // (форма не совпала со снимком), база начинается заново.
+  const keep = lower.eatBase && sameShape(lower.eatBase.now, lower) ? lower.eatBase : null;
+  const base = keep ? keep.base : snapShape(lower);
+  const by = keep ? keep.by : [];
+  const res = applyEat(project, lower, plan.shape);
+  if (!by.includes(upper.id)) by.push(upper.id);
+  lower.eatBase = { base, now: snapShape(lower), by };
+  return { ok: true, ...res };
+}
+
+// Вернуть съеденным комнатам исходную форму там, где съедавшая ушла:
+// комнаты, съеденные одной из upperIds, сбрасываются к базе и заново
+// съедаются теми, кто всё ещё перекрывает (кроме upperIds — их обработает
+// основной проход). Комната, которую двигали сами (она в upperIds), или
+// правленная руками забывает базу. → [{ lower }] восстановленные.
+function restoreEaten(project, ids) {
+  const reset = [];
+  for (const lower of project.rooms || []) {
+    const eb = lower.eatBase;
+    if (!eb) continue;
+    if (ids.has(lower.id) || !sameShape(eb.now, lower)) { delete lower.eatBase; continue; }
+    if (!eb.by.some((id) => ids.has(id))) continue;
+    keepOpenings(project, lower, () => {
+      lower.x = eb.base.x; lower.y = eb.base.y; lower.w = eb.base.w; lower.h = eb.base.h;
+      if (eb.base.outline) lower.outline = eb.base.outline.map((p) => ({ ...p })); else delete lower.outline;
+      if (eb.base.notch) lower.notch = { ...eb.base.notch }; else delete lower.notch;
+      finalizeRoomOutline(lower);
+    });
+    delete lower.eatBase;
+    reset.push({ lower, by: eb.by });
+  }
+  const restored = [];
+  for (const { lower, by } of reset) {
+    for (const id of by) {
+      const upper = project.rooms.find((r) => r.id === id);
+      if (!upper || ids.has(id) || !eatablePair(lower, upper) || !roomsIntersect(lower, upper)) continue;
+      eatRoom(project, lower, upper);
+    }
+    restored.push({ lower });
+  }
+  return restored;
 }
 
 // Комнаты upperIds (поставленные/сдвинутые/растянутые последними) съедают
@@ -141,6 +192,7 @@ export function eatRoom(project, lower, upper) {
 export function eatOverlaps(project, upperIds) {
   const ids = new Set(upperIds);
   const eaten = []; const failed = []; const lost = [];
+  const restored = restoreEaten(project, ids);
   for (const id of ids) {
     const upper = (project.rooms || []).find((r) => r.id === id);
     if (!upper) continue;
@@ -158,13 +210,15 @@ export function eatOverlaps(project, upperIds) {
       project.rooms.push(f.upper);
     }
   }
-  return { eaten, failed, lost };
+  return { eaten, failed, lost, restored };
 }
 
 // Короткий итог для тоста. null — нечего сказать.
 export function eatSummary(res) {
   if (!res) return null;
   const parts = [];
+  const back = (res.restored || []).filter((r) => !res.eaten.some((e) => e.lower === r.lower));
+  if (back.length) parts.push(`Форма восстановлена: ${back.map((r) => `«${r.lower.name}»`).join(', ')}`);
   if (res.eaten.length === 1) parts.push(`Комната «${res.eaten[0].lower.name}» уменьшена: пересечение с «${res.eaten[0].upper.name}»`);
   else if (res.eaten.length > 1) parts.push(`Уменьшены по пересечению: ${res.eaten.map((e) => `«${e.lower.name}»`).join(', ')}`);
   if (res.lost.length) parts.push(`удалено проёмов под комнатой: ${res.lost.length}`);

@@ -1494,7 +1494,7 @@ export function bindCanvasInput() {
       const movedIds = finished.kind === 'multi' ? finished.roomIds
         : [finished.kind === 'room' ? finished.id : finished.roomId];
       const eaten = eatOverlapsAfter(movedIds.filter(Boolean));
-      if (eaten.eaten.length || eaten.failed.length) finished.clamped = null;
+      if (eaten.eaten.length || eaten.failed.length || eaten.restored.length) finished.clamped = null;
       reconcileOpenings();
       refreshDerived();
       pushHistory(finished.before);

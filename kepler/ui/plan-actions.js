@@ -271,7 +271,7 @@ export function overlappingTopRooms(room) {
 // Тост — итог (что уменьшено / почему не получилось). → результат eatOverlaps.
 export function eatOverlapsAfter(roomIds, { silent = false } = {}) {
   const res = eatOverlaps(state.project, roomIds);
-  if (res.eaten.length || res.failed.length) reconcileOpenings();
+  if (res.eaten.length || res.failed.length || res.restored.length) reconcileOpenings();
   const text = eatSummary(res);
   if (text && !silent) toast(text, Boolean(res.failed.length || res.lost.length));
   return res;
