@@ -9,7 +9,7 @@ import {
   createLoopRoom, findLoopAt, freeLoops, loopField, splitRoomByWall, wallsInsideRooms,
 } from '../core/bound-rooms.js';
 import {
-  createOpening, createProject, createRoom, deserializeProject, serializeProject,
+  createOpening, createProject, createRoom, deserializeProject, fileDataV6, serializeProject,
 } from '../core/model.js';
 import { roomPolygon, roomShapeHandles } from '../core/room-shape.js';
 import { roomNetAreaM2, validateRoomPlacement } from '../core/rooms.js';
@@ -300,7 +300,8 @@ test('миграция: старые помещения room.bound при отк
   addManualWall(p, { x: 11000, y: 4000 }, { x: 6000, y: 4000 }, { thickness: T });
   addManualWall(p, { x: 6000, y: 4000 }, { x: 6000, y: 0 }, { thickness: T });
   p.openings.push(hostOpening('window', top.id, 2500, 1500));
-  const data = JSON.parse(serializeProject(p));
+  // Старый файл — формат v6 (room.bound был только там).
+  const data = JSON.parse(JSON.stringify(fileDataV6(p)));
   const old = (id, seed, x) => ({
     ...createRoom('living', x, 100, 4800, 3800), id, bound: { mode: 'walls', seed },
     poly: rectPts(x, 100, 4800, 3800),

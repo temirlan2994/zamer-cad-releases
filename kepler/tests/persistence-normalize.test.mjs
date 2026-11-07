@@ -4,14 +4,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  createProject, createRoom, deserializeProject, hasContent, normalizeProject, serializeProject,
+  createProject, createRoom, deserializeProject, fileDataV6, hasContent, normalizeProject, serializeProject,
 } from '../core/model.js';
 import { createLandscapeObject } from '../core/landscape.js';
 import { deriveWalls } from '../core/walls.js';
 import { normsReport } from '../core/norms.js';
 import { buildStructuredExport } from '../core/export.js';
 
-const base = () => JSON.parse(serializeProject(createProject()));
+// Данные файла v6 (нормализация чистит именно их; файл v7 сводится к ним, core/v7/file.js).
+const base = () => JSON.parse(JSON.stringify(fileDataV6(createProject())));
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
 // Всё, что приложение делает с проектом сразу после открытия.
@@ -96,7 +97,7 @@ test('нормализация не портит правильные проек
   for (const name of ['v1-project.kepler.json', 'v2-project.kepler.json', 'v3-project.kepler.json', 'v4-project.kepler.json', 'user-house-2026-11.json']) {
     const p = deserializeProject(fixture(name));
     const once = serializeProject(p);
-    const twice = serializeProject(normalizeProject(JSON.parse(once)));
+    const twice = serializeProject(normalizeProject(JSON.parse(JSON.stringify(fileDataV6(p)))));
     assert.equal(twice, once, name);
     const raw = JSON.parse(fixture(name));
     const rooms = (raw.levels || [{ rooms: raw.rooms }]).reduce((s, l) => s + (l.rooms?.length || 0), 0);

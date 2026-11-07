@@ -2,13 +2,16 @@
 // Чистый модуль без DOM. Все размеры в миллиметрах, ось Y вниз.
 
 import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, roomType } from './catalog.js';
-import { SCHEMA, migrateProject, normDeg } from './migrate.js';
+import { SCHEMA, migrateProject, normDeg, schemaVersion } from './migrate.js';
 import { DEFAULT_ROAD_WIDTH, createSite, ensureSite } from './site.js';
 import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
 import { WALL_T_MAX, WALL_T_MIN } from './walls.js';
 import { cleanViewAngles } from './view-angles.js';
+import { fileV7, isV7Data, toV6Data } from './v7/file.js';
+import { reconcileEats } from './v7/eat-bridge.js';
+import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
 
 export { SCHEMA };
@@ -164,12 +167,20 @@ export function serializeProject(project, { pretty = true } = {}) {
 
 export const LEGACY_SCHEMA = 'kepler-plan/5';
 
-// Формат файла проекта: 6 — есть ручные стены, иначе 5.
-export function fileSchema(project) {
-  return hasManualWalls(project) ? SCHEMA : LEGACY_SCHEMA;
+// Формат файла проекта — kepler-plan/7 (ядро v7, docs/v7-stage2-plan.md,
+// срез 2): номинальные блоки, стены осями, проёмы на рёбрах блоков; съедание
+// в файле не хранится. Старые v1–v6 открываются как раньше.
+export function fileSchema() {
+  return SCHEMA7;
 }
 
 function fileData(project) {
+  if (!project || typeof project !== 'object' || !Array.isArray(project.levels)) return project;
+  return fileV7(project);
+}
+
+// Прежний формат (5/6) — для проверки миграций и старых копий.
+export function fileDataV6(project) {
   if (!project || typeof project !== 'object' || !Array.isArray(project.levels)) return project;
   if (hasManualWalls(project)) return { ...project, schema: SCHEMA };
   const strip = (l) => {
@@ -213,13 +224,22 @@ export function deserializeProject(text) {
 
 // То же для уже разобранного JSON (снимки истории собираются с reviver).
 export function projectFromData(raw) {
-  const data = migrateProject(raw);
+  const v7 = isV7Data(raw);
+  const ver = schemaVersion(raw?.schema);
+  if (ver != null && ver > 7) {
+    throw new Error(`Файл создан более новой версией Kepler Plan (формат ${ver}, `
+      + 'здесь поддерживается до 7). Обновите приложение.');
+  }
+  const data = migrateProject(v7 ? toV6Data(raw) : raw);
   const levelOk = (l) => isObj(l) && Array.isArray(l.rooms) && Array.isArray(l.openings) && Array.isArray(l.items);
   if (!Array.isArray(data.levels) || !data.levels.some(levelOk)) {
     throw new Error('Файл повреждён: нет этажей со списками rooms/openings/items');
   }
   data.levels = data.levels.filter(levelOk);
-  return normalizeProject(data);
+  const project = normalizeProject(data);
+  // Файл v7 хранит номиналы: видимые формы съеденных — пересчётом.
+  if (v7) for (const l of project.levels) reconcileEats(levelProject(project, l.id));
+  return project;
 }
 
 // ---------------------------------------------------------------- Чистка

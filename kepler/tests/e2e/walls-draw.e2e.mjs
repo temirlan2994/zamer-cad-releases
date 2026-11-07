@@ -1,6 +1,6 @@
 // e2e ручных стен (этап B): инструмент «Стена» рисует цепочку из 4 стен,
 // дверь ставится на ручную стену, отмена/повтор, автосохранение и
-// перезагрузка (формат kepler-plan/6), без ошибок в консоли.
+// перезагрузка (формат kepler-plan/7), без ошибок в консоли.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew, clickWorld, worldToClient } from './helpers.mjs';
@@ -92,14 +92,14 @@ describe('ручные стены', () => {
     assert.equal(list[2].a.x, 4500);
   });
 
-  it('сохранение и перезагрузка: стены и дверь на месте, формат 6', async () => {
+  it('сохранение и перезагрузка: стены и дверь на месте, формат 7', async () => {
     const { page } = app;
     const saved = await page.evaluate(async () => {
       const store = await import('./ui/store.js');
       store.flushAutosave();
       return JSON.parse(localStorage.getItem('kepler-plan-autosave')).schema;
     });
-    assert.equal(saved, 'kepler-plan/6');
+    assert.equal(saved, 'kepler-plan/7');
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler) && window.__kepler.state.project.walls?.length === 4);
     const s = await page.evaluate(() => {

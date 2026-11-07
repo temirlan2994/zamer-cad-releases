@@ -139,11 +139,11 @@ test('проём остаётся на месте в мире при перен�
   assert.equal(p.walls.length, 0);
 });
 
-test('сохранение/открытие: стены и host-проём целы, формат 6', () => {
+test('сохранение/открытие: стены и host-проём целы, формат 7', () => {
   const { p, w } = twoRoomsWithPartition();
   p.openings.push(hostDoor(w.id, 1000));
   const text = serializeProject(p);
-  assert.equal(JSON.parse(text).schema, 'kepler-plan/6');
+  assert.equal(JSON.parse(text).schema, 'kepler-plan/7');
   const q = deserializeProject(text);
   assert.equal(q.walls.length, 1);
   assert.deepEqual(q.openings[0].host, { wallId: w.id, t: 1000 });

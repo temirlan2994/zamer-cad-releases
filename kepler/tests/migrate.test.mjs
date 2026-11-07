@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { createProject, serializeProject, deserializeProject } from '../core/model.js';
+import { createProject, deserializeProject, levelProject, serializeProject } from '../core/model.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { SCHEMA, SCHEMA_VERSION, MIGRATIONS, migrateProject, schemaVersion } from '../core/migrate.js';
 
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -121,12 +122,17 @@ test('файл версии 5 открывается как v6: walls: [] на �
   for (const l of p.levels) assert.deepEqual(l.walls, []);
   assert.deepEqual(p.levels.map((l) => l.rooms), raw.levels.map((l) => l.rooms));
   assert.deepEqual(p.levels.map((l) => l.openings), raw.levels.map((l) => l.openings));
-  // Без ручных стен файл пишется по-прежнему в формате 5 — без walls.
+  // Сохраняется в формате 7 (docs/v7-stage2-plan.md, срез 2): блоки вместо комнат.
   const text = serializeProject(p);
   const saved = JSON.parse(text);
-  assert.equal(saved.schema, 'kepler-plan/5');
-  assert.ok(saved.levels.every((l) => !('walls' in l)));
-  assert.deepEqual(deserializeProject(text), p);
+  assert.equal(saved.schema, 'kepler-plan/7');
+  assert.ok(saved.levels.every((l) => Array.isArray(l.blocks) && !('rooms' in l)));
+  // Ядро v7 держит отступы проёмов на сетке 0,5 мм.
+  const grid = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'offset' && typeof v === 'number' ? Math.round(v * 2) / 2 : v)));
+  // Открытие v7 пересчитывает съедание по номиналам (пары ближе перегородки
+  // отодвигаются) — сравниваем с тем же пересчётом исходного проекта.
+  for (const l of p.levels) reconcileEats(levelProject(p, l.id));
+  assert.deepEqual(grid(deserializeProject(text)), grid(p));
 });
 
 test('v5 → v6 → движок v2: стены комнат те же, что у v2 на исходном файле', async () => {
@@ -150,7 +156,7 @@ test('шаг 5 → 6: walls только добавляется (этажи и �
   assert.deepEqual(keep.levels[0].walls, [{ id: 'w' }]);
 });
 
-test('проект с ручной стеной сохраняется в формате 6; битые стены и проёмы чистятся', () => {
+test('проект с ручной стеной сохраняется в формате 7; битые стены и проёмы чистятся', () => {
   const p = createProject('x');
   p.walls.push({ id: 'w1', axis: { kind: 'line', a: { x: 0, y: 0 }, b: { x: 3000, y: 0 } }, thickness: 9999 });
   p.walls.push({ id: 'w2', axis: { kind: 'line', a: { x: 5, y: 5 }, b: { x: 5, y: 5 } } }); // нулевая ось
@@ -158,7 +164,7 @@ test('проект с ручной стеной сохраняется в фор
   p.openings.push({ id: 'd1', kind: 'door', host: { wallId: 'w1', t: 1000 }, width: 800 });
   p.openings.push({ id: 'd2', kind: 'door', host: { wallId: 'нет', t: 1000 }, width: 800 });
   const text = serializeProject(p);
-  assert.equal(JSON.parse(text).schema, SCHEMA);
+  assert.equal(JSON.parse(text).schema, 'kepler-plan/7');
   const q = deserializeProject(text);
   assert.deepEqual(q.walls.map((w) => w.id), ['w1']);
   assert.equal(q.walls[0].thickness, 600, 'толщина зажата в пределы');
