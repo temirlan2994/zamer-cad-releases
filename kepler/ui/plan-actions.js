@@ -12,7 +12,7 @@ import {
   captureRoomGroup, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
-import { eatOverlaps, eatSummary, roomsIntersect } from '../core/room-eat.js';
+import { eatOverlaps, eatSummary, restoreEaten, roomsIntersect } from '../core/room-eat.js';
 import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -216,7 +216,7 @@ export function deleteSelection() {
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;
-    mutate(() => { removeRoom(state.project, sel.id); reconcileOpenings(); });
+    mutate(() => { removeRoom(state.project, sel.id); restoreEaten(state.project, new Set([sel.id])); reconcileOpenings(); });
     state.selection = null;
     toast(`«${room.name}» удалена`);
   } else if (sel.type === 'wall' && String(sel.key).startsWith('m|')) {
@@ -237,6 +237,7 @@ export function deleteSelection() {
     mutate(() => {
       state.project.items = state.project.items.filter((i) => !sel.itemIds.includes(i.id));
       for (const roomId of sel.roomIds) removeRoom(state.project, roomId);
+      restoreEaten(state.project, new Set(sel.roomIds));
       reconcileOpenings();
     });
     state.selection = null;

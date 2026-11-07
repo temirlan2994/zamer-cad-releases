@@ -145,9 +145,13 @@ export function eatRoom(project, lower, upper) {
   const keep = lower.eatBase && sameShape(lower.eatBase.now, lower) ? lower.eatBase : null;
   const base = keep ? keep.base : snapShape(lower);
   const by = keep ? keep.by : [];
+  const openings = keep ? keep.openings : [];
+  const seen = new Map((project.openings || []).map((o) => [o.id, o]));
   const res = applyEat(project, lower, plan.shape);
+  // Удалённые проёмы запоминаем: вернутся вместе с формой.
+  for (const id of res.lost) { const o = seen.get(id); if (o && !openings.some((x) => x.id === id)) openings.push(JSON.parse(JSON.stringify(o))); }
   if (!by.includes(upper.id)) by.push(upper.id);
-  lower.eatBase = { base, now: snapShape(lower), by };
+  lower.eatBase = { base, now: snapShape(lower), by, openings };
   return { ok: true, ...res };
 }
 
@@ -156,7 +160,7 @@ export function eatRoom(project, lower, upper) {
 // съедаются теми, кто всё ещё перекрывает (кроме upperIds — их обработает
 // основной проход). Комната, которую двигали сами (она в upperIds), или
 // правленная руками забывает базу. → [{ lower }] восстановленные.
-function restoreEaten(project, ids) {
+export function restoreEaten(project, ids) {
   const reset = [];
   for (const lower of project.rooms || []) {
     const eb = lower.eatBase;
@@ -169,6 +173,10 @@ function restoreEaten(project, ids) {
       if (eb.base.notch) lower.notch = { ...eb.base.notch }; else delete lower.notch;
       finalizeRoomOutline(lower);
     });
+    // Проёмы, пропавшие под съедавшей, возвращаются на прежние места.
+    for (const o of eb.openings || []) {
+      if (!project.openings.some((x) => x.id === o.id)) project.openings.push(JSON.parse(JSON.stringify(o)));
+    }
     delete lower.eatBase;
     reset.push({ lower, by: eb.by });
   }

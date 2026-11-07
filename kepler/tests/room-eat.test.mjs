@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { createOpening, createProject, createRoom } from '../core/model.js';
 import { createLoopRoom } from '../core/bound-rooms.js';
 import { normsReport, roomOverlaps, trimRoomBy } from '../core/norms.js';
-import { eatOverlaps, eatShape } from '../core/room-eat.js';
+import { eatOverlaps, eatShape, restoreEaten } from '../core/room-eat.js';
 import { roomRects, roomShapeArea } from '../core/room-shape.js';
 import { roomNetAreaM2 } from '../core/rooms.js';
 import { deriveWalls, openingRect, sharedKey, wallRects, wallsEngine } from '../core/walls.js';
@@ -183,4 +183,25 @@ test('нижнюю подвинули сами — база забывается
   eatOverlaps(p, [b.id]);
   assert.equal(a.eatBase, undefined);
   assert.equal(a.x, -2000);
+});
+
+test('после удаления съедавшей комнаты форма возвращается', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  p.rooms = p.rooms.filter((r) => r.id !== b.id);
+  restoreEaten(p, new Set([b.id]));
+  assert.equal(a.outline, undefined);
+  assert.deepEqual([a.x, a.y, a.w, a.h], [0, 0, 4000, 4000]);
+});
+
+test('проём под съедавшей комнатой возвращается вместе с формой', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 5000, h: 4000 }, { x: 4000, y: 2000, w: 3000, h: 3000 });
+  const door = createOpening('door', a.id, 1, 3000, 800); // правая стена, y ≈ 3000 — под верхней
+  p.openings.push(door);
+  eatOverlaps(p, [b.id]);
+  const lostAfterEat = !p.openings.some((o) => o.id === door.id);
+  b.x = 9000; b.y = 9000;
+  eatOverlaps(p, [b.id]);
+  assert.ok(lostAfterEat, 'проём пропал под верхней');
+  assert.ok(p.openings.some((o) => o.id === door.id), 'проём вернулся');
 });
