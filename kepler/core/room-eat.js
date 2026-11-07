@@ -18,7 +18,7 @@ import { DEFAULT_PARTITION, isOpenRoom, isShaft } from './catalog.js';
 import { captureOpeningAnchors, keepOpenings } from './opening-anchor.js';
 import { rectsCycles } from './ortho-grid.js';
 import { finalizeRoomOutline, roomRects } from './room-shape.js';
-import { MIN_ROOM_SIZE, nestedOuterRect, rectInsideRoomShape } from './rooms.js';
+import { nestedOuterRect, rectInsideRoomShape } from './rooms.js';
 import { sharedWallThickness } from './walls.js';
 
 // Кусок остатка тоньше этого — волосок между стеной и краем, а не часть
@@ -62,7 +62,9 @@ export function eatablePair(lower, upper) {
 
 // Новая форма нижней комнаты. gap — толщина перегородки между ними.
 // → { ok: true, pts, rects, areaM2 } | { ok: false, why: 'whole'|'split'|'small'|'none' }.
-export function eatShape(lower, upper, gap = 0, minSize = MIN_ROOM_SIZE) {
+// Остаток уже этого (мм) — не комната: съедать нельзя, ушла бы целиком.
+export const EAT_MIN_REMAIN = 500;
+export function eatShape(lower, upper, gap = 0, minSize = EAT_MIN_REMAIN) {
   const before = roomRects(lower);
   const cut = roomRects(upper).map((q) => ({ x: q.x - gap, y: q.y - gap, w: q.w + gap * 2, h: q.h + gap * 2 }));
   if (!before.some((p) => roomRects(upper).some((q) => intersects(p, q)))) return { ok: false, why: 'none' };
@@ -99,7 +101,7 @@ export function eatFailText(why, lower, upper, child = null) {
   const a = `«${upper.name}»`; const b = `«${lower.name}»`;
   if (why === 'whole') return `${b} целиком под ${a} — передвиньте или удалите одну из комнат`;
   if (why === 'split') return `${a} разрезает ${b} на части — сдвиньте ${a} к краю ${b}`;
-  if (why === 'small') return `От ${b} под ${a} остаётся меньше ${MIN_ROOM_SIZE} мм — передвиньте ${a}`;
+  if (why === 'small') return `От ${b} под ${a} остаётся меньше ${EAT_MIN_REMAIN} мм — передвиньте ${a}`;
   if (why === 'children') return `${a} закрывает вложенное помещение «${child?.name || ''}» в ${b}`;
   return `${a} перекрывает ${b}`;
 }

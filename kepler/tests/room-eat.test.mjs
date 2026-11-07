@@ -205,3 +205,12 @@ test('проём под съедавшей комнатой возвращает
   assert.ok(lostAfterEat, 'проём пропал под верхней');
   assert.ok(p.openings.some((o) => o.id === door.id), 'проём вернулся');
 });
+
+test('узкий остаток 700 мм съедается (раньше отказ «меньше 900» оставлял красное)', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 3000, h: 4000 }, { x: 800, y: -500, w: 4000, h: 6000 });
+  const res = eatOverlaps(p, [b.id]);
+  assert.equal(res.failed.length, 0);
+  assert.equal(res.eaten.length, 1);
+  assert.equal(a.w, 700);
+  assert.equal(roomOverlaps(p).length, 0);
+});
