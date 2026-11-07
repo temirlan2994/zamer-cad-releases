@@ -203,22 +203,19 @@ describe('магнит блоков, поворот, копия, удалени�
     const bAlt = await room(page, 'B');
     assert.ok(bAlt.x > 4150, `Alt — без магнита: ${bAlt.x}`);
     await page.keyboard.press('Control+z');
-    // Тумблер «Примагничивание блоков» в «Привязках».
-    await page.click('#snapMenuBtn');
+    // Значок «Магнит блоков» в привязках внизу холста.
     const btn = '#snapBar [data-snap="magnet"]';
     assert.equal(await page.$eval(btn, (n) => n.classList.contains('on')), true, 'по умолчанию включён');
-    assert.match(await page.$eval(btn, (n) => n.textContent), /Примагничивание блоков/);
+    assert.equal(await page.getAttribute(btn, 'aria-label'), 'Магнит блоков');
     await page.click(btn);
     assert.equal(await page.$eval(btn, (n) => n.classList.contains('on')), false);
+    assert.equal(await page.getAttribute(btn, 'aria-pressed'), 'false');
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-draw-snap')).magnet);
     assert.equal(saved, false, 'настройка запомнена');
-    await page.click('#snapMenuBtn');
     await dragPlan(page, [7500, 1500], [5750, 1500]);
     assert.ok((await room(page, 'B')).x > 4150, 'выключен — без магнита');
     await page.keyboard.press('Control+z');
-    await page.click('#snapMenuBtn');
     await page.click(btn);
-    await page.click('#snapMenuBtn');
     // Явно «внутрь» соседа дальше радиуса — съедание как обычно.
     await dragPlan(page, [7500, 1500], [4500, 1500]); // B.x = 3000, на 1000 внутри A
     assert.equal((await room(page, 'B')).x, 3000);

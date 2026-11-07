@@ -1,7 +1,7 @@
 // e2e панели инструментов (ui/toolstrip.js) и вкладки «ТЭП и площади»
 // (ui/props-tep.js): кнопки-иконки с подсказками, подсветка активного
-// инструмента, наборы «План» / «Участок» / «Ландшафт», всплывающие «Вид» и
-// «Привязки», шапка без переехавших кнопок; удалённые блоки «Варианты»,
+// инструмента, наборы «План» / «Участок» / «Ландшафт», всплывающие «Вид»,
+// привязки внизу холста, шапка без переехавших кнопок; удалённые блоки «Варианты»,
 // «Управление», «Движок стен»; телефон — прокручиваемая строка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +22,7 @@ describe('панель инструментов', () => {
   it('кнопки на панели, в шапке — только общие действия', async () => {
     const { page } = app;
     assert.equal(await page.isVisible('#toolStrip'), true);
-    for (const id of [...MOVED, 'selectToolBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'orthoBtn', 'snapMenuBtn', 'snapBar']) {
+    for (const id of [...MOVED, 'selectToolBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} на панели инструментов`);
     }
     for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'modePlanBtn', 'modeSiteBtn', 'projectName']) {
@@ -37,13 +37,13 @@ describe('панель инструментов', () => {
       id: n.id, svg: Boolean(n.querySelector('svg')), title: n.title, label: n.getAttribute('aria-label'),
       text: n.querySelector('.tb-label')?.textContent.trim() || '',
     })));
-    assert.ok(btns.length >= 12, `кнопок ${btns.length}`);
+    assert.ok(btns.length >= 10, `кнопок ${btns.length}`); // «Орто» и «Привязки» переехали вниз холста
     for (const b of btns) {
       assert.ok(b.svg && b.title.length > 3 && b.label, `кнопка ${b.id}: иконка и подсказка`);
       assert.ok(!/\s/.test(b.text), `подпись ${b.id} «${b.text}» — одно слово`);
     }
     assert.match(await page.getAttribute('#wallToolBtn', 'title'), /\(W\)/);
-    assert.match(await page.getAttribute('#orthoBtn', 'title'), /F8/);
+    assert.equal(await page.$$eval('#toolStrip #orthoBtn, #toolStrip #snapMenuBtn, #toolStrip #snapBar', (ns) => ns.length), 0, 'привязки — не на панели');
   });
 
   it('активный инструмент подсвечен; Esc и «Выбор» снимают', async () => {
@@ -88,18 +88,16 @@ describe('панель инструментов', () => {
     assert.equal(await page.isVisible('#roomCards'), true);
   });
 
-  it('«Вид» и «Привязки» — всплывающие панели от своих кнопок', async () => {
+  it('«Вид» — всплывающая панель; привязки — значками внизу холста', async () => {
     const { page } = app;
     await page.click('#viewBtn');
     assert.equal(await page.isVisible('#viewPanel'), true);
     const [btn, panel] = await Promise.all(['#viewBtn', '#viewPanel'].map((s) => page.locator(s).boundingBox()));
     assert.ok(panel.y >= btn.y + btn.height && panel.x + panel.width <= 1280, `панель под кнопкой ${JSON.stringify(panel)}`);
-    await page.click('#snapMenuBtn');
-    assert.equal(await page.isHidden('#viewPanel'), true, 'открыта одна панель');
-    assert.equal(await page.isVisible('#snapPanel'), true);
-    assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Примагничивание блоков, Направляющие');
-    await page.keyboard.press('Escape');
-    assert.equal(await page.isHidden('#snapPanel'), true);
+    await page.click('#viewBtn');
+    assert.equal(await page.isHidden('#viewPanel'), true);
+    assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap'))), true);
+    assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
     // Размеры: подпись и подсветка меняются.
     assert.equal((await page.textContent('#dimModeBtn')).trim(), 'Снаружи');
     await page.click('#dimModeBtn');

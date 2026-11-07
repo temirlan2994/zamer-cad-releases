@@ -76,17 +76,6 @@
           <button type="button" class="tb-btn" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg><span class="tb-label">3D</span></button>
           <button type="button" class="tb-btn" id="fitBtn" aria-label="Вписать" title="Вписать план в экран"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg></button>
         </div>
-        <div class="tb-group" id="snapTools">
-          <button type="button" class="tb-btn" id="orthoBtn" aria-label="Орто" title="Орто (F8): строго 0/90° от последней точки; удерживать Ctrl — временно" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4v14h14"/><path d="M6 13h5v5"/></svg></button>
-          <div class="tb-pop-wrap" id="snapCtl">
-            <button type="button" class="tb-btn" id="snapMenuBtn" aria-label="Привязки" title="Привязки черчения и направляющие: Орто, Полярка, Объекты, Выравнивание, Направляющие · Shift — временно без привязок" aria-expanded="false" aria-controls="snapPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h4v8a2 2 0 0 0 4 0V3h4v8a6 6 0 0 1-12 0z"/><path d="M6 7h4M14 7h4"/></svg></button>
-            <div class="snap-panel tb-pop" id="snapPanel" role="dialog" aria-label="Привязки" hidden>
-              <strong>Привязки</strong>
-              <span class="snap-bar" id="snapBar" role="group" aria-label="Привязки"></span>
-                <p class="empty-hint">Во время черчения наберите число и Enter — длина, Tab — угол. Shift — без привязок.</p>
-            </div>
-          </div>
-        </div>
       </div>
 
       <main class="workspace">
@@ -166,6 +155,7 @@
             <button id="zoomInBtn" title="Приблизить">+</button>
             <button id="zoomOutBtn" title="Отдалить">−</button>
           </div>
+          <div class="snap-pill" id="snapBar" role="toolbar" aria-label="Привязки"></div>
           <div class="statusbar">
             <span id="cursorPos"></span>
             <span id="scaleInfo"></span>

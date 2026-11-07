@@ -37,28 +37,22 @@ describe('привязки черчения: лучи, орто, выравни�
   });
   after(async () => { await app?.close(); });
 
-  it('меню «Привязки» на панели инструментов; F8 и кнопка «Орто» переключают орто', async () => {
+  it('привязки — значки внизу холста; F8 и значок «Орто» переключают орто', async () => {
     const { page } = app;
-    assert.equal(await page.isHidden('#snapPanel'), true);
-    await page.click('#snapMenuBtn');
-    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true);
-    assert.ok(await page.$('#snapBar [data-snap="ortho"]'));
-    assert.ok(await page.$('#snapBar [data-snap="polar"]'));
-    assert.ok(await page.$('#snapBar [data-snap="objects"]'));
-    assert.ok(await page.$('#snapBar [data-snap="tracking"]'));
+    const ortho = '#snapBar [data-snap="ortho"]';
+    for (const k of ['ortho', 'polar', 'objects', 'tracking']) assert.equal(await page.isVisible(`#snapBar [data-snap="${k}"]`), true, k);
     await page.keyboard.press('F8');
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), true);
-    assert.equal(await page.$eval('#snapBar [data-snap="ortho"]', (n) => n.classList.contains('on')), true);
-    assert.equal(await page.getAttribute('#orthoBtn', 'aria-pressed'), 'true');
+    assert.equal(await page.$eval(ortho, (n) => n.classList.contains('on')), true);
+    assert.equal(await page.getAttribute(ortho, 'aria-pressed'), 'true');
     await page.keyboard.press('F8');
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), false);
-    await page.click('#orthoBtn');
+    await page.click(ortho);
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), true);
-    assert.equal(await page.$eval('#snapBar [data-snap="ortho"]', (n) => n.classList.contains('on')), true);
-    await page.click('#orthoBtn');
+    assert.equal(await page.getAttribute(ortho, 'aria-pressed'), 'true');
+    await page.click(ortho);
     assert.equal(await page.evaluate(() => window.__kepler.state.snapSettings.ortho), false);
-    await page.keyboard.press('Escape');
-    assert.equal(await page.isHidden('#snapPanel'), true);
+    await page.mouse.move(5, 5);
   });
 
   it('«Участок», граница: почти вертикаль → 90°, Ctrl → орто, Enter — замкнуть', async () => {

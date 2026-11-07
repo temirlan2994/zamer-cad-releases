@@ -1,5 +1,5 @@
 // Привязки черчения в интерфейсе: настройки (Орто, Полярка, Объекты,
-// Выравнивание — меню «Привязки» на панели инструментов, localStorage), сбор
+// Выравнивание, Магнит, Направляющие — значки внизу холста, localStorage), сбор
 // окружения для core/draw-snap.js (участок, дом, ландшафт), задержка
 // наведения для «Параллели», динамический ввод длины/угла с клавиатуры.
 
@@ -45,29 +45,65 @@ export function toggleOrtho() {
   setSnapSetting('ortho', !snapSettings().ortho);
 }
 
+// Панель привязок — «пилюля» внизу холста по центру (#snapBar): только
+// значки; подсказка (.snap-tip) — своя, CSS, появляется сразу при наведении.
+const svg = (body) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+
 const BUTTONS = [
-  { key: 'ortho', text: 'Орто', title: 'Орто: строго 0/90° от последней точки (F8; удерживать Ctrl — временно)' },
-  { key: 'polar', text: 'Полярка', title: 'Полярное отслеживание: лучи от последней точки с шагом угла' },
-  { key: 'objects', text: 'Объекты', title: 'Объектная привязка: конец, середина, пересечение, центр, перпендикуляр, параллель' },
-  { key: 'tracking', text: 'Выравнивание', title: 'Отслеживание: линии выравнивания по X/Y от вершин' },
-  { key: 'magnet', text: 'Примагничивание блоков', title: 'Примагничивание блоков: при переносе и растяжении помещение прижимается к соседу с зазором перегородки или выравнивается по его грани (радиус 300 мм; Alt или Shift — временно без магнита)' },
-  { key: 'guides', text: 'Направляющие', title: 'Направляющие объектов: при перемещении края и центры липнут к соседним объектам, стенам, дому и границе (Shift — временно без привязки)' },
+  {
+    key: 'ortho', name: 'Орто', what: 'строго 0/90° от последней точки', keys: 'F8 · Ctrl — временно',
+    icon: svg('<path d="M6 4v14h14"/><path d="M6 13h5v5"/>'),
+  },
+  {
+    key: 'polar', name: 'Полярка', what: 'лучи от последней точки с шагом угла', keys: 'Shift — временно без привязок',
+    icon: svg('<path d="M4 20h16"/><path d="M4 20L18 6"/><path d="M4 20l6-15"/><path d="M12 20a8 8 0 0 0-2.3-5.7"/>'),
+  },
+  {
+    key: 'objects', name: 'Объекты', what: 'конец, середина, пересечение, центр, перпендикуляр, параллель', keys: 'Shift — временно без привязок',
+    icon: svg('<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/>'),
+  },
+  {
+    key: 'tracking', name: 'Выравнивание', what: 'линии по X/Y от вершин', keys: 'Shift — временно без привязок',
+    icon: svg('<path d="M3 12h18" stroke-dasharray="2 3"/><path d="M12 3v18" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.2"/>'),
+  },
+  {
+    key: 'magnet', name: 'Магнит блоков', what: 'прижимает помещение к соседу с зазором перегородки или по его грани (300 мм)', keys: 'Alt или Shift — временно выкл',
+    icon: svg('<path d="M6 3h4v8a2 2 0 0 0 4 0V3h4v8a6 6 0 0 1-12 0z"/><path d="M6 7h4M14 7h4"/>'),
+  },
+  {
+    key: 'guides', name: 'Направляющие', what: 'края и центры объектов липнут к соседям, стенам, дому и границе', keys: 'Shift — временно выкл',
+    icon: svg('<rect x="3" y="7" width="7" height="7" rx="1"/><rect x="14" y="7" width="7" height="11" rx="1"/><path d="M1.5 4h21" stroke-dasharray="2 2.5"/>'),
+  },
 ];
+
+const tipHtml = (name, what, keys) => `<b>${name}</b> · ${what}${keys ? ` · <kbd>${keys}</kbd>` : ''}`;
+
+function buildSnapBar(bar) {
+  const n = BUTTONS.length + 1; // + шаг полярки после «Полярки»
+  let i = 0;
+  const edge = () => { i += 1; return i <= 2 ? ' tip-start' : (i > n - 2 ? ' tip-end' : ''); };
+  bar.innerHTML = BUTTONS.map((b) => `<button type="button" class="snap-btn${edge()}" data-snap="${b.key}" aria-label="${b.name}" aria-pressed="false" aria-describedby="snapTip-${b.key}">${b.icon}<span class="snap-tip" role="tooltip" id="snapTip-${b.key}">${tipHtml(b.name, b.what, b.keys)}</span></button>`
+    + (b.key === 'polar'
+      ? `<button type="button" class="snap-btn snap-step${edge()}" id="snapPolarStep" data-snap-step aria-label="Шаг полярки" aria-describedby="snapTip-step"><span class="snap-step-val"></span><span class="snap-tip" role="tooltip" id="snapTip-step">${tipHtml('Шаг полярки', `угол между лучами: ${POLAR_STEPS.join(' / ')}°`, 'клик — следующий')}</span></button>`
+      : '')).join('');
+}
 
 export function renderSnapBar() {
   const s = snapSettings();
-  const ortho = document.getElementById('orthoBtn'); // «Орто» на панели инструментов
-  if (ortho) {
-    ortho.classList.toggle('active', Boolean(s.ortho));
-    ortho.setAttribute('aria-pressed', String(Boolean(s.ortho)));
-  }
   const bar = document.getElementById('snapBar');
   if (!bar) return;
-  bar.title = 'Привязки при черчении линий · Shift — временно без привязок · во время черчения наберите число и Enter — длина, Tab — угол';
-  bar.innerHTML = BUTTONS.map((b) => `<button type="button" class="snap-btn${s[b.key] ? ' on' : ''}" data-snap="${b.key}" aria-pressed="${s[b.key]}" title="${b.title}">${b.text}</button>`
-    + (b.key === 'polar'
-      ? `<select class="snap-step" id="snapPolarStep" title="Шаг полярных лучей">${POLAR_STEPS.map((v) => `<option value="${v}"${v === s.polarStep ? ' selected' : ''}>${v}°</option>`).join('')}</select>`
-      : '')).join('');
+  if (!bar.querySelector('[data-snap]')) buildSnapBar(bar);
+  // Только классы и атрибуты: кнопка под курсором не пересоздаётся — подсказка не мигает.
+  for (const btn of bar.querySelectorAll('[data-snap]')) {
+    const on = Boolean(s[btn.dataset.snap]);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  const step = bar.querySelector('[data-snap-step]');
+  if (step) {
+    step.querySelector('.snap-step-val').textContent = `${s.polarStep}°`;
+    step.classList.toggle('dim', !s.polar);
+  }
 }
 
 export function bindSnapBar() {
@@ -75,16 +111,18 @@ export function bindSnapBar() {
   const bar = document.getElementById('snapBar');
   if (!bar) return;
   bar.addEventListener('click', (e) => {
+    const stepBtn = e.target.closest('[data-snap-step]');
+    if (stepBtn) {
+      const k = POLAR_STEPS.indexOf(snapSettings().polarStep);
+      setSnapSetting('polarStep', POLAR_STEPS[(k + 1) % POLAR_STEPS.length]);
+      if (e.detail) stepBtn.blur(); // мышь: Enter/цифры дальше идут черчению
+      return;
+    }
     const btn = e.target.closest('[data-snap]');
     if (!btn) return;
     const key = btn.dataset.snap;
     setSnapSetting(key, !snapSettings()[key]);
-    btn.blur(); // Enter/цифры дальше идут черчению, а не кнопке
-  });
-  bar.addEventListener('change', (e) => {
-    if (e.target.id !== 'snapPolarStep') return;
-    setSnapSetting('polarStep', Number(e.target.value));
-    e.target.blur();
+    if (e.detail) btn.blur(); // мышь: Enter/цифры дальше идут черчению, а не кнопке
   });
   renderSnapBar();
 }

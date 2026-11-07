@@ -8,7 +8,6 @@
 
 import { polygonAreaM2 } from '../core/site.js';
 import { el, refs } from './dom.js';
-import { toggleOrtho } from './draw-snap-ui.js';
 import { labelLandscapeSelection, selectedIds } from './landscape.js';
 import { startLandscapeArray } from './landscape-array.js';
 import { startSectionTool } from './landscape-section.js';
@@ -19,7 +18,6 @@ import { startTerrainTool } from './terrain.js';
 import {
   activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceOpening,
 } from './tools.js';
-import { setViewPanelOpen } from './view-align.js';
 import { finishWallChain } from './wall-tool.js';
 
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -148,14 +146,6 @@ export function renderToolstrip() {
   }
 }
 
-function setSnapPanelOpen(open) {
-  const panel = el('snapPanel');
-  if (!panel) return;
-  panel.hidden = !open;
-  el('snapMenuBtn')?.setAttribute('aria-expanded', String(open));
-  el('snapMenuBtn')?.classList.toggle('open', open);
-}
-
 function placeOpening(kind) {
   const t = state.tool;
   if (t?.kind === 'place-opening' && t.openKind === kind) cancelTool();
@@ -180,19 +170,4 @@ export function bindToolstrip() {
   el('doorToolBtn')?.addEventListener('click', () => placeOpening('door'));
   el('windowToolBtn')?.addEventListener('click', () => placeOpening('window'));
   el('furnitureToolBtn')?.addEventListener('click', toggleFurniture);
-  el('orthoBtn')?.addEventListener('click', () => toggleOrtho());
-  el('snapMenuBtn')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    setViewPanelOpen(false);
-    setSnapPanelOpen(el('snapPanel').hidden);
-  });
-  // «Вид» открывает свою панель (ui/view-align.js) — панель привязок закрыть.
-  el('viewBtn')?.addEventListener('click', () => setSnapPanelOpen(false));
-  document.addEventListener('click', (event) => {
-    const panel = el('snapPanel');
-    if (panel && !panel.hidden && !el('snapCtl')?.contains(event.target)) setSnapPanelOpen(false);
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && el('snapPanel') && !el('snapPanel').hidden) setSnapPanelOpen(false);
-  });
 }

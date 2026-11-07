@@ -420,27 +420,78 @@ button.issue-go:hover { background: var(--surface-2); }
 .view-panel #alignBtn.active { border-color: var(--accent); }
 .view-panel #alignBtn.armed { background: var(--accent); color: #fff; }
 .tb-pop .empty-hint { margin: 0; }
-/* Меню «Привязки» (ui/draw-snap-ui.js): Орто, Полярка, Объекты, Выравнивание, Направляющие. */
-.snap-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.snap-bar .snap-btn,
-.snap-bar .snap-step {
-  height: 30px;
-  padding: 0 11px;
-  font-size: 12.5px;
-  border-radius: 999px;
+/* Привязки (ui/draw-snap-ui.js): «пилюля» со значками внизу холста по центру,
+   между этажами и масштабом. Подсказка — своя, без title: видна сразу при
+   наведении, без задержек и переходов. */
+.snap-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  z-index: 30;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+.snap-pill .snap-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
+  opacity: 0.7;
   box-shadow: none;
-  cursor: pointer;
 }
-.snap-bar .snap-step { padding: 0 4px; background: var(--surface); color: var(--text); }
-.snap-bar .snap-btn.on {
+.snap-pill .snap-btn:hover { opacity: 1; color: var(--text); background: var(--surface-2); border-color: var(--border); }
+.snap-pill .snap-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; opacity: 1; }
+.snap-pill .snap-btn.on {
+  opacity: 1;
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
+.snap-pill .snap-step { width: auto; min-width: 30px; padding: 0 6px; font-size: 11.5px; font-weight: 650; opacity: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.snap-pill .snap-step.dim { opacity: 0.5; }
+.snap-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 90;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  transition: none;
+  animation: none;
+}
+.snap-tip b { font-weight: 650; }
+.snap-tip kbd { font: inherit; color: var(--muted); }
+.snap-btn.tip-start .snap-tip { left: -4px; transform: none; }
+.snap-btn.tip-end .snap-tip { left: auto; right: -4px; transform: none; }
+.snap-btn:hover .snap-tip, .snap-btn:focus-visible .snap-tip { display: block; }
 /* «Участок»: каталога нет — левая панель скрыта, инструменты на панели инструментов. */
 body.mode-site .library { display: none; }
 
@@ -1400,6 +1451,11 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   .level-dock { left: 8px; bottom: 30px; }
   .landscape-chip span { display: none; }
   .landscape-chip { padding: 0 10px; }
+  /* Привязки — над этажами слева (масштаб на телефоне — щипком); подсказка — от края пилюли */
+  .snap-pill { left: 8px; bottom: 76px; transform: none; max-width: calc(100% - 16px); }
+  .snap-pill .snap-btn { position: static; width: 34px; height: 32px; }
+  .snap-pill .snap-step { width: auto; }
+  .snap-tip, .snap-btn.tip-start .snap-tip, .snap-btn.tip-end .snap-tip { left: 0; right: auto; transform: none; max-width: calc(100vw - 32px); }
   .issues-btn { top: 8px; left: 8px; height: 36px; }
   /* Телефон: нижний лист над панелью кнопок (как «Свойства»), над клавиатурой */
   .issues-panel {
@@ -1619,7 +1675,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 /* Телефон: плашка компактная, не выше трети холста — дальше прокрутка. */
 @media (max-width: 640px) {
   .ls-sun {
-    bottom: 64px; right: 8px; width: min(232px, calc(100% - 16px)); max-height: 36%;
+    bottom: 124px; right: 8px; width: min(232px, calc(100% - 16px)); max-height: 36%; /* выше привязок */
     overflow-y: auto; overscroll-behavior: contain; padding: 6px 8px; gap: 4px; font-size: 12px;
   }
   .ls-sun .seg-opt { min-height: 30px; }
