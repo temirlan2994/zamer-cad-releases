@@ -2,13 +2,18 @@
 // выбор → поворот → растяжение с одной стороны → масштаб.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { startApp, openSample, worldToClient, zoomToItems } from './helpers.mjs';
 
 describe('мебель: режимы ручек по повторным кликам', () => {
   let app;
   before(async () => {
     app = await startApp({ width: 1400, height: 900 });
     await openSample(app.page);
+    const target = await app.page.evaluate(() => {
+      const k = window.__kepler.state;
+      return (k.project.items.find((i) => i.w >= 600 && i.h >= 400) || k.project.items[0]).id;
+    });
+    await zoomToItems(app.page, 0.12, [target]);
   });
   after(async () => { await app?.close(); });
 

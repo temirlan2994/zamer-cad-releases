@@ -39,6 +39,17 @@ const handleMode = (page) => page.evaluate(async () => {
   return k.selection?.type === 'item' ? m.itemHandleMode(k.itemHandle, k.selection.id) : null;
 });
 const panX = (page) => page.evaluate(() => window.__kepler.state.view.panX);
+// Мебель отвечает на мышь и касание только при 1:45 и ближе (core/hit-stack.js):
+// масштаб 0.12 (≈1:31) и точка плана (x, y) — в центре холста.
+const focusPlan = (page, x, y, scale = 0.12) => page.evaluate(([px, py, sc]) => {
+  const k = window.__kepler;
+  k.state.view.scale = sc;
+  const c = document.getElementById('canvas');
+  const s = k.planToScreen(px, py);
+  k.state.view.panX += c.clientWidth / 2 - s.x;
+  k.state.view.panY += c.clientHeight / 2 - s.y;
+  k.requestDraw?.();
+}, [x, y, scale]);
 
 describe('касания: группа, участок, малые предметы, поле размера', () => {
   let app; let cdp; let ids;
@@ -63,6 +74,7 @@ describe('касания: группа, участок, малые предме�
 
   it('П-11: тап по предмету группы без выделения — выбрана группа, без ошибок', async () => {
     await select(app.page, null);
+    await focusPlan(app.page, 3800, 1950);
     const g = await itemOf(app.page, ids.g1);
     await tap(await planToClient(app.page, g.x, g.y));
     const sel = await selection(app.page);
@@ -73,7 +85,8 @@ describe('касания: группа, участок, малые предме�
 
   it('П-12: группа на касании двигается только после удержания, свайп — панорама', async () => {
     await select(app.page, { type: 'multi', roomIds: [], itemIds: [ids.g1, ids.g2] });
-    let g = await itemOf(app.page, ids.g1);
+    await focusPlan(app.page, 3800, 1950);
+    let g =await itemOf(app.page, ids.g1);
     const pan0 = await panX(app.page);
     await swipe(await planToClient(app.page, g.x, g.y));
     assert.deepEqual(await itemOf(app.page, ids.g1), g, 'свайп не сдвинул группу');
@@ -121,6 +134,7 @@ describe('касания: группа, участок, малые предме�
 
   it('П-16: поле временного размера открывается на тапе с фокусом в жесте, свайп его закрывает', async () => {
     await select(app.page, null);
+    await focusPlan(app.page, 1500, 2000);
     await tap(await planToClient(app.page, 1500, 2000));
     assert.equal((await selection(app.page))?.id, ids.table);
     await wait(80);
@@ -144,6 +158,7 @@ describe('касания: группа, участок, малые предме�
     assert.equal(await app.page.evaluate(() => window.__focusAtUp), 'dimInputField', 'фокус — синхронно в жесте');
     await swipe(await planToClient(app.page, 1500, 2000));
     assert.equal(await app.page.isVisible('#dimInput'), false, 'панорама закрыла поле');
+    await app.page.evaluate(() => window.__kepler.fitView());
     assert.deepEqual(app.errors, []);
   });
 
@@ -182,6 +197,7 @@ describe('мышь и клавиши: повторный клик, окна по
 
   it('П-14: быстрый двойной клик по выбранному предмету — режим ручек, не комната под ним', async () => {
     await select(app.page, { type: 'item', id: ids.table });
+    await focusPlan(app.page, 1500, 2000);
     const p = await planToClient(app.page, 1500, 2000);
     await app.page.mouse.click(p.x, p.y, { clickCount: 2 });
     const sel = await selection(app.page);
@@ -201,6 +217,7 @@ describe('мышь и клавиши: повторный клик, окна по
 
   it('П-16: поле размера следует за масштабом колесом', async () => {
     await select(app.page, null);
+    await focusPlan(app.page, 1500, 2000);
     const p = await planToClient(app.page, 1500, 2000);
     await app.page.mouse.click(p.x, p.y);
     await app.page.waitForTimeout(80);

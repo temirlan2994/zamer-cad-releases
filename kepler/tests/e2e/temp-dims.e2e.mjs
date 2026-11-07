@@ -2,7 +2,7 @@
 // соседней мебели; клик по подписи — ввод расстояния, предмет сдвигается.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { startApp, openNew, zoomToItems } from './helpers.mjs';
 
 // Комната 5×4 м, стол 1200×800 в (1500, 2000), диван справа 1000×800 в (3700, 2000).
 async function scene(page) {
@@ -124,7 +124,9 @@ describe('временные размеры мебели (телефон)', () =
   after(async () => { await app?.close(); });
 
   it('тап по столу, тап по подписи (цель ≥ 36 px), ✓ — стол сдвинут', async () => {
-    const p = await planToClient(app.page, 1500, 2000);
+    // На узком экране вид дальше 1:45 — мебель не отвечает на касание: приближаем.
+    await zoomToItems(app.page, 0.12, [ids.table]);
+    const p =await planToClient(app.page, 1500, 2000);
     await app.page.touchscreen.tap(p.x, p.y);
     await app.page.waitForTimeout(120);
     const d = await dims(app.page);

@@ -1,7 +1,7 @@
 // Шаг перемещения мельчает при приближении камеры.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { startApp, openSample, worldToClient, zoomToItems } from './helpers.mjs';
 
 describe('шаг привязки и приближение', () => {
   let app;
@@ -17,6 +17,8 @@ describe('шаг привязки и приближение', () => {
 
   it('обычный вид: мышь двигает мебель с шагом 50 мм, стрелка — на 50', async () => {
     const it = await firstItem();
+    // Мебель берётся мышью только при 1:45 и ближе; при 0.12 (≈1:31) шаг ещё 50.
+    await zoomToItems(app.page, 0.12, [it.id]);
     assert.equal(await app.page.evaluate(() => window.__kepler.gridStep()), 50);
     await app.page.evaluate((id) => window.__kepler.select({ type: 'item', id }), it.id);
     // item.x/y — центр предмета (не левый верхний угол).

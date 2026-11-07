@@ -48,6 +48,24 @@ export async function openSample(page) {
   await page.click('#startSample');
   await page.waitForFunction(() => window.__kepler.state.project.rooms.length > 0);
 }
+// Мебель реагирует на мышь только при масштабе 1:45 и ближе (core/hit-stack.js):
+// приближаем вид и ставим центр мебели в центр холста (x, y предмета — его центр).
+export async function zoomToItems(page, scale = 0.12, ids = null) {
+  await page.evaluate(async ([target, only]) => {
+    const v = await import('./ui/view.js');
+    const st = window.__kepler.state;
+    const items = st.project.items.filter((i) => !only || only.includes(i.id));
+    const cx = items.reduce((a, i) => a + i.x, 0) / Math.max(1, items.length);
+    const cy = items.reduce((a, i) => a + i.y, 0) / Math.max(1, items.length);
+    st.view.scale = Math.max(st.view.scale, target);
+    const s = v.planToScreen(cx, cy);
+    const c = document.getElementById('canvas');
+    st.view.panX += c.clientWidth / 2 - s.x;
+    st.view.panY += c.clientHeight / 2 - s.y;
+    window.__kepler.requestDraw?.();
+  }, [scale, ids]);
+}
+
 export async function openNew(page) {
   await page.click('#startNew');
   await page.waitForFunction(() => document.getElementById('startScreen').hidden);

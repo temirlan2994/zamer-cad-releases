@@ -7,6 +7,14 @@ import { itemRect } from './furnish.js';
 import { roomContainsPoint } from './room-shape.js';
 import { openingRect, wallContains } from './walls.js';
 
+// Мебель реагирует на мышь только при крупном плане (знаменатель масштаба ≤ 45,
+// как в строке состояния «≈ 1:45»): издали мышь работает с помещением, и мебель
+// не сдвигается случайно. scale — пикселей на мм.
+export const ITEM_EDIT_DENOMINATOR = 45;
+export function itemsEditable(scale) {
+  return !(scale > 0) || Math.round(96 / 25.4 / scale) <= ITEM_EDIT_DENOMINATOR;
+}
+
 function itemContains(item, point) {
   if (isFixedSizeComp(item)) return pointInComposite(item, point.x, point.y);
   const rect = itemRect(item);
@@ -24,7 +32,7 @@ function openingContains(project, walls, opening, point, scale) {
 
 export function planHitStack(project, walls, scale, point) {
   const hits = [];
-  for (let i = project.items.length - 1; i >= 0; i -= 1) {
+  for (let i = project.items.length - 1; i >= 0 && itemsEditable(scale); i -= 1) {
     const item = project.items[i];
     if (itemContains(item, point)) hits.push({ type: 'item', id: item.id, entity: item });
   }

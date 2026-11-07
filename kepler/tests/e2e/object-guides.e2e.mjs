@@ -4,7 +4,7 @@
 // отключают привязку; то же для мебели и группы мебели.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, dropOnCanvas } from './helpers.mjs';
+import { startApp, openSample, dropOnCanvas, zoomToItems } from './helpers.mjs';
 
 const MIME = 'application/x-kepler-landscape';
 
@@ -103,6 +103,8 @@ describe('умные направляющие перемещения', () => {
       return list.map((i) => i.id);
     });
     assert.equal(ids.length, 3);
+    // Мебель берётся мышью только при 1:45 и ближе.
+    await zoomToItems(page, 0.12, ids);
     await page.waitForTimeout(100);
     const scr = (id) => page.evaluate((iid) => {
       const it = window.__kepler.state.project.items.find((i) => i.id === iid);

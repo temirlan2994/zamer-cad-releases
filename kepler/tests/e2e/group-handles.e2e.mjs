@@ -3,7 +3,7 @@
 // поворачивает все предметы, Ctrl+Z возвращает одним шагом.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { startApp, openSample, zoomToItems } from './helpers.mjs';
 
 describe('группа мебели: режимы ручек общей рамки', () => {
   let app;
@@ -26,6 +26,7 @@ describe('группа мебели: режимы ручек общей рамк
       return list.map((i) => i.id);
     });
     assert.equal(ids.length, 3);
+    await zoomToItems(app.page, 0.12, ids);
   });
   after(async () => { await app?.close(); });
 

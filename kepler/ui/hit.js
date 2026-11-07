@@ -2,7 +2,7 @@
 
 import { isFixedSizeComp, pointInComposite } from '../core/composite.js';
 import { isOpenRoom, isShaft } from '../core/catalog.js';
-import { planHitStack } from '../core/hit-stack.js';
+import { itemsEditable, planHitStack } from '../core/hit-stack.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
@@ -82,7 +82,7 @@ export function hitUnderlayHandle(screen) {
 }
 
 export function hitItemHandle(screen) {
-  if (state.selection?.type !== 'item') return null;
+  if (state.selection?.type !== 'item' || !itemsEditable(state.view.scale)) return null;
   const item = state.project.items.find((i) => i.id === state.selection.id);
   if (!item) return null;
   const mode = itemHandleMode(state.itemHandle, item.id);
@@ -116,6 +116,7 @@ export function hitItemHandle(screen) {
 
 // Ручки группы мебели (общая рамка): режим — state.itemHandle с id группы.
 export function hitGroupHandle(screen) {
+  if (!itemsEditable(state.view.scale)) return null;
   const id = groupHandleId(state.selection);
   if (!id) return null;
   const mode = itemHandleMode(state.itemHandle, id);
@@ -184,6 +185,7 @@ export function hitSiteVertex(screen) {
 
 // Плановые хит-тесты: точка p — в локальных координатах дома.
 export function hitItem(p) {
+  if (!itemsEditable(state.view.scale)) return null; // издали — только помещение
   const items = state.project.items;
   for (let i = items.length - 1; i >= 0; i -= 1) {
     // Диван-конструктор — только по модулям: пустой внутренний угол Г/П не его.

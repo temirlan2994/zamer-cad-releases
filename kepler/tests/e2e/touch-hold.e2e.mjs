@@ -1,7 +1,7 @@
 // Телефон: объект двигается только после долгого нажатия; быстрый свайп — панорама.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { startApp, openSample, worldToClient, zoomToItems } from './helpers.mjs';
 
 describe('касание: долгое нажатие для перемещения', () => {
   let app; let cdp;
@@ -95,8 +95,11 @@ describe('касание: долгое нажатие для перемещен�
   });
 
   it('касание: тап по мебели выбирает, второй тап — ручки поворота', async () => {
-    const it = await app.page.evaluate(() => { const i = window.__kepler.state.project.items[0]; return { x: i.x, y: i.y }; });
+    const it = await app.page.evaluate(() => { const i = window.__kepler.state.project.items[0]; return { id: i.id, x: i.x, y: i.y }; });
     await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
+    await app.page.evaluate(() => document.body.classList.remove('sheet-props'));
+    // Мебель отвечает на касание только при 1:45 и ближе.
+    await zoomToItems(app.page, 0.12, [it.id]);
     const p = await worldToClient(app.page, it.x, it.y);
     const modeNow = () => app.page.evaluate(async () => { const m = await import('./core/item-handles.js'); const k = window.__kepler.state; return k.selection?.type === 'item' ? m.itemHandleMode(k.itemHandle, k.selection.id) : null; });
     await touch('touchStart', p.x, p.y); await touch('touchEnd'); await app.page.waitForTimeout(120);
