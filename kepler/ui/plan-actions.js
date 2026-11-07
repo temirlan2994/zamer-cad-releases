@@ -14,7 +14,7 @@ import {
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import { eatSummary, roomsIntersect } from '../core/room-eat.js';
-import { liftRoom, reconcileEats } from '../core/v7/eat-bridge.js';
+import { liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
 import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
@@ -264,11 +264,13 @@ export function deleteSelection() {
   requestDraw();
 }
 
-// Комнаты верхнего уровня, чья форма перекрывается с данной (любой порядок z).
-// После съедания (eatOverlapsAfter) обычно пусто: остаются несъедаемые.
+// Комнаты верхнего уровня, чья НОМИНАЛЬНАЯ форма перекрывается с данной
+// (любой порядок z): съеденные пары тоже — «поменять» меняет порядок, и
+// съедание моста пересчитывает, кто кого ест.
 export function overlappingTopRooms(room) {
   if (room.parentId) return [];
-  return state.project.rooms.filter((o) => o !== room && !o.parentId && roomsIntersect(room, o));
+  const mine = nominalShape(room);
+  return state.project.rooms.filter((o) => o !== room && !o.parentId && roomsIntersect(mine, nominalShape(o)));
 }
 
 // Конец жеста над комнатами roomIds (поставлены, сдвинуты, растянуты): они

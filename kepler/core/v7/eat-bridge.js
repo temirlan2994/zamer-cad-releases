@@ -106,6 +106,23 @@ export function liftRoom(project, roomId) {
   return true;
 }
 
+// Правка номинала в обход жестов (срез 5: размеры в панели «Свойства»,
+// лестничная зона по маршу). Комнате возвращается номинальная форма — правят
+// её, а не видимую (иначе видимая стала бы номиналом). Вызывающий правит
+// комнату и вызывает reconcileEats(project, { touched: [id], under, prev }):
+// растянутая остаётся под теми, кто её ел (как растяжение ручкой).
+// Отказ — вернуть комнате размеры nominal и reconcileEats(project).
+// → { room, nominal, under, prev } либо null, если комнаты нет.
+export function liftForEdit(project, roomId) {
+  const level = activeLevelOf(project);
+  const room = (level.rooms || []).find((r) => r.id === roomId);
+  if (!room) return null;
+  const prev = eatState(project);
+  const under = { [room.id]: eatersOf(room) };
+  liftRoom(project, room.id);
+  return { room, nominal: snapShape(room), under, prev };
+}
+
 // Снимок «кто кого ест»: Map id → 'id|id' (для итога жеста, см. prev).
 export function eatState(project) {
   return new Map((activeLevelOf(project).rooms || []).map((r) => [r.id, (r.eatBase?.by || []).join('|')]));

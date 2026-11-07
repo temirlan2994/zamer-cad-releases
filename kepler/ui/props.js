@@ -34,6 +34,7 @@ import { state } from './state.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
+import { liftForEdit, liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 
@@ -170,6 +171,10 @@ function renderRoomProps(panel, room) {
   const parent = room.parentId ? roomById(state.project, room.parentId) : null;
   const rejected = state.rejected.get(room.id) || [];
   const insideCount = itemsInRoom(state.project, room).length;
+  // Ширина/глубина — по номиналу (полная форма блока), площадь, мебель,
+  // нормы и ТЭП — по видимой форме (комната моста = результат carve).
+  const nominal = nominalShape(room);
+  const eaten = Boolean(room.eatBase?.base);
 
   const furnitureRows = (def?.furniture || []).map((entry) => {
     const fd = furnitureDef(entry.kind);
@@ -212,9 +217,10 @@ function renderRoomProps(panel, room) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${room.w}"></label>
-        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${room.h}"></label>
+        <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${nominal.w}"></label>
+        <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${nominal.h}"></label>
       </div>
+      ${eaten ? '<p class="empty-hint" id="roomNominalHint">Размеры — полной формы блока; площадь — видимой части (без съеденного соседями).</p>' : ''}
       ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
         <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
       `}
@@ -231,21 +237,29 @@ function renderRoomProps(panel, room) {
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
+  // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):
+  // номинал возвращается, правится, видимую форму заново даёт съедание
+  // (core/v7/eat-bridge.js liftForEdit). Угол x/y номинала остаётся на месте.
   const applySize = () => {
-    const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || room.w);
-    const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || room.h);
-    if (w === room.w && h === room.h) return;
+    const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || nominal.w);
+    const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || nominal.h);
+    if (w === nominal.w && h === nominal.h) return;
     const before = snapshot();
+    const edit = liftForEdit(state.project, room.id);
     const old = { w: room.w, h: room.h };
     room.w = w; room.h = h;
     const verdict = resizeVerdict(room);
     if (!verdict.ok) {
       room.w = old.w; room.h = old.h;
+      reconcileEats(state.project);
+      reconcileOpenings();
+      refreshDerived();
       toast(verdict.reason, true);
       renderProps();
+      requestDraw();
       return;
     }
-    if (!room.parentId) eatOverlapsAfter([room.id]);
+    if (!room.parentId) eatOverlapsAfter([room.id], { under: edit.under, prev: edit.prev });
     reconcileOpenings();
     refreshDerived();
     pushHistory(before);
@@ -558,6 +572,9 @@ function fitStairRoom(item, margin = 200) {
     && item.x >= candidate.x && item.x <= candidate.x + candidate.w
     && item.y >= candidate.y && item.y <= candidate.y + candidate.h);
   if (!room) return;
+  // Габарит зоны — номинал (съеденной возвращается полная форма); видимую
+  // форму пересчитает съедание в mutate.
+  liftRoom(state.project, room.id);
   room.w = item.w + margin * 2;
   room.h = item.h + margin * 2;
   room.x = item.x - room.w / 2;
