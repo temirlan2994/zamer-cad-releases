@@ -47,6 +47,8 @@ export function tepRows(t) {
   if (t.density !== null) rows.push(['Коэффициент плотности', fmt(t.density, 2)]);
   rows.push(['Общая площадь дома', `${fmt(t.total)} м²`]);
   rows.push(['Жилая площадь', `${fmt(t.living)} м²`]);
+  // Вспомогательная — общая без жилой (кухни, санузлы, хозяйственные, проходы).
+  rows.push(['Вспомогательная площадь', `${fmt(Math.max(0, t.total - t.living))} м²`]);
   if (t.summer > 0) rows.push(['Летние помещения', `${fmt(t.summer)} м²`]);
   rows.push(['Строительный объём', `${fmt(t.volume, 0)} м³`]);
   rows.push(['Этажность / высота', `${t.storeys} · ${fmt(t.height, 2)} м`]);

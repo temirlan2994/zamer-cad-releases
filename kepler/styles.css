@@ -23,12 +23,6 @@
   --wall-fill: #39434f;
   --wall-bearing: #171d24;
   --furniture: #5b6b7e;
-  --tint-warm: #f7efe3;
-  --tint-calm: #e9eef9;
-  --tint-wet: #e3f1f4;
-  --tint-neutral: #eef1f5;
-  --tint-cool: #e9ecf1;
-  --tint-green: #e9f3e6;
   --chip-paper: #f8fafd;
   --chip-grid: rgba(31, 117, 255, 0.07);
   --shadow: 0 10px 30px rgba(24, 32, 43, 0.12);
@@ -57,12 +51,6 @@
     --wall-fill: #aebdcd;
     --wall-bearing: #e3ecf6;
     --furniture: #93a5ba;
-    --tint-warm: #241f17;
-    --tint-calm: #171d2b;
-    --tint-wet: #14232a;
-    --tint-neutral: #171c23;
-    --tint-cool: #161a21;
-    --tint-green: #16211a;
     --chip-paper: #10161e;
     --chip-grid: rgba(45, 162, 255, 0.10);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -92,12 +80,6 @@
   --wall-fill: #aebdcd;
   --wall-bearing: #e3ecf6;
   --furniture: #93a5ba;
-  --tint-warm: #241f17;
-  --tint-calm: #171d2b;
-  --tint-wet: #14232a;
-  --tint-neutral: #171c23;
-  --tint-cool: #161a21;
-  --tint-green: #16211a;
   --chip-paper: #10161e;
   --chip-grid: rgba(45, 162, 255, 0.10);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -564,15 +546,39 @@ body.mode-site .library { display: none; }
 .room-card-name { font-weight: 600; }
 .room-card-size { font-size: 11.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-/* Помещения — компактные чипы в строку с переносом. */
-#roomCards { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+/* Помещения — группы по категориям, в группе — чипы в строку с переносом.
+   Точка у названия — цвет типа (как пол на плане). */
+#roomCards { flex-direction: column; gap: 12px; }
+.room-group { display: flex; flex-direction: column; gap: 6px; }
+.room-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.room-group-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.room-group-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .room-card.names-only {
   display: inline-flex;
   justify-content: center;
+  align-items: center;
   flex: 0 0 auto;
-  padding: 5px 11px;
+  gap: 6px;
+  padding: 5px 11px 5px 9px;
   border-radius: 999px;
 }
+.room-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--dot, var(--muted));
+  box-shadow: 0 0 0 1px rgba(24, 32, 43, 0.12);
+}
+.room-card.active .room-dot { box-shadow: 0 0 0 1.5px #fff; }
 .room-card.names-only .room-card-name { font-size: 12px; font-weight: 600; }
 .room-card.names-only { cursor: grab; }
 .room-card.names-only:active { cursor: grabbing; }

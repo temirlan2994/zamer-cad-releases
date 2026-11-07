@@ -1,7 +1,7 @@
 // Библиотека (выезжает слева у колонки инструментов): вкладки, карточки
 // помещений, каталог мебели.
 
-import { FURNITURE_CATEGORIES, ROOM_TYPES, allFurniture, furnitureByCategory } from '../core/catalog.js';
+import { FURNITURE_CATEGORIES, allFurniture, furnitureByCategory, roomColors, roomTypesByCategory } from '../core/catalog.js';
 import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { state } from './state.js';
@@ -69,29 +69,45 @@ export function applyLibraryTab() {
 
 export function renderLibrary() {
   renderLandscapeLibrary(); // активная карточка ландшафта
-  // План: карточки помещений — только названия, без размеров.
+  // План: помещения по категориям (заголовок группы + чипы); у чипа —
+  // точка цвета типа, как пол на плане. Без размеров.
   refs.roomCards.innerHTML = '';
-  for (const def of ROOM_TYPES) {
-    const card = document.createElement('button');
-    card.className = 'room-card names-only';
-    card.draggable = true;
-    if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
-    card.innerHTML = `<span class="room-card-name">${def.title}</span>`;
-    card.addEventListener('click', () => {
-      if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
-      else startPlaceRoom(def.type);
-    });
-    card.addEventListener('dragstart', (e) => {
-      card.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'copy';
-      e.dataTransfer.setData('application/x-kepler-room', def.type);
-      e.dataTransfer.setData('text/plain', def.type);
-    });
-    card.addEventListener('dragend', () => card.classList.remove('dragging'));
-    refs.roomCards.appendChild(card);
+  for (const group of roomTypesByCategory()) {
+    if (!group.types.length) continue;
+    const box = document.createElement('section');
+    box.className = 'room-group';
+    box.dataset.cat = group.id;
+    box.innerHTML = `<h3 class="room-group-title">${group.title}</h3>`;
+    const chips = document.createElement('div');
+    chips.className = 'room-group-chips';
+    for (const def of group.types) chips.appendChild(roomCard(def));
+    box.appendChild(chips);
+    refs.roomCards.appendChild(box);
   }
 
   renderToolstrip(); // инструменты участка и подсветка активного — на панели инструментов
+}
+
+function roomCard(def) {
+  const card = document.createElement('button');
+  card.className = 'room-card names-only';
+  card.draggable = true;
+  card.dataset.type = def.type;
+  card.title = `${def.title} · ${def.w}×${def.h} мм`;
+  if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
+  card.innerHTML = `<span class="room-dot" style="--dot:${roomColors(def.type).swatch}"></span><span class="room-card-name">${def.title}</span>`;
+  card.addEventListener('click', () => {
+    if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
+    else startPlaceRoom(def.type);
+  });
+  card.addEventListener('dragstart', (e) => {
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-kepler-room', def.type);
+    e.dataTransfer.setData('text/plain', def.type);
+  });
+  card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  return card;
 }
 
 // Смена темы: миниатюры на canvas (мебель — цвет --muted, ландшафт — тёмная

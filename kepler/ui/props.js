@@ -1,6 +1,6 @@
 // Правая панель свойств: проект, комната, стена, проём, мебель, группа.
 
-import { furnitureDef, isShaft, roomType } from '../core/catalog.js';
+import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { SP55 } from '../core/norms.js';
@@ -176,6 +176,31 @@ function renderProjectProps(panel) {
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
 }
 
+// Тип помещения — список по категориям (optgroup). Шахта — вертикальный
+// проём, а не помещение: в шахту и из шахты тип не меняется.
+function roomTypeSelect(room, shaft) {
+  const groups = roomTypesByCategory().map((g) => {
+    const opts = g.types.filter((t) => Boolean(t.shaft) === shaft)
+      .map((t) => `<option value="${t.type}" ${t.type === room.type ? 'selected' : ''}>${escapeHtml(t.title)}</option>`).join('');
+    return opts ? `<optgroup label="${escapeHtml(g.title)}">${opts}</optgroup>` : '';
+  }).join('');
+  const unknown = roomType(room.type) ? '' : `<option value="${escapeHtml(room.type)}" selected>${escapeHtml(room.type)}</option>`;
+  return `<label class="prop-field"><span>Тип</span><select id="roomType" ${shaft ? 'disabled' : ''}>${unknown}${groups}</select></label>`;
+}
+
+// Смена типа: цвет, нормы, ТЭП и набор мебели — по новому типу. Название
+// меняется, только если было типовым («Кухня», «Кухня 2»), своё — остаётся.
+function changeRoomType(room, type) {
+  const next = roomType(type);
+  if (!next || type === room.type || next.shaft) return;
+  const prevTitle = roomType(room.type)?.title || room.type;
+  mutate(() => {
+    const m = room.name.match(/^(.*?)(\s+\d+)?$/);
+    if (m && m[1] === prevTitle) room.name = next.title + (m[2] || '');
+    room.type = type;
+  });
+}
+
 function renderRoomProps(panel, room) {
   if (!room) { renderProjectProps(panel); return; }
   const def = roomType(room.type);
@@ -229,6 +254,7 @@ function renderRoomProps(panel, room) {
     <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${escapeHtml(parent.name)}»</span>` : ''}</h2>
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
+      ${roomTypeSelect(room, shaft)}
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${nominal.w}"></label>
         <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${nominal.h}"></label>
@@ -250,6 +276,7 @@ function renderRoomProps(panel, room) {
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
+  panel.querySelector('#roomType')?.addEventListener('change', (e) => changeRoomType(room, e.target.value));
   // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):
   // номинал возвращается, правится, видимую форму заново даёт съедание
   // (core/v7/eat-bridge.js liftForEdit). Угол x/y номинала остаётся на месте.

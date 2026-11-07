@@ -18,7 +18,7 @@ import { buildDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
-import { isRoundItem, isShaft, isStructural } from './catalog.js';
+import { isRoundItem, isShaft, isStructural, isSummerRoom, roomType } from './catalog.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, retainingInfo, stairsInfo } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
@@ -44,6 +44,9 @@ function buildLevelExport(project, level) {
     id: room.id,
     number: numbers.get(room.id) || null, // как в экспликации и на листах
     type: room.type,
+    category: roomType(room.type)?.cat || null, // категория типа (core/catalog.js ROOM_CATEGORIES)
+    living: Boolean(roomType(room.type)?.living), // жилая комната (жилая площадь)
+    summer: isSummerRoom(room), // летнее: в общую площадь не входит
     void: isShaft(room),
     name: room.name,
     parent: room.parentId || null,

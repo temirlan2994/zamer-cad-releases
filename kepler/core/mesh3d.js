@@ -10,7 +10,7 @@
 // face: { pts: [{x,y,z}…], normal: {x,y,z} (наружу), color, alpha?, kind,
 //   ref? — у стен и их стёкол: { type: 'wall', key, wallId, level, face } }
 
-import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './catalog.js';
+import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './catalog.js';
 import { toLocal, toWorld } from './building.js';
 import { levelProject, sortedLevels } from './model.js';
 import { neighborRectCorners } from './site.js';
@@ -24,9 +24,6 @@ import { stairCalculation } from './stairs.js';
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
 export const DOOR_COLOR = '#b98a5a';
-const FLOOR_COLORS = {
-  warm: '#efe1cb', calm: '#d9e0f2', wet: '#d3e8ec', neutral: '#e3e7ec', cool: '#dde1e8', green: '#d9ead3',
-};
 const STAIR_COLOR = '#c9c2b7';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -514,7 +511,7 @@ function levelFloors(lp, z) {
   for (const r of order) {
     if (isShaft(r)) continue;
     const zz = z + (isOpenRoom(r) ? 0 : r.parentId ? 2 : 1);
-    const color = FLOOR_COLORS[roomType(r.type)?.tint] || FLOOR_COLORS.neutral;
+    const color = roomColors(r.type).floor3d; // цвет типа помещения (как на плане)
     const shaftCuts = lp.rooms.filter((shaft) => isShaft(shaft) &&
       (shaft.parentId === r.id || (!shaft.parentId && !r.parentId))).flatMap(roomRects);
     let floorParts = roomRects(r);

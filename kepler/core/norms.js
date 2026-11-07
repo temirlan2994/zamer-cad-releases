@@ -22,8 +22,11 @@ import { deriveWalls, openingOwnerId } from './walls.js';
 import { wallsInsideRooms } from './bound-rooms.js';
 
 export const SP55 = {
-  minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, kitchen: 6 },
-  minWidth: { kitchen: 1700, hall: 1400, corridor: 850, bathroom: 1500 },
+  // Спальни (в т. ч. детская и гостевая) — 8 м², общая комната — 12 м²,
+  // кухня — 6 м². Остальные типы — без нормы площади.
+  minArea: { living: 12, bedroom: 8, 'master-bedroom': 8, 'kids-room': 8, 'guest-bedroom': 8, kitchen: 6 },
+  // Санузлы (тип с wc в core/catalog.js) — по bathroomMinWidth.
+  minWidth: { kitchen: 1700, hall: 1400, entrance: 1400, corridor: 850, bathroom: 1500 },
   minWidthToilet: 800, // санузел без ванны (туалет, душевая)
   lightTypes: new Set([...LIVING_TYPES, 'kitchen']),
   lightRatio: 1 / 8,
@@ -84,7 +87,7 @@ export function roomChecks(project, room, level, walls = null) {
   const needWalls = !walls && (room.type === 'kitchen' || SP55.lightTypes.has(room.type));
   const zone = room.parentId || isShaft(room) ? [room] : openPlanZone(project, room, walls || (needWalls ? deriveWalls(project) : null));
   // Кухня в открытой планировке с гостиной (кухня-ниша) — площадь по зоне.
-  const kitchenNiche = room.type === 'kitchen' && zone.some((r) => r.type === 'living');
+  const kitchenNiche = room.type === 'kitchen' && zone.some((r) => r.type === 'living' || r.type === 'kitchen-living');
   const minArea = kitchenNiche ? 0 : SP55.minArea[room.type];
   if (minArea) {
     out.push({
@@ -92,7 +95,7 @@ export function roomChecks(project, room, level, walls = null) {
       text: `Площадь ${fmt(area)} м² ${area >= minArea - 1e-9 ? '≥' : '<'} ${minArea} м² (${title.toLowerCase()})`,
     });
   }
-  const minWidth = room.type === 'bathroom' ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
+  const minWidth = roomType(room.type)?.wc ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
   if (minWidth) {
     // Г/контур: ширина основной части (самый широкий из прямоугольников формы),
     // а не габарит — иначе узкий рукав маскируется широким габаритом.

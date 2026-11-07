@@ -2,6 +2,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
+import { ROOM_CATEGORIES, ROOM_TYPES } from '../../core/catalog.js';
 
 describe('smoke', () => {
   let app;
@@ -33,9 +34,10 @@ describe('smoke', () => {
     assert.equal(await hidden('#libraryTop'), false);
   });
 
-  it('карточки помещений: 15 типов, перетаскиваемые', async () => {
+  it('карточки помещений: все типы по группам, перетаскиваемые', async () => {
     const chips = await app.page.$$eval('#roomCards .room-card', (ns) => ns.map((n) => n.draggable));
-    assert.equal(chips.length, 15);
+    assert.equal(chips.length, ROOM_TYPES.length);
+    assert.equal(await app.page.$$eval('#roomCards .room-group', (ns) => ns.length), ROOM_CATEGORIES.length);
     assert.ok(chips.every(Boolean));
   });
 

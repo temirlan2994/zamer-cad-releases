@@ -14,7 +14,7 @@
 // GlobalId устойчивые: выводятся из id элемента — повторный экспорт того же
 // проекта сохраняет идентичность элементов.
 
-import { FURNITURE, isRoundItem, isStructural } from './catalog.js';
+import { FURNITURE, isOpenRoom, isRoundItem, isStructural, roomCategory, roomType } from './catalog.js';
 import { KITCHEN_PARTS, SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
 import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
@@ -318,7 +318,12 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       const profile = outline.length > 4
         ? polyProfile(outline)
         : rectProfile(room.x + room.w / 2, -(room.y + room.h / 2), room.w, room.h);
-      const sp = add(`IFCSPACE(${guid(`space-${room.id}`)},${owner},${stepString(numbers.get(room.id) || room.name)},$,$,${placement},${shape(solid(profile, 0, roomCeiling(room, level)))},${stepString(room.name)},.ELEMENT.,.SPACE.,$)`);
+      // Тип помещения: Description — категория, ObjectType — тип (англ.),
+      // PredefinedType — SPACE / PARKING (гараж, навес) / EXTERNAL (открытые).
+      const def = roomType(room.type);
+      const desc = roomCategory(def?.cat)?.title;
+      const predefined = isOpenRoom(room) && def?.ifc !== 'PARKING' ? 'EXTERNAL' : def?.ifc || 'SPACE';
+      const sp = add(`IFCSPACE(${guid(`space-${room.id}`)},${owner},${stepString(numbers.get(room.id) || room.name)},${desc ? stepString(desc) : '$'},${def?.ifcName ? stepString(def.ifcName) : '$'},${placement},${shape(solid(profile, 0, roomCeiling(room, level)))},${stepString(room.name)},.ELEMENT.,.${predefined}.,$)`);
       spaces.push(sp);
       counts.spaces += 1;
     }

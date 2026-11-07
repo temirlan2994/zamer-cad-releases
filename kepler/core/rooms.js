@@ -375,9 +375,10 @@ export function analyzeConnectivity(project, walls = null) {
   return { hasEntrance, reachable, unreachable, exempt, graph };
 }
 
-// Типы, которым отдельная дверь не нужна: шахта; кладовые и техпомещения
-// (если такие типы появятся) — по месту, на усмотрение автора.
+// Типы, которым отдельная дверь не нужна: шахта; кладовые, техпомещение и
+// котельная (вход бывает с улицы или через шкаф) — по месту, на усмотрение автора.
 const NO_ACCESS_TYPES = new Set(['shaft', 'storage', 'pantry', 'tech', 'boiler']);
+const BEDROOM_TYPES = new Set(['bedroom', 'master-bedroom', 'kids-room', 'guest-bedroom']);
 
 // Нужен ли помещению свой вход (дверь или проём) для проверки связности.
 // Не нужен: шахте и служебным типам; террасе/балкону (открытые — выход на
@@ -390,7 +391,7 @@ export function needsOwnAccess(project, room) {
   if (isOpenRoom(room)) return false;
   if (room.parentId) return false;
   if (room.type === 'wardrobe-room') {
-    const bedrooms = new Set(project.rooms.filter((r) => r.type === 'bedroom' || r.type === 'master-bedroom').map((r) => r.id));
+    const bedrooms = new Set(project.rooms.filter((r) => BEDROOM_TYPES.has(r.type)).map((r) => r.id));
     if (bedrooms.size && projectAdjacencies(project).some((a) => (a.a.id === room.id && bedrooms.has(a.b.id)) || (a.b.id === room.id && bedrooms.has(a.a.id)))) return false;
   }
   return true;

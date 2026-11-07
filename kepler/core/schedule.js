@@ -6,11 +6,11 @@
 //   жилая — гостиные, спальни, кабинеты;
 //   летние — террасы и балконы (отдельной строкой).
 
-import { isOpenRoom } from './catalog.js';
+import { ROOM_TYPES, isSummerRoom } from './catalog.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { roomNetAreaM2 } from './rooms.js';
 
-export const LIVING_TYPES = new Set(['living', 'bedroom', 'master-bedroom', 'cabinet']);
+export const LIVING_TYPES = new Set(ROOM_TYPES.filter((t) => t.living).map((t) => t.type));
 
 // Строки экспликации по этажам снизу вверх. Номера «этаж.порядок» (1.01…)
 // в порядке чтения плана: сверху вниз, слева направо.
@@ -28,7 +28,7 @@ export function roomSchedule(project) {
       h: room.h,
       ceiling: roomCeiling(room, level),
       living: LIVING_TYPES.has(room.type),
-      open: isOpenRoom(room),
+      open: isSummerRoom(room), // летнее (в общую площадь не входит)
       parent: room.parentId ? lp.rooms.find((r) => r.id === room.parentId)?.name || null : null,
     }));
     return { level, rows, totals: totalsOf(rows) };
@@ -70,6 +70,6 @@ export function buildRoomScheduleCsv(project) {
   const all = scheduleTotals(schedule);
   lines.push(['', '', 'Общая площадь', num(all.total), '', '', '', '', ''].join(';'));
   lines.push(['', '', 'Жилая площадь', num(all.living), '', '', '', '', ''].join(';'));
-  if (all.summer > 0) lines.push(['', '', 'Летние помещения (терраса, балкон)', num(all.summer), '', '', '', '', ''].join(';'));
+  if (all.summer > 0) lines.push(['', '', 'Летние помещения (терраса, балкон, веранда)', num(all.summer), '', '', '', '', ''].join(';'));
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }

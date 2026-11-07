@@ -231,60 +231,196 @@ export const FURNITURE = {
   sandbox: { title: 'Песочница', cat: 'outdoor', w: 1500, h: 1500, rules: { center: true, priority: 3 } },
 };
 
-// Типы помещений. furniture — набор доступных галочек (default: включены по умолчанию).
+// Категории помещений: порядок = порядок групп в библиотеке и в списке типа
+// в «Свойствах». hue/sat — оттенок категории (HSL); тип внутри категории
+// сдвигается на shade (−2…2) — чуть другой тон и светлота.
+export const ROOM_CATEGORIES = [
+  { id: 'living', title: 'Жилые', hue: 36, sat: 58 },
+  { id: 'kitchen', title: 'Кухня и столовая', hue: 14, sat: 62 },
+  { id: 'wet', title: 'Санузлы и гигиена', hue: 190, sat: 48 },
+  { id: 'utility', title: 'Хозяйственные', hue: 262, sat: 34 },
+  { id: 'circulation', title: 'Вход и проходы', hue: 214, sat: 20 },
+  { id: 'outdoor', title: 'Гараж и улица', hue: 108, sat: 32 },
+];
+
+// Типы помещений. Идентификаторы type стабильны (формат файла, экспорт).
+//   cat       — категория (ROOM_CATEGORIES), shade — оттенок внутри неё
+//   living    — жилая комната: жилая площадь в ТЭП, нормы света и высоты
+//   wc        — санузел: ширина по СП (с ванной 1,5 м, без ванны 0,8 м)
+//   summer    — летнее помещение (в общую площадь не входит)
+//   open      — открытое (без стен, с ограждением); тоже летнее
+//   ifc       — PredefinedType IfcSpace (по умолчанию SPACE), ifcName — ObjectType
+//   furniture — набор доступных галочек (default: включены по умолчанию)
 export const ROOM_TYPES = [
-  { type: 'living', title: 'Гостиная', w: 5000, h: 4200, tint: 'warm', furniture: [
+  // --- Жилые ---
+  { type: 'living', title: 'Гостиная', cat: 'living', shade: 0, living: true, ifcName: 'Living room', w: 5000, h: 4200, furniture: [
     { kind: 'sofa', default: true }, { kind: 'tv-stand', default: true }, { kind: 'coffee-table', default: true },
     { kind: 'armchair', default: false }, { kind: 'bookcase', default: false }, { kind: 'sofa-corner', default: false },
   ] },
-  { type: 'kitchen', title: 'Кухня', w: 3600, h: 3000, tint: 'wet', furniture: [
-    { kind: 'kitchen-row', default: true }, { kind: 'stove', default: true }, { kind: 'sink', default: true },
-    { kind: 'fridge', default: true }, { kind: 'dining-table', default: false }, { kind: 'chair', default: false },
-  ] },
-  { type: 'dining', title: 'Столовая', w: 3600, h: 3200, tint: 'warm', furniture: [
-    { kind: 'dining-table', default: true }, { kind: 'chair', default: true }, { kind: 'bookcase', default: false },
-  ] },
-  { type: 'bedroom', title: 'Спальня', w: 4000, h: 3500, tint: 'calm', furniture: [
+  { type: 'bedroom', title: 'Спальня', cat: 'living', shade: 1, living: true, ifcName: 'Bedroom', w: 4000, h: 3500, furniture: [
     { kind: 'bed-double', default: true }, { kind: 'nightstand', default: true }, { kind: 'wardrobe', default: true },
     { kind: 'dressing-table', default: false }, { kind: 'desk', default: false }, { kind: 'armchair', default: false },
   ] },
-  { type: 'master-bedroom', title: 'Мастер-спальня', w: 4800, h: 4200, tint: 'calm', furniture: [
+  { type: 'master-bedroom', title: 'Мастер-спальня', cat: 'living', shade: 2, living: true, ifcName: 'Master bedroom', w: 4800, h: 4200, furniture: [
     { kind: 'bed-double', default: true }, { kind: 'nightstand', default: true }, { kind: 'wardrobe', default: true },
     { kind: 'dressing-table', default: true }, { kind: 'armchair', default: false }, { kind: 'desk', default: false },
   ] },
-  { type: 'bathroom', title: 'Санузел', w: 2200, h: 2000, tint: 'wet', furniture: [
+  { type: 'kids-room', title: 'Детская', cat: 'living', shade: 1, living: true, ifcName: 'Children room', w: 3600, h: 3400, furniture: [
+    { kind: 'kids-bed', default: true }, { kind: 'wardrobe', default: true }, { kind: 'kids-desk', default: true },
+    { kind: 'toy-box', default: false }, { kind: 'crib', default: false }, { kind: 'changing-table', default: false },
+  ] },
+  { type: 'guest-bedroom', title: 'Гостевая спальня', cat: 'living', shade: 1, living: true, ifcName: 'Guest bedroom', w: 3400, h: 3200, furniture: [
+    { kind: 'bed-double', default: true }, { kind: 'nightstand', default: true }, { kind: 'wardrobe', default: false },
+  ] },
+  { type: 'cabinet', title: 'Кабинет', cat: 'living', shade: -1, living: true, ifcName: 'Study', w: 3200, h: 2800, furniture: [
+    { kind: 'desk', default: true }, { kind: 'armchair', default: true }, { kind: 'bookcase', default: true },
+  ] },
+  { type: 'library', title: 'Библиотека', cat: 'living', shade: -1, living: true, ifcName: 'Library', w: 3600, h: 3200, furniture: [
+    { kind: 'bookcase', default: true }, { kind: 'armchair', default: true }, { kind: 'side-table', default: false },
+  ] },
+  { type: 'gym', title: 'Спортзал', cat: 'living', shade: -2, ifcName: 'Gym', w: 4000, h: 3600, furniture: [
+    { kind: 'treadmill', default: true }, { kind: 'weight-bench', default: false }, { kind: 'exercise-bike', default: false },
+  ] },
+  // --- Кухня и столовая ---
+  { type: 'kitchen', title: 'Кухня', cat: 'kitchen', shade: 0, ifcName: 'Kitchen', w: 3600, h: 3000, furniture: [
+    { kind: 'kitchen-row', default: true }, { kind: 'stove', default: true }, { kind: 'sink', default: true },
+    { kind: 'fridge', default: true }, { kind: 'dining-table', default: false }, { kind: 'chair', default: false },
+  ] },
+  // Кухня-гостиная — гостиная с кухонной зоной: жилая комната.
+  { type: 'kitchen-living', title: 'Кухня-гостиная', cat: 'kitchen', shade: 1, living: true, ifcName: 'Kitchen-living room', w: 6500, h: 4500, furniture: [
+    { kind: 'kitchen-row', default: true }, { kind: 'fridge', default: true }, { kind: 'sofa', default: true },
+    { kind: 'dining-table', default: true }, { kind: 'tv-stand', default: false }, { kind: 'kitchen-island', default: false },
+  ] },
+  { type: 'dining', title: 'Столовая', cat: 'kitchen', shade: -1, ifcName: 'Dining room', w: 3600, h: 3200, furniture: [
+    { kind: 'dining-table', default: true }, { kind: 'chair', default: true }, { kind: 'bookcase', default: false },
+  ] },
+  { type: 'pantry', title: 'Кладовая продуктов', cat: 'kitchen', shade: -2, ifcName: 'Pantry', w: 1800, h: 1500, furniture: [
+    { kind: 'shelf-open', default: true }, { kind: 'fridge', default: false },
+  ] },
+  // --- Санузлы и гигиена ---
+  { type: 'bathroom', title: 'Санузел', cat: 'wet', shade: 0, wc: true, ifcName: 'Bathroom', w: 2200, h: 2000, furniture: [
     { kind: 'bath', default: true }, { kind: 'toilet', default: true }, { kind: 'washbasin', default: true },
     { kind: 'shower', default: false }, { kind: 'washer', default: false },
   ] },
-  { type: 'wardrobe-room', title: 'Гардеробная', w: 2000, h: 1800, tint: 'calm', furniture: [
+  { type: 'guest-wc', title: 'Гостевой санузел', cat: 'wet', shade: 1, wc: true, ifcName: 'Guest WC', w: 1500, h: 1300, furniture: [
+    { kind: 'toilet', default: true }, { kind: 'washbasin', default: true },
+  ] },
+  { type: 'shower-room', title: 'Душевая', cat: 'wet', shade: -1, wc: true, ifcName: 'Shower room', w: 1800, h: 1500, furniture: [
+    { kind: 'shower', default: true }, { kind: 'washbasin', default: true }, { kind: 'toilet', default: false },
+  ] },
+  { type: 'tub-room', title: 'Ванная', cat: 'wet', shade: 2, wc: true, ifcName: 'Bath room', w: 2400, h: 1900, furniture: [
+    { kind: 'bath', default: true }, { kind: 'washbasin', default: true }, { kind: 'towel-rail', default: false },
+  ] },
+  { type: 'sauna', title: 'Сауна', cat: 'wet', shade: -2, ifcName: 'Sauna', w: 2400, h: 2000, furniture: [] },
+  { type: 'hammam', title: 'Хаммам', cat: 'wet', shade: -1, ifcName: 'Hammam', w: 2400, h: 2200, furniture: [] },
+  // --- Хозяйственные ---
+  { type: 'boiler', title: 'Котельная', cat: 'utility', shade: 0, ifcName: 'Boiler room', w: 2500, h: 2200, furniture: [
+    { kind: 'boiler', default: true },
+  ] },
+  { type: 'laundry', title: 'Постирочная', cat: 'utility', shade: 1, ifcName: 'Laundry', w: 2200, h: 1800, furniture: [
+    { kind: 'washer', default: true }, { kind: 'dryer', default: true }, { kind: 'sink', default: false },
+  ] },
+  { type: 'wardrobe-room', title: 'Гардеробная', cat: 'utility', shade: 2, ifcName: 'Walk-in closet', w: 2000, h: 1800, furniture: [
     { kind: 'wardrobe-rack', default: true },
   ] },
-  { type: 'cabinet', title: 'Кабинет', w: 3200, h: 2800, tint: 'warm', furniture: [
-    { kind: 'desk', default: true }, { kind: 'armchair', default: true }, { kind: 'bookcase', default: true },
+  { type: 'storage', title: 'Кладовая', cat: 'utility', shade: -1, ifcName: 'Storage', w: 1800, h: 1500, furniture: [
+    { kind: 'shelf-open', default: true },
   ] },
-  { type: 'hall', title: 'Холл', w: 3000, h: 2400, tint: 'neutral', furniture: [
+  { type: 'tech', title: 'Техническое помещение', cat: 'utility', shade: -2, ifcName: 'Technical room', w: 2400, h: 2000, furniture: [] },
+  { type: 'workshop', title: 'Мастерская', cat: 'utility', shade: 1, ifcName: 'Workshop', w: 3600, h: 3000, furniture: [
+    { kind: 'workbench', default: true }, { kind: 'shelf-open', default: false },
+  ] },
+  // --- Вход и проходы ---
+  { type: 'entrance', title: 'Прихожая', cat: 'circulation', shade: 1, ifcName: 'Entrance hall', w: 2800, h: 2200, furniture: [
+    { kind: 'coat-rack', default: true }, { kind: 'shoe-bench', default: true }, { kind: 'mirror', default: false },
+  ] },
+  { type: 'vestibule', title: 'Тамбур', cat: 'circulation', shade: 2, ifcName: 'Vestibule', w: 1600, h: 1400, furniture: [] },
+  { type: 'hall', title: 'Холл', cat: 'circulation', shade: 0, ifcName: 'Hall', w: 3000, h: 2400, furniture: [
     { kind: 'coat-rack', default: true }, { kind: 'shoe-bench', default: true },
   ] },
-  { type: 'corridor', title: 'Коридор', w: 3000, h: 1200, tint: 'neutral', furniture: [] },
-  { type: 'stairs-room', title: 'Лестница', w: 2600, h: 3650, tint: 'neutral', furniture: [
+  { type: 'corridor', title: 'Коридор', cat: 'circulation', shade: -1, ifcName: 'Corridor', w: 3000, h: 1200, furniture: [] },
+  { type: 'stairs-room', title: 'Лестница', cat: 'circulation', shade: -2, ifcName: 'Stair', w: 2600, h: 3650, furniture: [
     { kind: 'stairs', default: true },
   ] },
+  { type: 'elevator', title: 'Лифт', cat: 'circulation', shade: -2, ifcName: 'Elevator', w: 1800, h: 1800, furniture: [] },
   // Вертикальный проём через перекрытие. Размещается только внутри помещения,
   // не имеет пола и не входит в полезную площадь.
-  { type: 'shaft', title: 'Шахта', w: 1200, h: 1200, tint: 'neutral', shaft: true, furniture: [] },
-  { type: 'garage', title: 'Гараж', w: 3600, h: 6000, tint: 'cool', furniture: [
+  { type: 'shaft', title: 'Шахта', cat: 'circulation', shade: 0, shaft: true, ifcName: 'Shaft', w: 1200, h: 1200, furniture: [] },
+  // --- Гараж и улица ---
+  { type: 'garage', title: 'Гараж', cat: 'outdoor', shade: -2, ifc: 'PARKING', ifcName: 'Garage', w: 3600, h: 6000, furniture: [
     { kind: 'car', default: true }, { kind: 'workbench', default: false },
   ] },
-  { type: 'terrace', title: 'Терраса', w: 4000, h: 2500, tint: 'green', open: true, furniture: [
+  { type: 'terrace', title: 'Терраса', cat: 'outdoor', shade: 0, open: true, ifc: 'EXTERNAL', ifcName: 'Terrace', w: 4000, h: 2500, furniture: [
     { kind: 'garden-set', default: false },
   ] },
-  { type: 'balcony', title: 'Балкон', w: 3000, h: 1200, tint: 'green', open: true, furniture: [] },
+  { type: 'balcony', title: 'Балкон', cat: 'outdoor', shade: 1, open: true, ifc: 'EXTERNAL', ifcName: 'Balcony', w: 3000, h: 1200, furniture: [] },
+  // Веранда — застеклённая неотапливаемая: со стенами, но летняя.
+  { type: 'veranda', title: 'Веранда', cat: 'outdoor', shade: 2, summer: true, ifcName: 'Veranda', w: 4000, h: 3000, furniture: [
+    { kind: 'garden-set', default: true }, { kind: 'garden-lounger', default: false },
+  ] },
+  { type: 'porch', title: 'Крыльцо', cat: 'outdoor', shade: -1, open: true, ifc: 'EXTERNAL', ifcName: 'Porch', w: 2000, h: 1500, furniture: [] },
+  { type: 'carport', title: 'Навес для машины', cat: 'outdoor', shade: -1, open: true, ifc: 'PARKING', ifcName: 'Carport', w: 3500, h: 6000, furniture: [
+    { kind: 'car', default: true },
+  ] },
 ];
 
 const roomTypeMap = new Map(ROOM_TYPES.map((t) => [t.type, t]));
+const roomCategoryMap = new Map(ROOM_CATEGORIES.map((c) => [c.id, c]));
 
 export function roomType(type) {
   return roomTypeMap.get(type) || null;
+}
+
+export function roomCategory(id) {
+  return roomCategoryMap.get(id) || null;
+}
+
+// Типы, сгруппированные по категориям (для библиотеки и списка типа).
+export function roomTypesByCategory() {
+  return ROOM_CATEGORIES.map((cat) => ({ ...cat, types: ROOM_TYPES.filter((t) => t.cat === cat.id) }));
+}
+
+// Цвета помещения по типу: оттенок категории, сдвиг по shade.
+//   light — пол на плане (светлая тема, печать), dark — пол в тёмной теме,
+//   swatch — метка типа (точка в библиотеке), floor3d — пол в 3D.
+// Неизвестный тип — нейтральный серо-голубой (как «Вход и проходы»).
+const hex2 = (v) => Math.round(Math.max(0, Math.min(255, v * 255))).toString(16).padStart(2, '0');
+function hslHex(h, s, l) {
+  const S = s / 100;
+  const L = l / 100;
+  const a = S * Math.min(L, 1 - L);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    return L - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return `#${hex2(f(0))}${hex2(f(8))}${hex2(f(4))}`;
+}
+const colorCache = new Map();
+export function roomColors(type) {
+  if (colorCache.has(type)) return colorCache.get(type);
+  const def = roomType(type);
+  const cat = roomCategory(def?.cat) || roomCategory('circulation');
+  const shade = def ? def.shade || 0 : 0;
+  const h = (cat.hue + shade * 6 + 360) % 360;
+  const s = cat.sat;
+  const out = {
+    light: hslHex(h, s, 92.5 - shade * 0.8),
+    dark: hslHex(h, s * 0.42, 13 + shade * 1.1),
+    swatch: hslHex(h, Math.min(72, s + 14), 58 - shade * 3),
+    floor3d: hslHex(h, s * 0.8, 85 - shade * 1.5),
+  };
+  colorCache.set(type, out);
+  return out;
+}
+
+// Жилая комната (жилая площадь, нормы света и высоты).
+export function isLivingType(type) {
+  return Boolean(roomType(type)?.living);
+}
+
+// Летнее помещение: открытое (терраса, балкон) или веранда.
+export function isSummerRoom(room) {
+  return isOpenRoom(room) || Boolean(roomType(room?.type)?.summer);
 }
 
 // Открытое помещение (терраса, балкон): без стен, с ограждением. Задаётся

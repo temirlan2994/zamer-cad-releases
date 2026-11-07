@@ -24,7 +24,7 @@ import {
 } from './core/group-handles.js';
 import { tempDimensions } from './core/temp-dims.js';
 import { roomNetAreaM2 } from './core/rooms.js';
-import { isOpenRoom, isRoundItem, isShaft, isStructural, roomType } from './core/catalog.js';
+import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './core/catalog.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygonFromCorners,
@@ -57,17 +57,18 @@ import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 
-const TINTS = ['warm', 'calm', 'wet', 'neutral', 'cool', 'green'];
-
-// Палитра печати: всегда светлая, на белом листе (не зависит от темы).
-const PRINT_TINTS = { warm: '#f7efe3', calm: '#e9eef9', wet: '#e3f1f4', neutral: '#eef1f5', cool: '#e9ecf1', green: '#e9f3e6' };
+// Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
+// светлой теме и на печати, приглушённый тёмный — в тёмной теме.
+const lightFill = (type) => roomColors(type).light;
+const darkFill = (type) => roomColors(type).dark;
 
 function cssTokens(style = getComputedStyle(document.documentElement)) {
   const token = (name, fallback) => ((style && style.getPropertyValue(name)) || fallback).trim();
-  const tints = {};
-  for (const t of TINTS) tints[t] = token(`--tint-${t}`, '#eef2f7');
+  const canvas = token('--canvas', '#fbfcfe');
+  let dark = false;
+  try { dark = luminance(canvas) < 0.45; } catch { /* нестандартный цвет — светлая тема */ }
   return {
-    canvas: token('--canvas', '#fbfcfe'),
+    canvas,
     grid: token('--grid', '#e3e9f2'),
     gridMajor: token('--grid-major', '#d2dae6'),
     line: token('--line', '#26313d'),
@@ -84,12 +85,12 @@ function cssTokens(style = getComputedStyle(document.documentElement)) {
     wallBearing: token('--wall-bearing', '#1d242c'),
     furniture: token('--furniture', '#5b6b7e'),
     surface: token('--surface', '#ffffff'),
-    tints,
+    roomFill: dark ? darkFill : lightFill,
   };
 }
 
 function printTokens() {
-  return { ...cssTokens(null), canvas: '#ffffff', tints: { ...PRINT_TINTS } };
+  return { ...cssTokens(null), canvas: '#ffffff', roomFill: lightFill };
 }
 
 // Мировая точка -> экранная с учётом поворота вида.
@@ -224,7 +225,7 @@ export function createRenderer(canvas) {
     // В «Ландшафте» дом — «белое пятно с планом»: светлые полы, тёмные стены.
     const houseTokens = landscape ? {
       ...tokens,
-      tints: Object.fromEntries(Object.keys(tokens.tints).map((k) => [k, lsPal.paper])),
+      roomFill: () => lsPal.paper,
       wall: lsPal.ink, wallBearing: lsPal.ink,
     } : tokens;
     if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
@@ -1325,8 +1326,6 @@ function drawRailing(ctx, room, rooms, tokens, px) {
 }
 
 function drawFloor(ctx, room, tokens, px) {
-  const def = roomType(room.type);
-  const tint = tokens.tints[def?.tint || 'neutral'] || tokens.tints.neutral;
   if (isShaft(room)) {
     ctx.save();
     ctx.fillStyle = tokens.canvas;
@@ -1344,7 +1343,7 @@ function drawFloor(ctx, room, tokens, px) {
     ctx.restore();
     return;
   }
-  ctx.fillStyle = tint;
+  ctx.fillStyle = tokens.roomFill(room.type);
   for (const rect of roomRects(room)) ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 }
 
