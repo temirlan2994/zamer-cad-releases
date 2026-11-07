@@ -89,7 +89,7 @@ describe('панель инструментов', () => {
     assert.equal(await page.isVisible('#roomCards'), true);
   });
 
-  it('«Вид» — всплывающая панель; привязки — значками внизу холста', async () => {
+  it('«Вид» — всплывающая панель; привязки — значками в строке состояния справа', async () => {
     const { page } = app;
     await page.click('#viewBtn');
     assert.equal(await page.isVisible('#viewPanel'), true);
@@ -97,7 +97,7 @@ describe('панель инструментов', () => {
     assert.ok(panel.x >= btn.x + btn.width && panel.y >= 0 && panel.y + panel.height <= 820, `панель справа от колонки ${JSON.stringify(panel)}`);
     await page.click('#viewBtn');
     assert.equal(await page.isHidden('#viewPanel'), true);
-    assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap'))), true);
+    assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap .statusbar'))), true);
     assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
     // Размеры: подпись и подсветка меняются.
     assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Снаружи');

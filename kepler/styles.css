@@ -402,34 +402,31 @@ button.issue-go:hover { background: var(--surface-2); }
 .view-panel #alignBtn.active { border-color: var(--accent); }
 .view-panel #alignBtn.armed { background: var(--accent); color: #fff; }
 .tb-pop .empty-hint { margin: 0; }
-/* Привязки (ui/draw-snap-ui.js): «пилюля» со значками внизу холста по центру,
-   между этажами и масштабом. Подсказка — своя, без title: видна сразу при
-   наведении, без задержек и переходов. */
+/* Привязки (ui/draw-snap-ui.js): как статус-бар AutoCAD — компактный ряд
+   значков в строке состояния, вплотную слева от масштаба (правый нижний угол
+   холста). Подсказка — своя, без title: видна сразу при наведении, без
+   задержек и переходов; у правого края — выравнивание по правому краю. */
 .snap-pill {
-  position: absolute;
-  left: 50%;
-  bottom: 40px;
+  position: relative;
   z-index: 30;
-  transform: translateX(-50%);
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: var(--shadow);
+  gap: 1px;
+  margin-left: auto;
+  padding: 0;
+  pointer-events: auto;
 }
 .snap-pill .snap-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 28px;
+  width: 26px;
+  height: 22px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
   opacity: 0.7;
@@ -443,15 +440,15 @@ button.issue-go:hover { background: var(--surface-2); }
   background: color-mix(in srgb, var(--accent) 13%, transparent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
-.snap-pill .snap-step { width: auto; min-width: 30px; padding: 0 6px; font-size: 11.5px; font-weight: 650; opacity: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.snap-pill .snap-btn svg { width: 16px; height: 16px; }
+.snap-pill .snap-step { width: auto; min-width: 30px; padding: 0 5px; font-size: 11px; font-weight: 650; opacity: 1; color: var(--text); font-variant-numeric: tabular-nums; }
 .snap-pill .snap-step.dim { opacity: 0.5; }
 .snap-tip {
   display: none;
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 50%;
+  right: -4px;
   z-index: 90;
-  transform: translateX(-50%);
   width: max-content;
   max-width: min(300px, calc(100vw - 24px));
   padding: 6px 9px;
@@ -471,8 +468,6 @@ button.issue-go:hover { background: var(--surface-2); }
 }
 .snap-tip b { font-weight: 650; }
 .snap-tip kbd { font: inherit; color: var(--muted); }
-.snap-btn.tip-start .snap-tip { left: -4px; transform: none; }
-.snap-btn.tip-end .snap-tip { left: auto; right: -4px; transform: none; }
 .snap-btn:hover .snap-tip, .snap-btn:focus-visible .snap-tip { display: block; }
 /* «Участок»: каталога нет — левая панель скрыта, инструменты на панели инструментов. */
 body.mode-site .library { display: none; }
@@ -1086,9 +1081,13 @@ body.mode-site .library { display: none; }
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 30;
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 3px 12px;
+  gap: 8px;
+  min-height: 24px;
+  padding: 1px 12px;
   font-size: 11.5px;
   color: var(--muted);
   background: color-mix(in srgb, var(--surface) 82%, transparent);
@@ -1096,6 +1095,7 @@ body.mode-site .library { display: none; }
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+.statusbar #scaleInfo { flex: none; min-width: 7ch; text-align: right; }
 /* --- Панель свойств --- */
 .props-tabs {
   position: sticky;
@@ -1109,8 +1109,15 @@ body.mode-site .library { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .props-tabs button {
+  position: static; /* подсказка — от ряда вкладок, во всю его ширину */
   flex: 1 1 0;
-  padding: 8px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 4px;
   font-size: 12.5px;
   font-weight: 600;
   background: transparent;
@@ -1118,9 +1125,38 @@ body.mode-site .library { display: none; }
   border-bottom: 2px solid transparent;
   border-radius: 0;
   color: var(--muted);
+  box-shadow: none;
 }
-.props-tabs button:hover:not(.active) { color: var(--text); }
+.props-tabs button:hover:not(.active) { color: var(--text); background: var(--surface-2); }
 .props-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.props-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ptab-label { display: none; }
+/* Подсказка вкладки — своя, без title: сразу при наведении, без переходов;
+   под рядом значков во всю ширину панели (не выходит за экран). */
+.ptab-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  z-index: 90;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  transition: none;
+  animation: none;
+}
+.ptab-tip b { font-weight: 650; }
+.ptab:hover .ptab-tip, .ptab:focus-visible .ptab-tip { display: block; }
 .sched-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .sched-table th, .sched-table td { padding: 4px 4px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: baseline; }
 .sched-table thead th { font-size: 11px; color: var(--muted); font-weight: 600; }
@@ -1454,14 +1490,21 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   /* строка прокручивается и обрезает absolute-потомков — всплывающие панели на fixed */
   .tb-pop { position: fixed; left: 8px; right: 8px; top: auto; bottom: 120px; width: auto; z-index: 200; }
   .props-tabs { top: 0; margin: 0 0 10px; padding: 4px 0 0; }
+  .props-tabs button { flex-direction: column; gap: 1px; height: 46px; font-size: 10.5px; }
+  .ptab-label { display: block; line-height: 1.1; }
+  .ptab-tip { display: none !important; }
   .level-dock { left: 8px; bottom: 30px; }
   .landscape-chip span { display: none; }
   .landscape-chip { padding: 0 10px; }
   /* Привязки — над этажами слева (масштаб на телефоне — щипком); подсказка — от края пилюли */
-  .snap-pill { left: 8px; bottom: 76px; transform: none; max-width: calc(100% - 16px); }
+  .snap-pill {
+    position: absolute; left: 8px; bottom: 76px; margin: 0; max-width: calc(100% - 16px);
+    gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
+  }
+  .snap-pill .snap-btn { border-radius: 999px; }
   .snap-pill .snap-btn { position: static; width: 34px; height: 32px; }
   .snap-pill .snap-step { width: auto; }
-  .snap-tip, .snap-btn.tip-start .snap-tip, .snap-btn.tip-end .snap-tip { left: 0; right: auto; transform: none; max-width: calc(100vw - 32px); }
+  .snap-tip { left: 0; right: auto; max-width: calc(100vw - 32px); }
   .issues-btn { top: 8px; left: 8px; height: 36px; }
   /* Телефон: нижний лист над панелью кнопок (как «Свойства»), над клавиатурой */
   .issues-panel {
@@ -1840,17 +1883,16 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   body.lib-open .library { display: flex; }
   body.mode-site .library { display: none; }
   body.lib-open .level-dock { left: calc(min(264px, 42vw) + 14px); }
-  body.lib-open .snap-pill { left: calc(50% + min(132px, 21vw)); } /* по центру видимой части холста */
   body.lib-open .ls-section { left: min(264px, 42vw); } /* разрез участка — правее каталога, не под ним */
   /* «⚠ Замечания» — третья вкладка; список — вместо содержимого панели */
   .props-tabs .issues-btn {
     position: static;
-    flex: 1.35 1 0;
+    flex: 1 1 0;
     justify-content: center;
     gap: 4px;
-    height: auto;
+    height: 38px;
     min-width: 0;
-    padding: 8px 4px 9px;
+    padding: 0 4px;
     border: 0;
     border-bottom: 2px solid transparent;
     border-radius: 0;
@@ -1863,8 +1905,8 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .props-tabs .issues-btn.warn { background: transparent; color: var(--warn-text); }
   .props-tabs .issues-btn:hover { color: var(--text); }
   .props-tabs .issues-btn[aria-expanded="true"] { color: var(--accent); border-bottom-color: var(--accent); }
-  .props-tabs .issues-icon { font-size: 12.5px; }
-  .props-tabs .issues-label { display: inline; }
+  .props-tabs .issues-icon { font-size: 16px; line-height: 1; }
+  .props-tabs .issues-label { display: none; }
   .props > .issues-panel {
     position: static;
     width: auto;
@@ -1877,9 +1919,6 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   }
   .props > .issues-panel .issues-body { overflow: visible; }
   .props:has(> .issues-panel:not([hidden])) > .props-body { display: none; }
-}
-@media (min-width: 641px) and (max-width: 860px) {
-  .props-tabs .issues-label { display: none; }
 }
 
 /* --- Телефон: строка инструментов над холстом, параметры — только когда есть --- */
@@ -1894,3 +1933,21 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .top-sep { display: none; }
   .project-name { flex: none; }
 }
+
+/* --- Вкладки «Виды» и «Листы» правой панели (ui/props-views.js, ui/props-sheets.js) --- */
+.views-ls-groups { padding-left: 14px; }
+.views-ls-groups.off { opacity: 0.5; }
+#viewsLsPlanOnly { margin-top: 6px; width: 100%; }
+#viewsAlignBtn { width: 100%; text-align: left; }
+#viewsAlignBtn.armed { background: var(--accent); color: #fff; border-color: var(--accent); }
+#views3dBtn { margin-top: 6px; width: 100%; }
+.sheets-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.sheets-item { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.sheets-item.current .sheets-name { font-weight: 650; }
+.sheets-item.active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.sheets-no { flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 650; display: inline-flex; align-items: center; justify-content: center; }
+.sheets-name { flex: 1; min-width: 0; }
+.sheets-preview { margin: 4px 0 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #fff; }
+.sheets-preview[hidden] { display: none; }
+.sheets-preview img { display: block; width: 100%; height: auto; }
+.sheets-preview .hint { margin: 8px; color: #555; }

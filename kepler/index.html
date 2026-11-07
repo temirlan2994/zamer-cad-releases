@@ -162,20 +162,24 @@
             <button id="zoomInBtn" title="Приблизить">+</button>
             <button id="zoomOutBtn" title="Отдалить">−</button>
           </div>
-          <div class="snap-pill" id="snapBar" role="toolbar" aria-label="Привязки"></div>
+          <!-- Нижняя строка состояния, как в AutoCAD: слева — координаты курсора, справа — привязки и масштаб. -->
           <div class="statusbar">
             <span id="cursorPos"></span>
+            <div class="snap-pill" id="snapBar" role="toolbar" aria-label="Привязки"></div>
             <span id="scaleInfo"></span>
           </div>
         </section>
 
-        <!-- Правая панель — только про выбранное: «Свойства», «ТЭП», «Замечания» (ui/props.js, ui/issues.js).
+        <!-- Правая панель: ряд из 5 значков — «Свойства», «Виды», «Листы», «ТЭП», «Замечания» (ui/props.js,
+             ui/props-views.js, ui/props-sheets.js, ui/props-tep.js, ui/issues.js). Подсказка .ptab-tip — своя, сразу при наведении.
              Настройки проекта — раскрывающаяся секция «Проект», когда ничего не выбрано. На телефоне «⚠» и замечания — на холсте. -->
         <aside class="props" id="propsPanel">
           <div class="props-tabs" role="tablist" aria-label="Панель свойств">
-            <button type="button" role="tab" id="propsTabMain" data-props-tab="props">Свойства</button>
-            <button type="button" role="tab" id="propsTabTep" data-props-tab="tep">ТЭП</button>
-            <button type="button" role="tab" class="issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" title="Замечания и нормы"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-label">Замечания</span><span class="issues-count" id="issuesCount" hidden>0</span></button>
+            <button type="button" role="tab" class="ptab" id="propsTabMain" data-props-tab="props" aria-label="Свойства" aria-describedby="ptabTip-props"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="ptab-label">Свойства</span><span class="ptab-tip" role="tooltip" id="ptabTip-props"><b>Свойства</b> · выбранный объект; ничего не выбрано — настройки проекта</span></button>
+            <button type="button" role="tab" class="ptab" id="propsTabViews" data-props-tab="views" aria-label="Виды" aria-describedby="ptabTip-views"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="ptab-label">Виды</span><span class="ptab-tip" role="tooltip" id="ptabTip-views"><b>Виды</b> · что видно на плане: поворот вида, подложка, размеры, ландшафт под домом</span></button>
+            <button type="button" role="tab" class="ptab" id="propsTabSheets" data-props-tab="sheets" aria-label="Листы" aria-describedby="ptabTip-sheets"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 17h7M13 14h3"/></svg><span class="ptab-label">Листы</span><span class="ptab-tip" role="tooltip" id="ptabTip-sheets"><b>Листы</b> · альбом A3: генплан, разрезы, этажи — предпросмотр, PDF и PNG</span></button>
+            <button type="button" role="tab" class="ptab" id="propsTabTep" data-props-tab="tep" aria-label="ТЭП" aria-describedby="ptabTip-tep"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 9h17M3.5 14.5h17M10 9v11"/></svg><span class="ptab-label">ТЭП</span><span class="ptab-tip" role="tooltip" id="ptabTip-tep"><b>ТЭП</b> · площади дома, показатели и экспликация помещений</span></button>
+            <button type="button" role="tab" class="ptab issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" aria-label="Замечания и нормы" aria-describedby="ptabTip-issues"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-label">Замечания</span><span class="issues-count" id="issuesCount" hidden>0</span><span class="ptab-tip" role="tooltip" id="ptabTip-issues"><b>Замечания</b> · нормы, доступ, свет, мебель — список с переходом к месту</span></button>
           </div>
           <div class="props-body" id="propsBody"></div>
           <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>

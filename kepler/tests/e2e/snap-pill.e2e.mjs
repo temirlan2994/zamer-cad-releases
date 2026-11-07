@@ -1,8 +1,9 @@
-// e2e: привязки — «пилюля» значков внизу холста (ui/draw-snap-ui.js):
-// все переключатели на месте, без подписей; клик меняет настройку
-// (localStorage kepler-draw-snap) и aria-pressed; подсказка видна сразу при
-// наведении (без задержек и переходов) и не выходит за экран; пилюля не
-// перекрывает этажи и масштаб на 1280 и на телефоне 390.
+// e2e: привязки — ряд значков в строке состояния справа, вплотную слева от
+// масштаба, как статус-бар AutoCAD (ui/draw-snap-ui.js): все переключатели на
+// месте, без подписей; клик меняет настройку (localStorage kepler-draw-snap)
+// и aria-pressed; подсказка видна сразу при наведении (без задержек и
+// переходов), не выходит за экран, у правого края — по правому краю; ряд не
+// перекрывает этажи, зум и библиотеку на 1280 и на телефоне 390.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
@@ -11,7 +12,7 @@ const KEYS = ['ortho', 'polar', 'objects', 'tracking', 'magnet', 'guides'];
 const overlap = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 const box = (page, sel) => page.locator(sel).boundingBox();
 
-describe('привязки внизу холста — компьютер 1280', () => {
+describe('привязки в правом нижнем углу — компьютер 1280', () => {
   let app;
   before(async () => {
     app = await startApp();
@@ -85,6 +86,7 @@ describe('привязки внизу холста — компьютер 1280',
       const b = await box(page, btn);
       assert.ok(m.r.y + m.r.height <= b.y, `${k}: над кнопкой`);
       assert.ok(m.text.includes('·'), `${k}: название · что делает`);
+      assert.ok(Math.abs(m.r.x + m.r.width - (b.x + b.width + 4)) < 2, `${k}: по правому краю кнопки`);
       assert.equal(await page.isVisible(tip), true);
     }
     assert.match(await page.textContent('#snapTip-magnet'), /Магнит блоков.*Alt/);
@@ -93,19 +95,37 @@ describe('привязки внизу холста — компьютер 1280',
     assert.equal(await page.isHidden('#snapTip-ortho'), true);
   });
 
-  it('по центру низа холста, не перекрывает этажи и масштаб', async () => {
+  it('в правом нижнем углу: вплотную слева от масштаба, под зумом, не перекрывает этажи', async () => {
     const { page } = app;
-    const [pill, levels, zoom, canvas] = await Promise.all(['#snapBar', '#levelDock', '.zoom-controls', '#canvas'].map((s) => box(page, s)));
+    const [pill, levels, zoom, canvas, scale] = await Promise.all(['#snapBar', '#levelDock', '.zoom-controls', '#canvas', '#scaleInfo'].map((s) => box(page, s)));
+    assert.equal(await page.$eval('#snapBar', (n) => n.parentElement.classList.contains('statusbar')), true, 'в строке состояния');
+    assert.match(await page.textContent('#scaleInfo'), /1:\d+/);
     assert.ok(!overlap(pill, levels), `этажи ${JSON.stringify([pill, levels])}`);
-    assert.ok(!overlap(pill, zoom), `масштаб ${JSON.stringify([pill, zoom])}`);
-    assert.ok(pill.x > levels.x + levels.width && pill.x + pill.width < zoom.x, 'между этажами и масштабом');
-    assert.ok(Math.abs(pill.x + pill.width / 2 - (canvas.x + canvas.width / 2)) < 2, 'по центру');
-    assert.ok(pill.y + pill.height <= canvas.y + canvas.height && pill.y > canvas.y + canvas.height - 120, 'внизу');
+    assert.ok(!overlap(pill, zoom), `зум ${JSON.stringify([pill, zoom])}`);
+    assert.ok(!overlap(pill, scale), `масштаб ${JSON.stringify([pill, scale])}`);
+    const gap = scale.x - (pill.x + pill.width);
+    assert.ok(gap >= 0 && gap <= 16, `вплотную слева от масштаба: ${gap}`);
+    assert.ok(Math.abs(pill.y + pill.height / 2 - (scale.y + scale.height / 2)) < 3, 'на одной линии с масштабом');
+    assert.ok(pill.y + pill.height <= canvas.y + canvas.height + 0.5 && pill.y > canvas.y + canvas.height - 32, `на нижней кромке ${JSON.stringify([pill, canvas])}`);
+    assert.ok(pill.x > canvas.x + canvas.width / 2 && pill.x + pill.width <= canvas.x + canvas.width, 'справа');
+    assert.ok(zoom.y + zoom.height <= pill.y, 'зум — над привязками');
+    assert.ok(pill.height <= 26, `компактно: ${pill.height}`);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('открытая библиотека не закрывает привязки', async () => {
+    const { page } = app;
+    await page.click('#furnitureToolBtn');
+    assert.equal(await page.isVisible('.library'), true);
+    const [pill, lib] = await Promise.all(['#snapBar', '.library'].map((s) => box(page, s)));
+    assert.ok(!overlap(pill, lib), `библиотека ${JSON.stringify([pill, lib])}`);
+    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true);
+    await page.keyboard.press('Escape');
     assert.deepEqual(app.errors, []);
   });
 });
 
-describe('привязки внизу холста — телефон 390', () => {
+describe('привязки — телефон 390', () => {
   let app;
   before(async () => {
     app = await startApp({ mobile: true });
@@ -118,6 +138,8 @@ describe('привязки внизу холста — телефон 390', () =
     const [pill, levels] = await Promise.all(['#snapBar', '#levelDock'].map((s) => box(page, s)));
     assert.ok(pill.x >= 0 && pill.x + pill.width <= 390, `в экране ${JSON.stringify(pill)}`);
     assert.ok(!overlap(pill, levels), `этажи ${JSON.stringify([pill, levels])}`);
+    const canvas = await box(page, '#canvas');
+    assert.ok(pill.y >= canvas.y && pill.y + pill.height <= canvas.y + canvas.height, 'на холсте');
     if (await page.isVisible('.zoom-controls')) assert.ok(!overlap(pill, await box(page, '.zoom-controls')));
     const sel = '#snapBar [data-snap="objects"]';
     const before = await page.getAttribute(sel, 'aria-pressed');

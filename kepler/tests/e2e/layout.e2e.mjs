@@ -141,10 +141,10 @@ describe('раскладка: колонка инструментов, библ�
     assert.equal(await page.$eval('#toolOptionsBody', (n) => n.childElementCount), 0);
   });
 
-  it('правая панель: «Свойства», «ТЭП», «⚠ Замечания»; проект — свёрнутой секцией', async () => {
+  it('правая панель: «Свойства», «Виды», «Листы», «ТЭП», «⚠ Замечания»; проект — свёрнутой секцией', async () => {
     const { page } = app;
     const tabs = await page.$$eval('#propsPanel .props-tabs > button', (ns) => ns.map((n) => n.id));
-    assert.deepEqual(tabs, ['propsTabMain', 'propsTabTep', 'issuesBtn']);
+    assert.deepEqual(tabs, ['propsTabMain', 'propsTabViews', 'propsTabSheets', 'propsTabTep', 'issuesBtn']);
     assert.equal(await page.$('#propsPanel .library, #propsPanel #roomCards'), null, 'библиотеки в правой панели нет');
     assert.equal(await page.$eval('#projectSection', (n) => n.open), false, '«Проект» свёрнут');
     assert.equal(await page.isVisible('#levelName'), false);

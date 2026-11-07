@@ -18,6 +18,8 @@ import { findWall } from './hit.js';
 import { deleteLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
+import { renderViewsPanel } from './props-views.js';
+import { renderSheetsPanel } from './props-sheets.js';
 import { renderToolstrip } from './toolstrip.js';
 import {
   addFurniture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
@@ -39,9 +41,11 @@ import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
 
-// Вкладки над панелью: «Свойства» (выбранный объект или проект) и «ТЭП и
-// площади» (показатели дома и экспликация, ui/props-tep.js). Выбор нового
-// объекта возвращает вкладку «Свойства».
+// Вкладки над панелью (ряд значков): «Свойства» (выбранный объект или
+// проект), «Виды» (что видно на плане, ui/props-views.js), «Листы» (альбом A3,
+// ui/props-sheets.js), «ТЭП» (показатели дома и экспликация, ui/props-tep.js).
+// Выбор нового объекта возвращает вкладку «Свойства».
+const PROPS_TABS = ['props', 'views', 'sheets', 'tep'];
 let lastSelKey = null;
 let projectOpen = false; // секция «Проект» раскрыта
 
@@ -79,9 +83,11 @@ export function renderProps() {
   const selKey = sel ? JSON.stringify(sel) : null;
   if (selKey && selKey !== lastSelKey) state.propsTab = 'props';
   lastSelKey = selKey;
-  if (state.propsTab !== 'tep') state.propsTab = 'props';
+  if (!PROPS_TABS.includes(state.propsTab)) state.propsTab = 'props';
   const panel = propsBody();
   if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
+  if (state.propsTab === 'views') { renderViewsPanel(panel); return; }
+  if (state.propsTab === 'sheets') { renderSheetsPanel(panel); return; }
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
   if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
   if (!sel) {

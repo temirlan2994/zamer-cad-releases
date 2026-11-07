@@ -200,7 +200,7 @@ describe('замечания: группы и «Скрыть»', () => {
     assert.equal(await app.page.isVisible('#issuesCount'), false);
     assert.match(await app.page.getAttribute('#issuesBtn', 'class'), /\bok\b/);
     assert.match(await app.page.textContent('#issuesPanel'), /Замечаний нет \(включено групп: 0 из 6\)/);
-    assert.match(await app.page.getAttribute('#issuesBtn', 'title'), /включено групп: 0 из 6/);
+    assert.match(await app.page.getAttribute('#issuesBtn', 'aria-label'), /включено групп: 0 из 6/);
   });
 
   it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });

@@ -100,7 +100,7 @@ function placeIssues() {
 function syncPropsTabs() {
   const open = isIssuesOpen() && !narrow();
   for (const b of document.querySelectorAll('#propsPanel [data-props-tab]')) {
-    const on = !open && b.dataset.propsTab === (state.propsTab === 'tep' ? 'tep' : 'props');
+    const on = !open && b.dataset.propsTab === (state.propsTab || 'props');
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', String(on));
   }
@@ -163,8 +163,12 @@ export function renderIssues() {
   btn.classList.toggle('ok', !issues.count);
   const count = el('issuesCount');
   if (count) { count.textContent = String(issues.count); count.hidden = !issues.count; }
-  btn.title = issues.count ? `Замечания: ${issues.count} — показать список` : quiet;
-  btn.setAttribute('aria-label', btn.title);
+  // Без title: подсказка — своя (.ptab-tip), сразу при наведении.
+  const label = issues.count ? `Замечания: ${issues.count} — показать список` : `Замечания: нет (включено групп: ${onCount} из ${summary.length})`;
+  btn.removeAttribute('title');
+  btn.setAttribute('aria-label', label);
+  const tip = el('ptabTip-issues');
+  if (tip) tip.innerHTML = `<b>Замечания</b> · ${issues.count ? `${issues.count} — нормы, доступ, свет, мебель; клик — список с переходом к месту` : escapeHtml(label.replace('Замечания: ', ''))}`;
   const chips = summary.map((g) => {
     const label = g.enabled ? `${g.short} ${g.count}` : `${g.short} выкл`;
     return `<button type="button" class="issue-chip${g.enabled && g.count ? ' has-warn' : ''}" data-issue-group="${g.id}" aria-pressed="${g.enabled}" title="${escapeHtml(g.title)} — ${g.enabled ? 'выключить' : 'включить'}">${escapeHtml(label)}</button>`;

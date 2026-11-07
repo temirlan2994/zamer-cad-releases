@@ -19,6 +19,7 @@ import { applyModeRotation } from './modes.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, setHint, setTool } from './tools.js';
+import { refreshViewsPanel } from './props-views.js';
 import { planToWorld, requestDraw, screenToWorld, worldToPlan } from './view.js';
 
 const MODE_TITLES = { plan: '«План»', site: '«Участок»', landscape: '«Ландшафт»' };
@@ -179,6 +180,7 @@ export function renderViewPanel() {
       ? `Задан вручную. ${DEFAULT_HINTS[mode]} (${fmt(defaultViewAngle(project, mode))}). У каждого режима свой угол.`
       : `${DEFAULT_HINTS[mode]}. У каждого режима свой угол; данные проекта не меняются.`;
   }
+  refreshViewsPanel(); // вкладка «Виды» правой панели — те же поля
 }
 
 export function bindViewPanel() {

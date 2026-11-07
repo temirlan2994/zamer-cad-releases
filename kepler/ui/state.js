@@ -11,15 +11,15 @@ export const state = {
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
   libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка библиотеки (в режиме «План»)
   libraryPinned: false, // библиотека открыта кнопкой «Помещение»/«Мебель» (без активного размещения)
-  propsTab: 'props', // 'props' | 'tep' — вкладка правой панели (ui/props.js)
+  propsTab: 'props', // 'props' | 'views' | 'sheets' | 'tep' — вкладка правой панели (ui/props.js)
+  planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },
     site: { scale: 0.03, panX: 120, panY: 120 },
     landscape: { scale: 0.03, panX: 120, panY: 120 },
   },
   ghostLandscape: null, // призрак объекта ландшафта при постановке
-  lsVertex: null, // { id, index } — активная вершина линии/контура ландшафта (Delete удалит её)
-  // Видимость групп ландшафта (core/landscape.js LANDSCAPE_VIS).
+  lsVertex: null, // { id, index } — активная вершина линии/контура ландшафта (Delete удалит её)  // Видимость групп ландшафта (core/landscape.js LANDSCAPE_VIS).
   lsVis: { shadows: true, plants: true, covers: true, objects: true, labels: false, notes: true },
   // Стиль графики ландшафта: 'sketch' | 'drawing' (ui/landscape-style.js).
   lsStyle: 'sketch',

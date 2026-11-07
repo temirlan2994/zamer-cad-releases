@@ -55,6 +55,7 @@ import {
 import { landscapeSunFrame, landscapeSunGrid } from './ui/landscape-sun.js';
 import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
+import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
@@ -114,6 +115,25 @@ export function unprojectPoint(view, sx, sy) {
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
+  // Слой ландшафта на плане: рисуется отдельно и кладётся одной картинкой с
+  // прозрачностью — объекты не просвечивают друг через друга.
+  let lsLayer = null;
+  function drawPlanLandscape(target, objects, lsOpts) {
+    const { width: w, height: h } = target.canvas;
+    if (!lsLayer) lsLayer = document.createElement('canvas');
+    if (lsLayer.width !== w || lsLayer.height !== h) { lsLayer.width = w; lsLayer.height = h; }
+    const lctx = lsLayer.getContext('2d');
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.clearRect(0, 0, w, h);
+    lctx.setTransform(target.getTransform());
+    drawLandscapeGround(lctx, objects, lsOpts);
+    drawLandscapeRaised(lctx, objects, lsOpts);
+    target.save();
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.globalAlpha = PLAN_LS_ALPHA;
+    target.drawImage(lsLayer, 0, 0);
+    target.restore();
+  }
 
   // opts (для печати листов): width/height — размер в CSS px, dpr — плотность,
   // print — светлая палитра без сетки, site: false — без слоёв участка,
@@ -202,7 +222,12 @@ export function createRenderer(canvas) {
     const landscape = state.modeName === 'landscape';
     // Слои ландшафта (панель «Ландшафт»): скрытые группы не рисуются.
     const lsVis = state.lsVis || null;
-    const lsObjects = site && state.modeName !== 'plan' ? visibleLandscape(site.landscape?.objects || [], lsVis) : [];
+    // В «Плане» (не на печати) — приглушённо под домом, по настройке вида
+    // «Ландшафт на плане» (ui/plan-landscape.js, вкладка «Виды»).
+    const planLs = site && state.modeName === 'plan' && !print && opts.planLandscape !== false ? planLandscapePref() : null;
+    const lsObjects = !site ? []
+      : planLs ? planLandscapeObjects(site.landscape?.objects || [], planLs)
+        : state.modeName !== 'plan' ? visibleLandscape(site.landscape?.objects || [], lsVis) : [];
     // Стиль ландшафта: «Эскиз» (акварель + графика) или «Чертёж» (монохром);
     // лист печати передаёт свой (opts.lsStyle). Тема — по цвету холста.
     const lsStyle = opts.lsStyle || state.lsStyle || 'sketch';
@@ -211,7 +236,7 @@ export function createRenderer(canvas) {
     // Тени (плашка «Тени» в «Ландшафте»): 'off' — нет, 'default' — условные
     // (как раньше), 'sun' — по солнцу (core/landscape-shadow.js, кеш в ui/landscape-sun.js).
     const sunMode = landscape ? (state.lsSun?.mode || 'default') : 'default';
-    const shadowsOn = lsVis?.shadows !== false && sunMode !== 'off';
+    const shadowsOn = planLs ? planLs.shadows === true : lsVis?.shadows !== false && sunMode !== 'off';
     const sunFrame = landscape && shadowsOn && sunMode === 'sun' ? landscapeSunFrame(state.project, lsObjects) : null;
     const sunDir = sunFrame?.sun.up ? { x: sunFrame.sun.dir.x, y: sunFrame.sun.dir.y, k: 0.3 } : null;
     const lsOpts = {
@@ -228,7 +253,11 @@ export function createRenderer(canvas) {
       roomFill: () => lsPal.paper,
       wall: lsPal.ink, wallBearing: lsPal.ink,
     } : tokens;
-    if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
+    state._planLandscape = 0;
+    if (planLs && lsObjects.length) {
+      drawPlanLandscape(ctx, lsObjects, lsOpts);
+      state._planLandscape = lsObjects.length;
+    } else if (lsObjects.length) drawLandscapeGround(ctx, lsObjects, lsOpts);
     if (landscape && sunMode === 'sun') {
       // Анализ освещённости — под тенями; тени по солнцу — на земле, до дома и объектов.
       const grid = state.lsSun?.analysis ? landscapeSunGrid(state.project, lsObjects) : null;
@@ -407,7 +436,7 @@ export function createRenderer(canvas) {
     // 7. Участок поверх полов (граница, красная линия, въезд) и
     // предпросмотры инструментов участка — в координатах съёмки.
     setView(view);
-    if (lsObjects.length) drawLandscapeRaised(ctx, lsObjects, lsOpts);
+    if (lsObjects.length && !planLs) drawLandscapeRaised(ctx, lsObjects, lsOpts);
     if (landscape && state.ghostLandscape) drawLandscapeGhost(ctx, state.ghostLandscape, lsOpts, tokens.accent);
     if (landscape && state.tool?.kind === 'draw-landscape') drawLandscapeDraft(ctx, state.tool, lsOpts, tokens.accent);
     if (landscape && state.tool?.kind === 'ls-array') drawLandscapeArrayPreview(ctx, state.tool, lsOpts, tokens.accent);
@@ -672,6 +701,10 @@ export function createRenderer(canvas) {
     const ghostOp = state.ghostDoor || state.ghostOpeningFull;
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
+    // Подписи ландшафта на плане — только если включены во «Видах».
+    if (planLs?.labels && lsObjects.length) {
+      drawLandscapeOverlay(ctx, lsObjects, { w2s, tokens, scale, labels: true, style: lsStyle });
+    }
     if (landscape && site) {
       const warnings = landscapeWarnings(lsObjects, { boundary: site.boundary, footprints: houseFootprints });
       drawLandscapeOverlay(ctx, lsObjects, {
