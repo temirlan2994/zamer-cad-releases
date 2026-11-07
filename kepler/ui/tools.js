@@ -6,6 +6,7 @@ import { deriveWalls } from '../core/walls.js';
 import { el, refs } from './dom.js';
 import { renderIssues } from './issues.js';
 import { renderLibrary } from './library.js';
+import { defaultOpeningPreset } from '../core/opening-preset.js';
 import { renderProps } from './props.js';
 import { state } from './state.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
@@ -68,6 +69,7 @@ export function setTool(tool, hint) {
   state.ghost = null;
   state.ghostItem = null;
   state.ghostOpening = null;
+  state.ghostOpeningFull = null;
   state.ghostDoor = null;
   setHint(hint || '');
   renderLibrary();
@@ -76,12 +78,14 @@ export function setTool(tool, hint) {
 }
 
 export function cancelTool() {
+  const wasOpening = state.tool?.kind === 'place-opening';
   state.tool = null;
   state.draft = null;
   clearDrawSnap();
   state.ghost = null;
   state.ghostItem = null;
   state.ghostOpening = null;
+  state.ghostOpeningFull = null;
   state.calibration = null;
   state.entryGhost = null;
   state.calCursor = null;
@@ -98,6 +102,7 @@ export function cancelTool() {
   setHint('');
   renderLibrary();
   renderSelectionToolbar();
+  if (wasOpening) renderProps();
   requestDraw();
 }
 
@@ -109,9 +114,13 @@ export function startPlaceRoom(type) {
 }
 
 export function startPlaceOpening(openKind, presetWall = null) {
-  setTool({ kind: 'place-opening', openKind, presetWall, doorTurns: 0 }, openKind === 'door'
-    ? 'Кликните по стене, чтобы добавить дверь · Пробел — петли / направление · Esc — отмена'
-    : 'Кликните по наружной стене, чтобы добавить окно · Esc — отмена');
+  // Параметры (тип, размеры) задаются в «Свойствах» до вставки и помнятся.
+  const preset = state.openingPreset[openKind] || (state.openingPreset[openKind] = defaultOpeningPreset(openKind));
+  state.selection = null;
+  setTool({ kind: 'place-opening', openKind, presetWall, doorTurns: 0, preset }, openKind === 'door'
+    ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'
+    : 'Кликайте по наружным стенам — можно ставить несколько окон · Esc — выход');
+  renderProps();
 }
 
 export function startPlaceFurniture(kind, title = 'мебель') {

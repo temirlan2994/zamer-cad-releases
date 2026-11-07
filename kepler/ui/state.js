@@ -37,6 +37,8 @@ export const state = {
   ghost: null,
   ghostItem: null,
   ghostOpening: null,
+  openingPreset: { door: null, window: null }, // параметры до вставки (ui/props.js)
+  ghostOpeningFull: null, // проём-превью (для размеров до соседей)
   pendingRoomSplit: null, // временное деление стены до первого реального сдвига
   splitEdit: null, // ввод точки деления стены: {key, from, end: 'from'|'to', distance}
   _wallUI: null, // кликабельные размеры и ручка выбранной стены

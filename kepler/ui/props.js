@@ -28,6 +28,8 @@ import {
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import { STAIR_SHAPES, applyStairPreset, stairCalculation, stairShape } from '../core/stairs.js';
+import { presetWithType } from '../core/opening-preset.js';
+import { requestDraw } from './view.js';
 import { state } from './state.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
@@ -76,6 +78,7 @@ export function renderProps() {
   if (state.propsTab !== 'tep') state.propsTab = 'props';
   const panel = propsBody();
   if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
+  if (state.tool?.kind === 'place-opening') { renderPlaceOpeningProps(panel); return; }
   if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
   if (!sel) {
     if (state.modeName === 'site') renderSiteSettings(panel);
@@ -408,6 +411,41 @@ function elevationSVG(opening) {
     ${dim(ox + width + sw * 6, oy, ox + width + sw * 6, oy + height, `${height}`, ox + width + sw * 10, oy + height / 2, -90)}
     ${sill > 0 ? dim(ox - sw * 6, oy + height, ox - sw * 6, ceil, `${sill}`, ox - sw * 10, oy + height + sill / 2, -90) : ''}
   </svg>`;
+}
+
+// Параметры двери/окна ДО вставки: активный инструмент «Дверь»/«Окно»
+// (state.tool.preset) — тип, ширина, высота, подоконник; каждый следующий
+// проём ставится с ними.
+function renderPlaceOpeningProps(panel) {
+  const tool = state.tool;
+  const isDoor = tool.openKind === 'door';
+  const preset = tool.preset;
+  const sample = { kind: tool.openKind, ...preset };
+  panel.innerHTML = `
+    <h2>${isDoor ? 'Дверь' : 'Окно'} — параметры вставки</h2>
+    <p class="subtitle">Задайте размеры и кликайте по стенам: можно ставить несколько. Esc — выход.</p>
+    <div class="elev-wrap">${elevationSVG(sample)}</div>
+    <div class="prop-block">
+      <label class="prop-field"><span>Тип</span>
+        <select id="presetType">${Object.entries(isDoor ? DOOR_TYPES : WINDOW_TYPES).map(([id, title]) => `
+          <option value="${id}" ${preset.type === id ? 'selected' : ''}>${title}</option>`).join('')}
+        </select></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Ширина, мм</span>
+          <input id="presetW" type="number" step="50" min="300" value="${preset.width}"></label>
+        <label class="prop-field"><span>Высота, мм</span>
+          <input id="presetH" type="number" step="50" min="300" value="${preset.height}"></label>
+      </div>
+      ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
+        <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
+    </div>`;
+  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel); requestDraw(); };
+  panel.querySelector('#presetType').addEventListener('change', (e) => {
+    save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
+  });
+  panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(300, Number(e.target.value) || preset.width) }));
+  panel.querySelector('#presetH').addEventListener('change', (e) => save({ height: Math.max(300, Number(e.target.value) || preset.height) }));
+  panel.querySelector('#presetSill')?.addEventListener('change', (e) => save({ sill: Math.max(0, Number(e.target.value) || 0) }));
 }
 
 function renderOpeningProps(panel, opening) {

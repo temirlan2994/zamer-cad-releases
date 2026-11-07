@@ -41,6 +41,7 @@ import { furnitureBlock } from './core/blocks.js';
 import { drawTerrainLabels, drawTerrainUnder } from './ui/terrain-render.js';
 import { drawObjectGuides, drawSnapOverlay } from './ui/render-guides.js';
 import { facadeDimensionStations } from './core/dimensions.js';
+import { openingGaps } from './core/opening-spacing.js';
 import { roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
 import { stairCalculation } from './core/stairs.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
@@ -637,6 +638,9 @@ export function createRenderer(canvas) {
       }
       drawSelectedOpeningUI(ctx, state, selOpening, walls, p2s, scale, tokens);
     }
+    // Вставка окна/двери: размеры до стен и соседних проёмов слева и справа.
+    const ghostOp = state.ghostDoor || state.ghostOpeningFull;
+    if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
     if (landscape && site) {
       const warnings = landscapeWarnings(lsObjects, { boundary: site.boundary, footprints: houseFootprints });
@@ -2849,6 +2853,40 @@ function drawTempDims(ctx, state, item, p2s, tokens, avoid) {
       dir: dim.dir, value: dim.value, x: box.x + w / 2, y: box.y + h / 2,
       box: { x: box.x + w / 2 - hw / 2, y: box.y + h / 2 - hh / 2, w: hw, h: hh },
     });
+  }
+  ctx.restore();
+}
+
+// Превью вставки: линии размеров от проёма до ближайшего препятствия
+// (торец стены или соседний проём) слева и справа, снаружи помещения.
+function drawOpeningGhostDims(ctx, state, opening, walls, w2s, tokens) {
+  const g = openingGaps(state.project, opening, walls);
+  if (!g) return;
+  const { wall } = g;
+  const horiz = wall.orient === 'h';
+  const mid = horiz ? (wall.center.y1 + wall.center.y2) / 2 : (wall.center.x1 + wall.center.x2) / 2;
+  const out = wall.outward || 1;
+  const pt = (along, perp) => (horiz ? w2s(along, perp) : w2s(perp, along));
+  const lineAt = mid + out * ((wall.thickness || 200) / 2 + 450);
+  ctx.save();
+  ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+  for (const [a, b] of [[g.left, g.from], [g.to, g.right]]) {
+    if (b - a < 1) continue;
+    const A = pt(a, lineAt); const B = pt(b, lineAt);
+    ctx.strokeStyle = tokens.accent; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+    drawWitness(ctx, pt(a, mid), A);
+    drawWitness(ctx, pt(b, mid), B);
+    for (const P of [A, B]) {
+      const t = horiz ? { x: 0, y: 5 } : { x: 5, y: 0 };
+      ctx.beginPath(); ctx.moveTo(P.x - t.x, P.y - t.y); ctx.lineTo(P.x + t.x, P.y + t.y); ctx.stroke();
+    }
+    const label = String(Math.round(b - a));
+    const mx = (A.x + B.x) / 2; const my = (A.y + B.y) / 2;
+    const w = ctx.measureText(label).width + 10;
+    ctx.fillStyle = tokens.surface; ctx.fillRect(mx - w / 2, my - 9, w, 18);
+    ctx.strokeStyle = tokens.accent; ctx.strokeRect(mx - w / 2, my - 9, w, 18);
+    ctx.fillStyle = tokens.accent; ctx.fillText(label, mx, my + 4);
   }
   ctx.restore();
 }

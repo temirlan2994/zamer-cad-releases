@@ -354,6 +354,7 @@ function updateHoverAndGhost(world, plan, event) {
   }
   if (state.tool?.kind === 'place-opening') {
     state.ghostOpening = null;
+    state.ghostOpeningFull = null;
     state.ghostDoor = null;
     const res = computeOpeningParams(plan);
     if (res && res.opening && !res.error) {
@@ -362,6 +363,7 @@ function updateHoverAndGhost(world, plan, event) {
       } else {
         const placed = openingRect(state.project, res.opening, state.walls);
         if (placed) state.ghostOpening = { rect: placed.rect };
+        state.ghostOpeningFull = res.opening; // для размеров до соседей
       }
     }
     requestDraw();

@@ -51,6 +51,27 @@ function occupied(project, opening, walls, others) {
   return list;
 }
 
+// Расстояния проёма до ближайшего слева и справа препятствия на той же
+// стене: торец стены или соседний проём (дверь/окно). Координаты — вдоль
+// стены в осях дома. Для превью при вставке и размеров у проёма.
+// → { wall, from, to, left, right } | null (нет стены).
+export function openingGaps(project, opening, walls) {
+  const placed = openingRect(project, opening, walls);
+  if (!placed) return null;
+  const half = (Number(opening.width) || 0) / 2;
+  const from = placed.absCenter - half;
+  const to = placed.absCenter + half;
+  const wall = placed.wall;
+  let left = Math.min(wall.from, wall.to);
+  let right = Math.max(wall.from, wall.to);
+  for (const t of occupied(project, opening, walls, null)) {
+    if (!sameLine(wall, t.wall)) continue;
+    if (t.to <= from + 0.5) left = Math.max(left, t.to);
+    else if (t.from >= to - 0.5) right = Math.min(right, t.from);
+  }
+  return { wall, from, to, left, right };
+}
+
 // Позиция — offset (проём комнаты) или host.t (проём ручной стены).
 export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap = OPENING_GAP, others = null } = {}) {
   const frame = openingFrame(project, opening, walls);

@@ -1,5 +1,6 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
+import { applyOpeningPreset } from '../core/opening-preset.js';
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, roomType } from '../core/catalog.js';
 import { reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
@@ -141,7 +142,7 @@ export function computeOpeningParams(at) {
   const base = edge.orient === 'h' ? room.x : room.y;
   const along = wall.orient === 'h' ? at.x : at.y;
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
-  const opening = createOpening(openKind, roomId, side, along - base, width);
+  const opening = applyOpeningPreset(createOpening(openKind, roomId, side, along - base, width), state.tool.preset);
   const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
   if (clamped === null) return { error: 'На этом участке стены проём не помещается' };
   // Ближайшее место, где проём не налезает на соседние (зазор ≥ OPENING_GAP).
@@ -166,7 +167,7 @@ export function computeOpeningParams(at) {
 // Проём на ручной стене: host { wallId, t }, t — центр от начала оси.
 function computeHostOpening(at, wall, openKind) {
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
-  const opening = createOpening(openKind, null, 0, 0, width);
+  const opening = applyOpeningPreset(createOpening(openKind, null, 0, 0, width), state.tool.preset);
   delete opening.side;
   delete opening.offset;
   opening.roomId = null;
@@ -194,8 +195,11 @@ export function placeOpeningAt(at) {
   if (res.error) { toast(res.error); return; }
   const { opening } = res;
   mutate(() => { state.project.openings.push(opening); });
-  cancelTool();
-  selectObject({ type: 'opening', id: opening.id });
+  // Инструмент остаётся активным: можно ставить следующий проём подряд.
+  // Esc — выход; проём правится кликом по нему после выхода.
+  state.ghostOpening = null; state.ghostOpeningFull = null; state.ghostDoor = null;
+  toast(`${opening.kind === 'door' ? 'Дверь' : 'Окно'} поставлена · кликайте дальше или Esc`);
+  requestDraw();
 }
 
 export function addFurniture(kind, room) {
