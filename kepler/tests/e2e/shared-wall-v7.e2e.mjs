@@ -137,3 +137,65 @@ describe('общая стена тянется ручкой — обе гран�
     assert.deepEqual(app.errors, []);
   });
 });
+
+// Тело общей стены тянут мышью, комнаты стоят вплотную (зазор 0): нижняя
+// «съедена» верхней. Двигаться должны обе номинальные грани — никакой щели.
+describe('общая стена тянется за тело — вплотную стоящие комнаты', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openNew(app.page);
+    await app.page.evaluate(async () => {
+      const { mutate } = await import('./ui/store.js');
+      const { selectObject } = await import('./ui/tools.js');
+      const { createRoom } = await import('./core/model.js');
+      const { state } = window.__kepler;
+      selectObject(null);
+      mutate(() => {
+        state.project.building.rotation = 0;
+        state.project.rooms.length = 0; state.project.items.length = 0; state.project.openings.length = 0;
+        const a = createRoom('living', 0, 0, 4000, 3000); a.id = 'A';
+        const b = createRoom('bedroom', 0, 3000, 4000, 3000); b.id = 'B';
+        state.project.rooms.push(a, b);
+      });
+      state.view.scale = 0.04; state.view.panX = 500; state.view.panY = 150; state.view.rotation = 0;
+      window.__kepler.requestDraw?.();
+    });
+  });
+  after(async () => { await app?.close(); });
+
+  const nominal = (page) => page.evaluate(() => {
+    const get = (id) => { const r = window.__kepler.state.project.rooms.find((x) => x.id === id); return r.eatBase?.base || r; };
+    const a = get('A'); const b = get('B');
+    return { aH: a.h, bY: b.y, bH: b.h };
+  });
+
+  it('обе грани едут вместе, щели нет; Ctrl+Z возвращает', async () => {
+    const { page } = app;
+    const start = await nominal(page);
+    const wallY = await page.evaluate(() => {
+      const w = window.__kepler.state.walls.find((x) => x.kind === 'shared' && x.orient === 'h');
+      return (w.center.y1 + w.center.y2) / 2;
+    });
+    const at = await planToClient(page, 2000, wallY);
+    await page.mouse.click(at.x, at.y);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    for (const dy of [300, 900, 1400, 600, -300, -700, 0, 500]) {
+      const p = await planToClient(page, 2000, wallY + dy);
+      await page.mouse.move(p.x, p.y, { steps: 6 });
+      const n = await nominal(page);
+      assert.equal(n.aH, n.bY, `щели нет на шаге ${dy}: ${JSON.stringify(n)}`);
+      assert.equal(n.bY + n.bH, 6000, 'дальняя грань B на месте');
+    }
+    await page.mouse.up();
+    const end = await nominal(page);
+    assert.notEqual(end.aH, start.aH, 'стена сдвинулась');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(await nominal(page), start);
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});

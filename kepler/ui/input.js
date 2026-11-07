@@ -1224,10 +1224,20 @@ export function bindCanvasInput() {
     if (drag.kind === 'wall') {
       const raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
       const delta = Math.round(raw / gridStep()) * gridStep();
+      // Стену двигаем по НОМИНАЛАМ комнат: съеденной (стоящей под соседом) комнате
+      // возвращается полная форма, иначе её видимая грань двигалась бы, а номинал
+      // оставался на месте — и между комнатами оставалась щель.
+      const wallIds = drag.roomStarts.map((entry) => entry.id);
+      if (liftForGesture(drag, wallIds)) {
+        drag.roomStarts = wallIds.map((id) => ({ id, room: structuredClone(roomById(state.project, id)) })).filter((entry) => entry.room);
+        drag.openingStarts = state.project.openings.filter((o) => (drag.wall.kind === 'manual' ? Boolean(o.host) : drag.wall.rooms.includes(o.roomId)))
+          .map((o) => (o.host ? { id: o.id, host: { ...o.host } } : { id: o.id, side: o.side, offset: o.offset }));
+      }
       restoreWallDragRooms(drag);
       drag.moved = delta !== 0;
       if (!drag.moved) {
         drag.valid = true;
+        liveEat(drag, { touched: wallIds });
         refreshDerived();
         requestDraw();
         return;
@@ -1236,6 +1246,7 @@ export function bindCanvasInput() {
       drag.clamped = verdict.clamped || [];
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
+      liveEat(drag, { touched: wallIds });
       refreshDerived();
       requestDraw();
       return;
@@ -1516,7 +1527,13 @@ export function bindCanvasInput() {
     }
 
     if (finished.kind === 'wall') {
-      if (!finished.moved) { requestDraw(); return; }
+      const wallIds = finished.roomStarts.map((entry) => entry.id);
+      if (!finished.moved) {
+        // Комнатам возвращали номинал на время жеста — снова съедание.
+        if (finished.lifted) { eatOverlapsAfter(wallIds, { silent: true, prev: finished.eatPrev }); refreshDerived(); }
+        requestDraw();
+        return;
+      }
       if (!finished.valid) {
         restoreFrom(finished.before);
         toast(finished.reason || 'Так переместить стену нельзя', true);
@@ -1524,8 +1541,9 @@ export function bindCanvasInput() {
       }
       for (const entry of finished.roomStarts) {
         const room = roomById(state.project, entry.id);
-        if (room?.outline) finalizeRoomOutlineKeepOpenings(state.project, room);
+        if (room?.outline && !room.eatBase) finalizeRoomOutlineKeepOpenings(state.project, room);
       }
+      eatOverlapsAfter(wallIds, { silent: true, prev: finished.eatPrev });
       reconcileOpenings();
       refreshDerived();
       pushHistory(finished.before);
