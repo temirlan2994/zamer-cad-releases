@@ -14,7 +14,7 @@ import { dragManualWallEnd, snapWallPoint } from '../core/wall-manual.js';
 import {
   boundRoomClick, boundRoomHover, finishWallChain, wallToolClick, wallToolHover,
 } from './wall-tool.js';
-import { fitOpeningOffset } from '../core/opening-spacing.js';
+import { fitOpeningOffset, snapOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
   captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
@@ -51,7 +51,7 @@ import {
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
-  addFurnitureAt, computeOpeningParams, eatOverlapsAfter, placeOpeningAt,
+  addFurnitureAt, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
@@ -359,6 +359,7 @@ function updateHoverAndGhost(world, plan, event) {
     state.ghostOpening = null;
     state.ghostOpeningFull = null;
     state.ghostDoor = null;
+    state.openingFree = event.shiftKey;
     const res = computeOpeningParams(plan);
     if (res && res.opening && !res.error) {
       if (state.tool.openKind === 'door') {
@@ -603,7 +604,7 @@ export function bindCanvasInput() {
         tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation); });
         return;
       }
-      if (t.kind === 'place-opening') { tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
+      if (t.kind === 'place-opening') { state.openingFree = event.shiftKey; tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
       if (t.kind === 'wall') {
         const mods = { shiftKey: event.shiftKey };
         tapOrNow(event, screen, () => wallToolClick(plan, mods));
@@ -1219,7 +1220,9 @@ export function bindCanvasInput() {
       const desired = openingPosAt(state.project, opening, state.walls, placedNow.wall.orient === 'h' ? plan.x : plan.y);
       // Сначала шаг сетки, потом поиск свободного места: округление не должно
       // загонять проём на соседний (зазор ≥ OPENING_GAP).
-      const clamped = fitOpeningOffset(state.project, opening, state.walls, Math.round(desired / gridStep()) * gridStep());
+      state.openingFree = event.shiftKey; // Shift — без шага и без привязки к центру
+      const clamped = fitOpeningOffset(state.project, opening, state.walls,
+        snapOpeningOffset(state.project, opening, state.walls, desired, openingSnapOpts()));
       if (clamped !== null) setOpeningPos(opening, clamped);
       requestDraw();
       return;

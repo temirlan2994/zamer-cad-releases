@@ -72,6 +72,34 @@ export function openingGaps(project, opening, walls) {
   return { wall, from, to, left, right };
 }
 
+// Шаговая привязка проёма при вставке и перетаскивании. Позиция (offset или
+// host.t) → позиция, при которой расстояния, что показаны на плане (до торца
+// стены или соседнего проёма), кратны step; ближняя сторона «круглая».
+// Если центр проёма в пределах tol от середины свободного участка стены —
+// проём встаёт ровно по центру. step ≤ 1 — без привязки (Shift).
+export function snapOpeningOffset(project, opening, walls, desired, { step = 50, tol = 0 } = {}) {
+  if (!(step > 1) && !(tol > 0)) return desired;
+  const probe = structuredClone(opening);
+  setOpeningPos(probe, desired);
+  const g = openingGaps(project, probe, walls);
+  if (!g) return desired;
+  const frame = openingFrame(project, probe, walls);
+  if (!frame) return desired;
+  const half = (Number(opening.width) || 0) / 2;
+  const center = (g.from + g.to) / 2;
+  const mid = (g.left + g.right) / 2;
+  let target = center;
+  if (tol > 0 && Math.abs(center - mid) <= tol) target = mid;
+  else if (step > 1) {
+    const gl = g.from - g.left;
+    const gr = g.right - g.to;
+    target = gl <= gr
+      ? g.left + Math.round(gl / step) * step + half
+      : g.right - Math.round(gr / step) * step - half;
+  }
+  return desired + (target - center) * frame.dir;
+}
+
 // Позиция — offset (проём комнаты) или host.t (проём ручной стены).
 export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap = OPENING_GAP, others = null } = {}) {
   const frame = openingFrame(project, opening, walls);

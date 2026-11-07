@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createOpening, createProject, createRoom } from '../core/model.js';
 import { deriveWalls, openingRect, wallRects } from '../core/walls.js';
 import {
-  OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts, windowsOnSharedWalls,
+  OPENING_GAP, fitOpeningOffset, openingGaps, resolveOpeningConflicts, snapOpeningOffset, windowsOnSharedWalls,
 } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
 
@@ -155,4 +155,27 @@ test('скрытая общая стена: наружный контур без
     reach = Math.max(reach, seg.to);
   }
   assert.ok(reach >= 9100, `щель в наружной стене после x=${reach}`);
+});
+
+test('привязка проёма: круглые расстояния до торца, середина стены, без шага', () => {
+  const project = createProject();
+  const room = createRoom('living', 0, 0, 6000, 4000);
+  project.rooms.push(room);
+  const op = createOpening('window', room.id, 0, 1234, 911);
+  project.openings.push(op);
+  const walls = deriveWalls(project);
+  const gaps = (offset) => {
+    const probe = { ...op, offset };
+    const g = openingGaps(project, probe, walls);
+    return { l: g.from - g.left, r: g.right - g.to };
+  };
+  // шаг 50: ближайший к торцу зазор кратен шагу
+  const a = snapOpeningOffset(project, op, walls, 1234, { step: 50, tol: 0 });
+  assert.equal(gaps(a).l % 50, 0, JSON.stringify(gaps(a)));
+  // рядом с серединой — ровно по центру: зазоры равны
+  const mid = snapOpeningOffset(project, op, walls, 3010, { step: 50, tol: 100 });
+  const gm = gaps(mid);
+  assert.ok(Math.abs(gm.l - gm.r) < 1, JSON.stringify(gm));
+  // Shift (step 1, tol 0) — позиция не меняется
+  assert.equal(snapOpeningOffset(project, op, walls, 1234, { step: 1, tol: 0 }), 1234);
 });

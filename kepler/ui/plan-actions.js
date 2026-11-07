@@ -1,12 +1,12 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
 import { applyOpeningPreset } from '../core/opening-preset.js';
-import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, roomType } from '../core/catalog.js';
+import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, roomType } from '../core/catalog.js';
 import { reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
-import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
+import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts, snapOpeningOffset } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
 import { planGapMove } from '../core/gaps.js';
 import {
@@ -127,6 +127,14 @@ export function placeRoomAt(at, typeOverride = null) {
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли
 // зависят от того, с какой стороны стены и ближе к какому концу стоит мышь.
+// Привязка проёма при вставке/перетаскивании: шаг по зуму, середина стены;
+// Shift (state.openingFree) — свободно, с точностью до мм.
+export function openingSnapOpts() {
+  if (state.openingFree) return { step: 1, tol: 0 };
+  const scale = state.view?.scale || 0.08;
+  return { step: gridStepForScale(scale), tol: 12 / scale };
+}
+
 export function computeOpeningParams(at) {
   const openKind = state.tool.openKind;
   const wall = state.tool.presetWall ? findWall(state.tool.presetWall.key, state.tool.presetWall.from) : nearestWall(at);
@@ -145,7 +153,8 @@ export function computeOpeningParams(at) {
   const clamped = clampOpeningOffset(state.project, opening, state.walls, along - base);
   if (clamped === null) return { error: 'На этом участке стены проём не помещается' };
   // Ближайшее место, где проём не налезает на соседние (зазор ≥ OPENING_GAP).
-  const free = fitOpeningOffset(state.project, opening, state.walls, along - base);
+  const free = fitOpeningOffset(state.project, opening, state.walls,
+    snapOpeningOffset(state.project, opening, state.walls, along - base, openingSnapOpts()));
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.offset = free;
   if (openKind === 'door') {
@@ -173,7 +182,8 @@ function computeHostOpening(at, wall, openKind) {
   const along = wall.orient === 'h' ? at.x : at.y;
   opening.host = { wallId: wall.wallId, t: (along - wall.axisStart) * wall.axisDir };
   if (clampOpeningOffset(state.project, opening, state.walls, opening.host.t) === null) return { error: 'На этой стене проём не помещается' };
-  const free = fitOpeningOffset(state.project, opening, state.walls, opening.host.t);
+  const free = fitOpeningOffset(state.project, opening, state.walls,
+    snapOpeningOffset(state.project, opening, state.walls, opening.host.t, openingSnapOpts()));
   if (free === null) return { error: `На этой стене нет места: проём пересёкся бы с соседними (нужен зазор ≥ ${OPENING_GAP} мм)` };
   opening.host.t = free;
   if (openKind === 'door') {
