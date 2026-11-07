@@ -12,7 +12,7 @@ import { moveWallBy } from './wall-edit.js';
 import {
   dragManualWallEnd, manualWallById, moveManualWall, setManualWallThickness, setWallHeight,
 } from './wall-manual.js';
-import { clampWallThickness, setSharedWallThickness } from './wall-thickness.js';
+import { clampWallThickness, setSharedWallThickness, setWallSpan } from './wall-thickness.js';
 import { deriveWalls, manualWallGeometry } from './walls.js';
 
 export const WALL_H_MIN = 100; // мм — ниже стену не делаем
@@ -84,8 +84,7 @@ function applyThickness(project, rec, t, axis) {
   }
   const value = clampWallThickness(t, rec.thickness);
   if (rec.kind === 'shared') return setSharedWallThickness(project, rec, value);
-  project.wallOverrides[rec.key] = { ...(project.wallOverrides[rec.key] || {}), thickness: value };
-  return { ok: true };
+  return setWallSpan(project, rec, { thickness: value }); // только этот участок
 }
 
 function applyLength(project, rec, endValue, axis) {

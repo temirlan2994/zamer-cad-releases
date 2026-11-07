@@ -14,8 +14,9 @@ import { captureOpeningAnchors, reanchorOpenings } from './opening-anchor.js';
 import { roomContainsPoint, roomNotchInnerPoint } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
 import { setManualWallKind } from './wall-manual.js';
+import { spanHostId, spanOrigin, writeSpan, writeWhole } from './wall-spans.js';
 import {
-  WALL_T_MAX, WALL_T_MIN, findAdjacencies, projectAdjacencies, sharedKey, sideEdge, wallClassThickness,
+  WALL_T_MAX, WALL_T_MIN, deriveWalls, findAdjacencies, projectAdjacencies, sharedKey, sideEdge, wallClassThickness,
 } from './walls.js';
 
 export function clampWallThickness(value, fallback = DEFAULT_PARTITION) {
@@ -187,22 +188,47 @@ export function setSharedWallThickness(project, wall, newT) {
   return { ok: true, moved: [...moving], stretched: [...stretched], broken };
 }
 
-// Меняет тип стены. Если толщина не настраивалась вручную (равна толщине
-// прежнего класса по умолчанию), стена получает толщину нового класса.
+// Толщина / тип / скрытие ТОЛЬКО выделенного участка стены wall (запись
+// deriveWalls: key + from..to). Если других кусков у ключа нет — значение
+// пишется на весь ключ (как раньше), иначе — участок wallOverrides[key].spans
+// (core/wall-spans.js); остальные участки той же стороны не меняются.
+// Толщину общей стены задаёт зазор пары — её меняет setSharedWallThickness.
+export function setWallSpan(project, wall, patch) {
+  if (!wall?.key || !['own', 'shared'].includes(wall.kind)) return { ok: false, reason: 'Эту стену так изменить нельзя' };
+  const clean = { ...patch };
+  if (wall.kind === 'shared') delete clean.thickness;
+  if (!Object.keys(clean).length) return { ok: true, whole: true };
+  if (!project.wallOverrides) project.wallOverrides = {};
+  const cur = project.wallOverrides[wall.key];
+  const overlaps = (w) => w.orient === wall.orient && Math.min(w.to, wall.to) - Math.max(w.from, wall.from) > 1;
+  const others = deriveWalls(project).filter((w) => w.key === wall.key && !overlaps(w));
+  if (!others.length) {
+    project.wallOverrides[wall.key] = writeWhole(cur, clean);
+    return { ok: true, whole: true };
+  }
+  const origin = spanOrigin(roomById(project, spanHostId(wall.key)), wall.orient);
+  project.wallOverrides[wall.key] = writeSpan(cur, wall.orient, wall.from - origin, wall.to - origin, clean);
+  return { ok: true, whole: false };
+}
+
+// Меняет тип стены (только выделенного участка). Если толщина не
+// настраивалась вручную (равна толщине прежнего класса по умолчанию), стена
+// получает толщину нового класса: своя — на том же участке, общая — для пары
+// (зазор, setSharedWallThickness).
 export function setWallKind(project, wall, kind) {
   if (wall?.kind === 'manual') return setManualWallKind(project, wall.wallId, kind);
   const current = Math.round(wall.thickness);
   const wasDefault = Math.abs(current - wallClassThickness(project.settings, wall.wallType)) <= 1;
   const target = wasDefault ? wallClassThickness(project.settings, kind) : current;
   const snapOverrides = structuredClone(project.wallOverrides);
-  setOverride(project, wall.key, { kind });
-  if (target === current) return { ok: true, thickness: current };
   if (wall.kind === 'shared') {
+    setWallSpan(project, wall, { kind });
+    if (target === current) return { ok: true, thickness: current };
     const result = setSharedWallThickness(project, wall, target);
     if (!result.ok) project.wallOverrides = snapOverrides;
     return { ...result, thickness: target };
   }
-  setOverride(project, wall.key, { thickness: target });
+  setWallSpan(project, wall, target === current ? { kind } : { kind, thickness: target });
   return { ok: true, thickness: target };
 }
 

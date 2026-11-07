@@ -22,7 +22,7 @@ import {
 } from '../core/walls.js';
 import { manualWallById, removeManualWall, setManualWallThickness } from '../core/wall-manual.js';
 import { applyStairPreset } from '../core/stairs.js';
-import { clampWallThickness, setSharedWallThickness, setWallKind } from '../core/wall-thickness.js';
+import { clampWallThickness, setSharedWallThickness, setWallKind, setWallSpan } from '../core/wall-thickness.js';
 import { toast } from './dom.js';
 import { findWall, nearestWall } from './hit.js';
 import { renderProps } from './props.js';
@@ -75,8 +75,7 @@ export function toggleSelectedWallHidden() {
       if (own) own.hidden = hidden;
       return;
     }
-    const current = state.project.wallOverrides[wall.key] || {};
-    state.project.wallOverrides[wall.key] = { ...current, hidden };
+    setWallSpan(state.project, wall, { hidden }); // только выделенный участок
   });
   selectObject({ ...sel });
   toast(hidden ? 'Стена скрыта · Ctrl+Z — вернуть' : 'Стена снова показана');
@@ -822,9 +821,9 @@ export function changeWallKind(wall, kind) {
   applyWallChange(wall, (project) => setWallKind(project, wall, kind));
 }
 
+// Своя стена: толщина только выделенного участка (core/wall-thickness.js setWallSpan).
 function setOwnWallThickness(project, wall, newT) {
-  const t = clampWallThickness(newT, wall.thickness);
-  project.wallOverrides[wall.key] = { ...(project.wallOverrides[wall.key] || {}), thickness: t };
+  setWallSpan(project, wall, { thickness: clampWallThickness(newT, wall.thickness) });
 }
 
 function applyWallChange(wall, apply) {
@@ -840,7 +839,10 @@ function applyWallChange(wall, apply) {
   pushHistory(before);
   afterChange();
   if (result.broken?.length) toast(`Внимание: разорвано стыковок — ${result.broken.length}, проверьте план`, true);
-  const moved = state.walls.find((w) => w.key === wall.key) || wall;
+  // У ключа может быть несколько участков — выделение остаётся на том же.
+  const at = (wall.from + wall.to) / 2;
+  const moved = state.walls.find((w) => w.key === wall.key && w.orient === wall.orient && w.from <= at && w.to >= at) ||
+    state.walls.find((w) => w.key === wall.key) || wall;
   selectObject({ type: 'wall', key: wall.key, from: wall.kind === 'manual' ? undefined : moved.from });
 }
 

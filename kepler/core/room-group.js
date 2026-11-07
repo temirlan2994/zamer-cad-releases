@@ -13,6 +13,7 @@ import { createItem } from './model.js';
 import { planRoomsCopy } from './duplicate-room.js';
 import { roomBoundaryEdges, roomContainsPoint, roomPolygon } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
+import { turnSpans } from './wall-spans.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -162,6 +163,8 @@ function turnCargo(project, cargo, cx, cy) {
     const anchor = openingAnchor(room, opening);
     if (anchor) anchors.set(opening.id, anchor);
   }
+  // Высоты до поворота — для участков стен (core/wall-spans.js turnSpans).
+  const oldH = new Map(cargo.rooms.map((r) => [r.id, (r.eatBase?.base || r).h]));
   for (const room of cargo.rooms) turnRoomShape(room, cx, cy);
   for (const item of cargo.items) {
     const p = turnPoint(item, cx, cy);
@@ -194,10 +197,15 @@ function turnCargo(project, cargo, cx, cy) {
     const moved = {};
     for (const key of Object.keys(overrides)) {
       const [tag, roomId, ...rest] = key.split('|');
+      // Общая стена пары внутри группы: участки (тип/скрытие) — от комнаты a.
+      if (tag === 's' && cargoIds.has(roomId) && cargoIds.has(rest[0])) {
+        overrides[key] = turnSpans(overrides[key], oldH.get(roomId));
+        continue;
+      }
       if (tag !== 'e' || !cargoIds.has(roomId) || !rest.length) continue;
       const raw = rest.join('|');
       const side = /^\d+$/.test(raw) ? Number(raw) : raw;
-      moved[`e|${roomId}|${turnSideName(side)}`] = overrides[key];
+      moved[`e|${roomId}|${turnSideName(side)}`] = turnSpans(overrides[key], oldH.get(roomId));
       delete overrides[key];
     }
     Object.assign(overrides, moved);

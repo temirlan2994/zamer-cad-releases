@@ -12,6 +12,7 @@ import { DEFAULT_BEARING, DEFAULT_PARTITION, DEFAULT_EXTERIOR, isOpenRoom, isSha
 import {
   roomBoundaryEdges, roomContainsPoint, roomNotchEdges, roomNotchInnerPoint, roomNotchSideCuts, roomPolygon, roomRects,
 } from './room-shape.js';
+import { overridePieces, spanHostId, spanOrigin } from './wall-spans.js';
 import { deriveWallsV2, resolveOpeningWall } from './walls-v2.js';
 
 export { deriveWallsV2, manualWallGeometry, resolveOpeningWall, wallOutline } from './walls-v2.js';
@@ -261,6 +262,7 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
   const exterior = project.settings?.exterior || DEFAULT_EXTERIOR;
   const adjacencies = findAdjacencies(project.rooms, partition, overrides);
   const sharedByRoomSide = new Map(); // `${roomId}|${side}` -> intervals
+  const byIdAll = new Map(project.rooms.map((r) => [r.id, r]));
 
   const noteShared = (roomId, side, from, to) => {
     const key = `${roomId}|${side}`;
@@ -280,38 +282,43 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
       `${Math.round(Math.max(edgeA.edge, edgeB.edge))}|${Math.round(adj.from)}|${Math.round(adj.to)}`;
     if (seenPairs.has(seenKey)) continue;
     seenPairs.add(seenKey);
-    const override = overrides[key];
     const orient = edgeA.orient;
     const oppositeEdge = edgeA.edge + edgeA.outward * adj.gap;
     const acrossFrom = Math.min(edgeA.edge, oppositeEdge);
-    const band = orient === 'h'
-      ? { x: adj.from, y: acrossFrom, w: adj.to - adj.from, h: adj.gap }
-      : { x: acrossFrom, y: adj.from, w: adj.gap, h: adj.to - adj.from };
     // edgeA может принадлежать как левому/верхнему, так и правому/нижнему
     // помещению. Направление outward обязательно: без него стена для второй
     // ориентации уезжала внутрь комнаты и оставляла белую щель в зазоре.
     const mid = edgeA.edge + edgeA.outward * (adj.gap / 2);
-    faces.set(walls.length, {
-      [adj.a.id]: { edge: edgeA.edge, outward: edgeA.outward },
-      [adj.b.id]: { edge: edgeB.edge, outward: edgeB.outward },
-    });
-    walls.push({
-      key,
-      kind: 'shared',
-      orient,
-      rooms: [adj.a.id, adj.b.id],
-      sides: { [adj.a.id]: adj.sideA, [adj.b.id]: adj.sideB },
-      from: adj.from,
-      to: adj.to,
-      edge: edgeA.edge,
-      thickness: adj.gap,
-      band,
-      center: orient === 'h'
-        ? { x1: adj.from, y1: mid, x2: adj.to, y2: mid }
-        : { x1: mid, y1: adj.from, x2: mid, y2: adj.to },
-      wallType: wallTypeOf(override, 'partition'),
-      hidden: Boolean(override?.hidden),
-    });
+    // Тип и скрытие могут быть заданы на участке (core/wall-spans.js);
+    // толщина общей стены — всегда зазор пары.
+    const host = byIdAll.get(spanHostId(key));
+    for (const piece of overridePieces(overrides[key], spanOrigin(host, orient), orient, adj.from, adj.to)) {
+      const override = piece.override;
+      const band = orient === 'h'
+        ? { x: piece.from, y: acrossFrom, w: piece.to - piece.from, h: adj.gap }
+        : { x: acrossFrom, y: piece.from, w: adj.gap, h: piece.to - piece.from };
+      faces.set(walls.length, {
+        [adj.a.id]: { edge: edgeA.edge, outward: edgeA.outward },
+        [adj.b.id]: { edge: edgeB.edge, outward: edgeB.outward },
+      });
+      walls.push({
+        key,
+        kind: 'shared',
+        orient,
+        rooms: [adj.a.id, adj.b.id],
+        sides: { [adj.a.id]: adj.sideA, [adj.b.id]: adj.sideB },
+        from: piece.from,
+        to: piece.to,
+        edge: edgeA.edge,
+        thickness: adj.gap,
+        band,
+        center: orient === 'h'
+          ? { x1: piece.from, y1: mid, x2: piece.to, y2: mid }
+          : { x1: mid, y1: piece.from, x2: mid, y2: piece.to },
+        wallType: wallTypeOf(override, 'partition'),
+        hidden: Boolean(override?.hidden),
+      });
+    }
     noteShared(adj.a.id, adj.sideA, adj.from, adj.to);
     noteShared(adj.b.id, adj.sideB, adj.from, adj.to);
   }
@@ -334,9 +341,15 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
       const subs = [...(sharedByRoomSide.get(`${room.id}|${side}`) || []), ...(notchCuts[side] || [])];
       const rest = subtractIntervals(edge.from, edge.to, subs);
       const key = ownKey(room.id, side);
-      const override = overrides[key];
-      const baseThick = (override && override.thickness) || (internal ? partition : exterior);
-      const baseType = wallTypeOf(override, internal ? 'partition' : 'exterior');
+      // Толщина/тип/скрытие — у ключа или у участка (core/wall-spans.js):
+      // текущий кусок стороны задаёт cur, emit/emitThick читают его.
+      const cur = { override: overrides[key], thick: 0, type: '' };
+      const setPiece = (override) => {
+        cur.override = override;
+        cur.thick = (override && override.thickness) || (internal ? partition : exterior);
+        cur.type = wallTypeOf(override, internal ? 'partition' : 'exterior');
+      };
+      setPiece(overrides[key]);
 
       // Участки, попадающие внутрь другой комнаты верхнего уровня (перекрытие),
       // становятся тонкой перегородкой.
@@ -370,7 +383,7 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
           const lo = edge.orient === 'h' ? o.y : o.x;
           const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
           const gap = edge.outward > 0 ? lo - edge.edge : edge.edge - hi;
-          if (gap <= 1 || gap >= baseThick - 1) continue;
+          if (gap <= 1 || gap >= WALL_T_MAX) continue; // с толщиной куска сравнивает emitThick
           const aLo = edge.orient === 'h' ? o.x : o.y;
           const aHi = edge.orient === 'h' ? o.x + o.w : o.y + o.h;
           const f = Math.max(edge.from, aLo);
@@ -395,13 +408,16 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
             ? { x1: segFrom, y1: mid, x2: segTo, y2: mid }
             : { x1: mid, y1: segFrom, x2: mid, y2: segTo },
           wallType: type,
-          hidden: Boolean(override?.hidden),
+          hidden: Boolean(cur.override?.hidden),
         });
       };
 
       // Полная толщина, кроме участков напротив близкого соседа (facing).
       const emitThick = (segFrom, segTo) => {
+        const baseThick = cur.thick;
+        const baseType = cur.type;
         const cuts = facing
+          .filter((c) => c.thickness < baseThick - 1)
           .map((c) => ({ from: Math.max(segFrom, c.from), to: Math.min(segTo, c.to), thickness: c.thickness }))
           .filter((c) => c.to - c.from > 1);
         if (!cuts.length) { emit(segFrom, segTo, baseThick, baseType); return; }
@@ -420,14 +436,18 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
         for (const p of parts) emit(p.from, p.to, p.thick, baseType);
       };
 
-      for (const seg of rest) {
-        if (!covered.length) { emitThick(seg.from, seg.to); continue; }
-        const thinParts = covered
-          .map((c) => ({ from: Math.max(seg.from, c.from), to: Math.min(seg.to, c.to) }))
-          .filter((c) => c.to - c.from > 1);
-        const thickParts = subtractIntervals(seg.from, seg.to, thinParts);
-        for (const p of thickParts) emitThick(p.from, p.to);
-        for (const p of thinParts) emit(p.from, p.to, Math.min(baseThick, partition), 'partition');
+      const origin = spanOrigin(room, edge.orient);
+      for (const whole of rest) {
+        for (const seg of overridePieces(overrides[key], origin, edge.orient, whole.from, whole.to)) {
+          setPiece(seg.override);
+          if (!covered.length) { emitThick(seg.from, seg.to); continue; }
+          const thinParts = covered
+            .map((c) => ({ from: Math.max(seg.from, c.from), to: Math.min(seg.to, c.to) }))
+            .filter((c) => c.to - c.from > 1);
+          const thickParts = subtractIntervals(seg.from, seg.to, thinParts);
+          for (const p of thickParts) emitThick(p.from, p.to);
+          for (const p of thinParts) emit(p.from, p.to, Math.min(cur.thick, partition), 'partition');
+        }
       }
     }
   }
