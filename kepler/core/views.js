@@ -13,8 +13,10 @@
 //   project.sheets[] = { id, no, name, format, orient, viewports[] } — листы
 //     пользователя (как в Revit): format 'A4' | 'A3' | 'A2' | 'A1', orient
 //     'landscape' | 'portrait'; viewports[] = { id, viewId, x, y, scale,
-//     title? } — видовые экраны: viewId — ключ вида (viewKey), x, y — центр
-//     вида в мм листа, scale — знаменатель масштаба, title — своя подпись.
+//     title?, no?, crop?, cam? } — видовые экраны: viewId — ключ вида
+//     (viewKey), x, y — центр всего (необрезанного) вида в мм листа, scale —
+//     знаменатель масштаба, title — своя подпись, no — свой номер вида на
+//     листе, crop — рамка обрезки, cam — снимок камеры 3D (см. ниже).
 //     Один вид — не больше чем на одном листе.
 //   project.sheetsAuto === false — автолисты альбома (sheetPlan() в
 //     ui/sheet.js: генплан, разрезы участка, этажи) скрыты. Без поля они
@@ -99,7 +101,140 @@ export function normalizeViewport(vp) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !(scale > 0) || !Number.isFinite(scale)) return null;
   const out = { id: str(vp.id), viewId: vp.viewId, x: round1(x), y: round1(y), scale: Math.round(scale) || 1 };
   if (str(vp.title)) out.title = vp.title;
+  const no = vp.no == null ? '' : String(vp.no).trim();
+  if (no) out.no = no.slice(0, 8);
+  const crop = normalizeCrop(vp.crop);
+  if (crop) out.crop = crop;
+  const cam = normalizeCam(vp.cam);
+  if (cam) out.cam = cam;
   return out;
+}
+
+// ------------------------------------------------------------ обрезка вида
+//
+// viewport.crop = { x0, y0, x1, y1, off? } — рамка обрезки (crop region
+// Revit) в мм МОДЕЛИ от начала содержимого вида: точка (0, 0) — левый
+// верхний угол чертежа без полей (план — габарит, фасад/разрез — u0/z1,
+// 3D — габарит аксонометрии). Поэтому при смене масштаба рамка
+// масштабируется вместе с видом. off: true — обрезка выключена (рамка
+// помнится, «Обрезать вид» её вернёт). Поля вида (отметки фасада справа,
+// рамка 3D) — в мм бумаги, рамка может их срезать, как аннотации в Revit.
+// Видовой экран без crop рисуется целиком, как раньше.
+
+export const CROP_MIN_MM = 5; // мм бумаги — наименьшая сторона рамки
+
+export function normalizeCrop(c) {
+  if (!isObj(c)) return null;
+  const n = ['x0', 'y0', 'x1', 'y1'].map((k) => Number(c[k]));
+  if (!n.every(Number.isFinite)) return null;
+  const x0 = Math.round(Math.min(n[0], n[2]));
+  const x1 = Math.round(Math.max(n[0], n[2]));
+  const y0 = Math.round(Math.min(n[1], n[3]));
+  const y1 = Math.round(Math.max(n[1], n[3]));
+  if (x1 - x0 < 1 || y1 - y0 < 1) return null;
+  const out = { x0, y0, x1, y1 };
+  if (c.off === true) out.off = true;
+  return out;
+}
+
+// Содержимое растра вида при знаменателе d: frame = { w, h, padL, padT, d }
+// — размер растра на бумаге (мм) и поле до начала чертежа (мм бумаги).
+// Прямоугольник обрезки в мм бумаги от левого верхнего угла растра или
+// null (обрезки нет / выключена). Обрезается по краю растра.
+export function cropPaperRect(crop, frame) {
+  if (!crop || crop.off) return null;
+  const { w, h, padL = 0, padT = 0, d } = frame;
+  const r = {
+    x0: clamp(padL + crop.x0 / d, 0, w), y0: clamp(padT + crop.y0 / d, 0, h),
+    x1: clamp(padL + crop.x1 / d, 0, w), y1: clamp(padT + crop.y1 / d, 0, h),
+  };
+  return r.x1 - r.x0 > 0.01 && r.y1 - r.y0 > 0.01 ? r : null;
+}
+
+// Обратно: прямоугольник в мм бумаги растра → crop в мм модели.
+export function cropFromPaper(rect, frame) {
+  const { padL = 0, padT = 0, d } = frame;
+  return normalizeCrop({ x0: (rect.x0 - padL) * d, y0: (rect.y0 - padT) * d, x1: (rect.x1 - padL) * d, y1: (rect.y1 - padT) * d });
+}
+
+// Ручки рамки: углы и середины сторон.
+export const CROP_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+// Точки ручек прямоугольника { x0, y0, x1, y1 }: [{ id, x, y }].
+export function cropHandlePoints(r) {
+  const mx = (r.x0 + r.x1) / 2;
+  const my = (r.y0 + r.y1) / 2;
+  const at = { nw: [r.x0, r.y0], n: [mx, r.y0], ne: [r.x1, r.y0], e: [r.x1, my], se: [r.x1, r.y1], s: [mx, r.y1], sw: [r.x0, r.y1], w: [r.x0, my] };
+  return CROP_HANDLES.map((id) => ({ id, x: at[id][0], y: at[id][1] }));
+}
+
+// Тянуть ручку: rect — рамка в начале жеста (мм бумаги растра), dx, dy —
+// сдвиг мыши (мм листа), origin — левый верхний угол растра на листе (для
+// привязки краёв к сетке листа step мм; 0 — без шага), bounds — { w, h }
+// растра, min — наименьшая сторона. Края не выходят за растр.
+export function dragCropHandle(rect, handle, dx, dy, { origin = { x: 0, y: 0 }, step = 0, bounds, min = CROP_MIN_MM } = {}) {
+  const r = { ...rect };
+  const snap = (v, o) => (step ? snapMm(v + o, step) - o : v);
+  const w = bounds?.w ?? Infinity;
+  const h = bounds?.h ?? Infinity;
+  if (handle.includes('w')) r.x0 = clamp(snap(rect.x0 + dx, origin.x), 0, rect.x1 - min);
+  if (handle.includes('e')) r.x1 = clamp(snap(rect.x1 + dx, origin.x), rect.x0 + min, w);
+  if (handle.includes('n')) r.y0 = clamp(snap(rect.y0 + dy, origin.y), 0, rect.y1 - min);
+  if (handle.includes('s')) r.y1 = clamp(snap(rect.y1 + dy, origin.y), rect.y0 + min, h);
+  return r;
+}
+
+// ------------------------------------------------------------ камера 3D
+//
+// viewport.cam = { yaw, pitch, dist?, roof? } — снимок камеры 3D-вида
+// (ui/view3d.js: углы в радианах, dist — масштаб окна 3D, на листе масштаб
+// задаёт видовой экран; roof — крыша показана). Без cam 3D на листе —
+// фиксированная аксонометрия, как в B3.
+
+export function normalizeCam(c) {
+  if (!isObj(c)) return null;
+  const yaw = Number(c.yaw);
+  const pitch = Number(c.pitch);
+  if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return null;
+  const out = { yaw: Math.round(yaw * 10000) / 10000, pitch: Math.round(clamp(pitch, -1.55, 1.55) * 10000) / 10000 };
+  const dist = Number(c.dist);
+  if (dist > 0 && Number.isFinite(dist)) out.dist = Math.round(dist);
+  if (c.roof === true) out.roof = true;
+  return out;
+}
+
+export const camKey = (cam) => (cam ? `${cam.yaw}/${cam.pitch}/${cam.roof ? 1 : 0}` : 'axo');
+
+// ------------------------------------------------------------ номера видов
+//
+// viewport.no — номер вида на листе (как «Номер вида» Revit). Без поля —
+// по порядку размещения: 1, 2, 3…, пропуская номера, заданные вручную;
+// удалили вид — следующие перенумеровываются.
+
+export function viewportNumbers(sheet) {
+  const list = sheet?.viewports || [];
+  const used = new Set(list.map((vp) => vp.no).filter(Boolean));
+  const out = new Map();
+  let k = 1;
+  for (const vp of list) {
+    if (vp.no) { out.set(vp.id, vp.no); continue; }
+    while (used.has(String(k))) k += 1;
+    out.set(vp.id, String(k));
+    k += 1;
+  }
+  return out;
+}
+
+export const viewportNo = (sheet, vp) => viewportNumbers(sheet).get(vp.id) || '';
+
+// Где размещён вид: { sheet, vp, no, mark: 'Л3-1', text: 'Лист 3, вид 1' }
+// или null.
+export function viewPlacement(project, viewId) {
+  const sheet = sheetOfView(project, viewId);
+  if (!sheet) return null;
+  const vp = sheet.viewports.find((v) => v.viewId === viewId);
+  const no = viewportNo(sheet, vp);
+  return { sheet, vp, no, mark: `Л${sheet.no}-${no}`, text: `Лист ${sheet.no}, вид ${no}` };
 }
 
 export function normalizeSheet(s, i) {

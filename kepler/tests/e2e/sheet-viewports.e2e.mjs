@@ -91,8 +91,8 @@ describe('листы пользователя — компьютер 1440', () =
     assert.ok(await inkIn(page, vp.box) > 0.05, 'фасад нарисован на листе');
     assert.match(await page.textContent('#toast'), /Фасад Север — на листе 3, М 1:\d+/);
     assert.equal(d.selected, vp.id, 'новый вид выбран');
-    // Дерево помечает размещённый вид номером листа.
-    assert.equal(await page.textContent('#viewTree [data-view="elev-N"] .vt-sheet'), 'Л3');
+    // Дерево помечает размещённый вид номером листа и номером вида (B4).
+    assert.equal(await page.textContent('#viewTree [data-view="elev-N"] .vt-sheet'), 'Л3-1');
     assert.deepEqual(app.errors, []);
   });
 

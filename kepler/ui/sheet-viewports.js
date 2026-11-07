@@ -5,8 +5,12 @@
 //   sheetPlan()); фасад и разрез по плану — ui/render-elevation.js; разрез
 //   участка — SVG ui/landscape-section-svg.js (растр асинхронно); 3D —
 //   аксонометрия граней core/mesh3d.js (canvas 2D, по глубине).
-// Под видом — подпись «Название · М 1:100». Растр видов кешируется по
-// содержимому проекта: сдвиг вида по листу его не перерисовывает.
+// Под видом — подпись Revit: кружок-маркер «№ / Л3», «№ · Название»,
+// «М 1:100». Растр видов кешируется по содержимому проекта, масштабу,
+// камере 3D и ступени разрешения (×1 — 150 dpi, как в PDF; ×2, ×4 — для
+// зума рабочего листа): сдвиг вида по листу его не перерисовывает.
+// Обрезка (viewport.crop, core/views.js) — clip при отрисовке: растр
+// строится целиком, рисуется только часть внутри рамки (и в PDF/PNG).
 
 import { buildElevation } from '../core/elevation.js';
 import { sectionProfile } from '../core/landscape-section.js';
@@ -14,7 +18,7 @@ import { buildHouseMesh } from '../core/mesh3d.js';
 import { groundLevel, levelProject } from '../core/model.js';
 import { buildSection } from '../core/section.js';
 import {
-  VIEWPORT_TITLE_H, sheetFrame, sheetSize, viewById, viewportScales, viewportTitle,
+  VIEWPORT_TITLE_H, camKey, cropPaperRect, sheetFrame, sheetSize, viewById, viewportNumbers, viewportScales, viewportTitle,
 } from '../core/views.js';
 import { sheetLandscapeStyle } from './landscape-style.js';
 import { sectionSvg, sectionSvgSize } from './landscape-section-svg.js';
@@ -26,7 +30,10 @@ import { svgAtDpi } from './sheet-sections.js';
 import { history, state } from './state.js';
 
 const CSS = 96 / 25.4; // CSS px на мм: линии и шрифты — «как на экране»
-const MAX_SIDE_PX = 6000; // предел растра одного вида
+const MAX_SIDE_PX = 6000; // предел растра одного вида (×1 — PDF/PNG)
+const MAX_SIDE_ZOOM = 8192; // предел растра на ступенях ×2/×4
+const MAX_AREA_ZOOM = 24e6; // пикселей на растр ступени ×2/×4
+export const RASTER_STEPS = [1, 2, 4];
 const ELEV_PAD = { l: 4, r: 36, t: 6, b: 4 }; // мм вокруг фасада: справа — отметки
 const AXO = { az: (35 * Math.PI) / 180, el: (30 * Math.PI) / 180 };
 const PAPER = elevationColors('#ffffff');
@@ -57,21 +64,26 @@ function groundProject(project) {
   return levelProject(project, groundLevel(project).id);
 }
 
+// Камера вида: снимок камеры 3D только у 3D-вида.
+const camOf = (viewId, cam) => (viewId === '3d' && cam ? cam : null);
+
 // Геометрия вида (не зависит от масштаба): { kind, extent: { w, h } мм
-// модели, ... } или null — вид пуст / удалён.
-function viewGeometry(project, viewId) {
+// модели, ... } или null — вид пуст / удалён. cam — снимок камеры 3D.
+function viewGeometry(project, viewId, cam = null) {
   contentSig(project);
-  if (geoCache.map.has(viewId)) return geoCache.map.get(viewId);
+  const c = camOf(viewId, cam);
+  const key = `${viewId}|${camKey(c)}`;
+  if (geoCache.map.has(key)) return geoCache.map.get(key);
   const desc = viewById(project, viewId);
   let geo = null;
   if (desc) {
-    try { geo = buildGeometry(project, desc); } catch (error) { console.error('Вид на листе не построился:', error); }
+    try { geo = buildGeometry(project, desc, c); } catch (error) { console.error('Вид на листе не построился:', error); }
   }
-  geoCache.map.set(viewId, geo);
+  geoCache.map.set(key, geo);
   return geo;
 }
 
-function buildGeometry(project, desc) {
+function buildGeometry(project, desc, cam = null) {
   if (desc.kind === 'plan') {
     const lp = levelProject(project, desc.levelId);
     if (!lp.rooms.length) return null;
@@ -102,9 +114,9 @@ function buildGeometry(project, desc) {
     return { desc, kind: 'lsection', prof, model: { w: s100.width * 100, h: s100.height * 100 } };
   }
   if (desc.kind === '3d') {
-    const faces = buildHouseMesh(project, { roof: false, site: false });
+    const faces = buildHouseMesh(project, { roof: Boolean(cam?.roof), site: false });
     if (!faces.length) return null;
-    const proj = axoFaces(faces);
+    const proj = axoFaces(faces, cam);
     if (!proj.list.length) return null;
     return { desc, kind: '3d', ...proj, model: { w: proj.box.x1 - proj.box.x0, h: proj.box.y1 - proj.box.y0 } };
   }
@@ -123,7 +135,21 @@ function paperSize(geo, d) {
   return { w: geo.model.w / d, h: geo.model.h / d };
 }
 
-export const viewportPaperSize = (project, viewId, d) => paperSize(viewGeometry(project, viewId), d);
+// Поле до начала чертежа в растре вида, мм бумаги (core/views.js
+// cropPaperRect: начало координат рамки обрезки).
+function contentPad(geo) {
+  if (geo?.kind === 'elevation') return { padL: ELEV_PAD.l, padT: ELEV_PAD.t };
+  if (geo?.kind === '3d') return { padL: 2, padT: 2 };
+  return { padL: 0, padT: 0 };
+}
+
+export const viewportPaperSize = (project, viewId, d, cam = null) => paperSize(viewGeometry(project, viewId, cam), d);
+
+// Растр вида на бумаге: { w, h, padL, padT, d } — для рамки обрезки.
+export function viewportFrame(project, vp) {
+  const geo = viewGeometry(project, vp.viewId, vp.cam);
+  return { ...paperSize(geo, vp.scale), ...contentPad(geo), d: vp.scale };
+}
 
 // Центр вида так, чтобы вид с подписью не выходил за рамку листа (если
 // помещается), мм.
@@ -179,26 +205,53 @@ function hexRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+// Проекция аксонометрии: P(точка в осях дома) → { u, v (мм, v вниз),
+// depth (больше — ближе к глазу) }, facing(нормаль) > 0 — грань к глазу.
+// Без cam — фиксированная аксонометрия B3; с cam — камера окна 3D
+// (ui/view3d.js: yaw, pitch в правой системе X = x, Y = −y, Z = z;
+// ортографическая, как там).
+export function axoProjection(cam = null) {
+  if (!cam) {
+    const c = Math.cos(AXO.az);
+    const s = Math.sin(AXO.az);
+    const ce = Math.cos(AXO.el);
+    const se = Math.sin(AXO.el);
+    return {
+      P: (p) => {
+        const px = p.x * c + p.y * s;
+        const py = -p.x * s + p.y * c;
+        return { u: px, v: py * se - p.z * ce, depth: py * ce + p.z * se };
+      },
+      facing: (n) => (-n.x * s + n.y * c) * ce + n.z * se,
+    };
+  }
+  const cp = Math.cos(cam.pitch);
+  const eye = { x: cp * Math.cos(cam.yaw), y: cp * Math.sin(cam.yaw), z: Math.sin(cam.pitch) }; // к глазу
+  const rl = Math.hypot(eye.y, eye.x) || 1;
+  const r = { x: -eye.y / rl, y: eye.x / rl, z: 0 }; // право = f × Z, f = −eye
+  const up = { // верх = r × f = eye × r
+    x: eye.y * r.z - eye.z * r.y,
+    y: eye.z * r.x - eye.x * r.z,
+    z: eye.x * r.y - eye.y * r.x,
+  };
+  const dotW = (p, a) => p.x * a.x - p.y * a.y + p.z * a.z; // W(p) · a
+  return {
+    P: (p) => ({ u: dotW(p, r), v: -dotW(p, up), depth: dotW(p, eye) }),
+    facing: (n) => dotW(n, eye),
+  };
+}
+
 // Грани → многоугольники аксонометрии (мм модели, y вниз), по глубине.
-function axoFaces(faces) {
-  const c = Math.cos(AXO.az);
-  const s = Math.sin(AXO.az);
-  const ce = Math.cos(AXO.el);
-  const se = Math.sin(AXO.el);
+function axoFaces(faces, cam = null) {
   const light = { x: -0.35, y: 0.55, z: 0.75 };
   const ll = Math.hypot(light.x, light.y, light.z);
-  const P = (p) => {
-    const px = p.x * c + p.y * s;
-    const py = -p.x * s + p.y * c;
-    return { u: px, v: py * se - p.z * ce, depth: py * ce + p.z * se };
-  };
+  const { P, facing } = axoProjection(cam);
   const list = [];
   const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   for (const f of faces) {
     if (!f.pts?.length || f.kind === 'ground' || f.kind === 'boundary') continue;
     const n = f.normal || { x: 0, y: 0, z: 1 };
-    const npy = -n.x * s + n.y * c;
-    if (npy * ce + n.z * se <= 0 && !f.twoSided) continue;
+    if (facing(n) <= 0 && !f.twoSided) continue;
     const q = f.pts.map(P);
     for (const p of q) {
       box.x0 = Math.min(box.x0, p.u); box.x1 = Math.max(box.x1, p.u);
@@ -218,18 +271,26 @@ function axoFaces(faces) {
 
 // ------------------------------------------------------------ растр вида
 
-function makeCanvas(wMm, hMm) {
-  const ppm = Math.min(SHEET_PX, MAX_SIDE_PX / Math.max(wMm, hMm, 1));
+// Пикселей на мм бумаги для ступени f: ×1 — как PDF (150 dpi, предел
+// стороны 6000 px); ×2/×4 — для зума листа, с пределом стороны и площади.
+export function rasterPpm(wMm, hMm, f = 1) {
+  if (f <= 1) return Math.min(SHEET_PX, MAX_SIDE_PX / Math.max(wMm, hMm, 1));
+  return Math.max(Math.min(SHEET_PX, MAX_SIDE_PX / Math.max(wMm, hMm, 1)),
+    Math.min(SHEET_PX * f, MAX_SIDE_ZOOM / Math.max(wMm, hMm, 1), Math.sqrt(MAX_AREA_ZOOM / Math.max(wMm * hMm, 1))));
+}
+
+function makeCanvas(wMm, hMm, f = 1) {
+  const ppm = rasterPpm(wMm, hMm, f);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(wMm * ppm));
   canvas.height = Math.max(1, Math.round(hMm * ppm));
   return { canvas, ppm };
 }
 
-function rasterize(project, geo, d) {
+function rasterize(project, geo, d, f = 1) {
   const size = paperSize(geo, d);
   if (geo.kind === 'plan' || geo.kind === 'site') {
-    const ppm = Math.min(SHEET_PX, MAX_SIDE_PX / Math.max(size.w, size.h, 1));
+    const ppm = rasterPpm(size.w, size.h, f);
     const canvas = renderRegion(geo.lp, {
       kind: geo.kind === 'site' ? 'site' : 'level', box: geo.box, rotation: geo.rotation, denominator: d,
       width: size.w, height: size.h, ppm,
@@ -239,7 +300,7 @@ function rasterize(project, geo, d) {
     return { canvas, ...size };
   }
   if (geo.kind === 'elevation') {
-    const { canvas, ppm } = makeCanvas(size.w, size.h);
+    const { canvas, ppm } = makeCanvas(size.w, size.h, f);
     const ctx = canvas.getContext('2d');
     const dpr = (ppm * 25.4) / 96;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -250,7 +311,7 @@ function rasterize(project, geo, d) {
     return { canvas, ...size };
   }
   if (geo.kind === '3d') {
-    const { canvas, ppm } = makeCanvas(size.w, size.h);
+    const { canvas, ppm } = makeCanvas(size.w, size.h, f);
     const ctx = canvas.getContext('2d');
     const m = ppm / d; // px на мм модели
     ctx.setTransform(m, 0, 0, m, (2 - geo.box.x0 / d) * ppm, (2 - geo.box.y0 / d) * ppm);
@@ -272,28 +333,52 @@ function rasterize(project, geo, d) {
 
 const lsStyle = () => (sheetLandscapeStyle() === 'drawing' ? 'drawing' : 'sketch');
 
-// Растр видового экрана: { canvas | null, w, h, empty?, pending? }.
-export function viewportRaster(project, vp) {
+const rasterKey = (vp, f) => `${vp.viewId}|${vp.scale}|${sheetLandscapeStyle()}|${camKey(camOf(vp.viewId, vp.cam))}|${f}`;
+
+// Растр есть в кеше для ступени f (без построения) — или null.
+export function cachedRaster(project, vp, f = 1) {
   const sig = contentSig(project);
-  const style = sheetLandscapeStyle();
-  const key = `${vp.viewId}|${vp.scale}|${style}`;
+  const hit = rasterCache.get(rasterKey(vp, f));
+  return hit && hit.sig === sig ? hit : null;
+}
+
+// Растр видового экрана: { canvas | null, w, h, empty?, pending? }.
+// f — ступень разрешения (RASTER_STEPS); разрез участка (SVG) — только ×1.
+export function viewportRaster(project, vp, f = 1) {
+  const sig = contentSig(project);
+  const geo = viewGeometry(project, vp.viewId, vp.cam);
+  if (f > 1 && (!geo || geo.kind === 'lsection')) return viewportRaster(project, vp, 1);
+  const key = rasterKey(vp, f);
   const hit = rasterCache.get(key);
   if (hit && hit.sig === sig) return hit;
-  const geo = viewGeometry(project, vp.viewId);
   let out;
   if (!geo) out = { canvas: null, ...EMPTY_SIZE, empty: true };
   else if (geo.kind === 'lsection') {
     const s = sectionSvgSize(geo.prof, vp.scale);
     out = { canvas: null, w: s.width, h: s.height, pending: true };
   } else {
-    try { out = rasterize(project, geo, vp.scale) || { canvas: null, ...EMPTY_SIZE, empty: true }; } catch (error) {
+    try { out = rasterize(project, geo, vp.scale, f) || { canvas: null, ...EMPTY_SIZE, empty: true }; } catch (error) {
       console.error('Вид на листе не нарисовался:', error);
       out = { canvas: null, ...EMPTY_SIZE, empty: true };
     }
   }
   out.sig = sig;
+  out.f = f;
   rasterCache.set(key, out);
   return out;
+}
+
+// Растр ступени f уже есть (или для вида не нужен: пуст, разрез участка).
+export function rasterReady(project, vp, f) {
+  if (f <= 1) return true;
+  const geo = viewGeometry(project, vp.viewId, vp.cam);
+  return !geo || geo.kind === 'lsection' || Boolean(cachedRaster(project, vp, f));
+}
+
+// Убрать из кеша растры ступеней ×2/×4, кроме keep (память: растр ×4
+// листа A3 — десятки мегабайт).
+export function dropZoomRasters(keep) {
+  for (const [key, r] of rasterCache) if (r.f > 1 && r.f !== keep) rasterCache.delete(key);
 }
 
 // Загрузить растр SVG (разрезы участка) для всех видов листа.
@@ -301,7 +386,7 @@ export function prepareViewports(project, sheet) {
   const jobs = sheet.viewports.map((vp) => {
     const r = viewportRaster(project, vp);
     if (!r.pending || r.loading) return r.loading || Promise.resolve();
-    const geo = viewGeometry(project, vp.viewId);
+    const geo = viewGeometry(project, vp.viewId, vp.cam);
     const item = { width: r.w, height: r.h };
     const svg = sectionSvg(geo.prof, { style: lsStyle(), scale: vp.scale });
     r.loading = new Promise((resolve) => {
@@ -315,61 +400,90 @@ export function prepareViewports(project, sheet) {
   return Promise.all(jobs);
 }
 
-// Прямоугольник вида и подписи на листе, мм: { x0, y0, x1, y1 } — вид;
-// cap — подпись под ним.
+// Прямоугольник вида и подписи на листе, мм: { x0, y0, x1, y1 } — видимая
+// (обрезанная) часть вида; full — весь растр вида (центр — vp.x, vp.y);
+// crop — рамка обрезки в мм бумаги растра или null; frame —
+// viewportFrame(); cap — подпись под видимой частью.
 export function viewportBox(project, vp) {
-  const r = viewportRaster(project, vp);
-  const x0 = vp.x - r.w / 2;
-  const y0 = vp.y - r.h / 2;
-  return { x0, y0, x1: x0 + r.w, y1: y0 + r.h, cap: { x0, y0: y0 + r.h, x1: x0 + Math.max(r.w, 50), y1: y0 + r.h + VIEWPORT_TITLE_H } };
+  const frame = viewportFrame(project, vp);
+  const fx0 = vp.x - frame.w / 2;
+  const fy0 = vp.y - frame.h / 2;
+  const full = { x0: fx0, y0: fy0, x1: fx0 + frame.w, y1: fy0 + frame.h };
+  const crop = cropPaperRect(vp.crop, frame);
+  const b = crop ? { x0: fx0 + crop.x0, y0: fy0 + crop.y0, x1: fx0 + crop.x1, y1: fy0 + crop.y1 } : { ...full };
+  return {
+    ...b, full, crop, frame,
+    cap: { x0: b.x0, y0: b.y1, x1: b.x0 + Math.max(b.x1 - b.x0, 60), y1: b.y1 + VIEWPORT_TITLE_H },
+  };
 }
 
-// Подпись под видом (Revit): название жирным, линия, масштаб.
-function caption(ctx, project, vp, box) {
-  const title = viewportTitle(project, vp);
-  const x = box.x0;
-  const y = box.y1 + 3.6;
+const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+// Подпись под видом (Revit): кружок-маркер «номер вида / номер листа»,
+// «№ · Название» жирным, масштаб, линия от маркера.
+function caption(ctx, project, vp, box, no, sheetNo) {
+  const title = `${no} · ${viewportTitle(project, vp)}`;
+  const R = 3.3;
+  const cx = box.x0 + R;
+  const cy = box.y1 + 4.2;
   ctx.save();
   ctx.fillStyle = '#000';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 0.3;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.font = `600 ${no.length > 2 ? 1.8 : 2.4}px ${FONT}`;
+  ctx.fillText(no, cx, cy - 1.45);
+  const sn = `Л${sheetNo}`;
+  ctx.font = `400 ${sn.length > 3 ? 1.3 : 1.7}px ${FONT}`;
+  ctx.fillText(sn, cx, cy + 1.5);
+  const x = box.x0 + R * 2 + 1.6;
+  const y = cy - 0.9;
   ctx.textAlign = 'left';
-  ctx.font = '600 3.2px system-ui, -apple-system, "Segoe UI", sans-serif';
+  ctx.font = `600 3.2px ${FONT}`;
   ctx.fillText(title, x, y);
   const tw = ctx.measureText(title).width;
-  ctx.font = '400 2.6px system-ui, -apple-system, "Segoe UI", sans-serif';
+  ctx.font = `400 2.6px ${FONT}`;
   const scaleText = `М 1:${vp.scale}`;
   ctx.fillText(scaleText, x + tw + 3, y + 0.2);
   const sw = ctx.measureText(scaleText).width;
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = 0.3;
-  ctx.beginPath(); ctx.moveTo(x, y + 2.3); ctx.lineTo(x + tw + 3 + sw, y + 2.3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + R, cy + 1.1); ctx.lineTo(x + tw + 3 + sw, cy + 1.1); ctx.stroke();
   ctx.restore();
 }
 
 // Нарисовать виды листа (контекст — в мм листа). editor — рамка пустых и
-// незагруженных видов (на печать не идёт).
-export function drawViewports(ctx, project, sheet, { editor = false } = {}) {
+// незагруженных видов (на печать не идёт); f — ступень растра (зум рабочего
+// листа): есть в кеше — рисуется она, нет — ×1.
+export function drawViewports(ctx, project, sheet, { editor = false, f = 1 } = {}) {
+  const numbers = viewportNumbers(sheet);
   for (const vp of sheet.viewports) {
-    const r = viewportRaster(project, vp);
+    const r = (f > 1 && cachedRaster(project, vp, f)) || viewportRaster(project, vp);
     const box = viewportBox(project, vp);
-    if (r.canvas) ctx.drawImage(r.canvas, box.x0, box.y0, r.w, r.h);
-    else if (editor) {
+    const full = box.full;
+    if (r.canvas) {
+      ctx.save();
+      if (box.crop) { ctx.beginPath(); ctx.rect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0); ctx.clip(); }
+      ctx.drawImage(r.canvas, full.x0, full.y0, full.x1 - full.x0, full.y1 - full.y0);
+      ctx.restore();
+    } else if (editor) {
       ctx.save();
       ctx.strokeStyle = '#8a94a3';
       ctx.lineWidth = 0.3;
       ctx.setLineDash([2, 1.5]);
-      ctx.strokeRect(box.x0, box.y0, r.w, r.h);
+      ctx.strokeRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
       ctx.setLineDash([]);
       ctx.fillStyle = '#687486';
       ctx.font = '400 3px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(r.pending ? 'Готовлю вид…' : 'Вид пуст', vp.x, vp.y);
+      ctx.fillText(r.pending ? 'Готовлю вид…' : 'Вид пуст', (box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
       ctx.restore();
     }
     // У разреза участка подпись с масштабом — в самом SVG.
     const own = !r.empty && !r.pending && viewById(project, vp.viewId)?.kind === 'lsection';
-    if ((!r.empty || editor) && !own) caption(ctx, project, vp, box);
+    if ((!r.empty || editor) && !own) caption(ctx, project, vp, box, numbers.get(vp.id) || '', sheet.no);
   }
 }
 

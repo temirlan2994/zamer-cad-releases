@@ -10,7 +10,7 @@
 
 import { buildElevation } from '../core/elevation.js';
 import { buildSection } from '../core/section.js';
-import { VIEW_SCALES, findView, materializeView, viewScale } from '../core/views.js';
+import { VIEW_SCALES, findView, materializeView, viewPlacement, viewScale } from '../core/views.js';
 import { el, escapeHtml } from './dom.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { closeSheet, notifyViewChange } from './sheet-view.js';
@@ -174,7 +174,31 @@ function draw() {
     ctx.fillText(view.kind === 'section' ? 'Пусто: линия разреза не проходит через дом.' : 'Пусто: на плане нет стен — нарисуйте помещения.', w / 2, h / 2);
   }
   drawElevation(ctx, geo, { view: cam, colors, marks: view.marks !== false, title: elevationTitle(view), dpr });
+  // Рамка обрезки вида на листе (viewport.crop — мм от u0/z1 чертежа):
+  // пунктиром, как граница обрезки Revit; правится ручками на листе.
+  const place = viewPlacement(state.project, view.id);
+  const crop = place?.vp.crop && !place.vp.crop.off ? place.vp.crop : null;
+  if (crop && geo.polys.length) {
+    const b = geo.bounds;
+    const x0 = cam.ox + (b.u0 + crop.x0) * cam.k;
+    const x1 = cam.ox + (b.u0 + crop.x1) * cam.k;
+    const y0 = cam.oy - (b.z1 - crop.y0) * cam.k;
+    const y1 = cam.oy - (b.z1 - crop.y1) * cam.k;
+    ctx.save();
+    ctx.strokeStyle = colors.muted;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.setLineDash([]);
+    ctx.fillStyle = colors.muted;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`Обрезка на листе ${place.sheet.no}`, x0 + 2, y0 - 2);
+    ctx.restore();
+  }
   state.elevationDrawn = {
+    crop: crop ? { ...crop } : null,
     id: view.id, kind: view.kind, polys: geo.polys.length, cuts: geo.cuts?.length || 0, openings: geo.openings?.length || 0,
     side: view.kind === 'section' ? (view.side === -1 ? -1 : 1) : null, zoom: cam.zoom, scale,
   };

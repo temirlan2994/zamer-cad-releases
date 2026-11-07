@@ -426,6 +426,12 @@ export function close3d() {
 
 export const is3dOpen = () => active;
 
+// Снимок камеры для 3D-вида на листе (viewport.cam, core/views.js): углы,
+// масштаб окна и крыша. Окно 3D ни разу не открывали — камера по умолчанию.
+export function camera3dSnapshot() {
+  return { yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, roof: Boolean(opts.roof) };
+}
+
 // ---------------------------------------------------------------- луч и ручки
 
 function canvasPoint(e) {

@@ -13,7 +13,7 @@
 
 import { sortedLevels } from '../core/model.js';
 import {
-  VIEW_SCALES, facadeViews, sectionViews, sheetOfView, userSheets, viewById, viewScale,
+  VIEW_SCALES, facadeViews, sectionViews, userSheets, viewById, viewPlacement, viewScale,
 } from '../core/views.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
@@ -29,7 +29,7 @@ import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
 import {
-  VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet,
+  VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
 import { state } from './state.js';
 import { requestDraw } from './view.js';
@@ -76,6 +76,7 @@ export function openView(id) {
   if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
   closeSheet();
   state.sheetSel = null;
+  state.sheetReturn = null; // двойной клик на листе (ui/sheet-view.js) вернёт его сам
   if (isWindowView(id)) {
     if (is3dOpen()) close3d();
     openElevation(id);
@@ -103,13 +104,15 @@ export function openView(id) {
   notifyViewChange();
 }
 
+setViewOpener(openView); // двойной клик по виду на листе
+
 // ------------------------------------------------------------ дерево видов
 
 // Вид можно перетащить на открытый лист (ui/sheet-view.js); вид, уже
-// размещённый на листе, помечен номером листа.
+// размещённый на листе, помечен «Л<лист>-<номер вида>».
 function treeItem(id, name, active, extra = '') {
-  const placed = sheetOfView(state.project, id);
-  const mark = placed ? `<small class="vt-sheet" title="На листе ${escapeHtml(placed.no)}">Л${escapeHtml(placed.no)}</small>` : '';
+  const placed = viewPlacement(state.project, id);
+  const mark = placed ? `<small class="vt-sheet" title="${escapeHtml(placed.text)}">${escapeHtml(placed.mark)}</small>` : '';
   return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}" draggable="true"
     aria-selected="${active === id}"${active === id ? ' aria-current="page"' : ''}>${extra}<span class="vt-name">${escapeHtml(name)}</span>${mark}</button></li>`;
 }
@@ -164,13 +167,15 @@ export function renderViewsPanel(panel) {
 // листа пользователя / новый лист.
 function placeBlockHtml(viewId) {
   if (!viewId || !viewById(state.project, viewId)) return '';
-  const placed = sheetOfView(state.project, viewId);
-  if (placed) {
+  const where = viewPlacement(state.project, viewId);
+  if (where) {
+    const placed = where.sheet;
     return `
     <h3>Лист</h3>
     <div class="prop-block" id="viewPlace">
-      <p class="hint" id="viewPlacedOn">Вид размещён на листе ${escapeHtml(placed.no)} — ${escapeHtml(placed.name)}.</p>
-      <button type="button" id="viewPlaceOpen" data-place-open="${escapeHtml(placed.id)}">Открыть лист ${escapeHtml(placed.no)}</button>
+      <div class="prop-row" id="viewPlacedNo"><span>Размещён</span><strong>${escapeHtml(where.text)}</strong></div>
+      <p class="hint" id="viewPlacedOn">Вид ${escapeHtml(where.no)} на листе ${escapeHtml(placed.no)} — ${escapeHtml(placed.name)}.</p>
+      <button type="button" id="viewPlaceOpen" data-place-open="${escapeHtml(placed.id)}">${state.sheetReturn === `user:${placed.id}` ? '↩ Назад к листу' : 'Открыть лист'} ${escapeHtml(placed.no)}</button>
     </div>`;
   }
   const sheets = userSheets(state.project);

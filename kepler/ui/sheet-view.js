@@ -9,21 +9,29 @@
 // (HTML5 DnD, тип VIEW_MIME) или кнопкой «На лист…» в «Свойствах» вида
 // (касание); клик — выбрать вид, тянуть — сдвиг с шагом 5 мм (Shift —
 // свободно), Delete — убрать с листа, одна запись истории на жест.
-// Колесо — масштаб листа, средняя кнопка или пустое место — сдвиг,
-// «Вписать» — весь лист.
+// Ручки выбранного вида (углы и середины сторон) — рамка обрезки
+// (viewport.crop): край с шагом 5 мм (вблизи — 1 мм), Shift — свободно;
+// вид на листе не сдвигается — двигается только край рамки.
+// Двойной клик по виду — открыть сам вид (лист закрывается, Esc — назад к
+// листу). Колесо — масштаб листа, средняя кнопка или пустое место — сдвиг,
+// «Вписать» — весь лист; на телефоне — щипок двумя пальцами и сдвиг одним
+// по пустому месту. Растр видов перерисовывается под зум ступенями ×1/×2/×4
+// с задержкой 150 мс; сдвиг листа растр не перестраивает.
 
 import {
-  addSheet, findSheetById, findViewport, moveViewport, nextSheetNo, placeView, removeSheet,
-  removeViewport, setViewportScale, sheetOfView, sheetSize, snapMm, updateSheet, viewById,
+  addSheet, cropFromPaper, cropHandlePoints, dragCropHandle, findSheetById, findViewport, moveViewport, nextSheetNo,
+  normalizeCam, placeView, removeSheet, removeViewport, setViewportScale, sheetOfView, sheetSize, snapMm, updateSheet,
+  viewById, viewPlacement, viewportNumbers,
 } from '../core/views.js';
 import { saveFile } from './cloud.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { handleExport, safeFileName } from './files.js';
 import {
-  SHEET, autoSheetCount, buildOneSheetPdf, loadSheetImages, renderSheet, sheetKey, sheetList, sheetNumber, sheetTitle,
+  SHEET, SHEET_PX, autoSheetCount, buildOneSheetPdf, loadSheetImages, renderSheet, sheetKey, sheetList, sheetNumber, sheetTitle,
 } from './sheet.js';
 import {
-  defaultViewportScale, drawSheetDecor, fitInFrame, freeSpot, drawViewports, prepareViewports, viewportBox, viewportRaster,
+  cachedRaster, defaultViewportScale, drawSheetDecor, dropZoomRasters, fitInFrame, freeSpot, drawViewports, prepareViewports,
+  rasterReady, viewportBox, viewportRaster,
 } from './sheet-viewports.js';
 import { sheetStylePref } from './landscape-style.js';
 import { closeSheets, isPhone } from './mobile.js';
@@ -35,8 +43,16 @@ export const VIEW_MIME = 'application/x-kepler-view';
 let cache = null; // { stamp, url, denominator } — лист дорогой, панель перерисовывается часто
 let pending = null; // stamp рендера в работе
 let ed = null; // камера листа пользователя: { key, k, ox, oy, w, h }
-let gesture = null; // { kind: 'move' | 'pan', … }
+let gesture = null; // { kind: 'move' | 'pan' | 'crop' | 'pinch', … }
 let resizeObs = null;
+let upgradeTimer = null; // отложенная перерисовка растра под зум
+const touches = new Map(); // пальцы на листе: pointerId → { x, y } (px холста)
+let viewOpener = null; // openView из ui/props-views.js (без циклического импорта)
+
+const HANDLE_PX = 9; // радиус попадания в ручку обрезки
+const HANDLE_CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
+
+export function setViewOpener(fn) { viewOpener = fn; }
 
 // Сообщить правой панели, что активный вид/лист сменился (ui/props.js слушает).
 export function notifyViewChange() {
@@ -64,6 +80,7 @@ export function sheetScaleOf(key) {
 
 export function openSheet(key) {
   if (!findSheet(key)) return false;
+  state.sheetReturn = null;
   if (state.sheetOpen !== key) { state.sheetVp = null; ed = null; }
   state.sheetOpen = key;
   state.sheetSel = key;
@@ -81,6 +98,10 @@ export function closeSheet() {
   state.sheetDrawn = null;
   ed = null;
   gesture = null;
+  touches.clear();
+  clearTimeout(upgradeTimer);
+  upgradeTimer = null;
+  dropZoomRasters(0);
   resizeObs?.disconnect();
   resizeObs = null;
   const box = el('sheetView');
@@ -278,43 +299,97 @@ export function drawEditor() {
   ctx.fillRect(ed.ox, ed.oy, size.w * ed.k, size.h * ed.k);
   ctx.restore();
   ctx.setTransform(dpr * ed.k, 0, 0, dpr * ed.k, dpr * ed.ox, dpr * ed.oy);
+  const f = zoomStep();
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, size.w, size.h);
   ctx.clip();
-  drawViewports(ctx, project, sheet, { editor: true });
+  drawViewports(ctx, project, sheet, { editor: true, f });
   drawSheetDecor(ctx, project, sheet, sheetList(project).length);
   ctx.restore();
   const sel = sheet.viewports.find((vp) => vp.id === state.sheetVp);
   if (sel) {
     const b = viewportBox(project, sel);
     const px = 1 / ed.k;
-    ctx.strokeStyle = cssVar('--accent', '#2f6fde');
-    ctx.lineWidth = 2 * px;
+    const accent = cssVar('--accent', '#2f6fde');
     ctx.setLineDash([]);
+    if (b.crop) { // весь вид — пунктиром: видно, что срезано
+      ctx.strokeStyle = 'rgba(47,111,222,0.45)';
+      ctx.lineWidth = px;
+      ctx.setLineDash([5 * px, 4 * px]);
+      ctx.strokeRect(b.full.x0, b.full.y0, b.full.x1 - b.full.x0, b.full.y1 - b.full.y0);
+      ctx.setLineDash([]);
+    }
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2 * px;
     ctx.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
     ctx.fillStyle = '#fff';
-    const hs = 7 * px;
-    for (const [x, y] of [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]]) {
-      ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
-      ctx.strokeRect(x - hs / 2, y - hs / 2, hs, hs);
+    const hs = 8 * px;
+    ctx.lineWidth = 1.5 * px;
+    for (const h of cropHandlePoints(b)) {
+      ctx.fillRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
+      ctx.strokeRect(h.x - hs / 2, h.y - hs / 2, hs, hs);
     }
   }
   const hint = el('sheetView')?.querySelector('#sheetEditHint');
   if (hint) hint.hidden = sheet.viewports.length > 0;
+  const numbers = viewportNumbers(sheet);
   state.sheetDrawn = {
-    key: state.sheetOpen, sheetId: sheet.id, k: ed.k, ox: ed.ox, oy: ed.oy, w: size.w, h: size.h, selected: state.sheetVp,
+    key: state.sheetOpen, sheetId: sheet.id, k: ed.k, ox: ed.ox, oy: ed.oy, w: size.w, h: size.h, selected: state.sheetVp, f,
     viewports: sheet.viewports.map((vp) => {
       const r = viewportRaster(project, vp);
-      return { id: vp.id, viewId: vp.viewId, x: vp.x, y: vp.y, scale: vp.scale, box: viewportBox(project, vp), empty: Boolean(r.empty), pending: Boolean(r.pending) };
+      const shown = (f > 1 && cachedRaster(project, vp, f)) || r;
+      return {
+        id: vp.id, viewId: vp.viewId, x: vp.x, y: vp.y, scale: vp.scale, box: viewportBox(project, vp), empty: Boolean(r.empty), pending: Boolean(r.pending),
+        no: numbers.get(vp.id), crop: vp.crop ? { ...vp.crop } : null, cam: vp.cam ? { ...vp.cam } : null,
+        rasterF: shown.f || 1, rasterPx: shown.canvas ? shown.canvas.width : 0,
+      };
     }),
   };
+  scheduleUpgrade(f);
+}
+
+// Ступень растра под зум: пикселей экрана на мм листа против 150 dpi.
+function zoomStep() {
+  if (!ed) return 1;
+  const need = (ed.k * (window.devicePixelRatio || 1)) / SHEET_PX;
+  return need <= 1.2 ? 1 : need <= 2.4 ? 2 : 4;
+}
+
+// Растр нужной ступени — через 150 мс после последнего зума (колесо,
+// щипок); пока его нет, рисуется ×1.
+function scheduleUpgrade(f) {
+  clearTimeout(upgradeTimer);
+  upgradeTimer = null;
+  const sheet = openUserSheet();
+  if (f <= 1 || !sheet || sheet.viewports.every((vp) => rasterReady(state.project, vp, f))) return;
+  upgradeTimer = setTimeout(() => {
+    upgradeTimer = null;
+    const cur = openUserSheet();
+    if (!cur || zoomStep() !== f || gesture?.kind === 'pinch') return;
+    dropZoomRasters(f);
+    for (const vp of cur.viewports) viewportRaster(state.project, vp, f);
+    drawEditor();
+  }, 150);
 }
 
 function toMm(canvas, e) {
   const r = canvas.getBoundingClientRect();
   return { x: (e.clientX - r.left - ed.ox) / ed.k, y: (e.clientY - r.top - ed.oy) / ed.k };
 }
+
+// Ручка рамки обрезки выбранного вида под точкой p (мм листа) или null.
+function hitCropHandle(sheet, p) {
+  const vp = sheet.viewports.find((v) => v.id === state.sheetVp);
+  if (!vp) return null;
+  const b = viewportBox(state.project, vp);
+  const r = HANDLE_PX / ed.k;
+  const h = cropHandlePoints(b).find((q) => Math.abs(q.x - p.x) <= r && Math.abs(q.y - p.y) <= r);
+  return h ? { vp, handle: h.id, box: b } : null;
+}
+
+// Шаг края рамки обрезки: 5 мм, вблизи (больше 6 px на мм) — 1 мм.
+const cropStep = () => (ed && ed.k >= 6 ? 1 : 5);
 
 function hitViewport(sheet, p) {
   for (let i = sheet.viewports.length - 1; i >= 0; i -= 1) {
@@ -334,12 +409,66 @@ function selectViewport(id) {
   notifyViewChange();
 }
 
+const local = (canvas, e) => {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+};
+
+// Второй палец: начатое одним пальцем отменяется (вид — на место), щипок.
+function startPinch() {
+  if (gesture?.kind === 'move' && gesture.moved) moveViewport(state.project, gesture.id, gesture.x0, gesture.y0, { snap: 0 });
+  if (gesture?.kind === 'crop' && gesture.moved) {
+    const vp = findViewport(state.project, gesture.id)?.vp;
+    if (vp) { if (gesture.crop0) vp.crop = { ...gesture.crop0 }; else delete vp.crop; }
+  }
+  const [a, b] = [...touches.values()];
+  gesture = {
+    kind: 'pinch', dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    k: ed.k, ox: ed.ox, oy: ed.oy, pid: null,
+  };
+}
+
+// Щипок: масштаб по расстоянию между пальцами, точка листа под серединой в
+// начале жеста остаётся под серединой пальцев.
+function movePinch() {
+  const pts = [...touches.values()];
+  if (pts.length < 2) return;
+  const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+  const g = gesture;
+  const k = Math.min(40, Math.max(0.2, g.k * (dist / g.dist)));
+  const sx = (g.mid.x - g.ox) / g.k;
+  const sy = (g.mid.y - g.oy) / g.k;
+  ed.k = k;
+  ed.ox = mid.x - sx * k;
+  ed.oy = mid.y - sy * k;
+  drawEditor();
+}
+
 function bindEditor(canvas) {
   canvas.addEventListener('pointerdown', (e) => {
     const sheet = openUserSheet();
     if (!sheet || !ed) return;
     canvas.focus({ preventScroll: true });
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, local(canvas, e));
+      canvas.setPointerCapture?.(e.pointerId);
+      if (touches.size === 2) { startPinch(); return; }
+      if (touches.size > 2) return;
+    }
     const p = toMm(canvas, e);
+    const grip = e.button === 0 ? hitCropHandle(sheet, p) : null;
+    if (grip) {
+      const { vp, box } = grip;
+      const rect0 = box.crop || { x0: 0, y0: 0, x1: box.frame.w, y1: box.frame.h };
+      gesture = {
+        kind: 'crop', id: vp.id, handle: grip.handle, start: p, rect0, frame: box.frame, origin: { x: box.full.x0, y: box.full.y0 },
+        crop0: vp.crop ? { ...vp.crop } : null, before: snapshot(), moved: false, pid: e.pointerId,
+      };
+      canvas.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     const hit = e.button === 0 ? hitViewport(sheet, p) : null;
     if (hit) {
       selectViewport(hit.id);
@@ -352,9 +481,15 @@ function bindEditor(canvas) {
     canvas.setPointerCapture?.(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, local(canvas, e));
+    if (gesture?.kind === 'pinch') { if (touches.has(e.pointerId)) movePinch(); return; }
     if (!gesture || gesture.pid !== e.pointerId) {
       const sheet = openUserSheet();
-      if (sheet && ed && !gesture) canvas.style.cursor = hitViewport(sheet, toMm(canvas, e)) ? 'move' : 'grab';
+      if (sheet && ed && !gesture) {
+        const p = toMm(canvas, e);
+        const grip = hitCropHandle(sheet, p);
+        canvas.style.cursor = grip ? HANDLE_CURSOR[grip.handle] : hitViewport(sheet, p) ? 'move' : 'grab';
+      }
       return;
     }
     if (gesture.kind === 'pan') {
@@ -368,19 +503,42 @@ function bindEditor(canvas) {
     const dy = p.y - gesture.start.y;
     if (!gesture.moved && Math.hypot(dx, dy) * ed.k < 3) return;
     gesture.moved = true;
+    if (gesture.kind === 'crop') {
+      const vp = findViewport(state.project, gesture.id)?.vp;
+      if (!vp) return;
+      const rect = dragCropHandle(gesture.rect0, gesture.handle, dx, dy, {
+        origin: gesture.origin, step: e.shiftKey ? 0 : cropStep(), bounds: gesture.frame,
+      });
+      const crop = cropFromPaper(rect, gesture.frame);
+      if (crop) vp.crop = crop;
+      drawEditor();
+      return;
+    }
     moveViewport(state.project, gesture.id, gesture.x0 + dx, gesture.y0 + dy, { snap: e.shiftKey ? 0 : undefined });
     drawEditor();
   });
   const end = (e) => {
+    const touch = touches.delete(e.pointerId);
+    if (gesture?.kind === 'pinch') {
+      if (touch && touches.size < 2) { gesture = null; touches.clear(); drawEditor(); } // растр под новый зум
+      canvas.releasePointerCapture?.(e.pointerId);
+      return;
+    }
     if (!gesture || gesture.pid !== e.pointerId) return;
     const g = gesture;
     gesture = null;
     canvas.releasePointerCapture?.(e.pointerId);
-    if (g.kind === 'move' && g.moved) {
+    if ((g.kind === 'move' || g.kind === 'crop') && g.moved) {
       pushHistory(g.before); // одна запись на жест
       afterChange();
     }
   };
+  canvas.addEventListener('dblclick', (e) => {
+    const sheet = openUserSheet();
+    if (!sheet || !ed) return;
+    const hit = hitViewport(sheet, toMm(canvas, e));
+    if (hit) { e.preventDefault(); openViewFromSheet(hit.viewId); }
+  });
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('wheel', (e) => {
@@ -461,10 +619,89 @@ export function removeSelectedViewport() {
   return true;
 }
 
+// Масштаб выбранного вида. Обрезанный вид: рамка обрезки (мм модели)
+// масштабируется с видом, центр видимой части остаётся на месте листа.
 export function setSelectedViewportScale(scale) {
   const id = state.sheetVp;
   if (!id) return;
-  mutate(() => { setViewportScale(state.project, id, scale); });
+  mutate(() => {
+    const vp = findViewport(state.project, id)?.vp;
+    if (!vp) return;
+    const b0 = viewportBox(state.project, vp);
+    setViewportScale(state.project, id, scale);
+    if (!b0.crop) return;
+    const b1 = viewportBox(state.project, vp);
+    vp.x = Math.round((vp.x + (b0.x0 + b0.x1) / 2 - (b1.x0 + b1.x1) / 2) * 10) / 10;
+    vp.y = Math.round((vp.y + (b0.y0 + b0.y1) / 2 - (b1.y0 + b1.y1) / 2) * 10) / 10;
+  });
+}
+
+function mutateSelectedVp(fn) {
+  const id = state.sheetVp;
+  if (!id || !findViewport(state.project, id)) return;
+  mutate(() => {
+    const found = findViewport(state.project, id);
+    if (found) fn(found.vp, found.sheet);
+  });
+}
+
+// «Обрезать вид»: включить — прежняя рамка или весь вид; выключить —
+// рамка помнится (crop.off).
+export function setSelectedViewportCrop(on) {
+  mutateSelectedVp((vp) => {
+    if (!on) { if (vp.crop) vp.crop.off = true; return; }
+    if (vp.crop) { delete vp.crop.off; return; }
+    const { frame } = viewportBox(state.project, vp);
+    const crop = cropFromPaper({ x0: 0, y0: 0, x1: frame.w, y1: frame.h }, frame);
+    if (crop) vp.crop = crop;
+  });
+}
+
+export function resetSelectedViewportCrop() {
+  mutateSelectedVp((vp) => { delete vp.crop; });
+}
+
+// Номер вида на листе: пусто — по порядку; занятый другим видом — отказ.
+export function setSelectedViewportNo(value) {
+  const no = String(value ?? '').trim().slice(0, 8);
+  const found = state.sheetVp && findViewport(state.project, state.sheetVp);
+  if (!found) return false;
+  if (no && [...viewportNumbers(found.sheet)].some(([id, n]) => id !== found.vp.id && n === no)) {
+    toast(`Номер ${no} уже занят на листе ${found.sheet.no}`, true);
+    return false;
+  }
+  mutateSelectedVp((vp) => { if (no) vp.no = no; else delete vp.no; });
+  return true;
+}
+
+// Камера 3D-вида на листе: снимок камеры окна 3D (null — аксонометрия).
+export function setSelectedViewportCam(cam) {
+  mutateSelectedVp((vp) => {
+    const c = normalizeCam(cam);
+    if (c) vp.cam = c; else delete vp.cam;
+  });
+}
+
+// Двойной клик по виду на листе: открыть сам вид; лист закрывается, Esc
+// (или «↩ К листу») возвращает к нему.
+export function openViewFromSheet(viewId) {
+  const key = state.sheetOpen;
+  const place = viewPlacement(state.project, viewId);
+  if (!viewOpener || !viewById(state.project, viewId)) return false;
+  viewOpener(viewId);
+  state.sheetReturn = key;
+  if (place) toast(`${viewById(state.project, viewId).name} · Esc — назад к листу ${place.sheet.no}`);
+  notifyViewChange();
+  return true;
+}
+
+// Вернуться к листу, с которого открыт вид (Esc). false — возвращаться некуда.
+export function returnToSheet() {
+  const key = state.sheetReturn;
+  state.sheetReturn = null;
+  if (!key || !findSheet(key)) return false;
+  openSheet(key);
+  return true;
 }
 
 export function setSelectedViewportTitle(title) {

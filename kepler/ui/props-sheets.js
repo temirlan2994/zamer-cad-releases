@@ -11,7 +11,7 @@
 
 import { mutate } from './store.js';
 import {
-  SHEET_FORMAT_LIST, findViewport, sheetSize, viewById, viewportScales, viewportTitle,
+  SHEET_FORMAT_LIST, findViewport, sheetSize, viewById, viewportNo, viewportNumbers, viewportScales, viewportTitle,
 } from '../core/views.js';
 import { escapeHtml } from './dom.js';
 import { handleExport } from './files.js';
@@ -19,9 +19,11 @@ import { setSheetStylePref, sheetStylePref } from './landscape-style.js';
 import { SHEET, sheetKey, sheetList, sheetNumber, sheetTitle } from './sheet.js';
 import {
   addUserSheet, closeSheet, deleteUserSheet, downloadSheetPdf, downloadSheetPng, editUserSheet, findSheet, notifyViewChange,
-  openSheet, removeSelectedViewport, setSelectedViewportScale, setSelectedViewportTitle, sheetScaleOf,
+  openSheet, openViewFromSheet, removeSelectedViewport, resetSelectedViewportCrop, setSelectedViewportCam,
+  setSelectedViewportCrop, setSelectedViewportNo, setSelectedViewportScale, setSelectedViewportTitle, sheetScaleOf,
 } from './sheet-view.js';
 import { state } from './state.js';
+import { camera3dSnapshot } from './view3d.js';
 
 const CONTENTS = {
   site: 'Генплан, таблица участка, условные обозначения',
@@ -175,7 +177,10 @@ function renderUserSheetProps(panel, key, found) {
     </div>
     <h3>Виды на листе</h3>
     ${sheet.viewports.length ? `<ul class="sheet-vp-list" id="sheetVpList">
-      ${sheet.viewports.map((vp) => `<li><span>${escapeHtml(viewportTitle(project, vp))}</span><em>1:${vp.scale}</em></li>`).join('')}
+      ${(() => {
+    const nums = viewportNumbers(sheet);
+    return sheet.viewports.map((vp) => `<li><b class="sheet-vp-no">${escapeHtml(nums.get(vp.id))}</b><span>${escapeHtml(viewportTitle(project, vp))}</span><em>1:${vp.scale}${vp.crop && !vp.crop.off ? ' · обрезан' : ''}</em></li>`).join('');
+  })()}
     </ul>` : '<p class="hint" id="sheetVpEmpty">Пусто. Откройте лист и перетащите вид из вкладки «Виды» (на телефоне — «На лист…» в «Свойствах» вида).</p>'}
     <div class="prop-actions">
       <button type="button" class="primary" id="sheetPropOpen">${open ? 'Закрыть лист' : 'Открыть лист'}</button>
@@ -205,23 +210,50 @@ function renderViewportProps(panel, found) {
   const { vp } = hit;
   const desc = viewById(state.project, vp.viewId);
   const scales = [...new Set([...viewportScales(desc?.kind), vp.scale])].sort((a, b) => a - b);
+  const no = viewportNo(hit.sheet, vp);
+  const cropOn = Boolean(vp.crop && !vp.crop.off);
+  const deg = (r) => Math.round((r * 180) / Math.PI);
+  const camText = vp.cam ? `из 3D · азимут ${deg(vp.cam.yaw)}°, наклон ${deg(vp.cam.pitch)}°${vp.cam.roof ? ', с крышей' : ''}` : 'аксонометрия по умолчанию';
   panel.innerHTML = `
     <h2 id="vpPropsTitle">${escapeHtml(desc?.name || 'Вид удалён')}</h2>
-    <p class="subtitle">Вид на листе ${escapeHtml(hit.sheet.no)} — ${escapeHtml(hit.sheet.name)}</p>
+    <p class="subtitle" id="vpPropsSub">Лист ${escapeHtml(hit.sheet.no)}, вид ${escapeHtml(no)} — ${escapeHtml(hit.sheet.name)}</p>
     <div class="prop-block" id="vpProps">
       <div class="prop-row"><span>Масштаб</span><strong id="vpScaleVal">1:${vp.scale}</strong></div>
       <div class="elev-scale" id="vpScale" role="radiogroup" aria-label="Масштаб вида на листе">
         ${scales.map((s) => `<button type="button" role="radio" data-vp-scale="${s}" aria-checked="${s === vp.scale}"${s === vp.scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
       </div>
+      <label class="prop-field"><span>Номер вида</span><input id="vpNo" type="text" value="${escapeHtml(vp.no || '')}" placeholder="${escapeHtml(no)} — по порядку" maxlength="8"></label>
       <label class="prop-field"><span>Подпись</span><input id="vpTitle" type="text" value="${escapeHtml(vp.title || '')}" placeholder="${escapeHtml(desc?.name || '')}" maxlength="80"></label>
+      ${prow('Маркер', `${escapeHtml(no)} / Л${escapeHtml(hit.sheet.no)}`, 'vpMarker')}
       ${prow('Центр на листе, мм', `${Math.round(vp.x)} × ${Math.round(vp.y)}`, 'vpPos')}
     </div>
+    <h3>Обрезка</h3>
+    <div class="prop-block" id="vpCropBlock">
+      <label class="check-row"><input type="checkbox" id="vpCrop" ${cropOn ? 'checked' : ''}><span>Обрезать вид</span></label>
+      ${cropOn ? prow('Рамка, мм модели', `${Math.round(vp.crop.x1 - vp.crop.x0)} × ${Math.round(vp.crop.y1 - vp.crop.y0)}`, 'vpCropSize') : ''}
+      <button type="button" id="vpCropReset" ${vp.crop ? '' : 'disabled'}>Сбросить обрезку</button>
+      <p class="hint">Тяните ручки рамки выбранного вида: край — с шагом 5 мм (вблизи 1 мм), Shift — свободно. Вид на листе не сдвигается.</p>
+    </div>
+    ${desc?.kind === '3d' ? `
+    <h3>Камера</h3>
+    <div class="prop-block" id="vpCamBlock">
+      ${prow('Камера', escapeHtml(camText), 'vpCamText')}
+      <button type="button" id="vpCam" title="Взять углы и крышу из окна 3D-вида">Обновить из 3D</button>
+      ${vp.cam ? '<button type="button" class="link" id="vpCamReset">Аксонометрия по умолчанию</button>' : ''}
+    </div>` : ''}
     <div class="prop-actions">
+      <button type="button" id="vpOpen" title="Или двойной клик по виду на листе; Esc — назад к листу">Открыть вид</button>
       <button type="button" class="danger" id="vpRemove">Убрать с листа</button>
     </div>
-    <p class="hint">Тяните вид — сдвиг (шаг 5 мм, Shift — свободно). Delete — убрать, Ctrl+Z — вернуть. Esc — снять выбор.</p>`;
+    <p class="hint">Тяните вид — сдвиг (шаг 5 мм, Shift — свободно). Двойной клик — открыть вид. Delete — убрать, Ctrl+Z — вернуть. Esc — снять выбор.</p>`;
   panel.querySelectorAll('[data-vp-scale]').forEach((b) => b.addEventListener('click', () => setSelectedViewportScale(Number(b.dataset.vpScale))));
   panel.querySelector('#vpTitle').addEventListener('change', (e) => setSelectedViewportTitle(e.target.value));
+  panel.querySelector('#vpNo').addEventListener('change', (e) => { if (!setSelectedViewportNo(e.target.value)) e.target.value = vp.no || ''; });
+  panel.querySelector('#vpCrop').addEventListener('change', (e) => setSelectedViewportCrop(e.target.checked));
+  panel.querySelector('#vpCropReset').addEventListener('click', () => resetSelectedViewportCrop());
+  panel.querySelector('#vpCam')?.addEventListener('click', () => setSelectedViewportCam(camera3dSnapshot()));
+  panel.querySelector('#vpCamReset')?.addEventListener('click', () => setSelectedViewportCam(null));
+  panel.querySelector('#vpOpen').addEventListener('click', () => openViewFromSheet(vp.viewId));
   panel.querySelector('#vpRemove').addEventListener('click', () => removeSelectedViewport());
   return true;
 }
