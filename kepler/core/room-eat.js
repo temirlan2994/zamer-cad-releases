@@ -160,21 +160,53 @@ export function eatRoom(project, lower, upper) {
 // Вернуть съеденным комнатам исходную форму там, где съедавшая ушла:
 // комнаты, съеденные одной из upperIds, сбрасываются к базе и заново
 // съедаются теми, кто всё ещё перекрывает (кроме upperIds — их обработает
-// основной проход). Комната, которую двигали сами (она в upperIds), или
+// основной проход).
+// Саму съеденную комнату можно двигать: если она только сдвинута (форма та же,
+// другое место), её запомненная форма сдвигается вместе с ней — съеденная
+// возвращается целой на новом месте (и съедает то, на что наехала), а если
+// двигали группу вместе со съедавшей — остаётся как есть. Растянутая или
 // правленная руками забывает базу. → [{ lower }] восстановленные.
+const sameSize = (a, b) => a.w === b.w && a.h === b.h &&
+  JSON.stringify(a.outline || null) === JSON.stringify(b.outline || null) &&
+  JSON.stringify(a.notch || null) === JSON.stringify(b.notch || null);
+
+function resetToBase(project, lower, base) {
+  keepOpenings(project, lower, () => {
+    lower.x = base.x; lower.y = base.y; lower.w = base.w; lower.h = base.h;
+    if (base.outline) lower.outline = base.outline.map((p) => ({ ...p })); else delete lower.outline;
+    if (base.notch) lower.notch = { ...base.notch }; else delete lower.notch;
+    finalizeRoomOutline(lower);
+  });
+}
+
 export function restoreEaten(project, ids) {
   const reset = [];
+  const restoredMoved = [];
   for (const lower of project.rooms || []) {
     const eb = lower.eatBase;
     if (!eb) continue;
-    if (ids.has(lower.id) || !sameShape(eb.now, lower)) { delete lower.eatBase; continue; }
-    if (!eb.by.some((id) => ids.has(id))) continue;
-    keepOpenings(project, lower, () => {
-      lower.x = eb.base.x; lower.y = eb.base.y; lower.w = eb.base.w; lower.h = eb.base.h;
-      if (eb.base.outline) lower.outline = eb.base.outline.map((p) => ({ ...p })); else delete lower.outline;
-      if (eb.base.notch) lower.notch = { ...eb.base.notch }; else delete lower.notch;
-      finalizeRoomOutline(lower);
-    });
+    if (!sameShape(eb.now, lower)) {
+      // Съеденную комнату сдвинули: форма та же, место другое.
+      const moved = ids.has(lower.id) && sameSize(eb.now, lower);
+      if (!moved) { delete lower.eatBase; continue; }
+      const dx = lower.x - eb.now.x; const dy = lower.y - eb.now.y;
+      const base = { ...eb.base, x: eb.base.x + dx, y: eb.base.y + dy };
+      if (eb.by.some((id) => ids.has(id))) {
+        // Сдвинута вместе со съедавшей: взаимное положение прежнее.
+        lower.eatBase = { ...eb, base, now: snapShape(lower) };
+        continue;
+      }
+      delete lower.eatBase;
+      resetToBase(project, lower, base);
+      // Проёмы, пропавшие под съедавшей, возвращаются (после смены формы).
+      for (const o of eb.openings || []) {
+        if (!project.openings.some((x) => x.id === o.id)) project.openings.push(JSON.parse(JSON.stringify(o)));
+      }
+      restoredMoved.push({ lower });
+      continue;
+    }
+    if (ids.has(lower.id) || !eb.by.some((id) => ids.has(id))) continue;
+    resetToBase(project, lower, eb.base);
     // Проёмы, пропавшие под съедавшей, возвращаются на прежние места.
     for (const o of eb.openings || []) {
       if (!project.openings.some((x) => x.id === o.id)) project.openings.push(JSON.parse(JSON.stringify(o)));
@@ -182,7 +214,7 @@ export function restoreEaten(project, ids) {
     delete lower.eatBase;
     reset.push({ lower, by: eb.by });
   }
-  const restored = [];
+  const restored = [...restoredMoved];
   for (const { lower, by } of reset) {
     for (const id of by) {
       const upper = project.rooms.find((r) => r.id === id);

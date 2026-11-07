@@ -214,3 +214,37 @@ test('узкий остаток 700 мм съедается (раньше отк
   assert.equal(a.w, 700);
   assert.equal(roomOverlaps(p).length, 0);
 });
+
+test('сдвинули съеденную нижнюю комнату — она возвращается целой на новом месте', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  assert.ok(a.outline, 'нижняя съедена');
+  a.x -= 6000; a.y -= 6000; // отодвинули нижнюю целиком (форма та же, место другое)
+  const res = eatOverlaps(p, [a.id]);
+  assert.equal(res.restored.length, 1);
+  assert.equal(a.outline, undefined);
+  assert.deepEqual([a.x, a.y, a.w, a.h], [-6000, -6000, 4000, 4000]);
+  assert.equal(roomOverlaps(p).length, 0);
+});
+
+test('нижнюю сдвинули, но она всё ещё под верхней — теперь съедает верхнюю («последняя двигаемая сверху»)', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  a.x += 200; // чуть двинули
+  eatOverlaps(p, [a.id]);
+  assert.equal(roomOverlaps(p).length, 0, 'перекрытия нет');
+});
+
+test('группу (нижняя + съедавшая) сдвинули вместе — форма нижней не меняется', () => {
+  const { p, a, b } = pair({ x: 0, y: 0, w: 4000, h: 4000 }, { x: 3000, y: 3000, w: 3000, h: 3000 });
+  eatOverlaps(p, [b.id]);
+  const area0 = roomShapeArea(a);
+  for (const r of [a, b]) { r.x += 1500; r.y += 700; }
+  eatOverlaps(p, [a.id, b.id]);
+  assert.equal(roomShapeArea(a), area0);
+  assert.ok(a.eatBase, 'база сдвинута вместе');
+  b.x = 20000; // потом уехала съедавшая — нижняя возвращает полную форму на новом месте
+  eatOverlaps(p, [b.id]);
+  assert.equal(a.outline, undefined);
+  assert.deepEqual([a.x, a.y, a.w, a.h], [1500, 700, 4000, 4000]);
+});

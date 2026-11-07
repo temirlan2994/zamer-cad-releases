@@ -100,3 +100,45 @@ describe('комната съедает комнату', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('съеденную нижнюю комнату можно отодвинуть — она возвращается целой', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openNew(app.page);
+    await app.page.evaluate(async () => {
+      const { mutate } = await import('./ui/store.js');
+      const { createRoom } = await import('./core/model.js');
+      const { state } = window.__kepler;
+      state.view.scale = 0.03; state.view.panX = 420; state.view.panY = 260;
+      mutate(() => {
+        const a = createRoom('living', 0, 0, 4000, 4000); a.id = 'A';
+        const b = createRoom('bedroom', 6000, 0, 3000, 3000); b.id = 'B';
+        state.project.rooms.push(a, b);
+      });
+    });
+  });
+  after(async () => { await app?.close(); });
+  const areaOf = (page, id) => page.evaluate(async (rid) => {
+    const { roomShapeArea } = await import('./core/room-shape.js');
+    return roomShapeArea(window.__kepler.state.project.rooms.find((r) => r.id === rid));
+  }, id);
+
+  it('B съела A; A отодвинули — A снова 4000×4000 без красного', async () => {
+    const { page } = app;
+    await clickWorld(page, 7500, 1500);
+    await drag(page, [7500, 1500], [4500, 4500]);
+    assert.ok(await areaOf(page, 'A') < 4000 * 4000, 'A съедена');
+    await clickWorld(page, 500, 500);
+    await drag(page, [500, 500], [-4000, 500]);
+    const s = await snap(page);
+    assert.equal(await areaOf(page, 'A'), 4000 * 4000, 'A восстановилась целой');
+    assert.equal(s.rooms.A.outline, 0, 'A снова прямоугольник');
+    assert.equal(s.overlaps, 0, 'нет замечания о перекрытии');
+    assert.equal(s.redRects, 0, 'нет красной зоны');
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});
