@@ -32,7 +32,7 @@ describe('раскладка: колонка инструментов, библ�
     assert.ok(strip.y >= top.y + top.height - 1 && strip.x < 2, 'колонка под шапкой у левого края');
     assert.ok(strip.x + strip.width <= canvas.x + 1, 'колонка слева от холста');
     assert.ok(opts.y >= top.y + top.height - 1 && opts.y + opts.height <= canvas.y + 1 && opts.height <= 44, 'строка параметров — тонкая, над холстом');
-    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'dimModeBtn', 'landscapeBtn', 'viewBtn', 'fitBtn'];
+    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'dimModeBtn', 'viewBtn', 'fitBtn'];
     const rects = [];
     for (const id of ids) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} в колонке`);

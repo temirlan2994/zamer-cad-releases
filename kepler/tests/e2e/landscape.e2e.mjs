@@ -25,11 +25,12 @@ describe('ландшафт', () => {
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('кнопка «Ландшафт» — в колонке инструментов', async () => {
-    const chip = await app.page.$('#toolStrip #landscapeBtn');
-    assert.ok(chip, 'кнопка в колонке инструментов');
-    assert.equal(await chip.getAttribute('aria-label'), 'Ландшафт');
-    assert.match(await chip.textContent(), /Ландшафт/); // подсказка
+  it('кнопка «Ландшафт» — в шапке между «План» и «Участок»', async () => {
+    const chip = await app.page.$('.mode-tabs #landscapeBtn');
+    assert.ok(chip, 'кнопка в переключателе режимов');
+    assert.match(await chip.textContent(), /Ландшафт/);
+    const order = await app.page.$$eval('.mode-tabs .tab', (els) => els.map((e) => e.id));
+    assert.deepEqual(order.slice(0, 3), ['modePlanBtn', 'landscapeBtn', 'modeSiteBtn']);
     // Список этажей не изменился (кнопка — вне #levelBar).
     const bar = await app.page.$$eval('#levelBar button', (els) => els.map((e) => e.textContent));
     assert.deepEqual(bar, ['1 этаж', '+']);

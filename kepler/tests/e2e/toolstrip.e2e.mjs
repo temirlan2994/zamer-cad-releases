@@ -10,7 +10,7 @@ import { startApp, openSample } from './helpers.mjs';
 
 const tool = (page) => page.evaluate(() => window.__kepler.state.tool?.kind || null);
 const active = (page, sel) => page.$eval(sel, (n) => n.classList.contains('active'));
-const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'landscapeBtn', 'stairsToolBtn'];
+const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'stairsToolBtn'];
 
 describe('панель инструментов', () => {
   let app;

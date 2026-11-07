@@ -1742,8 +1742,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .tb-pop-wrap:has(.tb-pop:not([hidden])) .tb-tip { display: none; } /* открыта панель вида — подсказка не мешает */
 
 /* «Ландшафт» — зелёный, как прежняя плашка у этажей */
-.tb-btn.tb-landscape { color: color-mix(in srgb, #3f7a34 70%, var(--text)); }
-.tb-btn.tb-landscape.active { background: linear-gradient(135deg, #4f8a3c, #6aa84f); border-color: #4f8a3c; color: #fff; }
+#landscapeBtn.active { background: #4f8a3c; color: #fff; }
 
 /* --- Строка параметров инструмента --- */
 .tool-options {

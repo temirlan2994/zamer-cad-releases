@@ -16,6 +16,7 @@
         <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
         <div class="mode-tabs" role="tablist" aria-label="Режим">
           <button id="modePlanBtn" class="tab active" role="tab">План</button>
+          <button type="button" id="landscapeBtn" class="tab" role="tab" aria-pressed="false" title="Ландшафт: растения, дорожки, площадки, посадка по участку">Ландшафт</button>
           <button id="modeSiteBtn" class="tab" role="tab">Участок</button>
           <button type="button" class="tab" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
         </div>
@@ -66,9 +67,6 @@
           </div>
           <div class="tb-group" id="siteTools" hidden></div>
           <div class="tb-group" id="landscapeTools" hidden></div>
-          <div class="tb-group" id="modeTools">
-            <button type="button" class="tb-btn tb-landscape" id="landscapeBtn" aria-pressed="false" aria-label="Ландшафт" aria-describedby="tbTip-landscape"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c-4.5 0-7-2.6-7-6.2C5 5 7.6 3 12 3s7 2 7 4.8C19 11.4 16.5 14 12 14z"/><path d="M12 10.5l-2.5-2.5M12 9l2.5-2"/><path d="M4 21h16"/></svg><span class="tb-tip" role="tooltip" id="tbTip-landscape"><b>Ландшафт</b> · деревья, площадки, вода, парковка на участке; назад — «План» в шапке</span></button>
-          </div>
           <span class="tb-sep" aria-hidden="true"></span>
           <div class="tb-group" id="viewTools">
             <div class="view-ctl tb-pop-wrap" id="viewCtl">
