@@ -19,6 +19,7 @@ import {
 import { addDraftPoint, finishDraft } from './site-actions.js';
 import { closeSection, isSectionOpen } from './landscape-section.js';
 import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
+import { splitLiveKey } from './split-input.js';
 import { state } from './state.js';
 import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
@@ -56,6 +57,7 @@ export function bindKeyboard() {
     if (btn && event.detail > 0 && document.activeElement === btn) btn.blur();
   });
   window.addEventListener('keydown', (event) => {
+    if (state.splitEdit && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') && splitLiveKey(event)) { event.preventDefault(); return; }
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }

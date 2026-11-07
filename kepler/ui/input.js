@@ -32,7 +32,7 @@ import {
 } from '../core/group-handles.js';
 import { hideDimInput, openDimInput, positionDimInput } from './dim-input.js';
 import { hitTempDim } from './temp-dims.js';
-import { hideSplitInput } from './split-input.js';
+import { splitLiveClick, splitLiveMove } from './split-input.js';
 import { focusGap, gapMarkerAt } from './gaps.js';
 import {
   KITCHEN_ELEMENTS, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenHandleDrag, kitchenProject, withDefaultComp,
@@ -478,6 +478,10 @@ export function bindCanvasInput() {
     const world = pointerWorld(event); // участок — координаты съёмки
     const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
+    // Деление стены: клик режет по линии деления.
+    if (state.splitEdit && event.button === 0 && !spaceDown) {
+      if (splitLiveClick(plan, screen, event.pointerType === 'touch')) return;
+    }
 
     // Панорама: правая/средняя кнопка или зажатый пробел.
     if (event.button === 1 || event.button === 2 || spaceDown) {
@@ -625,7 +629,6 @@ export function bindCanvasInput() {
     // Клик мимо поля калибровки — отменяем калибровку.
     if (state.calibration && !el('calOverlay').hidden) { hideCalInput(); }
     if (!el('dimInput').hidden) hideDimInput();
-    if (state.splitEdit) hideSplitInput();
     if (state.sofaMenu) hideSofaMenu();
 
     // Стрелки-перевороты и размерные подписи выбранного проёма.
@@ -882,6 +885,7 @@ export function bindCanvasInput() {
     refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`
       + (state.modeName !== 'plan' ? terrainStatus(world) : '');
 
+    if (!drag && state.splitEdit) { splitLiveMove(plan); return; }
     if (!drag) { updateHoverAndGhost(world, plan, event); return; }
 
     if (drag.kind === 'pan') {
@@ -1549,5 +1553,7 @@ export function bindCanvasInput() {
     const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
     zoomAt(screen, factor);
     positionDimInput();
+    // Масштаб меняется под неподвижным курсором: линия деления остаётся под ним, а не прыгает на следующем движении.
+    if (state.splitEdit) splitLiveMove(worldToPlan(pointerWorld(event)));
   }, { passive: false });
 }
