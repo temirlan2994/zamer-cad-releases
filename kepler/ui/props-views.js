@@ -12,7 +12,9 @@
 // меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
 import { sortedLevels } from '../core/model.js';
-import { VIEW_SCALES, facadeViews, sectionViews, viewScale } from '../core/views.js';
+import {
+  VIEW_SCALES, facadeViews, sectionViews, sheetOfView, userSheets, viewById, viewScale,
+} from '../core/views.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
 import {
@@ -26,7 +28,9 @@ import { setEditorMode } from './modes.js';
 import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
-import { closeSheet, isSheetOpen, notifyViewChange } from './sheet-view.js';
+import {
+  VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet,
+} from './sheet-view.js';
 import { state } from './state.js';
 import { requestDraw } from './view.js';
 import { close3d, is3dOpen, open3d } from './view3d.js';
@@ -101,9 +105,13 @@ export function openView(id) {
 
 // ------------------------------------------------------------ дерево видов
 
+// Вид можно перетащить на открытый лист (ui/sheet-view.js); вид, уже
+// размещённый на листе, помечен номером листа.
 function treeItem(id, name, active, extra = '') {
-  return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}"
-    aria-selected="${active === id}"${active === id ? ' aria-current="page"' : ''}>${extra}<span class="vt-name">${escapeHtml(name)}</span></button></li>`;
+  const placed = sheetOfView(state.project, id);
+  const mark = placed ? `<small class="vt-sheet" title="На листе ${escapeHtml(placed.no)}">Л${escapeHtml(placed.no)}</small>` : '';
+  return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}" draggable="true"
+    aria-selected="${active === id}"${active === id ? ' aria-current="page"' : ''}>${extra}<span class="vt-name">${escapeHtml(name)}</span>${mark}</button></li>`;
 }
 
 function treeGroup(key, title, items, empty, count = false) {
@@ -140,7 +148,56 @@ export function renderViewsPanel(panel) {
   panel.querySelectorAll('[data-view]').forEach((b) => {
     b.addEventListener('click', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
     b.addEventListener('dblclick', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
+    b.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData(VIEW_MIME, b.dataset.view);
+      e.dataTransfer.setData('text/plain', b.dataset.view);
+      e.dataTransfer.effectAllowed = 'copy';
+      b.classList.add('dragging');
+    });
+    b.addEventListener('dragend', () => b.classList.remove('dragging'));
   });
+}
+
+// ------------------------------------------------------------ вид на лист
+
+// «На лист…» (касание и мышь): лист, на котором вид уже стоит, или выбор
+// листа пользователя / новый лист.
+function placeBlockHtml(viewId) {
+  if (!viewId || !viewById(state.project, viewId)) return '';
+  const placed = sheetOfView(state.project, viewId);
+  if (placed) {
+    return `
+    <h3>Лист</h3>
+    <div class="prop-block" id="viewPlace">
+      <p class="hint" id="viewPlacedOn">Вид размещён на листе ${escapeHtml(placed.no)} — ${escapeHtml(placed.name)}.</p>
+      <button type="button" id="viewPlaceOpen" data-place-open="${escapeHtml(placed.id)}">Открыть лист ${escapeHtml(placed.no)}</button>
+    </div>`;
+  }
+  const sheets = userSheets(state.project);
+  return `
+    <h3>Лист</h3>
+    <div class="prop-block" id="viewPlace">
+      <button type="button" id="viewPlaceBtn" aria-expanded="false">На лист…</button>
+      <div class="view-place-menu" id="viewPlaceMenu" hidden>
+        ${sheets.map((s) => `<button type="button" data-place-sheet="${escapeHtml(s.id)}">Лист ${escapeHtml(s.no)} — ${escapeHtml(s.name)}</button>`).join('')}
+        <button type="button" data-place-sheet="" id="viewPlaceNew">+ Новый лист</button>
+      </div>
+      <p class="hint">Или перетащите вид из вкладки «Виды» на открытый лист.</p>
+    </div>`;
+}
+
+function bindPlaceBlock(panel, viewId) {
+  const btn = panel.querySelector('#viewPlaceBtn');
+  const menu = panel.querySelector('#viewPlaceMenu');
+  btn?.addEventListener('click', () => {
+    menu.hidden = !menu.hidden;
+    btn.setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  panel.querySelectorAll('[data-place-sheet]').forEach((b) => b.addEventListener('click', () => {
+    const sheetId = b.dataset.placeSheet || addUserSheet().id;
+    if (placeViewOnSheet(sheetId, viewId)) openSheet(`user:${sheetId}`);
+  }));
+  panel.querySelector('[data-place-open]')?.addEventListener('click', (e) => openSheet(`user:${e.currentTarget.dataset.placeOpen}`));
 }
 
 // ------------------------------------------------------------ настройки вида
@@ -177,14 +234,14 @@ export function viewSettingsHtml() {
       <label class="check-row"><input type="checkbox" id="elevMarks" ${view?.marks !== false ? 'checked' : ''}><span>Отметки уровней</span></label>
       <p class="hint">Только просмотр: колесо — масштаб, тяните — сдвиг. ${sec ? 'Линия, глубина и название — выберите линию разреза на плане.' : 'Сторона — по северу участка и повороту дома.'}</p>
       <button type="button" id="elevCloseBtn">✕ Закрыть вид</button>
-    </div>`;
+    </div>${placeBlockHtml(openElevationId())}`;
   }
   if (is3dOpen()) {
     return `
     <div class="prop-block" id="viewsSettings">
       <p class="hint">Слои, рельеф и «Вписать» — на панели над 3D-видом.</p>
       <button type="button" id="views3dBtn">Закрыть 3D-вид</button>
-    </div>`;
+    </div>${placeBlockHtml('3d')}`;
   }
   const mode = state.modeName || 'plan';
   const custom = customViewAngle(project, mode);
@@ -209,6 +266,7 @@ export function viewSettingsHtml() {
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
     ${mode === 'plan' ? landscapeBlock() : ''}
+    ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
     </div>`;
 }
 
@@ -227,6 +285,7 @@ export function refreshViewsPanel() {
 
 // rerender — перерисовать панель целиком (после смены угла, флажков ландшафта).
 export function bindViewSettings(panel, rerender) {
+  bindPlaceBlock(panel, activeViewId());
   panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
     setElevationScale(Number(b.dataset.elevScale));
     rerender();

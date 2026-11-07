@@ -6,6 +6,7 @@
   --surface: #ffffff;
   --surface-2: #eef2f7;
   --canvas: #fbfcfe;
+  --sheet-backdrop: #c9ced6; /* фон вокруг бумаги открытого листа */
   --grid: #e8edf5;
   --grid-major: #d8e0ec;
   --line: #26313d;
@@ -34,6 +35,7 @@
     --surface: #151b24;
     --surface-2: #1e2632;
     --canvas: #0d1118;
+    --sheet-backdrop: #262d38;
     --grid: #182029;
     --grid-major: #212b37;
     --line: #d9e4f2;
@@ -63,6 +65,7 @@
   --surface: #151b24;
   --surface-2: #1e2632;
   --canvas: #0d1118;
+  --sheet-backdrop: #262d38;
   --grid: #182029;
   --grid-major: #212b37;
   --line: #d9e4f2;
@@ -2003,6 +2006,27 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .sheet-view-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; }
 .sheet-view-body img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25); }
 .sheet-view-body .hint { color: var(--muted); }
+/* Лист пользователя — рабочий холст (бумага рисуется на canvas). */
+.sheet-view-body.sheet-edit { position: relative; padding: 0; overflow: hidden; display: block; }
+.sheet-edit canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
+.sheet-edit-hint {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); max-width: min(520px, calc(100% - 32px));
+  margin: 0; padding: 8px 14px; border-radius: 999px; background: var(--surface); color: var(--muted);
+  box-shadow: var(--shadow); font-size: 12.5px; text-align: center; pointer-events: none;
+}
+.sheet-edit-hint[hidden] { display: none; }
+.sheets-top { margin-bottom: 8px; }
+.sheets-item small { color: var(--muted); font-weight: 400; font-size: 11px; white-space: nowrap; }
+.sheets-del { flex: none; padding: 0 4px; color: var(--muted); }
+.sheets-del:hover { color: var(--danger); }
+.sheet-vp-list { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12.5px; }
+.sheet-vp-list li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--border); }
+.sheet-vp-list em { color: var(--muted); font-style: normal; }
+.vt-item .vt-sheet { margin-left: auto; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.vt-item.dragging { opacity: 0.55; }
+.view-place-menu { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.view-place-menu[hidden] { display: none; }
+.view-place-menu button { text-align: left; }
 
 /* Открытый фасад на холсте (ui/elevation-view.js): под листом, над 3D и разрезом. */
 .elev-view {

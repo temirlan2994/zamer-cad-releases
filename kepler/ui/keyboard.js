@@ -19,7 +19,7 @@ import {
 } from './landscape.js';
 import { addDraftPoint, finishDraft } from './site-actions.js';
 import { closeSection, isSectionOpen } from './landscape-section.js';
-import { closeSheet, isSheetOpen } from './sheet-view.js';
+import { closeSheet, handleSheetKey, isSheetOpen } from './sheet-view.js';
 import { closeElevation, isElevationOpen } from './elevation-view.js';
 import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
 import { splitLiveKey } from './split-input.js';
@@ -67,6 +67,8 @@ export function bindKeyboard() {
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }
     if (event.key === 'Escape' && is3dOpen()) { close3d(); return; }
     // Открытый лист (ui/sheet-view.js): Esc возвращает предыдущий вид.
+    // Лист пользователя: Delete убирает выбранный вид, Esc снимает выбор.
+    if (isSheetOpen() && handleSheetKey(event)) return;
     if (event.key === 'Escape' && isSheetOpen()) { closeSheet(); return; }
     // Открытый фасад (ui/elevation-view.js): Esc — «Закрыть вид».
     if (event.key === 'Escape' && isElevationOpen()) { closeElevation(); return; }

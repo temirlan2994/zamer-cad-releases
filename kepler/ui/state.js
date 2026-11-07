@@ -15,6 +15,7 @@ export const state = {
   tepTab: 'tep', // 'rooms' (экспликация) | 'tep' (показатели) — подвкладка «ТЭП» (ui/props-tep.js)
   sheetSel: null, // ключ листа, выбранного в «Листах» (ui/props-sheets.js): «Свойства» без выбора — его настройки
   sheetOpen: null, // ключ листа, открытого на холсте (ui/sheet-view.js)
+  sheetVp: null, // id видового экрана, выбранного на открытом листе пользователя
   elevationOpen: null, // id вида-фасада, открытого на холсте (ui/elevation-view.js), например 'elev-N'
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
