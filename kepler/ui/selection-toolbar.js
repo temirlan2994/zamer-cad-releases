@@ -113,6 +113,16 @@ function contentForSelection(sel) {
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'section') {
+    const view = (state.project.views || []).find((v) => v.id === sel.id);
+    if (!view) return null;
+    return {
+      label: view.name,
+      html: `${button('open-section', '▣', 'Открыть вид')}
+        ${button('flip-section', '⇄', 'Развернуть')}
+        ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
   if (sel.type === 'site' && sel.kind === 'building') {
     return { label: 'Дом: тяните мышью или стрелками', html: '' };
   }
@@ -151,6 +161,12 @@ export function bindSelectionToolbar() {
         const la = await import('./landscape-array.js');
         if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();
       }
+      return;
+    }
+    if (action === 'open-section' || action === 'flip-section') {
+      const id = state.selection?.id;
+      if (action === 'open-section') (await import('./elevation-view.js')).openElevation(id);
+      else (await import('./plan-section.js')).flipSectionView(id);
       return;
     }
     if (action === 'split-room') {

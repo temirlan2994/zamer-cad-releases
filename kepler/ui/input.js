@@ -58,6 +58,10 @@ import {
   addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
 } from './site-actions.js';
 import { addAlignViewPoint, snapAlignPoint } from './view-align.js';
+import {
+  planSectionClick, planSectionDblClick, planSectionDragEnd, planSectionDragMove, planSectionHover, planSectionHoverTarget,
+  planSectionPointerDown,
+} from './plan-section.js';
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
@@ -379,6 +383,7 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
   if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
+  if (state.tool?.kind === 'psec') { planSectionHover(plan, event); return; }
   if (state.tool?.kind === 'bound-room') { boundRoomHover(plan); return; }
   if (state.tool?.kind === 'terrain') {
     const s = worldToScreen(world.x, world.y);
@@ -403,9 +408,9 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
 
-  // Подсветка под курсором: мебель, проёмы, стены, комнаты, объекты участка.
-  let nextHover = null;
-  const item = hitItem(plan);
+  // Подсветка под курсором: линии разрезов, мебель, проёмы, стены, комнаты, объекты участка.
+  let nextHover = event?.clientX !== undefined ? planSectionHoverTarget(pointerScreen(event)) : null;
+  const item = nextHover ? null : hitItem(plan);
   if (item) nextHover = { type: 'item', id: item.id };
   if (!nextHover) {
     const opening = hitOpening(plan);
@@ -618,6 +623,11 @@ export function bindCanvasInput() {
         return;
       }
       if (t.kind === 'bound-room') { tapOrNow(event, screen, () => boundRoomClick(plan)); return; }
+      if (t.kind === 'psec') {
+        const mods = { shiftKey: event.shiftKey, ctrlKey: event.ctrlKey };
+        tapOrNow(event, screen, () => planSectionClick(plan, mods));
+        return;
+      }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
       if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
       touchPan();
@@ -712,6 +722,10 @@ export function bindCanvasInput() {
         return;
       }
     }
+
+    // Линия разреза: ручки концов, сдвиг, выбор (поверх комнат и стен).
+    const secDrag = planSectionPointerDown(event, screen, plan);
+    if (secDrag) { drag = secDrag; return; }
 
     // Ручки плановых объектов.
     const wallEndHit = hitManualWallEnd(screen);
@@ -923,6 +937,7 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind.startsWith('ls-')) { landscapeDragMove(drag, world, screen, event); return; }
+    if (drag.kind.startsWith('psec-')) { planSectionDragMove(drag, plan, event); return; }
 
     if (drag.kind === 'terrain-point') {
       const p = state.project.site.terrain?.points.find((x) => x.id === drag.id);
@@ -1532,6 +1547,7 @@ export function bindCanvasInput() {
     if (finished.kind === 'multi' && !finished.moved && finished.wasSelected && isItemGroup(state.selection)) { cycleGroupHandle(); return; }
     if (finished.kind.startsWith('group-')) state.groupRotateDeg = null;
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
+    if (finished.kind.startsWith('psec-')) { planSectionDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {
       applyMarquee();
@@ -1678,6 +1694,7 @@ export function bindCanvasInput() {
     if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
     if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
     if (state.tool?.kind === 'wall') finishWallChain();
+    if (state.modeName === 'plan' && !state.tool) planSectionDblClick(pointerScreen(event));
   });
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();

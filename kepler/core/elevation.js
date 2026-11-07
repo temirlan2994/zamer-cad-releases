@@ -36,7 +36,7 @@ import { deriveWalls } from './walls.js';
 // Наружные нормали сторон дома в осях дома (ось Y вниз): 0 — верх плана.
 const SIDES = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
 const DIR_STEP = { N: 0, E: 1, S: 2, W: 3 };
-const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', stair: 'stair', plinth: 'plinth' };
+export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', stair: 'stair', plinth: 'plinth' };
 const EPS = 1e-6;
 
 // Сторона дома для фасада dir: { side (0..3), out — наружная нормаль,
@@ -51,7 +51,7 @@ export function facadeSide(project, dir) {
 }
 
 // Полотна дверей этажа — грани посередине толщины стены.
-function doorFaces(project, level) {
+export function doorFaces(project, level) {
   const lp = levelProject(project, level.id);
   const { voids } = levelWallSolids(lp, deriveWalls(lp), level.height);
   const faces = [];
@@ -79,7 +79,7 @@ function pointInPoly(pts, u, z) {
   return inside;
 }
 
-const area2 = (pts) => pts.reduce((s, p, i) => { const q = pts[(i + 1) % pts.length]; return s + p.u * q.z - q.u * p.z; }, 0);
+export const area2 = (pts) => pts.reduce((s, p, i) => { const q = pts[(i + 1) % pts.length]; return s + p.u * q.z - q.u * p.z; }, 0);
 
 // Пробы грани: центр и вершины, сдвинутые на 10% к центру.
 function probes(poly) {
@@ -131,7 +131,29 @@ function visibleEdges(polys) {
   }
 }
 
-export const fmtMark = (mm) => `${mm < -0.5 ? '−' : '+'}${(Math.abs(mm) / 1000).toFixed(3)}`;
+// Алгоритм художника для граней в осях вида { pts: [{u, z}], depth, kind,
+// u0, u1, z0, z1, plane }: дальние → ближние (при равной глубине — стекло и
+// двери поверх стен), закрытые целиком более близкими — прочь, контуры —
+// visibleEdges. Общий для фасадов и разрезов (core/section.js).
+export function paintOrder(polys) {
+  const rank = (p) => (p.kind === 'window' || p.kind === 'door' ? 1 : 0);
+  polys.sort((a, b) => (b.depth - a.depth) || (rank(a) - rank(b)));
+  const visible = polys.filter((p, i) => {
+    const near = [];
+    for (let j = i + 1; j < polys.length; j += 1) {
+      const q = polys[j];
+      if (q.depth > p.depth - 1) continue;
+      if (q.u1 < p.u0 || q.u0 > p.u1 || q.z1 < p.z0 || q.z0 > p.z1) continue;
+      near.push(q);
+    }
+    if (!near.length) return true;
+    return probes(p).some((pt) => !near.some((q) => pt.u >= q.u0 && pt.u <= q.u1 && pt.z >= q.z0 && pt.z <= q.z1 && pointInPoly(q.pts, pt.u, pt.z)));
+  });
+  visibleEdges(visible);
+  return visible;
+}
+
+export const fmtMark =(mm) => `${mm < -0.5 ? '−' : '+'}${(Math.abs(mm) / 1000).toFixed(3)}`;
 
 // Фасад dir ('N' | 'S' | 'E' | 'W'):
 // { dir, side, polys: [{ pts: [{u, z}], depth, kind, edges: [[a, b]] }] —
@@ -163,22 +185,7 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
       plane: f.twoSided ? `t${Math.round(depth)}` : `${nn}|${offset}|${Math.round(depth)}`,
     });
   }
-  // Дальние → ближние; при равной глубине — стекло и двери поверх стен.
-  const rank = (p) => (p.kind === 'window' || p.kind === 'door' ? 1 : 0);
-  polys.sort((a, b) => (b.depth - a.depth) || (rank(a) - rank(b)));
-  // Грани, закрытые целиком более близкими, — прочь.
-  const visible = polys.filter((p, i) => {
-    const near = [];
-    for (let j = i + 1; j < polys.length; j += 1) {
-      const q = polys[j];
-      if (q.depth > p.depth - 1) continue;
-      if (q.u1 < p.u0 || q.u0 > p.u1 || q.z1 < p.z0 || q.z0 > p.z1) continue;
-      near.push(q);
-    }
-    if (!near.length) return true;
-    return probes(p).some((pt) => !near.some((q) => pt.u >= q.u0 && pt.u <= q.u1 && pt.z >= q.z0 && pt.z <= q.z1 && pointInPoly(q.pts, pt.u, pt.z)));
-  });
-  visibleEdges(visible);
+  const visible = paintOrder(polys);
 
   const empty = !visible.length;
   const bounds = empty ? { u0: 0, u1: 0, z0: 0, z1: 0 } : {

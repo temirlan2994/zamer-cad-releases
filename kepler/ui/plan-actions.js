@@ -32,6 +32,7 @@ import {
   afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
+import { deleteSectionView } from './plan-section.js';
 import { requestDraw } from './view.js';
 
 export function reconcileOpenings() {
@@ -226,6 +227,7 @@ export function deleteSelection() {
   const sel = state.selection;
   if (!sel) return;
   if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
+  if (sel.type === 'section') { deleteSectionView(sel.id); return; }
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;

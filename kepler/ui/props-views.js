@@ -1,7 +1,9 @@
 // Виды проекта, как диспетчер проекта Revit.
 // Вкладка «Виды» правой панели — дерево видов: «Планы этажей» (по виду на
-// этаж), «Участок», «Ландшафт», «3D», «Разрезы» (разрезы участка из
-// «Ландшафта»), «Фасады» (Север, Юг, Запад, Восток — ui/elevation-view.js).
+// этаж), «Участок», «Ландшафт», «3D», «Разрезы» (разрезы по линии на плане
+// этажа — ui/plan-section.js, окно ui/elevation-view.js; под подзаголовком
+// «Разрезы участка» — разрезы из «Ландшафта»), «Фасады» (Север, Юг, Запад,
+// Восток — ui/elevation-view.js).
 // Клик (и двойной клик) открывает вид; активный подсвечен.
 // Настройки активного вида — во вкладке «Свойства», когда ничего не выбрано
 // (ui/props.js): поворот вида (те же команды, что и панель ⟲ на колонке
@@ -10,12 +12,13 @@
 // меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
 import { sortedLevels } from '../core/model.js';
-import { VIEW_SCALES, facadeViews, viewScale } from '../core/views.js';
+import { VIEW_SCALES, facadeViews, sectionViews, viewScale } from '../core/views.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
 import {
   closeElevation, elevationView, isElevationOpen, openElevation, openElevationId, setElevationMarks, setElevationScale,
 } from './elevation-view.js';
+import { flipSectionView } from './plan-section.js';
 import { landscapeSections, openSection, closeSection, openSectionId } from './landscape-section.js';
 import { switchLevel } from './levels.js';
 import { closeSheets, isPhone } from './mobile.js';
@@ -34,6 +37,8 @@ const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
 const openGroups = { plans: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
 
 const sectionName = (sec) => `Разрез ${sec.name}–${sec.name}`;
+// Вид в окне фасада: фасад ('elev-N'…) или разрез по линии на плане.
+const isWindowView = (id) => id.startsWith('elev-') || sectionViews(state.project).some((v) => v.id === id);
 
 // Идентификатор активного вида: 'plan:<этаж>' | 'site' | 'landscape' |
 // 'section:<id>' | '3d' | 'elev-N'…; открытый лист — null (активен лист, не вид).
@@ -51,7 +56,7 @@ export function activeViewId() {
 export function activeViewTitle() {
   const id = activeViewId() || `plan:${state.project.activeLevel}`;
   if (id === '3d') return '3D';
-  if (id.startsWith('elev-')) return elevationView(id)?.name || 'Фасад';
+  if (isWindowView(id)) return elevationView(id)?.name || 'Фасад';
   if (id === 'site') return 'Участок';
   if (id === 'landscape') return 'Ландшафт';
   if (id.startsWith('section:')) {
@@ -67,7 +72,7 @@ export function openView(id) {
   if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
   closeSheet();
   state.sheetSel = null;
-  if (id.startsWith('elev-')) {
+  if (isWindowView(id)) {
     if (is3dOpen()) close3d();
     openElevation(id);
     return;
@@ -113,6 +118,12 @@ export function renderViewsPanel(panel) {
   const active = activeViewId();
   const levels = sortedLevels(project);
   const sections = landscapeSections();
+  const planSecs = sectionViews(project);
+  const secItems = [
+    ...planSecs.map((v) => treeItem(v.id, v.name, active)),
+    ...(sections.length ? [`<li role="none" class="vt-sub">Разрезы участка</li>`] : []),
+    ...sections.map((s) => treeItem(`section:${s.id}`, sectionName(s), active)),
+  ];
   panel.innerHTML = `
     <h2>Виды</h2>
     <p class="subtitle">Виды проекта, как в диспетчере Revit: клик — открыть. Настройки вида — во вкладке «Свойства».</p>
@@ -121,8 +132,8 @@ export function renderViewsPanel(panel) {
       ${treeGroup('site', 'Участок', [treeItem('site', 'Участок', active)])}
       ${treeGroup('landscape', 'Ландшафт', [treeItem('landscape', 'Ландшафт', active)])}
       ${treeGroup('3d', '3D', [treeItem('3d', '3D-вид', active)])}
-      ${treeGroup('sections', 'Разрезы', sections.map((s) => treeItem(`section:${s.id}`, sectionName(s), active)),
-    'Разрезов нет: инструмент «Разрез» в режиме «Ландшафт».', true)}
+      ${treeGroup('sections', 'Разрезы', secItems,
+    'Разрезов нет: инструмент «Разрез» (S) на плане этажа; разрезы участка — в режиме «Ландшафт».')}
       ${treeGroup('facades', 'Фасады', facadeViews(project).map((v) => treeItem(v.id, v.name, active)), 'Фасадов нет')}
     </div>`;
   panel.querySelectorAll('[data-vt-group]').forEach((d) => d.addEventListener('toggle', () => { openGroups[d.dataset.vtGroup] = d.open; }));
@@ -155,14 +166,16 @@ export function viewSettingsHtml() {
   if (isElevationOpen()) {
     const view = elevationView();
     const scale = viewScale(view);
+    const sec = view?.kind === 'section';
     return `
     <div class="prop-block" id="viewsSettings">
+      ${sec ? '<button type="button" id="elevFlipBtn" title="Смотреть в другую сторону от линии; Ctrl+Z — вернуть">⇄ Развернуть</button>' : ''}
       <div class="prop-row"><span>Масштаб</span><strong id="elevScaleVal">1:${scale}</strong></div>
       <div class="elev-scale" id="elevScale" role="radiogroup" aria-label="Масштаб фасада">
         ${VIEW_SCALES.map((s) => `<button type="button" role="radio" data-elev-scale="${s}" aria-checked="${s === scale}"${s === scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
       </div>
       <label class="check-row"><input type="checkbox" id="elevMarks" ${view?.marks !== false ? 'checked' : ''}><span>Отметки уровней</span></label>
-      <p class="hint">Только просмотр: колесо — масштаб, тяните — сдвиг. Сторона — по северу участка и повороту дома.</p>
+      <p class="hint">Только просмотр: колесо — масштаб, тяните — сдвиг. ${sec ? 'Линия, глубина и название — выберите линию разреза на плане.' : 'Сторона — по северу участка и повороту дома.'}</p>
       <button type="button" id="elevCloseBtn">✕ Закрыть вид</button>
     </div>`;
   }
@@ -220,6 +233,7 @@ export function bindViewSettings(panel, rerender) {
   }));
   panel.querySelector('#elevMarks')?.addEventListener('change', (e) => { setElevationMarks(e.target.checked); rerender(); });
   panel.querySelector('#elevCloseBtn')?.addEventListener('click', () => closeElevation());
+  panel.querySelector('#elevFlipBtn')?.addEventListener('click', () => { flipSectionView(openElevationId()); rerender(); });
   panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => { startAlignView(); refreshViewsPanel(); });
   panel.querySelector('#viewsAngleInput')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));

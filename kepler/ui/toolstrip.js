@@ -21,6 +21,7 @@ import {
   activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceFurniture, startPlaceOpening,
 } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
+import { togglePlanSectionTool } from './plan-section.js';
 
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
@@ -162,7 +163,8 @@ export function renderToolstrip() {
     || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
   toggle('stairsToolBtn', stairs);
-  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn']) {
+  toggle('sectionToolBtn', t?.kind === 'psec');
+  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'sectionToolBtn']) {
     const b = el(id);
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
@@ -218,4 +220,10 @@ export function bindToolstrip() {
   el('doorToolBtn')?.addEventListener('click', () => placeOpening('door'));
   el('windowToolBtn')?.addEventListener('click', () => placeOpening('window'));
   el('furnitureToolBtn')?.addEventListener('click', toggleFurniture);
+  el('sectionToolBtn')?.addEventListener('click', () => {
+    if (state.tool?.kind === 'wall') finishWallChain();
+    togglePlanSectionTool();
+    if (state.tool) closeSheets();
+    renderToolstrip();
+  });
 }

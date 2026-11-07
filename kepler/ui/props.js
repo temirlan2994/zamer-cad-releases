@@ -1,6 +1,8 @@
 // Правая панель свойств: проект, комната, стена, проём, мебель, группа.
 
-import { isElevationOpen, refreshElevationView } from './elevation-view.js';
+import { elevationView, isElevationOpen, refreshElevationView } from './elevation-view.js';
+import { findView } from '../core/views.js';
+import { renderSectionProps } from './plan-section.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
@@ -138,6 +140,10 @@ export function renderProps() {
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
   if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
+  if (sel.type === 'section') {
+    const view = findView(state.project, sel.id);
+    if (view?.kind === 'section') { renderSectionProps(panel, view); return; }
+  }
   renderProjectProps(panel);
 }
 
@@ -167,7 +173,7 @@ function defaultCeiling() {
 function renderElevationProps(panel) {
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
-    <p class="subtitle">Фасад · свойства вида</p>
+    <p class="subtitle">${elevationView()?.kind === 'section' ? 'Разрез' : 'Фасад'} · свойства вида</p>
     ${viewSettingsHtml()}`;
   bindViewSettings(panel, renderProps);
 }
@@ -630,6 +636,8 @@ export function renderToolOptions(force = false) {
     html = '<strong class="to-title">Помещение</strong><span class="to-note">клик внутри замкнутой петли стен — или тип из библиотеки слева</span>';
   } else if (t?.kind === 'place-furniture') {
     html = `<strong class="to-title">${t.itemKind === 'stairs' ? 'Лестница' : 'Мебель'}</strong><span class="to-value">${escapeHtml(furnitureDef(t.itemKind)?.title || t.itemKind)}</span>`;
+  } else if (t?.kind === 'psec') {
+    html = `<strong class="to-title">Разрез</strong><span class="to-note">${['клик — начало линии', 'клик — конец линии', 'клик — сторона взгляда или Enter'][Math.min(2, t.points.length)]} · Ctrl — орто, Shift — без привязки</span>`;
   } else if (furnLib) {
     html = '<strong class="to-title">Мебель</strong><span class="to-note">выберите предмет в каталоге слева или перетащите на план</span>';
   }

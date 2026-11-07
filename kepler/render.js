@@ -57,6 +57,7 @@ import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
+import { drawPlanSections } from './ui/render-plan-section.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -700,6 +701,8 @@ export function createRenderer(canvas) {
     // Вставка окна/двери: размеры до стен и соседних проёмов слева и справа.
     const ghostOp = state.ghostDoor || state.ghostOpeningFull;
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
+    // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
+    if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
     // Подписи ландшафта на плане — только если включены во «Видах».
     if (planLs?.labels && lsObjects.length) {

@@ -1,16 +1,21 @@
 // Рисование фасада (core/elevation.js buildElevation) на canvas: заливка по
 // типу грани, контур 1 px, линия земли, отметки уровней справа с
-// вертикальными размерами, подпись вида «Фасад Север 1:100».
+// вертикальными размерами, подпись вида «Фасад Север 1:100». Разрез
+// (core/section.js buildSection) — то же плюс сечение: тёмная заливка со
+// штриховкой и толстый контур, проёмы в разрезанных стенах — пустоты со
+// стеклом (окно) или линией перемычки (дверь).
 // Вид: sx = ox + u·k, sy = oy − z·k (k — px на мм).
 
 import { fmtMark } from '../core/elevation.js';
 
 const LIGHT = {
   bg: '#fbfcfe', line: '#2b313a', text: '#18202b', muted: '#687486', ground: '#4a5a3a', dim: '#5a6576',
+  cut: '#59616d', hatch: '#8c939d', cutLine: '#111821', glass: '#3f7fb8',
   fill: { wall: '#e9e6e1', window: '#bcd8ef', door: '#c9a07a', slab: '#cdc8bf', roof: '#a9b1bb', stair: '#d6d0c6', plinth: '#b5ab9e', other: '#dedbd6' },
 };
 const DARK = {
   bg: '#0d1118', line: '#cfd8e3', text: '#eef4fb', muted: '#8c9aac', ground: '#9fb68a', dim: '#9aa8ba',
+  cut: '#a9b4c2', hatch: '#7d8896', cutLine: '#f2f6fb', glass: '#7fb4e6',
   fill: { wall: '#3a4049', window: '#2e5274', door: '#6f5038', slab: '#4b4842', roof: '#5a6474', stair: '#4a4640', plinth: '#55504a', other: '#41444a' },
 };
 
@@ -107,6 +112,57 @@ function drawMarks(ctx, el, view, c) {
   ctx.restore();
 }
 
+// Сечение разреза: заливка, штриховка 45° (шаг 6 px), контур 2 px, проёмы.
+function drawCuts(ctx, el, view, c, fillS, lineS) {
+  if (!el.cuts.length) return;
+  ctx.save();
+  ctx.beginPath();
+  for (const q of el.cuts) {
+    q.pts.forEach((p, i) => (i ? ctx.lineTo(fillS.x(p.u), fillS.y(p.z)) : ctx.moveTo(fillS.x(p.u), fillS.y(p.z))));
+    ctx.closePath();
+  }
+  ctx.fillStyle = c.cut;
+  ctx.fill();
+  ctx.clip();
+  const b = el.bounds;
+  const x0 = view.ox + b.u0 * view.k - 10; const x1 = view.ox + b.u1 * view.k + 10;
+  const y0 = view.oy - b.z1 * view.k - 10; const y1 = view.oy - b.z0 * view.k + 10;
+  ctx.strokeStyle = c.hatch;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = x0 - (y1 - y0); x < x1; x += 6) { ctx.moveTo(x, y1); ctx.lineTo(x + (y1 - y0), y0); }
+  ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = c.cutLine;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (const [p, q] of el.cutEdges || []) { ctx.moveTo(lineS.x(p.u), lineS.y(p.z)); ctx.lineTo(lineS.x(q.u), lineS.y(q.z)); }
+  ctx.stroke();
+  // Проёмы: окно — стекло посередине (двойная линия), дверь — тонкий контур проёма.
+  for (const o of el.openings || []) {
+    const xa = lineS.x(o.u0); const xb = lineS.x(o.u1); const ya = lineS.y(o.z1); const yb = lineS.y(o.z0);
+    ctx.lineWidth = 1;
+    if (o.kind === 'window') {
+      ctx.strokeStyle = c.glass;
+      const w = xb - xa;
+      if (w > 6) {
+        const xm = (xa + xb) / 2;
+        ctx.beginPath(); ctx.moveTo(xm - 1.5, ya); ctx.lineTo(xm - 1.5, yb); ctx.moveTo(xm + 1.5, ya); ctx.lineTo(xm + 1.5, yb); ctx.stroke();
+      } else {
+        const ym = (ya + yb) / 2;
+        ctx.beginPath(); ctx.moveTo(xa, ym - 1.5); ctx.lineTo(xb, ym - 1.5); ctx.moveTo(xa, ym + 1.5); ctx.lineTo(xb, ym + 1.5); ctx.stroke();
+      }
+    }
+    ctx.strokeStyle = c.line;
+    ctx.setLineDash([3, 2]);
+    ctx.strokeRect(Math.min(xa, xb), Math.min(ya, yb), Math.abs(xb - xa), Math.abs(yb - ya));
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
 // Нарисовать фасад. opts: { view: {k, ox, oy}, colors, marks, title }.
 export function drawElevation(ctx, el, { view, colors = LIGHT, marks = true, title = '', dpr = 1 } = {}) {
   const c = colors;
@@ -136,7 +192,8 @@ export function drawElevation(ctx, el, { view, colors = LIGHT, marks = true, tit
     path(ctx, el.ground, fillS);
     ctx.stroke();
   }
-  if (marks && el.polys.length) drawMarks(ctx, el, view, c);
+  if (el.cuts) drawCuts(ctx, el, view, c, fillS, lineS);
+  if (marks && (el.polys.length || el.cuts?.length)) drawMarks(ctx, el, view, c);
   if (title) {
     const b = el.bounds;
     const x = view.ox + ((b.u0 + b.u1) / 2) * view.k;

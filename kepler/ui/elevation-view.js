@@ -5,8 +5,11 @@
 // двойной клик — вписать. Геометрия — core/elevation.js, рисование —
 // ui/render-elevation.js. Настройки вида (масштаб, отметки) хранятся в
 // project.views (core/views.js) — в «Свойствах» без выбора.
+// Разрезы по линии на плане (kind 'section', core/section.js) открываются
+// в том же окне: заливка сечения — ui/render-elevation.js.
 
 import { buildElevation } from '../core/elevation.js';
+import { buildSection } from '../core/section.js';
 import { VIEW_SCALES, findView, materializeView, viewScale } from '../core/views.js';
 import { el, escapeHtml } from './dom.js';
 import { closeSheets, isPhone } from './mobile.js';
@@ -15,6 +18,7 @@ import { elevationColors, drawElevation, fitElevation } from './render-elevation
 import { history, state } from './state.js';
 import { mutate } from './store.js';
 
+const EMPTY = { polys: [], cuts: [], cutEdges: [], openings: [], levels: [], ground: [], bounds: { u0: 0, u1: 0, z0: 0, z1: 0 }, width: 0, height: 0 };
 let cache = null; // { stamp, project, el }
 let cam = null; // { k, ox, oy, zoom, scale, id }
 let observers = null;
@@ -38,14 +42,15 @@ function geometry() {
   if (!view) return null;
   const stamp = stampOf(view.id);
   if (cache?.stamp !== stamp || cache.project !== state.project) {
-    cache = { stamp, project: state.project, el: buildElevation(state.project, view.dir) };
+    const geo = view.kind === 'section' ? buildSection(state.project, view) : buildElevation(state.project, view.dir);
+    cache = { stamp, project: state.project, el: geo || EMPTY };
   }
   return cache.el;
 }
 
 export function openElevation(id) {
   const view = findView(state.project, id);
-  if (!view || view.kind !== 'elevation') return false;
+  if (!view || (view.kind !== 'elevation' && view.kind !== 'section')) return false;
   closeSheet();
   if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
   state.elevationOpen = id;
@@ -162,14 +167,17 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = colors.bg;
   ctx.fillRect(0, 0, w, h);
-  if (!geo.polys.length) {
+  if (!geo.polys.length && !geo.cuts?.length) {
     ctx.fillStyle = colors.muted;
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Пусто: на плане нет стен — нарисуйте помещения.', w / 2, h / 2);
+    ctx.fillText(view.kind === 'section' ? 'Пусто: линия разреза не проходит через дом.' : 'Пусто: на плане нет стен — нарисуйте помещения.', w / 2, h / 2);
   }
   drawElevation(ctx, geo, { view: cam, colors, marks: view.marks !== false, title: elevationTitle(view), dpr });
-  state.elevationDrawn = { id: view.id, polys: geo.polys.length, zoom: cam.zoom, scale };
+  state.elevationDrawn = {
+    id: view.id, kind: view.kind, polys: geo.polys.length, cuts: geo.cuts?.length || 0, openings: geo.openings?.length || 0,
+    side: view.kind === 'section' ? (view.side === -1 ? -1 : 1) : null, zoom: cam.zoom, scale,
+  };
 }
 
 function zoomAt(sx, sy, factor) {

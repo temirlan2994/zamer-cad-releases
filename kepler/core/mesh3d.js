@@ -619,8 +619,8 @@ function levelStairs(lp, z0, levelHeight) {
 
 const ROOF_COLOR = '#9aa3ad';
 const SLAB_COLOR = '#b9b4ab';
-const ROOF_T = 250;
-const SLAB_T = 200;
+export const ROOF_T = 250;
+export const SLAB_T = 200;
 const SLAB_OUTSET = 20; // торец перекрытия чуть выступает из стены (без мерцания)
 
 // Пятно этажа: прямоугольники комнат (с частями Г/outline) с наружной стеной.

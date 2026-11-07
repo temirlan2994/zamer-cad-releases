@@ -7,6 +7,9 @@
 //     kind: 'plan' | 'site' | 'landscape' | '3d' | 'elevation' | 'section';
 //     dir — сторона фасада 'N' | 'S' | 'E' | 'W'; scale — знаменатель
 //     масштаба (по умолчанию 100); marks: false — отметки уровней скрыты.
+//     Разрез (kind 'section', core/section.js): levelId — этаж, на котором
+//     проведена линия; line { a, b } — в осях дома; side 1 | -1 — сторона
+//     взгляда; depth — глубина видимости, мм (нет — до габарита дома).
 //   project.sheets[] = { id, no, name, format: 'A3', orient: 'landscape', viewports: [] }
 //     — заготовка: листы пока строятся из sheetPlan() (ui/sheet.js),
 //     размещение видов (viewports) — следующий шаг.
@@ -55,10 +58,23 @@ export function materializeView(project, id) {
 export const viewScale = (view) => (VIEW_SCALES.includes(view?.scale) ? view.scale
   : Number(view?.scale) > 0 ? Number(view.scale) : DEFAULT_VIEW_SCALE);
 
+const finitePt = (p) => isObj(p) && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y));
+
 export function normalizeView(v) {
   if (!isObj(v) || !VIEW_KINDS.includes(v.kind) || !str(v.id)) return null;
-  const out = { ...v, name: str(v.name) || (v.kind === 'elevation' && DIR_NAMES[v.dir] ? `Фасад ${DIR_NAMES[v.dir]}` : 'Вид') };
+  const out = { ...v, name: str(v.name) || (v.kind === 'elevation' && DIR_NAMES[v.dir] ? `Фасад ${DIR_NAMES[v.dir]}` : v.kind === 'section' ? 'Разрез' : 'Вид') };
   if (v.kind === 'elevation' && !DIR_NAMES[v.dir]) return null;
+  if (v.kind === 'section') {
+    const l = v.line;
+    if (!isObj(l) || !finitePt(l.a) || !finitePt(l.b)) return null;
+    const a = { x: Number(l.a.x), y: Number(l.a.y) };
+    const b = { x: Number(l.b.x), y: Number(l.b.y) };
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1) return null;
+    out.line = { a, b };
+    out.side = v.side === -1 ? -1 : 1;
+    const depth = Number(v.depth);
+    if (v.depth != null && depth > 0 && Number.isFinite(depth)) out.depth = Math.round(depth); else delete out.depth;
+  }
   if (v.dir != null && !DIR_NAMES[v.dir]) delete out.dir;
   if (v.levelId != null && !str(v.levelId)) delete out.levelId;
   const scale = Number(v.scale);
@@ -89,4 +105,57 @@ export function normalizeViewsAndSheets(data) {
   } else delete data.views;
   if (Array.isArray(data.sheets)) data.sheets = data.sheets.map(normalizeSheet).filter(Boolean);
   else delete data.sheets;
+}
+
+// ------------------------------------------------------------ разрезы
+
+// Разрезы по линии на плане этажа (в порядке создания).
+export function sectionViews(project) {
+  return Array.isArray(project?.views) ? project.views.filter((v) => v.kind === 'section') : [];
+}
+
+export const isSectionViewId = (project, id) => sectionViews(project).some((v) => v.id === id);
+
+// Следующее свободное «Разрез N» и id.
+export function nextSectionName(project) {
+  const used = new Set(sectionViews(project).map((v) => v.name));
+  let k = 1;
+  while (used.has(`Разрез ${k}`)) k += 1;
+  return `Разрез ${k}`;
+}
+
+function nextSectionId(project) {
+  const ids = new Set((project.views || []).map((v) => v.id));
+  let k = 1;
+  while (ids.has(`sec-${k}`)) k += 1;
+  return `sec-${k}`;
+}
+
+// Новый разрез в project.views (мутирует проект — вызывать внутри mutate).
+export function addSectionView(project, { levelId = null, a, b, side = 1, depth = null, scale = DEFAULT_VIEW_SCALE, name = null }) {
+  if (!Array.isArray(project.views)) project.views = [];
+  const view = {
+    id: nextSectionId(project), kind: 'section', name: name || nextSectionName(project),
+    line: { a: { x: Math.round(a.x), y: Math.round(a.y) }, b: { x: Math.round(b.x), y: Math.round(b.y) } },
+    side: side === -1 ? -1 : 1, scale,
+  };
+  if (levelId) view.levelId = levelId;
+  if (Number(depth) > 0) view.depth = Math.round(Number(depth));
+  project.views.push(view);
+  return view;
+}
+
+export function removeView(project, id) {
+  if (!Array.isArray(project.views)) return false;
+  const i = project.views.findIndex((v) => v.id === id);
+  if (i < 0) return false;
+  project.views.splice(i, 1);
+  return true;
+}
+
+// Номер/буква в «головке» разреза: «Разрез 1» → «1», «Разрез А» → «А».
+export function sectionMark(view) {
+  const m = /(\S+)\s*$/.exec(String(view?.name || ''));
+  const t = m ? m[1] : '';
+  return t.length <= 3 ? t : t.slice(0, 3);
 }
