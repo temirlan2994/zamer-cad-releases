@@ -301,7 +301,10 @@ export function createRenderer(canvas) {
         else if (hovered) ctx.fillStyle = tokens.hover;
         if (wall.hidden) ctx.globalAlpha = 0.22;
         // v2: непересекающиеся куски области (с углами), v1: полоса.
-        for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+        // Куски соседних стен чуть перекрываем (0,5 px экрана), иначе на стыках
+        // сглаживание даёт светлые швы — стена выглядит собранной из кирпичиков.
+        const e = wall.hidden ? 0 : px(0.5);
+        for (const r of wallRects(wall)) ctx.fillRect(r.x - e, r.y - e, r.w + 2 * e, r.h + 2 * e);
         ctx.globalAlpha = 1;
       };
       const roomLayer = (room) => {
