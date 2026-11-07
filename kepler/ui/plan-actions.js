@@ -798,7 +798,7 @@ export function ungroupSelectedItems() {
 }
 
 // Добавляет предмет мебели в указанную мировую точку (центр предмета).
-export function addFurnitureAt(kind, x, y, rotation = 0) {
+export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straight' } = {}) {
   const fd = furnitureDef(kind);
   if (!fd) return;
   const item = createItem(
@@ -808,10 +808,14 @@ export function addFurnitureAt(kind, x, y, rotation = 0) {
     fd.w, fd.h, rotation,
   );
   withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
+  // Лестница — рассчитана по высоте этажа (марши, площадки, ступени).
+  if (kind === 'stairs') applyStairPreset(item, stairShape || 'straight', activeLevel(state.project)?.height || 3000);
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
   toast(item.comp?.type === 'kitchen'
     ? `«${fd.title}» добавлена — форма и элементы в панели справа, элементы тянутся по кухне`
+    : kind === 'stairs'
+    ? 'Лестница добавлена — круг с числом у марша тянет ступени, ромб — ширину, квадрат — площадку; форма — справа'
     : isFixedSizeComp(item)
     ? `«${fd.title}» добавлен — «+» на концах добавляет модули, круг — поворот`
     : `«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);

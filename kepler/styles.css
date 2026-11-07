@@ -668,6 +668,9 @@ body.mode-site .library { display: none; }
 }
 .furniture-chip:active { cursor: grabbing; transform: translateY(0); }
 .furniture-chip.dragging { opacity: 0.45; }
+/* Карточка двери/окна: выбранный пресет инструмента */
+.opening-chip { cursor: pointer; }
+.opening-chip.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--surface-2); }
 .furniture-chip canvas {
   width: 100%;
   max-width: 100%;
@@ -891,9 +894,11 @@ body.mode-site .library { display: none; }
 .kitchen-shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 6px; }
 .kitchen-shape button { min-width: 0; padding: 6px 4px; font-size: 12.5px; }
 .kitchen-shape button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.stair-shape { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 0 0 6px; }
+.stair-shape { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 0 0 6px; }
 .stair-shape button { min-width: 0; padding: 7px 3px; font-size: 12px; }
 .stair-shape button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.stair-params input.bad { border-color: var(--danger); color: var(--danger); }
+.stair-warn { margin: 6px 0 0; padding-left: 18px; color: var(--danger); font-size: 12px; }
 .kitchen-els { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .kitchen-el-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 4px; margin: 0 0 4px 24px; }
 .kitchen-el-row select, .kitchen-el-row input { width: 100%; min-width: 0; }
@@ -2022,6 +2027,8 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .sheet-vp-list { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12.5px; }
 .sheet-vp-list li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--border); }
 .sheet-vp-list em { color: var(--muted); font-style: normal; }
+.sheet-vp-list li > span { flex: 1; min-width: 0; }
+.sheet-vp-list .sheet-vp-no { min-width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; display: inline-grid; place-items: center; font-size: 10.5px; }
 .vt-item .vt-sheet { margin-left: auto; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; font-weight: 600; }
 .vt-item.dragging { opacity: 0.55; }
 .view-place-menu { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }

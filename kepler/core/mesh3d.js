@@ -19,7 +19,7 @@ import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { gridAxis, mergeCells } from './ortho-grid.js';
 import { roomRects } from './room-shape.js';
-import { stairCalculation } from './stairs.js';
+import { stairLayout } from './stairs.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -575,44 +575,35 @@ function stairBox(item, x0, y0, x1, y1, z0, z1) {
   }));
 }
 
-// Ступени в 3D: прямая, Г- или П-образная лестница из параметров плана.
+// Ступени в 3D: марши и площадки из раскладки лестницы (core/stairs.js).
+// Проступь k марша — на высоте (startStep + k) подъёмов, площадка — на своей.
 function levelStairs(lp, z0, levelHeight) {
   const faces = [];
   for (const item of lp.items.filter((candidate) => candidate.kind === 'stairs')) {
-    const calc = stairCalculation(item, levelHeight);
-    const w = item.w;
-    const h = item.h;
-    const addFlightY = (x0, x1, yStart, yEnd, count, startStep) => {
-      const depth = (yEnd - yStart) / Math.max(1, count);
-      for (let i = 0; i < count; i += 1) {
-        const top = z0 + Math.min(calc.floorH - calc.riserH, (startStep + i + 1) * calc.riserH);
-        faces.push(...stairBox(item, x0, yStart + i * depth, x1, yStart + (i + 1) * depth, z0, top));
-      }
+    const lay = stairLayout(item, levelHeight);
+    const m = item.mirrored ? -1 : 1;
+    // Отражённая лестница: прямоугольник зеркалится по x до поворота.
+    const box = (x0, y0, x1, y1, top) => {
+      const a = m > 0 ? x0 : -x1;
+      const b = m > 0 ? x1 : -x0;
+      faces.push(...stairBox(item, a, y0, b, y1, z0, top));
     };
-    const addFlightX = (xStart, xEnd, y0, y1, count, startStep) => {
-      const depth = (xEnd - xStart) / Math.max(1, count);
-      for (let i = 0; i < count; i += 1) {
-        const top = z0 + Math.min(calc.floorH - calc.riserH, (startStep + i + 1) * calc.riserH);
-        faces.push(...stairBox(item, xStart + i * depth, y0, xStart + (i + 1) * depth, y1, z0, top));
+    for (const f of lay.flights) {
+      for (let k = 0; k < f.n; k += 1) {
+        const top = z0 + (f.startStep + k) * lay.riserH;
+        const t0 = k / f.n;
+        const t1 = (k + 1) / f.n;
+        if (f.dir.x === 0) {
+          // Вверх по плану (dir.y < 0) — первая проступь у нижнего края.
+          const y0 = f.dir.y < 0 ? f.y + f.h * (1 - t1) : f.y + f.h * t0;
+          const y1 = f.dir.y < 0 ? f.y + f.h * (1 - t0) : f.y + f.h * t1;
+          box(f.x, y0, f.x + f.w, y1, top);
+        } else {
+          box(f.x + f.w * t0, f.y, f.x + f.w * t1, f.y + f.h, top);
+        }
       }
-    };
-    if (calc.shape === 'u') {
-      const gap = Math.min(200, w * 0.1);
-      const flightW = (w - gap) / 2;
-      const landingD = Math.min(flightW, h * 0.36);
-      addFlightY(-w / 2, -gap / 2, h / 2, -h / 2 + landingD, calc.firstTreads, 0);
-      const landingTop = z0 + (calc.firstTreads + 1) * calc.riserH;
-      faces.push(...stairBox(item, -w / 2, -h / 2, w / 2, -h / 2 + landingD, z0, landingTop));
-      addFlightY(gap / 2, w / 2, -h / 2 + landingD, h / 2, calc.secondTreads, calc.firstTreads + 1);
-    } else if (calc.shape === 'l') {
-      const flightW = Math.min(1000, w * 0.42, h * 0.42);
-      addFlightY(-w / 2, -w / 2 + flightW, h / 2, -h / 2 + flightW, calc.firstTreads, 0);
-      const landingTop = z0 + (calc.firstTreads + 1) * calc.riserH;
-      faces.push(...stairBox(item, -w / 2, -h / 2, -w / 2 + flightW, -h / 2 + flightW, z0, landingTop));
-      addFlightX(-w / 2 + flightW, w / 2, -h / 2, -h / 2 + flightW, calc.secondTreads, calc.firstTreads + 1);
-    } else {
-      addFlightY(-w / 2, w / 2, h / 2, -h / 2, calc.treads, 0);
     }
+    for (const l of lay.landings) box(l.x, l.y, l.x + l.w, l.y + l.h, z0 + l.step * lay.riserH);
   }
   return faces;
 }

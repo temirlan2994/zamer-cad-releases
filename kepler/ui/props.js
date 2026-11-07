@@ -35,9 +35,12 @@ import {
   bindBuildingRotation, buildingRotationField, renderSiteObjectProps, renderSiteSettings,
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
-import { STAIR_SHAPES, applyStairPreset, stairCalculation, stairShape } from '../core/stairs.js';
+import {
+  STAIR_SHAPES, applyStairPreset, materializeStair, setStairParam, stairCalculation, stairParamKeys, stairParamValue, stairShape,
+} from '../core/stairs.js';
 import { presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
+import { renderOpeningLibrary } from './opening-library.js';
 import { state } from './state.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
@@ -573,7 +576,8 @@ function renderPlaceOpeningProps(panel, compact = false) {
       ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
         <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
     </div>`;
-  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel, compact); requestDraw(); };
+  // Библиотека проёмов подсвечивает карточку по новым параметрам.
+  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel, compact); renderOpeningLibrary(); requestDraw(); };
   panel.querySelector('#presetType').addEventListener('change', (e) => {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });
@@ -634,6 +638,12 @@ export function renderToolOptions(force = false) {
     html = `<strong class="to-title">Помещение</strong><span class="to-value">${escapeHtml(roomType(t.type)?.title || t.type)}</span>`;
   } else if (t?.kind === 'bound-room' || roomLib) {
     html = '<strong class="to-title">Помещение</strong><span class="to-note">клик внутри замкнутой петли стен — или тип из библиотеки слева</span>';
+  } else if (t?.kind === 'place-furniture' && t.itemKind === 'stairs') {
+    html = `<strong class="to-title">Лестница</strong>
+      <label class="prop-field"><span>Форма</span>
+        <select id="toStairShape">${STAIR_SHAPES.map((s) => `
+          <option value="${s.id}" ${(t.stairShape || 'straight') === s.id ? 'selected' : ''}>${s.title}</option>`).join('')}
+        </select></label>`;
   } else if (t?.kind === 'place-furniture') {
     html = `<strong class="to-title">${t.itemKind === 'stairs' ? 'Лестница' : 'Мебель'}</strong><span class="to-value">${escapeHtml(furnitureDef(t.itemKind)?.title || t.itemKind)}</span>`;
   } else if (t?.kind === 'psec') {
@@ -647,6 +657,10 @@ export function renderToolOptions(force = false) {
     : 'Выбор: клик — объект, рамка по пустому месту — несколько · Esc — снять выбор');
   // Телефон: строка — только когда есть что задать (дверь, окно, стена).
   bar.classList.toggle('empty', !body.querySelector('input, select'));
+  body.querySelector('#toStairShape')?.addEventListener('change', (e) => {
+    t.stairShape = e.target.value; // следующая лестница — этой формы
+    requestDraw();
+  });
   if (t?.kind === 'wall') {
     body.querySelector('#toWallType').addEventListener('change', (e) => {
       t.wallType = e.target.value;
@@ -806,7 +820,8 @@ function renderItemProps(panel, item) {
         <div class="prop-row"><span>Глубина проступи</span><strong class="${c.okTread ? '' : 'bad'}">${Math.round(c.treadD)} мм</strong></div>
         <div class="prop-row"><span>Формула удобства</span><strong class="${c.okComfort ? '' : 'bad'}">${Math.round(c.comfort)} мм</strong></div>
         <p class="empty-hint">${comfortable ? '✓ Размеры лестницы удобные.' : 'Нажмите «Подогнать автоматически» — размеры станут удобными.'} Норма: ступень 150–190, проступь 230–340 мм.</p>
-      </div>`;
+      </div>
+      ${stairParamsBlock(item, c)}`;
   }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
@@ -827,6 +842,8 @@ function renderItemProps(panel, item) {
     const h = Math.max(200, Number(panel.querySelector('#itemH').value) || item.h);
     mutate(() => {
       item.w = w; item.h = h;
+      // Лестница раскладывается по новому габариту (ступени по маршам — свои).
+      if (isStairs) Object.assign(item, materializeStair(item, activeLevel(state.project)?.height || 3000));
       if (isStairs) fitStairRoom(item);
     });
     if (isStairs || item.comp) selectObject({ type: 'item', id: item.id });
@@ -861,7 +878,53 @@ function renderItemProps(panel, item) {
     selectObject({ type: 'item', id: item.id });
     toast('Лестница подогнана под высоту этажа');
   });
+  if (isStairs) bindStairParams(panel, item);
   bindCompositeSection(panel, item);
+}
+
+// Параметры лестницы числами: ширина марша, проступь, подъёмы, ступени по
+// маршам (сумма сохраняется — разница уходит в соседний марш), площадки.
+const STAIR_PARAM_TITLES = {
+  width: 'Ширина марша, мм', going: 'Проступь, мм', depth: 'Глубина площадки, мм', gap: 'Зазор между маршами, мм',
+  l0w: 'Площадка 1: по X, мм', l0h: 'Площадка 1: по Y, мм', l1w: 'Площадка 2: по X, мм', l1h: 'Площадка 2: по Y, мм',
+};
+function stairParamsBlock(item, c) {
+  const fh = activeLevel(state.project)?.height || 3000;
+  const field = (key) => {
+    const flight = /^n:(\d)$/.exec(key);
+    const title = flight ? `Ступеней в марше ${Number(flight[1]) + 1}` : STAIR_PARAM_TITLES[key];
+    const v = stairParamValue(item, key, fh);
+    const bad = (key === 'width' && !c.okWidth) || (key === 'going' && !c.okTread) || (flight && !c.okFlights);
+    return `<label class="prop-field"><span>${title}</span><input data-stair-param="${key}" class="${bad ? 'bad' : ''}" type="number" step="${flight ? 1 : 10}" min="${flight ? 1 : 0}" value="${Math.round(v)}"></label>`;
+  };
+  const keys = stairParamKeys(c.shape);
+  return `
+      <h3>Марши и площадки</h3>
+      <div class="prop-block stair-params">
+        <div class="prop-grid">
+          ${field('width')}${field('going')}
+          <label class="prop-field"><span>Подъёмов</span><input data-stair-param="risers" type="number" step="1" min="3" value="${c.risers}"></label>
+          ${keys.filter((k) => /^n:/.test(k)).map(field).join('')}
+          ${keys.filter((k) => !['width', 'going'].includes(k) && !/^n:/.test(k)).map(field).join('')}
+        </div>
+        ${c.warnings.length ? `<ul class="stair-warn">${c.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('')}</ul>` : ''}
+        <p class="empty-hint">На плане: круг с числом у конца марша — ступени (сумма не меняется), ромб — ширина марша, квадрат — угол площадки. Shift — без шага.</p>
+      </div>`;
+}
+
+function bindStairParams(panel, item) {
+  panel.querySelectorAll('[data-stair-param]').forEach((input) => {
+    input.addEventListener('change', (e) => {
+      const v = Number(e.target.value);
+      if (!Number.isFinite(v)) return;
+      mutate(() => {
+        setStairParam(item, e.target.dataset.stairParam, v, activeLevel(state.project)?.height || 3000);
+        fitStairRoom(item);
+        reconcileOpenings();
+      });
+      selectObject({ type: 'item', id: item.id });
+    });
+  });
 }
 
 function renderMultiProps(panel, sel) {

@@ -6,6 +6,7 @@ import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { state } from './state.js';
 import { bindLandscapeLibrary, renderLandscapeLibrary } from './landscape.js';
+import { bindOpeningLibrary, renderOpeningLibrary } from './opening-library.js';
 import { renderToolstrip } from './toolstrip.js';
 import { cancelTool, startPlaceFurniture, startPlaceRoom } from './tools.js';
 
@@ -18,20 +19,22 @@ let furnitureCat = FURNITURE_CATEGORIES[0].id;
 export function bindFurnitureSearch() {
   el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
   bindLandscapeLibrary();
+  bindOpeningLibrary();
 }
 
 const ROOM_TOOLS = new Set(['bound-room', 'place-room']);
 
 // Компьютер: библиотека выезжает рядом с колонкой инструментов только когда
 // нужна — «Помещение» (типы комнат), «Мебель» (каталог; кнопкой или во время
-// размещения), «Ландшафт» (каталог участка). Иначе холст свободен.
+// размещения), «Дверь» / «Окно» (каталог проёмов, ui/opening-library.js),
+// «Ландшафт» (каталог участка). Иначе холст свободен.
 // Телефон: та же панель — нижний лист по кнопкам #mobileBar (ui/mobile.js).
 export function libraryWanted() {
   if (state.modeName === 'landscape') return true;
   if (state.modeName !== 'plan') return false;
   const t = state.tool;
   if (!t) return state.libraryPinned;
-  if (ROOM_TOOLS.has(t.kind)) return true;
+  if (ROOM_TOOLS.has(t.kind) || t.kind === 'place-opening') return true;
   if (t.kind === 'place-furniture') return t.itemKind !== 'stairs' || state.libraryPinned;
   return false;
 }
@@ -50,9 +53,20 @@ export function syncLibraryOpen() {
   refs.libraryTabs.hidden = !plan;
   const bar = el('landscapeBar');
   if (bar) bar.hidden = !landscape;
+  const openings = el('openingsBar');
+  const opening = plan && t?.kind === 'place-opening';
+  if (openings) openings.hidden = !opening;
   if (!plan) {
     refs.libraryTop.hidden = landscape; // «Ландшафт» — свой каталог (ui/landscape.js)
     refs.furnitureBar.hidden = true;
+    return;
+  }
+  if (opening) {
+    // Дверь / окно: только каталог проёмов, без вкладок помещений и мебели.
+    refs.libraryTabs.hidden = true;
+    refs.libraryTop.hidden = true;
+    refs.furnitureBar.hidden = true;
+    renderOpeningLibrary();
     return;
   }
   const furn = state.libraryTab === 'furniture';
@@ -115,6 +129,7 @@ function roomCard(def) {
 export function refreshLibraryTheme() {
   try { renderLandscapeLibrary(); } catch { /* каталога ещё нет */ }
   if (refs.furnitureItems?.childElementCount) renderFurnitureItems();
+  renderOpeningLibrary();
 }
 
 export function renderFurnitureBar() {

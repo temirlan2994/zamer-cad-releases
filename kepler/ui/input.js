@@ -1,9 +1,10 @@
 // Ввод мышью на канвасе: выбор, перетаскивания, рамка, колесо, drag-and-drop.
 
 import { furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
-import { pickStackHit } from '../core/hit-stack.js';
+import { itemsEditable, pickStackHit } from '../core/hit-stack.js';
+import { STAIR_FIELDS, applyStairPreset, dragStairHandle, stairHandleLabel } from '../core/stairs.js';
 import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
-import { roomById } from '../core/model.js';
+import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { nearestPointOnPolyline } from '../core/site.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
@@ -107,6 +108,15 @@ function stackPickNumber(stack, event) {
 
 // Повторный клик по выбранной мебели — следующий режим ручек.
 function cycleItemHandle(id) {
+  // Лестница: «выбор» (ручки маршей и площадок) ↔ «поворот»; растяжения нет —
+  // габарит задают марши.
+  if (state.project.items.find((i) => i.id === id)?.kind === 'stairs') {
+    const rotate = state.itemHandle?.id === id && state.itemHandle.mode === 'rotate';
+    state.itemHandle = { id, mode: rotate ? 'select' : 'rotate' };
+    toast(rotate ? 'Лестница: круг с числом — ступени марша, ромб — ширина марша, квадрат — площадка' : ITEM_HANDLE_TITLES.rotate);
+    requestDraw();
+    return;
+  }
   state.itemHandle = nextItemHandle(state.itemHandle, id);
   toast(ITEM_HANDLE_TITLES[state.itemHandle.mode]);
   requestDraw();
@@ -319,6 +329,8 @@ function updateHoverAndGhost(world, plan, event) {
       w: def.w, h: def.h, rotation: state.tool.rotation || 0,
     };
     withDefaultComp(item);
+    // Лестница — сразу рассчитанная по высоте этажа, выбранной формы.
+    if (item.kind === 'stairs') applyStairPreset(item, state.tool.stairShape || 'straight', activeLevel(state.project)?.height || 3000);
     state.ghostItem = item;
     requestDraw();
     return;
@@ -441,6 +453,18 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    // Esc во время ручки лестницы — отмена жеста целиком.
+    if (e.key === 'Escape' && drag?.kind === 'stair-handle') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const finished = drag;
+      drag = null;
+      state.stairLabel = null;
+      if (finished.moved) restoreFrom(finished.before);
+      selectObject({ type: 'item', id: finished.id });
+      requestDraw();
+      return;
+    }
     if (e.key !== 'Escape' || !drag || !cancelLandscapeDrag(drag)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -612,8 +636,8 @@ export function bindCanvasInput() {
       const t = state.tool;
       if (t.kind === 'place-room') { tapOrNow(event, screen, () => placeRoomAt(plan)); return; }
       if (t.kind === 'place-furniture') {
-        const { itemKind, rotation = 0 } = t;
-        tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation); });
+        const { itemKind, rotation = 0, stairShape } = t;
+        tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation, { stairShape }); });
         return;
       }
       if (t.kind === 'place-opening') { state.openingFree = event.shiftKey; tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
@@ -719,6 +743,23 @@ export function bindCanvasInput() {
           start: { comp: structuredClone(item.comp), x: item.x, y: item.y },
           before: snapshot(), moved: false,
         };
+        return;
+      }
+    }
+
+    // Ручки выделенной лестницы: ступени по маршам, ширина марша, площадки.
+    if (state.selection?.type === 'item' && state._stairUI?.itemId === state.selection.id && itemsEditable(state.view.scale)) {
+      const item = state.project.items.find((i) => i.id === state.selection.id);
+      const tolPx = state.coarsePointer ? 6 : 3;
+      let h = null; let hd = Infinity;
+      for (const hh of state._stairUI.handles) {
+        const d = Math.hypot(hh.x - screen.x, hh.y - screen.y);
+        if (d <= hh.r + tolPx && d < hd) { h = hh; hd = d; }
+      }
+      if (item && h) {
+        // Ручка нарисована чуть снаружи кромки: тянем от точки захвата.
+        const grab = h.plan ? { x: plan.x - h.plan.x, y: plan.y - h.plan.y } : { x: 0, y: 0 };
+        drag = { kind: 'stair-handle', id: item.id, handle: h.id, grab, start: structuredClone(item), before: snapshot(), moved: false };
         return;
       }
     }
@@ -1217,6 +1258,24 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'stair-handle') {
+      const item = state.project.items.find((i) => i.id === drag.id);
+      if (!item) return;
+      const step = event.shiftKey ? 1 : gridStep(); // Shift — без привязки
+      const fallback = activeLevel(state.project)?.height || 3000;
+      const at = { x: plan.x - drag.grab.x, y: plan.y - drag.grab.y };
+      const next = dragStairHandle(drag.start, drag.handle, at, { snap: step, fallbackHeight: fallback });
+      if (next) {
+        for (const key of STAIR_FIELDS) delete item[key];
+        Object.assign(item, next);
+        drag.moved = STAIR_FIELDS.some((key) => JSON.stringify(item[key]) !== JSON.stringify(drag.start[key]))
+          || item.x !== drag.start.x || item.y !== drag.start.y;
+        state.stairLabel = { itemId: item.id, x: plan.x, y: plan.y, text: stairHandleLabel(item, drag.handle, fallback) };
+      }
+      requestDraw();
+      return;
+    }
+
     if (drag.kind === 'kitchen-handle') {
       const item = state.project.items.find((i) => i.id === drag.id);
       if (!item) return;
@@ -1540,6 +1599,7 @@ export function bindCanvasInput() {
     state.guides = [];
     state.objGuides = null;
     state.kitchenLabel = null;
+    state.stairLabel = null;
     if (finished.kind === 'site-vertex' || finished.kind === 'ls-vertex') state.drawSnap = null;
 
     if (finished.kind === 'pan') { requestDraw(); return; }

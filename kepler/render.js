@@ -44,7 +44,8 @@ import { facadeDimensionStations } from './core/dimensions.js';
 import { openingGaps } from './core/opening-spacing.js';
 import { roomPolygon, roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
 import { nominalShape } from './core/v7/eat-bridge.js';
-import { stairCalculation } from './core/stairs.js';
+import { stairHandles, stairLayout, stairPath } from './core/stairs.js';
+import { itemsEditable } from './core/hit-stack.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
 import { landscapeWarnings } from './core/landscape.js';
@@ -794,6 +795,7 @@ export function createRenderer(canvas) {
       ? state.project.items.find((i) => i.id === state.selection.id) : null;
     state._sofaUI = null;
     state._kitchenUI = null;
+    state._stairUI = null;
     state._tempDimsUI = null;
     if (selItem) {
       // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
@@ -832,7 +834,11 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.arc(p.x, p.y, HANDLE_SIZE / 2 - 1.5, -0.6, Math.PI * 1.2); ctx.stroke();
       }
       // Диван-конструктор не растягивается: вместо квадратов — «+» на торцах.
-      if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens, rotatorsPx);
+      // Лестница: свои ручки (ступени по маршам, ширина марша, углы площадок)
+      // вместо растяжения — только крупным планом (как правка мебели).
+      if (selItem.kind === 'stairs') {
+        if (!print && handleMode !== 'rotate' && itemsEditable(scale)) drawStairHandles(ctx, state, selItem, p2s, tokens);
+      } else if (selItem.comp?.type === 'kitchen' && isFixedSizeComp(selItem)) drawKitchenHandles(ctx, state, selItem, p2s, tokens, rotatorsPx);
       else if (isFixedSizeComp(selItem)) drawSofaPlus(ctx, state, selItem, p2s, tokens);
       else if (handleMode === 'scale') for (const c of corners) drawHandleSquare(ctx, p2s(c.x, c.y), tokens);
       else if (handleMode === 'stretch') for (const e of itemEdgeHandles(selItem)) drawHandleSquare(ctx, p2s(e.x, e.y), tokens);
@@ -1727,6 +1733,61 @@ function drawKitchenHandles(ctx, state, item, p2s, tokens, occupied = []) {
   }
 }
 
+// Ручки выделенной лестницы (экранный слой): у конца марша — залитый круг
+// с числом ступеней марша (тянуть — ступени перетекают в соседний марш; у
+// прямой — проступь), на кромке первого марша — ромб ширины марша, в углу
+// площадки — квадрат её размеров. Зоны — в state._stairUI (ui/input.js).
+function drawStairHandles(ctx, state, item, p2s, tokens) {
+  const touch = Boolean(state.coarsePointer);
+  const R = touch ? 15 : 10;
+  const handles = [];
+  const fallback = state.project?.levels?.find((l) => l.id === state.project.activeLevel)?.height || 3000;
+  for (const h of stairHandles(item, fallback)) {
+    const base = p2s(h.x, h.y);
+    const tip = p2s(h.x + h.out.x * 1000, h.y + h.out.y * 1000);
+    const len = Math.hypot(tip.x - base.x, tip.y - base.y) || 1;
+    const u = { x: (tip.x - base.x) / len, y: (tip.y - base.y) / len };
+    const r = h.kind === 'steps' ? R : R * 0.8;
+    const off = h.kind === 'landing' ? 0 : r + 3;
+    const x = base.x + u.x * off;
+    const y = base.y + u.y * off;
+    handles.push({ id: h.id, kind: h.kind, x, y, r, plan: { x: h.x, y: h.y } });
+    ctx.lineWidth = 1.5;
+    if (h.kind === 'steps') {
+      ctx.fillStyle = tokens.accent;
+      ctx.strokeStyle = tokens.surface;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = tokens.surface;
+      ctx.font = `600 ${touch ? 13 : 11}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(h.label, x, y + 0.5);
+    } else if (h.kind === 'width') {
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      const v = { x: -u.y, y: u.x };
+      ctx.beginPath();
+      ctx.moveTo(x + u.x * r, y + u.y * r); ctx.lineTo(x + v.x * r, y + v.y * r);
+      ctx.lineTo(x - u.x * r, y - u.y * r); ctx.lineTo(x - v.x * r, y - v.y * r);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); doubleArrowPath(ctx, x, y, u.x, u.y, r * 0.5, r * 0.3); ctx.stroke();
+    } else {
+      ctx.fillStyle = tokens.surface;
+      ctx.strokeStyle = tokens.accent;
+      const k = r * 0.8;
+      ctx.beginPath(); ctx.rect(x - k, y - k, k * 2, k * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = tokens.accent;
+      ctx.beginPath(); ctx.rect(x - k * 0.4, y - k * 0.4, k * 0.8, k * 0.8); ctx.fill();
+    }
+  }
+  state._stairUI = { itemId: item.id, handles };
+  const lab = state.stairLabel;
+  if (lab?.itemId === item.id) {
+    const p = p2s(lab.x, lab.y);
+    drawTextPill(ctx, lab.text, p.x, p.y - R - 16, tokens, tokens.accent, '600 12px system-ui, sans-serif');
+  }
+}
+
 // Кнопки «+» у свободных торцов выделенного дивана-конструктора (экранный
 // слой). Зоны клика — в state._sofaUI для pointerdown (ui/input.js).
 const SOFA_PLUS_R = 11; // радиус кнопки, px (на тач-экране — больше)
@@ -2012,49 +2073,38 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
     case 'bbq': { circle(0, 0, mn * 0.42); circle(0, 0, mn * 0.24); break; }
     case 'column': { circle(0, 0, mn / 2); ctx.fill(); break; }
     case 'stairs': {
-      const calc = stairCalculation({ ...options, w, h });
-      const stepsAlong = (x0, y0, sw, sh, count, horizontal = true) => {
-        for (let i = 1; i < count; i += 1) {
-          const t = i / count;
-          if (horizontal) line(x0, y0 + sh * t, x0 + sw, y0 + sh * t);
-          else line(x0 + sw * t, y0, x0 + sw * t, y0 + sh);
+      // Марши, площадки, линии проступей и стрелка подъёма — по раскладке
+      // core/stairs.js (та же, что у 3D и ручек).
+      const lay = stairLayout({ ...options, w, h });
+      for (const l of lay.landings) rrFill(l.x, l.y, l.w, l.h, 0);
+      for (const f of lay.flights) {
+        rrFill(f.x, f.y, f.w, f.h, 0);
+        for (let i = 1; i < f.n; i += 1) {
+          const t = i / f.n;
+          if (f.dir.x === 0) line(f.x, f.y + f.h * t, f.x + f.w, f.y + f.h * t);
+          else line(f.x + f.w * t, f.y, f.x + f.w * t, f.y + f.h);
         }
-      };
-      if (calc.shape === 'u') {
-        const gap = Math.min(200, w * 0.1);
-        const flightW = (w - gap) / 2;
-        const landingD = Math.min(flightW, h * 0.36);
-        const runH = h - landingD;
-        rrFill(x, y + landingD, flightW, runH, 0);
-        rrFill(x + flightW + gap, y + landingD, flightW, runH, 0);
-        rrFill(x, y, w, landingD, 0);
-        stepsAlong(x, y + landingD, flightW, runH, Math.max(1, calc.firstTreads));
-        stepsAlong(x + flightW + gap, y + landingD, flightW, runH, Math.max(1, calc.secondTreads));
-        const lx = x + flightW / 2;
-        const rx = x + flightW + gap + flightW / 2;
-        ctx.beginPath(); ctx.moveTo(lx, y + h - 120); ctx.lineTo(lx, y + landingD / 2); ctx.lineTo(rx, y + landingD / 2); ctx.lineTo(rx, y + h - 160); ctx.stroke();
-        line(rx, y + h - 160, rx - flightW * 0.16, y + h - 320);
-        line(rx, y + h - 160, rx + flightW * 0.16, y + h - 320);
-      } else if (calc.shape === 'l') {
-        const flightW = Math.min(1000, w * 0.42, h * 0.42);
-        rrFill(x, y + flightW, flightW, h - flightW, 0);
-        rrFill(x, y, w, flightW, 0);
-        stepsAlong(x, y + flightW, flightW, h - flightW, Math.max(1, calc.firstTreads));
-        stepsAlong(x + flightW, y, w - flightW, flightW, Math.max(1, calc.secondTreads), false);
-        const cx = x + flightW / 2;
-        const cy = y + flightW / 2;
-        ctx.beginPath(); ctx.moveTo(cx, y + h - 120); ctx.lineTo(cx, cy); ctx.lineTo(x + w - 160, cy); ctx.stroke();
-        line(x + w - 160, cy, x + w - 320, cy - flightW * 0.16);
-        line(x + w - 160, cy, x + w - 320, cy + flightW * 0.16);
-      } else {
-        rrFill(x, y, w, h, 0);
-        const steps = Math.max(2, calc.treads);
-        const step = h / steps;
-        for (let i = 1; i < steps; i += 1) line(x, y + step * i, x + w, y + step * i);
-        line(0, y + h - step, 0, y + step);
-        line(0, y + step, -w * 0.18, y + step * 2.2);
-        line(0, y + step, w * 0.18, y + step * 2.2);
       }
+      const path = stairPath(lay);
+      const first = lay.flights[0];
+      const last = lay.flights[lay.flights.length - 1];
+      const lenFirst = Math.abs(first.dir.x ? first.w : first.h);
+      const lenLast = Math.abs(last.dir.x ? last.w : last.h);
+      const s0 = Math.min(120, lenFirst * 0.2);
+      const s1 = Math.min(160, lenLast * 0.25);
+      path[0] = { x: path[0].x + first.dir.x * s0, y: path[0].y + first.dir.y * s0 };
+      const endP = path[path.length - 1];
+      path[path.length - 1] = { x: endP.x - last.dir.x * s1, y: endP.y - last.dir.y * s1 };
+      ctx.beginPath();
+      path.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.stroke();
+      const tip = path[path.length - 1];
+      const back = Math.min(160, lenLast * 0.25);
+      const side = Math.min(last.dir.x ? last.h : last.w, 1000) * 0.16;
+      const bx = tip.x - last.dir.x * back;
+      const by = tip.y - last.dir.y * back;
+      line(tip.x, tip.y, bx - last.dir.y * side, by + last.dir.x * side);
+      line(tip.x, tip.y, bx + last.dir.y * side, by - last.dir.x * side);
       break;
     }
     default: { rrFill(x, y, w, h, Math.min(60, mn * 0.12)); }

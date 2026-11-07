@@ -96,6 +96,10 @@ export function addLevel() {
         if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
         if (it.kind === 'stairs') {
           copyItem.stairShape = it.stairShape;
+          // Марши и площадки — как у нижней (core/stairs.js), этаж — свой.
+          for (const key of ['flightWidth', 'going', 'flights', 'gap', 'landingDepth', 'landings', 'mirrored']) {
+            if (it[key] !== undefined) copyItem[key] = structuredClone(it[key]);
+          }
           copyItem.floorHeight = level.height;
         }
         level.items.push(copyItem);
