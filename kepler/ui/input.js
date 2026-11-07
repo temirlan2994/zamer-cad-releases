@@ -46,7 +46,7 @@ import {
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
 import {
-  LANDSCAPE_MIME, applyLandscapeMarquee, dropLandscape, landscapeDblClick, landscapeDragEnd, landscapeDragMove,
+  LANDSCAPE_MIME, applyLandscapeMarquee, cancelLandscapeDrag, dropLandscape, landscapeDblClick, landscapeDragEnd, landscapeDragMove,
   landscapeHover, landscapePointerDown,
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
@@ -434,6 +434,13 @@ function updateHoverAndGhost(world, plan, event) {
 export function bindCanvasInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
+  // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !drag || !cancelLandscapeDrag(drag)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    drag = null;
+  }, true);
   // Перетаскивание мебели из панели на план.
   canvas.addEventListener('dragover', (e) => {
     if (state.modeName === 'landscape' && (e.dataTransfer?.types || []).includes(LANDSCAPE_MIME)) {

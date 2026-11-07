@@ -21,6 +21,7 @@ import {
   LS_STYLES, TAU, branches, cachedSprite, clearLandscapeSprites, grainPattern, hashStr, lsPalette, needlePath,
   luminance, physicalPattern, rgba, scallopPath, shadowSprite, sizeBucket, spriteStats,
 } from './render-landscape-kit.js';
+import { state } from './state.js';
 
 export { LS_STYLES, clearLandscapeSprites, lsPalette, spriteStats };
 
@@ -3241,6 +3242,18 @@ export function drawLandscapeOverlay(ctx, objects, {
       return null;
     }
     const { vertices, mids } = shapeHandles(o, w2s);
+    // Ребро под курсором или в жесте «тянуть ребро» (state.lsEdge) — толще.
+    const edge = handles ? state.lsEdge : null;
+    if (edge?.id === o.id && vertices.length > 2 && edge.index < vertices.length) {
+      const a = vertices[edge.index];
+      const b = vertices[(edge.index + 1) % vertices.length];
+      ctx.save();
+      ctx.strokeStyle = tokens.accent;
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.restore();
+    }
     for (const p of mids) {
       ctx.fillStyle = tokens.surface;
       ctx.strokeStyle = tokens.accent;

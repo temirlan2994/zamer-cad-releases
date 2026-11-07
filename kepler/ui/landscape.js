@@ -13,8 +13,8 @@ import {
   objectAreaM2, objectLengthM, pointAlong, screenPlaceRotation,
 } from '../core/landscape.js';
 import {
-  LS_GROUP_TITLES, LS_HANDLE_TITLES, frameCorners, frameEdges, frameRotators, lsHandleInfo, lsStarts, nextLsHandle,
-  rotateLs, scaleLs, screenAngle, stretchLs,
+  LS_GROUP_TITLES, LS_HANDLE_TITLES, edgeFrame, frameCorners, frameEdges, frameRotators, lsHandleInfo, lsStarts, moveEdgeLs,
+  nextLsHandle, rotateLs, scaleLs, screenAngle, stretchLs,
 } from '../core/landscape-handles.js';
 import { inItemCore } from '../core/item-handles.js';
 import { groupRotateDeg } from '../core/group-handles.js';
@@ -87,6 +87,7 @@ const editable = (list) => list.filter((o) => !o.locked);
 
 export function selectLandscape(ids) {
   if (state.lsVertex && !ids.includes(state.lsVertex.id)) state.lsVertex = null;
+  if (state.lsEdge && !ids.includes(state.lsEdge.id)) state.lsEdge = null;
   selectObject(ids.length ? { type: 'landscape', ids: [...ids] } : null);
 }
 
@@ -333,10 +334,18 @@ export function landscapeHover(world, canvas, event) {
   const sh = hitShapeHandle(screen);
   if (sh) {
     canvas.style.cursor = sh.mode === 'mid' ? 'copy' : 'move';
+    setEdgeHover(null, sh.obj);
+    return true;
+  }
+  const edge = hitShapeEdge(screen);
+  if (edge) {
+    setEdgeHover(edge, edge.obj);
+    canvas.style.cursor = edge.cursor;
     return true;
   }
   const handle = hitLandscapeHandle(screen);
   const hit = handle ? null : hitLandscape(landscapeObjects(), world, 4 / state.view.scale);
+  setEdgeHover(null, hit);
   const next = hit ? { type: 'landscape', id: hit.id } : null;
   const handleCursor = (h) => (h.mode.endsWith('rotate') ? 'grab' : h.mode.startsWith('note') ? 'move'
     : h.edge ? (h.edge === 'n' || h.edge === 's' ? 'ns-resize' : 'ew-resize') : 'nwse-resize');
@@ -418,6 +427,53 @@ export function hitShapeHandle(screen) {
   return null;
 }
 
+// Ребро выбранного контура (площадка, покрытие, газон) под курсором — в
+// узкой полосе у линии; ручки вершин и середин проверяются раньше. Курсор —
+// по наклону ребра на экране (вид «Ландшафта» повёрнут).
+const EDGE_TOL = () => (state.coarsePointer ? 14 : 7);
+export const EDGE_HINT = 'Линия — тянуть ребро; точки — править вершины';
+
+function edgeObject() {
+  const objs = selectedObjects();
+  if (objs.length !== 1) return null;
+  const o = objs[0];
+  if (o.locked || o.smooth || landscapeDef(o.kind)?.shape !== 'poly' || (o.points?.length || 0) < 3) return null;
+  if (landscapeHandleInfo()?.mode !== 'select') return null;
+  return o;
+}
+
+export function hitShapeEdge(screen) {
+  const o = edgeObject();
+  if (!o) return null;
+  const pts = o.points.map((p) => worldToScreen(p.x, p.y));
+  let best = null;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1) continue;
+    const t = Math.max(0, Math.min(1, ((screen.x - a.x) * dx + (screen.y - a.y) * dy) / len2));
+    const d = Math.hypot(a.x + dx * t - screen.x, a.y + dy * t - screen.y);
+    if (d <= EDGE_TOL() && (!best || d < best.d)) best = { d, index: i, dx, dy };
+  }
+  if (!best) return null;
+  const ang = Math.abs((Math.atan2(best.dy, best.dx) * 180) / Math.PI) % 180;
+  const cursor = ang < 12 || ang > 168 ? 'ns-resize' : Math.abs(ang - 90) < 12 ? 'ew-resize' : 'move';
+  return { mode: 'edge', index: best.index, obj: o, cursor };
+}
+
+// Подсветка ребра под курсором (state.lsEdge) и подсказка у выбранного контура.
+function setEdgeHover(edge, o) {
+  const next = edge ? { id: edge.obj.id, index: edge.index } : null;
+  if (JSON.stringify(next) !== JSON.stringify(state.lsEdge || null)) { state.lsEdge = next; requestDraw(); }
+  const own = Boolean(o && edgeObject() === o);
+  const hint = document.getElementById('canvasHint');
+  if (own && !state.tool) setHint(EDGE_HINT);
+  else if (hint?.textContent === EDGE_HINT) setHint('');
+}
+
 // Нажатие в «Ландшафте». Возвращает описание перетаскивания для input.js
 // (kind 'ls-*', 'marquee', 'pan') или null.
 export function landscapePointerDown(event, screen, world) {
@@ -453,6 +509,17 @@ export function landscapePointerDown(event, screen, world) {
     if (o.kind === 'path' && (prevVertex?.index !== state.lsVertex?.index || prevVertex?.id !== state.lsVertex?.id)) selectObject(state.selection);
     requestDraw();
     return { kind: 'ls-vertex', id: o.id, index: sh.index, insert: sh.mode === 'mid', before: snapshot(), moved: false, screen };
+  }
+  // Ребро выбранного контура — тянуть как линию (moveEdgeLs).
+  const edge = hitShapeEdge(screen);
+  if (edge) {
+    const o = edge.obj;
+    state.lsVertex = null;
+    state.lsEdge = { id: o.id, index: edge.index };
+    return {
+      kind: 'ls-edge', id: o.id, index: edge.index, start: { x: world.x, y: world.y }, points0: o.points.map((p) => ({ x: p.x, y: p.y })),
+      before: snapshot(), moved: false, screen, detail: event.detail || 1,
+    };
   }
   state.lsVertex = null;
   const handle = hitLandscapeHandle(screen);
@@ -591,6 +658,20 @@ export function landscapeDragMove(drag, world, screen, event) {
     drag.moved = true;
     state.lsVertex = { id: o.id, index: drag.index };
     updateLiveMeasure(o);
+  } else if (drag.kind === 'ls-edge') {
+    const o = objects.find((x) => x.id === drag.id);
+    const f = edgeFrame(drag.points0, drag.index);
+    if (!o || !f) return;
+    if (!drag.moved && Math.hypot(screen.x - drag.screen.x, screen.y - drag.screen.y) < 3) return;
+    drag.moved = true;
+    const raw = (world.x - drag.start.x) * f.n.x + (world.y - drag.start.y) * f.n.y;
+    const res = moveEdgeLs(drag.points0, drag.index, true, raw, { snap: event?.shiftKey ? 0 : snapStep() });
+    if (!res) return;
+    o.points = res.points;
+    syncShape(o);
+    drag.clamped = res.clamped;
+    state.lsEdge = { id: o.id, index: drag.index };
+    updateLiveMeasure(o);
   } else if (drag.kind === 'ls-note') {
     // Выноска: указатель — с привязкой к объектам, текст (излом) — по сетке.
     const o = objects.find((x) => x.id === drag.id);
@@ -664,6 +745,20 @@ export function landscapeDragMove(drag, world, screen, event) {
   requestDraw();
 }
 
+// Esc во время жеста «тянуть ребро»: контур — как до жеста, без записи истории.
+export function cancelLandscapeDrag(drag) {
+  if (drag?.kind !== 'ls-edge') return false;
+  const o = landscapeObjects().find((x) => x.id === drag.id);
+  if (o && drag.moved) {
+    o.points = drag.points0.map((p) => ({ x: p.x, y: p.y }));
+    syncShape(o);
+    updateLiveMeasure(o);
+  }
+  state.lsEdge = null;
+  requestDraw();
+  return true;
+}
+
 export function landscapeDragEnd(drag) {
   if (drag.kind === 'ls-sec-vertex') { sectionDragEnd(drag); return; }
   if (drag.kind === 'ls-draw-rect') {
@@ -694,6 +789,8 @@ export function landscapeDragEnd(drag) {
       const o = landscapeObjects().find((x) => x.id === drag.primary);
       if (!(drag.detail >= 2 && o && isShapeKind(o.kind))) cycleLandscapeHandle();
     }
+    // Клик по ребру без сдвига — как по самому контуру (двойной — вставка вершины).
+    if (drag.kind === 'ls-edge' && drag.detail < 2) cycleLandscapeHandle();
     requestDraw();
     return;
   }
@@ -706,7 +803,7 @@ export function landscapeDragEnd(drag) {
   }
   // Растение, перетащенное на короб, садится в него; за борт — отвязывается.
   if (drag.kind === 'ls-move') settleMoved(objects, [...drag.starts.keys()]);
-  if (drag.kind === 'ls-vertex') {
+  if (drag.kind === 'ls-vertex' || drag.kind === 'ls-edge') {
     const o = objects.find((x) => x.id === drag.id);
     if (isPlanter(o)) refitChildren(objects, o);
   }

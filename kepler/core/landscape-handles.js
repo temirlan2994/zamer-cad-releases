@@ -244,3 +244,130 @@ export function scaleLs(starts, frame, corner, point, { snap = 50, about = 'oppo
   const c = toWorld(frame, anchor.x * (1 - k), anchor.y * (1 - k));
   return { objects, k, frame: { ...frame, x: c.x, y: c.y, w: frame.w * k, h: frame.h * k } };
 }
+
+// ----------------------------------------------------------- Сдвиг ребра
+// Ребро index (вершины index → index+1) контура/линии points едет как линия
+// на d мм вдоль своей нормали n = (−u.y, u.x), u — направление ребра. Концы
+// скользят по своим смежным рёбрам (те остаются на своих прямых и
+// пересекаются с новым положением ребра); смежное ребро, параллельное
+// сдвигаемому, или его отсутствие (конец линии) — конец едет ровно по нормали.
+
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+const dot = (a, b) => a.x * b.x + a.y * b.y;
+const cross = (a, b) => a.x * b.y - a.y * b.x;
+
+export function edgeFrame(points, index) {
+  const n = points.length;
+  const a = points[index];
+  const b = points[(index + 1) % n];
+  if (!a || !b) return null;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1e-9) return null;
+  const u = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+  return { a, b, u, n: { x: -u.y, y: u.x }, len };
+}
+
+function shiftedEdge(points, index, closed, d) {
+  const cnt = points.length;
+  const f = edgeFrame(points, index);
+  const ib = (index + 1) % cnt;
+  const out = points.map((p) => ({ x: p.x, y: p.y }));
+  // Конец p скользит вдоль направления v (смежное ребро) до прямой ребра + d·n.
+  const slide = (p, v) => {
+    const vn = v ? dot(v, f.n) : 0;
+    if (!v || Math.abs(vn) < 0.05) return { x: p.x + f.n.x * d, y: p.y + f.n.y * d };
+    const t = d / vn;
+    return { x: p.x + v.x * t, y: p.y + v.y * t };
+  };
+  const hasPrev = closed || index > 0;
+  const hasNext = closed || ib < cnt - 1;
+  const unit = (v) => { const l = Math.hypot(v.x, v.y); return l > 1e-9 ? { x: v.x / l, y: v.y / l } : null; };
+  const prev = hasPrev ? unit(sub(f.a, points[(index - 1 + cnt) % cnt])) : null;
+  const next = hasNext ? unit(sub(points[(ib + 1) % cnt], f.b)) : null;
+  const a = slide(f.a, prev);
+  const b = slide(f.b, next);
+  out[index] = { x: Math.round(a.x), y: Math.round(a.y) };
+  out[ib] = { x: Math.round(b.x), y: Math.round(b.y) };
+  return out;
+}
+
+function segmentsCross(p1, p2, p3, p4) {
+  const d1 = cross(sub(p4, p3), sub(p1, p3));
+  const d2 = cross(sub(p4, p3), sub(p2, p3));
+  const d3 = cross(sub(p2, p1), sub(p3, p1));
+  const d4 = cross(sub(p2, p1), sub(p4, p1));
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+const signedArea = (pts) => pts.reduce((s, p, i) => s + cross(p, pts[(i + 1) % pts.length]), 0) / 2;
+
+// Форма цела: ребро и смежные не вывернулись и не схлопнулись, контур без
+// самопересечений, площадь того же знака и не нулевая.
+function edgeShapeOk(before, after, index, closed) {
+  const cnt = before.length;
+  const ib = (index + 1) % cnt;
+  const sameDir = (i, j) => {
+    const v0 = sub(before[j], before[i]);
+    const v1 = sub(after[j], after[i]);
+    return Math.hypot(v1.x, v1.y) >= 1 && dot(v0, v1) > 0;
+  };
+  if (!sameDir(index, ib)) return false;
+  if ((closed || index > 0) && !sameDir((index - 1 + cnt) % cnt, index)) return false;
+  if ((closed || ib < cnt - 1) && !sameDir(ib, (ib + 1) % cnt)) return false;
+  const segs = closed ? cnt : cnt - 1;
+  for (let i = 0; i < segs; i += 1) {
+    for (let j = i + 2; j < segs; j += 1) {
+      if (closed && i === 0 && j === segs - 1) continue; // соседи через замыкание
+      if (segmentsCross(after[i], after[(i + 1) % cnt], after[j], after[(j + 1) % cnt])) return false;
+    }
+  }
+  if (closed) {
+    const s0 = signedArea(before);
+    const s1 = signedArea(after);
+    if (Math.abs(s1) < 1 || Math.sign(s1) !== Math.sign(s0)) return false;
+  }
+  return true;
+}
+
+// Сдвиг ребра: raw — желаемый сдвиг (мм) вдоль нормали ребра. snap > 0 —
+// шаг: у ребра вдоль оси X/Y на сетку встаёт сама линия, у наклонного —
+// величина сдвига кратна шагу. Если форма ломается — упор в последнее
+// допустимое положение (по шагу). Возвращает { points, d, clamped } или null.
+export function moveEdgeLs(points, index, closed, raw, { snap = 0 } = {}) {
+  const f = edgeFrame(points, index);
+  if (!f || !Number.isFinite(raw)) return null;
+  const axisY = Math.abs(f.u.y) < 1e-9; // ребро горизонтально — линия по y
+  const axisX = Math.abs(f.u.x) < 1e-9;
+  const toGrid = (d) => {
+    if (!(snap > 0)) return d;
+    if (axisY) return (Math.round((f.a.y + d * f.n.y) / snap) * snap - f.a.y) / f.n.y;
+    if (axisX) return (Math.round((f.a.x + d * f.n.x) / snap) * snap - f.a.x) / f.n.x;
+    return Math.round(d / snap) * snap;
+  };
+  const ok = (d) => edgeShapeOk(points, shiftedEdge(points, index, closed, d), index, closed);
+  let d = toGrid(raw);
+  let clamped = false;
+  if (Math.abs(d) > 1e-9 && !ok(d)) {
+    clamped = true;
+    // Граница допустимого — делением пополам между 0 и d.
+    let lo = 0;
+    let hi = d;
+    for (let k = 0; k < 40; k += 1) {
+      const mid = (lo + hi) / 2;
+      if (ok(mid)) lo = mid; else hi = mid;
+    }
+    d = lo;
+    if (snap > 0) {
+      const sign = Math.sign(d) || Math.sign(raw);
+      let g = toGrid(d);
+      if (Math.sign(g) === sign && Math.abs(g) > Math.abs(d)) g -= sign * snap;
+      while (Math.abs(g) > 1e-9 && (Math.sign(g) !== sign || !ok(g))) {
+        if (Math.sign(g) !== sign) { g = 0; break; }
+        g -= sign * snap;
+      }
+      d = Math.sign(g) === sign ? g : 0;
+    }
+  }
+  if (Math.abs(d) < 1e-9) return { points: points.map((p) => ({ x: p.x, y: p.y })), d: 0, clamped };
+  return { points: shiftedEdge(points, index, closed, d), d, clamped };
+}
