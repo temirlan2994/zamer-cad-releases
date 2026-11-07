@@ -645,7 +645,11 @@ export function bindCanvasInput() {
         if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { tapOrNow(event, screen, () => openDimInput(d)); return; }
       }
     }
-    if (state.selection?.type === 'wall' && state._wallUI) {
+    // Ручка ↕ выбранной стены важнее подписи размера рядом: нажатие на неё —
+    // сдвиг стены (ниже), а не поле ввода.
+    const wallGrip = state.selection?.type === 'wall' ? state._wallUI?.grip : null;
+    const onWallGrip = wallGrip && Math.hypot(wallGrip.x - screen.x, wallGrip.y - screen.y) <= wallGrip.r;
+    if (state.selection?.type === 'wall' && state._wallUI && !onWallGrip) {
       for (const d of state._wallUI.dims) {
         if (Math.hypot(d.x - screen.x, d.y - screen.y) <= 20) { tapOrNow(event, screen, () => openDimInput(d)); return; }
       }

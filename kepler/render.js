@@ -2517,6 +2517,10 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
   ctx.strokeStyle = tokens.accent;
   ctx.fillStyle = tokens.accent;
   ctx.lineWidth = 1.25;
+  // Ручка ↕ — в центре стены; подпись размера на неё не ложится (иначе
+  // нажатие на ручку открывало поле размера вместо сдвига стены).
+  const gripAt = w2s((wall.center.x1 + wall.center.x2) / 2, (wall.center.y1 + wall.center.y2) / 2);
+  const onGrip = (box) => box.x < gripAt.x + 16 && box.x + box.w > gripAt.x - 16 && box.y < gripAt.y + 16 && box.y + box.h > gripAt.y - 16;
   for (const dim of wallRoomDimensions(state.project, wall)) {
     const a = dim.orient === 'h' ? w2s(dim.along, dim.edge.edge) : w2s(dim.edge.edge, dim.along);
     const b = dim.orient === 'h' ? w2s(dim.along, dim.opposite.edge) : w2s(dim.opposite.edge, dim.along);
@@ -2551,7 +2555,8 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
     for (const t of [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85]) {
       const x = a.x + (b.x - a.x) * t;
       const y = a.y + (b.y - a.y) * t;
-      if (!hitsLabels(state, { x: x - tw / 2, y: y - 10, w: tw, h: 20 })) { mx = x; my = y; break; }
+      const box = { x: x - tw / 2, y: y - 10, w: tw, h: 20 };
+      if (!hitsLabels(state, box) && !onGrip(box)) { mx = x; my = y; break; }
     }
     ctx.fillStyle = tokens.surface;
     ctx.fillRect(mx - tw / 2, my - 10, tw, 20);
@@ -2565,9 +2570,7 @@ function drawSelectedWallUI(ctx, state, wall, w2s, tokens) {
     });
   }
 
-  const cx = (wall.center.x1 + wall.center.x2) / 2;
-  const cy = (wall.center.y1 + wall.center.y2) / 2;
-  const grip = w2s(cx, cy);
+  const grip = gripAt;
   ctx.fillStyle = tokens.surface;
   ctx.strokeStyle = tokens.accent;
   ctx.lineWidth = 1.5;

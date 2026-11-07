@@ -11,14 +11,32 @@ import { moveManualWall } from './wall-manual.js';
 
 const clone = (value) => structuredClone(value);
 
+// Поперечный интервал тела стены (грани комнат лежат на его краях).
+function wallAcross(wall) {
+  const b = wall.band;
+  if (!b) return { lo: wall.edge, hi: wall.edge };
+  return wall.orient === 'h' ? { lo: b.y, hi: b.y + b.h } : { lo: b.x, hi: b.x + b.w };
+}
+
+// Грань комнаты, образующая участок стены. Стена выведена из ВИДИМЫХ форм,
+// а жест двигает НОМИНАЛЫ (liftForGesture): у съеденной комнаты номер стороны
+// видимого контура ('outline-4') в номинале не существует или указывает на
+// другую грань. Поэтому грань ищется по геометрии: та же ориентация, лежит
+// на теле стены (±1 мм), перекрывает участок вдоль оси. Нет такой грани —
+// null: номинал съеденной комнаты накрывает участок, её видимую границу
+// задаёт съевший сосед (reconcileEats), двигать у неё нечего.
 function edgeForWall(room, wall) {
+  const { lo, hi } = wallAcross(wall);
   const side = wall.sides?.[room.id];
-  const candidates = roomBoundaryEdges(room).filter((edge) => edge.side === side && edge.orient === wall.orient);
+  const overlap = (edge) => Math.min(edge.to, wall.to) - Math.max(edge.from, wall.from);
+  const onBody = (edge) => edge.edge >= lo - 1 && edge.edge <= hi + 1;
+  const mid = (lo + hi) / 2;
+  const faces = (edge) => Math.abs(mid - edge.edge) < 0.5 || Math.sign(mid - edge.edge) === edge.outward;
+  const candidates = roomBoundaryEdges(room)
+    .filter((edge) => edge.orient === wall.orient && overlap(edge) > 1 && onBody(edge));
   if (!candidates.length) return null;
-  return candidates.sort((a, b) => {
-    const overlap = (edge) => Math.max(0, Math.min(edge.to, wall.to) - Math.max(edge.from, wall.from));
-    return overlap(b) - overlap(a);
-  })[0];
+  const rank = (edge) => (edge.side === side ? 4 : 0) + (faces(edge) ? 2 : 0);
+  return candidates.sort((a, b) => rank(b) - rank(a) || overlap(b) - overlap(a))[0];
 }
 
 export function restoreRoom(room, backup) {
@@ -65,12 +83,11 @@ export function moveWallBy(project, wall, delta, { finalize = false } = {}) {
   // Отступы проёмов считаются от room.x/y: снимок до правки (блокер Б3).
   const anchors = new Map(affected.map((room) => [room.id, captureOpeningAnchors(project, room)]));
 
+  let movedAny = false;
   for (const room of affected) {
     const edge = edgeForWall(room, wall);
-    if (!edge) {
-      for (const current of affected) restoreRoom(current, backups.get(current.id));
-      return { ok: false, reason: 'Не найдена граница помещения для этой стены' };
-    }
+    if (!edge) continue; // номинал накрывает участок — видимую границу даст съедание
+    movedAny = true;
     const target = edge.edge + delta;
     const shaped = Boolean(room.outline || (room.notch && typeof edge.side === 'string'));
     const moved = shaped ? moveShapedEdge(room, edge, target) : moveRectEdge(room, edge.side, target);
@@ -79,6 +96,7 @@ export function moveWallBy(project, wall, delta, { finalize = false } = {}) {
       return { ok: false, reason: 'Форму этой стены пока нельзя изменить' };
     }
   }
+  if (!movedAny) return { ok: false, reason: 'Не найдена граница помещения для этой стены' };
 
   for (const room of affected) {
     const min = isShaft(room) ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
