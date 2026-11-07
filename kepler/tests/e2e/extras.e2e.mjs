@@ -35,7 +35,7 @@ describe('шаблоны и удобства', () => {
   });
 
   it('поиск мебели по всему каталогу; клик по категории сбрасывает', async () => {
-    await app.page.click('#libTabFurniture');
+    await app.page.click('#furnitureToolBtn');
     await app.page.fill('#furnSearch', 'ванн');
     const found = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
     assert.ok(found.length >= 1 && found.every((t) => /ванн/i.test(t)), found.join(', '));
@@ -49,6 +49,8 @@ describe('шаблоны и удобства', () => {
 
   it('размеры в метрах', async () => {
     await app.page.keyboard.press('Escape');
+    await app.page.keyboard.press('Escape'); // закрыть библиотеку
+    await app.page.click('#projectSummary'); // настройки проекта — свёрнутая секция «Проект»
     await app.page.selectOption('#unitsSel', 'm');
     assert.equal(await app.page.evaluate(() => window.__kepler.state.project.settings.units), 'm');
   });

@@ -25,14 +25,11 @@ describe('ландшафт', () => {
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('кнопка «Ландшафт» — в нижней панели слева от этажей', async () => {
-    const chip = await app.page.$('#levelDock #landscapeBtn');
-    assert.ok(chip, 'кнопка в панели этажей');
-    assert.match(await chip.textContent(), /Ландшафт/);
-    const a = await chip.boundingBox();
-    const b = await (await app.page.$('#levelBar')).boundingBox();
-    assert.ok(a.x + a.width <= b.x + 1, 'слева от этажей');
-    assert.ok(Math.abs((a.y + a.height / 2) - (b.y + b.height / 2)) < 8, 'на одной линии');
+  it('кнопка «Ландшафт» — в колонке инструментов', async () => {
+    const chip = await app.page.$('#toolStrip #landscapeBtn');
+    assert.ok(chip, 'кнопка в колонке инструментов');
+    assert.equal(await chip.getAttribute('aria-label'), 'Ландшафт');
+    assert.match(await chip.textContent(), /Ландшафт/); // подсказка
     // Список этажей не изменился (кнопка — вне #levelBar).
     const bar = await app.page.$$eval('#levelBar button', (els) => els.map((e) => e.textContent));
     assert.deepEqual(bar, ['1 этаж', '+']);
@@ -132,7 +129,7 @@ describe('ландшафт', () => {
     await app.page.click('#levelBar button[data-level]');
     assert.equal(await mode(app.page), 'plan');
     assert.equal(await app.page.isVisible('#landscapeBar'), false);
-    assert.equal(await app.page.isVisible('#libraryTabs'), true);
+    assert.equal(await app.page.isVisible('.library'), false, 'в «Плане» без инструмента библиотеки нет');
     assert.equal(await app.page.getAttribute('#landscapeBtn', 'aria-pressed'), 'false');
     assert.equal(await app.page.$$eval('#levelBar button.active', (els) => els.length), 1);
     // Верхний переключатель «План / Участок» работает как раньше.

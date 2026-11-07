@@ -57,7 +57,7 @@ describe('стены и колонны', () => {
   after(async () => { await app?.close(); });
 
   it('категория «Стены и колонны»: стена перетаскивается на план и видна в 3D', async () => {
-    await app.page.click('#libTabFurniture');
+    await app.page.click('#furnitureToolBtn');
     await app.page.click('#furnitureCats button[aria-label="Стены и колонны"]');
     const names = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
     assert.deepEqual(names, ['Стена', 'Колонна', 'Колонна круглая']);

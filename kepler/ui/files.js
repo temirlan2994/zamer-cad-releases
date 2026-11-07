@@ -169,6 +169,7 @@ export function newProject() {
   refs.libraryTitle.hidden = true;
   refs.libraryTitle.textContent = 'Помещения';
   state.libraryTab = 'rooms';
+  state.libraryPinned = false;
   applyLibraryTab();
   refreshDerived();
   applyModeRotation();

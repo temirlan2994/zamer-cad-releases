@@ -28,7 +28,9 @@ describe('ландшафт: клумба-короб и лестница', () => 
   let app;
   let box;
   before(async () => {
-    app = await startApp();
+    // Ширина — чтобы холст был как до колонки инструментов (744 px): броски растений
+    // и «Посадить в короб» опираются на тот же масштаб вида.
+    app = await startApp({ width: 1075 });
     await openSample(app.page);
     await app.page.click('#landscapeBtn');
   });

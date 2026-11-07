@@ -1,4 +1,5 @@
-// Левая панель: вкладки, карточки помещений, каталог мебели.
+// Библиотека (выезжает слева у колонки инструментов): вкладки, карточки
+// помещений, каталог мебели.
 
 import { FURNITURE_CATEGORIES, ROOM_TYPES, allFurniture, furnitureByCategory } from '../core/catalog.js';
 import { drawGlyphPreview } from '../render.js';
@@ -10,7 +11,7 @@ import { cancelTool, startPlaceFurniture, startPlaceRoom } from './tools.js';
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
 
-// Вкладки левой панели: в режиме «План» переключают «Помещения» / «Мебель»
+// Вкладки библиотеки: в режиме «План» переключают «Помещения» / «Мебель»
 // (как вкладки обозревателя в Revit). В режиме «Участок» каталога нет —
 // инструменты участка на панели инструментов (ui/toolstrip.js), левая
 // панель скрыта.
@@ -19,7 +20,31 @@ export function bindFurnitureSearch() {
   bindLandscapeLibrary();
 }
 
-export function applyLibraryTab() {
+const ROOM_TOOLS = new Set(['bound-room', 'place-room']);
+
+// Компьютер: библиотека выезжает рядом с колонкой инструментов только когда
+// нужна — «Помещение» (типы комнат), «Мебель» (каталог; кнопкой или во время
+// размещения), «Ландшафт» (каталог участка). Иначе холст свободен.
+// Телефон: та же панель — нижний лист по кнопкам #mobileBar (ui/mobile.js).
+export function libraryWanted() {
+  if (state.modeName === 'landscape') return true;
+  if (state.modeName !== 'plan') return false;
+  const t = state.tool;
+  if (!t) return state.libraryPinned;
+  if (ROOM_TOOLS.has(t.kind)) return true;
+  if (t.kind === 'place-furniture') return t.itemKind !== 'stairs' || state.libraryPinned;
+  return false;
+}
+
+// Без перерисовки панели инструментов (её зовёт renderToolstrip): другой
+// инструмент закрывает библиотеку, размещение задаёт вкладку.
+export function syncLibraryOpen() {
+  const t = state.tool;
+  if (t && !ROOM_TOOLS.has(t.kind) && t.kind !== 'place-furniture') state.libraryPinned = false;
+  if (state.modeName !== 'plan') state.libraryPinned = false;
+  if (t && ROOM_TOOLS.has(t.kind)) state.libraryTab = 'rooms';
+  else if (t?.kind === 'place-furniture' && t.itemKind !== 'stairs') state.libraryTab = 'furniture';
+  document.body.classList.toggle('lib-open', libraryWanted());
   const plan = state.modeName === 'plan';
   const landscape = state.modeName === 'landscape';
   refs.libraryTabs.hidden = !plan;
@@ -28,7 +53,6 @@ export function applyLibraryTab() {
   if (!plan) {
     refs.libraryTop.hidden = landscape; // «Ландшафт» — свой каталог (ui/landscape.js)
     refs.furnitureBar.hidden = true;
-    renderToolstrip();
     return;
   }
   const furn = state.libraryTab === 'furniture';
@@ -36,6 +60,10 @@ export function applyLibraryTab() {
   refs.libTabFurniture.classList.toggle('active', furn);
   refs.libraryTop.hidden = furn;
   refs.furnitureBar.hidden = !furn;
+}
+
+export function applyLibraryTab() {
+  syncLibraryOpen();
   renderToolstrip(); // кнопка «Мебель» подсвечена, пока открыт каталог
 }
 

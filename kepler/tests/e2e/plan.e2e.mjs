@@ -22,7 +22,7 @@ describe('план', () => {
   });
 
   it('клик по карточке даёт предмет на курсоре, пробел поворачивает до установки', async () => {
-    await app.page.click('#libTabFurniture');
+    await app.page.click('#furnitureToolBtn'); // каталог выезжает у колонки инструментов
     const chip = await app.page.$('#furnitureItems .furniture-chip');
     // Метим DOM-узел: если панель перерисуется, метка пропадёт.
     await chip.evaluate((n) => { n.dataset.probe = '1'; });
@@ -59,7 +59,7 @@ describe('план', () => {
   });
 
   it('перетаскивание комнаты мышью сдвигает её', async () => {
-    await app.page.click('#libTabRooms');
+    await app.page.click('#selectToolBtn'); // «Выбор» закрывает библиотеку
     const before = await app.page.evaluate(() => {
       const r = window.__kepler.state.project.rooms[0];
       return { x: r.x, y: r.y, cx: r.x + r.w / 2, cy: r.y + r.h / 2 };

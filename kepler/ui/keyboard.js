@@ -9,6 +9,7 @@ import { closeHelp, isHelpOpen, openHelp } from './help.js';
 import { closeProjects, isProjectsOpen } from './projects.js';
 import { hideSofaMenu } from './props-composite.js';
 import { stepLevel } from './levels.js';
+import { applyLibraryTab } from './library.js';
 import {
   copySelection, deleteSelection, duplicateSelection, eatOverlapsAfter, mirrorSelection, moveMultiBy,
   pasteSelection, reconcileOpenings, rotateSelection90,
@@ -150,6 +151,7 @@ export function bindKeyboard() {
         requestDraw();
         return;
       }
+      if (!state.tool && state.libraryPinned) { state.libraryPinned = false; applyLibraryTab(); } // Esc закрывает библиотеку
       cancelTool(); selectObject(null); return;
     }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }

@@ -180,7 +180,7 @@ describe('типы проёмов и высота потолка', () => {
     // Замечание — в панели «⚠» (не в свойствах), с переходом к этой комнате.
     const height = `#issuesPanel [data-issue-id^="height:"]`;
     assert.match(await app.page.textContent(height), /Высота ≈ 2,40 м < 2,5 м/);
-    assert.doesNotMatch(await app.page.textContent('#propsPanel'), /Высота ≈/);
+    assert.doesNotMatch(await app.page.textContent('#propsBody'), /Высота ≈/); // список «⚠» — отдельная вкладка той же панели
     assert.ok(await app.page.evaluate((id) => window.__kepler.state.issues.groups.flatMap((g) => g.items)
       .some((i) => i.id.startsWith('height:') && i.target?.id === id), r.id));
     await app.page.fill('#roomCeil', '');

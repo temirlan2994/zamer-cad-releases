@@ -10,20 +10,20 @@
   </head>
   <body>
     <div class="app">
+      <!-- Шапка: название и проект, режимы (План / Участок / 3D), общие действия. Инструментов рисования здесь нет. -->
       <header class="topbar">
         <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
-        <div class="mode-tabs" role="tablist">
+        <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
+        <div class="mode-tabs" role="tablist" aria-label="Режим">
           <button id="modePlanBtn" class="tab active" role="tab">План</button>
           <button id="modeSiteBtn" class="tab" role="tab">Участок</button>
+          <button type="button" class="tab" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
         </div>
-        <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
         <div class="top-actions">
           <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
-          <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
-          <button id="helpBtn" class="icon-btn" title="Справка: управление и горячие клавиши (? или F1)">?</button>
+          <span class="top-sep" aria-hidden="true"></span>
           <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
-          <button id="menuBtn" title="Главное меню: новый проект, открыть, пример">☰ Меню</button>
           <input type="file" id="fileInput" accept=".json,application/json" hidden />
           <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
           <div class="export-wrap">
@@ -42,43 +42,58 @@
               <button data-export="copy">Копировать проект в буфер</button>
             </div>
           </div>
+          <span class="top-sep" aria-hidden="true"></span>
+          <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
+          <button id="helpBtn" class="icon-btn" title="Справка: управление и горячие клавиши (? или F1)">?</button>
+          <button id="menuBtn" class="icon-btn" title="Главное меню: новый проект, открыть, пример" aria-label="Меню">☰</button>
         </div>
       </header>
-      <!-- Панель инструментов (ui/toolstrip.js): общие кнопки и наборы режимов «План» / «Участок» / «Ландшафт». -->
-      <div class="toolstrip" id="toolStrip" role="toolbar" aria-label="Инструменты">
-        <div class="tb-group" id="commonTools">
-          <button type="button" class="tb-btn" id="selectToolBtn" aria-label="Выбор" title="Выбор (Esc): курсор — выбрать, тянуть, рамка выделения"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3.5l13 6.3-5.6 1.9-2.1 5.8z"/><path d="M13 12l5 6"/></svg></button>
-        </div>
-        <div class="tb-group" id="planTools">
-          <button type="button" class="tb-btn" id="wallToolBtn" aria-label="Стена" title="Стена (W): клик — начало оси, клик — конец, цепочка продолжается; двойной клик, Enter или Esc — закончить"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="7" rx="1"/><path d="M9 8v7M15 8v7"/></svg><span class="tb-label">Стена</span></button>
-          <button type="button" class="tb-btn" id="boundRoomBtn" aria-label="Помещение" title="Помещение: клик внутри замкнутой петли стен — петля становится обычной комнатой"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z" stroke-dasharray="3 2.2"/><path d="M9 12h6M12 9v6"/></svg><span class="tb-label">Помещение</span></button>
-          <button type="button" class="tb-btn" id="doorToolBtn" aria-label="Проём: дверь" title="Проём: дверь — клик по стене; Пробел — петли и открывание; Esc — отмена"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M6 20V5"/><path d="M6 5a15 15 0 0 1 14 15"/></svg></button>
-          <button type="button" class="tb-btn" id="windowToolBtn" aria-label="Проём: окно" title="Проём: окно — клик по наружной стене; Esc — отмена"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8.5" width="18" height="7" rx="1"/><path d="M3 12h18M12 8.5v7"/></svg></button>
-          <button type="button" class="tb-btn" id="furnitureToolBtn" aria-label="Мебель" title="Мебель: открыть каталог мебели (клик — поставить, Пробел — повернуть)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V11"/><path d="M4 11.5A1.5 1.5 0 0 1 5.5 13v3h13v-3A1.5 1.5 0 0 1 20 11.5"/><path d="M6.5 16v2M17.5 16v2"/></svg></button>
-          <button type="button" class="tb-btn" id="dimModeBtn" aria-label="Размеры" title="Наружные размеры: по внешней грани стен или по оси"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7v10M20 7v10M4 12h16"/><path d="M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/></svg><span class="tb-label">Снаружи</span></button>
-        </div>
-        <div class="tb-group" id="siteTools" hidden></div>
-        <div class="tb-group" id="landscapeTools" hidden></div>
-        <span class="tb-sep" aria-hidden="true"></span>
-        <div class="tb-group" id="viewTools">
-          <div class="view-ctl tb-pop-wrap" id="viewCtl">
-            <button type="button" class="tb-btn" id="viewBtn" aria-label="Поворот вида" title="Поворот вида: выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой). Во время выравнивания — отмена" aria-expanded="false" aria-controls="viewPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/><path d="M8 14h8"/></svg><span class="tb-label">Вид</span></button>
-            <div class="view-panel tb-pop" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
-              <strong id="viewPanelTitle">Поворот вида</strong>
-              <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
-              <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
-                <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
-              <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
-              <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
-              <p class="empty-hint" id="viewPanelHint"></p>
-            </div>
-          </div>
-          <button type="button" class="tb-btn" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg><span class="tb-label">3D</span></button>
-          <button type="button" class="tb-btn" id="fitBtn" aria-label="Вписать" title="Вписать план в экран"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg></button>
-        </div>
-      </div>
-
       <main class="workspace">
+        <!-- Колонка инструментов слева (ui/toolstrip.js): только значки, подсказка .tb-tip — своя, сразу при наведении.
+             Наборы: общий «Выбор», «План» / «Участок» / «Ландшафт», переход в «Ландшафт», внизу — вид. Телефон — строка над холстом. -->
+        <div class="toolstrip" id="toolStrip" role="toolbar" aria-label="Инструменты" aria-orientation="vertical">
+          <div class="tb-group" id="commonTools">
+            <button type="button" class="tb-btn" id="selectToolBtn" aria-label="Выбор" aria-describedby="tbTip-select"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 3.5l13 6.3-5.6 1.9-2.1 5.8z"/><path d="M13 12l5 6"/></svg><span class="tb-tip" role="tooltip" id="tbTip-select"><b>Выбор</b> · выбрать, тянуть, рамка выделения · <kbd>Esc</kbd></span></button>
+          </div>
+          <div class="tb-group" id="planTools">
+            <button type="button" class="tb-btn" id="wallToolBtn" aria-label="Стена" aria-describedby="tbTip-wall"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="7" rx="1"/><path d="M9 8v7M15 8v7"/></svg><span class="tb-tip" role="tooltip" id="tbTip-wall"><b>Стена</b> · клик — начало оси, клик — конец, цепочка продолжается; двойной клик или Enter — закончить · <kbd>W</kbd></span></button>
+            <button type="button" class="tb-btn" id="boundRoomBtn" aria-label="Помещение" aria-describedby="tbTip-room"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z" stroke-dasharray="3 2.2"/><path d="M9 12h6M12 9v6"/></svg><span class="tb-tip" role="tooltip" id="tbTip-room"><b>Помещение</b> · клик внутри петли стен — комната; или тип из библиотеки (Гостиная, Кухня…) и клик на плане · <kbd>Esc — выйти</kbd></span></button>
+            <button type="button" class="tb-btn" id="doorToolBtn" aria-label="Проём: дверь" aria-describedby="tbTip-door"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M6 20V5"/><path d="M6 5a15 15 0 0 1 14 15"/></svg><span class="tb-tip" role="tooltip" id="tbTip-door"><b>Дверь</b> · клик по стене; размеры и тип — в строке параметров · <kbd>Пробел — петли · Esc</kbd></span></button>
+            <button type="button" class="tb-btn" id="windowToolBtn" aria-label="Проём: окно" aria-describedby="tbTip-window"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8.5" width="18" height="7" rx="1"/><path d="M3 12h18M12 8.5v7"/></svg><span class="tb-tip" role="tooltip" id="tbTip-window"><b>Окно</b> · клик по наружной стене; размеры и тип — в строке параметров · <kbd>Esc</kbd></span></button>
+            <button type="button" class="tb-btn" id="furnitureToolBtn" aria-label="Мебель" aria-describedby="tbTip-furniture"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V11"/><path d="M4 11.5A1.5 1.5 0 0 1 5.5 13v3h13v-3A1.5 1.5 0 0 1 20 11.5"/><path d="M6.5 16v2M17.5 16v2"/></svg><span class="tb-tip" role="tooltip" id="tbTip-furniture"><b>Мебель</b> · каталог мебели: клик — поставить, или перетащите на план · <kbd>Пробел — повернуть</kbd></span></button>
+            <button type="button" class="tb-btn" id="stairsToolBtn" aria-label="Лестница" aria-describedby="tbTip-stairs"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="1"/><path d="M6 7h12M6 11h12M6 15h12"/><path d="M12 19V5M10 7l2-2 2 2"/></svg><span class="tb-tip" role="tooltip" id="tbTip-stairs"><b>Лестница</b> · марш: клик на плане — поставить; форма и подъём — в «Свойствах» · <kbd>Пробел — повернуть</kbd></span></button>
+            <button type="button" class="tb-btn" id="dimModeBtn" aria-label="Размеры" aria-describedby="tbTip-dims"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7v10M20 7v10M4 12h16"/><path d="M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/></svg><span class="tb-label">Снаружи</span><span class="tb-tip" role="tooltip" id="tbTip-dims"><b>Размеры</b> · наружные — по внешней грани стен или по оси</span></button>
+          </div>
+          <div class="tb-group" id="siteTools" hidden></div>
+          <div class="tb-group" id="landscapeTools" hidden></div>
+          <div class="tb-group" id="modeTools">
+            <button type="button" class="tb-btn tb-landscape" id="landscapeBtn" aria-pressed="false" aria-label="Ландшафт" aria-describedby="tbTip-landscape"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c-4.5 0-7-2.6-7-6.2C5 5 7.6 3 12 3s7 2 7 4.8C19 11.4 16.5 14 12 14z"/><path d="M12 10.5l-2.5-2.5M12 9l2.5-2"/><path d="M4 21h16"/></svg><span class="tb-tip" role="tooltip" id="tbTip-landscape"><b>Ландшафт</b> · деревья, площадки, вода, парковка на участке; назад — «План» в шапке</span></button>
+          </div>
+          <span class="tb-sep" aria-hidden="true"></span>
+          <div class="tb-group" id="viewTools">
+            <div class="view-ctl tb-pop-wrap" id="viewCtl">
+              <button type="button" class="tb-btn" id="viewBtn" aria-label="Поворот вида" aria-describedby="tbTip-view" aria-expanded="false" aria-controls="viewPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/><path d="M8 14h8"/></svg><span class="tb-tip" role="tooltip" id="tbTip-view"><b>Поворот вида</b> · выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой); во время выравнивания — отмена</span></button>
+              <div class="view-panel tb-pop" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
+                <strong id="viewPanelTitle">Поворот вида</strong>
+                <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
+                <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
+                  <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
+                <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
+                <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
+                <p class="empty-hint" id="viewPanelHint"></p>
+              </div>
+            </div>
+            <button type="button" class="tb-btn" id="fitBtn" aria-label="Вписать" aria-describedby="tbTip-fit"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg><span class="tb-tip" role="tooltip" id="tbTip-fit"><b>Вписать</b> · весь план в экран</span></button>
+          </div>
+        </div>
+
+        <!-- Строка параметров активного инструмента (ui/props.js renderToolOptions): дверь/окно — тип и размеры, стена — тип и толщина, помещение — тип; справа — клавиши. -->
+        <div class="tool-options empty" id="toolOptions" role="group" aria-label="Параметры инструмента">
+          <div class="to-body" id="toolOptionsBody"></div>
+          <div class="to-keys" id="toolOptionsKeys"></div>
+        </div>
+
+        <!-- Библиотека — выезжает рядом с колонкой, только когда нужна: «Помещение» — типы комнат, «Мебель» — каталог, «Ландшафт» — каталог участка. -->
         <aside class="library">
           <div class="library-tabs" id="libraryTabs">
             <button id="libTabRooms" class="lib-tab active" type="button">Помещения</button>
@@ -108,8 +123,6 @@
 
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
-          <button type="button" class="issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" title="Замечания и нормы"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-count" id="issuesCount" hidden>0</span></button>
-          <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>
           <div class="canvas-hint" id="canvasHint" hidden></div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <div class="selection-toolbar" id="selectionToolbar" role="toolbar" aria-label="Действия с выбранным объектом" hidden></div>
@@ -130,10 +143,6 @@
             <span class="cal-unit">м</span>
           </div>
           <div class="level-dock" id="levelDock">
-            <button type="button" class="landscape-chip" id="landscapeBtn" aria-pressed="false" title="Ландшафт: деревья, площадки, вода, парковка на участке">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c-4.5 0-7-2.6-7-6.2C5 5 7.6 3 12 3s7 2 7 4.8C19 11.4 16.5 14 12 14z"/><path d="M12 10.5l-2.5-2.5M12 9l2.5-2"/><path d="M4 21h16"/></svg>
-              <span>Ландшафт</span>
-            </button>
             <div class="level-bar" id="levelBar" role="tablist" aria-label="Этажи"></div>
           </div>
           <div class="view3d" id="view3d" hidden>
@@ -162,7 +171,17 @@
           </div>
         </section>
 
-        <aside class="props" id="propsPanel"></aside>
+        <!-- Правая панель — только про выбранное: «Свойства», «ТЭП», «Замечания» (ui/props.js, ui/issues.js).
+             Настройки проекта — раскрывающаяся секция «Проект», когда ничего не выбрано. На телефоне «⚠» и замечания — на холсте. -->
+        <aside class="props" id="propsPanel">
+          <div class="props-tabs" role="tablist" aria-label="Панель свойств">
+            <button type="button" role="tab" id="propsTabMain" data-props-tab="props">Свойства</button>
+            <button type="button" role="tab" id="propsTabTep" data-props-tab="tep">ТЭП</button>
+            <button type="button" role="tab" class="issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" title="Замечания и нормы"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-label">Замечания</span><span class="issues-count" id="issuesCount" hidden>0</span></button>
+          </div>
+          <div class="props-body" id="propsBody"></div>
+          <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>
+        </aside>
       </main>
       <nav class="mobile-bar" id="mobileBar" aria-label="Панели">
         <button type="button" data-sheet="rooms">Помещения</button>

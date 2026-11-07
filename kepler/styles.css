@@ -1683,3 +1683,209 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 
 /* Телефон: объект «взят» долгим нажатием — можно двигать. */
 .canvas-wrap.move-armed::after { content: ""; position: absolute; inset: 0; border: 3px solid var(--accent); pointer-events: none; z-index: 5; }
+
+/* ===== Интерфейс, шаг 2: раскладка =====
+   Шапка — название, проект, режимы (План / Участок / 3D), общие действия.
+   Ниже: колонка инструментов слева · строка параметров инструмента над
+   холстом · холст · правая панель (только про выбранное). Библиотека
+   выезжает рядом с колонкой, только когда нужна (body.lib-open, ui/library.js).
+   Телефон (≤640px) — прежняя схема: строка инструментов над холстом,
+   панели — нижние листы. */
+
+/* --- Шапка: компактно --- */
+.topbar { gap: 10px; padding-top: 6px; padding-bottom: 6px; }
+.brand small { display: none; }
+.project-name { flex: 0 1 220px; padding: 5px 9px; }
+.top-actions { margin-left: auto; gap: 4px; }
+.top-actions > button, .top-actions .export-wrap > button { height: 32px; padding-top: 0; padding-bottom: 0; }
+.top-actions .icon-btn { min-width: 34px; padding: 0 8px; }
+.top-sep { width: 1px; height: 22px; margin: 0 4px; background: var(--border); }
+.mode-tabs .tab { padding: 4px 13px; }
+/* 3D открыт — режим под ним остаётся, но не залит */
+.mode-tabs:has(#view3dBtn.active) .tab.active:not(#view3dBtn) { background: transparent; color: var(--accent); }
+
+/* --- Подсказки кнопок инструментов — как у привязок, но справа от колонки --- */
+.tb-btn { position: relative; }
+.tb-tip {
+  display: none;
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  z-index: 90;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 300px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  transition: none;
+  animation: none;
+}
+.tb-tip b { font-weight: 650; }
+.tb-tip kbd { font: inherit; color: var(--muted); }
+.tb-btn:hover .tb-tip, .tb-btn:focus-visible .tb-tip { display: block; }
+.tb-pop-wrap:has(.tb-pop:not([hidden])) .tb-tip { display: none; } /* открыта панель вида — подсказка не мешает */
+
+/* «Ландшафт» — зелёный, как прежняя плашка у этажей */
+.tb-btn.tb-landscape { color: color-mix(in srgb, #3f7a34 70%, var(--text)); }
+.tb-btn.tb-landscape.active { background: linear-gradient(135deg, #4f8a3c, #6aa84f); border-color: #4f8a3c; color: #fff; }
+
+/* --- Строка параметров инструмента --- */
+.tool-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  min-width: 0;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  overflow: hidden;
+}
+.to-body { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.to-body::-webkit-scrollbar { display: none; }
+.to-body > * { flex: none; }
+.to-body .prop-block { flex-direction: row; align-items: center; gap: 12px; padding: 0; background: none; border-radius: 0; }
+.to-body .prop-grid { display: flex; gap: 12px; }
+.to-body .prop-field { flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; }
+.to-body .prop-field input, .to-body .prop-field select { height: 28px; padding: 2px 7px; }
+.to-body .prop-field input[type="number"] { width: 84px; }
+.to-body .prop-field select { max-width: 230px; }
+.to-title { font-weight: 650; color: var(--text); }
+.to-value { color: var(--accent); font-weight: 600; }
+.to-note { color: var(--muted); }
+.to-keys { flex: none; margin-left: auto; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+/* Подсказка инструмента (#canvasHint) — справа в строке, до двух строк */
+.tool-options .canvas-hint {
+  position: static; flex: 0 1 auto; max-width: 52%; margin-left: auto; padding: 0; transform: none;
+  border: 0; border-radius: 0; background: none; box-shadow: none; pointer-events: auto;
+  color: var(--muted); font-size: 11.5px; line-height: 1.3; text-align: right;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tool-options:has(.canvas-hint:not([hidden])) .to-keys { display: none; }
+/* Активный инструмент под курсором остаётся подсвеченным; «Размеры» — переключатель, не инструмент */
+.tb-btn.active:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+#dimModeBtn.active, #dimModeBtn.active:hover { background: transparent; border-color: transparent; color: var(--accent); }
+
+/* --- Правая панель: пусто — подсказка и свёрнутая секция «Проект» внизу --- */
+.props-empty .empty-hint { margin: 0 0 8px; }
+.props:has(> .props-body > .project-section) { display: flex; flex-direction: column; }
+.props-body:has(> .project-section) { flex: 1 0 auto; display: flex; flex-direction: column; }
+.project-section { margin-top: auto; padding-top: 6px; border-top: 1px solid var(--border); }
+.project-section > summary { padding: 6px 0; font-weight: 650; font-size: 13px; cursor: pointer; }
+.project-section > summary small { margin-left: 4px; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+.project-section[open] > summary { margin-bottom: 8px; }
+.project-section h3 { margin-top: 12px; }
+.issues-label { display: none; }
+
+/* --- Компьютер и планшет --- */
+@media (min-width: 641px) {
+  .workspace {
+    --tools-w: 47px;
+    --opts-h: 40px;
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "tools opts props" "tools canvas props";
+  }
+  .toolstrip {
+    grid-area: tools;
+    z-index: 55; /* над библиотекой: подсказки и панель вида */
+    width: var(--tools-w);
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 0;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+  }
+  .toolstrip .tb-group { flex-direction: column; gap: 2px; padding: 4px 0 0; border-left: 0; border-top: 1px solid var(--border); }
+  .toolstrip #commonTools, .toolstrip #viewTools { padding-top: 0; border-top: 0; }
+  .toolstrip .tb-btn { width: 36px; height: 36px; min-width: 0; padding: 0; }
+  .toolstrip .tb-label { display: none; }
+  .toolstrip .tb-sep { flex: 1 1 0; min-height: 8px; min-width: 0; }
+  .toolstrip .tb-pop { top: auto; bottom: 0; right: auto; left: calc(100% + 8px); }
+  .tool-options { grid-area: opts; height: var(--opts-h); }
+  .canvas-wrap { grid-area: canvas; min-height: 0; }
+  .props { grid-area: props; }
+  /* Библиотека — поверх холста у колонки, только когда нужна */
+  .library {
+    display: none;
+    position: absolute;
+    z-index: 50;
+    left: var(--tools-w);
+    top: var(--opts-h);
+    bottom: 0;
+    width: min(264px, 42vw);
+    padding: 0;
+    box-shadow: 10px 0 24px rgba(24, 32, 43, 0.12);
+  }
+  body.lib-open .library { display: flex; }
+  body.mode-site .library { display: none; }
+  body.lib-open .level-dock { left: calc(min(264px, 42vw) + 14px); }
+  body.lib-open .snap-pill { left: calc(50% + min(132px, 21vw)); } /* по центру видимой части холста */
+  body.lib-open .ls-section { left: min(264px, 42vw); } /* разрез участка — правее каталога, не под ним */
+  /* «⚠ Замечания» — третья вкладка; список — вместо содержимого панели */
+  .props-tabs .issues-btn {
+    position: static;
+    flex: 1.35 1 0;
+    justify-content: center;
+    gap: 4px;
+    height: auto;
+    min-width: 0;
+    padding: 8px 4px 9px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .props-tabs .issues-btn.warn { background: transparent; color: var(--warn-text); }
+  .props-tabs .issues-btn:hover { color: var(--text); }
+  .props-tabs .issues-btn[aria-expanded="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .props-tabs .issues-icon { font-size: 12.5px; }
+  .props-tabs .issues-label { display: inline; }
+  .props > .issues-panel {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin: -12px -14px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .props > .issues-panel .issues-body { overflow: visible; }
+  .props:has(> .issues-panel:not([hidden])) > .props-body { display: none; }
+}
+@media (min-width: 641px) and (max-width: 860px) {
+  .props-tabs .issues-label { display: none; }
+}
+
+/* --- Телефон: строка инструментов над холстом, параметры — только когда есть --- */
+@media (max-width: 640px) {
+  .workspace { display: flex; flex-direction: column; }
+  .toolstrip { order: 0; }
+  .tool-options { order: 1; height: auto; min-height: 40px; padding: 4px 8px; }
+  .tool-options.empty { display: none; }
+  .to-keys { display: none; }
+  .canvas-wrap { order: 2; flex: 1; min-height: 0; }
+  .tb-tip { display: none !important; }
+  .top-sep { display: none; }
+  .project-name { flex: none; }
+}

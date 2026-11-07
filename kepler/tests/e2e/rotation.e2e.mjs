@@ -20,6 +20,7 @@ describe('повёрнутый дом', () => {
   after(async () => { await app?.close(); });
 
   it('поле «Поворот дома» поворачивает дом на месте, «План» остаётся прямым', async () => {
+    await app.page.click('#projectSummary'); // секция «Проект»
     await app.page.fill('#buildingRot', '30');
     await app.page.locator('#buildingRot').blur();
     const s = await app.page.evaluate(() => ({

@@ -15,9 +15,9 @@ import { bindViewPanel } from './view-align.js';
 import { bindIssues } from './issues.js';
 import { bindElevInput } from './terrain.js';
 import { finishWallChain, startBoundRoomTool, startWallTool } from './wall-tool.js';
-import { closeSheets } from './mobile.js';
+import { closeSheets, isPhone } from './mobile.js';
 import { cancelTool } from './tools.js';
-import { bindToolstrip } from './toolstrip.js';
+import { bindToolstrip, setTip } from './toolstrip.js';
 import { fitView, zoomAt } from './view.js';
 
 // Кнопка на панели инструментов: иконка и короткая подпись режима.
@@ -27,9 +27,9 @@ export function updateDimModeBtn() {
   if (!b) return;
   const label = b.querySelector('.tb-label');
   if (label) label.textContent = outer ? 'Снаружи' : 'Ось';
-  b.title = outer
-    ? 'Наружные размеры — по внешней грани стен (клик — по оси)'
-    : 'Наружные размеры — по оси стен (клик — по внешней грани)';
+  setTip(b, 'Размеры', outer
+    ? 'наружные — по внешней грани стен (клик — по оси)'
+    : 'наружные — по оси стен (клик — по внешней грани)');
   b.classList.toggle('active', outer);
   b.setAttribute('aria-pressed', String(outer));
 }
@@ -38,8 +38,18 @@ export function bindToolbar() {
   refs.modePlan.addEventListener('click', () => setEditorMode('plan'));
   refs.modeSite.addEventListener('click', () => setEditorMode('site'));
   el('landscapeBtn')?.addEventListener('click', () => setEditorMode('landscape'));
-  refs.libTabRooms.addEventListener('click', () => { state.libraryTab = 'rooms'; applyLibraryTab(); });
-  refs.libTabFurniture.addEventListener('click', () => { state.libraryTab = 'furniture'; applyLibraryTab(); });
+  // Вкладки библиотеки: открыта — остаётся открытой на выбранной вкладке.
+  const libTab = (tab) => {
+    state.libraryTab = tab;
+    if (state.modeName === 'plan') {
+      const k = state.tool?.kind;
+      if ((tab === 'rooms' && k === 'place-furniture') || (tab === 'furniture' && (k === 'bound-room' || k === 'place-room'))) cancelTool();
+      state.libraryPinned = !isPhone(); // телефон: библиотека — нижний лист
+    }
+    applyLibraryTab();
+  };
+  refs.libTabRooms.addEventListener('click', () => libTab('rooms'));
+  refs.libTabFurniture.addEventListener('click', () => libTab('furniture'));
   el('undoBtn').addEventListener('click', undo);
   el('redoBtn').addEventListener('click', redo);
   el('fitBtn').addEventListener('click', fitView);
@@ -51,8 +61,15 @@ export function bindToolbar() {
   });
   el('boundRoomBtn')?.addEventListener('click', () => {
     if (state.modeName !== 'plan') setEditorMode('plan');
-    if (state.tool?.kind === 'bound-room') cancelTool(); else startBoundRoomTool();
+    // Вместе с инструментом выезжает библиотека типов комнат; повторный клик — выйти и закрыть.
+    if (state.tool?.kind === 'bound-room') { state.libraryPinned = false; cancelTool(); } else {
+      if (state.tool?.kind === 'wall') finishWallChain();
+      state.libraryTab = 'rooms';
+      state.libraryPinned = !isPhone(); // телефон: библиотека — нижний лист
+      startBoundRoomTool();
+    }
     closeSheets();
+    applyLibraryTab();
   });
   bindToolstrip(); // остальные кнопки панели инструментов (ui/toolstrip.js)
   bindViewPanel(); // «Вид» на панели инструментов — поворот вида (ui/view-align.js)

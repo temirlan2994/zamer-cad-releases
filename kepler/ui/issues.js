@@ -1,4 +1,5 @@
-// Кнопка «⚠ N» в левом верхнем углу холста и панель замечаний: связность и
+// Вкладка «⚠ Замечания» правой панели (на телефоне — кнопка «⚠ N» в углу
+// холста) и список замечаний: связность и
 // двери, нормы, свет, проходы у мебели, перекрытия, стены и зазоры — всё
 // одним списком по группам (core/issues.js). Клик по замечанию — выбрать
 // объект, показать его на плане (этаж и режим «План» — при необходимости) и
@@ -69,7 +70,42 @@ export function setIssuesOpen(open) {
   panel.hidden = !open;
   el('issuesBtn')?.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('issues-open', open);
+  syncPropsTabs();
   if (open) renderIssues();
+}
+
+// Компьютер: «⚠ Замечания» — третья вкладка правой панели, список — вместо
+// её содержимого. Телефон: кнопка и лист — на холсте (правая панель там —
+// выдвижная). Узлы переносятся целиком, обработчики остаются.
+function placeIssues() {
+  const btn = el('issuesBtn');
+  const panel = el('issuesPanel');
+  const props = el('propsPanel');
+  const tabs = props?.querySelector('.props-tabs');
+  const wrap = document.querySelector('.canvas-wrap');
+  if (!btn || !panel || !tabs || !wrap) return;
+  if (narrow()) {
+    if (btn.parentElement !== wrap) wrap.insertBefore(btn, wrap.children[1] || null);
+    if (panel.parentElement !== wrap) btn.after(panel);
+    btn.removeAttribute('role');
+  } else {
+    if (btn.parentElement !== tabs) tabs.appendChild(btn);
+    if (panel.parentElement !== props) props.appendChild(panel);
+    btn.setAttribute('role', 'tab');
+  }
+  syncPropsTabs();
+}
+
+// Открытые замечания — активная вкладка, «Свойства»/«ТЭП» гаснут.
+function syncPropsTabs() {
+  const open = isIssuesOpen() && !narrow();
+  for (const b of document.querySelectorAll('#propsPanel [data-props-tab]')) {
+    const on = !open && b.dataset.propsTab === (state.propsTab === 'tep' ? 'tep' : 'props');
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  }
+  const btn = el('issuesBtn');
+  if (btn?.closest('.props-tabs')) btn.setAttribute('aria-selected', String(open));
 }
 
 const entryById = (id) => (state.issues?.groups || []).flatMap((g) => g.items).find((it) => it.id === id) || null;
@@ -197,7 +233,7 @@ export function goToIssue(entry) {
     let left = 24;
     const panel = el('issuesPanel');
     const canvas = el('canvas');
-    if (!mobile && panel && !panel.hidden && canvas) {
+    if (!mobile && panel && !panel.hidden && canvas && panel.closest('.canvas-wrap')) {
       left = Math.max(left, panel.getBoundingClientRect().right - canvas.getBoundingClientRect().left + 16);
     }
     showPlanRect(entry.focus, { left });
@@ -227,6 +263,8 @@ export function bindIssues() {
   const btn = el('issuesBtn');
   const panel = el('issuesPanel');
   if (!btn || !panel) return;
+  placeIssues();
+  window.matchMedia?.('(max-width: 640px)').addEventListener?.('change', placeIssues);
   btn.addEventListener('click', (event) => {
     event.stopPropagation();
     setIssuesOpen(panel.hidden);

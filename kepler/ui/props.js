@@ -37,32 +37,35 @@ import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './st
 import { liftForEdit, liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
+import { isIssuesOpen, setIssuesOpen } from './issues.js';
 
 // Вкладки над панелью: «Свойства» (выбранный объект или проект) и «ТЭП и
 // площади» (показатели дома и экспликация, ui/props-tep.js). Выбор нового
 // объекта возвращает вкладку «Свойства».
 let lastSelKey = null;
+let projectOpen = false; // секция «Проект» раскрыта
 
+// Вкладки и тело — в разметке (index.html); третья вкладка «⚠ Замечания» —
+// ui/issues.js (пока открыта, «Свойства»/«ТЭП» не подсвечены).
 function propsBody() {
   const root = refs.props;
-  let tabs = root.querySelector(':scope > .props-tabs');
-  let body = root.querySelector(':scope > .props-body');
-  if (!tabs || !body) {
-    root.innerHTML = `<div class="props-tabs" role="tablist" aria-label="Панель свойств">
-        <button type="button" role="tab" id="propsTabMain" data-props-tab="props">Свойства</button>
-        <button type="button" role="tab" id="propsTabTep" data-props-tab="tep">ТЭП и площади</button>
-      </div><div class="props-body" id="propsBody"></div>`;
-    tabs = root.querySelector('.props-tabs');
-    body = root.querySelector('.props-body');
+  const tabs = root.querySelector(':scope > .props-tabs');
+  const body = root.querySelector(':scope > .props-body');
+  if (!tabs.dataset.bound) {
+    tabs.dataset.bound = '1';
     tabs.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-props-tab]');
-      if (!btn || btn.dataset.propsTab === state.propsTab) return;
+      if (!btn) return;
+      const wasIssues = isIssuesOpen();
+      if (wasIssues) setIssuesOpen(false);
+      if (btn.dataset.propsTab === state.propsTab && !wasIssues) return;
       state.propsTab = btn.dataset.propsTab;
       renderProps();
     });
   }
+  const issues = isIssuesOpen() && Boolean(root.querySelector('#issuesPanel'));
   for (const btn of tabs.querySelectorAll('[data-props-tab]')) {
-    const on = btn.dataset.propsTab === state.propsTab;
+    const on = !issues && btn.dataset.propsTab === state.propsTab;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-selected', String(on));
   }
@@ -79,7 +82,7 @@ export function renderProps() {
   if (state.propsTab !== 'tep') state.propsTab = 'props';
   const panel = propsBody();
   if (state.propsTab === 'tep') { renderTepPanel(panel); return; }
-  if (state.tool?.kind === 'place-opening') { renderPlaceOpeningProps(panel); return; }
+  // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
   if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) { renderLandscapeProps(panel); return; }
   if (!sel) {
     if (state.modeName === 'site') renderSiteSettings(panel);
@@ -106,8 +109,18 @@ function renderProjectProps(panel) {
   const hasSite = Boolean(site?.boundary?.length || site?.underlay);
   const level = activeLevel(state.project);
   const multi = state.project.levels.length > 1;
+  // Ничего не выбрано: подсказка, а настройки проекта — свёрнутой секцией
+  // «Проект» внизу (раскрыта ли — помнится, пока открыта вкладка).
+  const prev = panel.querySelector('#projectSection');
+  if (prev) projectOpen = prev.open; // событие toggle приходит позже — читаем сразу
   panel.innerHTML = `
-    <h2>Проект</h2>
+    <div class="props-empty">
+      <p class="empty-hint">Ничего не выбрано. Кликните помещение, стену, проём или мебель на плане — здесь будут их свойства.</p>
+      ${rooms.length ? '<p class="empty-hint">Площади и экспликация — вкладка «ТЭП».</p>' : `
+      <p class="empty-hint">Начните с инструмента «Помещение» слева: тип комнаты из библиотеки — и клик на плане. Комнаты стыкуются сами; маленькая внутри большой — вложится и отнимет площадь.</p>`}
+    </div>
+    <details class="project-section" id="projectSection"${projectOpen ? ' open' : ''}>
+    <summary id="projectSummary">Проект <small>поворот, единицы, стены, этаж</small></summary>
     <div class="prop-block">
       ${hasSite ? buildingRotationField() : ''}
       <label class="prop-field"><span>Размеры на плане</span>
@@ -139,8 +152,8 @@ function renderProjectProps(panel) {
       </div>
       ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : '<p class="empty-hint">Второй этаж — кнопка «+» внизу слева на плане.</p>'}
     </div>
-    ${rooms.length ? '<p class="empty-hint">Площади, ТЭП и экспликация — вкладка «ТЭП и площади» вверху панели.</p>' : `
-    <p class="empty-hint">Выберите тип помещения слева и кликните на плане. Комнаты стыкуются автоматически — общая стена становится единой. Перетащите маленькую комнату внутрь большой — она вложится и отнимет площадь.</p>`}`;
+    </details>`;
+  panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
@@ -429,16 +442,17 @@ function elevationSVG(opening) {
 
 // Параметры двери/окна ДО вставки: активный инструмент «Дверь»/«Окно»
 // (state.tool.preset) — тип, ширина, высота, подоконник; каждый следующий
-// проём ставится с ними.
-function renderPlaceOpeningProps(panel) {
+// проём ставится с ними. compact — строка параметров над холстом (без
+// заголовка и фасада).
+function renderPlaceOpeningProps(panel, compact = false) {
   const tool = state.tool;
   const isDoor = tool.openKind === 'door';
   const preset = tool.preset;
   const sample = { kind: tool.openKind, ...preset };
   panel.innerHTML = `
-    <h2>${isDoor ? 'Дверь' : 'Окно'} — параметры вставки</h2>
+    ${compact ? `<strong class="to-title">${isDoor ? 'Дверь' : 'Окно'}</strong>` : `<h2>${isDoor ? 'Дверь' : 'Окно'} — параметры вставки</h2>
     <p class="subtitle">Задайте размеры и кликайте по стенам: можно ставить несколько. Esc — выход.</p>
-    <div class="elev-wrap">${elevationSVG(sample)}</div>
+    <div class="elev-wrap">${elevationSVG(sample)}</div>`}
     <div class="prop-block">
       <label class="prop-field"><span>Тип</span>
         <select id="presetType">${Object.entries(isDoor ? DOOR_TYPES : WINDOW_TYPES).map(([id, title]) => `
@@ -453,13 +467,92 @@ function renderPlaceOpeningProps(panel) {
       ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
         <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
     </div>`;
-  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel); requestDraw(); };
+  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel, compact); requestDraw(); };
   panel.querySelector('#presetType').addEventListener('change', (e) => {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });
   panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(300, Number(e.target.value) || preset.width) }));
   panel.querySelector('#presetH').addEventListener('change', (e) => save({ height: Math.max(300, Number(e.target.value) || preset.height) }));
   panel.querySelector('#presetSill')?.addEventListener('change', (e) => save({ sill: Math.max(0, Number(e.target.value) || 0) }));
+}
+
+// --- Строка параметров активного инструмента (#toolOptions над холстом) ---
+// Дверь/окно — та же форма, что и раньше в «Свойствах» (renderPlaceOpeningProps,
+// компактно); стена — тип и толщина следующих участков; помещение и мебель —
+// что выбрано в библиотеке. Справа — подсказка инструмента с клавишами
+// (#canvasHint переезжает сюда; на телефоне остаётся на холсте). «Выбор» —
+// без параметров. Перестраивается только при смене инструмента: поле под
+// курсором не сбрасывается.
+let toolOptionsKey = null;
+const phoneQuery = () => window.matchMedia?.('(max-width: 640px)');
+
+function placeCanvasHint() {
+  const hint = refs.hint;
+  const bar = document.getElementById('toolOptions');
+  const wrap = document.querySelector('.canvas-wrap');
+  if (!hint || !bar || !wrap) return;
+  if (phoneQuery()?.matches) { if (hint.parentElement !== wrap) wrap.insertBefore(hint, wrap.children[1] || null); }
+  else if (hint.parentElement !== bar) bar.appendChild(hint);
+}
+
+export function renderToolOptions(force = false) {
+  const bar = document.getElementById('toolOptions');
+  const body = document.getElementById('toolOptionsBody');
+  const keys = document.getElementById('toolOptionsKeys');
+  if (!bar || !body || !keys || !state.project) return;
+  if (!bar.dataset.bound) {
+    bar.dataset.bound = '1';
+    placeCanvasHint();
+    phoneQuery()?.addEventListener?.('change', placeCanvasHint);
+  }
+  const t = state.tool;
+  const furnLib = !t && state.libraryPinned && state.libraryTab === 'furniture' && state.modeName === 'plan';
+  const roomLib = !t && state.libraryPinned && state.libraryTab === 'rooms' && state.modeName === 'plan';
+  const key = t || (furnLib ? 'furn' : roomLib ? 'rooms' : null);
+  if (!force && key === toolOptionsKey) return;
+  toolOptionsKey = key;
+  let html = '';
+  if (t?.kind === 'place-opening') {
+    renderPlaceOpeningProps(body, true);
+    html = null;
+  } else if (t?.kind === 'wall') {
+    const set = state.project.settings;
+    html = `<strong class="to-title">Стена</strong>
+      <label class="prop-field"><span>Тип</span>
+        <select id="toWallType">${['partition', 'bearing', 'exterior'].map((k) => `
+          <option value="${k}" ${t.wallType === k ? 'selected' : ''}>${{ partition: 'Перегородка', bearing: 'Несущая', exterior: 'Наружная' }[k]} (${wallClassThickness(set, k)})</option>`).join('')}
+        </select></label>
+      <label class="prop-field"><span>Толщина, мм</span>
+        <input id="toWallT" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(t.thickness)}"></label>`;
+  } else if (t?.kind === 'place-room') {
+    html = `<strong class="to-title">Помещение</strong><span class="to-value">${escapeHtml(roomType(t.type)?.title || t.type)}</span>`;
+  } else if (t?.kind === 'bound-room' || roomLib) {
+    html = '<strong class="to-title">Помещение</strong><span class="to-note">клик внутри замкнутой петли стен — или тип из библиотеки слева</span>';
+  } else if (t?.kind === 'place-furniture') {
+    html = `<strong class="to-title">${t.itemKind === 'stairs' ? 'Лестница' : 'Мебель'}</strong><span class="to-value">${escapeHtml(furnitureDef(t.itemKind)?.title || t.itemKind)}</span>`;
+  } else if (furnLib) {
+    html = '<strong class="to-title">Мебель</strong><span class="to-note">выберите предмет в каталоге слева или перетащите на план</span>';
+  }
+  if (html !== null) body.innerHTML = html;
+  keys.textContent = t ? '' : (furnLib || roomLib
+    ? 'Esc — закрыть библиотеку'
+    : 'Выбор: клик — объект, рамка по пустому месту — несколько · Esc — снять выбор');
+  // Телефон: строка — только когда есть что задать (дверь, окно, стена).
+  bar.classList.toggle('empty', !body.querySelector('input, select'));
+  if (t?.kind === 'wall') {
+    body.querySelector('#toWallType').addEventListener('change', (e) => {
+      t.wallType = e.target.value;
+      t.thickness = wallClassThickness(state.project.settings, t.wallType);
+      renderToolOptions(true);
+      requestDraw();
+    });
+    body.querySelector('#toWallT').addEventListener('change', (e) => {
+      const v = Math.round(Number(e.target.value));
+      if (Number.isFinite(v) && v > 0) t.thickness = Math.min(WALL_T_MAX, Math.max(WALL_T_MIN, v));
+      e.target.value = String(Math.round(t.thickness));
+      requestDraw();
+    });
+  }
 }
 
 function renderOpeningProps(panel, opening) {

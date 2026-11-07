@@ -21,6 +21,9 @@ describe('smoke', () => {
 
   it('вкладки «Помещения» / «Мебель» переключают панели', async () => {
     const hidden = (sel) => app.page.$eval(sel, (n) => n.hidden);
+    assert.equal(await app.page.isVisible('.library'), false, 'без инструмента библиотека скрыта');
+    await app.page.click('#boundRoomBtn'); // «Помещение» — библиотека типов комнат
+    assert.equal(await app.page.isVisible('#roomCards'), true);
     assert.equal(await hidden('#libraryTop'), false);
     assert.equal(await hidden('#furnitureBar'), true);
     await app.page.click('#libTabFurniture');
@@ -37,7 +40,7 @@ describe('smoke', () => {
   });
 
   it('мебель: иконки категорий и превью-канвасы', async () => {
-    await app.page.click('#libTabFurniture');
+    await app.page.click('#libTabFurniture'); // библиотека открыта «Помещением»
     const cats = await app.page.$$('#furnitureCats button');
     assert.equal(cats.length, 16);
     const chips = await app.page.$$('#furnitureItems .furniture-chip');
@@ -48,6 +51,7 @@ describe('smoke', () => {
     const after = await app.page.$$('#furnitureItems .furniture-chip');
     assert.ok(after.length > 0);
     await app.page.click('#libTabRooms');
+    await app.page.click('#selectToolBtn'); // закрыть библиотеку
   });
 
   it('переключатель наружных размеров', async () => {

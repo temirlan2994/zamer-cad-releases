@@ -9,7 +9,8 @@ export const state = {
   flash: null, // { rects, levelId } — мгновенная подсветка места замечания
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
-  libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка левой панели (в режиме «План»)
+  libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка библиотеки (в режиме «План»)
+  libraryPinned: false, // библиотека открыта кнопкой «Помещение»/«Мебель» (без активного размещения)
   propsTab: 'props', // 'props' | 'tep' — вкладка правой панели (ui/props.js)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

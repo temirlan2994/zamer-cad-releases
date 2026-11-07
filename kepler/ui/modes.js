@@ -67,7 +67,7 @@ export function setEditorMode(mode) {
   refs.libraryTitle.hidden = mode === 'plan'; // в «Плане» заголовок задаёт вкладка
   refs.libraryTitle.textContent = mode === 'plan' ? 'Помещения' : 'Участок';
   document.body.classList.toggle('mode-landscape', mode === 'landscape');
-  document.body.classList.toggle('mode-site', mode === 'site'); // левая панель скрыта (styles.css)
+  document.body.classList.toggle('mode-site', mode === 'site'); // библиотеки нет (styles.css)
   if (mode === 'landscape') refreshLandscapeSun(); // участок мог смениться (широта, граница)
   refs.libraryHint.textContent = mode === 'plan'
     ? 'Кликните тип, затем место на плане. Комнаты стыкуются сами.'

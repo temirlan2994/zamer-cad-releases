@@ -75,14 +75,15 @@ describe('замечания: кнопка «⚠» и панель', () => {
     assert.equal(got.sel?.type, entry.target.type);
     assert.equal(got.sel?.id, entry.target.id);
     assert.ok(got.flash?.rects?.length, 'подсветка места');
-    // Центр объекта — на видимой части холста правее открытой панели.
+    // Центр объекта — на видимой части холста (панель замечаний — вкладка правой панели, холст не закрывает).
     const pos = await app.page.evaluate((f) => {
       const c = document.getElementById('canvas').getBoundingClientRect();
       const p = document.getElementById('issuesPanel').getBoundingClientRect();
       const s = window.__kepler.planToScreen(f.x + f.w / 2, f.y + f.h / 2);
       return { x: s.x + c.left, y: s.y + c.top, c: { l: c.left, r: c.right, t: c.top, b: c.bottom }, panelRight: p.right };
     }, entry.focus);
-    assert.ok(pos.x > pos.panelRight && pos.x < pos.c.r, `x ${pos.x} вне ${pos.panelRight}…${pos.c.r}`);
+    assert.ok(pos.panelRight > pos.c.r, 'панель — справа от холста');
+    assert.ok(pos.x > pos.c.l && pos.x < pos.c.r, `x ${pos.x} вне ${pos.panelRight}…${pos.c.r}`);
     assert.ok(pos.y > pos.c.t && pos.y < pos.c.b, `y ${pos.y}`);
     assert.equal(await app.page.isVisible('#issuesPanel'), true);
     assert.match(await app.page.getAttribute(`#issuesPanel [data-issue-id="${entry.id}"]`, 'class'), /selected/);

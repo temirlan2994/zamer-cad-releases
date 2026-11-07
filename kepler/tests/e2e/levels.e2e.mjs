@@ -67,6 +67,7 @@ describe('этажи', () => {
     assert.equal((await levels(app.page)).list.length, 1);
     await app.page.click('#levelBar button.add');
     await app.page.keyboard.press('Escape');
+    if (!(await app.page.isVisible('#deleteLevel'))) await app.page.click('#projectSummary'); // секция «Проект»
     await app.page.click('#deleteLevel');
     const s = await levels(app.page);
     assert.equal(s.list.length, 1);

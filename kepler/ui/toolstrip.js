@@ -1,22 +1,24 @@
-// Панель инструментов под шапкой (index.html, #toolStrip): общие кнопки
-// (выбор, вид, 3D, вписать, орто, привязки) и наборы режимов — «План»
-// (стена, помещение, проём, мебель, размеры), «Участок» (слои участка),
-// «Ландшафт» (разрез, массив, выноска). Кнопки — иконки, полное название и
-// клавиша — в подсказке; активный инструмент подсвечен. Кнопки «Плана» и
-// общие — в разметке (их id нужны старым обработчикам), наборы «Участка» и
-// «Ландшафта» строятся здесь.
+// Колонка инструментов слева (index.html, #toolStrip; на телефоне — строка
+// над холстом): «Выбор» и наборы режимов — «План» (стена, помещение, дверь,
+// окно, мебель, лестница, размеры), «Участок» (слои участка), «Ландшафт»
+// (разрез, массив, выноска); переход в «Ландшафт»; внизу — поворот вида и
+// «Вписать». Кнопки — только значки; подсказка .tb-tip (название · что
+// делает · клавиша) — своя, CSS, сразу при наведении, без title. Активный
+// инструмент подсвечен. Кнопки «Плана» и общие — в разметке (их id нужны
+// старым обработчикам), наборы «Участка» и «Ландшафта» строятся здесь.
 
 import { polygonAreaM2 } from '../core/site.js';
 import { el, refs } from './dom.js';
 import { labelLandscapeSelection, selectedIds } from './landscape.js';
 import { startLandscapeArray } from './landscape-array.js';
 import { startSectionTool } from './landscape-section.js';
-import { applyLibraryTab } from './library.js';
+import { applyLibraryTab, syncLibraryOpen } from './library.js';
 import { closeSheets, isPhone, toggleSheet } from './mobile.js';
+import { renderToolOptions } from './props.js';
 import { state } from './state.js';
 import { startTerrainTool } from './terrain.js';
 import {
-  activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceOpening,
+  activeSiteLayer, cancelTool, setTool, startDraw, startEditLayer, startPlaceFurniture, startPlaceOpening,
 } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
 
@@ -39,7 +41,7 @@ const ICONS = {
 
 const editHint = (name) => `Правка: ${name}. Тяните точки/объект. Esc — выйти`;
 
-// Слои участка (раньше — карточки в левой панели). Порядок сохранён.
+// Слои участка (раньше — карточки в библиотеке). Порядок сохранён.
 const SITE_TOOLS = [
   { id: 'underlay', name: 'Топосъёмка', note: (s) => (s?.underlay ? 'двигать / масштаб' : 'импорт PDF/JPG/DXF'),
     action: (s) => setTool({ kind: 'underlay-edit' }, s?.underlay
@@ -82,7 +84,7 @@ function buildGroup(box, defs, attr) {
     btn.className = 'tb-btn';
     btn.dataset[attr] = def.id;
     btn.setAttribute('aria-label', def.name);
-    btn.innerHTML = svg(ICONS[def.id] || '');
+    btn.innerHTML = `${svg(ICONS[def.id] || '')}<span class="tb-tip" role="tooltip"></span>`;
     box.appendChild(btn);
   }
   box.addEventListener('click', (event) => {
@@ -106,8 +108,23 @@ function syncGroup(box, defs, attr, isActive) {
     btn.classList.toggle('active', Boolean(active));
     btn.setAttribute('aria-pressed', String(Boolean(active)));
     btn.disabled = def.enabled ? !def.enabled(site) && !active : false;
-    btn.title = `${def.name} — ${def.note(site)}`;
+    setTip(btn, def.name, def.note(site), def.keys);
   }
+}
+
+// Подсказка кнопки — как у привязок (ui/draw-snap-ui.js): название · что делает · клавиша.
+export function setTip(btn, name, what, keys = '') {
+  if (!btn) return;
+  let tip = btn.querySelector('.tb-tip');
+  if (!tip) {
+    tip = document.createElement('span');
+    tip.className = 'tb-tip';
+    tip.setAttribute('role', 'tooltip');
+    btn.appendChild(tip);
+  }
+  const html = `<b>${name}</b>${what ? ` · ${what}` : ''}${keys ? ` · <kbd>${keys}</kbd>` : ''}`;
+  if (tip.innerHTML !== html) tip.innerHTML = html;
+  btn.removeAttribute('title');
 }
 
 const toggle = (id, on) => {
@@ -132,18 +149,24 @@ export function renderToolstrip() {
   buildGroup(ls, LANDSCAPE_TOOLS, 'lsTool');
   if (mode === 'site') syncGroup(refs.siteTools, SITE_TOOLS, 'siteTool', (id) => activeSiteLayer() === id);
   if (mode === 'landscape') syncGroup(ls, LANDSCAPE_TOOLS, 'lsTool', () => false);
-  toggle('selectToolBtn', !t);
+  syncLibraryOpen(); // библиотека — по активному инструменту
+  const phone = isPhone();
+  const stairs = t?.kind === 'place-furniture' && t.itemKind === 'stairs';
+  const pinned = !phone && mode === 'plan' && !t && state.libraryPinned;
+  toggle('selectToolBtn', !t && !pinned);
   toggle('wallToolBtn', t?.kind === 'wall');
-  toggle('boundRoomBtn', t?.kind === 'bound-room');
+  toggle('boundRoomBtn', t?.kind === 'bound-room' || t?.kind === 'place-room' || (pinned && state.libraryTab === 'rooms'));
   toggle('doorToolBtn', t?.kind === 'place-opening' && t.openKind === 'door');
   toggle('windowToolBtn', t?.kind === 'place-opening' && t.openKind === 'window');
-  const furnOpen = mode === 'plan' && (t?.kind === 'place-furniture'
-    || (isPhone() ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : state.libraryTab === 'furniture'));
+  const furnOpen = mode === 'plan' && ((t?.kind === 'place-furniture' && !stairs)
+    || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
-  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn']) {
+  toggle('stairsToolBtn', stairs);
+  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn']) {
     const b = el(id);
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
+  renderToolOptions(); // строка параметров — только при смене инструмента
 }
 
 function placeOpening(kind) {
@@ -153,11 +176,34 @@ function placeOpening(kind) {
   renderToolstrip();
 }
 
+// Компьютер: «Мебель» открывает каталог рядом с колонкой (другой инструмент
+// выключается), повторный клик — закрывает.
 function toggleFurniture() {
   if (isPhone()) toggleSheet('furniture');
   else {
-    state.libraryTab = state.libraryTab === 'furniture' ? 'rooms' : 'furniture';
+    const open = document.body.classList.contains('lib-open') && state.libraryTab === 'furniture' && state.modeName === 'plan';
+    if (open) {
+      state.libraryPinned = false;
+      if (state.tool?.kind === 'place-furniture') cancelTool();
+    } else {
+      if (state.tool && state.tool.kind !== 'place-furniture' && !finishWallChain()) cancelTool();
+      state.libraryTab = 'furniture';
+      state.libraryPinned = true;
+    }
     applyLibraryTab();
+  }
+  renderToolstrip();
+}
+
+// Лестничный марш — размещение как у мебели (core/catalog.js «stairs»);
+// повторный клик — выйти.
+function toggleStairs() {
+  const t = state.tool;
+  if (t?.kind === 'place-furniture' && t.itemKind === 'stairs') cancelTool();
+  else {
+    if (t?.kind === 'wall') finishWallChain();
+    startPlaceFurniture('stairs', 'Лестничный марш');
+    closeSheets();
   }
   renderToolstrip();
 }
@@ -165,8 +211,10 @@ function toggleFurniture() {
 export function bindToolstrip() {
   el('selectToolBtn')?.addEventListener('click', () => {
     if (!finishWallChain()) cancelTool();
-    renderToolstrip();
+    state.libraryPinned = false; // «Выбор» закрывает библиотеку
+    applyLibraryTab();
   });
+  el('stairsToolBtn')?.addEventListener('click', toggleStairs);
   el('doorToolBtn')?.addEventListener('click', () => placeOpening('door'));
   el('windowToolBtn')?.addEventListener('click', () => placeOpening('window'));
   el('furnitureToolBtn')?.addEventListener('click', toggleFurniture);

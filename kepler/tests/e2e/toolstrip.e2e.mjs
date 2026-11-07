@@ -1,15 +1,16 @@
-// e2e панели инструментов (ui/toolstrip.js) и вкладки «ТЭП и площади»
+// e2e колонки инструментов (ui/toolstrip.js) и вкладки «ТЭП»
 // (ui/props-tep.js): кнопки-иконки с подсказками, подсветка активного
 // инструмента, наборы «План» / «Участок» / «Ландшафт», всплывающие «Вид»,
-// привязки внизу холста, шапка без переехавших кнопок; удалённые блоки «Варианты»,
+// привязки внизу холста, шапка без инструментов; удалённые блоки «Варианты»,
 // «Управление», «Движок стен»; телефон — прокручиваемая строка.
+// Раскладка целиком (библиотека, строка параметров) — layout.e2e.mjs.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
 
 const tool = (page) => page.evaluate(() => window.__kepler.state.tool?.kind || null);
 const active = (page, sel) => page.$eval(sel, (n) => n.classList.contains('active'));
-const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'view3dBtn', 'dimModeBtn', 'viewBtn', 'alignBtn'];
+const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'landscapeBtn', 'stairsToolBtn'];
 
 describe('панель инструментов', () => {
   let app;
@@ -19,22 +20,22 @@ describe('панель инструментов', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('кнопки на панели, в шапке — только общие действия', async () => {
+  it('кнопки в колонке, в шапке — режимы и общие действия', async () => {
     const { page } = app;
     assert.equal(await page.isVisible('#toolStrip'), true);
     for (const id of [...MOVED, 'selectToolBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} на панели инструментов`);
     }
-    for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'modePlanBtn', 'modeSiteBtn', 'projectName']) {
+    for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'modePlanBtn', 'modeSiteBtn', 'view3dBtn', 'projectName']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('.topbar'))), true, `#${id} в шапке`);
     }
-    assert.equal(await page.$$eval('.topbar #fitBtn, .topbar #wallToolBtn, .topbar #view3dBtn, .topbar #dimModeBtn', (ns) => ns.length), 0);
-    // Панель — между шапкой и холстом.
+    assert.equal(await page.$$eval('.topbar #fitBtn, .topbar #wallToolBtn, .topbar #dimModeBtn', (ns) => ns.length), 0);
+    // Колонка — под шапкой, слева от холста.
     const [top, strip, canvas] = await Promise.all(['.topbar', '#toolStrip', '#canvas'].map((s) => page.locator(s).boundingBox()));
-    assert.ok(strip.y >= top.y + top.height - 1 && canvas.y >= strip.y + strip.height - 1, 'шапка → панель → холст');
-    // Иконка, подсказка с названием, подпись — не длиннее одного слова.
+    assert.ok(strip.y >= top.y + top.height - 1 && canvas.x >= strip.x + strip.width - 1, 'шапка → колонка | холст');
+    // Иконка, подсказка (.tb-tip, без title) с названием, подпись — не длиннее одного слова.
     const btns = await page.$$eval('#toolStrip .tb-btn', (ns) => ns.filter((n) => n.offsetParent).map((n) => ({
-      id: n.id, svg: Boolean(n.querySelector('svg')), title: n.title, label: n.getAttribute('aria-label'),
+      id: n.id, svg: Boolean(n.querySelector('svg')), title: n.hasAttribute('title') ? '' : n.querySelector('.tb-tip')?.textContent || '', label: n.getAttribute('aria-label'),
       text: n.querySelector('.tb-label')?.textContent.trim() || '',
     })));
     assert.ok(btns.length >= 10, `кнопок ${btns.length}`); // «Орто» и «Привязки» переехали вниз холста
@@ -42,7 +43,7 @@ describe('панель инструментов', () => {
       assert.ok(b.svg && b.title.length > 3 && b.label, `кнопка ${b.id}: иконка и подсказка`);
       assert.ok(!/\s/.test(b.text), `подпись ${b.id} «${b.text}» — одно слово`);
     }
-    assert.match(await page.getAttribute('#wallToolBtn', 'title'), /\(W\)/);
+    assert.match(await page.textContent('#wallToolBtn .tb-tip'), /\bW\b/);
     assert.equal(await page.$$eval('#toolStrip #orthoBtn, #toolStrip #snapMenuBtn, #toolStrip #snapBar', (ns) => ns.length), 0, 'привязки — не на панели');
   });
 
@@ -93,15 +94,15 @@ describe('панель инструментов', () => {
     await page.click('#viewBtn');
     assert.equal(await page.isVisible('#viewPanel'), true);
     const [btn, panel] = await Promise.all(['#viewBtn', '#viewPanel'].map((s) => page.locator(s).boundingBox()));
-    assert.ok(panel.y >= btn.y + btn.height && panel.x + panel.width <= 1280, `панель под кнопкой ${JSON.stringify(panel)}`);
+    assert.ok(panel.x >= btn.x + btn.width && panel.y >= 0 && panel.y + panel.height <= 820, `панель справа от колонки ${JSON.stringify(panel)}`);
     await page.click('#viewBtn');
     assert.equal(await page.isHidden('#viewPanel'), true);
     assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
     // Размеры: подпись и подсветка меняются.
-    assert.equal((await page.textContent('#dimModeBtn')).trim(), 'Снаружи');
+    assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Снаружи');
     await page.click('#dimModeBtn');
-    assert.equal((await page.textContent('#dimModeBtn')).trim(), 'Ось');
+    assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Ось');
     assert.equal(await active(page, '#dimModeBtn'), false);
     await page.click('#dimModeBtn');
     assert.equal(await active(page, '#dimModeBtn'), true);
@@ -135,7 +136,7 @@ describe('панель инструментов', () => {
     await page.keyboard.press('Escape');
     await page.click('#modePlanBtn');
     assert.equal(await page.isVisible('#planTools'), true);
-    assert.equal(await page.isVisible('.library'), true);
+    assert.equal(await page.isVisible('.library'), false, '«План» без инструмента — библиотека не занимает холст');
     assert.deepEqual(app.errors, []);
   });
 });
