@@ -117,7 +117,7 @@ export function startPlaceOpening(openKind, presetWall = null) {
   // Параметры (тип, размеры) задаются в «Свойствах» до вставки и помнятся.
   const preset = state.openingPreset[openKind] || (state.openingPreset[openKind] = defaultOpeningPreset(openKind));
   state.selection = null;
-  setTool({ kind: 'place-opening', openKind, presetWall, doorTurns: 0, preset }, openKind === 'door'
+  setTool({ kind: 'place-opening', openKind, presetWall, hingeStart: true, preset }, openKind === 'door'
     ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'
     : 'Кликайте по наружным стенам — можно ставить несколько окон · Esc — выход');
   renderProps();
@@ -149,12 +149,9 @@ export function rotatePlacementPreview() {
       rect.y = cy - rect.h / 2;
     }
   } else if (tool.kind === 'place-opening' && tool.openKind === 'door') {
-    const previous = tool.doorTurns || 0;
-    tool.doorTurns = (previous + 1) % 4;
-    if (state.ghostDoor) {
-      if (previous === 0 || previous === 2) state.ghostDoor.hingeStart = !state.ghostDoor.hingeStart;
-      else state.ghostDoor.swingIn = !state.ghostDoor.swingIn;
-    }
+    // Пробел — только петли слева/справа; сторона открывания идёт за курсором.
+    tool.hingeStart = tool.hingeStart === false;
+    if (state.ghostDoor) state.ghostDoor.hingeStart = tool.hingeStart;
   } else return false;
   requestDraw();
   return true;

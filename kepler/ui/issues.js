@@ -168,7 +168,7 @@ export function renderIssues() {
   btn.removeAttribute('title');
   btn.setAttribute('aria-label', label);
   const tip = el('ptabTip-issues');
-  if (tip) tip.innerHTML = `<b>Замечания</b> · ${issues.count ? `${issues.count} — нормы, доступ, свет, мебель; клик — список с переходом к месту` : escapeHtml(label.replace('Замечания: ', ''))}`;
+  if (tip) tip.innerHTML = '<b>Замечания</b>'; // только название (число — значком на кнопке)
   const chips = summary.map((g) => {
     const label = g.enabled ? `${g.short} ${g.count}` : `${g.short} выкл`;
     return `<button type="button" class="issue-chip${g.enabled && g.count ? ' has-warn' : ''}" data-issue-group="${g.id}" aria-pressed="${g.enabled}" title="${escapeHtml(g.title)} — ${g.enabled ? 'выключить' : 'включить'}">${escapeHtml(label)}</button>`;

@@ -18,7 +18,7 @@ import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';
 import {
-  clampOpeningOffset, deriveWalls, doorPlacementVariant, openingPos, setOpeningPos, sideEdge,
+  clampOpeningOffset, deriveWalls, openingPos, setOpeningPos, sideEdge,
 } from '../core/walls.js';
 import { manualWallById, removeManualWall, setManualWallThickness } from '../core/wall-manual.js';
 import { applyStairPreset } from '../core/stairs.js';
@@ -166,9 +166,9 @@ export function computeOpeningParams(at) {
     const mouseSign = Math.sign(mousePerp - wall.edge) || roomSign;
     opening.swingIn = mouseSign === roomSign; // открывается в сторону курсора
     // Петли — на дальнем от курсора конце, створка «смотрит» к курсору.
-    const center = base + opening.offset;
-    opening.hingeStart = along > center;
-    Object.assign(opening, doorPlacementVariant(opening, state.tool?.doorTurns || 0));
+    // Петли — строго с одной стороны: её выбирает только Пробел (state.tool.hingeStart),
+    // положение мыши вдоль стены на неё не влияет (иначе дверь мерцает слева/справа).
+    opening.hingeStart = state.tool?.hingeStart !== false;
   }
   return { opening, wall };
 }
@@ -192,9 +192,7 @@ function computeHostOpening(at, wall, openKind) {
     const mid = wall.orient === 'h' ? wall.band.y + wall.band.h / 2 : wall.band.x + wall.band.w / 2;
     const mouseSign = Math.sign((wall.orient === 'h' ? at.y : at.x) - mid) || wall.outward;
     opening.swingIn = mouseSign === wall.outward;
-    const center = wall.axisStart + wall.axisDir * free;
-    opening.hingeStart = along > center; // петли — на дальнем от курсора конце
-    Object.assign(opening, doorPlacementVariant(opening, state.tool?.doorTurns || 0));
+    opening.hingeStart = state.tool?.hingeStart !== false; // см. выше: только Пробел
   }
   return { opening, wall };
 }
