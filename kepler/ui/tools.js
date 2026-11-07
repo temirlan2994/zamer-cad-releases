@@ -1,8 +1,6 @@
 // Выделение и активный инструмент (размещение, рисование, правка слоя).
 
 import { roomType } from '../core/catalog.js';
-import { roomById } from '../core/model.js';
-import { deriveWalls } from '../core/walls.js';
 import { el, refs } from './dom.js';
 import { renderIssues } from './issues.js';
 import { renderLibrary } from './library.js';
@@ -11,7 +9,7 @@ import { renderProps } from './props.js';
 import { state } from './state.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
 import { closeLibrarySheet } from './mobile.js';
-import { hideSplitInput, positionSplitInput } from './split-input.js';
+import { hideSplitInput, pendingSplitHas, positionSplitInput, revertPendingSplit } from './split-input.js';
 import { requestDraw } from './view.js';
 import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
@@ -24,15 +22,9 @@ export function selectObject(selection) {
   const split = state.splitEdit;
   if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
     Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();
-  const pending = state.pendingRoomSplit;
-  if (pending && (!selection || selection.type !== 'room' || selection.id !== pending.roomId)) {
-    const room = roomById(state.project, pending.roomId);
-    if (room && !pending.moved) {
-      if (pending.outline) room.outline = structuredClone(pending.outline); else delete room.outline;
-      if (pending.notch) room.notch = structuredClone(pending.notch); else delete room.notch;
-      state.walls = deriveWalls(state.project);
-    }
-    state.pendingRoomSplit = null;
+  // Несдвинутое деление стены откатывается, если выбрали не его комнату.
+  if (state.pendingRoomSplit && (!selection || selection.type !== 'room' || !pendingSplitHas(selection.id))) {
+    revertPendingSplit();
   }
   const handleOwner = selection?.type === 'item' ? selection.id : selection?.type === 'landscape' ? lsHandleKey(selection) : groupHandleId(selection);
   if (!(handleOwner && state.itemHandle?.id === handleOwner)) state.itemHandle = null;

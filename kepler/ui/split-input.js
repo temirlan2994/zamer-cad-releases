@@ -6,8 +6,9 @@
 // state.splitEdit = { key, from, along, typed } — along в осях дома.
 
 import { roomById } from '../core/model.js';
-import { keepOpenings } from '../core/opening-anchor.js';
-import { splitRoomOutlineWall, WALL_SPLIT_MIN_GAP } from '../core/room-shape.js';
+import { WALL_SPLIT_MIN_GAP } from '../core/room-shape.js';
+import { restoreRoom } from '../core/wall-edit.js';
+import { splitWallRooms } from '../core/wall-split.js';
 import { toast } from './dom.js';
 import { findWall } from './hit.js';
 import { state } from './state.js';
@@ -16,7 +17,9 @@ import { selectObject } from './tools.js';
 import { planToScreen, requestDraw } from './view.js';
 
 const STEP = 50;
-const isSplittable = (wall) => Boolean(wall && wall.kind === 'own' && roomById(state.project, wall.rooms?.[0]));
+// Собственная стена — одна комната, общая — обе (core/wall-split.js).
+const isSplittable = (wall) => Boolean(wall && (wall.kind === 'own' || wall.kind === 'shared') &&
+  wall.rooms?.length && wall.rooms.every((id) => roomById(state.project, id)));
 
 function editWall() {
   const edit = state.splitEdit;
@@ -51,7 +54,7 @@ export function snapAlong(wall, along) {
 
 export function openSplitInput(wall, at) {
   if (!isSplittable(wall)) {
-    toast('Разделить можно собственную наружную стену помещения', true);
+    toast('Разделить можно стену помещения (собственную или общую)', true);
     return;
   }
   const { lo, hi } = span(wall);
@@ -130,21 +133,44 @@ function applySplit() {
   splitWallAt(wall, at);
 }
 
-// Деление не меняет форму: в точке at появляются две совпадающие вершины.
-// История пишется одной записью, когда пользователь потянет половину.
+// Деление не меняет форму: в точке at появляются две совпадающие вершины —
+// у общей стены в контурах обеих комнат. История пишется одной записью,
+// когда пользователь потянет половину; без сдвига деление откатывается
+// (revertPendingSplit). state.pendingRoomSplit = { roomId (выбранная),
+// roomIds, starts (комнаты до деления), openings, before, moved }.
 export function splitWallAt(wall, along) {
-  const room = roomById(state.project, wall.rooms[0]);
+  const ids = wall.rooms.filter((id) => roomById(state.project, id));
   const before = snapshot();
-  const outline = room.outline ? structuredClone(room.outline) : null;
-  const notch = room.notch ? structuredClone(room.notch) : null;
-  // Вставка вершин сдвигает номера сторон контура — проёмы перепривязываем.
-  if (!keepOpenings(state.project, room, () => splitRoomOutlineWall(room, wall, along)).result) {
-    toast('На этом коротком участке стену разделить нельзя', true);
-    return false;
-  }
-  state.pendingRoomSplit = { roomId: room.id, before, outline, notch, moved: false };
+  const starts = ids.map((id) => structuredClone(roomById(state.project, id)));
+  const openings = structuredClone(state.project.openings || []);
+  const res = splitWallRooms(state.project, wall, along);
+  if (!res.ok) { toast(res.reason, true); return false; }
+  const roomId = ids[0];
+  state.pendingRoomSplit = { roomId, roomIds: ids, starts, openings, before, moved: false };
   refreshDerived();
-  selectObject({ type: 'room', id: room.id });
-  toast('Стена разделена без изменения формы — тяните любую половину за круглую точку');
+  selectObject({ type: 'room', id: roomId });
+  toast(ids.length > 1
+    ? 'Общая стена разделена в обеих комнатах — тяните половину за круглую точку, соседняя комната поедет вместе (Alt — оторвать)'
+    : 'Стена разделена без изменения формы — тяните любую половину за круглую точку');
+  return true;
+}
+
+// Временное деление относится к комнате id?
+export function pendingSplitHas(id) {
+  return Boolean(state.pendingRoomSplit?.roomIds?.includes(id) || state.pendingRoomSplit?.roomId === id);
+}
+
+// Откат несдвинутого деления: обе комнаты и проёмы — как до деления.
+export function revertPendingSplit() {
+  const pending = state.pendingRoomSplit;
+  state.pendingRoomSplit = null;
+  if (!pending || pending.moved) return false;
+  for (const start of pending.starts || []) {
+    const room = roomById(state.project, start.id);
+    if (room) restoreRoom(room, start);
+  }
+  const list = state.project.openings;
+  if (Array.isArray(list) && pending.openings) list.splice(0, list.length, ...structuredClone(pending.openings));
+  refreshDerived();
   return true;
 }

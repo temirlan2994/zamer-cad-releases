@@ -18,7 +18,7 @@ import {
 import { fitOpeningOffset, snapOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
 import {
-  captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, keepOpenings, reanchorOpenings,
+  captureOpeningAnchors, finalizeRoomOutlineKeepOpenings, reanchorOpenings,
 } from '../core/opening-anchor.js';
 import { applyRoomShapeHandle, clampRoomNotch, roomBoundaryEdges, roomContainsPoint } from '../core/room-shape.js';
 import { groupCargo } from '../core/room-group.js';
@@ -34,7 +34,7 @@ import {
 } from '../core/group-handles.js';
 import { hideDimInput, openDimInput, positionDimInput } from './dim-input.js';
 import { hitTempDim } from './temp-dims.js';
-import { splitLiveClick, splitLiveMove } from './split-input.js';
+import { pendingSplitHas, revertPendingSplit, splitLiveClick, splitLiveMove } from './split-input.js';
 import { focusGap, gapMarkerAt } from './gaps.js';
 import {
   KITCHEN_ELEMENTS, KITCHEN_SIDES, KITCHEN_SNAP, editKitchen, kitchenElementAt, kitchenHandleDrag, kitchenProject, withDefaultComp,
@@ -787,7 +787,7 @@ export function bindCanvasInput() {
     const handleHit = hitRoomHandle(screen);
     if (handleHit) {
       if (handleHit.shapeHandle?.kind) {
-        const pending = state.pendingRoomSplit?.roomId === handleHit.room.id ? state.pendingRoomSplit : null;
+        const pending = pendingSplitHas(handleHit.room.id) ? state.pendingRoomSplit : null;
         drag = {
           kind: 'shape-resize', roomId: handleHit.room.id, handle: handleHit.shapeHandle,
           before: pending?.before || snapshot(), moved: false, valid: true, merged: false,
@@ -1111,7 +1111,7 @@ export function bindCanvasInput() {
       liftRoom(state.project, room.id); // съели на прошлом кадре — снова номинал
       if (!room.notch && !room.outline) return;
       drag.moved = true;
-      if (state.pendingRoomSplit?.roomId === room.id) state.pendingRoomSplit.moved = true;
+      if (pendingSplitHas(room.id)) state.pendingRoomSplit.moved = true;
       // Ребро Г-комнаты на общей стене: встречные грани соседей едут с ним
       // (core/wall-follow.js); угловая ручка Г-контура — без попутчиков.
       if (drag.followEdge === undefined) {
@@ -1654,22 +1654,13 @@ export function bindCanvasInput() {
     if (finished.kind === 'room' || finished.kind === 'resize' || finished.kind === 'shape-resize' || finished.kind === 'multi') {
       state.ghost = null;
       if (!finished.moved) {
-        if (finished.kind === 'shape-resize' && state.pendingRoomSplit?.roomId === finished.roomId) {
-          const pending = state.pendingRoomSplit;
-          const room = roomById(state.project, pending.roomId);
-          if (room) {
-            keepOpenings(state.project, room, () => {
-              if (pending.outline) room.outline = structuredClone(pending.outline); else delete room.outline;
-              if (pending.notch) room.notch = structuredClone(pending.notch); else delete room.notch;
-            });
-          }
-          state.pendingRoomSplit = null;
-          refreshDerived();
-        }
+        // Деление без сдвига — откат (у общей стены — обе комнаты).
+        if (finished.kind === 'shape-resize' && pendingSplitHas(finished.roomId)) revertPendingSplit();
         requestDraw(); return;
       }
       if (!finished.valid) {
         restoreFrom(finished.before);
+        if (finished.kind === 'shape-resize') state.pendingRoomSplit = null; // снимок до деления
         toast(finished.reason || 'Так разместить нельзя', true);
         return;
       }
@@ -1698,6 +1689,12 @@ export function bindCanvasInput() {
         const room = roomById(state.project, finished.roomId);
         const finalized = room?.outline ? finalizeRoomOutlineKeepOpenings(state.project, room) : { merged: finished.merged };
         finished.merged = finished.merged || finalized.merged;
+        // Комнаты деления, которые жест не тронул (тянули не ту ручку, Alt),
+        // — без лишних совпадающих вершин.
+        for (const id of state.pendingRoomSplit?.roomIds || []) {
+          const r = id !== finished.roomId && roomById(state.project, id);
+          if (r?.outline && !r.eatBase) finalizeRoomOutlineKeepOpenings(state.project, r);
+        }
         state.pendingRoomSplit = null;
       }
       // Сдвинутая/растянутая комната «съедает» перекрытые: нижняя
@@ -1740,7 +1737,11 @@ export function bindCanvasInput() {
     touches.delete(event.pointerId);
     canvas.parentElement?.classList.remove('move-armed');
     if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
-    if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) restoreFrom(drag.before);
+    if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) {
+      restoreFrom(drag.before);
+      // before у жеста по делению — снимок до деления: деление тоже снято.
+      if (drag.kind === 'shape-resize') state.pendingRoomSplit = null;
+    }
     drag = null;
     state.marquee = null;
     state.ghost = null;

@@ -287,8 +287,13 @@ export function applyRoomShapeHandle(room, handle, point, { minArm = 900, mergeT
     const prev = (i - 1 + points.length) % points.length;
     const next = (i + 1) % points.length;
     const local = { x: point.x - room.x, y: point.y - room.y };
+    // Притяжение — к линиям ДРУГИХ вершин: сами подвижные вершины стоят там,
+    // где были на прошлом кадре, и прилипание к ним тормозило ручку на
+    // mergeTolerance позади курсора.
+    const moving = new Set(handle.kind === 'edge' ? [i, next] : [i]);
     const snapLine = (value, axis) => {
-      const close = points.map((p) => p[axis]).find((candidate) => Math.abs(candidate - value) <= mergeTolerance);
+      const close = points.filter((_p, k) => !moving.has(k)).map((p) => p[axis])
+        .find((candidate) => Math.abs(candidate - value) <= mergeTolerance);
       return close === undefined ? value : close;
     };
     if (handle.kind === 'edge') {

@@ -43,7 +43,7 @@ function contentForSelection(sel) {
       };
     }
     const room = roomById(state.project, wall.rooms[0]);
-    const canSplit = wall.kind === 'own';
+    const canSplit = wall.kind === 'own' || wall.kind === 'shared'; // общая — в обеих комнатах
     const canWindow = wall.kind !== 'shared' && !room?.parentId;
     return {
       label: 'Стена',

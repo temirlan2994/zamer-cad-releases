@@ -63,7 +63,10 @@ export function findFollowers(rooms, movingId, movingEdges, { shapeOf = (r) => r
         const key = `${o.id}|${f.index}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        const entry = { side: f.side, orient: f.orient, edge: f.edge, from: f.from, to: f.to, outward: f.outward, axis: axisOf(f) };
+        const entry = {
+          side: f.side, orient: f.orient, edge: f.edge, from: f.from, to: f.to, outward: f.outward, axis: axisOf(f),
+          gap: Math.max(0, dist),
+        };
         if (!picked.has(o.id)) picked.set(o.id, []);
         picked.get(o.id).push(entry);
         queue.push({ ...entry, owner: o.id });
@@ -103,6 +106,38 @@ export function followLimits(follow) {
 
 export const clampDelta = (value, { lo, hi }) => Math.max(lo, Math.min(hi, value));
 
+// Деление общей стены (core/wall-split.js): у соседа на концах ребра-половины
+// стоят пары совпадающих вершин. Когда половина сдвинута, пара становится
+// ступенькой — её линию надо отнести на толщину перегородки от ступеньки
+// тянущей комнаты (та — ровно в точке деления), иначе в углу уступа зазор
+// меньше перегородки и сосед «съедается». Ступенька смотрит на ступеньку
+// тянущей комнаты, поэтому её линия = точка деления − outward·gap.
+function offsetSplitSteps(room, start, e, gap) {
+  if (!gap || !Array.isArray(room.outline) || !Array.isArray(start?.outline)) return;
+  if (room.outline.length !== start.outline.length) return;
+  const was = start.outline.map((p) => ({ x: start.x + Number(p.x), y: start.y + Number(p.y) }));
+  const pts = room.outline.map((p) => ({ x: room.x + Number(p.x), y: room.y + Number(p.y) }));
+  const n = pts.length;
+  const across = e.orient === 'v' ? 'x' : 'y'; // ось сдвига ребра
+  const along = e.orient === 'v' ? 'y' : 'x'; // ось ступеньки (её линия)
+  let changed = false;
+  for (let i = 0; i < n; i += 1) {
+    const j = (i + 1) % n;
+    const a = was[i]; const b = was[j];
+    // В начале жеста — пара совпадающих вершин на линии ребра e, в его конце.
+    if (Math.abs(a.x - b.x) > EPS || Math.abs(a.y - b.y) > EPS) continue;
+    if (Math.abs(a[across] - e.edge) > EPS) continue;
+    if (Math.abs(a[along] - e.from) > EPS && Math.abs(a[along] - e.to) > EPS) continue;
+    const p = pts[i]; const q = pts[j];
+    if (Math.abs(p[across] - q[across]) < EPS) continue; // ступеньки нет (сдвиг 0)
+    // outward ступеньки: наружу от комнаты (обход контура, как roomBoundaryEdges).
+    const outward = e.orient === 'v' ? (q.x > p.x ? -1 : 1) : (q.y > p.y ? 1 : -1);
+    p[along] = q[along] = a[along] - outward * gap;
+    changed = true;
+  }
+  if (changed) room.outline = pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+}
+
 // Кадр жеста: попутчики — из снимка, их грани сдвинуты на delta { x, y }.
 // delta = null — оторвать (попутчики стоят как в начале жеста).
 // → { ok, clamped: [], lost: [] } (ok = false — ребро сложной формы не сдвинулось).
@@ -135,6 +170,7 @@ export function applyFollow(project, follow, delta) {
       const cur = roomBoundaryEdges(room).find((c) => c.orient === e.orient && c.outward === e.outward &&
         Math.abs(c.edge - e.edge) < EPS && overlap(c, e) > 1);
       if (!cur || !moveShapedEdge(room, cur, e.edge + d)) out.ok = false;
+      else offsetSplitSteps(room, f.start, e, e.gap || 0);
     }
     const report = reanchorOpenings(project, room, f.anchors);
     out.clamped.push(...report.clamped); out.lost.push(...report.lost);
