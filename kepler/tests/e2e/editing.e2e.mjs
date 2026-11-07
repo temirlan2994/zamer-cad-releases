@@ -150,6 +150,7 @@ describe('типы проёмов и высота потолка', () => {
     const r = (await proj(app.page)).rooms[0];
     await app.page.click('[data-selection-action="add-door"]');
     await clickWorld(app.page, r.x + r.w / 2, r.y - 60);
+    await app.page.keyboard.press('Escape'); // инструмент остаётся активным для серии — выходим
     const d = await opening(app.page, 'door');
     await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), d.id);
     await app.page.selectOption('#openType', 'double');
@@ -160,6 +161,7 @@ describe('типы проёмов и высота потолка', () => {
     await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
     await app.page.click('[data-selection-action="add-window"]');
     await clickWorld(app.page, r.x - 60, r.y + r.h / 2);
+    await app.page.keyboard.press('Escape');
     const w = await opening(app.page, 'window');
     await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), w.id);
     await app.page.selectOption('#openType', 'panoramic');
