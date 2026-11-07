@@ -14,9 +14,9 @@ import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
-import { finalizeRoomOutline, roomContainsPoint, roomRects } from './room-shape.js';
+import { roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
-import { eatFailText, eatPlan, eatRoom, eatShape } from './room-eat.js';
+import { eatFailText, overlapVerdicts, trimByBridge } from './v7/eat-bridge.js';
 import { LIVING_TYPES } from './schedule.js';
 import { deriveWalls, openingOwnerId } from './walls.js';
 import { wallsInsideRooms } from './bound-rooms.js';
@@ -130,7 +130,7 @@ export function roomChecks(project, room, level, walls = null) {
 
 // Оставшиеся перекрытия помещений (docs/walls-v2-architecture.md, раздел 5).
 // Обычно перекрытия в модели нет: комната, поставленная поверх другой,
-// «съедает» её в конце жеста (core/room-eat.js) — между ними перегородка.
+// «съедает» её (мост v7, core/v7/eat-bridge.js) — между ними перегородка.
 // Остаются только несъедаемые (нижняя целиком под верхней, распалась бы на
 // части, слишком мала) и перекрытия из старых файлов. Пары комнат верхнего
 // уровня; вложенные (parentId), шахты и открытые площадки (терраса всегда под
@@ -161,19 +161,12 @@ export function roomOverlaps(project) {
   return out;
 }
 
-// Действие «Обрезать» (старые перекрытия): нижняя комната теряет зону
-// перекрытия и зазор gap под перегородку. С project — как съедание в конце
-// жеста (толщина общей стены пары, проёмы на месте). Получается, только если
-// остаток — одна связная область без дыр и не меньше минимального размера;
-// иначе false и комната не тронута.
-export function trimRoomBy(room, by, project = null) {
-  if (project) return eatRoom(project, room, by).ok;
-  const shape = eatShape(room, by, 0);
-  if (!shape.ok) return false;
-  room.outline = shape.pts.map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
-  delete room.notch;
-  finalizeRoomOutline(room);
-  return true;
+// Действие «Обрезать» (старые перекрытия): верхняя by поднимается наверх и
+// съедает нижнюю room через мост v7 (зазор — толщина общей стены пары,
+// проёмы на месте). Получается, только если остаток — одна связная область
+// без дыр и не меньше минимального размера; иначе false, форма не тронута.
+export function trimRoomBy(room, by, project) {
+  return trimByBridge(project, room, by);
 }
 
 // Полный отчёт: инсоляция + проверки всех комнат по этажам.
@@ -186,6 +179,7 @@ export function normsReport(project) {
     const lp = levelProject(project, level.id);
     const walls = deriveWalls(lp);
     const levelOverlaps = roomOverlaps(lp);
+    const verdicts = overlapVerdicts(lp, levelOverlaps);
     const crossed = wallsInsideRooms(lp);
     for (const room of lp.rooms) {
       const checks = roomChecks(lp, room, level, walls);
@@ -203,7 +197,7 @@ export function normsReport(project) {
       }
       // Перекрытие — одно замечание на пару, у верхней комнаты.
       for (const o of levelOverlaps.filter((q) => q.upper === room)) {
-        const plan = eatPlan(lp, o.lower, o.upper);
+        const plan = verdicts.get(o.lower.id)?.get(o.upper.id) || { ok: false, why: 'none' };
         checks.push({
           kind: 'overlap', ok: false,
           text: plan.ok

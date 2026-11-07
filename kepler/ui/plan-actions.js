@@ -13,8 +13,7 @@ import {
   captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { roomContainsPoint } from '../core/room-shape.js';
-import { eatSummary, roomsIntersect } from '../core/room-eat.js';
-import { liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
+import { eatSummary, liftRoom, nominalShape, reconcileEats, roomsIntersect } from '../core/v7/eat-bridge.js';
 import {
   determineParent, snapRoomPosition, validateRoomPlacement,
 } from '../core/rooms.js';

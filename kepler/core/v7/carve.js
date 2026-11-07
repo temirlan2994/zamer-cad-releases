@@ -6,20 +6,20 @@
 // Никакой памяти: результат — чистая функция текущих номинальных форм и
 // порядка. Сдвинули верхний блок прочь — нижний сразу снова целый.
 //
-// Не получается (как core/room-eat.js) — форма остаётся номинальной,
+// Не получается — форма остаётся номинальной,
 // перекрытие видно и возвращается причина:
 //   'whole'    — нижний целиком под верхними;
 //   'split'    — остаток распадается на части;
 //   'small'    — ни одна часть остатка не вмещает квадрат EAT_MIN_REMAIN;
 //   'children' — под верхний попадает вложенный блок нижнего.
 // Вложенные блоки (parentId) всегда выше родителя и вырезают себя из него.
-// Открытые площадки и шахты в съедании не участвуют (как eatablePair).
+// Открытые площадки и шахты в съедании не участвуют.
 
 import { area, bbox, boxesOverlap, buffer, difference, erode, intersection, opening, union } from '../geom/poly.js';
 import { blockGeom, blockIsOpen, blockIsShaft, blockOrder, pairGap } from './model.js';
 
-export const EAT_MIN_REMAIN = 500; // = core/room-eat.js EAT_MIN_REMAIN
-export const EAT_SLIVER = 250; // = core/room-eat.js EAT_SLIVER: тоньше — волосок, срезается
+export const EAT_MIN_REMAIN = 500; // мм: остаток уже — не комната, съедать нельзя
+export const EAT_SLIVER = 250; // мм: тоньше — волосок, срезается
 const HIT_MM2 = 100; // пересечение меньше — касание, а не перекрытие
 
 const eatable = (b) => !b.parentId && !blockIsShaft(b) && !blockIsOpen(b);

@@ -1532,7 +1532,7 @@ export function bindCanvasInput() {
         state.pendingRoomSplit = null;
       }
       // Сдвинутая/растянутая комната «съедает» перекрытые: нижняя
-      // уменьшается, между ними перегородка (core/room-eat.js). Тот же шаг
+      // уменьшается, между ними перегородка (core/v7/eat-bridge.js). Тот же шаг
       // отмены, что и сам жест.
       const movedIds = finished.kind === 'multi' ? finished.roomIds
         : [finished.kind === 'room' ? finished.id : finished.roomId];

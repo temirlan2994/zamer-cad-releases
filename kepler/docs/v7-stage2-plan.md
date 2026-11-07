@@ -162,3 +162,25 @@ kepler-plan/7 при сохранении; зазор 100–450 — одна т�
   `fitStairRoom` — по номиналу; «Пересечения / поменять» — по номинальным
   формам (видны и съеденные пары). Тесты: `tests/v7-nominal-edit.test.mjs`,
   `tests/e2e/props-v7.e2e.mjs` (дом 45°).
+- Срез 6 — коммит «Этап 2, срез 6…». Удалены `core/room-eat.js`
+  (eatOverlaps/restoreEaten/eatRoom/eatPlan/eatShape — деструктивное съедание
+  с памятью) и `tests/room-eat.test.mjs`; `roomsIntersect`, `eatFailText`,
+  `eatSummary` перенесены в `core/v7/eat-bridge.js`. Нормы: вердикт
+  оставшихся перекрытий — `overlapVerdicts` (reconcileEats на копии этажа),
+  «Обрезать» — `trimByBridge` (верхняя наверх, съедание моста; зазор —
+  перегородка пары, как у жеста). Мёртвый псевдоним `deriveWallsFor` убран.
+  Тесты: `tests/v7-eat-cases.test.mjs` — все сценарии старого room-eat на
+  мосту + fuzz (40 сидов × 12 шагов: сдвиги, растяжения под «едоками»,
+  удаления = построение с нуля по номиналам и порядку, идемпотентность);
+  `tests/wall-fixtures.mjs` (EAT_FIXTURES) — через reconcileEats.
+  **Оставлено (живые пути, не мёртвые):** `core/bound-rooms.js` (петля стен
+  → помещение `createLoopRoom/findLoopAt`, «Разделить на два»
+  `splitRoomByWall`, `freeLoops` в store, `wallsInsideRooms` в нормах и
+  панели, миграция `convertBoundRooms` старых `room.bound`);
+  `core/walls-v2.js` (основной движок стен `deriveWallsV2`, ручные стены,
+  `wallOutline`); `core/ortho-grid.js` (walls-v2, bound-rooms, mesh3d, ifc);
+  движок v1 (`deriveWallsV1`, `wallJoinPatches` в mesh3d/ifc) — достижим
+  через `settings.wallsEngine: 'v1'` старых файлов и `?walls=v1`, удаление
+  меняет поведение таких проектов (этап 5 по architecture-v7);
+  `room.eatBase` — представление моста (номинал/сироты), уходит с мостом;
+  `snapRoomPosition` — постановка новой комнаты инструментом.

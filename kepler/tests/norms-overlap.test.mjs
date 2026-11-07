@@ -1,5 +1,5 @@
 // Оставшееся перекрытие помещений (старые файлы, несъедаемое) — замечание норм
-// (docs/walls-v2-architecture.md, раздел 5). Съедание в конце жеста — tests/room-eat.test.mjs.
+// (docs/walls-v2-architecture.md, раздел 5). Съедание моста v7 — tests/v7-eat-cases.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -27,17 +27,18 @@ test('перекрытие: ровно одно замечание у верхн
   assert.equal(report.overlaps.length, 1);
 });
 
-test('«Обрезать»: нижняя комната теряет зону перекрытия, замечание уходит', () => {
+test('«Обрезать»: нижняя комната теряет зону перекрытия и зазор перегородки, замечание уходит', () => {
   const { p, a, b } = overlapPair();
-  assert.ok(trimRoomBy(a, b));
-  assert.equal(roomShapeArea(a), 5000 * 4000 - 1000 * 3000, 'Г-образная без зоны перекрытия');
+  assert.ok(trimRoomBy(a, b, p));
+  assert.equal(roomShapeArea(a), 5000 * 4000 - 1100 * 3100, 'Г-образная без зоны перекрытия и зазора 100');
   assert.equal(roomOverlaps(p).length, 0);
+  assert.equal(normsReport(p).problems.filter((x) => x.kind === 'overlap').length, 0);
   // Комната целиком внутри другой — обрезать нельзя (дыра), комната не тронута.
   const q = createProject();
   const big = createRoom('living', 0, 0, 6000, 6000);
   const small = createRoom('kitchen', 2000, 2000, 2000, 2000);
   q.rooms.push(big, small);
-  assert.equal(trimRoomBy(big, small), false);
+  assert.equal(trimRoomBy(big, small, q), false);
   assert.equal(big.outline, undefined);
 });
 

@@ -18,9 +18,9 @@
 import { DEFAULT_PARTITION, isOpenRoom, isShaft } from '../catalog.js';
 import { area, buffer, erode, intersection, orientRing, pointInPolygon } from '../geom/poly.js';
 import { captureOpeningAnchors, keepOpenings } from '../opening-anchor.js';
-import { finalizeRoomOutline } from '../room-shape.js';
+import { finalizeRoomOutline, roomRects } from '../room-shape.js';
 import { nestedOuterRect, rectInsideRoomShape } from '../rooms.js';
-import { carveLevel } from './carve.js';
+import { EAT_MIN_REMAIN, carveLevel } from './carve.js';
 import { migrateLevel, zOrder } from './migrate.js';
 import { blockGeom, pairGap } from './model.js';
 
@@ -231,4 +231,74 @@ export function reconcileEats(project, { touched = [], under = null, prev = null
     if (prevBy.get(room.id) && !room.eatBase) out.restored.push({ lower: room });
   }
   return out;
+}
+
+// Пересекаются ли формы двух комнат (по площади, не касанием).
+export function roomsIntersect(a, b) {
+  const rb = roomRects(b);
+  return roomRects(a).some((p) => rb.some((q) =>
+    Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x) > 1 &&
+    Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y) > 1));
+}
+
+// Текст замечания для несъедаемого перекрытия (why — из carve/reconcileEats).
+export function eatFailText(why, lower, upper, child = null) {
+  const a = `«${upper.name}»`; const b = `«${lower.name}»`;
+  if (why === 'whole') return `${b} целиком под ${a} — передвиньте или удалите одну из комнат`;
+  if (why === 'split') return `${a} разрезает ${b} на части — сдвиньте ${a} к краю ${b}`;
+  if (why === 'small') return `От ${b} под ${a} остаётся меньше ${EAT_MIN_REMAIN} мм — передвиньте ${a}`;
+  if (why === 'children') return `${a} закрывает вложенное помещение «${child?.name || ''}» в ${b}`;
+  return `${a} перекрывает ${b}`;
+}
+
+// Короткий итог reconcileEats для тоста. null — нечего сказать.
+export function eatSummary(res) {
+  if (!res) return null;
+  const parts = [];
+  const back = (res.restored || []).filter((r) => !res.eaten.some((e) => e.lower === r.lower));
+  if (back.length) parts.push(`Форма восстановлена: ${back.map((r) => `«${r.lower.name}»`).join(', ')}`);
+  if (res.eaten.length === 1) parts.push(`Комната «${res.eaten[0].lower.name}» уменьшена: пересечение с «${res.eaten[0].upper.name}»`);
+  else if (res.eaten.length > 1) parts.push(`Уменьшены по пересечению: ${res.eaten.map((e) => `«${e.lower.name}»`).join(', ')}`);
+  if (res.lost.length) parts.push(`удалено проёмов под комнатой: ${res.lost.length}`);
+  if (res.failed.length) parts.push(eatFailText(res.failed[0].why, res.failed[0].lower, res.failed[0].upper, res.failed[0].child));
+  return parts.length ? parts.join('; ') : null;
+}
+
+// Вердикт для оставшихся перекрытий этажа (нормы): съедание считается на
+// КОПИИ этажа (проект не меняется). pairs — [{ lower, upper }].
+// → Map lower.id → Map upper.id → { ok, why, child }.
+export function overlapVerdicts(project, pairs) {
+  const out = new Map();
+  if (!pairs.length) return out;
+  const level = activeLevelOf(project);
+  const copy = {
+    settings: project.settings || {},
+    wallOverrides: clone(level.wallOverrides || {}),
+    walls: level.walls || [],
+    rooms: clone(level.rooms || []),
+    openings: clone(level.openings || []),
+  };
+  const res = reconcileEats(copy);
+  const byId = new Map(copy.rooms.map((r) => [r.id, r]));
+  for (const { lower, upper } of pairs) {
+    const c = byId.get(lower.id);
+    let v;
+    if (c?.eatBase?.by?.includes(upper.id)) v = { ok: true, why: null, child: null };
+    else {
+      const f = res.failed.find((x) => x.lower.id === lower.id && x.upper.id === upper.id) ||
+        res.failed.find((x) => x.lower.id === lower.id);
+      const child = f?.child ? (level.rooms || []).find((r) => r.id === f.child.id) || f.child : null;
+      v = { ok: false, why: f?.why || 'none', child };
+    }
+    if (!out.has(lower.id)) out.set(lower.id, new Map());
+    out.get(lower.id).set(upper.id, v);
+  }
+  return out;
+}
+
+// «Обрезать» оставшееся перекрытие: верхняя by — наверх, съедание моста.
+// → true, если комната room теперь съедена by.
+export function trimByBridge(project, room, by) {
+  reconcileEats(project, { touched: [by.id] });
+  return eatersOf(room).includes(by.id);
 }

@@ -186,7 +186,6 @@ export function projectHasManualWalls(project) {
 export function deriveWalls(project) {
   return wallsEngine(project) === 'v2' ? deriveWallsV2(project) : deriveWallsV1(project);
 }
-export const deriveWallsFor = deriveWalls;
 
 // Куски тела стены: у v2 — непересекающиеся rects, у v1 — полоса band.
 export function wallRects(wall) {

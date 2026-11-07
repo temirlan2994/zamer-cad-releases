@@ -9,7 +9,7 @@
 import { createProject, createRoom } from '../core/model.js';
 import { deriveWalls, ownKey, sharedKey } from '../core/walls.js';
 import { createLoopRoom } from '../core/bound-rooms.js';
-import { eatOverlaps } from '../core/room-eat.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 
 let seq = 0;
 function room(type, x, y, w, h, extra = {}) {
@@ -208,13 +208,13 @@ export function hiddenWallTee() {
 }
 
 // ---------------------------------------------------------------- Съедание перекрытых комнат
-// Комната, поставленная поверх другой, «съедает» её (core/room-eat.js):
-// нижняя теряет пересечение и зазор под перегородку 100 — между ними обычная
-// общая стена. Фикстура — модель ПОСЛЕ съедания (как в конце жеста).
+// Комната, поставленная поверх другой, «съедает» её (мост v7,
+// core/v7/eat-bridge.js): нижняя теряет пересечение и зазор под перегородку
+// 100 — между ними обычная общая стена. Фикстура — модель ПОСЛЕ съедания.
 
 function eaten(name, rooms, order) {
   const p = project(name, rooms);
-  for (const id of order) eatOverlaps(p, [id]);
+  for (const id of order) reconcileEats(p, { touched: [id] });
   return p;
 }
 
