@@ -7,10 +7,10 @@ import { itemRect } from './furnish.js';
 import { roomContainsPoint } from './room-shape.js';
 import { openingRect, wallContains } from './walls.js';
 
-// Мебель реагирует на мышь только при крупном плане (знаменатель масштаба ≤ 45,
-// как в строке состояния «≈ 1:45»): издали мышь работает с помещением, и мебель
+// Мебель реагирует на мышь только при крупном плане (знаменатель масштаба ≤ 165,
+// как в строке состояния «≈ 1:165»): издали мышь работает с помещением, и мебель
 // не сдвигается случайно. scale — пикселей на мм.
-export const ITEM_EDIT_DENOMINATOR = 45;
+export const ITEM_EDIT_DENOMINATOR = 165;
 export function itemsEditable(scale) {
   return !(scale > 0) || Math.round(96 / 25.4 / scale) <= ITEM_EDIT_DENOMINATOR;
 }

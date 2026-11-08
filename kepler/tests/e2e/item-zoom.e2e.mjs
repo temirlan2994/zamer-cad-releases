@@ -1,4 +1,4 @@
-// Мебель берётся мышью только при масштабе 1:45 и ближе (core/hit-stack.js,
+// Мебель берётся мышью только при масштабе 1:165 и ближе (core/hit-stack.js,
 // itemsEditable): издали клик и перетаскивание по мебели попадают в помещение
 // под ней — комната едет вместе с мебелью; вблизи — выбирается и едет предмет.
 import { describe, it, before, after } from 'node:test';
@@ -67,13 +67,13 @@ describe('мебель: выбор и перетаскивание завися�
     await app.page.waitForTimeout(80);
   }
 
-  it('издали (1:90) клик по мебели выбирает помещение', async () => {
-    await setScale(90);
+  it('издали (1:300) клик по мебели выбирает помещение', async () => {
+    await setScale(300);
     assert.deepEqual(await clickTable(), { type: 'room', id: ids.room });
   });
 
-  it('издали (1:90) перетаскивание за мебель двигает помещение вместе с мебелью', async () => {
-    await setScale(90);
+  it('издали (1:300) перетаскивание за мебель двигает помещение вместе с мебелью', async () => {
+    await setScale(300);
     await clickTable();
     const s0 = await state();
     await dragTable(120, 60);
@@ -100,11 +100,11 @@ describe('мебель: выбор и перетаскивание завися�
     assert.deepEqual((await state()).table, s0.table, 'отмена вернула стол');
   });
 
-  it('граница: 1:45 — предмет, 1:46 — помещение', async () => {
-    await setScale(45);
-    assert.deepEqual(await clickTable(), { type: 'item', id: ids.table }, '1:45 включительно');
-    await setScale(46);
-    assert.deepEqual(await clickTable(), { type: 'room', id: ids.room }, '1:46 — уже издали');
+  it('граница: 1:165 — предмет, 1:166 — помещение', async () => {
+    await setScale(165);
+    assert.deepEqual(await clickTable(), { type: 'item', id: ids.table }, '1:165 включительно');
+    await setScale(166);
+    assert.deepEqual(await clickTable(), { type: 'room', id: ids.room }, '1:166 — уже издали');
     assert.deepEqual(app.errors, []);
   });
 });
