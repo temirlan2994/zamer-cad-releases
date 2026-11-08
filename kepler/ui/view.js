@@ -2,6 +2,7 @@
 
 import { composeView, rectCornersWorld, toLocal, toWorld } from '../core/building.js';
 import { neighborRectCorners } from '../core/site.js';
+import { massRect } from '../core/masses.js';
 import { projectPoint, underlayHandles, unprojectPoint } from '../render.js';
 import { canvas, refs, renderer } from './dom.js';
 import { findWall } from './hit.js';
@@ -157,6 +158,12 @@ export function fitView() {
       { x: room.x - pad, y: room.y - pad, w: room.w + pad * 2, h: room.h + pad * 2 }));
   }
   const siteView = state.modeName === 'site' || state.modeName === 'landscape';
+  // Массы (core/masses.js) — основания в осях дома: эскиз тоже вписывается.
+  if (state.modeName === 'plan') {
+    for (const m of state.project.masses || []) {
+      pts.push(...rectCornersWorld(state.project.building, massRect(m)));
+    }
+  }
   if (siteView && site) {
     for (const p of site.boundary || []) pts.push(p);
     for (const road of site.roads || []) pts.push(...road.points);

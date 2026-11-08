@@ -66,7 +66,8 @@ import {
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize } from './block-gesture.js';
+import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet } from './block-gesture.js';
+import { massPlanClick, massPlanHover } from './masses.js';
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
@@ -344,7 +345,9 @@ function updateHoverAndGhost(world, plan, event) {
     let x = plan.x - w / 2;
     let y = plan.y - h / 2;
     const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
-    const snapped = snapRoomPosition(state.project, { id: '__ghost__', type: def.type, w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
+    let snapped = snapRoomPosition(state.project, { id: '__ghost__', type: def.type, w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
+    // Эскиз масс: свободные оси липнут к рёбрам контура (ui/block-gesture.js).
+    if (!event?.shiftKey && !event?.altKey) snapped = sketchMagnet({ ...snapped, guides: [...snapped.guides] }, { x, y, w, h });
     x = snapped.x; y = snapped.y;
     const verdict = validateRoomPlacement(state.project, { type: def.type, x, y, w, h, parentId }, null);
     state.guides = snapped.guides;
@@ -397,6 +400,7 @@ function updateHoverAndGhost(world, plan, event) {
   }
   if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
   if (state.tool?.kind === 'psec') { planSectionHover(plan, event); return; }
+  if (state.tool?.kind === 'mass') { massPlanHover(plan, event); return; }
   if (state.tool?.kind === 'bound-room') { boundRoomHover(plan); return; }
   if (state.tool?.kind === 'terrain') {
     const s = worldToScreen(world.x, world.y);
@@ -682,6 +686,11 @@ export function bindCanvasInput() {
       if (t.kind === 'psec') {
         const mods = { shiftKey: event.shiftKey, ctrlKey: event.ctrlKey };
         tapOrNow(event, screen, () => planSectionClick(plan, mods));
+        return;
+      }
+      if (t.kind === 'mass') {
+        const mods = { shiftKey: event.shiftKey, ctrlKey: event.ctrlKey };
+        tapOrNow(event, screen, () => massPlanClick(plan, mods));
         return;
       }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }

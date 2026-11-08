@@ -9,6 +9,7 @@ import { createLoopRoom, findLoopAt, splitRoomByWall } from '../core/bound-rooms
 import { wallClassThickness } from '../core/walls.js';
 import { toast } from './dom.js';
 import { gridStep } from './snap.js';
+import { massSnapPoints } from './plan-masses.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
@@ -34,6 +35,7 @@ function snapped(plan, event) {
     prev: t.start,
     walls: state.walls || [],
     manual: state.project.walls || [],
+    points: massSnapPoints(), // вершины эскиза масс
     tol: 12 / state.view.scale,
     grid: gridStep(),
     free: Boolean(event?.shiftKey),

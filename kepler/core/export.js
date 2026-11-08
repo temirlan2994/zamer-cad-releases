@@ -190,6 +190,9 @@ export function buildStructuredExport(project) {
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site, project),
     indicators: tepReport(project), // ТЭП: площади, коэффициенты, объём (м², м³)
+    // Массы (core/masses.js): боксы в осях дома — центр основания x, y, размеры
+    // w, d, низ z0, высота h, поворот (кратно 90°). Необязательно.
+    ...(project.masses?.length ? { masses: project.masses.map((m) => ({ ...m })) } : {}),
   };
 }
 

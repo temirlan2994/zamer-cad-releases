@@ -23,6 +23,7 @@ import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
+import { MASS_COLOR, massBox } from './masses.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -990,6 +991,7 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
 // ландшафта (только вместе с site).
 // furniture — мебель (грани kind 'furniture'; только для окна 3D: фасады,
 // разрезы, листы и габарит её не берут — по умолчанию выключена).
+// masses — массы (core/masses.js), как мебель — только для окна 3D.
 // levels — какие этажи показывать: 'all' (по умолчанию), 'upto' — до
 // активного (project.activeLevel) включительно, 'only' — только активный;
 // кровля (флажок roof) — только когда видны все этажи, иначе она закрыла бы
@@ -1001,8 +1003,35 @@ export function shownLevelIds(project, mode = 'all') {
   return mode === 'only' ? [levels[k].id] : levels.slice(0, k + 1).map((l) => l.id);
 }
 
+// Массы (core/masses.js) — полупрозрачные боксы с контурами: 6 граней kind
+// 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
+// Только для окна 3D (опция masses у buildHouseMesh).
+export function massFaces(masses, { alpha = 0.35 } = {}) {
+  const out = [];
+  for (const m of masses || []) {
+    const b = massBox(m);
+    const color = m.color || MASS_COLOR;
+    const P = {
+      a: v(b.x0, b.y0, b.z0), b: v(b.x1, b.y0, b.z0), c: v(b.x1, b.y1, b.z0), d: v(b.x0, b.y1, b.z0),
+      A: v(b.x0, b.y0, b.z1), B: v(b.x1, b.y0, b.z1), C: v(b.x1, b.y1, b.z1), D: v(b.x0, b.y1, b.z1),
+    };
+    const quad = (face, k, normal, edges) => out.push({
+      pts: k.map((n) => P[n]), normal, color, kind: 'mass', massId: m.id, face, alpha,
+      edges: edges.map(([p, q]) => [P[p], P[q]]),
+    });
+    quad('top', ['A', 'B', 'C', 'D'], v(0, 0, 1), [['A', 'B'], ['B', 'C'], ['C', 'D'], ['D', 'A']]);
+    quad('bottom', ['a', 'd', 'c', 'b'], v(0, 0, -1), [['a', 'b'], ['b', 'c'], ['c', 'd'], ['d', 'a']]);
+    quad('ny', ['a', 'b', 'B', 'A'], v(0, -1, 0), [['a', 'A'], ['b', 'B']]);
+    quad('py', ['c', 'd', 'D', 'C'], v(0, 1, 0), [['c', 'C'], ['d', 'D']]);
+    quad('nx', ['d', 'a', 'A', 'D'], v(-1, 0, 0), []);
+    quad('px', ['b', 'c', 'C', 'B'], v(1, 0, 0), []);
+  }
+  return out;
+}
+
 export function buildHouseMesh(project, {
   roof = false, site = false, terrainScale = 1, landscape = true, furniture = false, levels: levelMode = 'all',
+  masses = false,
 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
@@ -1028,5 +1057,6 @@ export function buildHouseMesh(project, {
   if (site) faces.push(...siteFaces(project, { terrainScale }));
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
+  if (masses) faces.push(...massFaces(project.masses));
   return faces;
 }

@@ -34,6 +34,8 @@ import {
 import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
 import { deleteSelectedRailing } from './railing-actions.js';
+import { addMass, deleteMass, duplicateMass, massById, masses, rotateMass } from './masses.js';
+import { copyMass } from '../core/masses.js';
 import { requestDraw } from './view.js';
 
 export function reconcileOpenings() {
@@ -228,6 +230,7 @@ export function deleteSelection() {
   if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
   if (sel.type === 'railing') { deleteSelectedRailing(); return; }
+  if (sel.type === 'mass') { deleteMass(sel.id); return; }
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;
@@ -494,6 +497,13 @@ function roomClipboard(room) {
 export function copySelection() {
   const sel = state.selection;
   if (!sel) return false;
+  if (sel.type === 'mass') {
+    const mass = massById(sel.id);
+    if (!mass) return false;
+    objectClipboard = { kind: 'mass', mass: cloneData(mass), pastes: 0 };
+    toast('Масса скопирована · Ctrl+V — вставить');
+    return true;
+  }
   const items = selectedItems(sel);
   if (items.length) {
     objectClipboard = { kind: 'items', items: cloneData(items), pastes: 0 };
@@ -617,6 +627,13 @@ export function pasteSelection() {
   if (objectClipboard.kind === 'opening') return pasteOpening(objectClipboard);
   if (objectClipboard.kind === 'room') return pasteRoom(objectClipboard);
   if (objectClipboard.kind === 'group') return pasteGroup(objectClipboard);
+  if (objectClipboard.kind === 'mass') {
+    const c = objectClipboard;
+    c.pastes += 1;
+    const step = 1000 * c.pastes;
+    addMass(copyMass(c.mass, masses(), { x: step, y: step }));
+    return true;
+  }
   return false;
 }
 
@@ -701,6 +718,7 @@ function duplicateRoomSelection(sel) {
 export function duplicateSelection() {
   const sel = state.selection;
   if (!sel) return;
+  if (sel.type === 'mass') { duplicateMass(sel.id); return; }
   if (sel.type === 'item' || (sel.type === 'multi' && !sel.roomIds.length)) duplicateItemSelection(sel);
   else if (sel.type === 'opening') duplicateOpeningSelection(sel);
   else if (sel.type === 'room') duplicateRoomSelection(sel);
@@ -708,7 +726,8 @@ export function duplicateSelection() {
 }
 
 export function rotateSelection90() {
-  if (state.selection?.type === 'multi') rotateMulti90();
+  if (state.selection?.type === 'mass') rotateMass(state.selection.id);
+  else if (state.selection?.type === 'multi') rotateMulti90();
   else if (state.selection?.type === 'room') rotateRoom90();
   else rotateSelectedItem();
 }

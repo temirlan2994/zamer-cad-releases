@@ -27,9 +27,10 @@ export function orthoPoint(a, p) {
 
 // Привязка точки инструмента «Стена»: к предыдущей точке — ортогонально;
 // по каждой свободной оси — к ближайшей линии привязки (грани и углы стен,
-// оси и торцы ручных стен) в пределах tol, иначе к сетке grid.
+// оси и торцы ручных стен, points — доп. точки: вершины эскиза масс) в
+// пределах tol, иначе к сетке grid.
 // → { point, snapX, snapY } (snapX/snapY — координата линии привязки или null).
-export function snapWallPoint({ p, prev = null, walls = [], manual = [], tol = 0, grid = 0, free = false }) {
+export function snapWallPoint({ p, prev = null, walls = [], manual = [], points = [], tol = 0, grid = 0, free = false }) {
   const q = prev ? orthoPoint(prev, p) : { x: p.x, y: p.y };
   if (free) return { point: q, snapX: null, snapY: null };
   const xs = []; const ys = [];
@@ -39,6 +40,7 @@ export function snapWallPoint({ p, prev = null, walls = [], manual = [], tol = 0
     }
   }
   for (const m of manual) for (const e of [m.axis.a, m.axis.b]) { xs.push(e.x); ys.push(e.y); }
+  for (const e of points) { xs.push(e.x); ys.push(e.y); }
   const near = (v, list) => {
     let best = null; let d = tol;
     for (const c of list) { const dd = Math.abs(c - v); if (dd <= d) { d = dd; best = c; } }

@@ -55,6 +55,14 @@ function contentForSelection(sel) {
         ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}`,
     };
   }
+  if (sel.type === 'mass') {
+    const mass = (state.project.masses || []).find((m) => m.id === sel.id);
+    if (!mass) return null;
+    return {
+      label: `${mass.name} · ${Math.round(mass.w)} × ${Math.round(mass.d)} × ${Math.round(mass.h)} мм`,
+      html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
   if (sel.type === 'railing') {
     const hit = selectedRailing(sel);
     if (!hit) return null;

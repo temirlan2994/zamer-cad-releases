@@ -28,6 +28,7 @@ import { setEditorMode } from './modes.js';
 import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
+import { planMassPref, setPlanMassPref } from './plan-masses.js';
 import {
   VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
@@ -222,6 +223,20 @@ function landscapeBlock() {
     </div>`;
 }
 
+// Эскиз масс (ui/plan-masses.js) — только когда в проекте есть массы.
+function massBlock() {
+  const count = state.project.masses?.length || 0;
+  if (!count) return '';
+  const pref = planMassPref();
+  return `
+    <h3>Эскиз масс</h3>
+    <div class="prop-block" id="viewsMasses">
+      <label class="check-row"><input type="checkbox" id="viewsMassOn" ${pref.on ? 'checked' : ''}><span>Показывать эскиз масс на плане</span><em>${count}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsMassOutline" ${pref.outlineOnly ? 'checked' : ''} ${pref.on ? '' : 'disabled'}><span>Только контур</span></label>
+      <p class="hint">Сечение масс этажа — под комнатами и стенами; комнаты и стены липнут к его рёбрам. На плане не выбирается, на листы и экспорт не влияет.</p>
+    </div>`;
+}
+
 // Настройки активного вида (разметка). У 3D — свои настройки над видом.
 export function viewSettingsHtml() {
   const project = state.project;
@@ -270,6 +285,7 @@ export function viewSettingsHtml() {
       <label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
+    ${mode === 'plan' ? massBlock() : ''}
     ${mode === 'plan' ? landscapeBlock() : ''}
     ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
     </div>`;
@@ -326,6 +342,8 @@ export function bindViewSettings(panel, rerender) {
     requestDraw();
     rerender();
   });
+  panel.querySelector('#viewsMassOn')?.addEventListener('change', (e) => { setPlanMassPref({ on: e.target.checked }); requestDraw(); rerender(); });
+  panel.querySelector('#viewsMassOutline')?.addEventListener('change', (e) => { setPlanMassPref({ outlineOnly: e.target.checked }); requestDraw(); });
   panel.querySelectorAll('[data-plan-ls]').forEach((box) => box.addEventListener('change', () => {
     setPlanLandscapePref({ [box.dataset.planLs]: box.checked });
     requestDraw();

@@ -298,3 +298,52 @@ export function pickObject(sets, ray) {
   }
   return best;
 }
+
+// ---------------------------------------------------------------- массы и плоскости
+//
+// Массы (core/masses.js) — полупрозрачные боксы: луч их проходит насквозь,
+// поэтому выбираются они отдельно (pickMass), а «ставить на грань» — через
+// пересечение луча с горизонтальной плоскостью (rayPlaneZ).
+
+// Луч × горизонтальная плоскость z = const → точка { x, y, z } (оси дома),
+// t по лучу, или null (луч параллелен плоскости или она позади камеры).
+export function rayPlaneZ(ray, z) {
+  if (Math.abs(ray.d.z) < 1e-9) return null;
+  const t = (z - ray.o.z) / ray.d.z;
+  if (!(t > 0)) return null;
+  return { x: ray.o.x + ray.d.x * t, y: ray.o.y + ray.d.y * t, z, t };
+}
+
+// Ближайшая масса под лучом: { id, face, normal, point, t, box } или null.
+// boxes — [{ id, x0, y0, z0, x1, y1, z1 }] (massBox + id). face — 'top' |
+// 'bottom' | 'px' | 'nx' | 'py' | 'ny' (нормаль наружу в осях дома).
+export function pickMass(boxes, ray) {
+  let best = null;
+  for (const b of boxes || []) {
+    const hit = rayBox(ray, b);
+    if (hit && (!best || hit.t < best.t)) best = { ...hit, box: b };
+  }
+  if (!best) return null;
+  const { axis, sign, t, box } = best;
+  const normal = { x: 0, y: 0, z: 0 };
+  normal[axis] = sign;
+  const face = axis === 'z' ? (sign > 0 ? 'top' : 'bottom') : `${sign > 0 ? 'p' : 'n'}${axis}`;
+  const point = { x: ray.o.x + ray.d.x * t, y: ray.o.y + ray.d.y * t, z: ray.o.z + ray.d.z * t };
+  return { id: box.id, face, normal, point, t, box };
+}
+
+// Плоскость основания под курсором: верх массы, в которую луч входит сверху
+// («поставить на грань»), иначе пол (floorZ — точка попадания в пол/землю
+// дома, если задана и ближе), иначе земля z = 0. → { z, point, massId } или null.
+export function basePlane(boxes, ray, { floor = null } = {}) {
+  const m = pickMass(boxes, ray);
+  if (m && m.face === 'top' && (!floor || m.t <= floor.t + 1)) {
+    return { z: m.box.z1, point: { x: m.point.x, y: m.point.y, z: m.box.z1 }, massId: m.id };
+  }
+  if (floor && (!m || floor.t < m.t)) {
+    const p = rayPlaneZ(ray, floor.z);
+    if (p) return { z: floor.z, point: p, massId: null };
+  }
+  const g = rayPlaneZ(ray, 0);
+  return g ? { z: 0, point: g, massId: null } : null;
+}

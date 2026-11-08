@@ -958,6 +958,13 @@ body.v3-open .level-dock { z-index: 46; }
   font-size: 13px; box-shadow: var(--shadow);
 }
 .view3d-num[hidden] { display: none; }
+/* Подпись у курсора: размеры массы при создании и правке (ui/mass3d.js). */
+.view3d-label {
+  position: absolute; z-index: 2; padding: 3px 8px; border-radius: 8px; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--accent); color: var(--accent); box-shadow: var(--shadow);
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.view3d-label[hidden] { display: none; }
 
 /* --- Шаблоны в стартовом меню, справка, поиск мебели --- */
 .start-sub { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }

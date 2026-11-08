@@ -3,6 +3,7 @@
 import { elevationView, isElevationOpen, refreshElevationView } from './elevation-view.js';
 import { findView } from '../core/views.js';
 import { renderSectionProps } from './plan-section.js';
+import { massById, renderMassProps } from './masses.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
@@ -145,6 +146,10 @@ export function renderProps() {
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
   if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
+  if (sel.type === 'mass') {
+    const mass = massById(sel.id);
+    if (mass) { renderMassProps(panel, mass); return; }
+  }
   if (sel.type === 'section') {
     const view = findView(state.project, sel.id);
     if (view?.kind === 'section') { renderSectionProps(panel, view); return; }

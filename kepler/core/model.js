@@ -15,6 +15,7 @@ import { reconcileEats } from './v7/eat-bridge.js';
 import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
 import { normalizeViewsAndSheets } from './views.js';
+import { normalizeMasses } from './masses.js';
 
 export { SCHEMA };
 
@@ -206,6 +207,7 @@ export function hasContent(project) {
   if (levels.length > 1) return true;
   if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length)) return true;
   if (Array.isArray(project.variants) && project.variants.length) return true;
+  if (Array.isArray(project.masses) && project.masses.length) return true;
   const s = project.site;
   if (!s || typeof s !== 'object') return false;
   return Boolean(s.boundary?.length || s.redLine?.length || s.roads?.length || s.neighbors?.length
@@ -483,6 +485,9 @@ export function normalizeProject(data) {
   }
   // Виды и листы (core/views.js): необязательно, без смены схемы.
   normalizeViewsAndSheets(data);
+  // Массы (core/masses.js): необязательно, без смены схемы; пустой список не хранится.
+  const masses = normalizeMasses(data.masses);
+  if (masses.length) data.masses = masses; else delete data.masses;
   ensureSite(data);
   return attachLevelAccessors(data);
 }

@@ -33,6 +33,8 @@ import { handlePlanSectionKey, startPlanSectionTool } from './plan-section.js';
 import { close3d, escape3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
 import { isItemGroup } from '../core/group-handles.js';
+import { massToolBack as planMassBack, startMassTool, toggleMassTool } from './masses.js';
+import { massKey } from './mass3d.js';
 
 export let spaceDown = false;
 
@@ -58,6 +60,9 @@ function handle3dKey(event) {
   const tag = event.target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
   const mod = event.ctrlKey || event.metaKey;
+  // Инструмент «Масса»: цифры и Enter — точный размер (ui/mass3d.js); M — вкл/выкл.
+  if (massKey(event)) return true;
+  if (!mod && !event.altKey && event.code === 'KeyM' && state.modeName === 'plan') { toggleMassTool(); return true; }
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
     event.preventDefault();
     if (state.selection) deleteSelection();
@@ -66,7 +71,7 @@ function handle3dKey(event) {
   if (mod && event.code === 'KeyC') { event.preventDefault(); if (state.selection) copySelection(); return true; }
   if (mod && event.code === 'KeyV') { event.preventDefault(); pasteSelection(); return true; }
   if (mod && event.code === 'KeyD') { event.preventDefault(); if (state.selection) duplicateSelection(); return true; }
-  if (!mod && !event.altKey && event.code === 'KeyR' && state.selection?.type === 'item') { rotateSelection90(); return true; }
+  if (!mod && !event.altKey && event.code === 'KeyR' && (state.selection?.type === 'item' || state.selection?.type === 'mass')) { rotateSelection90(); return true; }
   return false;
 }
 
@@ -177,6 +182,12 @@ export function bindKeyboard() {
       startPlanSectionTool();
       return;
     }
+    // M без выбора — инструмент «Масса» (с выбором M — зеркало).
+    if (event.code === 'KeyM' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool && !state.selection) {
+      startMassTool();
+      return;
+    }
+    if (event.key === 'Escape' && state.tool?.kind === 'mass') { planMassBack(); return; }
     if (event.code === 'KeyW' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool) {
       startWallTool();
       return;

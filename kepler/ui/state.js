@@ -18,6 +18,7 @@ export const state = {
   sheetVp: null, // id видового экрана, выбранного на открытом листе пользователя
   sheetReturn: null, // ключ листа, с которого вид открыт двойным кликом (Esc — назад)
   elevationOpen: null, // id вида-фасада, открытого на холсте (ui/elevation-view.js), например 'elev-N'
+  planMass: null, // эскиз масс на плане: { on, outlineOnly } (ui/plan-masses.js, localStorage)
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

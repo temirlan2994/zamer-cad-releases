@@ -58,6 +58,7 @@ import { landscapeSunFrame, landscapeSunGrid } from './ui/landscape-sun.js';
 import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
+import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
 
@@ -273,6 +274,14 @@ export function createRenderer(canvas) {
 
     // 3–6. Дом — в своих осях.
     setView(pv);
+    // Эскиз масс (core/masses.js) — подложка под комнатами и стенами; на печать не идёт.
+    state._planMasses = 0;
+    if (!print && opts.site !== false) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawMassSketch(ctx, { p2s, tokens });
+      ctx.restore();
+    }
 
     // 6. Мебель (на генплане и в «Ландшафте» — без неё).
     const detail = opts.detail !== false && !landscape;
@@ -705,6 +714,12 @@ export function createRenderer(canvas) {
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
+    if (state.modeName === 'plan' && !print) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawMassOverlay(ctx, { p2s, tokens });
+      ctx.restore();
+    }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);
     // Подписи ландшафта на плане — только если включены во «Видах».
     if (planLs?.labels && lsObjects.length) {

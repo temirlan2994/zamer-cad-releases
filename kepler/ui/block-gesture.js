@@ -14,6 +14,9 @@ import { eatState, liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-
 import { applyFollow, findFollowers, startFollow } from '../core/wall-follow.js';
 import { magnetEdges, magnetSnap } from '../core/v7/magnet.js';
 import { migrateLevel } from '../core/v7/migrate.js';
+import { snapRectToSketch } from '../core/masses.js';
+import { DEFAULT_EXTERIOR } from '../core/catalog.js';
+import { massSnapLines } from './plan-masses.js';
 import { state } from './state.js';
 
 export const MAGNET_MM = 300;
@@ -46,7 +49,22 @@ export function magnetMove(drag, id, rect, parentId, event) {
   if (!drag.magnet) drag.magnet = magnetProject();
   setParent(drag.magnet, id, parentId);
   const m = magnetSnap(drag.magnet, id, rect, { distance: MAGNET_MM });
-  return { x: m.x, y: m.y, snappedX: m.dx !== 0 || m.guides.some((g) => g.axis === 'x'), snappedY: m.dy !== 0 || m.guides.some((g) => g.axis === 'y'), guides: m.guides.map(planGuide) };
+  const out = { x: m.x, y: m.y, snappedX: m.dx !== 0 || m.guides.some((g) => g.axis === 'x'), snappedY: m.dy !== 0 || m.guides.some((g) => g.axis === 'y'), guides: m.guides.map(planGuide) };
+  return sketchMagnet(out, rect);
+}
+
+// Эскиз масс (ui/plan-masses.js): свободные от магнита блоков оси липнут к
+// рёбрам контура — грань помещения на ребре или внутри на толщину наружной стены.
+const sketchInset = () => Number(state.project?.settings?.exterior) || DEFAULT_EXTERIOR;
+
+export function sketchMagnet(out, rect) {
+  const lines = massSnapLines();
+  if (!lines || (out.snappedX && out.snappedY)) return out;
+  const s = snapRectToSketch({ ...rect }, lines, { distance: MAGNET_MM, inset: sketchInset(), skipX: out.snappedX, skipY: out.snappedY });
+  if (s.snappedX) { out.x = s.x; out.snappedX = true; }
+  if (s.snappedY) { out.y = s.y; out.snappedY = true; }
+  out.guides = [...out.guides, ...s.guides];
+  return out;
 }
 
 // Растяжение: прижать подвижные грани. edges — буквы ручки ('ne' → n, e).
@@ -56,7 +74,18 @@ export function magnetResize(drag, id, rect, handle, event) {
   const edges = ['w', 'e', 'n', 's'].filter((e) => handle.includes(e));
   const skip = (drag.follow || []).map((f) => f.id); // попутчики общей стены едут с гранью
   const m = magnetEdges(drag.magnet, id, rect, edges, { distance: MAGNET_MM, skip });
-  return { rect: m.rect, guides: m.guides.map(planGuide), edges: m.guides.map((g) => g.edge) };
+  const out = { rect: m.rect, guides: m.guides.map(planGuide), edges: m.guides.map((g) => g.edge) };
+  const lines = massSnapLines();
+  const free = edges.filter((e) => !out.edges.includes(e));
+  if (lines && free.length) {
+    const s = snapRectToSketch(out.rect, lines, { distance: MAGNET_MM, inset: sketchInset(), edges: free });
+    if (s.snappedX || s.snappedY) {
+      out.rect = { x: s.x, y: s.y, w: s.w, h: s.h };
+      out.guides = [...out.guides, ...s.guides];
+      out.edges = [...out.edges, ...free.filter((e) => ((e === 'w' || e === 'e') ? s.snappedX : s.snappedY))];
+    }
+  }
+  return out;
 }
 
 // Направляющая магнита → формат state.guides (render.js).

@@ -21,7 +21,7 @@
 // Здесь она переводится в правую систему: X = x, Y = −y, Z = z.
 
 import { GRID_STEP } from '../core/catalog.js';
-import { boxFaces, buildHouseMesh, buildLevelWalls, shownLevelIds } from '../core/mesh3d.js';
+import { boxFaces, buildHouseMesh, buildLevelWalls, massFaces, shownLevelIds } from '../core/mesh3d.js';
 import { LEVEL_KEYS } from '../core/model.js';
 import {
   axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, screenRay,
@@ -38,14 +38,20 @@ import { state } from './state.js';
 import {
   afterChange, pushHistory, refreshDerived, restoreFrom, snapshot,
 } from './store.js';
-import { selectObject } from './tools.js';
+import { cancelTool, selectObject } from './tools.js';
+import {
+  bindMassNum, cancelMassDrag, clearMassHover, closeMassNum, debugMass3d, finishMassDrag, initMass3d, massBoxes,
+  massDblClick, massDragging, massHover, massHoverAt, massNumOpen, massOverlay, massToolBack, massToolClick,
+  massToolHint, massToolMove, massToolOn, moveMassDrag, resetMassTool, selectedMassHit, startMassDrag,
+} from './mass3d.js';
+import { pickMass } from '../core/pick3d.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
 // дом, и ближняя плоскость начинает срезать стены.
 const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000, target: { x: 0, y: 0, z: 1500 } };
-const opts = { roof: false, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all' };
-const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи
+const opts = { roof: false, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
+const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
 const LEVEL_MODES = new Set(['all', 'upto', 'only']);
 
 function loadLayers() {
@@ -53,11 +59,12 @@ function loadLayers() {
     const raw = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null');
     if (raw && typeof raw.furniture === 'boolean') opts.furniture = raw.furniture;
     if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
+    if (raw && typeof raw.masses === 'boolean') opts.masses = raw.masses;
   } catch { /* нет хранилища — по умолчанию */ }
 }
 
 function saveLayers() {
-  try { localStorage.setItem(LAYERS_KEY, JSON.stringify({ furniture: opts.furniture, levels: opts.levels })); } catch { /* нет хранилища */ }
+  try { localStorage.setItem(LAYERS_KEY, JSON.stringify({ furniture: opts.furniture, levels: opts.levels, masses: opts.masses })); } catch { /* нет хранилища */ }
 }
 let faces = [];
 let active = false;
@@ -114,8 +121,21 @@ function selectedObject() {
   return { type: sel.type, id: sel.id, level: state.project.activeLevel };
 }
 
+const SEL_MASS = '#5b94dd'; // выбранная масса
+const HOVER_MASS = '#ff9f1c'; // грань выбранной массы под мышью / в жесте
+
+const massFaceHot = (face) => {
+  const h = massHover();
+  return Boolean(h && h.id === face.massId && h.face === face.face);
+};
+
 function faceColor(face) {
   if (face.kind === 'overlay') return face.color;
+  if (face.kind === 'mass') {
+    const sel = state.selection?.type === 'mass' && state.selection.id === face.massId;
+    if (sel && massFaceHot(face)) return HOVER_MASS;
+    return sel ? SEL_MASS : face.color;
+  }
   const obj = selectedObject();
   if (obj && face.level === obj.level) {
     if (obj.type === 'room' && face.kind === 'floor' && face.roomId === obj.id) return SEL_FILL;
@@ -130,6 +150,13 @@ function faceColor(face) {
   if (!refMatches(face.ref, sel)) return face.color;
   if (hover && refMatches(face.ref, hover) && face.ref.face === hover.face && sameNormal(face.normal, hover.normal)) return GRIP_COLOR;
   return SEL_COLOR;
+}
+
+function faceAlpha(face) {
+  if (face.kind === 'mass' && state.selection?.type === 'mass' && state.selection.id === face.massId) {
+    return massFaceHot(face) ? 0.55 : 0.42;
+  }
+  return face.alpha ?? 1;
 }
 
 // Нормаль многоугольника по Ньюэллу (для двусторонних граней).
@@ -187,6 +214,9 @@ function initGl(canvas) {
 
 const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture']);
 
+// Наложения поверх сетки: выбранный проём, призрак и ручки масс.
+const overlays = () => selectionOverlay().concat(massOverlay());
+
 // Выбранный проём — полупрозрачная коробка акцентного цвета в его пустоте.
 function selectionOverlay() {
   const obj = selectedObject();
@@ -199,28 +229,27 @@ function selectionOverlay() {
 }
 
 // Грани → треугольники (затенение по Ламберту заранее) и рёбра.
-function uploadGeometry() {
-  if (!gl) return;
+function faceArrays(list) {
   const opaque = [];
   const glass = [];
   const lines = [];
-  geomDirty = false;
-  for (const face of faces.concat(selectionOverlay())) {
+  for (const face of list) {
     const P = face.pts.map(W);
     const n = face.twoSided || !(face.normal.x || face.normal.y || face.normal.z) ? polyNormal(P) : W(face.normal);
     const lit = face.twoSided ? Math.abs(dot(n, LIGHT)) : Math.max(0, dot(n, LIGHT));
     const k = (0.6 + 0.4 * lit) / 255;
     const [r, g, b] = hexRgb(faceColor(face)).map((c) => c * k);
-    const a = face.alpha ?? 1;
+    const a = faceAlpha(face);
     const out = a < 1 ? glass : opaque;
     for (let i = 1; i < P.length - 1; i += 1) {
       for (const p of [P[0], P[i], P[i + 1]]) out.push(p.x, p.y, p.z, r, g, b, a);
     }
     if (Array.isArray(face.edges)) {
+      const [er, eg, eb, ea] = face.edgeRgba || [0.12, 0.16, 0.21, 0.48];
       for (const [a0, b0] of face.edges) {
         const p = W(a0);
         const q = W(b0);
-        lines.push(p.x, p.y, p.z, 0.12, 0.16, 0.21, 0.48, q.x, q.y, q.z, 0.12, 0.16, 0.21, 0.48);
+        lines.push(p.x, p.y, p.z, er, eg, eb, ea, q.x, q.y, q.z, er, eg, eb, ea);
       }
     } else if (EDGE_KINDS.has(face.kind) && !face.noEdges) {
       for (let i = 0; i < P.length; i += 1) {
@@ -230,14 +259,32 @@ function uploadGeometry() {
       }
     }
   }
+  return { opaque, glass, lines };
+}
+
+function makeBuffers(arrays) {
   const make = (data) => {
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
     return { buf, count: data.length / 7 };
   };
+  return { opaque: make(arrays.opaque), glass: make(arrays.glass), lines: make(arrays.lines) };
+}
+
+function uploadGeometry() {
+  if (!gl) return;
+  geomDirty = false;
   if (glState.buffers) for (const b of Object.values(glState.buffers)) gl.deleteBuffer(b.buf);
-  glState.buffers = { opaque: make(opaque), glass: make(glass), lines: make(lines) };
+  glState.buffers = makeBuffers(faceArrays(faces));
+  uploadOverlay();
+}
+
+// Только наложения (призрак и ручки масс) — без пересборки всего дома.
+function uploadOverlay() {
+  if (!gl) return;
+  if (glState.over) for (const b of Object.values(glState.over)) gl.deleteBuffer(b.buf);
+  glState.over = makeBuffers(faceArrays(overlays()));
 }
 
 function orthographic(left, right, bottom, top, near, far) {
@@ -304,13 +351,17 @@ function renderGl(canvas) {
   gl.depthMask(true);
   gl.enable(gl.POLYGON_OFFSET_FILL);
   gl.polygonOffset(1, 1); // рёбра поверх граней без мерцания
+  const over = glState.over || { opaque: { count: 0 }, glass: { count: 0 }, lines: { count: 0 } };
   draw(glState.buffers.opaque, gl.TRIANGLES);
+  draw(over.opaque, gl.TRIANGLES);
   gl.disable(gl.POLYGON_OFFSET_FILL);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   draw(glState.buffers.lines, gl.LINES);
+  draw(over.lines, gl.LINES);
   gl.depthMask(false); // стекло прозрачное: не закрывает то, что за ним
   draw(glState.buffers.glass, gl.TRIANGLES);
+  draw(over.glass, gl.TRIANGLES);
   gl.depthMask(true);
 }
 
@@ -336,7 +387,7 @@ function render2d(canvas) {
   const near = 100;
   const list = [];
   geomDirty = false;
-  for (const face of faces.concat(selectionOverlay())) {
+  for (const face of faces.concat(overlays())) {
     const P = face.pts.map(W);
     const centroid = P.reduce((s, p) => ({ x: s.x + p.x / P.length, y: s.y + p.y / P.length, z: s.z + p.z / P.length }), { x: 0, y: 0, z: 0 });
     const toEye = sub(c.eye, centroid);
@@ -366,7 +417,7 @@ function render2d(canvas) {
       const d = sub(W(raw), c.eye);
       return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
     })) : null;
-    list.push({ pts, edgePts, noEdges: face.noEdges, depth: depth / P.length, fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${face.alpha ?? 1})`, kind: face.kind });
+    list.push({ pts, edgePts, noEdges: face.noEdges, depth: depth / P.length, fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${faceAlpha(face)})`, kind: face.kind });
   }
   const layer = (k) => (k === 'ground' ? 0 : k === 'boundary' ? 1 : 2);
   list.sort((a, b) => layer(a.kind) - layer(b.kind) || b.depth - a.depth);
@@ -400,7 +451,7 @@ function requestRender() {
 // Камера смотрит на центр дома (стены и полы) с расстояния по его размеру;
 // участок и соседи при этом могут уходить за край — колесом можно отдалить.
 function frameHouse() {
-  const house = faces.filter((f) => f.kind === 'wall' || f.kind === 'floor').flatMap((f) => f.pts).map(W);
+  const house = faces.filter((f) => f.kind === 'wall' || f.kind === 'floor' || f.kind === 'mass').flatMap((f) => f.pts).map(W);
   const pts = house.length ? house : faces.flatMap((f) => f.pts).map(W);
   if (!pts.length) return;
   const min = (k) => Math.min(...pts.map((p) => p[k]));
@@ -423,6 +474,8 @@ const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копироват
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
+const HINT_MASS = 'Масса: тяните верх — высота, бок — размер, Alt + тянуть — перенос · двойной клик по грани — число · R — повернуть · Delete · Ctrl+C/V/D';
+const HINT_MASS_TOUCH = 'Масса: удерживайте грань и тяните — размер · R — повернуть · Delete';
 let touchUsed = false;
 
 function setHint(text) {
@@ -430,6 +483,8 @@ function setHint(text) {
   if (!hint) return;
   if (text === undefined) {
     if (!wallsEditable()) text = HINT_SITE;
+    else if (massToolOn()) text = massToolHint();
+    else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
     else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
@@ -446,16 +501,28 @@ function refreshHighlight() {
 
 // Выбор сменился (план, «Свойства», клавиши) — открытый 3D перекрашивается.
 export function refresh3dSelection() {
-  if (!active || edit) return;
+  if (!active || edit || massDragging()) return;
   refreshHighlight();
 }
 
-// Esc в 3D: сначала ввод числа, жест правки, выбор; true — Esc поглощён,
-// иначе (выбора нет) вид можно закрыть.
+// Esc в 3D: сначала ввод числа, жест правки, стадия инструмента «Масса»,
+// выбор; true — Esc поглощён, иначе (выбора нет) вид можно закрыть.
 export function escape3d() {
   if (!active) return false;
   if (numTarget) { hideNumber(); setHint(); return true; }
+  if (massNumOpen()) { closeMassNum(); setHint(); return true; }
   if (edit) { cancelEdit(); return true; }
+  if (massDragging()) { cancelMassDrag(); return true; }
+  if (massToolOn()) {
+    if (!massToolBack()) {
+      cancelTool();
+      document.dispatchEvent(new CustomEvent('kepler:mass-tool'));
+    }
+    setHint();
+    uploadOverlay();
+    requestRender();
+    return true;
+  }
   if (state.selection) {
     selectObject(null);
     hover = null;
@@ -470,11 +537,25 @@ function syncLayerControls() {
   if (furn) furn.checked = opts.furniture;
   const lv = el('v3Levels');
   if (lv) lv.value = opts.levels;
+  const ms = el('v3Masses');
+  if (ms) ms.checked = opts.masses;
+}
+
+// Флажок «Массы» виден, когда массы есть или идёт инструмент «Масса».
+function syncMassControl() {
+  const wrap = el('v3MassesWrap');
+  if (wrap) wrap.hidden = !(state.project?.masses?.length || massToolOn());
+}
+
+// Пересобрать только грани масс (жест правки массы).
+function rebuildMasses() {
+  faces = faces.filter((f) => f.kind !== 'mass').concat(opts.masses ? massFaces(state.project?.masses) : []);
 }
 
 export function refresh3d() {
-  if (!active || edit) return;
+  if (!active || edit || massDragging()) return;
   syncReliefControl();
+  syncMassControl();
   faces = buildHouseMesh(state.project, opts);
   sets = null;
   uploadGeometry();
@@ -489,6 +570,10 @@ export function open3d() {
   document.body.classList.add('v3-open'); // этажи — поверх 3D
   el('view3dBtn')?.classList.add('active');
   syncReliefControl();
+  resetMassTool();
+  if (massToolOn()) opts.masses = true;
+  syncLayerControls();
+  syncMassControl();
   faces = buildHouseMesh(state.project, opts);
   sets = null;
   hover = null;
@@ -501,6 +586,8 @@ export function open3d() {
 
 export function close3d() {
   if (edit) cancelEdit();
+  if (massDragging()) cancelMassDrag();
+  resetMassTool();
   hideNumber();
   active = false;
   hover = null;
@@ -541,6 +628,25 @@ function pickAt(e) {
   return pickObject(pickSets(), screenRay(cam, c.w, c.h, c.x, c.y));
 }
 
+function rayAt(e) {
+  const c = canvasPoint(e);
+  return screenRay(cam, c.w, c.h, c.x, c.y);
+}
+
+// Массы полупрозрачны и не мешают выбору дома: грань выбранной массы —
+// первой, иначе объект дома (ближайший не-масса), масса — когда под курсором
+// только она.
+function pickWithMass(e) {
+  const hit = pickAt(e);
+  if (!state.project?.masses?.length || !opts.masses || !wallsEditable()) return hit;
+  const ray = rayAt(e);
+  const own = selectedMassHit(ray);
+  if (own) return { type: 'mass', id: own.id, face: own.face, t: own.t };
+  if (hit) return hit;
+  const m = pickMass(massBoxes(), ray);
+  return m ? { type: 'mass', id: m.id, face: m.face, t: m.t } : null;
+}
+
 const onSelectedWall = (hit) => {
   const sel = selectedRef();
   return Boolean(hit?.type === 'wall' && sel && hit.key === sel.key && hit.levelId === sel.level);
@@ -553,7 +659,12 @@ function gripAt(hit, e) {
 const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize', length: 'ew-resize' };
 
 function updateHover(e) {
-  const hit = pickAt(e);
+  if (state.selection?.type === 'mass' && wallsEditable()) {
+    const r = massHoverAt(rayAt(e), e);
+    if (r.changed) { uploadGeometry(); requestRender(); }
+    if (r.cursor) { el('canvas3d').style.cursor = r.cursor; return; }
+  } else if (clearMassHover()) { uploadGeometry(); requestRender(); }
+  const hit = pickWithMass(e);
   const grip = gripAt(hit, e);
   const next = grip ? { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind } : null;
   el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : (hit ? 'pointer' : '');
@@ -564,7 +675,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'mass']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;
@@ -575,7 +686,8 @@ function clickSelect(hit) {
       if (SELECTABLE.has(state.selection?.type)) selectObject(null);
     } else {
       if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
-      if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
+      if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
+      else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'railing') selectObject({ type: 'railing', roomId: hit.roomId, id: hit.id });
       else selectObject({ type: hit.type, id: hit.id });
     }
@@ -583,6 +695,7 @@ function clickSelect(hit) {
     state.touchDeferSelect = defer;
   }
   hover = null;
+  clearMassHover();
   refreshHighlight();
 }
 
@@ -725,19 +838,47 @@ function onDown(e) {
   if (pointers.size === 2) {
     if (gesture?.hold) clearTimeout(gesture.hold);
     if (edit) cancelEdit();
+    if (massDragging()) cancelMassDrag();
     const [a, b] = [...pointers.values()];
     gesture = { kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1, camDist: cam.dist, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
     return;
   }
+  // Инструмент «Масса»: клик (без сдвига) — шаг жеста; потянули — вращение
+  // (с Shift — сдвиг вида), как обычно.
+  const massTool = massToolOn() && wallsEditable() && e.button === 0 && pointers.size === 1;
   if (pan || e.button !== 0 || pointers.size > 2) {
-    gesture = { kind: pan ? 'pan' : 'orbit', x: e.clientX, y: e.clientY };
+    gesture = { kind: pan ? 'pan' : 'orbit', x: e.clientX, y: e.clientY, ...(massTool ? { x0: e.clientX, y0: e.clientY, click: true, massTool } : {}) };
     return;
   }
-  const hit = pickAt(e);
+  if (massTool) {
+    gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, massTool };
+    return;
+  }
+  // Грань выбранной массы — ручка: мышь — сразу, палец — удержанием.
+  const ray = rayAt(e);
+  const massGrip = wallsEditable() ? selectedMassHit(ray) : null;
+  const massFace = massGrip && massGrip.face !== 'bottom';
+  if (massFace && e.pointerType === 'mouse' && startMassDrag(e, ray)) {
+    gesture = { kind: 'mass' };
+    setHint();
+    return;
+  }
+  const hit = pickWithMass(e);
   const grip = gripAt(hit, e);
   // Мышь: нажатие на грань выбранной стены — сразу ручка.
   if (grip && e.pointerType === 'mouse' && startEdit(hit, grip, e.clientX, e.clientY)) return;
   gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, hit };
+  if (massFace) {
+    const g = gesture;
+    g.hold = setTimeout(() => {
+      if (gesture !== g || !g.click || pointers.size !== 1) return;
+      if (startMassDrag({ clientX: g.x0, clientY: g.y0, altKey: false }, ray)) {
+        gesture = { kind: 'mass' };
+        navigator.vibrate?.(15);
+      }
+    }, HOLD_MS);
+    return;
+  }
   // Палец/перо: удержание грани выбранной стены — ручка (как на плане).
   if (grip) {
     const g = gesture;
@@ -761,11 +902,14 @@ function panBy(dx, dy) {
 
 function onMove(e) {
   if (!pointers.has(e.pointerId) || !gesture) {
-    if (e.pointerType === 'mouse' && !gesture && active) updateHover(e);
+    if (e.pointerType === 'mouse' && !gesture && active) {
+      if (massToolOn() && wallsEditable()) massToolMove(e); else updateHover(e);
+    }
     return;
   }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (gesture.kind === 'edit') { moveEdit(e); return; }
+  if (gesture.kind === 'mass') { moveMassDrag(e); return; }
   if (gesture.kind === 'pinch') {
     const [a, b] = [...pointers.values()];
     if (!b) return;
@@ -800,9 +944,23 @@ function onUp(e) {
     if (!pointers.size) finishEdit();
     return;
   }
+  if (g?.kind === 'mass') {
+    if (!pointers.size) {
+      gesture = null;
+      finishMassDrag();
+      refreshHighlight();
+    }
+    return;
+  }
   if (g?.hold) clearTimeout(g.hold);
   if (g?.click && !pointers.size) {
     gesture = null;
+    if (g.massTool) {
+      massToolClick(e);
+      syncMassControl();
+      setHint();
+      return;
+    }
     clickSelect(g.hit);
     return;
   }
@@ -819,12 +977,19 @@ function onCancel(e) {
     cancelEdit();
     return;
   }
+  if (gesture?.kind === 'mass') {
+    pointers.delete(e.pointerId);
+    gesture = null;
+    cancelMassDrag();
+    return;
+  }
   if (gesture?.hold) clearTimeout(gesture.hold);
   if (gesture) gesture.click = false;
   onUp(e);
 }
 
 function onDblClick(e) {
+  if (!massToolOn() && wallsEditable() && massDblClick(e, rayAt(e))) return;
   const hit = pickAt(e);
   const grip = gripAt(hit, e);
   if (grip) openNumber(e, hit, grip);
@@ -840,6 +1005,34 @@ export function bind3d() {
   loadLayers();
   syncLayerControls();
   el('v3Furniture')?.addEventListener('change', (e) => { opts.furniture = e.target.checked; saveLayers(); refresh3d(); });
+  el('v3Masses')?.addEventListener('change', (e) => { opts.masses = e.target.checked; saveLayers(); refresh3d(); });
+  initMass3d({
+    ray: rayAt,
+    axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
+    worldPerPx: () => cam.dist / camera(canvas.clientWidth || 1, canvas.clientHeight || 1).focal,
+    floorHit: (e) => {
+      const hit = pickAt(e);
+      if (hit?.type !== 'room') return null;
+      const r = rayAt(e);
+      return { t: hit.t, z: Math.round(r.o.z + r.d.z * hit.t) };
+    },
+    redraw: (geom = false) => {
+      if (geom) { rebuildMasses(); uploadGeometry(); } else uploadOverlay();
+      requestRender();
+    },
+    label: setMassLabel,
+    hint: (text) => setHint(text),
+  });
+  bindMassNum();
+  document.addEventListener('kepler:mass-tool', () => {
+    if (!active) return;
+    resetMassTool();
+    if (massToolOn() && !opts.masses) { opts.masses = true; syncLayerControls(); refresh3d(); }
+    syncMassControl();
+    setHint();
+    uploadGeometry();
+    requestRender();
+  });
   el('v3Levels')?.addEventListener('change', (e) => {
     opts.levels = LEVEL_MODES.has(e.target.value) ? e.target.value : 'all';
     saveLayers();
@@ -864,7 +1057,9 @@ export function bind3d() {
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onCancel);
   canvas.addEventListener('pointerleave', () => {
-    if (!hover || gesture) return;
+    const hadMass = !gesture && clearMassHover();
+    if (massToolOn() && !gesture) setMassLabel(null);
+    if ((!hover && !hadMass) || gesture) return;
     hover = null;
     canvas.style.cursor = '';
     uploadGeometry();
@@ -874,9 +1069,22 @@ export function bind3d() {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     cam.dist = Math.min(400000, Math.max(3000, cam.dist * Math.exp(e.deltaY * 0.0012)));
+    if (state.selection?.type === 'mass' || massToolOn()) uploadOverlay(); // ручки — в пикселях экрана
     requestRender();
   }, { passive: false });
   new ResizeObserver(() => requestRender()).observe(canvas);
+}
+
+// Подпись у курсора (размеры массы при создании и правке).
+function setMassLabel(text, x, y) {
+  const lab = el('v3Label');
+  if (!lab) return;
+  if (!text) { lab.hidden = true; return; }
+  const r = el('view3d').getBoundingClientRect();
+  lab.textContent = text;
+  lab.style.left = `${Math.round(x - r.left + 16)}px`;
+  lab.style.top = `${Math.round(y - r.top + 14)}px`;
+  lab.hidden = false;
 }
 
 // Для автотестов: камера, число граней, выбранная стена, слои.
@@ -890,14 +1098,17 @@ export function debug3d() {
     furniture: faces.filter((f) => f.kind === 'furniture').length,
     railings: faces.filter((f) => f.kind === 'railing').length,
     levels: opts.levels, levelsShown, roof: faces.some((f) => f.kind === 'roof'),
+    masses: faces.filter((f) => f.kind === 'mass').length / 6, massLayer: opts.masses,
+    mass: debugMass3d(), label: el('v3Label')?.hidden === false ? el('v3Label').textContent : null,
   };
 }
 
 // Для автотестов: что под точкой экрана (clientX/Y): стена (key, face) или
 // помещение / предмет / проём (type, id).
 export function debug3dPick(x, y) {
-  const hit = pickAt({ clientX: x, clientY: y });
+  const hit = pickWithMass({ clientX: x, clientY: y });
   if (!hit) return null;
+  if (hit.type === 'mass') return { type: 'mass', id: hit.id, face: hit.face };
   return hit.type === 'wall'
     ? { type: 'wall', key: hit.key, face: hit.face, levelId: hit.levelId }
     : { type: hit.type, id: hit.id, levelId: hit.levelId };
