@@ -17,7 +17,7 @@
 // чистое выдавливание сегмента. Новое: rects (непересекающиеся куски области
 // этого сегмента) и polys (их контуры).
 
-import { isShaft } from './catalog.js';
+import { isOpenRoom, isShaft } from './catalog.js';
 import { roomRects } from './room-shape.js';
 import { cutWallsInsideShafts, wallRects, wallSegments } from './walls.js';
 import { gridAxis, mergeCells, rectsCycles, snapHalf } from './ortho-grid.js';
@@ -260,7 +260,9 @@ export function deriveWallsV2(project) {
   });
 
   // Сетка.
-  const roomBoxes = rooms.map((r) => roomRects(r));
+  // Открытые помещения (терраса, балкон) клетки не занимают: стены дома
+  // поверх них не режутся — терраса лежит под домом.
+  const roomBoxes = rooms.map((r) => (isOpenRoom(r) ? [] : roomRects(r)));
   const xsRaw = []; const ysRaw = [];
   for (const c of cands) { xsRaw.push(c.x0, c.x1); ysRaw.push(c.y0, c.y1); }
   for (const list of roomBoxes) for (const q of list) { xsRaw.push(q.x, q.x + q.w); ysRaw.push(q.y, q.y + q.h); }

@@ -8,6 +8,7 @@ import { createBuilding } from './building.js';
 import { normalizeItemsComp } from './composite.js';
 import { roomContainsPoint } from './room-shape.js';
 import { WALL_T_MAX, WALL_T_MIN } from './walls.js';
+import { normalizeRailingList } from './railings.js';
 import { cleanViewAngles } from './view-angles.js';
 import { fileV7, isV7Data, toV6Data } from './v7/file.js';
 import { reconcileEats } from './v7/eat-bridge.js';
@@ -308,6 +309,11 @@ export function normalizeRoom(r) {
   if ('ceiling' in room) {
     const c = pos(room.ceiling);
     if (c) room.ceiling = c; else delete room.ceiling;
+  }
+  // Перила открытого помещения (core/railings.js): битое поле — по умолчанию.
+  if ('railings' in room) {
+    const list = normalizeRailingList(room.railings);
+    if (list) room.railings = list; else delete room.railings;
   }
   return room;
 }

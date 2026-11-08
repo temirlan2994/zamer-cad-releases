@@ -8,7 +8,19 @@
 // magnetSnap(project, movingId, rect {x,y,w,h}, { distance=300, enabled=true })
 // → { x, y, dx, dy, guides: [{ axis, at, from, to, kind, target }] }.
 
-import { activeLevel7, blockBox, blockById, pairGap } from './model.js';
+import { DEFAULT_EXTERIOR } from '../catalog.js';
+import { activeLevel7, blockBox, blockById, blockIsOpen, pairGap as wallPairGap } from './model.js';
+
+// Зазор прижатия. Открытое помещение (терраса, балкон) общей перегородки не
+// получает: к закрытому соседу оно прижимается к наружной грани его стены
+// (зазор = толщина наружной стены), к другой открытой площадке — вплотную.
+function pairGap(level, settings, a, b) {
+  const ao = blockIsOpen(a); const bo = blockIsOpen(b);
+  if (!ao && !bo) return wallPairGap(level, settings, a, b);
+  if (ao && bo) return 0;
+  const closed = ao ? b : a;
+  return Number(closed.walls?.exterior) || Number(settings?.exterior) || DEFAULT_EXTERIOR;
+}
 
 function candidates(rect, t, gap, axis, inner) {
   const [p, s] = axis === 'x' ? ['x', 'w'] : ['y', 'h'];

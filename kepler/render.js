@@ -3,7 +3,7 @@
 // поворот: в режиме «Участок» север всегда вверх), подписи — в экранных.
 
 import {
-  deriveWalls, doorLeaves, doorSymbol, openRoomRailingSegments, openingRect, sideEdge, wallOutline, wallRects,
+  deriveWalls, doorLeaves, doorSymbol, openingRect, wallOutline, wallRects,
   wallsEngine,
 } from './core/walls.js';
 
@@ -25,6 +25,7 @@ import {
 import { tempDimensions } from './core/temp-dims.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './core/catalog.js';
+import { RAILING_INSET, roomRailings } from './core/railings.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
   shadowVector, shadowPolygonFromCorners,
@@ -348,7 +349,7 @@ export function createRenderer(canvas) {
       drawFreeLoops(ctx, state.freeLoops, houseTokens, px);
       for (const room of roomPaintOrder) {
         drawFloor(ctx, room, houseTokens, px);
-        if (isOpenRoom(room)) drawRailing(ctx, room, state.project.rooms, houseTokens, px);
+        if (isOpenRoom(room)) drawRailing(ctx, room, state, houseTokens, px);
         for (const wall of ownByRoom.get(room.id) || []) paintWall(wall);
       }
       // Общие стыковочные стены — поверх всех полов.
@@ -1323,20 +1324,21 @@ function drawCompass(ctx, state, site, width, tokens) {
   ctx.restore();
 }
 
-// Перила открытого помещения (терраса/балкон): двойная линия + стойки.
-function drawRailing(ctx, room, rooms, tokens, px) {
-  const inset = 70;
-  ctx.strokeStyle = tokens.line;
-  ctx.lineWidth = px(2);
-  ctx.fillStyle = tokens.line;
-  const step = 700;
-  const post = px(2.5);
-  for (const segment of openRoomRailingSegments(room, rooms)) {
-    const full = sideEdge(room, segment.side);
-    const startCut = segment.from > full.from + 1;
-    const endCut = segment.to < full.to - 1;
-    const innerFrom = segment.from + (startCut ? 0 : inset);
-    const innerTo = segment.to - (endCut ? 0 : inset);
+// Перила открытого помещения (терраса/балкон) — сегменты core/railings.js.
+// Поручни — двойная линия + стойки; балясины — двойная линия + частые
+// поперечные штрихи; стекло — тонированная полоса с линией стекла.
+// Выбранный сегмент — цветом выделения, с ручками на концах.
+function drawRailing(ctx, room, state, tokens, px) {
+  const project = state.project;
+  const inset = RAILING_INSET;
+  const sel = state.selection?.type === 'railing' && state.selection.roomId === room.id ? state.selection.id : null;
+  const hov = state.hover?.type === 'railing' && state.hover.roomId === room.id ? state.hover.id : null;
+  for (const segment of roomRailings(room, project.rooms, project.settings)) {
+    const color = segment.id === sel ? tokens.accent : segment.id === hov ? tokens.hover : tokens.line;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    const startCut = segment.a > segment.sideFrom + 1;
+    const endCut = segment.b < segment.sideTo - 1;
     const innerEdge = segment.edge - segment.outward * inset;
     const line = (edge, from, to) => {
       if (to - from <= 1) return;
@@ -1345,24 +1347,62 @@ function drawRailing(ctx, room, rooms, tokens, px) {
       else { ctx.moveTo(edge, from); ctx.lineTo(edge, to); }
       ctx.stroke();
     };
-    ctx.lineWidth = px(2);
-    line(segment.edge, segment.from, segment.to);
-    ctx.lineWidth = px(1.2);
-    line(innerEdge, innerFrom, innerTo);
-
-    // У стыка со стеной стойку немного отодвигаем, чтобы на стене не оставалась точка.
-    const postFrom = segment.from + (startCut ? inset : 0);
-    const postTo = segment.to - (endCut ? inset : 0);
-    const len = postTo - postFrom;
-    if (len <= 1) continue;
-    const n = Math.max(1, Math.round(len / step));
-    for (let i = 0; i <= n; i += 1) {
-      const t = i / n;
-      const along = postFrom + len * t;
-      ctx.beginPath();
-      ctx.arc(segment.orient === 'h' ? along : segment.edge,
-        segment.orient === 'h' ? segment.edge : along, post, 0, Math.PI * 2);
-      ctx.fill();
+    const pt = (along, across) => (segment.orient === 'h' ? [along, across] : [across, along]);
+    if (segment.type === 'glass') {
+      const lo = Math.min(segment.edge, innerEdge);
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = segment.id === sel ? tokens.accent : '#5b9bd5';
+      if (segment.orient === 'h') ctx.fillRect(segment.a, lo, segment.b - segment.a, inset);
+      else ctx.fillRect(lo, segment.a, inset, segment.b - segment.a);
+      ctx.restore();
+      ctx.lineWidth = px(segment.id === sel ? 2.5 : 1.6);
+      line(segment.edge, segment.a, segment.b);
+      ctx.lineWidth = px(1);
+      line(innerEdge, segment.a, segment.b);
+    } else {
+      ctx.lineWidth = px(segment.id === sel ? 3 : 2);
+      line(segment.edge, segment.a, segment.b);
+      ctx.lineWidth = px(1.2);
+      line(innerEdge, segment.a + (startCut ? 0 : inset), segment.b - (endCut ? 0 : inset));
+      // У стыка со стеной стойку немного отодвигаем, чтобы на стене не оставалась точка.
+      const postFrom = segment.a + (startCut ? inset : 0);
+      const postTo = segment.b - (endCut ? inset : 0);
+      const len = postTo - postFrom;
+      if (len > 1) {
+        if (segment.type === 'balusters') {
+          ctx.lineWidth = px(1);
+          const n = Math.max(1, Math.round(len / 150));
+          ctx.beginPath();
+          for (let i = 0; i <= n; i += 1) {
+            const along = postFrom + (len * i) / n;
+            ctx.moveTo(...pt(along, segment.edge));
+            ctx.lineTo(...pt(along, innerEdge));
+          }
+          ctx.stroke();
+        } else {
+          const post = px(2.5);
+          const n = Math.max(1, Math.round(len / 700));
+          for (let i = 0; i <= n; i += 1) {
+            const along = postFrom + (len * i) / n;
+            ctx.beginPath();
+            ctx.arc(...pt(along, segment.edge), post, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+    if (segment.id === sel) {
+      const s = px(HANDLE_SIZE);
+      const mid = segment.edge - segment.outward * (inset / 2);
+      for (const along of [segment.a, segment.b]) {
+        const [x, y] = pt(along, mid);
+        ctx.fillStyle = tokens.canvas;
+        ctx.fillRect(x - s / 2, y - s / 2, s, s);
+        ctx.lineWidth = px(1.5);
+        ctx.strokeStyle = tokens.accent;
+        ctx.strokeRect(x - s / 2, y - s / 2, s, s);
+      }
     }
   }
 }

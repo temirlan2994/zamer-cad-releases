@@ -71,7 +71,8 @@ test('перила исчезают только на стыке со стено
   const rooms = [living, terrace, balcony];
   const terraceSegments = openRoomRailingSegments(terrace, rooms);
   assert.deepEqual(terraceSegments.filter((segment) => segment.side === 0).map(({ from, to }) => ({ from, to })), [
-    { from: 0, to: 1000 }, { from: 4000, to: 5000 },
+    // Перила упираются в наружную грань стены дома (250 мм от комнаты).
+    { from: 0, to: 750 }, { from: 4250, to: 5000 },
   ]);
   assert.equal(terraceSegments.some((segment) => segment.side === 1), false, 'на стыке с балконом перил нет');
   assert.equal(openRoomRailingSegments(balcony, rooms).some((segment) => segment.side === 3), false);

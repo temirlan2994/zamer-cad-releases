@@ -6,6 +6,7 @@ import { isFixedSizeComp, pointInComposite } from './composite.js';
 import { itemRect } from './furnish.js';
 import { roomContainsPoint } from './room-shape.js';
 import { openingRect, wallContains } from './walls.js';
+import { railingHit } from './railings.js';
 
 // Мебель реагирует на мышь только при крупном плане (знаменатель масштаба ≤ 80,
 // как в строке состояния «≈ 1:80»): издали мышь работает с помещением, и мебель
@@ -48,6 +49,12 @@ export function planHitStack(project, walls, scale, point) {
     if (wallContains(wall, point)) {
       hits.push({ type: 'wall', key: wall.key, from: wall.from, entity: wall });
     }
+  }
+  // Перила открытых помещений — над полом террасы, под стенами дома.
+  const rail = railingHit(project, point, scale > 0 ? 6 / scale + 15 : 60);
+  const underHouse = rail && project.rooms.some((r) => !isOpenRoom(r) && !isShaft(r) && roomContainsPoint(r, point.x, point.y));
+  if (rail && !underHouse && !walls.some((wall) => wall.kind !== 'joint' && wall.kind !== 'chamfer' && wallContains(wall, point))) {
+    hits.push({ type: 'railing', roomId: rail.room.id, id: rail.seg.id, at: rail.at, entity: rail.seg });
   }
   const roomLayer = (room) => (isShaft(room) ? 3 : room.parentId ? 2 : isOpenRoom(room) ? 0 : 1);
   const roomOrder = project.rooms.map((room, index) => ({ room, index }))

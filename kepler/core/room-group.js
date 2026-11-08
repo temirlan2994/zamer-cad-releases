@@ -14,6 +14,7 @@ import { planRoomsCopy } from './duplicate-room.js';
 import { roomBoundaryEdges, roomContainsPoint, roomPolygon } from './room-shape.js';
 import { validateRoomPlacement } from './rooms.js';
 import { turnSpans } from './wall-spans.js';
+import { turnRailings } from './railings.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -165,7 +166,11 @@ function turnCargo(project, cargo, cx, cy) {
   }
   // Высоты до поворота — для участков стен (core/wall-spans.js turnSpans).
   const oldH = new Map(cargo.rooms.map((r) => [r.id, (r.eatBase?.base || r).h]));
-  for (const room of cargo.rooms) turnRoomShape(room, cx, cy);
+  for (const room of cargo.rooms) {
+    // Перила (core/railings.js) — на повёрнутые стороны, высота до поворота.
+    if (Array.isArray(room.railings)) room.railings = turnRailings(room.railings, room.h);
+    turnRoomShape(room, cx, cy);
+  }
   for (const item of cargo.items) {
     const p = turnPoint(item, cx, cy);
     item.x = p.x; item.y = p.y;

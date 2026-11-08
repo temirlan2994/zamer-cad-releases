@@ -1,7 +1,7 @@
 // Действия режима «План»: комнаты, проёмы, мебель, удаление, группы.
 
 import { applyOpeningPreset } from '../core/opening-preset.js';
-import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, roomType } from '../core/catalog.js';
+import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, isOpenRoom, roomType } from '../core/catalog.js';
 import { reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
@@ -33,6 +33,7 @@ import {
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
+import { deleteSelectedRailing } from './railing-actions.js';
 import { requestDraw } from './view.js';
 
 export function reconcileOpenings() {
@@ -226,6 +227,7 @@ export function deleteSelection() {
   if (!sel) return;
   if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
+  if (sel.type === 'railing') { deleteSelectedRailing(); return; }
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;
@@ -276,9 +278,10 @@ export function deleteSelection() {
 // (любой порядок z): съеденные пары тоже — «поменять» меняет порядок, и
 // съедание моста пересчитывает, кто кого ест.
 export function overlappingTopRooms(room) {
-  if (room.parentId) return [];
+  // Открытые помещения (терраса, балкон) лежат под домом и не съедают.
+  if (room.parentId || isOpenRoom(room)) return [];
   const mine = nominalShape(room);
-  return state.project.rooms.filter((o) => o !== room && !o.parentId && roomsIntersect(mine, nominalShape(o)));
+  return state.project.rooms.filter((o) => o !== room && !o.parentId && !isOpenRoom(o) && roomsIntersect(mine, nominalShape(o)));
 }
 
 // Конец жеста над комнатами roomIds (поставлены, сдвинуты, растянуты): они

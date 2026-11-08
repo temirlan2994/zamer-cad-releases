@@ -122,6 +122,9 @@ function faceColor(face) {
     if (obj.type === 'item' && face.itemId === obj.id) return SEL_FILL;
   }
   if (obj?.type === 'opening' && face.openingId === obj.id) return SEL_OPENING;
+  const rsel = state.selection;
+  if (rsel?.type === 'railing' && face.railing && face.railing.id === rsel.id && face.railing.roomId === rsel.roomId &&
+    face.level === state.project?.activeLevel) return SEL_FILL;
   if (face.kind !== 'wall' || !face.ref) return face.color;
   const sel = selectedRef();
   if (!refMatches(face.ref, sel)) return face.color;
@@ -561,7 +564,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;
@@ -573,6 +576,7 @@ function clickSelect(hit) {
     } else {
       if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
       if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
+      else if (hit.type === 'railing') selectObject({ type: 'railing', roomId: hit.roomId, id: hit.id });
       else selectObject({ type: hit.type, id: hit.id });
     }
   } finally {
@@ -884,6 +888,7 @@ export function debug3d() {
     highlighted: faces.filter((f) => f.kind === 'wall' && faceColor(f) !== f.color).length,
     highlightedAll: faces.filter((f) => faceColor(f) !== f.color).length + selectionOverlay().length,
     furniture: faces.filter((f) => f.kind === 'furniture').length,
+    railings: faces.filter((f) => f.kind === 'railing').length,
     levels: opts.levels, levelsShown, roof: faces.some((f) => f.kind === 'roof'),
   };
 }

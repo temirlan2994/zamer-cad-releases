@@ -22,6 +22,7 @@ import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
+import { RAILING_INSET, projectRailings } from './railings.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -529,6 +530,51 @@ function levelFloors(lp, z, levelId) {
   return faces;
 }
 
+export const RAILING_COLOR = '#6f6a63';
+
+// Перила открытых помещений (core/railings.js) по сегментам: поручень
+// сверху, стойки; «Поручни» — ещё две промежуточные планки, «Балясины» —
+// частые стойки, «Стекло» — полупрозрачное полотно. Ось перил — посередине
+// полосы перил плана. Грани: kind 'railing', railing { roomId, id }, level.
+export function railingFaces(lp, z0, levelId) {
+  const faces = [];
+  const T = 50; // сечение поручня и стоек, мм
+  for (const { room, seg } of projectRailings(lp)) {
+    const axis = seg.edge - seg.outward * (RAILING_INSET / 2);
+    const a = seg.a; const b = seg.b;
+    if (b - a < 1) continue;
+    const top = z0 + seg.height;
+    const tag = (list) => list.map((f) => ({ ...f, railing: { roomId: room.id, id: seg.id }, level: levelId }));
+    const bar = (lo, hi, zLo, zHi, color = RAILING_COLOR, t = T) => (seg.orient === 'h'
+      ? boxFaces(lo, axis - t / 2, hi, axis + t / 2, zLo, zHi, color, 'railing')
+      : boxFaces(axis - t / 2, lo, axis + t / 2, hi, zLo, zHi, color, 'railing'));
+    faces.push(...tag(bar(a, b, top - T, top)));
+    const len = b - a;
+    const step = seg.type === 'balusters' ? 150 : seg.type === 'glass' ? 1500 : 1200;
+    const n = Math.max(1, Math.round(len / step));
+    for (let i = 0; i <= n; i += 1) {
+      const c = Math.min(b - T / 2, Math.max(a + T / 2, a + (len * i) / n));
+      const t = seg.type === 'balusters' && i > 0 && i < n ? 25 : T;
+      faces.push(...tag(bar(c - t / 2, c + t / 2, z0, top - T, RAILING_COLOR, t)));
+    }
+    if (seg.type === 'rails') {
+      for (const k of [1 / 3, 2 / 3]) {
+        const z = z0 + (seg.height - T) * k;
+        faces.push(...tag(bar(a, b, z - 15, z + 15, RAILING_COLOR, 30)));
+      }
+    } else if (seg.type === 'glass') {
+      const zLo = z0 + 100; const zHi = top - T;
+      const pts = seg.orient === 'h'
+        ? [v(a, axis, zLo), v(b, axis, zLo), v(b, axis, zHi), v(a, axis, zHi)]
+        : [v(axis, a, zLo), v(axis, b, zLo), v(axis, b, zHi), v(axis, a, zHi)];
+      faces.push(...tag([{
+        pts, normal: seg.orient === 'h' ? v(0, 1, 0) : v(1, 0, 0), color: GLASS_COLOR, alpha: 0.35, kind: 'railing', twoSided: true,
+      }]));
+    }
+  }
+  return faces;
+}
+
 // Контур конструкции в плане: повёрнутый прямоугольник или 12-угольник.
 export function structuralOutline(item) {
   const r = ((item.rotation || 0) * Math.PI) / 180;
@@ -966,6 +1012,7 @@ export function buildHouseMesh(project, {
     if (!shown.has(level.id)) return;
     const lp = lps[k];
     faces.push(...levelFloors(lp, level.elevation, level.id));
+    faces.push(...railingFaces(lp, level.elevation, level.id));
     faces.push(...buildLevelWalls(project, level.id));
     faces.push(...levelStructures(lp, level.elevation, level.height, level.id));
     faces.push(...levelStairs(lp, level.elevation, level.height, level.id));

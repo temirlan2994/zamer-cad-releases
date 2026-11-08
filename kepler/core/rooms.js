@@ -146,7 +146,13 @@ export function snapRoomPosition(project, moving, x, y, snapDist, parentId, grid
     const overlapY = Math.min(y + moving.h, o.y + o.h) - Math.max(y, o.y) > 1;
     const overlapX = Math.min(x + moving.w, o.x + o.w) - Math.max(x, o.x) > 1;
     // Зазор стыковки — толщина общей стены этой пары (своя или перегородка).
-    const gap = sharedWallThickness(project, moving.id, other.id);
+    // Терраса/балкон общей стены не получает: к закрытой комнате — к
+    // наружной грани её стены, к другой открытой площадке — вплотную.
+    const movingOpen = isOpenRoom(moving);
+    const otherOpen = isOpenRoom(other);
+    const gap = movingOpen || otherOpen
+      ? (movingOpen && otherOpen ? 0 : Number((movingOpen ? other : moving).walls?.exterior) || project.settings?.exterior || DEFAULT_EXTERIOR)
+      : sharedWallThickness(project, moving.id, other.id);
     const dockSnapDist = dockSnapRadius(gap, snapDist);
     if (overlapY) {
       considerX(o.x + o.w + gap, Math.abs(x - (o.x + o.w + gap)), { type: 'dock', other }, dockSnapDist);

@@ -40,6 +40,7 @@ import {
 } from '../core/stairs.js';
 import { presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
+import { bindRoomRailings, renderRailingProps, roomRailingsHtml } from './railing-props.js';
 import { renderOpeningLibrary } from './opening-library.js';
 import { state } from './state.js';
 import { isFixedSizeComp } from '../core/composite.js';
@@ -139,6 +140,7 @@ export function renderProps() {
   }
   if (sel.type === 'room') { renderRoomProps(panel, roomById(state.project, sel.id)); return; }
   if (sel.type === 'wall') { renderWallProps(panel, findWall(sel.key, sel.from)); return; }
+  if (sel.type === 'railing' && renderRailingProps(panel)) return;
   if (sel.type === 'opening') { renderOpeningProps(panel, state.project.openings.find((o) => o.id === sel.id)); return; }
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
@@ -349,6 +351,7 @@ function renderRoomProps(panel, room) {
     </div>
     ${areaControl}
     ${overlapControl}
+    ${roomRailingsHtml(room)}
     ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : ''}
     ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
@@ -358,6 +361,7 @@ function renderRoomProps(panel, room) {
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
+  bindRoomRailings(panel, room);
   panel.querySelector('#roomType')?.addEventListener('change', (e) => changeRoomType(room, e.target.value));
   // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):
   // номинал возвращается, правится, видимую форму заново даёт съедание

@@ -5,6 +5,8 @@ import { isShaft } from '../core/catalog.js';
 import { wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
+import { railingTypeTitle } from '../core/railings.js';
+import { selectedRailing } from './railing-actions.js';
 import { el, escapeHtml } from './dom.js';
 import { findWall } from './hit.js';
 import { state } from './state.js';
@@ -51,6 +53,16 @@ function contentForSelection(sel) {
         ${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
         ${button('add-door', '◱', 'Дверь')}
         ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}`,
+    };
+  }
+  if (sel.type === 'railing') {
+    const hit = selectedRailing(sel);
+    if (!hit) return null;
+    return {
+      label: `Перила · ${railingTypeTitle(hit.seg.type).toLowerCase()} · ${Math.round(hit.seg.to - hit.seg.from)} мм`,
+      html: `${button('railing-type', '◇', 'Тип')}
+        ${button('railing-split', '⌜', 'Разделить')}
+        ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
   if (sel.type === 'opening') {
@@ -167,6 +179,11 @@ export function bindSelectionToolbar() {
       const id = state.selection?.id;
       if (action === 'open-section') (await import('./elevation-view.js')).openElevation(id);
       else (await import('./plan-section.js')).flipSectionView(id);
+      return;
+    }
+    if (action === 'railing-type' || action === 'railing-split') {
+      const ra = await import('./railing-actions.js');
+      if (action === 'railing-type') ra.cycleSelectedRailingType(); else ra.splitSelectedRailing();
       return;
     }
     if (action === 'split-room') {

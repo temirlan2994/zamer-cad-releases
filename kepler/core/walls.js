@@ -127,23 +127,34 @@ export function projectAdjacencies(project) {
   return findAdjacencies(project.rooms, project.settings?.partition || DEFAULT_PARTITION, project.wallOverrides);
 }
 
-// Свободные участки ограждения террасы/балкона. Там, где открытое помещение
-// примыкает к любой комнате (включая другую террасу), перила не нужны: стена
-// закрытой комнаты при этом остаётся обычной наружной стеной.
-export function openRoomRailingSegments(room, rooms) {
+// Свободные участки ограждения террасы/балкона (перила по умолчанию). Там,
+// где открытое помещение примыкает к любой комнате (включая другую террасу)
+// или заходит под неё, перила не нужны: стена закрытой комнаты при этом
+// остаётся обычной наружной стеной. Закрытая комната занимает свой габарит
+// плюс наружную стену (exterior): перила упираются в наружную грань стены.
+// Сторона террасы считается примыкающей, если её линия лежит внутри соседа
+// или снаружи не дальше MAX_SHARED_GAP.
+export function openRoomRailingSegments(room, rooms, { exterior = DEFAULT_EXTERIOR } = {}) {
   if (!isOpenRoom(room)) return [];
   const cutsBySide = new Map();
   for (const other of rooms) {
-    if (other.id === room.id || (other.parentId || null) !== (room.parentId || null)) continue;
-    for (const side of [0, 1, 2, 3]) {
-      const edge = sideEdge(room, side);
-      const facing = sideEdge(other, oppositeSide(side));
-      const gap = (facing.edge - edge.edge) * edge.outward;
-      if (gap < -1 || gap > MAX_SHARED_GAP) continue;
-      const span = overlap1d(edge.from, edge.to, facing.from, facing.to);
-      if (!span) continue;
-      if (!cutsBySide.has(side)) cutsBySide.set(side, []);
-      cutsBySide.get(side).push(span);
+    if (other.id === room.id || isShaft(other) || (other.parentId || null) !== (room.parentId || null)) continue;
+    const wallT = isOpenRoom(other) ? 0 : (Number(other.walls?.exterior) || exterior);
+    for (const o of roomRects(other)) {
+      for (const side of [0, 1, 2, 3]) {
+        const edge = sideEdge(room, side);
+        const lo = edge.orient === 'h' ? o.y : o.x;
+        const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
+        if (edge.edge < lo - MAX_SHARED_GAP || edge.edge > hi + MAX_SHARED_GAP) continue;
+        // Сосед должен быть по ту сторону грани (или накрывать её).
+        if (edge.outward > 0 ? hi <= edge.edge + 1 : lo >= edge.edge - 1) continue;
+        const aLo = (edge.orient === 'h' ? o.x : o.y) - wallT;
+        const aHi = (edge.orient === 'h' ? o.x + o.w : o.y + o.h) + wallT;
+        const span = overlap1d(edge.from, edge.to, aLo, aHi);
+        if (!span) continue;
+        if (!cutsBySide.has(side)) cutsBySide.set(side, []);
+        cutsBySide.get(side).push(span);
+      }
     }
   }
   const result = [];
@@ -378,7 +389,9 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
       // сужается до зазора: иначе она заходит внутрь соседа бугром.
       const facing = [];
       for (const other of project.rooms) {
-        if (other.id === room.id || isShaft(other) || (other.parentId || null) !== (room.parentId || null)) continue;
+        // Терраса/балкон лежит под домом и стену не сужает: стена дома
+        // остаётся полной, терраса заходит под неё или стоит вплотную.
+        if (other.id === room.id || isShaft(other) || isOpenRoom(other) || (other.parentId || null) !== (room.parentId || null)) continue;
         for (const o of roomRects(other)) {
           const lo = edge.orient === 'h' ? o.y : o.x;
           const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;

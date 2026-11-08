@@ -212,6 +212,7 @@ export function pickWall(boxes, ray) {
 //
 // Кроме стен (коробки выше) выбираются: помещения — по граням пола (roomId),
 // мебель, лестницы, колонны и свободные стены — по своим граням (itemId),
+// перила — по граням перил (railing: { roomId, id }),
 // проёмы — по коробке пустоты. Перекрытия и кровля только заслоняют. Земля,
 // участок и ландшафт не участвуют. Побеждает ближайшее к камере попадание.
 
@@ -225,6 +226,7 @@ export function pickFaces(faces) {
     let pick = null;
     if (f.kind === 'floor' && f.roomId) pick = { type: 'room', id: f.roomId, levelId: f.level };
     else if (f.itemId && (f.kind === 'furniture' || f.kind === 'stairs' || f.kind === 'wall')) pick = { type: 'item', id: f.itemId, levelId: f.level };
+    else if (f.kind === 'railing' && f.railing) pick = { type: 'railing', roomId: f.railing.roomId, id: f.railing.id, levelId: f.level };
     else if (!OCCLUDERS.has(f.kind)) continue;
     const P = f.pts;
     if (!P || P.length < 3) continue;

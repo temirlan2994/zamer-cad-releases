@@ -42,7 +42,7 @@ import {
 import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
-  findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRoom,
+  findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRailingEnd, hitRoom,
   hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
@@ -68,6 +68,7 @@ import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
 import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize } from './block-gesture.js';
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
+import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
@@ -343,7 +344,7 @@ function updateHoverAndGhost(world, plan, event) {
     let x = plan.x - w / 2;
     let y = plan.y - h / 2;
     const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
-    const snapped = snapRoomPosition(state.project, { id: '__ghost__', w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
+    const snapped = snapRoomPosition(state.project, { id: '__ghost__', type: def.type, w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
     x = snapped.x; y = snapped.y;
     const verdict = validateRoomPlacement(state.project, { type: def.type, x, y, w, h, parentId }, null);
     state.guides = snapped.guides;
@@ -480,6 +481,19 @@ export function bindCanvasInput() {
         if (roomById(state.project, finished.roomId)) selectObject({ type: 'room', id: finished.roomId });
       } else if (finished.kind === 'shape-resize' && pendingSplitHas(finished.roomId)) revertPendingSplit();
       refreshDerived();
+      requestDraw();
+      return;
+    }
+    // Esc во время перетаскивания конца перил — перила как до жеста.
+    if (e.key === 'Escape' && drag?.kind === 'railing-end') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const finished = drag;
+      drag = null;
+      if (finished.moved) {
+        restoreFrom(finished.before);
+        selectObject({ type: 'railing', roomId: finished.roomId, id: finished.id });
+      }
       requestDraw();
       return;
     }
@@ -797,6 +811,15 @@ export function bindCanvasInput() {
       };
       return;
     }
+    // Ручка конца выбранных перил: укоротить/удлинить вдоль стороны.
+    const railEndHit = hitRailingEnd(screen);
+    if (railEndHit) {
+      drag = {
+        kind: 'railing-end', roomId: railEndHit.room.id, id: railEndHit.seg.id, end: railEndHit.end,
+        before: snapshot(), moved: false,
+      };
+      return;
+    }
     const openingHandleHit = hitOpeningHandle(screen);
     if (openingHandleHit) {
       drag = { kind: 'opening-handle', id: openingHandleHit.opening.id, end: openingHandleHit.end, before: snapshot(), moved: false };
@@ -879,6 +902,11 @@ export function bindCanvasInput() {
       const opening = picked.entity;
       selectObject({ type: 'opening', id: opening.id });
       drag = { kind: 'opening', id: opening.id, before: snapshot(), moved: false };
+      return;
+    }
+
+    if (picked?.type === 'railing') {
+      selectObject({ type: 'railing', roomId: picked.roomId, id: picked.id, at: Math.round(picked.at) });
       return;
     }
 
@@ -1358,6 +1386,25 @@ export function bindCanvasInput() {
       return;
     }
 
+    if (drag.kind === 'railing-end') {
+      // Конец перил — только вдоль своей стороны, шаг сетки по зуму (Shift — без шага).
+      const room = roomById(state.project, drag.roomId);
+      if (!room) return;
+      if (!drag.moved) {
+        materializeRailings(room, state.project.rooms, state.project.settings);
+        drag.moved = true;
+      }
+      const seg = room.railings.find((s) => s.id === drag.id);
+      if (!seg) return;
+      const vertical = seg.side % 2 === 1;
+      const base = vertical ? room.y : room.x;
+      let at = (vertical ? plan.y : plan.x) - base;
+      if (!event.shiftKey) { const g = gridStep(); at = Math.round(at / g) * g; }
+      moveRailingEnd(room, drag.id, drag.end, at);
+      requestDraw();
+      return;
+    }
+
     if (drag.kind === 'opening-handle') {
       const opening = state.project.openings.find((o) => o.id === drag.id);
       if (!opening) return;
@@ -1657,6 +1704,14 @@ export function bindCanvasInput() {
       pushHistory(finished.before);
       afterChange();
       if (finished.clamped?.length) toast(`Проёмы прижаты к краю укороченной стены: ${finished.clamped.length}`, true);
+      return;
+    }
+
+    if (finished.kind === 'railing-end') {
+      if (!finished.moved) { requestDraw(); return; }
+      refreshDerived();
+      pushHistory(finished.before); // жест — один шаг отмены
+      afterChange();
       return;
     }
 

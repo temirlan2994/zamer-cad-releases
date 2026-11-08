@@ -18,7 +18,8 @@ import { buildDxf } from './zamer/dxf.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
-import { isRoundItem, isShaft, isStructural, isSummerRoom, roomType } from './catalog.js';
+import { isOpenRoom, isRoundItem, isShaft, isStructural, isSummerRoom, roomType } from './catalog.js';
+import { RAILING_INSET, roomRailings } from './railings.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, retainingInfo, stairsInfo } from './landscape.js';
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
@@ -55,6 +56,14 @@ function buildLevelExport(project, level) {
     ceiling_height: roomCeiling(room, level), // чистая высота, мм
     area_m2: Number((roomShapeArea(room) / 1_000_000).toFixed(3)),
     net_area_m2: Number(roomNetAreaM2(project, room).toFixed(3)),
+    // Перила открытого помещения (core/railings.js): отрезки в осях дома.
+    ...(isOpenRoom(room) ? {
+      railings: roomRailings(room, project.rooms, project.settings).map((s) => ({
+        id: s.id, side: s.side, type: s.type, height: s.height, length: Math.round(s.b - s.a),
+        from: s.orient === 'h' ? { x: s.a, y: s.edge } : { x: s.edge, y: s.a },
+        to: s.orient === 'h' ? { x: s.b, y: s.edge } : { x: s.edge, y: s.b },
+      })),
+    } : {}),
   }));
 
   const wallsOut = walls.filter((w) => !w.hidden && w.kind !== 'joint' && w.kind !== 'chamfer').map((wall, index) => ({
@@ -354,6 +363,18 @@ export function planEntities(project, { dims = true } = {}) {
         const midX = rect.x + rect.w / 2;
         entities.push({ type: 'rectangle', layer: 'walls', x1: rect.x, y1: rect.y, x2: rect.x + rect.w, y2: rect.y + rect.h });
         entities.push({ type: 'line', layer: 'walls', x1: midX, y1: rect.y, x2: midX, y2: rect.y + rect.h });
+      }
+    }
+  }
+
+  // Перила открытых помещений: две линии (наружная и внутренняя) на сегмент.
+  for (const room of project.rooms) {
+    if (!isOpenRoom(room)) continue;
+    for (const s of roomRailings(room, project.rooms, project.settings)) {
+      for (const at of [s.edge, s.edge - s.outward * RAILING_INSET]) {
+        entities.push(s.orient === 'h'
+          ? { type: 'line', layer: 'walls', x1: s.a, y1: at, x2: s.b, y2: at }
+          : { type: 'line', layer: 'walls', x1: at, y1: s.a, x2: at, y2: s.b });
       }
     }
   }

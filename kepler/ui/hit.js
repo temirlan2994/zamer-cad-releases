@@ -8,6 +8,7 @@ import { roomById } from '../core/model.js';
 import { distanceToPolyline } from '../core/site.js';
 import { openingRect, wallContains, wallDistance } from '../core/walls.js';
 import { roomContainsPoint } from '../core/room-shape.js';
+import { RAILING_INSET, roomRailings } from '../core/railings.js';
 import {
   HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
@@ -46,6 +47,23 @@ export function hitManualWallEnd(screen) {
   for (const h of manualWallEnds()) {
     const p = planToScreen(h.x, h.y);
     if (Math.hypot(p.x - screen.x, p.y - screen.y) <= tol()) return { wall: h.wall, end: h.end };
+  }
+  return null;
+}
+
+// Ручки концов выбранного сегмента перил (core/railings.js): посередине
+// полосы перил, на концах a/b. → { room, seg, end: 'a'|'b' } или null.
+export function hitRailingEnd(screen) {
+  const sel = state.selection;
+  if (sel?.type !== 'railing') return null;
+  const room = roomById(state.project, sel.roomId);
+  if (!room) return null;
+  const seg = roomRailings(room, state.project.rooms, state.project.settings).find((s) => s.id === sel.id);
+  if (!seg) return null;
+  const mid = seg.edge - seg.outward * (RAILING_INSET / 2);
+  for (const end of ['a', 'b']) {
+    const p = seg.orient === 'h' ? planToScreen(seg[end], mid) : planToScreen(mid, seg[end]);
+    if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) return { room, seg, end };
   }
   return null;
 }
