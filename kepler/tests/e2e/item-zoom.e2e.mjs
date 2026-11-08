@@ -1,4 +1,4 @@
-// Мебель берётся мышью только при масштабе 1:165 и ближе (core/hit-stack.js,
+// Мебель берётся мышью только при масштабе 1:80 и ближе (core/hit-stack.js,
 // itemsEditable): издали клик и перетаскивание по мебели попадают в помещение
 // под ней — комната едет вместе с мебелью; вблизи — выбирается и едет предмет.
 import { describe, it, before, after } from 'node:test';
@@ -100,11 +100,11 @@ describe('мебель: выбор и перетаскивание завися�
     assert.deepEqual((await state()).table, s0.table, 'отмена вернула стол');
   });
 
-  it('граница: 1:165 — предмет, 1:166 — помещение', async () => {
-    await setScale(165);
-    assert.deepEqual(await clickTable(), { type: 'item', id: ids.table }, '1:165 включительно');
-    await setScale(166);
-    assert.deepEqual(await clickTable(), { type: 'room', id: ids.room }, '1:166 — уже издали');
+  it('граница: 1:80 — предмет, 1:81 — помещение', async () => {
+    await setScale(80);
+    assert.deepEqual(await clickTable(), { type: 'item', id: ids.table }, '1:80 включительно');
+    await setScale(81);
+    assert.deepEqual(await clickTable(), { type: 'room', id: ids.room }, '1:81 — уже издали');
     assert.deepEqual(app.errors, []);
   });
 });

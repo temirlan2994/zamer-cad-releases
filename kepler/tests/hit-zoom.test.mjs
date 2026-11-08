@@ -1,4 +1,4 @@
-// Мебель реагирует на мышь только при масштабе 1:165 и ближе (core/hit-stack.js).
+// Мебель реагирует на мышь только при масштабе 1:80 и ближе (core/hit-stack.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createItem, createProject, createRoom } from '../core/model.js';
@@ -8,12 +8,12 @@ import { ITEM_EDIT_DENOMINATOR, itemsEditable, planHitStack } from '../core/hit-
 // пикселей на мм для знаменателя d (как в строке состояния «≈ 1:d»)
 const scaleFor = (d) => 96 / 25.4 / d;
 
-test('порог: 1:165 и ближе — можно, дальше — нельзя', () => {
-  assert.equal(ITEM_EDIT_DENOMINATOR, 165);
-  assert.equal(itemsEditable(scaleFor(165)), true);
+test('порог: 1:80 и ближе — можно, дальше — нельзя', () => {
+  assert.equal(ITEM_EDIT_DENOMINATOR, 80);
+  assert.equal(itemsEditable(scaleFor(80)), true);
   assert.equal(itemsEditable(scaleFor(30)), true);
-  assert.equal(itemsEditable(scaleFor(166)), false);
-  assert.equal(itemsEditable(scaleFor(400)), false);
+  assert.equal(itemsEditable(scaleFor(81)), false);
+  assert.equal(itemsEditable(scaleFor(300)), false);
 });
 
 test('издали под мышью только помещение, вблизи — мебель сверху', () => {
