@@ -30,7 +30,7 @@ import {
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
 import { finishWallChain, startWallTool } from './wall-tool.js';
 import { handlePlanSectionKey, startPlanSectionTool } from './plan-section.js';
-import { close3d, is3dOpen } from './view3d.js';
+import { close3d, escape3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
 import { isItemGroup } from '../core/group-handles.js';
 
@@ -52,6 +52,24 @@ function ownsActivationKeys(target) {
   return role === 'button' || role === 'menuitem' || role === 'tab' || role === 'checkbox' || role === 'switch' || role === 'option';
 }
 
+// Клавиши правки в открытом 3D (те же действия, что на плане): Delete,
+// Ctrl+C/V/D, R — поворот выбранного предмета. true — клавиша обработана.
+function handle3dKey(event) {
+  const tag = event.target?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
+  const mod = event.ctrlKey || event.metaKey;
+  if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
+    event.preventDefault();
+    if (state.selection) deleteSelection();
+    return true;
+  }
+  if (mod && event.code === 'KeyC') { event.preventDefault(); if (state.selection) copySelection(); return true; }
+  if (mod && event.code === 'KeyV') { event.preventDefault(); pasteSelection(); return true; }
+  if (mod && event.code === 'KeyD') { event.preventDefault(); if (state.selection) duplicateSelection(); return true; }
+  if (!mod && !event.altKey && event.code === 'KeyR' && state.selection?.type === 'item') { rotateSelection90(); return true; }
+  return false;
+}
+
 export function bindKeyboard() {
   // Кнопка, нажатая мышью или пальцем, не держит фокус: иначе следующий
   // Enter «нажмёт» её ещё раз вместо завершения чертежа. Нажатая с клавиатуры
@@ -66,7 +84,11 @@ export function bindKeyboard() {
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }
     // Вид открыт двойным кликом на листе — Esc закрывает его и возвращает лист.
-    if (event.key === 'Escape' && is3dOpen()) { const back = state.sheetReturn; close3d(); if (back) returnToSheet(); return; }
+    // В 3D Esc сначала отменяет жест и снимает выбор, без выбора — закрывает вид.
+    if (event.key === 'Escape' && is3dOpen()) {
+      if (escape3d()) return;
+      const back = state.sheetReturn; close3d(); if (back) returnToSheet(); return;
+    }
     // Открытый лист (ui/sheet-view.js): Esc возвращает предыдущий вид.
     // Лист пользователя: Delete убирает выбранный вид, Esc снимает выбор.
     if (isSheetOpen() && handleSheetKey(event)) return;
@@ -79,6 +101,8 @@ export function bindKeyboard() {
       if (event.key === 'Escape') { closeSection(); return; }
       if (!((event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY'))) return;
     }
+    // 3D: выбранное удаляется, копируется, дублируется, мебель поворачивается.
+    if (is3dOpen() && !isHelpOpen() && handle3dKey(event)) return;
     // Под 3D, справкой, «Проектами» — только Ctrl+Z/Y и F1/«?».
     if (planCovered()) {
       const undoKey = (event.ctrlKey || event.metaKey) && (event.code === 'KeyZ' || event.code === 'KeyY');

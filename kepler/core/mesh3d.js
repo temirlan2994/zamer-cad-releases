@@ -18,6 +18,8 @@ import { landscapeFaces } from './mesh3d-landscape.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { gridAxis, mergeCells } from './ortho-grid.js';
+import { isFixedSizeComp, partsInHouse } from './composite.js';
+import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
 
@@ -228,7 +230,7 @@ export function levelWallSolids(lp, walls, height) {
     const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
     const top = Math.min(wallTop - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
-    voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri });
+    voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id });
   }
   return { recs, voids };
 }
@@ -262,7 +264,7 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
     const orient = q.wall.orient;
     const a0 = orient === 'h' ? q.r.x : q.r.y;
     const a1 = a0 + (orient === 'h' ? q.r.w : q.r.h);
-    faces.push({ ...paneFace(q.wall.band, orient, a0, a1, z0 + q.bottom, z0 + q.top, GLASS_COLOR, 0.45, 'glass'), ref: wallRef(q.wall, levelId, 'glass') });
+    faces.push({ ...paneFace(q.wall.band, orient, a0, a1, z0 + q.bottom, z0 + q.top, GLASS_COLOR, 0.45, 'glass'), ref: wallRef(q.wall, levelId, 'glass'), openingId: q.id });
   }
   const allRects = [...recs.flatMap((q) => q.rects), ...voids.map((q) => q.r)];
   const ax = gridAxis(allRects.flatMap((r) => [r.x, r.x + r.w]));
@@ -444,7 +446,7 @@ function levelWalls(lp, z0, height, levelId) {
     const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
     const top = Math.min(height - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
     if (!cuts.has(placed.wall)) cuts.set(placed.wall, []);
-    cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind });
+    cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind, id: o.id });
   }
   for (const run of wallRuns(walls, cuts)) {
     const { band: b, orient, start, end, holes } = run;
@@ -461,6 +463,7 @@ function levelWalls(lp, z0, height, levelId) {
       if (h.kind === 'window') {
         const pane = paneFace(b, orient, a0, a1, z0 + h.bottom, z0 + h.top, GLASS_COLOR, 0.45, 'glass');
         if (run.members?.[0]) pane.ref = wallRef(run.members[0], levelId, 'glass');
+        pane.openingId = h.id;
         faces.push(pane);
       }
       cursor = Math.max(cursor, a1);
@@ -504,7 +507,7 @@ function subtractFloorRect(base, cut) {
   ].filter((rect) => rect.w > 0.5 && rect.h > 0.5);
 }
 
-function levelFloors(lp, z) {
+function levelFloors(lp, z, levelId) {
   const faces = [];
   // Сначала комнаты верхнего уровня, вложенные — чуть выше (видны поверх).
   const order = [...lp.rooms].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)));
@@ -519,7 +522,7 @@ function levelFloors(lp, z) {
     for (const part of floorParts) {
       faces.push({
         pts: [v(part.x, part.y, zz), v(part.x + part.w, part.y, zz), v(part.x + part.w, part.y + part.h, zz), v(part.x, part.y + part.h, zz)],
-        normal: v(0, 0, 1), color, kind: 'floor', roomId: r.id,
+        normal: v(0, 0, 1), color, kind: 'floor', roomId: r.id, level: levelId,
       });
     }
   }
@@ -557,19 +560,75 @@ function prismFaces(poly, z0, z1, color, kind) {
   return faces;
 }
 
-// Свободные стены и колонны этажа — на всю высоту этажа.
-function levelStructures(lp, z0, height) {
+// Свободные стены и колонны этажа — на всю высоту этажа (выбираются как предмет).
+function levelStructures(lp, z0, height, levelId) {
   return lp.items.filter((i) => isStructural(i.kind))
-    .flatMap((i) => prismFaces(structuralOutline(i), z0, z0 + height, WALL_COLOR, 'wall'));
+    .flatMap((i) => prismFaces(structuralOutline(i), z0, z0 + height, WALL_COLOR, 'wall')
+      .map((f) => ({ ...f, itemId: i.id, level: levelId })));
 }
 
-function stairBox(item, x0, y0, x1, y1, z0, z1) {
+// Прямоугольник в локальных осях предмета (центр — 0, 0; до поворота) → в оси дома.
+function localRect(p, x0, y0, x1, y1) {
+  const r = ((p.rotation || 0) * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => ({ x: p.x + x * c - y * s, y: p.y + x * s + y * c }));
+}
+
+// Контур коробки мебели: повёрнутый прямоугольник или эллипс (круглый стол, ковёр).
+function furnitureOutline(p) {
+  const round = /round/.test(p.kind || '');
+  return structuralOutline(round ? { ...p, kind: 'column-round' } : { ...p, kind: '' });
+}
+
+const FURNITURE_LIFT = 3; // мм над гранью пола (пол — +1/+2), без мерцания
+
+// Мебель этажа (не конструкции и не лестницы — они уже в сетке): коробки по
+// габаритам предмета (x, y — центр, w×h, поворот) на высоту по виду
+// (core/furniture3d.js), низ — на полу этажа. Составная мебель — коробками
+// по своим частям (core/composite.js partsInHouse): стол — столешница и
+// стулья, диван и кухня — только модули (у них нет своей основы). Верх не
+// выше перекрытия. Грани: kind 'furniture', itemId, level.
+export function furnitureFaces(lp, z0, levelHeight, levelId) {
+  const faces = [];
+  const top = Math.max(1, levelHeight - 10);
+  const prism = (poly, lo, hi, item, color) => {
+    for (const f of prismFaces(poly, z0 + FURNITURE_LIFT + lo, z0 + FURNITURE_LIFT + hi, color, 'furniture')) {
+      faces.push({ ...f, itemId: item.id, level: levelId });
+    }
+  };
+  const add = (p, item, spec) => {
+    const lo = Math.min(top - 1, Math.max(0, spec.z0 || 0));
+    const hi = Math.min(top, lo + Math.max(1, spec.h));
+    const back = spec.back === 'part' ? Number(p.back) || 0 : Number(spec.back) || 0;
+    if (!(spec.seat && back > 0 && back < p.h && !/round/.test(p.kind || ''))) {
+      prism(furnitureOutline(p), lo, hi, item, spec.color);
+      return;
+    }
+    // Сиденье на всю площадь и спинка вдоль задней кромки (−Y), у угла — и вдоль +X.
+    const seat = Math.min(hi, lo + spec.seat);
+    prism(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, p.h / 2), lo, seat, item, spec.color);
+    prism(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, -p.h / 2 + back), seat, hi, item, spec.color);
+    if (spec.corner) prism(localRect(p, p.w / 2 - back, -p.h / 2 + back, p.w / 2, p.h / 2), seat, hi, item, spec.color);
+  };
+  for (const item of lp.items || []) {
+    if (isStructural(item.kind) || item.kind === 'stairs') continue;
+    if (!(item.w > 0 && item.h > 0)) continue;
+    const parts = item.comp ? partsInHouse(item) : [];
+    if (!isFixedSizeComp(item)) add(item, item, furniture3d(item.kind));
+    for (const p of parts) add(p, item, furniture3d(p.kind, p.layer));
+  }
+  return faces;
+}
+
+function stairBox(item, x0, y0, x1, y1, z0, z1, levelId) {
   const angle = ((item.rotation || 0) * Math.PI) / 180;
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   return boxFaces(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), z0, z1, STAIR_COLOR, 'stairs').map((face) => ({
     ...face,
     itemId: item.id,
+    level: levelId,
     pts: face.pts.map((p) => ({ x: item.x + p.x * c - p.y * s, y: item.y + p.x * s + p.y * c, z: p.z })),
     normal: { x: face.normal.x * c - face.normal.y * s, y: face.normal.x * s + face.normal.y * c, z: face.normal.z },
   }));
@@ -577,7 +636,7 @@ function stairBox(item, x0, y0, x1, y1, z0, z1) {
 
 // Ступени в 3D: марши и площадки из раскладки лестницы (core/stairs.js).
 // Проступь k марша — на высоте (startStep + k) подъёмов, площадка — на своей.
-function levelStairs(lp, z0, levelHeight) {
+function levelStairs(lp, z0, levelHeight, levelId) {
   const faces = [];
   for (const item of lp.items.filter((candidate) => candidate.kind === 'stairs')) {
     const lay = stairLayout(item, levelHeight);
@@ -586,7 +645,7 @@ function levelStairs(lp, z0, levelHeight) {
     const box = (x0, y0, x1, y1, top) => {
       const a = m > 0 ? x0 : -x1;
       const b = m > 0 ? x1 : -x0;
-      faces.push(...stairBox(item, a, y0, b, y1, z0, top));
+      faces.push(...stairBox(item, a, y0, b, y1, z0, top, levelId));
     };
     for (const f of lay.flights) {
       for (let k = 0; k < f.n; k += 1) {
@@ -883,19 +942,40 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
 // site — земля (с рельефом, если есть отметки), граница и соседи;
 // terrainScale — вертикальное усиление рельефа (1×–5×); landscape — объекты
 // ландшафта (только вместе с site).
-export function buildHouseMesh(project, { roof = false, site = false, terrainScale = 1, landscape = true } = {}) {
+// furniture — мебель (грани kind 'furniture'; только для окна 3D: фасады,
+// разрезы, листы и габарит её не берут — по умолчанию выключена).
+// levels — какие этажи показывать: 'all' (по умолчанию), 'upto' — до
+// активного (project.activeLevel) включительно, 'only' — только активный;
+// кровля (флажок roof) — только когда видны все этажи, иначе она закрыла бы
+// показанный верхний этаж.
+export function shownLevelIds(project, mode = 'all') {
+  const levels = sortedLevels(project);
+  if (mode !== 'upto' && mode !== 'only') return levels.map((l) => l.id);
+  const k = Math.max(0, levels.findIndex((l) => l.id === project.activeLevel));
+  return mode === 'only' ? [levels[k].id] : levels.slice(0, k + 1).map((l) => l.id);
+}
+
+export function buildHouseMesh(project, {
+  roof = false, site = false, terrainScale = 1, landscape = true, furniture = false, levels: levelMode = 'all',
+} = {}) {
   const faces = [];
   const levels = sortedLevels(project);
-  for (const level of levels) {
-    const lp = levelProject(project, level.id);
-    faces.push(...levelFloors(lp, level.elevation));
-    faces.push(...buildLevelWalls(project, level.id));
-    faces.push(...levelStructures(lp, level.elevation, level.height));
-    faces.push(...levelStairs(lp, level.elevation, level.height));
-  }
+  const shown = new Set(shownLevelIds(project, levelMode));
   const lps = levels.map((level) => levelProject(project, level.id));
-  for (let k = 1; k < levels.length; k += 1) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
-  if (roof) {
+  levels.forEach((level, k) => {
+    if (!shown.has(level.id)) return;
+    const lp = lps[k];
+    faces.push(...levelFloors(lp, level.elevation, level.id));
+    faces.push(...buildLevelWalls(project, level.id));
+    faces.push(...levelStructures(lp, level.elevation, level.height, level.id));
+    faces.push(...levelStairs(lp, level.elevation, level.height, level.id));
+    if (furniture) faces.push(...furnitureFaces(lp, level.elevation, level.height, level.id));
+  });
+  // Перекрытие под этажом k — его основание: показывается вместе с ним.
+  for (let k = 1; k < levels.length; k += 1) {
+    if (shown.has(levels[k].id)) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
+  }
+  if (roof && shown.size === levels.length) {
     levels.forEach((level, k) => faces.push(...roofFaces(lps[k], lps[k + 1], level.elevation + level.height)));
   }
   if (site) faces.push(...siteFaces(project, { terrainScale }));

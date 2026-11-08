@@ -68,7 +68,8 @@ for (const engine of ['v2', 'v1']) {
 
     it('после закрытия 3D на плане выбрана та же стена; Ctrl+Z возвращает высоту', async () => {
       const { page } = app;
-      await page.keyboard.press('Escape');
+      // Esc при выборе только снимает его — закрываем кнопкой, выбор остаётся.
+      await page.click('#v3Close');
       assert.equal(await page.isVisible('#view3d'), false);
       const sel = await page.evaluate(() => window.__kepler.state.selection);
       assert.equal(sel?.type, 'wall');

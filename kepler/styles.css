@@ -939,6 +939,10 @@ body.mode-site .library { display: none; }
   .view3d-bar .check-row { font-size: 13px; }
 }
 .view3d-bar button { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
+.view3d-bar .v3-levels select { height: 26px; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 12.5px; }
+/* Кнопки этажей доступны и поверх 3D (активный этаж, режим «До активного»). */
+body.v3-open .level-dock { z-index: 46; }
+@media (max-width: 640px) { body.v3-open .view3d-hint { bottom: 80px; } }
 #view3dBtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 /* Подсказка 3D (выбор и ручки стен) и поле ввода числа у ручки. */
 .view3d-hint {

@@ -74,11 +74,11 @@ describe('стены и колонны', () => {
     assert.ok(wall && wall.w === 3000 && wall.h === 120, JSON.stringify(wall));
     await app.page.click('#view3dBtn');
     const withWall = (await d3(app.page)).faces;
-    await app.page.keyboard.press('Escape');
+    await app.page.click('#v3Close'); // Esc сначала снял бы выбор стены
     await app.page.keyboard.press('Control+z');
     await app.page.click('#view3dBtn');
     assert.ok((await d3(app.page)).faces < withWall, 'без стены граней меньше');
-    await app.page.keyboard.press('Escape');
+    await app.page.click('#v3Close');
   });
 
   it('без ошибок в консоли', () => {

@@ -11,6 +11,7 @@ import { renderSelectionToolbar } from './selection-toolbar.js';
 import { closeLibrarySheet } from './mobile.js';
 import { hideSplitInput, pendingSplitHas, positionSplitInput, revertPendingSplit } from './split-input.js';
 import { requestDraw } from './view.js';
+import { refresh3dSelection } from './view3d.js';
 import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
@@ -33,6 +34,7 @@ export function selectObject(selection) {
   renderProps();
   updateWallButtons();
   renderSelectionToolbar();
+  refresh3dSelection(); // открытый 3D подсвечивает тот же выбор
   requestDraw();
 }
 

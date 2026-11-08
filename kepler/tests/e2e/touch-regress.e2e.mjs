@@ -240,7 +240,7 @@ describe('мышь и клавиши: повторный клик, окна по
     await app.page.evaluate(() => window.__kepler.fitView());
   });
 
-  it('П-17: Del, R и стрелки не правят план под справкой и 3D', async () => {
+  it('П-17: Del, R и стрелки не правят план под справкой; в 3D Delete удаляет выбранное', async () => {
     await select(app.page, { type: 'room', id: ids.a });
     const r0 = await roomOf(app.page, ids.a);
     await app.page.keyboard.press('F1');
@@ -254,9 +254,16 @@ describe('мышь и клавиши: повторный клик, окна по
     await select(app.page, { type: 'room', id: ids.a });
     await app.page.locator('body').focus().catch(() => {});
     await app.page.evaluate(() => document.activeElement?.blur?.());
-    for (const key of ['Delete', 'r', 'ArrowRight']) await app.page.keyboard.press(key);
-    assert.deepEqual(await roomOf(app.page, ids.a), r0, 'под 3D комната не изменилась');
+    for (const key of ['r', 'ArrowRight']) await app.page.keyboard.press(key);
+    assert.deepEqual(await roomOf(app.page, ids.a), r0, 'в 3D R и стрелки комнату не двигают');
+    // 3D, срез 1: Delete удаляет выбранное (как на плане), Ctrl+Z возвращает.
+    await app.page.keyboard.press('Delete');
+    assert.equal(await roomOf(app.page, ids.a), undefined, 'в 3D Delete удалил комнату');
+    await app.page.keyboard.press('Control+z');
+    assert.deepEqual(await roomOf(app.page, ids.a), r0);
+    // Esc: сначала снимает выбор (если есть), затем закрывает 3D.
     await app.page.keyboard.press('Escape');
+    if (await app.page.evaluate(async () => (await import('./ui/view3d.js')).is3dOpen())) await app.page.keyboard.press('Escape');
     assert.equal(await app.page.evaluate(async () => (await import('./ui/view3d.js')).is3dOpen()), false);
     // План снова правится.
     await select(app.page, { type: 'room', id: ids.a });

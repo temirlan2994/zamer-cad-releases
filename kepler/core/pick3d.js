@@ -108,12 +108,17 @@ function solidPieces(r, h, z0, z1, voids) {
 // Коробка помнит стену: key, wallId (ручная), from (кусок у шахты), этаж,
 // ориентацию, полную высоту стены (wallZ0/wallZ1) и её крайние координаты
 // вдоль оси (alongMin/alongMax) — по ним грань попадания делится на ручки.
-export function wallBoxes(project) {
-  const boxes = [];
+// Проёмы — коробки пустот в толще стены: { type: 'opening', id, levelId }.
+// levelIds — только эти этажи (как показано в 3D), по умолчанию все.
+export function pickBoxes(project, levelIds = null) {
+  const walls = [];
+  const openings = [];
+  const only = levelIds ? new Set(levelIds) : null;
   for (const level of sortedLevels(project)) {
+    if (only && !only.has(level.id)) continue;
     const lp = levelProject(project, level.id);
-    const walls = deriveWalls(lp);
-    const { recs, voids } = levelWallSolids(lp, walls, level.height);
+    const derived = deriveWalls(lp);
+    const { recs, voids } = levelWallSolids(lp, derived, level.height);
     const elev = Number(level.elevation) || 0;
     for (const q of recs) {
       const w = q.wall;
@@ -122,7 +127,7 @@ export function wallBoxes(project) {
       const alongMax = Math.max(...q.rects.map((r) => (h ? r.x + r.w : r.y + r.h)));
       for (const r of q.rects) {
         for (const p of solidPieces(r, h, q.z0, q.z1, voids)) {
-          boxes.push({
+          walls.push({
             ...p, z0: p.z0 + elev, z1: p.z1 + elev,
             key: w.key, wallId: w.wallId ?? null, from: w.from, kind: w.kind, orient: w.orient,
             levelId: level.id, wallZ0: q.z0 + elev, wallZ1: q.z1 + elev, alongMin, alongMax,
@@ -130,8 +135,19 @@ export function wallBoxes(project) {
         }
       }
     }
+    for (const q of voids) {
+      if (!q.id) continue;
+      openings.push({
+        x0: q.r.x, y0: q.r.y, x1: q.r.x + q.r.w, y1: q.r.y + q.r.h, z0: q.bottom + elev, z1: q.top + elev,
+        type: 'opening', id: q.id, kind: q.kind, levelId: level.id,
+      });
+    }
   }
-  return boxes;
+  return { walls, openings };
+}
+
+export function wallBoxes(project, levelIds = null) {
+  return pickBoxes(project, levelIds).walls;
 }
 
 // Пересечение луча с коробкой (slab-тест): { t, axis, sign } входа или null.
@@ -190,4 +206,93 @@ export function pickWall(boxes, ray) {
     key: b.key, wallId: b.wallId, from: b.from, levelId: b.levelId, kind: b.kind, orient: b.orient,
     face, normal, point, t, box: b,
   };
+}
+
+// ---------------------------------------------------------------- выбор объектов
+//
+// Кроме стен (коробки выше) выбираются: помещения — по граням пола (roomId),
+// мебель, лестницы, колонны и свободные стены — по своим граням (itemId),
+// проёмы — по коробке пустоты. Перекрытия и кровля только заслоняют. Земля,
+// участок и ландшафт не участвуют. Побеждает ближайшее к камере попадание.
+
+const OCCLUDERS = new Set(['slab', 'roof']);
+
+// Подготовка граней сетки к лучу: плоскость (нормаль по Ньюэллу), ось
+// проекции и габарит. Только выбираемые и заслоняющие грани; стены — коробками.
+export function pickFaces(faces) {
+  const out = [];
+  for (const f of faces) {
+    let pick = null;
+    if (f.kind === 'floor' && f.roomId) pick = { type: 'room', id: f.roomId, levelId: f.level };
+    else if (f.itemId && (f.kind === 'furniture' || f.kind === 'stairs' || f.kind === 'wall')) pick = { type: 'item', id: f.itemId, levelId: f.level };
+    else if (!OCCLUDERS.has(f.kind)) continue;
+    const P = f.pts;
+    if (!P || P.length < 3) continue;
+    let nx = 0; let ny = 0; let nz = 0;
+    for (let i = 0; i < P.length; i += 1) {
+      const a = P[i];
+      const b = P[(i + 1) % P.length];
+      nx += (a.y - b.y) * (a.z + b.z);
+      ny += (a.z - b.z) * (a.x + b.x);
+      nz += (a.x - b.x) * (a.y + b.y);
+    }
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-9) continue;
+    const n = { x: nx / len, y: ny / len, z: nz / len };
+    const ax = Math.abs(n.x); const ay = Math.abs(n.y); const az = Math.abs(n.z);
+    const drop = az >= ax && az >= ay ? 'z' : ax >= ay ? 'x' : 'y';
+    const box = { x0: Infinity, y0: Infinity, z0: Infinity, x1: -Infinity, y1: -Infinity, z1: -Infinity };
+    for (const p of P) {
+      box.x0 = Math.min(box.x0, p.x); box.x1 = Math.max(box.x1, p.x);
+      box.y0 = Math.min(box.y0, p.y); box.y1 = Math.max(box.y1, p.y);
+      box.z0 = Math.min(box.z0, p.z); box.z1 = Math.max(box.z1, p.z);
+    }
+    out.push({ pts: P, n, d: dot(n, P[0]), drop, box, pick });
+  }
+  return out;
+}
+
+const AXES2 = { x: ['y', 'z'], y: ['x', 'z'], z: ['x', 'y'] };
+
+// Луч × подготовленная грань → t (по лучу) или null.
+export function rayFace(ray, f) {
+  const den = dot(f.n, ray.d);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = (f.d - dot(f.n, ray.o)) / den;
+  if (!(t > 0)) return null;
+  const p = { x: ray.o.x + ray.d.x * t, y: ray.o.y + ray.d.y * t, z: ray.o.z + ray.d.z * t };
+  const e = 0.5;
+  const b = f.box;
+  if (p.x < b.x0 - e || p.x > b.x1 + e || p.y < b.y0 - e || p.y > b.y1 + e || p.z < b.z0 - e || p.z > b.z1 + e) return null;
+  const [u, v] = AXES2[f.drop];
+  let inside = false;
+  const P = f.pts;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i, i += 1) {
+    const a = P[i]; const c = P[j];
+    if ((a[v] > p[v]) !== (c[v] > p[v]) && p[u] < ((c[u] - a[u]) * (p[v] - a[v])) / (c[v] - a[v]) + a[u]) inside = !inside;
+  }
+  return inside ? t : null;
+}
+
+// Ближайший объект под лучом: { type: 'wall', ...pickWall } | { type: 'room' |
+// 'item' | 'opening', id, levelId, t } или null (пусто или заслонено
+// перекрытием/кровлей). sets = { walls, openings, faces } (faces — pickFaces).
+export function pickObject(sets, ray) {
+  let best = null;
+  const wall = sets.walls?.length ? pickWall(sets.walls, ray) : null;
+  if (wall) best = { ...wall, type: 'wall' };
+  for (const b of sets.openings || []) {
+    const hit = rayBox(ray, b);
+    if (hit && (!best || hit.t < best.t)) best = { type: 'opening', id: b.id, kind: b.kind, levelId: b.levelId, t: hit.t, box: b };
+  }
+  let face = null;
+  for (const f of sets.faces || []) {
+    const t = rayFace(ray, f);
+    if (t !== null && (!face || t < face.t)) face = { t, f };
+  }
+  // Пол и грань предмета чуть «уступают» стенам и проёмам при равенстве (5 мм).
+  if (face && (!best || face.t < best.t - 5)) {
+    best = face.f.pick ? { ...face.f.pick, t: face.t } : null;
+  }
+  return best;
 }

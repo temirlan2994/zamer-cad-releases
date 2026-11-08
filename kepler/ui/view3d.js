@@ -11,14 +11,20 @@
 // (core/pick3d.js), правка — core/wall-edit3d.js; во время жеста
 // пересобирается только слой стен этажа, в историю — одна запись.
 //
+// Выбираются и другие объекты (срез 1): помещение — по полу, мебель,
+// лестница, колонна — по своим граням, проём — по пустоте в стене; ближайшее
+// к камере попадание побеждает (core/pick3d.js pickObject). Выбор общий с
+// планом, объект другого этажа делает его активным. Слои: «Мебель» и «Этажи»
+// (все / до активного / только активный) — запоминаются в localStorage.
+//
 // Модель — core/mesh3d.js (оси дома: x вправо, y вниз по плану, z вверх).
 // Здесь она переводится в правую систему: X = x, Y = −y, Z = z.
 
 import { GRID_STEP } from '../core/catalog.js';
-import { buildHouseMesh, buildLevelWalls } from '../core/mesh3d.js';
+import { boxFaces, buildHouseMesh, buildLevelWalls, shownLevelIds } from '../core/mesh3d.js';
 import { LEVEL_KEYS } from '../core/model.js';
 import {
-  axisDelta, cameraBasis, pickWall, projectPoint, screenRay, wallBoxes,
+  axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, screenRay,
 } from '../core/pick3d.js';
 import {
   GRIP_LABEL, applyGrip, applyGripValue, findWallRecord, gripFor, gripValue,
@@ -38,13 +44,28 @@ import { selectObject } from './tools.js';
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
 // дом, и ближняя плоскость начинает срезать стены.
 const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000, target: { x: 0, y: 0, z: 1500 } };
-const opts = { roof: false, site: true, terrainScale: 1, landscape: true };
+const opts = { roof: false, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all' };
+const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи
+const LEVEL_MODES = new Set(['all', 'upto', 'only']);
+
+function loadLayers() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null');
+    if (raw && typeof raw.furniture === 'boolean') opts.furniture = raw.furniture;
+    if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
+  } catch { /* нет хранилища — по умолчанию */ }
+}
+
+function saveLayers() {
+  try { localStorage.setItem(LAYERS_KEY, JSON.stringify({ furniture: opts.furniture, levels: opts.levels })); } catch { /* нет хранилища */ }
+}
 let faces = [];
 let active = false;
 let gl = null; // WebGL-контекст (null — рисуем через canvas 2D)
 let glState = null; // программа, атрибуты, буферы
 let use2d = false;
 let drawQueued = false;
+let geomDirty = false; // перекраска выбора — пересобрать буферы перед кадром
 const pointers = new Map();
 let gesture = null;
 
@@ -65,15 +86,17 @@ const camera = (width, height) => cameraBasis(cam, width, height);
 // ---------------------------------------------------------------- выбор стен
 
 const SEL_COLOR = '#a9c8ef'; // выбранная стена
+const SEL_FILL = '#8db4e8'; // выбранные пол, предмет, лестница
+const SEL_OPENING = '#5b94dd'; // коробка выбранного проёма (полупрозрачная)
 const GRIP_COLOR = '#5b94dd'; // грань-ручка под мышью / в жесте
 const CLICK_SLOP = 5; // px — дальше это вращение, а не клик
 const HOLD_MS = 450; // удержание пальцем — перетаскивание ручки
-let boxes = null; // коробки стен для луча (кеш до пересборки)
+let sets = null; // коробки стен и проёмов, грани для луча (кеш до пересборки)
 let hover = null; // { key, level, face, normal, kind } — ручка выбранной стены под мышью
 let edit = null; // жест правки стены
 
-// Стены выбираются и правятся только в «Плане» (в «Участке»/«Ландшафте»
-// план стен не правится).
+// Объекты выбираются (стены — и правятся) только в «Плане» (в «Участке»/
+// «Ландшафте» план не правится).
 const wallsEditable = () => !isSiteView();
 
 function selectedRef() {
@@ -84,7 +107,21 @@ function selectedRef() {
 const refMatches = (ref, sel) => Boolean(ref && sel && ref.level === sel.level && (ref.key === sel.key || ref.keys?.includes(sel.key)));
 const sameNormal = (a, b) => a && b && a.x === b.x && a.y === b.y && a.z === b.z;
 
+// Выбор активного этажа, кроме стены: { type, id, level }.
+function selectedObject() {
+  const sel = state.selection;
+  if (!state.project || !sel || !['room', 'item', 'opening'].includes(sel.type)) return null;
+  return { type: sel.type, id: sel.id, level: state.project.activeLevel };
+}
+
 function faceColor(face) {
+  if (face.kind === 'overlay') return face.color;
+  const obj = selectedObject();
+  if (obj && face.level === obj.level) {
+    if (obj.type === 'room' && face.kind === 'floor' && face.roomId === obj.id) return SEL_FILL;
+    if (obj.type === 'item' && face.itemId === obj.id) return SEL_FILL;
+  }
+  if (obj?.type === 'opening' && face.openingId === obj.id) return SEL_OPENING;
   if (face.kind !== 'wall' || !face.ref) return face.color;
   const sel = selectedRef();
   if (!refMatches(face.ref, sel)) return face.color;
@@ -110,6 +147,7 @@ function render() {
   const canvas = el('canvas3d');
   if (!active || !canvas) return;
   if (!use2d && !gl) initGl(canvas);
+  else if (gl && geomDirty) uploadGeometry();
   if (gl) renderGl(canvas); else render2d(canvas);
 }
 
@@ -144,7 +182,18 @@ function initGl(canvas) {
   uploadGeometry();
 }
 
-const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth']);
+const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture']);
+
+// Выбранный проём — полупрозрачная коробка акцентного цвета в его пустоте.
+function selectionOverlay() {
+  const obj = selectedObject();
+  if (obj?.type !== 'opening') return [];
+  const b = pickSets()?.openings.find((q) => q.id === obj.id && q.levelId === obj.level);
+  if (!b) return [];
+  const e = 8; // чуть шире пустоты — видна поверх откосов
+  return boxFaces(b.x0 - e, b.y0 - e, b.x1 + e, b.y1 + e, b.z0, b.z1, SEL_OPENING, 'overlay')
+    .map((f) => ({ ...f, alpha: 0.4, twoSided: true }));
+}
 
 // Грани → треугольники (затенение по Ламберту заранее) и рёбра.
 function uploadGeometry() {
@@ -152,7 +201,8 @@ function uploadGeometry() {
   const opaque = [];
   const glass = [];
   const lines = [];
-  for (const face of faces) {
+  geomDirty = false;
+  for (const face of faces.concat(selectionOverlay())) {
     const P = face.pts.map(W);
     const n = face.twoSided || !(face.normal.x || face.normal.y || face.normal.z) ? polyNormal(P) : W(face.normal);
     const lit = face.twoSided ? Math.abs(dot(n, LIGHT)) : Math.max(0, dot(n, LIGHT));
@@ -282,7 +332,8 @@ function render2d(canvas) {
   const c = camera(width, height);
   const near = 100;
   const list = [];
-  for (const face of faces) {
+  geomDirty = false;
+  for (const face of faces.concat(selectionOverlay())) {
     const P = face.pts.map(W);
     const centroid = P.reduce((s, p) => ({ x: s.x + p.x / P.length, y: s.y + p.y / P.length, z: s.z + p.z / P.length }), { x: 0, y: 0, z: 0 });
     const toEye = sub(c.eye, centroid);
@@ -364,7 +415,8 @@ function syncReliefControl() {
 }
 
 
-const HINT_IDLE = 'Клик по стене — выбрать (и на плане) · тянуть — вращать, колесо — масштаб';
+const HINT_IDLE = 'Клик — выбрать стену, помещение, проём или мебель (и на плане) · тянуть — вращать, колесо — масштаб';
+const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копировать/вставить/дублировать · R — повернуть мебель · Esc — снять выбор';
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
@@ -376,23 +428,52 @@ function setHint(text) {
   if (text === undefined) {
     if (!wallsEditable()) text = HINT_SITE;
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
+    else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
   }
   hint.textContent = text;
 }
 
-// Подсветка выбора и ручки: перекраска граней.
+// Подсветка выбора и ручки: перекраска граней (к следующему кадру).
 function refreshHighlight() {
-  uploadGeometry();
+  geomDirty = true;
   requestRender();
   setHint();
+}
+
+// Выбор сменился (план, «Свойства», клавиши) — открытый 3D перекрашивается.
+export function refresh3dSelection() {
+  if (!active || edit) return;
+  refreshHighlight();
+}
+
+// Esc в 3D: сначала ввод числа, жест правки, выбор; true — Esc поглощён,
+// иначе (выбора нет) вид можно закрыть.
+export function escape3d() {
+  if (!active) return false;
+  if (numTarget) { hideNumber(); setHint(); return true; }
+  if (edit) { cancelEdit(); return true; }
+  if (state.selection) {
+    selectObject(null);
+    hover = null;
+    refreshHighlight();
+    return true;
+  }
+  return false;
+}
+
+function syncLayerControls() {
+  const furn = el('v3Furniture');
+  if (furn) furn.checked = opts.furniture;
+  const lv = el('v3Levels');
+  if (lv) lv.value = opts.levels;
 }
 
 export function refresh3d() {
   if (!active || edit) return;
   syncReliefControl();
   faces = buildHouseMesh(state.project, opts);
-  boxes = null;
+  sets = null;
   uploadGeometry();
   requestRender();
   setHint();
@@ -402,10 +483,11 @@ export function open3d() {
   closeElevation(); // фасад на холсте уступает 3D
   active = true;
   el('view3d').hidden = false;
+  document.body.classList.add('v3-open'); // этажи — поверх 3D
   el('view3dBtn')?.classList.add('active');
   syncReliefControl();
   faces = buildHouseMesh(state.project, opts);
-  boxes = null;
+  sets = null;
   hover = null;
   uploadGeometry();
   frameHouse();
@@ -420,6 +502,7 @@ export function close3d() {
   active = false;
   hover = null;
   el('view3d').hidden = true;
+  document.body.classList.remove('v3-open');
   el('view3dBtn')?.classList.remove('active');
   document.dispatchEvent(new CustomEvent('kepler:view'));
 }
@@ -439,16 +522,25 @@ function canvasPoint(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
 }
 
+// Наборы для луча — по показанным этажам; грани — из текущей сетки.
+function pickSets() {
+  if (!state.project) return null;
+  if (!sets) {
+    const { walls, openings } = pickBoxes(state.project, shownLevelIds(state.project, opts.levels));
+    sets = { walls, openings, faces: pickFaces(faces) };
+  }
+  return sets;
+}
+
 function pickAt(e) {
   if (!state.project || !wallsEditable()) return null;
   const c = canvasPoint(e);
-  boxes ||= wallBoxes(state.project);
-  return pickWall(boxes, screenRay(cam, c.w, c.h, c.x, c.y));
+  return pickObject(pickSets(), screenRay(cam, c.w, c.h, c.x, c.y));
 }
 
 const onSelectedWall = (hit) => {
   const sel = selectedRef();
-  return Boolean(hit && sel && hit.key === sel.key && hit.levelId === sel.level);
+  return Boolean(hit?.type === 'wall' && sel && hit.key === sel.key && hit.levelId === sel.level);
 };
 
 function gripAt(hit, e) {
@@ -461,24 +553,27 @@ function updateHover(e) {
   const hit = pickAt(e);
   const grip = gripAt(hit, e);
   const next = grip ? { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind } : null;
-  el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : '';
+  el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : (hit ? 'pointer' : '');
   const same = (!next && !hover) || (next && hover && next.key === hover.key && next.face === hover.face && sameNormal(next.normal, hover.normal));
   hover = next;
   if (!same) { uploadGeometry(); requestRender(); }
 }
 
-// Выбор стены кликом/тапом (пусто — снять выбор стены). Стена другого
-// этажа делает его активным.
+// Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
+// выбор). Объект другого этажа делает его активным.
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi']);
+
 function clickSelect(hit) {
   if (!wallsEditable()) return;
   const defer = state.touchDeferSelect;
   state.touchDeferSelect = false;
   try {
     if (!hit) {
-      if (state.selection?.type === 'wall') selectObject(null);
+      if (SELECTABLE.has(state.selection?.type)) selectObject(null);
     } else {
-      if (hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
-      selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
+      if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
+      if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
+      else selectObject({ type: hit.type, id: hit.id });
     }
   } finally {
     state.touchDeferSelect = defer;
@@ -521,7 +616,7 @@ function moveEdit(e) {
   edit.d = d;
   edit.changed = res.ok && !res.unchanged;
   faces = edit.base.concat(buildLevelWalls(state.project, edit.levelId));
-  boxes = null;
+  sets = null;
   uploadGeometry();
   requestRender();
   if (!res.ok) { setHint(`Нельзя: ${res.reason}`); return; }
@@ -738,6 +833,14 @@ export function bind3d() {
   el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
+  loadLayers();
+  syncLayerControls();
+  el('v3Furniture')?.addEventListener('change', (e) => { opts.furniture = e.target.checked; saveLayers(); refresh3d(); });
+  el('v3Levels')?.addEventListener('change', (e) => {
+    opts.levels = LEVEL_MODES.has(e.target.value) ? e.target.value : 'all';
+    saveLayers();
+    refresh3d();
+  });
   el('v3Relief')?.addEventListener('input', (e) => {
     opts.terrainScale = Math.max(1, Math.min(5, Number(e.target.value) || 1));
     const label = el('v3ReliefVal');
@@ -772,19 +875,27 @@ export function bind3d() {
   new ResizeObserver(() => requestRender()).observe(canvas);
 }
 
-// Для автотестов: камера, число граней, выбранная стена.
+// Для автотестов: камера, число граней, выбранная стена, слои.
 export function debug3d() {
+  const levelsShown = [...new Set(faces.filter((f) => f.kind === 'floor').map((f) => f.level))];
   return {
     active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
     selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
     highlighted: faces.filter((f) => f.kind === 'wall' && faceColor(f) !== f.color).length,
+    highlightedAll: faces.filter((f) => faceColor(f) !== f.color).length + selectionOverlay().length,
+    furniture: faces.filter((f) => f.kind === 'furniture').length,
+    levels: opts.levels, levelsShown, roof: faces.some((f) => f.kind === 'roof'),
   };
 }
 
-// Для автотестов: что под точкой экрана (clientX/Y) — стена и грань.
+// Для автотестов: что под точкой экрана (clientX/Y): стена (key, face) или
+// помещение / предмет / проём (type, id).
 export function debug3dPick(x, y) {
   const hit = pickAt({ clientX: x, clientY: y });
-  return hit ? { key: hit.key, face: hit.face, levelId: hit.levelId } : null;
+  if (!hit) return null;
+  return hit.type === 'wall'
+    ? { type: 'wall', key: hit.key, face: hit.face, levelId: hit.levelId }
+    : { type: hit.type, id: hit.id, levelId: hit.levelId };
 }
 
 // Для автотестов: точка в осях дома → экранные координаты (clientX/Y).
