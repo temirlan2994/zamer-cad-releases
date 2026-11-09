@@ -4,6 +4,7 @@
 //   on — показывать оси на плане (выключено — оси и не притягивают);
 //   dims — размерная цепочка между осями;
 //   sheets — оси на листах планов этажей;
+//   auto — автонумерация осей по порядку (ручные марки сохраняются);
 //   snap — 'face' (грань комнаты или наружная грань стены на оси) или
 //          'axis' (ось стены на оси).
 // Лёгкий модуль: только core и state (его читает render.js).
@@ -13,11 +14,11 @@ import { gridExtent, gridOffsets, gridWallPoints, visibleGrids } from '../core/g
 import { state } from './state.js';
 
 const KEY = 'kepler-plan-grids';
-export const PLAN_GRID_DEFAULT = Object.freeze({ on: true, dims: false, sheets: true, snap: 'face' });
+export const PLAN_GRID_DEFAULT = Object.freeze({ on: true, dims: false, sheets: true, snap: 'face', auto: true });
 
 export function normalizePlanGrid(v) {
   const b = (k) => (typeof v?.[k] === 'boolean' ? v[k] : PLAN_GRID_DEFAULT[k]);
-  return { on: b('on'), dims: b('dims'), sheets: b('sheets'), snap: v?.snap === 'axis' ? 'axis' : 'face' };
+  return { on: b('on'), dims: b('dims'), sheets: b('sheets'), snap: v?.snap === 'axis' ? 'axis' : 'face', auto: b('auto') };
 }
 
 function read() {

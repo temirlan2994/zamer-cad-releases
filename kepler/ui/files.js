@@ -3,6 +3,7 @@
 import { buildProjectDxf, buildSitePlanDxf, buildStructuredExport } from '../core/export.js';
 import { buildIfc } from '../core/ifc.js';
 import { buildLandscapeCsv } from '../core/landscape-report.js';
+import { autoNumberGrids } from '../core/grid-axes.js';
 import { createProject, levelProject, serializeProject } from '../core/model.js';
 import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
@@ -11,6 +12,7 @@ import { saveFile, saveZip } from './cloud.js';
 import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
+import { planGridPref } from './plan-grids.js';
 import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
@@ -99,6 +101,8 @@ export function openProjectFile(file) {
       const before = snapshotIfContent();
       const beforePid = state.pid;
       restoreFrom(String(reader.result));
+      // Оси из файла — по порядку (автонумерация; ручные марки сохраняются).
+      if (planGridPref().auto && state.project.grids?.length) state.project.grids = autoNumberGrids(state.project.grids);
       state.pid = null;
       if (before) pushHistory(before, beforePid);
       fitView();

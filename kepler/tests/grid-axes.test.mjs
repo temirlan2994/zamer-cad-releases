@@ -247,3 +247,26 @@ test('магнит: комната у оси примагничивается; �
   assert.equal(rs.rect.x + rs.rect.w, 14000, 'растяжение: правая грань на оси');
   state.project = null;
 });
+
+test('автонумерация: по положению, ручные марки сохраняются', async () => {
+  const { autoNumberGrids } = await import('../core/grid-axes.js');
+  const grids = [
+    { id: 'a', kind: 'x', at: 8000, label: '7' },
+    { id: 'b', kind: 'x', at: 0, label: '1' },
+    { id: 'c', kind: 'x', at: 4000, label: '6' },
+    { id: 'd', kind: 'y', at: 0, label: 'А' },
+    { id: 'e', kind: 'y', at: 5000, label: 'Б' },
+    { id: 'f', kind: 'y', at: 2500, label: 'Я' },
+  ];
+  const out = autoNumberGrids(grids);
+  const label = (id) => out.find((g) => g.id === id).label;
+  assert.deepEqual([label('b'), label('c'), label('a')], ['1', '2', '3'], 'слева направо');
+  assert.deepEqual([label('e'), label('f'), label('d')], ['А', 'Б', 'В'], 'снизу вверх (большой y — внизу)');
+  // ручная марка остаётся, остальные обходят её
+  const manual = autoNumberGrids([...grids.slice(0, 2), { ...grids[2], manual: true, label: '2' }]);
+  assert.equal(manual.find((g) => g.id === 'c').label, '2');
+  assert.equal(manual.find((g) => g.id === 'b').label, '1');
+  assert.equal(manual.find((g) => g.id === 'a').label, '3');
+  // исходный массив не меняется
+  assert.equal(grids[0].label, '7');
+});

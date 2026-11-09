@@ -103,6 +103,7 @@ export function normalizeGrid(raw) {
   const f = num(raw.from); const t = num(raw.to);
   if (f !== null && t !== null && Math.abs(t - f) >= 1) { g.from = round(Math.min(f, t)); g.to = round(Math.max(f, t)); }
   if (raw.hidden === true) g.hidden = true;
+  if (raw.manual === true) g.manual = true; // марка задана вручную — автонумерация её не трогает
   return g;
 }
 
@@ -136,6 +137,26 @@ export function renumberGrids(grids) {
   const labels = new Map();
   for (const g of sortGrids(grids)) { labels.set(g.id, gridLabelAt(g.kind, idx[g.kind])); idx[g.kind] += 1; }
   return grids.map((g) => ({ ...g, label: labels.get(g.id) }));
+}
+
+// Автонумерация по положению: вертикальные 1, 2, 3… слева направо, горизонтальные
+// А, Б, В… снизу вверх. Оси с ручной маркой (manual) сохраняют её, остальным
+// достаются следующие свободные марки по порядку. Возвращает новый массив.
+export function autoNumberGrids(grids) {
+  const list = grids || [];
+  const labels = new Map();
+  for (const kind of ['x', 'y']) {
+    const own = sortGrids(list.filter((g) => g.kind === kind));
+    const taken = new Set(own.filter((g) => g.manual).map((g) => String(g.label)));
+    let i = 0;
+    for (const g of own) {
+      if (g.manual) continue;
+      let l = gridLabelAt(kind, i); i += 1;
+      while (taken.has(l)) { l = gridLabelAt(kind, i); i += 1; }
+      labels.set(g.id, l);
+    }
+  }
+  return list.map((g) => (labels.has(g.id) && labels.get(g.id) !== g.label ? { ...g, label: labels.get(g.id) } : g));
 }
 
 export const moveGrid = (g, at) => ({ ...g, at: round(at) });

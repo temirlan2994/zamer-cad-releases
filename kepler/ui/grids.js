@@ -15,7 +15,7 @@
 
 import {
   createGrid, gridExtent, gridSegment, houseBox, moveGrid, nextGridLabel, autoGrids, resetGridExtent,
-  setGridExtent, visibleGrids,
+  autoNumberGrids, setGridExtent, visibleGrids,
 } from '../core/grid-axes.js';
 import { snapWallPoint } from '../core/wall-manual.js';
 import { escapeHtml, toast } from './dom.js';
@@ -39,7 +39,8 @@ export const gridKindTitle = (kind) => (kind === 'x' ? 'Вертикальная
 // ---------------------------------------------------------------- команды
 
 function setGrids(list) {
-  if (list.length) state.project.grids = list; else delete state.project.grids;
+  const next = planGridPref().auto ? autoNumberGrids(list) : list;
+  if (next.length) state.project.grids = next; else delete state.project.grids;
 }
 
 export function addGrid(grid, { select = false } = {}) {
@@ -257,6 +258,7 @@ export function gridDragMove(drag, plan, event) {
 // Конец перетаскивания — одна запись истории.
 export function gridDragEnd(drag) {
   if (!drag.moved) { requestDraw(); return; }
+  setGrids(grids()); // автонумерация по новому порядку
   pushHistory(drag.before);
   afterChange();
 }
@@ -325,7 +327,7 @@ export function renderGridProps(panel, g) {
     const label = String(e.target.value).trim().slice(0, 8);
     if (!label || label === g.label) { e.target.value = g.label; return; }
     if (grids().some((x) => x.id !== id && x.kind === g.kind && x.label === label)) toast(`Марка ${label} уже есть у другой оси`, true);
-    updateGrid(id, (x) => ({ ...x, label }));
+    updateGrid(id, (x) => ({ ...x, label, manual: true })); // ручная марка не перенумеровывается
   });
   panel.querySelector('#gridAt').addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
@@ -338,7 +340,7 @@ export function renderGridProps(panel, g) {
     // Новое направление: ось — через середину отрезка, марка — следующая свободная.
     const seg = gridSegment(state.project, g);
     const mid = kind === 'x' ? (seg.a.x + seg.b.x) / 2 : (seg.a.y + seg.b.y) / 2;
-    updateGrid(id, (x) => ({ ...resetGridExtent(x), kind, at: Math.round(mid), label: nextGridLabel(grids().filter((o) => o.id !== id), kind) }));
+    updateGrid(id, (x) => { const { manual: _m, ...rest } = x; return { ...resetGridExtent(rest), kind, at: Math.round(mid), label: nextGridLabel(grids().filter((o) => o.id !== id), kind) }; });
   });
   panel.querySelector('#gridHidden').addEventListener('change', (e) => {
     updateGrid(id, (x) => { const { hidden: _h, ...rest } = x; return e.target.checked ? { ...rest, hidden: true } : rest; });
@@ -356,6 +358,7 @@ export function gridViewBlock() {
     <h3>Координационные оси</h3>
     <div class="prop-block" id="viewsGrids">
       <label class="check-row"><input type="checkbox" id="viewsGridOn" ${pref.on ? 'checked' : ''}><span>Показывать оси на плане</span><em>${list.length}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsGridNumber" ${pref.auto ? 'checked' : ''}><span>Автонумерация осей</span></label>
       <label class="check-row"><input type="checkbox" id="viewsGridDims" ${pref.dims ? 'checked' : ''}><span>Размеры между осями</span></label>
       <label class="check-row"><input type="checkbox" id="viewsGridSheets" ${pref.sheets ? 'checked' : ''}><span>Оси на листах планов</span></label>
       <label class="prop-field"><span>Привязка к оси</span>
@@ -375,6 +378,11 @@ export function gridViewBlock() {
 export function bindGridViewBlock(panel, rerender) {
   const on = (sel, ev, fn) => panel.querySelector(sel)?.addEventListener(ev, fn);
   on('#viewsGridOn', 'change', (e) => { setPlanGridPref({ on: e.target.checked }); requestDraw(); });
+  on('#viewsGridNumber', 'change', (e) => {
+    setPlanGridPref({ auto: e.target.checked });
+    if (e.target.checked && grids().length) mutate(() => { setGrids(grids()); });
+    requestDraw(); rerender();
+  });
   on('#viewsGridDims', 'change', (e) => { setPlanGridPref({ dims: e.target.checked }); requestDraw(); });
   on('#viewsGridSheets', 'change', async (e) => {
     setPlanGridPref({ sheets: e.target.checked });
