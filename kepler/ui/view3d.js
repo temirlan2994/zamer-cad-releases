@@ -21,7 +21,10 @@
 // Здесь она переводится в правую систему: X = x, Y = −y, Z = z.
 
 import { GRID_STEP } from '../core/catalog.js';
-import { boxFaces, buildHouseMesh, buildLevelWalls, massFaces, shownLevelIds } from '../core/mesh3d.js';
+import {
+  boxFaces, buildHouseMesh, buildLevelWalls, massFaces, shownLevelIds, terrainHeightFn,
+} from '../core/mesh3d.js';
+import { massGroundFaces } from '../core/mass-ground.js';
 import { LEVEL_KEYS } from '../core/model.js';
 import {
   axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, screenRay,
@@ -41,8 +44,8 @@ import {
 import { cancelTool, selectObject } from './tools.js';
 import {
   bindMassNum, cancelMassDrag, clearMassHover, closeMassNum, debugMass3d, finishMassDrag, initMass3d, massBoxes,
-  massDblClick, massDragging, massHover, massHoverAt, massNumOpen, massOverlay, massToolBack, massToolClick,
-  massToolHint, massToolMove, massToolOn, moveMassDrag, resetMassTool, selectedMassHit, startMassDrag,
+  massDblClick, massDragging, massHover, massHoverAt, massNumOpen, massOverlay, massPartAt, massToolBack,
+  massToolClick, massToolHint, massToolMove, massToolOn, moveMassDrag, resetMassTool, selectedMassHit, startMassDrag,
 } from './mass3d.js';
 import { pickMass } from '../core/pick3d.js';
 
@@ -178,6 +181,7 @@ function render() {
   if (!active || !canvas) return;
   if (!use2d && !gl) initGl(canvas);
   else if (gl && geomDirty) uploadGeometry();
+  else if (gl && state.selection?.type === 'mass') uploadOverlay(); // гизмо и точки — к камере
   if (gl) renderGl(canvas); else render2d(canvas);
 }
 
@@ -237,7 +241,7 @@ function faceArrays(list) {
     const P = face.pts.map(W);
     const n = face.twoSided || !(face.normal.x || face.normal.y || face.normal.z) ? polyNormal(P) : W(face.normal);
     const lit = face.twoSided ? Math.abs(dot(n, LIGHT)) : Math.max(0, dot(n, LIGHT));
-    const k = (0.6 + 0.4 * lit) / 255;
+    const k = face.flat ? 1 / 255 : (0.6 + 0.4 * lit) / 255; // flat — гизмо без тени
     const [r, g, b] = hexRgb(faceColor(face)).map((c) => c * k);
     const a = faceAlpha(face);
     const out = a < 1 ? glass : opaque;
@@ -275,16 +279,21 @@ function makeBuffers(arrays) {
 function uploadGeometry() {
   if (!gl) return;
   geomDirty = false;
-  if (glState.buffers) for (const b of Object.values(glState.buffers)) gl.deleteBuffer(b.buf);
-  glState.buffers = makeBuffers(faceArrays(faces));
+  for (const set of [glState.buffers, glState.under]) if (set) for (const b of Object.values(set)) gl.deleteBuffer(b.buf);
+  // Подземная часть масс — отдельно: рисуется сквозь землю (GREATER).
+  glState.buffers = makeBuffers(faceArrays(faces.filter((f) => f.kind !== 'massUnder')));
+  glState.under = makeBuffers(faceArrays(faces.filter((f) => f.kind === 'massUnder')));
   uploadOverlay();
 }
 
-// Только наложения (призрак и ручки масс) — без пересборки всего дома.
+// Только наложения (призрак и ручки масс) — без пересборки всего дома;
+// onTop (гизмо и точки массы) — отдельно, поверх сцены без теста глубины.
 function uploadOverlay() {
   if (!gl) return;
-  if (glState.over) for (const b of Object.values(glState.over)) gl.deleteBuffer(b.buf);
-  glState.over = makeBuffers(faceArrays(overlays()));
+  for (const set of [glState.over, glState.top]) if (set) for (const b of Object.values(set)) gl.deleteBuffer(b.buf);
+  const list = overlays();
+  glState.over = makeBuffers(faceArrays(list.filter((f) => !f.onTop)));
+  glState.top = makeBuffers(faceArrays(list.filter((f) => f.onTop)));
 }
 
 function orthographic(left, right, bottom, top, near, far) {
@@ -362,6 +371,21 @@ function renderGl(canvas) {
   gl.depthMask(false); // стекло прозрачное: не закрывает то, что за ним
   draw(glState.buffers.glass, gl.TRIANGLES);
   draw(over.glass, gl.TRIANGLES);
+  // Подземная часть масс: только там, где её закрывает земля (или дом).
+  if (glState.under) {
+    gl.depthFunc(gl.GREATER);
+    draw(glState.under.glass, gl.TRIANGLES);
+    draw(glState.under.lines, gl.LINES);
+    gl.depthFunc(gl.LEQUAL);
+  }
+  // Гизмо и точки массы — поверх всего (порядок — как в списке).
+  if (glState.top) {
+    gl.disable(gl.DEPTH_TEST);
+    draw(glState.top.glass, gl.TRIANGLES);
+    draw(glState.top.opaque, gl.TRIANGLES);
+    draw(glState.top.lines, gl.LINES);
+    gl.enable(gl.DEPTH_TEST);
+  }
   gl.depthMask(true);
 }
 
@@ -411,16 +435,23 @@ function render2d(canvas) {
       depth += zc;
     }
     if (behind) continue;
-    const light = 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
+    const light = face.flat ? 1 : 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
     const [r, g, b] = hexRgb(faceColor(face));
     const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
       const d = sub(W(raw), c.eye);
       return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
     })) : null;
-    list.push({ pts, edgePts, noEdges: face.noEdges, depth: depth / P.length, fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${faceAlpha(face)})`, kind: face.kind });
+    const er = face.edgeRgba;
+    list.push({
+      pts, edgePts, noEdges: face.noEdges, depth: depth / P.length, kind: face.kind, onTop: face.onTop, order: list.length,
+      fill: `rgba(${Math.round(r * light)},${Math.round(g * light)},${Math.round(b * light)},${faceAlpha(face)})`,
+      stroke: er ? `rgba(${Math.round(er[0] * 255)},${Math.round(er[1] * 255)},${Math.round(er[2] * 255)},${er[3]})` : null,
+    });
   }
-  const layer = (k) => (k === 'ground' ? 0 : k === 'boundary' ? 1 : 2);
-  list.sort((a, b) => layer(a.kind) - layer(b.kind) || b.depth - a.depth);
+  // Земля, затем подземная часть масс (видна сквозь землю), граница, дом;
+  // гизмо и точки массы — последними, в порядке списка.
+  const layer = (it) => (it.onTop ? 4 : it.kind === 'ground' ? 0 : it.kind === 'massUnder' ? 1 : it.kind === 'boundary' ? 2 : 3);
+  list.sort((a, b) => layer(a) - layer(b) || (a.onTop ? a.order - b.order : b.depth - a.depth));
   ctx.lineJoin = 'round';
   for (const it of list) {
     ctx.beginPath();
@@ -429,7 +460,7 @@ function render2d(canvas) {
     ctx.fillStyle = it.fill;
     ctx.fill();
     if (it.edgePts) {
-      ctx.strokeStyle = 'rgba(30,38,48,0.48)';
+      ctx.strokeStyle = it.stroke || 'rgba(30,38,48,0.48)';
       ctx.lineWidth = 0.75;
       ctx.beginPath();
       for (const [a, b] of it.edgePts) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
@@ -474,8 +505,8 @@ const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копироват
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
-const HINT_MASS = 'Масса: тяните верх — высота, бок — размер, Alt + тянуть — перенос · двойной клик по грани — число · R — повернуть · Delete · Ctrl+C/V/D';
-const HINT_MASS_TOUCH = 'Масса: удерживайте грань и тяните — размер · R — повернуть · Delete';
+const HINT_MASS = 'Масса: стрелки гизмо — переместить · точки — размер · R — повернуть · Delete';
+const HINT_MASS_TOUCH = HINT_MASS;
 let touchUsed = false;
 
 function setHint(text) {
@@ -548,8 +579,13 @@ function syncMassControl() {
 }
 
 // Пересобрать только грани масс (жест правки массы).
+// Подземная часть (рельеф и «Участок») пересобирается вместе с ними.
+const MASS_KINDS = new Set(['mass', 'massUnder', 'massLine']);
 function rebuildMasses() {
-  faces = faces.filter((f) => f.kind !== 'mass').concat(opts.masses ? massFaces(state.project?.masses) : []);
+  const list = state.project?.masses;
+  const hz = opts.masses && opts.site && list?.length ? terrainHeightFn(state.project, opts.terrainScale) : null;
+  faces = faces.filter((f) => !MASS_KINDS.has(f.kind))
+    .concat(opts.masses ? massFaces(list) : [], hz ? massGroundFaces(list, hz) : []);
 }
 
 export function refresh3d() {
@@ -660,7 +696,7 @@ const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize'
 
 function updateHover(e) {
   if (state.selection?.type === 'mass' && wallsEditable()) {
-    const r = massHoverAt(rayAt(e), e);
+    const r = massHoverAt(e);
     if (r.changed) { uploadGeometry(); requestRender(); }
     if (r.cursor) { el('canvas3d').style.cursor = r.cursor; return; }
   } else if (clearMassHover()) { uploadGeometry(); requestRender(); }
@@ -854,12 +890,12 @@ function onDown(e) {
     gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, massTool };
     return;
   }
-  // Грань выбранной массы — ручка: мышь — сразу, палец — удержанием.
-  const ray = rayAt(e);
-  const massGrip = wallsEditable() ? selectedMassHit(ray) : null;
-  const massFace = massGrip && massGrip.face !== 'bottom';
-  if (massFace && e.pointerType === 'mouse' && startMassDrag(e, ray)) {
+  // Гизмо или точка выбранной массы — сразу жест (мышь и палец; у пальца
+  // зона попадания шире). Тело массы — только выбор.
+  const massPart = wallsEditable() ? massPartAt(e) : null;
+  if (massPart && startMassDrag(e, massPart)) {
     gesture = { kind: 'mass' };
+    el('canvas3d').style.cursor = massPart.part.startsWith('g') ? 'grabbing' : el('canvas3d').style.cursor;
     setHint();
     return;
   }
@@ -868,17 +904,6 @@ function onDown(e) {
   // Мышь: нажатие на грань выбранной стены — сразу ручка.
   if (grip && e.pointerType === 'mouse' && startEdit(hit, grip, e.clientX, e.clientY)) return;
   gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, hit };
-  if (massFace) {
-    const g = gesture;
-    g.hold = setTimeout(() => {
-      if (gesture !== g || !g.click || pointers.size !== 1) return;
-      if (startMassDrag({ clientX: g.x0, clientY: g.y0, altKey: false }, ray)) {
-        gesture = { kind: 'mass' };
-        navigator.vibrate?.(15);
-      }
-    }, HOLD_MS);
-    return;
-  }
   // Палец/перо: удержание грани выбранной стены — ручка (как на плане).
   if (grip) {
     const g = gesture;
@@ -989,7 +1014,7 @@ function onCancel(e) {
 }
 
 function onDblClick(e) {
-  if (!massToolOn() && wallsEditable() && massDblClick(e, rayAt(e))) return;
+  if (!massToolOn() && wallsEditable() && massDblClick(e)) return;
   const hit = pickAt(e);
   const grip = gripAt(hit, e);
   if (grip) openNumber(e, hit, grip);
@@ -1022,6 +1047,13 @@ export function bind3d() {
     },
     label: setMassLabel,
     hint: (text) => setHint(text),
+    // Точка в осях дома → клиентские координаты; оси экрана для «точек к камере».
+    project: (p) => debug3dScreen(p),
+    basis: () => {
+      const c = camera(canvas.clientWidth || 1, canvas.clientHeight || 1);
+      return { r: W(c.r), u: W(c.u), f: W(c.f) };
+    },
+    ground: () => (opts.site ? terrainHeightFn(state.project, opts.terrainScale) : null),
   });
   bindMassNum();
   document.addEventListener('kepler:mass-tool', () => {
@@ -1099,6 +1131,8 @@ export function debug3d() {
     railings: faces.filter((f) => f.kind === 'railing').length,
     levels: opts.levels, levelsShown, roof: faces.some((f) => f.kind === 'roof'),
     masses: faces.filter((f) => f.kind === 'mass').length / 6, massLayer: opts.masses,
+    undergroundFaces: faces.filter((f) => f.kind === 'massUnder' && f.pts.length).length,
+    waterline: faces.filter((f) => f.kind === 'massLine').reduce((t, f) => t + f.edges.length, 0),
     mass: debugMass3d(), label: el('v3Label')?.hidden === false ? el('v3Label').textContent : null,
   };
 }

@@ -24,6 +24,7 @@ import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR, massBox } from './masses.js';
+import { massGroundFaces } from './mass-ground.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -1058,5 +1059,7 @@ export function buildHouseMesh(project, {
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
   if (masses) faces.push(...massFaces(project.masses));
+  // Часть масс под землёй (рельеф и слой «Участок») — бледно сквозь землю.
+  if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
   return faces;
 }

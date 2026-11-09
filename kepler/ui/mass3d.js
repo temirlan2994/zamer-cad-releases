@@ -19,16 +19,25 @@
 // Tab → глубина → Enter → высота → Enter. Esc — стадия назад.
 // Касание: тапы по шагам (третий тап — высота по положению пальца).
 //
-// Правка выбранной массы: тянуть грань — push/pull (верх — высота, бок —
-// эта грань, противоположная стоит), Alt + тянуть грань — перенос по
-// плоскости основания (опора: на землю или на верх другой массы); двойной
-// клик по грани — число. Касание: удержание грани выбранной массы. Каждый
-// жест — одна запись истории.
+// Правка выбранной массы (core/mass-gizmo.js) — поверх сцены рисуются:
+//   гизмо перемещения — стрелки X/Y/Z из центра (тянуть — перенос только
+//   вдоль оси) и квадрат XY (перенос по плоскости основания); привязка —
+//   грани других масс, отметки этажей, верх масс и земля (рельеф);
+//   точки размера — центры 6 граней (грань по нормали) и 8 углов (ширина и
+//   глубина сразу); противоположные грани стоят, не меньше 300 мм; двойной
+//   клик по точке — число.
+// Грань массы ничего не тянет: клик по телу — только выбор. Shift — без
+// шага, Esc — отмена жеста, каждый жест — одна запись истории. Касание —
+// те же ручки с увеличенной зоной попадания.
 
 import {
-  MASS_H_DEFAULT, MASS_MIN, createMass, faceSize, floorsLabel, isSupported, massBox,
-  massStep, resizeFace, setFaceSize, snapValue, stackMass,
+  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, createMass, faceSize, floorsLabel, massBox,
+  massStep, setFaceSize, snapValue,
 } from '../core/masses.js';
+import {
+  GIZMO_AXES, GIZMO_COLORS, GIZMO_PLANE_PX, GIZMO_PX, MASS_HANDLES, gizmoOrigin, gizmoPick,
+  handleFacing, handlePick, handlePoint, massHandle, resizeByHandle, snapShift,
+} from '../core/mass-gizmo.js';
 import { basePlane, pickMass, rayPlaneZ } from '../core/pick3d.js';
 import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
@@ -242,50 +251,130 @@ export function massOverlay() {
     const P = [{ x: c.x - s, y: c.y - s, z }, { x: c.x + s, y: c.y - s, z }, { x: c.x + s, y: c.y + s, z }, { x: c.x - s, y: c.y + s, z }];
     out.push({ pts: P, normal: { x: 0, y: 0, z: 1 }, color: GHOST, alpha: 0.85, kind: 'overlay', twoSided: true });
   }
-  // Ручки выбранной массы: маркеры в центрах верхней и боковых граней.
-  const sel = !t && state.selection?.type === 'mass' ? massById(state.selection.id) : null;
-  if (sel) {
-    const b = massBox(sel);
-    const s = 4.5 * k;
-    const cx = (b.x0 + b.x1) / 2; const cy = (b.y0 + b.y1) / 2; const cz = (b.z0 + b.z1) / 2;
-    const marks = {
-      top: { x: cx, y: cy, z: b.z1 }, px: { x: b.x1, y: cy, z: cz }, nx: { x: b.x0, y: cy, z: cz },
-      py: { x: cx, y: b.y1, z: cz }, ny: { x: cx, y: b.y0, z: cz },
-    };
-    for (const [face, p] of Object.entries(marks)) {
-      const hot = (hover?.id === sel.id && hover.face === face) || (drag?.id === sel.id && drag.face === face);
-      const color = hot ? '#ff9f1c' : '#ffffff';
-      const cube = [
-        [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], [[-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1]],
-        [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]], [[1, 1, -1], [-1, 1, -1], [-1, 1, 1], [1, 1, 1]],
-        [[-1, 1, -1], [-1, -1, -1], [-1, -1, 1], [-1, 1, 1]], [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]],
-      ];
-      for (const q of cube) {
-        const P = q.map(([a, bb, c]) => ({ x: p.x + a * s, y: p.y + bb * s, z: p.z + c * s }));
-        out.push({ pts: P, normal: { x: 0, y: 0, z: 1 }, color, alpha: 1, kind: 'overlay', twoSided: true, edges: P.map((pp, i) => [pp, P[(i + 1) % 4]]), edgeRgba: [0.15, 0.4, 0.85, 1] });
-      }
-    }
+  // Выбранная масса: точки размера и гизмо перемещения — поверх сцены.
+  const sel = !t ? selectedMass() : null;
+  if (sel) out.push(...gripOverlay(sel, k));
+  return out;
+}
+
+// ---------------------------------------------------------------- гизмо и точки
+
+const HANDLE_PX = 5; // радиус точки на экране, px (≈ 10 px в поперечнике)
+const HIT = { mouse: { axis: 8, handle: 10 }, touch: { axis: 22, handle: 20 } };
+const ACCENT_EDGE = [0.24, 0.5, 0.88, 1];
+
+function selectedMass() {
+  return state.selection?.type === 'mass' ? massById(state.selection.id) : null;
+}
+
+const add = (p, a, s) => ({ x: p.x + a.x * s, y: p.y + a.y * s, z: p.z + a.z * s });
+const vcross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+const vnorm = (a) => { const l = Math.hypot(a.x, a.y, a.z); return l > 1e-9 ? { x: a.x / l, y: a.y / l, z: a.z / l } : null; };
+
+const isHot = (id, part) => (drag?.id === id && drag.part === part) || (!drag && hover?.id === id && hover.part === part);
+
+// Круг-точка, развёрнутый к камере (r, u — оси экрана в осях дома).
+function disc(p, rad, B, n = 12) {
+  const P = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = (i / n) * Math.PI * 2;
+    P.push(add(add(p, B.r, Math.cos(a) * rad), B.u, Math.sin(a) * rad));
+  }
+  return P;
+}
+
+function gripOverlay(m, k) {
+  const out = [];
+  const B = env.basis();
+  const box = massBox(m);
+  const top = { kind: 'overlay', onTop: true, flat: true, twoSided: true, normal: { x: 0, y: 0, z: 1 } };
+  // Точки размера (сначала невидимые стороны — ниже в стопке).
+  const list = MASS_HANDLES.map((h) => ({ h, p: handlePoint(box, h.s), front: handleFacing(h.s, B.f) }))
+    .sort((a, b) => Number(a.front) - Number(b.front));
+  for (const { h, p, front } of list) {
+    const hot = isHot(m.id, h.id);
+    const P = disc(p, (hot ? HANDLE_PX + 1.5 : HANDLE_PX) * k, B);
+    out.push({
+      ...top, pts: P, color: hot ? GIZMO_COLORS.hot : '#ffffff', alpha: front || hot ? 1 : 0.55,
+      edges: P.map((q, i) => [q, P[(i + 1) % P.length]]), edgeRgba: front || hot ? ACCENT_EDGE : [0.24, 0.5, 0.88, 0.5],
+    });
+  }
+  // Гизмо: квадрат XY, затем стрелки (горячая — последней, поверх).
+  const O = gizmoOrigin(box);
+  const [s0, s1] = GIZMO_PLANE_PX.map((v) => v * k);
+  const X = GIZMO_AXES.x; const Y = GIZMO_AXES.y;
+  const Q = [add(add(O, X, s0), Y, s0), add(add(O, X, s1), Y, s0), add(add(O, X, s1), Y, s1), add(add(O, X, s0), Y, s1)];
+  const hotXY = isHot(m.id, 'gxy');
+  out.push({
+    ...top, pts: Q, color: hotXY ? GIZMO_COLORS.hot : GIZMO_COLORS.xy, alpha: hotXY ? 0.75 : 0.45,
+    edges: Q.map((q, i) => [q, Q[(i + 1) % 4]]), edgeRgba: [0.75, 0.5, 0.05, 0.95],
+  });
+  const L = GIZMO_PX * k;
+  const axes = ['x', 'y', 'z'].sort((a, b) => Number(isHot(m.id, `g${a}`)) - Number(isHot(m.id, `g${b}`)));
+  for (const axis of axes) {
+    const a = GIZMO_AXES[axis];
+    const side = vnorm(vcross(a, B.f));
+    if (!side) continue; // ось «в глаз»
+    const hot = isHot(m.id, `g${axis}`);
+    const color = hot ? GIZMO_COLORS.hot : GIZMO_COLORS[axis];
+    const w = (hot ? 2.2 : 1.5) * k;
+    const head = 14 * k;
+    const p0 = add(O, a, 6 * k);
+    const p1 = add(O, a, L - head);
+    out.push({ ...top, pts: [add(p0, side, -w), add(p1, side, -w), add(p1, side, w), add(p0, side, w)], color, alpha: 1 });
+    const hw = (hot ? 7 : 5.5) * k;
+    out.push({ ...top, pts: [add(p1, side, -hw), add(O, a, L), add(p1, side, hw)], color, alpha: 1 });
   }
   return out;
 }
 
-// ---------------------------------------------------------------- правка
-
-// Грань выбранной массы под лучом (только выбранной): { id, face, point, t } или null.
-export function selectedMassHit(ray) {
-  const sel = state.selection?.type === 'mass' ? massById(state.selection.id) : null;
-  if (!sel) return null;
-  return pickMass([{ id: sel.id, ...massBox(sel) }], ray);
+// Гизмо и точки выбранной массы в пикселях клиента (для попадания).
+function gripScreen(m) {
+  const k = env.worldPerPx();
+  const box = massBox(m);
+  const B = env.basis();
+  const O = gizmoOrigin(box);
+  const [s0, s1] = GIZMO_PLANE_PX.map((v) => v * k);
+  const X = GIZMO_AXES.x; const Y = GIZMO_AXES.y;
+  const L = GIZMO_PX * k;
+  return {
+    gizmo: {
+      origin: env.project(O),
+      tips: { x: env.project(add(O, X, L)), y: env.project(add(O, Y, L)), z: env.project(add(O, GIZMO_AXES.z, L)) },
+      plane: [add(add(O, X, s0), Y, s0), add(add(O, X, s1), Y, s0), add(add(O, X, s1), Y, s1), add(add(O, X, s0), Y, s1)].map(env.project),
+    },
+    handles: MASS_HANDLES.map((h) => ({ id: h.id, p: env.project(handlePoint(box, h.s)), back: !handleFacing(h.s, B.f) })),
+  };
 }
 
-const FACE_CURSOR = { top: 'ns-resize', bottom: 'ns-resize', px: 'ew-resize', nx: 'ew-resize', py: 'ew-resize', ny: 'ew-resize' };
+// Часть ручек выбранной массы под указателем: 'gx' | 'gy' | 'gz' | 'gxy' |
+// id точки (грань 'top'… или угол 'cpnp'…) или null. Порядок: видимые
+// точки, гизмо, точки на невидимой стороне.
+export function massPartAt(e) {
+  if (!env || tool()) return null;
+  const m = selectedMass();
+  if (!m) return null;
+  const hit = e?.pointerType === 'touch' || e?.pointerType === 'pen' ? HIT.touch : HIT.mouse;
+  const p = { x: e.clientX, y: e.clientY };
+  const scr = gripScreen(m);
+  const front = handlePick(scr.handles.filter((h) => !h.back), p, hit.handle);
+  if (front) return { id: m.id, part: front };
+  const g = gizmoPick(scr.gizmo, p, hit.axis);
+  if (g) return { id: m.id, part: `g${g}` };
+  const back = handlePick(scr.handles.filter((h) => h.back), p, hit.handle);
+  return back ? { id: m.id, part: back } : null;
+}
 
-export function massHoverAt(ray, e) {
-  const hit = selectedMassHit(ray);
-  const next = hit && hit.face !== 'bottom' ? { id: hit.id, face: hit.face } : null;
-  const changed = (next?.face || null) !== (hover?.face || null) || (next?.id || null) !== (hover?.id || null);
+const HANDLE_CURSOR = { top: 'ns-resize', bottom: 'ns-resize', px: 'ew-resize', nx: 'ew-resize', py: 'ew-resize', ny: 'ew-resize' };
+const partCursor = (part) => (part.startsWith('g') ? 'move' : HANDLE_CURSOR[part] || 'nwse-resize');
+
+// Наведение: подсветка части гизмо/точки и курсор.
+export function massHoverAt(e) {
+  const at = massPartAt(e);
+  const next = at ? { id: at.id, part: at.part, face: massHandle(at.part)?.face || null } : null;
+  const changed = (next?.part || null) !== (hover?.part || null) || (next?.id || null) !== (hover?.id || null);
   hover = next;
-  return { changed, cursor: next ? (e?.altKey ? 'move' : FACE_CURSOR[next.face]) : null };
+  return { changed, cursor: next ? partCursor(next.part) : null };
 }
 
 export function clearMassHover() {
@@ -294,88 +383,131 @@ export function clearMassHover() {
   return had;
 }
 
-// Начало жеста по грани выбранной массы. true — жест начат.
-export function startMassDrag(e, ray) {
-  const hit = selectedMassHit(ray);
-  if (!hit || hit.face === 'bottom') return false;
-  const m = massById(hit.id);
-  const move = Boolean(e.altKey);
+// ---------------------------------------------------------------- правка
+
+// Грань выбранной массы под лучом (только выбранной): { id, face, point, t } или null.
+export function selectedMassHit(ray) {
+  const sel = selectedMass();
+  if (!sel) return null;
+  return pickMass([{ id: sel.id, ...massBox(sel) }], ray);
+}
+
+// Начало жеста по гизмо или точке выбранной массы. true — жест начат.
+export function startMassDrag(e, at = massPartAt(e)) {
+  if (!at) return false;
+  const m = massById(at.id);
+  if (!m) return false;
+  const box = massBox(m);
+  const handle = massHandle(at.part);
   drag = {
-    id: m.id, face: hit.face, mode: move ? 'move' : 'face', start: { ...m }, x0: e.clientX, y0: e.clientY,
-    planeZ: hit.point.z, p0: hit.point, before: snapshot(), changed: false,
-    supported: isSupported(m, masses()),
+    id: m.id, part: at.part, handle, start: { ...m }, x0: e.clientX, y0: e.clientY,
+    before: snapshot(), changed: false,
   };
-  hover = { id: m.id, face: hit.face };
+  // Перенос по плоскости и углы — по горизонтальной плоскости.
+  if (at.part === 'gxy' || (handle && !handle.face)) {
+    drag.planeZ = at.part === 'gxy' ? gizmoOrigin(box).z : handlePoint(box, handle.s).z;
+    drag.p0 = rayPlaneZ(env.ray(e), drag.planeZ);
+  }
+  hover = { id: m.id, part: at.part, face: handle?.face || null };
   env.redraw();
   return true;
 }
 
-function faceCoord(box, face) {
-  return { top: box.z1, bottom: box.z0, px: box.x1, nx: box.x0, py: box.y1, ny: box.y0 }[face];
+// Отметки земли под основанием (рельеф): центр и углы.
+function groundZs(m) {
+  const hz = env.ground?.();
+  if (!hz) return [];
+  const b = massBox(m);
+  return [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1], [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]]
+    .map(([x, y]) => Math.round(hz(x, y))).filter((z) => z >= 0);
 }
 
-function dragFace(e) {
-  const d = drag;
-  const axis = { top: { x: 0, y: 0, z: 1 }, px: { x: 1, y: 0, z: 0 }, nx: { x: -1, y: 0, z: 0 }, py: { x: 0, y: 1, z: 0 }, ny: { x: 0, y: -1, z: 0 } }[d.face];
-  let delta = env.axisDelta(axis, e.clientX - d.x0, e.clientY - d.y0);
-  if (!delta && d.face === 'top') delta = -(e.clientY - d.y0) * env.worldPerPx();
-  const box0 = massBox(d.start);
-  const sign = d.face === 'nx' || d.face === 'ny' ? -1 : 1;
-  const raw = faceCoord(box0, d.face) + sign * delta;
-  let at;
-  if (e.shiftKey) at = Math.round(raw / 10) * 10;
-  else {
-    const k = env.worldPerPx();
-    const lines = d.face === 'top' ? zLines(d.id) : (d.face === 'px' || d.face === 'nx' ? massBaseSnap(d.id).xs : massBaseSnap(d.id).ys);
-    const step = d.face === 'top' ? 100 : massStep(1 / k);
-    at = snapValue(raw, lines, SNAP_PX * k, step).value;
-  }
-  const next = resizeFace(d.start, d.face, sign * (at - faceCoord(box0, d.face)));
-  return next;
+// Сдвиг (мм, оси дома) с привязкой: край габарита к линиям, иначе шаг.
+function snapAxis(coord, box, v, e, skip, extraZ = []) {
+  if (e.shiftKey) return Math.round(v);
+  const k = env.worldPerPx();
+  const lines = coord === 'z' ? zLines(skip).concat(extraZ) : massBaseSnap(skip)[`${coord}s`];
+  return snapShift(box[`${coord}0`], box[`${coord}1`], v, lines, SNAP_PX * k, massStep(1 / k)).value;
 }
 
-function dragMove(e) {
+// Сдвиг мыши → смещение вдоль оси (мм).
+function axisMove(axis, e) {
+  const dx = e.clientX - drag.x0; const dy = e.clientY - drag.y0;
+  let d = env.axisDelta(axis, dx, dy);
+  if (!d && axis.z) d = -dy * env.worldPerPx();
+  return d;
+}
+
+function dragGizmo(e) {
   const d = drag;
-  const p = rayPlaneZ(env.ray(e), d.planeZ);
-  if (!p) return null;
-  let dx = p.x - d.p0.x;
-  let dy = p.y - d.p0.y;
   const b = massBox(d.start);
-  if (!e.shiftKey) {
-    const k = env.worldPerPx();
-    const tol = SNAP_PX * k;
-    const step = massStep(1 / k);
-    const lines = massBaseSnap(d.id);
-    const fit = (lo, hi, v, list) => {
-      let best = null;
-      for (const L of list) {
-        for (const edge of [lo, hi]) {
-          const dd = L - (edge + v);
-          if (Math.abs(dd) <= tol && (!best || Math.abs(dd) < Math.abs(best))) best = dd;
-        }
-      }
-      return best != null ? v + best : Math.round(v / step) * step;
-    };
-    dx = fit(b.x0, b.x1, dx, lines.xs);
-    dy = fit(b.y0, b.y1, dy, lines.ys);
+  const shift = { x: 0, y: 0, z: 0 };
+  if (d.part === 'gxy') {
+    const p = d.p0 ? rayPlaneZ(env.ray(e), d.planeZ) : null;
+    if (p) { shift.x = p.x - d.p0.x; shift.y = p.y - d.p0.y; } else {
+      shift.x = axisMove(GIZMO_AXES.x, e);
+      shift.y = -axisMove(GIZMO_AXES.y, e);
+    }
+    shift.x = snapAxis('x', b, shift.x, e, d.id);
+    shift.y = snapAxis('y', b, shift.y, e, d.id);
+  } else {
+    const axis = d.part.slice(1);
+    const a = GIZMO_AXES[axis];
+    const v = axisMove(a, e);
+    for (const c of ['x', 'y', 'z']) if (a[c]) shift[c] = snapAxis(c, b, a[c] * v, e, d.id, c === 'z' ? groundZs(d.start) : []);
   }
-  let next = { ...d.start, x: d.start.x + dx, y: d.start.y + dy };
-  if (d.supported) next = stackMass(next, masses().filter((m) => m.id !== d.id));
-  return next;
+  shift.z = Math.max(-d.start.z0, shift.z);
+  return { ...d.start, x: d.start.x + shift.x, y: d.start.y + shift.y, z0: Math.round(d.start.z0 + shift.z) };
 }
+
+function dragHandle(e) {
+  const d = drag;
+  const b = massBox(d.start);
+  const s = d.handle.s;
+  const p0 = handlePoint(b, s);
+  const shift = { x: 0, y: 0, z: 0 };
+  const snapTo = (c, raw) => {
+    if (e.shiftKey) return Math.round(raw);
+    const k = env.worldPerPx();
+    const lines = c === 'z' ? zLines(d.id).concat(groundZs(d.start)) : massBaseSnap(d.id)[`${c}s`];
+    return snapValue(raw, lines, SNAP_PX * k, massStep(1 / k)).value;
+  };
+  if (d.handle.face) {
+    const n = FACE_NORMAL[d.handle.face];
+    const v = axisMove(n, e);
+    for (const c of ['x', 'y', 'z']) if (n[c]) shift[c] = snapTo(c, p0[c] + n[c] * v) - p0[c];
+  } else {
+    const p = d.p0 ? rayPlaneZ(env.ray(e), d.planeZ) : null;
+    if (!p) return null;
+    shift.x = snapTo('x', p0.x + p.x - d.p0.x) - p0.x;
+    shift.y = snapTo('y', p0.y + p.y - d.p0.y) - p0.y;
+  }
+  return resizeByHandle(d.start, s, shift);
+}
+
+const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v))}`;
 
 export function moveMassDrag(e) {
   if (!drag) return;
-  const next = drag.mode === 'move' ? dragMove(e) : dragFace(e);
+  const next = drag.handle ? dragHandle(e) : dragGizmo(e);
   if (!next) return;
   state.project.masses = masses().map((m) => (m.id === drag.id ? next : m));
   drag.changed = JSON.stringify(next) !== JSON.stringify(drag.start);
   const b = massBox(next);
-  const text = drag.mode === 'move'
-    ? `Перенос: ${Math.round(next.x - drag.start.x)}, ${Math.round(next.y - drag.start.y)} мм${next.z0 ? ` · низ ${Math.round(next.z0)}` : ''}`
-    : drag.face === 'top'
-      ? `Высота: ${Math.round(b.z1 - b.z0)} мм · ${floorsLabel(b.z1 - b.z0, massLevelHeight())}`
-      : `${drag.face === 'px' || drag.face === 'nx' ? 'Размер по X' : 'Размер по Y'}: ${Math.round(faceSize(next, drag.face))} мм`;
+  let text;
+  if (drag.handle) {
+    text = `${Math.round(b.x1 - b.x0)} × ${Math.round(b.y1 - b.y0)} × ${Math.round(b.z1 - b.z0)} мм`;
+    if (drag.handle.face === 'top' || drag.handle.face === 'bottom') text += ` · ${floorsLabel(b.z1 - b.z0, massLevelHeight())}`;
+  } else {
+    const at = `x ${Math.round(next.x)}, y ${Math.round(next.y)}, z ${Math.round(next.z0)}`;
+    if (drag.part === 'gxy') text = `Перенос ${signed(next.x - drag.start.x)}, ${signed(next.y - drag.start.y)} мм · ${at}`;
+    else {
+      const axis = drag.part.slice(1);
+      const a = GIZMO_AXES[axis];
+      const along = (next.x - drag.start.x) * a.x + (next.y - drag.start.y) * a.y + (next.z0 - drag.start.z0) * a.z;
+      text = `${axis.toUpperCase()} ${signed(along)} мм · ${at}`;
+    }
+  }
   env.label(text, e.clientX, e.clientY);
   env.redraw(true);
 }
@@ -510,22 +642,30 @@ export function bindMassNum() {
 export const massNumOpen = () => Boolean(numField);
 export function closeMassNum() { hideNum(); }
 
-// Двойной клик по грани выбранной массы — точное значение.
-export function massDblClick(e, ray) {
-  const hit = selectedMassHit(ray);
-  if (!hit || hit.face === 'bottom') return false;
-  const m = massById(hit.id);
+// Двойной клик по точке выбранной массы — точный размер её оси (угол —
+// ширина по x; противоположная грань стоит). Грань — ничего.
+export function massDblClick(e) {
+  const at = massPartAt(e);
+  const handle = at ? massHandle(at.part) : null;
+  if (!handle) return false;
+  const m = massById(at.id);
+  const face = handle.face || (handle.s.x > 0 ? 'px' : 'nx');
   lastCursor = { x: e.clientX, y: e.clientY };
-  showNum('face', faceSize(m, hit.face), { face: hit.face, id: m.id });
+  showNum('face', faceSize(m, face), { face, id: m.id });
   return true;
 }
 
-// Для автотестов.
+// Для автотестов: стадия инструмента, жест, наведение, ввод числа, гизмо и
+// точки выбранной массы (экранные координаты клиента).
 export function debugMass3d() {
   const t = tool();
+  const m = !t && env ? selectedMass() : null;
+  const scr = m ? gripScreen(m) : null;
   return {
     tool: Boolean(t), stage: t?.stage || null, a: t?.a || null, b: t?.b || null, z: t?.z ?? null, h: t?.h ?? null,
-    dragging: Boolean(drag), hover, num: numField?.kind || null,
+    dragging: Boolean(drag), part: drag?.part || null, hover, num: numField?.kind || null,
+    gizmo: scr ? scr.gizmo : null,
+    handles: scr ? Object.fromEntries(scr.handles.map((h) => [h.id, { ...h.p, back: h.back }])) : null,
   };
 }
 

@@ -192,7 +192,7 @@ export function renderMassProps(panel, m) {
         <button type="button" id="massCopy" title="Копия рядом (Ctrl+D)">Копировать</button>
         <button type="button" id="massDelete" class="danger">Удалить</button>
       </div>
-      <p class="hint">В 3D тяните грани выбранной массы: верх — высота, бок — размер (противоположная грань стоит), с Alt — перенос. Двойной клик по грани — число. На плане этажа масса видна эскизом.</p>
+      <p class="hint">В 3D у выбранной массы: стрелки гизмо — перенос по оси (квадрат — по плоскости), точки — размер (противоположная грань стоит). Двойной клик по точке — число. На плане этажа масса видна эскизом.</p>
     </div>`;
   const id = m.id;
   panel.querySelector('#massName').addEventListener('change', (e) => {

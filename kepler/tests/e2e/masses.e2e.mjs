@@ -1,6 +1,7 @@
 // e2e: массы (концептуальная форма) — создание и правка боксов в 3D
 // реальной мышью, числовой ввод, Esc по стадиям, масса на грани другой,
-// тяни-толкай граней, перенос с Alt, Delete, Ctrl+Z/Y, копия; эскиз на
+// гизмо перемещения (стрелки X/Y/Z, квадрат XY), размер только за точки
+// (грань не тянет), Delete, Ctrl+Z/Y, копия; эскиз на
 // плане и его настройка, магнит комнаты к ребру эскиза, сохранение и
 // загрузка, создание двумя кликами на плане.
 import { describe, it, before, after } from 'node:test';
@@ -20,16 +21,59 @@ async function clickAt(page, p) {
   return s;
 }
 
-async function dragFace(page, from, to, { alt = false } = {}) {
-  const a = await sc(page, from);
-  const b = await sc(page, to);
-  await page.mouse.move(a.x, a.y);
-  if (alt) await page.keyboard.down('Alt');
+// Цвет пикселя экрана (снимок 1×1, WebGL-холст напрямую не читается).
+async function pixel(page, x, y) {
+  const buf = await page.screenshot({ clip: { x: Math.round(x), y: Math.round(y), width: 1, height: 1 } });
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = 1; c.height = 1;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return [...ctx.getImageData(0, 0, 1, 1).data];
+  }, buf.toString('base64'));
+}
+
+// Часть гизмо/точка под экранной точкой (null — тело массы или пусто).
+const partAt = (page, p) => page.evaluate(async (q) => {
+  const at = (await import('./ui/mass3d.js')).massPartAt({ clientX: q.x, clientY: q.y, pointerType: 'mouse' });
+  return at ? at.part : null;
+}, p);
+
+async function drag(page, a, b, check) {
+  await page.mouse.move(a.x, a.y, { steps: 2 });
   await page.mouse.down();
   await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 });
   await page.mouse.move(b.x, b.y, { steps: 4 });
+  if (check) check((await d3(page)).label || '');
   await page.mouse.up();
-  if (alt) await page.keyboard.up('Alt');
+}
+
+// Тянуть точку размера id так, чтобы она встала в мировую точку to.
+async function dragHandle(page, id, to, check) {
+  const a = (await d3(page)).mass.handles[id];
+  assert.ok(a, `точка ${id}`);
+  assert.equal(await partAt(page, a), id);
+  await drag(page, a, await sc(page, to), check);
+}
+
+// Тянуть гизмо: стрелку axis ('x' | 'y' | 'z') или квадрат 'xy' на смещение
+// shift (мм, оси дома) — мышь проходит экранный образ смещения.
+async function dragGizmo(page, axis, shift, check) {
+  const s = await d3(page);
+  const g = s.mass.gizmo;
+  const a = axis === 'xy'
+    ? { x: g.plane.reduce((t, p) => t + p.x, 0) / 4, y: g.plane.reduce((t, p) => t + p.y, 0) / 4 }
+    : { x: g.origin.x + (g.tips[axis].x - g.origin.x) * 0.7, y: g.origin.y + (g.tips[axis].y - g.origin.y) * 0.7 };
+  assert.equal(await partAt(page, a), `g${axis}`);
+  const id = (await sel(page)).id;
+  const m = (await masses(page)).find((q) => q.id === id);
+  const c = { x: m.x, y: m.y, z: m.z0 + m.h / 2 };
+  const o = await sc(page, c);
+  const t = await sc(page, { x: c.x + shift.x, y: c.y + shift.y, z: c.z + shift.z });
+  await drag(page, a, { x: a.x + t.x - o.x, y: a.y + t.y - o.y }, check);
 }
 
 describe('Массы: создание и правка в 3D, эскиз на плане', () => {
@@ -127,50 +171,111 @@ describe('Массы: создание и правка в 3D, эскиз на п
     assert.equal((await masses(page)).length, 2);
   });
 
-  it('правка: верх — высота, бок — размер, Alt — перенос; Ctrl+Z/Y; копия', async () => {
+  it('клик по массе — выбор и гизмо; тянуть грань — размер не меняется', async () => {
     const { page } = app;
     const m1 = (await masses(page))[0];
     // Клик по массе (под курсором только она) — выбор.
     await clickAt(page, { x: 4000, y: 2500, z: 6000 });
     assert.deepEqual(await sel(page), { type: 'mass', id: m1.id });
     assert.match(await page.textContent('#propsBody'), /Масса[\s\S]*Объём/);
-    await dragFace(page, { x: 4000, y: 2500, z: 6000 }, { x: 4000, y: 2500, z: 7000 });
+    const s = await d3(page);
+    assert.ok(s.mass.gizmo, 'гизмо у выбранной массы');
+    assert.equal(Object.keys(s.mass.handles).length, 14);
+    assert.match(await page.textContent('#v3Hint'), /стрелки гизмо — переместить · точки — размер/);
+    // Стрелка X видна поверх сцены: пиксель на её середине — красный.
+    const g = s.mass.gizmo;
+    const mid = { x: g.origin.x + (g.tips.x.x - g.origin.x) * 0.55, y: g.origin.y + (g.tips.x.y - g.origin.y) * 0.55 };
+    const [r, gg, b] = await pixel(page, mid.x, mid.y);
+    assert.ok(r > gg + 60 && r > b + 60, `стрелка X красная: ${r},${gg},${b}`);
+    // Грань (вне точек и гизмо) — тянется вид, не масса; камера — туда и обратно.
+    const face = { x: 0, y: 1500, z: 4600 }; // бок nx, вдали от точек и гизмо
+    const f = await sc(page, face);
+    assert.equal(await partAt(page, f), null, 'на грани нет ручек');
+    const before = dims(m1);
+    await page.mouse.move(f.x, f.y);
+    await page.mouse.down();
+    await page.mouse.move(f.x + 40, f.y - 30, { steps: 4 });
+    await page.mouse.move(f.x, f.y, { steps: 4 });
+    await page.mouse.up();
+    assert.deepEqual(dims((await masses(page))[0]), before, 'грань не меняет размер');
+    assert.deepEqual(await sel(page), { type: 'mass', id: m1.id });
+  });
+
+  it('точки: центр грани — эта грань, угол — две; противоположные стоят; двойной клик — число', async () => {
+    const { page } = app;
+    // Верх: высота 6000 → 7000, низ стоит.
+    await dragHandle(page, 'top', { x: 4000, y: 2500, z: 7000 });
     let m = (await masses(page))[0];
     assert.deepEqual([m.z0, m.h], [0, 7000]);
     // Бок py (виден с камеры по умолчанию): глубина растёт, грань y = 0 стоит.
-    await dragFace(page, { x: 4000, y: 5000, z: 3000 }, { x: 4000, y: 6000, z: 3000 });
+    await dragHandle(page, 'py', { x: 4000, y: 6000, z: 3500 }, (lab) => assert.match(lab, /8000 × 6000 × 7000 мм/));
     m = (await masses(page))[0];
-    assert.deepEqual([m.y - m.d / 2, m.y + m.d / 2], [0, 6000]);
-    // Alt + тянуть — перенос по плоскости основания.
-    await dragFace(page, { x: 4000, y: 3000, z: 7000 }, { x: 6000, y: 3000, z: 7000 }, { alt: true });
+    assert.deepEqual([m.y - m.d / 2, m.y + m.d / 2, m.w, m.h], [0, 6000, 8000, 7000]);
+    // Верхний угол x0/y1: ширина и глубина сразу, угол x1/y0 стоит.
+    await dragHandle(page, 'cnpp', { x: -1000, y: 7000, z: 7000 });
     m = (await masses(page))[0];
-    assert.deepEqual([m.x, m.y, m.w, m.d, m.h], [6000, 3000, 8000, 6000, 7000]);
-    await page.keyboard.press('Control+z');
-    m = (await masses(page))[0];
-    assert.equal(m.x, 4000);
-    await page.keyboard.press('Control+y');
-    m = (await masses(page))[0];
-    assert.equal(m.x, 6000);
-    // Выбор после отмены снимается — выбираем снова и копируем.
-    await clickAt(page, { x: 6000, y: 3000, z: 7000 });
-    await page.keyboard.press('Control+d');
-    const list = await masses(page);
-    assert.equal(list.length, 3);
-    assert.equal(list[2].name, 'Масса 3');
-    assert.equal(list[2].x, 6000 + 8000 + 1000);
-    await page.keyboard.press('Delete');
-    assert.equal((await masses(page)).length, 2);
-  });
-
-  it('двойной клик по грани — точная высота', async () => {
-    const { page } = app;
-    await clickAt(page, { x: 6000, y: 3000, z: 7000 });
-    const p = await sc(page, { x: 6000, y: 3000, z: 7000 });
+    const b = { x0: m.x - m.w / 2, x1: m.x + m.w / 2, y0: m.y - m.d / 2, y1: m.y + m.d / 2 };
+    assert.deepEqual([b.x0, b.x1, b.y0, b.y1, m.h, m.z0], [-1000, 8000, 0, 7000, 7000, 0]);
+    // Двойной клик по точке верха — точная высота.
+    const p = (await d3(page)).mass.handles.top;
     await page.mouse.dblclick(p.x, p.y);
     assert.equal((await d3(page)).mass.num, 'face');
     await page.fill('#v3MassNum', '6000');
     await page.keyboard.press('Enter');
-    assert.equal((await masses(page))[0].h, 6000);
+    m = (await masses(page))[0];
+    assert.deepEqual([m.z0, m.h, m.w, m.d], [0, 6000, 9000, 7000]);
+  });
+
+  it('гизмо: стрелка X — только x, Y — только y (на север), Z — низ; квадрат — x и y; Ctrl+Z/Y; копия', async () => {
+    const { page } = app;
+    const id = (await masses(page))[0].id;
+    let m = (await masses(page))[0];
+    const start = [m.x, m.y, m.z0, m.w, m.d, m.h]; // 3500, 3500, 0, 9000, 7000, 6000
+    await dragGizmo(page, 'x', { x: 2000, y: 0, z: 0 }, (lab) => assert.match(lab, /^X \+2000 мм · x 5500, y 3500, z 0/));
+    m = (await masses(page))[0];
+    assert.deepEqual([m.x, m.y, m.z0, m.w, m.d, m.h], [start[0] + 2000, ...start.slice(1)]);
+    await dragGizmo(page, 'y', { x: 0, y: -1000, z: 0 });
+    m = (await masses(page))[0];
+    assert.deepEqual([m.x, m.y, m.z0], [start[0] + 2000, start[1] - 1000, 0]);
+    await dragGizmo(page, 'z', { x: 0, y: 0, z: 1500 });
+    m = (await masses(page))[0];
+    assert.deepEqual([m.x, m.y, m.z0, m.h], [start[0] + 2000, start[1] - 1000, 1500, 6000]);
+    // Ctrl+Z — одним шагом на жест.
+    await page.keyboard.press('Control+z');
+    assert.equal((await masses(page))[0].z0, 0);
+    await page.keyboard.press('Control+y');
+    assert.equal((await masses(page))[0].z0, 1500);
+    await page.keyboard.press('Control+z');
+    assert.equal((await masses(page))[0].z0, 0);
+    // Выбор после отмены снимается — выбираем снова.
+    m = (await masses(page))[0];
+    await clickAt(page, { x: m.x, y: m.y, z: m.h - 100 });
+    assert.deepEqual(await sel(page), { type: 'mass', id });
+    await dragGizmo(page, 'xy', { x: 1000, y: 1000, z: 0 });
+    m = (await masses(page))[0];
+    assert.deepEqual([m.x, m.y, m.z0, m.w, m.d], [start[0] + 3000, start[1], 0, 9000, 7000]);
+    // Esc во время жеста — отмена.
+    const g = (await d3(page)).mass.gizmo;
+    const a = { x: g.origin.x + (g.tips.x.x - g.origin.x) * 0.7, y: g.origin.y + (g.tips.x.y - g.origin.y) * 0.7 };
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(a.x + 60, a.y + 10, { steps: 4 });
+    assert.equal((await d3(page)).mass.part, 'gx');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    assert.equal((await masses(page))[0].x, start[0] + 3000);
+    // Копия.
+    await page.keyboard.press('Control+d');
+    const list = await masses(page);
+    assert.equal(list.length, 3);
+    assert.equal(list[2].name, 'Масса 3');
+    assert.equal(list[2].x, start[0] + 3000 + 9000 + 1000);
+    await page.keyboard.press('Delete');
+    assert.equal((await masses(page)).length, 2);
+    if (process.env.KEPLER_MASS_SHOTS) {
+      await clickAt(page, { x: m.x, y: m.y, z: m.h - 100 });
+      await page.screenshot({ path: `${process.env.KEPLER_MASS_SHOTS}/mass-gizmo.png` });
+    }
   });
 
   it('на плане — эскиз под домом; настройка «Показывать эскиз» выключает', async () => {
