@@ -24,6 +24,7 @@ import { closeElevation, isElevationOpen } from './elevation-view.js';
 import { handleDynamicKey, rehoverSnap, toggleOrtho } from './draw-snap-ui.js';
 import { splitLiveKey } from './split-input.js';
 import { state } from './state.js';
+import { handleErgoKey } from './ergonomics.js';
 import {
   afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
 } from './store.js';
@@ -134,6 +135,8 @@ export function bindKeyboard() {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     // Координационные оси: G — инструмент, Tab — направление, стрелки — сдвиг (ui/grids.js).
     if (!planCovered() && handleGridKey(event)) { event.preventDefault(); return; }
+    // E — режим «Эргономика» (ui/ergonomics.js).
+    if (!planCovered() && handleErgoKey(event)) { event.preventDefault(); return; }
     // Привязки черчения: F8 — орто; Shift/Ctrl — пересчитать привязку на месте.
     if (event.key === 'F8') { event.preventDefault(); toggleOrtho(); return; }
     if ((event.key === 'Shift' || event.key === 'Control') && !event.repeat) {

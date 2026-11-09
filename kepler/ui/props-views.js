@@ -30,6 +30,7 @@ import {
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
+import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
 import {
   VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
@@ -287,6 +288,7 @@ export function viewSettingsHtml() {
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
     ${mode === 'plan' ? gridViewBlock() : ''}
+    ${mode === 'plan' ? ergoViewBlock() : ''}
     ${mode === 'plan' ? massBlock() : ''}
     ${mode === 'plan' ? landscapeBlock() : ''}
     ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
@@ -310,6 +312,7 @@ export function refreshViewsPanel() {
 export function bindViewSettings(panel, rerender) {
   bindPlaceBlock(panel, activeViewId());
   bindGridViewBlock(panel, rerender);
+  bindErgoViewBlock(panel, rerender);
   panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
     setElevationScale(Number(b.dataset.elevScale));
     rerender();

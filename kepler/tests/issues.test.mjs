@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { analyzeErgonomics } from '../core/ergonomics.js';
 import { collectIssues, DEFAULT_ISSUE_GROUPS, ISSUE_GROUPS, pairKey, unionRect } from '../core/issues.js';
 import { createItem, createLevel, createOpening, createProject, createRoom, normalizeProject } from '../core/model.js';
 import { normsReport, roomChecks } from '../core/norms.js';
@@ -14,8 +15,8 @@ const all = (issues) => issues.groups.flatMap((g) => g.items);
 const group = (issues, id) => issues.groups.find((g) => g.id === id);
 const warns = (issues) => all(issues).filter((x) => x.severity === 'warn');
 
-test('умолчания групп: ВКЛ — геометрия и мебель, остальные выкл; шесть групп', () => {
-  assert.deepEqual(ISSUE_GROUPS.map((g) => g.id), ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry']);
+test('умолчания групп: ВКЛ — геометрия и мебель, остальные выкл; семь групп (эргономика — по режиму)', () => {
+  assert.deepEqual(ISSUE_GROUPS.map((g) => g.id), ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry', 'ergo']);
   assert.deepEqual(DEFAULT_ISSUE_GROUPS, ['furniture', 'geometry']);
 });
 
@@ -123,7 +124,7 @@ test('фильтр групп: выключенные не в списке и н
   assert.equal(only.count, group(full, 'geometry').count);
   assert.ok(full.count > only.count);
   assert.equal(only.enabledCount, 2);
-  assert.equal(only.total, 6);
+  assert.equal(only.total, 7);
   const norms = only.summary.find((g) => g.id === 'norms');
   assert.equal(norms.enabled, false);
   assert.equal(norms.count, group(full, 'norms').count, 'выключенная группа — сколько было бы');
@@ -265,4 +266,23 @@ test('нормализация: dismissedIssues — уникальные стр�
 test('unionRect: габарит, пустой список — null', () => {
   assert.equal(unionRect([]), null);
   assert.deepEqual(unionRect([{ x: 0, y: 0, w: 10, h: 10 }, null, { x: 20, y: -5, w: 5, h: 5 }]), { x: 0, y: -5, w: 25, h: 15 });
+});
+
+test('эргономика: находки режима — группа «Эргономика», переход к предмету', () => {
+  const p = createProject();
+  const r = createRoom('bedroom', 0, 0, 2100, 4000);
+  p.rooms.push(r);
+  const bed = createItem('bed-double', 800, 1000, 1600, 2000);
+  p.items.push(bed);
+  const ergo = analyzeErgonomics(p, deriveWalls(p)).findings;
+  assert.ok(ergo.length >= 1);
+  const off = collectIssues(p, { enabled: DEFAULT_ISSUE_GROUPS, ergo });
+  assert.equal(off.groups.find((g) => g.id === 'ergo'), undefined, 'группа выключена — записей нет');
+  const on = collectIssues(p, { enabled: [...DEFAULT_ISSUE_GROUPS, 'ergo'], ergo });
+  const g = on.groups.find((x) => x.id === 'ergo');
+  assert.equal(g.count, ergo.length);
+  const e = g.items.find((x) => x.target?.id === bed.id);
+  assert.equal(e.target.type, 'item');
+  assert.equal(e.mark, '⛔');
+  assert.ok(e.focus && e.focus.w > 0);
 });

@@ -31,6 +31,9 @@ export const ISSUE_GROUPS = [
   { id: 'insolation', title: 'Инсоляция', short: 'Инсоляция', on: false },
   { id: 'furniture', title: 'Проходы у мебели', short: 'Мебель', on: true },
   { id: 'geometry', title: 'Геометрия', short: 'Геометрия', on: true },
+  // Эргономика мебели (core/ergonomics.js): включена, пока включён режим
+  // «Эргономика» (ui/ergonomics.js) — записи приходят в opts.ergo.
+  { id: 'ergo', title: 'Эргономика мебели', short: 'Эргономика', on: false },
 ];
 export const DEFAULT_ISSUE_GROUPS = ISSUE_GROUPS.filter((g) => g.on).map((g) => g.id);
 
@@ -60,6 +63,10 @@ export function unionRect(rects) {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
+const polyBox = (pts) => {
+  const xs = pts.map((p) => p.x); const ys = pts.map((p) => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+};
 const roomRect = (room) => (room ? { x: room.x, y: room.y, w: room.w, h: room.h } : null);
 
 // Скрытые пользователем замечания проекта (project.settings.dismissedIssues).
@@ -77,7 +84,8 @@ export function dismissedIssueIds(project) {
  *   count — предупреждения включённых групп без скрытых (бейдж кнопки).
  * opts.enabled — id включённых групп (по умолчанию — все);
  * opts.norms — готовый normsReport(project) (иначе посчитается);
- * opts.walls, opts.gaps — стены и зазоры активного этажа (иначе посчитаются).
+ * opts.walls, opts.gaps — стены и зазоры активного этажа (иначе посчитаются);
+ * opts.ergo — находки эргономики активного этажа (core/ergonomics.js).
  * id записей стабильны между пересчётами (по комнатам, парам, предметам) —
  * по ним запоминается «Скрыть».
  */
@@ -250,6 +258,22 @@ export function collectIssues(project, opts = {}) {
         focus: roomRect(room),
       });
     }
+  }
+
+  // --- Эргономика мебели (режим «Эргономика»): ошибки и замечания активного
+  // этажа; переход — к первому предмету находки.
+  for (const f of opts.ergo || []) {
+    if (f.severity !== 'error' && f.severity !== 'warn') continue;
+    const lp = lps.get(project.activeLevel);
+    const room = roomOf(project.activeLevel, f.roomId);
+    const list = f.itemIds.map((id) => lp?.items.find((it) => it.id === id)).filter(Boolean);
+    push({
+      id: f.id, group: 'ergo', levelId: project.activeLevel, mark: f.severity === 'error' ? '⛔' : '⚠',
+      title: room?.name || '', text: f.text,
+      target: f.itemIds.length ? { type: 'item', id: f.itemIds[0] } : (room ? { type: 'room', id: room.id } : null),
+      focus: unionRect([...list.map(itemBounds), ...(f.zone ? [polyBox(f.zone)] : [])]) || roomRect(room),
+      ergo: f.severity,
+    });
   }
 
   // --- Фильтры: включённые группы и скрытые замечания (только

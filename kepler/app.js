@@ -35,6 +35,7 @@ import { bindSplitInput } from './ui/split-input.js';
 import { syncUnderlayImage } from './ui/underlay.js';
 import { bindView, fitView, requestDraw, scaleLabel } from './ui/view.js';
 import { bindSnapBar } from './ui/draw-snap-ui.js';
+import { bindErgonomics } from './ui/ergonomics.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -50,6 +51,7 @@ bindFurnitureSearch();
 bindView();
 bindTheme();
 bindSnapBar();
+bindErgonomics(); // режим «Эргономика»: кнопка, счётчик, настройки
 
 (function boot() {
   loadTheme();

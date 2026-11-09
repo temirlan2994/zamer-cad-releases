@@ -20,6 +20,8 @@ export const state = {
   elevationOpen: null, // id вида-фасада, открытого на холсте (ui/elevation-view.js), например 'elev-N'
   planGrid: null, // координационные оси на плане: { on, dims, sheets, snap } (ui/plan-grids.js, localStorage)
   planMass: null, // эскиз масс на плане: { on, outlineOnly } (ui/plan-masses.js, localStorage)
+  ergo: null, // режим «Эргономика»: { on, okZones, heat, groups } (ui/render-ergonomics.js, localStorage)
+  ergoFocus: null, // id находки эргономики, подсвеченной кнопкой «Показать»
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

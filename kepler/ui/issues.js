@@ -18,6 +18,7 @@ import { focusedGap } from './gaps.js';
 import { findWall } from './hit.js';
 import { switchLevel } from './levels.js';
 import { setEditorMode } from './modes.js';
+import { setErgoPref } from './render-ergonomics.js';
 import { dockGapPair } from './plan-actions.js';
 import { state } from './state.js';
 import { mutate, refreshIssues } from './store.js';
@@ -37,7 +38,7 @@ export function issueGroupsEnabled() {
   if (enabledGroups) return enabledGroups;
   let saved;
   try { saved = JSON.parse(localStorage.getItem(GROUPS_KEY) || 'null'); } catch { saved = null; }
-  const known = new Set(ISSUE_GROUPS.map((g) => g.id));
+  const known = new Set(ISSUE_GROUPS.map((g) => g.id).filter((id) => id !== 'ergo')); // ergo — по режиму
   enabledGroups = Array.isArray(saved) ? saved.filter((id) => known.has(id)) : [...DEFAULT_ISSUE_GROUPS];
   return enabledGroups;
 }
@@ -279,7 +280,13 @@ export function bindIssues() {
     event.stopPropagation();
     if (event.target.closest('[data-issues-close]')) { setIssuesOpen(false); return; }
     const chip = event.target.closest('[data-issue-group]');
-    if (chip) { setIssueGroupEnabled(chip.dataset.issueGroup, chip.getAttribute('aria-pressed') !== 'true'); return; }
+    if (chip) {
+      const on = chip.getAttribute('aria-pressed') !== 'true';
+      // «Эргономика» — это режим (ui/ergonomics.js): чип включает/выключает его.
+      if (chip.dataset.issueGroup === 'ergo') setErgoPref({ on });
+      else setIssueGroupEnabled(chip.dataset.issueGroup, on);
+      return;
+    }
     const dismiss = event.target.closest('[data-dismiss]');
     if (dismiss) { setDismissed(dismiss.dataset.dismiss, true); return; }
     const restore = event.target.closest('[data-restore]');

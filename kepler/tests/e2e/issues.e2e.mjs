@@ -138,7 +138,8 @@ describe('замечания: группы и «Скрыть»', () => {
     assert.equal(await badge(app.page), s.count);
     await app.page.click('#issuesBtn');
     const chips = await app.page.$$eval('#issuesPanel [data-issue-group]', (ns) => ns.map((n) => [n.dataset.issueGroup, n.getAttribute('aria-pressed'), n.textContent]));
-    assert.equal(chips.length, 6);
+    assert.equal(chips.length, 7); // + «Эргономика» (по режиму, выключена)
+    assert.deepEqual(chips.find((c) => c[0] === 'ergo').slice(1), ['false', 'Эргономика выкл']);
     assert.deepEqual(chips.find((c) => c[0] === 'norms').slice(1), ['false', 'Нормы выкл']);
     assert.match(chips.find((c) => c[0] === 'geometry')[2], /^Геометрия \d+$/);
     assert.equal(await app.page.$('#issuesPanel [data-group="norms"]'), null, 'выключенной группы нет в списке');
@@ -192,15 +193,15 @@ describe('замечания: группы и «Скрыть»', () => {
     assert.ok(await app.page.$(`#issuesPanel [data-issue-id="${id}"]`), 'замечание снова в списке');
   });
 
-  it('все группы выключены — спокойная кнопка и «Замечаний нет (включено групп: 0 из 6)»', async () => {
+  it('все группы выключены — спокойная кнопка и «Замечаний нет (включено групп: 0 из 7)»', async () => {
     for (const g of (await k(app.page)).summary.filter((x) => x.enabled)) {
       await app.page.click(`#issuesPanel [data-issue-group="${g.id}"]`);
     }
     assert.equal((await k(app.page)).count, 0);
     assert.equal(await app.page.isVisible('#issuesCount'), false);
     assert.match(await app.page.getAttribute('#issuesBtn', 'class'), /\bok\b/);
-    assert.match(await app.page.textContent('#issuesPanel'), /Замечаний нет \(включено групп: 0 из 6\)/);
-    assert.match(await app.page.getAttribute('#issuesBtn', 'aria-label'), /включено групп: 0 из 6/);
+    assert.match(await app.page.textContent('#issuesPanel'), /Замечаний нет \(включено групп: 0 из 7\)/);
+    assert.match(await app.page.getAttribute('#issuesBtn', 'aria-label'), /включено групп: 0 из 7/);
   });
 
   it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });
