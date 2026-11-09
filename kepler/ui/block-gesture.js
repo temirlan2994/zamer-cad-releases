@@ -17,6 +17,8 @@ import { migrateLevel } from '../core/v7/migrate.js';
 import { snapRectToSketch } from '../core/masses.js';
 import { DEFAULT_EXTERIOR } from '../core/catalog.js';
 import { massSnapLines } from './plan-masses.js';
+import { snapRectToGrids } from '../core/grid-axes.js';
+import { activeGrids, gridExtentOf, gridSnapOffsets } from './plan-grids.js';
 import { state } from './state.js';
 
 export const MAGNET_MM = 300;
@@ -58,12 +60,35 @@ export function magnetMove(drag, id, rect, parentId, event) {
 const sketchInset = () => Number(state.project?.settings?.exterior) || DEFAULT_EXTERIOR;
 
 export function sketchMagnet(out, rect) {
+  gridMagnet(out, rect);
   const lines = massSnapLines();
   if (!lines || (out.snappedX && out.snappedY)) return out;
   const s = snapRectToSketch({ ...rect }, lines, { distance: MAGNET_MM, inset: sketchInset(), skipX: out.snappedX, skipY: out.snappedY });
   if (s.snappedX) { out.x = s.x; out.snappedX = true; }
   if (s.snappedY) { out.y = s.y; out.snappedY = true; }
   out.guides = [...out.guides, ...s.guides];
+  return out;
+}
+
+// Координационные оси (ui/plan-grids.js): грань помещения (или наружная
+// грань / ось его стены — по настройке) липнет к оси в радиусе 300 мм. Ось
+// берёт верх над магнитом соседей, если она ближе. Тумблер — тот же, что у
+// магнита блоков; Shift/Alt — без привязки (проверяют вызывающие).
+export function gridMagnet(out, rect) {
+  if (state.snapSettings?.magnet === false) return out;
+  const grids = activeGrids();
+  if (!grids.length) return out;
+  const g = snapRectToGrids({ ...rect }, grids, { distance: MAGNET_MM, offsets: gridSnapOffsets(), extent: (x) => gridExtentOf(x) });
+  for (const [axis, p, flag, dir] of [['x', 'x', 'snappedX', 'v'], ['y', 'y', 'snappedY', 'h']]) {
+    if (!g[flag]) continue;
+    const mine = Math.abs(g[p] - rect[p]);
+    const theirs = Math.abs(out[p] - rect[p]);
+    if (out[flag] && theirs < mine) continue;
+    out[p] = g[p];
+    out[flag] = true;
+    out.guides = [...out.guides.filter((x) => x.axis !== dir), ...g.guides.filter((x) => x.axis === dir)];
+    if (axis === 'x') out.gridX = g.guides.find((x) => x.axis === 'v')?.gridId; else out.gridY = g.guides.find((x) => x.axis === 'h')?.gridId;
+  }
   return out;
 }
 
@@ -75,6 +100,17 @@ export function magnetResize(drag, id, rect, handle, event) {
   const skip = (drag.follow || []).map((f) => f.id); // попутчики общей стены едут с гранью
   const m = magnetEdges(drag.magnet, id, rect, edges, { distance: MAGNET_MM, skip });
   const out = { rect: m.rect, guides: m.guides.map(planGuide), edges: m.guides.map((g) => g.edge) };
+  // Координационные оси (ui/plan-grids.js): подвижные грани без магнита соседей.
+  const gridFree = edges.filter((e) => !out.edges.includes(e));
+  const grids = state.snapSettings?.magnet === false ? [] : activeGrids();
+  if (grids.length && gridFree.length) {
+    const g = snapRectToGrids(out.rect, grids, { distance: MAGNET_MM, offsets: gridSnapOffsets(), edges: gridFree, extent: (x) => gridExtentOf(x) });
+    if (g.snappedX || g.snappedY) {
+      out.rect = { x: g.x, y: g.y, w: g.w, h: g.h };
+      out.guides = [...out.guides, ...g.guides];
+      out.edges = [...out.edges, ...gridFree.filter((e) => ((e === 'w' || e === 'e') ? g.snappedX : g.snappedY))];
+    }
+  }
   const lines = massSnapLines();
   const free = edges.filter((e) => !out.edges.includes(e));
   if (lines && free.length) {

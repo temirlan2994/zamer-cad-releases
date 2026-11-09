@@ -68,6 +68,9 @@ import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
 import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet } from './block-gesture.js';
 import { massPlanClick, massPlanHover } from './masses.js';
+import {
+  gridDragEnd, gridDragMove, gridHoverTarget, gridPointerDown, gridToolClick, gridToolHover,
+} from './grids.js';
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
@@ -85,7 +88,7 @@ import {
 // Перемещение объекта пальцем: долгое нажатие (мс), допуск дрожания (px).
 const TOUCH_HOLD_MS = 420;
 const TOUCH_HOLD_SLOP = 9;
-const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move']);
+const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move', 'grid-move']);
 let drag = null;
 
 // Касание: действие (поставить объект, точку, открыть поле ввода) — только на
@@ -401,6 +404,7 @@ function updateHoverAndGhost(world, plan, event) {
   if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
   if (state.tool?.kind === 'psec') { planSectionHover(plan, event); return; }
   if (state.tool?.kind === 'mass') { massPlanHover(plan, event); return; }
+  if (state.tool?.kind === 'grid') { gridToolHover(plan, event); return; }
   if (state.tool?.kind === 'bound-room') { boundRoomHover(plan); return; }
   if (state.tool?.kind === 'terrain') {
     const s = worldToScreen(world.x, world.y);
@@ -427,6 +431,10 @@ function updateHoverAndGhost(world, plan, event) {
 
   // Подсветка под курсором: линии разрезов, мебель, проёмы, стены, комнаты, объекты участка.
   let nextHover = event?.clientX !== undefined ? planSectionHoverTarget(pointerScreen(event)) : null;
+  // Координационные оси: кружки — везде, линия — вне комнат и стен (ui/grids.js).
+  if (!nextHover && event?.clientX !== undefined && state._gridUI?.length) {
+    nextHover = gridHoverTarget(pointerScreen(event), !hitRoom(plan) && !hitWall(plan));
+  }
   const item = nextHover ? null : hitItem(plan);
   if (item) nextHover = { type: 'item', id: item.id };
   if (!nextHover) {
@@ -458,6 +466,17 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    // Esc во время перетаскивания оси — отмена жеста (ui/grids.js).
+    if (e.key === 'Escape' && drag?.kind?.startsWith('grid-')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const finished = drag;
+      drag = null;
+      if (finished.moved) restoreFrom(finished.before);
+      selectObject({ type: 'grid', id: finished.id });
+      requestDraw();
+      return;
+    }
     // Esc во время ручки лестницы — отмена жеста целиком.
     if (e.key === 'Escape' && drag?.kind === 'stair-handle') {
       e.preventDefault();
@@ -693,6 +712,11 @@ export function bindCanvasInput() {
         tapOrNow(event, screen, () => massPlanClick(plan, mods));
         return;
       }
+      if (t.kind === 'grid') {
+        const mods = { shiftKey: event.shiftKey };
+        tapOrNow(event, screen, () => gridToolClick(plan, mods));
+        return;
+      }
       if (t.kind === 'north') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addNorthPoint(p)); return; }
       if (t.kind === 'calibrate') { const p = snapTwoPointTool(world, event); tapOrNow(event, screen, () => addCalibratePoint(p)); return; }
       touchPan();
@@ -808,6 +832,9 @@ export function bindCanvasInput() {
     // Линия разреза: ручки концов, сдвиг, выбор (поверх комнат и стен).
     const secDrag = planSectionPointerDown(event, screen, plan);
     if (secDrag) { drag = secDrag; return; }
+    // Координационная ось: кружок любой оси или линия выбранной (ui/grids.js).
+    const gridDrag = gridPointerDown(event, screen, plan);
+    if (gridDrag) { drag = gridDrag; return; }
 
     // Ручки плановых объектов.
     const wallEndHit = hitManualWallEnd(screen);
@@ -961,6 +988,10 @@ export function bindCanvasInput() {
       return;
     }
 
+    // Линия оси вне комнат и стен — выбор и сдвиг оси.
+    const gridLine = !picked && gridPointerDown(event, screen, plan, { lineAll: true });
+    if (gridLine) { drag = gridLine; return; }
+
     // Пустое место: пальцем — панорама, мышью — рамка выделения.
     selectObject(null);
     if (event.pointerType === 'touch') {
@@ -1034,6 +1065,7 @@ export function bindCanvasInput() {
 
     if (drag.kind.startsWith('ls-')) { landscapeDragMove(drag, world, screen, event); return; }
     if (drag.kind.startsWith('psec-')) { planSectionDragMove(drag, plan, event); return; }
+    if (drag.kind.startsWith('grid-')) { gridDragMove(drag, plan, event); return; }
 
     if (drag.kind === 'terrain-point') {
       const p = state.project.site.terrain?.points.find((x) => x.id === drag.id);
@@ -1682,6 +1714,7 @@ export function bindCanvasInput() {
     if (finished.kind.startsWith('group-')) state.groupRotateDeg = null;
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
     if (finished.kind.startsWith('psec-')) { planSectionDragEnd(finished); return; }
+    if (finished.kind.startsWith('grid-')) { gridDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {
       applyMarquee();

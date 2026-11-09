@@ -35,6 +35,7 @@ import { requestDraw } from './view.js';
 import { isItemGroup } from '../core/group-handles.js';
 import { massToolBack as planMassBack, startMassTool, toggleMassTool } from './masses.js';
 import { massKey } from './mass3d.js';
+import { handleGridKey } from './grids.js';
 
 export let spaceDown = false;
 
@@ -131,6 +132,8 @@ export function bindKeyboard() {
     }
     const tag = event.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    // Координационные оси: G — инструмент, Tab — направление, стрелки — сдвиг (ui/grids.js).
+    if (!planCovered() && handleGridKey(event)) { event.preventDefault(); return; }
     // Привязки черчения: F8 — орто; Shift/Ctrl — пересчитать привязку на месте.
     if (event.key === 'F8') { event.preventDefault(); toggleOrtho(); return; }
     if ((event.key === 'Shift' || event.key === 'Control') && !event.repeat) {

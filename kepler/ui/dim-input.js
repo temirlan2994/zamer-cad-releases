@@ -3,10 +3,11 @@
 import { cloneProject } from '../core/model.js';
 import { moveWallBy, wallRoomDimensions } from '../core/wall-edit.js';
 import {
-  clampOpeningOffset, deriveWalls, openingPos, openingPosAt, openingRect, setOpeningPos,
+  deriveWalls, openingPosAt, openingRect, setOpeningPos,
 } from '../core/walls.js';
-import { fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
+import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { el, toast } from './dom.js';
+import { reconcileOpenings } from './plan-actions.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { selectObject } from './tools.js';
@@ -85,16 +86,8 @@ export function applyDimInput() {
     if (verdict.clamped?.length) toast(`Проёмы прижаты к краю укороченной стены: ${verdict.clamped.length}`, true);
     mutate(() => {
       moveWallBy(state.project, wall, delta, { finalize: true });
-      const nextWalls = deriveWalls(state.project);
-      state.project.openings = state.project.openings.filter((opening) => {
-        const clamped = clampOpeningOffset(state.project, opening, nextWalls, openingPos(opening));
-        if (clamped === null) return false;
-        setOpeningPos(opening, clamped);
-        return true;
-      });
-      // Прижатые проёмы не должны налезать друг на друга.
-      const spaced = resolveOpeningConflicts(state.project, nextWalls);
-      if (spaced.dropped.length) toast(`Проёмов удалено: ${spaced.dropped.length} — на укороченной стене нет места`, true);
+      // Прижать к краю и раздвинуть; не поместившиеся — сироты, не удаляются.
+      reconcileOpenings();
     });
     hideDimInput();
     selectObject({ type: 'wall', key: edit.wallKey, from: edit.wallFrom });

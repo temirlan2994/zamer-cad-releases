@@ -18,7 +18,8 @@ import { formatDuration } from './insolation.js';
 import { isUpperLevel, levelProject, sortedLevels } from './model.js';
 import { normsReport } from './norms.js';
 import { analyzeConnectivity, suggestAccess } from './rooms.js';
-import { deriveWalls } from './walls.js';
+import { orphanOpenings } from './opening-spacing.js';
+import { deriveWalls, openingRect } from './walls.js';
 
 // Группы замечаний. on — включена по умолчанию (переключатели в панели «⚠»
 // хранятся у пользователя, ui/issues.js): шумные справочные проверки по
@@ -214,6 +215,39 @@ export function collectIssues(project, opts = {}) {
         gapKey: gap.key,
         focus: unionRect([roomRect(roomOf(level.id, gap.a)), roomRect(roomOf(level.id, gap.b))]),
         actions: [{ kind: 'dock-gap', label: 'Пристыковать', key: gap.key }],
+      });
+    }
+  }
+
+  // --- Проёмы: окно в общей стене (межкомнатное — света снаружи нет) и
+  // проёмы-«сироты» без стены (хранятся в проекте, вернутся со стеной).
+  for (const level of levels) {
+    const lp = lps.get(level.id);
+    if (!lp.openings?.length && !lp.rooms.some((r) => r.eatBase?.openings?.length)) continue;
+    const walls = level.id === project.activeLevel && opts.walls ? opts.walls : deriveWalls(lp);
+    for (const o of lp.openings || []) {
+      if (o.kind !== 'window' || o.orphan) continue;
+      const placed = openingRect(lp, o, walls);
+      if (!placed || placed.wall.kind !== 'shared') continue;
+      const room = roomOf(level.id, o.roomId);
+      push({
+        id: `opening:${level.id}:shared:${o.id}`, group: 'geometry', levelId: level.id,
+        title: room?.name || '',
+        text: 'Окно в общей стене — нет света снаружи',
+        target: { type: 'opening', id: o.id },
+        focus: placed.rect,
+      });
+    }
+    for (const { opening, room, under } of orphanOpenings(lp)) {
+      const what = opening.kind === 'door' ? 'дверь' : opening.kind === 'window' ? 'окно' : opening.kind;
+      push({
+        id: `opening:${level.id}:orphan:${opening.id}`, group: 'geometry', levelId: level.id,
+        title: room?.name || '',
+        text: under
+          ? `Проём «${what}» под соседней комнатой — вернётся, если её сдвинуть`
+          : `Проём «${what}» потерял стену — верните комнату или перенесите проём`,
+        target: room ? { type: 'room', id: room.id } : null,
+        focus: roomRect(room),
       });
     }
   }

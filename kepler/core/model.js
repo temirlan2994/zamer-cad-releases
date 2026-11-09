@@ -16,6 +16,7 @@ import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
 import { normalizeViewsAndSheets } from './views.js';
 import { normalizeMasses } from './masses.js';
+import { normalizeGrids } from './grid-axes.js';
 
 export { SCHEMA };
 
@@ -208,6 +209,7 @@ export function hasContent(project) {
   if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length)) return true;
   if (Array.isArray(project.variants) && project.variants.length) return true;
   if (Array.isArray(project.masses) && project.masses.length) return true;
+  if (Array.isArray(project.grids) && project.grids.length) return true;
   const s = project.site;
   if (!s || typeof s !== 'object') return false;
   return Boolean(s.boundary?.length || s.redLine?.length || s.roads?.length || s.neighbors?.length
@@ -488,6 +490,9 @@ export function normalizeProject(data) {
   // Массы (core/masses.js): необязательно, без смены схемы; пустой список не хранится.
   const masses = normalizeMasses(data.masses);
   if (masses.length) data.masses = masses; else delete data.masses;
+  // Координационные оси (core/grid-axes.js): необязательно, без смены схемы.
+  const grids = normalizeGrids(data.grids);
+  if (grids.length) data.grids = grids; else delete data.grids;
   ensureSite(data);
   return attachLevelAccessors(data);
 }

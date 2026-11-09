@@ -130,8 +130,10 @@ export function fitOpeningOffset(project, opening, walls, desiredOffset, { gap =
 // Раздвигает проёмы в порядке массива: ранние стоят, поздние уступают.
 // ids — если задано, двигаются только эти проёмы (остальные — неподвижные
 // соседи). Возвращает { moved: [id], dropped: [id] }; удалённые убраны из
-// project.openings.
-export function resolveOpeningConflicts(project, walls, { gap = OPENING_GAP, ids = null } = {}) {
+// project.openings. keep — не удалять: не поместившийся проём остаётся в
+// проекте «сиротой» (opening.orphan, не рисуется) и вернётся, когда место
+// появится (dropped тогда пуст, такие — в orphaned).
+export function resolveOpeningConflicts(project, walls, { gap = OPENING_GAP, ids = null, keep = false } = {}) {
   const movable = ids ? new Set(ids) : null;
   const all = project.openings || [];
   const fixed = movable ? all.filter((o) => !movable.has(o.id)) : [];
@@ -139,9 +141,12 @@ export function resolveOpeningConflicts(project, walls, { gap = OPENING_GAP, ids
   const settled = [...fixed];
   const moved = [];
   const dropped = [];
+  const orphaned = [];
   for (const opening of queue) {
+    if (opening.orphan) continue; // стены нет — не занимает места
     const current = openingPos(opening);
     const fitted = fitOpeningOffset(project, opening, walls, current, { gap, others: settled });
+    if (fitted === null && keep) { opening.orphan = true; orphaned.push(opening.id); continue; }
     if (fitted === null) { dropped.push(opening.id); continue; }
     if (Math.abs(fitted - current) > 0.5) moved.push(opening.id);
     setOpeningPos(opening, fitted);
@@ -151,7 +156,20 @@ export function resolveOpeningConflicts(project, walls, { gap = OPENING_GAP, ids
     const gone = new Set(dropped);
     project.openings = all.filter((o) => !gone.has(o.id));
   }
-  return { moved, dropped };
+  return { moved, dropped, orphaned };
+}
+
+// Проёмы-«сироты» этажа: помеченные opening.orphan (стены нет или на ней нет
+// места) и проёмы съеденных комнат, чья стена ушла под верхнюю
+// (room.eatBase.openings). → [{ opening, room, under }] (under — съеденная).
+export function orphanOpenings(project) {
+  const out = [];
+  const roomOf = (id) => (project.rooms || []).find((r) => r.id === id) || null;
+  for (const o of project.openings || []) if (o.orphan) out.push({ opening: o, room: roomOf(o.roomId), under: false });
+  for (const room of project.rooms || []) {
+    for (const o of room.eatBase?.openings || []) out.push({ opening: o, room, under: true });
+  }
+  return out;
 }
 
 // Окна (из ids или все), которые стоят в общей стене или потеряли стену.

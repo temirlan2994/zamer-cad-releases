@@ -61,6 +61,7 @@ import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/pla
 import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
+import { drawPlanGrids } from './ui/render-axes.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -714,6 +715,13 @@ export function createRenderer(canvas) {
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
+    // Координационные оси (ui/render-axes.js): тонко поверх плана; на листе плана — по настройке.
+    if (state.modeName === 'plan' && opts.detail !== false) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawPlanGrids(ctx, { st: state, p2s, tokens, print });
+      ctx.restore();
+    }
     if (state.modeName === 'plan' && !print) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

@@ -36,26 +36,33 @@ import { deleteSectionView } from './plan-section.js';
 import { deleteSelectedRailing } from './railing-actions.js';
 import { addMass, deleteMass, duplicateMass, massById, masses, rotateMass } from './masses.js';
 import { copyMass } from '../core/masses.js';
+import { deleteGrid } from './grids.js';
 import { requestDraw } from './view.js';
 
+// Проёмы после правки стен: прижать к краю укороченной стены и раздвинуть.
+// Проём НЕ удаляется: если стены нет или на ней нет места, он остаётся в
+// проекте «сиротой» (opening.orphan — не рисуется, замечание в «⚠») на
+// прежнем месте и возвращается, как только стена снова есть.
 export function reconcileOpenings() {
   const walls = deriveWalls(state.project);
-  const dropped = [];
-  for (const opening of [...state.project.openings]) {
+  const wasOrphan = new Set(state.project.openings.filter((o) => o.orphan).map((o) => o.id));
+  for (const opening of state.project.openings) {
     const clamped = clampOpeningOffset(state.project, opening, walls, openingPos(opening));
     if (clamped === null) {
-      state.project.openings = state.project.openings.filter((o) => o.id !== opening.id);
-      dropped.push(opening);
+      opening.orphan = true;
     } else {
+      delete opening.orphan;
       setOpeningPos(opening, clamped);
     }
   }
   // Прижатые к краю (Б3) или вставленные проёмы не должны налезать друг на
-  // друга: раздвигаем с зазором OPENING_GAP, не помещающиеся — удаляем.
-  const spaced = resolveOpeningConflicts(state.project, walls);
-  if (dropped.length) toast(`Удалено проёмов без стены: ${dropped.length}`, true);
-  if (spaced.dropped.length) toast(`Проёмов удалено: ${spaced.dropped.length} — на стене нет места (зазор между проёмами ≥ ${OPENING_GAP} мм)`, true);
+  // друга: раздвигаем с зазором OPENING_GAP, не помещающиеся — в сироты.
+  const spaced = resolveOpeningConflicts(state.project, walls, { keep: true });
+  const lost = state.project.openings.filter((o) => o.orphan && !wasOrphan.has(o.id)).length;
+  const back = [...wasOrphan].filter((id) => state.project.openings.some((o) => o.id === id && !o.orphan)).length;
+  if (lost) toast(`Проёмов без места на стене: ${lost} — сохранены и вернутся вместе со стеной (см. «⚠»)`, true);
   else if (spaced.moved.length) toast(`Проёмы раздвинуты, чтобы не налезали друг на друга: ${spaced.moved.length}`);
+  if (back) toast(`Проёмы вернулись на стену: ${back}`);
 }
 
 // «Разделить»: сначала плашка у стены — торец отсчёта и расстояние от него
@@ -231,6 +238,7 @@ export function deleteSelection() {
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
   if (sel.type === 'railing') { deleteSelectedRailing(); return; }
   if (sel.type === 'mass') { deleteMass(sel.id); return; }
+  if (sel.type === 'grid') { deleteGrid(sel.id); return; }
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);
     if (!room) return;

@@ -4,6 +4,7 @@ import { elevationView, isElevationOpen, refreshElevationView } from './elevatio
 import { findView } from '../core/views.js';
 import { renderSectionProps } from './plan-section.js';
 import { massById, renderMassProps } from './masses.js';
+import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
@@ -146,6 +147,10 @@ export function renderProps() {
   if (sel.type === 'item') { renderItemProps(panel, state.project.items.find((i) => i.id === sel.id)); return; }
   if (sel.type === 'multi') { renderMultiProps(panel, sel); return; }
   if (sel.type === 'site') { renderSiteObjectProps(panel, sel); return; }
+  if (sel.type === 'grid') {
+    const grid = gridById(sel.id);
+    if (grid) { renderGridProps(panel, grid); return; }
+  }
   if (sel.type === 'mass') {
     const mass = massById(sel.id);
     if (mass) { renderMassProps(panel, mass); return; }
@@ -655,6 +660,9 @@ export function renderToolOptions(force = false) {
         </select></label>`;
   } else if (t?.kind === 'place-furniture') {
     html = `<strong class="to-title">${t.itemKind === 'stairs' ? 'Лестница' : 'Мебель'}</strong><span class="to-value">${escapeHtml(furnitureDef(t.itemKind)?.title || t.itemKind)}</span>`;
+  } else if (t?.kind === 'grid') {
+    renderGridToolOptions(body);
+    html = null;
   } else if (t?.kind === 'psec') {
     html = `<strong class="to-title">Разрез</strong><span class="to-note">${['клик — начало линии', 'клик — конец линии', 'клик — сторона взгляда или Enter'][Math.min(2, t.points.length)]} · Ctrl — орто, Shift — без привязки</span>`;
   } else if (furnLib) {

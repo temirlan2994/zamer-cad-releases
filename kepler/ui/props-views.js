@@ -29,6 +29,7 @@ import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
+import { bindGridViewBlock, gridViewBlock } from './grids.js';
 import {
   VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
@@ -285,6 +286,7 @@ export function viewSettingsHtml() {
       <label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
+    ${mode === 'plan' ? gridViewBlock() : ''}
     ${mode === 'plan' ? massBlock() : ''}
     ${mode === 'plan' ? landscapeBlock() : ''}
     ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
@@ -307,6 +309,7 @@ export function refreshViewsPanel() {
 // rerender — перерисовать панель целиком (после смены угла, флажков ландшафта).
 export function bindViewSettings(panel, rerender) {
   bindPlaceBlock(panel, activeViewId());
+  bindGridViewBlock(panel, rerender);
   panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
     setElevationScale(Number(b.dataset.elevScale));
     rerender();

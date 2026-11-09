@@ -55,6 +55,14 @@ function contentForSelection(sel) {
         ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}`,
     };
   }
+  if (sel.type === 'grid') {
+    const g = (state.project.grids || []).find((x) => x.id === sel.id);
+    if (!g) return null;
+    return {
+      label: `Ось ${g.label} · ${g.kind} = ${Math.round(g.at)} мм`,
+      html: `${button('grid-rename', '✎', 'Переименовать')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
   if (sel.type === 'mass') {
     const mass = (state.project.masses || []).find((m) => m.id === sel.id);
     if (!mass) return null;
@@ -187,6 +195,10 @@ export function bindSelectionToolbar() {
       const id = state.selection?.id;
       if (action === 'open-section') (await import('./elevation-view.js')).openElevation(id);
       else (await import('./plan-section.js')).flipSectionView(id);
+      return;
+    }
+    if (action === 'grid-rename') {
+      (await import('./grids.js')).focusGridLabel();
       return;
     }
     if (action === 'railing-type' || action === 'railing-split') {

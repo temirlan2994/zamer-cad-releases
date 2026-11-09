@@ -17,6 +17,8 @@ import { roomSchedule } from '../core/schedule.js';
 import { tepReport, tepRows } from '../core/tep.js';
 import { buildZonePolygon, neighborRectCorners, polygonAreaM2 } from '../core/site.js';
 import { deriveWalls } from '../core/walls.js';
+import { gridSegment, visibleGrids } from '../core/grid-axes.js';
+import { planGridPref } from './plan-grids.js';
 import { createRenderer, projectPoint, underlayHandles } from '../render.js';
 import { state } from './state.js';
 import { sheetLandscapeStyle, sheetSectionsPref } from './landscape-style.js';
@@ -100,9 +102,18 @@ export { rotatedBox, PX as SHEET_PX };
 
 export function planPoints(lp) {
   const pad = (lp.settings?.exterior || 250) + 1600; // стены + размерные линии
-  return lp.rooms.flatMap((r) => rectCornersWorld(lp.building, {
+  const pts = lp.rooms.flatMap((r) => rectCornersWorld(lp.building, {
     x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2,
   }));
+  // Координационные оси с кружками марок (ui/render-axes.js) — тоже в поле листа.
+  if (lp.grids?.length && planGridPref().sheets) {
+    for (const g of visibleGrids(lp.grids)) {
+      const { a, b } = gridSegment(lp, g);
+      const k = g.kind === 'x' ? { x: 0, y: 1000 } : { x: 1000, y: 0 };
+      pts.push(...rectCornersWorld(lp.building, { x: a.x - k.x - 500, y: a.y - k.y - 500, w: b.x - a.x + 2 * k.x + 1000, h: b.y - a.y + 2 * k.y + 1000 }));
+    }
+  }
+  return pts;
 }
 
 export function sitePoints(project) {

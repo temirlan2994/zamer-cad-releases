@@ -777,7 +777,11 @@ export function openingPosAt(project, opening, walls, along) {
 }
 
 // Мировая геометрия проёма: прямоугольник поперёк полотна стены.
+// Проём-«сирота» (opening.orphan: стена ушла или на ней нет места, см.
+// ui/plan-actions.js reconcileOpenings) хранится в проекте, но не стоит
+// ни на какой стене — null; вернётся, когда место появится.
 export function openingRect(project, opening, walls) {
+  if (opening.orphan) return null;
   if (opening.host) {
     const placed = resolveOpeningWall(project, opening, walls);
     if (!placed) return null;

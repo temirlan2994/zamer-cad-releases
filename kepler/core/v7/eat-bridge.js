@@ -16,9 +16,10 @@
 // ушла под верхнюю («сироты»: данные целы, вернутся с формой).
 
 import { DEFAULT_PARTITION, isOpenRoom, isShaft } from '../catalog.js';
+import { MAX_SHARED_GAP } from '../walls.js';
 import { area, buffer, erode, intersection, orientRing, pointInPolygon } from '../geom/poly.js';
 import { captureOpeningAnchors, keepOpenings } from '../opening-anchor.js';
-import { finalizeRoomOutline, roomRects } from '../room-shape.js';
+import { finalizeRoomOutline, roomBoundaryEdges, roomRects } from '../room-shape.js';
 import { nestedOuterRect, rectInsideRoomShape } from '../rooms.js';
 import { EAT_MIN_REMAIN, carveLevel } from './carve.js';
 import { migrateLevel, zOrder } from './migrate.js';
@@ -61,8 +62,25 @@ export function nominalShape(room) {
   return room?.eatBase?.base ? { ...room, ...room.eatBase.base, outline: room.eatBase.base.outline, notch: room.eatBase.base.notch } : room;
 }
 
+// «Стены объединились»: верхняя срезает у нижней полоску не глубже зазора
+// пары + MERGE_DEPTH (наезд на толщину стены с запасом — так магнит ставит
+// комнату к грани стены соседа). Проём срезанной грани тогда не уходит
+// «под» соседа, а переезжает на новую грань — общую стену. Глубже — комната
+// правда под соседом: проём — «сирота» и вернётся с формой.
+export const MERGE_DEPTH = 600;
+const stripShift = () => MAX_SHARED_GAP + MERGE_DEPTH + 1;
+
+// Вернуть комнате номинальную форму, сохранив проёмы. Проём, переехавший при
+// съедании на грань общей стены (moveToShiftedEdge), — обратно на свою грань.
+function restoreShape(level, room, base, shift) {
+  const anchors = captureOpeningAnchors(level, room);
+  const { lost } = keepOpenings(level, room, () => setShape(room, base));
+  for (const a of anchors.list) if (lost.includes(a.id)) moveToShiftedEdge(level, room, a, shift);
+}
+
 // Вернуть этажу номинальные формы (снять производное съедание).
 export function nominalizeLevel(level) {
+  const shift = stripShift();
   const rooms = level.rooms;
   // Старые файлы: съевшая (eatBase.by) — выше съеденной, даже если раньше в массиве.
   if (rooms.some((r) => r.eatBase?.by?.length)) {
@@ -82,7 +100,7 @@ export function nominalizeLevel(level) {
       // Чистый сдвиг: номинал едет вместе с комнатой.
       base = { ...base, x: base.x + room.x - eb.now.x, y: base.y + room.y - eb.now.y };
     }
-    keepOpenings(level, room, () => setShape(room, base));
+    restoreShape(level, room, base, shift);
     for (const o of eb.openings || []) {
       if (!level.openings.some((x) => x.id === o.id)) level.openings.push(clone(o));
     }
@@ -99,7 +117,7 @@ export function liftRoom(project, roomId) {
   if (!eb) return false;
   delete room.eatBase;
   if (!Array.isArray(level.openings)) level.openings = [];
-  if (eb.base) keepOpenings(level, room, () => setShape(room, eb.base));
+  if (eb.base) restoreShape(level, room, eb.base, stripShift());
   for (const o of eb.openings || []) {
     if (!level.openings.some((x) => x.id === o.id)) level.openings.push(clone(o));
   }
@@ -132,7 +150,7 @@ export function eatState(project) {
 export const eatersOf = (room) => [...(room?.eatBase?.by || [])];
 
 // Съесть: видимая форма = результат carve. → { ok, why, orphans }.
-function applyCarved(level, room, ring, cutters, partition) {
+function applyCarved(level, room, ring, cutters, partition, shift = 0) {
   const local = orientRing(ring, 1).map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
   const probe = { ...room, outline: local };
   delete probe.notch;
@@ -143,7 +161,8 @@ function applyCarved(level, room, ring, cutters, partition) {
   }
   const inner = cutters.map((c) => erode(c, 1));
   const under = new Set();
-  for (const a of captureOpeningAnchors(level, room).list) {
+  const anchors = captureOpeningAnchors(level, room).list;
+  for (const a of anchors) {
     const p = a.orient === 'h' ? { x: a.abs, y: a.edge } : { x: a.edge, y: a.abs };
     if (inner.some((c) => c.length && pointInPolygon(c, p, 0))) under.add(a.id);
   }
@@ -154,8 +173,37 @@ function applyCarved(level, room, ring, cutters, partition) {
     finalizeRoomOutline(room);
   });
   const drop = new Set([...under, ...lost]);
+  // Стыковка вплотную или с наездом на стену: верхняя срезает у нижней лишь
+  // полоску (≤ shift, см. MERGE_DEPTH) — стены объединились в одну общую.
+  // Проём этой грани не уходит «под» соседа, а переезжает на новую грань
+  // (общую стену) на то же место вдоль стены.
+  for (const a of anchors) {
+    if (!drop.has(a.id)) continue;
+    if (moveToShiftedEdge(level, room, a, shift)) drop.delete(a.id);
+  }
   if (drop.size) level.openings = level.openings.filter((o) => !drop.has(o.id));
   return { ok: true, orphans: [...drop].map((id) => seen.get(id)).filter(Boolean) };
+}
+
+// Проём a (снимок captureOpeningAnchors) — на грань той же ориентации и
+// внешней стороны, сдвинутую не дальше shift (срезанная полоска), если
+// центр проёма лежит на ней. → true, если переехал.
+function moveToShiftedEdge(level, room, a, shift) {
+  const opening = level.openings.find((o) => o.id === a.id);
+  if (!opening || !(shift > 0)) return false;
+  const edge = roomBoundaryEdges(room)
+    .filter((e) => e.orient === a.orient && e.outward === a.outward)
+    .map((e) => ({ e, d: Math.abs(a.edge - e.edge) }))
+    .filter(({ e, d }) => d <= shift && a.abs >= e.from - 0.5 && a.abs <= e.to + 0.5)
+    .sort((p, q) => p.d - q.d)[0]?.e;
+  if (!edge) return false;
+  const half = (Number(opening.width) || 0) / 2;
+  const lo = edge.from + half;
+  const hi = edge.to - half;
+  const pos = lo > hi ? (edge.from + edge.to) / 2 : Math.max(lo, Math.min(hi, a.abs));
+  opening.side = edge.side;
+  opening.offset = pos - (edge.orient === 'h' ? room.x : room.y);
+  return true;
 }
 
 // Пересчитать съедание активного этажа с нуля.
@@ -221,8 +269,9 @@ export function reconcileEats(project, { touched = [], under = null, prev = null
       continue;
     }
     const base = snapShape(room);
-    const cutters = c.by.map((id) => buffer(geom(id), pairGap(v7, settings, blockOf.get(room.id), blockOf.get(id))));
-    const res = applyCarved(level, room, c.shape[0][0], cutters, partition);
+    const gaps = c.by.map((id) => pairGap(v7, settings, blockOf.get(room.id), blockOf.get(id)));
+    const cutters = c.by.map((id, i) => buffer(geom(id), gaps[i]));
+    const res = applyCarved(level, room, c.shape[0][0], cutters, partition, Math.max(0, ...gaps) + MERGE_DEPTH + 1);
     if (!res.ok) { out.failed.push({ lower: room, upper, why: res.why, child: res.child }); continue; }
     room.eatBase = { base, now: snapShape(room), by: [...c.by], openings: res.orphans };
     if (prevBy.get(room.id) !== c.by.join('|')) out.eaten.push({ lower: room, upper });

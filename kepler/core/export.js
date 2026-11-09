@@ -193,6 +193,9 @@ export function buildStructuredExport(project) {
     // Массы (core/masses.js): боксы в осях дома — центр основания x, y, размеры
     // w, d, низ z0, высота h, поворот (кратно 90°). Необязательно.
     ...(project.masses?.length ? { masses: project.masses.map((m) => ({ ...m })) } : {}),
+    // Координационные оси (core/grid-axes.js): { id, label, kind 'x'|'y', at,
+    // from?, to?, hidden? } в осях дома, мм. Необязательно.
+    ...(project.grids?.length ? { grids: project.grids.map((g) => ({ ...g })) } : {}),
   };
 }
 
