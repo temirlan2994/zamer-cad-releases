@@ -39,6 +39,10 @@ const MAX_DIFF = { // относительное расхождение, см. �
   steppedWithKitchenAndShaft: 0.02, shaftInWall: 0.03, shaftAtCorner: 0.015,
   terraceAtPartitionGap: 0.02, diagonalCorners: 0.003, courtyardBetweenL: 0.002, nearGapRooms: 0.006,
   manualCrossesRoomWall: 0.016, manualThroughRoom: 0.017,
+  // derive v7 ставит стену полной толщины и на 10-мм ребро ступеньки (выступ
+  // в зоне скрытой стены съедает площадь) — микроступеньки v7 ещё не
+  // выравнивает (JOG_TOL есть только в core/walls-v2.js).
+  jogCornerHidden: 0.002, jogStepFace: 0.003, 'user-house-joints-2026-11.kepler.json': 0.001,
   'user-house-2026-11.json': 0.005, 'v5-project.kepler.json': 0.005,
 };
 

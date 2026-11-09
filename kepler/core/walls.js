@@ -799,7 +799,33 @@ export function openingRect(project, opening, walls) {
   const rect = wall.orient === 'h'
     ? { x: absCenter - half, y: wall.band.y, w: opening.width, h: wall.band.h }
     : { x: wall.band.x, y: absCenter - half, w: wall.band.w, h: opening.width };
-  return { rect, wall, absCenter };
+  return { rect: acrossBody(wall, rect), wall, absCenter };
+}
+
+// Проём режет тело стены насквозь: если грань стены выровнена по соседней
+// ступеньке (v2, JOG_TOL — тело шире полосы band на величину сдвига),
+// прямоугольник проёма растягивается поперёк до граней тела на своём участке.
+function acrossBody(wall, rect) {
+  if (!wall.rects) return rect;
+  const h = wall.orient === 'h';
+  const a0 = h ? rect.x : rect.y;
+  const a1 = a0 + (h ? rect.w : rect.h);
+  const lo0 = h ? rect.y : rect.x;
+  const hi0 = lo0 + (h ? rect.h : rect.w);
+  let lo = lo0;
+  let hi = hi0;
+  for (const r of wall.rects) {
+    const rl = h ? r.x : r.y;
+    const rh = rl + (h ? r.w : r.h);
+    if (Math.min(rh, a1) - Math.max(rl, a0) <= 0.5) continue;
+    const cl = h ? r.y : r.x;
+    const ch = cl + (h ? r.h : r.w);
+    if (ch < lo - 0.5 || cl > hi + 0.5) continue;
+    lo = Math.min(lo, cl);
+    hi = Math.max(hi, ch);
+  }
+  if (lo > lo0 - 0.5 && hi < hi0 + 0.5) return rect; // тело не шире полосы — как было
+  return h ? { ...rect, y: lo, h: hi - lo } : { ...rect, x: lo, w: hi - lo };
 }
 
 // Зона открывания двери: квадрат width×width внутри комнаты, в которую она открывается.

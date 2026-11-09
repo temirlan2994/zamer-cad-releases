@@ -11,7 +11,7 @@ import * as wallsModule from '../core/walls.js';
 import { buildTemplate, TEMPLATES } from '../core/templates.js';
 import { readFileSync } from 'node:fs';
 import { deserializeProject, levelProject } from '../core/model.js';
-import { MANUAL_WALL_FIXTURES, WALL_FIXTURES } from './wall-fixtures.mjs';
+import { JOG_FIXTURES, MANUAL_WALL_FIXTURES, WALL_FIXTURES } from './wall-fixtures.mjs';
 import { checkWallInvariants } from './wall-invariants-lib.mjs';
 
 const V2 = wallsModule.wallsEngine({ settings: {} }) === 'v2';
@@ -25,12 +25,24 @@ const INVARIANTS = {
   area: 'e: площадь кусков = площадь объединения (нет наложений)',
   fragments: 'f: нет обломков',
   hidden: 'g: скрытая стена не забирает углы видимых',
+  jogs: 'h: нет микроступенек (рёбра контура ≥ 50 мм)',
 };
+
+// Сдвиги помещений тоньше 50 мм (JOG_FIXTURES): ступенька заполняется стеной —
+// она закрывает полоску пола (c) и меняет толщину на величину сдвига (d);
+// щель ≤ 50 мм между скрытой стеной и узлом отходит скрытой (g).
+// Вырезка из файла пользователя — координаты не кратны 10 мм, растровая
+// проверка (b) там неточна; главное для неё — (h).
+const JOG_EXEMPT = { intrusion: true, thickness: true, hidden: true };
+const USER_JOINTS = 'проект user-house-joints';
+const isExempt = (name, inv) => (JOG_EXEMPT[inv] && (name in JOG_FIXTURES || name.startsWith(USER_JOINTS))) ||
+  (inv === 'coverage' && name.startsWith(USER_JOINTS));
 
 // Дефекты старой схемы (полосы + заплатки), замерено 2026-11-05.
 const ALL = '*';
 const KNOWN_OLD_FAILURES = {
   area: ALL, // углы удлиняются, заплатки-стыки кладутся поверх полос
+  jogs: ALL, // ступеньки от сдвигов помещений не выравниваются
   intrusion: ['courtyardBetweenL', 'diagonalCorners'], // удлинение угла заходит в соседа по диагонали
 };
 
@@ -54,6 +66,13 @@ for (const t of TEMPLATES) {
   const p = deserializeProject(readFileSync(new URL('./fixtures/user-house-2026-11.json', import.meta.url), 'utf8'));
   for (const lv of p.levels) cases.push([`проект user-house-2026-11/${lv.name}`, levelProject(p, lv.id)]);
 }
+// Вырезка из проекта пользователя 2026-11-09 (kepler-plan/7, этаж 1): сдвиги
+// помещений 10–50 мм после съедания — Коридор 2, Постирочная, угол Гостиная/
+// Холл/Гардеробная со скрытой стеной, низ Спальни/Санузла/Постирочной.
+{
+  const p = deserializeProject(readFileSync(new URL('./fixtures/user-house-joints-2026-11.kepler.json', import.meta.url), 'utf8'));
+  for (const lv of p.levels) cases.push([`проект user-house-joints-2026-11/${lv.name}`, levelProject(p, lv.id)]);
+}
 
 test('реализация стен доступна', { skip: !derive && 'deriveWallsV2 ещё нет' }, () => {
   assert.equal(typeof derive, 'function');
@@ -63,6 +82,7 @@ for (const [name, project] of cases) {
   if (!derive) break;
   const result = checkWallInvariants(project, derive(project));
   for (const [inv, title] of Object.entries(INVARIANTS)) {
+    if (isExempt(name, inv)) continue;
     const known = isKnown(name, inv);
     test(`${name} — ${title}`, known ? { todo: 'дефект старой схемы стен' } : {}, () => {
       const r = result[inv];

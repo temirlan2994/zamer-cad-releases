@@ -12,11 +12,12 @@
 //  d thickness — толщина стены по нормали к грани постоянна и равна заданной
 //                (зазор до соседа ≤ 450 либо назначенная толщина);
 //  e area      — сумма площадей кусков = площадь их объединения (нет наложений);
-//  f fragments — нет «обломков»: каждая связная часть стен касается закрытой комнаты.
+//  f fragments — нет «обломков»: каждая связная часть стен касается закрытой комнаты;
+//  h jogs      — в контуре видимых стен нет рёбер короче 50 мм (ступенек, зубцов).
 
 import { isOpenRoom, isShaft } from '../core/catalog.js';
 import { roomBoundaryEdges, roomRects } from '../core/room-shape.js';
-import { ownKey } from '../core/walls.js';
+import { ownKey, wallOutline } from '../core/walls.js';
 
 export const G = 10;
 const MAX_GAP = 450;
@@ -352,5 +353,27 @@ export function checkWallInvariants(project, walls) {
     count: Math.round(diff / 1e4) / 100,
     sample: [`сумма кусков ${(pieceArea / 1e6).toFixed(3)} м², объединение ${(unionArea / 1e6).toFixed(3)} м²`],
   };
+
+  // h — микроступеньки: в едином контуре видимых стен нет рёбер короче
+  // JOG мм (без растра — ступенька в 10 мм тоже видна).
+  result.jogs = checkWallJogs(walls);
   return result;
+}
+
+// Рёбра контура видимых стен короче jog мм: зубцы, выступы, торцы «ёлочкой».
+export const JOG = 49.5;
+export function checkWallJogs(walls, { jog = JOG, box = null } = {}) {
+  const short = [];
+  for (const c of wallOutline(walls)) {
+    const pts = c.pts;
+    for (let i = 0; i < pts.length; i += 1) {
+      const a = pts[i]; const b = pts[(i + 1) % pts.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len >= jog) continue;
+      if (box && !(Math.max(a.x, b.x) >= box.x && Math.min(a.x, b.x) <= box.x + box.w &&
+        Math.max(a.y, b.y) >= box.y && Math.min(a.y, b.y) <= box.y + box.h)) continue;
+      short.push(`(${a.x}, ${a.y})→(${b.x}, ${b.y}) ${len} мм`);
+    }
+  }
+  return { ok: short.length === 0, count: short.length, sample: short.slice(0, 3) };
 }

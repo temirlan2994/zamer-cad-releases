@@ -132,8 +132,9 @@ export async function compareCases(files = []) {
     }
     return cases;
   }
-  const { WALL_FIXTURES } = await import('../tests/wall-fixtures.mjs');
-  for (const [name, build] of Object.entries(WALL_FIXTURES)) cases.push([name, build()]);
+  const { JOG_FIXTURES, WALL_FIXTURES } = await import('../tests/wall-fixtures.mjs');
+  // Сдвиги помещений < 50 мм v2 выравнивает (JOG_TOL), v1 — нет: сравнивать нечего.
+  for (const [name, build] of Object.entries(WALL_FIXTURES)) if (!(name in JOG_FIXTURES)) cases.push([name, build()]);
   for (const t of TEMPLATES) {
     const p = buildTemplate(t.id);
     for (const lv of p.levels) cases.push([`шаблон ${t.id}/${lv.name}`, levelProject(p, lv.id)]);

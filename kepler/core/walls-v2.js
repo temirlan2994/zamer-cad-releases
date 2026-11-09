@@ -18,11 +18,23 @@
 // этого сегмента) и polys (их контуры).
 
 import { isOpenRoom, isShaft } from './catalog.js';
-import { roomRects } from './room-shape.js';
+import { roomContainsPoint, roomRects } from './room-shape.js';
 import { cutWallsInsideShafts, wallRects, wallSegments } from './walls.js';
 import { gridAxis, mergeCells, rectsCycles, snapHalf } from './ortho-grid.js';
 
 const TYPE_RANK = { exterior: 3, bearing: 2, partition: 1 };
+
+// Ступенька тоньше JOG_TOL мм — шум, а не замысел: помещения стоят со сдвигом
+// на 10–50 мм (неточная расстановка, съедание по номиналу соседа). Раньше
+// каждый такой сдвиг давал в стене ступеньку, а микроребро помещения —
+// свою стену полной толщины поперёк (зубец/выступ на стыке). Теперь:
+//   • участок стены короче JOG_TOL своей полосы и углов не строит;
+//   • угловой прямоугольник ставится только в выпуклой вершине помещения
+//     (в вогнутой он лишний, а при укороченной соседней полосе торчал);
+//   • после раздачи клеток ступеньки тоньше JOG_TOL в теле стен заполняются
+//     в сторону прироста тела (fillThinSteps): грань стены — одна прямая,
+//     внутренняя грань закрывает полоску пола, наружные — заподлицо.
+export const JOG_TOL = 50;
 
 // Сравнение сегментов при равной близости: shared > own, толще, класс
 // (наружная > несущая > перегородка), ключ, начало. < 0 — a лучше.
@@ -195,9 +207,11 @@ export function deriveWallsV2(project) {
     }
     return a;
   };
+  // Микроучасток (сдвиг помещений, ребро-ступенька): без своей полосы.
+  const micro = (seg) => seg.source !== 'manual' && seg.to - seg.from <= JOG_TOL + 0.25;
   segs.forEach((seg, si) => {
     const b = seg.band;
-    if (seg.source === 'manual' || !b || b.w <= 0.25 || b.h <= 0.25) return;
+    if (seg.source === 'manual' || !b || b.w <= 0.25 || b.h <= 0.25 || micro(seg)) return;
     const f = faces.get(seg) || {};
     cands.push({
       x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h, si, corner: false,
@@ -211,7 +225,7 @@ export function deriveWallsV2(project) {
   const byRoom = new Map();
   segs.forEach((seg, si) => {
     const f = faces.get(seg);
-    if (!f) return;
+    if (!f || micro(seg)) return;
     for (const [id, face] of Object.entries(f)) {
       if (!byRoom.has(id)) byRoom.set(id, []);
       byRoom.get(id).push({ si, seg, edge: face.edge, outward: face.outward });
@@ -221,12 +235,17 @@ export function deriveWallsV2(project) {
   for (const [id, list] of byRoom) {
     const hs = list.filter((q) => q.seg.orient === 'h');
     const vs = list.filter((q) => q.seg.orient === 'v');
+    const room = rooms[roomIndex.get(id)];
     for (const h of hs) {
       for (const v of vs) {
         // Вершина (v.edge, h.edge) — конец обоих сегментов.
         if (!(near(h.seg.from, v.edge) || near(h.seg.to, v.edge))) continue;
         if (!(near(v.seg.from, h.edge) || near(v.seg.to, h.edge))) continue;
         const cx = v.edge; const cy = h.edge;
+        // Вогнутая вершина: четверть «наружу от v, внутрь от h» — в помещении.
+        // Там угол закрывают сами полосы; прямоугольник лишний и при
+        // укороченной/суженной соседней полосе давал выступ.
+        if (room && roomContainsPoint(room, cx + v.outward, cy - h.outward)) continue;
         const x2 = cx + v.outward * v.seg.thickness;
         const y2 = cy + h.outward * h.seg.thickness;
         // Владелец угла: видимый, затем более толстый (наружная стена ведёт
@@ -328,6 +347,26 @@ export function deriveWallsV2(project) {
     }
   });
 
+  // Ступеньки тоньше JOG_TOL — заподлицо (клетка может отойти стене, если
+  // лежит вне помещений или в помещении этой стены / его предке).
+  const ownRooms = segs.map((seg) => new Set((seg.rooms || []).map((id) => roomIndex.get(id)).filter((i) => i !== undefined)));
+  // bound — владелец клетки-ступеньки, к которой выравнивается грань (−1 —
+  // щель). Вне помещений (наружная грань) выравниваются только стены одной
+  // толщины: уступ от разной толщины (300 и 250) — замысел, не шум.
+  const canFill = (ci, k, bound) => {
+    const c = cands[ci];
+    if (cover[k] < 0) {
+      return bound < 0 || Math.abs(segs[c.si].thickness - segs[cands[bound].si].thickness) <= 0.5;
+    }
+    if (c.free) return true;
+    const own = ownRooms[c.si];
+    const ok = (ri) => own.has(ri) || (c.allowed && c.allowed[ri]);
+    if (!ok(cover[k])) return false;
+    const m = multi.get(k);
+    return !m || m.every(ok);
+  };
+  fillThinSteps(best, (ci) => !segs[cands[ci].si].hidden, canFill, xs, ys, (k) => cover[k] >= 0);
+
   // Сегмент → записи (у шахт сегмент режется на куски, как в v1).
   const records = [];
   const piecesOf = segs.map((seg) => {
@@ -388,6 +427,117 @@ function manualBetter(c, seg, o, oseg, x, y) {
   if (Boolean(c.manual) !== Boolean(o.manual)) return Boolean(c.manual);
   if (seg.key !== oseg.key) return seg.key < oseg.key;
   return seg.from < oseg.from;
+}
+
+// Заполнение ступенек тела стен тоньше JOG_TOL на сжатой сетке. best —
+// владелец клетки (−1 — пусто), visible(ci) — видна ли стена владельца,
+// canFill(ci, k, bound) — можно ли стене занять клетку (bound — владелец
+// ступеньки, к которой выравнивается грань; −1 — щель). Полоса сетки (столбец или
+// строка) тоньше JOG_TOL просматривается вдоль; пустая клетка рядом с видимой
+// стеной поперёк полосы:
+//   • стена с обеих сторон — щель, заполняется;
+//   • стена с одной стороны — заполняется, если ряд таких клеток вдоль полосы
+//     упирается в ступеньку: клетку полосы, занятую стеной с той же стороны
+//     и свободную с другой (грань продолжается на соседней линии). Ряд у
+//     поперечной стены (занято с обеих сторон) не трогается — иначе стены
+//     толстели бы от посторонних линий сетки.
+// Заполнение идёт только в сторону прироста тела: грань — одна прямая.
+// Последним проходом щели между видимой и скрытой стеной отходят скрытой
+// (грань видимой не сдвигается, а в области стен нет дыры).
+// Клетка тоньше JOG_TOL по обеим осям вне помещений, окружённая стенами и
+// помещениями (≥ 2 стены), — пустота-зубец у узла: тоже заполняется
+// (inRoom(k) — клетка в помещении).
+export function fillThinSteps(best, visible, canFill, xs, ys, inRoom = () => false) {
+  const nx = xs.length - 1;
+  const ny = ys.length - 1;
+  if (nx <= 0 || ny <= 0) return;
+  let any = false; // последний проход: скрытые — тоже стена, только щели
+  const ownerAt = (i, j) => {
+    if (i < 0 || j < 0 || i >= nx || j >= ny) return -1;
+    const ci = best[j * nx + i];
+    return ci >= 0 && (any || visible(ci)) ? ci : -1;
+  };
+  // Полоса — окно из соседних линий сетки l0..l1 общей толщиной ≤ JOG_TOL
+  // (ступенька 50 мм может состоять из линий 40 + 10 от посторонних граней).
+  const sweep = (vertical) => {
+    let changed = false;
+    const lines = vertical ? nx : ny;
+    const len = vertical ? ny : nx;
+    const coords = vertical ? xs : ys;
+    const idx = (line, t) => (vertical ? t * nx + line : line * nx + t);
+    const owner = (line, t) => (vertical ? ownerAt(line, t) : ownerAt(t, line));
+    for (let l0 = 0; l0 < lines; l0 += 1) {
+      for (let l1 = l0; l1 < lines && coords[l1 + 1] - coords[l0] <= JOG_TOL + 0.25; l1 += 1) {
+        const empty = (t) => {
+          for (let l = l0; l <= l1; l += 1) if (best[idx(l, t)] >= 0) return false;
+          return true;
+        };
+        const full = (t) => {
+          if (t < 0 || t >= len) return false;
+          for (let l = l0; l <= l1; l += 1) if (owner(l, t) < 0) return false;
+          return true;
+        };
+        const side = (t, s) => owner(s < 0 ? l0 - 1 : l1 + 1, t);
+        const open = (t) => empty(t) && (side(t, -1) >= 0 || side(t, 1) >= 0);
+        // Ступенька в ряду t со стороны s → владелец клетки окна у этой стороны.
+        const stepAt = (t, s) => (full(t) && side(t, s) >= 0 && side(t, -s) < 0 ? owner(s < 0 ? l0 : l1, t) : -1);
+        let t = 0;
+        while (t < len) {
+          if (!open(t)) { t += 1; continue; }
+          let t1 = t;
+          while (t1 + 1 < len && open(t1 + 1)) t1 += 1;
+          for (let q = t; q <= t1; q += 1) {
+            const a = side(q, -1);
+            const b = side(q, 1);
+            let src = -1;
+            let bound = -1;
+            if (a >= 0 && b >= 0) src = any && visible(a) ? b : a;
+            else if (!any) {
+              const s = a >= 0 ? -1 : 1;
+              bound = stepAt(t - 1, s);
+              if (bound < 0) bound = stepAt(t1 + 1, s);
+              if (bound >= 0) src = a >= 0 ? a : b;
+            }
+            if (src < 0) continue;
+            let ok = true;
+            for (let l = l0; l <= l1 && ok; l += 1) ok = canFill(src, idx(l, q), bound);
+            if (!ok) continue;
+            for (let l = l0; l <= l1; l += 1) best[idx(l, q)] = src;
+            changed = true;
+          }
+          t = t1 + 1;
+        }
+      }
+    }
+    return changed;
+  };
+  for (let guard = 0; guard < 4; guard += 1) {
+    const a = sweep(true);
+    const b = sweep(false);
+    if (!a && !b) break;
+  }
+  any = true;
+  sweep(true);
+  sweep(false);
+  const thinX = (i) => xs[i + 1] - xs[i] <= JOG_TOL + 0.25;
+  const thinY = (j) => ys[j + 1] - ys[j] <= JOG_TOL + 0.25;
+  for (let j = 0; j < ny; j += 1) {
+    if (!thinY(j)) continue;
+    for (let i = 0; i < nx; i += 1) {
+      const k = j * nx + i;
+      if (!thinX(i) || best[k] >= 0 || inRoom(k)) continue;
+      const near = [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]];
+      let walls = 0; let enclosed = true; let src = -1;
+      for (const [a, b] of near) {
+        const o = ownerAt(a, b);
+        if (o >= 0) {
+          walls += 1;
+          if (src < 0 || (visible(src) && !visible(o))) src = o; // скрытая — без следа на плане
+        } else if (a < 0 || b < 0 || a >= nx || b >= ny || !inRoom(b * nx + a)) enclosed = false;
+      }
+      if (walls >= 2 && enclosed && canFill(src, k, -1)) best[k] = src;
+    }
+  }
 }
 
 // Стена, на которой стоит проём с host { wallId, t } (ручная стена), и

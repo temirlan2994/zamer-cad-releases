@@ -1,0 +1,613 @@
+{
+ "schema": "kepler-plan/7",
+ "revision": 0,
+ "name": "Новый дом (вырезка: стыки стен)",
+ "settings": {
+  "partition": 100,
+  "exterior": 250,
+  "bearing": 200,
+  "dimOuter": true,
+  "units": "mm",
+  "viewAngles": {
+   "plan": 1.6,
+   "landscape": 1.97
+  }
+ },
+ "building": {
+  "rotation": 1.6299999999999955,
+  "origin": {
+   "x": -3108.602618783625,
+   "y": 2929.97766881346
+  }
+ },
+ "levels": [
+  {
+   "id": "L1",
+   "name": "1 этаж",
+   "elevation": 0,
+   "height": 2950,
+   "blocks": [
+    {
+     "id": "room-mw85i2tt-si",
+     "name": "Кладовая",
+     "type": "storage",
+     "parentId": null,
+     "x": 16795,
+     "y": -19100,
+     "rotation": 0,
+     "z": 1,
+     "shape": {
+      "kind": "rect",
+      "w": 2750,
+      "h": 1700
+     }
+    },
+    {
+     "id": "room-mw6rj51k-8",
+     "name": "Котельная",
+     "type": "boiler",
+     "parentId": null,
+     "x": 19645,
+     "y": -19100,
+     "rotation": 0,
+     "z": 2,
+     "shape": {
+      "kind": "rect",
+      "w": 3150,
+      "h": 1700
+     }
+    },
+    {
+     "id": "room-mw6riiei-5",
+     "name": "Санузел",
+     "type": "bathroom",
+     "parentId": null,
+     "x": 7095,
+     "y": -12061,
+     "rotation": 0,
+     "z": 3,
+     "shape": {
+      "kind": "rect",
+      "w": 3105,
+      "h": 1719
+     }
+    },
+    {
+     "id": "room-mw7yclgf-1",
+     "name": "Гардеробная",
+     "type": "wardrobe-room",
+     "parentId": null,
+     "x": 12550,
+     "y": -18200,
+     "rotation": 0,
+     "z": 4,
+     "shape": {
+      "kind": "rect",
+      "w": 1745,
+      "h": 1650
+     }
+    },
+    {
+     "id": "room-mw6uq4cc-dc",
+     "name": "Прихожая",
+     "type": "entrance",
+     "parentId": null,
+     "x": 14395,
+     "y": -18200,
+     "rotation": 0,
+     "z": 5,
+     "shape": {
+      "kind": "rect",
+      "w": 2300,
+      "h": 2650
+     },
+     "edges": {
+      "2": {
+       "hidden": false
+      }
+     }
+    },
+    {
+     "id": "room-mw80kcnm-12",
+     "name": "Коридор 2",
+     "type": "corridor",
+     "parentId": null,
+     "x": 7095,
+     "y": -13392,
+     "rotation": 0,
+     "z": 6,
+     "shape": {
+      "kind": "rect",
+      "w": 3105,
+      "h": 1231
+     }
+    },
+    {
+     "id": "room-mw6rhm8z-2",
+     "name": "Спальня",
+     "type": "bedroom",
+     "parentId": null,
+     "x": 2045,
+     "y": -13392,
+     "rotation": 0,
+     "z": 7,
+     "shape": {
+      "kind": "rect",
+      "w": 4950,
+      "h": 3039
+     },
+     "edges": {
+      "0": {
+       "hidden": false
+      }
+     }
+    },
+    {
+     "id": "room-mw84kwrw-sg",
+     "name": "Гараж",
+     "type": "garage",
+     "parentId": null,
+     "x": 16795,
+     "y": -17300,
+     "rotation": 0,
+     "z": 8,
+     "shape": {
+      "kind": "rect",
+      "w": 6000,
+      "h": 6943
+     }
+    },
+    {
+     "id": "room-mw861rt7-sj",
+     "name": "Постирочная",
+     "type": "laundry",
+     "parentId": null,
+     "x": 10300,
+     "y": -13396,
+     "rotation": 0,
+     "z": 9,
+     "shape": {
+      "kind": "rect",
+      "w": 2400,
+      "h": 3039
+     }
+    },
+    {
+     "id": "room-mw6ri5fr-4",
+     "name": "Гостевой санузел",
+     "type": "guest-wc",
+     "parentId": null,
+     "x": 12550,
+     "y": -16450,
+     "rotation": 0,
+     "z": 10,
+     "shape": {
+      "kind": "rect",
+      "w": 1745,
+      "h": 1483
+     }
+    },
+    {
+     "id": "room-mw82egef-4a",
+     "name": "Гардеробная — копия",
+     "type": "wardrobe-room",
+     "parentId": null,
+     "x": 0,
+     "y": -13392,
+     "rotation": 0,
+     "z": 13,
+     "shape": {
+      "kind": "rect",
+      "w": 1945,
+      "h": 3039
+     }
+    },
+    {
+     "id": "room-mw881jbg-128",
+     "name": "Холл",
+     "type": "hall",
+     "parentId": null,
+     "x": 0,
+     "y": -15450,
+     "rotation": 0,
+     "z": 14,
+     "shape": {
+      "kind": "poly",
+      "pts": [
+       {
+        "x": 0,
+        "y": 583
+       },
+       {
+        "x": 14370,
+        "y": 583
+       },
+       {
+        "x": 14370,
+        "y": 0
+       },
+       {
+        "x": 16695,
+        "y": 0
+       },
+       {
+        "x": 16695,
+        "y": 4350
+       },
+       {
+        "x": 12784,
+        "y": 4350
+       },
+       {
+        "x": 12784,
+        "y": 1982
+       },
+       {
+        "x": 0,
+        "y": 1982
+       }
+      ]
+     }
+    },
+    {
+     "id": "room-mw6rhjh3-1",
+     "name": "Гостиная",
+     "type": "living",
+     "parentId": null,
+     "x": -5665,
+     "y": -19241,
+     "rotation": 0,
+     "z": 15,
+     "shape": {
+      "kind": "poly",
+      "pts": [
+       {
+        "x": 5605,
+        "y": 0
+       },
+       {
+        "x": 5605,
+        "y": 5849
+       },
+       {
+        "x": 5615,
+        "y": 5849
+       },
+       {
+        "x": 5615,
+        "y": 6966
+       },
+       {
+        "x": 0,
+        "y": 6966
+       },
+       {
+        "x": 0,
+        "y": 0
+       }
+      ]
+     },
+     "edges": {
+      "3": {
+       "spans": [
+        {
+         "orient": "h",
+         "from": 3753,
+         "to": 3853,
+         "hidden": false
+        }
+       ]
+      },
+      "4": {
+       "hidden": true,
+       "spans": [
+        {
+         "orient": "v",
+         "from": -946,
+         "to": 6992,
+         "hidden": false
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "walls": [],
+   "openings": [
+    {
+     "id": "door-mw889zgw-17f",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": true,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw6uq4cc-dc",
+      "edge": 3,
+      "offset": 1500
+     }
+    },
+    {
+     "id": "door-mw88avl0-1ar",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw85i2tt-si",
+      "edge": 2,
+      "offset": 500
+     }
+    },
+    {
+     "id": "door-mw88by6u-1cq",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": true,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw84kwrw-sg",
+      "edge": 0,
+      "offset": 3350
+     }
+    },
+    {
+     "id": "door-mw88c4p1-1ff",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw80kcnm-12",
+      "edge": 3,
+      "offset": 681
+     }
+    },
+    {
+     "id": "door-mw88hhh3-1w8",
+     "kind": "door",
+     "width": 1000,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw6uq4cc-dc",
+      "edge": 0,
+      "offset": 800
+     }
+    },
+    {
+     "id": "door-mw88cdv6-1j3",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw6rhm8z-2",
+      "edge": 3,
+      "offset": 1254
+     }
+    },
+    {
+     "id": "door-mw81jmvm-1l",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw6rhm8z-2",
+      "edge": 1,
+      "offset": 1781
+     }
+    },
+    {
+     "id": "door-mw888ig1-15p",
+     "kind": "door",
+     "width": 1400,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "double",
+     "host": {
+      "blockId": "room-mw6uq4cc-dc",
+      "edge": 2,
+      "offset": 1150
+     }
+    },
+    {
+     "id": "door-mw8c1yg6-8c",
+     "kind": "door",
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw881jbg-128",
+      "edge": 0,
+      "offset": 13417.5
+     }
+    },
+    {
+     "id": "door-mw8c4qo8-a5",
+     "kind": "door",
+     "width": 900,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "single",
+     "host": {
+      "blockId": "room-mw84kwrw-sg",
+      "edge": 3,
+      "offset": 5743
+     }
+    },
+    {
+     "id": "window-mw8d9trq-dg",
+     "kind": "window",
+     "width": 3000,
+     "height": 2400,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": true,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6rhjh3-1",
+      "edge": 5,
+      "offset": 2802.5
+     }
+    },
+    {
+     "id": "window-mw8dam4n-po",
+     "kind": "window",
+     "width": 1800,
+     "height": 2100,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6rhjh3-1",
+      "edge": 4,
+      "offset": 6016
+     }
+    },
+    {
+     "id": "window-mw8dapfr-rm",
+     "kind": "window",
+     "width": 1800,
+     "height": 2100,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6rhjh3-1",
+      "edge": 4,
+      "offset": 950
+     }
+    },
+    {
+     "id": "window-mw8dbg94-wz",
+     "kind": "window",
+     "width": 900,
+     "height": 2300,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6rhm8z-2",
+      "edge": 2,
+      "offset": 4450
+     }
+    },
+    {
+     "id": "window-mw8dbhuw-yf",
+     "kind": "window",
+     "width": 900,
+     "height": 2300,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6rhm8z-2",
+      "edge": 2,
+      "offset": 500
+     }
+    },
+    {
+     "id": "window-mw8dblpv-10i",
+     "kind": "window",
+     "width": 900,
+     "height": 2300,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw82egef-4a",
+      "edge": 2,
+      "offset": 972.5
+     }
+    },
+    {
+     "id": "window-mw8dbrxw-13c",
+     "kind": "window",
+     "width": 900,
+     "height": 2300,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw6riiei-5",
+      "edge": 2,
+      "offset": 2605
+     }
+    },
+    {
+     "id": "window-mw8dbumf-165",
+     "kind": "window",
+     "width": 900,
+     "height": 2300,
+     "sill": 100,
+     "swingIn": true,
+     "hingeStart": false,
+     "type": "panoramic",
+     "host": {
+      "blockId": "room-mw861rt7-sj",
+      "edge": 2,
+      "offset": 1200
+     }
+    },
+    {
+     "id": "door-mw880vz5-11l",
+     "kind": "door",
+     "width": 1500,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false,
+     "type": "none",
+     "host": {
+      "blockId": "room-mw80kcnm-12",
+      "edge": 0,
+      "offset": 1566
+     }
+    }
+   ],
+   "items": [],
+   "seeds": [],
+   "pairs": {
+    "room-mw6rhjh3-1|room-mw881jbg-128": {
+     "hidden": true
+    }
+   }
+  }
+ ],
+ "activeLevel": "L1"
+}
