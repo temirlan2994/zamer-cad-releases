@@ -62,6 +62,8 @@ import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
 import { drawPlanGrids } from './ui/render-axes.js';
+import { drawErgonomics } from './ui/render-ergonomics.js';
+import { drawGridLocks } from './ui/grid-locks.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -444,6 +446,8 @@ export function createRenderer(canvas) {
         const hovered = hoveredItems.has(item.id);
         drawItem(ctx, item, tokens, px, selected, hovered);
       }
+      // Эргономика мебели (ui/render-ergonomics.js): зоны и тесные места — только на экране.
+      if (detail && !print && state.modeName === 'plan') drawErgonomics(ctx, { st: state, walls, tokens, px, p2s, dpr, scale, print });
     }
 
     // 7. Участок поверх полов (граница, красная линия, въезд) и
@@ -720,6 +724,7 @@ export function createRenderer(canvas) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawPlanGrids(ctx, { st: state, p2s, tokens, print });
+      if (!print) drawGridLocks(ctx, { st: state, p2s, tokens }); // замки «стена — ось»
       ctx.restore();
     }
     if (state.modeName === 'plan' && !print) {

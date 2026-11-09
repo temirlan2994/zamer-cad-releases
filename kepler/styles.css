@@ -1798,6 +1798,23 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   transition: none;
   animation: none;
 }
+/* Подсказка замка «стена — ось» на плане (ui/grid-pin-ui.js) — мгновенная, как .tb-tip */
+.plan-tip {
+  position: fixed;
+  z-index: 95;
+  max-width: 280px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+  transition: none;
+}
+.plan-tip[hidden] { display: none; }
 .tb-tip b { font-weight: 650; }
 .tb-tip kbd { font: inherit; color: var(--muted); }
 .tb-btn:hover .tb-tip, .tb-btn:focus-visible .tb-tip { display: block; }
@@ -2079,3 +2096,31 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 @media (min-width: 641px) {
   .library .library-tabs, .library #libraryHint, .library .furn-hint { display: none; }
 }
+
+/* Режим «Эргономика» (ui/ergonomics.js): счётчик на кнопке колонки и блок «Эргономика предмета» в «Свойствах». */
+.tb-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn-text);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+.tb-badge.error { background: var(--danger); }
+.tb-badge.ok { background: var(--ok-text); }
+.tb-badge[hidden] { display: none; }
+.ergo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ergo-f { display: grid; grid-template-columns: 1.3em 1fr; gap: 2px 4px; font-size: 12.5px; line-height: 1.35; }
+.ergo-f .ergo-mark { text-align: center; }
+.ergo-f.error .ergo-mark { color: var(--danger); }
+.ergo-f.warn .ergo-mark { color: var(--warn-text); }
+.ergo-f .ergo-acts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; }
+.ergo-f .ergo-acts button { font-size: 11.5px; padding: 2px 8px; }
+.ergo-ok { color: var(--ok-text); margin: 0; }

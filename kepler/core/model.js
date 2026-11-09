@@ -17,6 +17,7 @@ import { convertBoundRooms } from './bound-rooms.js';
 import { normalizeViewsAndSheets } from './views.js';
 import { normalizeMasses } from './masses.js';
 import { normalizeGrids } from './grid-axes.js';
+import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
 
 export { SCHEMA };
 
@@ -319,6 +320,7 @@ export function normalizeRoom(r) {
     const list = normalizeRailingList(room.railings);
     if (list) room.railings = list; else delete room.railings;
   }
+  cleanRoomPins(room); // привязки граней к осям (core/grid-pins-model.js)
   return room;
 }
 
@@ -337,7 +339,7 @@ export function normalizeWall(w) {
   const thickness = t != null && t > 0 ? Math.min(WALL_T_MAX, Math.max(WALL_T_MIN, Math.round(t))) : DEFAULT_PARTITION;
   const base = isObj(w.base) ? w.base : {};
   const top = isObj(w.top) ? w.top : {};
-  return {
+  return cleanWallPins({ // привязки к осям — core/grid-pins-model.js
     ...w,
     id: str(w.id) || makeId('wall'),
     axis: { kind: 'line', a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } },
@@ -349,7 +351,7 @@ export function normalizeWall(w) {
     top: { level: str(top.level), offset: num(top.offset) ?? 0, height: pos(top.height) },
     hidden: Boolean(w.hidden),
     roomBounding: w.roomBounding !== false,
-  };
+  });
 }
 
 // Проём на ручной стене: host { wallId, t } — t: центр проёма от axis.a, мм.
@@ -493,6 +495,20 @@ export function normalizeProject(data) {
   // Координационные оси (core/grid-axes.js): необязательно, без смены схемы.
   const grids = normalizeGrids(data.grids);
   if (grids.length) data.grids = grids; else delete data.grids;
+  // Привязки стен к осям (core/grid-pins.js): к несуществующим осям — снимаются.
+  const gridIds = new Set(grids.map((g) => g.id));
+  for (const level of data.levels) {
+    for (const r of level.rooms || []) {
+      if (!r.axisPins) continue;
+      r.axisPins = r.axisPins.filter((p) => gridIds.has(p.gridId));
+      if (!r.axisPins.length) delete r.axisPins;
+    }
+    for (const w of level.walls || []) {
+      if (!w.axisPins) continue;
+      for (const k of Object.keys(w.axisPins)) if (!gridIds.has(w.axisPins[k].gridId)) delete w.axisPins[k];
+      if (!Object.keys(w.axisPins).length) delete w.axisPins;
+    }
+  }
   ensureSite(data);
   return attachLevelAccessors(data);
 }

@@ -10,6 +10,8 @@ import { selectedRailing } from './railing-actions.js';
 import { el, escapeHtml } from './dom.js';
 import { findWall } from './hit.js';
 import { state } from './state.js';
+import { activeGrids } from './plan-grids.js';
+import { wallPins } from '../core/grid-pins.js';
 
 const button = (action, icon, text, key = '', extra = '') => `
   <button type="button" data-selection-action="${action}" ${extra} title="${escapeHtml(text)}${key ? ` (${key})` : ''}">
@@ -20,6 +22,16 @@ const button = (action, icon, text, key = '', extra = '') => `
 
 function itemCanMirror(item) {
   return Boolean(item);
+}
+
+// «Прикрепить к оси» / «Открепить от оси» (core/grid-pins.js): есть
+// параллельная ось — кнопка; дублирует замок на плане.
+function gridPinButton(wall) {
+  if (!wall || (wall.orient !== 'h' && wall.orient !== 'v')) return '';
+  const pinned = wallPins(state.project, wall).length > 0;
+  if (pinned) return button('grid-unpin', '⊸', 'Открепить от оси');
+  const kind = wall.orient === 'h' ? 'y' : 'x';
+  return activeGrids().some((g) => g.kind === kind) ? button('grid-pin', '⊸', 'Прикрепить к оси') : '';
 }
 
 function contentForSelection(sel) {
@@ -41,6 +53,7 @@ function contentForSelection(sel) {
           ${button('add-door', '◱', 'Дверь')}
           ${button('add-window', '▦', 'Окно')}
           ${divides ? button('split-room', '⊟', 'Разделить на два', '', `data-room="${divides.roomId}"`) : ''}
+          ${gridPinButton(wall)}
           ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
       };
     }
@@ -52,7 +65,8 @@ function contentForSelection(sel) {
       html: `${button('split-wall', '⌜', 'Разделить', '', canSplit ? '' : 'disabled')}
         ${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
         ${button('add-door', '◱', 'Дверь')}
-        ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}`,
+        ${button('add-window', '▦', 'Окно', '', canWindow ? '' : 'disabled')}
+        ${gridPinButton(wall)}`,
     };
   }
   if (sel.type === 'grid') {
@@ -195,6 +209,11 @@ export function bindSelectionToolbar() {
       const id = state.selection?.id;
       if (action === 'open-section') (await import('./elevation-view.js')).openElevation(id);
       else (await import('./plan-section.js')).flipSectionView(id);
+      return;
+    }
+    if (action === 'grid-pin' || action === 'grid-unpin') {
+      const gp = await import('./grid-pin-ui.js');
+      if (action === 'grid-pin') gp.pinSelectedWall(); else gp.unpinSelectedWall();
       return;
     }
     if (action === 'grid-rename') {

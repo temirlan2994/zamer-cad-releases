@@ -47,12 +47,14 @@ import { renderOpeningLibrary } from './opening-library.js';
 import { state } from './state.js';
 import { isFixedSizeComp } from '../core/composite.js';
 import { bindCompositeSection, compositeSection } from './props-composite.js';
+import { bindErgoItemSection, ergoItemSection } from './ergonomics.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { liftForEdit, liftRoom, nominalShape, reconcileEats } from '../core/v7/eat-bridge.js';
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
 import { is3dOpen } from './view3d.js';
+import { bindWallPinBlock, wallPinBlock } from './grid-pin-ui.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -465,7 +467,9 @@ function renderWallProps(panel, wall) {
     </div>
     <p class="empty-hint">${wall.kind === 'shared'
     ? 'Тип и скрытие — только у выделенного участка. Толщина общей стены — зазор между комнатами: меняется для пары, соседняя комната (и всё за ней) сдвигается, стыковка сохраняется.'
-    : 'Толщина, тип и скрытие меняются только у выделенного участка. Смена типа даёт толщину этого класса, если толщина не задавалась вручную.'}</p>`;
+    : 'Толщина, тип и скрытие меняются только у выделенного участка. Смена типа даёт толщину этого класса, если толщина не задавалась вручную.'}</p>
+    ${wallPinBlock(wall)}`;
+  bindWallPinBlock(panel, wall);
 
   panel.querySelector('#wallT').addEventListener('change', (e) => {
     changeWallThickness(wall, Number(e.target.value) || wall.thickness);
@@ -513,7 +517,9 @@ function renderManualWallProps(panel, wall) {
       <label class="prop-field"><span>Высота, мм (пусто — по этажу, ${levelH})</span>
         <input id="wallH" type="number" step="50" min="100" value="${height}"></label>
     </div>
-    <p class="empty-hint">Тяните стену — сдвиг, круглые ручки на концах — длина. Примыкающие ручные стены едут вместе. Del — удалить вместе с проёмами.</p>`;
+    <p class="empty-hint">Тяните стену — сдвиг, круглые ручки на концах — длина. Примыкающие ручные стены едут вместе. Del — удалить вместе с проёмами.</p>
+    ${wallPinBlock(wall)}`;
+  bindWallPinBlock(panel, wall);
 
   panel.querySelector('#wallT').addEventListener('change', (e) => changeWallThickness(wall, Number(e.target.value) || wall.thickness));
   panel.querySelector('#wallKind').addEventListener('change', (e) => changeWallKind(wall, e.target.value));
@@ -852,6 +858,7 @@ function renderItemProps(panel, item) {
     </div>
     ${stairsBlock}
     ${compositeSection(item)}
+    ${ergoItemSection(item)}
     <p class="empty-hint">Копирование, поворот, отражение и удаление — в единой панели над планом.</p>`;
   const applySize = () => {
     if (fixed) return; // диван-конструктор: размер — по модулям
@@ -897,6 +904,7 @@ function renderItemProps(panel, item) {
   });
   if (isStairs) bindStairParams(panel, item);
   bindCompositeSection(panel, item);
+  bindErgoItemSection(panel, item);
 }
 
 // Параметры лестницы числами: ширина марша, проступь, подъёмы, ступени по

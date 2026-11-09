@@ -18,12 +18,14 @@ import {
   autoNumberGrids, setGridExtent, visibleGrids,
 } from '../core/grid-axes.js';
 import { snapWallPoint } from '../core/wall-manual.js';
+import { captureLevels, hasGridPins, moveGridWithPins, restoreLevels } from '../core/grid-pins.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { escapeHtml, toast } from './dom.js';
 import { GRID_HEAD_R } from './render-axes.js';
 import { planGridPref, setPlanGridPref } from './plan-grids.js';
 import { gridStep } from './snap.js';
 import { state } from './state.js';
-import { afterChange, mutate, pushHistory, snapshot } from './store.js';
+import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { renderProps, renderToolOptions } from './props.js';
 import { cancelTool, selectObject, setTool } from './tools.js';
 import { requestDraw } from './view.js';
@@ -63,9 +65,27 @@ export function updateGrid(id, fn) {
 export function deleteGrid(id) {
   const g = gridById(id);
   if (!g) return;
+  const pinned = hasGridPins(state.project, id); // привязки снимет syncGridPins (ui/store.js)
   mutate(() => { setGrids(grids().filter((x) => x.id !== id)); });
   if (state.selection?.type === 'grid' && state.selection.id === id) selectObject(null);
-  toast(`Ось ${g.label} удалена · Ctrl+Z — вернуть`);
+  toast(`Ось ${g.label} удалена${pinned ? ' · стены откреплены' : ''} · Ctrl+Z — вернуть`);
+}
+
+// Сдвиг оси в положение at («Свойства», стрелки): прикреплённые стены едут
+// с ней (core/grid-pins.js), комнаты растягиваются — один шаг истории.
+export function moveGridTo(id, at) {
+  const g = gridById(id);
+  if (!g || !Number.isFinite(at)) return null;
+  if (!hasGridPins(state.project, id)) return updateGrid(id, (x) => moveGrid(x, at));
+  const before = snapshot();
+  const res = moveGridWithPins(state.project, id, at);
+  if (!res.ok) { toast(`Ось не сдвинуть: ${res.reason}`, true); renderProps(); requestDraw(); return null; }
+  setGrids(grids());
+  reconcileEats(state.project);
+  refreshDerived();
+  pushHistory(before);
+  afterChange();
+  return gridById(id);
 }
 
 export function deleteAllGrids() {
@@ -238,6 +258,25 @@ export function gridDragMove(drag, plan, event) {
   if (drag.kind === 'grid-move') {
     const d = g.kind === 'x' ? plan.x - drag.plan0.x : plan.y - drag.plan0.y;
     const raw = drag.start + d;
+    // Прикреплённые стены (core/grid-pins.js): каждый кадр — от снимка начала
+    // жеста, ось и стены сдвигаются вместе; привязка — только к шагу сетки
+    // (грани своих же стен ехали бы с осью). Не получилось — последнее удачное.
+    if (drag.pinSave === undefined) drag.pinSave = hasGridPins(state.project, g.id) ? captureLevels(state.project) : null;
+    if (drag.pinSave) {
+      const step = event?.shiftKey ? 1 : gridStep();
+      const at = Math.round(raw / step) * step;
+      restoreLevels(drag.pinSave);
+      state.project.grids = grids().map((x) => (x.id === g.id ? moveGrid(x, drag.start) : x));
+      const res = moveGridWithPins(state.project, g.id, at);
+      if (res.ok) { drag.lastOk = at; drag.reason = null; } else {
+        drag.reason = res.reason;
+        if (drag.lastOk !== undefined) moveGridWithPins(state.project, g.id, drag.lastOk);
+      }
+      drag.moved = gridById(g.id).at !== drag.start;
+      refreshDerived();
+      requestDraw();
+      return;
+    }
     const at = snapAt(g.kind === 'x' ? { x: raw, y: plan.y } : { x: plan.x, y: raw }, g.kind, event, g.id);
     next = moveGrid(g, at);
     drag.moved = next.at !== drag.start;
@@ -257,6 +296,7 @@ export function gridDragMove(drag, plan, event) {
 
 // Конец перетаскивания — одна запись истории.
 export function gridDragEnd(drag) {
+  if (drag.reason) toast(`Дальше ось не сдвинуть: ${drag.reason}`, true);
   if (!drag.moved) { requestDraw(); return; }
   setGrids(grids()); // автонумерация по новому порядку
   pushHistory(drag.before);
@@ -283,7 +323,7 @@ export function handleGridKey(event) {
     const d = g.kind === 'x' ? nudge[0] : nudge[1];
     if (!d) return true;
     const step = event.shiftKey ? gridStep() * 10 : gridStep();
-    updateGrid(g.id, (x) => moveGrid(x, x.at + d * step));
+    moveGridTo(g.id, g.at + d * step);
     return true;
   }
   return false;
@@ -296,6 +336,16 @@ export function focusGridLabel() {
   renderProps();
   const input = document.querySelector('#gridLabel');
   if (input) { input.focus(); input.select(); }
+}
+
+// Сколько стен прикреплено к оси (подпись в «Свойствах» оси).
+function pinnedNote(g) {
+  let n = 0;
+  for (const l of state.project.levels || []) {
+    for (const r of l.rooms || []) n += (r.axisPins || []).filter((p) => p.gridId === g.id).length;
+    for (const w of l.walls || []) n += Object.values(w.axisPins || {}).filter((p) => p?.gridId === g.id).length;
+  }
+  return n ? `<div class="prop-row"><span>Прикреплено граней стен</span><strong id="gridPinned">${n}</strong></div>` : '';
 }
 
 export function renderGridProps(panel, g) {
@@ -320,7 +370,8 @@ export function renderGridProps(panel, g) {
         <button type="button" id="gridResetLen" ${custom ? '' : 'disabled'} title="Длина — по габариту дома + 1500 мм">Длина по дому</button>
         <button type="button" id="gridDelete" class="danger">Удалить</button>
       </div>
-      <p class="hint">Тяните линию — сдвиг оси, кружок — длина. Грани комнат и стен липнут к осям при переносе и растяжении (тумблер магнита в «Привязках»). Настройки показа — в «Свойствах» без выбора.</p>
+      ${pinnedNote(g)}
+      <p class="hint">Тяните линию — сдвиг оси, кружок — длина. Грани комнат и стены липнут к осям при переносе и растяжении (тумблер магнита в «Привязках»); замок у стены — прикрепить к оси. Настройки показа — в «Свойствах» без выбора.</p>
     </div>`;
   const id = g.id;
   panel.querySelector('#gridLabel').addEventListener('change', (e) => {
@@ -332,7 +383,7 @@ export function renderGridProps(panel, g) {
   panel.querySelector('#gridAt').addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
     if (!Number.isFinite(v)) { e.target.value = Math.round(g.at); return; }
-    updateGrid(id, (x) => moveGrid(x, v));
+    moveGridTo(id, v);
   });
   panel.querySelector('#gridKind').addEventListener('change', (e) => {
     const kind = e.target.value;
@@ -366,12 +417,13 @@ export function gridViewBlock() {
           <option value="face" ${pref.snap === 'face' ? 'selected' : ''}>по грани (комнаты или наружной стены)</option>
           <option value="axis" ${pref.snap === 'axis' ? 'selected' : ''}>по оси стены</option>
         </select></label>
+      <label class="check-row" title="Стена, притянутая магнитом к оси, сразу прикрепляется (замок закрыт). Выключено — прикрепляет клик по замку"><input type="checkbox" id="viewsGridRemember" ${pref.remember ? 'checked' : ''}><span>Привязка стен к осям: запоминать при магните</span></label>
       <div class="prop-grid">
         <button type="button" id="viewsGridAuto" title="Оси по наружным и несущим стенам; существующие оси остаются">Оси по стенам</button>
         <button type="button" id="viewsGridClear" class="danger" ${list.length ? '' : 'disabled'}>Удалить все оси</button>
       </div>
       ${hidden ? `<button type="button" id="viewsGridShow">Показать скрытые оси (${hidden})</button>` : ''}
-      <p class="hint">Инструмент «Ось» (G) — слева. Комнаты и стены липнут к осям в радиусе 300 мм.</p>
+      <p class="hint">Инструмент «Ось» (G) — слева. Комнаты и стены липнут к осям в радиусе 300 мм; замок у выделенной стены на оси — прикрепить: стена поедет вместе с осью.</p>
     </div>`;
 }
 
@@ -390,6 +442,7 @@ export function bindGridViewBlock(panel, rerender) {
     requestDraw();
   });
   on('#viewsGridSnap', 'change', (e) => setPlanGridPref({ snap: e.target.value }));
+  on('#viewsGridRemember', 'change', (e) => setPlanGridPref({ remember: e.target.checked }));
   on('#viewsGridAuto', 'click', () => { autoGridsAction(); rerender(); });
   on('#viewsGridClear', 'click', () => { deleteAllGrids(); rerender(); });
   on('#viewsGridShow', 'click', () => { showHiddenGrids(); rerender(); });

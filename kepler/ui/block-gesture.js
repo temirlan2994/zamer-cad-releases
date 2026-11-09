@@ -18,7 +18,8 @@ import { snapRectToSketch } from '../core/masses.js';
 import { DEFAULT_EXTERIOR } from '../core/catalog.js';
 import { massSnapLines } from './plan-masses.js';
 import { snapRectToGrids } from '../core/grid-axes.js';
-import { activeGrids, gridExtentOf, gridSnapOffsets } from './plan-grids.js';
+import { activeGrids, gridExtentOf, gridSnapOffsets, planGridPref } from './plan-grids.js';
+import { wallBody, wallMagnet, wallPins } from '../core/grid-pins.js';
 import { state } from './state.js';
 
 export const MAGNET_MM = 300;
@@ -90,6 +91,34 @@ export function gridMagnet(out, rect) {
     if (axis === 'x') out.gridX = g.guides.find((x) => x.axis === 'v')?.gridId; else out.gridY = g.guides.find((x) => x.axis === 'h')?.gridId;
   }
   return out;
+}
+
+// Перетаскивание стены (жест 'wall', ui/input.js): опорная линия тела —
+// наружная грань или ось стены (настройка «Привязка к оси») — к ближайшей
+// оси своего направления в радиусе 300 мм. Прикреплённая стена липнет к
+// своей оси той же линией. raw — сдвиг мыши поперёк стены (мм).
+// → { delta, grid, guide } | null (нет оси рядом, магнит выключен, Shift/Alt).
+export function wallGridMagnet(drag, raw, event) {
+  if (!magnetOn(event)) return null;
+  const grids = activeGrids();
+  if (!grids.length) return null;
+  const body = wallBody(drag.wall);
+  if (!body) return null;
+  if (drag.pinRef === undefined) {
+    // Прикреплённая стена: опорная линия — та, что стоит на её оси.
+    const pin = wallPins(state.project, drag.wall).find((p) => p.part === 'line');
+    const g = pin && grids.find((x) => x.id === pin.gridId);
+    const ref = g && [body.lo, body.mid, body.hi].find((r) => Math.abs(r - g.at) <= 1);
+    drag.pinRef = ref !== undefined && g ? { gridId: g.id, ref } : null;
+  }
+  const m = wallMagnet(body, raw, grids, { mode: planGridPref().snap, radius: MAGNET_MM, extent: (g) => gridExtentOf(g), pinned: drag.pinRef });
+  if (!m) return null;
+  const ext = gridExtentOf(m.grid);
+  const guide = {
+    type: 'magnet', kind: 'align', axis: body.orient === 'h' ? 'h' : 'v', at: m.grid.at, gridId: m.grid.id,
+    from: Math.min(body.from, ext.from), to: Math.max(body.to, ext.to),
+  };
+  return { delta: m.delta, grid: m.grid, guide };
 }
 
 // Растяжение: прижать подвижные грани. edges — буквы ручки ('ne' → n, e).

@@ -28,11 +28,14 @@ export function orthoPoint(a, p) {
 // Привязка точки инструмента «Стена»: к предыдущей точке — ортогонально;
 // по каждой свободной оси — к ближайшей линии привязки (грани и углы стен,
 // оси и торцы ручных стен, points — доп. точки: вершины эскиза масс) в
-// пределах tol, иначе к сетке grid.
-// → { point, snapX, snapY } (snapX/snapY — координата линии привязки или null).
-export function snapWallPoint({ p, prev = null, walls = [], manual = [], points = [], tol = 0, grid = 0, free = false }) {
+// пределах tol, иначе к сетке grid. gridPoints — координационные оси (как
+// points, вторая координата NaN) со своим радиусом gridTol (магнит 300 мм):
+// ось берёт верх, если она ближе линии привязки стен; пересечение двух осей —
+// угол. → { point, snapX, snapY, gridX, gridY } (snapX/snapY — координата
+// линии привязки или null; gridX/gridY — true, если это координационная ось).
+export function snapWallPoint({ p, prev = null, walls = [], manual = [], points = [], gridPoints = [], gridTol = 0, tol = 0, grid = 0, free = false }) {
   const q = prev ? orthoPoint(prev, p) : { x: p.x, y: p.y };
-  if (free) return { point: q, snapX: null, snapY: null };
+  if (free) return { point: q, snapX: null, snapY: null, gridX: false, gridY: false };
   const xs = []; const ys = [];
   for (const w of walls) {
     for (const r of w.polys ? w.polys.flat() : (w.band ? [{ x: w.band.x, y: w.band.y }, { x: w.band.x + w.band.w, y: w.band.y + w.band.h }] : [])) {
@@ -46,12 +49,26 @@ export function snapWallPoint({ p, prev = null, walls = [], manual = [], points 
     for (const c of list) { const dd = Math.abs(c - v); if (dd <= d) { d = dd; best = c; } }
     return best;
   };
+  const gx = gridPoints.map((e) => e.x).filter(Number.isFinite);
+  const gy = gridPoints.map((e) => e.y).filter(Number.isFinite);
+  const nearGrid = (v, list) => {
+    let best = null; let d = Math.max(tol, gridTol);
+    for (const c of list) { const dd = Math.abs(c - v); if (dd <= d) { d = dd; best = c; } }
+    return best;
+  };
+  // Линия стен или ось — что ближе (ось — в своём радиусе).
+  const pick = (v, list, glist) => {
+    const a = near(v, list); const b = nearGrid(v, glist);
+    if (b === null) return { at: a, grid: false };
+    if (a === null || Math.abs(b - v) < Math.abs(a - v)) return { at: b, grid: true };
+    return { at: a, grid: false };
+  };
   const lockX = Boolean(prev) && q.x === prev.x;
   const lockY = Boolean(prev) && q.y === prev.y;
-  let snapX = null; let snapY = null;
-  if (!lockX) { snapX = near(q.x, xs); q.x = snapX ?? (grid ? Math.round(q.x / grid) * grid : q.x); }
-  if (!lockY) { snapY = near(q.y, ys); q.y = snapY ?? (grid ? Math.round(q.y / grid) * grid : q.y); }
-  return { point: q, snapX, snapY };
+  let snapX = null; let snapY = null; let gridX = false; let gridY = false;
+  if (!lockX) { const s = pick(q.x, xs, gx); snapX = s.at; gridX = s.grid; q.x = snapX ?? (grid ? Math.round(q.x / grid) * grid : q.x); }
+  if (!lockY) { const s = pick(q.y, ys, gy); snapY = s.at; gridY = s.grid; q.y = snapY ?? (grid ? Math.round(q.y / grid) * grid : q.y); }
+  return { point: q, snapX, snapY, gridX, gridY };
 }
 
 export function createWall(a, b, {

@@ -9,6 +9,7 @@ import { hashText, newId } from '../core/storage.js';
 import { deriveWalls } from '../core/walls.js';
 import { freeLoops } from '../core/bound-rooms.js';
 import { reconcileEats } from '../core/v7/eat-bridge.js';
+import { syncGridPins } from '../core/grid-pins.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { collectIssues } from '../core/issues.js';
 import { el, toast } from './dom.js';
@@ -19,6 +20,7 @@ import { renderViewPanel } from './view-align.js';
 import { renderProps } from './props.js';
 import { history, state } from './state.js';
 import { issueGroupsEnabled, setIssues } from './issues.js';
+import { ergoFindings, ergoOn } from './render-ergonomics.js';
 import { updateDimModeBtn } from './toolbar.js';
 import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
@@ -146,7 +148,10 @@ export function refreshNorms() {
 export function refreshIssues() {
   try {
     setIssues(collectIssues(state.project, {
-      norms: state.norms, walls: state.walls, gaps: state.gaps, enabled: issueGroupsEnabled(),
+      norms: state.norms, walls: state.walls, gaps: state.gaps,
+      // Группа «Эргономика» — пока включён режим (ui/ergonomics.js).
+      enabled: ergoOn() ? [...issueGroupsEnabled(), 'ergo'] : issueGroupsEnabled(),
+      ergo: ergoFindings(),
     }));
   } catch (error) {
     setIssues(null);
@@ -155,6 +160,8 @@ export function refreshIssues() {
 }
 
 export function afterChange() {
+  // Привязки стен к осям (core/grid-pins.js): грань ушла с оси — привязка снята.
+  if (state.project && syncGridPins(state.project).dropped) toast('Стена отвязана от оси');
   syncUnderlayImage();
   refreshNorms();
   refreshIssues();

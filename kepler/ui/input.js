@@ -66,7 +66,10 @@ import {
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet } from './block-gesture.js';
+import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallGridMagnet } from './block-gesture.js';
+import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-grids.js';
+import { hitGridLock } from './grid-locks.js';
+import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
 import {
   gridDragEnd, gridDragMove, gridHoverTarget, gridPointerDown, gridToolClick, gridToolHover,
@@ -145,6 +148,19 @@ function applyGroupItems(list) {
 }
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
+
+// Торец ручной стены на координационной оси: подсветка оси (render-axes.js).
+function mwallGridGuides(snapRes) {
+  const out = [];
+  for (const [flag, at, kind] of [[snapRes.gridX, snapRes.snapX, 'x'], [snapRes.gridY, snapRes.snapY, 'y']]) {
+    if (!flag) continue;
+    const g = activeGrids().find((x) => x.kind === kind && Math.abs(x.at - at) < 0.5);
+    if (!g) continue;
+    const e = gridExtentOf(g);
+    out.push({ type: 'magnet', kind: 'align', axis: kind === 'x' ? 'v' : 'h', at: g.at, gridId: g.id, from: e.from, to: e.to });
+  }
+  return out;
+}
 
 function restoreWallDragRooms(wallDrag) {
   for (const entry of wallDrag.roomStarts) {
@@ -429,6 +445,11 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
 
+  // Замок «стена — ось»: мгновенная подсказка, курсор-рука.
+  const lockHover = event?.clientX !== undefined ? hitGridLock(state, pointerScreen(event)) : null;
+  showLockTip(lockHover, event);
+  if (lockHover) { canvas.style.cursor = 'pointer'; return; }
+
   // Подсветка под курсором: линии разрезов, мебель, проёмы, стены, комнаты, объекты участка.
   let nextHover = event?.clientX !== undefined ? planSectionHoverTarget(pointerScreen(event)) : null;
   // Координационные оси: кружки — везде, линия — вне комнат и стен (ui/grids.js).
@@ -463,6 +484,7 @@ function updateHoverAndGhost(world, plan, event) {
 
 export function bindCanvasInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('pointerleave', () => hideLockTip()); // подсказка замка «стена — ось»
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
@@ -764,6 +786,10 @@ export function bindCanvasInput() {
     // Подпись временного размера мебели — раньше ручек и перетаскивания предмета.
     // На телефоне поле открывается на тапе (отпускании пальца): focus() из
     // жеста открывает клавиатуру, а свайп по подписи — панорама.
+    // Замок «стена — ось» (ui/grid-locks.js): клик прикрепляет/открепляет —
+    // раньше стены и оси под ним.
+    const lockHit = hitGridLock(state, screen);
+    if (lockHit) { tapOrNow(event, screen, () => toggleGridLock(lockHit)); return; }
     const tempDimHit = hitTempDim(screen);
     if (tempDimHit) { tapOrNow(event, screen, () => openDimInput(tempDimHit)); return; }
 
@@ -1398,7 +1424,13 @@ export function bindCanvasInput() {
 
     if (drag.kind === 'wall') {
       const raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
-      const delta = Math.round(raw / gridStep()) * gridStep();
+      // Координационные оси (ui/block-gesture.js): грань или ось стены липнет к
+      // оси в радиусе 300 мм (подсветка оси и подпись); иначе — шаг сетки.
+      const gm = wallGridMagnet(drag, raw, event);
+      const delta = gm ? gm.delta : Math.round(raw / gridStep()) * gridStep();
+      drag.gridSnap = gm ? { gridId: gm.grid.id } : null;
+      state.guides = gm ? [gm.guide] : [];
+      state.gridSnapTag = gm ? { x: plan.x, y: plan.y, text: `Ось ${gm.grid.label}` } : null;
       // Стену двигаем по НОМИНАЛАМ комнат: съеденной (стоящей под соседом) комнате
       // возвращается полная форма, иначе её видимая грань двигалась бы, а номинал
       // оставался на месте — и между комнатами оставалась щель.
@@ -1484,10 +1516,13 @@ export function bindCanvasInput() {
       }
       const fixed = drag.start.axis[drag.end === 'a' ? 'b' : 'a'];
       const others = state.project.walls.filter((w) => w.id !== wall.id);
-      const p = snapWallPoint({
+      const snapRes = snapWallPoint({
         p: plan, prev: fixed, walls: (state.walls || []).filter((w) => w.wallId !== wall.id), manual: others,
+        gridPoints: gridSnapPoints(), gridTol: gridPointTol(), // торец — на ось
         tol: 12 / state.view.scale, grid: gridStep(), free: event.shiftKey,
-      }).point;
+      });
+      const p = snapRes.point;
+      state.guides = mwallGridGuides(snapRes);
       drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;
       refreshDerived();
       requestDraw();
@@ -1703,6 +1738,7 @@ export function bindCanvasInput() {
     const finished = drag;
     drag = null;
     state.guides = [];
+    state.gridSnapTag = null;
     state.objGuides = null;
     state.kitchenLabel = null;
     state.stairLabel = null;
@@ -1743,6 +1779,9 @@ export function bindCanvasInput() {
       eatOverlapsAfter(wallIds, { silent: true, prev: finished.eatPrev });
       reconcileOpenings();
       refreshDerived();
+      // «Запоминать привязку при магните» (блок «Координационные оси»): стена,
+      // притянутая к оси, сразу прикрепляется (тем же шагом истории).
+      if (finished.gridSnap) rememberGridSnap(finished);
       pushHistory(finished.before);
       afterChange();
       if (finished.clamped?.length) toast(`Проёмы прижаты к краю укороченной стены: ${finished.clamped.length}`, true);
