@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MASS_MIN, copyMass, createMass, faceOf, faceSize, floorsLabel, isSupported, levelMasses, massBox, massExtent,
+  MASS_MIN, PLAN_CUT_MM, copyMass, createMass, faceOf, faceSize, floorsLabel, isSupported, levelMasses, massBox, massExtent,
   massFromCorners, massRect, massSketch, massStats, massStep, normalizeMass, normalizeMasses, resizeFace,
   rotateMass90, sectionRects, setFaceSize, sketchLines, snapRectToSketch, snapValue, stackMass, supportAt,
   unionOutline,
@@ -178,13 +178,14 @@ test('сохранение: kepler-plan/7 и v6 хранят массы, ста�
   assert.equal(buildStructuredExport(createProject('x')).masses, undefined);
 });
 
-test('3D: грани масс только с опцией masses; 6 граней, полупрозрачные', () => {
+test('3D: грани масс только с опцией masses; 6 граней, обычные — непрозрачные белые', () => {
   const p = createProject('m');
   p.masses = [createMass({ w: 4000, d: 4000, h: 3000 })];
   assert.equal(buildHouseMesh(p).filter((f) => f.kind === 'mass').length, 0);
   const faces = buildHouseMesh(p, { masses: true }).filter((f) => f.kind === 'mass');
   assert.equal(faces.length, 6);
-  assert.ok(faces.every((f) => f.alpha < 1 && f.massId === p.masses[0].id));
+  assert.ok(faces.every((f) => f.alpha === 1 && f.massId === p.masses[0].id), 'прозрачной массу делает только выбор (view3d faceAlpha)');
+  assert.ok(faces.every((f) => f.color === '#f3f5f7'), 'белая');
   assert.deepEqual(massFaces(p.masses).map((f) => f.face).sort(), ['bottom', 'nx', 'ny', 'px', 'py', 'top']);
   const top = faces.find((f) => f.face === 'top');
   assert.ok(top.pts.every((q) => q.z === 3000), 'верх — над землёй');
@@ -219,4 +220,16 @@ test('стены: вершины эскиза — точки привязки и
   const r = snapWallPoint({ p: { x: 9930, y: 4321 }, points: s.points, tol: 100, grid: 50 });
   assert.deepEqual(r.point, { x: 10000, y: 4300 });
   assert.equal(r.snapX, 10000);
+});
+
+test('план этажа: массы по секущей на высоте окна (1650 мм над полом)', () => {
+  const low = createMass({ x: 0, y: 0, w: 3000, d: 3000, z0: 0, h: 1000 });     // ниже секущей
+  const mid = createMass({ x: 4000, y: 0, w: 3000, d: 3000, z0: 0, h: 3000 });  // пересекает
+  const up = createMass({ x: 8000, y: 0, w: 3000, d: 3000, z0: 2000, h: 1000 }); // выше секущей
+  const lvl = { elevation: 0, height: 3000 };
+  assert.deepEqual(levelMasses([low, mid, up], lvl).map((m) => m.id), [mid.id]);
+  assert.equal(PLAN_CUT_MM, 1650);
+  // следующий этаж: секущая 3000 + 1650
+  const two = createMass({ x: 0, y: 0, w: 3000, d: 3000, z0: 3000, h: 3000 });
+  assert.deepEqual(levelMasses([mid, two], { elevation: 3000, height: 3000 }).map((m) => m.id), [two.id]);
 });

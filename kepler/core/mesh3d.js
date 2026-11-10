@@ -23,7 +23,7 @@ import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
-import { MASS_COLOR, massBox } from './masses.js';
+import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 
 export const WALL_COLOR = '#ece8e1';
@@ -1004,14 +1004,15 @@ export function shownLevelIds(project, mode = 'all') {
   return mode === 'only' ? [levels[k].id] : levels.slice(0, k + 1).map((l) => l.id);
 }
 
-// Массы (core/masses.js) — полупрозрачные боксы с контурами: 6 граней kind
+// Массы (core/masses.js) — боксы с контурами (обычные — непрозрачные белые;
+// прозрачной становится только выбранная, см. faceAlpha в ui/view3d.js): 6 граней kind
 // 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
 // Только для окна 3D (опция masses у buildHouseMesh).
-export function massFaces(masses, { alpha = 0.35 } = {}) {
+export function massFaces(masses, { alpha = 1 } = {}) {
   const out = [];
   for (const m of masses || []) {
     const b = massBox(m);
-    const color = m.color || MASS_COLOR;
+    const color = m.color || MASS_COLOR_3D;
     const P = {
       a: v(b.x0, b.y0, b.z0), b: v(b.x1, b.y0, b.z0), c: v(b.x1, b.y1, b.z0), d: v(b.x0, b.y1, b.z0),
       A: v(b.x0, b.y0, b.z1), B: v(b.x1, b.y0, b.z1), C: v(b.x1, b.y1, b.z1), D: v(b.x0, b.y1, b.z1),

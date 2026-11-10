@@ -157,7 +157,7 @@ function faceColor(face) {
 
 function faceAlpha(face) {
   if (face.kind === 'mass' && state.selection?.type === 'mass' && state.selection.id === face.massId) {
-    return massFaceHot(face) ? 0.55 : 0.42;
+    return massFaceHot(face) ? 0.5 : 0.34; // выбранная масса — прозрачная
   }
   return face.alpha ?? 1;
 }

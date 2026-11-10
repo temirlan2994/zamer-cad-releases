@@ -17,7 +17,12 @@ import { union } from './geom/poly.js';
 export const MASS_MIN = 100; // мм — меньше бокс не делаем
 export const MASS_MAX = 300000;
 export const MASS_H_DEFAULT = 3000;
-export const MASS_COLOR = '#9cc3e6';
+export const MASS_COLOR = '#9cc3e6'; // цвет выделенной/прозрачной массы
+export const MASS_COLOR_3D = '#f3f5f7'; // обычная масса в 3D — непрозрачная белая
+// Высота секущей плоскости плана над полом этажа, мм: середина стандартного окна
+// (подоконник 900 + половина высоты 1500). Эскиз масс на плане этажа — сечение
+// масс на этой отметке: показываются только те, что её пересекают.
+export const PLAN_CUT_MM = 1650;
 
 let counter = 0;
 const newId = () => {
@@ -237,13 +242,16 @@ export function sectionRects(masses, z) {
   return out;
 }
 
-// Массы этажа: пересекают диапазон [elevation, elevation + height) этажа.
+// Массы этажа: пересекают секущую плоскость плана — отметка пола + PLAN_CUT_MM
+// (середина окна; у низкого этажа не выше height − 100). Масса целиком выше или
+// ниже этой отметки на плане этажа не показывается.
 export function levelMasses(masses, level) {
   const z0 = Number(level?.elevation) || 0;
-  const z1 = z0 + (Number(level?.height) > 0 ? Number(level.height) : MASS_H_DEFAULT);
+  const h = Number(level?.height) > 0 ? Number(level.height) : MASS_H_DEFAULT;
+  const cut = z0 + Math.max(0, Math.min(PLAN_CUT_MM, h - 100));
   return (masses || []).filter((m) => {
     const b = massBox(m);
-    return b.z0 < z1 - 0.5 && b.z1 > z0 + 0.5;
+    return b.z0 <= cut + 0.5 && b.z1 > cut + 0.5;
   });
 }
 
