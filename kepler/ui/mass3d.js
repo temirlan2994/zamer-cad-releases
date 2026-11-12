@@ -26,18 +26,24 @@
 //   точки размера — центры 6 граней (грань по нормали) и 8 углов (ширина и
 //   глубина сразу); противоположные грани стоят, не меньше 300 мм; двойной
 //   клик по точке — число.
+// Магнит (core/mass-snap.js): края двигаемой массы липнут к граням других
+//   масс «вплотную» и «заподлицо» по трём осям, по z — к отметкам этажей,
+//   земле и верху масс (стопка); радиус 12 px экрана (касание 20 px) в
+//   пределах 20…600 мм, отрыв — за 16 px; цель подсвечивается оранжевым,
+//   подпись у курсора и в подсказке; флажок «Магнит масс», Alt — без магнита.
 // Грань массы ничего не тянет: клик по телу — только выбор. Shift — без
 // шага, Esc — отмена жеста, каждый жест — одна запись истории. Касание —
 // те же ручки с увеличенной зоной попадания.
 
 import {
   FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, createMass, faceSize, floorsLabel, massBox,
-  massStep, setFaceSize, snapValue,
+  massStep, setFaceSize,
 } from '../core/masses.js';
 import {
-  GIZMO_AXES, GIZMO_COLORS, GIZMO_PLANE_PX, GIZMO_PX, MASS_HANDLES, gizmoOrigin, gizmoPick,
-  handleFacing, handlePick, handlePoint, massHandle, resizeByHandle, snapShift,
+  GIZMO_AXES, GIZMO_COLORS, GIZMO_PLANE_PX, GIZMO_PX, MASS_GRIP_MIN, MASS_HANDLES, gizmoOrigin, gizmoPick,
+  handleFacing, handlePick, handlePoint, massHandle, resizeByHandle,
 } from '../core/mass-gizmo.js';
+import { axisTargets, snapContact, snapLabel, snapMove, snapTolerances } from '../core/mass-snap.js';
 import { basePlane, pickMass, rayPlaneZ } from '../core/pick3d.js';
 import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
@@ -47,7 +53,9 @@ import { afterChange, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject } from './tools.js';
 
 const GHOST = '#3d7fe0';
-const SNAP_PX = 10; // px — радиус привязки к граням и отметкам
+const SNAP_COLOR = '#f76b15'; // подсветка цели магнита
+const SNAP_EDGE = [0.97, 0.42, 0.08, 1];
+const PREF_KEY = 'kepler-3d-layers'; // общий ключ слоёв 3D (ui/view3d.js), поле massSnap
 
 let env = null;
 let drag = null; // жест правки массы
@@ -66,31 +74,138 @@ export function massBoxes() {
   return masses().map((m) => ({ id: m.id, ...massBox(m) }));
 }
 
-// Отметки привязки высоты: этажи (низ и верх) и другие массы.
-function zLines(skip = null) {
-  const zs = [];
-  for (const l of state.project?.levels || []) {
-    const e = Number(l.elevation) || 0;
-    zs.push(e, e + (Number(l.height) || 0));
-  }
-  for (const m of masses()) {
-    if (m.id === skip) continue;
-    const b = massBox(m);
-    zs.push(b.z0, b.z1);
-  }
-  return zs;
+// ---------------------------------------------------------------- магнит
+// Магнит масс (core/mass-snap.js): грани и рёбра других масс по трём осям,
+// отметки этажей, земля; радиус — в пикселях экрана, с гистерезисом.
+// Флажок «Магнит масс» (#v3MassSnap) запоминается в kepler-3d-layers.
+// Shift — без магнита и без шага, Alt — без магнита (шаг остаётся).
+
+let magnetPref = true;
+try {
+  const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
+  if (raw && typeof raw.massSnap === 'boolean') magnetPref = raw.massSnap;
+} catch { /* нет хранилища — по умолчанию включён */ }
+
+export const massSnapOn = () => magnetPref;
+export function setMassSnap(on) {
+  magnetPref = Boolean(on);
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREF_KEY) || 'null') || {};
+    localStorage.setItem(PREF_KEY, JSON.stringify({ ...raw, massSnap: magnetPref }));
+  } catch { /* нет хранилища */ }
+  const cb = document.getElementById('v3MassSnap');
+  if (cb) cb.checked = magnetPref;
 }
 
-function snapXY(p, e, skip = null) {
-  if (e?.shiftKey) return { x: Math.round(p.x), y: Math.round(p.y) };
+const magnetFree = (e) => !magnetPref || Boolean(e?.altKey) || Boolean(e?.shiftKey);
+const UNIT = { x: { x: 1, y: 0, z: 0 }, y: { x: 0, y: 1, z: 0 }, z: { x: 0, y: 0, z: 1 } };
+
+function otherBoxes(skip = null) {
+  return masses().filter((m) => m.id !== skip).map((m) => ({ id: m.id, name: m.name, box: massBox(m) }));
+}
+
+function levelList() {
+  return (state.project?.levels || []).map((l) => ({ elevation: l.elevation, height: l.height, name: l.name }));
+}
+
+// Миллиметров на пиксель вдоль оси c у точки p (с учётом ракурса и
+// перспективы): ось, идущая «в глубину», на экране короче — радиус в мм больше.
+function mmPerPxAlong(p, c) {
   const k = env.worldPerPx();
-  const step = massStep(1 / k);
-  const lines = massBaseSnap(skip);
-  return { x: snapValue(p.x, lines.xs, SNAP_PX * k, step).value, y: snapValue(p.y, lines.ys, SNAP_PX * k, step).value };
+  try {
+    const s0 = env.project(p);
+    const s1 = env.project(add(p, UNIT[c], 1000));
+    const len = s0 && s1 ? Math.hypot(s1.x - s0.x, s1.y - s0.y) : 0;
+    return Number.isFinite(len) && len > 1 ? 1000 / len : k;
+  } catch { return k; }
+}
+
+// Привязка по оси c: край габарита box (сдвиг v) к целям; cur — габарит с
+// сырым сдвигом по всем осям (для проверки «касаются ли»); held — объект
+// гистерезиса { x, y, z } (key притянутой цели). → { value, snap }.
+function snapAlong(c, box, cur, v, e, held, { skip = null, ground = [], step = 0, accept = null, edges = null, at = null } = {}) {
+  let targets = axisTargets(c, cur, otherBoxes(skip), {
+    levels: c === 'z' ? levelList() : [], ground: c === 'z' ? ground : [], lines: c === 'z' ? [] : massBaseSnap(skip)[`${c}s`],
+  });
+  if (edges) targets = targets.filter((t) => edges.includes(t.edge));
+  const { tol, release } = snapTolerances(mmPerPxAlong(at || gizmoOrigin(cur), c), drag?.pointer || (tool()?.touch ? 'touch' : 'mouse'));
+  const r = snapMove({
+    lo: box[`${c}0`], hi: box[`${c}1`], v, targets, tol, release, held: held[c] || null, step, free: magnetFree(e), accept,
+  });
+  held[c] = r.snap?.key || null;
+  return r;
+}
+
+// Точка основания при создании: x и y липнут к граням масс, комнат и стен.
+function snapXY(p, e, z = 0) {
+  const t = tool();
+  const held = t ? (t.held ||= {}) : {};
+  if (t) t.snaps = [];
+  if (e?.shiftKey) { held.x = null; held.y = null; return { x: Math.round(p.x), y: Math.round(p.y) }; }
+  const step = massStep(1 / env.worldPerPx());
+  const pt = { x0: p.x, x1: p.x, y0: p.y, y1: p.y, z0: z, z1: z };
+  const at = { x: p.x, y: p.y, z };
+  const out = {};
+  for (const c of ['x', 'y']) {
+    const r = snapAlong(c, pt, pt, 0, e, held, { edges: ['lo', 'hi'], at });
+    if (r.snap) {
+      out[c] = p[c] + r.value;
+      t?.snaps.push({ t: r.snap, box: pt });
+    } else out[c] = step > 0 ? Math.round(p[c] / step) * step : Math.round(p[c]);
+  }
+  return out;
+}
+
+const snapText = (list) => [...new Set((list || []).map((s) => snapLabel(s.t)).filter(Boolean))].join(', ');
+
+// Подсказка в #v3Hint при срабатывании магнита.
+function snapHint(list) {
+  const text = snapText(list);
+  if (text) env.hint(`Магнит: ${text} · Alt или Shift — без магнита`);
+}
+
+// Рёбра габарита (12 отрезков).
+function boxEdges(b) {
+  const P = (i, j, k) => ({ x: i ? b.x1 : b.x0, y: j ? b.y1 : b.y0, z: k ? b.z1 : b.z0 });
+  const E = [];
+  for (const [i, j, k] of [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]]) {
+    if (!i) E.push([P(i, j, k), P(1, j, k)]);
+    if (!j) E.push([P(i, j, k), P(i, 1, k)]);
+    if (!k) E.push([P(i, j, k), P(i, j, 1)]);
+  }
+  return E;
+}
+
+// Подсветка цели магнита: оранжевая плоскость стыка и рёбра целевой массы.
+function snapOverlay(list) {
+  const out = [];
+  const lit = new Set();
+  for (const { t, box } of list || []) {
+    const tm = t.id ? massById(t.id) : null;
+    const tbox = tm ? massBox(tm) : null;
+    if (t.kind !== 'center') {
+      const c = snapContact(box, t, tbox);
+      const [u, w] = Object.keys(c.ranges);
+      const [u0, u1] = c.ranges[u]; const [w0, w1] = c.ranges[w];
+      const pt = (a, b) => ({ [t.axis]: c.value, [u]: a, [w]: b });
+      const P = [pt(u0, w0), pt(u1, w0), pt(u1, w1), pt(u0, w1)];
+      out.push({
+        pts: P, normal: { ...UNIT[t.axis] }, color: SNAP_COLOR, alpha: 0.35, kind: 'overlay', onTop: true, flat: true, twoSided: true,
+        edges: P.map((q, i) => [q, P[(i + 1) % 4]]), edgeRgba: SNAP_EDGE,
+      });
+    }
+    if (tbox && !lit.has(t.id)) {
+      lit.add(t.id);
+      out.push({ pts: [], normal: { x: 0, y: 0, z: 1 }, color: SNAP_COLOR, alpha: 0, kind: 'overlay', edges: boxEdges(tbox), edgeRgba: [0.97, 0.42, 0.08, 0.85] });
+    }
+  }
+  return out;
 }
 
 function setStage(t, stage) {
   t.stage = stage;
+  t.held = {};
+  t.snaps = [];
   env.hint(stageHint(t));
 }
 
@@ -109,7 +224,7 @@ export function massToolHint() {
 // Сброс стадий (вход в 3D, выход из него).
 export function resetMassTool() {
   const t = tool();
-  if (t) Object.assign(t, { stage: 'corner', a: null, b: null, h: null, z: 0, cursor: null, screen2: null });
+  if (t) Object.assign(t, { stage: 'corner', a: null, b: null, h: null, z: 0, cursor: null, screen2: null, held: {}, snaps: [] });
   hideNum();
   env?.label(null);
 }
@@ -120,10 +235,21 @@ function heightFrom(t, e) {
   let d = env.axisDelta({ x: 0, y: 0, z: 1 }, e.clientX - t.screen2.x, e.clientY - t.screen2.y);
   if (!d) d = -(e.clientY - t.screen2.y) * env.worldPerPx();
   let h = Math.max(MASS_MIN, d);
-  if (e.shiftKey) return Math.max(MASS_MIN, Math.round(h / 10) * 10);
-  const tol = SNAP_PX * env.worldPerPx();
-  const top = snapValue(t.z + h, zLines(), tol, 0);
-  if (top.line != null && top.line - t.z >= MASS_MIN) return top.line - t.z;
+  t.held ||= {};
+  t.snaps = [];
+  if (e.shiftKey) { t.held.z = null; return Math.max(MASS_MIN, Math.round(h / 10) * 10); }
+  // Верх призрака липнет к отметкам этажей и верху/низу других масс.
+  const top = t.z + h;
+  const ghost = {
+    x0: Math.min(t.a.x, t.b.x), x1: Math.max(t.a.x, t.b.x), y0: Math.min(t.a.y, t.b.y), y1: Math.max(t.a.y, t.b.y), z0: t.z, z1: top,
+  };
+  const at = { x: (ghost.x0 + ghost.x1) / 2, y: (ghost.y0 + ghost.y1) / 2, z: top };
+  const pt = { ...ghost, z0: top, z1: top };
+  const r = snapAlong('z', pt, ghost, 0, e, t.held, { edges: ['hi'], at, accept: (v) => top + v - t.z >= MASS_MIN });
+  if (r.snap) {
+    t.snaps = [{ t: r.snap, box: ghost }];
+    return top + r.value - t.z;
+  }
   h = Math.round(h / 100) * 100;
   return Math.max(MASS_MIN, h);
 }
@@ -143,21 +269,25 @@ export function massToolMove(e) {
   if (t.stage === 'corner' || !t.stage) {
     const plane = basePlane(massBoxes(), ray, { floor: env.floorHit(e) });
     if (!plane) { t.cursor = null; env.label(null); env.redraw(); return; }
-    const p = snapXY(plane.point, e);
+    const p = snapXY(plane.point, e, plane.z);
     t.cursor = { x: p.x, y: p.y, z: plane.z };
     const on = plane.massId ? massById(plane.massId) : null;
-    env.label(on ? `на «${on.name}» · отм. ${Math.round(plane.z)}` : plane.z ? `отм. ${Math.round(plane.z)}` : null, e.clientX, e.clientY);
+    const text = [on ? `на «${on.name}» · отм. ${Math.round(plane.z)}` : plane.z ? `отм. ${Math.round(plane.z)}` : '', snapText(t.snaps)].filter(Boolean).join(' · ');
+    env.label(text || null, e.clientX, e.clientY);
   } else if (t.stage === 'base') {
     const p = rayPlaneZ(ray, t.z);
     if (!p) return;
-    let b = snapXY(p, e);
-    if (e.ctrlKey || e.metaKey) b = squareB(t.a, b);
+    let b = snapXY(p, e, t.z);
+    if (e.ctrlKey || e.metaKey) { b = squareB(t.a, b); t.snaps = []; }
     t.b = b;
-    env.label(`${Math.round(Math.abs(b.x - t.a.x))} × ${Math.round(Math.abs(b.y - t.a.y))} мм`, e.clientX, e.clientY);
+    const s = snapText(t.snaps);
+    env.label(`${Math.round(Math.abs(b.x - t.a.x))} × ${Math.round(Math.abs(b.y - t.a.y))} мм${s ? ` · ${s}` : ''}`, e.clientX, e.clientY);
   } else if (t.stage === 'height') {
     t.h = heightFrom(t, e);
-    env.label(`${Math.round(t.h)} мм · ${floorsLabel(t.h, massLevelHeight())}`, e.clientX, e.clientY);
+    const s = snapText(t.snaps);
+    env.label(`${Math.round(t.h)} мм · ${floorsLabel(t.h, massLevelHeight())}${s ? ` · ${s}` : ''}`, e.clientX, e.clientY);
   }
+  if (t.snaps?.length) snapHint(t.snaps); else env.hint(stageHint(t));
   env.redraw();
 }
 
@@ -167,7 +297,7 @@ function commitTool(t) {
   const m = createMass({
     x: (t.a.x + t.b.x) / 2, y: (t.a.y + t.b.y) / 2, w, d, z0: t.z, h: t.h || MASS_H_DEFAULT,
   }, masses());
-  Object.assign(t, { stage: 'corner', a: null, b: null, h: null, screen2: null });
+  Object.assign(t, { stage: 'corner', a: null, b: null, h: null, screen2: null, held: {}, snaps: [] });
   hideNum();
   env.label(null);
   addMass(m);
@@ -251,6 +381,9 @@ export function massOverlay() {
     const P = [{ x: c.x - s, y: c.y - s, z }, { x: c.x + s, y: c.y - s, z }, { x: c.x + s, y: c.y + s, z }, { x: c.x - s, y: c.y + s, z }];
     out.push({ pts: P, normal: { x: 0, y: 0, z: 1 }, color: GHOST, alpha: 0.85, kind: 'overlay', twoSided: true });
   }
+  // Магнит: плоскость стыка и целевая масса.
+  if (t?.snaps?.length && t.stage) out.push(...snapOverlay(t.snaps));
+  if (drag?.snaps?.length) out.push(...snapOverlay(drag.snaps));
   // Выбранная масса: точки размера и гизмо перемещения — поверх сцены.
   const sel = !t ? selectedMass() : null;
   if (sel) out.push(...gripOverlay(sel, k));
@@ -402,6 +535,8 @@ export function startMassDrag(e, at = massPartAt(e)) {
   drag = {
     id: m.id, part: at.part, handle, start: { ...m }, x0: e.clientX, y0: e.clientY,
     before: snapshot(), changed: false,
+    pointer: e.pointerType === 'touch' || e.pointerType === 'pen' ? 'touch' : 'mouse',
+    held: {}, snaps: [], // магнит: притянутые цели (гистерезис) и подсветка
   };
   // Перенос по плоскости и углы — по горизонтальной плоскости.
   if (at.part === 'gxy' || (handle && !handle.face)) {
@@ -422,13 +557,7 @@ function groundZs(m) {
     .map(([x, y]) => Math.round(hz(x, y))).filter((z) => z >= 0);
 }
 
-// Сдвиг (мм, оси дома) с привязкой: край габарита к линиям, иначе шаг.
-function snapAxis(coord, box, v, e, skip, extraZ = []) {
-  if (e.shiftKey) return Math.round(v);
-  const k = env.worldPerPx();
-  const lines = coord === 'z' ? zLines(skip).concat(extraZ) : massBaseSnap(skip)[`${coord}s`];
-  return snapShift(box[`${coord}0`], box[`${coord}1`], v, lines, SNAP_PX * k, massStep(1 / k)).value;
-}
+const shifted = (b, s) => ({ x0: b.x0 + s.x, x1: b.x1 + s.x, y0: b.y0 + s.y, y1: b.y1 + s.y, z0: b.z0 + s.z, z1: b.z1 + s.z });
 
 // Сдвиг мыши → смещение вдоль оси (мм).
 function axisMove(axis, e) {
@@ -438,51 +567,86 @@ function axisMove(axis, e) {
   return d;
 }
 
+// Гизмо: стрелка — одна ось, квадрат XY — x и y независимо. Края габарита
+// липнут к граням других масс (вплотную или заподлицо), по z — к верху/низу
+// масс, отметкам этажей и земле; иначе — шаг по масштабу (Shift — без шага).
 function dragGizmo(e) {
   const d = drag;
   const b = massBox(d.start);
-  const shift = { x: 0, y: 0, z: 0 };
+  const raw = { x: 0, y: 0, z: 0 };
+  const axes = [];
   if (d.part === 'gxy') {
     const p = d.p0 ? rayPlaneZ(env.ray(e), d.planeZ) : null;
-    if (p) { shift.x = p.x - d.p0.x; shift.y = p.y - d.p0.y; } else {
-      shift.x = axisMove(GIZMO_AXES.x, e);
-      shift.y = -axisMove(GIZMO_AXES.y, e);
+    if (p) { raw.x = p.x - d.p0.x; raw.y = p.y - d.p0.y; } else {
+      raw.x = axisMove(GIZMO_AXES.x, e);
+      raw.y = -axisMove(GIZMO_AXES.y, e);
     }
-    shift.x = snapAxis('x', b, shift.x, e, d.id);
-    shift.y = snapAxis('y', b, shift.y, e, d.id);
+    axes.push('x', 'y');
   } else {
-    const axis = d.part.slice(1);
-    const a = GIZMO_AXES[axis];
+    const a = GIZMO_AXES[d.part.slice(1)];
     const v = axisMove(a, e);
-    for (const c of ['x', 'y', 'z']) if (a[c]) shift[c] = snapAxis(c, b, a[c] * v, e, d.id, c === 'z' ? groundZs(d.start) : []);
+    for (const c of ['x', 'y', 'z']) if (a[c]) { raw[c] = a[c] * v; axes.push(c); }
+  }
+  raw.z = Math.max(-d.start.z0, raw.z);
+  const cur = shifted(b, raw);
+  const step = e.shiftKey ? 0 : massStep(1 / env.worldPerPx());
+  const shift = { x: 0, y: 0, z: 0 };
+  const snaps = [];
+  for (const c of axes) {
+    const r = snapAlong(c, b, cur, raw[c], e, d.held, {
+      skip: d.id, ground: c === 'z' ? groundZs(d.start) : [], step, accept: c === 'z' ? (v) => b.z0 + v >= 0 : null,
+    });
+    shift[c] = r.value;
+    if (r.snap) snaps.push({ t: r.snap, c });
   }
   shift.z = Math.max(-d.start.z0, shift.z);
-  return { ...d.start, x: d.start.x + shift.x, y: d.start.y + shift.y, z0: Math.round(d.start.z0 + shift.z) };
+  const next = { ...d.start, x: d.start.x + shift.x, y: d.start.y + shift.y, z0: Math.round(d.start.z0 + shift.z) };
+  const nb = massBox(next);
+  d.snaps = snaps.map((s) => ({ t: s.t, box: nb }));
+  return next;
 }
 
+// Точка размера: двигаемая грань (центр грани — по нормали, угол — две
+// боковые) липнет к граням других масс, отметкам и земле по своей оси; размер
+// не меньше MASS_GRIP_MIN, низ не ниже 0. Без цели — абсолютный шаг.
 function dragHandle(e) {
   const d = drag;
   const b = massBox(d.start);
   const s = d.handle.s;
   const p0 = handlePoint(b, s);
   const shift = { x: 0, y: 0, z: 0 };
-  const snapTo = (c, raw) => {
-    if (e.shiftKey) return Math.round(raw);
-    const k = env.worldPerPx();
-    const lines = c === 'z' ? zLines(d.id).concat(groundZs(d.start)) : massBaseSnap(d.id)[`${c}s`];
-    return snapValue(raw, lines, SNAP_PX * k, massStep(1 / k)).value;
+  const snaps = [];
+  const step = massStep(1 / env.worldPerPx());
+  const snapTo = (c, v) => {
+    const p = p0[c];
+    const hi = s[c] > 0;
+    const accept = (dv) => {
+      const q = p + dv;
+      if (hi) return q - b[`${c}0`] >= MASS_GRIP_MIN;
+      return b[`${c}1`] - q >= MASS_GRIP_MIN && (c !== 'z' || q >= 0);
+    };
+    const pt = { ...b, [`${c}0`]: p, [`${c}1`]: p };
+    const r = snapAlong(c, pt, b, v, e, d.held, {
+      skip: d.id, ground: c === 'z' ? groundZs(d.start) : [], edges: [hi ? 'hi' : 'lo'], accept, at: p0,
+    });
+    if (r.snap) { snaps.push(r.snap); return r.value; }
+    if (e.shiftKey) return Math.round(p + v) - p;
+    return Math.round((p + v) / step) * step - p;
   };
   if (d.handle.face) {
     const n = FACE_NORMAL[d.handle.face];
     const v = axisMove(n, e);
-    for (const c of ['x', 'y', 'z']) if (n[c]) shift[c] = snapTo(c, p0[c] + n[c] * v) - p0[c];
+    for (const c of ['x', 'y', 'z']) if (n[c]) shift[c] = snapTo(c, n[c] * v);
   } else {
     const p = d.p0 ? rayPlaneZ(env.ray(e), d.planeZ) : null;
     if (!p) return null;
-    shift.x = snapTo('x', p0.x + p.x - d.p0.x) - p0.x;
-    shift.y = snapTo('y', p0.y + p.y - d.p0.y) - p0.y;
+    shift.x = snapTo('x', p.x - d.p0.x);
+    shift.y = snapTo('y', p.y - d.p0.y);
   }
-  return resizeByHandle(d.start, s, shift);
+  const next = resizeByHandle(d.start, s, shift);
+  const nb = massBox(next);
+  d.snaps = snaps.map((t) => ({ t, box: nb }));
+  return next;
 }
 
 const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v))}`;
@@ -508,6 +672,8 @@ export function moveMassDrag(e) {
       text = `${axis.toUpperCase()} ${signed(along)} мм · ${at}`;
     }
   }
+  const s = snapText(drag.snaps);
+  if (s) { text += ` · ${s}`; snapHint(drag.snaps); } else env.hint();
   env.label(text, e.clientX, e.clientY);
   env.redraw(true);
 }
@@ -517,6 +683,7 @@ export function finishMassDrag() {
   drag = null;
   env.label(null);
   if (!d) return;
+  if (d.snaps?.length) env.hint();
   if (!d.changed) { env.redraw(true); return; }
   refreshDerived();
   pushHistory(d.before);
@@ -529,6 +696,7 @@ export function cancelMassDrag() {
   drag = null;
   env?.label(null);
   if (!d) return;
+  env.hint();
   state.project.masses = masses().map((m) => (m.id === d.id ? d.start : m));
   env.redraw(true);
 }
@@ -630,6 +798,11 @@ function applyNum(e) {
 }
 
 export function bindMassNum() {
+  const cb = document.getElementById('v3MassSnap');
+  if (cb) {
+    cb.checked = magnetPref;
+    cb.addEventListener('change', () => setMassSnap(cb.checked));
+  }
   const input = numInput();
   if (!input) return;
   input.addEventListener('keydown', (e) => {
@@ -655,6 +828,10 @@ export function massDblClick(e) {
   return true;
 }
 
+const snapDebug = (list) => (list?.length
+  ? { kind: list[0].t.kind, axis: list[0].t.axis, target: list[0].t.id || null, name: list[0].t.name || null, value: list[0].t.value, text: snapText(list), count: list.length }
+  : null);
+
 // Для автотестов: стадия инструмента, жест, наведение, ввод числа, гизмо и
 // точки выбранной массы (экранные координаты клиента).
 export function debugMass3d() {
@@ -665,6 +842,9 @@ export function debugMass3d() {
     tool: Boolean(t), stage: t?.stage || null, a: t?.a || null, b: t?.b || null, z: t?.z ?? null, h: t?.h ?? null,
     dragging: Boolean(drag), part: drag?.part || null, hover, num: numField?.kind || null,
     gizmo: scr ? scr.gizmo : null,
+    // Магнит: первая притянутая цель жеста или инструмента и все подписи.
+    snap: snapDebug(drag?.snaps || t?.snaps), magnet: magnetPref,
+    snapTol: m ? Object.fromEntries(['x', 'y', 'z'].map((c) => [c, snapTolerances(mmPerPxAlong(gizmoOrigin(massBox(m)), c))])) : null,
     handles: scr ? Object.fromEntries(scr.handles.map((h) => [h.id, { ...h.p, back: h.back }])) : null,
   };
 }

@@ -67,7 +67,10 @@ function loadLayers() {
 }
 
 function saveLayers() {
-  try { localStorage.setItem(LAYERS_KEY, JSON.stringify({ furniture: opts.furniture, levels: opts.levels, masses: opts.masses })); } catch { /* нет хранилища */ }
+  try {
+    const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
+    localStorage.setItem(LAYERS_KEY, JSON.stringify({ ...prev, furniture: opts.furniture, levels: opts.levels, masses: opts.masses }));
+  } catch { /* нет хранилища */ }
 }
 let faces = [];
 let active = false;
@@ -581,6 +584,8 @@ function syncLayerControls() {
 function syncMassControl() {
   const wrap = el('v3MassesWrap');
   if (wrap) wrap.hidden = !(state.project?.masses?.length || massToolOn());
+  const snap = el('v3MassSnapWrap');
+  if (snap) snap.hidden = !(state.project?.masses?.length || massToolOn());
 }
 
 // Пересобрать только грани масс (жест правки массы).
