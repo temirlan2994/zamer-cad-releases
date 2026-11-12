@@ -196,6 +196,9 @@ export function buildStructuredExport(project) {
     // Координационные оси (core/grid-axes.js): { id, label, kind 'x'|'y', at,
     // from?, to?, hidden? } в осях дома, мм. Необязательно.
     ...(project.grids?.length ? { grids: project.grids.map((g) => ({ ...g })) } : {}),
+    // Крыши-плиты (core/roofs.js): этаж, накрытые помещения, вынос по
+    // сторонам, толщина, край, парапет, материал. Необязательно.
+    ...(project.roofs?.length ? { roofs: project.roofs.map((r) => structuredClone(r)) } : {}),
   };
 }
 

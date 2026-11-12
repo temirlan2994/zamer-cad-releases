@@ -25,6 +25,9 @@ import { stairLayout } from './stairs.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
+import {
+  FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, ringSpec, roofCutRects, roofRects, roofZ, sideDist,
+} from './roofs.js';
 
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
@@ -825,11 +828,86 @@ export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
   return faces;
 }
 
-// Крыша этажа: плоская плита над частью этажа, не закрытой этажом выше.
-function roofFaces(lp, above, z) {
+// Автокровля этажа (флажок «Крыша»): плоская плита над частью этажа, не
+// закрытой этажом выше и явными крышами (core/roofs.js) этого этажа.
+function autoRoofFaces(lp, above, z, own = []) {
   const t = lp.settings?.exterior || 250;
-  const grid = regionGrid([levelFootprint(lp, t)], above ? levelFootprint(above, t) : []);
-  return slabFaces(grid, z, z + ROOF_T, ROOF_COLOR, 'roof');
+  const grid = regionGrid([levelFootprint(lp, t)], [...(above ? levelFootprint(above, t) : []), ...own]);
+  return slabFaces(grid, z, z + ROOF_T, ROOF_COLOR, 'roof').map((f) => (f.normal.z > 0.5 ? { ...f, cutZ0: z } : f));
+}
+
+// Крыши-плиты (core/roofs.js): плита с выносом (kind 'roof'), край (фасция,
+// карниз, капельник — kind 'fascia'), парапет (стенка, стекло, перила,
+// ступенчатый — kind 'parapet'). Грани: roofId, level; верхние грани несут
+// cutZ0 — низ тела в разрезе (core/section.js). roofs — список (по умолчанию
+// project.roofs); color/alpha — призрак инструмента «Крыша».
+export function roofFaces(project, roofs = project?.roofs, { color = null, alpha = null } = {}) {
+  const out = [];
+  for (const roof of roofs || []) {
+    const z = roofZ(project, roof);
+    const rects = z ? roofRects(project, roof) : [];
+    if (!rects.length) continue;
+    const mat = color || materialColor(roof.material);
+    const edgeColor = color || roof.edge.color || mat;
+    const tag = (list, kind, cutZ0, extra = {}) => {
+      for (const f of list) {
+        const g = { ...f, kind, roofId: roof.id, level: roof.levelId, ...extra };
+        if (f.normal.z > 0.5 && cutZ0 != null) g.cutZ0 = cutZ0;
+        if (alpha != null) { g.alpha = alpha; g.twoSided = true; }
+        out.push(g);
+      }
+    };
+    // Над пятном этажа выше плиты нет — там перекрытие (козырёк вокруг верхнего этажа).
+    const cut = roofCutRects(project, roof);
+    const slab = (spec, z0, z1, c, kind, extra) => tag(slabFaces(regionGrid(spec.all, [...(spec.none || []), ...cut]), z0, z1, c, kind, { bottom: true }), kind, z0, extra);
+    const { z0, z1 } = z;
+    const T = roof.thickness;
+    slab({ all: [rects] }, z0, z1, mat, 'roof');
+    // Край плиты.
+    const e = roof.edge;
+    if (e.type === 'fascia') {
+      const top = z1 + 50;
+      slab({ all: [expandRects(rects, FASCIA_T)], none: rects }, top - Math.max(e.height, T + 50), top, edgeColor, 'fascia');
+    } else if (e.type === 'cornice') {
+      slab({ all: [expandRects(rects, 90)], none: rects }, z1 - Math.max(80, Math.round(T * 0.45)), z1, edgeColor, 'fascia');
+    } else if (e.type === 'drip') {
+      slab(ringSpec(rects, {}, sideDist(null, 40)), z0 - 40, z0, edgeColor, 'fascia');
+    }
+    // Парапет.
+    const p = roof.parapet;
+    const ring = (from, to) => ringSpec(rects, sideDist(p.sides, from), sideDist(p.sides, to));
+    const pt = p.thickness;
+    if (p.type === 'wall') slab(ring(p.inset, p.inset + pt), z1, z1 + p.height, mat, 'parapet');
+    else if (p.type === 'stepped') {
+      slab(ring(p.inset, p.inset + pt), z1, z1 + p.height, mat, 'parapet');
+      slab(ring(p.inset + pt, p.inset + 2 * pt), z1, z1 + Math.round(p.height / 2), mat, 'parapet');
+    } else if (p.type === 'glass') {
+      slab(ring(p.inset, p.inset + 60), z1, z1 + 80, edgeColor, 'parapet');
+      slab(ring(p.inset + 20, p.inset + 40), z1 + 80, z1 + p.height, GLASS_COLOR, 'parapet', alpha == null ? { alpha: 0.35, twoSided: true } : {});
+    } else if (p.type === 'rail') {
+      const R = 50;
+      const top = z1 + p.height;
+      slab(ring(p.inset, p.inset + R), top - R, top, RAILING_COLOR, 'parapet');
+      for (const k of [1 / 3, 2 / 3]) {
+        const zz = z1 + (p.height - R) * k;
+        slab(ring(p.inset + 10, p.inset + 40), zz - 15, zz + 15, RAILING_COLOR, 'parapet');
+      }
+      // Стойки — по рёбрам контура, сжатого на отступ + полстойки (только включённые стороны).
+      const inner = ringSpec(rects, {}, sideDist(p.sides, p.inset + R / 2));
+      const posts = regionGrid([rects], inner.all[1]);
+      for (const ed of gridEdges(posts)) {
+        if (p.sides?.[edgeSide(ed.n)] === false) continue;
+        const len = Math.hypot(ed.b.x - ed.a.x, ed.b.y - ed.a.y);
+        const n = Math.max(1, Math.round(len / 1200));
+        for (let i = 0; i <= n; i += 1) {
+          const cx = ed.a.x + ((ed.b.x - ed.a.x) * i) / n;
+          const cy = ed.a.y + ((ed.b.y - ed.a.y) * i) / n;
+          tag(boxFaces(cx - R / 2, cy - R / 2, cx + R / 2, cy + R / 2, z1, top - R, RAILING_COLOR, 'parapet'), 'parapet', null);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // Перекрытие под этажом: где он стоит на нижнем, кроме проёмов лестниц и шахт.
@@ -993,6 +1071,8 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
 // furniture — мебель (грани kind 'furniture'; только для окна 3D: фасады,
 // разрезы, листы и габарит её не берут — по умолчанию выключена).
 // masses — массы (core/masses.js), как мебель — только для окна 3D.
+// roofs — крыши-плиты (core/roofs.js), по умолчанию включены везде (3D,
+// фасады, разрезы, листы).
 // levels — какие этажи показывать: 'all' (по умолчанию), 'upto' — до
 // активного (project.activeLevel) включительно, 'only' — только активный;
 // кровля (флажок roof) — только когда видны все этажи, иначе она закрыла бы
@@ -1031,9 +1111,21 @@ export function massFaces(masses, { alpha = 1 } = {}) {
   return out;
 }
 
+// Крыши, видимые при режиме этажей: этаж крыши показан и этаж над ним тоже
+// (иначе плита закрыла бы показанный верхний этаж).
+export function shownRoofs(project, mode = 'all') {
+  const levels = sortedLevels(project);
+  const shown = new Set(shownLevelIds(project, mode));
+  const k = new Map(levels.map((l, i) => [l.id, i]));
+  return (project.roofs || []).filter((r) => {
+    const above = levels[(k.get(r.levelId) ?? -2) + 1];
+    return shown.has(r.levelId) && (!above || shown.has(above.id));
+  });
+}
+
 export function buildHouseMesh(project, {
   roof = false, site = false, terrainScale = 1, landscape = true, furniture = false, levels: levelMode = 'all',
-  masses = false,
+  masses = false, roofs = true,
 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
@@ -1054,8 +1146,11 @@ export function buildHouseMesh(project, {
     if (shown.has(levels[k].id)) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
   }
   if (roof && shown.size === levels.length) {
-    levels.forEach((level, k) => faces.push(...roofFaces(lps[k], lps[k + 1], level.elevation + level.height)));
+    levels.forEach((level, k) => faces.push(...autoRoofFaces(lps[k], lps[k + 1], level.elevation + level.height, explicitRoofRects(project, level.id))));
   }
+  // Крыши-плиты (core/roofs.js) — над показанными этажами; как и автокровля,
+  // не закрывают показанный верхний этаж: только когда показан и этаж выше.
+  if (roofs && project.roofs?.length) faces.push(...roofFaces(project, shownRoofs(project, levelMode)));
   if (site) faces.push(...siteFaces(project, { terrainScale }));
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));

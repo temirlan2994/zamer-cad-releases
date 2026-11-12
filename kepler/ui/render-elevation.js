@@ -173,7 +173,7 @@ export function drawElevation(ctx, el, { view, colors = LIGHT, marks = true, tit
   for (const p of el.polys) {
     path(ctx, p.pts, fillS);
     ctx.closePath();
-    ctx.fillStyle = c.fill[p.kind] || c.fill.other;
+    ctx.fillStyle = p.tint || c.fill[p.kind] || c.fill.other; // tint — материал крыши-плиты
     ctx.fill();
     ctx.strokeStyle = c.line;
     ctx.lineWidth = 1;

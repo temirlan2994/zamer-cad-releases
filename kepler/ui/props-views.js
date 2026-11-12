@@ -29,6 +29,7 @@ import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
+import { planRoofPref, setPlanRoofPref } from './render-roofs.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
 import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
 import {
@@ -239,6 +240,20 @@ function massBlock() {
     </div>`;
 }
 
+// Контур кровли (ui/render-roofs.js) — только когда в проекте есть крыши-плиты.
+function roofBlock() {
+  const count = state.project.roofs?.length || 0;
+  if (!count) return '';
+  const pref = planRoofPref();
+  return `
+    <h3>Крыши</h3>
+    <div class="prop-block" id="viewsRoofs">
+      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Показывать контур кровли на плане</span><em>${count}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsRoofPrint" ${pref.print ? 'checked' : ''}><span>Контур кровли на листах</span></label>
+      <p class="hint">Штрихпунктир — проекция плиты с выносом на плане этажа, над которым крыша. Клик в зоне выноса — выбрать крышу.</p>
+    </div>`;
+}
+
 // Настройки активного вида (разметка). У 3D — свои настройки над видом.
 export function viewSettingsHtml() {
   const project = state.project;
@@ -290,6 +305,7 @@ export function viewSettingsHtml() {
     ${mode === 'plan' ? gridViewBlock() : ''}
     ${mode === 'plan' ? ergoViewBlock() : ''}
     ${mode === 'plan' ? massBlock() : ''}
+    ${mode === 'plan' ? roofBlock() : ''}
     ${mode === 'plan' ? landscapeBlock() : ''}
     ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
     </div>`;
@@ -349,6 +365,8 @@ export function bindViewSettings(panel, rerender) {
     rerender();
   });
   panel.querySelector('#viewsMassOn')?.addEventListener('change', (e) => { setPlanMassPref({ on: e.target.checked }); requestDraw(); rerender(); });
+  panel.querySelector('#viewsRoofOn')?.addEventListener('change', (e) => { setPlanRoofPref({ on: e.target.checked }); requestDraw(); });
+  panel.querySelector('#viewsRoofPrint')?.addEventListener('change', (e) => { setPlanRoofPref({ print: e.target.checked }); requestDraw(); });
   panel.querySelector('#viewsMassOutline')?.addEventListener('change', (e) => { setPlanMassPref({ outlineOnly: e.target.checked }); requestDraw(); });
   panel.querySelectorAll('[data-plan-ls]').forEach((box) => box.addEventListener('change', () => {
     setPlanLandscapePref({ [box.dataset.planLs]: box.checked });

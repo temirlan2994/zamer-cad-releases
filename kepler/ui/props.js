@@ -4,6 +4,7 @@ import { elevationView, isElevationOpen, refreshElevationView } from './elevatio
 import { findView } from '../core/views.js';
 import { renderSectionProps } from './plan-section.js';
 import { massById, renderMassProps } from './masses.js';
+import { bindRoomRoof, renderRoofProps, roofById, roomRoofHtml } from './roofs.js';
 import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
@@ -156,6 +157,10 @@ export function renderProps() {
   if (sel.type === 'mass') {
     const mass = massById(sel.id);
     if (mass) { renderMassProps(panel, mass); return; }
+  }
+  if (sel.type === 'roof') {
+    const roof = roofById(sel.id);
+    if (roof) { renderRoofProps(panel, roof); return; }
   }
   if (sel.type === 'section') {
     const view = findView(state.project, sel.id);
@@ -364,6 +369,7 @@ function renderRoomProps(panel, room) {
     ${areaControl}
     ${overlapControl}
     ${roomRailingsHtml(room)}
+    ${shaft ? '' : roomRoofHtml(room)}
     ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : ''}
     ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
@@ -373,6 +379,7 @@ function renderRoomProps(panel, room) {
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
+  bindRoomRoof(panel);
   bindRoomRailings(panel, room);
   panel.querySelector('#roomType')?.addEventListener('change', (e) => changeRoomType(room, e.target.value));
   // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):

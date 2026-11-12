@@ -16,6 +16,7 @@ import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
 import { normalizeViewsAndSheets } from './views.js';
 import { normalizeMasses } from './masses.js';
+import { normalizeRoofs } from './roofs.js';
 import { normalizeGrids } from './grid-axes.js';
 import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
 
@@ -210,6 +211,7 @@ export function hasContent(project) {
   if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length)) return true;
   if (Array.isArray(project.variants) && project.variants.length) return true;
   if (Array.isArray(project.masses) && project.masses.length) return true;
+  if (Array.isArray(project.roofs) && project.roofs.length) return true;
   if (Array.isArray(project.grids) && project.grids.length) return true;
   const s = project.site;
   if (!s || typeof s !== 'object') return false;
@@ -492,6 +494,10 @@ export function normalizeProject(data) {
   // Массы (core/masses.js): необязательно, без смены схемы; пустой список не хранится.
   const masses = normalizeMasses(data.masses);
   if (masses.length) data.masses = masses; else delete data.masses;
+  // Крыши-плиты (core/roofs.js): необязательно, без смены схемы; помещения —
+  // только существующие на своём этаже; пустой список не хранится.
+  const roofs = normalizeRoofs(data.roofs, data.levels);
+  if (roofs.length) data.roofs = roofs; else delete data.roofs;
   // Координационные оси (core/grid-axes.js): необязательно, без смены схемы.
   const grids = normalizeGrids(data.grids);
   if (grids.length) data.grids = grids; else delete data.grids;

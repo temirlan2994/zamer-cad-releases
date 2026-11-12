@@ -6,6 +6,7 @@ import { wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
 import { railingTypeTitle } from '../core/railings.js';
+import { overhangLabel } from '../core/roofs.js';
 import { selectedRailing } from './railing-actions.js';
 import { el, escapeHtml } from './dom.js';
 import { findWall } from './hit.js';
@@ -39,7 +40,7 @@ function contentForSelection(sel) {
     const room = roomById(state.project, sel.id);
     if (!room) return null;
     const common = `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${room.parentId ? '' : button('rotate', '↻', 'Повернуть 90°', 'R')}`;
-    const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}`;
+    const roomTools = isShaft(room) ? '' : `${button('add-door', '◱', 'Дверь')}${button('add-window', '▦', 'Окно')}${button('roof', '⌂', 'Крыша', 'K')}`;
     return { label: isShaft(room) ? 'Шахта' : 'Помещение', html: `${common}${roomTools}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}` };
   }
   if (sel.type === 'wall') {
@@ -83,6 +84,14 @@ function contentForSelection(sel) {
     return {
       label: `${mass.name} · ${Math.round(mass.w)} × ${Math.round(mass.d)} × ${Math.round(mass.h)} мм`,
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
+  if (sel.type === 'roof') {
+    const roof = (state.project.roofs || []).find((r) => r.id === sel.id);
+    if (!roof) return null;
+    return {
+      label: `${roof.name} · ${overhangLabel(roof)} мм`,
+      html: `${button('roof-add-room', '+', 'Добавить помещение')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
   if (sel.type === 'railing') {
@@ -223,6 +232,12 @@ export function bindSelectionToolbar() {
     if (action === 'railing-type' || action === 'railing-split') {
       const ra = await import('./railing-actions.js');
       if (action === 'railing-type') ra.cycleSelectedRailingType(); else ra.splitSelectedRailing();
+      return;
+    }
+    if (action === 'roof' || action === 'roof-add-room') {
+      const rf = await import('./roofs.js');
+      if (action === 'roof') rf.coverSelectedRoom(); else rf.startRoofTool({ addTo: state.selection?.id });
+      (await import('./toolstrip.js')).renderToolstrip();
       return;
     }
     if (action === 'split-room') {

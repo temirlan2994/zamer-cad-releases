@@ -59,6 +59,7 @@ import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
 import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
+import { drawRoofOutlines, drawRoofOverlay } from './ui/render-roofs.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
 import { drawPlanGrids } from './ui/render-axes.js';
@@ -283,6 +284,14 @@ export function createRenderer(canvas) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawMassSketch(ctx, { p2s, tokens });
+      ctx.restore();
+    }
+    // Проекция кровли (core/roofs.js) — штрихпунктир контура плиты; на печать — по настройке.
+    state._planRoofs = 0;
+    if (opts.site !== false) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawRoofOutlines(ctx, { p2s, tokens, print });
       ctx.restore();
     }
 
@@ -731,6 +740,7 @@ export function createRenderer(canvas) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawMassOverlay(ctx, { p2s, tokens });
+      drawRoofOverlay(ctx, { p2s, tokens });
       ctx.restore();
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);

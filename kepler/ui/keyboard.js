@@ -37,6 +37,7 @@ import { isItemGroup } from '../core/group-handles.js';
 import { massToolBack as planMassBack, startMassTool, toggleMassTool } from './masses.js';
 import { massKey } from './mass3d.js';
 import { handleGridKey } from './grids.js';
+import { isRoofTool, toggleRoofTool } from './roofs.js';
 
 export let spaceDown = false;
 
@@ -65,6 +66,7 @@ function handle3dKey(event) {
   // Инструмент «Масса»: цифры и Enter — точный размер (ui/mass3d.js); M — вкл/выкл.
   if (massKey(event)) return true;
   if (!mod && !event.altKey && event.code === 'KeyM' && state.modeName === 'plan') { toggleMassTool(); return true; }
+  if (!mod && !event.altKey && !event.shiftKey && event.code === 'KeyK' && state.modeName === 'plan') { toggleRoofTool(); return true; }
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
     event.preventDefault();
     if (state.selection) deleteSelection();
@@ -135,6 +137,14 @@ export function bindKeyboard() {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     // Координационные оси: G — инструмент, Tab — направление, стрелки — сдвиг (ui/grids.js).
     if (!planCovered() && handleGridKey(event)) { event.preventDefault(); return; }
+    // K — инструмент «Крыша» (ui/roofs.js).
+    if (!planCovered() && event.code === 'KeyK' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+      state.modeName === 'plan' && (!state.tool || isRoofTool())) {
+      event.preventDefault();
+      toggleRoofTool();
+      import('./toolstrip.js').then((m) => m.renderToolstrip());
+      return;
+    }
     // E — режим «Эргономика» (ui/ergonomics.js).
     if (!planCovered() && handleErgoKey(event)) { event.preventDefault(); return; }
     // Привязки черчения: F8 — орто; Shift/Ctrl — пересчитать привязку на месте.

@@ -36,7 +36,9 @@ import { deriveWalls } from './walls.js';
 // Наружные нормали сторон дома в осях дома (ось Y вниз): 0 — верх плана.
 const SIDES = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
 const DIR_STEP = { N: 0, E: 1, S: 2, W: 3 };
-export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', stair: 'stair', plinth: 'plinth' };
+export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', parapet: 'roof', fascia: 'roof', stair: 'stair', plinth: 'plinth' };
+// Цвет материала крыши-плиты (core/roofs.js) на фасаде — tint полигона.
+export const roofTint = (f) => (f.roofId ? f.color : undefined);
 const EPS = 1e-6;
 
 // Сторона дома для фасада dir: { side (0..3), out — наружная нормаль,
@@ -180,7 +182,7 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
     const nn = Math.abs(facing) > 0.999 ? `${Math.sign(facing)}` : `${n.x.toFixed(3)},${n.y.toFixed(3)}`;
     const offset = Math.round(f.pts[0].x * n.x + f.pts[0].y * n.y);
     polys.push({
-      pts, depth, kind: KIND_OF[f.kind] || 'other',
+      pts, depth, kind: KIND_OF[f.kind] || 'other', tint: roofTint(f),
       u0: Math.min(...us), u1: Math.max(...us), z0: Math.min(...zs), z1: Math.max(...zs),
       plane: f.twoSided ? `t${Math.round(depth)}` : `${nn}|${offset}|${Math.round(depth)}`,
     });
@@ -220,7 +222,7 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
   }
   return {
     dir, side,
-    polys: visible.map(({ pts, depth, kind, edges }) => ({ pts, depth, kind, edges })),
+    polys: visible.map(({ pts, depth, kind, edges, tint }) => ({ pts, depth, kind, edges, ...(tint ? { tint } : {}) })),
     levels: levels.map((l) => ({ id: l.id, name: l.name, z: l.elevation, height: l.height, label: fmtMark(l.elevation) })),
     ground,
     bounds,

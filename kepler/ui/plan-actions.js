@@ -36,6 +36,7 @@ import { deleteSectionView } from './plan-section.js';
 import { deleteSelectedRailing } from './railing-actions.js';
 import { addMass, deleteMass, duplicateMass, massById, masses, rotateMass } from './masses.js';
 import { copyMass } from '../core/masses.js';
+import { deleteRoof } from './roofs.js';
 import { deleteGrid } from './grids.js';
 import { requestDraw } from './view.js';
 
@@ -238,6 +239,7 @@ export function deleteSelection() {
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
   if (sel.type === 'railing') { deleteSelectedRailing(); return; }
   if (sel.type === 'mass') { deleteMass(sel.id); return; }
+  if (sel.type === 'roof') { deleteRoof(sel.id); return; }
   if (sel.type === 'grid') { deleteGrid(sel.id); return; }
   if (sel.type === 'room') {
     const room = roomById(state.project, sel.id);

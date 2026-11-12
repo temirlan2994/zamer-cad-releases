@@ -23,6 +23,7 @@ import {
 import { finishWallChain } from './wall-tool.js';
 import { togglePlanSectionTool } from './plan-section.js';
 import { toggleMassTool } from './masses.js';
+import { toggleRoofTool } from './roofs.js';
 import { toggleGridTool } from './grids.js';
 
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -167,8 +168,9 @@ export function renderToolstrip() {
   toggle('stairsToolBtn', stairs);
   toggle('sectionToolBtn', t?.kind === 'psec');
   toggle('massToolBtn', t?.kind === 'mass');
+  toggle('roofToolBtn', t?.kind === 'roof');
   toggle('gridToolBtn', t?.kind === 'grid');
-  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'sectionToolBtn', 'massToolBtn', 'gridToolBtn']) {
+  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'sectionToolBtn', 'massToolBtn', 'roofToolBtn', 'gridToolBtn']) {
     const b = el(id);
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
@@ -227,6 +229,14 @@ export function bindToolstrip() {
   el('massToolBtn')?.addEventListener('click', () => {
     if (state.tool?.kind === 'wall') finishWallChain();
     toggleMassTool();
+    if (state.tool) closeSheets();
+    renderToolstrip();
+  });
+  // Инструмент «Крыша» включают/выключают и из 3D (K, Esc, смена этажа).
+  document.addEventListener('kepler:roof-tool', () => renderToolstrip());
+  el('roofToolBtn')?.addEventListener('click', () => {
+    if (state.tool?.kind === 'wall') finishWallChain();
+    toggleRoofTool();
     if (state.tool) closeSheets();
     renderToolstrip();
   });

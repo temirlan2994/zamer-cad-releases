@@ -36,7 +36,7 @@ function pointInPolygon(points, x, y) {
   return inside;
 }
 
-function polygonRects(points) {
+export function polygonRects(points) {
   const xs = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b);
   const ys = [...new Set(points.map((p) => p.y))].sort((a, b) => a - b);
   const rows = [];

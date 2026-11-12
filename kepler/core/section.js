@@ -26,7 +26,7 @@
 // ландшафт в разрез не попадают.
 
 import {
-  KIND_OF, area2, doorFaces, fmtMark, paintOrder,
+  KIND_OF, area2, doorFaces, fmtMark, paintOrder, roofTint,
 } from './elevation.js';
 import { isStructural } from './catalog.js';
 import {
@@ -222,11 +222,15 @@ function cutSolids(project, fr, faces, levels) {
     }
   });
   // Перекрытия и кровля — по верхним граням плит.
+  // Крыши-плиты (core/roofs.js): плита, борт края и парапет — в группе кровли,
+  // низ тела — cutZ0 верхней грани.
   for (const f of faces) {
-    if ((f.kind !== 'slab' && f.kind !== 'roof') || !(f.normal?.z > 0.5)) continue;
+    const roofish = f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia';
+    if ((f.kind !== 'slab' && !roofish) || !(f.normal?.z > 0.5)) continue;
+    if (f.alpha != null && f.alpha < 1) continue; // стекло ограждения — не тело
     const z1 = f.pts[0].z;
-    const z0 = f.kind === 'roof' ? z1 - ROOF_T : z1 - SLAB_T + 1;
-    for (const [u0, u1] of uIntervals(fr, f.pts)) groups[f.kind].push({ u0, u1, z0, z1 });
+    const z0 = Number.isFinite(f.cutZ0) ? f.cutZ0 : (f.kind === 'slab' ? z1 - SLAB_T + 1 : z1 - ROOF_T);
+    for (const [u0, u1] of uIntervals(fr, f.pts)) groups[roofish ? 'roof' : 'slab'].push({ u0, u1, z0, z1 });
   }
   // Марши: верх ступени × от пола своего этажа.
   for (const f of faces) {
@@ -283,7 +287,7 @@ export function buildSection(project, view, { roof = true, terrain = true } = {}
     const nn = Math.abs(facing) > 0.999 ? `${Math.sign(facing)}` : `${n.x.toFixed(3)},${n.y.toFixed(3)}`;
     const offset = Math.round(f.pts[0].x * n.x + f.pts[0].y * n.y);
     polys.push({
-      pts, depth: d, kind: KIND_OF[f.kind] || 'other',
+      pts, depth: d, kind: KIND_OF[f.kind] || 'other', tint: roofTint(f),
       u0: Math.min(...us), u1: Math.max(...us), z0: Math.min(...zs), z1: Math.max(...zs),
       plane: f.twoSided ? `t${Math.round(d)}` : `${nn}|${offset}|${Math.round(d)}`,
     });
@@ -314,7 +318,7 @@ export function buildSection(project, view, { roof = true, terrain = true } = {}
   if (hz) bounds.z0 = Math.min(bounds.z0, ...ground.map((g) => g.z));
   return {
     id: view.id, side: fr.side,
-    polys: visible.map(({ pts, depth: d, kind, edges }) => ({ pts, depth: d, kind, edges })),
+    polys: visible.map(({ pts, depth: d, kind, edges, tint }) => ({ pts, depth: d, kind, edges, ...(tint ? { tint } : {}) })),
     cuts: cuts.map(({ kind, pts, u0, u1, z0, z1 }) => ({ kind, pts, u0, u1, z0, z1 })),
     cutEdges,
     openings,

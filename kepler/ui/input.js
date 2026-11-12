@@ -72,6 +72,9 @@ import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
 import {
+  roofDragCancel, roofDragEnd, roofDragMove, roofPlanClick, roofPlanHover, roofPointerDown, roofZoneHit,
+} from './roofs.js';
+import {
   gridDragEnd, gridDragMove, gridHoverTarget, gridPointerDown, gridToolClick, gridToolHover,
 } from './grids.js';
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
@@ -420,6 +423,7 @@ function updateHoverAndGhost(world, plan, event) {
   if (state.tool?.kind === 'wall') { wallToolHover(plan, event); return; }
   if (state.tool?.kind === 'psec') { planSectionHover(plan, event); return; }
   if (state.tool?.kind === 'mass') { massPlanHover(plan, event); return; }
+  if (state.tool?.kind === 'roof') { roofPlanHover(plan); return; }
   if (state.tool?.kind === 'grid') { gridToolHover(plan, event); return; }
   if (state.tool?.kind === 'bound-room') { boundRoomHover(plan); return; }
   if (state.tool?.kind === 'terrain') {
@@ -489,6 +493,15 @@ export function bindCanvasInput() {
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
   // Esc во время жеста «тянуть ребро» ландшафта — отмена (раньше общих клавиш).
   window.addEventListener('keydown', (e) => {
+    // Esc во время перетаскивания точки выноса крыши — отмена жеста.
+    if (e.key === 'Escape' && drag?.kind === 'roof-handle') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const finished = drag;
+      drag = null;
+      roofDragCancel(finished);
+      return;
+    }
     // Esc во время перетаскивания оси — отмена жеста (ui/grids.js).
     if (e.key === 'Escape' && drag?.kind?.startsWith('grid-')) {
       e.preventDefault();
@@ -740,6 +753,11 @@ export function bindCanvasInput() {
         tapOrNow(event, screen, () => massPlanClick(plan, mods));
         return;
       }
+      if (t.kind === 'roof') {
+        const mods = { shiftKey: event.shiftKey };
+        tapOrNow(event, screen, () => roofPlanClick(plan, mods));
+        return;
+      }
       if (t.kind === 'grid') {
         const mods = { shiftKey: event.shiftKey };
         tapOrNow(event, screen, () => gridToolClick(plan, mods));
@@ -870,6 +888,10 @@ export function bindCanvasInput() {
     // Координационная ось: кружок любой оси или линия выбранной (ui/grids.js).
     const gridDrag = gridPointerDown(event, screen, plan);
     if (gridDrag) { drag = gridDrag; return; }
+
+    // Точки выноса выбранной крыши (core/roofs.js) — раньше комнат и стен под ними.
+    const roofDrag = roofPointerDown(event, screen, plan);
+    if (roofDrag) { drag = roofDrag; return; }
 
     // Ручки плановых объектов.
     const wallEndHit = hitManualWallEnd(screen);
@@ -1026,6 +1048,9 @@ export function bindCanvasInput() {
     // Линия оси вне комнат и стен — выбор и сдвиг оси.
     const gridLine = !picked && gridPointerDown(event, screen, plan, { lineAll: true });
     if (gridLine) { drag = gridLine; return; }
+    // Зона выноса крыши вне помещений и стен — выбор крыши.
+    const roofHit = !picked && state.modeName === 'plan' ? roofZoneHit(plan) : null;
+    if (roofHit) { selectObject({ type: 'roof', id: roofHit.id }); return; }
 
     // Пустое место: пальцем — панорама, мышью — рамка выделения.
     selectObject(null);
@@ -1101,6 +1126,7 @@ export function bindCanvasInput() {
     if (drag.kind.startsWith('ls-')) { landscapeDragMove(drag, world, screen, event); return; }
     if (drag.kind.startsWith('psec-')) { planSectionDragMove(drag, plan, event); return; }
     if (drag.kind.startsWith('grid-')) { gridDragMove(drag, plan, event); return; }
+    if (drag.kind === 'roof-handle') { roofDragMove(drag, plan, event); return; }
 
     if (drag.kind === 'terrain-point') {
       const p = state.project.site.terrain?.points.find((x) => x.id === drag.id);
@@ -1762,6 +1788,7 @@ export function bindCanvasInput() {
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
     if (finished.kind.startsWith('psec-')) { planSectionDragEnd(finished); return; }
     if (finished.kind.startsWith('grid-')) { gridDragEnd(finished); return; }
+    if (finished.kind === 'roof-handle') { roofDragEnd(finished); return; }
 
     if (finished.kind === 'marquee') {
       applyMarquee();

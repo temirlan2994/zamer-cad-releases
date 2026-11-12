@@ -48,6 +48,12 @@ import {
   massToolClick, massToolHint, massToolMove, massToolOn, moveMassDrag, resetMassTool, selectedMassHit, startMassDrag,
 } from './mass3d.js';
 import { pickMass } from '../core/pick3d.js';
+import {
+  bindRoofNum, cancelRoofDrag, clearRoofHover, closeRoofNum, debugRoof3d, finishRoofDrag, initRoof3d, moveRoofDrag,
+  resetRoofTool, roofDblClick, roofDragging, roofHoverAt, roofNumOpen, roofOverlay, roofPartAt, roofToolClick,
+  roofToolMove, roofToolOn, startRoofDrag,
+} from './roof3d.js';
+import { roofFaces, shownRoofs } from '../core/mesh3d.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
@@ -135,8 +141,15 @@ const massFaceHot = (face) => {
   return Boolean(h && h.id === face.massId && h.face === face.face);
 };
 
+// Выбранная крыша-плита — цвет материала с примесью акцента.
+function mixHex(a, b, t) {
+  const p = hexRgb(a); const q = hexRgb(b);
+  return `#${p.map((c, i) => Math.round(c + (q[i] - c) * t).toString(16).padStart(2, '0')).join('')}`;
+}
+
 function faceColor(face) {
   if (face.kind === 'overlay') return face.color;
+  if (face.roofId && state.selection?.type === 'roof' && state.selection.id === face.roofId) return mixHex(face.color, SEL_FILL, 0.5);
   if (face.kind === 'mass') {
     const sel = state.selection?.type === 'mass' && state.selection.id === face.massId;
     if (sel && massFaceHot(face)) return HOVER_MASS;
@@ -184,7 +197,7 @@ function render() {
   if (!active || !canvas) return;
   if (!use2d && !gl) initGl(canvas);
   else if (gl && geomDirty) uploadGeometry();
-  else if (gl && state.selection?.type === 'mass') uploadOverlay(); // гизмо и точки — к камере
+  else if (gl && (state.selection?.type === 'mass' || state.selection?.type === 'roof')) uploadOverlay(); // гизмо и точки — к камере
   if (gl) renderGl(canvas); else render2d(canvas);
 }
 
@@ -222,7 +235,7 @@ function initGl(canvas) {
 const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture']);
 
 // Наложения поверх сетки: выбранный проём, призрак и ручки масс.
-const overlays = () => selectionOverlay().concat(massOverlay());
+const overlays = () => selectionOverlay().concat(massOverlay(), roofOverlay());
 
 // Выбранный проём — полупрозрачная коробка акцентного цвета в его пустоте.
 function selectionOverlay() {
@@ -515,6 +528,8 @@ const HINT_SEL_TOUCH = 'Удерживайте грань выбранной с�
 const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
 const HINT_MASS = 'Масса: стрелки гизмо — переместить · точки — размер · R — повернуть · Delete';
 const HINT_MASS_TOUCH = HINT_MASS;
+const HINT_ROOF = 'Крыша: точки — вынос (по плоскости плиты), синяя стрелка — высота · двойной клик — число · Shift — без привязки · Delete';
+const HINT_ROOF_TOOL = 'Крыша: клик по помещению — накрыть · Shift+клик — добавить к выбранной · клик по крыше — выбрать · Esc — выйти';
 let touchUsed = false;
 
 function setHint(text) {
@@ -523,6 +538,8 @@ function setHint(text) {
   if (text === undefined) {
     if (!wallsEditable()) text = HINT_SITE;
     else if (massToolOn()) text = massToolHint();
+    else if (roofToolOn()) text = HINT_ROOF_TOOL;
+    else if (state.selection?.type === 'roof') text = HINT_ROOF;
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
     else if (selectedObject()) text = HINT_OBJ;
@@ -540,7 +557,7 @@ function refreshHighlight() {
 
 // Выбор сменился (план, «Свойства», клавиши) — открытый 3D перекрашивается.
 export function refresh3dSelection() {
-  if (!active || edit || massDragging()) return;
+  if (!active || edit || massDragging() || roofDragging()) return;
   refreshHighlight();
 }
 
@@ -550,6 +567,18 @@ export function escape3d() {
   if (!active) return false;
   if (numTarget) { hideNumber(); setHint(); return true; }
   if (massNumOpen()) { closeMassNum(); setHint(); return true; }
+  if (roofNumOpen()) { closeRoofNum(); setHint(); return true; }
+  if (roofDragging()) { cancelRoofDrag(); return true; }
+  if (roofToolOn()) {
+    cancelTool();
+    resetRoofTool();
+    setMassLabel(null);
+    document.dispatchEvent(new CustomEvent('kepler:roof-tool'));
+    setHint();
+    uploadOverlay();
+    requestRender();
+    return true;
+  }
   if (edit) { cancelEdit(); return true; }
   if (massDragging()) { cancelMassDrag(); return true; }
   if (massToolOn()) {
@@ -598,8 +627,14 @@ function rebuildMasses() {
     .concat(opts.masses ? massFaces(list) : [], hz ? massGroundFaces(list, hz) : []);
 }
 
+// Пересобрать только грани крыш-плит (жест правки крыши).
+function rebuildRoofs() {
+  faces = faces.filter((f) => !f.roofId).concat(roofFaces(state.project, shownRoofs(state.project, opts.levels)));
+  sets = null;
+}
+
 export function refresh3d() {
-  if (!active || edit || massDragging()) return;
+  if (!active || edit || massDragging() || roofDragging()) return;
   syncReliefControl();
   syncMassControl();
   faces = buildHouseMesh(state.project, opts);
@@ -633,7 +668,9 @@ export function open3d() {
 export function close3d() {
   if (edit) cancelEdit();
   if (massDragging()) cancelMassDrag();
+  if (roofDragging()) cancelRoofDrag();
   resetMassTool();
+  resetRoofTool();
   hideNumber();
   active = false;
   hover = null;
@@ -705,6 +742,11 @@ function gripAt(hit, e) {
 const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize', length: 'ew-resize' };
 
 function updateHover(e) {
+  if (state.selection?.type === 'roof' && wallsEditable()) {
+    const r = roofHoverAt(e);
+    if (r.changed) { uploadOverlay(); requestRender(); }
+    if (r.cursor) { el('canvas3d').style.cursor = r.cursor; return; }
+  } else if (clearRoofHover()) { uploadOverlay(); requestRender(); }
   if (state.selection?.type === 'mass' && wallsEditable()) {
     const r = massHoverAt(e);
     if (r.changed) { uploadGeometry(); requestRender(); }
@@ -721,7 +763,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'mass']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'mass', 'roof']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;
@@ -733,6 +775,7 @@ function clickSelect(hit) {
     } else {
       if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
       if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
+      else if (hit.type === 'roof') selectObject({ type: 'roof', id: hit.id });
       else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'railing') selectObject({ type: 'railing', roomId: hit.roomId, id: hit.id });
       else selectObject({ type: hit.type, id: hit.id });
@@ -885,8 +928,17 @@ function onDown(e) {
     if (gesture?.hold) clearTimeout(gesture.hold);
     if (edit) cancelEdit();
     if (massDragging()) cancelMassDrag();
+    if (roofDragging()) cancelRoofDrag();
     const [a, b] = [...pointers.values()];
     gesture = { kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1, camDist: cam.dist, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    return;
+  }
+  // Точка выноса или стрелка Z выбранной крыши — сразу жест (и с Shift —
+  // «без привязки», а не сдвиг вида).
+  const roofPart = wallsEditable() && e.button === 0 && pointers.size === 1 ? roofPartAt(e) : null;
+  if (roofPart && startRoofDrag(e, roofPart)) {
+    gesture = { kind: 'roof' };
+    setHint();
     return;
   }
   // Инструмент «Масса»: клик (без сдвига) — шаг жеста; потянули — вращение
@@ -898,6 +950,11 @@ function onDown(e) {
   }
   if (massTool) {
     gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, massTool };
+    return;
+  }
+  // Инструмент «Крыша»: клик (без сдвига) — накрыть помещение; потянули — вращение.
+  if (roofToolOn() && wallsEditable()) {
+    gesture = { kind: 'orbit', x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, click: true, roofTool: true };
     return;
   }
   // Гизмо или точка выбранной массы — сразу жест (мышь и палец; у пальца
@@ -938,13 +995,16 @@ function panBy(dx, dy) {
 function onMove(e) {
   if (!pointers.has(e.pointerId) || !gesture) {
     if (e.pointerType === 'mouse' && !gesture && active) {
-      if (massToolOn() && wallsEditable()) massToolMove(e); else updateHover(e);
+      if (massToolOn() && wallsEditable()) massToolMove(e);
+      else if (roofToolOn() && wallsEditable()) roofToolMove(e);
+      else updateHover(e);
     }
     return;
   }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (gesture.kind === 'edit') { moveEdit(e); return; }
   if (gesture.kind === 'mass') { moveMassDrag(e); return; }
+  if (gesture.kind === 'roof') { moveRoofDrag(e); return; }
   if (gesture.kind === 'pinch') {
     const [a, b] = [...pointers.values()];
     if (!b) return;
@@ -987,12 +1047,25 @@ function onUp(e) {
     }
     return;
   }
+  if (g?.kind === 'roof') {
+    if (!pointers.size) {
+      gesture = null;
+      finishRoofDrag();
+      refreshHighlight();
+    }
+    return;
+  }
   if (g?.hold) clearTimeout(g.hold);
   if (g?.click && !pointers.size) {
     gesture = null;
     if (g.massTool) {
       massToolClick(e);
       syncMassControl();
+      setHint();
+      return;
+    }
+    if (g.roofTool) {
+      roofToolClick(e);
       setHint();
       return;
     }
@@ -1018,6 +1091,12 @@ function onCancel(e) {
     cancelMassDrag();
     return;
   }
+  if (gesture?.kind === 'roof') {
+    pointers.delete(e.pointerId);
+    gesture = null;
+    cancelRoofDrag();
+    return;
+  }
   if (gesture?.hold) clearTimeout(gesture.hold);
   if (gesture) gesture.click = false;
   onUp(e);
@@ -1025,6 +1104,7 @@ function onCancel(e) {
 
 function onDblClick(e) {
   if (!massToolOn() && wallsEditable() && massDblClick(e)) return;
+  if (wallsEditable() && roofDblClick(e)) return;
   const hit = pickAt(e);
   const grip = gripAt(hit, e);
   if (grip) openNumber(e, hit, grip);
@@ -1066,6 +1146,32 @@ export function bind3d() {
     ground: () => (opts.site ? terrainHeightFn(state.project, opts.terrainScale) : null),
   });
   bindMassNum();
+  initRoof3d({
+    ray: rayAt,
+    axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
+    worldPerPx: () => cam.dist / camera(canvas.clientWidth || 1, canvas.clientHeight || 1).focal,
+    pick: (e) => pickAt(e),
+    switchLevel: (id) => { if (id && id !== state.project.activeLevel) switchLevel(id); },
+    redraw: (geom = false) => {
+      if (geom) { rebuildRoofs(); uploadGeometry(); } else uploadOverlay();
+      requestRender();
+    },
+    label: setMassLabel,
+    project: (p) => debug3dScreen(p),
+    basis: () => {
+      const c = camera(canvas.clientWidth || 1, canvas.clientHeight || 1);
+      return { r: W(c.r), u: W(c.u), f: W(c.f) };
+    },
+  });
+  bindRoofNum();
+  document.addEventListener('kepler:roof-tool', () => {
+    if (!active) return;
+    resetRoofTool();
+    setMassLabel(null);
+    setHint();
+    uploadOverlay();
+    requestRender();
+  });
   document.addEventListener('kepler:mass-tool', () => {
     if (!active) return;
     resetMassTool();
@@ -1143,6 +1249,13 @@ export function debug3d() {
     masses: faces.filter((f) => f.kind === 'mass').length / 6, massLayer: opts.masses,
     undergroundFaces: faces.filter((f) => f.kind === 'massUnder' && f.pts.length).length,
     waterline: faces.filter((f) => f.kind === 'massLine').reduce((t, f) => t + f.edges.length, 0),
+    roofs: new Set(faces.filter((f) => f.roofId).map((f) => f.roofId)).size,
+    roofFaces: faces.filter((f) => f.roofId && f.kind === 'roof').length,
+    parapetFaces: faces.filter((f) => f.kind === 'parapet').length,
+    fasciaFaces: faces.filter((f) => f.kind === 'fascia').length,
+    roofColors: [...new Set(faces.filter((f) => f.roofId && f.kind === 'roof').map((f) => f.color))],
+    roofTop: Math.max(-Infinity, ...faces.filter((f) => f.roofId && f.kind === 'roof').flatMap((f) => f.pts.map((p) => p.z))),
+    roof3d: debugRoof3d(),
     mass: debugMass3d(), label: el('v3Label')?.hidden === false ? el('v3Label').textContent : null,
   };
 }
