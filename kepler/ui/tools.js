@@ -75,6 +75,7 @@ export function cancelTool() {
   const wasOpening = state.tool?.kind === 'place-opening';
   state.tool = null;
   state.draft = null;
+  state.gridSnapTag = null; // подпись привязки («центр стены», «Ось 3»)
   clearDrawSnap();
   state.ghost = null;
   state.ghostItem = null;

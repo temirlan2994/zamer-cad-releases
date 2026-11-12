@@ -33,9 +33,17 @@ export function orthoPoint(a, p) {
 // ось берёт верх, если она ближе линии привязки стен; пересечение двух осей —
 // угол. → { point, snapX, snapY, gridX, gridY } (snapX/snapY — координата
 // линии привязки или null; gridX/gridY — true, если это координационная ось).
-export function snapWallPoint({ p, prev = null, walls = [], manual = [], points = [], gridPoints = [], gridTol = 0, tol = 0, grid = 0, free = false }) {
+// Центр стены (centers): осевая линия тела каждой стены — луч по её
+// направлению (у наружной — середина толщины, у общей — середина зазора, у
+// ручной — её ось); mids — середина стены (центр отрезка) рядом с телом.
+// centerX/centerY — 'center' | 'mid' | null, label — «центр стены» /
+// «середина стены» или ''.
+export function snapWallPoint({
+  p, prev = null, walls = [], manual = [], points = [], gridPoints = [], gridTol = 0, tol = 0, grid = 0, free = false,
+  centers = true, mids = true,
+}) {
   const q = prev ? orthoPoint(prev, p) : { x: p.x, y: p.y };
-  if (free) return { point: q, snapX: null, snapY: null, gridX: false, gridY: false };
+  if (free) return { point: q, snapX: null, snapY: null, gridX: false, gridY: false, centerX: null, centerY: null, label: '' };
   const xs = []; const ys = [];
   for (const w of walls) {
     for (const r of w.polys ? w.polys.flat() : (w.band ? [{ x: w.band.x, y: w.band.y }, { x: w.band.x + w.band.w, y: w.band.y + w.band.h }] : [])) {
@@ -44,9 +52,27 @@ export function snapWallPoint({ p, prev = null, walls = [], manual = [], points 
   }
   for (const m of manual) for (const e of [m.axis.a, m.axis.b]) { xs.push(e.x); ys.push(e.y); }
   for (const e of points) { xs.push(e.x); ys.push(e.y); }
+  // Цели «центр стены»: { v, tag } (берут верх только если строго ближе).
+  const cx = []; const cy = [];
+  if (centers || mids) {
+    for (const c of wallCenterTargets(walls)) {
+      const across = c.orient === 'v' ? q.x : q.y;
+      const along = c.orient === 'v' ? q.y : q.x;
+      if (centers) (c.orient === 'v' ? cx : cy).push({ v: c.at, tag: 'center' });
+      // Середина — только у самого тела стены (иначе вся сетка в линиях).
+      if (mids && Math.abs(across - c.at) <= c.half + tol && along >= c.from - tol && along <= c.to + tol) {
+        (c.orient === 'v' ? cy : cx).push({ v: c.mid, tag: 'mid' });
+      }
+    }
+  }
   const near = (v, list) => {
     let best = null; let d = tol;
     for (const c of list) { const dd = Math.abs(c - v); if (dd <= d) { d = dd; best = c; } }
+    return best;
+  };
+  const nearCenter = (v, list, than) => {
+    let best = null; let d = than === null ? tol : Math.abs(than - v) - 1e-6;
+    for (const c of list) { const dd = Math.abs(c.v - v); if (dd <= d) { d = dd; best = c; } }
     return best;
   };
   const gx = gridPoints.map((e) => e.x).filter(Number.isFinite);
@@ -56,19 +82,48 @@ export function snapWallPoint({ p, prev = null, walls = [], manual = [], points 
     for (const c of list) { const dd = Math.abs(c - v); if (dd <= d) { d = dd; best = c; } }
     return best;
   };
-  // Линия стен или ось — что ближе (ось — в своём радиусе).
-  const pick = (v, list, glist) => {
-    const a = near(v, list); const b = nearGrid(v, glist);
-    if (b === null) return { at: a, grid: false };
-    if (a === null || Math.abs(b - v) < Math.abs(a - v)) return { at: b, grid: true };
-    return { at: a, grid: false };
+  // Линия стен, центр стены или ось — что ближе (ось — в своём радиусе).
+  const pick = (v, list, clist, glist) => {
+    let a = near(v, list); let center = null;
+    const c = nearCenter(v, clist, a);
+    if (c) { a = c.v; center = c.tag; }
+    const b = nearGrid(v, glist);
+    if (b === null) return { at: a, grid: false, center };
+    if (a === null || Math.abs(b - v) < Math.abs(a - v)) return { at: b, grid: true, center: null };
+    return { at: a, grid: false, center };
   };
   const lockX = Boolean(prev) && q.x === prev.x;
   const lockY = Boolean(prev) && q.y === prev.y;
-  let snapX = null; let snapY = null; let gridX = false; let gridY = false;
-  if (!lockX) { const s = pick(q.x, xs, gx); snapX = s.at; gridX = s.grid; q.x = snapX ?? (grid ? Math.round(q.x / grid) * grid : q.x); }
-  if (!lockY) { const s = pick(q.y, ys, gy); snapY = s.at; gridY = s.grid; q.y = snapY ?? (grid ? Math.round(q.y / grid) * grid : q.y); }
-  return { point: q, snapX, snapY, gridX, gridY };
+  let snapX = null; let snapY = null; let gridX = false; let gridY = false; let centerX = null; let centerY = null;
+  if (!lockX) { const s = pick(q.x, xs, cx, gx); snapX = s.at; gridX = s.grid; centerX = s.center; q.x = snapX ?? (grid ? Math.round(q.x / grid) * grid : q.x); }
+  if (!lockY) { const s = pick(q.y, ys, cy, gy); snapY = s.at; gridY = s.grid; centerY = s.center; q.y = snapY ?? (grid ? Math.round(q.y / grid) * grid : q.y); }
+  const tags = [centerX, centerY];
+  const label = tags.includes('mid') ? 'середина стены' : (tags.includes('center') ? 'центр стены' : '');
+  return { point: q, snapX, snapY, gridX, gridY, centerX, centerY, label };
+}
+
+// Цели привязки «центр стены» по записям стен (state.walls / deriveWalls):
+// [{ orient, at, half, from, to, mid, key }] — at — осевая линия тела
+// (поперёк), half — полтолщины, from…to — вдоль, mid — середина стены.
+// Узлы, фаски и скрытые стены не дают целей; совпадающие — один раз.
+export function wallCenterTargets(walls) {
+  const out = [];
+  const seen = new Set();
+  for (const w of walls || []) {
+    if (!w || w.hidden || !['own', 'shared', 'manual'].includes(w.kind)) continue;
+    const b = w.band;
+    if (!b || (w.orient !== 'h' && w.orient !== 'v')) continue;
+    const h = w.orient === 'h';
+    const lo = h ? b.y : b.x; const hi = h ? b.y + b.h : b.x + b.w;
+    const from = h ? b.x : b.y; const to = h ? b.x + b.w : b.y + b.h;
+    if (hi - lo < 1 || to - from < 1) continue;
+    const at = (lo + hi) / 2;
+    const key = `${w.orient}|${at}|${from}|${to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ orient: w.orient, at, half: (hi - lo) / 2, from, to, mid: (from + to) / 2, key: w.key });
+  }
+  return out;
 }
 
 export function createWall(a, b, {

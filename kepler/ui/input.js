@@ -66,7 +66,7 @@ import {
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallGridMagnet } from './block-gesture.js';
+import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallCenterGuides, wallCenterSnapOpts, wallGridMagnet } from './block-gesture.js';
 import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-grids.js';
 import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
@@ -446,7 +446,8 @@ function updateHoverAndGhost(world, plan, event) {
   }
 
   // Замок «стена — ось»: мгновенная подсказка, курсор-рука.
-  const lockHover = event?.clientX !== undefined ? hitGridLock(state, pointerScreen(event)) : null;
+  // На ручке грани выбранной комнаты — ручка (её курсор), а не замок.
+  const lockHover = event?.clientX !== undefined && !hitRoomHandle(pointerScreen(event)) ? hitGridLock(state, pointerScreen(event)) : null;
   showLockTip(lockHover, event);
   if (lockHover) { canvas.style.cursor = 'pointer'; return; }
 
@@ -602,6 +603,11 @@ export function bindCanvasInput() {
       if (splitLiveClick(plan, screen, event.pointerType === 'touch')) return;
     }
 
+    // Правый клик по замку «стена — ось» — сменить режим (по грани ↔ по центру).
+    if (event.button === 2 && !spaceDown) {
+      const lockR = hitGridLock(state, screen);
+      if (lockR) { toggleGridLock(lockR, { switchMode: true }); return; }
+    }
     // Панорама: правая/средняя кнопка или зажатый пробел.
     if (event.button === 1 || event.button === 2 || spaceDown) {
       drag = { kind: 'pan', start: screen, view: { ...state.view } };
@@ -788,13 +794,16 @@ export function bindCanvasInput() {
     // жеста открывает клавиатуру, а свайп по подписи — панорама.
     // Замок «стена — ось» (ui/grid-locks.js): клик прикрепляет/открепляет —
     // раньше стены и оси под ним.
-    const lockHit = hitGridLock(state, screen);
-    if (lockHit) { tapOrNow(event, screen, () => toggleGridLock(lockHit)); return; }
-    const tempDimHit = hitTempDim(screen);
+    // Ручка грани выбранной комнаты важнее замка, подписи и маркера зазора,
+    // лежащих на ней (у общей стены «≈250 мм» стоит ровно на ручке грани).
+    const onRoomHandle = Boolean(hitRoomHandle(screen));
+    const lockHit = onRoomHandle ? null : hitGridLock(state, screen);
+    if (lockHit) { const sw = Boolean(event.shiftKey); tapOrNow(event, screen, () => toggleGridLock(lockHit, { switchMode: sw })); return; }
+    const tempDimHit = onRoomHandle ? null : hitTempDim(screen);
     if (tempDimHit) { tapOrNow(event, screen, () => openDimInput(tempDimHit)); return; }
 
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
-    const gapHit = gapMarkerAt(screen.x, screen.y);
+    const gapHit = onRoomHandle ? null : gapMarkerAt(screen.x, screen.y);
     if (gapHit) { focusGap(gapHit); return; }
 
     // Кнопки «+» выделенного дивана-конструктора — раньше ручек и перетаскивания.
@@ -1427,10 +1436,10 @@ export function bindCanvasInput() {
       // Координационные оси (ui/block-gesture.js): грань или ось стены липнет к
       // оси в радиусе 300 мм (подсветка оси и подпись); иначе — шаг сетки.
       const gm = wallGridMagnet(drag, raw, event);
+      drag.gridSnap = gm ? { gridId: gm.grid.id, mode: gm.mode } : null;
       const delta = gm ? gm.delta : Math.round(raw / gridStep()) * gridStep();
-      drag.gridSnap = gm ? { gridId: gm.grid.id } : null;
       state.guides = gm ? [gm.guide] : [];
-      state.gridSnapTag = gm ? { x: plan.x, y: plan.y, text: `Ось ${gm.grid.label}` } : null;
+      state.gridSnapTag = gm ? { x: plan.x, y: plan.y, text: `Ось ${gm.grid.label} · ${gm.mode === 'axis' ? 'по центру' : 'по грани'}` } : null;
       // Стену двигаем по НОМИНАЛАМ комнат: съеденной (стоящей под соседом) комнате
       // возвращается полная форма, иначе её видимая грань двигалась бы, а номинал
       // оставался на месте — и между комнатами оставалась щель.
@@ -1519,10 +1528,12 @@ export function bindCanvasInput() {
       const snapRes = snapWallPoint({
         p: plan, prev: fixed, walls: (state.walls || []).filter((w) => w.wallId !== wall.id), manual: others,
         gridPoints: gridSnapPoints(), gridTol: gridPointTol(), // торец — на ось
-        tol: 12 / state.view.scale, grid: gridStep(), free: event.shiftKey,
+        tol: 12 / state.view.scale, grid: gridStep(), free: event.shiftKey, ...wallCenterSnapOpts(event),
       });
       const p = snapRes.point;
-      state.guides = mwallGridGuides(snapRes);
+      // Центр соседней стены (осевая линия, середина) — направляющая и подпись.
+      state.guides = [...mwallGridGuides(snapRes), ...wallCenterGuides(snapRes)];
+      state.gridSnapTag = snapRes.label ? { x: p.x, y: p.y, text: snapRes.label } : null;
       drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;
       refreshDerived();
       requestDraw();

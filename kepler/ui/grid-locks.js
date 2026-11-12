@@ -28,7 +28,7 @@ function locksFor(st) {
   const out = [];
   const seen = new Set();
   for (const w of list) {
-    for (const l of wallLocks(st.project, w, grids)) {
+    for (const l of wallLocks(st.project, w, grids, { prefer: planGridPref().snap })) {
       const key = `${l.gridId}|${l.part}|${w.key}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -85,6 +85,7 @@ function snapTag(ctx, st, p2s, tokens) {
   if (ctx.roundRect) ctx.roundRect(x, y, w, 18, 9); else ctx.rect(x, y, w, 18);
   ctx.fill();
   ctx.fillStyle = tokens.surface || '#ffffff';
+  ctx.textAlign = 'left'; // после подписей осей ctx мог остаться с 'center'
   ctx.textBaseline = 'middle';
   ctx.fillText(t.text, x + 6, y + 9.5);
   ctx.restore();
@@ -127,4 +128,8 @@ export function hitGridLock(st, screen) {
   return best?.l || null;
 }
 
-export const lockTitle = (l) => (l.closed ? `Открепить от оси ${l.label}` : `Прикрепить стену к оси ${l.label}`);
+const modeTitle = (m) => (m === 'axis' ? 'по центру (оси стены)' : 'по грани');
+// Подсказка замка: что сделает клик и правый клик / Shift-клик (режим).
+export const lockTitle = (l) => (l.closed
+  ? `Открепить от оси ${l.label} · ${modeTitle(l.mode)} · правый клик или Shift — ${modeTitle(l.mode === 'axis' ? 'face' : 'axis')}`
+  : `Прикрепить стену к оси ${l.label} · ${modeTitle(l.mode)} · правый клик или Shift — ${modeTitle(l.mode === 'axis' ? 'face' : 'axis')}`);

@@ -18,7 +18,7 @@ import { snapRectToSketch } from '../core/masses.js';
 import { DEFAULT_EXTERIOR } from '../core/catalog.js';
 import { massSnapLines } from './plan-masses.js';
 import { snapRectToGrids } from '../core/grid-axes.js';
-import { activeGrids, gridExtentOf, gridSnapOffsets, planGridPref } from './plan-grids.js';
+import { activeGrids, gridExtentOf, gridFaceTol, gridSnapOffsets, planGridPref } from './plan-grids.js';
 import { wallBody, wallMagnet, wallPins } from '../core/grid-pins.js';
 import { state } from './state.js';
 
@@ -79,7 +79,7 @@ export function gridMagnet(out, rect) {
   if (state.snapSettings?.magnet === false) return out;
   const grids = activeGrids();
   if (!grids.length) return out;
-  const g = snapRectToGrids({ ...rect }, grids, { distance: MAGNET_MM, offsets: gridSnapOffsets(), extent: (x) => gridExtentOf(x) });
+  const g = snapRectToGrids({ ...rect }, grids, { distance: gridFaceTol(), offsets: gridSnapOffsets(), extent: (x) => gridExtentOf(x) });
   for (const [axis, p, flag, dir] of [['x', 'x', 'snappedX', 'v'], ['y', 'y', 'snappedY', 'h']]) {
     if (!g[flag]) continue;
     const mine = Math.abs(g[p] - rect[p]);
@@ -111,14 +111,33 @@ export function wallGridMagnet(drag, raw, event) {
     const ref = g && [body.lo, body.mid, body.hi].find((r) => Math.abs(r - g.at) <= 1);
     drag.pinRef = ref !== undefined && g ? { gridId: g.id, ref } : null;
   }
-  const m = wallMagnet(body, raw, grids, { mode: planGridPref().snap, radius: MAGNET_MM, extent: (g) => gridExtentOf(g), pinned: drag.pinRef });
+  const m = wallMagnet(body, raw, grids, { mode: planGridPref().snap, radius: gridFaceTol(), extent: (g) => gridExtentOf(g), pinned: drag.pinRef });
   if (!m) return null;
   const ext = gridExtentOf(m.grid);
   const guide = {
     type: 'magnet', kind: 'align', axis: body.orient === 'h' ? 'h' : 'v', at: m.grid.at, gridId: m.grid.id,
     from: Math.min(body.from, ext.from), to: Math.max(body.to, ext.to),
   };
-  return { delta: m.delta, grid: m.grid, guide };
+  // Режим — какая линия тела встала на ось: центр (ось стены) или грань.
+  return { delta: m.delta, grid: m.grid, guide, mode: Math.abs(m.ref - body.mid) < 0.5 ? 'axis' : 'face' };
+}
+
+// Направляющие «центр стены» для результата core/wall-manual.js
+// snapWallPoint (centerX/centerY): линия через точку по сработавшей оси.
+export function wallCenterGuides(snapRes, reach = 3000) {
+  const out = [];
+  const p = snapRes?.point;
+  if (!p) return out;
+  if (snapRes.centerX) out.push({ type: 'magnet', kind: 'align', axis: 'v', at: p.x, from: p.y - reach, to: p.y + reach });
+  if (snapRes.centerY) out.push({ type: 'magnet', kind: 'align', axis: 'h', at: p.y, from: p.x - reach, to: p.x + reach });
+  return out;
+}
+
+// Включены ли цели «центр стены» (кнопки «Объекты» / «Выравнивание»).
+export function wallCenterSnapOpts(event) {
+  const s = state.snapSettings || {};
+  const off = Boolean(event?.altKey);
+  return { centers: !off && (s.objects !== false || s.tracking !== false), mids: !off && s.objects !== false };
 }
 
 // Растяжение: прижать подвижные грани. edges — буквы ручки ('ne' → n, e).
@@ -133,7 +152,7 @@ export function magnetResize(drag, id, rect, handle, event) {
   const gridFree = edges.filter((e) => !out.edges.includes(e));
   const grids = state.snapSettings?.magnet === false ? [] : activeGrids();
   if (grids.length && gridFree.length) {
-    const g = snapRectToGrids(out.rect, grids, { distance: MAGNET_MM, offsets: gridSnapOffsets(), edges: gridFree, extent: (x) => gridExtentOf(x) });
+    const g = snapRectToGrids(out.rect, grids, { distance: gridFaceTol(), offsets: gridSnapOffsets(), edges: gridFree, extent: (x) => gridExtentOf(x) });
     if (g.snappedX || g.snappedY) {
       out.rect = { x: g.x, y: g.y, w: g.w, h: g.h };
       out.guides = [...out.guides, ...g.guides];

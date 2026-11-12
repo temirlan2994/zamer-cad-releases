@@ -58,6 +58,12 @@ export const gridSnapPoints = (project = state.project) => gridWallPoints(active
 export const GRID_MAGNET_MM = 300;
 export const gridPointTol = (scale = state.view?.scale || 0.1) => Math.min(GRID_MAGNET_MM, 30 / scale);
 
+// Радиус магнита осей для граней комнат и стен: 300 мм, но не больше 12 px
+// экрана. Иначе грань, стоящая на оси (или рядом), «залипала»: любой сдвиг
+// меньше 300 мм возвращался на ось, и стену у оси было не сдвинуть.
+export const GRID_FACE_PX = 12;
+export const gridFaceTol = (scale = state.view?.scale || 0.1) => Math.min(GRID_MAGNET_MM, GRID_FACE_PX / scale);
+
 // Смещения граней комнаты от оси по настройке привязки.
 export function gridSnapOffsets(project = state.project) {
   const ext = Number(project?.settings?.exterior) || DEFAULT_EXTERIOR;

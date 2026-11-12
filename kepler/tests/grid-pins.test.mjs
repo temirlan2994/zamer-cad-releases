@@ -6,8 +6,8 @@
 // торцы), магнит стены к оси и привязка точек ручной стены к осям.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoNumberGrids, createGrid, renumberGrids } from '../core/grid-axes.js';
-import { addManualWall, snapWallPoint } from '../core/wall-manual.js';
+import { autoGrids, autoNumberGrids, createGrid, renumberGrids } from '../core/grid-axes.js';
+import { addManualWall, snapWallPoint, wallCenterTargets } from '../core/wall-manual.js';
 import {
   createProject, createRoom, deserializeProject, fileDataV6, normalizeRoom, normalizeWall, serializeProject,
 } from '../core/model.js';
@@ -15,7 +15,7 @@ import { deriveWalls } from '../core/walls.js';
 import { normalizeRoomPins, normalizeWallPins } from '../core/grid-pins-model.js';
 import {
   dirOf, hasGridPins, moveGridWithPins, nearestWallGrid, pinWallToGrid, syncGridPins, unpinWallFromGrid,
-  wallBody, wallLocks, wallMagnet, wallPins,
+  autoWallMode, setWallPinMode, wallBody, wallLocks, wallMagnet, wallPins,
 } from '../core/grid-pins.js';
 
 // Две комнаты с общей стеной (зазор 100 = перегородка) по x = 4000…4100.
@@ -252,4 +252,157 @@ test('точка ручной стены липнет к осям в своём 
   assert.deepEqual(u.point, { x: 5000, y: 2000 });
   // Shift — без привязки.
   assert.equal(snapWallPoint({ p: { x: 3200, y: 1830 }, gridPoints, gridTol: 300, free: true }).gridX, false);
+});
+
+// ---------------------------------------------------------------- центр стены
+
+const westV = (p) => deriveWalls(p).find((w) => w.kind === 'own' && w.orient === 'v' && w.band.x < 0);
+
+test('автоопределение режима: ось по центру → «по оси», по грани → «по грани»; тонкая стена — по настройке', () => {
+  const body = { lo: -250, mid: -125, hi: 0 };
+  assert.equal(autoWallMode(body, -125).mode, 'axis');
+  assert.equal(autoWallMode(body, -123).mode, 'axis');
+  assert.equal(autoWallMode(body, -250).mode, 'face');
+  assert.equal(autoWallMode(body, 2, 'axis').mode, 'face');
+  const thin = { lo: 0, mid: 4, hi: 8 };
+  assert.equal(autoWallMode(thin, 2, 'face').mode, 'face');
+  assert.equal(autoWallMode(thin, 2, 'axis').mode, 'axis');
+  // Замок у наружной стены видит ось по центру толщины (настройка «по грани»).
+  const { p } = twoRooms();
+  const g = createGrid({ kind: 'x', at: -125 }, []);
+  p.grids = [g];
+  const locks = wallLocks(p, westV(p), p.grids, { prefer: 'face' });
+  assert.equal(locks.length, 1);
+  assert.equal(locks[0].mode, 'axis');
+  assert.equal(locks[0].closed, false);
+  // Кнопка «Прикрепить к оси»: ближе центр — режим «по оси».
+  const near = nearestWallGrid(wallBody(westV(p)), p.grids, 'face');
+  assert.equal(near.mode, 'axis');
+  assert.equal(near.delta, 0);
+  // Ось у наружной грани — «по грани».
+  const gf = createGrid({ kind: 'x', at: -240 }, []);
+  assert.equal(nearestWallGrid(wallBody(westV(p)), [gf], 'axis').mode, 'face');
+});
+
+test('наружная стена «по центру»: центр на оси, сдвиг оси двигает центр', () => {
+  const { p, a } = twoRooms();
+  const g = createGrid({ kind: 'x', at: -100 }, []);
+  p.grids = [g];
+  const res = pinWallToGrid(p, westV(p), g, { mode: 'auto' });
+  assert.ok(res.ok, res.reason);
+  assert.equal(res.moved, true); // центр -125 → -100
+  assert.equal(a.x, 25);
+  assert.deepEqual(a.axisPins, [{ dir: 'w', gridId: g.id, off: 125, mode: 'axis' }]);
+  assert.equal(wallBody(westV(p)).mid, -100);
+  const r = moveGridWithPins(p, g.id, -600);
+  assert.ok(r.ok, r.reason);
+  assert.equal(wallBody(westV(p)).mid, -600);
+  assert.equal(a.x, -475);
+  const locks = wallLocks(p, westV(p), p.grids);
+  assert.equal(locks[0].closed, true);
+  assert.equal(locks[0].mode, 'axis');
+  assert.deepEqual(syncGridPins(p), { dropped: 0, orphans: 0 });
+});
+
+test('общая стена: ось по середине зазора — замок «по оси», прикрепление и сдвиг у обеих комнат', () => {
+  const { p, a, b } = twoRooms();
+  const g = createGrid({ kind: 'x', at: 4050 }, []);
+  p.grids = [g];
+  const locks = wallLocks(p, sharedV(p), p.grids, { prefer: 'face' });
+  assert.equal(locks[0].mode, 'axis');
+  assert.ok(pinWallToGrid(p, sharedV(p), g, { mode: locks[0].mode }).ok);
+  assert.deepEqual(a.axisPins, [{ dir: 'e', gridId: g.id, off: -50, mode: 'axis' }]);
+  assert.deepEqual(b.axisPins, [{ dir: 'w', gridId: g.id, off: 50, mode: 'axis' }]);
+  assert.ok(moveGridWithPins(p, g.id, 3550).ok);
+  assert.equal(wallBody(sharedV(p)).mid, 3550);
+  assert.equal(a.w, 3500);
+  assert.equal(b.x, 3600);
+});
+
+test('ручная стена (своя перегородка): ось по её оси — «по оси», сдвиг оси двигает стену', () => {
+  const p = createProject('Ручная');
+  const g = createGrid({ kind: 'y', at: 2000 }, []);
+  p.grids = [g];
+  const mw = addManualWall(p, { x: 0, y: 2000 }, { x: 3000, y: 2000 }, { thickness: 100 });
+  const rec = () => deriveWalls(p).find((w) => w.kind === 'manual');
+  const locks = wallLocks(p, rec(), p.grids, { prefer: 'face' });
+  assert.equal(locks.find((l) => l.part === 'line').mode, 'axis');
+  assert.ok(pinWallToGrid(p, rec(), g, { mode: 'auto' }).ok);
+  assert.equal(mw.axisPins.line.mode, 'axis');
+  assert.ok(moveGridWithPins(p, g.id, 2500).ok);
+  assert.equal(mw.axis.a.y, 2500);
+});
+
+test('смена режима привязки: «по центру» ↔ «по грани» одним шагом; отказ — без изменений', () => {
+  const { p, a } = twoRooms();
+  const g = createGrid({ kind: 'x', at: -125 }, []);
+  p.grids = [g];
+  assert.ok(pinWallToGrid(p, westV(p), g, { mode: 'axis' }).ok);
+  assert.equal(a.x, 0);
+  // → по грани: наружная грань (-250) встаёт на ось, комната ужимается на полтолщины.
+  const r1 = setWallPinMode(p, westV(p), g.id, 'face');
+  assert.ok(r1.ok, r1.reason);
+  assert.equal(a.x, 125);
+  assert.deepEqual(a.axisPins, [{ dir: 'w', gridId: g.id, off: 250, mode: 'face' }]);
+  assert.equal(wallBody(westV(p)).lo, -125);
+  // → обратно по центру.
+  assert.ok(setWallPinMode(p, westV(p), g.id, 'axis').ok);
+  assert.equal(a.x, 0);
+  assert.deepEqual(a.axisPins, [{ dir: 'w', gridId: g.id, off: 125, mode: 'axis' }]);
+  assert.equal(wallPins(p, westV(p))[0].mode, 'axis');
+  // Нет такого режима — отказ, всё как было.
+  const before = JSON.stringify(p.rooms);
+  assert.equal(setWallPinMode(p, westV(p), g.id, 'zzz').ok, false);
+  assert.equal(JSON.stringify(p.rooms), before);
+  // Сохранение: режим «по оси» переживает файл.
+  const back = deserializeProject(serializeProject(p));
+  assert.equal(back.rooms.find((r) => r.name === 'Гостиная').axisPins[0].mode, 'axis');
+});
+
+test('«Оси по стенам» в режиме «по оси»: оси по центрам наружных стен, замок у каждой, прикрепление кликом', () => {
+  const { p } = twoRooms();
+  const walls = deriveWalls(p);
+  p.grids = autoGrids(p, { walls, mode: 'axis' });
+  for (const w of walls.filter((x) => x.kind === 'own')) {
+    const body = wallBody(w);
+    const g = p.grids.find((x) => x.kind === (w.orient === 'h' ? 'y' : 'x') && Math.abs(x.at - body.mid) < 0.5);
+    assert.ok(g, `ось по центру стены ${w.key}`);
+    const locks = wallLocks(p, w, p.grids, { prefer: 'face' });
+    assert.ok(locks.some((l) => l.gridId === g.id && l.mode === 'axis'));
+  }
+  const w = westV(p);
+  const lock = wallLocks(p, w, p.grids)[0];
+  const res = pinWallToGrid(p, w, p.grids.find((x) => x.id === lock.gridId), { mode: lock.mode });
+  assert.ok(res.ok, res.reason);
+  assert.equal(res.moved, false);
+});
+
+test('цели привязки «центр стены»: наружная, общая, ручная; середина стены; подпись; выключение', () => {
+  const { p } = twoRooms();
+  addManualWall(p, { x: 1000, y: 500 }, { x: 1000, y: 2500 }, { thickness: 100 });
+  const walls = deriveWalls(p);
+  const xs = [...new Set(wallCenterTargets(walls).filter((c) => c.orient === 'v').map((c) => c.at))].sort((m, n) => m - n);
+  assert.deepEqual(xs, [-125, 1000, 4050, 7225]);
+  // Луч центра наружной стены: точка далеко от стены по длине — липнет по x.
+  const s1 = snapWallPoint({ p: { x: -118, y: 6000 }, walls, tol: 20, grid: 100 });
+  assert.equal(s1.point.x, -125);
+  assert.equal(s1.centerX, 'center');
+  assert.equal(s1.label, 'центр стены');
+  // Общая стена: середина зазора 4050 (грани 4000/4100 дальше).
+  const s2 = snapWallPoint({ p: { x: 4045, y: 9000 }, walls, tol: 20, grid: 100 });
+  assert.equal(s2.point.x, 4050);
+  // Ручная стена: середина отрезка (1000, 1500) — «середина стены».
+  const s3 = snapWallPoint({ p: { x: 1010, y: 1490 }, walls, tol: 20, grid: 100 });
+  assert.deepEqual(s3.point, { x: 1000, y: 1500 });
+  assert.equal(s3.label, 'середина стены');
+  // Рисуем от точки: конец липнет к центру соседней стены ортогонально.
+  const s4 = snapWallPoint({ p: { x: 4040, y: 4010 }, prev: { x: 2000, y: 4000 }, walls, tol: 20, grid: 100 });
+  assert.deepEqual(s4.point, { x: 4050, y: 4000 });
+  // Грань ближе центра — грань, без подписи.
+  const s5 = snapWallPoint({ p: { x: 4003, y: 9000 }, walls, tol: 20, grid: 100 });
+  assert.equal(s5.point.x, 4000);
+  assert.equal(s5.label, '');
+  // Выключено (кнопки «Объекты»/«Выравнивание», Alt) и Shift — центров нет.
+  assert.equal(snapWallPoint({ p: { x: 4045, y: 9000 }, walls, tol: 20, grid: 100, centers: false, mids: false }).point.x, 4050 - 50);
+  assert.equal(snapWallPoint({ p: { x: 4045, y: 9000 }, walls, tol: 20, grid: 100, free: true }).point.x, 4045);
 });

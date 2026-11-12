@@ -24,6 +24,7 @@ import { escapeHtml, toast } from './dom.js';
 import { GRID_HEAD_R } from './render-axes.js';
 import { planGridPref, setPlanGridPref } from './plan-grids.js';
 import { gridStep } from './snap.js';
+import { wallCenterSnapOpts } from './block-gesture.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
 import { renderProps, renderToolOptions } from './props.js';
@@ -124,8 +125,11 @@ function snapAt(plan, kind, event, skipId = null) {
   const s = snapWallPoint({
     p: plan, walls: state.walls || [], manual: state.project.walls || [], points,
     tol: 12 / state.view.scale, grid: gridStep(), free: Boolean(event?.shiftKey),
+    ...wallCenterSnapOpts(event), // ось по центру стены (осевая линия тела)
   });
   const v = kind === 'x' ? s.point.x : s.point.y;
+  const center = kind === 'x' ? s.centerX : s.centerY;
+  state.gridSnapTag = center && event ? { x: s.point.x, y: s.point.y, text: center === 'mid' ? 'середина стены' : 'центр стены' } : null;
   return Math.round(v);
 }
 

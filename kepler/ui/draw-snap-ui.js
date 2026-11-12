@@ -60,11 +60,11 @@ const BUTTONS = [
     icon: svg('<path d="M4 20h16"/><path d="M4 20L18 6"/><path d="M4 20l6-15"/><path d="M12 20a8 8 0 0 0-2.3-5.7"/>'),
   },
   {
-    key: 'objects', name: 'Объекты', what: 'конец, середина, пересечение, центр, перпендикуляр, параллель', keys: 'Shift — временно без привязок',
+    key: 'objects', name: 'Объекты', what: 'конец, середина, пересечение, центр, перпендикуляр, параллель; у стен — центр стены и середина стены', keys: 'Shift — временно без привязок',
     icon: svg('<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/>'),
   },
   {
-    key: 'tracking', name: 'Выравнивание', what: 'линии по X/Y от вершин', keys: 'Shift — временно без привязок',
+    key: 'tracking', name: 'Выравнивание', what: 'линии по X/Y от вершин и по осевым линиям стен', keys: 'Shift — временно без привязок',
     icon: svg('<path d="M3 12h18" stroke-dasharray="2 3"/><path d="M12 3v18" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.2"/>'),
   },
   {

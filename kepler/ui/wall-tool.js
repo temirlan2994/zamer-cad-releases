@@ -11,6 +11,7 @@ import { toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { massSnapPoints } from './plan-masses.js';
 import { gridPointTol, gridSnapPoints } from './plan-grids.js';
+import { wallCenterSnapOpts } from './block-gesture.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
@@ -41,6 +42,7 @@ function snapped(plan, event) {
     tol: 12 / state.view.scale,
     grid: gridStep(),
     free: Boolean(event?.shiftKey),
+    ...wallCenterSnapOpts(event), // центр стены и середина стены (Alt — без них)
   });
 }
 
@@ -52,6 +54,7 @@ export function wallToolHover(plan, event) {
   t.cursor = s.point;
   t.snapX = s.snapX;
   t.snapY = s.snapY;
+  state.gridSnapTag = s.label ? { x: s.point.x, y: s.point.y, text: s.label } : null; // «центр стены»
   t.valid = t.start ? wallAxisVerdict(t.start, s.point).ok : true;
   requestDraw();
 }

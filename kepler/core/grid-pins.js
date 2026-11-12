@@ -87,6 +87,24 @@ export function facesOnBody(room, body) {
 // Опорные линии тела для привязки: 'axis' — ось стены, 'face' — грани.
 export const wallRefs = (body, mode) => (mode === 'axis' ? [body.mid] : [body.lo, body.hi]);
 
+// Наружная грань тела (outward — куда смотрит стена от комнаты): при равном
+// расстоянии «по грани» выбирается она (переключение «по центру» → «по грани»).
+const outerFirst = (body, outward) => (outward < 0 ? [body.lo, body.hi] : [body.hi, body.lo]);
+
+// Чем стена стоит на линии at: гранью или центром (осью стены).
+// → { mode, ref, dist } — ближайшая опорная линия; если на линии (±tol)
+// и грань, и центр (тонкая стена) — режим prefer (настройка «Привязка»).
+export function autoWallMode(body, at, prefer = 'face', tol = LOCK_TOL) {
+  const cands = [{ mode: 'face', ref: body.lo }, { mode: 'axis', ref: body.mid }, { mode: 'face', ref: body.hi }]
+    .map((c) => ({ ...c, dist: Math.abs(at - c.ref) }));
+  const best = cands.reduce((a, b) => (b.dist < a.dist ? b : a));
+  if (best.dist <= tol && best.mode !== prefer) {
+    const alt = cands.filter((c) => c.mode === prefer && c.dist <= tol).sort((a, b) => a.dist - b.dist)[0];
+    if (alt) return alt;
+  }
+  return best;
+}
+
 // Магнит стены к осям при сдвиге поперёк на raw (мм): опорная линия тела
 // встаёт на ближайшую ось своего направления в радиусе radius.
 // extent(g) → { from, to } — пределы линии оси (стена должна их задевать).
@@ -113,9 +131,24 @@ export function wallMagnet(body, raw, grids, { mode = 'face', radius = 300, exte
   return best;
 }
 
-// Ближайшая параллельная ось без ограничения радиуса (кнопка «Прикрепить»).
-export function nearestWallGrid(body, grids, mode = 'face') {
-  return wallMagnet(body, 0, grids, { mode, radius: Infinity });
+// Ближайшая параллельная ось без ограничения радиуса (кнопка «Прикрепить»)
+// и режим по тому, что к ней ближе: грань или центр стены (оба на оси —
+// prefer). mode 'face' | 'axis' — только этим режимом (как раньше).
+// → { grid, mode, ref, delta, dist } | null.
+export function nearestWallGrid(body, grids, prefer = 'face', { auto = true } = {}) {
+  if (!body) return null;
+  if (!auto) {
+    const m = wallMagnet(body, 0, grids, { mode: prefer, radius: Infinity });
+    return m && { ...m, mode: prefer };
+  }
+  const kind = gridKindFor(body.orient);
+  let best = null;
+  for (const g of grids || []) {
+    if (g.hidden || g.kind !== kind) continue;
+    const m = autoWallMode(body, g.at, prefer);
+    if (!best || m.dist < best.dist - 1e-9) best = { grid: g, mode: m.mode, ref: m.ref, delta: g.at - m.ref, dist: m.dist };
+  }
+  return best;
 }
 
 // ------------------------------------------------------------- состояние
@@ -155,7 +188,7 @@ export function wallPins(project, wall) {
 //   at — точка на оси у стены, side — куда отодвинуть значок (±1 поперёк
 //   для линии, вдоль стены наружу для торца), clear — мм от оси до края тела
 //   в сторону side (значок не ложится на штриховку стены).
-export function wallLocks(project, wall, grids, { tol = LOCK_TOL } = {}) {
+export function wallLocks(project, wall, grids, { tol = LOCK_TOL, prefer = 'face' } = {}) {
   const body = wallBody(wall);
   if (!body) return [];
   const closed = new Map(wallPins(project, wall).map((p) => [`${p.part}|${p.gridId}`, p]));
@@ -166,12 +199,13 @@ export function wallLocks(project, wall, grids, { tol = LOCK_TOL } = {}) {
   for (const g of grids || []) {
     if (g.hidden || g.kind !== kind) continue;
     const pin = closed.get(`line|${g.id}`);
-    const ref = [body.lo, body.mid, body.hi].find((r) => Math.abs(g.at - r) <= tol);
-    if (ref === undefined && !pin) continue;
+    // Ось по грани или по центру стены — режим определяется сам (оба — prefer).
+    const auto = autoWallMode(body, g.at, prefer, tol);
+    if (auto.dist > tol && !pin) continue;
     const side = Math.sign(g.at - body.mid) || (wall.outward || 1);
     const clear = Math.max(0, side > 0 ? body.hi - g.at : g.at - body.lo);
     const at = body.orient === 'h' ? { x: along, y: g.at } : { x: g.at, y: along };
-    out.push({ gridId: g.id, part: 'line', mode: pin?.mode || (ref === body.mid ? 'axis' : 'face'), closed: Boolean(pin), at, side, clear });
+    out.push({ gridId: g.id, part: 'line', mode: pin?.mode || auto.mode, closed: Boolean(pin), at, side, clear });
   }
   if (wall.kind === 'manual') {
     const mw = (project.walls || []).find((w) => w.id === wall.wallId);
@@ -205,14 +239,19 @@ function setRoomPin(project, room, dir, coord, grid, mode) {
 // Прикрепить стену (запись state.walls) к оси grid: стена сначала встаёт на
 // ось (опорная линия по mode), потом запоминаются грани. part — 'line' или
 // торец ручной стены 'a' | 'b'. → { ok, reason?, moved }.
-export function pinWallToGrid(project, wall, grid, { mode = 'face', part = 'line' } = {}) {
+// mode 'auto' — по тому, что ближе к оси (грань или центр; оба — prefer).
+export function pinWallToGrid(project, wall, grid, { mode = 'face', part = 'line', prefer = 'face' } = {}) {
   if (!wall || !grid) return { ok: false, reason: 'Нет стены или оси' };
+  if (mode === 'auto') {
+    const b = wallBody(wall);
+    mode = b && part === 'line' ? autoWallMode(b, grid.at, prefer).mode : prefer;
+  }
   if (wall.kind === 'manual') return pinManualWall(project, wall.wallId, grid, { mode, part });
   if (!['own', 'shared'].includes(wall.kind)) return { ok: false, reason: 'Эту стену нельзя прикрепить' };
   const body = wallBody(wall);
   if (!body || grid.kind !== gridKindFor(body.orient)) return { ok: false, reason: 'Ось не параллельна стене' };
-  const refs = wallRefs(body, mode);
-  const ref = refs.reduce((a, b) => (Math.abs(b - grid.at) < Math.abs(a - grid.at) ? b : a));
+  const refs = mode === 'axis' ? [body.mid] : outerFirst(body, wall.outward || 1);
+  const ref = refs.reduce((a, b) => (Math.abs(b - grid.at) < Math.abs(a - grid.at) - 1e-9 ? b : a));
   const delta = grid.at - ref;
   for (const id of wall.rooms) liftRoom(project, id);
   if (Math.abs(delta) >= 0.5) {
@@ -261,6 +300,21 @@ function pinManualWall(project, wallId, grid, { mode = 'face', part = 'line' } =
   }
   mw.axisPins = { ...(mw.axisPins || {}), [part]: { gridId: grid.id, off: Math.round((mw.axis[part][along] - grid.at) * 100) / 100 } };
   return { ok: true };
+}
+
+// Сменить режим привязки стены к оси gridId ('face' ↔ 'axis'): открепить и
+// прикрепить заново новым режимом (стена встаёт на ось новой линией —
+// центром или гранью). При отказе привязка и стена — как были.
+// → { ok, reason?, moved }.
+export function setWallPinMode(project, wall, gridId, mode) {
+  const grid = gridOf(project, gridId);
+  if (!wall || !grid) return { ok: false, reason: 'Нет стены или оси' };
+  if (mode !== 'face' && mode !== 'axis') return { ok: false, reason: 'Нет такого режима' };
+  const saved = captureLevels(project);
+  unpinWallFromGrid(project, wall, gridId, 'line');
+  const res = pinWallToGrid(project, wall, grid, { mode, part: 'line' });
+  if (!res.ok) restoreLevels(saved);
+  return res;
 }
 
 // Открепить стену от оси gridId (part — 'line' | 'a' | 'b').
