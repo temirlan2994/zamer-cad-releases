@@ -276,13 +276,17 @@ function makeBuffers(arrays) {
   return { opaque: make(arrays.opaque), glass: make(arrays.glass), lines: make(arrays.lines) };
 }
 
+// Подземная часть массы и «ватерлиния» видны только у ВЫБРАННОЙ массы.
+const groundShown = (f) => (f.kind !== 'massUnder' && f.kind !== 'massLine') ||
+  (state.selection?.type === 'mass' && state.selection.id === f.massId);
+
 function uploadGeometry() {
   if (!gl) return;
   geomDirty = false;
   for (const set of [glState.buffers, glState.under]) if (set) for (const b of Object.values(set)) gl.deleteBuffer(b.buf);
   // Подземная часть масс — отдельно: рисуется сквозь землю (GREATER).
-  glState.buffers = makeBuffers(faceArrays(faces.filter((f) => f.kind !== 'massUnder')));
-  glState.under = makeBuffers(faceArrays(faces.filter((f) => f.kind === 'massUnder')));
+  glState.buffers = makeBuffers(faceArrays(faces.filter((f) => f.kind !== 'massUnder' && groundShown(f))));
+  glState.under = makeBuffers(faceArrays(faces.filter((f) => f.kind === 'massUnder' && groundShown(f))));
   uploadOverlay();
 }
 
@@ -412,6 +416,7 @@ function render2d(canvas) {
   const list = [];
   geomDirty = false;
   for (const face of faces.concat(overlays())) {
+    if (!groundShown(face)) continue; // подземная часть — только у выбранной массы
     const P = face.pts.map(W);
     const centroid = P.reduce((s, p) => ({ x: s.x + p.x / P.length, y: s.y + p.y / P.length, z: s.z + p.z / P.length }), { x: 0, y: 0, z: 0 });
     const toEye = sub(c.eye, centroid);

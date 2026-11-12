@@ -52,7 +52,15 @@ describe('Масса на рельефе: подземная часть', () => 
     assert.ok(s.waterline > 0);
     // Бок py (виден камере) у x = 7000: земля +700, точка z = 300 — под землёй.
     const p = await sc(page, { x: 7000, y: 5000, z: 300 });
+    // Без выбора подземная часть НЕ рисуется (пиксель как у земли), после выбора — проступает.
+    const unselected = await pixel(page, p.x, p.y);
+    await page.evaluate(async () => {
+      const { selectObject } = await import('./ui/tools.js');
+      selectObject({ type: 'mass', id: window.__kepler.state.project.masses[0].id });
+    });
+    await page.waitForTimeout(120);
     const on = await pixel(page, p.x, p.y);
+    assert.ok(diff(on, unselected) > 12, `после выбора подземная часть видна: ${on} / ${unselected}`);
     await page.uncheck('#v3Masses');
     await page.waitForTimeout(80);
     assert.equal((await d3(page)).undergroundFaces, 0);
