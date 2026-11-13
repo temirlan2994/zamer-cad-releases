@@ -21,6 +21,7 @@ import { STAIR_SHAPES } from '../core/stairs.js';
 import { cancelTool, startPlaceFurniture } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
 import { bindMobileCard, syncMobileCard } from './mobile-card.js';
+import { bindTouchHints } from './touch-hints.js';
 
 const LIB = 'sheet-library';
 const PROPS = 'sheet-props';
@@ -154,6 +155,9 @@ export function syncMobileBar() {
   syncDrawRow();
   for (const b of bar.querySelectorAll('[data-sheet]')) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   el('moreBtn')?.setAttribute('aria-expanded', String(has(MORE)));
+  // Инструмент включён, а «Готово» в рядах не видно — своя кнопка на плане.
+  const done = el('toolDone');
+  if (done) done.hidden = !(isPhone() && state.tool && !has(DRAW) && !has(CAT) && !anySheet());
   syncSheetHead();
   syncMobileCard();
 }
@@ -258,12 +262,26 @@ function doneButton() {
   return b;
 }
 
-// «Готово» в рядах: закончить ломаную (как «✓ Готово» на плане), иначе —
-// выйти из инструмента (цепочка стен сохраняется) и убрать ряд.
+// Инструменты ландшафта, которые заканчиваются кнопкой в «Свойствах»
+// (разрез, массив, контур): «Готово» нажимает её.
+const FINISH_TOOLS = ['ls-section', 'ls-array', 'draw-landscape'];
+const FINISH_BUTTONS = '#lsSecFinish, #lsArApply, #lsDrawFinish';
+function toolFinishButton() {
+  if (!FINISH_TOOLS.includes(state.tool?.kind)) return null;
+  if (state.propsTab !== 'props') setPropsTab('props'); // кнопка — в «Свойствах» инструмента
+  const b = el('propsBody')?.querySelector(FINISH_BUTTONS);
+  return b && !b.disabled ? b : null;
+}
+
+// «Готово» в рядах и на плане: закончить ломаную (как «✓ Готово» на плане),
+// разрез, массив или контур ландшафта, цепочку стен; иначе — выйти из
+// инструмента. Ряд убирается.
 function finishTool() {
   const draft = el('draftDone');
   if (draft && !draft.hidden) { draft.click(); return; }
-  if (!finishWallChain() && state.tool) cancelTool();
+  const tool = state.tool;
+  toolFinishButton()?.click();
+  if (state.tool && state.tool === tool && !finishWallChain()) cancelTool(); // закончить не вышло — выйти
   document.body.classList.remove(DRAW, CAT);
   closeAll();
   syncMobileBar();
@@ -501,6 +519,12 @@ export function bindMobile() {
     ensurePropsTab: () => { if (state.propsTab !== 'props') setPropsTab('props'); },
   });
   el('fitFab')?.addEventListener('click', () => el('fitBtn')?.click());
+  el('toolDone')?.addEventListener('click', () => finishTool());
+  // Подсказки без клавиш: «Готово» заканчивает цепочку стен и контур, у остальных — выход.
+  bindTouchHints({
+    isPhone,
+    context: () => ({ tool: Boolean(state.tool), finish: state.tool?.kind === 'wall' || Boolean(state.draft) || FINISH_TOOLS.includes(state.tool?.kind) }),
+  });
   // Этажи — вверху слева, «⚠» — сразу за ними: ширина кнопок этажей в --level-w.
   const dock = el('levelDock');
   if (dock && globalThis.ResizeObserver) {

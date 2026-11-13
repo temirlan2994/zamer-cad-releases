@@ -186,6 +186,27 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.waitForSelector('#mobileCard', { state: 'hidden' });
   });
 
+  it('подсказки без клавиш: «Тапайте…», выход — «Готово»; инструмент из карточки — «Готово» на плане', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="rooms"]');
+    await page.tap('#mobileCat [data-cat="door"]');
+    const touch = await page.getAttribute('#canvasHint', 'data-touch');
+    assert.match(touch, /^Тапайте по стенам/);
+    assert.match(touch, /«Готово» — выход/);
+    assert.doesNotMatch(touch, /Esc|Пробел|Клик/);
+    assert.match(await page.textContent('#canvasHint'), /Esc — выход/, 'исходный текст на месте — его сравнивает код');
+    assert.equal(await page.isVisible('#toolDone'), false, '«Готово» уже есть в ряду');
+    await page.tap('#mobileCat [data-done]');
+    const id = await page.evaluate(() => window.__kepler.state.project.rooms.find((r) => r.name === 'Гостиная').id);
+    await page.evaluate((rid) => window.__kepler.selectRoom(rid), id);
+    await page.tap('#mobileCard [data-selection-action="add-window"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.openKind), 'window');
+    assert.equal(await page.isVisible('#toolDone'), true, 'ряда нет — «Готово» на плане');
+    await page.tap('#toolDone');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
+    assert.equal(await page.isVisible('#toolDone'), false);
+  });
+
   it('«Виды»: режим и «Виды · Листы» сверху; ручка и «✕»', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="views"]');

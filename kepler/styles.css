@@ -2158,14 +2158,21 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .issues-btn { top: calc(var(--card-h) + 8px); left: calc(var(--level-w, 0px) + 16px); height: 36px; }
   body.v3-open .view3d-bar { top: calc(var(--card-h) + 52px); } /* 3D: панель — под этажами */
 
-  /* --- Подсказка инструмента: под этажами, не заходит на компас, не больше двух строк --- */
+  /* --- Подсказка инструмента: под этажами, не заходит на компас, не больше трёх строк --- */
   .canvas-wrap > .canvas-hint {
     left: 8px; top: calc(var(--card-h) + 52px); transform: none; max-width: calc(100% - 96px); padding: 5px 12px; border-radius: 14px;
     font-size: 12.5px; line-height: 1.3; text-align: left;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
   .canvas-wrap > .canvas-hint[hidden] { display: none; }
   .draft-done { bottom: calc(var(--ribbon-h) + 16px); }
+  .tool-done { z-index: 46; } /* и поверх 3D */
+  .draft-done:not([hidden]) ~ .tool-done { display: none; } /* ломаная: её «Готово» важнее */
+  /* Подсказки для пальцев (ui/touch-hints.js): исходный текст скрыт, показан data-touch */
+  .canvas-hint[data-touch], #v3Hint[data-touch], #toast[data-touch] { font-size: 0 !important; }
+  .canvas-hint[data-touch]::after { content: attr(data-touch); font-size: 12.5px; }
+  #v3Hint[data-touch]::after { content: attr(data-touch); font-size: 12px; }
+  #toast[data-touch]::after { content: attr(data-touch); font-size: 13px; }
   body.v3-open .view3d-hint { bottom: calc(var(--ribbon-h) + 12px); }
 
   /* --- Вторые ряды «Рисовать» и «Каталог»: над нижней навигацией, «Готово» в конце --- */
