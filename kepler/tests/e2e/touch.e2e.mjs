@@ -25,9 +25,9 @@ describe('телефон', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('холст во всю ширину, нижняя панель вместо боковых', async () => {
+  it('холст — всё, кроме узкой колонки инструментов; нижняя панель вместо боковых', async () => {
     const box = await canvasBox(app.page);
-    assert.ok(box.width >= 380, `ширина холста ${box.width}`);
+    assert.ok(box.width >= 320, `ширина холста ${box.width}`);
     assert.ok(box.height >= 500, `высота холста ${box.height}`);
     assert.equal(await app.page.isVisible('#mobileBar'), true);
     assert.equal(await app.page.isVisible('#propsPanel'), false);
@@ -47,12 +47,13 @@ describe('телефон', () => {
   it('«Помещения» → тап по карточке → тап по плану ставит комнату', async () => {
     const before = await app.page.evaluate(() => window.__kepler.state.project.rooms.length);
     await app.page.tap('#mobileBar [data-sheet="rooms"]');
+    await app.page.tap('#mobileCat [data-cat="room"]');
     await app.page.waitForFunction(() => document.body.classList.contains('sheet-library'));
     await app.page.tap('#roomCards .room-card >> text=Терраса');
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
-    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — между шапкой и лентой инструментов внизу
-    assert.ok(Math.abs(box0.y + box0.height - strip.y) < 2 && box0.y > 30 && box0.y < 70, `холст не уехал прокруткой: y=${box0.y}`);
+    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — справа от колонки инструментов
+    assert.ok(Math.abs(box0.y - strip.y) < 2 && box0.y > 30 && box0.y < 130, `холст не уехал прокруткой: y=${box0.y}`);
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {
       const k = window.__kepler;

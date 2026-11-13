@@ -174,17 +174,16 @@ describe('раскладка на телефоне', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('лента инструментов под холстом, «⚠» на холсте, параметры — только у инструмента', async () => {
+  it('колонка инструментов слева, «⚠» на холсте, параметры — только у инструмента', async () => {
     const { page } = app;
     const [strip, canvas, nav] = await Promise.all([box(page, '#toolStrip'), box(page, '#canvas'), box(page, '#mobileBar')]);
-    assert.ok(strip.width > 300 && strip.height <= 56, `строка ${JSON.stringify(strip)}`);
-    assert.ok(strip.y >= canvas.y + canvas.height - 1, 'лента под холстом');
-    assert.ok(nav.y >= strip.y + strip.height - 1 && nav.y + nav.height <= 844.5, 'навигация — внизу экрана');
+    assert.ok(strip.width <= 64 && strip.x + strip.width <= canvas.x + 1, `колонка ${JSON.stringify(strip)}`);
+    assert.ok(nav.y >= canvas.y + canvas.height - 1 && nav.y + nav.height <= 844.5, 'навигация — внизу экрана');
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     assert.equal(await page.isVisible('#issuesBtn'), true);
     assert.equal(await page.isVisible('#toolOptions'), false, '«Выбор» — строки параметров нет');
-    await page.locator('#doorToolBtn').scrollIntoViewIfNeeded();
-    await page.tap('#doorToolBtn');
+    await page.tap('#mobileBar [data-sheet="rooms"]');
+    await page.tap('#mobileCat [data-cat="door"]');
     assert.equal(await page.isVisible('#presetW'), true, 'дверь — параметры');
     const opts = await box(page, '#toolOptions');
     assert.ok(opts.x >= 0 && opts.x + opts.width <= 390.5, 'в экране');

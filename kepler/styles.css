@@ -2098,7 +2098,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
    (прокрутка вбок) и нижняя навигация: Каталог · Свойства · Виды · Листы ·
    3D · Ещё. Каталог, правая панель и «Ещё» — нижние листы над лентой:
    ручка (45% / 88%, вниз — закрыть) и «✕». На компьютере — скрыто. */
-.more-btn, .mobile-more, .sheet-grip, .snap-menu { display: none; }
+.more-btn, .mobile-more, .sheet-grip, .mobile-snap-row, .mobile-cat { display: none; }
 
 @media (max-width: 640px) {
   /* --- Шапка --- */
@@ -2111,31 +2111,74 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .more-btn { display: inline-flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }
   .export-dropdown { top: 56px; }
 
-  /* --- Рабочая область: параметры инструмента · холст · лента --- */
-  .workspace { --ribbon-h: 56px; display: flex; flex-direction: column; }
-  .tool-options { order: 0; height: auto; min-height: 40px; padding: 4px 8px; }
+  /* --- Рабочая область: параметры инструмента · привязки · [колонка | холст] ---
+     --ribbon-h — высота второго ряда «Каталога» внизу (0, пока он скрыт). */
+  .workspace {
+    --ribbon-h: 0px; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  body.cat-open .workspace { --ribbon-h: 60px; }
+  .tool-options { grid-column: 1 / -1; grid-row: 1; height: auto; min-height: 40px; padding: 4px 8px; }
   .tool-options.empty { display: none; }
   .to-keys { display: none; }
-  .canvas-wrap { order: 1; flex: 1; min-height: 0; }
+  .canvas-wrap { grid-column: 2; grid-row: 3; min-height: 0; }
 
-  /* --- Лента инструментов: значок и подпись, прокрутка вбок, цели ≥ 44 px --- */
+  /* --- Привязки: ряд под шапкой, все кнопки видны, прокрутка вбок --- */
+  .mobile-snap-row {
+    grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; min-width: 0;
+    overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+    padding: 2px max(6px, env(safe-area-inset-left, 0px)); background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .mobile-snap-row::-webkit-scrollbar { display: none; }
+  .mobile-snap-row .snap-pill {
+    position: static; display: flex; flex-wrap: nowrap; gap: 2px; margin: 0; padding: 0; max-width: none; overflow: visible;
+    background: transparent; border: 0; box-shadow: none;
+  }
+  .mobile-snap-row .snap-btn { position: static; flex: none; width: 40px; height: 40px; border-radius: 10px; }
+  .mobile-snap-row .snap-step { width: auto; padding: 0 8px; }
+  .snap-tip { display: none !important; }
+
+  /* --- Колонка инструментов слева: значок и подпись, прокрутка вниз, цели ≥ 44 px --- */
   .toolstrip {
-    order: 2; flex: none; height: var(--ribbon-h); box-sizing: border-box;
-    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
-    gap: 0; padding: 2px max(6px, env(safe-area-inset-left, 0px)); border-bottom: 0; border-top: 1px solid var(--border);
+    grid-column: 1; grid-row: 3; width: 60px; height: auto; min-height: 0; box-sizing: border-box;
+    flex-direction: column; flex-wrap: nowrap; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; scrollbar-width: none;
+    gap: 0; padding: 2px 2px var(--ribbon-h) max(2px, env(safe-area-inset-left, 0px));
+    border-top: 0; border-bottom: 0; border-right: 1px solid var(--border);
   }
   .toolstrip::-webkit-scrollbar { display: none; }
   .toolstrip > * { flex: none; }
   .tb-sep { display: none; }
-  .tb-group { gap: 0; padding-left: 4px; margin-left: 4px; }
+  .tb-group { flex-direction: column; gap: 0; padding: 4px 0 0; margin: 4px 0 0; border: 0; border-top: 1px solid var(--border); }
+  .tb-group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+  .tb-group[hidden] { display: none; }
+  .toolstrip .view-ctl { display: flex; flex-direction: column; }
+  /* Каталожное (помещение, дверь, окно, мебель, лестница) — во втором ряду «Каталога» */
+  #boundRoomBtn, #doorToolBtn, #windowToolBtn, #furnitureToolBtn, #stairsToolBtn { display: none; }
   .tb-btn {
-    flex-direction: column; gap: 2px; min-width: 54px; height: 50px; padding: 4px 4px 3px;
-    font-size: 10.5px; line-height: 1.1;
+    flex-direction: column; gap: 2px; width: 54px; min-width: 0; height: 50px; padding: 4px 2px 3px;
+    font-size: 10px; line-height: 1.1;
   }
   .tb-btn svg { width: 22px; height: 22px; }
-  .tb-label { display: block; font-size: 10.5px; font-weight: 600; }
-  /* строка прокручивается и обрезает absolute-потомков — всплывающие панели на fixed, над лентой */
-  .tb-pop { position: fixed; left: 8px; right: 8px; top: auto; bottom: 128px; width: auto; z-index: 200; }
+  .tb-label { display: block; max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; }
+  .tb-tip { display: none !important; }
+  /* колонка прокручивается и обрезает absolute-потомков — всплывающие панели на fixed */
+  .tb-pop { position: fixed; left: 68px; right: 8px; top: auto; bottom: 72px; width: auto; z-index: 200; }
+
+  /* --- Второй ряд «Каталога»: над нижней навигацией --- */
+  .mobile-cat {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 61; height: var(--ribbon-h); box-sizing: border-box;
+    display: flex; gap: 0; padding: 2px max(4px, env(safe-area-inset-left, 0px));
+    background: var(--surface-2, var(--surface)); border-top: 1px solid var(--border);
+  }
+  .mobile-cat[hidden] { display: none; }
+  .mobile-cat button {
+    flex: 1 1 0; min-width: 0; height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; padding: 0 2px; border: 0; border-radius: 10px; background: transparent; box-shadow: none; color: var(--text);
+    font-size: 10.5px; font-weight: 600;
+  }
+  .mobile-cat button.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .mobile-cat .mb-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ms-grid { grid-template-columns: repeat(2, 1fr); }
+  .ms-grid button { height: 84px; font-size: 12px; }
 
   /* --- Нижние листы: над лентой, высота 45% / 88% --- */
   .library, .props, .mobile-more {
@@ -2143,7 +2186,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
     transition: transform 0.2s ease, height 0.2s ease, visibility 0s linear 0.2s;
   }
   body.sheet-tall .library, body.sheet-tall .props, body.sheet-tall .mobile-more { height: calc(100% - var(--ribbon-h) - 8px); }
-  body.sheet-library .library, body.sheet-props .props, body.sheet-more .mobile-more { transition: transform 0.2s ease, height 0.2s ease, visibility 0s; }
+  body.sheet-library .library, body.sheet-props .props, body.sheet-more #mobileMore, body.sheet-stairs #mobileStairs { transition: transform 0.2s ease, height 0.2s ease, visibility 0s; }
   .props { padding-top: 0; }
   .props-tabs { top: 32px; }
   .library { padding-top: 0; }
@@ -2153,7 +2196,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
     box-shadow: 0 -12px 30px rgba(24, 32, 43, 0.18);
     transform: translateY(110%); visibility: hidden; pointer-events: none;
   }
-  body.sheet-more .mobile-more { transform: none; visibility: visible; pointer-events: auto; }
+  body.sheet-more #mobileMore, body.sheet-stairs #mobileStairs { transform: none; visibility: visible; pointer-events: auto; }
   .sheet-grip {
     position: sticky; top: 0; z-index: 3; flex: none; display: flex; align-items: center; justify-content: center;
     height: 32px; margin: 0 -14px; background: var(--surface); touch-action: none; cursor: grab;
@@ -2201,19 +2244,8 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .statusbar { min-height: 0; padding: 0 8px 3px; background: transparent; border-top: 0; }
   .statusbar #cursorPos { display: none; }
   .statusbar #scaleInfo { margin-left: auto; }
-  .level-dock { left: 8px; bottom: 8px; }
-  /* Привязки — одна кнопка «Привязки», касание раскрывает ряд */
-  .snap-pill {
-    position: absolute; left: 8px; bottom: 58px; margin: 0; max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none;
-    gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
-  }
-  .snap-pill .snap-btn { position: static; flex: none; width: 38px; height: 38px; border-radius: 999px; }
-  .snap-pill .snap-step { width: auto; }
-  .snap-pill:not(.open) .snap-btn:not(.snap-menu) { display: none; }
-  .snap-pill .snap-menu { display: inline-flex; width: auto; gap: 6px; padding: 0 12px 0 10px; opacity: 1; color: var(--text); font-size: 12.5px; font-weight: 600; }
-  .snap-pill.open .snap-menu { padding: 0; width: 38px; }
-  .snap-pill.open .snap-menu-label { display: none; }
-  .snap-tip { display: none !important; }
+  .level-dock { left: 8px; bottom: calc(var(--ribbon-h) + 8px); }
+  .canvas-wrap .statusbar { margin-bottom: var(--ribbon-h); }
 }
 
 /* Планшет и сенсорный экран шире телефона: колонка шире, под значками — подписи (наведения нет). */
