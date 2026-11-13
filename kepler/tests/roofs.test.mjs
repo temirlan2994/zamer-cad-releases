@@ -11,7 +11,7 @@ import {
   normalizeRoof, normalizeRoofs, offsetOutline, outlineArea, overhangLabel, patchRoof, pushRoofEdgePart, rectGrid, rectsBox,
   rectsOutline, removeRoofVertex, roofAtPoint, roofBaseRects, roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom,
   roofRects, roofSlabEdges, roofSlabOutline, roofStats, roofZ, snapOverhang, snapRoofDz, snapRoofMove, tidyOutline,
-  triangulate, validOutline,
+  triangulate, validOutline, unionOutlines, mergeTouchingRoofs, roofsMergeable, boxOutline,
 } from '../core/roofs.js';
 import { createLevel, createProject, createRoom, deserializeProject, fileDataV6, serializeProject } from '../core/model.js';
 import { buildHouseMesh, roofFaces } from '../core/mesh3d.js';
@@ -472,4 +472,82 @@ test('косой контур: вынос по нормалям рёбер, пл
   assert.equal(roofSlabOutline(p, o).length, 4);
   // Сохранение косого контура.
   assert.deepEqual(deserializeProject(serializeProject(p)).roofs[0].outline, r.outline);
+});
+
+// ---------------------------------------------------------------- слияние крыш
+
+const R = (x0, y0, x1, y1) => boxOutline({ x0, y0, x1, y1 });
+const roofsOn = (outlines, patches = []) => {
+  const list = [];
+  outlines.forEach((o, i) => list.push(createRoof({ levelId: 'L1', outline: o, ...(patches[i] || {}) }, list)));
+  return list;
+};
+
+test('слияние: смежные помещения → одна крыша, свойства от активной, имя самой ранней', () => {
+  const p = house();
+  const a = over(p, ['a']);
+  const b = over(p, ['b'], { overhang: { n: 1000, e: 1000, s: 1000, w: 1000 }, material: 'white' }, [a]);
+  const m = mergeTouchingRoofs([a, b], b.id);
+  assert.ok(m);
+  assert.equal(m.list.length, 1);
+  assert.deepEqual(m.merged, [a.id]);
+  assert.equal(m.roof.id, b.id);
+  assert.equal(m.roof.name, 'Крыша 1');
+  assert.equal(m.roof.material, 'white');
+  assert.deepEqual(m.roof.outline, [{ x: -250, y: -250 }, { x: 10250, y: -250 }, { x: 10250, y: 4250 }, { x: -250, y: 4250 }]);
+  // Вынос — от общего контура: одна плита без швов.
+  p.roofs = m.list;
+  assert.deepEqual(bbox(p, m.roof), { x0: -1250, y0: -1250, x1: 11250, y1: 5250 });
+  assert.equal(roofRects(p, m.roof).length >= 1, true);
+  assert.equal(roofFaces(p).filter((f) => f.kind === 'roof').every((f) => f.roofId === b.id), true);
+});
+
+test('слияние: касание ребром (зазор до 5 мм), перекрытие, Г-образный итог', () => {
+  assert.deepEqual(unionOutlines(R(0, 0, 4000, 3000), R(4000, 0, 8000, 3000)).outline, R(0, 0, 8000, 3000));
+  assert.deepEqual(unionOutlines(R(0, 0, 4000, 3000), R(4004, 0, 8000, 3000)).outline, R(0, 0, 8000, 3000));
+  assert.equal(unionOutlines(R(0, 0, 4000, 3000), R(4020, 0, 8000, 3000)), null, 'зазор 20 мм — не касание');
+  const ov = unionOutlines(R(0, 0, 5000, 3000), R(4000, 0, 8000, 3000));
+  assert.deepEqual(ov.outline, R(0, 0, 8000, 3000));
+  const g = unionOutlines(R(0, 0, 6000, 3000), R(0, 3000, 3000, 7000)).outline;
+  assert.equal(g.length, 6);
+  assert.equal(outlineArea(g), 6000 * 3000 + 3000 * 4000);
+  assert.ok(validOutline(g));
+});
+
+test('слияние: несвязные и касание в точке не сливаются', () => {
+  assert.equal(unionOutlines(R(0, 0, 4000, 3000), R(5000, 0, 8000, 3000)), null);
+  assert.equal(unionOutlines(R(0, 0, 4000, 3000), R(4000, 3000, 7000, 6000)), null);
+  const list = roofsOn([R(0, 0, 4000, 3000), R(5000, 0, 8000, 3000)]);
+  assert.equal(mergeTouchingRoofs(list, list[1].id), null);
+});
+
+test('слияние: другой этаж, другая отметка верха, autoMerge=false — не сливаются', () => {
+  const lv = roofsOn([R(0, 0, 4000, 3000), R(4000, 0, 8000, 3000)], [{}, { levelId: 'L2' }]);
+  assert.equal(mergeTouchingRoofs(lv, lv[1].id), null);
+  const dz = roofsOn([R(0, 0, 4000, 3000), R(4000, 0, 8000, 3000)], [{}, { dz: 200 }]);
+  assert.equal(mergeTouchingRoofs(dz, dz[1].id), null);
+  // Тот же верх при другой толщине — сливаются (толщина — от активной).
+  const th = roofsOn([R(0, 0, 4000, 3000), R(4000, 0, 8000, 3000)], [{ thickness: 400 }, { dz: 100, thickness: 300 }]);
+  assert.equal(mergeTouchingRoofs(th, th[1].id).roof.thickness, 300);
+  const off = roofsOn([R(0, 0, 4000, 3000), R(4000, 0, 8000, 3000)], [{ autoMerge: false }, {}]);
+  assert.equal(off[0].autoMerge, false);
+  assert.equal(off[1].autoMerge, undefined);
+  assert.equal(mergeTouchingRoofs(off, off[1].id), null, 'выключенная не сливается');
+  assert.equal(mergeTouchingRoofs(off, off[0].id), null, 'выключенная не сливает других');
+  assert.equal(mergeTouchingRoofs(off, off[1].id, { force: true }).list.length, 1, 'вручную — сливается');
+  assert.equal(roofsMergeable(off[0], off[1], { force: true }), true);
+  assert.equal(normalizeRoof({ ...off[0], autoMerge: 'нет' }).autoMerge, undefined);
+});
+
+test('слияние: косые контуры, цепочка из трёх, двор заливается', () => {
+  const tri = unionOutlines([{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 2000, y: 3000 }], [{ x: 4000, y: 0 }, { x: 6000, y: 3000 }, { x: 2000, y: 3000 }]);
+  assert.deepEqual(tri.outline, [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 6000, y: 3000 }, { x: 2000, y: 3000 }]);
+  const chain = roofsOn([R(0, 0, 3000, 3000), R(6000, 0, 9000, 3000), R(3000, 0, 6000, 3000)]);
+  const m = mergeTouchingRoofs(chain, chain[2].id);
+  assert.equal(m.list.length, 1);
+  assert.deepEqual(m.roof.outline, R(0, 0, 9000, 3000));
+  const ring = roofsOn([R(0, 0, 9000, 1000), R(0, 8000, 9000, 9000), R(0, 0, 1000, 9000), R(8000, 0, 9000, 9000)]);
+  const rm = mergeTouchingRoofs(ring, ring[3].id);
+  assert.equal(rm.filled, true);
+  assert.deepEqual(rm.roof.outline, R(0, 0, 9000, 9000));
 });

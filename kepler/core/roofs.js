@@ -22,7 +22,9 @@
 //   edge { type: plain|fascia|cornice|drip, height 150…600 (250), color? };
 //   parapet { type: none|wall|glass|rail|stepped, height, thickness, inset,
 //             sides { n, e, s, w }: bool };
-//   material: graphite|white|wood|concrete|metal; drain: bool (маркер).
+//   material: graphite|white|wood|concrete|metal; drain: bool (маркер);
+//   autoMerge — необязательно; false — не сливаться с касающимися крышами
+//             (mergeTouchingRoofs: этаж и верх плиты те же — один общий контур).
 // }
 // Геометрия ортогонального контура — на общей сетке прямоугольников (как
 // перекрытия в core/mesh3d.js regionGrid): плита, кольцо фасции снаружи,
@@ -32,6 +34,7 @@
 // острый выпуклый — срез), плита — треугольники (triangulate).
 
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
+import { union as clipUnion } from './geom/clip.js';
 import { polygonRects, roomLabelPoint, roomRects, roomShapeHandles } from './room-shape.js';
 
 export const ROOF_SIDES = ['n', 'e', 's', 'w'];
@@ -404,6 +407,7 @@ export function normalizeRoof(raw) {
     drain: Boolean(raw.drain),
   };
   delete out.roomIds;
+  if (typeof raw.autoMerge !== 'boolean') delete out.autoMerge;
   if (typeof e.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(e.color)) delete out.edge.color;
   return out;
 }
@@ -1074,4 +1078,94 @@ export function roofStats(project, roof) {
   const b = rectsBox(rects);
   const z = roofZ(project, roof);
   return { area, box: b, z0: z?.z0 ?? 0, z1: z?.z1 ?? 0 };
+}
+
+// ---------------------------------------------------------------- слияние крыш
+
+export const MERGE_TOL = 5; // зазор между контурами, который считается касанием, мм
+
+// Ближайшая точка отрезка ab к p.
+function nearestOnSeg(p, a, b) {
+  const vx = b.x - a.x; const vy = b.y - a.y;
+  const L2 = vx * vx + vy * vy;
+  const t = L2 > 0 ? clamp(((p.x - a.x) * vx + (p.y - a.y) * vy) / L2, 0, 1) : 0;
+  return { x: a.x + vx * t, y: a.y + vy * t };
+}
+
+// Вершины контура pts, лежащие в пределах tol от другого контура, — на него
+// (сначала на вершину, иначе на ребро): зазор в 1–5 мм закрывается.
+function snapOutlineTo(pts, other, tol) {
+  if (!(tol > 0)) return pts;
+  return pts.map((p) => {
+    let best = null; let bd = tol + 1e-9;
+    for (const q of other) {
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d <= bd) { bd = d; best = q; }
+    }
+    if (best) return { x: best.x, y: best.y };
+    for (let i = 0; i < other.length; i += 1) {
+      const q = nearestOnSeg(p, other[i], other[(i + 1) % other.length]);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d <= bd) { bd = d; best = q; }
+    }
+    return best ? { x: best.x, y: best.y } : p;
+  });
+}
+
+const boxesNear = (a, b, tol) => a.x0 <= b.x1 + tol && b.x0 <= a.x1 + tol && a.y0 <= b.y1 + tol && b.y0 <= a.y1 + tol;
+
+// Объединение двух контуров (перекрытие или касание по отрезку, зазор ≤ tol)
+// → { outline, filled } или null: части не связаны (касание в точке, зазор),
+// итог негоден. Дыра в объединении (кольцо, двор) заливается — filled: true.
+export function unionOutlines(a, b, { tol = MERGE_TOL } = {}) {
+  if (!validOutline(a) || !validOutline(b)) return null;
+  if (!boxesNear(ptsBox(a), ptsBox(b), tol)) return null;
+  const A = snapOutlineTo(a, b, tol);
+  const B = snapOutlineTo(b, A, tol);
+  const res = clipUnion([A], [B]);
+  if (res.length !== 1 || !res[0][0]) return null;
+  const outline = tidyOutline(res[0][0]);
+  if (!validOutline(outline)) return null;
+  // Объединение не меньше большей части (защита от вырожденного итога).
+  if (outlineArea(outline) + 1 < Math.max(outlineArea(a), outlineArea(b))) return null;
+  return { outline, filled: res[0].length > 1 };
+}
+
+// Крыши можно слить: один этаж, одинаковая отметка верха плиты (dz + толщина),
+// у обеих не выключено autoMerge (force — ручное «Соединить», флаги не важны).
+export function roofsMergeable(a, b, { force = false } = {}) {
+  if (!a || !b || a.id === b.id || a.levelId !== b.levelId) return false;
+  if (Math.abs((a.dz || 0) + a.thickness - (b.dz || 0) - b.thickness) > 0.5) return false;
+  return force || (a.autoMerge !== false && b.autoMerge !== false);
+}
+
+// Крыша id (активная — созданная или изменённая последней) поглощает все
+// касающиеся/перекрывающиеся крыши своего этажа и высоты (по цепочке).
+// Свойства — от активной (id тоже), имя — самой ранней из слитых.
+// → { list, roof, merged: [id поглощённых], filled } или null (сливать нечего).
+export function mergeTouchingRoofs(list, id, { tol = MERGE_TOL, force = false } = {}) {
+  const all = Array.isArray(list) ? list : [];
+  const act = all.find((r) => r.id === id);
+  if (!act || (!force && act.autoMerge === false)) return null;
+  let outline = act.outline;
+  let filled = false;
+  const merged = new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const r of all) {
+      if (merged.has(r.id) || !roofsMergeable(act, r, { force })) continue;
+      const u = unionOutlines(outline, r.outline, { tol });
+      if (!u) continue;
+      outline = u.outline;
+      filled = filled || u.filled;
+      merged.add(r.id);
+      grew = true;
+    }
+  }
+  if (!merged.size) return null;
+  const first = all.find((r) => r.id === id || merged.has(r.id));
+  const roof = { ...act, outline, name: first?.name || act.name };
+  const out = all.filter((r) => !merged.has(r.id)).map((r) => (r.id === id ? roof : r));
+  return { list: out, roof, merged: [...merged], filled };
 }

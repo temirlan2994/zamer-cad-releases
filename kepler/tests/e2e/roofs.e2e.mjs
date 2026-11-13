@@ -477,3 +477,124 @@ describe('Крыши-плиты: телефон', () => {
     assert.equal((await sel(page)).type, 'roof');
   });
 });
+
+describe('Крыши-плиты: автослияние касающихся крыш', () => {
+  let app;
+  const zoom = (page) => st(page, async () => {
+    const s = window.__kepler.state;
+    s.view.scale = 0.045;
+    const c = document.getElementById('canvas');
+    const q = window.__kepler.planToScreen(5000, 2000);
+    s.view.panX += c.clientWidth / 2 - q.x;
+    s.view.panY += c.clientHeight / 2 - q.y;
+    (await import('./ui/view.js')).requestDraw();
+  });
+  before(async () => {
+    app = await startApp({ width: 1440, height: 860 });
+    await app.page.emulateMedia({ colorScheme: 'light' });
+    await openNew(app.page);
+    await st(app.page, async () => {
+      const m = await import('./core/model.js');
+      const store = await import('./ui/store.js');
+      const p = m.createProject('Слияние');
+      const a = m.createRoom('living', 0, 0, 6000, 4000); a.id = 'a';
+      const b = m.createRoom('kitchen', 6000, 0, 4000, 4000); b.id = 'b';
+      p.rooms.push(a, b);
+      store.restoreFrom(m.serializeProject(p));
+      window.__kepler.fitView();
+    });
+  });
+  after(async () => {
+    assert.deepEqual(app.errors, []);
+    await app?.close();
+  });
+
+  it('клик по двум смежным помещениям — одна крыша с общим контуром; Ctrl+Z возвращает как было', async () => {
+    const { page } = app;
+    await page.keyboard.press('KeyK');
+    await zoom(page);
+    const pa = await toClient(page, 3000, 2000);
+    await page.mouse.move(pa.x, pa.y, { steps: 3 });
+    await page.mouse.click(pa.x, pa.y);
+    assert.equal((await roofs(page)).length, 1);
+    const first = (await roofs(page))[0];
+    await page.keyboard.press('KeyK');
+    const pb = await toClient(page, 8000, 2000);
+    await page.mouse.move(pb.x, pb.y, { steps: 3 });
+    assert.deepEqual(await st(page, () => window.__kepler.state.tool.hover), { levelId: 'L1', roomId: 'b' });
+    await page.mouse.click(pb.x, pb.y);
+    const list = await roofs(page);
+    assert.equal(list.length, 1, 'смежные крыши слились');
+    assert.deepEqual(box(list[0]), { x0: -250, y0: -250, x1: 10250, y1: 4250 });
+    assert.equal(list[0].outline.length, 4, 'общий контур — прямоугольник без шва');
+    assert.equal(list[0].name, first.name);
+    assert.deepEqual(await sel(page), { type: 'roof', id: list[0].id });
+    assert.match(await page.textContent('#toast'), /соединена/);
+    assert.ok(await page.isChecked('#roofAutoMerge'));
+    await shot(page, 'merge-1-plan-after-click');
+    await page.keyboard.press('Control+z');
+    const back = await roofs(page);
+    assert.equal(back.length, 1);
+    assert.deepEqual(back[0].outline, first.outline, 'Ctrl+Z — снова одна первая крыша');
+  });
+
+  it('перенос крыши к другой сливает их; Ctrl+Z — две крыши', async () => {
+    const { page } = app;
+    await page.keyboard.press('Escape');
+    // Вторая крыша с зазором 1 м от первой.
+    await st(page, async () => {
+      const { createRoof, boxOutline } = await import('./core/roofs.js');
+      const { mutate } = await import('./ui/store.js');
+      const s = window.__kepler.state;
+      mutate(() => { s.project.roofs = [...s.project.roofs, createRoof({ levelId: 'L1', outline: boxOutline({ x0: 7250, y0: -250, x1: 10250, y1: 4250 }) }, s.project.roofs)]; });
+    });
+    await zoom(page);
+    assert.equal((await roofs(page)).length, 2);
+    await shot(page, 'merge-2-plan-before-move');
+    const a = await toClient(page, 8750, 2000);
+    const b = await toClient(page, 7550, 2000);
+    await dragPlan(page, a, b);
+    const list = await roofs(page);
+    assert.equal(list.length, 1, 'перенос к соседней — слились');
+    assert.equal(box(list[0]).x0, -250);
+    assert.ok(box(list[0]).x1 <= 9250 && box(list[0]).x1 >= 9000, `правый край ${box(list[0]).x1}`);
+    assert.equal((await sel(page))?.id, list[0].id);
+    await shot(page, 'merge-3-plan-after-move');
+    await page.keyboard.press('Control+z');
+    assert.equal((await roofs(page)).length, 2, 'Ctrl+Z — снова две крыши');
+  });
+
+  it('«Свойства»: флажок выключает автослияние, кнопка «Соединить с касающимися»; 3D — одна плита', async () => {
+    const { page } = app;
+    // Две перекрывающиеся крыши с выключенным автослиянием (как раньше: швы и наложения).
+    await st(page, async () => {
+      const { createRoof, boxOutline } = await import('./core/roofs.js');
+      const store = await import('./ui/store.js');
+      const s = window.__kepler.state;
+      store.mutate(() => {
+        const r1 = createRoof({ levelId: 'L1', outline: boxOutline({ x0: -250, y0: -250, x1: 6250, y1: 4250 }), autoMerge: false }, []);
+        const r2 = createRoof({ levelId: 'L1', outline: boxOutline({ x0: 5750, y0: -250, x1: 10250, y1: 4250 }), autoMerge: false, material: 'white' }, [r1]);
+        s.project.roofs = [r1, r2];
+      });
+      (await import('./ui/tools.js')).selectObject({ type: 'roof', id: s.project.roofs[1].id });
+    });
+    assert.equal(await page.isChecked('#roofAutoMerge'), false);
+    await page.click('#view3dBtn');
+    await page.waitForFunction(() => window.__kepler.debug3d()?.roofs === 2);
+    await shot(page, 'merge-4-3d-before');
+    await page.click('#roofMergeNow');
+    const list = await roofs(page);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].material, 'white', 'свойства — от выбранной');
+    assert.deepEqual(box(list[0]), { x0: -250, y0: -250, x1: 10250, y1: 4250 });
+    await page.waitForFunction(() => window.__kepler.debug3d()?.roofs === 1);
+    await shot(page, 'merge-5-3d-after');
+    // Флажок: включить — без соседей ничего не меняется, выключить — поле false.
+    await page.click('#roofAutoMerge');
+    assert.equal(await page.isChecked('#roofAutoMerge'), true);
+    assert.equal((await roofs(page))[0].autoMerge, undefined);
+    await page.click('#roofAutoMerge');
+    assert.equal((await roofs(page))[0].autoMerge, false);
+    await page.click('#view3dBtn');
+  });
+});

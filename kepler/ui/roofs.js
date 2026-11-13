@@ -11,7 +11,7 @@
 import {
   EDGE_HEIGHT, EDGE_TYPES, OVERHANG_MAX, PARAPET_HEIGHT, PARAPET_THICK, PARAPET_TYPES, ROOF_MATERIALS, ROOF_PRESETS,
   ROOF_SIDES, ROOF_THICK, SIDE_TITLES, applyRoofPreset, baseEdge, overhangLabel, patchRoof, rectsOutline,
-  roofBaseRects, roofFromRooms, roofOverRoom, roofSnapLines, roofStats, roomsBaseRects, sideAxis, snapOverhang,
+  mergeTouchingRoofs, roofBaseRects, roofFromRooms, roofOverRoom, roofSnapLines, roofStats, roomsBaseRects, sideAxis, snapOverhang,
 } from '../core/roofs.js';
 import { massBox } from '../core/masses.js';
 import { isShaft } from '../core/catalog.js';
@@ -49,12 +49,51 @@ export function updateRoof(id, fn) {
   return next;
 }
 
-// Новая крыша в проект (одна запись истории) и выбор.
+// ---------------------------------------------------------------- слияние
+
+// Итог последнего слияния для подсказки (takeMergeNote — забрать и сбросить).
+let mergeNote = '';
+const noteOf = (m) => (m ? ` · соединена с касающимися (${m.merged.length})${m.filled ? ', двор внутри залит' : ''}` : '');
+export function takeMergeNote() {
+  const t = mergeNote;
+  mergeNote = '';
+  return t;
+}
+
+// Внутри правки (mutate или до pushHistory): крыша id поглощает касающиеся
+// крыши своего этажа и высоты (core/roofs.js mergeTouchingRoofs). force —
+// ручное «Соединить» (флаг autoMerge не важен). → итог слияния или null.
+export function mergeRoofInPlace(id, { force = false } = {}) {
+  const m = mergeTouchingRoofs(roofs(), id, { force });
+  if (m) setRoofs(m.list);
+  mergeNote = noteOf(m);
+  return m;
+}
+
+// Новая крыша в проект (одна запись истории, вместе с автослиянием) и выбор.
 export function addRoof(roof) {
   if (!roof) return null;
-  mutate(() => setRoofs([...roofs(), roof]));
-  selectObject({ type: 'roof', id: roof.id });
-  return roof;
+  let out = roof;
+  mutate(() => {
+    setRoofs([...roofs(), roof]);
+    out = mergeRoofInPlace(roof.id)?.roof || roof;
+  });
+  selectObject({ type: 'roof', id: out.id });
+  return out;
+}
+
+// «Соединить с касающимися» (вручную, флаги autoMerge не важны).
+export function mergeRoofNow(id) {
+  if (!roofById(id)) return null;
+  if (!mergeTouchingRoofs(roofs(), id, { force: true })) {
+    toast('Касающихся крыш того же этажа и высоты нет', true);
+    return null;
+  }
+  let m = null;
+  mutate(() => { m = mergeRoofInPlace(id, { force: true }); });
+  selectObject({ type: 'roof', id });
+  toast(`«${m.roof.name}»${takeMergeNote()} · Ctrl+Z — вернуть`);
+  return m;
 }
 
 export function deleteRoof(id) {
@@ -88,7 +127,8 @@ export function roofClickRoom(levelId, roomId, { add = false } = {}) {
     return next;
   }
   const roof = addRoof(roofFromRooms(state.project, levelId, [roomId], {}, roofs()));
-  if (roof) toast(`${roof.name} по форме «${room.name}» · дальше крыша сама по себе: «План крыши» — двигать и менять форму`);
+  const note = takeMergeNote();
+  if (roof) toast(note ? `${roof.name}: форма «${room.name}»${note}` : `${roof.name} по форме «${room.name}» · дальше крыша сама по себе: «План крыши» — двигать и менять форму`);
   return roof;
 }
 
@@ -215,6 +255,8 @@ export function renderRoofProps(panel, roof) {
       <div class="roof-materials" role="radiogroup">
         ${ROOF_MATERIALS.map((m) => `<button type="button" role="radio" aria-checked="${m.id === roof.material}" class="roof-swatch${m.id === roof.material ? ' active' : ''}" data-roof-material="${m.id}" title="${m.title}"><i style="background:${m.color}"></i><span>${m.title}</span></button>`).join('')}
       </div>
+      <label class="check-row"><input type="checkbox" id="roofAutoMerge" ${roof.autoMerge === false ? '' : 'checked'}><span>Автоматически соединять с соседними</span></label>
+      <button type="button" id="roofMergeNow">Соединить с касающимися</button>
       <div class="prop-row"><span>Контур</span><strong id="roofOutlineInfo">${roof.outline.length} вершин · ${(gw / 1000).toFixed(2)} × ${(gh / 1000).toFixed(2)} м</strong></div>
       <div class="prop-row"><span>Площадь плиты</span><strong id="roofArea">${st.area.toFixed(1)} м²</strong></div>
       <div class="prop-row"><span>Отметка верха</span><strong>${(st.z1 / 1000).toFixed(3)}</strong></div>
@@ -248,6 +290,22 @@ export function renderRoofProps(panel, roof) {
   bindNum('#roofParH', (v) => ({ parapet: { height: v } }));
   bindNum('#roofParT', (v) => ({ parapet: { thickness: v } }));
   bindNum('#roofParInset', (v) => ({ parapet: { inset: v } }));
+  panel.querySelector('#roofAutoMerge').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    mutate(() => {
+      setRoofs(roofs().map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, autoMerge: false };
+        if (on) delete next.autoMerge;
+        return next;
+      }));
+      if (on) mergeRoofInPlace(id);
+    });
+    const note = takeMergeNote();
+    if (note) toast(`«${roofById(id)?.name || ''}»${note} · Ctrl+Z — вернуть`);
+    renderProps();
+  });
+  panel.querySelector('#roofMergeNow').addEventListener('click', () => { mergeRoofNow(id); renderProps(); });
   panel.querySelector('#roofDelete').addEventListener('click', () => deleteRoof(id));
 }
 

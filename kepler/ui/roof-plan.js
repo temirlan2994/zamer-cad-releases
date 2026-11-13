@@ -36,7 +36,9 @@ import { renderProps } from './props.js';
 import { cancelTool, selectObject, setHint } from './tools.js';
 import { planToScreen, requestDraw } from './view.js';
 import { drawnRoofHandles, isRoofPlan, roofById, roofs, selectedRoof } from './plan-roofs.js';
-import { ROOF_DRAW_HINT, addRoof, roofSnapper, setRoofs, topLevelId, updateRoof } from './roofs.js';
+import {
+  ROOF_DRAW_HINT, addRoof, mergeRoofInPlace, roofSnapper, setRoofs, takeMergeNote, topLevelId, updateRoof,
+} from './roofs.js';
 
 export const ROOF_PLAN_HINT = 'План крыши: тяните крышу — перенос · ребро за любое место — уступ, кружок — всё ребро · клик по ребру — излом · вершины — свободно (Alt — прямые углы) · двойной клик по вершине — удалить · K — новая крыша';
 export const ROOF_POLY_HINT = 'Контур крыши: клики по точкам · замкнуть — клик по первой точке, Enter или двойной клик · Backspace — убрать точку · Shift — без привязки · Esc — бросить';
@@ -292,15 +294,24 @@ export function roofPlanDragEnd(drag) {
     addRoof(roof);
     document.dispatchEvent(new CustomEvent('kepler:roof-tool'));
     setHint(ROOF_PLAN_HINT);
-    toast(`${roof.name}: тяните крышу, вершины и рёбра · «Свойства» — край, парапет, вынос`);
+    const note = takeMergeNote();
+    toast(note ? `${roof.name}${note} · Ctrl+Z — вернуть` : `${roof.name}: тяните крышу, вершины и рёбра · «Свойства» — край, парапет, вынос`);
     renderProps();
     requestDraw();
     return;
   }
   if (!drag.moved) { requestDraw(); return; }
+  // Перенос и правка контура: касание другой крыши того же этажа и высоты —
+  // слияние в одну (тот же шаг истории).
+  const merged = drag.kind === 'roofplan-overhang' ? null : mergeRoofInPlace(drag.id);
   refreshDerived();
   pushHistory(drag.before);
   afterChange();
+  if (merged) {
+    selectObject({ type: 'roof', id: merged.roof.id });
+    toast(`«${merged.roof.name}»${takeMergeNote()} · Ctrl+Z — вернуть`);
+    renderProps();
+  }
 }
 
 export function roofPlanDragCancel(drag) {
@@ -399,7 +410,8 @@ export function finishRoofPoly() {
   addRoof(roof);
   document.dispatchEvent(new CustomEvent('kepler:roof-tool'));
   setHint(ROOF_PLAN_HINT);
-  toast(`${roof.name}: контур по точкам · тяните вершины и рёбра`);
+  const note = takeMergeNote();
+  toast(note ? `${roof.name}${note} · Ctrl+Z — вернуть` : `${roof.name}: контур по точкам · тяните вершины и рёбра`);
   renderProps();
   requestDraw();
   return true;
