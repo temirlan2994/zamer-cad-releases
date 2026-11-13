@@ -15,7 +15,7 @@ import { bindViewPanel } from './view-align.js';
 import { bindIssues } from './issues.js';
 import { bindElevInput } from './terrain.js';
 import { finishWallChain, startBoundRoomTool, startWallTool } from './wall-tool.js';
-import { closeSheets, isPhone } from './mobile.js';
+import { closeSheets, isPhone, openLibrarySheet } from './mobile.js';
 import { cancelTool } from './tools.js';
 import { bindToolstrip, setTip } from './toolstrip.js';
 import { fitView, zoomAt } from './view.js';
@@ -70,6 +70,8 @@ export function bindToolbar() {
     }
     closeSheets();
     applyLibraryTab();
+    // Телефон: типы комнат — нижним листом; касание плана (петля стен или место) его убирает.
+    if (state.tool?.kind === 'bound-room') openLibrarySheet();
   });
   bindToolstrip(); // остальные кнопки панели инструментов (ui/toolstrip.js)
   bindViewPanel(); // «Вид» на панели инструментов — поворот вида (ui/view-align.js)

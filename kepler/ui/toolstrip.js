@@ -13,7 +13,7 @@ import { labelLandscapeSelection, selectedIds } from './landscape.js';
 import { startLandscapeArray } from './landscape-array.js';
 import { startSectionTool } from './landscape-section.js';
 import { applyLibraryTab, syncLibraryOpen } from './library.js';
-import { closeSheets, isPhone, toggleSheet } from './mobile.js';
+import { closeSheets, isPhone, syncMobileBar, toggleSheet } from './mobile.js';
 import { renderToolOptions } from './props.js';
 import { state } from './state.js';
 import { startTerrainTool } from './terrain.js';
@@ -80,15 +80,37 @@ const LANDSCAPE_TOOLS = [
     enabled: () => selectedIds().length > 0, action: () => labelLandscapeSelection() },
 ];
 
+// Подписи под значками на телефоне (.tb-label; на компьютере скрыты — там подсказка .tb-tip).
+const SHORT = {
+  underlay: 'Съёмка', boundary: 'Граница', redline: 'Кр.линия', neighbor: 'Сосед', terrain: 'Отметка', north: 'Север',
+};
+const PLAN_LABELS = {
+  selectToolBtn: 'Выбор', wallToolBtn: 'Стена', boundRoomBtn: 'Помещение', doorToolBtn: 'Дверь', windowToolBtn: 'Окно',
+  furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', massToolBtn: 'Масса', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
+  sectionToolBtn: 'Разрез', ergoToolBtn: 'Эргономика', viewBtn: 'Поворот', fitBtn: 'Вписать',
+};
+function ensurePlanLabels() {
+  for (const [id, text] of Object.entries(PLAN_LABELS)) {
+    const b = el(id);
+    if (!b || b.querySelector('.tb-label')) continue;
+    const span = document.createElement('span');
+    span.className = 'tb-label';
+    span.textContent = text;
+    const tip = b.querySelector('.tb-tip, .tb-badge');
+    b.insertBefore(span, tip || null);
+  }
+}
+
 function buildGroup(box, defs, attr) {
   if (!box || box.childElementCount) return;
+  for (const def of defs) def.short ||= SHORT[def.id];
   for (const def of defs) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tb-btn';
     btn.dataset[attr] = def.id;
     btn.setAttribute('aria-label', def.name);
-    btn.innerHTML = `${svg(ICONS[def.id] || '')}<span class="tb-tip" role="tooltip"></span>`;
+    btn.innerHTML = `${svg(ICONS[def.id] || '')}<span class="tb-label">${def.short || def.name}</span><span class="tb-tip" role="tooltip"></span>`;
     box.appendChild(btn);
   }
   box.addEventListener('click', (event) => {
@@ -149,6 +171,7 @@ export function renderToolstrip() {
   refs.siteTools.hidden = mode !== 'site';
   const ls = el('landscapeTools');
   if (ls) ls.hidden = mode !== 'landscape';
+  ensurePlanLabels();
   buildGroup(refs.siteTools, SITE_TOOLS, 'siteTool');
   buildGroup(ls, LANDSCAPE_TOOLS, 'lsTool');
   if (mode === 'site') syncGroup(refs.siteTools, SITE_TOOLS, 'siteTool', (id) => activeSiteLayer() === id);
@@ -175,6 +198,7 @@ export function renderToolstrip() {
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
   renderToolOptions(); // строка параметров — только при смене инструмента
+  syncMobileBar(); // подпись каталога на нижней навигации — по инструменту
 }
 
 function placeOpening(kind) {

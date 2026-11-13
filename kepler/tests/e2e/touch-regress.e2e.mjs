@@ -163,7 +163,7 @@ describe('касания: группа, участок, малые предме�
   });
 
   it('П-13: «Участок» — свайп не ставит соседа и не открывает отметку, тап — ставит', async () => {
-    await app.page.click('#modeSiteBtn');
+    await app.page.evaluate(() => document.getElementById('modeSiteBtn').click()); // телефон: режимы — в листе «Ещё»
     await app.page.evaluate(async () => (await import('./ui/tools.js')).setTool({ kind: 'neighbor' }));
     const box = await canvasBox(app.page);
     const p = { x: box.x + 40, y: box.y + box.height * 0.8 };

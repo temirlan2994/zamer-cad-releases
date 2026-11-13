@@ -51,8 +51,8 @@ describe('телефон', () => {
     await app.page.tap('#roomCards .room-card >> text=Терраса');
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
-    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — сразу под панелью инструментов
-    assert.ok(Math.abs(box0.y - (strip.y + strip.height)) < 2 && strip.y > 30 && strip.y < 70, `холст не уехал прокруткой: y=${box0.y}`);
+    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — между шапкой и лентой инструментов внизу
+    assert.ok(Math.abs(box0.y + box0.height - strip.y) < 2 && box0.y > 30 && box0.y < 70, `холст не уехал прокруткой: y=${box0.y}`);
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {
       const k = window.__kepler;
@@ -93,7 +93,8 @@ describe('телефон', () => {
 
   it('«Экспорт» открывается целиком поверх холста и закрывается по Esc', async () => {
     await app.page.evaluate(() => window.scrollTo(0, 0));
-    await app.page.click('#exportBtn');
+    await app.page.tap('#moreBtn'); // телефон: «Экспорт» — в листе «Ещё»
+    await app.page.tap('#mobileMore [data-more="export"]');
     await app.page.waitForSelector('#exportDropdown', { state: 'visible' });
     const box = await (await app.page.$('#exportDropdown')).boundingBox();
     const vp = app.page.viewportSize();
@@ -106,7 +107,8 @@ describe('телефон', () => {
   });
 
   it('выбор инструмента участка закрывает нижнюю панель', async () => {
-    await app.page.click('#modeSiteBtn');
+    await app.page.tap('#mobileBar [data-sheet="more"]'); // телефон: режимы — в листе «Ещё»
+    await app.page.tap('#mobileMore [data-more="site"]');
     assert.equal(await app.page.isHidden('#mobileBar [data-sheet="rooms"]'), true, 'в «Участке» каталога нет');
     await app.page.tap('#mobileBar [data-sheet="props"]');
     await app.page.waitForFunction(() => document.body.classList.contains('sheet-props'));
@@ -115,7 +117,7 @@ describe('телефон', () => {
     await app.page.waitForFunction(() => !document.body.classList.contains('sheet-props'));
     assert.equal(await app.page.evaluate(() => window.__kepler.state.tool?.target), 'road', '«Дорога» — черчение или правка оси');
     await app.page.keyboard.press('Escape');
-    await app.page.click('#modePlanBtn');
+    await app.page.evaluate(() => document.getElementById('modePlanBtn').click());
   });
 
   it('без ошибок в консоли', () => {

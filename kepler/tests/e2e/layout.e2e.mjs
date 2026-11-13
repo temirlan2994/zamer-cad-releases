@@ -174,11 +174,12 @@ describe('раскладка на телефоне', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('строка инструментов над холстом, «⚠» на холсте, параметры — только у инструмента', async () => {
+  it('лента инструментов под холстом, «⚠» на холсте, параметры — только у инструмента', async () => {
     const { page } = app;
-    const [strip, canvas] = await Promise.all([box(page, '#toolStrip'), box(page, '#canvas')]);
+    const [strip, canvas, nav] = await Promise.all([box(page, '#toolStrip'), box(page, '#canvas'), box(page, '#mobileBar')]);
     assert.ok(strip.width > 300 && strip.height <= 56, `строка ${JSON.stringify(strip)}`);
-    assert.ok(canvas.y >= strip.y + strip.height - 1, 'холст под строкой');
+    assert.ok(strip.y >= canvas.y + canvas.height - 1, 'лента под холстом');
+    assert.ok(nav.y >= strip.y + strip.height - 1 && nav.y + nav.height <= 844.5, 'навигация — внизу экрана');
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     assert.equal(await page.isVisible('#issuesBtn'), true);
     assert.equal(await page.isVisible('#toolOptions'), false, '«Выбор» — строки параметров нет');

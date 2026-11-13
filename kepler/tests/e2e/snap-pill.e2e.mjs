@@ -135,13 +135,16 @@ describe('привязки — телефон 390', () => {
 
   it('в экране, не перекрывает этажи; касание переключает', async () => {
     const { page } = app;
+    const sel = '#snapBar [data-snap="objects"]';
     const [pill, levels] = await Promise.all(['#snapBar', '#levelDock'].map((s) => box(page, s)));
     assert.ok(pill.x >= 0 && pill.x + pill.width <= 390, `в экране ${JSON.stringify(pill)}`);
     assert.ok(!overlap(pill, levels), `этажи ${JSON.stringify([pill, levels])}`);
     const canvas = await box(page, '#canvas');
     assert.ok(pill.y >= canvas.y && pill.y + pill.height <= canvas.y + canvas.height, 'на холсте');
     if (await page.isVisible('.zoom-controls')) assert.ok(!overlap(pill, await box(page, '.zoom-controls')));
-    const sel = '#snapBar [data-snap="objects"]';
+    // Свёрнуто в одну кнопку «Привязки»; касание раскрывает ряд.
+    assert.equal(await page.isVisible(sel), false, 'ряд свёрнут');
+    await page.tap('#snapBar .snap-menu');
     const before = await page.getAttribute(sel, 'aria-pressed');
     await page.tap(sel);
     assert.notEqual(await page.getAttribute(sel, 'aria-pressed'), before);

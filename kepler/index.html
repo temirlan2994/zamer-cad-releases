@@ -47,6 +47,8 @@
           <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
           <button id="helpBtn" class="icon-btn" title="Справка: управление и горячие клавиши (? или F1)">?</button>
           <button id="menuBtn" class="icon-btn" title="Главное меню: новый проект, открыть, пример" aria-label="Меню">☰</button>
+          <!-- Телефон: «⋯» — лист «Ещё» (режимы, проекты, экспорт, справка, тема; ui/mobile.js). На компьютере скрыта. -->
+          <button type="button" id="moreBtn" class="icon-btn more-btn" aria-label="Ещё" aria-controls="mobileMore" aria-expanded="false">⋯</button>
         </div>
       </header>
       <main class="workspace">
@@ -210,11 +212,34 @@
           <div class="props-body" id="propsBody"></div>
           <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>
         </aside>
+        <!-- Телефон: лист «Ещё» — режимы и общие действия шапки (ui/mobile.js). На компьютере скрыт. -->
+        <div class="mobile-more" id="mobileMore" role="dialog" aria-label="Ещё">
+          <h3 class="mm-title">Режим</h3>
+          <div class="mm-modes">
+            <button type="button" data-more="plan">План</button>
+            <button type="button" data-more="site">Участок</button>
+            <button type="button" data-more="landscape">Ландшафт</button>
+          </div>
+          <h3 class="mm-title">Проект</h3>
+          <div class="mm-grid">
+            <button type="button" data-more="projects"><span aria-hidden="true">▤</span>Проекты</button>
+            <button type="button" data-more="export"><span aria-hidden="true">⇪</span>Экспорт</button>
+            <button type="button" data-more="menu"><span aria-hidden="true">☰</span>Файл</button>
+            <button type="button" data-more="tep"><span aria-hidden="true">▦</span>ТЭП</button>
+            <button type="button" data-more="issues"><span aria-hidden="true">⚠</span>Замечания</button>
+            <button type="button" data-more="theme"><span aria-hidden="true">☀</span>Тема</button>
+            <button type="button" data-more="help"><span aria-hidden="true">?</span>Справка</button>
+          </div>
+        </div>
       </main>
+      <!-- Телефон: нижняя навигация — значок и подпись (ui/mobile.js). На компьютере скрыта. -->
       <nav class="mobile-bar" id="mobileBar" aria-label="Панели">
-        <button type="button" data-sheet="rooms">Помещения</button>
-        <button type="button" data-sheet="furniture">Мебель</button>
-        <button type="button" data-sheet="props">Свойства</button>
+        <button type="button" data-sheet="rooms"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/></svg><span class="mb-label">Каталог</span></button>
+        <button type="button" data-sheet="props"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="mb-label">Свойства</span></button>
+        <button type="button" data-sheet="views"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="mb-label">Виды</span></button>
+        <button type="button" data-sheet="sheets"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 17h7M13 14h3"/></svg><span class="mb-label">Листы</span></button>
+        <button type="button" data-sheet="3d"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="mb-label">3D</span></button>
+        <button type="button" data-sheet="more"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span class="mb-label">Ещё</span></button>
       </nav>
     </div>
 

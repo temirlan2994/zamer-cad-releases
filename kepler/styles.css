@@ -1432,15 +1432,8 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 @media (max-width: 640px) {
   html, body { overscroll-behavior: none; }
   .app { height: 100dvh; }
-  .topbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 10px; scrollbar-width: none; }
-  .topbar::-webkit-scrollbar { display: none; }
-  /* шапка прокручивается и обрезает absolute-потомков — меню экспорта выносим на fixed */
   .export-dropdown { position: fixed; left: 8px; right: 8px; top: 52px; z-index: 200; min-width: 0; max-height: calc(100dvh - 64px); overflow-y: auto; }
   .export-dropdown button { padding: 13px 14px; }
-  .topbar > *, .top-actions > * { flex: none; }
-  .top-actions { flex-wrap: nowrap; }
-  .brand small { display: none; }
-  .project-name { flex: none; width: 130px; min-width: 0; }
   /* clip — не контейнер прокрутки: спрятанные панели не дают её даже программно */
   .workspace { position: relative; overflow: hidden; overflow: clip; }
   .canvas-wrap { flex: 1; min-width: 0; }
@@ -1451,7 +1444,6 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
     bottom: 0;
     z-index: 60;
     width: auto;
-    max-height: 58%;
     overflow: auto;
     border: 0;
     border-top: 1px solid var(--border);
@@ -1474,56 +1466,13 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
     bottom: var(--kb, 0px);
     max-height: calc(var(--vvh, 100dvh) * 0.62);
   }
-  .mobile-bar {
-    display: flex;
-    gap: 6px;
-    padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px));
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-  }
-  .mobile-bar button { flex: 1; height: 40px; border-radius: 10px; font-weight: 600; }
-  .mobile-bar button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .mobile-bar button.dot::after {
-    content: '';
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    margin-left: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    vertical-align: middle;
-  }
-  .mobile-bar button.active.dot::after { background: #fff; }
   .zoom-controls { display: none; } /* масштаб — щипком */
-  /* Панель инструментов — одна прокручиваемая строка; кнопки под палец */
-  .toolstrip {
-    flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
-    gap: 6px; padding: 3px 8px;
-  }
-  .toolstrip::-webkit-scrollbar { display: none; }
-  .toolstrip > * { flex: none; }
-  .tb-sep { display: none; }
-  .tb-group { padding-left: 6px; }
-  .tb-btn { min-width: 40px; height: 40px; padding: 0 8px; }
-  .tb-label { display: none; }
-  /* строка прокручивается и обрезает absolute-потомков — всплывающие панели на fixed */
-  .tb-pop { position: fixed; left: 8px; right: 8px; top: auto; bottom: 120px; width: auto; z-index: 200; }
   .props-tabs { top: 0; margin: 0 0 10px; padding: 4px 0 0; }
   .props-tabs button { flex-direction: column; gap: 1px; height: 46px; font-size: 10.5px; }
   .ptab-label { display: block; line-height: 1.1; }
   .ptab-tip { display: none !important; }
-  .level-dock { left: 8px; bottom: 30px; }
   .landscape-chip span { display: none; }
   .landscape-chip { padding: 0 10px; }
-  /* Привязки — над этажами слева (масштаб на телефоне — щипком); подсказка — от края пилюли */
-  .snap-pill {
-    position: absolute; left: 8px; bottom: 76px; margin: 0; max-width: calc(100% - 16px);
-    gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
-  }
-  .snap-pill .snap-btn { border-radius: 999px; }
-  .snap-pill .snap-btn { position: static; width: 34px; height: 32px; }
-  .snap-pill .snap-step { width: auto; }
-  .snap-tip { left: 0; right: auto; max-width: calc(100vw - 32px); }
   .issues-btn { top: 8px; left: 8px; height: 36px; }
   /* Телефон: нижний лист над панелью кнопок (как «Свойства»), над клавиатурой */
   .issues-panel {
@@ -1959,12 +1908,6 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 
 /* --- Телефон: строка инструментов над холстом, параметры — только когда есть --- */
 @media (max-width: 640px) {
-  .workspace { display: flex; flex-direction: column; }
-  .toolstrip { order: 0; }
-  .tool-options { order: 1; height: auto; min-height: 40px; padding: 4px 8px; }
-  .tool-options.empty { display: none; }
-  .to-keys { display: none; }
-  .canvas-wrap { order: 2; flex: 1; min-height: 0; }
   .tb-tip { display: none !important; }
   .top-sep { display: none; }
   .project-name { flex: none; }
@@ -2148,3 +2091,137 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 }
 .view3d-dim.area { font-size: 13px; background: rgba(255, 255, 255, 0.92); }
 .view3d-dim[hidden] { display: none; }
+
+/* ===== Телефон, шаг 3: раскладка как у мобильных планировщиков (ui/mobile.js) =====
+   Шапка (одна строка): название · ⟲ ⟳ · Сохранить · «⋯» (режимы, проекты,
+   экспорт, справка, тема). Холст. Внизу — лента инструментов с подписями
+   (прокрутка вбок) и нижняя навигация: Каталог · Свойства · Виды · Листы ·
+   3D · Ещё. Каталог, правая панель и «Ещё» — нижние листы над лентой:
+   ручка (45% / 88%, вниз — закрыть) и «✕». На компьютере — скрыто. */
+.more-btn, .mobile-more, .sheet-grip, .snap-menu { display: none; }
+
+@media (max-width: 640px) {
+  /* --- Шапка --- */
+  .topbar { flex-wrap: nowrap; gap: 4px; padding: max(6px, env(safe-area-inset-top, 0px)) 8px 6px; }
+  .topbar .brand, .topbar .mode-tabs, .top-sep, #projectsBtn, #exportBtn, #themeBtn, #helpBtn, #menuBtn { display: none; }
+  .project-name { flex: 1 1 auto; width: auto; min-width: 0; height: 38px; }
+  .top-actions { flex: none; flex-wrap: nowrap; margin-left: 0; gap: 2px; }
+  .top-actions > button, .top-actions .icon-btn { height: 40px; min-width: 40px; }
+  .top-actions #saveBtn { padding: 0 12px; }
+  .more-btn { display: inline-flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }
+  .export-dropdown { top: 56px; }
+
+  /* --- Рабочая область: параметры инструмента · холст · лента --- */
+  .workspace { --ribbon-h: 56px; display: flex; flex-direction: column; }
+  .tool-options { order: 0; height: auto; min-height: 40px; padding: 4px 8px; }
+  .tool-options.empty { display: none; }
+  .to-keys { display: none; }
+  .canvas-wrap { order: 1; flex: 1; min-height: 0; }
+
+  /* --- Лента инструментов: значок и подпись, прокрутка вбок, цели ≥ 44 px --- */
+  .toolstrip {
+    order: 2; flex: none; height: var(--ribbon-h); box-sizing: border-box;
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+    gap: 0; padding: 2px max(6px, env(safe-area-inset-left, 0px)); border-bottom: 0; border-top: 1px solid var(--border);
+  }
+  .toolstrip::-webkit-scrollbar { display: none; }
+  .toolstrip > * { flex: none; }
+  .tb-sep { display: none; }
+  .tb-group { gap: 0; padding-left: 4px; margin-left: 4px; }
+  .tb-btn {
+    flex-direction: column; gap: 2px; min-width: 54px; height: 50px; padding: 4px 4px 3px;
+    font-size: 10.5px; line-height: 1.1;
+  }
+  .tb-btn svg { width: 22px; height: 22px; }
+  .tb-label { display: block; font-size: 10.5px; font-weight: 600; }
+  /* строка прокручивается и обрезает absolute-потомков — всплывающие панели на fixed, над лентой */
+  .tb-pop { position: fixed; left: 8px; right: 8px; top: auto; bottom: 128px; width: auto; z-index: 200; }
+
+  /* --- Нижние листы: над лентой, высота 45% / 88% --- */
+  .library, .props, .mobile-more {
+    bottom: var(--ribbon-h); height: 45%; max-height: none;
+    transition: transform 0.2s ease, height 0.2s ease, visibility 0s linear 0.2s;
+  }
+  body.sheet-tall .library, body.sheet-tall .props, body.sheet-tall .mobile-more { height: calc(100% - var(--ribbon-h) - 8px); }
+  body.sheet-library .library, body.sheet-props .props, body.sheet-more .mobile-more { transition: transform 0.2s ease, height 0.2s ease, visibility 0s; }
+  .props { padding-top: 0; }
+  .props-tabs { top: 32px; }
+  .library { padding-top: 0; }
+  .mobile-more {
+    display: block; position: absolute; left: 0; right: 0; z-index: 60; overflow: auto; padding: 0 14px 14px;
+    background: var(--surface); border-top: 1px solid var(--border); border-radius: 16px 16px 0 0;
+    box-shadow: 0 -12px 30px rgba(24, 32, 43, 0.18);
+    transform: translateY(110%); visibility: hidden; pointer-events: none;
+  }
+  body.sheet-more .mobile-more { transform: none; visibility: visible; pointer-events: auto; }
+  .sheet-grip {
+    position: sticky; top: 0; z-index: 3; flex: none; display: flex; align-items: center; justify-content: center;
+    height: 32px; margin: 0 -14px; background: var(--surface); touch-action: none; cursor: grab;
+  }
+  .props > .sheet-grip { margin: 0 -10px; }
+  .library > .sheet-grip { margin: 0 -8px; }
+  .sheet-handle { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+  .sheet-close {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; padding: 0;
+    border: 0; border-radius: 50%; background: transparent; box-shadow: none; color: var(--muted); font-size: 16px;
+  }
+  /* «Ещё» */
+  .mm-title { margin: 6px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+  .mm-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
+  .mm-modes button { height: 40px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; font-weight: 600; color: var(--muted); }
+  .mm-modes button.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .mm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .mm-grid button {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 0; height: 64px; padding: 4px 2px;
+    border-radius: 12px; font-size: 11.5px; font-weight: 600;
+  }
+  .mm-grid button span { font-size: 20px; line-height: 1; }
+
+  /* --- Нижняя навигация --- */
+  .mobile-bar {
+    display: flex; gap: 0; padding: 2px max(4px, env(safe-area-inset-right, 0px)) calc(2px + env(safe-area-inset-bottom, 0px)) max(4px, env(safe-area-inset-left, 0px));
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .mobile-bar button {
+    position: relative; flex: 1 1 0; min-width: 0; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; padding: 0 2px; border: 0; border-radius: 10px; background: transparent; box-shadow: none; color: var(--muted);
+    font-size: 10.5px; font-weight: 600;
+  }
+  .mobile-bar button[hidden] { display: none; }
+  .mobile-bar button svg { box-sizing: content-box; padding: 2px 12px; border-radius: 999px; }
+  .mobile-bar button.active { color: var(--accent); }
+  .mobile-bar button.active svg { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .mobile-bar .mb-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-bar button.dot::after {
+    content: ''; position: absolute; top: 5px; left: calc(50% + 13px); width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--surface);
+  }
+
+  /* --- Холст: строка состояния без фона; этажи и привязки — слева внизу --- */
+  .statusbar { min-height: 0; padding: 0 8px 3px; background: transparent; border-top: 0; }
+  .statusbar #cursorPos { display: none; }
+  .statusbar #scaleInfo { margin-left: auto; }
+  .level-dock { left: 8px; bottom: 8px; }
+  /* Привязки — одна кнопка «Привязки», касание раскрывает ряд */
+  .snap-pill {
+    position: absolute; left: 8px; bottom: 58px; margin: 0; max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none;
+    gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow);
+  }
+  .snap-pill .snap-btn { position: static; flex: none; width: 38px; height: 38px; border-radius: 999px; }
+  .snap-pill .snap-step { width: auto; }
+  .snap-pill:not(.open) .snap-btn:not(.snap-menu) { display: none; }
+  .snap-pill .snap-menu { display: inline-flex; width: auto; gap: 6px; padding: 0 12px 0 10px; opacity: 1; color: var(--text); font-size: 12.5px; font-weight: 600; }
+  .snap-pill.open .snap-menu { padding: 0; width: 38px; }
+  .snap-pill.open .snap-menu-label { display: none; }
+  .snap-tip { display: none !important; }
+}
+
+/* Планшет и сенсорный экран шире телефона: колонка шире, под значками — подписи (наведения нет). */
+@media (min-width: 641px) and (pointer: coarse) {
+  .workspace { --tools-w: 64px; }
+  .toolstrip { overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+  .toolstrip .tb-btn { flex-direction: column; gap: 2px; width: 58px; height: 50px; }
+  .toolstrip .tb-label { display: block; max-width: 56px; overflow: hidden; text-overflow: ellipsis; font-size: 9.5px; font-weight: 600; line-height: 1.1; }
+  .toolstrip .tb-pop { position: fixed; left: calc(var(--tools-w) + 8px); top: auto; bottom: 12px; }
+  .toolstrip .tb-tip { display: none !important; }
+}
