@@ -9,8 +9,11 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 // query — дополнительные параметры адреса (например, 'walls=v2').
 // issueGroups: 'all' | [id…] — включённые группы замечаний (localStorage
 // kepler-issues-groups до загрузки; по умолчанию — умолчания приложения).
+// planShadows: тени на плане (ui/plan-shadows.js). По умолчанию в тестах
+// выключены — проверки цвета пикселей плана от них не зависят; включает
+// только тест теней.
 export const ALL_ISSUE_GROUPS = ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry'];
-export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null } = {}) {
+export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null, planShadows = false } = {}) {
   const server = createServer();
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
@@ -32,6 +35,13 @@ export async function startApp({ width = 1280, height = 820, debug = true, mobil
       }
     }, ids);
   }
+  // Только при первой загрузке: перезагрузка в тесте видит то, что сохранило приложение.
+  await page.addInitScript((on) => {
+    if (!sessionStorage.getItem('kepler-test-shadows')) {
+      localStorage.setItem('kepler-plan-shadows', JSON.stringify({ on }));
+      sessionStorage.setItem('kepler-test-shadows', '1');
+    }
+  }, planShadows);
   const params = [debug ? 'debug=1' : '', query].filter(Boolean).join('&');
   await page.goto(`http://127.0.0.1:${port}/index.html${params ? `?${params}` : ''}`);
   if (debug) await page.waitForFunction(() => Boolean(window.__kepler));

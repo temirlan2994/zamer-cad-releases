@@ -65,6 +65,7 @@ import { drawPlanSections } from './ui/render-plan-section.js';
 import { drawSlabOpenings } from './ui/render-slab.js';
 import { drawPlanGrids } from './ui/render-axes.js';
 import { drawErgonomics } from './ui/render-ergonomics.js';
+import { drawPlanShadows } from './ui/plan-shadows.js';
 import { drawGridLocks } from './ui/grid-locks.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
@@ -419,6 +420,12 @@ export function createRenderer(canvas) {
           ctx.stroke();
           ctx.restore();
         }
+      }
+
+      // Тени от стен и мебели (ui/plan-shadows.js): готовый слой из кеша, умножением —
+      // поверх полов и стен (места стен в слое белые), под проёмами, мебелью и подписями.
+      if (!print && !landscape && state.modeName === 'plan' && opts.site !== false) {
+        drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark });
       }
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.

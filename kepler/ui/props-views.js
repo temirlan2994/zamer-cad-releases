@@ -31,6 +31,7 @@ import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
+import { planShadowPref, setPlanShadowPref } from './plan-shadows.js';
 import { planRoofPref, setPlanRoofPref } from './render-roofs.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
 import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
@@ -310,6 +311,7 @@ export function viewSettingsHtml() {
     <div class="prop-block">
       ${project.site?.underlay ? `<label class="check-row"><input type="checkbox" id="viewsUnderlay" ${state.underlayHidden ? '' : 'checked'}><span>Подложка (съёмка)</span></label>` : ''}
       <label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>
+      ${mode === 'plan' ? `<label class="check-row"><input type="checkbox" id="viewsShadows" ${planShadowPref().on ? 'checked' : ''}><span>Тени от стен и мебели</span></label>` : ''}
       <button type="button" id="views3dBtn">Открыть 3D-вид</button>
     </div>
     ${mode === 'plan' ? gridViewBlock() : ''}
@@ -366,6 +368,10 @@ export function bindViewSettings(panel, rerender) {
   panel.querySelector('#viewsDimOuter')?.addEventListener('change', (e) => {
     const outer = state.project.settings?.dimOuter !== false;
     if (outer !== e.target.checked) el('dimModeBtn')?.click();
+  });
+  panel.querySelector('#viewsShadows')?.addEventListener('change', (e) => {
+    setPlanShadowPref({ on: e.target.checked });
+    requestDraw();
   });
   panel.querySelector('#views3dBtn')?.addEventListener('click', () => openView(is3dOpen() ? activeBaseView() : '3d'));
   panel.querySelector('#viewsLsOn')?.addEventListener('change', (e) => {
