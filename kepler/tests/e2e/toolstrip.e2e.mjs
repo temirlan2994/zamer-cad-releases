@@ -201,35 +201,25 @@ describe('панель инструментов на телефоне', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('одна прокручиваемая строка, кнопки ≥ 40 px, вёрстка не шире экрана', async () => {
+  it('колонки нет: ряд «Рисовать» зеркалит её кнопки — нажатие, подсветка, недоступность', async () => {
     const { page } = app;
-    const strip = await page.locator('#toolStrip').boundingBox();
-    assert.ok(strip.x >= 0 && strip.x + strip.width <= 390.5, `панель ${JSON.stringify(strip)}`);
-    assert.ok(strip.height <= 56, `одна строка: ${strip.height}`);
-    const m = await page.evaluate(() => {
-      const s = document.getElementById('toolStrip');
-      const sizes = [...s.querySelectorAll('.tb-btn')].filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect());
-      return {
-        sw: s.scrollWidth, cw: s.clientWidth, overflow: getComputedStyle(s).overflowX,
-        minH: Math.min(...sizes.map((r) => r.height)), minW: Math.min(...sizes.map((r) => r.width)),
-        page: document.documentElement.scrollWidth,
-      };
-    });
-    assert.ok(m.minH >= 40 && m.minW >= 40, `кнопки ${m.minW}×${m.minH}`);
-    assert.equal(m.overflow, 'auto');
-    assert.ok(m.page <= 390, `страница ${m.page}`);
-    assert.equal(await page.isVisible('#mobileBar'), true, 'нижняя панель осталась');
-    // Последняя кнопка достижима прокруткой, «Вид» открывает панель в экране.
-    await page.locator('#viewBtn').scrollIntoViewIfNeeded();
-    await page.tap('#viewBtn');
-    const panel = await page.locator('#viewPanel').boundingBox();
-    assert.ok(panel && panel.x >= 0 && panel.x + panel.width <= 390.5 && panel.y >= 0 && panel.y + panel.height <= 844, `панель вида ${JSON.stringify(panel)}`);
-    await page.tap('#viewBtn');
-    assert.equal(await page.isHidden('#viewPanel'), true);
-    await page.locator('#wallToolBtn').scrollIntoViewIfNeeded();
-    await page.tap('#wallToolBtn');
+    assert.equal(await page.isVisible('#toolStrip'), false, 'колонка скрыта');
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'страница не шире экрана');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    const sizes = await page.$$eval('#mobileDraw button', (ns) => ns.map((n) => n.getBoundingClientRect()).map((r) => [r.width, r.height]));
+    for (const [w, h] of sizes) assert.ok(w >= 44 && h >= 44, `кнопка ${w}×${h}`);
+    await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
     assert.equal(await tool(page), 'wall');
-    assert.equal(await active(page, '#wallToolBtn'), true);
+    assert.equal(await active(page, '#wallToolBtn'), true, 'кнопка колонки включена');
+    assert.equal(await active(page, '#mobileDraw [data-draw="wallToolBtn"]'), true, 'и её зеркало');
+    await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
+    assert.equal(await tool(page), null, 'повторное касание — выйти');
+    // «Ландшафт»: «Массив» и «Выноска» без выделения недоступны — как в колонке.
+    await page.evaluate(() => document.getElementById('landscapeBtn').click());
+    await page.waitForFunction(() => document.querySelector('#mobileDraw [data-draw="array"]'));
+    assert.equal(await page.$eval('#mobileDraw [data-draw="array"]', (n) => n.disabled), true);
+    assert.equal(await page.$eval('#mobileDraw [data-draw="section"]', (n) => n.disabled), false);
+    await page.evaluate(() => document.getElementById('modePlanBtn').click());
     await page.keyboard.press('Escape');
     assert.deepEqual(app.errors, []);
   });

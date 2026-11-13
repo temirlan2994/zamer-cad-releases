@@ -465,10 +465,11 @@ describe('Крыши-плиты: телефон', () => {
     await app?.close();
   });
 
-  it('кнопка видна: «План крыши», тап по помещению создаёт крышу и выбирает её', async () => {
+  it('«Крыша» в ряду «Рисовать»: «План крыши», тап по помещению создаёт крышу и выбирает её', async () => {
     const { page } = app;
-    assert.ok(await page.isVisible('#roofToolBtn'));
-    await page.tap('#roofToolBtn');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    assert.ok(await page.isVisible('#mobileDraw [data-draw="roofToolBtn"]'));
+    await page.tap('#mobileDraw [data-draw="roofToolBtn"]');
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'roof');
     assert.equal(await st(page, () => window.__kepler.state.roofPlan), true);
     const p = await toClient(page, 3000, 2000);

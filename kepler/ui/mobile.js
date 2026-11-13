@@ -1,12 +1,16 @@
-// Телефон (≤640px): сверху — ряд привязок (#mobileSnapRow, всегда открыт),
-// слева — колонка инструментов (#toolStrip: выбор, стена, масса, крыша…),
-// внизу — навигация (#mobileBar): «Каталог» (в «Ландшафте» — «Ландшафт»),
-// «Свойства», «Виды», «Листы», «3D», «Ещё». «Каталог» выдвигает второй ряд
-// (#mobileCat): Помещение · Мебель · Окно · Дверь · Лестница; касание —
-// библиотека нижним листом. Листы (каталог, правая панель, «Ещё», формы
-// лестниц) — над вторым рядом: ручка (45% / 88% высоты, вниз — закрыть) и «✕».
-// На больших экранах навигация, «Ещё» и ручки скрыты, классы ни на что не
-// влияют (см. @media в styles.css).
+// Телефон (≤640px): план во всю ширину. Сверху — ряд привязок
+// (#mobileSnapRow, всегда открыт), под ним — параметры инструмента. Внизу —
+// навигация (#mobileBar): «Рисовать» · «Каталог» (в «Ландшафте» —
+// «Ландшафт») · «Свойства» · «Виды» · «3D». «Рисовать» выдвигает второй ряд
+// (#mobileDraw) с инструментами режима (стена, крыша, масса, ось, разрез; в
+// «Участке» и «Ландшафте» — свои) и «Готово»; «Каталог» — второй ряд
+// (#mobileCat): Помещение · Мебель · Окно · Дверь · Лестница · Готово.
+// Кнопки рядов — зеркала кнопок колонки инструментов (#toolStrip скрыт, его
+// обработчики работают). Листы (каталог, правая панель, «⋯», формы лестниц) —
+// над вторым рядом: ручка (45% / 88% высоты, вниз — закрыть) и «✕». В листе
+// «Виды» — режим и «Виды · Листы» (#mobileSheetHead). Выбранный объект —
+// карточка внизу (ui/mobile-card.js), «Вписать» — круглая кнопка на плане.
+// На больших экранах всё это скрыто, классы ни на что не влияют (styles.css).
 
 import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
@@ -15,6 +19,7 @@ import { renderToolstrip } from './toolstrip.js';
 import { STAIR_SHAPES } from '../core/stairs.js';
 import { cancelTool, startPlaceFurniture } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
+import { bindMobileCard, syncMobileCard } from './mobile-card.js';
 
 const LIB = 'sheet-library';
 const PROPS = 'sheet-props';
@@ -22,6 +27,7 @@ const MORE = 'sheet-more';
 const STAIRS = 'sheet-stairs';
 const TALL = 'sheet-tall';
 const CAT = 'cat-open';
+const DRAW = 'draw-open';
 const SHEETS = [LIB, PROPS, MORE, STAIRS];
 const has = (cls) => document.body.classList.contains(cls);
 const anySheet = () => SHEETS.some(has);
@@ -32,9 +38,10 @@ function libraryKindActive(kind) {
   return (state.libraryTab === 'furniture') === (kind === 'furniture');
 }
 
-// Вкладка правой панели, к которой относится кнопка навигации.
+// Вкладка правой панели, к которой относится кнопка навигации: «Листы» — раздел «Видов».
 const PANEL_TAB = { props: 'props', views: 'views', sheets: 'sheets' };
 const navTab = () => (['views', 'sheets'].includes(state.propsTab) ? state.propsTab : 'props');
+const viewsTab = () => navTab() !== 'props';
 
 function setPropsTab(tab) {
   if (state.propsTab === tab && !el('issuesBtn')?.getAttribute('aria-expanded')?.includes('true')) return;
@@ -46,17 +53,21 @@ function closeAll() {
   document.body.classList.remove(...SHEETS, TALL);
 }
 
-// Кнопка нижней панели: открыть нужный лист или закрыть его, если он уже
-// открыт. kind: 'rooms' | 'furniture' | 'props' | 'views' | 'sheets' | 'more' | '3d'.
+// Кнопка нижней панели: открыть нужный лист или ряд, повторно — закрыть.
+// kind: 'draw' | 'rooms' | 'furniture' | 'stairs' | 'props' | 'views' | 'sheets' | 'more' | '3d'.
 export function toggleSheet(kind) {
-  // «Каталог» в «Плане» — второй ряд (помещение, мебель, окно, дверь, лестница).
-  if (kind === 'rooms' && state.modeName === 'plan') {
-    const open = !has(CAT);
-    document.body.classList.toggle(CAT, open);
-    if (!open) closeAll();
+  // «Рисовать» — второй ряд инструментов; «Каталог» в «Плане» — второй ряд
+  // каталога. Открыт один из двух.
+  if (kind === 'draw' || (kind === 'rooms' && state.modeName === 'plan')) {
+    const cls = kind === 'draw' ? DRAW : CAT;
+    const open = !has(cls);
+    document.body.classList.remove(DRAW, CAT);
+    if (open) document.body.classList.add(cls);
+    closeAll();
     syncMobileBar();
     return;
   }
+  document.body.classList.remove(DRAW);
   if (kind !== 'furniture' && kind !== 'stairs') document.body.classList.remove(CAT);
   if (kind === '3d') {
     closeAll();
@@ -73,8 +84,8 @@ export function toggleSheet(kind) {
   closeAll();
   if (!already) {
     if (PANEL_TAB[kind]) {
+      document.body.classList.add(PROPS); // сначала лист: карточка уже скрыта и не вернёт вкладку «Свойства»
       setPropsTab(PANEL_TAB[kind]);
-      document.body.classList.add(PROPS);
     } else if (kind === 'more') {
       document.body.classList.add(MORE);
     } else if (kind === 'stairs') {
@@ -127,23 +138,55 @@ export function syncMobileBar() {
     const label = lib.querySelector('.mb-label') || lib;
     const text = state.modeName === 'landscape' ? 'Ландшафт' : 'Каталог';
     if (label.textContent !== text) label.textContent = text;
-    // «Участок»: инструменты — на ленте, каталога нет.
+    // «Участок»: инструменты — в «Рисовать», каталога нет.
     lib.hidden = state.modeName === 'site';
     lib.classList.toggle('active', has(LIB));
   }
   const props = has(PROPS);
-  for (const kind of ['props', 'views', 'sheets']) btn(kind)?.classList.toggle('active', props && navTab() === kind);
+  btn('draw')?.classList.toggle('active', has(DRAW));
+  btn('props')?.classList.toggle('active', props && !viewsTab());
+  btn('views')?.classList.toggle('active', props && viewsTab());
   btn('props')?.classList.toggle('dot', Boolean(state.selection)); // есть что смотреть
-  btn('more')?.classList.toggle('active', has(MORE));
   btn('3d')?.classList.toggle('active', Boolean(el('view3dBtn')?.classList.contains('active')));
   if (lib && state.modeName === 'plan') lib.classList.toggle('active', has(CAT));
   syncCatRow(state.modeName === 'plan');
+  syncDrawRow();
   for (const b of bar.querySelectorAll('[data-sheet]')) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   el('moreBtn')?.setAttribute('aria-expanded', String(has(MORE)));
-  const more = el('mobileMore');
-  if (more) {
-    for (const b of more.querySelectorAll('.mm-modes [data-more]')) b.classList.toggle('active', b.dataset.more === state.modeName);
+  syncSheetHead();
+  syncMobileCard();
+}
+
+// Шапка листа «Виды»: режим и «Виды · Листы». Пока открыт этот лист,
+// заголовок и пояснение вкладки скрыты (data-tab у панели, styles.css).
+function syncSheetHead() {
+  const head = el('mobileSheetHead');
+  const panel = el('propsPanel');
+  if (!head || !panel) return;
+  head.hidden = !viewsTab();
+  if (panel.dataset.tab !== state.propsTab) panel.dataset.tab = state.propsTab;
+  for (const b of head.querySelectorAll('[data-mode]')) b.classList.toggle('active', b.dataset.mode === state.modeName);
+  for (const b of head.querySelectorAll('[data-tab]')) {
+    const on = b.dataset.tab === state.propsTab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
   }
+}
+
+const MODE_BUTTONS = { plan: 'modePlanBtn', site: 'modeSiteBtn', landscape: 'landscapeBtn' };
+function bindSheetHead() {
+  el('mobileSheetHead')?.addEventListener('click', (e) => {
+    const mode = e.target.closest('[data-mode]')?.dataset.mode;
+    const tab = e.target.closest('[data-tab]')?.dataset.tab;
+    if (mode) {
+      closeSheets(); // режим сменили — план свободен
+      if (mode !== state.modeName) el(MODE_BUTTONS[mode])?.click();
+      syncMobileBar();
+    } else if (tab) {
+      setPropsTab(tab);
+      syncMobileBar();
+    }
+  });
 }
 
 // Привязки на телефоне — ряд под шапкой, все кнопки сразу видны: #snapBar
@@ -183,9 +226,95 @@ function buildCatRow() {
     b.appendChild(span);
     row.appendChild(b);
   }
+  row.appendChild(doneButton());
   row.addEventListener('click', (e) => {
+    if (e.target.closest('[data-done]')) { finishTool(); return; }
     const b = e.target.closest('[data-cat]');
     if (b) pickCatalog(b.dataset.cat);
+  });
+}
+
+// Кнопка ряда: значок и подпись.
+function rowButton(icon, label) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.setAttribute('aria-label', label);
+  const svg = icon?.cloneNode(true);
+  if (svg) { svg.setAttribute('width', '22'); svg.setAttribute('height', '22'); b.appendChild(svg); }
+  const span = document.createElement('span');
+  span.className = 'mb-label';
+  span.textContent = label;
+  b.appendChild(span);
+  return b;
+}
+
+function doneButton() {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'row-done';
+  b.dataset.done = '1';
+  b.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="mb-label">Готово</span>';
+  return b;
+}
+
+// «Готово» в рядах: закончить ломаную (как «✓ Готово» на плане), иначе —
+// выйти из инструмента (цепочка стен сохраняется) и убрать ряд.
+function finishTool() {
+  const draft = el('draftDone');
+  if (draft && !draft.hidden) { draft.click(); return; }
+  if (!finishWallChain() && state.tool) cancelTool();
+  document.body.classList.remove(DRAW, CAT);
+  closeAll();
+  syncMobileBar();
+  renderToolstrip();
+}
+
+// Второй ряд «Рисовать»: зеркала кнопок колонки инструментов текущего режима.
+const PLAN_DRAW = ['wallToolBtn', 'roofToolBtn', 'massToolBtn', 'gridToolBtn', 'sectionToolBtn'];
+const drawSource = new WeakMap(); // кнопка ряда → кнопка колонки
+let drawKey = '';
+
+function drawSources() {
+  if (state.modeName === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])];
+  if (state.modeName === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])];
+  return PLAN_DRAW.map((id) => el(id)).filter(Boolean);
+}
+const sourceId = (b) => b.id || b.dataset.siteTool || b.dataset.lsTool || '';
+
+function syncDrawRow() {
+  const row = el('mobileDraw');
+  if (!row) return;
+  row.hidden = !has(DRAW);
+  if (row.hidden) return;
+  const src = drawSources();
+  const key = `${state.modeName}:${src.map(sourceId).join(',')}`;
+  if (key !== drawKey) {
+    drawKey = key;
+    row.replaceChildren();
+    for (const s of src) {
+      const b = rowButton(s.querySelector('svg'), s.querySelector('.tb-label')?.textContent.trim() || s.getAttribute('aria-label') || '');
+      b.dataset.draw = sourceId(s);
+      drawSource.set(b, s);
+      row.appendChild(b);
+    }
+    row.appendChild(doneButton());
+  }
+  for (const b of row.querySelectorAll('[data-draw]')) {
+    const s = drawSource.get(b);
+    const on = Boolean(s?.classList.contains('active'));
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.disabled = Boolean(s?.disabled);
+  }
+}
+
+function bindDrawRow() {
+  el('mobileDraw')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    if (b.dataset.done) { finishTool(); return; }
+    drawSource.get(b)?.click(); // обработчик кнопки колонки (ui/toolbar.js, ui/toolstrip.js)
+    syncMobileBar();
   });
 }
 
@@ -300,15 +429,12 @@ function attachGrip(panel, onClose) {
   grip.addEventListener('pointercancel', end);
 }
 
-// Пункты листа «Ещё» — кнопки шапки, скрытые на телефоне.
+// Пункты листа «Ещё» («⋯» в шапке) — кнопки шапки, скрытые на телефоне.
 function bindMore() {
   const more = el('mobileMore');
   if (!more) return;
   const click = (id) => el(id)?.click();
   const ACTIONS = {
-    plan: () => click('modePlanBtn'),
-    site: () => click('modeSiteBtn'),
-    landscape: () => click('landscapeBtn'),
     projects: () => click('projectsBtn'),
     export: () => click('exportBtn'),
     menu: () => click('menuBtn'),
@@ -322,7 +448,7 @@ function bindMore() {
     const key = b.dataset.more;
     if (key === 'theme') { ACTIONS.theme(); return; } // лист остаётся: видно, как сменилась тема
     closeSheets();
-    if (key === 'tep') { setPropsTab('tep'); document.body.classList.add(PROPS); syncMobileBar(); return; }
+    if (key === 'tep') { document.body.classList.add(PROPS); setPropsTab('tep'); syncMobileBar(); return; }
     if (key === 'issues') { click('issuesBtn'); return; }
     ACTIONS[key]?.();
     syncMobileBar();
@@ -362,9 +488,27 @@ export function bindMobile() {
   attachGrip(el('propsPanel'), () => closeSheets());
   attachGrip(el('mobileMore'), () => closeSheets());
   buildCatRow();
+  bindDrawRow();
+  bindSheetHead();
   buildStairsSheet();
   attachGrip(el('mobileStairs'), () => closeSheets());
   placeSnapBar();
+  bindMobileCard({
+    isPhone,
+    sheetOpen: () => anySheet() || el('issuesBtn')?.getAttribute('aria-expanded') === 'true',
+    openProps: () => toggleSheet('props'),
+    ensurePropsTab: () => { if (state.propsTab !== 'props') setPropsTab('props'); },
+  });
+  el('fitFab')?.addEventListener('click', () => el('fitBtn')?.click());
+  // Перерисовались «Свойства» или панель действий — обновить карточку и шапку листа.
+  let queued = false;
+  const observer = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; syncMobileBar(); });
+  });
+  if (el('propsBody')) observer.observe(el('propsBody'), { childList: true });
+  if (el('selectionToolbar')) observer.observe(el('selectionToolbar'), { childList: true, attributes: true, attributeFilter: ['hidden'] });
   globalThis.matchMedia?.('(max-width: 640px)').addEventListener?.('change', () => { placeSnapBar(); syncMobileBar(); });
   bindMore();
   // 3D, смена режима или вида (дерево видов, клавиши) — подсветка навигации.

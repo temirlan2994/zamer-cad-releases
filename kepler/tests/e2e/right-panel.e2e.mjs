@@ -115,20 +115,20 @@ describe('правая панель — телефон 390', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('в нижнем листе — «Виды» и «Листы»; «⚠» — на холсте', async () => {
+  it('вкладок панели нет: «Свойства» и «Виды» — кнопки навигации, «Листы» — в «Видах», ТЭП — в «⋯»; «⚠» — на холсте', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="props"]');
     await page.waitForTimeout(300);
-    for (const id of ['propsTabMain', 'propsTabViews', 'propsTabSheets', 'propsTabTep']) {
-      assert.equal(await page.isVisible(`#${id}`), true, id);
-      const b = await page.locator(`#${id}`).boundingBox();
-      assert.ok(b.x >= 0 && b.x + b.width <= 390.5, `${id} в экране`);
-    }
+    for (const id of ['propsTabMain', 'propsTabViews', 'propsTabSheets', 'propsTabTep']) assert.equal(await page.isVisible(`#${id}`), false, id);
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
-    await page.tap('#propsTabViews');
+    await page.tap('#mobileBar [data-sheet="views"]');
+    await page.waitForTimeout(300);
     assert.equal(await page.isVisible('#viewTree'), true);
-    await page.tap('#propsTabSheets');
+    await page.tap('#mobileSheetHead [data-tab="sheets"]');
     assert.equal(await page.isVisible('#sheetsPdfBtn'), true);
+    await page.tap('#moreBtn');
+    await page.tap('#mobileMore [data-more="tep"]');
+    assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true', 'ТЭП из «⋯»');
     assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
     assert.deepEqual(app.errors, []);
   });

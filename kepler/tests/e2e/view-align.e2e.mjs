@@ -182,8 +182,9 @@ describe('поворот вида: новый план и касания', () =>
 
   it('тапами по двум точкам: пустой «План» — оси дома по виду (вариант А)', async () => {
     const { page } = app;
-    await page.tap('#viewBtn');
-    await page.tap('#alignBtn');
+    await page.tap('#mobileBar [data-sheet="props"]'); // телефон: поворот вида — в «Свойствах» вида
+    await page.tap('#viewsAlignBtn');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('sheet-props')), false, 'лист уехал — точки ставят на плане');
     const box = await (await page.$('#canvas')).boundingBox();
     const c = { x: box.x + box.width / 2, y: box.y + box.height / 3 };
     await page.touchscreen.tap(c.x, c.y);

@@ -220,11 +220,11 @@ describe('разрез — телефон', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('инструмент доступен в строке инструментов; тапы рисуют разрез', async () => {
+  it('инструмент — в ряду «Рисовать»; тапы рисуют разрез', async () => {
     const { page } = app;
-    await page.locator('#sectionToolBtn').scrollIntoViewIfNeeded();
-    assert.equal(await page.isVisible('#sectionToolBtn'), true);
-    await page.tap('#sectionToolBtn');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    assert.equal(await page.isVisible('#mobileDraw [data-draw="sectionToolBtn"]'), true);
+    await page.tap('#mobileDraw [data-draw="sectionToolBtn"]');
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'psec');
     const b = await houseBox(page);
     const cy = (b.y0 + b.y1) / 2;

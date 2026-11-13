@@ -272,14 +272,13 @@ describe('листы пользователя — телефон', () => {
 
   it('«На лист…» в «Свойствах» вида кладёт вид и открывает лист', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="props"]');
-    await page.tap('#propsTabSheets');
+    await page.tap('#mobileBar [data-sheet="views"]');
+    await page.tap('#mobileSheetHead [data-tab="sheets"]');
     await page.tap('#sheetsAddBtn');
     assert.equal((await sheets(page)).length, 1);
-    await page.tap('#propsTabViews');
+    await page.tap('#mobileSheetHead [data-tab="views"]');
     await page.tap('#viewTree [data-view="elev-S"]');
     await page.tap('#mobileBar [data-sheet="props"]');
-    await page.tap('#propsTabMain');
     await page.tap('#viewPlaceBtn');
     await page.tap('[data-place-sheet="sh-1"]');
     assert.equal(await page.isVisible('#sheetCanvas'), true);
@@ -293,7 +292,7 @@ describe('листы пользователя — телефон', () => {
     // Вид уже на листе — в «Свойствах» вида: «Открыть лист».
     await page.tap('#sheetViewClose');
     await page.tap('#mobileBar [data-sheet="props"]');
-    await page.tap('#propsTabMain');
+    assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true', '«Свойства» — сразу настройки вида');
     assert.match(await page.textContent('#viewPlacedOn'), /на листе 3/);
     assert.deepEqual(app.errors, []);
   });

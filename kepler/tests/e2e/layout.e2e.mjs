@@ -174,10 +174,11 @@ describe('раскладка на телефоне', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('колонка инструментов слева, «⚠» на холсте, параметры — только у инструмента', async () => {
+  it('план во всю ширину (колонки нет), «⚠» на холсте, параметры — только у инструмента', async () => {
     const { page } = app;
-    const [strip, canvas, nav] = await Promise.all([box(page, '#toolStrip'), box(page, '#canvas'), box(page, '#mobileBar')]);
-    assert.ok(strip.width <= 64 && strip.x + strip.width <= canvas.x + 1, `колонка ${JSON.stringify(strip)}`);
+    const [canvas, nav] = await Promise.all([box(page, '#canvas'), box(page, '#mobileBar')]);
+    assert.equal(await page.isVisible('#toolStrip'), false, 'колонки инструментов нет');
+    assert.ok(canvas.x <= 0.5 && canvas.width >= 389, `план во всю ширину ${JSON.stringify(canvas)}`);
     assert.ok(nav.y >= canvas.y + canvas.height - 1 && nav.y + nav.height <= 844.5, 'навигация — внизу экрана');
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     assert.equal(await page.isVisible('#issuesBtn'), true);

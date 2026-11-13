@@ -346,7 +346,11 @@ export function bindViewSettings(panel, rerender) {
   panel.querySelector('#elevMarks')?.addEventListener('change', (e) => { setElevationMarks(e.target.checked); rerender(); });
   panel.querySelector('#elevCloseBtn')?.addEventListener('click', () => closeElevation());
   panel.querySelector('#elevFlipBtn')?.addEventListener('click', () => { flipSectionView(openElevationId()); rerender(); });
-  panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => { startAlignView(); refreshViewsPanel(); });
+  panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => {
+    startAlignView();
+    closeSheets(); // телефон: точки ставят на плане — нижний лист уезжает
+    refreshViewsPanel();
+  });
   panel.querySelector('#viewsAngleInput')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
     if (Number.isFinite(v)) applyViewAngle(v);

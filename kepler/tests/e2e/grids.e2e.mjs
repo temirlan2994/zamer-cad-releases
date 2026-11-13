@@ -287,11 +287,11 @@ describe('Координационные оси на телефоне', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('инструмент виден в колонке и тапом ставит ось', async () => {
+  it('инструмент — в ряду «Рисовать», тапом ставит ось', async () => {
     const { page } = app;
-    await page.locator('#gridToolBtn').scrollIntoViewIfNeeded();
-    assert.ok(await page.isVisible('#gridToolBtn'));
-    await page.tap('#gridToolBtn');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    assert.ok(await page.isVisible('#mobileDraw [data-draw="gridToolBtn"]'));
+    await page.tap('#mobileDraw [data-draw="gridToolBtn"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'grid');
     const box = await canvasBox(page);
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.3);

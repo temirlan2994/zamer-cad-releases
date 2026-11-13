@@ -1,8 +1,9 @@
-// e2e мобильной раскладки 390×844 (ui/mobile.js, styles.css «Телефон, шаг 3»):
-// лента инструментов с подписями внизу, нижняя навигация (Каталог, Свойства,
-// Виды, Листы, 3D, Ещё), нижние листы с ручкой и «✕», компактная шапка,
-// ничего не выходит за экран. Планшет 768 — компьютерная раскладка без
-// мобильной навигации.
+// e2e мобильной раскладки 390×844 (ui/mobile.js, ui/mobile-card.js, styles.css
+// «Телефон»): план во всю ширину, ряд привязок сверху, нижняя навигация
+// (Рисовать, Каталог, Свойства, Виды, 3D) со вторыми рядами, карточка
+// выбранного объекта, лист «Виды» с режимом и «Листами», нижние листы с ручкой
+// и «✕», компактная шапка, ничего не выходит за экран. Планшет 768 —
+// компьютерная раскладка без мобильной навигации.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
@@ -51,73 +52,51 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.deepEqual(await offscreen(page), []);
   });
 
-  it('инструменты — колонкой слева: значок и подпись, цели ≥ 44 px; каталожного нет', async () => {
+  it('колонки инструментов нет: план во всю ширину, привязки сверху, «Вписать» — кнопкой на плане', async () => {
     const { page } = app;
-    const [strip, canvas, nav] = await Promise.all(['#toolStrip', '#canvas', '#mobileBar'].map((s) => box(page, s)));
-    assert.ok(strip.x + strip.width <= canvas.x + 1 && strip.width < 80, `колонка слева от холста ${JSON.stringify([strip, canvas])}`);
-    assert.ok(nav.y >= canvas.y + canvas.height - 1, 'навигация под холстом');
-    const btns = await page.$$eval('#toolStrip .tb-btn', (ns) => ns.filter((n) => n.offsetParent).map((n) => {
-      const r = n.getBoundingClientRect();
-      const label = n.querySelector('.tb-label');
-      return { id: n.id || n.dataset.siteTool || '', w: r.width, h: r.height, text: label?.offsetParent ? label.textContent.trim() : '' };
-    }));
-    for (const b of btns) {
-      assert.ok(b.text, `у ${b.id} видна подпись`);
-      assert.ok(b.w >= 44 && b.h >= 44, `${b.id} ${b.w}×${b.h}`);
-    }
-    const texts = btns.map((b) => b.text);
-    for (const t of ['Выбор', 'Стена', 'Масса', 'Крыша', 'Ось', 'Разрез']) assert.ok(texts.includes(t), `нет «${t}»`);
-    for (const t of ['Помещение', 'Дверь', 'Окно', 'Мебель', 'Лестница']) assert.ok(!texts.includes(t), `«${t}» — в каталоге, не в колонке`);
+    assert.equal(await page.isVisible('#toolStrip'), false, 'колонка скрыта');
+    const [canvas, snap, nav] = await Promise.all(['#canvas', '#mobileSnapRow', '#mobileBar'].map((s) => box(page, s)));
+    assert.ok(canvas.x <= 0.5 && canvas.width >= W - 1, `план во всю ширину ${JSON.stringify(canvas)}`);
+    assert.ok(snap.y + snap.height <= canvas.y + 1, 'привязки над планом');
+    assert.ok(nav.y >= canvas.y + canvas.height - 1, 'навигация под планом');
+    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true, 'привязки видны сразу');
+    assert.equal(await page.isVisible('#fitFab'), true);
+    assert.ok(inScreen(await box(page, '#fitFab')));
+    await page.evaluate(() => { window.__kepler.state.view.panX += 900; });
+    const pan = await page.evaluate(() => window.__kepler.state.view.panX);
+    await page.tap('#fitFab');
+    assert.notEqual(await page.evaluate(() => window.__kepler.state.view.panX), pan, '«Вписать» вернул план в экран');
   });
 
-  it('нижняя навигация: подписи, ≥ 44 px, в экране', async () => {
+  it('нижняя навигация: Рисовать · Каталог · Свойства · Виды · 3D, ≥ 44 px, в экране', async () => {
     const { page } = app;
     const items = await page.$$eval('#mobileBar button', (ns) => ns.filter((n) => n.offsetParent).map((n) => {
       const r = n.getBoundingClientRect();
       return { t: n.textContent.trim(), x: r.x, y: r.y, w: r.width, h: r.height };
     }));
-    assert.deepEqual(items.map((i) => i.t), ['Каталог', 'Свойства', 'Виды', 'Листы', '3D', 'Ещё']);
+    assert.deepEqual(items.map((i) => i.t), ['Рисовать', 'Каталог', 'Свойства', 'Виды', '3D']);
     for (const i of items) {
       assert.ok(i.h >= 44 && i.w >= 44, `${i.t} ${i.w}×${i.h}`);
       assert.ok(inScreen({ x: i.x, y: i.y, width: i.w, height: i.h }), `${i.t} в экране`);
     }
   });
 
-  it('«Виды» и «Листы» — одно касание; лист над навигацией, ручка и «✕»', async () => {
+  it('«Рисовать» — второй ряд инструментов; «Стена» включает инструмент, «Готово» выходит', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="views"]');
-    await settle(page);
-    assert.equal(await has(page, 'sheet-props'), true);
-    assert.equal(await page.isVisible('#viewTree'), true, 'дерево видов');
-    const [sheet, nav] = await Promise.all([box(page, '#propsPanel'), box(page, '#mobileBar')]);
-    assert.ok(sheet.y + sheet.height <= nav.y + 1, 'лист не закрывает навигацию');
-    assert.ok(sheet.height < H * 0.5, `лист ~45%: ${sheet.height}`);
-    assert.equal(await page.getAttribute('#mobileBar [data-sheet="views"]', 'aria-pressed'), 'true');
-    await page.tap('#mobileBar [data-sheet="sheets"]');
-    await settle(page);
-    assert.equal(await page.isVisible('#sheetsPdfBtn'), true, 'вкладка «Листы»');
-    assert.equal(await page.getAttribute('#mobileBar [data-sheet="sheets"]', 'aria-pressed'), 'true');
-    // Касание ручки — высокий лист, ещё раз — обратно.
-    await page.tap('#propsPanel .sheet-handle');
-    await settle(page);
-    assert.ok((await box(page, '#propsPanel')).height > H * 0.6, 'высокий лист');
-    await page.tap('#propsPanel .sheet-handle');
-    await settle(page);
-    assert.ok((await box(page, '#propsPanel')).height < H * 0.5);
+    assert.equal(await page.isVisible('#mobileDraw'), false);
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    const labels = await page.$$eval('#mobileDraw button', (ns) => ns.map((n) => n.textContent.trim()));
+    assert.deepEqual(labels, ['Стена', 'Крыша', 'Масса', 'Ось', 'Разрез', 'Готово']);
+    assert.equal(await page.getAttribute('#mobileBar [data-sheet="draw"]', 'aria-pressed'), 'true');
+    await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'wall');
+    assert.equal(await page.getAttribute('#mobileDraw [data-draw="wallToolBtn"]', 'aria-pressed'), 'true');
+    const [snap, opts, canvas] = await Promise.all(['#mobileSnapRow', '#toolOptions', '#canvas'].map((s) => box(page, s)));
+    assert.ok(snap.y + snap.height <= opts.y + 1 && opts.y + opts.height <= canvas.y + 1, 'параметры стены — под привязками');
     assert.deepEqual(await offscreen(page), []);
-    await page.tap('#propsPanel .sheet-close');
-    await settle(page);
-    assert.equal(await has(page, 'sheet-props'), false, '«✕» закрыл лист');
-  });
-
-  it('«Свойства» открывают вкладку свойств, повторное касание — закрывает', async () => {
-    const { page } = app;
-    await page.tap('#mobileBar [data-sheet="props"]');
-    await settle(page);
-    assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true');
-    await page.tap('#mobileBar [data-sheet="props"]');
-    await settle(page);
-    assert.equal(await has(page, 'sheet-props'), false);
+    await page.tap('#mobileDraw [data-done]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null, '«Готово» — инструмент выключен');
+    assert.equal(await page.isVisible('#mobileDraw'), false, 'ряд убран');
   });
 
   it('«Каталог» — второй ряд; «Помещение» — каталог нижним листом; карточка включает размещение', async () => {
@@ -126,12 +105,13 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileBar [data-sheet="rooms"]');
     await settle(page);
     const cats = await page.$$eval('#mobileCat button', (ns) => ns.map((n) => n.textContent.trim()));
-    assert.deepEqual(cats, ['Помещение', 'Мебель', 'Окно', 'Дверь', 'Лестница']);
+    assert.deepEqual(cats, ['Помещение', 'Мебель', 'Окно', 'Дверь', 'Лестница', 'Готово']);
     assert.equal(await page.getAttribute('#mobileBar [data-sheet="rooms"]', 'aria-pressed'), 'true');
     await page.tap('#mobileCat [data-cat="room"]');
     await settle(page);
     assert.equal(await has(page, 'sheet-library'), true, 'каталог выехал');
     assert.equal(await page.isVisible('#roomCards .room-card >> text=Гостиная'), true);
+    assert.equal(await page.isVisible('#libTabRooms'), false, 'вкладки каталога не нужны — разделы во втором ряду');
     const [lib, row] = await Promise.all([box(page, '.library'), box(page, '#mobileCat')]);
     assert.ok(lib.y + lib.height <= row.y + 1, 'лист над вторым рядом');
     assert.deepEqual(await offscreen(page), []);
@@ -140,11 +120,14 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.equal(tool?.kind, 'place-room');
     assert.ok(tool?.type, 'тип комнаты выбран');
     assert.equal(await has(page, 'sheet-library'), false, 'каталог уехал — план свободен');
-    await page.keyboard.press('Escape');
+    await page.tap('#mobileCat [data-done]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null, '«Готово» — размещение отменено');
+    assert.equal(await page.isVisible('#mobileCat'), false);
   });
 
   it('«Дверь» — каталог проёмов; «Лестница» — выбор формы, касание плана ставит', async () => {
     const { page } = app;
+    await page.tap('#mobileBar [data-sheet="rooms"]');
     await page.tap('#mobileCat [data-cat="door"]');
     await settle(page);
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.openKind), 'door');
@@ -165,23 +148,107 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.equal(await page.isVisible('#mobileCat'), false, 'повторное «Каталог» прячет ряд');
   });
 
-  it('«Ещё»: режим «Участок», затем «План»; привязки — рядом сверху, все видны', async () => {
+  it('выбранный объект — карточка внизу: название, размеры, действия; поле размера правит объект', async () => {
+    const { page } = app;
+    const id = await page.evaluate(() => window.__kepler.state.project.rooms.find((r) => r.name === 'Гостиная').id);
+    await page.evaluate((rid) => window.__kepler.selectRoom(rid), id);
+    await page.waitForSelector('#mobileCard', { state: 'visible' });
+    assert.equal(await page.textContent('#mobileCardTitle'), 'Гостиная');
+    assert.deepEqual(await page.$$eval('#mobileCard .mc-chip small', (ns) => ns.map((n) => n.textContent)), ['Ш', 'Г']);
+    assert.match(await page.textContent('#mobileCard .mc-info'), /м²/);
+    assert.equal(await page.isVisible('#mobileCard [data-selection-action="delete"]'), true, 'действия — в карточке');
+    assert.equal(await page.$eval('#selectionToolbar', (n) => Boolean(n.closest('#mobileCard'))), true);
+    const [card, nav] = await Promise.all([box(page, '#mobileCard'), box(page, '#mobileBar')]);
+    assert.ok(card.y + card.height <= nav.y + 1, 'карточка над навигацией');
+    assert.deepEqual(await offscreen(page), []);
+    const w0 = await page.evaluate((rid) => window.__kepler.state.project.rooms.find((r) => r.id === rid).w, id);
+    await page.fill('#mobileCard input[data-field="roomW"]', String(w0 + 500));
+    await page.press('#mobileCard input[data-field="roomW"]', 'Enter');
+    await page.waitForFunction(([rid, w]) => window.__kepler.state.project.rooms.find((r) => r.id === rid).w === w, [id, w0 + 500]);
+    await page.evaluate(() => document.getElementById('undoBtn').click());
+    await page.evaluate((rid) => window.__kepler.selectRoom(rid), id); // отмена снимает выделение
+    await page.waitForSelector('#mobileCard', { state: 'visible' });
+    // «Свойства» — лист без вкладок; карточка на это время скрыта
+    await page.tap('#mobileCardProps');
+    await settle(page);
+    assert.equal(await has(page, 'sheet-props'), true);
+    assert.equal(await page.isVisible('#roomName'), true, 'поля помещения');
+    assert.equal(await page.isVisible('#propsTabMain'), false, 'вкладок панели нет');
+    assert.equal(await page.isVisible('#mobileCard'), false);
+    await page.tap('#propsPanel .sheet-close');
+    await settle(page);
+    assert.equal(await page.isVisible('#mobileCard'), true, 'лист закрыт — карточка вернулась');
+    await page.evaluate(() => window.__kepler.select(null));
+    await page.waitForSelector('#mobileCard', { state: 'hidden' });
+  });
+
+  it('«Виды»: режим и «Виды · Листы» сверху; ручка и «✕»', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="views"]');
+    await settle(page);
+    assert.equal(await has(page, 'sheet-props'), true);
+    assert.equal(await page.isVisible('#viewTree'), true, 'дерево видов');
+    assert.equal(await page.isVisible('#mobileSheetHead [data-mode="site"]'), true, 'переключатель режима');
+    assert.equal(await page.getAttribute('#mobileBar [data-sheet="views"]', 'aria-pressed'), 'true');
+    const [sheet, nav] = await Promise.all([box(page, '#propsPanel'), box(page, '#mobileBar')]);
+    assert.ok(sheet.y + sheet.height <= nav.y + 1, 'лист не закрывает навигацию');
+    assert.ok(sheet.height < H * 0.5, `лист ~45%: ${sheet.height}`);
+    await page.tap('#mobileSheetHead [data-tab="sheets"]');
+    await settle(page);
+    assert.equal(await page.isVisible('#sheetsPdfBtn'), true, '«Листы» — внутри «Видов»');
+    assert.equal(await page.getAttribute('#mobileBar [data-sheet="views"]', 'aria-pressed'), 'true');
+    await page.tap('#propsPanel .sheet-handle');
+    await settle(page);
+    assert.ok((await box(page, '#propsPanel')).height > H * 0.6, 'высокий лист');
+    await page.tap('#propsPanel .sheet-handle');
+    await settle(page);
+    assert.ok((await box(page, '#propsPanel')).height < H * 0.5);
+    assert.deepEqual(await offscreen(page), []);
+    await page.tap('#propsPanel .sheet-close');
+    await settle(page);
+    assert.equal(await has(page, 'sheet-props'), false, '«✕» закрыл лист');
+  });
+
+  it('«Свойства» без выделения — настройки вида, повторное касание закрывает', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="props"]');
+    await settle(page);
+    assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true');
+    assert.equal(await page.isVisible('#mobileSheetHead'), false, 'режимы — только в «Видах»');
+    await page.tap('#mobileBar [data-sheet="props"]');
+    await settle(page);
+    assert.equal(await has(page, 'sheet-props'), false);
+  });
+
+  it('режим «Участок» из «Видов»: инструменты участка в «Рисовать», «Готово» видна; обратно «План»', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="views"]');
+    await settle(page);
+    await page.tap('#mobileSheetHead [data-mode="site"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
+    assert.equal(await has(page, 'sheet-props'), false, 'лист закрылся — участок виден');
+    assert.equal(await page.isHidden('#mobileBar [data-sheet="rooms"]'), true, 'в «Участке» каталога нет');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    const n = await page.$$eval('#mobileDraw [data-draw]', (ns) => ns.length);
+    assert.ok(n >= 8, `инструменты участка: ${n}`);
+    assert.ok(inScreen(await box(page, '#mobileDraw [data-done]')), '«Готово» в экране');
+    await page.tap('#mobileBar [data-sheet="views"]');
+    await settle(page);
+    await page.tap('#mobileSheetHead [data-mode="plan"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
+  });
+
+  it('«⋯»: проекты, экспорт, файл, ТЭП, замечания, тема, справка; режимов там нет', async () => {
     const { page } = app;
     await page.tap('#moreBtn');
     await settle(page);
     assert.equal(await has(page, 'sheet-more'), true);
+    const keys = await page.$$eval('#mobileMore [data-more]', (ns) => ns.map((n) => n.dataset.more));
+    assert.deepEqual(keys, ['projects', 'export', 'menu', 'tep', 'issues', 'theme', 'help']);
     assert.deepEqual(await offscreen(page), []);
-    await page.tap('#mobileMore [data-more="site"]');
-    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
-    assert.equal(await has(page, 'sheet-more'), false);
-    await page.tap('#mobileBar [data-sheet="more"]');
+    await page.tap('#mobileMore .sheet-close');
     await settle(page);
-    await page.tap('#mobileMore [data-more="plan"]');
-    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
-    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true, 'привязки видны сразу');
-    const [snap, canvas] = await Promise.all([box(page, '#mobileSnapRow'), box(page, '#canvas')]);
-    assert.ok(snap.y + snap.height <= canvas.y + 1, 'ряд привязок над холстом');
-    assert.equal(await page.$('#snapBar .snap-menu'), null, 'кнопки-меню нет');
+    assert.equal(await has(page, 'sheet-more'), false);
   });
 
   it('«3D» на навигации открывает 3D, повторно — закрывает', async () => {

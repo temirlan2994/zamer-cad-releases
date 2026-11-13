@@ -182,11 +182,13 @@ describe('режим «Эргономика» на телефоне', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('кнопка видна в строке инструментов и включает режим', async () => {
+  it('колонки нет — режим включается чипом в «⚠ Замечаниях»', async () => {
     const { page } = app;
     await page.waitForFunction(() => document.getElementById('startScreen').hidden);
-    assert.equal(await page.isVisible('#ergoToolBtn'), true);
-    await page.tap('#ergoToolBtn');
+    assert.equal(await page.isVisible('#ergoToolBtn'), false, 'колонка инструментов скрыта');
+    await page.tap('#issuesBtn');
+    await page.tap('#issuesPanel [data-issue-group="ergo"]');
     assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'true');
+    assert.equal(await page.getAttribute('#issuesPanel [data-issue-group="ergo"]', 'aria-pressed'), 'true');
   });
 });

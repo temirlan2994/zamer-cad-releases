@@ -52,8 +52,8 @@ describe('телефон', () => {
     await app.page.tap('#roomCards .room-card >> text=Терраса');
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
-    const strip = await app.page.locator('#toolStrip').boundingBox(); // холст — справа от колонки инструментов
-    assert.ok(Math.abs(box0.y - strip.y) < 2 && box0.y > 30 && box0.y < 130, `холст не уехал прокруткой: y=${box0.y}`);
+    const snap = await app.page.locator('#mobileSnapRow').boundingBox(); // холст — под рядом привязок
+    assert.ok(box0.y >= snap.y + snap.height - 1 && box0.y < 170, `холст не уехал прокруткой: y=${box0.y}`);
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {
       const k = window.__kepler;
@@ -94,7 +94,14 @@ describe('телефон', () => {
 
   it('«Экспорт» открывается целиком поверх холста и закрывается по Esc', async () => {
     await app.page.evaluate(() => window.scrollTo(0, 0));
-    await app.page.tap('#moreBtn'); // телефон: «Экспорт» — в листе «Ещё»
+    // Телефон: «Экспорт» — в листе «⋯». После синтетического сдвига эмулятор
+    // иногда считает жест «броском»: первое касание только останавливает его
+    // и click не приходит — касаемся ещё раз.
+    const moreOpen = () => app.page.evaluate(() => document.body.classList.contains('sheet-more'));
+    for (let i = 0; i < 3 && !(await moreOpen()); i += 1) {
+      await app.page.tap('#moreBtn');
+      await app.page.waitForTimeout(250);
+    }
     await app.page.tap('#mobileMore [data-more="export"]');
     await app.page.waitForSelector('#exportDropdown', { state: 'visible' });
     const box = await (await app.page.$('#exportDropdown')).boundingBox();
@@ -108,14 +115,15 @@ describe('телефон', () => {
   });
 
   it('выбор инструмента участка закрывает нижнюю панель', async () => {
-    await app.page.tap('#mobileBar [data-sheet="more"]'); // телефон: режимы — в листе «Ещё»
-    await app.page.tap('#mobileMore [data-more="site"]');
+    await app.page.tap('#mobileBar [data-sheet="views"]'); // телефон: режимы — в листе «Виды»
+    await app.page.tap('#mobileSheetHead [data-mode="site"]');
     assert.equal(await app.page.isHidden('#mobileBar [data-sheet="rooms"]'), true, 'в «Участке» каталога нет');
-    await app.page.tap('#mobileBar [data-sheet="props"]');
+    await app.page.tap('#mobileBar [data-sheet="draw"]');
+    await app.page.tap('#mobileBar [data-sheet="props"]'); // лист поверх ряда — ряд закрылся
     await app.page.waitForFunction(() => document.body.classList.contains('sheet-props'));
-    await app.page.waitForSelector('#siteTools .tb-btn', { state: 'visible' });
-    await app.page.tap('#siteTools .tb-btn >> nth=3');
+    await app.page.tap('#mobileBar [data-sheet="draw"]');
     await app.page.waitForFunction(() => !document.body.classList.contains('sheet-props'));
+    await app.page.tap('#mobileDraw [data-draw="road"]');
     assert.equal(await app.page.evaluate(() => window.__kepler.state.tool?.target), 'road', '«Дорога» — черчение или правка оси');
     await app.page.keyboard.press('Escape');
     await app.page.evaluate(() => document.getElementById('modePlanBtn').click());

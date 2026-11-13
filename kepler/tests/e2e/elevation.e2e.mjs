@@ -123,8 +123,7 @@ describe('фасады — телефон', () => {
 
   it('фасад открывается из «Видов» и закрывается', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="props"]');
-    await page.tap('#propsTabViews');
+    await page.tap('#mobileBar [data-sheet="views"]');
     await page.tap('#viewTree [data-view="elev-S"]');
     assert.equal(await open(page), 'elev-S');
     assert.equal(await page.isVisible('#elevView'), true);
