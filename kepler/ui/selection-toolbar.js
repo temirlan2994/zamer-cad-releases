@@ -7,6 +7,7 @@ import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
 import { railingTypeTitle } from '../core/railings.js';
 import { overhangLabel } from '../core/roofs.js';
+import { findSlabOpening, slabOpeningStair } from '../core/slab-openings.js';
 import { selectedRailing } from './railing-actions.js';
 import { el, escapeHtml } from './dom.js';
 import { findWall } from './hit.js';
@@ -164,6 +165,16 @@ function contentForSelection(sel) {
         ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
+  if (sel.type === 'slab') {
+    // Проём в перекрытии (ui/slab-ui.js): ручной — «Вернуть авто» и удаление.
+    const o = findSlabOpening(state.project, sel.levelId || state.project.activeLevel, sel.id);
+    if (!o) return null;
+    const canReset = !o.auto && o.stairId && slabOpeningStair(state.project, o);
+    return {
+      label: `Проём в перекрытии · ${o.w} × ${o.h} мм${o.auto ? ' · по лестнице' : ''}`,
+      html: `${canReset ? button('slab-auto', '↺', 'Вернуть авто') : ''}${o.auto ? '' : button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+    };
+  }
   if (sel.type === 'section') {
     const view = (state.project.views || []).find((v) => v.id === sel.id);
     if (!view) return null;
@@ -212,6 +223,10 @@ export function bindSelectionToolbar() {
         const la = await import('./landscape-array.js');
         if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();
       }
+      return;
+    }
+    if (action === 'slab-auto') {
+      (await import('./slab-ui.js')).resetSlabAuto();
       return;
     }
     if (action === 'open-section' || action === 'flip-section') {

@@ -8,6 +8,7 @@ import {
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
 import { isUpperLevel } from './model.js';
+import { slabOpenings } from './slab-openings.js';
 import {
   roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
 } from './room-shape.js';
@@ -316,6 +317,8 @@ export function roomNetAreaM2(project, room) {
     if (isShaft(eater)) continue; // уже учтена выше независимо от z-порядка
     subtractRects.push(...shapeClips(parts, roomRects(eater)));
   }
+  // Проём в перекрытии под этим этажом (над лестницей) — не пол помещения.
+  subtractRects.push(...shapeClips(parts, slabOpenings(project, project.activeLevel)));
   area -= rectUnionArea(subtractRects);
   return Math.max(0, area) / 1_000_000;
 }

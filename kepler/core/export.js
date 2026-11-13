@@ -25,6 +25,7 @@ import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, ret
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { plantSchedule, plantScheduleExport } from './landscape-plants.js';
 import { structuralOutline } from './mesh3d.js';
+import { slabOpenings, stairTargetLevel } from './slab-openings.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
 import {
@@ -137,6 +138,8 @@ function buildLevelExport(project, level) {
     size: { w: item.w, h: item.h },
     rotation_deg: item.rotation || 0,
     mirrored: Boolean(item.mirrored || item.comp?.mirror),
+    // Лестница: на какой этаж ведёт (core/slab-openings.js).
+    ...(item.kind === 'stairs' ? { to_level: stairTargetLevel(project, item, level)?.id || null } : {}),
     // Составная мебель: параметры и готовые части (стулья у стола) в осях дома.
     ...(item.comp ? {
       comp: item.comp,
@@ -163,6 +166,12 @@ function buildLevelExport(project, level) {
     furniture,
     free_walls: freeWalls,
     columns,
+    // Проёмы в перекрытии под этажом (core/slab-openings.js): авто — по лестнице.
+    slab_openings: slabOpenings(project, level.id).map((o) => ({
+      id: o.id, source: o.auto ? 'stair' : 'manual', stair: o.stairId || null,
+      polygon: [{ x: o.x, y: o.y }, { x: o.x + o.w, y: o.y }, { x: o.x + o.w, y: o.y + o.h }, { x: o.x, y: o.y + o.h }],
+      size: { w: o.w, h: o.h }, area_m2: Number(((o.w * o.h) / 1_000_000).toFixed(3)),
+    })),
     connections: {
       doors,
       has_entrance: connectivity.hasEntrance,

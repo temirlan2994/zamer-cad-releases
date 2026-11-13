@@ -1303,6 +1303,17 @@ export function debug3d() {
   };
 }
 
+// Для автотестов: грани перекрытия и пола (верх), накрывающие точку плана
+// (оси дома) — проём в перекрытии (core/slab-openings.js) их не имеет.
+export function debug3dCovered(x, y) {
+  const hit = (f) => {
+    const xs = f.pts.map((p) => p.x); const ys = f.pts.map((p) => p.y);
+    return Math.min(...xs) < x && Math.max(...xs) > x && Math.min(...ys) < y && Math.max(...ys) > y;
+  };
+  const top = faces.filter((f) => (f.kind === 'slab' || f.kind === 'floor') && f.normal?.z > 0.5 && f.pts?.length >= 3);
+  return { slab: top.filter((f) => f.kind === 'slab' && hit(f)).length, floor: top.filter((f) => f.kind === 'floor' && hit(f)).map((f) => f.level) };
+}
+
 // Для автотестов: что под точкой экрана (clientX/Y): стена (key, face) или
 // помещение / предмет / проём (type, id).
 export function debug3dPick(x, y) {

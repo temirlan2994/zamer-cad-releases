@@ -24,6 +24,8 @@
 //    перегородки (нижний теряет полосу), v6 вычитал без зазора;
 //  • courtyardBetweenL, manualClosesCorridor: замкнутый двор — в v7
 //    безымянная пустота (source = null), в сумму не входит, как и в v6.
+// Проёмы в перекрытии над лестницами (core/slab-openings.js) derive v7 не
+// знает — сверка идёт без них (лестницы «никуда», ручных проёмов нет).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -46,6 +48,15 @@ const MAX_DIFF = { // относительное расхождение, см. �
   'user-house-2026-11.json': 0.005, 'v5-project.kepler.json': 0.005,
 };
 
+function noSlabOpenings(p) {
+  return {
+    ...p,
+    levels: p.levels.map((l) => ({
+      ...l, slabOpenings: [], items: l.items.map((i) => (i.kind === 'stairs' ? { ...i, toLevel: 'none' } : i)),
+    })),
+  };
+}
+
 function cases() {
   const out = [];
   for (const [n, f] of Object.entries({ ...WALL_FIXTURES, ...MANUAL_WALL_FIXTURES })) out.push([n, f()]);
@@ -63,7 +74,7 @@ test('сверка площадей v7 со старым движком по в�
     assert.equal(v7.schema, 'kepler-plan/7');
     assert.deepEqual(warnings, [], `${name}: все проёмы перенесены`);
     for (const level of p.levels) {
-      const old = totalAreaM2(levelProject(p, level.id));
+      const old = totalAreaM2(levelProject(noSlabOpenings(p), level.id));
       const res = derive(v7, { levelId: level.id, cache: false });
       const diff = Math.abs(totalArea(res) - old);
       const allowed = Math.max(EXACT, (MAX_DIFF[name] || 0) * old);

@@ -71,6 +71,7 @@ import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-
 import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
+import { slabDragEnd, slabDragMove, slabHoverTarget, slabPointerDown } from './slab-ui.js';
 import {
   isRoofPlan, roofPlanDblClick, roofPlanDragCancel, roofPlanDragEnd, roofPlanDragMove, roofPlanHover, roofPlanPointerDown,
 } from './roof-plan.js';
@@ -458,6 +459,8 @@ function updateHoverAndGhost(world, plan, event) {
 
   // Подсветка под курсором: линии разрезов, мебель, проёмы, стены, комнаты, объекты участка.
   let nextHover = event?.clientX !== undefined ? planSectionHoverTarget(pointerScreen(event)) : null;
+  // Проём в перекрытии — по контуру, диагоналям и подписи (ui/slab-ui.js).
+  if (!nextHover && event?.clientX !== undefined) nextHover = slabHoverTarget(pointerScreen(event));
   // Координационные оси: кружки — везде, линия — вне комнат и стен (ui/grids.js).
   if (!nextHover && event?.clientX !== undefined && state._gridUI?.length) {
     nextHover = gridHoverTarget(pointerScreen(event), !hitRoom(plan) && !hitWall(plan));
@@ -884,6 +887,11 @@ export function bindCanvasInput() {
       }
     }
 
+    // Проём в перекрытии (ui/slab-ui.js): ручки выбранного, контур — выбор и сдвиг.
+    if (!onRoomHandle || state.selection?.type === 'slab') {
+      const slabDrag = slabPointerDown(event, screen, plan);
+      if (slabDrag) { drag = slabDrag; return; }
+    }
     // Линия разреза: ручки концов, сдвиг, выбор (поверх комнат и стен).
     const secDrag = planSectionPointerDown(event, screen, plan);
     if (secDrag) { drag = secDrag; return; }
@@ -1120,6 +1128,7 @@ export function bindCanvasInput() {
 
     if (drag.kind.startsWith('ls-')) { landscapeDragMove(drag, world, screen, event); return; }
     if (drag.kind.startsWith('psec-')) { planSectionDragMove(drag, plan, event); return; }
+    if (drag.kind.startsWith('slab-')) { slabDragMove(drag, plan, event); return; }
     if (drag.kind.startsWith('grid-')) { gridDragMove(drag, plan, event); return; }
     if (drag.kind.startsWith('roofplan-')) { roofPlanDragMove(drag, plan, screen, event); return; }
 
@@ -1782,6 +1791,7 @@ export function bindCanvasInput() {
     if (finished.kind.startsWith('group-')) state.groupRotateDeg = null;
     if (finished.kind.startsWith('ls-')) { landscapeDragEnd(finished); return; }
     if (finished.kind.startsWith('psec-')) { planSectionDragEnd(finished); return; }
+    if (finished.kind.startsWith('slab-')) { slabDragEnd(finished); return; }
     if (finished.kind.startsWith('grid-')) { gridDragEnd(finished); return; }
     if (finished.kind.startsWith('roofplan-')) { roofPlanDragEnd(finished); return; }
 

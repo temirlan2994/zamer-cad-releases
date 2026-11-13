@@ -62,6 +62,7 @@ import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawRoofOutlines, drawRoofPlan } from './ui/render-roofs.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
+import { drawSlabOpenings } from './ui/render-slab.js';
 import { drawPlanGrids } from './ui/render-axes.js';
 import { drawErgonomics } from './ui/render-ergonomics.js';
 import { drawGridLocks } from './ui/grid-locks.js';
@@ -735,6 +736,8 @@ export function createRenderer(canvas) {
     // Вставка окна/двери: размеры до стен и соседних проёмов слева и справа.
     const ghostOp = state.ghostDoor || state.ghostOpeningFull;
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
+    // Проёмы в перекрытии (ui/render-slab.js): над лестницей — авто, ручные.
+    if (state.modeName === 'plan' && !state.roofPlan) drawSlabOpenings(ctx, { p2s, tokens, print });
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
     // Координационные оси (ui/render-axes.js): тонко поверх плана; на листе плана — по настройке.

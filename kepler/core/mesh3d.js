@@ -22,6 +22,7 @@ import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairLayout } from './stairs.js';
+import { slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
@@ -516,6 +517,8 @@ function subtractFloorRect(base, cut) {
 
 function levelFloors(lp, z, levelId) {
   const faces = [];
+  // Проём в перекрытии под этажом (над лестницей) — пол вырезан.
+  const holes = slabOpenings(lp, levelId);
   // Сначала комнаты верхнего уровня, вложенные — чуть выше (видны поверх).
   const order = [...lp.rooms].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)));
   for (const r of order) {
@@ -525,7 +528,7 @@ function levelFloors(lp, z, levelId) {
     const shaftCuts = lp.rooms.filter((shaft) => isShaft(shaft) &&
       (shaft.parentId === r.id || (!shaft.parentId && !r.parentId))).flatMap(roomRects);
     let floorParts = roomRects(r);
-    for (const cut of shaftCuts) floorParts = floorParts.flatMap((part) => subtractFloorRect(part, cut));
+    for (const cut of [...shaftCuts, ...holes]) floorParts = floorParts.flatMap((part) => subtractFloorRect(part, cut));
     for (const part of floorParts) {
       faces.push({
         pts: [v(part.x, part.y, zz), v(part.x + part.w, part.y, zz), v(part.x + part.w, part.y + part.h, zz), v(part.x, part.y + part.h, zz)],
@@ -732,7 +735,8 @@ function levelFootprint(lp, offset) {
     .map((p) => ({ x0: p.x - offset, y0: p.y - offset, x1: p.x + p.w + offset, y1: p.y + p.h + offset }));
 }
 
-// Проём в перекрытии: лестничные помещения и шахты обоих этажей, марши нижнего.
+// Проём в перекрытии: лестничные помещения и шахты обоих этажей и проёмы в
+// перекрытии верхнего (над лестницами — авто, ручные; core/slab-openings.js).
 function slabCuts(lower, upper) {
   const cuts = [];
   for (const lp of [lower, upper]) {
@@ -740,13 +744,7 @@ function slabCuts(lower, upper) {
       for (const p of roomRects(r)) cuts.push({ x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h });
     }
   }
-  for (const item of lower.items.filter((i) => i.kind === 'stairs')) {
-    const o = structuralOutline(item);
-    cuts.push({
-      x0: Math.min(...o.map((p) => p.x)), y0: Math.min(...o.map((p) => p.y)),
-      x1: Math.max(...o.map((p) => p.x)), y1: Math.max(...o.map((p) => p.y)),
-    });
-  }
+  for (const o of slabOpenings(upper, upper.activeLevel)) cuts.push({ x0: o.x, y0: o.y, x1: o.x + o.w, y1: o.y + o.h });
   return cuts;
 }
 

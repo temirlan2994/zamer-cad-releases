@@ -19,6 +19,7 @@ import { normalizeMasses } from './masses.js';
 import { normalizeRoofs } from './roofs.js';
 import { normalizeGrids } from './grid-axes.js';
 import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
+import { normalizeSlabOpenings } from './slab-openings.js';
 
 export { SCHEMA };
 
@@ -407,7 +408,9 @@ function normalizeLevelContent(l) {
   for (const r of rooms) if (r.parentId && !ids.has(r.parentId)) r.parentId = null;
   const walls = cleanList(l.walls, normalizeWall);
   const wallIds = new Set(walls.map((w) => w.id));
-  return {
+  // Проёмы в перекрытии (core/slab-openings.js): необязательно, без смены схемы.
+  const slabOpenings = normalizeSlabOpenings(l.slabOpenings);
+  const out = {
     ...l,
     rooms,
     // Проём на несуществующей ручной стене удаляется (как проём без комнаты).
@@ -416,6 +419,8 @@ function normalizeLevelContent(l) {
     wallOverrides: isObj(l.wallOverrides) ? l.wallOverrides : {},
     walls,
   };
+  if (slabOpenings.length) out.slabOpenings = slabOpenings; else delete out.slabOpenings;
+  return out;
 }
 
 function cleanSite(site) {

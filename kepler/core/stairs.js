@@ -561,6 +561,23 @@ export function setStairParam(item, key, value, fallbackHeight = 3000) {
   return Object.assign(item, cur);
 }
 
+// Другая высота подъёма (лестница ведёт на этаж — разница отметок): число
+// подъёмов — по высоте (≈175 мм), ширина марша и проступь — свои, ступени
+// добавляются/убираются в последнем марше; левый верхний угол на месте.
+export function setStairRise(item, height, fallbackHeight = 3000) {
+  const h = Math.max(1000, Math.round(height));
+  const cur = materializeStair(item, fallbackHeight);
+  const lay0 = stairLayout(cur, fallbackHeight);
+  cur.floorHeight = h;
+  delete cur.risers;
+  const p = explicitParams(cur, baseOf(cur, fallbackHeight));
+  writeParams(cur, p);
+  Object.assign(cur, placeByAnchor(item, lay0, layoutFrom(p), 'tl'));
+  Object.assign(item, cur);
+  delete item.risers;
+  return item;
+}
+
 // Подпись при перетаскивании ручки.
 export function stairHandleLabel(item, handleId, fallbackHeight = 3000) {
   const c = stairCalculation(item, fallbackHeight);

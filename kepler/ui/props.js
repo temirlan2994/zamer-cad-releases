@@ -3,6 +3,8 @@
 import { elevationView, isElevationOpen, refreshElevationView } from './elevation-view.js';
 import { findView } from '../core/views.js';
 import { renderSectionProps } from './plan-section.js';
+import { renderSlabProps } from './slab-ui.js';
+import { slabOpenings, stairRiseByLevels, stairTargetLevel } from '../core/slab-openings.js';
 import { massById, renderMassProps } from './masses.js';
 import { bindRoomRoof, renderRoofProps, roofById, roomRoofHtml } from './roofs.js';
 import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
@@ -21,7 +23,7 @@ import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
-import { deleteLevel } from './levels.js';
+import { deleteLevel, switchLevel } from './levels.js';
 import { syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
 import {
@@ -39,7 +41,7 @@ import {
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import {
-  STAIR_SHAPES, applyStairPreset, materializeStair, setStairParam, stairCalculation, stairParamKeys, stairParamValue, stairShape,
+  STAIR_SHAPES, applyStairPreset, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
 } from '../core/stairs.js';
 import { presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
@@ -162,6 +164,7 @@ export function renderProps() {
     const roof = roofById(sel.id);
     if (roof) { renderRoofProps(panel, roof); return; }
   }
+  if (sel.type === 'slab' && renderSlabProps(panel, sel)) return;
   if (sel.type === 'section') {
     const view = findView(state.project, sel.id);
     if (view?.kind === 'section') { renderSectionProps(panel, view); return; }
@@ -834,16 +837,18 @@ function renderItemProps(panel, item) {
   if (isStairs) {
     const c = stairCalculation(item, activeLevel(state.project)?.height || 3000);
     const comfortable = c.okRiser && c.okTread && c.okComfort;
+    const byLevels = Boolean(item.toLevel && item.toLevel !== 'none');
     stairsBlock = `
       <h3>Форма лестницы</h3>
       <div class="stair-shape">
         ${STAIR_SHAPES.map((shape) => `<button type="button" data-stair-shape="${shape.id}" class="${c.shape === shape.id ? 'active' : ''}">${shape.title}</button>`).join('')}
       </div>
       <button id="stairFit" type="button">Подогнать автоматически</button>
+      ${stairLevelBlock(item)}
       <h3>Простой расчёт</h3>
       <div class="prop-block">
-        <label class="prop-field"><span>Высота этажа, мм</span>
-          <input id="floorH" type="number" step="50" min="2000" value="${c.floorH}"></label>
+        <label class="prop-field"><span>${byLevels ? 'Высота подъёма (по этажам), мм' : 'Высота этажа, мм'}</span>
+          <input id="floorH" type="number" step="50" min="2000" value="${c.floorH}" ${byLevels ? 'readonly' : ''}></label>
         <div class="prop-row"><span>Подступенков</span><strong>${c.risers}</strong></div>
         <div class="prop-row"><span>Проступей</span><strong>${c.treads}</strong></div>
         <div class="prop-row"><span>Высота ступени</span><strong class="${c.okRiser ? '' : 'bad'}">${Math.round(c.riserH)} мм</strong></div>
@@ -882,7 +887,7 @@ function renderItemProps(panel, item) {
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
   const fh = panel.querySelector('#floorH');
-  if (fh) fh.addEventListener('change', (e) => {
+  if (fh && !fh.readOnly) fh.addEventListener('change', (e) => {
     mutate(() => {
       applyStairPreset(item, stairShape(item), Math.max(2000, Number(e.target.value) || 3000));
       fitStairRoom(item);
@@ -910,8 +915,66 @@ function renderItemProps(panel, item) {
     toast('Лестница подогнана под высоту этажа');
   });
   if (isStairs) bindStairParams(panel, item);
+  if (isStairs) bindStairLevel(panel, item);
   bindCompositeSection(panel, item);
   bindErgoItemSection(panel, item);
+}
+
+// «Ведёт на этаж»: следующий (по умолчанию), выбранный этаж выше или никуда.
+// Явный этаж — высота подъёма по разнице отметок (core/slab-openings.js); над
+// лестницей в перекрытии — авто-проём.
+function stairLevelBlock(item) {
+  const project = state.project;
+  const own = activeLevel(project);
+  const above = [...project.levels].filter((l) => l.elevation > own.elevation + 1).sort((a, b) => a.elevation - b.elevation);
+  const target = stairTargetLevel(project, item, own);
+  const value = item.toLevel === 'none' ? 'none' : item.toLevel && above.some((l) => l.id === item.toLevel) ? item.toLevel : '';
+  const next = above[0];
+  const rise = stairRiseByLevels(project, item, own);
+  const hole = target ? slabOpenings(project, target.id).find((o) => o.stairId === item.id) : null;
+  const fmt = (mm) => (mm / 1000).toFixed(2).replace('.', ',');
+  const opts = [
+    `<option value="" ${value === '' ? 'selected' : ''}>${next ? `Следующий: ${escapeHtml(next.name)}` : 'Следующий (этажа выше нет)'}</option>`,
+    ...above.map((l) => `<option value="${l.id}" ${value === l.id ? 'selected' : ''}>${escapeHtml(l.name)} · +${fmt(l.elevation - own.elevation)} м</option>`),
+    `<option value="none" ${value === 'none' ? 'selected' : ''}>Никуда (без проёма)</option>`,
+  ];
+  let hint;
+  if (!target) hint = above.length ? 'Проём в перекрытии не делается.' : 'Добавьте этаж сверху («+» у этажей) — над лестницей появится проём в перекрытии.';
+  else {
+    const mode = hole ? (hole.auto ? ' — авто по лестнице' : ' — изменён вручную') : '';
+    hint = `Подъём ${Math.round(rise)} мм${item.toLevel ? ' — по отметкам этажей' : ''}. Проём в перекрытии на «${escapeHtml(target.name)}»${mode}.`;
+  }
+  return `
+      <h3>Ведёт на этаж</h3>
+      <div class="prop-block">
+        <label class="prop-field"><span>Куда ведёт</span>
+          <select id="stairToLevel">${opts.join('')}</select></label>
+        <p class="empty-hint" id="stairToLevelHint">${hint}</p>
+        ${hole ? '<button id="stairShowHole" type="button">Показать проём на этаже выше</button>' : ''}
+      </div>`;
+}
+
+function bindStairLevel(panel, item) {
+  panel.querySelector('#stairToLevel')?.addEventListener('change', (e) => {
+    const v = e.target.value;
+    mutate(() => {
+      if (v) item.toLevel = v; else delete item.toLevel;
+      const own = activeLevel(state.project);
+      // Явный этаж: подъём по отметкам — ступени и подступенки пересчитаются.
+      const rise = v && v !== 'none' ? stairRiseByLevels(state.project, item, own) : null;
+      if (rise) setStairRise(item, rise, own?.height || 3000);
+      fitStairRoom(item);
+      reconcileOpenings();
+    });
+    selectObject({ type: 'item', id: item.id });
+  });
+  panel.querySelector('#stairShowHole')?.addEventListener('click', () => {
+    const target = stairTargetLevel(state.project, item, activeLevel(state.project));
+    const hole = target && slabOpenings(state.project, target.id).find((o) => o.stairId === item.id);
+    if (!hole) return;
+    switchLevel(target.id);
+    selectObject({ type: 'slab', levelId: target.id, id: hole.id });
+  });
 }
 
 // Параметры лестницы числами: ширина марша, проступь, подъёмы, ступени по

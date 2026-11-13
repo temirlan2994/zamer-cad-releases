@@ -33,6 +33,7 @@ import {
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
+import { deleteSlab } from './slab-ui.js';
 import { deleteSelectedRailing } from './railing-actions.js';
 import { addMass, deleteMass, duplicateMass, massById, masses, rotateMass } from './masses.js';
 import { copyMass } from '../core/masses.js';
@@ -237,6 +238,7 @@ export function deleteSelection() {
   if (!sel) return;
   if (sel.type === 'site' && sel.kind === 'building') return; // дом с участка не удаляется
   if (sel.type === 'section') { deleteSectionView(sel.id); return; }
+  if (sel.type === 'slab') { deleteSlab(sel); return; }
   if (sel.type === 'railing') { deleteSelectedRailing(); return; }
   if (sel.type === 'mass') { deleteMass(sel.id); return; }
   if (sel.type === 'roof') { deleteRoof(sel.id); return; }

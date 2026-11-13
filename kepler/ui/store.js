@@ -10,6 +10,8 @@ import { deriveWalls } from '../core/walls.js';
 import { freeLoops } from '../core/bound-rooms.js';
 import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { syncGridPins } from '../core/grid-pins.js';
+import { syncStairLevels } from '../core/slab-openings.js';
+import { setStairRise } from '../core/stairs.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { collectIssues } from '../core/issues.js';
 import { el, toast } from './dom.js';
@@ -115,6 +117,8 @@ export function pushHistory(before, pid = state.pid) {
 export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   const before = snapshot();
   fn();
+  // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
+  if (state.project) syncStairLevels(state.project, setStairRise);
   // Съедание — производное номинальных форм: после любой правки считается
   // заново (core/v7/eat-bridge.js), результат не зависит от порядка действий.
   if (state.project) reconcileEats(state.project);
