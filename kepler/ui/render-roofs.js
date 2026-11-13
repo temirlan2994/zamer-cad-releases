@@ -8,7 +8,7 @@
 // выкл) бледный штрих проекции плиты, мышь не ловит.
 
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from '../core/catalog.js';
-import { materialColor, overhangLabel, rectsOutline, roofRects } from '../core/roofs.js';
+import { materialColor, overhangLabel, rectsOutline, roofIsSlanted, roofRects, roofSlabOutline } from '../core/roofs.js';
 import { roomPolygon, roomRects } from '../core/room-shape.js';
 import {
   ghostRoofFor, isRoofPlan, planRoofHandles, planRoofPref, rememberRoofHandles, roofOutlineEdges, roofs, selectedRoof,
@@ -117,7 +117,7 @@ function drawHandles(ctx, hs, accent, hotId) {
     ctx.lineWidth = 1.8;
     ctx.strokeStyle = accent;
     if (h.kind === 'vertex') {
-      const r = hot ? 6 : 5;
+      const r = (hot ? 6 : 5) - (h.brk ? 1.5 : 0); // излом на прямой — меньше
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(h.s.x - r, h.s.y - r, 2 * r, 2 * r);
       ctx.strokeRect(h.s.x - r, h.s.y - r, 2 * r, 2 * r);
@@ -159,7 +159,8 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
     if (!slab.length) continue;
     // Плита с выносом — заливка цветом материала.
     ctx.beginPath();
-    rectsPath(ctx, roofRects(state.project, r), p2s);
+    if (roofIsSlanted(r)) polyPath(ctx, roofSlabOutline(state.project, r), p2s);
+    else rectsPath(ctx, roofRects(state.project, r), p2s);
     ctx.fillStyle = materialColor(r.material);
     ctx.globalAlpha = isSel ? 0.2 : 0.13;
     ctx.fill();
@@ -188,7 +189,22 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
     ctx.fillStyle = accent;
     ctx.lineWidth = 1.6;
     ctx.setLineDash([8, 4]);
-    if (t.draw && (t.draw.a.x !== t.draw.b.x || t.draw.a.y !== t.draw.b.y)) {
+    if (t.poly?.length) {
+      // Контур по точкам: поставленные точки, отрезок до курсора, первая — крупнее (замкнуть).
+      const pts = t.cursor ? [...t.poly, t.cursor] : t.poly;
+      ctx.beginPath();
+      pts.forEach((q, i) => { const s = p2s(q.x, q.y); if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); });
+      if (pts.length >= 3) { ctx.closePath(); ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1; }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      t.poly.forEach((q, i) => {
+        const s = p2s(q.x, q.y);
+        const r = i === 0 ? (t.closeHot ? 7 : 5.5) : 3.5;
+        ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = i === 0 && t.closeHot ? accent : '#ffffff'; ctx.fill(); ctx.stroke();
+      });
+      ctx.fillStyle = accent;
+    } else if (t.draw && (t.draw.a.x !== t.draw.b.x || t.draw.a.y !== t.draw.b.y)) {
       const { a, b } = t.draw;
       ctx.beginPath();
       polyPath(ctx, [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }], p2s);
@@ -202,7 +218,7 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
       }
     }
     ctx.setLineDash([]);
-    if (t.cursor && !t.draw) {
+    if (t.cursor && !t.draw && !t.poly?.length) {
       const s = p2s(t.cursor.x, t.cursor.y);
       ctx.beginPath(); ctx.moveTo(s.x - 6, s.y); ctx.lineTo(s.x + 6, s.y); ctx.moveTo(s.x, s.y - 6); ctx.lineTo(s.x, s.y + 6); ctx.stroke();
     }

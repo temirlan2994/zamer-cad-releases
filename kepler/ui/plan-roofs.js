@@ -6,7 +6,7 @@
 // листах/печати (выкл).
 
 import {
-  gridEdges, rectGrid, roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofRects,
+  roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofSlabEdges,
 } from '../core/roofs.js';
 import { state } from './state.js';
 
@@ -52,8 +52,7 @@ export function setPlanRoofPref(patch) {
 
 // Контур плиты (рёбра) для рисования.
 export function roofOutlineEdges(roof) {
-  const rects = roofRects(state.project, roof);
-  return rects.length ? gridEdges(rectGrid([rects])) : [];
+  return roofSlabEdges(state.project, roof);
 }
 
 // Призрак будущей крыши по форме помещения (инструмент «Крыша» в 3D и на

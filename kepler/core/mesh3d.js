@@ -26,7 +26,8 @@ import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import {
-  FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, ringSpec, roofCutRects, roofRects, roofZ, sideDist,
+  FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
+  roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
 } from './roofs.js';
 
 export const WALL_COLOR = '#ece8e1';
@@ -841,6 +842,122 @@ function autoRoofFaces(lp, above, z, own = []) {
 // ступенчатый — kind 'parapet'). Грани: roofId, level; верхние грани несут
 // cutZ0 — низ тела в разрезе (core/section.js). roofs — список (по умолчанию
 // project.roofs); color/alpha — призрак инструмента «Крыша».
+// Призма над многоугольником (косой контур крыши): верх и низ —
+// треугольники (без внутренних рёбер), бока — по рёбрам; рёбра контура — у
+// первой грани.
+export function polySlabFaces(poly, z0, z1, color, kind, { bottom = true } = {}) {
+  const tris = triangulate(poly);
+  if (!tris.length) return [];
+  const faces = [];
+  for (const [a, b, c] of tris) {
+    faces.push({ pts: [v(a.x, a.y, z1), v(b.x, b.y, z1), v(c.x, c.y, z1)], normal: v(0, 0, 1), color, kind, edges: [] });
+    if (bottom) faces.push({ pts: [v(c.x, c.y, z0), v(b.x, b.y, z0), v(a.x, a.y, z0)], normal: v(0, 0, -1), color, kind, edges: [] });
+  }
+  const N = outlineNormals(poly);
+  const edges = [];
+  poly.forEach((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    if (!N[i]) return;
+    faces.push({ pts: [v(a.x, a.y, z0), v(b.x, b.y, z0), v(b.x, b.y, z1), v(a.x, a.y, z1)], normal: v(N[i].x, N[i].y, 0), color, kind, edges: [] });
+    edges.push([v(a.x, a.y, z1), v(b.x, b.y, z1)], [v(a.x, a.y, z0), v(b.x, b.y, z0)], [v(a.x, a.y, z0), v(a.x, a.y, z1)]);
+  });
+  faces[0].edges = edges;
+  return faces;
+}
+
+// Кольцо между контурами outer и inner (одинаковое число точек, ребро i к
+// ребру i): верх, низ, наружная и внутренняя стенки, торцы там, где ширина
+// кольца обрывается в ноль (on[i] = false — выключенная сторона парапета).
+export function polyRingFaces(outer, inner, z0, z1, color, kind, on = null) {
+  const n = outer.length;
+  if (n < 3 || inner.length !== n) return [];
+  const faces = [];
+  const edges = [];
+  const N = outlineNormals(outer);
+  const gap = (i) => {
+    const j = (i + 1) % n;
+    return Math.hypot(outer[i].x - inner[i].x, outer[i].y - inner[i].y) + Math.hypot(outer[j].x - inner[j].x, outer[j].y - inner[j].y);
+  };
+  const wide = outer.map((_p, i) => (on ? on[i] : gap(i) > 1) && N[i]);
+  const P = (p, z) => v(p.x, p.y, z);
+  for (let i = 0; i < n; i += 1) {
+    if (!wide[i]) continue;
+    const j = (i + 1) % n;
+    const o0 = outer[i]; const o1 = outer[j]; const i0 = inner[i]; const i1 = inner[j];
+    faces.push({ pts: [P(o0, z1), P(o1, z1), P(i1, z1), P(i0, z1)], normal: v(0, 0, 1), color, kind, edges: [] });
+    faces.push({ pts: [P(i0, z0), P(i1, z0), P(o1, z0), P(o0, z0)], normal: v(0, 0, -1), color, kind, edges: [] });
+    faces.push({ pts: [P(o0, z0), P(o1, z0), P(o1, z1), P(o0, z1)], normal: v(N[i].x, N[i].y, 0), color, kind, edges: [] });
+    faces.push({ pts: [P(i1, z0), P(i0, z0), P(i0, z1), P(i1, z1)], normal: v(-N[i].x, -N[i].y, 0), color, kind, edges: [] });
+    edges.push([P(o0, z1), P(o1, z1)], [P(i0, z1), P(i1, z1)], [P(o0, z0), P(o1, z0)], [P(i0, z0), P(i1, z0)]);
+    const prev = (i - 1 + n) % n;
+    if (!wide[prev]) {
+      faces.push({ pts: [P(o0, z0), P(i0, z0), P(i0, z1), P(o0, z1)], normal: v(N[prev]?.x || 0, N[prev]?.y || 0, 0), color, kind, edges: [] });
+    }
+    if (!wide[j]) {
+      faces.push({ pts: [P(i1, z0), P(o1, z0), P(o1, z1), P(i1, z1)], normal: v(N[j]?.x || 0, N[j]?.y || 0, 0), color, kind, edges: [] });
+    }
+    edges.push([P(o0, z0), P(o0, z1)], [P(i0, z0), P(i0, z1)]);
+  }
+  if (faces.length) faces[0].edges = edges;
+  return faces;
+}
+
+// Косая крыша: те же части, что на сетке прямоугольников, но многоугольником
+// (пятно этажа выше не вырезается — у косой плиты своей формы его нет).
+function slantedRoofParts(roof, slab, z, mat, edgeColor, add) {
+  const { z0, z1 } = z;
+  const T = roof.thickness;
+  const off = (d, base = slab) => offsetOutline(base, d, { bevel: false });
+  add(polySlabFaces(slab, z0, z1, mat, 'roof'), 'roof', z0);
+  const e = roof.edge;
+  if (e.type === 'fascia') {
+    const top = z1 + 50;
+    add(polyRingFaces(off(FASCIA_T), slab, top - Math.max(e.height, T + 50), top, edgeColor, 'fascia'), 'fascia', top - Math.max(e.height, T + 50));
+  } else if (e.type === 'cornice') {
+    const lo = z1 - Math.max(80, Math.round(T * 0.45));
+    add(polyRingFaces(off(90), slab, lo, z1, edgeColor, 'fascia'), 'fascia', lo);
+  } else if (e.type === 'drip') {
+    add(polyRingFaces(slab, off(-40), z0 - 40, z0, edgeColor, 'fascia'), 'fascia', z0 - 40);
+  }
+  const p = roof.parapet;
+  if (p.type === 'none') return;
+  const on = (n) => p.sides?.[edgeSide(n)] !== false;
+  const inset = (d) => off((n) => (on(n) ? -d : 0));
+  const sideOn = outlineNormals(slab).map((n) => Boolean(n) && on(n));
+  const ring = (from, to, zz0, zz1, c, extra) => add(polyRingFaces(inset(from), inset(to), zz0, zz1, c, 'parapet', sideOn), 'parapet', zz0, extra);
+  const pt = p.thickness;
+  if (p.type === 'wall') ring(p.inset, p.inset + pt, z1, z1 + p.height, mat);
+  else if (p.type === 'stepped') {
+    ring(p.inset, p.inset + pt, z1, z1 + p.height, mat);
+    ring(p.inset + pt, p.inset + 2 * pt, z1, z1 + Math.round(p.height / 2), mat);
+  } else if (p.type === 'glass') {
+    ring(p.inset, p.inset + 60, z1, z1 + 80, edgeColor);
+    ring(p.inset + 20, p.inset + 40, z1 + 80, z1 + p.height, GLASS_COLOR, { glass: true });
+  } else if (p.type === 'rail') {
+    const R = 50;
+    const top = z1 + p.height;
+    ring(p.inset, p.inset + R, top - R, top, RAILING_COLOR);
+    for (const k of [1 / 3, 2 / 3]) {
+      const zz = z1 + (p.height - R) * k;
+      ring(p.inset + 10, p.inset + 40, zz - 15, zz + 15, RAILING_COLOR);
+    }
+    const line = inset(p.inset + R / 2);
+    const N = outlineNormals(slab);
+    if (line.length !== slab.length) return;
+    line.forEach((a, i) => {
+      if (!N[i] || !on(N[i])) return;
+      const b = line[(i + 1) % line.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const cnt = Math.max(1, Math.round(len / 1200));
+      for (let k = 0; k <= cnt; k += 1) {
+        const cx = a.x + ((b.x - a.x) * k) / cnt;
+        const cy = a.y + ((b.y - a.y) * k) / cnt;
+        add(boxFaces(cx - R / 2, cy - R / 2, cx + R / 2, cy + R / 2, z1, top - R, RAILING_COLOR, 'parapet'), 'parapet', null);
+      }
+    });
+  }
+}
+
 export function roofFaces(project, roofs = project?.roofs, { color = null, alpha = null } = {}) {
   const out = [];
   for (const roof of roofs || []) {
@@ -857,6 +974,15 @@ export function roofFaces(project, roofs = project?.roofs, { color = null, alpha
         out.push(g);
       }
     };
+    if (roofIsSlanted(roof)) {
+      const slab = roofSlabOutline(project, roof);
+      if (slab.length < 3) continue;
+      slantedRoofParts(roof, slab, z, mat, edgeColor, (list, kind, cutZ0, extra = {}) => {
+        const more = extra.glass ? (alpha == null ? { alpha: 0.35, twoSided: true } : {}) : extra;
+        tag(list, kind, cutZ0, more);
+      });
+      continue;
+    }
     // Над пятном этажа выше плиты нет — там перекрытие (козырёк вокруг верхнего этажа).
     const cut = roofCutRects(project, roof);
     const slab = (spec, z0, z1, c, kind, extra) => tag(slabFaces(regionGrid(spec.all, [...(spec.none || []), ...cut]), z0, z1, c, kind, { bottom: true }), kind, z0, extra);

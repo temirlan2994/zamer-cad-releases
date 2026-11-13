@@ -38,6 +38,7 @@ import { massToolBack as planMassBack, startMassTool, toggleMassTool } from './m
 import { massKey } from './mass3d.js';
 import { handleGridKey } from './grids.js';
 import { isRoofTool, toggleRoofTool } from './roofs.js';
+import { roofPolyKey } from './roof-plan.js';
 
 export let spaceDown = false;
 
@@ -190,6 +191,8 @@ export function bindKeyboard() {
       stepLevel(event.key === 'PageUp' ? 1 : -1);
       return;
     }
+    // Контур крыши по точкам: Enter — замкнуть, Backspace — точка назад, Esc — бросить (ui/roof-plan.js).
+    if (roofPolyKey(event)) { event.preventDefault(); return; }
     if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
     // Инструмент «Стена»: Enter и Esc заканчивают цепочку (стены остаются).
     if ((event.key === 'Enter' || event.key === 'Escape') && state.tool?.kind === 'wall') { finishWallChain(); return; }

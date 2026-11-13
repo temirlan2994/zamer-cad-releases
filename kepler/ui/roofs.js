@@ -25,7 +25,7 @@ import { cancelTool, selectObject, setTool } from './tools.js';
 import { is3dOpen } from './view3d.js';
 import { isRoofPlan, openRoofPlanView, roofById, roofs, selectedRoof } from './plan-roofs.js';
 
-export const ROOF_DRAW_HINT = 'Крыша: протяните прямоугольник или кликните по помещению подложки — форма по нему (дальше без связи) · Shift — без привязки · Esc — выйти';
+export const ROOF_DRAW_HINT = 'Крыша: протяните прямоугольник, кликните по помещению подложки — форма по нему (дальше без связи), клик мимо помещений или Alt+клик — контур по точкам · Shift — без привязки · Esc — выйти';
 const HINT_3D = 'Крыша: клик по помещению — крыша по его форме · Shift+клик — добавить форму помещения к выбранной крыше · клик по крыше — выбрать · Esc — выйти';
 
 export { roofById, roofs, selectedRoof };

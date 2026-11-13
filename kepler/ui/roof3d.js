@@ -25,6 +25,7 @@ const GHOST = '#3d7fe0';
 const HANDLE_PX = 5;
 const HIT = { mouse: { axis: 8, handle: 10 }, touch: { axis: 22, handle: 20 } };
 const ACCENT_EDGE = [0.24, 0.5, 0.88, 1];
+const OUTLINE_COLOR = '#2f6fd6'; // свой контур выбранной крыши (штрих поверх плиты)
 const Z_AXIS = { x: 0, y: 0, z: 1 };
 
 let env = null;
@@ -66,7 +67,8 @@ function grips(roof) {
 
 const isHot = (part) => (drag ? drag.part === part : hover === part);
 
-// Наложения: призрак инструмента и ручки выбранной крыши.
+// Наложения: призрак инструмента и у выбранной крыши — свой контур штрихом
+// на верхней грани (плита сама полупрозрачна, ui/view3d.js faceAlpha) и ручки.
 export function roofOverlay() {
   if (!env || !state.project) return [];
   const out = [];
@@ -84,6 +86,27 @@ export function roofOverlay() {
   const k = env.worldPerPx();
   const B = env.basis();
   const top = { kind: 'overlay', onTop: true, flat: true, twoSided: true, normal: { x: 0, y: 0, z: 1 } };
+  // Свой контур (без выноса, от него считается вынос) — штрих акцентом на
+  // верхней грани плиты, поверх сцены.
+  const zTop = g.handles[0]?.p.z ?? 0;
+  const O = (roof.outline || []).map((q) => ({ x: q.x, y: q.y, z: zTop + 1 }));
+  if (O.length >= 3) {
+    const dash = 12 * k; const gap = 6 * k; const w = 1.4 * k;
+    O.forEach((a, i) => {
+      const b = O[(i + 1) % O.length];
+      const L = Math.hypot(b.x - a.x, b.y - a.y);
+      if (L < 1) return;
+      const u = { x: (b.x - a.x) / L, y: (b.y - a.y) / L, z: 0 };
+      const nrm = { x: -u.y, y: u.x, z: 0 };
+      for (let t = 0; t < L; t += dash + gap) {
+        const p0 = add(a, u, t); const p1 = add(a, u, Math.min(L, t + dash));
+        out.push({
+          ...top, kind: 'overlay-outline', noEdges: true, color: OUTLINE_COLOR, alpha: 1,
+          pts: [add(p0, nrm, -w), add(p1, nrm, -w), add(p1, nrm, w), add(p0, nrm, w)],
+        });
+      }
+    });
+  }
   for (const h of g.handles) {
     const hot = isHot(h.id);
     const P = disc(h.p, (hot ? HANDLE_PX + 1.5 : HANDLE_PX) * k, B);

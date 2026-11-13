@@ -8,10 +8,12 @@
 //             level.height + dz, верх = низ + thickness;
 //   dz — поднять/опустить, мм (по умолчанию 0);
 //   outline [{x, y}] — свой контур основания (без выноса) в осях дома, мм:
-//             ортогональный многоугольник (прямоугольник, Г, П…), с
+//             простой многоугольник — ортогональный (прямоугольник, Г, П…)
+//             или с косыми рёбрами (трапеция, ромб, треугольник); с
 //             помещениями не связан — двигается и правится сам (план крыши,
-//             ui/roof-plan.js). Старые крыши над помещениями (roomIds) при
-//             открытии получают контур по помещениям (normalizeRoofs);
+//             ui/roof-plan.js). Точки «излома» на прямой (без поворота)
+//             допустимы — заготовка уступа. Старые крыши над помещениями
+//             (roomIds) при открытии получают контур по помещениям (normalizeRoofs);
 //   overhang { n, e, s, w } — вынос от контура по сторонам в осях дома (n — к
 //             меньшим y, «верх» плана; e — к большим x), 0…3000 мм; на
 //             Г-образном основании каждое ребро сдвигается по своей нормали
@@ -22,14 +24,15 @@
 //             sides { n, e, s, w }: bool };
 //   material: graphite|white|wood|concrete|metal; drain: bool (маркер).
 // }
-// Геометрия — на общей сетке прямоугольников (как перекрытия в
-// core/mesh3d.js regionGrid): плита, кольцо фасции снаружи, кольцо
-// парапета внутри (эрозия по включённым сторонам).
+// Геометрия ортогонального контура — на общей сетке прямоугольников (как
+// перекрытия в core/mesh3d.js regionGrid): плита, кольцо фасции снаружи,
+// кольцо парапета внутри (эрозия по включённым сторонам). Косой контур —
+// многоугольником: каждое ребро сдвигается по своей нормали на вынос
+// nx²·(e|w) + ny²·(n|s) (offsetOutline, угол — пересечение соседних линий,
+// острый выпуклый — срез), плита — треугольники (triangulate).
 
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
-import {
-  applyRoomShapeHandle, polygonRects, roomLabelPoint, roomRects, roomShapeHandles,
-} from './room-shape.js';
+import { polygonRects, roomLabelPoint, roomRects, roomShapeHandles } from './room-shape.js';
 
 export const ROOF_SIDES = ['n', 'e', 's', 'w'];
 export const SIDE_TITLES = { n: 'верх', e: 'право', s: 'низ', w: 'лево' };
@@ -111,8 +114,14 @@ export function nextRoofName(existing = []) {
 }
 
 const samePt = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5;
-const collinear = (a, b, c) => (Math.abs(a.x - b.x) < 0.5 && Math.abs(b.x - c.x) < 0.5)
-  || (Math.abs(a.y - b.y) < 0.5 && Math.abs(b.y - c.y) < 0.5);
+// b на прямой ac (отклонение < 0,75 мм): 'straight' — по ходу, 'spike' — шип назад.
+function lineKind(a, b, c) {
+  const L = Math.hypot(c.x - a.x, c.y - a.y);
+  const ux = b.x - a.x; const uy = b.y - a.y; const vx = c.x - b.x; const vy = c.y - b.y;
+  if (L < 0.5) return Math.hypot(ux, uy) < 0.5 ? null : 'spike';
+  if (Math.abs((c.x - a.x) * uy - (c.y - a.y) * ux) / L >= 0.75) return null;
+  return ux * vx + uy * vy > 0 ? 'straight' : 'spike';
+}
 
 function cleanOutline(list) {
   if (!Array.isArray(list)) return null;
@@ -122,7 +131,8 @@ function cleanOutline(list) {
 }
 
 // Контур без повторов и без точек посреди прямой (в т. ч. «шипов» назад).
-export function tidyOutline(points) {
+// keepBreaks — точки излома на прямой (заготовки уступа) остаются.
+export function tidyOutline(points, { keepBreaks = false } = {}) {
   const pts = (points || []).map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
   let changed = true;
   while (changed && pts.length >= 3) {
@@ -131,10 +141,128 @@ export function tidyOutline(points) {
       const a = pts[(i - 1 + pts.length) % pts.length];
       const b = pts[i];
       const c = pts[(i + 1) % pts.length];
-      if (samePt(a, b) || collinear(a, b, c)) { pts.splice(i, 1); changed = true; break; }
+      const k = samePt(a, b) ? 'same' : lineKind(a, b, c);
+      if (k === 'same' || k === 'spike' || (k === 'straight' && !keepBreaks)) { pts.splice(i, 1); changed = true; break; }
     }
   }
   return pts;
+}
+
+// Все рёбра по осям (прямоугольник, Г, П…) — геометрия на сетке прямоугольников.
+export function isOrthoOutline(points) {
+  const n = (points || []).length;
+  for (let i = 0; i < n; i += 1) {
+    const a = points[i]; const b = points[(i + 1) % n];
+    if (Math.abs(a.x - b.x) > 0.5 && Math.abs(a.y - b.y) > 0.5) return false;
+  }
+  return true;
+}
+
+const signedArea2 = (pts) => {
+  let s = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    s += a.x * b.y - b.x * a.y;
+  }
+  return s;
+};
+
+// Нормали рёбер наружу (единичные; у нулевого ребра — null).
+export function outlineNormals(points) {
+  const s = signedArea2(points) >= 0 ? 1 : -1;
+  return points.map((a, i) => {
+    const b = points[(i + 1) % points.length];
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    return L < 0.5 ? null : { x: (s * (b.y - a.y)) / L, y: (-s * (b.x - a.x)) / L };
+  });
+}
+
+// Точка внутри многоугольника (на границе — внутри).
+export function pointInOutline(points, x, y) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[j]; const b = points[i];
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    if (L > 0 && Math.abs((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) / L < 0.5
+      && x >= Math.min(a.x, b.x) - 0.5 && x <= Math.max(a.x, b.x) + 0.5
+      && y >= Math.min(a.y, b.y) - 0.5 && y <= Math.max(a.y, b.y) + 0.5) return true;
+    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+// Вынос ребра с нормалью n по сторонам { n, e, s, w }: nx²·(e|w) + ny²·(n|s)
+// (ребро по оси — ровно вынос своей стороны, под 45° — среднее).
+export function edgeOverhang(oh, n) {
+  if (!n) return 0;
+  return n.x * n.x * (n.x > 0 ? oh.e : oh.w) + n.y * n.y * (n.y > 0 ? oh.s : oh.n);
+}
+
+// Сдвиг контура: ребро i — по своей нормали наружу на dist(n, i) (меньше
+// нуля — внутрь). Угол — пересечение соседних линий; острый выпуклый угол
+// (выступ длиннее 4 сдвигов) — срез двумя точками. Точки излома на прямой
+// (соседние рёбра параллельны) сдвигаются по нормали.
+export function offsetOutline(points, dist, { bevel = true } = {}) {
+  const src = (points || []).filter((p, i, list) => !samePt(p, list[(i + 1) % list.length]));
+  const n = src.length;
+  if (n < 3) return [];
+  const N = outlineNormals(src);
+  const D = N.map((nn, i) => (typeof dist === 'function' ? dist(nn, i) : Number(dist) || 0));
+  const out = [];
+  for (let j = 0; j < n; j += 1) {
+    const i = (j - 1 + n) % n;
+    const a = src[j];
+    const n1 = N[i]; const n2 = N[j]; const d1 = D[i]; const d2 = D[j];
+    const det = n1.x * n2.y - n1.y * n2.x;
+    const at = (nn, d) => ({ x: a.x + nn.x * d, y: a.y + nn.y * d });
+    if (Math.abs(det) < 1e-6) {
+      if (Math.abs(d1 - d2) < 0.5) out.push(at(n2, d2));
+      else out.push(at(n1, d1), at(n2, d2));
+      continue;
+    }
+    const q = { x: (d1 * n2.y - d2 * n1.y) / det, y: (n1.x * d2 - n2.x * d1) / det };
+    const lim = 4 * Math.max(Math.abs(d1), Math.abs(d2));
+    const outward = (q.x * (n1.x + n2.x) + q.y * (n1.y + n2.y)) * Math.sign(d1 + d2) > 0;
+    if (bevel && lim > 0 && Math.hypot(q.x, q.y) > lim && outward) out.push(at(n1, d1), at(n2, d2));
+    else out.push({ x: a.x + q.x, y: a.y + q.y });
+  }
+  return out;
+}
+
+// Простой многоугольник → треугольники [[a, b, c], …] (отсечение ушей).
+export function triangulate(points) {
+  const pts = (points || []).filter((p, i, list) => !samePt(p, list[(i + 1) % list.length]));
+  if (pts.length < 3) return [];
+  const s = signedArea2(pts) >= 0 ? 1 : -1;
+  const idx = pts.map((_p, i) => i);
+  const tris = [];
+  const cr = (a, b, c) => ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * s;
+  let guard = 0;
+  while (idx.length > 3 && guard < 10000) {
+    guard += 1;
+    let cut = false;
+    for (let k = 0; k < idx.length; k += 1) {
+      const a = pts[idx[(k - 1 + idx.length) % idx.length]];
+      const b = pts[idx[k]];
+      const c = pts[idx[(k + 1) % idx.length]];
+      const turn = cr(a, b, c);
+      if (turn < 0) continue;
+      if (Math.abs(turn) < 1e-6) { idx.splice(k, 1); cut = true; break; } // на прямой
+      const inside = idx.some((m) => {
+        const p = pts[m];
+        if (p === a || p === b || p === c) return false;
+        return cr(a, b, p) >= 0 && cr(b, c, p) >= 0 && cr(c, a, p) >= 0;
+      });
+      if (inside) continue;
+      tris.push([a, b, c]);
+      idx.splice(k, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) break; // негодный контур — сколько вышло
+  }
+  if (idx.length === 3) tris.push(idx.map((m) => pts[m]));
+  return tris;
 }
 
 export function outlineArea(points) {
@@ -159,15 +287,15 @@ function segsTouch(p1, p2, p3, p4) {
     || (d3 === 0 && on(p1, p2, p3)) || (d4 === 0 && on(p1, p2, p4));
 }
 
-// Годный контур крыши: ≥ 4 вершин, рёбра по осям, без самопересечений,
-// площадь не меньше 0,01 м².
+// Годный контур крыши: ≥ 3 вершин (рёбра любые, излом на прямой можно),
+// без повторов, шипов назад и самопересечений, площадь не меньше 0,01 м².
 export function validOutline(points) {
-  if (!Array.isArray(points) || points.length < 4) return false;
+  if (!Array.isArray(points) || points.length < 3) return false;
   const n = points.length;
   for (let i = 0; i < n; i += 1) {
     const a = points[i]; const b = points[(i + 1) % n];
-    if (Math.abs(a.x - b.x) > 0.5 && Math.abs(a.y - b.y) > 0.5) return false;
-    if (samePt(a, b)) return false;
+    if (!Number.isFinite(a?.x) || !Number.isFinite(a?.y) || samePt(a, b)) return false;
+    if (lineKind(points[(i - 1 + n) % n], a, b) === 'spike') return false;
   }
   if (outlineArea(points) < 1e4) return false;
   for (let i = 0; i < n; i += 1) {
@@ -354,51 +482,176 @@ export function outlineBox(roof) {
 // Ручки контура (как у помещения с контуром, core/room-shape.js):
 // вершины { id: 'outline-v-i', kind: 'vertex', index } и середины рёбер
 // { id: 'outline-e-i', kind: 'edge', index } в осях дома.
+// brk: true — вершина-излом на прямой (заготовка уступа).
 export function roofOutlineHandles(roof) {
-  if (!Array.isArray(roof?.outline) || roof.outline.length < 4) return [];
-  return roomShapeHandles({ x: 0, y: 0, w: 0, h: 0, outline: roof.outline });
+  const o = roof?.outline;
+  if (!Array.isArray(o) || o.length < 3) return [];
+  const hs = o.length >= 4 ? roomShapeHandles({ x: 0, y: 0, w: 0, h: 0, outline: o }) : [
+    ...o.map((p, index) => ({ id: `outline-v-${index}`, kind: 'vertex', outline: true, index, x: p.x, y: p.y })),
+    ...o.map((p, index) => ({ id: `outline-e-${index}`, kind: 'edge', outline: true, index, x: (p.x + o[(index + 1) % 3].x) / 2, y: (p.y + o[(index + 1) % 3].y) / 2 })),
+  ];
+  const n = o.length;
+  for (const h of hs) {
+    if (h.kind === 'vertex' && lineKind(o[(h.index - 1 + n) % n], o[h.index], o[(h.index + 1) % n]) === 'straight') h.brk = true;
+  }
+  return hs;
 }
 
-// Ручка контура в точку (ребро — сдвиг по нормали, вершина — два ребра).
-// → новая крыша или null (контур вышел негодным: самопересечение, вырождение).
-export function applyRoofOutlineHandle(roof, handle, point, { mergeTolerance = 0 } = {}) {
-  const room = { x: 0, y: 0, outline: roof.outline.map((p) => ({ x: p.x, y: p.y })) };
-  applyRoomShapeHandle(room, { ...handle, outline: true }, point, { mergeTolerance });
-  const t = tidyOutline(room.outline);
+// Сдвиг ребра i (a→b) по его нормали на d (знак — по нормали (dy, −dx)/L).
+// Концы скользят по линиям соседних рёбер (как стена помещения: соседние
+// стены удлиняются); если сосед на одной прямой с ребром (точка излома),
+// нулевой или почти параллелен — на конце встаёт уступ (новая точка, ребро
+// по нормали). → { pts, ia, ib } — новый контур и индексы концов ребра.
+export function shiftOutlineEdge(points, i, d) {
+  const pts = points.map((p) => ({ x: p.x, y: p.y }));
+  const n = pts.length;
+  const ib0 = (i + 1) % n;
+  const a = pts[i]; const b = pts[ib0];
+  const L = Math.hypot(b.x - a.x, b.y - a.y);
+  if (L < 0.5) return { pts, ia: i, ib: ib0 };
+  const u = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
+  const nn = { x: u.y, y: -u.x };
+  const slide = (p, nb) => {
+    const w = { x: nb.x - p.x, y: nb.y - p.y };
+    const lw = Math.hypot(w.x, w.y);
+    const sin = lw < 0.5 ? 0 : Math.abs(u.x * w.y - u.y * w.x) / lw;
+    if (sin < 0.1) return null; // уступ
+    const k = d / (nn.x * w.x + nn.y * w.y);
+    return { x: p.x + w.x * k, y: p.y + w.y * k };
+  };
+  const moved = (p) => ({ x: p.x + nn.x * d, y: p.y + nn.y * d });
+  const sa = slide(a, pts[(i - 1 + n) % n]);
+  const sb = slide(b, pts[(i + 2) % n]);
+  const out = [];
+  let ia = -1; let ib = -1;
+  for (let k = 0; k < n; k += 1) {
+    if (k === i) {
+      if (sa) { ia = out.length; out.push(sa); } else { out.push(a); ia = out.length; out.push(moved(a)); }
+    } else if (k === ib0) {
+      if (sb) { ib = out.length; out.push(sb); } else { ib = out.length; out.push(moved(b)); out.push(b); }
+    } else out.push(pts[k]);
+  }
+  return { pts: out, ia, ib };
+}
+
+// Расстояние сдвига ребра i до точки, с притяжением к линиям других вершин
+// (в пределах tol — ребро встаёт заподлицо с ними).
+function edgeShift(pts, i, point, tol) {
+  const n = pts.length;
+  const a = pts[i]; const b = pts[(i + 1) % n];
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const nn = { x: (b.y - a.y) / L, y: -(b.x - a.x) / L };
+  const along = (p) => nn.x * (p.x - a.x) + nn.y * (p.y - a.y);
+  let d = along(point);
+  if (tol > 0) {
+    let best = tol;
+    pts.forEach((p, k) => {
+      if (k === i || k === (i + 1) % n) return;
+      const v = along(p);
+      if (Math.abs(v - d) <= best && Math.abs(v) > 0.5) { best = Math.abs(v - d); d = v; }
+    });
+  }
+  return d;
+}
+
+const roundPts = (pts) => pts.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+const finishOutline = (roof, pts) => {
+  const t = tidyOutline(roundPts(pts), { keepBreaks: true });
   return validOutline(t) ? { ...roof, outline: t } : null;
-}
+};
 
-// Деление ребра в точке: две совпадающие вершины (потянуть половину ребра —
-// получится уступ, Г-форма). → крыша или null (точка у конца ребра).
-export function insertRoofVertex(roof, edgeIndex, point, minGap = 100) {
+// Ручка контура в точку. Ребро — сдвиг по нормали (концы скользят по
+// соседям, у излома — уступ). Вершина: free — свободно в точку (косые
+// рёбра; притяжение к x/y других вершин в пределах mergeTolerance — прямой
+// угол), иначе — оба ребра параллельно (прямоугольник остаётся
+// прямоугольником). → новая крыша или null (самопересечение, вырождение).
+export function applyRoofOutlineHandle(roof, handle, point, { mergeTolerance = 0, free = false } = {}) {
   const pts = roof.outline.map((p) => ({ x: p.x, y: p.y }));
   const n = pts.length;
-  const a = pts[edgeIndex]; const b = pts[(edgeIndex + 1) % n];
-  if (!a || !b) return null;
-  const horiz = Math.abs(a.y - b.y) < 0.5;
-  const lo = horiz ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
-  const hi = horiz ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-  const v = Math.round(horiz ? point.x : point.y);
-  if (v < lo + minGap || v > hi - minGap) return null;
-  const p = horiz ? { x: v, y: a.y } : { x: a.x, y: v };
-  pts.splice(edgeIndex + 1, 0, { ...p }, { ...p });
+  const i = handle.index;
+  if (!pts[i]) return null;
+  const tol = mergeTolerance;
+  if (handle.kind === 'edge') {
+    return finishOutline(roof, shiftOutlineEdge(pts, i, edgeShift(pts, i, point, tol)).pts);
+  }
+  if (free) {
+    const p = { x: point.x, y: point.y };
+    if (tol > 0) {
+      for (const axis of ['x', 'y']) {
+        let best = tol;
+        pts.forEach((q, k) => {
+          if (k !== i && Math.abs(q[axis] - point[axis]) <= best) { best = Math.abs(q[axis] - point[axis]); p[axis] = q[axis]; }
+        });
+      }
+    }
+    pts[i] = p;
+    return finishOutline(roof, pts);
+  }
+  const prev = (i - 1 + n) % n;
+  const first = shiftOutlineEdge(pts, prev, edgeShift(pts, prev, point, tol));
+  const second = shiftOutlineEdge(first.pts, first.ib, edgeShift(first.pts, first.ib, point, tol));
+  return finishOutline(roof, second.pts);
+}
+
+// Проекция точки на ребро i → { t (0…1), along, len, p }.
+function onEdge(pts, i, point) {
+  const a = pts[i]; const b = pts[(i + 1) % pts.length];
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const t = len > 0 ? clamp(((point.x - a.x) * (b.x - a.x) + (point.y - a.y) * (b.y - a.y)) / (len * len), 0, 1) : 0;
+  return { t, along: t * len, len, p: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t } };
+}
+
+// Излом на ребре: точка на прямой ребра (потянуть часть ребра — уступ,
+// потянуть саму точку — косой излом). → крыша или null (у конца ребра).
+export function insertRoofVertex(roof, edgeIndex, point, minGap = 100) {
+  const pts = roof.outline.map((p) => ({ x: p.x, y: p.y }));
+  if (!pts[edgeIndex]) return null;
+  const e = onEdge(pts, edgeIndex, point);
+  if (e.along < minGap || e.along > e.len - minGap) return null;
+  pts.splice(edgeIndex + 1, 0, { x: Math.round(e.p.x), y: Math.round(e.p.y) });
   return { ...roof, outline: pts };
 }
 
-// Удалить вершину: угол срезается до соседей (вогнутый — уступ заполняется).
-// → крыша или null (прямоугольник, негодный результат).
+// «Сломать ребро как стену»: часть ребра i от точки нажатия at до
+// ближнего конца уходит в точку point — уступ (Г, П, Т-формы). Нажатие у
+// конца (ближе minGap) — сдвиг всего ребра. → крыша или null.
+export function pushRoofEdgePart(roof, edgeIndex, at, point, { minGap = 100, mergeTolerance = 0 } = {}) {
+  const pts = roof.outline.map((p) => ({ x: p.x, y: p.y }));
+  if (!pts[edgeIndex]) return null;
+  const e = onEdge(pts, edgeIndex, at);
+  if (e.along < minGap || e.along > e.len - minGap) {
+    return finishOutline(roof, shiftOutlineEdge(pts, edgeIndex, edgeShift(pts, edgeIndex, point, mergeTolerance)).pts);
+  }
+  pts.splice(edgeIndex + 1, 0, e.p);
+  const part = e.t < 0.5 ? edgeIndex : edgeIndex + 1;
+  return finishOutline(roof, shiftOutlineEdge(pts, part, edgeShift(pts, part, point, mergeTolerance)).pts);
+}
+
+// Удалить вершину. Излом на прямой — просто убрать. Угол ортогонального
+// контура — срезается до соседей (вогнутый — уступ заполняется, у
+// прямоугольника нельзя). Иначе — соседи соединяются прямо (из квадрата —
+// треугольник нельзя: только у косого контура). → крыша или null.
 export function removeRoofVertex(roof, index) {
-  const at = roof.outline[index];
+  const src = roof.outline;
+  const at = src[index];
   if (!at) return null;
-  const pts = tidyOutline(roof.outline);
-  index = pts.findIndex((p) => samePt(p, at));
-  // Вершина деления ребра (на прямой) — просто убрать деление.
-  if (index < 0) return validOutline(pts) && pts.length < roof.outline.length ? { ...roof, outline: pts } : null;
-  const n = pts.length;
-  if (n <= 4) return null;
-  const a = pts[(index - 1 + n) % n]; const b = pts[index]; const c = pts[(index + 1) % n];
-  pts[index] = Math.abs(a.y - b.y) < 0.5 ? { x: a.x, y: c.y } : { x: c.x, y: a.y };
-  const t = tidyOutline(pts);
+  const n = src.length;
+  if (lineKind(src[(index - 1 + n) % n], at, src[(index + 1) % n]) === 'straight') {
+    const pts = src.filter((_p, k) => k !== index);
+    return validOutline(pts) ? { ...roof, outline: pts } : null;
+  }
+  if (isOrthoOutline(src)) {
+    const pts = tidyOutline(src);
+    index = pts.findIndex((p) => samePt(p, at));
+    if (index < 0 || pts.length <= 4) return null;
+    const m = pts.length;
+    const a = pts[(index - 1 + m) % m]; const b = pts[index]; const c = pts[(index + 1) % m];
+    pts[index] = Math.abs(a.y - b.y) < 0.5 ? { x: a.x, y: c.y } : { x: c.x, y: a.y };
+    const t = tidyOutline(pts);
+    return validOutline(t) ? { ...roof, outline: t } : null;
+  }
+  const pts = src.filter((_p, k) => k !== index);
+  const t = tidyOutline(pts, { keepBreaks: true });
   return validOutline(t) ? { ...roof, outline: t } : null;
 }
 
@@ -454,7 +707,7 @@ export const roofById = (project, id) => roofsOf(project).find((r) => r.id === i
 export function roofAtPoint(project, levelId, x, y) {
   const list = roofsOf(project).filter((r) => r.levelId === levelId);
   for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (roofBaseRects(project, list[i]).some((b) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1)) return list[i];
+    if (pointInOutline(list[i].outline || [], x, y)) return list[i];
   }
   return null;
 }
@@ -484,9 +737,15 @@ export function roofZ(project, roof) {
 
 const box = (p, o = 0) => ({ x0: p.x - o, y0: p.y - o, x1: p.x + p.w + o, y1: p.y + p.h + o });
 
-// Основание без выноса: прямоугольники своего контура.
+const ptsBox = (pts) => ({
+  x0: Math.min(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)),
+  x1: Math.max(...pts.map((p) => p.x)), y1: Math.max(...pts.map((p) => p.y)),
+});
+
+// Основание без выноса: прямоугольники своего контура (косой контур — габарит).
 export function roofBaseRects(_project, roof) {
-  return Array.isArray(roof?.outline) && roof.outline.length >= 3 ? polygonRects(roof.outline).map((p) => box(p)) : [];
+  if (!Array.isArray(roof?.outline) || roof.outline.length < 3) return [];
+  return isOrthoOutline(roof.outline) ? polygonRects(roof.outline).map((p) => box(p)) : [ptsBox(roof.outline)];
 }
 
 // Пятно этажа над крышей (как core/mesh3d.js levelFootprint: закрытые
@@ -508,10 +767,40 @@ export function expandRects(rects, d) {
   return rects.map((r) => ({ x0: r.x0 - o.w, y0: r.y0 - o.n, x1: r.x1 + o.e, y1: r.y1 + o.s }));
 }
 
-// Плита с выносом.
+// Плита с выносом (косой контур — габарит многоугольника плиты).
 export function roofRects(project, roof) {
+  if (Array.isArray(roof?.outline) && roof.outline.length >= 3 && !isOrthoOutline(roof.outline)) {
+    const poly = roofSlabOutline(project, roof);
+    return poly.length >= 3 ? [ptsBox(poly)] : [];
+  }
   return expandRects(roofBaseRects(project, roof), roof.overhang);
 }
+
+// Контур плиты с выносом (многоугольник): ортогональный — по сетке
+// прямоугольников (сумма Минковского; несвязное — []), косой — сдвиг рёбер.
+export function roofSlabOutline(project, roof) {
+  const o = roof?.outline;
+  if (!Array.isArray(o) || o.length < 3) return [];
+  if (!isOrthoOutline(o)) return offsetOutline(tidyOutline(o), (n) => edgeOverhang(roof.overhang, n));
+  const loops = chainEdges(gridEdges(rectGrid([roofRects(project, roof)])));
+  return loops && loops.length === 1 ? tidyOutline(loops[0]) : [];
+}
+
+// Рёбра плиты { a, b, n } (n — нормаль наружу) для рисования и ручек выноса.
+export function roofSlabEdges(project, roof) {
+  const o = roof?.outline;
+  if (!Array.isArray(o) || o.length < 3) return [];
+  if (isOrthoOutline(o)) {
+    const rects = roofRects(project, roof);
+    return rects.length ? gridEdges(rectGrid([rects])) : [];
+  }
+  const poly = roofSlabOutline(project, roof);
+  const N = outlineNormals(poly);
+  return poly.map((a, i) => ({ a, b: poly[(i + 1) % poly.length], n: N[i] })).filter((e) => e.n);
+}
+
+// Косой контур (не все рёбра по осям) — 3D, фасады, площадь — многоугольником.
+export const roofIsSlanted = (roof) => Array.isArray(roof?.outline) && roof.outline.length >= 3 && !isOrthoOutline(roof.outline);
 
 export function rectsBox(rects) {
   if (!rects.length) return null;
@@ -585,7 +874,7 @@ export function gridEdges(grid) {
   return out;
 }
 
-export const edgeSide = (n) => (n.y < 0 ? 'n' : n.y > 0 ? 's' : n.x > 0 ? 'e' : 'w');
+export const edgeSide = (n) => (Math.abs(n.y) >= Math.abs(n.x) ? (n.y < 0 ? 'n' : 's') : (n.x > 0 ? 'e' : 'w'));
 
 // Дополнение области (клетки сетки вне её + рамка вокруг габарита).
 function complementRects(rects, margin) {
@@ -633,16 +922,19 @@ export function sideDist(sides, d) {
 // Точки выноса: середины самых длинных рёбер сторон и крайние углы
 // → [{ id: 'n'|'e'|'s'|'w'|'nw'|'ne'|'se'|'sw', x, y, sides }].
 export function roofHandles(project, roof) {
-  const rects = roofRects(project, roof);
-  if (!rects.length) return [];
-  const edges = gridEdges(rectGrid([rects]));
+  const edges = roofSlabEdges(project, roof);
+  if (!edges.length) return [];
   const out = [];
   for (const s of ROOF_SIDES) {
-    let best = null; let len = -1;
+    // Ребро, смотрящее в сторону s сильнее всех (длина × косинус²; у косых —
+    // и ромб получает все четыре точки).
+    const dir = { n: { x: 0, y: -1 }, e: { x: 1, y: 0 }, s: { x: 0, y: 1 }, w: { x: -1, y: 0 } }[s];
+    let best = null; let len = 0;
     for (const e of edges) {
-      if (edgeSide(e.n) !== s) continue;
-      const l = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y);
-      if (l > len) { len = l; best = e; }
+      const c = e.n.x * dir.x + e.n.y * dir.y;
+      if (c < 0.5) continue;
+      const l = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) * c * c;
+      if (l > len + 1e-6) { len = l; best = e; }
     }
     if (best) out.push({ id: s, x: (best.a.x + best.b.x) / 2, y: (best.a.y + best.b.y) / 2, sides: [s] });
   }
@@ -777,7 +1069,8 @@ export function overhangLabel(roof) {
 // Сводка для «Свойств»: площадь плиты (м²), габарит, отметки.
 export function roofStats(project, roof) {
   const rects = roofRects(project, roof);
-  const area = rects.length ? gridArea(rectGrid([rects])) / 1e6 : 0;
+  const area = roofIsSlanted(roof) ? outlineArea(roofSlabOutline(project, roof)) / 1e6
+    : (rects.length ? gridArea(rectGrid([rects])) / 1e6 : 0);
   const b = rectsBox(rects);
   const z = roofZ(project, roof);
   return { area, box: b, z0: z?.z0 ?? 0, z1: z?.z1 ?? 0 };

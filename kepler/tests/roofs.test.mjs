@@ -8,9 +8,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyRoofOutlineHandle, applyRoofPreset, createRoof, dragOverhang, gridArea, gridEdges, insertRoofVertex, moveRoof,
-  normalizeRoof, normalizeRoofs, overhangLabel, patchRoof, rectGrid, rectsBox, rectsOutline, removeRoofVertex,
-  roofBaseRects, roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofRects, roofZ, snapOverhang,
-  snapRoofDz, snapRoofMove, tidyOutline, validOutline,
+  normalizeRoof, normalizeRoofs, offsetOutline, outlineArea, overhangLabel, patchRoof, pushRoofEdgePart, rectGrid, rectsBox,
+  rectsOutline, removeRoofVertex, roofAtPoint, roofBaseRects, roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom,
+  roofRects, roofSlabEdges, roofSlabOutline, roofStats, roofZ, snapOverhang, snapRoofDz, snapRoofMove, tidyOutline,
+  triangulate, validOutline,
 } from '../core/roofs.js';
 import { createLevel, createProject, createRoom, deserializeProject, fileDataV6, serializeProject } from '../core/model.js';
 import { buildHouseMesh, roofFaces } from '../core/mesh3d.js';
@@ -106,10 +107,11 @@ test('правка контура: перенос, ребро, вершина, �
   assert.deepEqual(rectsBox(roofBaseRects(p, big)), { x0: 0, y0: 0, x1: 7000, y1: 5000 });
   // Ребро за противоположное — негодно (null), контур не ломается.
   assert.equal(applyRoofOutlineHandle(r, e1, { x: 0, y: 0 }), null);
-  // Деление нижнего ребра (индекс 2: (6000,4000)→(0,4000)) в x = 3000 и
-  // сдвиг правой половины вниз — Г-форма.
+  // Излом нижнего ребра (индекс 2: (6000,4000)→(0,4000)) в x = 3000 (точка
+  // на прямой) и сдвиг правой половины вниз — Г-форма (уступ у излома).
   const split = insertRoofVertex(r, 2, { x: 3000, y: 4100 });
-  assert.equal(split.outline.length, 6);
+  assert.equal(split.outline.length, 5);
+  assert.deepEqual(split.outline[3], { x: 3000, y: 4000 });
   const half = roofOutlineHandles(split).find((h) => h.kind === 'edge' && h.y === 4000 && h.x === 4500);
   assert.ok(half, 'ручка правой половины ребра');
   const L = applyRoofOutlineHandle(split, half, { x: 4500, y: 6000 });
@@ -122,6 +124,7 @@ test('правка контура: перенос, ребро, вершина, �
   assert.equal(back.outline.length, 4);
   assert.deepEqual(rectsBox(roofBaseRects(p, back)), { x0: 0, y0: 0, x1: 6000, y1: 6000 });
   assert.equal(removeRoofVertex(r, 0), null, 'у прямоугольника вершину не удалить');
+  assert.equal(removeRoofVertex(split, 3).outline.length, 4, 'излом на прямой — убрать');
   // Вынос считается от нового контура.
   const oh = patchRoof(L, { overhang: { n: 500, e: 500, s: 500, w: 500 } });
   assert.deepEqual(bbox(p, oh), { x0: -500, y0: -500, x1: 6500, y1: 6500 });
@@ -344,4 +347,129 @@ test('выбор в 3D: клик по крыше сверху выбирает �
   const hit2 = hitAt(buildHouseMesh(p, { roofs: false }));
   assert.equal(hit2.type, 'room');
   assert.ok(screenRay(cam, 800, 600, 400, 300));
+});
+
+const rect = (w = 6000, h = 4000, oh = 0) => createRoof({ levelId: 'L1', outline: [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }], overhang: { n: oh, e: oh, s: oh, w: oh } });
+
+test('ломать как стену: тянуть часть ребра — уступ (Г, П, Т), нажатие у конца — всё ребро', () => {
+  const p = house();
+  const r = rect();
+  // Нижнее ребро (индекс 2) нажато в x = 1500 — ближе к левому концу: часть 1500…0 уходит вниз.
+  const L = pushRoofEdgePart(r, 2, { x: 1500, y: 4000 }, { x: 1500, y: 5000 });
+  assert.deepEqual(L.outline, [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 }, { x: 1500, y: 4000 }, { x: 1500, y: 5000 }, { x: 0, y: 5000 }]);
+  assert.equal(outlineArea(L.outline), 6000 * 4000 + 1500 * 1000);
+  // Внутрь — вырез (Г с вогнутым углом).
+  const cut = pushRoofEdgePart(r, 2, { x: 4500, y: 4000 }, { x: 4500, y: 3000 });
+  assert.equal(outlineArea(cut.outline), 6000 * 4000 - 1500 * 1000);
+  // Два излома и средняя часть — П/Т-выступ.
+  const two = insertRoofVertex(insertRoofVertex(r, 2, { x: 4000, y: 4000 }), 3, { x: 2000, y: 4000 });
+  assert.equal(two.outline.length, 6);
+  const mid = roofOutlineHandles(two).find((h) => h.kind === 'edge' && h.x === 3000 && h.y === 4000);
+  const T = applyRoofOutlineHandle(two, mid, { x: 3000, y: 5500 });
+  assert.equal(T.outline.length, 8, 'Т — 8 вершин');
+  assert.equal(outlineArea(T.outline), 6000 * 4000 + 2000 * 1500);
+  assert.equal(gridArea(rectGrid([roofBaseRects(p, T)])), 6000 * 4000 + 2000 * 1500);
+  // Вернуть заподлицо — уступ исчезает.
+  const back = roofOutlineHandles(T).find((h) => h.kind === 'edge' && h.x === 3000 && h.y === 5500);
+  const flat = applyRoofOutlineHandle(T, back, { x: 3000, y: 4000 });
+  assert.equal(outlineArea(flat.outline), 6000 * 4000);
+  // У конца ребра (ближе 100 мм) — сдвиг всего ребра.
+  const all = pushRoofEdgePart(r, 2, { x: 50, y: 4000 }, { x: 50, y: 4500 });
+  assert.deepEqual(rectsBox(roofBaseRects(p, all)), { x0: 0, y0: 0, x1: 6000, y1: 4500 });
+  assert.equal(all.outline.length, 4);
+});
+
+test('свободные вершины: косая грань, трапеция, треугольник; привязка к x/y соседей; без free — прямые углы', () => {
+  const r = rect(6000, 4000, 600);
+  const v2 = roofOutlineHandles(r).find((h) => h.kind === 'vertex' && h.x === 6000 && h.y === 4000);
+  const trap = applyRoofOutlineHandle(r, v2, { x: 4000, y: 4000 }, { free: true });
+  assert.deepEqual(trap.outline[2], { x: 4000, y: 4000 });
+  assert.ok(validOutline(trap.outline));
+  assert.equal(outlineArea(trap.outline), ((6000 + 4000) / 2) * 4000);
+  // Притяжение к x/y других вершин — прямой угол.
+  const snapped = applyRoofOutlineHandle(r, v2, { x: 5970, y: 4030 }, { free: true, mergeTolerance: 50 });
+  assert.deepEqual(snapped.outline[2], { x: 6000, y: 4000 });
+  // Без free — оба ребра параллельно (прямоугольник растёт).
+  assert.deepEqual(rectsBox(roofBaseRects(null, applyRoofOutlineHandle(r, v2, { x: 7000, y: 5000 }))), { x0: 0, y0: 0, x1: 7000, y1: 5000 });
+  // Вершину на соседнюю — треугольник.
+  const tri = applyRoofOutlineHandle(r, v2, { x: 0, y: 4000 }, { free: true });
+  assert.equal(tri.outline.length, 3);
+  assert.equal(outlineArea(tri.outline), (6000 * 4000) / 2);
+  // Самопересечение (вершина за противоположное ребро) — null.
+  assert.equal(applyRoofOutlineHandle(r, v2, { x: 3000, y: -3000 }, { free: true }), null);
+  // Удалить вершину косого контура — соседи соединяются (из трапеции — треугольник).
+  assert.equal(removeRoofVertex(trap, 2).outline.length, 3);
+  // Ребро косого контура: сдвиг по нормали, соседи удлиняются по своим линиям.
+  const slantEdge = roofOutlineHandles(trap).find((h) => h.kind === 'edge' && h.index === 1);
+  const pushed = applyRoofOutlineHandle(trap, slantEdge, { x: 6000, y: 3000 });
+  assert.ok(pushed && outlineArea(pushed.outline) > outlineArea(trap.outline));
+  assert.equal(pushed.outline.length, 4);
+  assert.equal(pushed.outline[1].y, 0, 'конец скользит по верхнему ребру');
+  assert.equal(pushed.outline[2].y, 4000, 'и по нижнему');
+});
+
+test('косой контур: вынос по нормалям рёбер, площадь, валидация, попадание, 3D, фасад, разрез', () => {
+  const p = house();
+  const r = createRoof({ levelId: 'L1', outline: [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 4000, y: 4000 }, { x: 0, y: 4000 }] });
+  const slab = roofSlabOutline(p, r);
+  assert.equal(slab.length, 4);
+  // Косое ребро (6000,0)-(4000,4000) сдвинуто на 600 по своей нормали.
+  const L = Math.hypot(2000, 4000);
+  const d = (q) => ((q.x - 6000) * 4000) / L + (q.y * 2000) / L;
+  assert.ok(Math.abs(d(slab[1]) - 600) < 1 && Math.abs(d(slab[2]) - 600) < 1);
+  assert.deepEqual(slab[0], { x: -600, y: -600 });
+  // Площадь плиты — по многоугольнику.
+  const st = roofStats(p, r);
+  assert.ok(Math.abs(st.area - outlineArea(slab) / 1e6) < 1e-9);
+  assert.ok(st.area > (((6000 + 4000) / 2) * 4000) / 1e6);
+  // Ромб с разными выносами по сторонам: рёбра плиты есть, ручки выноса — 8.
+  const diamond = createRoof({ levelId: 'L1', outline: [{ x: 0, y: -3000 }, { x: 3000, y: 0 }, { x: 0, y: 3000 }, { x: -3000, y: 0 }], overhang: { n: 0, e: 1000, s: 1000, w: 0 } });
+  assert.equal(roofSlabEdges(p, diamond).length, 4);
+  assert.equal(roofHandles(p, diamond).length, 8);
+  // Острый угол — срез двумя точками (без длинного шипа).
+  const sharp = offsetOutline([{ x: 0, y: 0 }, { x: 10000, y: 1000 }, { x: 0, y: 2000 }], 500);
+  assert.equal(sharp.length, 4);
+  assert.ok(Math.max(...sharp.map((q) => q.x)) < 10000 + 4 * 500 + 1);
+  // Валидация: треугольник годен, бабочка, шип и крошка — нет.
+  assert.ok(validOutline([{ x: 0, y: 0 }, { x: 3000, y: 0 }, { x: 0, y: 3000 }]));
+  assert.equal(validOutline([{ x: 0, y: 0 }, { x: 3000, y: 3000 }, { x: 3000, y: 0 }, { x: 0, y: 3000 }]), false);
+  assert.equal(validOutline([{ x: 0, y: 0 }, { x: 3000, y: 0 }, { x: 1000, y: 0 }, { x: 0, y: 3000 }]), false, 'шип назад');
+  assert.equal(validOutline([{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 0, y: 50 }]), false, 'меньше 0,01 м²');
+  // Треугольники вогнутого контура покрывают его площадь.
+  const Lp = [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 1000 }, { x: 1000, y: 3000 }, { x: 0, y: 3000 }];
+  const tris = triangulate(Lp);
+  assert.equal(tris.length, 3);
+  assert.ok(Math.abs(tris.reduce((s, t) => s + outlineArea(t), 0) - outlineArea(Lp)) < 1);
+  // Попадание — по многоугольнику.
+  const q = { ...p, roofs: [r] };
+  assert.equal(roofAtPoint(q, 'L1', 1000, 1000)?.id, r.id);
+  assert.equal(roofAtPoint(q, 'L1', 5800, 3800), null, 'за косой гранью');
+  // 3D: плита — треугольники на отметке, фасция и парапеты всех типов строятся.
+  const faces = roofFaces(p, [r]);
+  const tops = faces.filter((f) => f.kind === 'roof' && f.normal.z > 0.5);
+  assert.ok(tops.length >= 2 && tops.every((f) => f.pts.length === 3 && f.pts.every((t) => t.z === 3300) && f.cutZ0 === 3000));
+  assert.ok(Math.abs(tops.reduce((s, f) => s + outlineArea(f.pts), 0) - outlineArea(slab)) < 1);
+  assert.ok(faces.some((f) => f.kind === 'fascia'));
+  const sb = rectsBox([{ x0: Math.min(...slab.map((t) => t.x)), y0: Math.min(...slab.map((t) => t.y)), x1: Math.max(...slab.map((t) => t.x)), y1: Math.max(...slab.map((t) => t.y)) }]);
+  for (const type of ['wall', 'glass', 'rail', 'stepped']) {
+    const pf = roofFaces(p, [patchRoof(r, { parapet: { type } })]).filter((f) => f.kind === 'parapet');
+    assert.ok(pf.length > 0, type);
+    for (const f of pf) assert.ok(f.pts.every((t) => t.x >= sb.x0 - 1 && t.x <= sb.x1 + 1 && t.y >= sb.y0 - 1 && t.y <= sb.y1 + 1), `${type}: парапет на плите`);
+  }
+  const one = roofFaces(p, [patchRoof(r, { parapet: { type: 'wall', sides: { n: true, e: false, s: false, w: false } } })]).filter((f) => f.kind === 'parapet');
+  assert.ok(Math.max(...one.flatMap((f) => f.pts.map((t) => t.y))) <= -600 + 200 + 1, 'только сторона n');
+  for (const type of ['cornice', 'drip']) assert.ok(roofFaces(p, [patchRoof(r, { edge: { type } })]).some((f) => f.kind === 'fascia'), type);
+  // Фасад и разрез.
+  p.roofs = [r];
+  const el = buildElevation(p, 'S');
+  assert.ok(el.polys.some((x) => x.kind === 'roof'));
+  const sec = buildSection(p, { kind: 'section', id: 's1', line: { a: { x: 1000, y: -3000 }, b: { x: 1000, y: 8000 } } });
+  const cut = sec.cuts.filter((c) => c.kind === 'roof');
+  assert.ok(cut.some((c) => c.z0 === 3000 && c.z1 === 3300), 'плита в сечении');
+  // Старый ортогональный контур — прежняя геометрия (сетка прямоугольников).
+  const o = rect(6000, 4000, 600);
+  assert.deepEqual(rectsBox(roofRects(p, o)), { x0: -600, y0: -600, x1: 6600, y1: 4600 });
+  assert.equal(roofSlabOutline(p, o).length, 4);
+  // Сохранение косого контура.
+  assert.deepEqual(deserializeProject(serializeProject(p)).roofs[0].outline, r.outline);
 });

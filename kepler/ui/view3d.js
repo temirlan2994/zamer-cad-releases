@@ -175,6 +175,10 @@ function faceAlpha(face) {
   if (face.kind === 'mass' && state.selection?.type === 'mass' && state.selection.id === face.massId) {
     return massFaceHot(face) ? 0.5 : 0.34; // выбранная масса — прозрачная
   }
+  // Выбранная крыша — полупрозрачная: под ней читаются стены и свой контур.
+  if (face.roofId && state.selection?.type === 'roof' && state.selection.id === face.roofId && !face.kind?.startsWith('overlay')) {
+    return Math.min(face.alpha ?? 1, 0.45);
+  }
   return face.alpha ?? 1;
 }
 
