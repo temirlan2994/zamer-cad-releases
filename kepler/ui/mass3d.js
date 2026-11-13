@@ -421,6 +421,16 @@ function gripOverlay(m, k) {
   const B = env.basis();
   const box = massBox(m);
   const top = { kind: 'overlay', onTop: true, flat: true, twoSided: true, normal: { x: 0, y: 0, z: 1 } };
+  // Лёгкий каркас куба поверх сцены: виден, даже когда масса частично
+  // спрятана внутри соседней.
+  const cz = [box.z0, box.z1];
+  const C = (i, j, l) => ({ x: i ? box.x1 : box.x0, y: j ? box.y1 : box.y0, z: cz[l] });
+  const wire = [];
+  for (const [a, b] of [[[0, 0], [1, 0]], [[1, 0], [1, 1]], [[1, 1], [0, 1]], [[0, 1], [0, 0]]]) {
+    for (const l of [0, 1]) wire.push([C(a[0], a[1], l), C(b[0], b[1], l)]);
+    wire.push([C(a[0], a[1], 0), C(a[0], a[1], 1)]);
+  }
+  out.push({ ...top, pts: [C(0, 0, 0), C(1, 0, 0), C(1, 1, 0)], color: '#ffffff', alpha: 0, edges: wire, edgeRgba: [0.24, 0.5, 0.88, 0.55] });
   // Точки размера (сначала невидимые стороны — ниже в стопке).
   const list = MASS_HANDLES.map((h) => ({ h, p: handlePoint(box, h.s), front: handleFacing(h.s, B.f) }))
     .sort((a, b) => Number(a.front) - Number(b.front));
