@@ -31,7 +31,10 @@ import {
   PLAN_LS_GROUPS, planLandscapePref, planOnlyPref, setPlanLandscapePref,
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
-import { planShadowPref, setPlanShadowPref } from './plan-shadows.js';
+import { setViewDisplay, viewDisplay, viewIdOf } from '../core/view-display.js';
+import { setLandscapeSun } from './landscape-style.js';
+import { refreshLandscapeSun } from './landscape-sun.js';
+import { tweak } from './store.js';
 import { planRoofPref, setPlanRoofPref } from './render-roofs.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
 import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
@@ -43,7 +46,6 @@ import { requestDraw } from './view.js';
 import { close3d, is3dOpen, open3d } from './view3d.js';
 import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from './view-align.js';
 
-const MODE_TITLES = { plan: '«План»', site: '«Участок»', landscape: '«Ландшафт»' };
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
 const openGroups = { plans: true, roof: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
 
@@ -293,33 +295,102 @@ export function viewSettingsHtml() {
   }
   const mode = state.modeName || 'plan';
   const custom = customViewAngle(project, mode);
-  const outer = project.settings?.dimOuter !== false;
+  const plan = mode === 'plan';
   return `
     <div id="viewsSettings">
-    <h3>Поворот вида ${MODE_TITLES[mode] || ''}</h3>
+    ${section('display', displayBlock(mode))}
+    ${section('light', lightBlock(mode))}
+    ${section('rotation', `
+    <h3>Поворот вида</h3>
     <div class="prop-block" id="viewsRotation">
-      <button type="button" id="viewsAlignBtn"${state.tool?.kind === 'align-view' ? ' class="armed"' : ''}>⟲ Выровнять вид по двум точкам</button>
+      <button type="button" id="viewsAlignBtn"${state.tool?.kind === 'align-view' ? ' class="armed"' : ''}>⟲ Выровнять по двум точкам</button>
       <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
         <input id="viewsAngleInput" type="number" step="0.5" inputmode="decimal" value="${fmtAngle(viewAngle(project, mode))}"></label>
       <div class="prop-grid">
         <button type="button" id="viewsAngleReset" ${custom == null ? 'disabled' : ''}>Сбросить</button>
         <button type="button" id="viewsAxesBtn" ${isPlanEmpty(project) ? 'disabled' : ''} title="Повернуть оси дома (данные) по экрану этого вида; Ctrl+Z — вернуть">Оси дома по виду</button>
       </div>
-      <p class="hint">У «Плана», «Участка» и «Ландшафта» — свой угол; данные проекта не меняются.</p>
-    </div>
+    </div>`)}
+    ${plan ? section('landscape', landscapeBlock()) : ''}
+    ${plan ? section('masses', massBlock()) : ''}
+    ${plan ? section('roofs', roofBlock()) : ''}
+    ${plan ? section('grid', gridViewBlock()) : ''}
+    ${plan ? section('ergo', ergoViewBlock()) : ''}
+    ${section('sheet', placeBlockHtml(activeViewId() || (plan ? `plan:${project.activeLevel}` : mode)))}
+    </div>`;
+}
+
+// --- Разделы настроек вида: сворачиваются, раскрытость помнится (браузер) ---
+// Открыты сразу «Отображение» и «Освещение», остальное — по нажатию.
+const SECTIONS_KEY = 'kepler-view-sections';
+const SECTIONS_OPEN = { display: true, light: true, sheet: true };
+function sectionsState() {
+  if (!state.viewSections) {
+    try { state.viewSections = JSON.parse(localStorage.getItem(SECTIONS_KEY) || '{}') || {}; } catch { state.viewSections = {}; }
+  }
+  return state.viewSections;
+}
+const sectionOpen = (id) => (id in sectionsState() ? sectionsState()[id] : Boolean(SECTIONS_OPEN[id]));
+function setSectionOpen(id, open) {
+  sectionsState()[id] = open;
+  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(state.viewSections)); } catch { /* только на сессию */ }
+}
+// Блок «<h3>Заголовок</h3> …» → раздел <details> с этим заголовком.
+function section(id, html) {
+  if (!html || !html.trim()) return '';
+  const m = html.match(/^\s*<h3[^>]*>([\s\S]*?)<\/h3>/);
+  const title = m ? m[1] : id;
+  const body = m ? html.slice(m[0].length) : html;
+  return `<details class="vs-sec" data-sec="${id}"${sectionOpen(id) ? ' open' : ''}><summary>${title}</summary>${body}</details>`;
+}
+
+// Сегментный выбор (радиокнопки, .seg — как «Тени» ландшафта).
+const seg = (name, options, current, disabled = false) => `<div class="seg views-seg" role="radiogroup">${options.map(([value, title]) => `
+  <label class="seg-opt${current === value ? ' active' : ''}"><input type="radio" name="${name}" value="${value}" ${current === value ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${title}</span></label>`).join('')}</div>`;
+
+const currentViewId = () => viewIdOf(state.project, state.modeName || 'plan');
+
+// «Отображение»: помещения цветные или серые (у каждого вида своё), подложка, размеры.
+function displayBlock(mode) {
+  const project = state.project;
+  const vd = viewDisplay(project, currentViewId());
+  const outer = project.settings?.dimOuter !== false;
+  return `
     <h3>Отображение</h3>
-    <div class="prop-block">
+    <div class="prop-block" id="viewsDisplay">
+      ${mode !== 'landscape' ? `<div class="views-row"><span>Помещения</span>${seg('viewsRooms', [['color', 'Цветные'], ['gray', 'Серые']], vd.rooms)}</div>` : ''}
       ${project.site?.underlay ? `<label class="check-row"><input type="checkbox" id="viewsUnderlay" ${state.underlayHidden ? '' : 'checked'}><span>Подложка (съёмка)</span></label>` : ''}
-      <label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>
-      ${mode === 'plan' ? `<label class="check-row"><input type="checkbox" id="viewsShadows" ${planShadowPref().on ? 'checked' : ''}><span>Тени от стен и мебели</span></label>` : ''}
-      <button type="button" id="views3dBtn">Открыть 3D-вид</button>
-    </div>
-    ${mode === 'plan' ? gridViewBlock() : ''}
-    ${mode === 'plan' ? ergoViewBlock() : ''}
-    ${mode === 'plan' ? massBlock() : ''}
-    ${mode === 'plan' ? roofBlock() : ''}
-    ${mode === 'plan' ? landscapeBlock() : ''}
-    ${placeBlockHtml(activeViewId() || (mode === 'plan' ? `plan:${project.activeLevel}` : mode))}
+      ${mode !== 'landscape' ? `<label class="check-row"><input type="checkbox" id="viewsDimOuter" ${outer ? 'checked' : ''}><span>Наружные размеры — по внешней грани стен</span></label>` : ''}
+    </div>`;
+}
+
+const LS_SUN_MODES = [['off', 'Выкл'], ['default', 'Обычные'], ['sun', 'Солнце']];
+
+// «Освещение»: план — тени от стен и мебели (свет, длина), у всех видов —
+// тень дома по солнцу участка; «Ландшафт» — его тени (как на плашке «Тени»).
+function lightBlock(mode) {
+  const project = state.project;
+  const vd = viewDisplay(project, currentViewId());
+  const sunOn = Boolean(project.site?.sun?.enabled);
+  const sunRow = sunOn
+    ? `<label class="check-row"><input type="checkbox" id="viewsSunShadow" ${vd.sunShadow ? 'checked' : ''}><span>Тень дома по солнцу</span></label>`
+    : '<p class="hint">Солнце по дате и времени включается в «Участке» (свойства участка → «Солнце»).</p>';
+  if (mode === 'landscape') {
+    return `
+    <h3>Освещение</h3>
+    <div class="prop-block" id="viewsLight">
+      <div class="views-row"><span>Тени</span>${seg('viewsLsSun', LS_SUN_MODES, state.lsSun?.mode || 'default')}</div>
+    </div>`;
+  }
+  return `
+    <h3>Освещение</h3>
+    <div class="prop-block" id="viewsLight">
+      ${mode === 'plan' ? `
+      <label class="check-row"><input type="checkbox" id="viewsShadows" ${vd.shadows ? 'checked' : ''}><span>Тени от стен и мебели</span></label>
+      ${vd.shadows ? `
+      <div class="views-row"><span>Свет</span>${seg('viewsLight', [['sun', 'По солнцу'], ['fixed', 'Условный']], vd.light)}</div>
+      <div class="views-row"><span>Длина</span>${seg('viewsLength', [['short', 'Короткие'], ['medium', 'Средние'], ['long', 'Длинные']], vd.length)}</div>` : ''}` : ''}
+      ${sunRow}
     </div>`;
 }
 
@@ -369,11 +440,25 @@ export function bindViewSettings(panel, rerender) {
     const outer = state.project.settings?.dimOuter !== false;
     if (outer !== e.target.checked) el('dimModeBtn')?.click();
   });
-  panel.querySelector('#viewsShadows')?.addEventListener('change', (e) => {
-    setPlanShadowPref({ on: e.target.checked });
+  // Разделы: раскрытость помнится.
+  panel.querySelectorAll('details.vs-sec').forEach((d) => d.addEventListener('toggle', () => setSectionOpen(d.dataset.sec, d.open)));
+  // Отображение и освещение вида (core/view-display.js) — у каждого вида свои.
+  const display = (patch) => {
+    tweak(() => setViewDisplay(state.project, currentViewId(), patch));
+    rerender();
+  };
+  panel.querySelector('#viewsShadows')?.addEventListener('change', (e) => display({ shadows: e.target.checked }));
+  panel.querySelector('#viewsSunShadow')?.addEventListener('change', (e) => display({ sunShadow: e.target.checked }));
+  for (const [name, key] of [['viewsRooms', 'rooms'], ['viewsLight', 'light'], ['viewsLength', 'length']]) {
+    panel.querySelectorAll(`input[name="${name}"]`).forEach((r) => r.addEventListener('change', () => { if (r.checked) display({ [key]: r.value }); }));
+  }
+  panel.querySelectorAll('input[name="viewsLsSun"]').forEach((r) => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    setLandscapeSun({ mode: r.value });
+    refreshLandscapeSun();
     requestDraw();
-  });
-  panel.querySelector('#views3dBtn')?.addEventListener('click', () => openView(is3dOpen() ? activeBaseView() : '3d'));
+    rerender();
+  }));
   panel.querySelector('#viewsLsOn')?.addEventListener('change', (e) => {
     const pref = planLandscapePref();
     // Включили после «Только планировки» — вернуть группы по умолчанию.
@@ -400,8 +485,3 @@ export function bindViewSettings(panel, rerender) {
   });
 }
 
-// Вид под 3D (режим редактора): куда вернуться, закрыв 3D.
-function activeBaseView() {
-  const mode = state.modeName || 'plan';
-  return mode === 'plan' ? `plan:${state.project.activeLevel}` : mode;
-}

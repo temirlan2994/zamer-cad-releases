@@ -66,12 +66,16 @@ import { drawSlabOpenings } from './ui/render-slab.js';
 import { drawPlanGrids } from './ui/render-axes.js';
 import { drawErgonomics } from './ui/render-ergonomics.js';
 import { drawPlanShadows } from './ui/plan-shadows.js';
+import { VIEW_DISPLAY_DEFAULT, viewDisplay, viewIdOf } from './core/view-display.js';
 import { drawGridLocks } from './ui/grid-locks.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
 const lightFill = (type) => roomColors(type).light;
 const darkFill = (type) => roomColors(type).dark;
+// Помещения «серые» (настройка вида, core/view-display.js) — как на презентационном плане.
+const grayFill = () => '#f2f3f5';
+const grayFillDark = () => '#2d3239';
 
 function cssTokens(style = getComputedStyle(document.documentElement)) {
   const token = (name, fallback) => ((style && style.getPropertyValue(name)) || fallback).trim();
@@ -192,6 +196,8 @@ export function createRenderer(canvas) {
     };
 
     const px = (v) => v / scale; // толщина линии в экранных пикселях
+    // Отображение и освещение этого вида (core/view-display.js); листы — по умолчанию.
+    const vd = print ? VIEW_DISPLAY_DEFAULT : viewDisplay(state.project, viewIdOf(state.project, state.modeName));
 
     // 1. Сетка (на печати не нужна).
     setView(gridView);
@@ -225,7 +231,7 @@ export function createRenderer(canvas) {
     // 2. Рельеф (закраска высот, горизонтали), затем участок: дороги,
     // запретная зона, соседи, тени.
     if (site) drawTerrainUnder(ctx, state, site, px);
-    if (site) drawSiteUnder(ctx, state, site, tokens, px);
+    if (site) drawSiteUnder(ctx, state, site, tokens, px, { sunShadow: vd.sunShadow });
 
     // Ландшафт (core/landscape.js, ui/render-landscape.js): в «Ландшафте» —
     // для правки, в «Участке» — для контекста. Покрытия — под домом.
@@ -262,7 +268,7 @@ export function createRenderer(canvas) {
       ...tokens,
       roomFill: () => lsPal.paper,
       wall: lsPal.ink, wallBearing: lsPal.ink,
-    } : tokens;
+    } : vd.rooms === 'gray' ? { ...tokens, roomFill: lsDark ? grayFillDark : grayFill } : tokens;
     state._planLandscape = 0;
     if (planLs && lsObjects.length) {
       drawPlanLandscape(ctx, lsObjects, lsOpts);
@@ -422,11 +428,11 @@ export function createRenderer(canvas) {
         }
       }
 
-      // Тени от стен и мебели (ui/plan-shadows.js): готовый слой из кеша, умножением —
-      // поверх полов и стен (места стен в слое белые), под проёмами, мебелью и подписями.
-      if (!print && !landscape && state.modeName === 'plan' && opts.site !== false) {
-        drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark });
-      }
+      // Тени от стен и мебели (ui/plan-shadows.js) по настройке вида «Освещение»:
+      // готовый слой из кеша — поверх полов и стен (места стен в слое прозрачные),
+      // под проёмами, мебелью и подписями.
+      const planShadows = !print && !landscape && state.modeName === 'plan' && opts.site !== false && vd.shadows;
+      if (planShadows) drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark, display: vd });
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.
       const overlapZones = landscape ? [] : (state.norms?.overlaps || []).filter((o) => o.levelId === state.project.activeLevel);
@@ -464,13 +470,15 @@ export function createRenderer(canvas) {
         drawOpening(ctx, state, opening, walls, houseTokens, px);
       }
 
-      // 6. Мебель (на генплане — без неё: opts.detail === false).
+      // 6. Мебель (на генплане — без неё: opts.detail === false). С тенями — объёмная:
+      // светлый непрозрачный верх, тень и ореол вокруг — из слоя теней.
+      const itemTokens = planShadows ? { ...tokens, furnitureFill: lsDark ? '#454d58' : '#ffffff' } : tokens;
       const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
       for (const item of detail ? state.project.items : []) {
         const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
           (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
         const hovered = hoveredItems.has(item.id);
-        drawItem(ctx, item, tokens, px, selected, hovered);
+        drawItem(ctx, item, itemTokens, px, selected, hovered);
       }
       // Эргономика мебели (ui/render-ergonomics.js): зоны и тесные места — только на экране.
       if (detail && !print && state.modeName === 'plan') drawErgonomics(ctx, { st: state, walls, tokens, px, p2s, dpr, scale, print });
@@ -999,7 +1007,7 @@ function polyPath(ctx, points, close = true) {
   if (close) ctx.closePath();
 }
 
-function drawSiteUnder(ctx, state, site, tokens, px) {
+function drawSiteUnder(ctx, state, site, tokens, px, { sunShadow = true } = {}) {
   const hov = state.hover?.type === 'site-obj' ? state.hover : null;
   // Дороги.
   for (const road of site.roads || []) {
@@ -1083,7 +1091,8 @@ function drawSiteUnder(ctx, state, site, tokens, px) {
   // совпадают со стенами при любом повороте дома и вида.
   // В «Ландшафте» при тенях «Солнце»/«Выкл» тени инсоляции участка не дублируются.
   const lsMode = state.modeName === 'landscape' ? (state.lsSun?.mode || 'default') : 'default';
-  if (site.sun?.enabled && lsMode === 'default') {
+  // Настройка вида «Тень дома по солнцу» (core/view-display.js) — у каждого вида своя.
+  if (site.sun?.enabled && lsMode === 'default' && sunShadow) {
     const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
     const vector = shadowVector(sun, site.north, site.buildingHeight || 6000);
     if (vector) {
@@ -1602,7 +1611,7 @@ function drawItem(ctx, item, tokens, px, selected, hovered) {
   }
   ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : tokens.furniture;
   ctx.lineWidth = px(selected || hovered ? 1.8 : 1.2);
-  ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : 'rgba(127,144,165,0.08)';
+  ctx.fillStyle = hovered ? 'rgba(29,78,216,0.1)' : tokens.furnitureFill || 'rgba(127,144,165,0.08)';
   const parts = compositeParts(item);
   // Диван-конструктор: предмет — только его модули, основы нет.
   const whole = isFixedSizeComp(item);

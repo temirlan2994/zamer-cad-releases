@@ -46,10 +46,13 @@ function itemPoly(it) {
   });
 }
 
-// Кто отбрасывает тень: видимые стены и мебель. { poly, len, kind: 'wall'|'item' }.
-export function shadowCasters(walls, items = [], { wallHeight = 3000, k = 0.3 } = {}) {
+// Кто отбрасывает тень: видимые стены и мебель. { poly, len, kind: 'wall'|'item' };
+// у мебели ещё halo — контур чуть шире: мягкая тень вокруг (предмет «стоит» на полу).
+// lengthK — множитель длины (настройка вида «Длина теней»).
+export function shadowCasters(walls, items = [], { wallHeight = 3000, k = 0.3, lengthK = 1 } = {}) {
   const out = [];
-  const wallLen = shadowLength(wallHeight, k);
+  const len = (h) => Math.min(5000, Math.max(150, shadowLength(h, k) * lengthK));
+  const wallLen = len(wallHeight);
   for (const w of walls || []) {
     if (w.hidden) continue;
     const polys = w.polys?.length ? w.polys : w.poly ? [w.poly] : wallRects(w).map(rectPoly);
@@ -58,7 +61,7 @@ export function shadowCasters(walls, items = [], { wallHeight = 3000, k = 0.3 } 
   for (const it of items || []) {
     if (!(it.w > 0 && it.h > 0)) continue;
     const h = Math.min(2200, furniture3d(it.kind)?.h || 600);
-    out.push({ poly: itemPoly(it), len: shadowLength(h, k), kind: 'item' });
+    out.push({ poly: itemPoly(it), halo: itemPoly({ ...it, w: it.w + 120, h: it.h + 120 }), len: len(h), kind: 'item' });
   }
   return out;
 }

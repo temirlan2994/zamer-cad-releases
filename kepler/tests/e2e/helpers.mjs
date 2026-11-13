@@ -12,8 +12,12 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 // planShadows: тени на плане (ui/plan-shadows.js). По умолчанию в тестах
 // выключены — проверки цвета пикселей плана от них не зависят; включает
 // только тест теней.
+// viewSections: 'open' (по умолчанию) — все разделы «Свойств» вида раскрыты
+// (тесты работают с полями поворота, сетки и т. п. напрямую); 'default' —
+// как у пользователя: раскрыты только «Отображение», «Освещение», «Лист».
 export const ALL_ISSUE_GROUPS = ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry'];
-export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null, planShadows = false } = {}) {
+export const VIEW_SECTIONS = ['display', 'light', 'rotation', 'landscape', 'masses', 'roofs', 'grid', 'ergo', 'sheet'];
+export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null, planShadows = false, viewSections = 'open' } = {}) {
   const server = createServer();
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
@@ -36,12 +40,13 @@ export async function startApp({ width = 1280, height = 820, debug = true, mobil
     }, ids);
   }
   // Только при первой загрузке: перезагрузка в тесте видит то, что сохранило приложение.
-  await page.addInitScript((on) => {
+  await page.addInitScript(([on, sections]) => {
     if (!sessionStorage.getItem('kepler-test-shadows')) {
       localStorage.setItem('kepler-plan-shadows', JSON.stringify({ on }));
+      if (sections) localStorage.setItem('kepler-view-sections', JSON.stringify(Object.fromEntries(sections.map((id) => [id, true]))));
       sessionStorage.setItem('kepler-test-shadows', '1');
     }
-  }, planShadows);
+  }, [planShadows, viewSections === 'open' ? VIEW_SECTIONS : null]);
   const params = [debug ? 'debug=1' : '', query].filter(Boolean).join('&');
   await page.goto(`http://127.0.0.1:${port}/index.html${params ? `?${params}` : ''}`);
   if (debug) await page.waitForFunction(() => Boolean(window.__kepler));

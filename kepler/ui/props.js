@@ -56,7 +56,6 @@ import { liftForEdit, liftRoom, nominalShape, reconcileEats } from '../core/v7/e
 import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
-import { is3dOpen } from './view3d.js';
 import { bindWallPinBlock, wallPinBlock } from './grid-pin-ui.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
@@ -215,13 +214,10 @@ function renderProjectProps(panel) {
   if (prev) projectOpen = prev.open; // событие toggle приходит позже — читаем сразу
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
-    <p class="subtitle">${is3dOpen() ? '3D-вид дома' : 'План этажа'} · свойства вида</p>
+    ${rooms.length ? '' : `<div class="props-empty">
+      <p class="empty-hint">Начните с «Помещения»: тип комнаты из каталога — и клик на плане. Комнаты стыкуются сами.</p>
+    </div>`}
     ${viewSettingsHtml()}
-    <div class="props-empty">
-      <p class="empty-hint">Ничего не выбрано. Кликните помещение, стену, проём или мебель на плане — здесь будут их свойства.</p>
-      ${rooms.length ? '<p class="empty-hint">Площади и экспликация — вкладка «ТЭП».</p>' : `
-      <p class="empty-hint">Начните с инструмента «Помещение» слева: тип комнаты из библиотеки — и клик на плане. Комнаты стыкуются сами; маленькая внутри большой — вложится и отнимет площадь.</p>`}
-    </div>
     <details class="project-section" id="projectSection"${projectOpen ? ' open' : ''}>
     <summary id="projectSummary">Проект <small>поворот, единицы, стены, этаж</small></summary>
     <div class="prop-block">

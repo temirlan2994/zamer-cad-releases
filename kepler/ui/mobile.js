@@ -490,10 +490,18 @@ function bindKeyboardInset() {
   vv.addEventListener('resize', update);
   vv.addEventListener('scroll', update);
   update();
+  // Только поле ввода с клавиатурой, только на телефоне и только если его
+  // закрыло: иначе галочки и кнопки после касания уезжали к центру — панель «прыгала».
+  const TYPING = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="color"]):not([type="file"]), textarea';
   document.addEventListener('focusin', (e) => {
     const t = e.target;
-    if (!(t instanceof HTMLElement) || !t.closest('.props, .library')) return;
-    setTimeout(() => { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* старый браузер */ } }, 320);
+    if (!(t instanceof HTMLElement) || !isPhone() || !t.matches(TYPING) || !t.closest('.props, .library')) return;
+    setTimeout(() => {
+      if (document.activeElement !== t) return;
+      const r = t.getBoundingClientRect();
+      if (r.top >= 8 && r.bottom <= vv.height - 8) return; // и так видно
+      try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* старый браузер */ }
+    }, 320);
   });
 }
 

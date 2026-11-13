@@ -54,6 +54,16 @@ test('кто отбрасывает тень: видимые стены (мно�
   assert.ok(near(Math.max(...xs) - Math.min(...xs), 600, 1e-6));
 });
 
+test('длина теней вида: множитель lengthK; у мебели — ореол шире предмета', () => {
+  const walls = [{ polys: [square] }];
+  const items = [{ kind: 'bed', x: 0, y: 0, w: 1000, h: 2000 }];
+  const [w1, i1] = shadowCasters(walls, items, { lengthK: 1 });
+  const [w2] = shadowCasters(walls, items, { lengthK: 1.6 });
+  assert.ok(near(w2.len, w1.len * 1.6, 1e-6));
+  const xs = i1.halo.map((p) => p.x);
+  assert.ok(near(Math.max(...xs) - Math.min(...xs), 1120, 1e-6), 'ореол на 60 мм с каждой стороны');
+});
+
 test('длина тени ограничена: от 250 до 4000 мм; высокое солнце — не короче, чем при k = 0,25', () => {
   assert.equal(shadowLength(10, 0.3), 250);
   assert.equal(shadowLength(100000, 2), 4000);

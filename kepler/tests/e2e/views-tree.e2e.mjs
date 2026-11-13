@@ -93,7 +93,7 @@ describe('дерево видов, свойства вида, листы, ТЭП
     await page.click('#propsTabMain');
     const name = await page.evaluate(() => window.__kepler.state.project.levels[0].name);
     assert.equal(await page.textContent('#viewPropsTitle'), `Вид: ${name}`);
-    for (const id of ['#viewsAngleInput', '#viewsAlignBtn', '#viewsDimOuter', '#views3dBtn', '#viewsLsOn']) {
+    for (const id of ['#viewsAngleInput', '#viewsAlignBtn', '#viewsDimOuter', '#viewsShadows', '#viewsLsOn']) {
       assert.equal(await page.isVisible(id), true, id);
     }
     assert.equal(await page.$eval('#projectSection', (n) => n.open), false, '«Проект» — свёрнут внизу');

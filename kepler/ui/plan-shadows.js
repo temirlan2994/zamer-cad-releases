@@ -11,10 +11,14 @@
 // нажатия (отмена, клавиши) — не чаще раза в 140 мс. Сдвиг плана слой не
 // перестраивает.
 //
-// Настройка вида «Тени от стен и мебели» (вкладка «Свойства» без выбора) —
-// в браузере (localStorage), только на экране: листы и экспорт — без теней.
+// Включает тени настройка вида «Освещение» (core/view-display.js: тени, свет,
+// длина — у каждого плана этажа свои); только на экране: листы и экспорт —
+// без теней. Пока тянут комнату или мебель, тени нет (старая отставала бы),
+// новая — когда отпустили. planShadowPref — общий выключатель этого браузера
+// (тесты выключают тени, чтобы проверки цвета пикселей от них не зависели).
 
 import { planShadowDir, shadowBounds, shadowCasters, shadowKey, shadowStrips } from '../core/plan-shadows.js';
+import { FIXED_SHADOW_DIR, SHADOW_LENGTH_K } from '../core/view-display.js';
 import { activeLevel } from '../core/model.js';
 import { landscapeShadow } from './render-landscape.js';
 import { state } from './state.js';
@@ -159,8 +163,14 @@ function build({ casters, dir, want, dark, key, level }) {
     for (let i = 1; i < pts.length; i += 1) g.lineTo(pts[i].x, pts[i].y);
     g.closePath();
   };
+  // Мебель «стоит» на полу: мягкая тень вокруг (после размытия — ореол у краёв).
+  const halo = gray(dark ? 0.72 : 0.82);
+  g.fillStyle = halo;
+  g.beginPath();
+  for (const c of casters) if (c.halo) path(c.halo);
+  g.fill();
   for (const c of casters) {
-    const v0 = c.kind === 'wall' ? (dark ? 0.5 : 0.6) : (dark ? 0.68 : 0.8);
+    const v0 = c.kind === 'wall' ? (dark ? 0.5 : 0.6) : (dark ? 0.55 : 0.64);
     const near = gray(v0);
     const mid = gray(v0 + (1 - v0) * 0.55);
     for (const s of shadowStrips(c.poly, dir, c.len)) {
@@ -189,15 +199,19 @@ function build({ casters, dir, want, dark, key, level }) {
 }
 
 // Рисует тени на плане: ctx — в осях дома (как стены). items — мебель, если
-// она на плане видна. dark — тёмная тема холста.
-export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark = false }) {
+// она на плане видна. dark — тёмная тема холста. display — настройки вида
+// (core/view-display.js): light ('sun' | 'fixed'), length.
+export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark = false, display = {} }) {
   if (!planShadowPref().on || !state.project) return;
   trackPointers();
   const t0 = performance.now();
   const project = state.project;
-  const light = landscapeShadow(project.site);
-  const dir = planShadowDir(light, project.building);
-  const casters = shadowCasters(walls, items, { wallHeight: activeLevel(project)?.height || 3000, k: light.k ?? 0.3 });
+  const fixed = display.light === 'fixed';
+  const light = fixed ? { ...FIXED_SHADOW_DIR, k: 0.3 } : landscapeShadow(project.site);
+  const dir = fixed ? { ...FIXED_SHADOW_DIR } : planShadowDir(light, project.building);
+  const casters = shadowCasters(walls, items, {
+    wallHeight: activeLevel(project)?.height || 3000, k: light.k ?? 0.3, lengthK: SHADOW_LENGTH_K[display.length] || 1,
+  });
   if (!casters.length) return;
   const level = project.activeLevel;
   const key = shadowKey(casters, `${level}|${dark ? 1 : 0}|${Math.round(dir.x * 1000)},${Math.round(dir.y * 1000)}`);
@@ -207,10 +221,16 @@ export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark =
   const fits = cache && cache.want <= want * ZOOM_SLACK && cache.want * ZOOM_SLACK >= want;
   if (!cache || cache.key !== key || !fits) {
     const since = cache ? performance.now() - cache.builtAt : Infinity;
-    // Другой этаж — сразу; нажатие — после него; иначе — не чаще MIN_GAP, последний раз — по таймеру.
+    // Другой этаж — сразу; нажатие — после него, а пока тянут — без тени (старая
+    // отстаёт); иначе — не чаще MIN_GAP, последний раз — по таймеру.
     if (!cache || cache.level !== level) cache = build({ casters, dir, want, dark, key, level });
-    else if (pointers.size) pending = true;
-    else if (since >= MIN_GAP) cache = build({ casters, dir, want, dark, key, level });
+    else if (pointers.size) {
+      pending = true;
+      if (cache.key !== key) { // геометрия меняется под пальцем — тень спрятана
+        (state._planShadow || (state._planShadow = { builds: 0, ms: 0 })).hidden = true;
+        return;
+      }
+    } else if (since >= MIN_GAP) cache = build({ casters, dir, want, dark, key, level });
     else later(MIN_GAP - since);
   }
   ctx.save();
@@ -221,4 +241,5 @@ export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark =
   ctx.restore();
   const stats = state._planShadow || (state._planShadow = { builds: 0, ms: 0 });
   stats.ms = performance.now() - t0;
+  stats.hidden = false;
 }

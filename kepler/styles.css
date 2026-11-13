@@ -1198,6 +1198,25 @@ body.v3-open .level-dock { z-index: 46; }
 }
 .props h2 { margin: 0 0 8px; font-size: 16px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .props h3 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+/* Свойства вида (ui/props-views.js): сворачиваемые разделы — заголовок как у h3, ▾ справа */
+.vs-sec { border-top: 1px solid var(--border); }
+.vs-sec:first-child { border-top: 0; }
+.vs-sec > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 4px 0;
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted);
+  cursor: pointer; list-style: none; user-select: none;
+}
+.vs-sec > summary::-webkit-details-marker { display: none; }
+.vs-sec > summary::after { content: '▾'; font-size: 13px; transition: transform 0.15s ease; }
+.vs-sec:not([open]) > summary::after { transform: rotate(-90deg); }
+.vs-sec[open] > summary { color: var(--text); }
+.vs-sec > .prop-block { margin: 0 0 12px; }
+/* Строка «подпись — сегментный выбор» */
+.views-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; margin: 6px 0; }
+.views-row > span { font-size: 12.5px; color: var(--muted); }
+.views-seg { margin: 0 0 0 auto; flex: none; max-width: 100%; } /* не влезает рядом с подписью — под ней */
+.views-seg .seg-opt { padding: 5px 10px; }
+.views-seg .seg-opt:has(input:disabled) { opacity: 0.5; cursor: default; }
 .props h4 { margin: 0 0 4px; font-size: 12.5px; }
 .props .subtitle { margin: -4px 0 10px; color: var(--muted); font-size: 12.5px; }
 .badge {
@@ -2247,6 +2266,10 @@ body:not(.mode-landscape) .ls-sun { display: none; }
     box-shadow: -8px 0 8px -6px rgba(24, 32, 43, 0.18);
   }
   .mc-acts .mc-props { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+
+  /* --- Свойства вида: цели касания крупнее --- */
+  .vs-sec > summary { min-height: 44px; font-size: 12.5px; }
+  .views-seg .seg-opt { padding: 9px 11px; font-size: 13px; }
 
   /* --- Лист «Виды»: режим и «Виды · Листы» сверху, вкладки панели и повторный заголовок не нужны --- */
   .mobile-sheet-head {
