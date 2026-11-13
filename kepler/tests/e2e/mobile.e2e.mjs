@@ -1,7 +1,7 @@
 // e2e мобильной раскладки 390×844 (ui/mobile.js, ui/mobile-card.js, styles.css
 // «Телефон»): план во всю ширину, ряд привязок сверху, нижняя навигация
 // (Рисовать, Каталог, Свойства, Виды, 3D) со вторыми рядами, карточка
-// выбранного объекта, лист «Виды» с режимом и «Листами», нижние листы с ручкой
+// выбранного объекта и этажи вверху плана, лист «Виды» с режимом и «Листами», нижние листы с ручкой
 // и «✕», компактная шапка, ничего не выходит за экран. Планшет 768 —
 // компьютерная раскладка без мобильной навигации.
 import { describe, it, before, after } from 'node:test';
@@ -60,6 +60,9 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.ok(snap.y + snap.height <= canvas.y + 1, 'привязки над планом');
     assert.ok(nav.y >= canvas.y + canvas.height - 1, 'навигация под планом');
     assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true, 'привязки видны сразу');
+    const [levels, warn] = await Promise.all(['#levelDock', '#issuesBtn'].map((s) => box(page, s)));
+    assert.ok(levels.y < canvas.y + 20 && levels.x < 20, `этажи — вверху слева ${JSON.stringify(levels)}`);
+    assert.ok(warn.x >= levels.x + levels.width && Math.abs(warn.y - levels.y) < 2, '«⚠» — сразу за этажами');
     assert.equal(await page.isVisible('#fitFab'), true);
     assert.ok(inScreen(await box(page, '#fitFab')));
     await page.evaluate(() => { window.__kepler.state.view.panX += 900; });
@@ -148,7 +151,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.equal(await page.isVisible('#mobileCat'), false, 'повторное «Каталог» прячет ряд');
   });
 
-  it('выбранный объект — карточка внизу: название, размеры, действия; поле размера правит объект', async () => {
+  it('выбранный объект — карточка вверху плана: название, размеры, действия; поле размера правит объект', async () => {
     const { page } = app;
     const id = await page.evaluate(() => window.__kepler.state.project.rooms.find((r) => r.name === 'Гостиная').id);
     await page.evaluate((rid) => window.__kepler.selectRoom(rid), id);
@@ -158,8 +161,9 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.match(await page.textContent('#mobileCard .mc-info'), /м²/);
     assert.equal(await page.isVisible('#mobileCard [data-selection-action="delete"]'), true, 'действия — в карточке');
     assert.equal(await page.$eval('#selectionToolbar', (n) => Boolean(n.closest('#mobileCard'))), true);
-    const [card, nav] = await Promise.all([box(page, '#mobileCard'), box(page, '#mobileBar')]);
-    assert.ok(card.y + card.height <= nav.y + 1, 'карточка над навигацией');
+    const [card, canvas, levels] = await Promise.all([box(page, '#mobileCard'), box(page, '#canvas'), box(page, '#levelDock')]);
+    assert.ok(Math.abs(card.y - canvas.y) < 2, `карточка — вверху плана ${JSON.stringify([card, canvas])}`);
+    assert.ok(levels.y >= card.y + card.height - 1, 'этажи — под карточкой');
     assert.deepEqual(await offscreen(page), []);
     const w0 = await page.evaluate((rid) => window.__kepler.state.project.rooms.find((r) => r.id === rid).w, id);
     await page.fill('#mobileCard input[data-field="roomW"]', String(w0 + 500));

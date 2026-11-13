@@ -1,5 +1,5 @@
-// Телефон: выбранный объект — карточка внизу экрана (#mobileCard) вместо
-// плашки действий вверху холста. В карточке: название, два главных размера
+// Телефон: выбранный объект — карточка вверху плана (#mobileCard, поверх
+// плана: он не сдвигается) вместо плашки действий. В карточке: название, два главных размера
 // (поля пересылают ввод в такие же поля «Свойств» — логика правки одна,
 // ui/props.js), площадь или длина, кнопка «Свойства» и действия
 // (#selectionToolbar переезжает сюда, обработчики — ui/selection-toolbar.js).
@@ -27,7 +27,7 @@ function placeToolbar() {
   if (bar.parentElement !== home.parent) home.parent.insertBefore(bar, home.next);
 }
 
-// --card-h (на body): от неё отступают этажи, «Вписать», масштаб, сообщения.
+// --card-h (на body): под карточкой — этажи, «⚠» и подсказка инструмента.
 function setCardHeight(px) {
   const v = `${Math.round(px)}px`;
   if (document.body.style.getPropertyValue('--card-h') !== v) document.body.style.setProperty('--card-h', v);

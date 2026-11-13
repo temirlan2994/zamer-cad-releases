@@ -2114,12 +2114,13 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 
   /* --- Рабочая область: привязки · параметры инструмента · план во всю ширину ---
      --ribbon-h — высота второго ряда внизу («Рисовать» / «Каталог»; 0, пока скрыт),
-     --card-h — высота карточки выбранного объекта (ui/mobile-card.js). */
+     --card-h — высота карточки выбранного объекта вверху плана (ui/mobile-card.js),
+     --level-w — ширина кнопок этажей вверху слева (ui/mobile.js). */
   body { --ribbon-h: 0px; --card-h: 0px; }
   body.cat-open, body.draw-open { --ribbon-h: 60px; }
   .workspace { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
-  /* сообщения — над навигацией, вторым рядом и карточкой */
-  #toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--ribbon-h) + var(--card-h)); z-index: 70; }
+  /* сообщения — над навигацией и вторым рядом */
+  #toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--ribbon-h)); z-index: 70; }
   .tool-options { grid-column: 1; grid-row: 2; height: auto; min-height: 40px; padding: 4px 8px; }
   .tool-options.empty { display: none; }
   .to-keys { display: none; }
@@ -2146,21 +2147,26 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .toolstrip { display: none; }
   .tb-tip { display: none !important; }
   .fit-fab {
-    position: absolute; right: 8px; bottom: calc(var(--ribbon-h) + var(--card-h) + 26px); z-index: 4;
+    position: absolute; right: 8px; bottom: calc(var(--ribbon-h) + 26px); z-index: 4;
     display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; padding: 0; border-radius: 50%;
     background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); color: var(--text);
   }
   body.v3-open .fit-fab { display: none; }
 
-  /* --- Подсказка инструмента: рядом с «⚠», не больше двух строк --- */
+  /* --- Верх плана: карточка выбранного объекта, под ней — этажи и «⚠», ниже — подсказка --- */
+  .level-dock { left: 8px; top: calc(var(--card-h) + 8px); bottom: auto; }
+  .issues-btn { top: calc(var(--card-h) + 8px); left: calc(var(--level-w, 0px) + 16px); height: 36px; }
+  body.v3-open .view3d-bar { top: calc(var(--card-h) + 52px); } /* 3D: панель — под этажами */
+
+  /* --- Подсказка инструмента: под этажами, не заходит на компас, не больше двух строк --- */
   .canvas-wrap > .canvas-hint {
-    left: 56px; top: 8px; transform: none; max-width: calc(100% - 124px); padding: 5px 12px; border-radius: 14px;
+    left: 8px; top: calc(var(--card-h) + 52px); transform: none; max-width: calc(100% - 96px); padding: 5px 12px; border-radius: 14px;
     font-size: 12.5px; line-height: 1.3; text-align: left;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .canvas-wrap > .canvas-hint[hidden] { display: none; }
-  .draft-done { bottom: calc(var(--ribbon-h) + var(--card-h) + 44px); }
-  body.v3-open .view3d-hint { bottom: calc(var(--ribbon-h) + var(--card-h) + 60px); }
+  .draft-done { bottom: calc(var(--ribbon-h) + 16px); }
+  body.v3-open .view3d-hint { bottom: calc(var(--ribbon-h) + 12px); }
 
   /* --- Вторые ряды «Рисовать» и «Каталог»: над нижней навигацией, «Готово» в конце --- */
   .mobile-cat {
@@ -2187,14 +2193,13 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .ms-grid { grid-template-columns: repeat(2, 1fr); }
   .ms-grid button { height: 84px; font-size: 12px; }
 
-  /* --- Карточка выбранного объекта: название, размеры, «Свойства» и действия --- */
+  /* --- Карточка выбранного объекта: вверху плана, поверх него (план не сдвигается) --- */
   .mobile-card {
-    position: absolute; left: 0; right: 0; bottom: var(--ribbon-h); z-index: 59; display: flex; flex-direction: column; gap: 4px;
-    padding: 8px max(8px, env(safe-area-inset-left, 0px)) 4px; background: var(--surface); border-top: 1px solid var(--border);
-    border-radius: 16px 16px 0 0; box-shadow: 0 -8px 22px rgba(24, 32, 43, 0.12);
+    grid-column: 1; grid-row: 3; align-self: start; position: relative; z-index: 59; display: flex; flex-direction: column; gap: 4px;
+    padding: 6px max(8px, env(safe-area-inset-left, 0px)) 4px; background: var(--surface); border-bottom: 1px solid var(--border);
+    border-radius: 0 0 16px 16px; box-shadow: 0 8px 22px rgba(24, 32, 43, 0.12);
   }
   .mobile-card[hidden] { display: none; }
-  body.kb-open .mobile-card { position: fixed; bottom: var(--kb, 0px); }
   .mc-head { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 2px; }
   .mc-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; }
   .mc-chips { display: flex; gap: 6px; flex: none; }
@@ -2319,8 +2324,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .statusbar { min-height: 0; padding: 0 8px 3px; background: transparent; border-top: 0; }
   .statusbar #cursorPos { display: none; }
   .statusbar #scaleInfo { margin-left: auto; }
-  .level-dock { left: 8px; bottom: calc(var(--ribbon-h) + var(--card-h) + 8px); }
-  .canvas-wrap .statusbar { margin-bottom: calc(var(--ribbon-h) + var(--card-h)); }
+  .canvas-wrap .statusbar { margin-bottom: var(--ribbon-h); }
 }
 
 /* Планшет и сенсорный экран шире телефона: колонка шире, под значками — подписи (наведения нет). */

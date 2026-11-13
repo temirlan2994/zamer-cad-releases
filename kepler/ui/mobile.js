@@ -9,7 +9,8 @@
 // обработчики работают). Листы (каталог, правая панель, «⋯», формы лестниц) —
 // над вторым рядом: ручка (45% / 88% высоты, вниз — закрыть) и «✕». В листе
 // «Виды» — режим и «Виды · Листы» (#mobileSheetHead). Выбранный объект —
-// карточка внизу (ui/mobile-card.js), «Вписать» — круглая кнопка на плане.
+// карточка вверху плана (ui/mobile-card.js), под ней — этажи и «⚠»;
+// «Вписать» — круглая кнопка на плане.
 // На больших экранах всё это скрыто, классы ни на что не влияют (styles.css).
 
 import { el } from './dom.js';
@@ -500,6 +501,14 @@ export function bindMobile() {
     ensurePropsTab: () => { if (state.propsTab !== 'props') setPropsTab('props'); },
   });
   el('fitFab')?.addEventListener('click', () => el('fitBtn')?.click());
+  // Этажи — вверху слева, «⚠» — сразу за ними: ширина кнопок этажей в --level-w.
+  const dock = el('levelDock');
+  if (dock && globalThis.ResizeObserver) {
+    new ResizeObserver(() => {
+      const w = `${Math.round(dock.getBoundingClientRect().width)}px`;
+      if (document.body.style.getPropertyValue('--level-w') !== w) document.body.style.setProperty('--level-w', w);
+    }).observe(dock);
+  }
   // Перерисовались «Свойства» или панель действий — обновить карточку и шапку листа.
   let queued = false;
   const observer = new MutationObserver(() => {
