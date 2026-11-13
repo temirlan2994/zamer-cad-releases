@@ -199,6 +199,45 @@ function render() {
   else if (gl && geomDirty) uploadGeometry();
   else if (gl && (state.selection?.type === 'mass' || state.selection?.type === 'roof')) uploadOverlay(); // гизмо и точки — к камере
   if (gl) renderGl(canvas); else render2d(canvas);
+  updateMassDims();
+}
+
+// Размеры верхних рёбер и площадь верха выбранной массы (вертикальные — нет).
+const massDimEls = [];
+function updateMassDims() {
+  const host = el('view3d');
+  const sel = state.selection?.type === 'mass' && massToolOn() === false ? massBoxes().find((b) => b.id === state.selection.id) : null;
+  let items = [];
+  if (host && sel) {
+    const r = host.getBoundingClientRect();
+    const z = sel.z1;
+    const P = (x, y) => { const q = debug3dScreen({ x, y, z }); return { x: q.x - r.left, y: q.y - r.top }; };
+    const cx = (sel.x0 + sel.x1) / 2;
+    const cy = (sel.y0 + sel.y1) / 2;
+    const w = sel.x1 - sel.x0;
+    const d = sel.y1 - sel.y0;
+    const mm = (v) => String(Math.round(v));
+    items = [
+      { p: P(cx, sel.y0), t: mm(w) }, { p: P(cx, sel.y1), t: mm(w) },
+      { p: P(sel.x0, cy), t: mm(d) }, { p: P(sel.x1, cy), t: mm(d) },
+      { p: P(cx, cy), t: `${(w * d / 1e6).toFixed(1)} м²`, area: true },
+    ];
+  }
+  while (massDimEls.length < items.length) {
+    const div = document.createElement('div');
+    div.className = 'view3d-dim';
+    host?.appendChild(div);
+    massDimEls.push(div);
+  }
+  massDimEls.forEach((div, i) => {
+    const it = items[i];
+    div.hidden = !it;
+    if (!it) return;
+    div.textContent = it.t;
+    div.classList.toggle('area', Boolean(it.area));
+    div.style.left = `${Math.round(it.p.x)}px`;
+    div.style.top = `${Math.round(it.p.y)}px`;
+  });
 }
 
 // ---------------------------------------------------------------- WebGL
