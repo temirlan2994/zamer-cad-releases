@@ -1,5 +1,6 @@
 // Крыши-плиты в 3D (core/roofs.js): инструмент «Крыша» (клик по помещению —
-// накрыть, Shift — добавить к выбранной, по накрытому — выбрать; наведение —
+// крыша по его форме, дальше без связи; Shift — добавить форму к выбранной,
+// по накрытому — выбрать; наведение —
 // подсветка и призрак плиты) и ручки выбранной крыши поверх сцены — белые
 // точки выноса у верха плиты (середины сторон и углы; тянуть по плоскости
 // плиты, rayPlaneZ) и синяя стрелка Z — высота (dz, шаг 50 мм, привязка к
@@ -249,7 +250,7 @@ export function roofToolMove(e) {
   else if (next) {
     const lv = (state.project.levels || []).find((l) => l.id === next.levelId);
     const room = lv?.rooms?.find((r) => r.id === next.roomId);
-    env.label(`Накрыть «${room?.name || 'помещение'}»${e.shiftKey ? ' · добавить' : ''}`, e.clientX, e.clientY);
+    env.label(`Крыша по форме «${room?.name || 'помещение'}»${e.shiftKey ? ' · добавить к выбранной' : ''}`, e.clientX, e.clientY);
   } else env.label(null);
   el3d().style.cursor = next || hit?.type === 'roof' ? 'pointer' : '';
   if (!same) env.redraw();
@@ -270,7 +271,7 @@ export function roofToolClick(e) {
     env.switchLevel(at.levelId);
     if (keep?.type === 'roof' && !state.selection) state.selection = keep;
     if (tool && !state.tool) state.tool = { ...tool, hover: null }; // смена этажа сняла инструмент — серия продолжается
-    roofClickRoom(at.levelId, at.roomId, { add: e.shiftKey, addTo: state.tool?.addTo });
+    roofClickRoom(at.levelId, at.roomId, { add: e.shiftKey });
   }
   env.label(null);
   env.redraw(true);

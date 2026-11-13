@@ -1,9 +1,11 @@
-// e2e: крыши-плиты (core/roofs.js) реальной мышью — инструмент «Крыша» (K)
-// на плане: клик по помещению создаёт и выбирает крышу, Shift+клик
-// добавляет помещение, контур выноса и «Свойства» с карточками; точка
-// стороны тянет вынос (подпись, Ctrl+Z); типы края/парапета/материал меняют
-// 3D; в 3D инструмент накрывает помещение, точка выноса и стрелка Z тянутся,
-// Delete; сохранение; фасад с выносом; автокровля не дублируется.
+// e2e: крыши-плиты (core/roofs.js) реальной мышью. Крыша — свой контур, без
+// связи с помещениями; чертится и правится на «Плане крыши» (дерево видов):
+// K на плане этажа открывает его с инструментом, клик по помещению
+// подложки — крыша по его форме; на обычном плане крыша не рисуется и
+// клики не ловит; на «Плане крыши» — перенос, ребро, вершина, деление ребра
+// (Г-форма) и удаление вершины двойным кликом, Esc, Ctrl+Z, точка выноса;
+// «Свойства» с карточками меняют 3D; в 3D инструмент накрывает помещение,
+// точка выноса и стрелка Z тянутся, Delete; сохранение; фасад с выносом.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew } from './helpers.mjs';
@@ -26,6 +28,11 @@ const handle = (page, id) => st(page, async (hid) => {
   const roof = s.project.roofs.find((r) => r.id === s.selection.id);
   return roofHandles(s.project, roof).find((h) => h.id === hid);
 }, id);
+const box = (r) => {
+  const xs = r.outline.map((q) => q.x); const ys = r.outline.map((q) => q.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+};
+const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${a} ≈ ${b}`);
 
 async function dragPlan(page, a, b, mid) {
   await page.mouse.move(a.x, a.y, { steps: 2 });
@@ -36,7 +43,7 @@ async function dragPlan(page, a, b, mid) {
   await page.mouse.up();
 }
 
-describe('Крыши-плиты: инструмент, ручки, типы, 3D', () => {
+describe('Крыши-плиты: план крыши, правка контура, типы, 3D', () => {
   let app;
   before(async () => {
     app = await startApp({ width: 1440, height: 860 });
@@ -65,63 +72,126 @@ describe('Крыши-плиты: инструмент, ручки, типы, 3D'
     await app?.close();
   });
 
-  it('кнопка и подсказка, K — инструмент, клик по помещению — крыша создана и выбрана', async () => {
+  it('K на плане этажа — «План крыши» с инструментом; клик по помещению — крыша по его форме, без связи', async () => {
     const { page } = app;
     assert.ok(await page.isVisible('#roofToolBtn'));
-    assert.match(await page.textContent('#tbTip-roof'), /клик по помещению — накрыть крышей/);
+    assert.match(await page.textContent('#tbTip-roof'), /План крыши/);
     await page.keyboard.press('KeyK');
+    assert.equal(await st(page, () => window.__kepler.state.roofPlan), true);
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'roof');
     assert.ok(await page.$eval('#roofToolBtn', (b) => b.classList.contains('active')));
-    const p = await toClient(page, 3000, 2000);
+    const p = await toClient(page, 8000, 2000);
     await page.mouse.move(p.x, p.y, { steps: 3 });
-    assert.equal(await st(page, () => window.__kepler.state.tool.hover), 'a');
+    assert.deepEqual(await st(page, () => window.__kepler.state.tool.hover), { levelId: 'L1', roomId: 'b' });
     await page.mouse.click(p.x, p.y);
     const list = await roofs(page);
     assert.equal(list.length, 1);
     assert.equal(list[0].levelId, 'L1');
-    assert.deepEqual(list[0].roomIds, ['a']);
+    assert.equal(list[0].roomIds, undefined, 'с помещением не связана');
+    assert.deepEqual(box(list[0]), { x0: 5750, y0: -250, x1: 10250, y1: 4250 });
     assert.deepEqual(await sel(page), { type: 'roof', id: list[0].id });
-    assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'roof', 'инструмент остаётся');
+    assert.equal(await st(page, () => window.__kepler.state.tool), null, 'крыша создана — инструмент выключен');
     assert.ok(await page.isVisible('#roofProps .roof-card'));
-    await page.waitForFunction(() => window.__kepler.state._planRoofs === 1);
+    assert.equal(await page.$('[data-roof-room]'), null, 'галочек помещений нет');
+    await page.waitForFunction(() => window.__kepler.state._roofPlanDrawn === 1);
+    await shot(page, 'roof-1-roofplan');
   });
 
-  it('Shift+клик — второе помещение в той же крыше; клик по накрытому — выбрать', async () => {
+  it('обычный план этажа: крыша не рисуется и не перехватывает мышь', async () => {
     const { page } = app;
-    const p = await toClient(page, 8000, 2000);
-    await page.keyboard.down('Shift');
-    await page.mouse.click(p.x, p.y);
-    await page.keyboard.up('Shift');
-    const list = await roofs(page);
-    assert.equal(list.length, 1);
-    assert.deepEqual(list[0].roomIds, ['a', 'b']);
-    await page.mouse.click(p.x, p.y);
-    assert.equal((await roofs(page)).length, 1, 'накрытое — не новая крыша');
+    await st(page, async () => (await import('./ui/props-views.js')).openView('plan:L1'));
+    assert.equal(await st(page, () => window.__kepler.state.roofPlan), false);
+    await page.waitForFunction(() => window.__kepler.state._planRoofs === 0);
+    // Зона выноса вне помещений: клик — не крыша.
+    const z = await toClient(page, 10450, 2000);
+    await page.mouse.move(z.x, z.y, { steps: 2 });
+    assert.notEqual((await st(page, () => window.__kepler.state.hover))?.type, 'roof');
+    await page.mouse.click(z.x, z.y);
+    assert.notEqual((await sel(page))?.type, 'roof');
+    // Кухня под крышей — выбирается сама кухня.
+    const k = await toClient(page, 8000, 2000);
+    await page.mouse.click(k.x, k.y);
+    assert.deepEqual(await sel(page), { type: 'room', id: 'b' });
     await page.keyboard.press('Escape');
-    assert.equal(await st(page, () => window.__kepler.state.tool), null);
-    await shot(page, 'roof-1-plan');
   });
 
-  it('клик в зоне выноса выбирает крышу; точка стороны тянет вынос, подпись, Ctrl+Z', async () => {
+  it('«План крыши»: перенос крыши, Ctrl+Z; ребро, деление ребра — Г-форма, удаление вершины; Esc отменяет жест', async () => {
     const { page } = app;
-    await st(page, () => window.__kepler.select(null));
-    // Зум ближе: точки и зона выноса крупнее.
+    await st(page, async () => (await import('./ui/props-views.js')).openView('roofplan'));
+    assert.equal(await st(page, () => window.__kepler.state.roofPlan), true);
+    // Зум ближе.
     await st(page, async () => {
       const s = window.__kepler.state;
-      s.view.scale = 0.06;
+      s.view.scale = 0.05;
       const c = document.getElementById('canvas');
-      const q = window.__kepler.planToScreen(5000, 2000);
+      const q = window.__kepler.planToScreen(8000, 2000);
       s.view.panX += c.clientWidth / 2 - q.x;
       s.view.panY += c.clientHeight / 2 - q.y;
-      window.__kepler.fitView && (await import('./ui/view.js')).requestDraw();
+      (await import('./ui/view.js')).requestDraw();
     });
-    const z = await toClient(page, -600, 2000);
-    await page.mouse.click(z.x, z.y);
     const id = (await roofs(page))[0].id;
+    const b0 = box((await roofs(page))[0]);
+    // Клик по плите — выбор; перенос на 1 м вправо.
+    const a = await toClient(page, 8000, 2000);
+    const b = await toClient(page, 9000, 2000);
+    let label = '';
+    await dragPlan(page, a, b, async () => { label = await st(page, () => window.__kepler.state.roofLabel?.text || ''); });
     assert.deepEqual(await sel(page), { type: 'roof', id });
-    await shot(page, 'roof-2-selected');
+    assert.match(label, /сдвиг/);
+    const b1 = box((await roofs(page))[0]);
+    near(b1.x0 - b0.x0, 1000, 120, 'сдвиг x');
+    assert.equal(b1.x1 - b1.x0, b0.x1 - b0.x0, 'форма та же');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(box((await roofs(page))[0]), b0);
+    if ((await sel(page))?.type !== 'roof') await page.mouse.click(a.x, a.y);
+    // Правое ребро (x = 10250) — на 2 м вправо.
+    const e0 = await toClient(page, 10250, 2000);
+    const e1 = await toClient(page, 12250, 2000);
+    await dragPlan(page, e0, e1);
+    let r = (await roofs(page))[0];
+    near(box(r).x1, 12250, 150, 'правое ребро');
+    assert.equal(box(r).x0, 5750, 'левое ребро на месте');
+    assert.equal(r.outline.length, 4);
+    // Esc во время жеста — контур не меняется.
+    const before = JSON.stringify(r.outline);
+    const t0 = await toClient(page, 8000, -250);
+    const t1 = await toClient(page, 8000, -2000);
+    await page.mouse.move(t0.x, t0.y, { steps: 2 });
+    await page.mouse.down();
+    await page.mouse.move(t1.x, t1.y, { steps: 5 });
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    assert.equal(JSON.stringify((await roofs(page))[0].outline), before, 'Esc — отмена жеста');
+    // Двойной клик по нижнему ребру — деление; правая половина вниз — Г-форма.
+    const x1 = box(r).x1;
+    const split = await toClient(page, 8000, 4250);
+    await page.mouse.dblclick(split.x, split.y);
+    r = (await roofs(page))[0];
+    assert.equal(r.outline.length, 6, 'деление ребра: две новые вершины');
+    const midX = (8000 + x1) / 2;
+    const h0 = await toClient(page, midX, 4250);
+    const h1 = await toClient(page, midX, 6250);
+    await dragPlan(page, h0, h1);
+    r = (await roofs(page))[0];
+    assert.equal(r.outline.length, 6, 'Г-форма');
+    near(box(r).y1, 6250, 150, 'уступ вниз');
+    await shot(page, 'roof-2-lshape');
+    // Двойной клик по вогнутой вершине — удалить: снова прямоугольник.
+    const inner = r.outline.find((q) => Math.abs(q.x - 8000) < 200 && Math.abs(q.y - 4250) < 5);
+    assert.ok(inner, 'вогнутая вершина');
+    const v = await toClient(page, inner.x, inner.y);
+    await page.mouse.dblclick(v.x, v.y);
+    r = (await roofs(page))[0];
+    assert.equal(r.outline.length, 4, 'вершина удалена');
+  });
+
+  it('точка выноса тянет вынос от контура (подпись, Ctrl+Z)', async () => {
+    const { page } = app;
+    if ((await sel(page))?.type !== 'roof') {
+      const p = await toClient(page, 8000, 2000);
+      await page.mouse.click(p.x, p.y);
+    }
     const h = await handle(page, 'w');
-    assert.equal(h.x, -850);
     const a = await toClient(page, h.x, h.y);
     const b = await toClient(page, h.x - 900, h.y);
     let label = '';
@@ -133,16 +203,9 @@ describe('Крыши-плиты: инструмент, ручки, типы, 3D'
     assert.equal((await roofs(page))[0].overhang.w, 600);
     await page.keyboard.press('Control+y');
     assert.equal((await roofs(page))[0].overhang.w, 1500);
-    await page.mouse.click(z.x - 30, z.y); // отмена/возврат снимают выбор — снова клик в зоне выноса
+    const p = await toClient(page, 8000, 2000);
+    await page.mouse.click(p.x, p.y);
     assert.equal((await sel(page))?.type, 'roof');
-    // Угол: две стороны сразу.
-    const c = await handle(page, 'ne');
-    const c0 = await toClient(page, c.x, c.y);
-    const c1 = await toClient(page, c.x + 400, c.y - 400);
-    await dragPlan(page, c0, c1);
-    const oh = (await roofs(page))[0].overhang;
-    assert.equal(oh.n, 1000);
-    assert.equal(oh.e, 1000);
   });
 
   it('«Свойства»: карточки края и парапета, материал, пресеты — меняют 3D', async () => {
@@ -185,7 +248,8 @@ describe('Крыши-плиты: инструмент, ручки, типы, 3D'
     assert.equal(list.length, 2);
     const top = list[1];
     assert.equal(top.levelId, 'L2');
-    assert.deepEqual(top.roomIds, ['c']);
+    assert.equal(top.roomIds, undefined);
+    assert.deepEqual(box(top), { x0: -250, y0: -250, x1: 6250, y1: 4250 });
     assert.deepEqual(await sel(page), { type: 'roof', id: top.id });
     await page.keyboard.press('Escape');
     assert.equal((await d3(page)).roof3d.tool, false);
@@ -240,7 +304,8 @@ describe('Крыши-плиты: инструмент, ручки, типы, 3D'
       const auto = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof' && !f.roofId && f.normal.z > 0.5);
       return {
         same: JSON.stringify(back.roofs) === JSON.stringify(p.roofs),
-        over: (Math.max(...roofU) - Math.max(...wallU)),
+        // Крыша над кухней (вынос 1200) — с одного края фасада.
+        over: Math.max(Math.max(...roofU) - Math.max(...wallU), Math.min(...wallU) - Math.min(...roofU)),
         tint: el.polys.some((q) => q.tint === '#3d4148'),
         auto: auto.length,
       };
@@ -275,11 +340,12 @@ describe('Крыши-плиты: телефон', () => {
     await app?.close();
   });
 
-  it('кнопка видна, тап по помещению создаёт крышу и выбирает её', async () => {
+  it('кнопка видна: «План крыши», тап по помещению создаёт крышу и выбирает её', async () => {
     const { page } = app;
     assert.ok(await page.isVisible('#roofToolBtn'));
     await page.tap('#roofToolBtn');
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'roof');
+    assert.equal(await st(page, () => window.__kepler.state.roofPlan), true);
     const p = await toClient(page, 3000, 2000);
     await page.touchscreen.tap(p.x, p.y);
     await page.waitForFunction(() => (window.__kepler.state.project.roofs || []).length === 1);

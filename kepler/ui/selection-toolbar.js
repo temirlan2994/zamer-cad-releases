@@ -91,7 +91,7 @@ function contentForSelection(sel) {
     if (!roof) return null;
     return {
       label: `${roof.name} · ${overhangLabel(roof)} мм`,
-      html: `${button('roof-add-room', '+', 'Добавить помещение')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
+      html: `${state.roofPlan ? '' : button('roof-plan', '⌂', 'План крыши')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }
   if (sel.type === 'railing') {
@@ -234,9 +234,9 @@ export function bindSelectionToolbar() {
       if (action === 'railing-type') ra.cycleSelectedRailingType(); else ra.splitSelectedRailing();
       return;
     }
-    if (action === 'roof' || action === 'roof-add-room') {
+    if (action === 'roof' || action === 'roof-plan') {
       const rf = await import('./roofs.js');
-      if (action === 'roof') rf.coverSelectedRoom(); else rf.startRoofTool({ addTo: state.selection?.id });
+      if (action === 'roof') rf.coverSelectedRoom(); else rf.showRoofPlan(state.selection?.id);
       (await import('./toolstrip.js')).renderToolstrip();
       return;
     }

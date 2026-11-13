@@ -15,6 +15,7 @@ import { refresh3dSelection } from './view3d.js';
 import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
+import { isRoofPlan } from './plan-roofs.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
@@ -55,6 +56,12 @@ export function setHint(text) {
 }
 
 export function setTool(tool, hint) {
+  // Инструмент плана этажа на «Плане крыши» — назад к плану этажа.
+  if (isRoofPlan() && tool && tool.kind !== 'roof' && tool.kind !== 'align-view') {
+    state.roofPlan = false;
+    document.body.classList.remove('mode-roofplan');
+    document.dispatchEvent(new CustomEvent('kepler:view'));
+  }
   state.tool = tool;
   state.draft = null;
   clearDrawSnap();

@@ -35,6 +35,10 @@ export function setEditorMode(mode) {
   closeSheet(); // лист на холсте закрывается при переходе к виду
   closeElevation(); // и фасад
   if (state.modeName === mode) return;
+  if (mode !== 'plan' && state.roofPlan) { // «План крыши» — только в режиме «План»
+    state.roofPlan = false;
+    document.body.classList.remove('mode-roofplan');
+  }
   // Флаги touched/fitted (view.js) сохраняются вместе с видом.
   // origin — где стоял дом: если в «Участке» его сдвинули, вид «Плана»
   // едет следом, и дом остаётся на том же месте экрана.

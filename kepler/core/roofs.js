@@ -7,14 +7,15 @@
 //   levelId — этаж, НАД которым лежит плита: низ плиты = level.elevation +
 //             level.height + dz, верх = низ + thickness;
 //   dz — поднять/опустить, мм (по умолчанию 0);
-//   roomIds — накрытые помещения этого этажа: основание — объединение их
-//             прямоугольников (roomRects), расширенных на наружную стену
-//             (settings.exterior; открытые помещения — без стены);
-//   outline? — свой контур [{x, y}] (ортогональный) вместо помещений;
-//   overhang { n, e, s, w } — вынос по сторонам в осях дома (n — к меньшим y,
-//             «верх» плана; e — к большим x), 0…3000 мм; на Г-образном
-//             основании каждое ребро сдвигается по своей нормали (сумма
-//             Минковского прямоугольников с коробкой выноса);
+//   outline [{x, y}] — свой контур основания (без выноса) в осях дома, мм:
+//             ортогональный многоугольник (прямоугольник, Г, П…), с
+//             помещениями не связан — двигается и правится сам (план крыши,
+//             ui/roof-plan.js). Старые крыши над помещениями (roomIds) при
+//             открытии получают контур по помещениям (normalizeRoofs);
+//   overhang { n, e, s, w } — вынос от контура по сторонам в осях дома (n — к
+//             меньшим y, «верх» плана; e — к большим x), 0…3000 мм; на
+//             Г-образном основании каждое ребро сдвигается по своей нормали
+//             (сумма Минковского прямоугольников с коробкой выноса);
 //   thickness — толщина плиты 150…600 (300);
 //   edge { type: plain|fascia|cornice|drip, height 150…600 (250), color? };
 //   parapet { type: none|wall|glass|rail|stepped, height, thickness, inset,
@@ -26,7 +27,9 @@
 // парапета внутри (эрозия по включённым сторонам).
 
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from './catalog.js';
-import { polygonRects, roomRects } from './room-shape.js';
+import {
+  applyRoomShapeHandle, polygonRects, roomLabelPoint, roomRects, roomShapeHandles,
+} from './room-shape.js';
 
 export const ROOF_SIDES = ['n', 'e', 's', 'w'];
 export const SIDE_TITLES = { n: 'верх', e: 'право', s: 'низ', w: 'лево' };
@@ -107,6 +110,10 @@ export function nextRoofName(existing = []) {
   return `Крыша ${Math.max(n, (existing || []).length) + 1}`;
 }
 
+const samePt = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5;
+const collinear = (a, b, c) => (Math.abs(a.x - b.x) < 0.5 && Math.abs(b.x - c.x) < 0.5)
+  || (Math.abs(a.y - b.y) < 0.5 && Math.abs(b.y - c.y) < 0.5);
+
 function cleanOutline(list) {
   if (!Array.isArray(list)) return null;
   const pts = list.filter((p) => isObj(p) && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y)))
@@ -114,12 +121,133 @@ function cleanOutline(list) {
   return pts.length >= 3 ? pts : null;
 }
 
+// Контур без повторов и без точек посреди прямой (в т. ч. «шипов» назад).
+export function tidyOutline(points) {
+  const pts = (points || []).map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+  let changed = true;
+  while (changed && pts.length >= 3) {
+    changed = false;
+    for (let i = 0; i < pts.length; i += 1) {
+      const a = pts[(i - 1 + pts.length) % pts.length];
+      const b = pts[i];
+      const c = pts[(i + 1) % pts.length];
+      if (samePt(a, b) || collinear(a, b, c)) { pts.splice(i, 1); changed = true; break; }
+    }
+  }
+  return pts;
+}
+
+export function outlineArea(points) {
+  let twice = 0;
+  for (let i = 0; i < (points || []).length; i += 1) {
+    const a = points[i]; const b = points[(i + 1) % points.length];
+    twice += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(twice) / 2;
+}
+
+function segsTouch(p1, p2, p3, p4) {
+  const o = (a, b, c) => {
+    const v = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    return Math.abs(v) < 0.5 ? 0 : Math.sign(v);
+  };
+  const on = (a, b, c) => Math.min(a.x, b.x) - 0.5 <= c.x && c.x <= Math.max(a.x, b.x) + 0.5
+    && Math.min(a.y, b.y) - 0.5 <= c.y && c.y <= Math.max(a.y, b.y) + 0.5;
+  const d1 = o(p3, p4, p1); const d2 = o(p3, p4, p2); const d3 = o(p1, p2, p3); const d4 = o(p1, p2, p4);
+  if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+  return (d1 === 0 && on(p3, p4, p1)) || (d2 === 0 && on(p3, p4, p2))
+    || (d3 === 0 && on(p1, p2, p3)) || (d4 === 0 && on(p1, p2, p4));
+}
+
+// Годный контур крыши: ≥ 4 вершин, рёбра по осям, без самопересечений,
+// площадь не меньше 0,01 м².
+export function validOutline(points) {
+  if (!Array.isArray(points) || points.length < 4) return false;
+  const n = points.length;
+  for (let i = 0; i < n; i += 1) {
+    const a = points[i]; const b = points[(i + 1) % n];
+    if (Math.abs(a.x - b.x) > 0.5 && Math.abs(a.y - b.y) > 0.5) return false;
+    if (samePt(a, b)) return false;
+  }
+  if (outlineArea(points) < 1e4) return false;
+  for (let i = 0; i < n; i += 1) {
+    for (let j = i + 2; j < n; j += 1) {
+      if (i === 0 && j === n - 1) continue;
+      if (segsTouch(points[i], points[(i + 1) % n], points[j], points[(j + 1) % n])) return false;
+    }
+  }
+  return true;
+}
+
+export const boxOutline = (b) => [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
+
+// Рёбра контура области (gridEdges) → замкнутые обходы или null (у точки не 2 ребра).
+function chainEdges(edges) {
+  const key = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
+  const at = new Map();
+  edges.forEach((e, i) => {
+    for (const p of [e.a, e.b]) {
+      const k = key(p);
+      if (!at.has(k)) at.set(k, []);
+      at.get(k).push(i);
+    }
+  });
+  if ([...at.values()].some((l) => l.length !== 2)) return null;
+  const used = new Set();
+  const loops = [];
+  for (let s = 0; s < edges.length; s += 1) {
+    if (used.has(s)) continue;
+    const loop = [];
+    let i = s;
+    let p = edges[s].a;
+    while (!used.has(i)) {
+      used.add(i);
+      loop.push({ x: p.x, y: p.y });
+      const e = edges[i];
+      const q = key(e.a) === key(p) ? e.b : e.a;
+      const next = at.get(key(q)).find((j) => j !== i);
+      p = q;
+      i = next;
+    }
+    loops.push(loop);
+  }
+  return loops;
+}
+
+// Объединение прямоугольников → один ортогональный контур; несвязные куски
+// или дворы — габарит (контур крыши — один многоугольник без дыр).
+export function rectsOutline(rects) {
+  const list = (rects || []).filter((r) => r.x1 - r.x0 > 0.5 && r.y1 - r.y0 > 0.5);
+  if (!list.length) return null;
+  const loops = chainEdges(gridEdges(rectGrid([list])));
+  if (loops && loops.length === 1) {
+    const t = tidyOutline(loops[0]);
+    if (validOutline(t)) return t;
+  }
+  return boxOutline(rectsBox(list));
+}
+
+// Прямоугольники помещений этажа с наружной стеной (открытые — без стены).
+export function roomsBaseRects(project, levelId, roomIds) {
+  const l = (project?.levels || []).find((x) => x.id === levelId);
+  if (!l) return [];
+  const ids = new Set(roomIds || []);
+  const t = Number(project?.settings?.exterior) || DEFAULT_EXTERIOR;
+  return (l.rooms || []).filter((r) => ids.has(r.id))
+    .flatMap((r) => roomRects(r).map((p) => box(p, isOpenRoom(r) ? 0 : t)));
+}
+
+// Контур по помещениям (стартовая форма новой крыши, перенос старых файлов).
+export function roomsOutline(project, levelId, roomIds) {
+  return rectsOutline(roomsBaseRects(project, levelId, roomIds));
+}
+
 // Крыша из файла или правки → приведённая (лишние поля сохраняются) или null.
+// Без своего контура крыша не живёт (старые roomIds переводит normalizeRoofs).
 export function normalizeRoof(raw) {
   if (!isObj(raw) || typeof raw.levelId !== 'string' || !raw.levelId) return null;
-  const roomIds = Array.isArray(raw.roomIds) ? [...new Set(raw.roomIds.filter((x) => typeof x === 'string' && x))] : [];
   const outline = cleanOutline(raw.outline);
-  if (!roomIds.length && !outline) return null;
+  if (!outline) return null;
   const oh = isObj(raw.overhang) ? raw.overhang : {};
   const e = isObj(raw.edge) ? raw.edge : {};
   const p = isObj(raw.parapet) ? raw.parapet : {};
@@ -130,7 +258,7 @@ export function normalizeRoof(raw) {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 60) : 'Крыша',
     levelId: raw.levelId,
     dz: Math.round(clamp(num(raw.dz, 0), -DZ_LIMIT, DZ_LIMIT)),
-    roomIds,
+    outline,
     overhang: Object.fromEntries(ROOF_SIDES.map((s) => [s, clampOverhang(oh[s])])),
     thickness: range(raw.thickness, ROOF_THICK),
     edge: {
@@ -147,29 +275,28 @@ export function normalizeRoof(raw) {
     material: MATERIAL_IDS.has(raw.material) ? raw.material : 'graphite',
     drain: Boolean(raw.drain),
   };
+  delete out.roomIds;
   if (typeof e.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(e.color)) delete out.edge.color;
-  if (outline) out.outline = outline; else delete out.outline;
   return out;
 }
 
 // Список из файла: битые отброшены, id уникальны. levels (необязательно) —
-// этажи проекта: помещения, которых на этаже нет, снимаются; крыша без
-// этажа или без помещений (и без своего контура) — отбрасывается.
-export function normalizeRoofs(list, levels = null) {
+// этажи проекта: крыша без этажа отбрасывается; старая крыша над помещениями
+// (roomIds без outline) получает контур по ним — объединение с наружной
+// стеной (settings.exterior), несвязные — габарит; поле roomIds уходит.
+export function normalizeRoofs(list, levels = null, settings = null) {
   if (!Array.isArray(list)) return [];
-  const byLevel = levels ? new Map(levels.map((l) => [l.id, new Set((l.rooms || []).map((r) => r.id))])) : null;
   const seen = new Set();
   const out = [];
   for (const raw of list) {
-    let r = normalizeRoof(raw);
-    if (!r) continue;
-    if (byLevel) {
-      const ids = byLevel.get(r.levelId);
-      if (!ids) continue;
-      const roomIds = r.roomIds.filter((id) => ids.has(id));
-      if (!roomIds.length && !r.outline) continue;
-      r = { ...r, roomIds };
+    let src = raw;
+    if (isObj(raw) && !cleanOutline(raw.outline) && Array.isArray(raw.roomIds) && levels) {
+      const outline = roomsOutline({ levels, settings }, raw.levelId, raw.roomIds);
+      if (outline) src = { ...raw, outline };
     }
+    const r = normalizeRoof(src);
+    if (!r) continue;
+    if (levels && !levels.some((l) => l.id === r.levelId)) continue;
     if (seen.has(r.id)) r.id = roofId();
     seen.add(r.id);
     out.push(r);
@@ -177,16 +304,22 @@ export function normalizeRoofs(list, levels = null) {
   return out;
 }
 
-// Новая крыша над помещениями: вынос 600, фасция 250, графит.
-export function createRoof({ levelId, roomIds = [], ...patch } = {}, existing = []) {
+// Новая крыша по контуру: вынос 600, фасция 250, графит.
+export function createRoof({ levelId, outline, ...patch } = {}, existing = []) {
   return normalizeRoof({
-    id: roofId(), name: nextRoofName(existing), levelId, roomIds, dz: 0,
+    id: roofId(), name: nextRoofName(existing), levelId, outline, dz: 0,
     overhang: allSides(OVERHANG_DEFAULT), thickness: ROOF_THICK.def,
     edge: { type: 'fascia', height: EDGE_HEIGHT.def },
     parapet: { type: 'none', height: PARAPET_HEIGHT.def, thickness: PARAPET_THICK.def, inset: 0, sides: allSides(true) },
     material: 'graphite', drain: false,
     ...patch,
   });
+}
+
+// Новая крыша со стартовой формой по помещениям (дальше с ними не связана).
+export function roofFromRooms(project, levelId, roomIds, patch = {}, existing = []) {
+  const outline = roomsOutline(project, levelId, roomIds);
+  return outline ? createRoof({ levelId, outline, ...patch }, existing) : null;
 }
 
 // Правка с вложенными полями (overhang/edge/parapet/sides сливаются).
@@ -206,25 +339,132 @@ export function applyRoofPreset(roof, presetId) {
   return p ? patchRoof(roof, p.patch) : roof;
 }
 
-export function addRoomToRoof(roof, roomId) {
-  if (roof.roomIds.includes(roomId)) return roof;
-  const { outline: _drop, ...rest } = roof;
-  return normalizeRoof({ ...rest, roomIds: [...roof.roomIds, roomId] }) || roof;
+// ---------------------------------------------------------------- правка контура
+
+// Перенос крыши целиком.
+export function moveRoof(roof, dx, dy) {
+  return { ...roof, outline: roof.outline.map((p) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) })) };
 }
 
-// Без последнего помещения крыша не остаётся — null (удалить).
-export function removeRoomFromRoof(roof, roomId) {
-  const roomIds = roof.roomIds.filter((id) => id !== roomId);
-  if (!roomIds.length && !roof.outline) return null;
-  return { ...roof, roomIds };
+export function outlineBox(roof) {
+  const xs = roof.outline.map((p) => p.x); const ys = roof.outline.map((p) => p.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+// Ручки контура (как у помещения с контуром, core/room-shape.js):
+// вершины { id: 'outline-v-i', kind: 'vertex', index } и середины рёбер
+// { id: 'outline-e-i', kind: 'edge', index } в осях дома.
+export function roofOutlineHandles(roof) {
+  if (!Array.isArray(roof?.outline) || roof.outline.length < 4) return [];
+  return roomShapeHandles({ x: 0, y: 0, w: 0, h: 0, outline: roof.outline });
+}
+
+// Ручка контура в точку (ребро — сдвиг по нормали, вершина — два ребра).
+// → новая крыша или null (контур вышел негодным: самопересечение, вырождение).
+export function applyRoofOutlineHandle(roof, handle, point, { mergeTolerance = 0 } = {}) {
+  const room = { x: 0, y: 0, outline: roof.outline.map((p) => ({ x: p.x, y: p.y })) };
+  applyRoomShapeHandle(room, { ...handle, outline: true }, point, { mergeTolerance });
+  const t = tidyOutline(room.outline);
+  return validOutline(t) ? { ...roof, outline: t } : null;
+}
+
+// Деление ребра в точке: две совпадающие вершины (потянуть половину ребра —
+// получится уступ, Г-форма). → крыша или null (точка у конца ребра).
+export function insertRoofVertex(roof, edgeIndex, point, minGap = 100) {
+  const pts = roof.outline.map((p) => ({ x: p.x, y: p.y }));
+  const n = pts.length;
+  const a = pts[edgeIndex]; const b = pts[(edgeIndex + 1) % n];
+  if (!a || !b) return null;
+  const horiz = Math.abs(a.y - b.y) < 0.5;
+  const lo = horiz ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
+  const hi = horiz ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
+  const v = Math.round(horiz ? point.x : point.y);
+  if (v < lo + minGap || v > hi - minGap) return null;
+  const p = horiz ? { x: v, y: a.y } : { x: a.x, y: v };
+  pts.splice(edgeIndex + 1, 0, { ...p }, { ...p });
+  return { ...roof, outline: pts };
+}
+
+// Удалить вершину: угол срезается до соседей (вогнутый — уступ заполняется).
+// → крыша или null (прямоугольник, негодный результат).
+export function removeRoofVertex(roof, index) {
+  const at = roof.outline[index];
+  if (!at) return null;
+  const pts = tidyOutline(roof.outline);
+  index = pts.findIndex((p) => samePt(p, at));
+  // Вершина деления ребра (на прямой) — просто убрать деление.
+  if (index < 0) return validOutline(pts) && pts.length < roof.outline.length ? { ...roof, outline: pts } : null;
+  const n = pts.length;
+  if (n <= 4) return null;
+  const a = pts[(index - 1 + n) % n]; const b = pts[index]; const c = pts[(index + 1) % n];
+  pts[index] = Math.abs(a.y - b.y) < 0.5 ? { x: a.x, y: c.y } : { x: c.x, y: a.y };
+  const t = tidyOutline(pts);
+  return validOutline(t) ? { ...roof, outline: t } : null;
+}
+
+// Ближайшее ребро контура к точке → { index, dist }.
+export function nearestOutlineEdge(roof, p) {
+  let best = { index: -1, dist: Infinity };
+  const pts = roof.outline;
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]; const b = pts[(i + 1) % pts.length];
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const L = dx * dx + dy * dy;
+    const t = L > 0 ? clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / L, 0, 1) : 0;
+    const d = Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+    if (d < best.dist) best = { index: i, dist: d };
+  }
+  return best;
+}
+
+// Привязка координаты: к ближайшей линии в пределах tol, иначе к шагу.
+export function snapCoord(v, lines = [], tol = 0, step = 0) {
+  let best = null; let d = tol;
+  for (const c of lines) {
+    const dd = Math.abs(c - v);
+    if (dd <= d) { d = dd; best = c; }
+  }
+  if (best != null) return { value: Math.round(best), snapped: true };
+  return { value: step > 0 ? Math.round(v / step) * step : Math.round(v), snapped: false };
+}
+
+// Сдвиг крыши с привязкой граней габарита контура к линиям (иначе шаг).
+export function snapRoofMove(roof, dx, dy, { xs = [], ys = [], tol = 0, step = 0 } = {}) {
+  const b = outlineBox(roof);
+  const axis = (d, a0, a1, lines) => {
+    let best = null; let bd = tol;
+    for (const c of lines) {
+      for (const a of [a0, a1]) {
+        const dd = Math.abs(c - (a + d));
+        if (dd <= bd) { bd = dd; best = c - a; }
+      }
+    }
+    if (best != null) return { value: Math.round(best), snapped: true };
+    return { value: step > 0 ? Math.round(d / step) * step : Math.round(d), snapped: false };
+  };
+  const sx = axis(dx, b.x0, b.x1, xs);
+  const sy = axis(dy, b.y0, b.y1, ys);
+  return { dx: sx.value, dy: sy.value, snapped: sx.snapped || sy.snapped };
 }
 
 export const roofsOf = (project) => (Array.isArray(project?.roofs) ? project.roofs : []);
 export const roofById = (project, id) => roofsOf(project).find((r) => r.id === id) || null;
 
-// Крыша, накрывающая помещение этажа, или null.
-export function roofOfRoom(project, levelId, roomId) {
-  return roofsOf(project).find((r) => r.levelId === levelId && r.roomIds.includes(roomId)) || null;
+// Крыша этажа, основание которой накрывает точку (последняя сверху), или null.
+export function roofAtPoint(project, levelId, x, y) {
+  const list = roofsOf(project).filter((r) => r.levelId === levelId);
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (roofBaseRects(project, list[i]).some((b) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1)) return list[i];
+  }
+  return null;
+}
+
+// Крыша над помещением (по точке подписи помещения) или null — связи нет,
+// только геометрия.
+export function roofOverRoom(project, levelId, room) {
+  if (!room) return null;
+  const p = roomLabelPoint(room);
+  return roofAtPoint(project, levelId, p.x, p.y);
 }
 
 // ---------------------------------------------------------------- геометрия
@@ -242,20 +482,11 @@ export function roofZ(project, roof) {
   return { base, z0, z1: z0 + roof.thickness };
 }
 
-export function roofRooms(project, roof) {
-  const l = roofLevel(project, roof);
-  if (!l) return [];
-  const ids = new Set(roof.roomIds);
-  return (l.rooms || []).filter((r) => ids.has(r.id));
-}
-
 const box = (p, o = 0) => ({ x0: p.x - o, y0: p.y - o, x1: p.x + p.w + o, y1: p.y + p.h + o });
 
-// Основание без выноса: прямоугольники помещений с наружной стеной.
-export function roofBaseRects(project, roof) {
-  if (roof.outline) return polygonRects(roof.outline).map((p) => box(p));
-  const t = Number(project?.settings?.exterior) || DEFAULT_EXTERIOR;
-  return roofRooms(project, roof).flatMap((r) => roomRects(r).map((p) => box(p, isOpenRoom(r) ? 0 : t)));
+// Основание без выноса: прямоугольники своего контура.
+export function roofBaseRects(_project, roof) {
+  return Array.isArray(roof?.outline) && roof.outline.length >= 3 ? polygonRects(roof.outline).map((p) => box(p)) : [];
 }
 
 // Пятно этажа над крышей (как core/mesh3d.js levelFootprint: закрытые
@@ -475,13 +706,28 @@ export function baseEdge(project, roof, side) {
   return { n: b.y0, e: b.x1, s: b.y1, w: b.x0 }[side];
 }
 
-// Линии привязки граней выноса: грани других крыш, масс (massBox), оси.
-export function roofSnapLines(project, skipId = null, massBoxFn = null) {
+// Линии привязки: грани других крыш, масс (massBox), оси; geometry — ещё
+// вершины контуров других крыш и грани помещений всех этажей (внутренние и
+// наружные с толщиной стены) — только привязка, не связь.
+export function roofSnapLines(project, skipId = null, massBoxFn = null, { geometry = false } = {}) {
   const xs = []; const ys = [];
   for (const r of roofsOf(project)) {
     if (r.id === skipId) continue;
     const b = rectsBox(roofRects(project, r));
     if (b) { xs.push(b.x0, b.x1); ys.push(b.y0, b.y1); }
+    if (geometry) for (const p of r.outline || []) { xs.push(p.x); ys.push(p.y); }
+  }
+  if (geometry) {
+    const t = Number(project?.settings?.exterior) || DEFAULT_EXTERIOR;
+    for (const l of project?.levels || []) {
+      for (const room of l.rooms || []) {
+        if (isShaft(room)) continue;
+        for (const q of roomRects(room)) {
+          xs.push(q.x, q.x + q.w); ys.push(q.y, q.y + q.h);
+          if (!isOpenRoom(room)) { xs.push(q.x - t, q.x + q.w + t); ys.push(q.y - t, q.y + q.h + t); }
+        }
+      }
+    }
   }
   if (massBoxFn) {
     for (const m of project?.masses || []) {

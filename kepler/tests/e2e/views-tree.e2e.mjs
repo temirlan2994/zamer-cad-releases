@@ -24,10 +24,18 @@ describe('дерево видов, свойства вида, листы, ТЭП
     const { page } = app;
     await page.click('#propsTabViews');
     const groups = await page.$$eval('#viewTree .vt-group > summary', (ns) => ns.map((n) => n.firstChild.textContent.trim()));
-    assert.deepEqual(groups, ['Планы этажей', 'Участок', 'Ландшафт', '3D', 'Разрезы', 'Фасады']);
+    assert.deepEqual(groups, ['Планы этажей', 'Кровля', 'Участок', 'Ландшафт', '3D', 'Разрезы', 'Фасады']);
     const { level } = await st(page);
     assert.deepEqual(await activeView(page), [`plan:${level}`]);
     assert.match(await page.textContent('[data-vt-group="facades"]'), /Фасад Север/);
+    // «План крыши»: открывается из дерева, на лист не тянется; назад — план этажа.
+    assert.equal(await page.getAttribute('[data-view="roofplan"]', 'draggable'), 'false');
+    await page.click('[data-view="roofplan"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.roofPlan), true);
+    assert.deepEqual(await activeView(page), ['roofplan']);
+    await page.click(`[data-view="plan:${level}"]`);
+    assert.equal(await page.evaluate(() => window.__kepler.state.roofPlan), false);
+    assert.deepEqual(await activeView(page), [`plan:${level}`]);
   });
 
   it('двойной клик по «2 этаж» — этаж и режим «План»', async () => {

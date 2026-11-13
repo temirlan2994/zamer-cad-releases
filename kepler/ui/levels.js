@@ -35,6 +35,11 @@ export function renderLevelBar() {
     btn.addEventListener('click', () => {
       // Из «Ландшафта» клик по этажу возвращает в «План».
       if (state.modeName === 'landscape') setEditorMode('plan');
+      if (state.roofPlan) { // с «Плана крыши» клик по этажу — к плану этажа
+        state.roofPlan = false;
+        document.body.classList.remove('mode-roofplan');
+        document.dispatchEvent(new CustomEvent('kepler:view'));
+      }
       switchLevel(level.id);
     });
     bar.appendChild(btn);

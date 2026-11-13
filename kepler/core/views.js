@@ -30,6 +30,7 @@ export const VIEW_KINDS = ['plan', 'site', 'landscape', '3d', 'elevation', 'sect
 export const ELEV_DIRS = ['N', 'S', 'W', 'E']; // порядок в дереве видов
 export const DIR_NAMES = { N: 'Север', S: 'Юг', W: 'Запад', E: 'Восток' };
 export const VIEW_SCALES = [50, 100, 200];
+export const ROOF_PLAN_VIEW = 'roofplan'; // ключ вида «План крыши» (вычисляется, не хранится)
 export const DEFAULT_VIEW_SCALE = 100;
 
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -361,6 +362,8 @@ export function viewById(project, id) {
     const level = (project.levels || []).find((l) => l.id === id.slice(5));
     return level ? { id, kind: 'plan', levelId: level.id, name: `План: ${level.name}` } : null;
   }
+  // План крыши (ui/roof-plan.js): только крыши над подложкой этажей; на листы не идёт.
+  if (id === ROOF_PLAN_VIEW) return { id, kind: 'roofplan', name: 'План крыши' };
   if (id === 'site') return { id, kind: 'site', name: 'Участок' };
   if (id === 'landscape') return { id, kind: 'landscape', name: 'Ландшафт' };
   if (id === '3d') return { id, kind: '3d', name: '3D-вид' };

@@ -59,7 +59,7 @@ import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
 import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
-import { drawRoofOutlines, drawRoofOverlay } from './ui/render-roofs.js';
+import { drawRoofOutlines, drawRoofPlan } from './ui/render-roofs.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
 import { drawPlanGrids } from './ui/render-axes.js';
@@ -278,6 +278,15 @@ export function createRenderer(canvas) {
 
     // 3–6. Дом — в своих осях.
     setView(pv);
+    // «План крыши» (ui/roof-plan.js): только подложка этажей и крыши.
+    if (state.roofPlan && state.modeName === 'plan' && !print) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawRoofPlan(ctx, { p2s, tokens });
+      ctx.restore();
+      if (site) drawCompass(ctx, state, site, width, tokens);
+      return;
+    }
     // Эскиз масс (core/masses.js) — подложка под комнатами и стенами; на печать не идёт.
     state._planMasses = 0;
     if (!print && opts.site !== false) {
@@ -286,7 +295,7 @@ export function createRenderer(canvas) {
       drawMassSketch(ctx, { p2s, tokens });
       ctx.restore();
     }
-    // Проекция кровли (core/roofs.js) — штрихпунктир контура плиты; на печать — по настройке.
+    // Проекция кровли (core/roofs.js) — бледный штрих по настройке вида (по умолчанию нет).
     state._planRoofs = 0;
     if (opts.site !== false) {
       ctx.save();
@@ -740,7 +749,6 @@ export function createRenderer(canvas) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawMassOverlay(ctx, { p2s, tokens });
-      drawRoofOverlay(ctx, { p2s, tokens });
       ctx.restore();
     }
     if (site) drawSiteLabels(ctx, state, site, w2s, tokens);

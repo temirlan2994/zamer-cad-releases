@@ -13,8 +13,10 @@
 
 import { sortedLevels } from '../core/model.js';
 import {
-  VIEW_SCALES, facadeViews, sectionViews, userSheets, viewById, viewPlacement, viewScale,
+  ROOF_PLAN_VIEW, VIEW_SCALES, facadeViews, sectionViews, userSheets, viewById, viewPlacement, viewScale,
 } from '../core/views.js';
+import { setRoofPlanOpener } from './plan-roofs.js';
+import { setRoofPlan } from './roof-plan.js';
 import { customViewAngle, isPlanEmpty, viewAngle } from '../core/view-angles.js';
 import { el, escapeHtml } from './dom.js';
 import {
@@ -42,7 +44,7 @@ import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from
 
 const MODE_TITLES = { plan: '«План»', site: '«Участок»', landscape: '«Ландшафт»' };
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
-const openGroups = { plans: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
+const openGroups = { plans: true, roof: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
 
 const sectionName = (sec) => `Разрез ${sec.name}–${sec.name}`;
 // Вид в окне фасада: фасад ('elev-N'…) или разрез по линии на плане.
@@ -55,7 +57,7 @@ export function activeViewId() {
   if (isElevationOpen()) return openElevationId();
   if (is3dOpen()) return '3d';
   const mode = state.modeName || 'plan';
-  if (mode === 'plan') return `plan:${state.project.activeLevel}`;
+  if (mode === 'plan') return state.roofPlan ? ROOF_PLAN_VIEW : `plan:${state.project.activeLevel}`;
   if (mode === 'landscape' && openSectionId()) return `section:${openSectionId()}`;
   return mode;
 }
@@ -64,6 +66,7 @@ export function activeViewId() {
 export function activeViewTitle() {
   const id = activeViewId() || `plan:${state.project.activeLevel}`;
   if (id === '3d') return '3D';
+  if (id === ROOF_PLAN_VIEW) return 'План крыши';
   if (isWindowView(id)) return elevationView(id)?.name || 'Фасад';
   if (id === 'site') return 'Участок';
   if (id === 'landscape') return 'Ландшафт';
@@ -93,8 +96,12 @@ export function openView(id) {
     return;
   }
   if (is3dOpen()) close3d();
-  if (id.startsWith('plan:')) {
+  if (id === ROOF_PLAN_VIEW) {
     setEditorMode('plan');
+    setRoofPlan(true);
+  } else if (id.startsWith('plan:')) {
+    setEditorMode('plan');
+    setRoofPlan(false);
     switchLevel(id.slice(5));
   } else if (id === 'site') {
     setEditorMode('site');
@@ -109,15 +116,16 @@ export function openView(id) {
 }
 
 setViewOpener(openView); // двойной клик по виду на листе
+setRoofPlanOpener(() => { if (activeViewId() !== ROOF_PLAN_VIEW) openView(ROOF_PLAN_VIEW); });
 
 // ------------------------------------------------------------ дерево видов
 
 // Вид можно перетащить на открытый лист (ui/sheet-view.js); вид, уже
 // размещённый на листе, помечен «Л<лист>-<номер вида>».
-function treeItem(id, name, active, extra = '') {
+function treeItem(id, name, active, extra = '', drag = true) {
   const placed = viewPlacement(state.project, id);
   const mark = placed ? `<small class="vt-sheet" title="${escapeHtml(placed.text)}">${escapeHtml(placed.mark)}</small>` : '';
-  return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}" draggable="true"
+  return `<li role="none"><button type="button" role="treeitem" class="vt-item${active === id ? ' active' : ''}" data-view="${escapeHtml(id)}" draggable="${drag}"
     aria-selected="${active === id}"${active === id ? ' aria-current="page"' : ''}>${extra}<span class="vt-name">${escapeHtml(name)}</span>${mark}</button></li>`;
 }
 
@@ -144,6 +152,7 @@ export function renderViewsPanel(panel) {
     <p class="subtitle">Виды проекта, как в диспетчере Revit: клик — открыть. Настройки вида — во вкладке «Свойства».</p>
     <div class="view-tree" id="viewTree" role="tree" aria-label="Виды проекта">
       ${treeGroup('plans', 'Планы этажей', levels.map((l) => treeItem(`plan:${l.id}`, l.name, active)), 'Этажей нет', true)}
+      ${treeGroup('roof', 'Кровля', [treeItem(ROOF_PLAN_VIEW, 'План крыши', active, '', false)])}
       ${treeGroup('site', 'Участок', [treeItem('site', 'Участок', active)])}
       ${treeGroup('landscape', 'Ландшафт', [treeItem('landscape', 'Ландшафт', active)])}
       ${treeGroup('3d', '3D', [treeItem('3d', '3D-вид', active)])}
@@ -170,7 +179,7 @@ export function renderViewsPanel(panel) {
 // «На лист…» (касание и мышь): лист, на котором вид уже стоит, или выбор
 // листа пользователя / новый лист.
 function placeBlockHtml(viewId) {
-  if (!viewId || !viewById(state.project, viewId)) return '';
+  if (!viewId || viewId === ROOF_PLAN_VIEW || !viewById(state.project, viewId)) return '';
   const where = viewPlacement(state.project, viewId);
   if (where) {
     const placed = where.sheet;
@@ -248,9 +257,10 @@ function roofBlock() {
   return `
     <h3>Крыши</h3>
     <div class="prop-block" id="viewsRoofs">
-      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Показывать контур кровли на плане</span><em>${count}</em></label>
+      ${state.roofPlan ? '' : '<button type="button" id="viewsRoofPlanBtn">Открыть «План крыши»</button>'}
+      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Показывать контур кровли на плане этажа</span><em>${count}</em></label>
       <label class="check-row"><input type="checkbox" id="viewsRoofPrint" ${pref.print ? 'checked' : ''}><span>Контур кровли на листах</span></label>
-      <p class="hint">Штрихпунктир — проекция плиты с выносом на плане этажа, над которым крыша. Клик в зоне выноса — выбрать крышу.</p>
+      <p class="hint">Крыши чертятся и правятся на «Плане крыши» (дерево «Виды» → «Кровля», K). На плане этажа — только бледный штрих по этой настройке, клики он не ловит.</p>
     </div>`;
 }
 
@@ -365,6 +375,7 @@ export function bindViewSettings(panel, rerender) {
     rerender();
   });
   panel.querySelector('#viewsMassOn')?.addEventListener('change', (e) => { setPlanMassPref({ on: e.target.checked }); requestDraw(); rerender(); });
+  panel.querySelector('#viewsRoofPlanBtn')?.addEventListener('click', () => openView(ROOF_PLAN_VIEW));
   panel.querySelector('#viewsRoofOn')?.addEventListener('change', (e) => { setPlanRoofPref({ on: e.target.checked }); requestDraw(); });
   panel.querySelector('#viewsRoofPrint')?.addEventListener('change', (e) => { setPlanRoofPref({ print: e.target.checked }); requestDraw(); });
   panel.querySelector('#viewsMassOutline')?.addEventListener('change', (e) => { setPlanMassPref({ outlineOnly: e.target.checked }); requestDraw(); });

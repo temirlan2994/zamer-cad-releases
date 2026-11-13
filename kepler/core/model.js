@@ -494,9 +494,10 @@ export function normalizeProject(data) {
   // Массы (core/masses.js): необязательно, без смены схемы; пустой список не хранится.
   const masses = normalizeMasses(data.masses);
   if (masses.length) data.masses = masses; else delete data.masses;
-  // Крыши-плиты (core/roofs.js): необязательно, без смены схемы; помещения —
-  // только существующие на своём этаже; пустой список не хранится.
-  const roofs = normalizeRoofs(data.roofs, data.levels);
+  // Крыши-плиты (core/roofs.js): необязательно, без смены схемы; у крыши свой
+  // контур, старые крыши над помещениями (roomIds) получают контур по ним;
+  // пустой список не хранится.
+  const roofs = normalizeRoofs(data.roofs, data.levels, data.settings);
   if (roofs.length) data.roofs = roofs; else delete data.roofs;
   // Координационные оси (core/grid-axes.js): необязательно, без смены схемы.
   const grids = normalizeGrids(data.grids);

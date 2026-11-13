@@ -1,13 +1,16 @@
-// Крыши-плиты (core/roofs.js): создание над помещением, объединение,
-// вынос по сторонам (прямоугольник и Г-образное основание), привязки,
-// нормализация, сохранение v7/v6, автокровля не дублируется, парапет;
-// грани 3D (core/mesh3d.js roofFaces), фасад и разрез, выбор в 3D.
+// Крыши-плиты (core/roofs.js): свой контур (стартовая форма по помещениям,
+// дальше без связи), перенос, правка вершин и рёбер, деление ребра и
+// удаление вершины, вынос по сторонам (прямоугольник и Г-образное
+// основание), привязки, нормализация и перенос старых крыш (roomIds →
+// outline), сохранение v7/v6, автокровля не дублируется, парапет; грани 3D
+// (core/mesh3d.js roofFaces), фасад и разрез, выбор в 3D.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addRoomToRoof, applyRoofPreset, createRoof, dragOverhang, gridArea, gridEdges, normalizeRoof, normalizeRoofs,
-  overhangLabel, patchRoof, rectGrid, rectsBox, removeRoomFromRoof, roofBaseRects, roofHandles, roofOfRoom, roofRects,
-  roofZ, snapOverhang, snapRoofDz,
+  applyRoofOutlineHandle, applyRoofPreset, createRoof, dragOverhang, gridArea, gridEdges, insertRoofVertex, moveRoof,
+  normalizeRoof, normalizeRoofs, overhangLabel, patchRoof, rectGrid, rectsBox, rectsOutline, removeRoofVertex,
+  roofBaseRects, roofFromRooms, roofHandles, roofOutlineHandles, roofOverRoom, roofRects, roofZ, snapOverhang,
+  snapRoofDz, snapRoofMove, tidyOutline, validOutline,
 } from '../core/roofs.js';
 import { createLevel, createProject, createRoom, deserializeProject, fileDataV6, serializeProject } from '../core/model.js';
 import { buildHouseMesh, roofFaces } from '../core/mesh3d.js';
@@ -35,11 +38,15 @@ function twoStorey() {
 }
 
 const bbox = (p, r) => rectsBox(roofRects(p, r));
+// Крыша со стартовой формой по помещениям этажа L1 (без связи с ними).
+const over = (p, ids, patch = {}, existing = []) => roofFromRooms(p, 'L1', ids, patch, existing);
 
 test('создание над помещением: основание по наружной грани стен, вынос 600, отметка над этажом', () => {
   const p = house();
-  const r = createRoof({ levelId: 'L1', roomIds: ['a'] });
+  const r = over(p, ['a']);
   assert.equal(r.name, 'Крыша 1');
+  assert.equal(r.roomIds, undefined, 'с помещениями не связана');
+  assert.deepEqual(r.outline, [{ x: -250, y: -250 }, { x: 6250, y: -250 }, { x: 6250, y: 4250 }, { x: -250, y: 4250 }]);
   assert.deepEqual(r.overhang, { n: 600, e: 600, s: 600, w: 600 });
   assert.equal(r.thickness, 300);
   assert.equal(r.edge.type, 'fascia');
@@ -50,32 +57,84 @@ test('создание над помещением: основание по на
   assert.equal(z.z0, 3000);
   assert.equal(z.z1, 3300);
   assert.equal(roofZ(p, { ...r, dz: -200 }).z0, 2800);
-  assert.equal(createRoof({ levelId: 'L1', roomIds: ['b'] }, [r]).name, 'Крыша 2');
-  assert.equal(roofOfRoom({ ...p, roofs: [r] }, 'L1', 'a').id, r.id);
-  assert.equal(roofOfRoom({ ...p, roofs: [r] }, 'L1', 'b'), null);
+  assert.equal(over(p, ['b'], {}, [r]).name, 'Крыша 2');
+  assert.equal(roofOverRoom({ ...p, roofs: [r] }, 'L1', p.rooms[0]).id, r.id);
+  assert.equal(roofOverRoom({ ...p, roofs: [r] }, 'L1', p.rooms[1]), null);
+  // Помещение сдвинули — крыша на месте (связи нет).
+  p.rooms[0].x += 1000;
+  assert.deepEqual(rectsBox(roofBaseRects(p, r)), { x0: -250, y0: -250, x1: 6250, y1: 4250 });
 });
 
-test('объединение двух помещений — одна плита без шва', () => {
+test('форма по двум помещениям — одна плита без шва; объединение прямоугольников в контур', () => {
   const p = house();
-  let r = createRoof({ levelId: 'L1', roomIds: ['a'] });
-  r = addRoomToRoof(r, 'b');
-  assert.deepEqual(r.roomIds, ['a', 'b']);
+  const r = over(p, ['a', 'b']);
+  assert.equal(r.outline.length, 4);
   assert.deepEqual(bbox(p, r), { x0: -850, y0: -850, x1: 10850, y1: 4850 });
   const g = rectGrid([roofRects(p, r)]);
   assert.equal(gridEdges(g).length, 4, 'прямоугольник — 4 ребра');
   assert.equal(gridArea(g), 11700 * 5700);
-  assert.equal(removeRoomFromRoof(r, 'b').roomIds.length, 1);
-  assert.equal(removeRoomFromRoof(createRoof({ levelId: 'L1', roomIds: ['a'] }), 'a'), null);
+  // Г из двух прямоугольников — 6 вершин; несвязные — габарит.
+  const L = rectsOutline([{ x0: 0, y0: 0, x1: 6000, y1: 4000 }, { x0: 0, y0: 4000, x1: 3000, y1: 7000 }]);
+  assert.equal(L.length, 6);
+  assert.ok(validOutline(L));
+  assert.deepEqual(rectsOutline([{ x0: 0, y0: 0, x1: 1000, y1: 1000 }, { x0: 3000, y0: 0, x1: 4000, y1: 1000 }]),
+    [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 1000 }, { x: 0, y: 1000 }]);
+  assert.deepEqual(tidyOutline([{ x: 0, y: 0 }, { x: 500, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }]).length, 4);
+  assert.equal(validOutline([{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 0, y: 1000 }, { x: 1000, y: 1000 }]), false, 'бабочка');
+});
+
+test('правка контура: перенос, ребро, вершина, деление ребра (Г-форма), удаление вершины', () => {
+  const p = house();
+  const r = createRoof({ levelId: 'L1', outline: [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 }, { x: 0, y: 4000 }], overhang: { n: 0, e: 0, s: 0, w: 0 } });
+  // Перенос — весь контур.
+  const m = moveRoof(r, 1000, -500);
+  assert.deepEqual(rectsBox(roofBaseRects(p, m)), { x0: 1000, y0: -500, x1: 7000, y1: 3500 });
+  // Привязка переноса: правая грань 6000+990 липнет к линии 7000, иначе шаг.
+  assert.deepEqual(snapRoofMove(r, 990, 33, { xs: [7000], ys: [], tol: 50, step: 100 }), { dx: 1000, dy: 0, snapped: true });
+  assert.deepEqual(snapRoofMove(r, 1234, 0, { step: 100 }), { dx: 1200, dy: 0, snapped: false });
+  // Ручки: 4 вершины + 4 ребра.
+  const hs = roofOutlineHandles(r);
+  assert.equal(hs.filter((h) => h.kind === 'vertex').length, 4);
+  assert.equal(hs.filter((h) => h.kind === 'edge').length, 4);
+  // Ребро e (x = 6000, индекс 1) — на x = 8000.
+  const e1 = hs.find((h) => h.kind === 'edge' && h.x === 6000);
+  const wide = applyRoofOutlineHandle(r, e1, { x: 8000, y: 2000 });
+  assert.deepEqual(rectsBox(roofBaseRects(p, wide)), { x0: 0, y0: 0, x1: 8000, y1: 4000 });
+  // Вершина (6000, 4000) — в (7000, 5000): оба ребра.
+  const v2 = hs.find((h) => h.kind === 'vertex' && h.x === 6000 && h.y === 4000);
+  const big = applyRoofOutlineHandle(r, v2, { x: 7000, y: 5000 });
+  assert.deepEqual(rectsBox(roofBaseRects(p, big)), { x0: 0, y0: 0, x1: 7000, y1: 5000 });
+  // Ребро за противоположное — негодно (null), контур не ломается.
+  assert.equal(applyRoofOutlineHandle(r, e1, { x: 0, y: 0 }), null);
+  // Деление нижнего ребра (индекс 2: (6000,4000)→(0,4000)) в x = 3000 и
+  // сдвиг правой половины вниз — Г-форма.
+  const split = insertRoofVertex(r, 2, { x: 3000, y: 4100 });
+  assert.equal(split.outline.length, 6);
+  const half = roofOutlineHandles(split).find((h) => h.kind === 'edge' && h.y === 4000 && h.x === 4500);
+  assert.ok(half, 'ручка правой половины ребра');
+  const L = applyRoofOutlineHandle(split, half, { x: 4500, y: 6000 });
+  assert.equal(L.outline.length, 6, 'Г — 6 вершин');
+  assert.equal(gridArea(rectGrid([roofBaseRects(p, L)])), 6000 * 4000 + 3000 * 2000);
+  assert.equal(insertRoofVertex(r, 2, { x: 50, y: 4000 }), null, 'у самой вершины — нет');
+  // Удаление вогнутой вершины Г — снова прямоугольник по габариту.
+  const inner = L.outline.findIndex((q) => q.x === 3000 && q.y === 4000);
+  const back = removeRoofVertex(L, inner);
+  assert.equal(back.outline.length, 4);
+  assert.deepEqual(rectsBox(roofBaseRects(p, back)), { x0: 0, y0: 0, x1: 6000, y1: 6000 });
+  assert.equal(removeRoofVertex(r, 0), null, 'у прямоугольника вершину не удалить');
+  // Вынос считается от нового контура.
+  const oh = patchRoof(L, { overhang: { n: 500, e: 500, s: 500, w: 500 } });
+  assert.deepEqual(bbox(p, oh), { x0: -500, y0: -500, x1: 6500, y1: 6500 });
 });
 
 test('вынос по сторонам: n — к меньшим y (верх плана), e — к большим x; Г-образное основание', () => {
   const p = house();
-  const r = patchRoof(createRoof({ levelId: 'L1', roomIds: ['a'] }), { overhang: { n: 0, e: 1000, s: 200, w: 1500 } });
+  const r = patchRoof(over(p, ['a']), { overhang: { n: 0, e: 1000, s: 200, w: 1500 } });
   assert.deepEqual(bbox(p, r), { x0: -1750, y0: -250, x1: 7250, y1: 4450 });
   // Г: a + комната под ней слева.
   const c = createRoom('hall', 0, 4000, 3000, 3000); c.id = 'c';
   p.rooms.push(c);
-  const g = patchRoof(createRoof({ levelId: 'L1', roomIds: ['a', 'c'] }), { overhang: { n: 0, e: 1000, s: 500, w: 0 } });
+  const g = patchRoof(roofFromRooms(p, 'L1', ['a', 'c']), { overhang: { n: 0, e: 1000, s: 500, w: 0 } });
   const edges = gridEdges(rectGrid([roofRects(p, g)]));
   assert.equal(edges.length, 6, 'Г — 6 рёбер');
   // Внутреннее ребро уступа (нормаль +x) сдвинуто на e = 1000: x = 3250 + 1000.
@@ -91,7 +150,7 @@ test('вынос по сторонам: n — к меньшим y (верх пл
 });
 
 test('ручки: тянуть сторону и угол, привязки 0/600/1000/1500 и к граням, шаг', () => {
-  const r = createRoof({ levelId: 'L1', roomIds: ['a'] });
+  const r = over(house(), ['a']);
   assert.equal(dragOverhang(r, ['e'], 400, 0).roof.overhang.e, 1000);
   assert.equal(dragOverhang(r, ['n'], 0, -300).roof.overhang.n, 900, 'n растёт вверх (y вниз)');
   assert.equal(dragOverhang(r, ['w'], 1000, 0).roof.overhang.w, 0, 'не меньше 0');
@@ -105,20 +164,22 @@ test('ручки: тянуть сторону и угол, привязки 0/60
   assert.equal(snapOverhang(1160, { side: 'w', base: -250, lines: [-1400], tol: 30 }).value, 1150);
   // dz: шаг 50, привязка к отметкам этажей.
   const q = twoStorey();
-  const r1 = createRoof({ levelId: 'L1', roomIds: ['b'] });
+  const r1 = roofFromRooms(q, 'L1', ['b']);
   assert.equal(snapRoofDz(q, r1, 130).value, 150);
   assert.deepEqual(snapRoofDz(q, r1, 2960, { tol: 100 }), { value: 3000, label: 'верх «2 этаж»' });
 });
 
-test('нормализация: битые отброшены, поля зажаты, помещения — только существующие', () => {
+test('нормализация: битые отброшены, поля зажаты; старые крыши над помещениями получают свой контур', () => {
+  const sq = [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }];
   assert.equal(normalizeRoof(null), null);
-  assert.equal(normalizeRoof({ roomIds: ['a'] }), null, 'без этажа');
-  assert.equal(normalizeRoof({ levelId: 'L1', roomIds: [] }), null, 'без помещений и контура');
+  assert.equal(normalizeRoof({ outline: sq }), null, 'без этажа');
+  assert.equal(normalizeRoof({ levelId: 'L1', roomIds: ['a'] }), null, 'без контура (старые roomIds — только через normalizeRoofs)');
   const r = normalizeRoof({
-    levelId: 'L1', roomIds: ['a', 'a', 5], overhang: { n: -5, e: 99999 }, thickness: 10,
+    levelId: 'L1', outline: sq, roomIds: ['a'], overhang: { n: -5, e: 99999 }, thickness: 10,
     edge: { type: 'x', height: 1000, color: 'red' }, parapet: { type: 'glass', sides: { n: false } }, material: 'gold', extra: 1,
   });
-  assert.deepEqual(r.roomIds, ['a']);
+  assert.equal(r.roomIds, undefined, 'поле помещений отброшено');
+  assert.deepEqual(r.outline, sq);
   assert.deepEqual(r.overhang, { n: 0, e: 3000, s: 600, w: 600 });
   assert.equal(r.thickness, 150);
   assert.equal(r.edge.type, 'fascia');
@@ -128,10 +189,16 @@ test('нормализация: битые отброшены, поля зажа
   assert.deepEqual(r.parapet.sides, { n: false, e: true, s: true, w: true });
   assert.equal(r.material, 'graphite');
   assert.equal(r.extra, 1);
-  const list = normalizeRoofs([r, { ...r }, { ...r, levelId: 'nope' }, { ...r, id: 'x', roomIds: ['zzz'] }],
-    [{ id: 'L1', rooms: [{ id: 'a' }] }]);
-  assert.equal(list.length, 2);
+  const levels = [{ id: 'L1', rooms: [createRoom('living', 0, 0, 6000, 4000), createRoom('kitchen', 6000, 0, 4000, 4000)] }];
+  levels[0].rooms[0].id = 'a'; levels[0].rooms[1].id = 'b';
+  const old = { id: 'old', levelId: 'L1', roomIds: ['a', 'b'], overhang: { n: 600, e: 600, s: 600, w: 600 } };
+  const list = normalizeRoofs([r, { ...r }, { ...r, levelId: 'nope' }, { id: 'x', levelId: 'L1', roomIds: ['zzz'] }, old],
+    levels, { exterior: 250 });
+  assert.equal(list.length, 3, 'битый этаж и крыша без существующих помещений — отброшены');
   assert.notEqual(list[0].id, list[1].id);
+  const mig = list.find((x) => x.id === 'old');
+  assert.equal(mig.roomIds, undefined);
+  assert.deepEqual(mig.outline, [{ x: -250, y: -250 }, { x: 10250, y: -250 }, { x: 10250, y: 4250 }, { x: -250, y: 4250 }]);
   const preset = applyRoofPreset(r, 'terrace');
   assert.equal(preset.parapet.type, 'wall');
   assert.equal(preset.parapet.height, 1000);
@@ -140,24 +207,36 @@ test('нормализация: битые отброшены, поля зажа
   assert.equal(overhangLabel(r), 'вынос 0–3000');
 });
 
-test('сохранение: kepler-plan/7 и v6 хранят крыши, старый проект без поля, удалённое помещение снимается', () => {
+test('сохранение: kepler-plan/7 и v6 хранят крыши с контуром, старый проект без поля; старый файл с roomIds открывается', () => {
   const p = house();
-  p.roofs = [createRoof({ levelId: 'L1', roomIds: ['a', 'b'], overhang: { n: 1200, e: 0, s: 600, w: 600 } })];
+  p.roofs = [over(p, ['a', 'b'], { overhang: { n: 1200, e: 0, s: 600, w: 600 } })];
   const text = serializeProject(p);
   assert.equal(JSON.parse(text).schema, 'kepler-plan/7');
   assert.deepEqual(deserializeProject(text).roofs, p.roofs);
   assert.deepEqual(deserializeProject(JSON.stringify(fileDataV6(p))).roofs, p.roofs);
   assert.equal(deserializeProject(serializeProject(createProject('old'))).roofs, undefined);
-  const gone = JSON.parse(text);
-  gone.levels[0].blocks = gone.levels[0].blocks.filter((b) => b.id !== 'b');
-  assert.deepEqual(deserializeProject(JSON.stringify(gone)).roofs[0].roomIds, ['a']);
+  // Старый файл (крыша над помещениями): контур по ним, roomIds уходит; без
+  // одной из комнат — контур по оставшейся.
+  const legacy = JSON.parse(text);
+  legacy.roofs[0] = { ...legacy.roofs[0], roomIds: ['a', 'b'] };
+  delete legacy.roofs[0].outline;
+  const opened = deserializeProject(JSON.stringify(legacy)).roofs[0];
+  assert.equal(opened.roomIds, undefined);
+  assert.deepEqual(rectsBox(roofBaseRects(p, opened)), { x0: -250, y0: -250, x1: 10250, y1: 4250 });
+  legacy.levels[0].blocks = legacy.levels[0].blocks.filter((b) => b.id !== 'b');
+  const lessOne = deserializeProject(JSON.stringify(legacy)).roofs[0];
+  assert.deepEqual(rectsBox(roofBaseRects(p, lessOne)), { x0: -250, y0: -250, x1: 6250, y1: 4250 });
+  // Контур после правки переживает сохранение; экспорт JSON — с контуром.
+  const moved = { ...house(), roofs: [moveRoof(p.roofs[0], 500, 0)] };
+  assert.deepEqual(deserializeProject(serializeProject(moved)).roofs[0].outline, moved.roofs[0].outline);
+  assert.deepEqual(buildStructuredExport(moved).roofs[0].outline, moved.roofs[0].outline);
   assert.equal(buildStructuredExport(p).roofs.length, 1);
   assert.equal(buildStructuredExport(house()).roofs, undefined);
 });
 
 test('3D: плита на отметке, толщина, вынос, фасция, автокровля не дублируется', () => {
   const p = house();
-  p.roofs = [createRoof({ levelId: 'L1', roomIds: ['a'], dz: 100, overhang: { n: 1200, e: 600, s: 600, w: 600 } })];
+  p.roofs = [over(p, ['a'], { dz: 100, overhang: { n: 1200, e: 600, s: 600, w: 600 } })];
   const faces = roofFaces(p);
   const slab = faces.filter((f) => f.kind === 'roof');
   const tops = slab.filter((f) => f.normal.z > 0.5);
@@ -188,7 +267,7 @@ test('3D: плита на отметке, толщина, вынос, фасци
 
 test('3D: парапет по включённым сторонам, типы, цвет материала', () => {
   const p = house();
-  const base = createRoof({ levelId: 'L1', roomIds: ['a'], overhang: { n: 0, e: 0, s: 0, w: 0 } });
+  const base = over(p, ['a'], { overhang: { n: 0, e: 0, s: 0, w: 0 } });
   const wall = patchRoof(base, { parapet: { type: 'wall', height: 1000, thickness: 200, sides: { n: true, e: false, s: false, w: false } } });
   const par = roofFaces(p, [wall]).filter((f) => f.kind === 'parapet');
   assert.ok(par.length > 0);
@@ -213,8 +292,8 @@ test('3D: парапет по включённым сторонам, типы, �
 test('этажи: нижняя крыша шире, верхняя уже; крыша над этажом скрыта, когда этаж выше не показан', () => {
   const p = twoStorey();
   p.roofs = [
-    createRoof({ levelId: 'L1', roomIds: ['a', 'b'], overhang: { n: 1200, e: 1200, s: 1200, w: 1200 } }),
-    createRoof({ levelId: 'L2', roomIds: ['c'] }),
+    roofFromRooms(p, 'L1', ['a', 'b'], { overhang: { n: 1200, e: 1200, s: 1200, w: 1200 } }),
+    roofFromRooms(p, 'L2', ['c']),
   ];
   const faces = buildHouseMesh(p);
   const top = (id) => faces.filter((f) => f.roofId === id && f.kind === 'roof' && f.normal.z > 0.5).map((f) => f.pts[0].z);
@@ -234,7 +313,7 @@ test('этажи: нижняя крыша шире, верхняя уже; кр�
 
 test('фасад и разрез: крыша с выносом и фасцией, цвет материала; сечение плиты', () => {
   const p = house();
-  p.roofs = [createRoof({ levelId: 'L1', roomIds: ['a', 'b'], overhang: { n: 1200, e: 1200, s: 1200, w: 1200 } })];
+  p.roofs = [over(p, ['a', 'b'], { overhang: { n: 1200, e: 1200, s: 1200, w: 1200 } })];
   const el = buildElevation(p, 'S');
   const roofPolys = el.polys.filter((q) => q.kind === 'roof');
   assert.ok(roofPolys.length > 0);
@@ -253,7 +332,7 @@ test('фасад и разрез: крыша с выносом и фасцией
 
 test('выбор в 3D: клик по крыше сверху выбирает её, без крыши — помещение', () => {
   const p = house();
-  p.roofs = [createRoof({ levelId: 'L1', roomIds: ['a'] })];
+  p.roofs = [over(p, ['a'])];
   const cam = { yaw: -2.2, pitch: 1.2, dist: 30000, eyeDist: 50000, target: { x: 3000, y: 2000, z: 0 } };
   const hitAt = (faces) => {
     const ray = { o: { x: 3000, y: 2000, z: 20000 }, d: { x: 0, y: 0, z: -1 } };
