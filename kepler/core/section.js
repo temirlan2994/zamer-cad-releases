@@ -232,12 +232,13 @@ function cutSolids(project, fr, faces, levels) {
     const z0 = Number.isFinite(f.cutZ0) ? f.cutZ0 : (f.kind === 'slab' ? z1 - SLAB_T + 1 : z1 - ROOF_T);
     for (const [u0, u1] of uIntervals(fr, f.pts)) groups[roofish ? 'roof' : 'slab'].push({ u0, u1, z0, z1 });
   }
-  // Марши: верх ступени × от пола своего этажа.
+  // Марши: верх ступени × от пола своего этажа (монолит) или до низа плиты
+  // проступи/площадки (cutZ0 — открытая и консольная); тетивы и перила — нет.
   for (const f of faces) {
-    if (f.kind !== 'stairs' || !(f.normal?.z > 0.5)) continue;
+    if (f.kind !== 'stairs' || f.noCut || !(f.normal?.z > 0.5)) continue;
     const z1 = f.pts[0].z;
     const base = [...levels].reverse().find((l) => l.elevation < z1 - 1);
-    const z0 = base ? base.elevation : 0;
+    const z0 = Number.isFinite(f.cutZ0) ? f.cutZ0 : (base ? base.elevation : 0);
     if (z1 - z0 < 1) continue;
     for (const [u0, u1] of uIntervals(fr, f.pts)) groups.stair.push({ u0, u1, z0, z1 });
   }

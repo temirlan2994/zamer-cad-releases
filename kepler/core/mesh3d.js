@@ -21,7 +21,7 @@ import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
-import { stairLayout } from './stairs.js';
+import { stairBuild, stairLayout } from './stairs.js';
 import { slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
@@ -676,48 +676,248 @@ export function furnitureFaces(lp, z0, levelHeight, levelId) {
   return faces;
 }
 
-function stairBox(item, x0, y0, x1, y1, z0, z1, levelId) {
+// Лестница в 3D — по конструкции (core/stairs.js stairBuild):
+//   closed — монолит: каждая ступень и площадка — коробка от пола;
+//   open — проступи-плиты между двумя тетивами, площадка-плита на стойках,
+//     под маршем пусто; перила по открытой стороне;
+//   cantilever — толстые проступи от стены без тетив, перила со свободной стороны.
+// Грани: kind 'stairs', itemId, level, part (tread | riser | stringer | landing |
+// post | rail); у верха проступи и площадки — cutZ0 (низ плиты для разреза
+// core/section.js), у тетив, стоек и перил — noCut (в разрез не идут).
+const STAIR_RISER_COLOR = '#b1a99d';
+const TREAD_COLOR = '#d3b68e';
+const STRINGER_COLOR = '#8e867b';
+const LANDING_COLOR = '#c2bbb0';
+const STAIR = {
+  tread: 50, nose: 30, stringer: 60, stringerUp: 40, stringerDepth: 300, landing: 180,
+  post: 80, cantTread: 80, railH: 900, rail: 50, baluster: 25, railInset: 40,
+};
+
+// Коробка с низом (видна снизу у открытой лестницы).
+function solidBox(x0, y0, x1, y1, z0, z1, color, kind) {
+  const faces = boxFaces(x0, y0, x1, y1, z0, z1, color, kind);
+  if (faces.length) faces.push({ pts: [v(x0, y0, z0), v(x0, y1, z0), v(x1, y1, z0), v(x1, y0, z0)], normal: v(0, 0, -1), color, kind });
+  return faces;
+}
+
+// Локальные оси лестницы → оси дома (отражение по x до поворота).
+function stairPlacer(item, levelId) {
   const angle = ((item.rotation || 0) * Math.PI) / 180;
   const c = Math.cos(angle);
   const s = Math.sin(angle);
-  return boxFaces(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), z0, z1, STAIR_COLOR, 'stairs').map((face) => ({
-    ...face,
-    itemId: item.id,
-    level: levelId,
-    pts: face.pts.map((p) => ({ x: item.x + p.x * c - p.y * s, y: item.y + p.x * s + p.y * c, z: p.z })),
-    normal: { x: face.normal.x * c - face.normal.y * s, y: face.normal.x * s + face.normal.y * c, z: face.normal.z },
-  }));
+  const m = item.mirrored ? -1 : 1;
+  const P = (p) => v(item.x + p.x * m * c - p.y * s, item.y + p.x * m * s + p.y * c, p.z);
+  const N = (n) => v(n.x * m * c - n.y * s, n.x * m * s + n.y * c, n.z);
+  return (face, extra) => ({ ...face, ...extra, pts: face.pts.map(P), normal: N(face.normal), itemId: item.id, level: levelId });
+}
+
+// Рамка марша: s — вдоль подъёма от начала (0…L), t — поперёк (0…W).
+function flightFrame(f) {
+  const along = f.dir.x === 0;
+  const o = f.dir.y < 0 ? { x: f.x, y: f.y + f.h } : { x: f.x, y: f.y };
+  const d = f.dir;
+  const e = along ? { x: 1, y: 0 } : { x: 0, y: 1 };
+  const L = along ? f.h : f.w;
+  const W = along ? f.w : f.h;
+  const at = (s, t, z) => v(o.x + d.x * s + e.x * t, o.y + d.y * s + e.y * t, z);
+  return { d, e, L, W, at };
+}
+
+// Коробка в рамке марша (оси марша параллельны осям лестницы).
+function frameBox(fr, s0, s1, t0, t1, z0, z1, color, bottom = true) {
+  const a = fr.at(s0, t0, 0);
+  const b = fr.at(s1, t1, 0);
+  const make = bottom ? solidBox : boxFaces;
+  return make(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), z0, z1, color, 'stairs');
+}
+
+// Призма с профилем в плоскости (s, z) марша, толщиной t0…t1 поперёк.
+function framePrism(fr, profile, t0, t1, color) {
+  const faces = [];
+  const n = profile.length;
+  if (n < 3 || t1 - t0 < 0.5) return faces;
+  const cs = profile.reduce((a, p) => a + p.s, 0) / n;
+  const cz = profile.reduce((a, p) => a + p.z, 0) / n;
+  const side = (t, sign) => {
+    const pts = profile.map((p) => fr.at(p.s, t, p.z));
+    faces.push({ pts: sign > 0 ? pts : pts.reverse(), normal: v(fr.e.x * sign, fr.e.y * sign, 0), color, kind: 'stairs' });
+  };
+  side(t0, -1);
+  side(t1, 1);
+  for (let i = 0; i < n; i += 1) {
+    const a = profile[i];
+    const b = profile[(i + 1) % n];
+    const ds = b.s - a.s;
+    const dz = b.z - a.z;
+    const len = Math.hypot(ds, dz);
+    if (len < 0.5) continue;
+    let ns = dz / len;
+    let nz = -ds / len;
+    if (ns * ((a.s + b.s) / 2 - cs) + nz * ((a.z + b.z) / 2 - cz) < 0) { ns = -ns; nz = -nz; }
+    faces.push({
+      pts: [fr.at(a.s, t0, a.z), fr.at(b.s, t0, b.z), fr.at(b.s, t1, b.z), fr.at(a.s, t1, a.z)],
+      normal: v(fr.d.x * ns, fr.d.y * ns, nz), color, kind: 'stairs',
+    });
+  }
+  return faces;
+}
+
+// Сторона марша, обращённая к середине лестницы (к «колодцу»): 0 или W.
+function innerSide(fr) {
+  const p0 = fr.at(fr.L / 2, 0, 0);
+  const p1 = fr.at(fr.L / 2, fr.W, 0);
+  return Math.hypot(p1.x, p1.y) < Math.hypot(p0.x, p0.y) ? fr.W : 0;
+}
+
+// Перила марша вдоль стороны tc: наклонный поручень над линией носков,
+// балясины по проступям, стойки на концах. top — потолок поручня.
+function flightRailing(fr, f, zFrom, riserH, tc, top) {
+  const S = STAIR;
+  const g = fr.L / f.n;
+  const nose = (s) => zFrom + riserH + (s * riserH) / g;
+  const sa = S.rail / 2;
+  let sb = fr.L - S.rail / 2;
+  if (Number.isFinite(top)) sb = Math.min(sb, ((top - S.railH - zFrom - riserH) * g) / riserH);
+  if (sb - sa < 300) return [];
+  const t0 = tc - S.rail / 2;
+  const t1 = tc + S.rail / 2;
+  const tread = (s) => zFrom + (Math.min(f.n - 1, Math.max(0, Math.floor(s / g))) + 1) * riserH;
+  const faces = framePrism(fr, [
+    { s: sa, z: nose(sa) + S.railH - S.rail }, { s: sb, z: nose(sb) + S.railH - S.rail },
+    { s: sb, z: nose(sb) + S.railH }, { s: sa, z: nose(sa) + S.railH },
+  ], t0, t1, RAILING_COLOR);
+  for (const s of [sa, sb]) {
+    faces.push(...frameBox(fr, s - S.rail / 2, s + S.rail / 2, t0, t1, tread(s), nose(s) + S.railH - S.rail, RAILING_COLOR, false));
+  }
+  const b = S.baluster / 2;
+  for (let k = 0; k < f.n; k += 1) {
+    const s = (k + 0.5) * g;
+    if (s - sa < 2 * S.rail || sb - s < 2 * S.rail) continue;
+    faces.push(...frameBox(fr, s - b, s + b, tc - b, tc + b, tread(s), nose(s) + S.railH - S.rail, RAILING_COLOR, false));
+  }
+  return faces;
+}
+
+// Свободные отрезки краёв площадки, обращённых к середине лестницы (не занятые маршами).
+function landingFreeEdges(l, flights) {
+  const out = [];
+  const edges = [
+    { axis: 'y', c: l.y, a: l.x, b: l.x + l.w, out: -1 }, { axis: 'y', c: l.y + l.h, a: l.x, b: l.x + l.w, out: 1 },
+    { axis: 'x', c: l.x, a: l.y, b: l.y + l.h, out: -1 }, { axis: 'x', c: l.x + l.w, a: l.y, b: l.y + l.h, out: 1 },
+  ];
+  for (const e of edges) {
+    if (e.out * (0 - e.c) <= 0) continue; // край смотрит наружу, не к середине
+    let free = [[e.a, e.b]];
+    for (const f of flights) {
+      const lo = e.axis === 'y' ? f.y : f.x;
+      const hi = e.axis === 'y' ? f.y + f.h : f.x + f.w;
+      if (e.c < lo - 0.5 || e.c > hi + 0.5) continue;
+      const fa = e.axis === 'y' ? f.x : f.y;
+      const fb = e.axis === 'y' ? f.x + f.w : f.y + f.h;
+      free = free.flatMap(([a, b]) => [[a, Math.min(b, fa)], [Math.max(a, fb), b]]).filter(([a, b]) => b - a > 1);
+    }
+    for (const [a, b] of free) out.push({ ...e, a, b });
+  }
+  return out;
+}
+
+// Перила площадки по свободному краю (горизонтальный поручень, балясины).
+function landingRailing(e, zL) {
+  const S = STAIR;
+  const faces = [];
+  const c = e.c - e.out * S.railInset;
+  const box = (a0, a1, w, z0, z1) => (e.axis === 'y'
+    ? boxFaces(a0, c - w / 2, a1, c + w / 2, z0, z1, RAILING_COLOR, 'stairs')
+    : boxFaces(c - w / 2, a0, c + w / 2, a1, z0, z1, RAILING_COLOR, 'stairs'));
+  const top = zL + S.railH;
+  faces.push(...box(e.a, e.b, S.rail, top - S.rail, top));
+  const len = e.b - e.a;
+  const n = Math.max(1, Math.round(len / 150));
+  for (let i = 0; i <= n; i += 1) {
+    const p = e.a + (len * i) / n;
+    const w = i === 0 || i === n ? S.rail : S.baluster;
+    const a0 = Math.min(e.b - w, Math.max(e.a, p - w / 2));
+    faces.push(...box(a0, a0 + w, w, zL, top - S.rail));
+  }
+  return faces;
 }
 
 // Ступени в 3D: марши и площадки из раскладки лестницы (core/stairs.js).
 // Проступь k марша — на высоте (startStep + k) подъёмов, площадка — на своей.
-function levelStairs(lp, z0, levelHeight, levelId) {
+// hasAbove — над этажом есть этаж: иначе поручень не выше перекрытия.
+function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
   const faces = [];
+  const S = STAIR;
   for (const item of lp.items.filter((candidate) => candidate.kind === 'stairs')) {
     const lay = stairLayout(item, levelHeight);
-    const m = item.mirrored ? -1 : 1;
-    // Отражённая лестница: прямоугольник зеркалится по x до поворота.
-    const box = (x0, y0, x1, y1, top) => {
-      const a = m > 0 ? x0 : -x1;
-      const b = m > 0 ? x1 : -x0;
-      faces.push(...stairBox(item, a, y0, b, y1, z0, top, levelId));
+    const build = stairBuild(item);
+    const rH = lay.riserH;
+    const place = stairPlacer(item, levelId);
+    const add = (list, extra) => { for (const f of list) faces.push(place(f, extra)); };
+    const addCut = (list, part, cutZ0) => {
+      for (const f of list) faces.push(place(f, f.normal.z > 0.5 ? { part, cutZ0 } : { part }));
     };
+    const top = hasAbove ? Infinity : z0 + levelHeight - 1;
+    const straight = lay.flights.length === 1;
     for (const f of lay.flights) {
+      const fr = flightFrame(f);
+      const g = fr.L / f.n;
+      const zFrom = z0 + (f.startStep - 1) * rH;
+      const zTo = z0 + (f.startStep + f.n) * rH;
+      const inner = innerSide(fr);
       for (let k = 0; k < f.n; k += 1) {
-        const top = z0 + (f.startStep + k) * lay.riserH;
-        const t0 = k / f.n;
-        const t1 = (k + 1) / f.n;
-        if (f.dir.x === 0) {
-          // Вверх по плану (dir.y < 0) — первая проступь у нижнего края.
-          const y0 = f.dir.y < 0 ? f.y + f.h * (1 - t1) : f.y + f.h * t0;
-          const y1 = f.dir.y < 0 ? f.y + f.h * (1 - t0) : f.y + f.h * t1;
-          box(f.x, y0, f.x + f.w, y1, top);
-        } else {
-          box(f.x + f.w * t0, f.y, f.x + f.w * t1, f.y + f.h, top);
+        const zk = z0 + (f.startStep + k) * rH;
+        if (build === 'closed') {
+          // Монолит: ступень от пола; подступенок — тоном темнее.
+          for (const face of frameBox(fr, k * g, (k + 1) * g, 0, fr.W, z0, zk, STAIR_COLOR, false)) {
+            const riser = face.normal.z < 0.5 && face.normal.x === -fr.d.x && face.normal.y === -fr.d.y;
+            faces.push(place(riser ? { ...face, color: STAIR_RISER_COLOR } : face, { part: face.normal.z > 0.5 ? 'tread' : riser ? 'riser' : 'side' }));
+          }
+          continue;
         }
+        const T = build === 'cantilever' ? S.cantTread : S.tread;
+        const t0 = build === 'open' ? S.stringer : 0;
+        const t1 = build === 'open' ? fr.W - S.stringer : fr.W;
+        addCut(frameBox(fr, Math.max(0, k * g - S.nose), (k + 1) * g, t0, t1, zk - T, zk, TREAD_COLOR), 'tread', zk - T);
+      }
+      if (build === 'closed') continue;
+      if (build === 'open') {
+        // Тетивы: верх — на stringerUp над линией носков, низ параллелен, упирается в пол/площадку.
+        const up = S.stringerUp;
+        const D = S.stringerDepth;
+        const sC = Math.max(0, fr.L - (up * g) / rH);
+        const s0 = Math.max(0, ((D - up - rH) * g) / rH);
+        const profile = [
+          { s: 0, z: zFrom }, ...(s0 > 0.5 ? [{ s: Math.min(s0, fr.L), z: zFrom }] : []),
+          { s: fr.L, z: Math.max(zFrom, zTo + up - D) }, { s: fr.L, z: zTo }, ...(sC < fr.L - 0.5 ? [{ s: sC, z: zTo }] : []),
+          { s: 0, z: zFrom + rH + up },
+        ];
+        if (s0 <= 0.5) profile[0] = { s: 0, z: zFrom + rH + up - D > zFrom ? zFrom + rH + up - D : zFrom };
+        for (const t of [0, fr.W - S.stringer]) add(framePrism(fr, profile, t, t + S.stringer, STRINGER_COLOR), { part: 'stringer', noCut: true });
+      }
+      // Перила: у прямой открытой — с обеих сторон; иначе — со стороны колодца.
+      const inset = build === 'open' ? S.stringer / 2 : S.railInset;
+      const sides = build === 'open' && straight ? [0, fr.W] : [straight ? fr.W : inner];
+      for (const side of sides) {
+        const tc = side === 0 ? inset : fr.W - inset;
+        add(flightRailing(fr, f, zFrom, rH, tc, top), { part: 'rail', noCut: true, noEdges: true });
       }
     }
-    for (const l of lay.landings) box(l.x, l.y, l.x + l.w, l.y + l.h, z0 + l.step * lay.riserH);
+    for (const l of lay.landings) {
+      const zL = z0 + l.step * rH;
+      if (build === 'closed') {
+        add(boxFaces(l.x, l.y, l.x + l.w, l.y + l.h, z0, zL, STAIR_COLOR, 'stairs'), { part: 'landing' });
+        continue;
+      }
+      addCut(solidBox(l.x, l.y, l.x + l.w, l.y + l.h, zL - S.landing, zL, LANDING_COLOR, 'stairs'), 'landing', zL - S.landing);
+      if (build === 'open' && zL - S.landing - z0 > 100) {
+        const p = S.post;
+        for (const [x, y] of [[l.x, l.y], [l.x + l.w - p, l.y], [l.x, l.y + l.h - p], [l.x + l.w - p, l.y + l.h - p]]) {
+          add(boxFaces(x, y, x + p, y + p, z0, zL - S.landing, STRINGER_COLOR, 'stairs'), { part: 'post', noCut: true });
+        }
+      }
+      for (const e of landingFreeEdges(l, lay.flights)) add(landingRailing(e, zL), { part: 'rail', noCut: true, noEdges: true });
+    }
   }
   return faces;
 }
@@ -1262,7 +1462,7 @@ export function buildHouseMesh(project, {
     faces.push(...railingFaces(lp, level.elevation, level.id));
     faces.push(...buildLevelWalls(project, level.id));
     faces.push(...levelStructures(lp, level.elevation, level.height, level.id));
-    faces.push(...levelStairs(lp, level.elevation, level.height, level.id));
+    faces.push(...levelStairs(lp, level.elevation, level.height, level.id, k < levels.length - 1));
     if (furniture) faces.push(...furnitureFaces(lp, level.elevation, level.height, level.id));
   });
   // Перекрытие под этажом k — его основание: показывается вместе с ним.

@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildHouseMesh } from '../core/mesh3d.js';
+import { buildSection } from '../core/section.js';
 import { createItem, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
 import {
-  applyStairPreset, dragStairHandle, materializeStair, setStairParam, stairCalculation, stairHandles, stairLayout, stairPreset,
+  STAIR_BUILDS, applyStairPreset, dragStairHandle, stairBuild, materializeStair, setStairParam, stairCalculation, stairHandles, stairLayout, stairPreset,
 } from '../core/stairs.js';
 
 test('быстрые формы лестницы подбирают компактные габариты', () => {
@@ -38,7 +39,7 @@ test('лестница создаёт настоящие ступени в 3D', 
   const faces = buildHouseMesh(project).filter((face) => face.kind === 'stairs');
   assert.ok(faces.length > 40);
   assert.ok(faces.every((face) => face.itemId === stair.id));
-  const top = Math.max(...faces.flatMap((face) => face.pts.map((point) => point.z)));
+  const top = Math.max(...faces.filter((face) => face.part === 'tread').flatMap((face) => face.pts.map((point) => point.z)));
   assert.ok(top > 2700 && top < 3000);
 });
 
@@ -90,7 +91,7 @@ test('П-образная в 3 марша: три марша, две площа�
 test('П-образная в 3 марша в 3D: ступени растут до перекрытия', () => {
   const project = createProject('П3');
   project.items.push(make('u3', 3000));
-  const faces = buildHouseMesh(project).filter((f) => f.kind === 'stairs');
+  const faces = buildHouseMesh(project).filter((f) => f.kind === 'stairs' && (f.part === 'tread' || f.part === 'landing'));
   const top = Math.max(...faces.flatMap((f) => f.pts.map((p) => p.z)));
   assert.ok(Math.abs(top - 16 * (3000 / 17)) < 1, `верх ${top}`);
 });
@@ -205,4 +206,89 @@ test('параметры лестницы сохраняются в файле �
   const back = deserializeProject(serializeProject(project));
   const item = back.items.find((i) => i.id === s.id);
   for (const key of ['stairShape', 'flightWidth', 'going', 'flights', 'landings', 'w', 'h']) assert.deepEqual(item[key], s[key], key);
+});
+
+// --- Конструкция в 3D: монолит / тетивы / консольная ---
+
+const stairMesh = (shape, build, extra = {}) => {
+  const project = createProject('Конструкция');
+  const s = make(shape, 3000);
+  if (build) s.stairBuild = build;
+  Object.assign(s, extra);
+  project.items.push(s);
+  return { project, s, faces: buildHouseMesh(project).filter((f) => f.kind === 'stairs') };
+};
+const parts = (faces) => faces.reduce((m, f) => ({ ...m, [f.part]: (m[f.part] || 0) + 1 }), {});
+
+test('конструкция лестницы: по умолчанию «Открытая (тетивы)», поле необязательное и сохраняется', () => {
+  assert.deepEqual(STAIR_BUILDS.map((b) => b.id), ['closed', 'open', 'cantilever']);
+  assert.equal(stairBuild({}), 'open');
+  assert.equal(stairBuild({ stairBuild: 'чужое' }), 'open');
+  assert.equal(stairBuild({ stairBuild: 'closed' }), 'closed');
+  const project = createProject('Сохранение');
+  const s = make('u');
+  s.stairBuild = 'cantilever';
+  project.items.push(s);
+  const back = deserializeProject(serializeProject(project));
+  assert.equal(back.items.find((i) => i.kind === 'stairs').stairBuild, 'cantilever');
+});
+
+test('открытая лестница: проступи-плиты, тетивы, площадка на стойках, перила; под маршем пусто', () => {
+  for (const shape of ['straight', 'l', 'u', 'u3']) {
+    const { s, faces } = stairMesh(shape);
+    const lay = stairLayout(s);
+    const p = parts(faces);
+    const treads = lay.flights.reduce((n, f) => n + f.n, 0);
+    assert.equal(p.tread, treads * 6, `${shape}: каждая проступь — плита с низом`);
+    assert.equal(p.stringer > 0 && p.stringer % 2, 0, `${shape}: тетивы парами`);
+    assert.ok(p.rail > 0, `${shape}: есть перила`);
+    assert.ok(faces.length < 400, `${shape}: граней ${faces.length}`);
+    if (lay.landings.length) assert.ok(p.post > 0 && p.landing === 6 * lay.landings.length, `${shape}: площадка-плита на стойках`);
+    // Плита проступи тонкая: низ на 50 мм ниже верха, не от пола.
+    for (const f of faces.filter((x) => x.part === 'tread' && x.normal.z > 0.5)) {
+      assert.ok(Math.abs(f.pts[0].z - f.cutZ0 - 50) < 0.01, `${shape}: толщина проступи`);
+    }
+    const lowest = Math.min(...faces.filter((x) => x.part === 'tread').flatMap((x) => x.pts.map((q) => q.z)));
+    assert.ok(lowest > 100, `${shape}: низ первой проступи над полом (${lowest})`);
+  }
+});
+
+test('закрытая лестница — прежний монолит: ступени от пола, без тетив и перил', () => {
+  const { faces } = stairMesh('u', 'closed');
+  const p = parts(faces);
+  assert.equal(p.stringer, undefined);
+  assert.equal(p.rail, undefined);
+  assert.ok(p.riser > 0, 'подступенки другим тоном');
+  assert.ok(faces.filter((f) => f.part === 'riser').every((f) => f.color !== faces.find((x) => x.part === 'tread').color));
+  assert.equal(Math.min(...faces.flatMap((f) => f.pts.map((q) => q.z))), 0, 'монолит стоит на полу');
+});
+
+test('консольная: толстые проступи без тетив и стоек, перила со свободной стороны', () => {
+  const { faces } = stairMesh('u', 'cantilever');
+  const p = parts(faces);
+  assert.equal(p.stringer, undefined);
+  assert.equal(p.post, undefined);
+  assert.ok(p.rail > 0);
+  const top = faces.find((f) => f.part === 'tread' && f.normal.z > 0.5);
+  assert.ok(Math.abs(top.pts[0].z - top.cutZ0 - 80) < 0.01);
+});
+
+test('отражённая и повёрнутая открытая лестница — грани без NaN, план не меняется', () => {
+  const { s, faces } = stairMesh('l', 'open', { rotation: 30, mirrored: true });
+  assert.ok(faces.every((f) => f.pts.every((q) => Number.isFinite(q.x + q.y + q.z))));
+  assert.ok(faces.every((f) => f.itemId === s.id));
+  assert.deepEqual(stairLayout(s), stairLayout({ ...s, stairBuild: 'closed' }), 'раскладка на плане от конструкции не зависит');
+});
+
+test('разрез через открытую лестницу: плиты проступей, а не заливка до пола', () => {
+  const section = (build) => {
+    const { project } = stairMesh('straight', build);
+    const s = buildSection(project, { id: 's', kind: 'section', name: 'Р', line: { a: { x: 0, y: -3000 }, b: { x: 0, y: 3000 } }, side: 1 });
+    return s.cuts.filter((c) => c.kind === 'stair');
+  };
+  const open = section('open');
+  const closed = section('closed');
+  assert.ok(open.length > 5 && closed.length > 5);
+  assert.ok(open.every((c) => c.z1 - c.z0 <= 50.5), 'открытая: только толщина проступей');
+  assert.ok(closed.some((c) => c.z0 === 0 && c.z1 > 2000), 'монолит: от пола');
 });

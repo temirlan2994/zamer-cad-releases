@@ -41,7 +41,7 @@ import {
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import {
-  STAIR_SHAPES, applyStairPreset, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
+  STAIR_BUILDS, STAIR_SHAPES, applyStairPreset, stairBuild, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
 } from '../core/stairs.js';
 import { presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
@@ -844,6 +844,8 @@ function renderItemProps(panel, item) {
         ${STAIR_SHAPES.map((shape) => `<button type="button" data-stair-shape="${shape.id}" class="${c.shape === shape.id ? 'active' : ''}">${shape.title}</button>`).join('')}
       </div>
       <button id="stairFit" type="button">Подогнать автоматически</button>
+      <label class="prop-field"><span>Конструкция (3D)</span>
+        <select id="stairBuild">${STAIR_BUILDS.map((b) => `<option value="${b.id}" ${stairBuild(item) === b.id ? 'selected' : ''}>${b.title}</option>`).join('')}</select></label>
       ${stairLevelBlock(item)}
       <h3>Простой расчёт</h3>
       <div class="prop-block">
@@ -904,6 +906,10 @@ function renderItemProps(panel, item) {
       });
       selectObject({ type: 'item', id: item.id });
     });
+  });
+  panel.querySelector('#stairBuild')?.addEventListener('change', (e) => {
+    mutate(() => { item.stairBuild = e.target.value; });
+    selectObject({ type: 'item', id: item.id });
   });
   panel.querySelector('#stairFit')?.addEventListener('click', () => {
     mutate(() => {

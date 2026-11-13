@@ -275,7 +275,7 @@ function initGl(canvas) {
   uploadGeometry();
 }
 
-const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture']);
+const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture', 'stairs']);
 
 // Наложения поверх сетки: выбранный проём, призрак и ручки масс.
 const overlays = () => selectionOverlay().concat(massOverlay(), roofOverlay());

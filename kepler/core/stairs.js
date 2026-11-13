@@ -40,6 +40,19 @@ export function stairShape(item) {
   return STAIR_SHAPES.some((shape) => shape.id === item?.stairShape) ? item.stairShape : 'straight';
 }
 
+// Конструкция в 3D (поле stairBuild, необязательное): монолит до пола,
+// открытые проступи на тетивах (по умолчанию) или консольные от стены.
+// На плане не влияет.
+export const STAIR_BUILDS = [
+  { id: 'closed', title: 'Закрытая (монолит)' },
+  { id: 'open', title: 'Открытая (тетивы)' },
+  { id: 'cantilever', title: 'Консольная' },
+];
+
+export function stairBuild(item) {
+  return STAIR_BUILDS.some((b) => b.id === item?.stairBuild) ? item.stairBuild : 'open';
+}
+
 // Подъёмы: по высоте этажа (≈175 мм) или заданное число.
 export function stairRisers(item, fallbackHeight = 3000) {
   const floorH = item?.floorHeight || fallbackHeight;
