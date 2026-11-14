@@ -29,7 +29,7 @@ import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
-import { arrangeRoomsNow } from './auto-layout.js';
+import { arrangeRoomsNow, AUTO_LAYOUT_AVAILABLE } from './auto-layout.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
@@ -205,6 +205,7 @@ function changedLayoutRooms(beforeText) {
 // транзакции. Историю и перерисовку helper не создаёт: вызывающая операция
 // затем делает один pushHistory(before) и один afterChange().
 export function reflowLayoutChanges(beforeText, { roomIds = [], force = false } = {}) {
+  if (!AUTO_LAYOUT_AVAILABLE) return { applied: 0, reports: [] };
   const changed = changedLayoutRooms(beforeText);
   const activeLevelId = state.project.activeLevel;
   const active = changed.levels.get(activeLevelId) || { roomIds: [], itemIdsByRoom: new Map() };

@@ -57,7 +57,9 @@ import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
 import { bindWallPinBlock, wallPinBlock } from './grid-pin-ui.js';
-import { arrangeRoomsNow, autoLayoutHtml, bindAutoLayout } from './auto-layout.js';
+import {
+  arrangeRoomsNow, AUTO_LAYOUT_AVAILABLE, autoLayoutHtml, bindAutoLayout,
+} from './auto-layout.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -308,7 +310,7 @@ function renderRoomProps(panel, room) {
   const shaft = isShaft(room);
   const minRoomSize = shaft ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
   const parent = room.parentId ? roomById(state.project, room.parentId) : null;
-  const rejected = state.rejected.get(room.id) || [];
+  const rejected = AUTO_LAYOUT_AVAILABLE ? state.rejected.get(room.id) || [] : [];
   const insideCount = itemsInRoom(state.project, room).length;
   // Ширина/глубина — по номиналу (полная форма блока), площадь, мебель,
   // нормы и ТЭП — по видимой форме (комната моста = результат carve).
@@ -865,7 +867,7 @@ function renderItemProps(panel, item) {
         <label class="prop-field"><span>${isStairs ? 'Габарит по Y, мм' : fixed ? 'Общая глубина, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}" ${fixed ? 'readonly' : ''}></label>
       </div>
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
-      ${isStairs ? '' : `<label class="check-row"><input id="itemAutoLayoutLocked" type="checkbox" ${item.autoLayoutLocked ? 'checked' : ''}>
+      ${isStairs || !AUTO_LAYOUT_AVAILABLE ? '' : `<label class="check-row"><input id="itemAutoLayoutLocked" type="checkbox" ${item.autoLayoutLocked ? 'checked' : ''}>
         <span>Закрепить при авторасстановке</span></label>`}
     </div>
     ${stairsBlock}

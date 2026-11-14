@@ -30,6 +30,10 @@ import {
 } from './whole-home-layout.js';
 
 const COUNT = 3;
+// Текущий подход к авторасстановке снят с пользовательского интерфейса.
+// Ядро оставлено как эксперимент для следующей реализации, но ни ручной
+// запуск, ни фоновая перестановка мебели сейчас недоступны.
+export const AUTO_LAYOUT_AVAILABLE = false;
 const roomWorkerClient = new LayoutWorkerClient();
 const roomTasks = new Map();
 
@@ -541,6 +545,7 @@ function layoutBriefEditorHtml(room) {
 }
 
 export function autoLayoutHtml(room) {
+  if (!AUTO_LAYOUT_AVAILABLE) return '';
   const record = activeRecord(room);
   const enabled = state.project?.settings?.autoArrangeFurniture !== false;
   return `<h3>Авторасстановка мебели</h3>
@@ -838,6 +843,7 @@ function applyVariant(room, record, layout) {
 }
 
 export function bindAutoLayout(panel, room) {
+  if (!AUTO_LAYOUT_AVAILABLE) return;
   if (!panel || !room) return;
   bindLayoutBriefEditor(panel, room);
   bindWholeHomeLayout(panel, { onApplied: () => invalidateLayoutVariants() });
@@ -900,8 +906,9 @@ export function bindAutoLayout(panel, room) {
 // mutate(), pushHistory() или afterChange(). Вызывающая сторона включает её
 // в собственную транзакцию жеста/поля размера.
 export function arrangeRoomsNow(roomIds, { force = false, itemIdsByRoom = null, levelId = null } = {}) {
-  const rootProject = state.project;
   const reports = [];
+  if (!AUTO_LAYOUT_AVAILABLE) return { applied: 0, reports };
+  const rootProject = state.project;
   if (!rootProject || (!force && rootProject.settings?.autoArrangeFurniture === false)) return { applied: 0, reports };
   const targetLevelId = levelId || rootProject.activeLevel;
   const project = targetLevelId === rootProject.activeLevel ? rootProject : levelProject(rootProject, targetLevelId);
