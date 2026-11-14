@@ -30,8 +30,6 @@ jobs:
 
       - name: Настройка GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Подготовка сайта
         uses: actions/upload-pages-artifact@v3
