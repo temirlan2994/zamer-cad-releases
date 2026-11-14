@@ -67,17 +67,19 @@ function cloneForTrial(project) {
   };
 }
 
-// Проба сдвига комнаты roomId на (dx, dy) на копии проекта.
+// Проба изменения комнаты roomId на копии проекта: change(trial) делает правку
+// и возвращает { ok, reason?, warning? }. Годится, если комната не наложилась
+// на соседей, образовала общую стену с otherId и не потеряла другие стыковки.
 // { ok } или { ok: false, reason }.
-function tryMove(project, roomId, otherId, dx, dy) {
+export function trialRoomChange(project, roomId, otherId, change) {
   const trial = cloneForTrial(project);
   const before = trial.rooms.find((r) => r.id === roomId);
   const siblingsBefore = new Map(trial.rooms
     .filter((r) => r.id !== roomId && (r.parentId || null) === (before.parentId || null))
     .map((r) => [r.id, roomsOverlapArea(before, r)]));
   const pairsBefore = sharedPairsOf(trial, roomId);
-  const res = moveRoomGroup(trial, [roomId], [], dx, dy);
-  if (!res.ok) return { ok: false, reason: res.reason || 'сдвиг недопустим' };
+  const res = change(trial);
+  if (!res.ok) return { ok: false, reason: res.reason || 'изменение недопустимо' };
   const moved = trial.rooms.find((r) => r.id === roomId);
   for (const other of trial.rooms) {
     if (!siblingsBefore.has(other.id)) continue;
@@ -96,10 +98,17 @@ function tryMove(project, roomId, otherId, dx, dy) {
   return { ok: true, warning: res.warning };
 }
 
+// Проба сдвига комнаты roomId на (dx, dy).
+function tryMove(project, roomId, otherId, dx, dy) {
+  return trialRoomChange(project, roomId, otherId, (trial) => moveRoomGroup(trial, [roomId], [], dx, dy));
+}
+
 // План сдвига для найденного зазора: сначала меньшая (не «якорная») комната,
 // при неудаче — большая. move = null, если любой сдвиг ведёт к наложению или
 // разрыву существующей стыковки; тогда reason объясняет почему.
-export function planGapMove(project, gap) {
+// opts.prefer — id комнаты, которую пробовать первой (например, той, что только
+// что двигали); opts.only — пробовать только её.
+export function planGapMove(project, gap, opts = {}) {
   const delta = gap.target - gap.gap; // >0 — раздвинуть, <0 — сблизить
   const a = project.rooms.find((r) => r.id === gap.a);
   const b = project.rooms.find((r) => r.id === gap.b);
@@ -114,7 +123,11 @@ export function planGapMove(project, gap) {
     const d = delta * outward * sign;
     return gap.axis === 'x' ? { dx: d, dy: 0 } : { dx: 0, dy: d };
   };
-  const order = roomShapeArea(b) <= roomShapeArea(a) ? [b, a] : [a, b];
+  let order = roomShapeArea(b) <= roomShapeArea(a) ? [b, a] : [a, b];
+  if (opts.prefer === a.id || opts.prefer === b.id) {
+    const first = opts.prefer === a.id ? a : b;
+    order = opts.only ? [first] : [first, first === a ? b : a];
+  }
   const reasons = [];
   for (const room of order) {
     const other = room === a ? b : a;
@@ -163,6 +176,7 @@ export function findNearMissGaps(project, opts = {}) {
         overlap: { from: hit.from, to: hit.to },
         axis,
         outward: hit.edgeA.outward,
+        edges: { a: hit.edgeA.edge, b: hit.edgeB.edge }, // координаты обращённых друг к другу граней
         at: axis === 'x' ? { x: mid, y: along } : { x: along, y: mid },
       };
       if (withMove) {

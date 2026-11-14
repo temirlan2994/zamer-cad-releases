@@ -5,6 +5,8 @@ import { isShaft } from '../core/catalog.js';
 import { wallsInsideRooms } from '../core/bound-rooms.js';
 import { canFill } from '../core/landscape-array.js';
 import { roomById } from '../core/model.js';
+import { planGapStretch, planGapThicken } from '../core/gap-fix.js';
+import { planGapMove } from '../core/gaps.js';
 import { railingTypeTitle } from '../core/railings.js';
 import { overhangLabel } from '../core/roofs.js';
 import { findSlabOpening, slabOpeningStair } from '../core/slab-openings.js';
@@ -21,6 +23,35 @@ const button = (action, icon, text, key = '', extra = '') => `
     <span class="tool-text">${escapeHtml(text)}</span>
     ${key ? `<span class="tool-key">${key}</span>` : ''}
   </button>`;
+
+// Пара с зазором «≠ N мм», выбранная по маркеру или строке «Замечаний» (как focusedGap в ui/gaps.js;
+// здесь без импорта — иначе круг модулей).
+function gapOfSelection(sel) {
+  const gap = (state.gaps || []).find((g) => g.key === state.gapFocus);
+  return gap && sel.roomIds.includes(gap.a) && sel.roomIds.includes(gap.b) ? gap : null;
+}
+
+const mmText = (v) => `${Math.round(Math.abs(v))} мм`;
+
+// Три способа исправить зазор (core/gap-fix.js); у каждого в подсказке — что именно изменится.
+function gapButtons(gap) {
+  const project = state.project;
+  const move = planGapMove(project, gap).move;
+  const stretch = planGapStretch(project, gap);
+  const thick = planGapThicken(project, gap);
+  const off = (reason) => `disabled title="Нельзя: ${escapeHtml(reason)}"`;
+  const moveReason = planGapMove(project, gap).reason;
+  return `
+    <button type="button" data-selection-action="gap-move" ${move ? `title="Сдвинуть «${escapeHtml(move.name)}» на ${mmText(move.distance)}: комната едет целиком"` : off(moveReason || 'сдвиг невозможен')}>
+      <span class="tool-icon" aria-hidden="true">⇥</span><span class="tool-text">Сдвинуть</span>
+    </button>
+    <button type="button" data-selection-action="gap-stretch" ${stretch.move ? `title="${stretch.move.direction === 'out' ? 'Продлить' : 'Сузить'} сторону «${escapeHtml(stretch.move.name)}» на ${mmText(stretch.move.distance)}: остальные стороны на месте"` : off(stretch.reason || 'растяжение невозможно')}>
+      <span class="tool-icon" aria-hidden="true">⇔</span><span class="tool-text">Растянуть</span>
+    </button>
+    <button type="button" data-selection-action="gap-thicken" ${thick.thickness != null ? `title="Оставить комнаты на месте: щель станет общей стеной ${thick.thickness} мм"` : off(thick.reason || 'нельзя')}>
+      <span class="tool-icon" aria-hidden="true">▮</span><span class="tool-text">${thick.thickness != null ? `Стена ${thick.thickness}` : 'Стена'}</span>
+    </button>`;
+}
 
 function itemCanMirror(item) {
   return Boolean(item);
@@ -137,6 +168,10 @@ function contentForSelection(sel) {
     const canMirror = onlyItems && items.every(itemCanMirror);
     // Группа с помещениями: копия, поворот вокруг центра группы, удаление.
     const canMove = onlyItems || sel.roomIds.length > 0;
+    const gap = sel.roomIds.length === 2 && !sel.itemIds.length ? gapOfSelection(sel) : null;
+    if (gap) {
+      return { label: `Зазор ${Math.round(gap.gap)} мм (нужно ${gap.target})`, html: gapButtons(gap) };
+    }
     return {
       label: `Выбрано: ${sel.roomIds.length + sel.itemIds.length}`,
       html: `${canMove ? button('duplicate', '⧉', 'Копировать', 'Ctrl+D') : ''}
@@ -223,6 +258,12 @@ export function bindSelectionToolbar() {
         const la = await import('./landscape-array.js');
         if (action === 'array') la.startLandscapeArray(); else la.plantFillSelection();
       }
+      return;
+    }
+    if (action.startsWith('gap-')) {
+      const sel = state.selection;
+      const gap = sel?.type === 'multi' ? gapOfSelection(sel) : null;
+      if (gap) (await actionsReady).applyGapFix(gap, action.slice(4));
       return;
     }
     if (action === 'slab-auto') {

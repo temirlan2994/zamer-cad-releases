@@ -33,7 +33,7 @@ import { renderSheetProps, renderSheetsPanel } from './props-sheets.js';
 import { refreshSheetView } from './sheet-view.js';
 import { renderToolstrip } from './toolstrip.js';
 import {
-  addFurniture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
+  addFurniture, autoDockAfterGesture, changeManualWall, changeWallKind, changeWallThickness, eatOverlapsAfter, overlappingTopRooms,
   reconcileOpenings,
 } from './plan-actions.js';
 import {
@@ -408,6 +408,8 @@ function renderRoomProps(panel, room) {
     refreshDerived();
     pushHistory(before);
     afterChange();
+    // Ввели размер, и сторона встала в 1–60 мм от «нужной» толщины стены соседа — стыкуется.
+    autoDockAfterGesture([room.id], 'stretch', { before });
   };
   panel.querySelector('#roomW').addEventListener('change', applySize);
   panel.querySelector('#roomH').addEventListener('change', applySize);

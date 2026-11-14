@@ -19,7 +19,8 @@ import { findWall } from './hit.js';
 import { switchLevel } from './levels.js';
 import { setEditorMode } from './modes.js';
 import { setErgoPref } from './render-ergonomics.js';
-import { dockGapPair } from './plan-actions.js';
+import { applyGapFix } from './plan-actions.js';
+import { planGapStretch, planGapThicken } from '../core/gap-fix.js';
 import { state } from './state.js';
 import { mutate, refreshIssues } from './store.js';
 import { selectObject } from './tools.js';
@@ -112,19 +113,25 @@ function syncPropsTabs() {
 const entryById = (id) => (state.issues?.groups || []).flatMap((g) => g.items).find((it) => it.id === id) || null;
 
 function actionHtml(entry, action, i) {
-  let label = action.label;
+  const attrs = `data-action="${action.kind}" data-issue="${escapeHtml(entry.id)}" data-index="${i}"`;
   if (action.kind === 'dock-gap') {
-    // Сдвиг считается только для выбранной пары (как раньше на плашке).
+    // Способы исправить считаются только для выбранной пары (как на плашке над планом).
     const focused = focusedGap();
     if (focused && focused.key === action.key && entry.levelId === state.project.activeLevel) {
-      const plan = planGapMove(state.project, focused);
-      label = plan.move
-        ? `Пристыковать (сдвинуть «${plan.move.name}» на ${Math.round(plan.move.distance)} мм)`
-        : 'Пристыковать сдвигом нельзя';
-      if (!plan.move) return `<span class="issue-why">Пристыковать сдвигом нельзя: ${escapeHtml(plan.reason)}. Поправьте положение вручную.</span>`;
+      const move = planGapMove(state.project, focused);
+      const stretch = planGapStretch(state.project, focused);
+      const thick = planGapThicken(state.project, focused);
+      const parts = [];
+      const add = (fix, label, ok, why) => parts.push(ok
+        ? `<button type="button" class="issue-action" ${attrs} data-fix="${fix}">${escapeHtml(label)}</button>`
+        : `<span class="issue-why">${escapeHtml(label)} нельзя: ${escapeHtml(why)}.</span>`);
+      add('move', move.move ? `Сдвинуть «${move.move.name}» на ${Math.round(move.move.distance)} мм` : 'Сдвинуть', Boolean(move.move), move.reason);
+      add('stretch', stretch.move ? `${stretch.move.direction === 'out' ? 'Продлить' : 'Сузить'} сторону «${stretch.move.name}» на ${Math.round(stretch.move.distance)} мм` : 'Растянуть', Boolean(stretch.move), stretch.reason);
+      add('thicken', thick.thickness != null ? `Стена ${thick.thickness} мм, комнаты на месте` : 'Сделать стену', thick.thickness != null, thick.reason);
+      return parts.join('');
     }
   }
-  return `<button type="button" class="issue-action" data-action="${action.kind}" data-issue="${escapeHtml(entry.id)}" data-index="${i}">${escapeHtml(label)}</button>`;
+  return `<button type="button" class="issue-action" ${attrs}>${escapeHtml(action.label)}</button>`;
 }
 
 function entryHtml(entry) {
@@ -247,7 +254,7 @@ export function goToIssue(entry) {
   renderIssues();
 }
 
-function runAction(entry, action) {
+function runAction(entry, action, fix = 'move') {
   if (entry.levelId && entry.levelId !== state.project.activeLevel) switchLevel(entry.levelId);
   if (action.kind === 'trim') {
     const room = roomById(state.project, action.roomId);
@@ -260,7 +267,7 @@ function runAction(entry, action) {
     splitByWallAction(action.roomId, action.wallId);
   } else if (action.kind === 'dock-gap') {
     const gap = (state.gaps || []).find((g) => g.key === action.key);
-    if (gap) dockGapPair(gap);
+    if (gap) applyGapFix(gap, fix);
   }
 }
 
@@ -296,7 +303,7 @@ export function bindIssues() {
     if (act) {
       const entry = entryById(act.dataset.issue);
       const action = entry?.actions[Number(act.dataset.index)];
-      if (entry && action) runAction(entry, action);
+      if (entry && action) runAction(entry, action, act.dataset.fix);
       return;
     }
     const go = event.target.closest('[data-goto]');

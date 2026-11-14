@@ -52,7 +52,7 @@ import {
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
-  addFurnitureAt, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
+  addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
@@ -1905,10 +1905,16 @@ export function bindCanvasInput() {
       refreshDerived();
       pushHistory(finished.before);
       afterChange();
+      let noted = true;
       if (finished.kind === 'shape-resize' && finished.merged) {
         toast('Стены выровнены и объединены в одну');
       } else if (finished.clamped?.length) {
         toast(`Проёмы прижаты к краю укороченной стены: ${finished.clamped.length}`, true);
+      } else noted = false;
+      // Зазор от толщины перегородки до AUTO_DOCK_MM: комната прилипает сама (отдельный шаг
+      // истории); тянули сторону — растяжением, двигали — сдвигом; Alt и кнопка «Магнит» — без неё.
+      if (!noted && (finished.kind === 'room' || finished.kind === 'resize')) {
+        autoDockAfterGesture(movedIds.filter(Boolean), finished.kind === 'resize' ? 'stretch' : 'move', { magnet: !event.altKey, before: finished.before });
       }
       return;
     }

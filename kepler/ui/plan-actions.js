@@ -8,7 +8,8 @@ import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts, snapOpeningOffset } from '../core/opening-spacing.js';
 import { planRoomDuplicate } from '../core/duplicate-room.js';
-import { planGapMove } from '../core/gaps.js';
+import { findNearMissGaps, planGapMove } from '../core/gaps.js';
+import { applyGapStretch, applyGapThicken, autoDockFix, planGapStretch, planGapThicken } from '../core/gap-fix.js';
 import {
   captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
@@ -29,7 +30,7 @@ import { renderProps } from './props.js';
 import { openSplitInput } from './split-input.js';
 import { state } from './state.js';
 import {
-  afterChange, mutate, pushHistory, refreshDerived, restoreFrom, snapshot,
+  afterChange, mutate, parseProjectText, pushHistory, refreshDerived, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
@@ -397,6 +398,71 @@ export function dockGapPair(gap) {
     toast(`«${name}» сдвинута на ${Math.round(distance)} мм — общая стена ${gap.target} мм · Ctrl+Z — отменить`);
   }
   return ok;
+}
+
+// Сколько мм написать в сообщении: целые, без «-0».
+const mm = (v) => Math.round(Math.abs(v));
+
+// Исправить зазор «≠ N мм» (core/gap-fix.js): 'move' — сдвинуть комнату,
+// 'stretch' — растянуть (сузить) сторону, 'thicken' — щель станет общей стеной.
+// Одна запись истории; проёмы, вложенные комнаты и мебель — как при жесте.
+export function applyGapFix(gap, fix) {
+  if (fix === 'move') return dockGapPair(gap);
+  if (fix === 'stretch') {
+    const plan = planGapStretch(state.project, gap);
+    if (!plan.move) { toast(`Растянуть нельзя: ${plan.reason}`, true); return false; }
+    const { roomId, name, distance, direction } = plan.move;
+    const ok = applyGroupChange((project) => applyGapStretch(project, plan.move), 'Так растянуть нельзя', [roomId]);
+    if (ok) {
+      state.gapFocus = null;
+      selectObject({ type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] });
+      toast(`Сторона «${name}» ${direction === 'out' ? 'продлена' : 'сужена'} на ${mm(distance)} мм — общая стена ${gap.target} мм · Ctrl+Z — отменить`);
+    }
+    return ok;
+  }
+  if (fix === 'thicken') {
+    const plan = planGapThicken(state.project, gap);
+    if (plan.thickness == null) { toast(`Сделать стену нельзя: ${plan.reason}`, true); return false; }
+    mutate(() => applyGapThicken(state.project, gap, plan.thickness));
+    state.gapFocus = null;
+    selectObject({ type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] });
+    toast(`Щель стала общей стеной ${plan.thickness} мм · Ctrl+Z — отменить`);
+    return true;
+  }
+  return false;
+}
+
+// Автостыковка после правки комнат: перетащили (kind 'move') — сдвиг, тянули сторону или
+// ввели размер ('stretch') — растяжение; если зазор появился или изменился этой правкой и
+// отличается от толщины перегородки не больше чем на AUTO_DOCK_MM. before — снимок до правки
+// (snapshot()). Отдельный шаг истории: Ctrl+Z возвращает ровно то, что получилось у пальца
+// или было введено. Выключена вместе с магнитом блоков (кнопка «Магнит», Alt).
+export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: beforeText = null } = {}) {
+  if (!magnet || !roomIds?.length || state.snapSettings?.magnet === false) return false;
+  let changed = null;
+  if (beforeText) {
+    try { changed = new Map(findNearMissGaps(parseProjectText(beforeText), { move: false }).map((g) => [g.key, g.gap])); } catch { changed = null; }
+  }
+  const found = autoDockFix(state.project, roomIds, kind, { changed });
+  if (!found) return false;
+  const { gap, fix, plan } = found;
+  const before = snapshot();
+  const room = roomById(state.project, plan.roomId);
+  if (!room) return false;
+  const carry = new Set(groupCargo(state.project, [room.id], []).items.map((i) => i.id));
+  liftRoom(state.project, room.id);
+  const res = fix === 'stretch'
+    ? applyGapStretch(state.project, plan)
+    : moveRoomGroup(state.project, [room.id], [], plan.dx, plan.dy, { carry });
+  if (!res.ok) { restoreFrom(before); return false; }
+  reconcileEats(state.project, { touched: [room.id] });
+  reconcileOpenings();
+  refreshDerived();
+  pushHistory(before);
+  afterChange();
+  const d = fix === 'stretch' ? Math.abs(plan.shift) : Math.hypot(plan.dx, plan.dy);
+  toast(`Состыковано: общая стена ${gap.target} мм (${mm(d)} мм) · Ctrl+Z — как было`);
+  return true;
 }
 
 // Повернуть выбранную мебель группой на 90° вокруг общего центра.

@@ -39,6 +39,7 @@ function titleOf(body) {
   const h2 = body?.querySelector('h2');
   const own = h2 ? [...h2.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim() : '';
   const label = el('selectionToolbar')?.querySelector('.selection-toolbar-label')?.textContent.trim() || '';
+  if (/^Зазор(?![а-яё])/.test(label)) return label; // пара с зазором: «Зазор 130 мм (нужно 100)»
   return own && !/^(Вид|Лист)(?![а-яё])/i.test(own) ? own : label || own;
 }
 
