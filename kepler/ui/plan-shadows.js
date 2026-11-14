@@ -1,6 +1,7 @@
-// Тени на плане этажа (геометрия — core/plan-shadows.js). Слой рисуется один
-// раз в отдельный холст в осях дома — в уменьшенном разрешении (тень мягкая,
-// резкость не нужна), с размытием — и в кадре кладётся одной картинкой:
+// Тени на плане этажа (геометрия — core/plan-shadows.js: стены, колонны и
+// объёмы мебели, длина — по высоте). Слой рисуется один раз в отдельный холст
+// в осях дома — в уменьшенном разрешении, двумя слоями (длинная мягкая тень и
+// тёмная тень касания у основания) — и в кадре кладётся одной картинкой:
 // чёрное с прозрачностью (то же, что умножение на серый, но заметно дешевле),
 // без сглаживания, пока точка слоя не крупнее трёх точек экрана. Места стен в
 // слое прозрачные — сами стены не темнеют.
@@ -17,7 +18,9 @@
 // новая — когда отпустили. planShadowPref — общий выключатель этого браузера
 // (тесты выключают тени, чтобы проверки цвета пикселей от них не зависели).
 
-import { planShadowDir, shadowBounds, shadowCasters, shadowKey, shadowStrips } from '../core/plan-shadows.js';
+import {
+  castShadow, contactLength, planShadowDir, shadowBounds, shadowCasters, shadowKey, shadowScale, shadowStrips,
+} from '../core/plan-shadows.js';
 import { FIXED_SHADOW_DIR, SHADOW_LENGTH_K } from '../core/view-display.js';
 import { activeLevel } from '../core/model.js';
 import { landscapeShadow } from './render-landscape.js';
@@ -138,11 +141,65 @@ function blur(cv, r) {
   g.globalCompositeOperation = 'source-over';
 }
 
-function build({ casters, dir, want, dark, key, level }) {
-  const b = shadowBounds(casters, dir);
-  const longest = Math.max(...casters.map((c) => c.len));
-  const blurMm = 40 + longest * 0.14;
-  const pad = blurMm * 2.5;
+// Тени двумя слоями: длинная — мягкая, светлеет к концу; касания — короткая,
+// тёмная, почти резкая, у основания стоящих на полу объёмов; итог — темнее из
+// двух. Основания залиты тенью до размытия, поэтому самая тёмная тень — прямо
+// у стены, а не отступив от неё (иначе стены будто парят над полом).
+const TONES = {
+  light: { wall: [0.6, 0.38], item: [0.7, 0.52], lifted: 0.8 },
+  dark: { wall: [0.48, 0.28], item: [0.58, 0.4], lifted: 0.7 },
+};
+const SOFT_MM = (longest) => 20 + Math.min(longest, 5000) * 0.07; // размытие длинной тени
+const SHARP_MM = 12; // размытие тени касания
+
+function trace(g, pts) {
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i += 1) g.lineTo(pts[i].x, pts[i].y);
+  g.closePath();
+}
+
+function paint(g, { casters, dir, s, ppm, x0, y0, W, H, tones, contact }) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#fff'; // белый — без тени
+  g.fillRect(0, 0, W, H);
+  g.setTransform(ppm, 0, 0, ppm, -x0 * ppm, -y0 * ppm);
+  g.globalCompositeOperation = 'darken'; // перекрытия — по самой тёмной, не вдвойне
+  for (const c of casters) {
+    const lifted = c.z0 > 0;
+    if (contact && lifted) continue; // у поднятого (спинка, столешница) касания нет
+    const [main, touch] = tones[c.kind === 'wall' ? 'wall' : 'item'];
+    const v = contact ? touch : lifted ? tones.lifted : main;
+    const shadow = contact ? { base: c.poly, len: contactLength(c, s) } : castShadow(c, dir, s);
+    if (!(shadow.len > 0)) continue;
+    const near = gray(v);
+    if (!lifted) { // основание — тенью: она начинается прямо от стены
+      g.fillStyle = near;
+      g.beginPath();
+      trace(g, c.poly);
+      g.fill();
+    }
+    const mid = gray(v + (1 - v) * (contact ? 0.6 : 0.5));
+    for (const st of shadowStrips(shadow.base, dir, shadow.len)) {
+      const grad = g.createLinearGradient(st.from.x, st.from.y, st.to.x, st.to.y);
+      grad.addColorStop(0, near);
+      grad.addColorStop(contact ? 0.5 : 0.35, mid);
+      grad.addColorStop(1, '#fff');
+      g.fillStyle = grad;
+      g.beginPath();
+      trace(g, st.quad);
+      g.fill();
+    }
+  }
+}
+
+let contactLayer = null;
+
+function build({ casters, dir, s, want, dark, key, level }) {
+  const b = shadowBounds(casters, dir, s);
+  const longest = Math.max(...casters.map((c) => c.z1 * s));
+  const softMm = SOFT_MM(longest);
+  const pad = softMm * 2.5 + 20;
   const x0 = b.minX - pad;
   const y0 = b.minY - pad;
   const wMm = b.maxX - b.minX + pad * 2;
@@ -151,46 +208,23 @@ function build({ casters, dir, want, dark, key, level }) {
   const W = Math.max(1, Math.ceil(wMm * ppm));
   const H = Math.max(1, Math.ceil(hMm * ppm));
   layer = canvasOf(layer, W, H);
+  contactLayer = canvasOf(contactLayer, W, H);
   const g = layer.getContext('2d');
+  const q = contactLayer.getContext('2d');
+  const opts = { casters, dir, s, ppm, x0, y0, W, H, tones: dark ? TONES.dark : TONES.light };
+  paint(g, { ...opts, contact: false });
+  blur(layer, softMm * ppm);
+  paint(q, { ...opts, contact: true });
+  blur(contactLayer, SHARP_MM * ppm);
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = '#fff'; // белый при умножении ничего не меняет
-  g.fillRect(0, 0, W, H);
-  g.setTransform(ppm, 0, 0, ppm, -x0 * ppm, -y0 * ppm);
-  g.globalCompositeOperation = 'darken'; // перекрытия — по самой тёмной, не вдвойне
-  const path = (pts) => {
-    g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i += 1) g.lineTo(pts[i].x, pts[i].y);
-    g.closePath();
-  };
-  // Мебель «стоит» на полу: мягкая тень вокруг (после размытия — ореол у краёв).
-  const halo = gray(dark ? 0.72 : 0.82);
-  g.fillStyle = halo;
-  g.beginPath();
-  for (const c of casters) if (c.halo) path(c.halo);
-  g.fill();
-  for (const c of casters) {
-    const v0 = c.kind === 'wall' ? (dark ? 0.5 : 0.6) : (dark ? 0.55 : 0.64);
-    const near = gray(v0);
-    const mid = gray(v0 + (1 - v0) * 0.55);
-    for (const s of shadowStrips(c.poly, dir, c.len)) {
-      const grad = g.createLinearGradient(s.from.x, s.from.y, s.to.x, s.to.y);
-      grad.addColorStop(0, near);
-      grad.addColorStop(0.4, mid);
-      grad.addColorStop(1, '#fff');
-      g.fillStyle = grad;
-      g.beginPath();
-      path(s.quad);
-      g.fill();
-    }
-  }
-  blur(layer, blurMm * ppm);
+  g.globalCompositeOperation = 'darken';
+  g.drawImage(contactLayer, 0, 0);
   // Места стен — белые: сами стены (и выбранная) не темнеют.
   g.setTransform(ppm, 0, 0, ppm, -x0 * ppm, -y0 * ppm);
   g.globalCompositeOperation = 'source-over';
   g.fillStyle = '#fff';
   g.beginPath();
-  for (const c of casters) if (c.kind === 'wall') path(c.poly);
+  for (const c of casters) if (c.kind === 'wall') trace(g, c.poly);
   g.fill();
   toAlphaMask(layer);
   const stats = state._planShadow || (state._planShadow = { builds: 0, ms: 0 });
@@ -209,12 +243,11 @@ export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark =
   const fixed = display.light === 'fixed';
   const light = fixed ? { ...FIXED_SHADOW_DIR, k: 0.3 } : landscapeShadow(project.site);
   const dir = fixed ? { ...FIXED_SHADOW_DIR } : planShadowDir(light, project.building);
-  const casters = shadowCasters(walls, items, {
-    wallHeight: activeLevel(project)?.height || 3000, k: light.k ?? 0.3, lengthK: SHADOW_LENGTH_K[display.length] || 1,
-  });
+  const s = shadowScale(light.k ?? 0.3, SHADOW_LENGTH_K[display.length] || 1);
+  const casters = shadowCasters(walls, items, { wallHeight: activeLevel(project)?.height || 3000 });
   if (!casters.length) return;
   const level = project.activeLevel;
-  const key = shadowKey(casters, `${level}|${dark ? 1 : 0}|${Math.round(dir.x * 1000)},${Math.round(dir.y * 1000)}`);
+  const key = shadowKey(casters, `${level}|${dark ? 1 : 0}|${Math.round(dir.x * 1000)},${Math.round(dir.y * 1000)}|${Math.round(s * 1000)}`);
   const want = Math.max(1e-4, scale * Math.min(dpr, 2) * QUALITY);
   // Слой годится, пока масштаб разошёлся не больше чем в ZOOM_SLACK раз (сравниваем
   // с запрошенным при построении: слой, урезанный по MAX_SIDE, не перестраивается зря).
@@ -223,14 +256,14 @@ export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark =
     const since = cache ? performance.now() - cache.builtAt : Infinity;
     // Другой этаж — сразу; нажатие — после него, а пока тянут — без тени (старая
     // отстаёт); иначе — не чаще MIN_GAP, последний раз — по таймеру.
-    if (!cache || cache.level !== level) cache = build({ casters, dir, want, dark, key, level });
+    if (!cache || cache.level !== level) cache = build({ casters, dir, s, want, dark, key, level });
     else if (pointers.size) {
       pending = true;
       if (cache.key !== key) { // геометрия меняется под пальцем — тень спрятана
         (state._planShadow || (state._planShadow = { builds: 0, ms: 0 })).hidden = true;
         return;
       }
-    } else if (since >= MIN_GAP) cache = build({ casters, dir, want, dark, key, level });
+    } else if (since >= MIN_GAP) cache = build({ casters, dir, s, want, dark, key, level });
     else later(MIN_GAP - since);
   }
   ctx.save();

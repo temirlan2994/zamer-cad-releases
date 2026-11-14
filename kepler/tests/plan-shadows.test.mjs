@@ -1,9 +1,13 @@
 // Тени на плане (core/plan-shadows.js): направление в осях дома, полосы по
-// рёбрам, смотрящим по тени, градиент по нормали ребра, кто отбрасывает тень,
-// границы слоя и подпись кеша.
+// рёбрам, смотрящим по тени, градиент по нормали ребра; объёмы с высотой —
+// стены на этаж, мебель как в 3D (у дивана сиденье и спинка); длина тени —
+// по высоте с одним масштабом; поднятый объём — тень отделена; тень касания —
+// только у стоящих на полу; границы слоя и подпись кеша.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planShadowDir, shadowBounds, shadowCasters, shadowKey, shadowLength, shadowStrips } from '../core/plan-shadows.js';
+import {
+  castShadow, contactLength, planShadowDir, shadowBounds, shadowCasters, shadowKey, shadowScale, shadowStrips,
+} from '../core/plan-shadows.js';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
 const square = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
@@ -29,57 +33,64 @@ test('полосы: только рёбра, смотрящие по тени; �
 });
 
 test('градиент — по нормали ребра: для косой тени конец сдвинут на n·(n·v)', () => {
-  const [s] = shadowStrips(square, { x: 0.6, y: 0.8 }, 100).filter((x) => near(x.from.y, x.to.y) === false && near(x.from.x, x.to.x));
+  const [s] = shadowStrips(square, { x: 0.6, y: 0.8 }, 100).filter((x) => near(x.from.x, x.to.x));
   assert.ok(s, 'нижнее ребро y = 100');
   assert.ok(near(s.to.y - s.from.y, 80), `t = 1 на расстоянии v·n = 80, а не 100: ${JSON.stringify(s)}`);
 });
 
-test('вырожденная фигура — без полос', () => {
+test('вырожденная фигура или нулевая длина — без полос', () => {
   assert.deepEqual(shadowStrips([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }], { x: 0, y: 1 }, 50), []);
+  assert.deepEqual(shadowStrips(square, { x: 0, y: 1 }, 0), []);
 });
 
-test('кто отбрасывает тень: видимые стены (многоугольники или полосы) и мебель', () => {
-  const walls = [
-    { polys: [square] },
-    { hidden: true, polys: [square] },
-    { poly: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }] },
-  ];
-  const items = [{ kind: 'wardrobe', x: 500, y: 500, w: 1000, h: 600, rotation: 90 }, { kind: 'bed', x: 0, y: 0, w: 0, h: 0 }];
-  const c = shadowCasters(walls, items, { wallHeight: 3000, k: 0.3 });
-  assert.deepEqual(c.map((x) => x.kind), ['wall', 'wall', 'item'], 'скрытая стена и пустой предмет — без тени');
-  assert.equal(c[0].len, shadowLength(3000, 0.3));
-  assert.ok(c[2].len < c[0].len, 'мебель ниже стены — тень короче');
-  // Повёрнутый на 90° шкаф 1000×600: по X занимает 600.
-  const xs = c[2].poly.map((p) => p.x);
-  assert.ok(near(Math.max(...xs) - Math.min(...xs), 600, 1e-6));
+test('масштаб тени: стена 3000 мм при средней длине — 1200 мм; высокое солнце — не короче k = 0,25', () => {
+  assert.ok(near(3000 * shadowScale(0.25, 1), 1200));
+  assert.ok(near(shadowScale(0.1, 1), shadowScale(0.25, 1)));
+  assert.ok(near(shadowScale(0.3, 1.6), 0.3 * 1.6 * 1.6));
 });
 
-test('длина теней вида: множитель lengthK; у мебели — ореол шире предмета', () => {
-  const walls = [{ polys: [square] }];
-  const items = [{ kind: 'bed', x: 0, y: 0, w: 1000, h: 2000 }];
-  const [w1, i1] = shadowCasters(walls, items, { lengthK: 1 });
-  const [w2] = shadowCasters(walls, items, { lengthK: 1.6 });
-  assert.ok(near(w2.len, w1.len * 1.6, 1e-6));
-  const xs = i1.halo.map((p) => p.x);
-  assert.ok(near(Math.max(...xs) - Math.min(...xs), 1120, 1e-6), 'ореол на 60 мм с каждой стороны');
+test('кто отбрасывает тень: видимые стены на высоту этажа; диван — сиденье и спинка выше', () => {
+  const walls = [{ polys: [square] }, { hidden: true, polys: [square] }, { poly: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }] }];
+  const items = [{ id: 'S', kind: 'sofa', x: 1000, y: 1000, w: 2000, h: 900, rotation: 0 }];
+  const c = shadowCasters(walls, items, { wallHeight: 2800 });
+  const ws = c.filter((x) => x.kind === 'wall');
+  assert.equal(ws.length, 2, 'скрытая стена — без тени');
+  assert.ok(ws.every((w) => w.z0 === 0 && w.z1 === 2800));
+  const sofa = c.filter((x) => x.kind === 'item');
+  assert.equal(sofa.length, 2, 'сиденье и спинка');
+  const [seat, back] = sofa.sort((a, b) => a.z0 - b.z0);
+  assert.equal(seat.z0, 0);
+  assert.ok(back.z0 > 0 && back.z1 > seat.z1, `спинка выше сиденья: ${JSON.stringify([seat.z1, back.z0, back.z1])}`);
 });
 
-test('длина тени ограничена: от 250 до 4000 мм; высокое солнце — не короче, чем при k = 0,25', () => {
-  assert.equal(shadowLength(10, 0.3), 250);
-  assert.equal(shadowLength(100000, 2), 4000);
-  assert.equal(shadowLength(3000, 0.1), shadowLength(3000, 0.25));
+test('тень объёма: длина по высоте; поднятый объём — тень начинается со сдвига', () => {
+  const s = 0.4;
+  const dir = { x: 1, y: 0 };
+  const onFloor = castShadow({ poly: square, z0: 0, z1: 500 }, dir, s);
+  assert.ok(near(onFloor.len, 200) && near(onFloor.base[0].x, 0));
+  const top = castShadow({ poly: square, z0: 700, z1: 750 }, dir, s);
+  assert.ok(near(top.base[0].x, 280) && near(top.len, 20), 'столешница: тень отделена, тонкая');
+  const tall = castShadow({ poly: square, z0: 0, z1: 1e6 }, dir, s);
+  assert.equal(tall.len, 5000, 'длина ограничена');
 });
 
-test('границы слоя включают сдвинутую копию', () => {
-  const b = shadowBounds([{ poly: square, len: 300 }], { x: -1, y: 0 });
+test('тень касания: только у стоящих на полу; не длиннее 240 мм', () => {
+  assert.ok(contactLength({ z0: 0, z1: 3000 }, 0.4) <= 240);
+  assert.ok(near(contactLength({ z0: 0, z1: 500 }, 0.4), 500 * 0.4 * 0.22));
+  assert.equal(contactLength({ z0: 450, z1: 850 }, 0.4), 0);
+});
+
+test('границы слоя включают кончик тени', () => {
+  const b = shadowBounds([{ poly: square, z0: 0, z1: 1000 }], { x: -1, y: 0 }, 0.3);
   assert.deepEqual([b.minX, b.maxX, b.minY, b.maxY], [-300, 100, 0, 100]);
 });
 
-test('подпись кеша меняется от сдвига стены и прочих условий, но не от дробей мм', () => {
-  const a = shadowCasters([{ polys: [square] }], [], {});
-  const moved = shadowCasters([{ polys: [square.map((p) => ({ x: p.x + 50, y: p.y }))] }], [], {});
-  const tiny = shadowCasters([{ polys: [square.map((p) => ({ x: p.x + 0.2, y: p.y }))] }], [], {});
-  assert.notEqual(shadowKey(a), shadowKey(moved));
-  assert.equal(shadowKey(a), shadowKey(tiny));
-  assert.notEqual(shadowKey(a, 'L1'), shadowKey(a, 'L2'));
+test('подпись кеша меняется от сдвига и высоты, но не от дробей мм', () => {
+  const base = { poly: square, z0: 0, z1: 1000, kind: 'item' };
+  const moved = { ...base, poly: square.map((p) => ({ x: p.x + 50, y: p.y })) };
+  const tiny = { ...base, poly: square.map((p) => ({ x: p.x + 0.2, y: p.y })) };
+  assert.notEqual(shadowKey([base]), shadowKey([moved]));
+  assert.notEqual(shadowKey([base]), shadowKey([{ ...base, z1: 1500 }]));
+  assert.equal(shadowKey([base]), shadowKey([tiny]));
+  assert.notEqual(shadowKey([base], 'L1'), shadowKey([base], 'L2'));
 });

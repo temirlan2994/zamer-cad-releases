@@ -638,40 +638,49 @@ function furnitureOutline(p) {
 
 const FURNITURE_LIFT = 3; // мм над гранью пола (пол — +1/+2), без мерцания
 
-// Мебель этажа (не конструкции и не лестницы — они уже в сетке): коробки по
-// габаритам предмета (x, y — центр, w×h, поворот) на высоту по виду
-// (core/furniture3d.js), низ — на полу этажа. Составная мебель — коробками
-// по своим частям (core/composite.js partsInHouse): стол — столешница и
-// стулья, диван и кухня — только модули (у них нет своей основы). Верх не
-// выше перекрытия. Грани: kind 'furniture', itemId, level.
-export function furnitureFaces(lp, z0, levelHeight, levelId) {
-  const faces = [];
-  const top = Math.max(1, levelHeight - 10);
-  const prism = (poly, lo, hi, item, color) => {
-    for (const f of prismFaces(poly, z0 + FURNITURE_LIFT + lo, z0 + FURNITURE_LIFT + hi, color, 'furniture')) {
-      faces.push({ ...f, itemId: item.id, level: levelId });
-    }
-  };
+// Объёмы мебели этажа (не конструкции и не лестницы): коробки по габаритам
+// предмета (x, y — центр, w×h, поворот) на высоту по виду (core/furniture3d.js),
+// низ — на полу (z0 — от пола: верхние шкафы висят). Мягкая мебель — сиденье на
+// всю площадь и спинка вдоль задней кромки (−Y; у угла — и вдоль +X).
+// Составная мебель — по своим частям (core/composite.js partsInHouse): стол —
+// столешница и стулья, диван и кухня — только модули. Верх не выше top.
+// { poly, z0, z1, color, itemId } в осях дома — для 3D и теней на плане
+// (core/plan-shadows.js).
+export function furnitureVolumes(items, top = Infinity) {
+  const out = [];
+  const box = (poly, lo, hi, item, color) => out.push({ poly, z0: lo, z1: hi, color, itemId: item.id });
   const add = (p, item, spec) => {
     const lo = Math.min(top - 1, Math.max(0, spec.z0 || 0));
     const hi = Math.min(top, lo + Math.max(1, spec.h));
     const back = spec.back === 'part' ? Number(p.back) || 0 : Number(spec.back) || 0;
     if (!(spec.seat && back > 0 && back < p.h && !/round/.test(p.kind || ''))) {
-      prism(furnitureOutline(p), lo, hi, item, spec.color);
+      box(furnitureOutline(p), lo, hi, item, spec.color);
       return;
     }
-    // Сиденье на всю площадь и спинка вдоль задней кромки (−Y), у угла — и вдоль +X.
     const seat = Math.min(hi, lo + spec.seat);
-    prism(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, p.h / 2), lo, seat, item, spec.color);
-    prism(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, -p.h / 2 + back), seat, hi, item, spec.color);
-    if (spec.corner) prism(localRect(p, p.w / 2 - back, -p.h / 2 + back, p.w / 2, p.h / 2), seat, hi, item, spec.color);
+    box(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, p.h / 2), lo, seat, item, spec.color);
+    box(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, -p.h / 2 + back), seat, hi, item, spec.color);
+    if (spec.corner) box(localRect(p, p.w / 2 - back, -p.h / 2 + back, p.w / 2, p.h / 2), seat, hi, item, spec.color);
   };
-  for (const item of lp.items || []) {
+  for (const item of items || []) {
     if (isStructural(item.kind) || item.kind === 'stairs') continue;
     if (!(item.w > 0 && item.h > 0)) continue;
     const parts = item.comp ? partsInHouse(item) : [];
     if (!isFixedSizeComp(item)) add(item, item, furniture3d(item.kind));
     for (const p of parts) add(p, item, furniture3d(p.kind, p.layer));
+  }
+  return out;
+}
+
+// Мебель этажа в 3D — призмы по объёмам (furnitureVolumes). Верх не выше
+// перекрытия. Грани: kind 'furniture', itemId, level.
+export function furnitureFaces(lp, z0, levelHeight, levelId) {
+  const faces = [];
+  const top = Math.max(1, levelHeight - 10);
+  for (const b of furnitureVolumes(lp.items, top)) {
+    for (const f of prismFaces(b.poly, z0 + FURNITURE_LIFT + b.z0, z0 + FURNITURE_LIFT + b.z1, b.color, 'furniture')) {
+      faces.push({ ...f, itemId: b.itemId, level: levelId });
+    }
   }
   return faces;
 }
