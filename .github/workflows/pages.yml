@@ -26,7 +26,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Получение репозитория
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Настройка GitHub Pages
         uses: actions/configure-pages@v5
