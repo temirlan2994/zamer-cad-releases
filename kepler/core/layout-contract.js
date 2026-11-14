@@ -12,6 +12,7 @@ import { northInBuilding } from './building.js';
 import { furnitureDef, isStructural } from './catalog.js';
 import { isFixedSizeComp } from './composite.js';
 import { furniture3d } from './furniture3d.js';
+import { normalizeLayoutBrief } from './layout-brief.js';
 import { createItem, levelProject, roomCeiling } from './model.js';
 import { roomContainsPoint, roomPolygon } from './room-shape.js';
 import {
@@ -101,6 +102,7 @@ const ROOM_FUNCTIONS = Object.freeze({
 });
 
 const unique = (list) => [...new Set(list.filter(Boolean))];
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
 
 function roomForItem(rooms, item) {
   const ordered = [...rooms].sort((a, b) => Number(Boolean(b.parentId)) - Number(Boolean(a.parentId)));
@@ -210,6 +212,16 @@ function openingRecord(project, opening, walls, level) {
 
 const catalogId = (item) => `kepler-item:${item.id}`;
 
+function manualConstraintRecord(constraint) {
+  const out = { ...constraint };
+  const sourceRef = constraint.source_ref ?? constraint.sourceRef ?? null;
+  if (sourceRef) out.source_ref = sourceRef; else delete out.source_ref;
+  delete out.sourceRef;
+  out.status = constraint.status === 'verified' ? 'verified' : 'unknown';
+  out.requirement = constraint.requirement || 'Паспортные ограничения изделия';
+  return out;
+}
+
 function catalogRecord(item) {
   const def = furnitureDef(item.kind);
   const spec = furniture3d(item.kind);
@@ -217,7 +229,10 @@ function catalogRecord(item) {
   return {
     id: catalogId(item),
     kind: item.kind,
-    geometry_status: item.sku ? 'verified_sku' : 'parametric_custom',
+    // Строка SKU сама по себе не доказывает, что габарит сверен с карточкой.
+    geometry_status: ['verified_sku', 'parametric_custom', 'proxy'].includes(item.geometryStatus)
+      ? item.geometryStatus : 'parametric_custom',
+    geometry_confirmed: ['verified_sku', 'parametric_custom', 'proxy'].includes(item.geometryStatus),
     manufacturer: item.manufacturer || null,
     sku: item.sku || null,
     source_url: item.sourceUrl || null,
@@ -233,7 +248,9 @@ function catalogRecord(item) {
       ], z0, z0 + (spec.h || 1))],
       zones: [],
     }],
-    manual_constraints: Array.isArray(item.manualConstraints) ? item.manualConstraints : [],
+    manual_status: ['verified', 'not_required'].includes(item.manualStatus) ? item.manualStatus : 'unknown',
+    manual_constraints: Array.isArray(item.manualConstraints)
+      ? item.manualConstraints.map(manualConstraintRecord) : [],
     price: item.price || null,
     assembly_data: item.assemblyData || null,
     title: def?.title || item.kind,
@@ -252,14 +269,99 @@ function placementRecord(item, floorId, roomId) {
 }
 
 function actorRecord(actor) {
+  const width = Number(actor.bodyWidthMm);
+  const depth = Number(actor.bodyDepthMm);
+  const footprint = actor.body_footprint_local_mm ?? actor.bodyFootprintLocalMm
+    ?? (width > 0 && depth > 0 ? {
+      outer: [
+        [-width / 2, -depth / 2], [width / 2, -depth / 2],
+        [width / 2, depth / 2], [-width / 2, depth / 2], [-width / 2, -depth / 2],
+      ],
+      holes: [],
+    } : null);
   return {
     ...actor,
     id: String(actor.id),
-    height_mm: actor.height_mm ?? null,
-    mobility_profile: actor.mobility_profile ?? null,
-    body_footprint_local_mm: actor.body_footprint_local_mm ?? null,
-    carried_object_ids: actor.carried_object_ids || [],
-    data_status: actor.data_status || 'unknown',
+    alias: actor.alias || null,
+    height_mm: actor.height_mm ?? actor.heightMm ?? null,
+    mobility_profile: actor.mobility_profile ?? actor.mobilityProfile ?? null,
+    body_footprint_local_mm: footprint,
+    carried_object_ids: actor.carried_object_ids || actor.carriedObjectIds || [],
+    data_status: actor.data_status || actor.dataStatus || 'unknown',
+    source_ref: actor.source_ref || actor.sourceRef || null,
+  };
+}
+
+function engineeringRecord(point) {
+  return {
+    point_id: point.id,
+    system_type: point.kind,
+    room_id: point.roomId ?? null,
+    floor_id: point.levelId ?? null,
+    position_xyz_mm: point.x != null && point.y != null
+      ? [point.x, -point.y, point.zMm ?? 0] : null,
+    movability: point.fixed === false ? 'movable' : 'fixed',
+    service_clearance_mm: point.clearanceMm ?? null,
+    equipment_ids: point.equipmentItemIds || [],
+    data_status: point.dataStatus || 'unknown',
+    source_id: point.sourceRef || null,
+    notes: point.notes || null,
+  };
+}
+
+function storageRecord(entry) {
+  return {
+    item_group_id: entry.id,
+    owner_person_ids: entry.ownerActorIds || [],
+    category: entry.category || null,
+    description: entry.label || entry.notes || null,
+    count: entry.count ?? null,
+    storage_mode: entry.storageMode || null,
+    frequency_of_use: entry.frequency || null,
+    preferred_zone: entry.preferredZone || null,
+    seasonality: entry.seasonality || null,
+    source_id: entry.sourceRef || null,
+    data_status: entry.dataStatus || 'unknown',
+    item_dimensions_mm: entry.dimensionsMm ? {
+      width: entry.dimensionsMm.width ?? null,
+      depth: entry.dimensionsMm.depth ?? null,
+      height: entry.dimensionsMm.height ?? null,
+    } : null,
+    required_volume_liters: entry.requiredVolumeLiters ?? null,
+    weight_kg: entry.weightKg ?? null,
+  };
+}
+
+function uncertaintyRecord(entry) {
+  return {
+    id: entry.id,
+    scope: entry.scope,
+    target_id: entry.targetId ?? null,
+    field_path: entry.fieldPath ?? null,
+    status: entry.status,
+    lower_bound: entry.lowerBound ?? null,
+    upper_bound: entry.upperBound ?? null,
+    unit: entry.unit ?? null,
+    source_ref: entry.sourceRef ?? null,
+    note: entry.note ?? null,
+  };
+}
+
+function scenarioRecord(selection, index) {
+  return {
+    id: `brief-${String(selection.scenarioId).toLowerCase()}-${index + 1}`,
+    template_id: selection.scenarioId,
+    enabled: selection.enabled,
+    required: selection.mandatory,
+    actor_ids: selection.actorPersonIds || [],
+    state_assignments: {},
+    route_pairs: [],
+    concurrency: {},
+    required_checks: [],
+    comfort_checks: [],
+    frequency_per_week: selection.frequencyPeriod === 'week' ? selection.frequencyValue : null,
+    specific_requirements: selection.specificRequirements || null,
+    source_id: selection.sourceRef || null,
   };
 }
 
@@ -299,14 +401,79 @@ export function projectToLayoutInput(project, opts = {}) {
   const location = site.location || {};
   const localNorth = northInBuilding(site.north, project.building);
   const locationVerified = opts.locationVerified === true || (opts.locationVerified == null && site.solarVerified === true);
-  const actors = (opts.actors || []).map(actorRecord);
-  const unknown = [...(opts.unknownInputs || [])];
-  if (!actors.length) unknown.push('Состав, размеры и мобильность пользователей не заданы');
-  if (catalog.some((entry) => entry.geometry_status !== 'verified_sku')) unknown.push('Точные модели и паспортные состояния части мебели не заданы');
-  if (!locationVerified) unknown.push('Координаты участка и направление севера требуют подтверждения');
-  if (!opts.storageInventory) unknown.push('Инвентарь хранения не задан');
-
+  const storedBrief = normalizeLayoutBrief(project.layoutBrief, {
+    levelIds: project.levels.map((level) => level.id),
+    roomIds: project.levels.flatMap((level) => level.rooms.map((room) => room.id)),
+    itemIds: project.levels.flatMap((level) => level.items.map((item) => item.id)),
+  });
+  const actorSource = hasOwn(opts, 'actors') ? opts.actors : storedBrief.actors;
+  const actors = (Array.isArray(actorSource) ? actorSource : []).map(actorRecord);
+  const engineeringSource = hasOwn(opts, 'fixedEngineering') ? opts.fixedEngineering : storedBrief.fixedEngineering;
+  const fixedEngineering = hasOwn(opts, 'fixedEngineering')
+    ? (Array.isArray(engineeringSource) ? engineeringSource : [])
+    : (engineeringSource || []).map(engineeringRecord);
   const brief = opts.functionalBrief || {};
+  let storageSource;
+  let storageInventory;
+  if (hasOwn(brief, 'storage_inventory')) {
+    storageSource = brief.storage_inventory;
+    storageInventory = Array.isArray(storageSource) ? storageSource : null;
+  } else if (hasOwn(opts, 'storageInventory')) {
+    storageSource = opts.storageInventory;
+    storageInventory = Array.isArray(storageSource) ? storageSource : null;
+  } else {
+    storageSource = storedBrief.storageInventory;
+    storageInventory = Array.isArray(storageSource) ? storageSource.map(storageRecord) : null;
+  }
+  const dailySeats = hasOwn(brief, 'daily_seats') ? brief.daily_seats : storedBrief.capacity.dailySeats;
+  const guestSeats = hasOwn(brief, 'guest_seats') ? brief.guest_seats : storedBrief.capacity.guestSeats;
+  const uncertainty = storedBrief.uncertainty.map(uncertaintyRecord);
+  const scenarios = hasOwn(opts, 'scenarios')
+    ? (Array.isArray(opts.scenarios) ? opts.scenarios : [])
+    : storedBrief.scenarioSelections.map(scenarioRecord);
+  const unknown = [...(opts.unknownInputs || [])];
+  const actorsConfirmed = actors.length > 0 && actors.every((actor) => actor.height_mm != null
+    && actor.mobility_profile && actor.mobility_profile !== 'unknown' && actor.data_status !== 'unknown');
+  if (!actorsConfirmed) unknown.push('Состав, рост и мобильность пользователей не подтверждены полностью');
+  const catalogConfirmed = catalog.every((entry) => {
+    const geometryReady = entry.geometry_status === 'verified_sku'
+      ? Boolean(entry.geometry_confirmed && entry.sku && entry.source_url)
+      : entry.geometry_status === 'parametric_custom' && entry.geometry_confirmed;
+    const manualReady = entry.manual_status === 'not_required'
+      || (entry.manual_status === 'verified'
+        && entry.manual_constraints.every((constraint) => constraint.status === 'verified'));
+    return geometryReady && manualReady;
+  });
+  if (!catalogConfirmed) unknown.push('Точные модели, источники или паспортные зазоры части мебели не подтверждены');
+  if (!locationVerified) unknown.push('Координаты участка и направление севера требуют подтверждения');
+  const engineeringConfirmed = Array.isArray(engineeringSource) && engineeringSource.every((point) => {
+    const positionKnown = Array.isArray(point.position_xyz_mm)
+      || (Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
+    const status = point.data_status || point.dataStatus;
+    return positionKnown && status && status !== 'unknown';
+  });
+  if (!engineeringConfirmed) unknown.push('Фиксированные инженерные точки не подтверждены');
+  const storageConfirmed = Array.isArray(storageSource) && storageSource.every((entry) => {
+    const status = entry.data_status || entry.dataStatus;
+    const amountKnown = entry.count != null || entry.required_volume_liters != null
+      || entry.requiredVolumeLiters != null || entry.item_dimensions_mm || entry.dimensionsMm;
+    return (entry.category || entry.description || entry.label) && amountKnown && status && status !== 'unknown';
+  });
+  if (!storageConfirmed) unknown.push('Инвентарь хранения не подтверждён');
+  if (dailySeats == null || guestSeats == null) unknown.push('Ежедневная и гостевая вместимость задана не полностью');
+  for (const entry of uncertainty) {
+    if (entry.status === 'resolved') continue;
+    const label = entry.note || entry.field_path || entry.target_id || entry.id;
+    unknown.push(`Неопределённость: ${label}`);
+  }
+
+  const storedAssumptions = uncertainty
+    .filter((entry) => entry.status === 'assumed')
+    .map((entry) => `Допущение: ${entry.note || entry.field_path || entry.target_id || entry.id}`);
+  const assumptions = opts.assumptions || [
+    'Контуры, проёмы и положения взяты из текущего проекта Kepler.',
+    'Мебель без подтверждённой модели представлена параметрической геометрией редактора.',
+  ];
   return {
     project_id: String(opts.projectId || project.id || project.name || 'kepler-project'),
     units: 'mm',
@@ -326,25 +493,23 @@ export function projectToLayoutInput(project, opts = {}) {
     floors,
     rooms,
     openings,
-    fixed_engineering: opts.fixedEngineering || [],
+    fixed_engineering: fixedEngineering,
     actors,
     catalog,
     locked_placements: locked,
     functional_brief: {
       mandatory_functions: unique(brief.mandatory_functions || allFunctions),
-      daily_seats: brief.daily_seats ?? null,
-      guest_seats: brief.guest_seats ?? null,
-      storage_inventory: brief.storage_inventory ?? opts.storageInventory ?? null,
+      daily_seats: dailySeats ?? null,
+      guest_seats: guestSeats ?? null,
+      storage_inventory: storageInventory,
       privacy_requirements: brief.privacy_requirements || [],
       preferences: brief.preferences || [],
       budget: brief.budget ?? null,
+      uncertainty_records: uncertainty,
     },
-    scenarios: opts.scenarios || [],
+    scenarios,
     unknown_inputs: unique(unknown),
-    assumptions: opts.assumptions || [
-      'Контуры, проёмы и положения взяты из текущего проекта Kepler.',
-      'Мебель без SKU представлена параметрической геометрией редактора.',
-    ],
+    assumptions: unique([...assumptions, ...storedAssumptions]),
   };
 }
 

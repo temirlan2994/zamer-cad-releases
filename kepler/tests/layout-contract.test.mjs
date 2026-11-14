@@ -84,6 +84,83 @@ test('проект превращается в полный вход: конту
   assert.ok(!input.unknown_inputs.some((text) => text.includes('Координаты')));
 });
 
+test('сохраняемый layoutBrief и паспорт мебели попадают в контракт', () => {
+  const { project, bed } = projectFixture();
+  project.site.solarVerified = true;
+  project.layoutBrief = {
+    actors: [{
+      id: 'A1', alias: 'Жилец 1', heightMm: 1760, mobilityProfile: 'wheelchair',
+      bodyWidthMm: 720, bodyDepthMm: 1100, dataStatus: 'measured', sourceRef: 'обмер',
+    }],
+    capacity: { dailySeats: 2, guestSeats: 4 },
+    fixedEngineering: [{
+      id: 'E1', kind: 'outlet', levelId: 'L1', roomId: 'R-main',
+      x: 700, y: 900, zMm: 300, dataStatus: 'measured', sourceRef: 'план ЭОМ', clearanceMm: 200,
+    }],
+    storageInventory: [{
+      id: 'S1', label: 'Сезонная одежда', category: 'clothes', count: 8,
+      frequency: 'seasonal', dataStatus: 'declared', ownerActorIds: ['A1'], roomIds: ['R-main'],
+    }],
+    uncertainty: [{
+      id: 'U1', scope: 'site', fieldPath: 'site.neighbors', status: 'resolved', note: 'Съёмка получена',
+    }],
+    scenarioSelections: [{
+      scenarioId: 'SCN014', enabled: true, mandatory: true, actorPersonIds: ['A1'],
+      frequencyValue: 2, frequencyPeriod: 'week', specificRequirements: 'Ночник у кровати',
+    }],
+  };
+  Object.assign(bed, {
+    manufacturer: 'Factory', sku: 'BED-160', sourceUrl: 'https://example.test/bed-160',
+    geometryStatus: 'verified_sku', manualStatus: 'verified',
+    manualConstraints: [{
+      id: 'M1', status: 'verified', requirement: 'Зазор для обслуживания',
+      sourceRef: 'паспорт, стр. 6', clearances: { frontMm: 600 },
+    }],
+  });
+
+  const input = projectToLayoutInput(project);
+  assert.equal(input.actors[0].height_mm, 1760);
+  assert.equal(input.actors[0].mobility_profile, 'wheelchair');
+  assert.equal(input.actors[0].body_footprint_local_mm.outer.length, 5);
+  assert.deepEqual(input.fixed_engineering[0].position_xyz_mm, [700, -900, 300]);
+  assert.equal(input.fixed_engineering[0].source_id, 'план ЭОМ');
+  assert.equal(input.functional_brief.daily_seats, 2);
+  assert.equal(input.functional_brief.guest_seats, 4);
+  assert.equal(input.functional_brief.storage_inventory[0].item_group_id, 'S1');
+  assert.equal(input.functional_brief.uncertainty_records[0].field_path, 'site.neighbors');
+  assert.equal(input.catalog[0].geometry_status, 'verified_sku');
+  assert.equal(input.catalog[0].manual_status, 'verified');
+  assert.equal(input.catalog[0].manual_constraints[0].source_ref, 'паспорт, стр. 6');
+  assert.equal(input.scenarios[0].template_id, 'SCN014');
+  assert.equal(input.scenarios[0].required, true);
+  assert.deepEqual(input.scenarios[0].actor_ids, ['A1']);
+  assert.equal(input.scenarios[0].frequency_per_week, 2);
+  assert.ok(!input.unknown_inputs.some((text) => /пользовател|модел|север|инженер|хранен|вместимост/.test(text)));
+});
+
+test('SKU и непроверенные внешние данные не снимают unknown_inputs', () => {
+  const { project, bed } = projectFixture();
+  bed.sku = 'BED-160';
+  project.layoutBrief = {
+    actors: [{ id: 'A1', heightMm: null, mobilityProfile: 'unknown', dataStatus: 'unknown' }],
+    capacity: { dailySeats: 2, guestSeats: null },
+    fixedEngineering: [{
+      id: 'E1', kind: 'outlet', levelId: 'L1', roomId: 'R-main', x: 700, y: 900, dataStatus: 'unknown',
+    }],
+    storageInventory: [{ id: 'S1', category: 'clothes', count: null, dataStatus: 'unknown' }],
+    uncertainty: [{ id: 'U1', scope: 'site', fieldPath: 'site.neighbors', status: 'unknown', note: 'Нет съёмки' }],
+  };
+
+  const input = projectToLayoutInput(project);
+  assert.equal(input.catalog[0].geometry_status, 'parametric_custom');
+  assert.ok(input.unknown_inputs.some((text) => text.includes('мобильность')));
+  assert.ok(input.unknown_inputs.some((text) => text.includes('паспортные')));
+  assert.ok(input.unknown_inputs.some((text) => text.includes('инженерные')));
+  assert.ok(input.unknown_inputs.some((text) => text.includes('хранения')));
+  assert.ok(input.unknown_inputs.some((text) => text.includes('вместимость')));
+  assert.ok(input.unknown_inputs.some((text) => text.includes('Нет съёмки')));
+});
+
 test('север учитывает поворот дома', () => {
   const { project } = projectFixture();
   project.site.north = 40;

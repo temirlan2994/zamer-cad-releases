@@ -9,6 +9,7 @@ import { furnitureDef, isStructural } from './catalog.js';
 import { itemShapes } from './clearance.js';
 import { itemsInRoom } from './furnish.js';
 import { windowMorningExposure } from './insolation.js';
+import { collectLayoutEvaluatorMetrics } from './layout-evaluators.js';
 import { evaluateLayoutRules, layoutRuleCoverage, summarizeLayoutRuleResults } from './layout-rules.js';
 import { nestedOuterRect } from './rooms.js';
 import { roomBoundaryEdges, roomContainsPoint, roomRects } from './room-shape.js';
@@ -585,7 +586,20 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     itemIds: [], text: route.unknown ? 'Нет двери: маршрут не проверяется' : route.ok ? 'Все предметы доступны по проходу 600 мм' : route.reason,
   });
   const geometryFails = checks.filter((entry) => entry.id.startsWith('AUTO-GEOMETRY-') && entry.status === 'fail');
+  const capacity = project.layoutBrief?.capacity || {};
+  const requestedSeats = [capacity.dailySeats, capacity.guestSeats]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const requiredSeatCount = requestedSeats.length ? Math.max(...requestedSeats) : null;
   const metrics = {
+    ...collectLayoutEvaluatorMetrics({
+      project, room, items, records, route,
+      context: {
+        doorZones: ctx.doorZones,
+        requiredSeatCount,
+        requiredDiningSeatCount: requiredSeatCount,
+      },
+    }),
     room_polygon_valid: ctx.edges.length >= 3,
     solid_collision_count: geometryFails.filter((entry) => /collision|access|wall/.test(entry.text)).length,
     door_swing_collision_count: geometryFails.filter((entry) => entry.text.includes('door')).length,
@@ -594,6 +608,19 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
   if (!route.unknown) {
     metrics.required_routes_reachable = route.ok;
     metrics.agent_body_route_valid = route.ok;
+    metrics.route_bottleneck_valid = route.ok;
+    if (items.some((item) => ['chair', 'chair-soft'].includes(item.kind))) metrics.all_dining_seats_reachable = route.ok;
+  } else {
+    // Номинальное количество иконок известно, пригодность мест без маршрута — нет.
+    delete metrics.usable_seat_count;
+    delete metrics.usable_dining_seat_count;
+  }
+  const bedsForCapacity = items.filter((item) => ['bed-double', 'bed-king', 'bed-queen', 'bed-single', 'kids-bed', 'crib'].includes(item.kind));
+  if (bedsForCapacity.length) {
+    metrics.bedside_surface_count = items.filter((item) => ['nightstand', 'side-table'].includes(item.kind)).length;
+    metrics.required_bedside_surface_count = bedsForCapacity.reduce((sum, bed) => (
+      sum + (['bed-double', 'bed-king', 'bed-queen'].includes(bed.kind) ? 2 : 1)
+    ), 0);
   }
   const doubleBeds = items.filter((item) => ['bed-double', 'bed-king', 'bed-queen'].includes(item.kind));
   if (doubleBeds.length && !route.unknown) metrics.independent_bed_access = doubleBeds.every((bed) => {
@@ -607,11 +634,23 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     const center = centerOf(bboxOf(record.shapes));
     return ctx.windowSun.some((entry) => (entry.morningMinutes || 0) >= 30 && distToRect(center, entry.rect) <= 3500);
   });
+  const brief = project.layoutBrief || {};
+  const externalData = {
+    north_and_solar_geometry: ctx.solarKnown,
+    measurement_uncertainty: Array.isArray(brief.uncertainty)
+      && brief.uncertainty.some((entry) => entry?.status === 'bounded' || entry?.status === 'resolved'),
+    fixed_engineering: Array.isArray(brief.fixedEngineering)
+      && brief.fixedEngineering.every((entry) => ['measured', 'declared'].includes(entry?.dataStatus)),
+    catalog_geometry: items.length > 0
+      && items.every((item) => ['verified_sku', 'parametric_custom'].includes(item.geometryStatus)),
+    appliance_manuals: items.length > 0
+      && items.every((item) => item.manualStatus === 'verified' || item.manualStatus === 'not_required'),
+  };
   const ruleResults = evaluateLayoutRules({
     roomType: room.type,
     itemKinds: items.map((item) => item.kind),
     metrics,
-    externalData: { north_and_solar_geometry: ctx.solarKnown },
+    externalData,
   });
   const ruleSummary = summarizeLayoutRuleResults(ruleResults);
   return {

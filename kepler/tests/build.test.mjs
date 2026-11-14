@@ -12,6 +12,8 @@ test('все модули ui/ достижимы из app.js (нет забыт�
   const graph = new Set(moduleGraph('app.js'));
   for (const f of readdirSync(join(ROOT, 'ui'))) assert.ok(graph.has(`ui/${f}`), `ui/${f} не подключён`);
   for (const f of ['render.js', 'core/model.js', 'core/migrate.js', 'core/zamer/geometry.js']) assert.ok(graph.has(f), f);
+  assert.ok(graph.has('workers/layout-worker.js'), 'module Worker не попал в граф');
+  assert.ok(graph.has('core/layout-worker-handler.js'), 'зависимости Worker не попали в граф');
 });
 
 test('страница артефакта — фрагмент из index.html', () => {
@@ -39,6 +41,7 @@ test('сборка кладёт страницу, стили, модули и м
     const { files } = buildArtifact(out);
     assert.ok(existsSync(join(out, PAGE)));
     assert.ok(files.includes('styles.css') && files.includes('app.js') && files.includes('ui/input.js'));
+    assert.ok(files.includes('workers/layout-worker.js'));
     for (const f of files) assert.ok(existsSync(join(out, f)), f);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.deepEqual(manifest.files, files);

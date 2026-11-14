@@ -1,0 +1,1166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seven3d:furniture:project-input:1.0",
+  "title": "Вход задачи расстановки v1.0",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "units": {
+      "const": "mm"
+    },
+    "angle_unit": {
+      "const": "degree"
+    },
+    "mode": {
+      "enum": [
+        "furniture_only",
+        "explicitly_authorized_architectural_options"
+      ]
+    },
+    "coordinate_convention": {
+      "const": "right_handed_z_up_yaw_ccw_local_origin_xy_center_at_support"
+    },
+    "metric_geometry_verified": {
+      "type": "boolean"
+    },
+    "source_plan_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latitude": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "longitude": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "north_yaw_deg": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "country",
+        "latitude",
+        "longitude",
+        "north_yaw_deg"
+      ]
+    },
+    "active_profiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "profile_overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule_id": {
+            "type": "string"
+          },
+          "parameter_path": {
+            "type": "string"
+          },
+          "value": {},
+          "reason": {
+            "type": "string"
+          },
+          "authority": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "parameter_path",
+          "value",
+          "reason",
+          "authority"
+        ]
+      },
+      "minItems": 0
+    },
+    "floors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "elevation_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "elevation_mm"
+        ]
+      },
+      "minItems": 1
+    },
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "floor_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "privacy": {
+            "enum": [
+              "public",
+              "family",
+              "private",
+              "service",
+              "unknown"
+            ]
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "footprint_mm": {
+                    "type": "object",
+                    "properties": {
+                      "outer": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          },
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "minItems": 4
+                      },
+                      "holes": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "minItems": 4
+                        },
+                        "minItems": 0
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "outer",
+                      "holes"
+                    ],
+                    "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+                  },
+                  "z_base_mm": {
+                    "type": "number"
+                  },
+                  "ceiling_height_mm": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "fixed_obstacle_volumes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "footprint_mm": {
+                          "type": "object",
+                          "properties": {
+                            "outer": {
+                              "type": "array",
+                              "items": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "minItems": 2,
+                                "maxItems": 2
+                              },
+                              "minItems": 4
+                            },
+                            "holes": {
+                              "type": "array",
+                              "items": {
+                                "type": "array",
+                                "items": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                "minItems": 4
+                              },
+                              "minItems": 0
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": [
+                            "outer",
+                            "holes"
+                          ],
+                          "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+                        },
+                        "z_min_mm": {
+                          "type": "number"
+                        },
+                        "z_max_mm": {
+                          "type": "number"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "footprint_mm",
+                        "z_min_mm",
+                        "z_max_mm"
+                      ]
+                    },
+                    "minItems": 0
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "footprint_mm",
+                  "z_base_mm",
+                  "ceiling_height_mm",
+                  "fixed_obstacle_volumes"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "linear_uncertainty_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "required_functions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "floor_id",
+          "type",
+          "geometry",
+          "required_functions"
+        ]
+      },
+      "minItems": 1
+    },
+    "openings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hinged_door",
+              "sliding_door",
+              "folding_door",
+              "doorless",
+              "window",
+              "stairs_connector"
+            ]
+          },
+          "room_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "segment_mm": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "clear_width_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sill_height_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "head_height_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pivot_mm": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required_open_angle_deg": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "swing_direction": {
+            "enum": [
+              "cw",
+              "ccw",
+              null
+            ]
+          },
+          "fixed": {
+            "type": "boolean"
+          },
+          "zones": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "physical_volume",
+                    "opening_zone",
+                    "use_zone",
+                    "approach_zone",
+                    "service_zone",
+                    "preferred_zone",
+                    "regulatory_clearance"
+                  ]
+                },
+                "geometry": {
+                  "type": "object",
+                  "properties": {
+                    "footprint_mm": {
+                      "type": "object",
+                      "properties": {
+                        "outer": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "minItems": 4
+                        },
+                        "holes": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            "minItems": 4
+                          },
+                          "minItems": 0
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "outer",
+                        "holes"
+                      ],
+                      "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+                    },
+                    "z_min_mm": {
+                      "type": "number"
+                    },
+                    "z_max_mm": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "footprint_mm",
+                    "z_min_mm",
+                    "z_max_mm"
+                  ]
+                },
+                "active_state_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 0
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "required_by_profile": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "type",
+                "geometry",
+                "active_state_ids",
+                "scope"
+              ]
+            },
+            "minItems": 0
+          },
+          "data_status": {
+            "enum": [
+              "measured",
+              "imported",
+              "inferred",
+              "unknown"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "kind",
+          "room_ids",
+          "fixed",
+          "data_status"
+        ]
+      },
+      "minItems": 0
+    },
+    "fixed_engineering": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 0
+    },
+    "actors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "height_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mobility_profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_footprint_local_mm": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "outer": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "minItems": 4
+                  },
+                  "holes": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "minItems": 4
+                    },
+                    "minItems": 0
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "outer",
+                  "holes"
+                ],
+                "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "carried_object_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "data_status": {
+            "enum": [
+              "measured",
+              "declared",
+              "assumed",
+              "unknown"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "height_mm",
+          "mobility_profile",
+          "body_footprint_local_mm",
+          "data_status"
+        ]
+      },
+      "minItems": 0
+    },
+    "catalog": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "geometry_status": {
+            "enum": [
+              "verified_sku",
+              "parametric_custom",
+              "proxy"
+            ]
+          },
+          "manufacturer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sku": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outer_dimensions_mm": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "local_front_direction": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "resizable": {
+            "type": "boolean"
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "physical_volumes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "footprint_mm": {
+                        "type": "object",
+                        "properties": {
+                          "outer": {
+                            "type": "array",
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            "minItems": 4
+                          },
+                          "holes": {
+                            "type": "array",
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "minItems": 2,
+                                "maxItems": 2
+                              },
+                              "minItems": 4
+                            },
+                            "minItems": 0
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "outer",
+                          "holes"
+                        ],
+                        "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+                      },
+                      "z_min_mm": {
+                        "type": "number"
+                      },
+                      "z_max_mm": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "footprint_mm",
+                      "z_min_mm",
+                      "z_max_mm"
+                    ]
+                  },
+                  "minItems": 0
+                },
+                "zones": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "physical_volume",
+                          "opening_zone",
+                          "use_zone",
+                          "approach_zone",
+                          "service_zone",
+                          "preferred_zone",
+                          "regulatory_clearance"
+                        ]
+                      },
+                      "geometry": {
+                        "type": "object",
+                        "properties": {
+                          "footprint_mm": {
+                            "type": "object",
+                            "properties": {
+                              "outer": {
+                                "type": "array",
+                                "items": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                "minItems": 4
+                              },
+                              "holes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "minItems": 4
+                                },
+                                "minItems": 0
+                              }
+                            },
+                            "additionalProperties": false,
+                            "required": [
+                              "outer",
+                              "holes"
+                            ],
+                            "description": "Кольца замкнуты повтором первой вершины. XY в мм. Самопересечения проверяет геометрический валидатор, не JSON Schema."
+                          },
+                          "z_min_mm": {
+                            "type": "number"
+                          },
+                          "z_max_mm": {
+                            "type": "number"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "footprint_mm",
+                          "z_min_mm",
+                          "z_max_mm"
+                        ]
+                      },
+                      "active_state_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 0
+                      },
+                      "scope": {
+                        "type": "string"
+                      },
+                      "required_by_profile": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": true,
+                    "required": [
+                      "id",
+                      "type",
+                      "geometry",
+                      "active_state_ids",
+                      "scope"
+                    ]
+                  },
+                  "minItems": 0
+                }
+              },
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "physical_volumes",
+                "zones"
+              ]
+            },
+            "minItems": 1
+          },
+          "manual_constraints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "source_ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "verified",
+                    "unknown"
+                  ]
+                },
+                "requirement": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true,
+              "required": [
+                "id",
+                "status",
+                "requirement"
+              ]
+            },
+            "minItems": 0
+          },
+          "price": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "assembly_data": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "kind",
+          "geometry_status",
+          "outer_dimensions_mm",
+          "local_front_direction",
+          "resizable",
+          "states",
+          "manual_constraints"
+        ]
+      },
+      "minItems": 0
+    },
+    "locked_placements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "catalog_id": {
+            "type": "string"
+          },
+          "room_id": {
+            "type": "string"
+          },
+          "floor_id": {
+            "type": "string"
+          },
+          "pose": {
+            "type": "object",
+            "properties": {
+              "position_mm": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "yaw_deg": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "position_mm",
+              "yaw_deg"
+            ]
+          },
+          "state_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "instance_id",
+          "catalog_id",
+          "room_id",
+          "floor_id",
+          "pose",
+          "state_id"
+        ]
+      },
+      "minItems": 0
+    },
+    "functional_brief": {
+      "type": "object",
+      "properties": {
+        "mandatory_functions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "daily_seats": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "guest_seats": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "storage_inventory": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "privacy_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "preferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0
+        },
+        "budget": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "mandatory_functions",
+        "daily_seats",
+        "guest_seats",
+        "storage_inventory",
+        "privacy_requirements",
+        "preferences",
+        "budget"
+      ]
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "actor_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "state_assignments": {
+            "type": "object"
+          },
+          "route_pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "actor_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true,
+              "required": [
+                "from",
+                "to",
+                "actor_id"
+              ]
+            },
+            "minItems": 0
+          },
+          "concurrency": {
+            "type": "object"
+          },
+          "required_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "comfort_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "frequency_per_week": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "enabled",
+          "required",
+          "actor_ids",
+          "state_assignments",
+          "route_pairs",
+          "required_checks",
+          "comfort_checks"
+        ]
+      },
+      "minItems": 0
+    },
+    "unknown_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "project_id",
+    "units",
+    "angle_unit",
+    "mode",
+    "coordinate_convention",
+    "metric_geometry_verified",
+    "location",
+    "active_profiles",
+    "floors",
+    "rooms",
+    "openings",
+    "actors",
+    "catalog",
+    "locked_placements",
+    "functional_brief",
+    "scenarios",
+    "unknown_inputs",
+    "assumptions"
+  ]
+}

@@ -1,0 +1,361 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "parameter_origin": "Все авторские веса и цели — начальная конфигурация, которую следует калибровать на пользовательских заданиях.",
+    "no_universal_furniture_fill_ratio": true
+  },
+  "active_by_default": [
+    "geometry_and_states",
+    "large_house_comfort",
+    "relevant_manufacturer_constraints"
+  ],
+  "profiles": [
+    {
+      "id": "geometry_and_states",
+      "enabled": true,
+      "scope": "Геометрия, доступ, реальные состояния, неизвестные данные."
+    },
+    {
+      "id": "large_house_comfort",
+      "enabled": true,
+      "scope": "Цели для просторного частного дома; не менять их молча при конфликте.",
+      "targets": [
+        {
+          "id": "primary_route",
+          "related_rule_ids": [
+            "PATH004"
+          ],
+          "values": {
+            "preferred_floor": 900,
+            "target_range": [
+              1100,
+              1200
+            ]
+          },
+          "unit": "mm",
+          "measurement": "Наименьший чистый размер поперек пути между препятствиями в выбранном состоянии.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "frequent_two_way_route",
+          "related_rule_ids": [
+            "PATH005"
+          ],
+          "values": {
+            "target_range": [
+              1400,
+              1600
+            ]
+          },
+          "unit": "mm",
+          "measurement": "Поперек пути двух реальных пользователей/переносимых вещей; точная проверка тел имеет приоритет.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "bed_side",
+          "related_rule_ids": [
+            "BED004"
+          ],
+          "values": {
+            "recommendation_floor": 600,
+            "target_range": [
+              800,
+              900
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От внешнего бока каркаса на рабочем участке подхода до ближайшего препятствия.",
+          "basis": "design_heuristic",
+          "notes": "600 мм — ограниченный исходный ориентир; не цель большого дома и не доказательство доступности.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "bed_foot",
+          "related_rule_ids": [
+            "BED005"
+          ],
+          "values": {
+            "target_range": [
+              800,
+              1000
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От внешнего изножья до ближайшего препятствия; если есть банкетка, от ее внешней грани.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "wardrobe_working_aisle",
+          "related_rule_ids": [
+            "WARD003"
+          ],
+          "values": {
+            "target_range": [
+              1000,
+              1200
+            ]
+          },
+          "unit": "mm",
+          "measurement": "Между наиболее выступающими закрытыми фасадами и препятствием; открытые ящики проверяются отдельно.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "sofa_coffee_table",
+          "related_rule_ids": [
+            "LIV007"
+          ],
+          "values": {
+            "target_range": [
+              400,
+              500
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От передней наружной кромки дивана до столика; это зона пользования, не главный транзит.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "dining_table_to_obstruction",
+          "related_rule_ids": [
+            "DIN004"
+          ],
+          "values": {
+            "target_range": [
+              1300,
+              1500
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От края столешницы до препятствия за сидящим, включая посадку и проход.",
+          "basis": "published_guideline",
+          "notes": "Рекомендация IKEA для более комфортного прохода. Не остаточная ширина за спинкой.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "dining_frontage",
+          "related_rule_ids": [
+            "DIN002"
+          ],
+          "values": {
+            "target_range": [
+              650,
+              750
+            ]
+          },
+          "unit": "mm",
+          "measurement": "Свободный фронт столешницы на одного человека; проверять подлокотники/ножки/ширину реального пользователя.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "kitchen_reference",
+          "related_rule_ids": [
+            "KIT004"
+          ],
+          "values": {
+            "one_cook_reference": 1067,
+            "multiple_cooks_reference": 1219
+          },
+          "unit": "mm",
+          "measurement": "Между фронтами столешниц, высоких шкафов и техники.",
+          "basis": "published_guideline",
+          "notes": "NKBA: рекомендации, не местные нормы; состояния дверей и операторов проверять отдельно.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "kitchen_large_house",
+          "related_rule_ids": [
+            "KIT004"
+          ],
+          "values": {
+            "target_range": [
+              1200,
+              1400
+            ]
+          },
+          "unit": "mm",
+          "measurement": "Та же метрика рабочих фронтов; не считать больший проход бесконечно полезным.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "bath_front",
+          "related_rule_ids": [
+            "BATH002"
+          ],
+          "values": {
+            "target_range": [
+              900,
+              1200
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От переднего края прибора до встречного препятствия; доступность имеет свои дополнительные шаблоны.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "shower_seed",
+          "related_rule_ids": [
+            "BATH006"
+          ],
+          "values": {
+            "width_target": 1000,
+            "depth_target": 1200
+          },
+          "unit": "mm",
+          "measurement": "Между готовыми внутренними поверхностями душа, без вычета толщины стен второй раз.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "office_pullback",
+          "related_rule_ids": [
+            "OFF010"
+          ],
+          "values": {
+            "target_range": [
+              900,
+              1100
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От передней рабочей кромки стола назад по оси кресла до препятствия; проход за сидящим отдельно.",
+          "basis": "design_heuristic",
+          "notes": "Настраиваемая проектная цель; не обязательная строительная норма.",
+          "enforcement": "soft"
+        },
+        {
+          "id": "monitor_viewing",
+          "related_rule_ids": [
+            "OFF002"
+          ],
+          "values": {
+            "target_range": [
+              500,
+              1000
+            ]
+          },
+          "unit": "mm",
+          "measurement": "От глаза до передней плоскости экрана.",
+          "basis": "published_guideline",
+          "notes": "OSHA: ориентир рабочего места, адаптируется под пользователя/шрифт; не обязательная норма частного дома.",
+          "enforcement": "soft"
+        }
+      ]
+    },
+    {
+      "id": "nkba_recommendations_reference",
+      "enabled": true,
+      "scope": "Только опубликованные рекомендации, не исторические code requirements из тех же PDF.",
+      "source_ids": [
+        "ROOM-S06",
+        "SERVICE-S02"
+      ]
+    },
+    {
+      "id": "accessibility_ada_reference",
+      "enabled": false,
+      "scope": "Выбранные справочные ADA-проверки. Полная применимость и дополнительные таблицы подлежат отдельной реализации.",
+      "compliance_claim_allowed": false
+    },
+    {
+      "id": "KG_residential_regulatory",
+      "enabled": null,
+      "status": "pending_external_validation",
+      "jurisdiction": "Кыргызская Республика",
+      "source_ids": [
+        "ROOT-S03"
+      ],
+      "scope": "Нужен полный проверенный текст актуальных требований по конкретному проекту; численные нормативы не импортированы."
+    },
+    {
+      "id": "relevant_manufacturer_constraints",
+      "enabled": true,
+      "scope": "При наличии изделия активировать его проверки; неизвестная модель/паспорт дает unknown."
+    }
+  ],
+  "initial_score_weights": {
+    "circulation": 0.2,
+    "daily_tasks": 0.2,
+    "ergonomics": 0.2,
+    "daylight_and_views": 0.1,
+    "privacy_and_acoustics": 0.1,
+    "storage_and_service": 0.1,
+    "composition": 0.1
+  },
+  "score_policy": "Только среди вариантов без hard fail; coverage и hard unknown сообщать отдельно. До использования обучить/настроить шкалы и веса. Итоговый балл не является доказательством идеальности.",
+  "overlap_policy": [
+    {
+      "pair": [
+        "physical",
+        "physical"
+      ],
+      "policy": "Запрещено пересечение твердых 3D-тел; касание/сопряжение допускается по модели."
+    },
+    {
+      "pair": [
+        "opening",
+        "physical"
+      ],
+      "policy": "Проверить swept volume в требуемом состоянии."
+    },
+    {
+      "pair": [
+        "use",
+        "use"
+      ],
+      "policy": "Разрешено при совместимых телах и действиях; иначе разнести по времени, если сценарий допускает."
+    },
+    {
+      "pair": [
+        "approach",
+        "approach"
+      ],
+      "policy": "Один пользователь может подходить по очереди; одновременных проверить отдельно."
+    },
+    {
+      "pair": [
+        "service",
+        "use"
+      ],
+      "policy": "Возможна отдельная сервисная конфигурация с разрешенными штатными преобразованиями."
+    },
+    {
+      "pair": [
+        "preferred",
+        "any"
+      ],
+      "policy": "Мягкая оценка по смыслу предпочтения."
+    },
+    {
+      "pair": [
+        "regulatory_clearance",
+        "any"
+      ],
+      "policy": "Только правила выбранного профиля; общее разрешение перекрытий не применяется."
+    }
+  ],
+  "six_object_envelopes": [
+    "physical_volume",
+    "opening_zone",
+    "use_zone",
+    "approach_zone",
+    "service_zone",
+    "preferred_zone"
+  ]
+}

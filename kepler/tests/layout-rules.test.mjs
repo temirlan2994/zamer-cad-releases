@@ -8,21 +8,28 @@ import {
 } from '../core/layout-rules.js';
 
 test('реестр: ID уникальны, типы и покрытие согласованы', () => {
-  assert.ok(LAYOUT_RULES.length >= 35, `правил первой группы: ${LAYOUT_RULES.length}`);
+  assert.equal(LAYOUT_RULES.length, 487);
   assert.equal(new Set(LAYOUT_RULES.map((r) => r.id)).size, LAYOUT_RULES.length);
   for (const r of LAYOUT_RULES) {
-    assert.match(r.id, /^(GEO|PATH|BED|LIV|DIN|KIT|BATH)\d{3}$/);
+    assert.match(r.id, /^[A-Z]+\d{3}$/);
     assert.ok(['hard', 'conditional_hard', 'soft'].includes(r.severity));
     assert.ok(Object.values(RULE_IMPLEMENTATION).includes(r.implementation));
-    assert.ok(r.checks.length > 0);
+    assert.ok(Array.isArray(r.checks));
+    assert.equal(r.missingDataResult, 'unknown');
+    assert.equal(r.version, '1.0.0');
+    if (r.binding === 'curated') assert.ok(r.checks.length > 0);
   }
   const c = layoutRuleCoverage();
-  assert.equal(c.total, LAYOUT_RULES.length);
+  assert.equal(c.total, 487);
+  assert.equal(c.catalogVersion, '1.0.0');
+  assert.equal(c.bound, 44);
+  assert.equal(c.canonicalOnly, 443);
   assert.equal(Object.values(c.byImplementation).reduce((a, b) => a + b, 0), c.total);
   assert.equal(c.executable, c.byImplementation.implemented);
   for (const category of ['Геометрия и состояния объектов', 'Маршруты и движение', 'Спальня', 'Гостиная и медиа', 'Столовая', 'Кухня', 'Санузлы']) {
     assert.ok(c.byCategory[category] > 0, `есть раздел «${category}»`);
   }
+  assert.equal(Object.keys(c.byCategory).length, 31);
 });
 
 test('поиск по ID возвращает исходное правило, неизвестное — null', () => {
@@ -92,6 +99,30 @@ test('внешние данные и отсутствующий вычислит
   assert.match(unsupported.reason, /не реализован/);
 });
 
+test('каноническая спецификация без binding остаётся unknown, внешний evaluator может дать evidence-result', () => {
+  const pending = evaluateLayoutRule('IN001', { metrics: {} });
+  assert.equal(pending.status, RULE_STATUS.UNKNOWN);
+  assert.equal(pending.implementation, RULE_IMPLEMENTATION.UNSUPPORTED);
+  assert.match(pending.reason, /применимости/i);
+
+  const measured = evaluateLayoutRule('IN001', {
+    ruleResults: {
+      IN001: {
+        status: 'pass',
+        reason: 'Единицы подтверждены при импорте',
+        evidence: { type: 'calibration', source: 'input-1' },
+      },
+    },
+  });
+  assert.equal(measured.status, RULE_STATUS.PASS);
+  assert.equal(measured.blocking, false);
+  assert.equal(measured.evidence.type, 'calibration');
+
+  const summary = summarizeLayoutRuleResults([pending]);
+  assert.equal(summary.verificationStatus, 'conceptual_only');
+  assert.equal(summary.feasible, true);
+});
+
 test('пакетная оценка и сводка сохраняют unknown отдельно', () => {
   const results = evaluateLayoutRules({
     roomType: 'bedroom', itemKinds: ['bed-double'],
@@ -121,5 +152,6 @@ test('пакетная оценка и сводка сохраняют unknown �
   assert.equal(s.notApplicable, 0);
   assert.deepEqual(s.hardUnknown, []);
   assert.deepEqual(s.unknownByImplementation, { requires_external_data: 1 });
+  assert.equal(s.verificationStatus, 'invalid');
   assert.equal(s.coverage, 5 / 6);
 });

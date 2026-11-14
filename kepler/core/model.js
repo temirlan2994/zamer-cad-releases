@@ -20,6 +20,9 @@ import { normalizeRoofs } from './roofs.js';
 import { normalizeGrids } from './grid-axes.js';
 import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
 import { normalizeSlabOpenings } from './slab-openings.js';
+import {
+  layoutBriefIsEmpty, normalizeCatalogItemMetadata, normalizeLayoutBrief,
+} from './layout-brief.js';
 
 export { SCHEMA };
 
@@ -397,7 +400,9 @@ export function normalizeItem(it) {
   const w = pos(it.w);
   const h = pos(it.h);
   if (x == null || y == null || w == null || h == null) return null;
-  return { ...it, id: str(it.id) || makeId('item'), x, y, w, h, rotation: num(it.rotation) ?? 0 };
+  return normalizeCatalogItemMetadata({
+    ...it, id: str(it.id) || makeId('item'), x, y, w, h, rotation: num(it.rotation) ?? 0,
+  });
 }
 
 const cleanList = (list, fn) => (Array.isArray(list) ? list.map(fn).filter(Boolean) : []);
@@ -521,6 +526,15 @@ export function normalizeProject(data) {
       if (!Object.keys(w.axisPins).length) delete w.axisPins;
     }
   }
+  // Внешние факты для авторасстановки: необязательный корневой объект.
+  // null и [] различаются для инженерии/хранения, поэтому пустые подтверждённые
+  // списки сохраняются; полностью незаполненное задание в файл не попадает.
+  const layoutBrief = normalizeLayoutBrief(data.layoutBrief, {
+    levelIds: data.levels.map((level) => level.id),
+    roomIds: data.levels.flatMap((level) => level.rooms.map((room) => room.id)),
+    itemIds: data.levels.flatMap((level) => level.items.map((item) => item.id)),
+  });
+  if (layoutBriefIsEmpty(layoutBrief)) delete data.layoutBrief; else data.layoutBrief = layoutBrief;
   ensureSite(data);
   return attachLevelAccessors(data);
 }

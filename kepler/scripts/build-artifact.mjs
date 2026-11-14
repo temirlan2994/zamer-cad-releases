@@ -15,6 +15,7 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PAGE = 'kepler-plan.html';
 
 const IMPORT_RE = /^\s*(?:import|export)\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|^\s*import\s*['"](\.{1,2}\/[^'"]+)['"]/gm;
+const MODULE_URL_RE = /new\s+URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g;
 
 // Все локальные модули, достижимые из entry (пути от корня, через «/»).
 export function moduleGraph(entry, root = ROOT) {
@@ -25,6 +26,12 @@ export function moduleGraph(entry, root = ROOT) {
     const code = readFileSync(join(root, rel), 'utf8');
     for (const m of code.matchAll(IMPORT_RE)) {
       visit(posix.normalize(posix.join(posix.dirname(rel), m[1] || m[2])));
+    }
+    // Module Worker не является import-выражением, но его entry и весь его
+    // статический граф должны лежать рядом со страницей артефакта.
+    for (const m of code.matchAll(MODULE_URL_RE)) {
+      const target = posix.normalize(posix.join(posix.dirname(rel), m[1]));
+      if (target.endsWith('.js')) visit(target);
     }
   };
   visit(entry);

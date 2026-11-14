@@ -1,0 +1,477 @@
+{
+  "metadata": {
+    "status": "implementation_contracts_not_implemented",
+    "count": 23
+  },
+  "evaluators": [
+    {
+      "id": "polygon_validity",
+      "example_rule_ids": [
+        "GEO001"
+      ],
+      "required_inputs": [
+        "rings",
+        "coordinate_units"
+      ],
+      "algorithm_contract": "Проверить замкнутость, площадь, самопересечения, вложенность отверстий; точность не заменяет реальный допуск.",
+      "returns": [
+        "validity",
+        "invalid_edges"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "support_and_containment",
+      "example_rule_ids": [
+        "GEO006",
+        "GEO018"
+      ],
+      "required_inputs": [
+        "room_floor_mesh",
+        "voids",
+        "object_support_contacts"
+      ],
+      "algorithm_contract": "Проверить опору каждого контакта и объем внутри доступного пространства; отверстия второго света вычтены.",
+      "returns": [
+        "support_status",
+        "outside_parts"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "solid_collision_3d",
+      "example_rule_ids": [
+        "GEO004",
+        "GEO005"
+      ],
+      "required_inputs": [
+        "physical_volumes_per_state",
+        "transforms"
+      ],
+      "algorithm_contract": "Broad-phase AABB, затем реальная 3D/многослойная narrow-phase; исключения сопряжений явные.",
+      "returns": [
+        "collision_pairs",
+        "intersection_geometry"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "swept_opening",
+      "example_rule_ids": [
+        "GEO008",
+        "GEO009",
+        "KIT025"
+      ],
+      "required_inputs": [
+        "kinematic_model",
+        "required_angle_or_extension",
+        "obstacles"
+      ],
+      "algorithm_contract": "Проверить весь непрерывный ход либо консервативную ограниченную дискретизацию с доказанным запасом.",
+      "returns": [
+        "collision_intervals",
+        "reachable_open_fraction"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "activity_space",
+      "example_rule_ids": [
+        "GEO013",
+        "GEO014",
+        "BED003"
+      ],
+      "required_inputs": [
+        "actor_footprint",
+        "posture",
+        "item_state",
+        "approach_zones"
+      ],
+      "algorithm_contract": "Совместить тело, позу, опоры и пространство действия; проверять вставание/посадку, не только позу.",
+      "returns": [
+        "reachable",
+        "collision",
+        "clearance"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "navmesh_connectivity",
+      "example_rule_ids": [
+        "PATH001",
+        "PATH002"
+      ],
+      "required_inputs": [
+        "free_space",
+        "agent_geometry",
+        "doors",
+        "level_connectors"
+      ],
+      "algorithm_contract": "Configuration-space/navmesh либо search в SE(2) для ориентируемого тела. Учесть форму и этаж.",
+      "returns": [
+        "path_exists",
+        "path",
+        "path_length"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "bottleneck",
+      "example_rule_ids": [
+        "PATH004",
+        "PATH020"
+      ],
+      "required_inputs": [
+        "validated_path",
+        "occupied_obstacles",
+        "measurement_definition"
+      ],
+      "algorithm_contract": "Найти минимум по пути, координату и длину сужения; средняя ширина не годится.",
+      "returns": [
+        "min_width",
+        "location",
+        "segment_length"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "time_expanded_access",
+      "example_rule_ids": [
+        "GEO015",
+        "GEO016",
+        "KIT006"
+      ],
+      "required_inputs": [
+        "states",
+        "transitions",
+        "actors",
+        "concurrency",
+        "profile_exclusions"
+      ],
+      "algorithm_contract": "Проверить доступную последовательность открытия/закрытия без trapping; не обходить запреты профиля.",
+      "returns": [
+        "state_sequence",
+        "exit_reachable",
+        "conflicts"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "occupied_seating",
+      "example_rule_ids": [
+        "DIN003",
+        "PATH007",
+        "KIT035"
+      ],
+      "required_inputs": [
+        "table_edge",
+        "chair_and_user_state",
+        "obstacle"
+      ],
+      "algorithm_contract": "Измерять table_to_obstruction и residual_walkway раздельно, с указанием позы.",
+      "returns": [
+        "total_depth",
+        "occupied_depth",
+        "residual_walkway"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "reachability",
+      "example_rule_ids": [
+        "OFF006",
+        "WARD011"
+      ],
+      "required_inputs": [
+        "body_model",
+        "working_pose",
+        "control_location",
+        "obstacles"
+      ],
+      "algorithm_contract": "Проверить досягаемость без пересечения тела и неудобной позы; применимые профили отдельно.",
+      "returns": [
+        "reachable",
+        "posture_cost"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "visibility_rays",
+      "example_rule_ids": [
+        "VIS001",
+        "LIV011",
+        "PRIV001"
+      ],
+      "required_inputs": [
+        "eye_poses",
+        "targets",
+        "3D_occluders"
+      ],
+      "algorithm_contract": "Лучевой тест по реальным глазам; доля видимой цели — проектная метрика без универсального порога.",
+      "returns": [
+        "visible_fraction",
+        "occluders",
+        "view_angle"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "solar_and_glare",
+      "example_rule_ids": [
+        "LGT004",
+        "LGT006"
+      ],
+      "required_inputs": [
+        "geolocation",
+        "north",
+        "time",
+        "window_geometry",
+        "external_obstacles",
+        "reflectance",
+        "eye_pose"
+      ],
+      "algorithm_contract": "Трассировка солнца и отражений. Без фотометрии только маркированный качественный риск, не расчет UGR/DGP.",
+      "returns": [
+        "sun_intervals",
+        "qualitative_glare_risk"
+      ],
+      "implementation_kind": "simulation",
+      "status": "specification_only"
+    },
+    {
+      "id": "photometric_adapter",
+      "example_rule_ids": [
+        "LGT018",
+        "LGT024"
+      ],
+      "required_inputs": [
+        "IES_LDT",
+        "luminaire_flux",
+        "geometry",
+        "reflectances",
+        "task_planes"
+      ],
+      "algorithm_contract": "Внешний светотехнический расчет с сохранением плоскостей, коэффициентов и версии входа.",
+      "returns": [
+        "illuminance",
+        "uniformity",
+        "glare_if_supported"
+      ],
+      "implementation_kind": "external_calculation",
+      "status": "specification_only"
+    },
+    {
+      "id": "acoustic_adapter",
+      "example_rule_ids": [
+        "ACOU004",
+        "ACOU005"
+      ],
+      "required_inputs": [
+        "assembly_specs",
+        "source_levels",
+        "flanking_paths",
+        "absorptions"
+      ],
+      "algorithm_contract": "Акустический расчет/измерение; отдельно реверберация и межкомнатная изоляция.",
+      "returns": [
+        "supported_acoustic_metrics"
+      ],
+      "implementation_kind": "external_calculation",
+      "status": "specification_only"
+    },
+    {
+      "id": "manufacturer_clearances",
+      "example_rule_ids": [
+        "SPA002",
+        "KIT018",
+        "CLIM005"
+      ],
+      "required_inputs": [
+        "exact_model",
+        "manual_revision",
+        "installed_configuration"
+      ],
+      "algorithm_contract": "Извлечь требование из паспорта и проверить его конкретную геометрию. Без модели unknown.",
+      "returns": [
+        "clearance_checks",
+        "manual_reference"
+      ],
+      "implementation_kind": "catalog_and_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "capacity",
+      "example_rule_ids": [
+        "LIV002",
+        "DIN001"
+      ],
+      "required_inputs": [
+        "seat_geometry",
+        "actor_profiles",
+        "mandatory_counts"
+      ],
+      "algorithm_contract": "Подсчитать только достижимые пригодные места; число иконок стульев не равно вместимости.",
+      "returns": [
+        "usable_count",
+        "unusable_seats"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "storage_capacity",
+      "example_rule_ids": [
+        "WARD001",
+        "STORE003"
+      ],
+      "required_inputs": [
+        "inventory",
+        "usable_shelf_volumes",
+        "door_kinematics"
+      ],
+      "algorithm_contract": "Проверить полезный объем и доступ по категории, массу/досягаемость отдельно.",
+      "returns": [
+        "required_provided",
+        "unreachable_storage"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "delivery_path",
+      "example_rule_ids": [
+        "GEO019",
+        "SERV007"
+      ],
+      "required_inputs": [
+        "package_geometry",
+        "approved_disassembly",
+        "route_3D"
+      ],
+      "algorithm_contract": "Проверить перенос и повороты; для сложных лестниц SE(3) либо подтвержденная процедура.",
+      "returns": [
+        "transport_feasible",
+        "assembly_sequence"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "load_and_fixing",
+      "example_rule_ids": [
+        "STORE005",
+        "SAFE001"
+      ],
+      "required_inputs": [
+        "rated_load",
+        "actual_load",
+        "fixing_spec",
+        "substrate"
+      ],
+      "algorithm_contract": "Сверить нагрузку и проект крепления; неизвестное основание требует внешней проверки.",
+      "returns": [
+        "load_margin",
+        "fixing_status"
+      ],
+      "implementation_kind": "manufacturer_or_external",
+      "status": "specification_only"
+    },
+    {
+      "id": "profile_lookup",
+      "example_rule_ids": [
+        "ACC001",
+        "IN020"
+      ],
+      "required_inputs": [
+        "jurisdiction",
+        "building_scope",
+        "selected_profile",
+        "source_version"
+      ],
+      "algorithm_contract": "Активировать только применимые пункты, их исключения и зависимые таблицы; не комбинировать версии.",
+      "returns": [
+        "active_constraints",
+        "missing_tables"
+      ],
+      "implementation_kind": "profile_engine",
+      "status": "specification_only"
+    },
+    {
+      "id": "robust_threshold",
+      "example_rule_ids": [
+        "GEO017",
+        "QA011"
+      ],
+      "required_inputs": [
+        "measurement",
+        "uncertainty_bound",
+        "threshold"
+      ],
+      "algorithm_contract": "Для g±e: pass если g-e>=t; fail если g+e<t; иначе unknown. Статистические интервалы не подменять твердым bound.",
+      "returns": [
+        "status",
+        "lower_bound",
+        "upper_bound"
+      ],
+      "implementation_kind": "deterministic_geometry",
+      "status": "specification_only"
+    },
+    {
+      "id": "scenario_coordinator",
+      "example_rule_ids": [
+        "SCN001",
+        "SCN004",
+        "SCN014"
+      ],
+      "required_inputs": [
+        "actors",
+        "states",
+        "task_graph",
+        "concurrency"
+      ],
+      "algorithm_contract": "Запустить связанные валидаторы для выбранных одновременных состояний; комфорт остается soft.",
+      "returns": [
+        "required_results",
+        "comfort_results",
+        "unresolved_inputs"
+      ],
+      "implementation_kind": "orchestration",
+      "status": "specification_only"
+    },
+    {
+      "id": "score_composer",
+      "example_rule_ids": [
+        "OPT001",
+        "OPT011",
+        "OPT012"
+      ],
+      "required_inputs": [
+        "hard_results",
+        "soft_metrics",
+        "weights",
+        "fixed_scales",
+        "coverage"
+      ],
+      "algorithm_contract": "Сначала feasibility; затем нормированная utility с насыщением; одинаковая база сравнения, unknown отдельно.",
+      "returns": [
+        "rank",
+        "score",
+        "coverage",
+        "pareto_tradeoffs"
+      ],
+      "implementation_kind": "optimisation",
+      "status": "specification_only"
+    }
+  ]
+}

@@ -5,6 +5,10 @@
 // намеренно не исполняется: каждому поддержанному правилу соответствует
 // явная метрика и детерминированный оператор сравнения.
 
+import {
+  FURNITURE_RULE_CATALOG, FURNITURE_RULE_CATALOG_METADATA,
+} from './layout-rule-catalog.generated.js';
+
 export const RULE_IMPLEMENTATION = Object.freeze({
   IMPLEMENTED: 'implemented',
   REQUIRES_EXTERNAL_DATA: 'requires_external_data',
@@ -45,7 +49,7 @@ const rule = (id, category, title, severity, implementation, evaluator, checks, 
 // unsupported означает не «правило неважно», а честное отсутствие нужного
 // вычислителя. requires_external_data — вычислитель есть/понятен, но без
 // паспорта, инженерных точек или солнечных данных результат остаётся unknown.
-export const LAYOUT_RULES = Object.freeze([
+const CURATED_LAYOUT_RULES = Object.freeze([
   rule('GEO001', 'Геометрия и состояния объектов', 'Валидные полигоны', 'hard', 'implemented', 'polygon_validity', [
     check('room_polygon_valid', 'true'),
   ]),
@@ -186,6 +190,79 @@ export const LAYOUT_RULES = Object.freeze([
   ], { applies: { roomTypes: BATHROOMS, anyItemKinds: BATH_ITEMS } }),
 ]);
 
+const CURATED_INDEX = new Map(CURATED_LAYOUT_RULES.map((entry) => [entry.id, entry]));
+
+function hasExternalValidationFlag(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(hasExternalValidationFlag);
+  return Object.entries(value).some(([key, nested]) => (
+    (key === 'requires_external_validation' || key === 'model_manual_required' || key === 'lookup_required')
+      && nested === true
+  ) || hasExternalValidationFlag(nested));
+}
+
+function externalRequirements(canonical) {
+  const required = [];
+  if (canonical.basis === 'manufacturer') required.push('manufacturer_documentation');
+  if (canonical.basis === 'regulation_profile') required.push('regulatory_profile');
+  if (hasExternalValidationFlag(canonical.parameters)) required.push('external_validation');
+  return [...new Set(required)];
+}
+
+function canonicalMetadata(canonical) {
+  return {
+    categoryCode: canonical.categoryCode,
+    requirement: canonical.requirement,
+    appliesWhen: canonical.appliesWhen,
+    checkText: canonical.checkText,
+    exceptions: canonical.exceptions,
+    confidence: canonical.confidence,
+    relatedRuleIds: canonical.relatedRuleIds,
+    version: canonical.version,
+    missingDataResult: canonical.missingDataResult,
+  };
+}
+
+function catalogRule(canonical) {
+  const curated = CURATED_INDEX.get(canonical.id);
+  if (curated) return Object.freeze({
+    ...curated,
+    category: canonical.category,
+    title: canonical.title,
+    severity: canonical.severity,
+    basis: canonical.basis,
+    sourceIds: canonical.sourceIds,
+    parameters: Object.freeze({ ...canonical.parameters, ...curated.parameters }),
+    ...canonicalMetadata(canonical),
+    binding: 'curated',
+  });
+
+  const requiresData = externalRequirements(canonical);
+  return Object.freeze({
+    id: canonical.id,
+    category: canonical.category,
+    title: canonical.title,
+    severity: canonical.severity,
+    implementation: requiresData.length ? 'requires_external_data' : 'unsupported',
+    evaluator: 'declarative_specification',
+    checks: Object.freeze([]),
+    basis: canonical.basis,
+    sourceIds: canonical.sourceIds,
+    // applies_when — спецификация на русском языке, а не исполняемое условие.
+    // До явной привязки применимость обязана оставаться unknown.
+    applies: Object.freeze({ unresolved: true }),
+    requiresData: Object.freeze(requiresData),
+    parameters: canonical.parameters,
+    ...canonicalMetadata(canonical),
+    binding: 'canonical_only',
+  });
+}
+
+// Полный каталог пакета. 44 записи имеют вручную проверенные привязки к
+// метрикам; остальные сохранены как канонические спецификации и честно дают
+// unknown, пока для них не появится исполняемый evaluator binding.
+export const LAYOUT_RULES = Object.freeze(FURNITURE_RULE_CATALOG.map(catalogRule));
+
 const INDEX = new Map(LAYOUT_RULES.map((entry) => [entry.id, entry]));
 
 export function layoutRuleById(id) {
@@ -193,6 +270,10 @@ export function layoutRuleById(id) {
 }
 
 function applicability(ruleEntry, context) {
+  const supplied = context.ruleApplicability instanceof Map
+    ? context.ruleApplicability.get(ruleEntry.id)
+    : context.ruleApplicability?.[ruleEntry.id];
+  if (supplied === true || supplied === false || supplied === 'unknown') return supplied;
   const { roomTypes = null, anyItemKinds = null, profiles = null } = ruleEntry.applies;
   if (roomTypes) {
     if (context.roomType == null) return 'unknown';
@@ -206,7 +287,30 @@ function applicability(ruleEntry, context) {
     if (!Array.isArray(context.activeProfiles)) return 'unknown';
     if (!profiles.every((profile) => context.activeProfiles.includes(profile))) return false;
   }
+  if (ruleEntry.applies.unresolved === true) return 'unknown';
   return true;
+}
+
+function suppliedRuleResult(entry, context) {
+  const source = context.ruleResults || context.evaluatorResults;
+  let supplied = null;
+  if (source instanceof Map) supplied = source.get(entry.id);
+  else if (Array.isArray(source)) supplied = source.find((result) => result?.ruleId === entry.id);
+  else if (source && typeof source === 'object') supplied = source[entry.id];
+  if (supplied == null) return null;
+  const result = typeof supplied === 'string' ? { status: supplied } : supplied;
+  if (!Object.values(RULE_STATUS).includes(result.status)) return null;
+  return {
+    ...result,
+    ruleId: entry.id,
+    status: result.status,
+    severity: entry.severity,
+    implementation: entry.implementation,
+    blocking: result.status === 'fail'
+      && (entry.severity === 'hard' || entry.severity === 'conditional_hard'),
+    metricResults: Array.isArray(result.metricResults) ? result.metricResults : [],
+    reason: result.reason || '',
+  };
 }
 
 function sample(metrics, key) {
@@ -257,6 +361,8 @@ function compare(measurement, spec, metrics) {
 export function evaluateLayoutRule(ruleOrId, context = {}) {
   const entry = typeof ruleOrId === 'string' ? layoutRuleById(ruleOrId) : ruleOrId;
   if (!entry) throw new Error(`Неизвестное правило авторасстановки: ${ruleOrId}`);
+  const supplied = suppliedRuleResult(entry, context);
+  if (supplied) return supplied;
   const applies = applicability(entry, context);
   if (applies === false) return {
     ruleId: entry.id, status: 'not_applicable', severity: entry.severity,
@@ -312,12 +418,18 @@ function countBy(entries, keyOf) {
 
 export function layoutRuleCoverage(rules = LAYOUT_RULES) {
   const byImplementation = countBy(rules, (entry) => entry.implementation);
+  const byBinding = countBy(rules, (entry) => entry.binding || 'unknown');
   return {
     total: rules.length,
     executable: byImplementation.implemented || 0,
     byImplementation,
+    byBinding,
+    bound: byBinding.curated || 0,
+    canonicalOnly: byBinding.canonical_only || 0,
     bySeverity: countBy(rules, (entry) => entry.severity),
     byCategory: countBy(rules, (entry) => entry.category),
+    catalogVersion: FURNITURE_RULE_CATALOG_METADATA.version,
+    sourceSha256: FURNITURE_RULE_CATALOG_METADATA.sourceSha256,
   };
 }
 
@@ -341,6 +453,9 @@ export function summarizeLayoutRuleResults(results) {
     unknownByImplementation: countBy(unknownResults, (result) => result.implementation),
     blocking,
     feasible: blocking.length === 0,
+    verificationStatus: blocking.length
+      ? 'invalid'
+      : hardUnknown.length ? 'conceptual_only' : 'verified_for_known_rules',
     coverage: applicable ? known / applicable : 1,
   };
 }

@@ -228,3 +228,35 @@ test('утреннее солнце учитывается только посл
   result = generateFurnitureLayouts(project, room, walls, { count: 1 });
   assert.notEqual(result.layouts[0].ruleResults.find((entry) => entry.ruleId === 'BED013')?.status, 'unknown');
 });
+
+test('вместимость из брифа становится обязательной проверяемой метрикой', () => {
+  const project = createProject();
+  const room = createRoom('dining', 0, 0, 8000, 6000);
+  project.rooms.push(room);
+  project.openings.push(createOpening('door', room.id, 2, 4000, 900));
+  project.layoutBrief = {
+    version: 1,
+    actors: [],
+    capacity: { dailySeats: 4, guestSeats: 6 },
+    fixedEngineering: null,
+    storageInventory: null,
+    uncertainty: [],
+  };
+  const table = createItem('dining-table-6', 4000, 3000, 1800, 900);
+  const chairs = [
+    createItem('chair', 3000, 2000, 450, 450),
+    createItem('chair', 5000, 2000, 450, 450),
+    createItem('chair', 3000, 4000, 450, 450),
+    createItem('chair', 5000, 4000, 450, 450),
+  ];
+  project.items.push(table, ...chairs);
+  const layout = { placements: project.items.map((item) => ({
+    itemId: item.id, x: item.x, y: item.y, rotation: item.rotation,
+  })) };
+  const validation = validateFurnitureLayout(project, room, deriveWalls(project), layout);
+  const capacityRule = validation.ruleResults.find((entry) => entry.ruleId === 'DIN001');
+  assert.equal(capacityRule.status, 'fail');
+  assert.equal(capacityRule.blocking, true);
+  assert.equal(capacityRule.metricResults[0].value, 4);
+  assert.equal(capacityRule.metricResults[0].threshold, 6);
+});

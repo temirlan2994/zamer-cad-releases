@@ -185,4 +185,56 @@ describe('полноценная авторасстановка мебели', (
     assert.ok(result.second.x < result.second.roomRight);
     assert.deepEqual(app.errors, []);
   });
+
+  it('подбирает весь дом в Worker, применяет один вариант и отменяет одним Undo', async () => {
+    const setup = await app.page.evaluate(async () => {
+      const model = await import('./core/model.js');
+      const store = await import('./ui/store.js');
+      const { state } = await import('./ui/state.js');
+      const project = model.createProject('Автомеблировка дома');
+      const second = model.createLevel('2 этаж', 3000, 3000, 'L2');
+      project.levels.push(second);
+      const dining = model.createRoom('dining', 0, 0, 6500, 5000);
+      const bedroom = model.createRoom('bedroom', 0, 0, 6200, 5000);
+      project.levels[0].rooms.push(dining);
+      project.levels[0].openings.push(model.createOpening('door', dining.id, 2, 3250, 900));
+      second.rooms.push(bedroom);
+      second.openings.push(model.createOpening('door', bedroom.id, 2, 3100, 900));
+      project.layoutBrief = {
+        version: 1,
+        actors: [{
+          id: 'actor-1', alias: 'Жилец 1', heightMm: 1750, mobilityProfile: 'standard',
+          bodyWidthMm: 500, bodyDepthMm: 350, carriedObjectIds: [], dataStatus: 'declared',
+        }],
+        capacity: { dailySeats: 4, guestSeats: 4 },
+        fixedEngineering: [], storageInventory: [], uncertainty: [],
+      };
+      state.project = project;
+      store.refreshDerived();
+      return { roomId: dining.id };
+    });
+    await selectRoom(app.page, setup.roomId);
+    assert.equal(await app.page.locator('#arrangeWholeHomeBtn').count(), 1);
+    assert.equal(await app.page.evaluate(() => window.__kepler.state.project.levels.flatMap((level) => level.items).length), 0);
+
+    await app.page.locator('[data-layout-brief] > summary').click();
+    await app.page.locator('[data-brief-section="scenarios"] > summary').click();
+    await app.page.selectOption('[data-scenario-id="SCN003"]', 'required');
+    await app.page.waitForFunction(() => window.__kepler.state.project.layoutBrief?.scenarioSelections
+      ?.some((entry) => entry.scenarioId === 'SCN003' && entry.enabled === true && entry.mandatory === true));
+
+    await app.page.click('#arrangeWholeHomeBtn');
+    await app.page.waitForFunction(() => document.querySelectorAll('[data-whole-home-variant]').length >= 1);
+    assert.equal(await app.page.evaluate(() => window.__kepler.state.project.levels.flatMap((level) => level.items).length), 0,
+      'предпросмотр всего дома не меняет проект');
+
+    await app.page.locator('[data-whole-home-apply]').first().click();
+    await app.page.waitForFunction(() => window.__kepler.state.project.levels.every((level) => level.items.length > 0));
+    const applied = await app.page.evaluate(() => window.__kepler.state.project.levels.map((level) => level.items.length));
+    assert.ok(applied.every((count) => count > 0));
+
+    await app.page.keyboard.press('Control+z');
+    await app.page.waitForFunction(() => window.__kepler.state.project.levels.every((level) => level.items.length === 0));
+    assert.deepEqual(app.errors, []);
+  });
 });

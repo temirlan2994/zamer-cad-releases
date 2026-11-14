@@ -87,22 +87,36 @@ function freeAnchor(project, room) {
   return { x: room.x + room.w / 2, y: room.y + room.h / 2 };
 }
 
+function requestedDiningSeats(layoutBrief) {
+  const capacity = layoutBrief?.capacity || {};
+  const values = [capacity.dailySeats, capacity.guestSeats]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length ? Math.max(...values) : 4;
+}
+
 // Типовой набор мебели для комнаты (создаёт предметы в центре комнаты).
-export function defaultItemsFor(room) {
+// Если заполнен бриф, количество посадочных мест берётся из него, но не
+// маскируется возможностями каталога: встроенный стол рассчитан максимум на
+// шесть мест, а больший запрос позднее останется явным capacity-fail.
+export function defaultItemsFor(room, { layoutBrief = null } = {}) {
   const def = roomType(room.type);
   if (!def) return [];
   const items = [];
   const cx = room.x + room.w / 2;
   const cy = room.y + room.h / 2;
+  const requestedSeats = requestedDiningSeats(layoutBrief);
+  const catalogSeats = Math.max(1, Math.min(6, Math.round(requestedSeats)));
   for (const entry of def.furniture) {
     if (!entry.default) continue;
-    const fd = furnitureDef(entry.kind);
-    const count = entry.kind === 'nightstand' ? 2 : entry.kind === 'chair' ? 4 : 1;
+    const kind = entry.kind === 'dining-table' && catalogSeats > 4 ? 'dining-table-6' : entry.kind;
+    const fd = furnitureDef(kind);
+    const count = kind === 'nightstand' ? 2 : kind === 'chair' ? catalogSeats : 1;
     for (let i = 0; i < count; i += 1) {
-      const item = createItem(entry.kind, cx, cy, fd.w, fd.h);
+      const item = createItem(kind, cx, cy, fd.w, fd.h);
       // Диван — конструктором (размер модулей по умолчанию = размер каталога).
       // Стол остаётся без comp: стулья в наборе комнаты идут отдельно.
-      if (compTypeFor(entry.kind) === 'sofa') withDefaultComp(item);
+      if (compTypeFor(kind) === 'sofa') withDefaultComp(item);
       items.push(item);
     }
   }
