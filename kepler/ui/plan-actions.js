@@ -2,7 +2,7 @@
 
 import { applyOpeningPreset } from '../core/opening-preset.js';
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, isOpenRoom, roomType } from '../core/catalog.js';
-import { reclaimItemsFromChild } from '../core/furnish.js';
+import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
@@ -30,7 +30,7 @@ import { renderProps } from './props.js';
 import { openSplitInput } from './split-input.js';
 import { state } from './state.js';
 import {
-  afterChange, mutate, parseProjectText, pushHistory, refreshDerived, restoreFrom, snapshot,
+  afterChange, mutate, parseProjectText, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
@@ -41,6 +41,7 @@ import { copyMass } from '../core/masses.js';
 import { deleteRoof } from './roofs.js';
 import { deleteGrid } from './grids.js';
 import { requestDraw } from './view.js';
+import { arrangeRoomsNow } from './auto-layout.js';
 
 // Проёмы после правки стен: прижать к краю укороченной стены и раздвинуть.
 // Проём НЕ удаляется: если стены нет или на ней нет места, он остаётся в
@@ -355,7 +356,7 @@ export function selectGroup(groupId) {
 // roomIds — комнаты, которые действие двигает/поворачивает: съеденным из них
 // возвращается номинал (жест над блоком — по номиналу), мебель — по видимой
 // форме (carry), после действия съедание считается заново (тронутые — наверх).
-function applyGroupChange(action, failText, roomIds = []) {
+function applyGroupChange(action, failText, roomIds = [], { reflow = false } = {}) {
   const before = snapshot();
   const carry = new Set(groupCargo(state.project, roomIds, []).items.map((i) => i.id));
   for (const id of roomIds) liftRoom(state.project, id);
@@ -368,6 +369,7 @@ function applyGroupChange(action, failText, roomIds = []) {
   reconcileEats(state.project, { touched: roomIds });
   reconcileOpenings();
   refreshDerived();
+  if (reflow) reflowLayoutChanges(before);
   pushHistory(before);
   afterChange();
   if (res.warning) toast(`⚠ ${res.warning}`, true);
@@ -412,7 +414,7 @@ export function applyGapFix(gap, fix) {
     const plan = planGapStretch(state.project, gap);
     if (!plan.move) { toast(`Растянуть нельзя: ${plan.reason}`, true); return false; }
     const { roomId, name, distance, direction } = plan.move;
-    const ok = applyGroupChange((project) => applyGapStretch(project, plan.move), 'Так растянуть нельзя', [roomId]);
+    const ok = applyGroupChange((project) => applyGapStretch(project, plan.move), 'Так растянуть нельзя', [roomId], { reflow: true });
     if (ok) {
       state.gapFocus = null;
       selectObject({ type: 'multi', roomIds: [gap.a, gap.b], itemIds: [] });
@@ -440,8 +442,12 @@ export function applyGapFix(gap, fix) {
 export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: beforeText = null } = {}) {
   if (!magnet || !roomIds?.length || state.snapSettings?.magnet === false) return false;
   let changed = null;
+  let originalProject = null;
   if (beforeText) {
-    try { changed = new Map(findNearMissGaps(parseProjectText(beforeText), { move: false }).map((g) => [g.key, g.gap])); } catch { changed = null; }
+    try {
+      originalProject = parseProjectText(beforeText);
+      changed = new Map(findNearMissGaps(originalProject, { move: false }).map((g) => [g.key, g.gap]));
+    } catch { changed = null; originalProject = null; }
   }
   const found = autoDockFix(state.project, roomIds, kind, { changed });
   if (!found) return false;
@@ -449,6 +455,10 @@ export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: bef
   const before = snapshot();
   const room = roomById(state.project, plan.roomId);
   if (!room) return false;
+  const originalRoom = originalProject && roomById(originalProject, room.id);
+  const layoutItemIds = fix === 'stretch'
+    ? itemsInRoom(originalProject && originalRoom ? originalProject : state.project, originalRoom || room).map((item) => item.id)
+    : [];
   const carry = new Set(groupCargo(state.project, [room.id], []).items.map((i) => i.id));
   liftRoom(state.project, room.id);
   const res = fix === 'stretch'
@@ -458,6 +468,9 @@ export function autoDockAfterGesture(roomIds, kind, { magnet = true, before: bef
   reconcileEats(state.project, { touched: [room.id] });
   reconcileOpenings();
   refreshDerived();
+  if (fix === 'stretch') arrangeRoomsNow([room.id], {
+    itemIdsByRoom: new Map([[room.id, layoutItemIds]]),
+  });
   pushHistory(before);
   afterChange();
   const d = fix === 'stretch' ? Math.abs(plan.shift) : Math.hypot(plan.dx, plan.dy);
@@ -950,6 +963,7 @@ function applyWallChange(wall, apply) {
   }
   reconcileOpenings();
   refreshDerived();
+  reflowLayoutChanges(before);
   pushHistory(before);
   afterChange();
   if (result.broken?.length) toast(`Внимание: разорвано стыковок — ${result.broken.length}, проверьте план`, true);

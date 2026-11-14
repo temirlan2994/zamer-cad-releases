@@ -98,6 +98,8 @@ export function renderSiteSettings(panel) {
         <label class="prop-field"><span>Пояс UTC+</span><input id="tz" type="number" step="1" value="${site.location.tz}"></label>
         <label class="prop-field"><span>Высота дома, м</span><input id="bh" type="number" step="0.5" min="2" value="${(site.buildingHeight / 1000).toFixed(1)}"></label>
       </div>
+      <label class="check-row"><input type="checkbox" id="solarVerified" ${site.solarVerified ? 'checked' : ''}>
+        <span>Координаты и направление севера проверены</span></label>
       <label class="prop-field"><span>Дата</span><input id="sunDate" type="date" value="${site.sun.date}"></label>
       <label class="prop-field"><span>Время: <b id="sunTimeLabel">${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</b></span>
         <input id="sunTime" type="range" min="0" max="1440" step="15" value="${site.sun.time}"></label>
@@ -117,7 +119,10 @@ export function renderSiteSettings(panel) {
   bindBuildingPosition(panel);
   bindTerrainSection(panel);
   panel.querySelector('#northDeg').addEventListener('change', (e) => {
-    mutate(() => { site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360; });
+    mutate(() => {
+      site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360;
+      site.solarVerified = false;
+    });
     applyModeRotation();
     requestDraw();
   });
@@ -133,15 +138,18 @@ export function renderSiteSettings(panel) {
   panel.querySelector('#sunEnabled').addEventListener('change', (e) => {
     tweak(() => { site.sun.enabled = e.target.checked; });
   });
+  panel.querySelector('#solarVerified').addEventListener('change', (e) => {
+    mutate(() => { site.solarVerified = e.target.checked; });
+  });
   const updateSun = () => {
     const s = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
     const info = panel.querySelector('#sunInfo');
     if (info) info.textContent = formatSunInfo(s);
   };
   for (const [id, apply] of [
-    ['lat', (v) => { site.location.lat = Number(v) || 0; }],
-    ['lon', (v) => { site.location.lon = Number(v) || 0; }],
-    ['tz', (v) => { site.location.tz = Number(v) || 0; }],
+    ['lat', (v) => { site.location.lat = Number(v) || 0; site.solarVerified = false; }],
+    ['lon', (v) => { site.location.lon = Number(v) || 0; site.solarVerified = false; }],
+    ['tz', (v) => { site.location.tz = Number(v) || 0; site.solarVerified = false; }],
     ['bh', (v) => { site.buildingHeight = Math.max(2000, (Number(v) || 6) * 1000); }],
     ['sunDate', (v) => { if (/^\d{4}-\d{2}-\d{2}$/.test(v)) site.sun.date = v; }],
   ]) {

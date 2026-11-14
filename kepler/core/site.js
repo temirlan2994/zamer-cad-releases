@@ -14,6 +14,7 @@ export function createSite() {
   return {
     north: 0, // направление севера: 0 = вверх экрана плана, по часовой
     location: { lat: 43.238, lon: 76.889, tz: 5 }, // широта/долгота/UTC-пояс
+    solarVerified: false, // пользователь подтвердил координаты и направление севера
     sun: { date: '2026-06-21', time: 12 * 60, enabled: false }, // time — минуты от полуночи
     buildingHeight: 6000, // высота дома для теней, мм
     setbackBoundary: DEFAULT_SETBACK_BOUNDARY,

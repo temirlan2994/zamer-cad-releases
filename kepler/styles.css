@@ -2366,3 +2366,27 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   .toolstrip .tb-pop { position: fixed; left: calc(var(--tools-w) + 8px); top: auto; bottom: 12px; }
   .toolstrip .tb-tip { display: none !important; }
 }
+
+/* Несколько проверенных вариантов авторасстановки в свойствах комнаты. */
+.auto-layout-block { gap: 9px; }
+.auto-layout-hint { margin: 0; }
+.auto-layout-results:empty { display: none; }
+.layout-variants { display: flex; flex-direction: column; gap: 8px; }
+.layout-variant {
+  display: flex; flex-direction: column; gap: 7px; padding: 9px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+}
+.layout-variant-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.layout-variant-head strong { font-size: 13px; color: var(--text); }
+.layout-variant-head span { flex: none; color: var(--accent); font-size: 11.5px; font-weight: 700; }
+.layout-metrics { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 11.5px; }
+.layout-variant button { min-height: 34px; }
+.auto-layout-empty {
+  padding: 9px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 12px;
+}
+.auto-layout-empty p { margin: 4px 0 0; }
+
+@media (max-width: 640px) {
+  .layout-variant { padding: 10px; }
+  .layout-variant button, .auto-layout-block > button { min-height: 40px; }
+}

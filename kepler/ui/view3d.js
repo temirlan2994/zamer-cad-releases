@@ -39,7 +39,7 @@ import { isSiteView } from './modes.js';
 import { reconcileOpenings } from './plan-actions.js';
 import { state } from './state.js';
 import {
-  afterChange, pushHistory, refreshDerived, restoreFrom, snapshot,
+  afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot,
 } from './store.js';
 import { cancelTool, selectObject } from './tools.js';
 import {
@@ -883,6 +883,7 @@ function moveEdit(e) {
 function commitWallChange(before, rec) {
   reconcileOpenings();
   refreshDerived();
+  reflowLayoutChanges(before);
   pushHistory(before);
   afterChange();
   const moved = state.walls.find((w) => w.key === rec.key);

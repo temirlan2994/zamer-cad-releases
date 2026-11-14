@@ -57,6 +57,7 @@ import { selectObject } from './tools.js';
 import { renderLandscapeProps } from './landscape.js';
 import { isIssuesOpen, setIssuesOpen } from './issues.js';
 import { bindWallPinBlock, wallPinBlock } from './grid-pin-ui.js';
+import { arrangeRoomsNow, autoLayoutHtml, bindAutoLayout } from './auto-layout.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -373,13 +374,14 @@ function renderRoomProps(panel, room) {
     ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
     ${rejectedHtml}
-    ${shaft ? '' : '<div class="prop-actions"><button id="arrangeBtn">Расставить мебель автоматически</button></div>'}`;
+    ${shaft ? '' : autoLayoutHtml(room)}`;
 
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
   bindRoomRoof(panel);
   bindRoomRailings(panel, room);
+  if (!shaft) bindAutoLayout(panel, room);
   panel.querySelector('#roomType')?.addEventListener('change', (e) => changeRoomType(room, e.target.value));
   // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):
   // номинал возвращается, правится, видимую форму заново даёт съедание
@@ -388,6 +390,7 @@ function renderRoomProps(panel, room) {
     const w = Math.max(minRoomSize, Number(panel.querySelector('#roomW').value) || nominal.w);
     const h = Math.max(minRoomSize, Number(panel.querySelector('#roomH').value) || nominal.h);
     if (w === nominal.w && h === nominal.h) return;
+    const layoutItemIds = itemsInRoom(state.project, room).map((item) => item.id);
     const before = snapshot();
     const edit = liftForEdit(state.project, room.id);
     const old = { w: room.w, h: room.h };
@@ -406,6 +409,7 @@ function renderRoomProps(panel, room) {
     if (!room.parentId) eatOverlapsAfter([room.id], { under: edit.under, prev: edit.prev });
     reconcileOpenings();
     refreshDerived();
+    arrangeRoomsNow([room.id], { itemIdsByRoom: new Map([[room.id, layoutItemIds]]) });
     pushHistory(before);
     afterChange();
     // Ввели размер, и сторона встала в 1–60 мм от «нужной» толщины стены соседа — стыкуется.
@@ -419,12 +423,6 @@ function renderRoomProps(panel, room) {
   });
   panel.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', () => addFurniture(btn.dataset.add, room));
-  });
-  panel.querySelector('#arrangeBtn')?.addEventListener('click', () => {
-    mutate(() => {}, { arrange: [room.id] });
-    const problems = state.rejected.get(room.id) || [];
-    toast(problems.length ? 'Расставлено, но есть замечания — смотрите панель' : 'Мебель расставлена');
-    selectObject({ type: 'room', id: room.id });
   });
   const fromParent = panel.querySelector('#areaFromParent');
   const fromSelf = panel.querySelector('#areaFromSelf');
@@ -867,6 +865,8 @@ function renderItemProps(panel, item) {
         <label class="prop-field"><span>${isStairs ? 'Габарит по Y, мм' : fixed ? 'Общая глубина, мм' : 'Глубина, мм'}</span><input id="itemH" type="number" step="50" min="200" value="${item.h}" ${fixed ? 'readonly' : ''}></label>
       </div>
       <div class="prop-row"><span>Поворот</span><strong>${item.rotation || 0}°</strong></div>
+      ${isStairs ? '' : `<label class="check-row"><input id="itemAutoLayoutLocked" type="checkbox" ${item.autoLayoutLocked ? 'checked' : ''}>
+        <span>Закрепить при авторасстановке</span></label>`}
     </div>
     ${stairsBlock}
     ${compositeSection(item)}
@@ -886,6 +886,13 @@ function renderItemProps(panel, item) {
   };
   panel.querySelector('#itemW').addEventListener('change', applySize);
   panel.querySelector('#itemH').addEventListener('change', applySize);
+  panel.querySelector('#itemAutoLayoutLocked')?.addEventListener('change', (e) => {
+    mutate(() => {
+      if (e.target.checked) item.autoLayoutLocked = true;
+      else delete item.autoLayoutLocked;
+    });
+    selectObject({ type: 'item', id: item.id });
+  });
   const fh = panel.querySelector('#floorH');
   if (fh && !fh.readOnly) fh.addEventListener('change', (e) => {
     mutate(() => {

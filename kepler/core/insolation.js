@@ -166,13 +166,17 @@ export function windowsOf(project) {
       if (!facade) continue;
       const { at, normal: n } = facade;
       const normal = { x: n.x * c - n.y * s, y: n.x * s + n.y * c };
-      const p = toWorld(project.building, at);
+      const atLocal = { x: at.x + n.x * 20, y: at.y + n.y * 20 };
+      const p = toWorld(project.building, atLocal);
       out.push({
+        openingId: o.id,
         roomId,
         levelId: level.id,
         // Чуть наружу от фасада, чтобы не задеть собственную стену.
-        at: { x: p.x + normal.x * 20, y: p.y + normal.y * 20 },
+        at: p,
         normal,
+        atLocal,
+        normalLocal: { ...n },
         z: level.elevation + (o.sill ?? 900),
       });
     }
@@ -189,6 +193,52 @@ function visible(win, sun, obstacles) {
     if (t !== null && ob.top - win.z > t * sun.tanAlt) return false;
   }
   return true;
+}
+
+// Утреннее солнце по каждому окну на выбранную дату. Это отдельная мягкая
+// метрика для планировочных предпочтений, не нормативный отчёт инсоляции:
+// диапазон времени задаёт вызывающая сторона, ранние часы не отбрасываются.
+// Без подтверждённого контекста участка и конечных координат возвращаем
+// morningMinutes=null, чтобы значения проекта по умолчанию не выглядели как
+// измеренные данные.
+export function windowMorningExposure(project, options = {}) {
+  const site = project?.site || {};
+  const location = site.location || {};
+  const finiteLocation = [location.lat, location.lon, location.tz].every(Number.isFinite);
+  const known = site.solarVerified === true && finiteLocation;
+  const date = String(options.date || site.sun?.date || '2026-06-21');
+  const fromRaw = Number(options.from);
+  const toRaw = Number(options.to);
+  const stepRaw = Number(options.step);
+  const from = Math.max(0, Math.min(1440, Number.isFinite(fromRaw) ? fromRaw : 6 * 60));
+  const to = Math.max(from, Math.min(1440, Number.isFinite(toRaw) ? toRaw : 12 * 60));
+  const step = Math.max(1, Math.min(60, Math.round(Number.isFinite(stepRaw) ? stepRaw : 10)));
+  const source = windowsOf(project);
+  const windows = source.map((win) => ({
+    openingId: win.openingId,
+    roomId: win.roomId,
+    levelId: win.levelId,
+    morningMinutes: known ? 0 : null,
+  }));
+  if (!known || to <= from || !windows.length) return { known, date, from, to, step, windows };
+
+  const obstacles = obstaclesOf(project);
+  const north = ((Number(site.north) || 0) * Math.PI) / 180;
+  for (let minute = from; minute < to; minute += step) {
+    const duration = Math.min(step, to - minute);
+    const position = sunPosition(location.lat, location.lon, location.tz, date, minute + duration / 2);
+    if (!(position.altitude > 0)) continue;
+    const angle = north + (position.azimuth * Math.PI) / 180;
+    const sun = {
+      ...position,
+      dir: { x: Math.sin(angle), y: -Math.cos(angle) },
+      tanAlt: Math.tan((position.altitude * Math.PI) / 180),
+    };
+    for (let i = 0; i < source.length; i += 1) {
+      if (visible(source[i], sun, obstacles)) windows[i].morningMinutes += duration;
+    }
+  }
+  return { known, date, from, to, step, windows };
 }
 
 // Периоды подряд из флагов по шагам: [[начало, конец] в минутах].

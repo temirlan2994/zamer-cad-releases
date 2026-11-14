@@ -26,7 +26,7 @@ import { planGridPref, setPlanGridPref } from './plan-grids.js';
 import { gridStep } from './snap.js';
 import { wallCenterSnapOpts } from './block-gesture.js';
 import { state } from './state.js';
-import { afterChange, mutate, pushHistory, refreshDerived, snapshot } from './store.js';
+import { afterChange, mutate, pushHistory, refreshDerived, reflowLayoutChanges, snapshot } from './store.js';
 import { renderProps, renderToolOptions } from './props.js';
 import { cancelTool, selectObject, setTool } from './tools.js';
 import { requestDraw } from './view.js';
@@ -84,6 +84,7 @@ export function moveGridTo(id, at) {
   setGrids(grids());
   reconcileEats(state.project);
   refreshDerived();
+  reflowLayoutChanges(before);
   pushHistory(before);
   afterChange();
   return gridById(id);
@@ -303,6 +304,7 @@ export function gridDragEnd(drag) {
   if (drag.reason) toast(`Дальше ось не сдвинуть: ${drag.reason}`, true);
   if (!drag.moved) { requestDraw(); return; }
   setGrids(grids()); // автонумерация по новому порядку
+  reflowLayoutChanges(drag.before);
   pushHistory(drag.before);
   afterChange();
 }

@@ -134,7 +134,10 @@ export function addNorthPoint(world) {
   const dy = points[1].y - points[0].y;
   if (Math.hypot(dx, dy) < 200) { toast('Точки слишком близко'); state.tool.points = []; return; }
   const north = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
-  mutate(() => { state.project.site.north = Math.round(north * 10) / 10; });
+  mutate(() => {
+    state.project.site.north = Math.round(north * 10) / 10;
+    state.project.site.solarVerified = false;
+  });
   state.northCursor = null;
   applyModeRotation();
   cancelTool();

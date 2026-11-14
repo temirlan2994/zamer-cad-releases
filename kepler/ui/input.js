@@ -3,7 +3,7 @@
 import { furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
 import { itemsEditable, pickStackHit } from '../core/hit-stack.js';
 import { STAIR_FIELDS, applyStairPreset, dragStairHandle, stairHandleLabel } from '../core/stairs.js';
-import { arrangeRoom, reclaimItemsFromChild } from '../core/furnish.js';
+import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
 import { nearestPointOnPolyline } from '../core/site.js';
@@ -81,7 +81,8 @@ import {
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
-import { afterChange, pushHistory, refreshDerived, restoreFrom, snapshot } from './store.js';
+import { afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
+import { arrangeRoomsNow } from './auto-layout.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
 import { addCalibratePoint, hideCalInput, positionCalInput } from './underlay.js';
 import {
@@ -97,6 +98,16 @@ const TOUCH_HOLD_MS = 420;
 const TOUCH_HOLD_SLOP = 9;
 const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move', 'grid-move']);
 let drag = null;
+
+// До изменения формы запоминаем принадлежность мебели комнатам. После
+// уменьшения часть предметов может оказаться уже снаружи нового контура, но
+// авторасстановка всё равно должна вернуть их внутрь, а не незаметно забыть.
+function captureLayoutItemIds() {
+  return new Map(state.project.rooms.map((room) => [
+    room.id,
+    itemsInRoom(state.project, room).map((item) => item.id),
+  ]));
+}
 
 // Касание: действие (поставить объект, точку, открыть поле ввода) — только на
 // тапе (отпускание без сдвига), свайп отдаётся панораме. Мышь — сразу.
@@ -933,12 +944,14 @@ export function bindCanvasInput() {
           before: pending?.before || snapshot(), moved: false, valid: true, merged: false,
           anchors: captureOpeningAnchors(state.project, handleHit.room),
           under: { [handleHit.room.id]: eatersOf(handleHit.room) },
+          layoutItemIdsByRoom: captureLayoutItemIds(),
         };
       } else {
         drag = {
           kind: 'resize', roomId: handleHit.room.id, handle: handleHit.handle, start: structuredClone(handleHit.room),
           before: snapshot(), plan, valid: true, anchors: captureOpeningAnchors(state.project, handleHit.room),
           under: { [handleHit.room.id]: eatersOf(handleHit.room) },
+          layoutItemIdsByRoom: captureLayoutItemIds(),
         };
       }
       return;
@@ -1018,6 +1031,7 @@ export function bindCanvasInput() {
         kind: 'wall', key: wall.key, from: wall.from, wall: structuredClone(wall),
         plan, before: snapshot(), moved: false, valid: true,
         roomStarts: wall.rooms.map((id) => ({ id, room: structuredClone(roomById(state.project, id)) })).filter((entry) => entry.room),
+        layoutItemIdsByRoom: captureLayoutItemIds(),
         openingStarts: state.project.openings.filter((o) => (manual ? Boolean(o.host) : wall.rooms.includes(o.roomId)))
           .map((o) => (o.host ? { id: o.id, host: { ...o.host } } : { id: o.id, side: o.side, offset: o.offset })),
         wallsStart: manual ? structuredClone(state.project.walls) : null,
@@ -1047,6 +1061,7 @@ export function bindCanvasInput() {
         childStarts: children.map((c) => ({ id: c.id, x: c.x, y: c.y })),
         carried,
         startParent: room.parentId, before: snapshot(), moved: false, valid: true,
+        layoutItemIdsByRoom: captureLayoutItemIds(),
       };
       return;
     }
@@ -1822,6 +1837,7 @@ export function bindCanvasInput() {
       eatOverlapsAfter(wallIds, { silent: true, prev: finished.eatPrev });
       reconcileOpenings();
       refreshDerived();
+      reflowLayoutChanges(finished.before, { roomIds: wallIds });
       // «Запоминать привязку при магните» (блок «Координационные оси»): стена,
       // притянутая к оси, сразу прикрепляется (тем же шагом истории).
       if (finished.gridSnap) rememberGridSnap(finished);
@@ -1843,6 +1859,7 @@ export function bindCanvasInput() {
       if (!finished.moved) { requestDraw(); return; }
       reconcileOpenings(); // проёмы за новым торцом прижимаются или удаляются
       refreshDerived();
+      reflowLayoutChanges(finished.before);
       pushHistory(finished.before);
       afterChange();
       return;
@@ -1871,7 +1888,7 @@ export function bindCanvasInput() {
             const carriedIds = new Set(finished.carried.map((c) => c.id));
             reclaimItemsFromChild(state.project, parent, room, carriedIds);
             refreshDerived();
-            state.rejected.set(parent.id, arrangeRoom(state.project, parent, state.walls));
+            arrangeRoomsNow([parent.id], { force: true });
             toast(`«${room.name}» вложена в «${parent?.name}» и отнимает её площадь — можно поменять в панели справа`, true);
           } else {
             toast(`«${room.name}» отделена — снова самостоятельная комната`);
@@ -1903,6 +1920,10 @@ export function bindCanvasInput() {
       if (eaten.eaten.length || eaten.failed.length || eaten.restored.length) finished.clamped = null;
       reconcileOpenings();
       refreshDerived();
+      const reflowIds = new Set(finished.kind === 'resize' || finished.kind === 'shape-resize' ? movedIds : []);
+      for (const follower of finished.follow || []) if (follower.id) reflowIds.add(follower.id);
+      for (const entry of [...(eaten.eaten || []), ...(eaten.restored || [])]) if (entry.lower?.id) reflowIds.add(entry.lower.id);
+      arrangeRoomsNow([...reflowIds], { itemIdsByRoom: finished.layoutItemIdsByRoom });
       pushHistory(finished.before);
       afterChange();
       let noted = true;
@@ -1930,6 +1951,7 @@ export function bindCanvasInput() {
         }
       }
       refreshDerived();
+      if (finished.kind === 'opening' || finished.kind === 'opening-handle') reflowLayoutChanges(finished.before);
       pushHistory(finished.before);
       afterChange();
       return;

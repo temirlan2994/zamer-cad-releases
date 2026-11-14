@@ -63,6 +63,7 @@ export const state = {
   dynInput: null, // { field: 'length'|'angle', length, angle }
   objGuides: null, // умные направляющие перемещения (ui/guides-ui.js): [{ type, from, to, label }]
   rejected: new Map(), // roomId -> причины отказов расстановки
+  layoutVariants: new Map(), // roomId -> эфемерные варианты авторасстановки (не сохраняются в проект)
   calibration: null, // {p1, p2, measured}
   underlayImg: null,
   pid: null, // идентификатор проекта в хранилище («Проекты»); null — ещё не сохранялся

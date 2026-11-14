@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, createLevel } from '../core/model.js';
 import {
   insolationZone, insolationNorm, rayEnter, insolationReport, meetsNorm, formatDuration,
+  windowMorningExposure, windowsOf,
 } from '../core/insolation.js';
 import { roomChecks, normsReport } from '../core/norms.js';
 
@@ -64,6 +65,49 @@ test('поворот дома меняет инсоляцию: окно уход
   const { p, living } = house();
   p.building = { rotation: 180, origin: { x: 0, y: 0 } };
   assert.equal(insolationReport(p).rooms.find((x) => x.id === living.id).total, 0);
+});
+
+test('окно хранит id и локальную точку/нормаль фасада', () => {
+  const { p, living } = house();
+  const opening = p.openings.find((entry) => entry.roomId === living.id);
+  const win = windowsOf(p).find((entry) => entry.openingId === opening.id);
+  assert.equal(win.roomId, living.id);
+  assert.deepEqual(win.normalLocal, { x: 0, y: 1 });
+  assert.equal(win.atLocal.x, 2500);
+  assert.ok(win.atLocal.y > living.y + living.h);
+  assert.deepEqual(win.at, win.atLocal); // дом пока без поворота и сдвига
+});
+
+test('утренняя экспозиция известна только при известном участке и координатах', () => {
+  const { p, living, bedroom } = house();
+  let exposure = windowMorningExposure(p, { date: '2026-06-21', from: 360, to: 720, step: 10 });
+  assert.equal(exposure.known, false);
+  assert.ok(exposure.windows.every((entry) => entry.morningMinutes === null));
+
+  p.site.boundary = [{ x: -1000, y: -1000 }, { x: 10000, y: -1000 }, { x: 10000, y: 10000 }, { x: -1000, y: 10000 }];
+  p.site.solarVerified = true;
+  exposure = windowMorningExposure(p, { date: '2026-06-21', from: 360, to: 720, step: 10 });
+  assert.equal(exposure.known, true);
+  const south = exposure.windows.find((entry) => entry.roomId === living.id);
+  const north = exposure.windows.find((entry) => entry.roomId === bedroom.id);
+  assert.ok(south.morningMinutes > 0, `южное окно: ${south.morningMinutes} мин`);
+  assert.ok(south.morningMinutes > north.morningMinutes);
+
+  p.site.location.lat = null;
+  exposure = windowMorningExposure(p);
+  assert.equal(exposure.known, false);
+  assert.ok(exposure.windows.every((entry) => entry.morningMinutes === null));
+});
+
+test('соседний дом уменьшает утреннюю экспозицию окна', () => {
+  const { p, living } = house();
+  p.site.boundary = [{ x: -1000, y: -1000 }, { x: 10000, y: -1000 }, { x: 10000, y: 20000 }, { x: -1000, y: 20000 }];
+  p.site.solarVerified = true;
+  const options = { date: '2026-06-21', from: 360, to: 720, step: 10 };
+  const minutes = () => windowMorningExposure(p, options).windows.find((entry) => entry.roomId === living.id).morningMinutes;
+  const free = minutes();
+  p.site.neighbors.push({ id: 'shade', x: 2500, y: 4200 + 250 + 6000, w: 40000, h: 8000, height: 12000, rot: 0 });
+  assert.ok(minutes() < free);
 });
 
 test('правило прерывистой инсоляции и «2 комнаты при 4+ жилых»', () => {

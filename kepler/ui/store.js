@@ -1,18 +1,19 @@
 // Изменения проекта: транзакции с историей, отмена/повтор, автосохранение.
 
-import { arrangeRoom } from '../core/furnish.js';
 import { normsReport } from '../core/norms.js';
+import { itemsInRoom } from '../core/furnish.js';
 import {
-  deserializeProject, hasContent, levelBelow, levelProject, projectFromData, roomById, serializeProject,
+  deserializeProject, hasContent, levelBelow, levelProject, projectFromData, serializeProject,
 } from '../core/model.js';
 import { hashText, newId } from '../core/storage.js';
-import { deriveWalls } from '../core/walls.js';
+import { deriveWalls, doorLink, wallRects } from '../core/walls.js';
 import { freeLoops } from '../core/bound-rooms.js';
 import { reconcileEats } from '../core/v7/eat-bridge.js';
 import { syncGridPins } from '../core/grid-pins.js';
 import { syncStairLevels } from '../core/slab-openings.js';
 import { setStairRise } from '../core/stairs.js';
 import { findNearMissGaps } from '../core/gaps.js';
+import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
 import { el, toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
@@ -28,6 +29,7 @@ import { renderSelectionToolbar } from './selection-toolbar.js';
 import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
+import { arrangeRoomsNow } from './auto-layout.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
@@ -114,6 +116,114 @@ export function pushHistory(before, pid = state.pid) {
   history.redo.length = 0;
 }
 
+// Комнаты, у которых внутри mutate изменилась именно usable-геометрия или
+// проёмы. Координаты x/y намеренно не сравниваются: при обычном переносе
+// комната везёт мебель вместе с собой и перестраивать её не нужно.
+function changedLayoutRooms(beforeText) {
+  const empty = { levels: new Map() };
+  if (state.project?.settings?.autoArrangeFurniture === false) return empty;
+  let oldProject;
+  try { oldProject = parseProjectText(beforeText); } catch { return empty; }
+  const shapeKey = (room) => JSON.stringify([
+    room?.type, room?.w, room?.h, room?.parentId || null,
+    room?.outline || null, room?.notch || null, room?.poly || null, room?.holes || null,
+    room?.eatBase?.by || null,
+  ]);
+  const openingKey = (opening) => JSON.stringify([
+    opening.kind, opening.roomId || null, opening.host || null, opening.side ?? null,
+    opening.offset ?? null, opening.width ?? null, opening.height ?? null, opening.sill ?? null,
+    opening.type || null, opening.swingIn ?? null, opening.hingeStart ?? null, opening.orphan === true,
+  ]);
+  const manualRects = (walls) => walls
+    .filter((wall) => wall.kind === 'manual' || wall.source === 'manual')
+    .flatMap((wall) => wallRects(wall));
+  const overlap = (a, b) => Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) + 0.5 &&
+    Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y) + 0.5;
+  const addOpeningRooms = (ids, project, opening, walls) => {
+    if (!opening) return;
+    if (opening.roomId) ids.add(opening.roomId);
+    if (opening.kind !== 'door') return;
+    for (const roomId of doorLink(project, opening, walls) || []) {
+      if (roomId !== 'outside' && project.rooms.some((room) => room.id === roomId)) ids.add(roomId);
+    }
+  };
+  const oldLevelIds = new Set((oldProject.levels || []).map((level) => level.id));
+  const levels = new Map();
+  for (const currentLevel of state.project.levels || []) {
+    if (!oldLevelIds.has(currentLevel.id)) continue;
+    const currentProject = levelProject(state.project, currentLevel.id);
+    const previousProject = levelProject(oldProject, currentLevel.id);
+    const oldRooms = new Map((previousProject.rooms || []).map((room) => [room.id, room]));
+    const currentRooms = new Map((currentProject.rooms || []).map((room) => [room.id, room]));
+    const ids = new Set();
+    for (const room of currentProject.rooms || []) {
+      const old = oldRooms.get(room.id);
+      if (old && shapeKey(old) !== shapeKey(room)) ids.add(room.id);
+      if ((old?.parentId || null) !== (room.parentId || null)) {
+        if (old?.parentId) ids.add(old.parentId);
+        if (room.parentId) ids.add(room.parentId);
+      }
+    }
+    // Удаление вложенной комнаты освобождает площадь родителя, хотя его
+    // собственный контур не меняется.
+    for (const old of oldRooms.values()) {
+      if (!currentRooms.has(old.id) && old.parentId && currentRooms.has(old.parentId)) ids.add(old.parentId);
+    }
+
+    const oldOpenings = new Map((previousProject.openings || []).map((opening) => [opening.id, opening]));
+    const currentOpenings = new Map((currentProject.openings || []).map((opening) => [opening.id, opening]));
+    const oldWalls = deriveWalls(previousProject);
+    const currentWalls = currentLevel.id === state.project.activeLevel ? state.walls : deriveWalls(currentProject);
+    if (JSON.stringify(previousProject.walls || []) !== JSON.stringify(currentProject.walls || [])) {
+      const oldObstacles = manualRects(oldWalls);
+      const currentObstacles = manualRects(currentWalls);
+      for (const room of previousProject.rooms || []) {
+        if (roomRects(room).some((part) => oldObstacles.some((wall) => overlap(part, wall)))) ids.add(room.id);
+      }
+      for (const room of currentProject.rooms || []) {
+        if (roomRects(room).some((part) => currentObstacles.some((wall) => overlap(part, wall)))) ids.add(room.id);
+      }
+    }
+    for (const id of new Set([...oldOpenings.keys(), ...currentOpenings.keys()])) {
+      const old = oldOpenings.get(id); const current = currentOpenings.get(id);
+      if (openingKey(old || {}) === openingKey(current || {})) continue;
+      addOpeningRooms(ids, previousProject, old, oldWalls);
+      addOpeningRooms(ids, currentProject, current, currentWalls);
+    }
+    if (!ids.size) continue;
+    const itemIdsByRoom = new Map();
+    for (const roomId of ids) {
+      const oldRoom = oldRooms.get(roomId);
+      if (oldRoom) itemIdsByRoom.set(roomId, itemsInRoom(previousProject, oldRoom).map((item) => item.id));
+    }
+    levels.set(currentLevel.id, { roomIds: [...ids], itemIdsByRoom });
+  }
+  return { levels };
+}
+
+// Автоперестройка геометрически изменившихся комнат как часть уже начатой
+// транзакции. Историю и перерисовку helper не создаёт: вызывающая операция
+// затем делает один pushHistory(before) и один afterChange().
+export function reflowLayoutChanges(beforeText, { roomIds = [], force = false } = {}) {
+  const changed = changedLayoutRooms(beforeText);
+  const activeLevelId = state.project.activeLevel;
+  const active = changed.levels.get(activeLevelId) || { roomIds: [], itemIdsByRoom: new Map() };
+  active.roomIds = [...new Set([...(roomIds || []), ...active.roomIds])];
+  if (active.roomIds.length) changed.levels.set(activeLevelId, active);
+  let applied = 0;
+  const reports = [];
+  for (const [levelId, levelChange] of changed.levels) {
+    const result = arrangeRoomsNow(levelChange.roomIds, {
+      force: force && levelId === activeLevelId,
+      itemIdsByRoom: levelChange.itemIdsByRoom,
+      levelId,
+    });
+    applied += result.applied;
+    reports.push(...result.reports);
+  }
+  return { applied, reports };
+}
+
 export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   const before = snapshot();
   fn();
@@ -123,10 +233,7 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   // заново (core/v7/eat-bridge.js), результат не зависит от порядка действий.
   if (state.project) reconcileEats(state.project);
   refreshDerived();
-  for (const roomId of new Set(arrange)) {
-    const room = roomById(state.project, roomId);
-    if (room) state.rejected.set(roomId, arrangeRoom(state.project, room, state.walls));
-  }
+  reflowLayoutChanges(before, { roomIds: arrange, force: arrange.length > 0 });
   if (!skipHistory) pushHistory(before);
   afterChange();
 }
@@ -339,10 +446,17 @@ export function restoreHeavyRefs(project, refs) {
 export function restoreFrom(text) {
   const project = parseProjectText(text);
   const derived = deriveAll(project);
-  const prev = { project: state.project, selection: state.selection };
+  const prev = {
+    project: state.project,
+    selection: state.selection,
+    rejected: new Map(state.rejected),
+    layoutVariants: new Map(state.layoutVariants),
+  };
   state.project = project;
   Object.assign(state, derived);
   state.selection = null;
+  state.rejected.clear();
+  state.layoutVariants.clear();
   try {
     const name = el('projectName');
     if (name) name.value = state.project.name;
@@ -351,6 +465,8 @@ export function restoreFrom(text) {
   } catch (error) {
     state.project = prev.project;
     state.selection = prev.selection;
+    state.rejected = prev.rejected;
+    state.layoutVariants = prev.layoutVariants;
     try {
       refreshDerived();
       const name = el('projectName');

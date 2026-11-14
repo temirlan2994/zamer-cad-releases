@@ -26,7 +26,7 @@ import { splitLiveKey } from './split-input.js';
 import { state } from './state.js';
 import { handleErgoKey } from './ergonomics.js';
 import {
-  afterChange, mutate, pushHistory, redo, refreshDerived, restoreFrom, snapshot, undo,
+  afterChange, mutate, pushHistory, redo, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot, undo,
 } from './store.js';
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
 import { finishWallChain, startWallTool } from './wall-tool.js';
@@ -252,6 +252,7 @@ export function bindKeyboard() {
         if (!room.parentId) eatOverlapsAfter([room.id]);
         reconcileOpenings();
         refreshDerived();
+        reflowLayoutChanges(before);
         pushHistory(before);
         afterChange();
       } else if (state.selection.type === 'item') {
