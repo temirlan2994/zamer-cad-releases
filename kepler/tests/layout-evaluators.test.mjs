@@ -353,7 +353,9 @@ test('collector возвращает сырые AABB/route/capacity метрик
   assert.equal(metrics.door_swing_aabb_collision_count, 2);
   assert.equal(metrics.aabb_support_valid, true);
   assert.equal(metrics.required_routes_reachable, true);
-  assert.equal(metrics.route_min_width_mm, 600);
+  assert.equal(metrics.route_test_agent_diameter_mm, 600);
+  assert.equal(Object.hasOwn(metrics, 'route_min_width_mm'), false);
+  assert.equal(Object.hasOwn(metrics, 'main_route_min_width_mm'), false);
   assert.equal(metrics.nominal_usable_seat_count, 4);
   assert.equal(metrics.required_seat_count, 4);
   assert.deepEqual(metrics.route_zone_access[sofa.id], [true]);

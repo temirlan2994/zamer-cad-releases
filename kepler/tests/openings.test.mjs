@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening } from '../core/model.js';
-import { deriveWalls, doorLeaves } from '../core/walls.js';
+import { buildRoomContext } from '../core/furnish.js';
+import { addManualWall } from '../core/wall-manual.js';
+import { deriveWalls, doorLeaves, doorSwingRect, doorSwingRects } from '../core/walls.js';
 import { buildProjectDxf, buildStructuredExport } from '../core/export.js';
 import { roomChecks } from '../core/norms.js';
 import { buildRoomScheduleCsv } from '../core/schedule.js';
@@ -27,6 +29,55 @@ test('створки: одна, две половины от обоих кося
   const [a, b] = doorLeaves(p, door, deriveWalls(p));
   assert.deepEqual([a.hinge.x, b.hinge.x], [1800, 3200]); // косяки проёма 1400 по центру 2500
   assert.equal(Math.hypot(a.closed.x - a.hinge.x, a.closed.y - a.hinge.y), 700);
+});
+
+test('двустворчатая дверь на ручной стене разводит половины по host.t', () => {
+  const p = createProject();
+  p.rooms.push(createRoom('living', 0, 0, 5000, 4000));
+  const wall = addManualWall(p, { x: 1000, y: 2000 }, { x: 5000, y: 2000 });
+  const door = createOpening('door', null, 0, 0, 1200);
+  delete door.side;
+  delete door.offset;
+  door.roomId = null;
+  door.type = 'double';
+  door.host = { wallId: wall.id, t: 2000 };
+  p.openings.push(door);
+
+  const [left, right] = doorLeaves(p, door, deriveWalls(p));
+  assert.deepEqual(
+    [left.rect.x + left.rect.w / 2, right.rect.x + right.rect.w / 2],
+    [2700, 3300],
+  );
+  assert.deepEqual([left.hinge.x, right.hinge.x], [2400, 3600]);
+  assert.deepEqual([left.closed.x, right.closed.x], [3000, 3000]);
+});
+
+test('swing-зона соответствует типу двери, а раздвижной проём остаётся входом маршрута', () => {
+  const single = withDoor('single');
+  const singleWalls = deriveWalls(single.p);
+  assert.equal(doorSwingRects(single.p, single.door, singleWalls).length, 1);
+  assert.deepEqual(
+    [doorSwingRect(single.p, single.door, singleWalls).w, doorSwingRect(single.p, single.door, singleWalls).h].sort((a, b) => a - b),
+    [1400, 1400],
+  );
+
+  const double = withDoor('double');
+  const doubleWalls = deriveWalls(double.p);
+  assert.equal(doorSwingRects(double.p, double.door, doubleWalls).length, 2);
+  assert.deepEqual(
+    [doorSwingRect(double.p, double.door, doubleWalls).w, doorSwingRect(double.p, double.door, doubleWalls).h].sort((a, b) => a - b),
+    [700, 1400],
+  );
+  double.door.requiredLeafIndices = [0];
+  assert.equal(doorSwingRects(double.p, double.door, doubleWalls).length, 1);
+
+  for (const type of ['sliding', 'none']) {
+    const { p, room, door } = withDoor(type);
+    const walls = deriveWalls(p);
+    assert.equal(doorSwingRect(p, door, walls), null);
+    const context = buildRoomContext(p, room, walls);
+    assert.equal(context.doorCells.length, 1, `${type}: порог остаётся стартом маршрута`);
+  }
 });
 
 test('DXF: двустворчатая — две дуги, раздвижная — без дуг, проём — пусто', () => {

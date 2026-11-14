@@ -71,12 +71,33 @@ test('порог с погрешностью даёт pass / fail / unknown по
 
 test('диапазон и зависимый порог используют уже вычисленные метрики', () => {
   const bed = { roomType: 'bedroom', itemKinds: ['bed-double', 'nightstand'] };
-  assert.equal(evaluateLayoutRule('BED007', { ...bed, metrics: { bed_nightstand_gap_mm: 75 } }).status, 'pass');
-  assert.equal(evaluateLayoutRule('BED007', { ...bed, metrics: { bed_nightstand_gap_mm: 130 } }).status, 'fail');
+  assert.equal(evaluateLayoutRule('BED007', { ...bed, metrics: { bed_nightstand_gaps_valid: true } }).status, 'pass');
+  assert.equal(evaluateLayoutRule('BED007', { ...bed, metrics: { bed_nightstand_gaps_valid: false } }).status, 'fail');
 
   const living = { roomType: 'living', itemKinds: ['sofa'] };
   assert.equal(evaluateLayoutRule('LIV002', { ...living, metrics: { usable_seat_count: 4, required_seat_count: 4 } }).status, 'pass');
   assert.equal(evaluateLayoutRule('LIV002', { ...living, metrics: { usable_seat_count: 3, required_seat_count: 4 } }).status, 'fail');
+});
+
+test('новые локальные bindings используют только доказуемые метрики', () => {
+  const bedroom = { roomType: 'bedroom', itemKinds: ['bed-double'] };
+  assert.equal(evaluateLayoutRule('BED002', {
+    ...bedroom, metrics: { bed_headboard_supported: true },
+  }).status, RULE_STATUS.PASS);
+  assert.equal(layoutRuleById('BED020').binding, 'canonical_only');
+  assert.equal(layoutRuleById('PATH003').binding, 'canonical_only');
+  assert.equal(layoutRuleById('PATH006').binding, 'canonical_only');
+  assert.equal(layoutRuleById('PATH005').binding, 'canonical_only');
+  assert.equal(layoutRuleById('KIT035').binding, 'canonical_only');
+
+  const kitchen = { roomType: 'kitchen', itemKinds: ['kitchen-row'] };
+  assert.equal(evaluateLayoutRule('KIT004', {
+    ...kitchen, metrics: { kitchen_work_aisle_mm: 1100, kitchen_work_aisle_required_mm: 1067 },
+  }).status, RULE_STATUS.PASS);
+  assert.equal(evaluateLayoutRule('KIT005', {
+    ...kitchen,
+    metrics: { kitchen_full_projection_geometry_verified: true, kitchen_projection_collision_count: 0 },
+  }).status, RULE_STATUS.PASS);
 });
 
 test('внешние данные и отсутствующий вычислитель не превращаются в ложный pass', () => {
@@ -110,13 +131,53 @@ test('каноническая спецификация без binding оста�
       IN001: {
         status: 'pass',
         reason: 'Единицы подтверждены при импорте',
-        evidence: { type: 'calibration', source: 'input-1' },
+        evidence: { type: 'manual_verified', source: 'input-1' },
       },
     },
   });
   assert.equal(measured.status, RULE_STATUS.PASS);
   assert.equal(measured.blocking, false);
-  assert.equal(measured.evidence.type, 'calibration');
+  assert.equal(measured.evidence.type, 'manual_verified');
+
+  const unproven = evaluateLayoutRule('IN001', {
+    ruleResults: { IN001: { status: 'pass' } },
+  });
+  assert.equal(unproven.status, RULE_STATUS.UNKNOWN);
+  assert.match(unproven.reason, /доказательство/i);
+
+  const invalidEvidence = evaluateLayoutRule('IN001', {
+    ruleResults: {
+      IN001: {
+        status: 'pass',
+        evidence: { type: 'invented', source: {} },
+      },
+    },
+  });
+  assert.equal(invalidEvidence.status, RULE_STATUS.UNKNOWN);
+
+  const stale = evaluateLayoutRule('IN001', {
+    currentInputSignature: 'new',
+    ruleResults: {
+      IN001: {
+        status: 'pass', inputSignature: 'old',
+        evidence: { type: 'computed', source: 'input-1' },
+      },
+    },
+  });
+  assert.equal(stale.status, RULE_STATUS.UNKNOWN);
+  assert.match(stale.reason, /другой версии/i);
+
+  const unsigned = evaluateLayoutRule('IN001', {
+    currentInputSignature: 'current',
+    ruleResults: {
+      IN001: {
+        status: 'pass',
+        evidence: { type: 'computed', source: 'input-2' },
+      },
+    },
+  });
+  assert.equal(unsigned.status, RULE_STATUS.UNKNOWN);
+  assert.match(unsigned.reason, /нет подписи/i);
 
   const summary = summarizeLayoutRuleResults([pending]);
   assert.equal(summary.verificationStatus, 'conceptual_only');

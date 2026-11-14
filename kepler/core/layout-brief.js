@@ -49,6 +49,10 @@ const integer = (value) => {
   const number = nonNegative(value);
   return number == null ? null : Math.round(number);
 };
+const positiveInteger = (value) => {
+  const number = positive(value);
+  return number == null ? null : Math.max(1, Math.round(number));
+};
 const enumValue = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const stringList = (value) => (Array.isArray(value)
   ? [...new Set(value.map(text).filter(Boolean))]
@@ -215,7 +219,7 @@ export function createLayoutBrief() {
   return {
     version: LAYOUT_BRIEF_VERSION,
     actors: [],
-    capacity: { dailySeats: null, guestSeats: null },
+    capacity: { dailySeats: null, guestSeats: null, simultaneousCooks: null },
     // null = не обследовано; [] = пользователь подтвердил отсутствие точек.
     fixedEngineering: null,
     // Та же семантика: null неизвестно, [] подтверждённо нечего хранить.
@@ -246,6 +250,7 @@ export function normalizeLayoutBrief(raw, {
       ...capacity,
       dailySeats: integer(capacity.dailySeats),
       guestSeats: integer(capacity.guestSeats),
+      simultaneousCooks: positiveInteger(capacity.simultaneousCooks),
     },
     fixedEngineering: Array.isArray(source.fixedEngineering)
       ? source.fixedEngineering.map((point, index) => normalizeEngineering(point, index, engineeringUsed, refs))
@@ -268,6 +273,7 @@ export function layoutBriefIsEmpty(brief) {
   return !(brief.actors?.length)
     && brief.capacity?.dailySeats == null
     && brief.capacity?.guestSeats == null
+    && brief.capacity?.simultaneousCooks == null
     && brief.fixedEngineering == null
     && brief.storageInventory == null
     && !(brief.uncertainty?.length)
@@ -307,6 +313,11 @@ function normalizeClearances(value) {
 export function normalizeCatalogItemMetadata(item) {
   const out = isObj(item) ? { ...item } : {};
   for (const key of ['manufacturer', 'sku', 'sourceUrl']) cleanOptionalTextField(out, key);
+  // Отсутствие поля в старом файле остаётся отсутствием, но любое записанное
+  // значение нормализуется в строгий boolean.
+  if ('planProjectionVerified' in out) {
+    out.planProjectionVerified = out.planProjectionVerified === true;
+  }
   if (!CATALOG_GEOMETRY_STATUSES.includes(out.geometryStatus)) delete out.geometryStatus;
   if (!MANUAL_STATUSES.includes(out.manualStatus)) delete out.manualStatus;
   if (Array.isArray(out.manualConstraints)) {
@@ -383,14 +394,16 @@ export function layoutBriefReadiness(project, { itemIds = null } = {}) {
     mobilityKnown ? [] : ['Указать профиль мобильности и нужные габариты'],
   ));
 
-  const capacityReady = brief.capacity.dailySeats != null && brief.capacity.guestSeats != null;
-  const capacitySome = brief.capacity.dailySeats != null || brief.capacity.guestSeats != null;
+  const capacityReady = brief.capacity.dailySeats != null && brief.capacity.guestSeats != null
+    && brief.capacity.simultaneousCooks != null;
+  const capacitySome = brief.capacity.dailySeats != null || brief.capacity.guestSeats != null
+    || brief.capacity.simultaneousCooks != null;
   sections.push(readinessSection(
     'capacity', 'Места', capacityReady ? 'ready' : (capacitySome ? 'partial' : 'missing'),
     capacityReady
-      ? `${brief.capacity.dailySeats} ежедневно · ${brief.capacity.guestSeats} гостевых`
+      ? `${brief.capacity.dailySeats} ежедневно · ${brief.capacity.guestSeats} гостевых · ${brief.capacity.simultaneousCooks} готовят`
       : (capacitySome ? 'заполнено частично' : 'не заданы'),
-    capacityReady ? [] : ['Указать ежедневные и гостевые места'],
+    capacityReady ? [] : ['Указать ежедневные и гостевые места, а также сколько человек готовят одновременно'],
   ));
 
   const scenarios = brief.scenarioSelections || [];
@@ -425,8 +438,11 @@ export function layoutBriefReadiness(project, { itemIds = null } = {}) {
 
   const furniture = allFurniture(project, itemIds);
   const catalogKnown = furniture.filter((item) => {
-    const geometryReady = item.geometryStatus === 'parametric_custom'
+    const geometrySourceReady = item.geometryStatus === 'parametric_custom'
       || (item.geometryStatus === 'verified_sku' && text(item.sku) && text(item.sourceUrl));
+    // Габарит корпуса недостаточен для производственных проверок: ручки и
+    // свесы должны быть явно включены в подтверждённую плановую проекцию.
+    const geometryReady = geometrySourceReady && item.planProjectionVerified === true;
     const manualReady = item.manualStatus === 'not_required'
       || (item.manualStatus === 'verified'
         && (item.manualConstraints || []).every((constraint) => constraint.status === 'verified'));
@@ -437,7 +453,9 @@ export function layoutBriefReadiness(project, { itemIds = null } = {}) {
   sections.push(readinessSection(
     'manuals', 'Модели и паспорта', manualStatus,
     furniture.length ? `${catalogKnown} из ${furniture.length} изделий подтверждены` : 'в комнате нет мебели',
-    manualStatus === 'ready' || manualStatus === 'not_applicable' ? [] : ['Указать статус геометрии, SKU/источник и паспортные зазоры'],
+    manualStatus === 'ready' || manualStatus === 'not_applicable'
+      ? []
+      : ['Указать статус геометрии, SKU/источник, подтвердить полную проекцию с ручками/свесами и паспортные зазоры'],
   ));
 
   const unresolved = brief.uncertainty.filter((entry) => entry.status !== 'resolved').length;

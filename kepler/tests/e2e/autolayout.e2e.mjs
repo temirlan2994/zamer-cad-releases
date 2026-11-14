@@ -46,6 +46,116 @@ describe('полноценная авторасстановка мебели', (
   });
   after(async () => { await app?.close(); });
 
+  it('сохраняет число готовящих и подтверждение полной проекции в исходных данных', async () => {
+    const { page } = app;
+    await selectRoom(page, roomId);
+    const before = await page.evaluate(async (id) => {
+      const { itemsInRoom } = await import('./core/furnish.js');
+      const { layoutSignature } = await import('./ui/auto-layout.js');
+      const state = window.__kepler.state;
+      const room = state.project.rooms.find((candidate) => candidate.id === id);
+      return {
+        itemId: itemsInRoom(state.project, room)[0].id,
+        signature: layoutSignature(state.project, room),
+      };
+    }, roomId);
+
+    const briefEditor = page.locator('[data-layout-brief]');
+    if (!await briefEditor.evaluate((element) => element.open)) {
+      await page.locator('[data-layout-brief] > summary').click();
+    }
+    const capacityEditor = page.locator('[data-brief-section="capacity"]');
+    if (!await capacityEditor.evaluate((element) => element.open)) {
+      await page.locator('[data-brief-section="capacity"] > summary').click();
+    }
+    await page.fill('[data-capacity="simultaneousCooks"]', '2');
+    await page.dispatchEvent('[data-capacity="simultaneousCooks"]', 'change');
+    await page.waitForFunction(() => window.__kepler.state.project.layoutBrief?.capacity?.simultaneousCooks === 2);
+
+    const manualsEditor = page.locator('[data-brief-section="manuals"]');
+    if (!await manualsEditor.evaluate((element) => element.open)) {
+      await page.locator('[data-brief-section="manuals"] > summary').click();
+    }
+    const projection = page.locator(`[data-brief-item="${before.itemId}"] [data-item-plan-projection]`);
+    await projection.check();
+    await page.waitForFunction((itemId) => window.__kepler.state.project.items
+      .find((item) => item.id === itemId)?.planProjectionVerified === true, before.itemId);
+
+    const after = await page.evaluate(async ({ id }) => {
+      const { layoutSignature } = await import('./ui/auto-layout.js');
+      const state = window.__kepler.state;
+      const room = state.project.rooms.find((candidate) => candidate.id === id);
+      return layoutSignature(state.project, room);
+    }, { id: roomId });
+    assert.notEqual(after, before.signature, 'новые исходные данные входят в сигнатуру расчёта');
+    assert.equal(await page.inputValue('[data-capacity="simultaneousCooks"]'), '2');
+    assert.equal(await projection.isChecked(), true);
+
+    // Тесты ниже используют тот же проект: детерминированно возвращаем оба
+    // поля вместо зависимости от порядка глобального Undo-стека.
+    await projection.uncheck();
+    await page.waitForFunction((itemId) => window.__kepler.state.project.items
+      .find((item) => item.id === itemId)?.planProjectionVerified !== true, before.itemId);
+    await page.fill('[data-capacity="simultaneousCooks"]', '');
+    await page.dispatchEvent('[data-capacity="simultaneousCooks"]', 'change');
+    await page.waitForFunction(() => window.__kepler.state.project.layoutBrief?.capacity?.simultaneousCooks == null);
+    if (await briefEditor.evaluate((element) => element.open)) {
+      await page.locator('[data-layout-brief] > summary').click();
+    }
+    assert.equal(await page.locator('[data-layout-brief]').getAttribute('open'), null);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('инвалидирует варианты по новым входам мебели, дверей и соседней геометрии', async () => {
+    const signatures = await app.page.evaluate(async (id) => {
+      const { layoutSignature } = await import('./ui/auto-layout.js');
+      const { cloneProject } = await import('./core/model.js');
+      const source = cloneProject(window.__kepler.state.project);
+      const sign = (project) => layoutSignature(
+        project,
+        project.rooms.find((candidate) => candidate.id === id),
+      );
+
+      const nullOccupancy = cloneProject(source);
+      nullOccupancy.items = [...(nullOccupancy.items || []), {
+        id: 'signature-bed', kind: 'bed-double', x: -10000, y: -10000,
+        w: 1600, h: 2000, rotation: 0, occupancyCount: null,
+      }];
+      const zeroOccupancy = cloneProject(nullOccupancy);
+      zeroOccupancy.items.at(-1).occupancyCount = 0;
+
+      const nullHandle = cloneProject(source);
+      nullHandle.openings = [...(nullHandle.openings || []), {
+        id: 'signature-door', kind: 'door', roomId: id, side: 0, offset: 500,
+        width: 900, height: 2100, type: 'single', handleProjectionMm: null,
+      }];
+      const zeroHandle = cloneProject(nullHandle);
+      zeroHandle.openings.at(-1).handleProjectionMm = 0;
+
+      const plainItem = cloneProject(nullOccupancy);
+      plainItem.items.at(-1).mirrored = false;
+      const mirrored = cloneProject(plainItem);
+      mirrored.items.at(-1).mirrored = true;
+      const baseNeighbor = cloneProject(source);
+      baseNeighbor.rooms.push({
+        id: 'signature-neighbor', type: 'hall', x: 20000, y: 20000, w: 3000, h: 3000,
+      });
+      const neighboringRoom = cloneProject(baseNeighbor);
+      neighboringRoom.rooms.at(-1).x += 1;
+
+      return {
+        nullOccupancy: sign(nullOccupancy), zeroOccupancy: sign(zeroOccupancy),
+        nullHandle: sign(nullHandle), zeroHandle: sign(zeroHandle),
+        plainItem: sign(plainItem), mirrored: sign(mirrored),
+        baseNeighbor: sign(baseNeighbor), neighboringRoom: sign(neighboringRoom),
+      };
+    }, roomId);
+    assert.notEqual(signatures.nullOccupancy, signatures.zeroOccupancy);
+    assert.notEqual(signatures.nullHandle, signatures.zeroHandle);
+    assert.notEqual(signatures.plainItem, signatures.mirrored);
+    assert.notEqual(signatures.baseNeighbor, signatures.neighboringRoom);
+  });
+
   it('строит варианты без мутации, применяет с Undo и соблюдает закрепление', async () => {
     const { page } = app;
     const initial = await roomItems(page, roomId);
@@ -206,7 +316,7 @@ describe('полноценная авторасстановка мебели', (
           id: 'actor-1', alias: 'Жилец 1', heightMm: 1750, mobilityProfile: 'standard',
           bodyWidthMm: 500, bodyDepthMm: 350, carriedObjectIds: [], dataStatus: 'declared',
         }],
-        capacity: { dailySeats: 4, guestSeats: 4 },
+        capacity: { dailySeats: 4, guestSeats: 4, simultaneousCooks: 1 },
         fixedEngineering: [], storageInventory: [], uncertainty: [],
       };
       state.project = project;

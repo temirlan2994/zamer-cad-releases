@@ -9,7 +9,10 @@ import { furnitureDef, isStructural } from './catalog.js';
 import { itemShapes } from './clearance.js';
 import { itemsInRoom } from './furnish.js';
 import { windowMorningExposure } from './insolation.js';
+import { collectRoomDoorRouteEvidence, collectVerifiedRouteMetrics } from './layout-door-route.js';
 import { collectLayoutEvaluatorMetrics } from './layout-evaluators.js';
+import { collectKitchenLayoutMetrics } from './layout-kitchen-metrics.js';
+import { collectBedroomBathroomMetrics } from './layout-room-metrics.js';
 import { evaluateLayoutRules, layoutRuleCoverage, summarizeLayoutRuleResults } from './layout-rules.js';
 import { nestedOuterRect } from './rooms.js';
 import { roomBoundaryEdges, roomContainsPoint, roomRects } from './room-shape.js';
@@ -20,6 +23,9 @@ const ROUTE_STEP = 150;
 const PERSON_RADIUS = 300;
 const DEFAULT_RULES = Object.freeze({ wall: true, clearFront: 500, priority: 9 });
 const EPS = 2;
+const ALTERNATIVE_BED_SIDES = new Set(['bed-single', 'bed-double', 'bed-queen', 'bed-king']);
+const DOUBLE_BED_KINDS = new Set(['bed-double', 'bed-queen', 'bed-king']);
+const BED_KINDS = new Set([...DOUBLE_BED_KINDS, 'bed-single', 'bed-bunk', 'kids-bed', 'crib']);
 
 const PROFILES = Object.freeze([
   { id: 'balanced', title: 'Сбалансированный', movement: 0.45, space: 0.55, door: 0.55, relation: 1.3 },
@@ -103,23 +109,70 @@ function rotatedLocalRect(pose, localX, localY, w, h) {
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
-// Зоны пользования нужны поиску как твёрдые требования. Перекрываться между
-// собой они могут, но физическое тело другого несвязанного предмета не должно
-// их занимать.
-function accessZonesAt(item, pose) {
+function requiresTwoBedSides(item) {
+  return DOUBLE_BED_KINDS.has(item?.kind) && explicitBedOccupancy(item) >= 2;
+}
+
+function explicitBedOccupancy(item) {
+  const assigned = Array.isArray(item?.userActorIds)
+    ? new Set(item.userActorIds
+      .filter((id) => id !== null && id !== undefined && String(id).trim())
+      .map((id) => String(id))).size
+    : null;
+  const rawOccupancy = item?.occupancyCount;
+  const numeric = rawOccupancy === null || rawOccupancy === undefined || rawOccupancy === ''
+    ? null
+    : Number(rawOccupancy);
+  const declared = Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null;
+  if (assigned === null) return declared;
+  if (declared === null) return assigned;
+  // Назначенные пользователи и заявленная вместимость — независимые
+  // доказательства. Двухместность нельзя потерять из-за пустого/частичного
+  // массива userActorIds.
+  return Math.max(assigned, declared);
+}
+
+// Зоны пользования объединены в логические группы. Обычно каждая зона
+// обязательна. У взрослой кровати без явно назначенных двух спящих два
+// боковых подхода — альтернативы: свободным должен остаться хотя бы один.
+// Это не позволяет стене или одной тумбе ложно запретить хорошую позу, но
+// агрегатная проверка ниже всё равно отклонит два предмета, перекрывшие обе
+// стороны по отдельности.
+function accessZoneGroupsAt(item, pose) {
   const rules = rulesOf(item);
-  const zones = [];
+  const groups = [];
   if (rules.clearFront > 0) {
-    zones.push(rotatedLocalRect(pose, 0, item.h / 2 + rules.clearFront / 2, item.w, rules.clearFront));
+    groups.push({
+      id: 'front', mode: 'all',
+      zones: [rotatedLocalRect(pose, 0, item.h / 2 + rules.clearFront / 2, item.w, rules.clearFront)],
+    });
   }
-  if (rules.clearAround > 0) zones.push(grow(bboxOf(shapesAt(item, pose)), rules.clearAround));
+  if (rules.clearAround > 0) {
+    groups.push({ id: 'around', mode: 'all', zones: [grow(bboxOf(shapesAt(item, pose)), rules.clearAround)] });
+  }
   if (rules.clearSides > 0) {
     const d = rules.clearSides;
-    zones.push(rotatedLocalRect(pose, -item.w / 2 - d / 2, item.h * 0.15, d, item.h * 0.7));
-    zones.push(rotatedLocalRect(pose, item.w / 2 + d / 2, item.h * 0.15, d, item.h * 0.7));
+    const left = rotatedLocalRect(pose, -item.w / 2 - d / 2, item.h * 0.15, d, item.h * 0.7);
+    const right = rotatedLocalRect(pose, item.w / 2 + d / 2, item.h * 0.15, d, item.h * 0.7);
+    if (ALTERNATIVE_BED_SIDES.has(item.kind) && !requiresTwoBedSides(item)) {
+      groups.push({ id: 'bed-side', mode: 'any', zones: [left, right] });
+    } else {
+      groups.push(
+        { id: 'side-left', mode: 'all', zones: [left] },
+        { id: 'side-right', mode: 'all', zones: [right] },
+      );
+    }
   }
-  return zones;
+  return groups;
 }
+
+const groupsOf = (record) => (Array.isArray(record?.zoneGroups)
+  ? record.zoneGroups
+  : (record?.zones || []).map((zone, index) => ({ id: `legacy-${index}`, mode: 'all', zones: [zone] })));
+
+const groupSatisfied = (group, test) => group.mode === 'any'
+  ? group.zones.some(test)
+  : group.zones.every(test);
 
 function accessPairCompatible(a, b) {
   const chairs = new Set(['chair', 'chair-soft']);
@@ -145,6 +198,8 @@ function contextOf(project, room, walls) {
     .map((r) => ({ room: r, rect: nestedOuterRect(r, partition) }));
   const doorZones = [];
   const doorRects = [];
+  const doorPortals = [];
+  const openingRects = [];
   const manualDoorCuts = [];
   const windowZones = [];
   const solar = windowMorningExposure(project);
@@ -156,13 +211,29 @@ function contextOf(project, room, walls) {
     if (opening.kind === 'door') {
       const link = doorLink(project, opening, walls);
       if (!link?.includes(room.id)) continue;
-      doorRects.push(grow(placed.rect, 180));
+      openingRects.push({ ...placed.rect });
+      const portalRect = grow(placed.rect, 180);
+      doorRects.push(portalRect);
+      const declaredWidth = Number(opening.width);
+      const activeLeafIndices = opening.type === 'double' && Array.isArray(opening.requiredLeafIndices)
+        ? [...new Set(opening.requiredLeafIndices.filter((index) => index === 0 || index === 1))]
+        : null;
+      const effectiveWidth = activeLeafIndices
+        ? activeLeafIndices.length === 1 ? declaredWidth / 2
+          : activeLeafIndices.length === 2 ? declaredWidth : null
+        : declaredWidth;
+      doorPortals.push({
+        openingId: opening.id,
+        rect: portalRect,
+        clearWidthMm: Number.isFinite(effectiveWidth) && effectiveWidth > 0 ? effectiveWidth : null,
+      });
       if (placed.wall?.kind === 'manual' || placed.wall?.source === 'manual') {
         manualDoorCuts.push({ key: placed.wall.key, rect: grow(placed.rect, EPS) });
       }
       const swing = doorSwingRect(project, opening, walls);
       if (swing && rectTouchesRoom(room, swing)) doorZones.push(swing);
     } else if (opening.kind === 'window' && openingOwnerId(project, opening, walls) === room.id) {
+      openingRects.push({ ...placed.rect });
       const rect = grow(placed.rect, 250);
       windowZones.push(rect);
       windowSun.push({
@@ -172,18 +243,34 @@ function contextOf(project, room, walls) {
       });
     }
   }
-  const wallObstacles = (walls || [])
+  const wallObstacleEntries = (walls || [])
     .filter((wall) => !wall.hidden && (wall.kind === 'manual' || wall.source === 'manual'))
     .flatMap((wall) => wallRects(wall).flatMap((rect) => {
       let parts = [{ ...rect }];
       for (const cut of manualDoorCuts) if (cut.key === wall.key) parts = parts.flatMap((part) => subtractRect(part, cut.rect));
-      return parts;
+      return parts.map((part) => ({ rect: part, wallId: wall.wallId || wall.key }));
     }))
-    .filter((rect) => rectTouchesRoom(room, rect));
+    .filter((entry) => rectTouchesRoom(room, entry.rect));
+  const wallObstacles = wallObstacleEntries.map((entry) => entry.rect);
   return {
-    project, room, walls, children, doorZones, doorRects, windowZones, windowSun,
-    solarKnown: solar.known, wallObstacles, edges: roomBoundaryEdges(room),
+    project, room, walls, children, doorZones, doorRects, doorPortals, openingRects, windowZones, windowSun,
+    solarKnown: solar.known, wallObstacles, wallObstacleEntries, edges: roomBoundaryEdges(room),
   };
+}
+
+function fixedPlacedForScope(ctx, selectedItems) {
+  const selectedIds = new Set(selectedItems.map((item) => item.id));
+  const roomItemIds = new Set(itemsInRoom(ctx.project, ctx.room).map((item) => item.id));
+  return (ctx.project.items || []).flatMap((item) => {
+    if (selectedIds.has(item.id)) return [];
+    // Мебель вложенного помещения уже целиком закрыта child obstacle и не
+    // должна навязывать родителю собственные зоны пользования.
+    if (!roomItemIds.has(item.id)
+      && ctx.children.some((child) => roomContainsPoint(child.room, item.x, item.y))) return [];
+    const record = poseRecord(item, item, 'fixed');
+    if (!record.shapes.some((shape) => rectTouchesRoom(ctx.room, shape))) return [];
+    return [{ item, record, inRoom: roomItemIds.has(item.id) }];
+  });
 }
 
 function shapeBlocked(ctx, rect) {
@@ -197,6 +284,7 @@ function shapeBlocked(ctx, rect) {
 function poseRecord(item, pose, anchor = 'free') {
   const rawRotation = Number(pose.rotation) || 0;
   const normalizedRotation = ((rawRotation % 360) + 360) % 360;
+  const zoneGroups = accessZoneGroupsAt(item, pose);
   return {
     itemId: item.id,
     kind: item.kind,
@@ -204,7 +292,12 @@ function poseRecord(item, pose, anchor = 'free') {
     // Закреплённому предмету оставляем исходное числовое значение угла: -90°
     // и 270° физически равны, но lock не должен незаметно переписывать данные.
     rotation: round(anchor === 'locked' ? rawRotation : normalizedRotation),
-    shapes: shapesAt(item, pose), zones: accessZonesAt(item, pose), anchor,
+    shapes: shapesAt(item, pose),
+    // zones сохраняется как плоское совместимое представление для внешних
+    // потребителей, а валидатор и маршрут используют семантику zoneGroups.
+    zones: zoneGroups.flatMap((group) => group.zones),
+    zoneGroups,
+    anchor,
   };
 }
 
@@ -213,22 +306,66 @@ function angleDistance(a, b) {
   return Math.min(d, 360 - d);
 }
 
+function staticAccessFailure(ctx, zone) {
+  if (!rectInsideRoom(ctx.room, zone)) return 'access-outside';
+  if (ctx.children.some((child) => rectOverlap(zone, child.rect))) return 'access-child';
+  if (ctx.wallObstacles.some((wall) => rectOverlap(zone, wall))) return 'access-wall';
+  return null;
+}
+
+function groupClearOfBodies(ctx, ownerItem, group, blockers) {
+  return groupSatisfied(group, (zone) => (
+    !staticAccessFailure(ctx, zone) && !blockers.some((other) => (
+      !accessPairCompatible(ownerItem, other.item)
+      && other.record.shapes.some((shape) => rectOverlap(zone, shape))
+    ))
+  ));
+}
+
+function groupsClearOfBodies(ctx, ownerItem, record, blockers) {
+  return groupsOf(record).every((group) => groupClearOfBodies(ctx, ownerItem, group, blockers));
+}
+
 function recordHardFailure(ctx, item, record, placed) {
   for (const rect of record.shapes) {
     const blocked = shapeBlocked(ctx, rect);
     if (blocked) return blocked;
     if (rulesOf(item).tall && ctx.windowZones.some((z) => rectOverlap(rect, z))) return 'window';
   }
-  for (const zone of record.zones) {
-    if (!rectInsideRoom(ctx.room, zone)) return 'access-outside';
-    if (ctx.children.some((c) => rectOverlap(zone, c.rect))) return 'access-child';
-    if (ctx.wallObstacles.some((wall) => rectOverlap(zone, wall))) return 'access-wall';
+  for (const group of groupsOf(record)) {
+    const failures = group.zones.map((zone) => staticAccessFailure(ctx, zone));
+    const valid = group.mode === 'any' ? failures.some((failure) => !failure) : failures.every((failure) => !failure);
+    if (!valid) return failures.find(Boolean) || 'access';
   }
-  for (const other of placed) {
+  const fixedPlaced = Array.isArray(ctx.fixedPlaced) ? ctx.fixedPlaced : [];
+  const bodyBlockers = [...fixedPlaced, ...placed];
+  for (const other of bodyBlockers) {
     if (record.shapes.some((a) => other.record.shapes.some((b) => rectOverlap(a, b)))) return 'collision';
-    if (!accessPairCompatible(item, other.item)) {
-      if (record.shapes.some((a) => other.record.zones.some((b) => rectOverlap(a, b)))) return 'foreign-access';
-      if (record.zones.some((a) => other.record.shapes.some((b) => rectOverlap(a, b)))) return 'own-access';
+  }
+  // Группы проверяются против совокупности тел, а не попарно. Иначе два
+  // разных предмета могли занять по одной альтернативной стороне кровати.
+  if (!groupsClearOfBodies(ctx, item, record, bodyBlockers)) return 'own-access';
+  const candidate = { item, record };
+  // Зоны пользования проверяем только у предметов текущей задачи. Внешний
+  // предмет может лишь частично заходить проекцией в комнату; проверять его
+  // собственную зону относительно чужой комнаты было бы ложным запретом.
+  for (const other of placed) {
+    const blockers = [...fixedPlaced, ...placed.filter((entry) => entry !== other), candidate];
+    if (!groupsClearOfBodies(ctx, other.item, other.record, blockers)) return 'foreign-access';
+  }
+  for (const other of fixedPlaced.filter((entry) => entry.inRoom)) {
+    const baseline = [
+      ...fixedPlaced.filter((entry) => entry !== other),
+      ...placed,
+    ];
+    // Partial layout не обязан чинить уже существовавшую ошибку вне scope,
+    // но не может перекрыть последнюю свободную альтернативу фиксированного
+    // предмета (например, вторую сторону исключённой кровати).
+    if (groupsOf(other.record).some((group) => (
+      groupClearOfBodies(ctx, other.item, group, baseline)
+        && !groupClearOfBodies(ctx, other.item, group, [...baseline, candidate])
+    ))) {
+      return 'fixed-access';
     }
   }
   return null;
@@ -442,7 +579,24 @@ function searchProfile(ctx, movable, lockedPlaced, allBasePoses, profile, opts, 
 }
 
 function routeCheck(ctx, records) {
-  if (!ctx.doorRects.length) return { ok: true, unknown: true, minWidth: null };
+  if (!ctx.doorPortals.length) return {
+    ok: true, unknown: true, minWidth: null, reason: 'Нет двери: маршрут не проверяется',
+  };
+  const narrowPortal = ctx.doorPortals.find((portal) => (
+    Number.isFinite(portal.clearWidthMm) && portal.clearWidthMm < PERSON_RADIUS * 2
+  ));
+  if (narrowPortal) return {
+    ok: false,
+    unknown: false,
+    minWidth: narrowPortal.clearWidthMm,
+    reason: `Ширина дверного портала ${Math.round(narrowPortal.clearWidthMm)} мм меньше 600 мм`,
+  };
+  if (ctx.doorPortals.some((portal) => !Number.isFinite(portal.clearWidthMm))) return {
+    ok: true,
+    unknown: true,
+    minWidth: null,
+    reason: 'Неизвестна чистая ширина дверного портала: маршрут 600 мм не доказан',
+  };
   const { room } = ctx;
   const cols = Math.max(1, Math.ceil(room.w / ROUTE_STEP));
   const rows = Math.max(1, Math.ceil(room.h / ROUTE_STEP));
@@ -469,8 +623,8 @@ function routeCheck(ctx, records) {
   }
   const visited = new Uint8Array(cols * rows);
   const queue = [];
-  const portals = ctx.doorRects.map((door) => cells
-    .map((point, index) => (!blocked[index] && distToRect(point, door) <= PERSON_RADIUS + ROUTE_STEP ? index : -1))
+  const portals = ctx.doorPortals.map((portal) => cells
+    .map((point, index) => (!blocked[index] && distToRect(point, portal.rect) <= PERSON_RADIUS + ROUTE_STEP ? index : -1))
     .filter((index) => index >= 0));
   for (const index of portals[0] || []) {
     if (!visited[index]) { visited[index] = 1; queue.push(index); }
@@ -483,23 +637,39 @@ function routeCheck(ctx, records) {
       if (!blocked[ni] && !visited[ni]) { visited[ni] = 1; queue.push(ni); }
     }
   }
-  if (!queue.length) return { ok: false, unknown: false, minWidth: 0, reason: 'От двери нет прохода шириной 600 мм' };
+  const isReachable = (point) => Boolean(point && cells.some((cell, index) => (
+    visited[index] && Math.hypot(cell.x - point.x, cell.y - point.y) <= ROUTE_STEP * 1.1
+  )));
+  const routeResult = (value) => {
+    const result = { ...value, computedFromCurrentLayout: true };
+    // Нужен только синхронной валидации двери; в Worker/result функция не
+    // сериализуется и не попадает в публичный layout.
+    Object.defineProperty(result, 'isReachable', { value: isReachable });
+    return result;
+  };
+  if (!queue.length) return routeResult({
+    ok: false, unknown: false, minWidth: 0, reason: 'От двери нет прохода шириной 600 мм',
+  });
   if (portals.some((portal) => !portal.length || !portal.some((index) => visited[index]))) {
-    return { ok: false, unknown: false, minWidth: 0, reason: 'Дверные порталы не связаны проходом шириной 600 мм' };
+    return routeResult({
+      ok: false, unknown: false, minWidth: 0, reason: 'Дверные порталы не связаны проходом шириной 600 мм',
+    });
   }
   const zoneAccess = new Map(records.map((record) => [
     record.itemId,
-    record.zones.map((zone) => cells.some((point, index) => visited[index] && pointInRect(point, zone))),
+    groupsOf(record).map((group) => groupSatisfied(group, (zone) => (
+      cells.some((point, index) => visited[index] && pointInRect(point, zone))
+    ))),
   ]));
   for (const record of records) {
-    if (isStructural(record.kind)) continue;
+    if (record.routeTarget === false || isStructural(record.kind)) continue;
     const reached = cells.some((p, i) => visited[i] && record.shapes.some((s) => distToRect(p, s) <= PERSON_RADIUS + ROUTE_STEP * 1.5));
-    if (!reached) return {
+    if (!reached) return routeResult({
       ok: false, unknown: false, minWidth: 0, zoneAccess,
       reason: `К предмету «${record.kind}» нет прохода шириной 600 мм`,
-    };
+    });
   }
-  return { ok: true, unknown: false, minWidth: PERSON_RADIUS * 2, zoneAccess };
+  return routeResult({ ok: true, unknown: false, minWidth: PERSON_RADIUS * 2, zoneAccess });
 }
 
 function layoutSignature(placements) {
@@ -532,6 +702,18 @@ function publicPlacements(records) {
   return records.map((r) => ({ itemId: r.itemId, x: r.x, y: r.y, rotation: r.rotation }));
 }
 
+// Hard/conditional-hard уже отбрасываются validateFurnitureLayout(). Здесь
+// мягкие правила действительно влияют на порядок вариантов: подтверждённый
+// pass слегка поощряется, fail получает заметный штраф, unknown нейтрален.
+export function layoutRuleScoreAdjustment(results = []) {
+  return results.reduce((score, result) => {
+    if (result?.severity !== 'soft') return score;
+    if (result.status === 'pass') return score + 0.25;
+    if (result.status === 'fail') return score - 1;
+    return score;
+  }, 0);
+}
+
 /**
  * Независимая проверка готового варианта. Поиск вызывает её для финалистов,
  * но функцию можно повторно запустить перед применением или после импорта.
@@ -539,6 +721,7 @@ function publicPlacements(records) {
 export function validateFurnitureLayout(project, room, walls, layout, opts = {}) {
   const ctx = contextOf(project, room, walls);
   const items = itemsForLayout(project, room, opts.itemIds);
+  ctx.fixedPlaced = fixedPlacedForScope(ctx, items);
   const checks = [];
   const expectedIds = new Set(items.map((item) => item.id));
   const poses = new Map();
@@ -556,6 +739,7 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     poses.set(pose.itemId, pose);
   }
   const placed = [];
+  const allPosedRecords = [];
   const locked = new Set([
     ...(opts.lockedIds || []),
     ...items.filter((item) => isStructural(item.kind) || item.autoLayoutLocked === true).map((item) => item.id),
@@ -566,11 +750,14 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
       checks.push({ id: 'AUTO-ITEM-PRESENT', status: 'fail', itemIds: [item.id], text: 'Предмет отсутствует в варианте' });
       continue;
     }
+    // Сохраняем каждую заданную позу до lock/geometry-проверок. Невалидный
+    // предмет остаётся реальным препятствием для маршрута и кинематики двери.
+    const record = poseRecord(item, pose, 'validate');
+    allPosedRecords.push(record);
     if (locked.has(item.id) && (Math.abs(pose.x - item.x) > 0.5 || Math.abs(pose.y - item.y) > 0.5 || angleDistance(pose.rotation, item.rotation) > 0.001)) {
       checks.push({ id: 'AUTO-LOCKED', status: 'fail', itemIds: [item.id], text: 'Закреплённый предмет был перемещён' });
       continue;
     }
-    const record = poseRecord(item, pose, 'validate');
     const failure = recordHardFailure(ctx, item, record, placed);
     checks.push({
       id: `AUTO-GEOMETRY-${item.id}`,
@@ -580,10 +767,26 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     if (!failure) placed.push({ item, record });
   }
   const records = placed.map((p) => p.record);
-  const route = routeCheck(ctx, records);
+  const fixedRoomPlaced = ctx.fixedPlaced.filter((entry) => entry.inRoom);
+  const externalFixedPlaced = ctx.fixedPlaced.filter((entry) => !entry.inRoom);
+  const metricItems = [...items, ...fixedRoomPlaced.map((entry) => entry.item)];
+  const metricRecords = [...records, ...fixedRoomPlaced.map((entry) => entry.record)];
+  const placementGeometryValid = checks.every((entry) => entry.status !== 'fail')
+    && records.length === items.length;
+  const allPosedGeometryComplete = allPosedRecords.length === items.length
+    && allPosedRecords.every((record) => record.shapes.length > 0 && record.shapes.every((shape) => (
+      [shape.x, shape.y, shape.w, shape.h].every(Number.isFinite) && shape.w > 0 && shape.h > 0
+    )));
+  const routeRecords = [
+    ...ctx.fixedPlaced.map((entry) => (entry.inRoom
+      ? entry.record
+      : { ...entry.record, routeTarget: false })),
+    ...allPosedRecords,
+  ];
+  const route = routeCheck(ctx, routeRecords);
   checks.push({
     id: 'AUTO-ROUTE-600', status: route.unknown ? 'unknown' : route.ok ? 'pass' : 'fail',
-    itemIds: [], text: route.unknown ? 'Нет двери: маршрут не проверяется' : route.ok ? 'Все предметы доступны по проходу 600 мм' : route.reason,
+    itemIds: [], text: route.unknown ? route.reason : route.ok ? 'Все предметы доступны по проходу 600 мм' : route.reason,
   });
   const geometryFails = checks.filter((entry) => entry.id.startsWith('AUTO-GEOMETRY-') && entry.status === 'fail');
   const capacity = project.layoutBrief?.capacity || {};
@@ -591,45 +794,125 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     .map(Number)
     .filter((value) => Number.isFinite(value) && value >= 0);
   const requiredSeatCount = requestedSeats.length ? Math.max(...requestedSeats) : null;
+  const obstacleRects = [
+    ...ctx.children.map((child) => child.rect),
+    ...ctx.wallObstacles,
+    ...externalFixedPlaced.flatMap((entry) => entry.record.shapes),
+  ];
+  const roomMetrics = collectBedroomBathroomMetrics({
+    room,
+    items: metricItems,
+    records: metricRecords,
+    extraObstacles: obstacleRects,
+    // Наружная грань вложенного помещения — такая же реальная опора для
+    // изголовья, как ручная перегородка; само помещение остаётся obstacle.
+    supportObstacles: [...ctx.wallObstacles, ...ctx.children.map((child) => child.rect)],
+    supportVoids: ctx.openingRects,
+  });
+  const kitchenMetrics = collectKitchenLayoutMetrics({
+    room,
+    items: metricItems,
+    records: metricRecords,
+    obstacleRects,
+    obstacleItems: externalFixedPlaced.map((entry) => entry.item),
+    simultaneousCooks: capacity.simultaneousCooks,
+  });
+  const actors = Array.isArray(project.layoutBrief?.actors) ? project.layoutBrief.actors : [];
+  const routeActorModelVerified = actors.length > 0 && actors.every((actor) => {
+    if (!['measured', 'declared'].includes(actor?.dataStatus)) return false;
+    const width = Number(actor.bodyWidthMm);
+    const depth = Number(actor.bodyDepthMm);
+    const carriesNothing = !Array.isArray(actor.carriedObjectIds) || actor.carriedObjectIds.length === 0;
+    return width > 0 && depth > 0 && Math.hypot(width, depth) <= PERSON_RADIUS * 2 && carriesNothing;
+  });
+  const routeMetrics = placementGeometryValid ? collectVerifiedRouteMetrics({ route, actors }) : {};
+  const doorObstacleRects = [
+    ...allPosedRecords.flatMap((record) => record.shapes),
+    ...(project.items || [])
+      .filter((item) => !expectedIds.has(item.id))
+      .flatMap((item) => itemShapes(item))
+      .filter((rect) => rectTouchesRoom(room, rect)),
+    ...ctx.wallObstacleEntries.map((entry) => ({ ...entry, type: 'wall' })),
+    ...ctx.children.map((child) => ({ rect: child.rect, type: 'child', roomId: child.room.id })),
+  ];
+  const doorObstacleGeometryComplete = doorObstacleRects.every((value) => {
+    const rect = value?.rect || value;
+    return [rect?.x, rect?.y, rect?.w, rect?.h].every(Number.isFinite) && rect.w > 0 && rect.h > 0;
+  });
+  const doorEvidence = collectRoomDoorRouteEvidence({
+    project,
+    room,
+    walls,
+    obstacleRects: doorObstacleRects,
+    isReachable: placementGeometryValid && routeActorModelVerified && typeof route.isReachable === 'function'
+      ? route.isReachable : null,
+    modeledScopeComplete: placementGeometryValid && allPosedGeometryComplete && doorObstacleGeometryComplete,
+  });
+  const routeForCanonicalMetrics = placementGeometryValid || route.ok === false ? route : null;
+  const evaluatorMetrics = collectLayoutEvaluatorMetrics({
+    project, room, items: metricItems, records: metricRecords, route: routeForCanonicalMetrics,
+    context: {
+      doorZones: ctx.doorZones,
+      requiredSeatCount,
+      requiredDiningSeatCount: requiredSeatCount,
+    },
+  });
+  const geometryCollisionCount = geometryFails
+    .filter((entry) => /collision|access|wall/.test(entry.text)).length;
   const metrics = {
-    ...collectLayoutEvaluatorMetrics({
-      project, room, items, records, route,
-      context: {
-        doorZones: ctx.doorZones,
-        requiredSeatCount,
-        requiredDiningSeatCount: requiredSeatCount,
-      },
-    }),
-    room_polygon_valid: ctx.edges.length >= 3,
-    solid_collision_count: geometryFails.filter((entry) => /collision|access|wall/.test(entry.text)).length,
-    door_swing_collision_count: geometryFails.filter((entry) => entry.text.includes('door')).length,
-    furniture_support_valid: !geometryFails.some((entry) => /outside|child/.test(entry.text)),
+    ...evaluatorMetrics,
+    ...roomMetrics,
+    ...kitchenMetrics,
+    ...routeMetrics,
+    ...doorEvidence.metrics,
+    solid_collision_count: Math.max(
+      Number(evaluatorMetrics.solid_collision_count) || 0,
+      geometryCollisionCount,
+    ),
+    furniture_support_valid: evaluatorMetrics.furniture_support_valid === true
+      && !geometryFails.some((entry) => /outside|child/.test(entry.text)),
   };
-  if (!route.unknown) {
-    metrics.required_routes_reachable = route.ok;
-    metrics.agent_body_route_valid = route.ok;
-    metrics.route_bottleneck_valid = route.ok;
-    if (items.some((item) => ['chair', 'chair-soft'].includes(item.kind))) metrics.all_dining_seats_reachable = route.ok;
-  } else {
+  // Грубый evaluator всегда возвращает 0, даже когда swept-геометрия двери
+  // неизвестна. Каноническая метрика допускается только из доказательства
+  // двери; найденная geometry-коллизия всегда остаётся положительным fail.
+  const geometryDoorFailureCount = geometryFails.filter((entry) => entry.text.includes('door')).length;
+  const evidencedDoorCollisionCount = Number(doorEvidence.metrics.door_swing_collision_count);
+  delete metrics.door_swing_collision_count;
+  if (geometryDoorFailureCount > 0 || (Number.isFinite(evidencedDoorCollisionCount) && evidencedDoorCollisionCount > 0)) {
+    metrics.door_swing_collision_count = Math.max(
+      geometryDoorFailureCount,
+      Number.isFinite(evidencedDoorCollisionCount) ? evidencedDoorCollisionCount : 0,
+    );
+  } else if (allPosedGeometryComplete
+    && Object.hasOwn(doorEvidence.metrics, 'door_swing_collision_count')
+    && evidencedDoorCollisionCount === 0) {
+    metrics.door_swing_collision_count = 0;
+  }
+  // Комнатный flood-fill остаётся обязательной внутренней проверкой, но не
+  // подменяет PATH001/2: для них нужны явные OD-пары и подтверждённая модель
+  // конкретного пользователя. Удаляем более грубые evaluator-метрики.
+  delete metrics.required_routes_reachable;
+  delete metrics.agent_body_route_valid;
+  if (route.unknown || !placementGeometryValid) {
     // Номинальное количество иконок известно, пригодность мест без маршрута — нет.
     delete metrics.usable_seat_count;
     delete metrics.usable_dining_seat_count;
   }
-  const bedsForCapacity = items.filter((item) => ['bed-double', 'bed-king', 'bed-queen', 'bed-single', 'kids-bed', 'crib'].includes(item.kind));
-  if (bedsForCapacity.length) {
-    metrics.bedside_surface_count = items.filter((item) => ['nightstand', 'side-table'].includes(item.kind)).length;
-    metrics.required_bedside_surface_count = bedsForCapacity.reduce((sum, bed) => (
-      sum + (['bed-double', 'bed-king', 'bed-queen'].includes(bed.kind) ? 2 : 1)
-    ), 0);
+  const doubleBeds = metricItems.filter((item) => ['bed-double', 'bed-king', 'bed-queen'].includes(item.kind));
+  const twoOccupantDoubleBeds = doubleBeds.filter(requiresTwoBedSides);
+  if (placementGeometryValid && twoOccupantDoubleBeds.length && !route.unknown) {
+    metrics.independent_bed_access = twoOccupantDoubleBeds.every((bed) => {
+      const record = metricRecords.find((entry) => entry.itemId === bed.id);
+      const groupAccess = route.zoneAccess?.get(bed.id) || [];
+      const sideIndices = groupsOf(record).flatMap((group, index) => (
+        group.id === 'side-left' || group.id === 'side-right' ? [index] : []
+      ));
+      return sideIndices.length === 2 && sideIndices.every((index) => groupAccess[index] === true);
+    });
   }
-  const doubleBeds = items.filter((item) => ['bed-double', 'bed-king', 'bed-queen'].includes(item.kind));
-  if (doubleBeds.length && !route.unknown) metrics.independent_bed_access = doubleBeds.every((bed) => {
-    const sides = route.zoneAccess?.get(bed.id) || [];
-    return sides.length >= 2 && sides.slice(0, 2).every(Boolean);
-  });
-  const beds = items.filter((item) => ['bed-double', 'bed-king', 'bed-queen', 'bed-single', 'kids-bed', 'crib'].includes(item.kind));
+  const beds = metricItems.filter((item) => ['bed-double', 'bed-king', 'bed-queen', 'bed-single', 'kids-bed', 'crib'].includes(item.kind));
   if (ctx.solarKnown && beds.length) metrics.bed_morning_sun_preference_satisfied = beds.every((bed) => {
-    const record = records.find((entry) => entry.itemId === bed.id);
+    const record = metricRecords.find((entry) => entry.itemId === bed.id);
     if (!record) return false;
     const center = centerOf(bboxOf(record.shapes));
     return ctx.windowSun.some((entry) => (entry.morningMinutes || 0) >= 30 && distToRect(center, entry.rect) <= 3500);
@@ -640,24 +923,95 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     measurement_uncertainty: Array.isArray(brief.uncertainty)
       && brief.uncertainty.some((entry) => entry?.status === 'bounded' || entry?.status === 'resolved'),
     fixed_engineering: Array.isArray(brief.fixedEngineering)
+      && brief.fixedEngineering.length > 0
       && brief.fixedEngineering.every((entry) => ['measured', 'declared'].includes(entry?.dataStatus)),
-    catalog_geometry: items.length > 0
-      && items.every((item) => ['verified_sku', 'parametric_custom'].includes(item.geometryStatus)),
-    appliance_manuals: items.length > 0
-      && items.every((item) => item.manualStatus === 'verified' || item.manualStatus === 'not_required'),
+    catalog_geometry: metricItems.length > 0
+      && metricItems.every((item) => ['verified_sku', 'parametric_custom'].includes(item.geometryStatus)),
+    appliance_manuals: metricItems.length > 0
+      && metricItems.every((item) => item.manualStatus === 'verified' || item.manualStatus === 'not_required'),
+  };
+  const adultBeds = metricItems.filter((item) => ['bed-double', 'bed-king', 'bed-queen', 'bed-single'].includes(item.kind));
+  const sleepBeds = metricItems.filter((item) => BED_KINDS.has(item.kind));
+  const occupancies = sleepBeds.map(explicitBedOccupancy);
+  const doubleOccupancies = doubleBeds.map(explicitBedOccupancy);
+  const knownOccupancyTotal = occupancies
+    .filter((value) => value !== null)
+    .reduce((sum, value) => sum + value, 0);
+  const knownRequiredBedsideSurfaces = sleepBeds.reduce((sum, bed, index) => {
+    const occupancy = occupancies[index];
+    if (occupancy === null || occupancy <= 0) return sum;
+    return sum + (DOUBLE_BED_KINDS.has(bed.kind) ? Math.min(2, occupancy) : 1);
+  }, 0);
+  const unknownBedOccupancy = occupancies.some((value) => value === null);
+  const knownBedsideCoverage = Number(metrics.bedside_surface_count);
+  const bedsideSurfaceApplicability = !sleepBeds.length
+    ? false
+    : knownOccupancyTotal >= 1
+      ? unknownBedOccupancy
+        ? Number.isFinite(knownBedsideCoverage) && knownBedsideCoverage < knownRequiredBedsideSurfaces
+          ? true : 'unknown'
+        : true
+      : unknownBedOccupancy ? 'unknown' : false;
+  const independentBedApplicability = !doubleBeds.length
+    ? false
+    : doubleOccupancies.some((value) => value >= 2)
+      ? metrics.independent_bed_access === false
+        ? true
+        : doubleOccupancies.some((value) => value === null) ? 'unknown' : true
+      : doubleOccupancies.some((value) => value === null) ? 'unknown' : false;
+  const footRouteFacts = adultBeds.map((bed) => (
+    ['measured', 'declared'].includes(bed.routeToSecondSideDataStatus)
+      && ['foot', 'side', 'not_required'].includes(bed.routeToSecondSide)
+      ? bed.routeToSecondSide : null
+  ));
+  const footRouteApplicability = !adultBeds.length
+    ? false
+    : footRouteFacts.includes('foot')
+      ? Number(metrics.bed_verified_foot_route_clearance_mm) < 800
+        ? true
+        : footRouteFacts.some((value) => value === null) ? 'unknown' : true
+      : footRouteFacts.some((value) => value === null) ? 'unknown' : false;
+  const hasStandardBathActor = actors.some((actor) => (
+    ['measured', 'declared'].includes(actor?.dataStatus) && actor.mobilityProfile === 'standard'
+  ));
+  const hasUnknownBathActor = actors.some((actor) => (
+    !['measured', 'declared'].includes(actor?.dataStatus)
+      || !actor?.mobilityProfile || actor.mobilityProfile === 'unknown'
+  ));
+  const bathProfileApplicability = !actors.length
+    ? 'unknown'
+    : hasStandardBathActor ? true : hasUnknownBathActor ? 'unknown' : false;
+  let kitchenAisleApplicability = 'unknown';
+  if (kitchenMetrics.kitchen_front_geometry_complete === true
+    && kitchenMetrics.kitchen_aisle_evidence_complete === true) {
+    kitchenAisleApplicability = Number(kitchenMetrics.kitchen_opposing_front_pair_count) > 0;
+  }
+  const ruleApplicability = {
+    ...doorEvidence.ruleApplicability,
+    PATH001: 'unknown',
+    PATH002: 'unknown',
+    ...(adultBeds.length ? {
+      BED003: independentBedApplicability,
+      BED005: footRouteApplicability,
+    } : {}),
+    ...(sleepBeds.length ? { BED006: bedsideSurfaceApplicability } : {}),
+    ...(metricItems.some((item) => item.kind === 'toilet') ? { BATH003: bathProfileApplicability } : {}),
+    ...(Number(kitchenMetrics.kitchen_item_count) > 0 ? { KIT004: kitchenAisleApplicability } : {}),
   };
   const ruleResults = evaluateLayoutRules({
     roomType: room.type,
-    itemKinds: items.map((item) => item.kind),
+    itemKinds: metricItems.map((item) => item.kind),
     metrics,
     externalData,
+    ruleApplicability,
   });
   const ruleSummary = summarizeLayoutRuleResults(ruleResults);
   return {
     ok: checks.every((c) => c.status !== 'fail') && records.length === items.length && ruleSummary.feasible,
     checks,
-    route,
+    route: { ...route },
     records,
+    allPosedRecords,
     ruleResults,
     ruleSummary,
     unsupported: ['точная фотометрия', 'акустика', 'паспортные ограничения конкретных SKU'],
@@ -678,6 +1032,7 @@ export function generateFurnitureLayouts(project, room, walls, options = {}) {
   };
   const ctx = contextOf(project, room, walls);
   const items = itemsForLayout(project, room, options.itemIds);
+  ctx.fixedPlaced = fixedPlacedForScope(ctx, items);
   const registryCoverage = layoutRuleCoverage();
   if (!items.length) {
     return { status: 'insufficient_data', layouts: [], diagnostics: ['В комнате нет мебели'], coverage: registryCoverage };
@@ -710,31 +1065,30 @@ export function generateFurnitureLayouts(project, room, walls, options = {}) {
     for (const state of states.slice(0, 24)) finalists.push({ state, profile });
   }
   finalists.sort((a, b) => b.state.score - a.state.score || stateKey(a.state.placed).localeCompare(stateKey(b.state.placed)));
-  // Варианты должны отличаться не только координатами, но и замыслом. Если
-  // просто взять общий top-N, шкала «Больше проходов» обычно занимает все
-  // места. Обходим профили по кругу, сохраняя их внутренний порядок.
-  const groups = profiles.map((profile) => finalists.filter((entry) => entry.profile.id === profile.id));
-  const ordered = [];
-  for (let rank = 0; groups.some((entries) => rank < entries.length); rank += 1) {
-    for (const entries of groups) if (entries[rank]) ordered.push(entries[rank]);
-  }
-  const layouts = [];
-  const coveredProfiles = new Set();
-  const seen = new Set();
-  for (const { state, profile } of ordered) {
+  // Для каждого замысла перепроверяем ограниченный top-K, затем ранжируем
+  // уже с фактическими soft-правилами. Так хороший зазор влияет на выбор, но
+  // стоимость валидации остаётся ограниченной.
+  const validated = [];
+  const checkedByProfile = new Map(profiles.map((profile) => [profile.id, 0]));
+  for (const { state, profile } of finalists) {
+    const checked = checkedByProfile.get(profile.id) || 0;
+    if (checked >= 12) continue;
+    checkedByProfile.set(profile.id, checked + 1);
     const records = state.placed.map((p) => p.record);
     const placements = publicPlacements(records);
     const signature = layoutSignature(placements);
-    if (seen.has(signature)) continue;
     const draft = { placements };
     const validation = validateFurnitureLayout(project, room, walls, draft, { lockedIds: opts.lockedIds, itemIds: options.itemIds });
     if (!validation.ok) continue;
-    seen.add(signature);
-    layouts.push({
+    const ruleScoreAdjustment = layoutRuleScoreAdjustment(validation.ruleResults);
+    validated.push({
       id: '',
       label: profile.title,
       profile: profile.id,
-      score: Math.round(state.score * 100) / 100,
+      score: Math.round((state.score + ruleScoreAdjustment) * 100) / 100,
+      baseScore: Math.round(state.score * 100) / 100,
+      ruleScoreAdjustment: Math.round(ruleScoreAdjustment * 100) / 100,
+      signature,
       placements,
       metrics: metricsOf(items, records, validation.route),
       checks: validation.checks,
@@ -742,8 +1096,24 @@ export function generateFurnitureLayouts(project, room, walls, options = {}) {
       ruleSummary: validation.ruleSummary,
       unknowns: validation.unsupported,
     });
-    coveredProfiles.add(profile.id);
-    if (layouts.length >= opts.count && coveredProfiles.size === profiles.length) break;
+  }
+  const groups = profiles.map((profile) => validated
+    .filter((entry) => entry.profile === profile.id)
+    .sort((a, b) => b.score - a.score || a.signature.localeCompare(b.signature)));
+  // Варианты должны отличаться не только координатами, но и замыслом. Если
+  // просто взять общий top-N, шкала «Больше проходов» обычно занимает все
+  // места. Обходим профили по кругу, сохраняя их внутренний порядок.
+  const ordered = [];
+  for (let rank = 0; groups.some((entries) => rank < entries.length); rank += 1) {
+    for (const entries of groups) if (entries[rank]) ordered.push(entries[rank]);
+  }
+  const layouts = [];
+  const seen = new Set();
+  for (const layout of ordered) {
+    if (seen.has(layout.signature)) continue;
+    seen.add(layout.signature);
+    const { signature: _signature, ...publicLayout } = layout;
+    layouts.push(publicLayout);
   }
   if (!layouts.length) {
     const top = Object.entries(failures).sort((a, b) => b[1] - a[1]).slice(0, 3);

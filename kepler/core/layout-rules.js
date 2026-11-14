@@ -8,6 +8,9 @@
 import {
   FURNITURE_RULE_CATALOG, FURNITURE_RULE_CATALOG_METADATA,
 } from './layout-rule-catalog.generated.js';
+import {
+  ENHANCED_DOOR_ROUTE_BINDINGS,
+} from './layout-door-route.js';
 
 export const RULE_IMPLEMENTATION = Object.freeze({
   IMPLEMENTED: 'implemented',
@@ -29,9 +32,14 @@ const KITCHENS = ['kitchen', 'kitchen-living'];
 const BATHROOMS = ['bathroom', 'guest-wc', 'shower-room', 'tub-room'];
 
 const BEDS = ['bed-double', 'bed-king', 'bed-queen', 'bed-single', 'bed-bunk', 'kids-bed', 'crib'];
+const ADULT_BEDS = ['bed-double', 'bed-king', 'bed-queen', 'bed-single'];
 const SOFAS = ['sofa', 'sofa-2', 'sofa-corner', 'sofa-u', 'loveseat', 'sofa-bed', 'daybed'];
 const DINING_TABLES = ['dining-table', 'dining-table-6', 'table-round', 'conference-table'];
-const KITCHEN_ITEMS = ['kitchen-row', 'kitchen-corner', 'kitchen-u', 'kitchen-island', 'stove', 'cooktop-hood', 'sink', 'oven', 'dishwasher', 'fridge', 'fridge-side'];
+const KITCHEN_ITEMS = [
+  'kitchen-row', 'kitchen-corner', 'kitchen-u', 'kitchen-island',
+  'stove', 'cooktop-hood', 'sink', 'bar-counter', 'oven', 'microwave',
+  'dishwasher', 'fridge', 'fridge-side', 'pantry',
+];
 const BATH_ITEMS = ['toilet', 'bidet', 'washbasin', 'washbasin-double', 'vanity-unit', 'bath', 'bath-corner', 'jacuzzi', 'shower', 'urinal'];
 
 const check = (key, op, target = undefined) => Object.freeze({ key, op, ...(target === undefined ? {} : { target }) });
@@ -88,20 +96,23 @@ const CURATED_LAYOUT_RULES = Object.freeze([
   rule('BED001', 'Спальня', 'Размер каркаса вместо размера матраса', 'hard', 'requires_external_data', 'catalog_geometry', [
     check('bed_frame_geometry_verified', 'true'),
   ], { applies: { roomTypes: BEDROOMS, anyItemKinds: BEDS }, requiresData: ['catalog_geometry'], sourceIds: ['ROOM-S17'] }),
+  rule('BED002', 'Спальня', 'Опорное изголовье', 'soft', 'implemented', 'clearance', [
+    check('bed_headboard_supported', 'true'),
+  ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: ['bed-double', 'bed-king', 'bed-queen', 'bed-single'] } }),
   rule('BED003', 'Спальня', 'Независимый выход двух спящих', 'conditional_hard', 'implemented', 'activity_space', [
     check('independent_bed_access', 'true'),
   ], { applies: { roomTypes: BEDROOMS, anyItemKinds: ['bed-double', 'bed-king', 'bed-queen'] } }),
   rule('BED004', 'Спальня', 'Боковой проход у взрослой кровати', 'soft', 'implemented', 'clearance', [
     check('bed_side_clearance_mm', 'gte', 600),
-  ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: BEDS }, parameters: { recommendationFloorMm: 600, comfortTargetMm: [800, 900] } }),
+  ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: ADULT_BEDS }, parameters: { recommendationFloorMm: 600, comfortTargetMm: [800, 900] } }),
   rule('BED005', 'Спальня', 'Проход в ногах', 'soft', 'implemented', 'clearance', [
-    check('bed_foot_clearance_mm', 'gte', 800),
-  ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: BEDS }, parameters: { comfortTargetMm: [800, 1000] } }),
+    check('bed_verified_foot_route_clearance_mm', 'gte', 800),
+  ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: ADULT_BEDS }, parameters: { comfortTargetMm: [800, 1000] } }),
   rule('BED006', 'Спальня', 'Поверхность для каждого спящего', 'soft', 'implemented', 'capacity', [
     check('bedside_surface_count', 'gteMetric', 'required_bedside_surface_count'),
   ], { basis: 'design_heuristic', applies: { roomTypes: BEDROOMS, anyItemKinds: BEDS } }),
   rule('BED007', 'Спальня', 'Зазор тумбы у кровати', 'soft', 'implemented', 'clearance', [
-    check('bed_nightstand_gap_mm', 'between', [50, 100]),
+    check('bed_nightstand_gaps_valid', 'true'),
   ], { basis: 'published_guideline', applies: { roomTypes: BEDROOMS, anyItemKinds: ['nightstand'] }, sourceIds: ['ROOM-S09'], parameters: { comfortTargetMm: [50, 100] } }),
   rule('BED013', 'Спальня', 'Утреннее солнце как предпочтение', 'soft', 'requires_external_data', 'solar_and_glare', [
     check('bed_morning_sun_preference_satisfied', 'true'),
@@ -149,10 +160,11 @@ const CURATED_LAYOUT_RULES = Object.freeze([
     check('main_route_crosses_hot_zone', 'false'),
   ], { basis: 'design_heuristic', applies: { roomTypes: KITCHENS, anyItemKinds: KITCHEN_ITEMS } }),
   rule('KIT004', 'Кухня', 'Рабочий проход', 'soft', 'implemented', 'clearance', [
-    check('kitchen_work_aisle_mm', 'gte', 1067),
+    check('kitchen_work_aisle_mm', 'gteMetric', 'kitchen_work_aisle_required_mm'),
   ], { basis: 'published_guideline', applies: { roomTypes: KITCHENS, anyItemKinds: KITCHEN_ITEMS }, sourceIds: ['ROOM-S06'], parameters: { oneCookMm: 1067, multipleCooksMm: 1219, comfortTargetMm: [1200, 1400] } }),
   rule('KIT005', 'Кухня', 'Размеры прохода с реальными выступами', 'hard', 'implemented', 'clearance', [
-    check('kitchen_real_projection_clearance_valid', 'true'),
+    check('kitchen_full_projection_geometry_verified', 'true'),
+    check('kitchen_projection_collision_count', 'lte', 0),
   ], { applies: { roomTypes: KITCHENS, anyItemKinds: KITCHEN_ITEMS } }),
   rule('KIT006', 'Кухня', 'Одновременное открытие техники', 'hard', 'unsupported', 'time_expanded_access', [
     check('kitchen_required_open_states_valid', 'true'),
@@ -166,10 +178,6 @@ const CURATED_LAYOUT_RULES = Object.freeze([
   rule('KIT031', 'Кухня', 'Закрепленные подключения', 'hard', 'requires_external_data', 'engineering_constraints', [
     check('fixed_engineering_connections_satisfied', 'true'),
   ], { applies: { roomTypes: KITCHENS, anyItemKinds: KITCHEN_ITEMS }, requiresData: ['fixed_engineering'] }),
-  rule('KIT035', 'Кухня', 'Зазор позади посадки', 'soft', 'implemented', 'occupied_seating', [
-    check('kitchen_seating_clearance_mm', 'gte', 813),
-  ], { basis: 'published_guideline', applies: { roomTypes: KITCHENS, anyItemKinds: ['bar-counter', 'kitchen-island'] }, sourceIds: ['ROOM-S06'], parameters: { withoutTrafficMm: 813, edgePastMm: 914, walkPastMm: 1118, comfortTargetMm: [1200, 1400] } }),
-
   rule('BATH001', 'Санузлы', 'Исходные санитарные точки', 'hard', 'requires_external_data', 'engineering_constraints', [
     check('sanitary_connections_satisfied', 'true'),
   ], { applies: { roomTypes: BATHROOMS, anyItemKinds: BATH_ITEMS }, requiresData: ['fixed_engineering'] }),
@@ -191,6 +199,9 @@ const CURATED_LAYOUT_RULES = Object.freeze([
 ]);
 
 const CURATED_INDEX = new Map(CURATED_LAYOUT_RULES.map((entry) => [entry.id, entry]));
+// Route bindings остаются canonical-only, пока комнатный flood-fill не
+// получит явные OD-пары и подтверждённую геометрию конкретного пользователя.
+for (const entry of ENHANCED_DOOR_ROUTE_BINDINGS) CURATED_INDEX.set(entry.id, entry);
 
 function hasExternalValidationFlag(value) {
   if (!value || typeof value !== 'object') return false;
@@ -264,6 +275,9 @@ function catalogRule(canonical) {
 export const LAYOUT_RULES = Object.freeze(FURNITURE_RULE_CATALOG.map(catalogRule));
 
 const INDEX = new Map(LAYOUT_RULES.map((entry) => [entry.id, entry]));
+const EXTERNAL_EVIDENCE_TYPES = new Set([
+  'computed', 'source_lookup', 'external_report', 'manual_verified',
+]);
 
 export function layoutRuleById(id) {
   return INDEX.get(id) || null;
@@ -300,6 +314,29 @@ function suppliedRuleResult(entry, context) {
   if (supplied == null) return null;
   const result = typeof supplied === 'string' ? { status: supplied } : supplied;
   if (!Object.values(RULE_STATUS).includes(result.status)) return null;
+  const asserted = result.status === RULE_STATUS.PASS || result.status === RULE_STATUS.FAIL;
+  const evidenceType = result.evidence?.type || result.evidenceType;
+  const evidenceReference = result.evidence?.source || result.evidence?.reference || result.evidenceReference;
+  const evidenceValid = EXTERNAL_EVIDENCE_TYPES.has(evidenceType)
+    && typeof evidenceReference === 'string' && evidenceReference.trim().length > 0;
+  const signatureRequired = Boolean(context.currentInputSignature);
+  const missingSignature = signatureRequired && !result.inputSignature;
+  const stale = signatureRequired && result.inputSignature !== context.currentInputSignature;
+  if (asserted && (!evidenceValid || stale)) {
+    return {
+      ruleId: entry.id,
+      status: RULE_STATUS.UNKNOWN,
+      severity: entry.severity,
+      implementation: entry.implementation,
+      blocking: false,
+      metricResults: [],
+      reason: missingSignature
+        ? 'Во внешнем результате нет подписи версии проекта'
+        : stale
+          ? 'Внешний результат рассчитан для другой версии проекта'
+        : 'Внешний pass/fail требует типа и ссылки на доказательство',
+    };
+  }
   return {
     ...result,
     ruleId: entry.id,

@@ -92,7 +92,7 @@ test('сохраняемый layoutBrief и паспорт мебели попа
       id: 'A1', alias: 'Жилец 1', heightMm: 1760, mobilityProfile: 'wheelchair',
       bodyWidthMm: 720, bodyDepthMm: 1100, dataStatus: 'measured', sourceRef: 'обмер',
     }],
-    capacity: { dailySeats: 2, guestSeats: 4 },
+    capacity: { dailySeats: 2, guestSeats: 4, simultaneousCooks: 1 },
     fixedEngineering: [{
       id: 'E1', kind: 'outlet', levelId: 'L1', roomId: 'R-main',
       x: 700, y: 900, zMm: 300, dataStatus: 'measured', sourceRef: 'план ЭОМ', clearanceMm: 200,
@@ -111,7 +111,7 @@ test('сохраняемый layoutBrief и паспорт мебели попа
   };
   Object.assign(bed, {
     manufacturer: 'Factory', sku: 'BED-160', sourceUrl: 'https://example.test/bed-160',
-    geometryStatus: 'verified_sku', manualStatus: 'verified',
+    geometryStatus: 'verified_sku', planProjectionVerified: true, manualStatus: 'verified',
     manualConstraints: [{
       id: 'M1', status: 'verified', requirement: 'Зазор для обслуживания',
       sourceRef: 'паспорт, стр. 6', clearances: { frontMm: 600 },
@@ -126,9 +126,11 @@ test('сохраняемый layoutBrief и паспорт мебели попа
   assert.equal(input.fixed_engineering[0].source_id, 'план ЭОМ');
   assert.equal(input.functional_brief.daily_seats, 2);
   assert.equal(input.functional_brief.guest_seats, 4);
+  assert.equal(input.functional_brief.simultaneous_cooks, 1);
   assert.equal(input.functional_brief.storage_inventory[0].item_group_id, 'S1');
   assert.equal(input.functional_brief.uncertainty_records[0].field_path, 'site.neighbors');
   assert.equal(input.catalog[0].geometry_status, 'verified_sku');
+  assert.equal(input.catalog[0].plan_projection_verified, true);
   assert.equal(input.catalog[0].manual_status, 'verified');
   assert.equal(input.catalog[0].manual_constraints[0].source_ref, 'паспорт, стр. 6');
   assert.equal(input.scenarios[0].template_id, 'SCN014');

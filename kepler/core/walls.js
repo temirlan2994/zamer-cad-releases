@@ -832,24 +832,36 @@ function acrossBody(wall, rect) {
   return h ? { ...rect, y: lo, h: hi - lo } : { ...rect, x: lo, w: hi - lo };
 }
 
-// Зона открывания двери: квадрат width×width внутри комнаты, в которую она открывается.
+// Консервативные AABB полного хода каждой распашной створки. У одинарной
+// двери это квадрат width×width, у двустворчатой — два квадрата half×half.
+// Раздвижная дверь и проём без полотна не получают вымышленную swing-зону.
+export function doorSwingRects(project, opening, walls) {
+  if (opening.kind !== 'door') return [];
+  const type = opening.type || 'single';
+  if (type !== 'single' && type !== 'double') return [];
+  const required = Array.isArray(opening.requiredLeafIndices)
+    ? new Set(opening.requiredLeafIndices.filter((index) => Number.isInteger(index) && index >= 0))
+    : null;
+  return doorLeaves(project, opening, walls).flatMap((leaf, leafIndex) => {
+    if (required && !required.has(leafIndex)) return [];
+    const points = [leaf.hinge, leaf.closed, leaf.open, leaf.through];
+    const x0 = Math.min(...points.map((point) => point.x));
+    const y0 = Math.min(...points.map((point) => point.y));
+    const x1 = Math.max(...points.map((point) => point.x));
+    const y1 = Math.max(...points.map((point) => point.y));
+    return [{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }];
+  });
+}
+
+// Объединённый габарит сохранён для потребителей прежнего API.
 export function doorSwingRect(project, opening, walls) {
-  if (opening.kind !== 'door') return null;
-  const placed = openingRect(project, opening, walls);
-  if (!placed) return null;
-  const { rect, wall } = placed;
-  const inwardOfOwner = ownerInward(project, opening, wall, rect);
-  if (inwardOfOwner === null) return null;
-  // Куда открывается: swingIn — внутрь комнаты-владельца, иначе наружу/в соседнюю.
-  let dir;
-  if (wall.orient === 'h') {
-    dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
-    const y = dir > 0 ? rect.y + rect.h : rect.y - opening.width;
-    return { x: rect.x, y, w: opening.width, h: opening.width };
-  }
-  dir = opening.swingIn ? inwardOfOwner : -inwardOfOwner;
-  const x = dir > 0 ? rect.x + rect.w : rect.x - opening.width;
-  return { x, y: rect.y, w: opening.width, h: opening.width };
+  const rects = doorSwingRects(project, opening, walls);
+  if (!rects.length) return null;
+  const x0 = Math.min(...rects.map((rect) => rect.x));
+  const y0 = Math.min(...rects.map((rect) => rect.y));
+  const x1 = Math.max(...rects.map((rect) => rect.x + rect.w));
+  const y1 = Math.max(...rects.map((rect) => rect.y + rect.h));
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 // Знак поперёк стены (+1: +y/+x) стороны «внутрь владельца». У проёма
@@ -950,9 +962,21 @@ export function doorLeaves(project, opening, walls) {
   const type = opening.type || 'single';
   if (type === 'double') {
     const half = opening.width / 2;
+    const shiftedLeaf = (direction, hingeStart) => {
+      const shifted = { ...opening, width: half, hingeStart };
+      if (opening.host) {
+        shifted.host = {
+          ...opening.host,
+          t: Number(opening.host.t) + direction * half / 2,
+        };
+      } else {
+        shifted.offset = opening.offset + direction * half / 2;
+      }
+      return shifted;
+    };
     return [
-      doorSymbol(project, { ...opening, width: half, offset: opening.offset - half / 2, hingeStart: true }, walls),
-      doorSymbol(project, { ...opening, width: half, offset: opening.offset + half / 2, hingeStart: false }, walls),
+      doorSymbol(project, shiftedLeaf(-1, true), walls),
+      doorSymbol(project, shiftedLeaf(1, false), walls),
     ].filter(Boolean);
   }
   if (type !== 'single') return [];

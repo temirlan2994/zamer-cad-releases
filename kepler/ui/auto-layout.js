@@ -40,7 +40,11 @@ function cache() {
   return state.layoutVariants;
 }
 
-const cleanNumber = (value) => (Number.isFinite(Number(value)) ? Math.round(Number(value) * 1000) / 1000 : null);
+const cleanNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric * 1000) / 1000 : null;
+};
 
 function itemSignature(item) {
   return {
@@ -49,12 +53,24 @@ function itemSignature(item) {
     x: cleanNumber(item.x), y: cleanNumber(item.y),
     w: cleanNumber(item.w), h: cleanNumber(item.h),
     rotation: cleanNumber(item.rotation || 0),
+    mirrored: item.mirrored === true,
     comp: item.comp || null,
     autoLayoutLocked: item.autoLayoutLocked === true,
     manufacturer: item.manufacturer || null,
     sku: item.sku || null,
     sourceUrl: item.sourceUrl || null,
     geometryStatus: item.geometryStatus || null,
+    planProjectionVerified: item.planProjectionVerified === true,
+    occupancyCount: cleanNumber(item.occupancyCount),
+    userActorIds: Array.isArray(item.userActorIds)
+      ? [...item.userActorIds].map(String).sort()
+      : null,
+    routeToSecondSide: item.routeToSecondSide || null,
+    routeToSecondSideDataStatus: item.routeToSecondSideDataStatus || null,
+    requiredSleepSurfaceMm: item.requiredSleepSurfaceMm || null,
+    sleepSurfaceMm: item.sleepSurfaceMm || null,
+    requiredSleepSurfaceProvenance: item.requiredSleepSurfaceProvenance || null,
+    approachSide: item.approachSide || null,
     manualStatus: item.manualStatus || null,
     manualConstraints: item.manualConstraints || null,
   };
@@ -64,6 +80,12 @@ function itemSignature(item) {
 // применить вариант после правки комнаты, проёма или мебели.
 export function layoutSignature(project, room) {
   if (!project || !room) return '';
+  const rooms = (project.rooms || []).map((candidate) => ({
+    id: candidate.id, parentId: candidate.parentId || null, type: candidate.type || null,
+    x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h,
+    outline: candidate.outline || null, notch: candidate.notch || null,
+    eatBase: candidate.eatBase || null,
+  })).sort((a, b) => a.id.localeCompare(b.id));
   const children = project.rooms
     .filter((candidate) => candidate.parentId === room.id)
     .map((candidate) => ({
@@ -73,9 +95,17 @@ export function layoutSignature(project, room) {
     .sort((a, b) => a.id.localeCompare(b.id));
   const openings = (project.openings || []).map((opening) => ({
     id: opening.id, kind: opening.kind, roomId: opening.roomId || null,
+    type: opening.type || null, orphan: opening.orphan === true,
     host: opening.host || null, side: opening.side ?? null, offset: opening.offset ?? null,
     width: opening.width ?? null, height: opening.height ?? null, sill: opening.sill ?? null,
     hingeStart: opening.hingeStart ?? null, swingIn: opening.swingIn ?? null,
+    requiredLeafIndices: Array.isArray(opening.requiredLeafIndices)
+      ? [...opening.requiredLeafIndices].sort((a, b) => a - b)
+      : null,
+    swingGeometryStatus: opening.swingGeometryStatus || null,
+    leafThicknessMm: cleanNumber(opening.leafThicknessMm),
+    handleProjectionMm: cleanNumber(opening.handleProjectionMm),
+    handleInsetMm: cleanNumber(opening.handleInsetMm),
   })).sort((a, b) => a.id.localeCompare(b.id));
   const manualWalls = (project.walls || []).map((wall) => ({
     id: wall.id,
@@ -108,14 +138,18 @@ export function layoutSignature(project, room) {
       wallOverrides: level.wallOverrides || {},
     })),
   };
-  const items = itemsInRoom(project, room).map(itemSignature).sort((a, b) => a.id.localeCompare(b.id));
+  // Дверная swept-проверка учитывает также предметы, чей центр находится за
+  // пределами комнаты, но проекция касается её. Подписываем все предметы:
+  // небольшая лишняя инвалидация безопаснее устаревшего варианта.
+  const items = (project.items || []).map(itemSignature).sort((a, b) => a.id.localeCompare(b.id));
   return JSON.stringify({
     room: {
       id: room.id, type: room.type, x: room.x, y: room.y, w: room.w, h: room.h,
       outline: room.outline || null, notch: room.notch || null, eatBase: room.eatBase || null,
     },
-    children, openings, manualWalls, items, solarContext,
+    rooms, children, openings, manualWalls, items, solarContext,
     layoutBrief: project.layoutBrief || null,
+    wallOverrides: project.wallOverrides || {},
     partition: project.settings?.partition || 100,
   });
 }
@@ -397,6 +431,8 @@ function manualsEditorHtml(room) {
         <label class="prop-field"><span>Геометрия</span><select data-item-meta="geometryStatus">${optionsHtml(GEOMETRY_OPTIONS, item.geometryStatus || '')}</select></label>
         <label class="prop-field"><span>Паспорт</span><select data-item-meta="manualStatus">${optionsHtml(MANUAL_OPTIONS, item.manualStatus || '')}</select></label>
       </div>
+      <label class="check-row"><input type="checkbox" data-item-plan-projection ${item.planProjectionVerified === true ? 'checked' : ''}>
+        <span>Полная проекция с ручками/свесами подтверждена</span></label>
       <div class="layout-clearance-grid">
         ${[['frontMm', 'Спереди'], ['backMm', 'Сзади'], ['leftMm', 'Слева'], ['rightMm', 'Справа'], ['topMm', 'Сверху']]
     .map(([key, title]) => `<label class="prop-field"><span>${title}, мм</span><input data-item-clearance="${key}" type="number" min="0" step="10" value="${fieldValue(clearances[key])}"></label>`).join('')}
@@ -479,10 +515,11 @@ function layoutBriefEditorHtml(room) {
     </details>
     ${actorsEditorHtml(brief.actors)}
     <details class="layout-brief-subsection" ${briefSectionAttrs('capacity')}>
-      <summary>Вместимость <small>${brief.capacity.dailySeats ?? '—'} + ${brief.capacity.guestSeats ?? '—'}</small></summary>
+      <summary>Вместимость <small>${brief.capacity.dailySeats ?? '—'} + ${brief.capacity.guestSeats ?? '—'} · готовят ${brief.capacity.simultaneousCooks ?? '—'}</small></summary>
       <div class="prop-grid layout-brief-capacity">
         <label class="prop-field"><span>Ежедневных мест</span><input data-capacity="dailySeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.dailySeats)}"></label>
         <label class="prop-field"><span>Гостевых мест</span><input data-capacity="guestSeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.guestSeats)}"></label>
+        <label class="prop-field"><span>Одновременно готовят</span><input data-capacity="simultaneousCooks" type="number" min="1" step="1" value="${fieldValue(brief.capacity.simultaneousCooks)}"></label>
       </div>
     </details>
     ${scenariosEditorHtml(brief.scenarioSelections)}
@@ -631,7 +668,8 @@ function bindLayoutBriefEditor(panel, room) {
     if (input.dataset.capacity) {
       const field = input.dataset.capacity;
       const value = optionalNumber(input, true);
-      commitBriefChange((brief) => { brief.capacity[field] = value; });
+      const normalized = field === 'simultaneousCooks' && value === 0 ? null : value;
+      commitBriefChange((brief) => { brief.capacity[field] = normalized; });
       return;
     }
     if (input.dataset.scenarioId) {
@@ -695,6 +733,14 @@ function bindLayoutBriefEditor(panel, room) {
     const itemCard = input.closest('[data-brief-item]');
     if (!itemCard) return;
     const itemId = itemCard.dataset.briefItem;
+    if (input.hasAttribute('data-item-plan-projection')) {
+      const checked = input.checked;
+      commitProjectChange((project) => {
+        const item = findItem(project, itemId);
+        if (item) item.planProjectionVerified = checked;
+      });
+      return;
+    }
     if (input.dataset.itemMeta) {
       const field = input.dataset.itemMeta;
       const value = input.value.trim();

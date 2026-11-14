@@ -233,6 +233,7 @@ function catalogRecord(item) {
     geometry_status: ['verified_sku', 'parametric_custom', 'proxy'].includes(item.geometryStatus)
       ? item.geometryStatus : 'parametric_custom',
     geometry_confirmed: ['verified_sku', 'parametric_custom', 'proxy'].includes(item.geometryStatus),
+    plan_projection_verified: item.planProjectionVerified === true,
     manufacturer: item.manufacturer || null,
     sku: item.sku || null,
     source_url: item.sourceUrl || null,
@@ -427,6 +428,8 @@ export function projectToLayoutInput(project, opts = {}) {
   }
   const dailySeats = hasOwn(brief, 'daily_seats') ? brief.daily_seats : storedBrief.capacity.dailySeats;
   const guestSeats = hasOwn(brief, 'guest_seats') ? brief.guest_seats : storedBrief.capacity.guestSeats;
+  const simultaneousCooks = hasOwn(brief, 'simultaneous_cooks')
+    ? brief.simultaneous_cooks : storedBrief.capacity.simultaneousCooks;
   const uncertainty = storedBrief.uncertainty.map(uncertaintyRecord);
   const scenarios = hasOwn(opts, 'scenarios')
     ? (Array.isArray(opts.scenarios) ? opts.scenarios : [])
@@ -442,7 +445,7 @@ export function projectToLayoutInput(project, opts = {}) {
     const manualReady = entry.manual_status === 'not_required'
       || (entry.manual_status === 'verified'
         && entry.manual_constraints.every((constraint) => constraint.status === 'verified'));
-    return geometryReady && manualReady;
+    return geometryReady && entry.plan_projection_verified === true && manualReady;
   });
   if (!catalogConfirmed) unknown.push('Точные модели, источники или паспортные зазоры части мебели не подтверждены');
   if (!locationVerified) unknown.push('Координаты участка и направление севера требуют подтверждения');
@@ -460,7 +463,9 @@ export function projectToLayoutInput(project, opts = {}) {
     return (entry.category || entry.description || entry.label) && amountKnown && status && status !== 'unknown';
   });
   if (!storageConfirmed) unknown.push('Инвентарь хранения не подтверждён');
-  if (dailySeats == null || guestSeats == null) unknown.push('Ежедневная и гостевая вместимость задана не полностью');
+  if (dailySeats == null || guestSeats == null || simultaneousCooks == null) {
+    unknown.push('Ежедневная, гостевая вместимость и число одновременно готовящих заданы не полностью');
+  }
   for (const entry of uncertainty) {
     if (entry.status === 'resolved') continue;
     const label = entry.note || entry.field_path || entry.target_id || entry.id;
@@ -501,6 +506,7 @@ export function projectToLayoutInput(project, opts = {}) {
       mandatory_functions: unique(brief.mandatory_functions || allFunctions),
       daily_seats: dailySeats ?? null,
       guest_seats: guestSeats ?? null,
+      simultaneous_cooks: simultaneousCooks ?? null,
       storage_inventory: storageInventory,
       privacy_requirements: brief.privacy_requirements || [],
       preferences: brief.preferences || [],

@@ -139,8 +139,8 @@ export function buildRoomContext(project, room, walls) {
     if (opening.kind !== 'door') continue;
     const swing = doorSwingRect(project, opening, walls);
     const placed = openingRect(project, opening, walls);
-    if (!swing || !placed) continue;
-    const swingInRoom = intersects(swing, inner);
+    if (!placed) continue;
+    const swingInRoom = Boolean(swing && intersects(swing, inner));
     if (swingInRoom) doorZones.push(swing);
     const t = thresholdRect(placed.rect, inner, opening.width);
     if (t) { doorCells.push(t); if (!swingInRoom) doorZones.push(t); }

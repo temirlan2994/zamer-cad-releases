@@ -1064,10 +1064,11 @@ export function collectLayoutEvaluatorMetrics({ project, room, items = null, rec
     metrics.agent_body_route_valid = route.ok;
     metrics.route_path_exists = route.ok;
   }
-  if (finite(route?.minWidth)) {
-    metrics.route_min_width_mm = Number(route.minWidth);
-    metrics.main_route_min_width_mm = Number(route.minWidth);
-  }
+  // route.minWidth у встроенного flood-fill — диаметр проверочного агента,
+  // а не измеренный bottleneck. Не публикуем его как ширину прохода: такая
+  // подмена давала ложный pass PATH004. Полная измеренная ширина поступает
+  // отдельно через collectVerifiedRouteMetrics().
+  if (finite(route?.minWidth)) metrics.route_test_agent_diameter_mm = Number(route.minWidth);
   if (route?.zoneAccess instanceof Map) {
     metrics.route_zone_access = Object.fromEntries([...route.zoneAccess].map(([id, value]) => [id, [...value]]));
   }
