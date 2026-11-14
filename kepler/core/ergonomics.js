@@ -311,7 +311,11 @@ export function ergoContext(project, walls) {
     if (!placed) continue;
     const entry = { opening: o, rect: placed.rect, orient: placed.wall.orient };
     if (o.kind === 'door') {
-      entry.leaves = doorLeaves(project, o, walls).map((leaf) => sectorOf(leaf));
+      const required = Array.isArray(o.requiredLeafIndices)
+        ? new Set(o.requiredLeafIndices.filter((index) => Number.isInteger(index) && index >= 0))
+        : null;
+      entry.leaves = doorLeaves(project, o, walls)
+        .flatMap((leaf, leafIndex) => (required && !required.has(leafIndex) ? [] : [sectorOf(leaf)]));
       doors.push(entry);
     } else windows.push(entry);
   }

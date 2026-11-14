@@ -37,7 +37,11 @@ test('строит несколько детерминированных про�
   assert.deepEqual(a.layouts.map((x) => x.placements), b.layouts.map((x) => x.placements));
   assert.equal(new Set(a.layouts.map((x) => JSON.stringify(x.placements))).size, a.layouts.length);
   assert.deepEqual(project.items.map((item) => ({ x: item.x, y: item.y, rotation: item.rotation })), before);
-  for (const layout of a.layouts) assert.equal(validateFurnitureLayout(project, room, walls, layout).ok, true);
+  for (const layout of a.layouts) {
+    assert.equal(validateFurnitureLayout(project, room, walls, layout).ok, true);
+    assert.equal(layout.ergonomics?.analyzed, true);
+    assert.equal(layout.ergonomics?.errorCount, 0);
+  }
 });
 
 test('использует настоящий Г-контур, а не его габаритный прямоугольник', () => {
@@ -785,4 +789,118 @@ test('soft-правила влияют на рейтинг, unknown остаёт
     { severity: 'soft', status: 'unknown' },
     { severity: 'hard', status: 'pass' },
   ]), -0.75);
+});
+
+test('финальная эргономика проверяет позу варианта перед дверью, а не исходную позу предмета', () => {
+  const project = createProject();
+  const room = createRoom('bedroom', 0, 0, 5000, 4000);
+  const door = createOpening('door', room.id, 2, 2500, 1800);
+  door.swingIn = false;
+  // Исходная поза имеет нормативные 900 мм. Кандидат специально перемещает
+  // пуф вплотную к двери: тест защищает от анализа устаревших координат.
+  const pouf = createItem('pouf', 2500, 2850, 500, 500);
+  project.rooms.push(room);
+  project.openings.push(door);
+  project.items.push(pouf);
+
+  const validation = validateFurnitureLayout(project, room, deriveWalls(project), {
+    placements: [{ itemId: pouf.id, x: 2500, y: 3750, rotation: 0 }],
+  });
+
+  assert.equal(validation.ok, false);
+  assert.equal(validation.checks.find((entry) => entry.id === 'AUTO-ERGONOMICS')?.status, 'fail');
+  assert.equal(validation.ergonomics?.errorCount, 1);
+  assert.ok(validation.ergonomics?.findings.some((entry) => (
+    entry.rule === 'door-front'
+      && entry.severity === 'error'
+      && entry.gap === 0
+      && entry.itemIds.includes(pouf.id)
+  )));
+});
+
+test('предупреждение 700 мм перед дверью допускается со штрафом, 900 мм проходит чисто', () => {
+  const project = createProject();
+  const room = createRoom('bedroom', 0, 0, 5000, 4000);
+  const door = createOpening('door', room.id, 2, 2500, 1800);
+  door.swingIn = false;
+  const pouf = createItem('pouf', 2500, 2850, 500, 500);
+  project.rooms.push(room);
+  project.openings.push(door);
+  project.items.push(pouf);
+  const walls = deriveWalls(project);
+  const at = (y) => validateFurnitureLayout(project, room, walls, {
+    placements: [{ itemId: pouf.id, x: 2500, y, rotation: 0 }],
+  });
+
+  const warning = at(3050);
+  assert.equal(warning.ok, true);
+  assert.equal(warning.checks.find((entry) => entry.id === 'AUTO-ERGONOMICS')?.status, 'pass');
+  assert.equal(warning.ergonomics?.errorCount, 0);
+  assert.equal(warning.ergonomics?.warningCount ?? warning.ergonomics?.warnCount, 1);
+  assert.ok(warning.ergonomics?.scoreAdjustment < 0);
+  assert.ok(warning.ergonomics?.findings.some((entry) => (
+    entry.rule === 'door-front' && entry.severity === 'warn' && entry.gap === 700
+  )));
+
+  const clean = at(2850);
+  assert.equal(clean.ok, true);
+  assert.equal(clean.ergonomics?.errorCount, 0);
+  assert.equal(clean.ergonomics?.warningCount ?? clean.ergonomics?.warnCount, 0);
+  assert.equal(clean.ergonomics?.scoreAdjustment, 0);
+  assert.equal(clean.ergonomics?.findings.some((entry) => entry.rule === 'door-front'), false);
+});
+
+test('генератор не возвращает варианты с красной зоной перед дверью', () => {
+  const project = createProject();
+  const room = createRoom('bedroom', 0, 0, 5000, 4000);
+  const door = createOpening('door', room.id, 2, 2500, 1800);
+  door.swingIn = false;
+  const pouf = createItem('pouf', 2500, 3750, 500, 500);
+  project.rooms.push(room);
+  project.openings.push(door);
+  project.items.push(pouf);
+
+  const result = generateFurnitureLayouts(project, room, deriveWalls(project), { count: 3 });
+  assert.equal(result.status, 'feasible', result.diagnostics.join('; '));
+  assert.ok(result.layouts.length > 0);
+  for (const layout of result.layouts) {
+    assert.equal(layout.ergonomics?.analyzed, true);
+    assert.equal(layout.ergonomics?.errorCount, 0);
+    assert.equal(layout.ergonomics?.findings.some((entry) => entry.severity === 'error'), false);
+  }
+});
+
+test('частичная расстановка игнорирует старую ошибку fixed-мебели, но блокирует новую', () => {
+  const project = createProject();
+  const room = createRoom('bedroom', 0, 0, 5000, 4000);
+  const oldDoor = createOpening('door', room.id, 2, 1200, 900);
+  const newDoor = createOpening('door', room.id, 0, 3800, 900);
+  oldDoor.swingIn = false;
+  newDoor.swingIn = false;
+  // Этот пуф уже стоял вплотную к нижней двери до частичного подбора.
+  const fixed = createItem('pouf', 1200, 3750, 500, 500);
+  const selected = createItem('pouf', 3000, 2000, 500, 500);
+  project.rooms.push(room);
+  project.openings.push(oldDoor, newDoor);
+  project.items.push(fixed, selected);
+  const walls = deriveWalls(project);
+  const at = (x, y) => validateFurnitureLayout(project, room, walls, {
+    placements: [{ itemId: selected.id, x, y, rotation: 0 }],
+  }, { itemIds: [selected.id] });
+
+  const unchanged = at(3000, 2000);
+  assert.equal(unchanged.ok, true);
+  assert.equal(unchanged.ergonomics?.errorCount, 0);
+  assert.equal(unchanged.ergonomics?.findings.length, 0);
+
+  // Новая красная ошибка у второй двери относится к выбранному предмету и
+  // не может быть скрыта уже существующей проблемой у fixed-мебели.
+  const worsened = at(3800, 250);
+  assert.equal(worsened.ok, false);
+  assert.ok(worsened.ergonomics?.errorCount > 0);
+  assert.ok(worsened.ergonomics?.findings.some((entry) => (
+    entry.rule === 'door-front'
+      && entry.doorId === newDoor.id
+      && entry.itemIds.includes(selected.id)
+  )));
 });

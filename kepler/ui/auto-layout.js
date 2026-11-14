@@ -249,8 +249,17 @@ function checksSummary(layout) {
   return { passed, failed, unknown, hardUnknown: 0, known: passed + failed, applicable: passed + failed + unknown };
 }
 
+function ergonomicsSummary(layout) {
+  if (layout.ergonomics?.analyzed === false) return 'Эргономика: не рассчитана';
+  const counts = layout.ergonomics?.counts || layout.ergonomics;
+  const errors = Number(counts?.errorCount ?? counts?.error);
+  const warnings = Number(counts?.warningCount ?? counts?.warnCount ?? counts?.warn);
+  if (!Number.isFinite(errors) || !Number.isFinite(warnings)) return 'Эргономика: не рассчитана';
+  return `Эргономика: критических ошибок — ${errors}; предупреждений — ${warnings}`;
+}
+
 function variantsHtml(record) {
-  if (!record) return '<p class="empty-hint auto-layout-hint">Нажмите «Подобрать варианты» — проект пока не изменится.</p>';
+  if (!record) return `<p class="empty-hint auto-layout-hint">Предложу до ${COUNT} проверенных вариантов; проект изменится только после выбора.</p>`;
   const { result } = record;
   if (result.status !== 'feasible' || !result.layouts?.length) {
     const diagnostics = result.diagnostics?.length ? result.diagnostics : ['Подходящий вариант не найден'];
@@ -272,11 +281,12 @@ function variantsHtml(record) {
         <div class="layout-metrics">
           <span title="Проверка маршрута круглым телом диаметром 600 мм">Проверен проход ${metric(layout.metrics?.routeWidthMm, ' мм')}</span>
           <span title="Среднее перемещение мебели">Сдвиг ${metric(layout.metrics?.averageMoveMm, ' мм')}</span>
+          <span>${escapeHtml(ergonomicsSummary(layout))}</span>
           <span>По расчётным данным ${checks.known} из ${checks.applicable} применимых</span>
           ${checks.failed ? `<span>Компромиссов: ${checks.failed}</span>` : ''}
           ${checks.unknown ? `<span>Пока неизвестны: ${checks.unknown}${checks.hardUnknown ? `, обязательных ${checks.hardUnknown}` : ''}</span>` : ''}
         </div>
-        <button type="button" data-layout-apply="${escapeHtml(layout.id)}">Применить вариант</button>
+        <button type="button" data-layout-apply="${escapeHtml(layout.id)}">Выбрать и применить</button>
       </article>`;
   }).join('')}
   </div>`;
@@ -533,14 +543,14 @@ function layoutBriefEditorHtml(room) {
 export function autoLayoutHtml(room) {
   const record = activeRecord(room);
   const enabled = state.project?.settings?.autoArrangeFurniture !== false;
-  return `<h3>Авторасстановка</h3>
+  return `<h3>Авторасстановка мебели</h3>
     <div class="prop-block auto-layout-block">
       ${layoutBriefEditorHtml(room)}
       <label class="check-row">
         <input id="autoArrangeFurniture" type="checkbox" ${enabled ? 'checked' : ''}>
         <span>Перестраивать после изменения формы</span>
       </label>
-      <button id="arrangeBtn" type="button">Подобрать ${COUNT} варианта</button>
+      <button id="arrangeBtn" type="button">Авторасставить мебель</button>
       <div class="auto-layout-results" aria-live="polite">${variantsHtml(record)}</div>
       ${wholeHomeLayoutHtml()}
     </div>`;
@@ -838,14 +848,14 @@ export function bindAutoLayout(panel, room) {
       running.cancel();
       return;
     }
-    arrange.textContent = 'Подбираем…';
+    arrange.textContent = 'Готовлю варианты…';
     // Первый кадр показывает состояние кнопки, сам поиск идёт в Worker.
     requestAnimationFrame(async () => {
       try {
         const record = await findLayouts(state.project, room, (progress) => {
-          if (progress?.phase === 'restore') arrange.textContent = 'Подготавливаем…';
-          else if (progress?.phase === 'solve') arrange.textContent = 'Отменить подбор';
-          else if (progress?.phase === 'validate') arrange.textContent = 'Проверяем…';
+          if (progress?.phase === 'restore') arrange.textContent = 'Готовлю комнату…';
+          else if (progress?.phase === 'solve') arrange.textContent = 'Ищу варианты — нажмите, чтобы отменить';
+          else if (progress?.phase === 'validate') arrange.textContent = 'Проверяю варианты…';
         });
         putResults(panel, record);
       } catch (error) {
@@ -860,7 +870,7 @@ export function bindAutoLayout(panel, room) {
           });
         }
       } finally {
-        arrange.textContent = `Подобрать ${COUNT} варианта`;
+        arrange.textContent = 'Авторасставить мебель';
       }
     });
   });

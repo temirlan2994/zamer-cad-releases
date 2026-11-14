@@ -187,11 +187,24 @@ function compactRoute(route) {
   };
 }
 
+function compactErgonomics(ergonomics) {
+  if (!ergonomics) return null;
+  const warningCount = Number(ergonomics.warningCount ?? ergonomics.warnCount) || 0;
+  return {
+    analyzed: ergonomics.analyzed !== false,
+    errorCount: Number(ergonomics.errorCount) || 0,
+    warningCount,
+    scoreAdjustment: Number(ergonomics.scoreAdjustment) || 0,
+    findings: cloneRecord(ergonomics.findings || []),
+  };
+}
+
 function compactValidation(validation) {
   return {
     ok: validation.ok,
     checks: cloneRecord(validation.checks || []),
     route: compactRoute(validation.route),
+    ergonomics: compactErgonomics(validation.ergonomics),
     ruleSummary: cloneRecord(validation.ruleSummary || null),
     unsupported: [...(validation.unsupported || [])],
   };
@@ -229,12 +242,27 @@ function emptyLayout(entry) {
     checks: [],
     ruleResults: [],
     ruleSummary: null,
+    ergonomics: {
+      analyzed: true,
+      errorCount: 0,
+      warningCount: 0,
+      scoreAdjustment: 0,
+      findings: [],
+    },
+    ergonomicsScoreAdjustment: 0,
     unknowns: [],
     seedItems: [],
     validation: {
       ok: true,
       checks: [],
       route: { ok: true, unknown: true, minWidth: null },
+      ergonomics: {
+        analyzed: true,
+        errorCount: 0,
+        warningCount: 0,
+        scoreAdjustment: 0,
+        findings: [],
+      },
       ruleSummary: null,
       unsupported: [],
     },
@@ -358,6 +386,8 @@ function projectVariant(state, index) {
     layoutId: layout.id,
     profile: layout.profile,
     score: Number(layout.score) || 0,
+    ergonomics: compactErgonomics(layout.ergonomics || layout.validation?.ergonomics),
+    ergonomicsScoreAdjustment: Number(layout.ergonomicsScoreAdjustment) || 0,
     placements: layout.placements.map((pose) => ({ ...pose, levelId: room.levelId, roomId: room.roomId })),
     seedItems: cloneRecord(layout.seedItems || []),
     validation: cloneRecord(layout.validation),
@@ -384,6 +414,8 @@ function projectVariant(state, index) {
       passedChecks: checks.filter((check) => check.status === 'pass').length,
       failedChecks: checks.filter((check) => check.status === 'fail').length,
       unknownChecks: checks.filter((check) => check.status === 'unknown').length,
+      ergonomicErrors: rooms.reduce((sum, room) => sum + (Number(room.ergonomics?.errorCount) || 0), 0),
+      ergonomicWarnings: rooms.reduce((sum, room) => sum + (Number(room.ergonomics?.warningCount) || 0), 0),
     },
   };
 }

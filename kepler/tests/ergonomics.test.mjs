@@ -228,6 +228,20 @@ test('пустая комната — пусто; анализ чистый и �
   assert.ok(ergoRulesTable().length > 10);
 });
 
+test('контекст эргономики учитывает только требуемые створки двустворчатой двери', () => {
+  const p = createProject();
+  const r = createRoom('hall', 0, 0, 4000, 4000);
+  const door = createOpening('door', r.id, 0, 2000, 1800);
+  door.type = 'double';
+  p.rooms.push(r);
+  p.openings.push(door);
+  const walls = deriveWalls(p);
+
+  assert.equal(ergoContext(p, walls).doors[0].leaves.length, 2);
+  door.requiredLeafIndices = [0];
+  assert.equal(ergoContext(p, walls).doors[0].leaves.length, 1);
+});
+
 test('производительность: 14 комнат с мебелью < 150 мс, одна комната < 30 мс', () => {
   const p = createProject();
   for (let k = 0; k < 14; k += 1) {

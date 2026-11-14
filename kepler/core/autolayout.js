@@ -7,6 +7,7 @@
 
 import { furnitureDef, isStructural } from './catalog.js';
 import { itemShapes } from './clearance.js';
+import { analyzeRoomErgonomics, ergoContext, ERGO_NORMS } from './ergonomics.js';
 import { itemsInRoom } from './furnish.js';
 import { windowMorningExposure } from './insolation.js';
 import { collectRoomDoorRouteEvidence, collectVerifiedRouteMetrics } from './layout-door-route.js';
@@ -192,13 +193,46 @@ function subtractRect(base, cut) {
   ].filter((rect) => rect.w > EPS && rect.h > EPS);
 }
 
-function contextOf(project, room, walls) {
+// Критическая полоса непосредственно перед дверью. Полный анализатор ниже
+// точно измеряет зазор и различает error/warn, а эта дешёвая осевая зона не
+// даёт beam-search тратить лучшие кандидаты на заведомо красные позиции.
+function doorFrontCriticalRect(room, children, placed) {
+  const { rect } = placed;
+  const horizontal = placed.wall?.orient === 'h'
+    || (placed.wall?.orient !== 'v' && rect.w >= rect.h);
+  const span = (horizontal ? rect.w : rect.h) - 60;
+  if (span <= EPS) return null;
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const inside = (x, y) => roomContainsPoint(room, x, y)
+    && !children.some((child) => roomContainsPoint(child.room, x, y));
+  const depth = ERGO_NORMS.doorFront.crit;
+  if (horizontal) {
+    if (inside(cx, rect.y + rect.h + 60)) {
+      return { x: rect.x + 30, y: rect.y + rect.h, w: span, h: depth };
+    }
+    if (inside(cx, rect.y - 60)) {
+      return { x: rect.x + 30, y: rect.y - depth, w: span, h: depth };
+    }
+    return null;
+  }
+  if (inside(rect.x + rect.w + 60, cy)) {
+    return { x: rect.x + rect.w, y: rect.y + 30, w: depth, h: span };
+  }
+  if (inside(rect.x - 60, cy)) {
+    return { x: rect.x - depth, y: rect.y + 30, w: depth, h: span };
+  }
+  return null;
+}
+
+function contextOf(project, room, walls, { hardDoorFront = false } = {}) {
   const partition = project.settings?.partition || 100;
   const children = project.rooms.filter((r) => r.parentId === room.id)
     .map((r) => ({ room: r, rect: nestedOuterRect(r, partition) }));
   const doorZones = [];
   const doorRects = [];
   const doorPortals = [];
+  const doorFrontZones = [];
   const openingRects = [];
   const manualDoorCuts = [];
   const windowZones = [];
@@ -230,6 +264,10 @@ function contextOf(project, room, walls) {
       if (placed.wall?.kind === 'manual' || placed.wall?.source === 'manual') {
         manualDoorCuts.push({ key: placed.wall.key, rect: grow(placed.rect, EPS) });
       }
+      if (hardDoorFront) {
+        const doorFront = doorFrontCriticalRect(room, children, placed);
+        if (doorFront) doorFrontZones.push(doorFront);
+      }
       const swing = doorSwingRect(project, opening, walls);
       if (swing && rectTouchesRoom(room, swing)) doorZones.push(swing);
     } else if (opening.kind === 'window' && openingOwnerId(project, opening, walls) === room.id) {
@@ -253,7 +291,7 @@ function contextOf(project, room, walls) {
     .filter((entry) => rectTouchesRoom(room, entry.rect));
   const wallObstacles = wallObstacleEntries.map((entry) => entry.rect);
   return {
-    project, room, walls, children, doorZones, doorRects, doorPortals, openingRects, windowZones, windowSun,
+    project, room, walls, children, doorZones, doorRects, doorPortals, doorFrontZones, openingRects, windowZones, windowSun,
     solarKnown: solar.known, wallObstacles, wallObstacleEntries, edges: roomBoundaryEdges(room),
   };
 }
@@ -278,6 +316,7 @@ function shapeBlocked(ctx, rect) {
   if (ctx.children.some((c) => rectOverlap(rect, c.rect))) return 'child';
   if (ctx.wallObstacles.some((wall) => rectOverlap(rect, wall))) return 'wall';
   if (ctx.doorZones.some((z) => rectOverlap(rect, z))) return 'door';
+  if (ctx.doorFrontZones.some((z) => rectOverlap(rect, z))) return 'door-front';
   return null;
 }
 
@@ -714,6 +753,106 @@ export function layoutRuleScoreAdjustment(results = []) {
   }, 0);
 }
 
+const ERGO_SEVERITY_RANK = Object.freeze({ warn: 1, error: 2 });
+
+function compactErgonomicFinding(finding) {
+  return {
+    id: finding.id,
+    severity: finding.severity,
+    rule: finding.rule,
+    group: finding.group,
+    itemIds: [...(finding.itemIds || [])],
+    ...(finding.doorId ? { doorId: finding.doorId } : {}),
+    text: finding.text,
+    gap: Number.isFinite(finding.gap) ? finding.gap : null,
+    need: Number.isFinite(finding.need) ? finding.need : null,
+    crit: Number.isFinite(finding.crit) ? finding.crit : null,
+  };
+}
+
+function projectWithCandidatePoses(project, records) {
+  const poses = new Map(records.map((record) => [record.itemId, record]));
+  return {
+    ...project,
+    // У активного этажа эти поля могут быть неперечисляемыми accessors, так
+    // что одного spread недостаточно.
+    rooms: project.rooms,
+    openings: project.openings,
+    items: (project.items || []).map((item) => {
+      const pose = poses.get(item.id);
+      return pose ? { ...item, x: pose.x, y: pose.y, rotation: pose.rotation } : item;
+    }),
+  };
+}
+
+function ergonomicPlacementSignature(records) {
+  return [...records]
+    .sort((a, b) => a.itemId.localeCompare(b.itemId))
+    .map((record) => `${record.itemId}:${round(record.x)}:${round(record.y)}:${round(record.rotation)}`)
+    .join('|');
+}
+
+function findingIsNewOrWorse(finding, baselineById) {
+  const baseline = baselineById.get(finding.id);
+  if (!baseline) return true;
+  const rank = ERGO_SEVERITY_RANK[finding.severity] || 0;
+  const baselineRank = ERGO_SEVERITY_RANK[baseline.severity] || 0;
+  if (rank > baselineRank) return true;
+  return rank === baselineRank
+    && Number.isFinite(finding.gap)
+    && Number.isFinite(baseline.gap)
+    && finding.gap < baseline.gap - 0.5;
+}
+
+function candidateErgonomics(project, room, walls, records, selectedItems, opts) {
+  const selectedIds = new Set(selectedItems.map((item) => item.id));
+  const fullRoomScope = itemsInRoom(project, room).every((item) => selectedIds.has(item.id));
+  const sharedContext = opts.ergoContext || ergoContext(project, walls);
+  const cacheKey = `${fullRoomScope ? 'full' : 'partial'}:${ergonomicPlacementSignature(records)}`;
+  const cached = opts.ergoResultCache?.get(cacheKey);
+  if (cached) return cached;
+
+  const candidateProject = projectWithCandidatePoses(project, records);
+  const result = analyzeRoomErgonomics(candidateProject, room, walls, sharedContext, { heat: false });
+  let findings = result.findings || [];
+  if (!fullRoomScope) {
+    const baselineResult = opts.baselineErgonomics
+      || analyzeRoomErgonomics(project, room, walls, sharedContext, { heat: false });
+    const baselineById = new Map((baselineResult.findings || []).map((finding) => [finding.id, finding]));
+    findings = findings.filter((finding) => (
+      (finding.itemIds || []).some((itemId) => selectedIds.has(itemId))
+      || findingIsNewOrWorse(finding, baselineById)
+    ));
+  }
+
+  const errors = findings.filter((finding) => finding.severity === 'error');
+  const warnings = findings.filter((finding) => finding.severity === 'warn');
+  const summary = {
+    analyzed: true,
+    fullRoomScope,
+    errorCount: errors.length,
+    warningCount: warnings.length,
+    // Старое имя оставлено как безвредный alias для потребителей черновика.
+    warnCount: warnings.length,
+    scoreAdjustment: warnings.length ? -Math.min(4, warnings.length * 0.5) : 0,
+    findings: findings.map(compactErgonomicFinding),
+  };
+  opts.ergoResultCache?.set(cacheKey, summary);
+  return summary;
+}
+
+function emptyErgonomics() {
+  return {
+    analyzed: false,
+    fullRoomScope: false,
+    errorCount: 0,
+    warningCount: 0,
+    warnCount: 0,
+    scoreAdjustment: 0,
+    findings: [],
+  };
+}
+
 /**
  * Независимая проверка готового варианта. Поиск вызывает её для финалистов,
  * но функцию можно повторно запустить перед применением или после импорта.
@@ -1006,12 +1145,33 @@ export function validateFurnitureLayout(project, room, walls, layout, opts = {})
     ruleApplicability,
   });
   const ruleSummary = summarizeLayoutRuleResults(ruleResults);
+  const coreOk = checks.every((check) => check.status !== 'fail')
+    && records.length === items.length
+    && ruleSummary.feasible;
+  let ergonomics = emptyErgonomics();
+  // Полный эргономический анализ заметно дороже осевых проверок. Запускаем
+  // его только для уже целостного финалиста, но всегда до публикации/apply.
+  if (coreOk && allPosedGeometryComplete) {
+    ergonomics = candidateErgonomics(project, room, walls, allPosedRecords, items, opts);
+    const failedFindings = ergonomics.findings.filter((finding) => finding.severity === 'error');
+    checks.push({
+      id: 'AUTO-ERGONOMICS',
+      status: ergonomics.errorCount > 0 ? 'fail' : 'pass',
+      itemIds: [...new Set(failedFindings.flatMap((finding) => finding.itemIds || []))],
+      text: ergonomics.errorCount > 0
+        ? `Эргономика: критических нарушений — ${ergonomics.errorCount}. ${failedFindings[0]?.text || ''}`.trim()
+        : ergonomics.warningCount > 0
+          ? `Критических нарушений нет; предупреждений — ${ergonomics.warningCount}`
+          : 'Критических нарушений эргономики нет',
+    });
+  }
   return {
     ok: checks.every((c) => c.status !== 'fail') && records.length === items.length && ruleSummary.feasible,
     checks,
     route: { ...route },
     records,
     allPosedRecords,
+    ergonomics,
     ruleResults,
     ruleSummary,
     unsupported: ['точная фотометрия', 'акустика', 'паспортные ограничения конкретных SKU'],
@@ -1030,9 +1190,16 @@ export function generateFurnitureLayouts(project, room, walls, options = {}) {
     maxBasePoses: clamp(Math.round(options.maxBasePoses || 96), 32, 320),
     lockedIds: options.lockedIds || [],
   };
-  const ctx = contextOf(project, room, walls);
+  const ctx = contextOf(project, room, walls, { hardDoorFront: true });
   const items = itemsForLayout(project, room, options.itemIds);
   ctx.fixedPlaced = fixedPlacedForScope(ctx, items);
+  const sharedErgoContext = ergoContext(project, walls);
+  const selectedIds = new Set(items.map((item) => item.id));
+  const fullRoomScope = itemsInRoom(project, room).every((item) => selectedIds.has(item.id));
+  const baselineErgonomics = fullRoomScope
+    ? null
+    : analyzeRoomErgonomics(project, room, walls, sharedErgoContext, { heat: false });
+  const ergoResultCache = new Map();
   const registryCoverage = layoutRuleCoverage();
   if (!items.length) {
     return { status: 'insufficient_data', layouts: [], diagnostics: ['В комнате нет мебели'], coverage: registryCoverage };
@@ -1067,31 +1234,46 @@ export function generateFurnitureLayouts(project, room, walls, options = {}) {
   finalists.sort((a, b) => b.state.score - a.state.score || stateKey(a.state.placed).localeCompare(stateKey(b.state.placed)));
   // Для каждого замысла перепроверяем ограниченный top-K, затем ранжируем
   // уже с фактическими soft-правилами. Так хороший зазор влияет на выбор, но
-  // стоимость валидации остаётся ограниченной.
+  // стоимость валидации остаётся ограниченной. До 24 нужно потому, что
+  // точная эргономика может законно отсеять несколько верхних кандидатов.
   const validated = [];
   const checkedByProfile = new Map(profiles.map((profile) => [profile.id, 0]));
   for (const { state, profile } of finalists) {
     const checked = checkedByProfile.get(profile.id) || 0;
-    if (checked >= 12) continue;
+    if (checked >= 24) continue;
     checkedByProfile.set(profile.id, checked + 1);
     const records = state.placed.map((p) => p.record);
     const placements = publicPlacements(records);
     const signature = layoutSignature(placements);
     const draft = { placements };
-    const validation = validateFurnitureLayout(project, room, walls, draft, { lockedIds: opts.lockedIds, itemIds: options.itemIds });
-    if (!validation.ok) continue;
+    const validation = validateFurnitureLayout(project, room, walls, draft, {
+      lockedIds: opts.lockedIds,
+      itemIds: options.itemIds,
+      ergoContext: sharedErgoContext,
+      baselineErgonomics,
+      ergoResultCache,
+    });
+    if (!validation.ok) {
+      if (validation.ergonomics?.errorCount) {
+        failures['критическая эргономика'] = (failures['критическая эргономика'] || 0) + 1;
+      }
+      continue;
+    }
     const ruleScoreAdjustment = layoutRuleScoreAdjustment(validation.ruleResults);
+    const ergonomicsScoreAdjustment = validation.ergonomics?.scoreAdjustment || 0;
     validated.push({
       id: '',
       label: profile.title,
       profile: profile.id,
-      score: Math.round((state.score + ruleScoreAdjustment) * 100) / 100,
+      score: Math.round((state.score + ruleScoreAdjustment + ergonomicsScoreAdjustment) * 100) / 100,
       baseScore: Math.round(state.score * 100) / 100,
       ruleScoreAdjustment: Math.round(ruleScoreAdjustment * 100) / 100,
+      ergonomicsScoreAdjustment: Math.round(ergonomicsScoreAdjustment * 100) / 100,
       signature,
       placements,
       metrics: metricsOf(items, records, validation.route),
       checks: validation.checks,
+      ergonomics: validation.ergonomics,
       ruleResults: validation.ruleResults,
       ruleSummary: validation.ruleSummary,
       unknowns: validation.unsupported,
