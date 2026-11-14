@@ -1,7 +1,7 @@
 // Выделение и активный инструмент (размещение, рисование, правка слоя).
 
 import { roomType } from '../core/catalog.js';
-import { el, refs } from './dom.js';
+import { canvas, el, refs } from './dom.js';
 import { renderIssues } from './issues.js';
 import { renderLibrary } from './library.js';
 import { defaultOpeningPreset } from '../core/opening-preset.js';
@@ -165,6 +165,9 @@ export function startDraw(target) {
     ? 'клик по первой точке или Enter — замкнуть'
     : 'двойной клик или Enter — завершить';
   setTool({ kind: 'draw', target }, `Кликами наметьте ${names[target]} · ${finish} · Shift — без привязки, F8 — орто, число + Enter — длина · Esc — отмена`);
+  // В режиме участка без инструмента используется курсор-панорама («рука»).
+  // Сбрасываем его сразу при включении черчения, не дожидаясь движения мыши.
+  canvas.style.cursor = 'crosshair';
   state.draft = { kind: target, points: [], cursor: null, closeHint: target === 'boundary' };
 }
 

@@ -119,6 +119,15 @@ describe('панель инструментов', () => {
     assert.equal(await page.isHidden('.library'), true, 'левая панель без каталога скрыта');
     const names = await page.$$eval('#siteTools .tb-btn', (ns) => ns.map((n) => n.getAttribute('aria-label')));
     assert.deepEqual(names, ['Топосъёмка', 'Граница участка', 'Красная линия', 'Дорога', 'Въезд', 'Соседний дом', 'Отметка высоты', 'Север по 2 точкам', 'Калибровка']);
+    // «Рука» режима участка не должна оставаться после включения черчения.
+    await page.evaluate(() => {
+      window.__kepler.state.project.site.boundary = null;
+      document.getElementById('canvas').style.cursor = 'grab';
+    });
+    await page.click('#siteTools [aria-label="Граница участка"]');
+    assert.equal(await tool(page), 'draw');
+    assert.equal(await page.$eval('#canvas', (n) => n.style.cursor), 'crosshair');
+    await page.keyboard.press('Escape');
     await page.click('#siteTools [aria-label="Север по 2 точкам"]');
     assert.equal(await tool(page), 'north');
     assert.equal(await active(page, '#siteTools [aria-label="Север по 2 точкам"]'), true);
