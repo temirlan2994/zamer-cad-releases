@@ -30,7 +30,6 @@ import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
 import { arrangeRoomsNow } from './auto-layout.js';
-import { clearLayoutPreview } from './layout-preview.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
@@ -272,9 +271,6 @@ export function refreshIssues() {
 }
 
 export function afterChange() {
-  // Любая правка, Undo/Redo или загрузка делает временный вариант
-  // устаревшим. Сбрасываем только UI-слой, без отдельной истории.
-  clearLayoutPreview(null, { redraw: false });
   // Привязки стен к осям (core/grid-pins.js): грань ушла с оси — привязка снята.
   if (state.project && syncGridPins(state.project).dropped) toast('Стена отвязана от оси');
   syncUnderlayImage();

@@ -39,7 +39,6 @@ import { massKey } from './mass3d.js';
 import { handleGridKey } from './grids.js';
 import { isRoofTool, toggleRoofTool } from './roofs.js';
 import { roofPolyKey } from './roof-plan.js';
-import { clearLayoutPreview } from './layout-preview.js';
 
 export let spaceDown = false;
 
@@ -107,11 +106,6 @@ export function bindKeyboard() {
     // Открытый фасад (ui/elevation-view.js): Esc — «Закрыть вид».
     if (event.key === 'Escape' && isElevationOpen()) { const back = state.sheetReturn; closeElevation(); if (back) returnToSheet(); return; }
     if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }
-    if (event.key === 'Escape' && state.layoutPreview) {
-      event.preventDefault();
-      clearLayoutPreview();
-      return;
-    }
     // Окно разреза: Esc закрывает, правка плана под ним не идёт (кроме Ctrl+Z/Y).
     if (isSectionOpen()) {
       if (event.key === 'Escape') { closeSection(); return; }

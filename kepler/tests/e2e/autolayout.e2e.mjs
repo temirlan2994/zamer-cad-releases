@@ -3,7 +3,6 @@
 // изменение формы автоматически перестраивает остальные предметы.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { startApp, openSample } from './helpers.mjs';
 
 const roomItems = (page, roomId) => page.evaluate(async (id) => {
@@ -17,12 +16,6 @@ const roomItems = (page, roomId) => page.evaluate(async (id) => {
 }, roomId);
 
 const poseKey = (items) => JSON.stringify(items.map(({ id, x, y, rotation }) => ({ id, x, y, rotation })));
-
-async function canvasHash(page) {
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  const png = await page.locator('#canvas').screenshot();
-  return createHash('sha256').update(png).digest('hex');
-}
 
 async function selectRoom(page, roomId) {
   await page.evaluate((id) => window.__kepler.selectRoom(id), roomId);
@@ -167,92 +160,12 @@ describe('полноценная авторасстановка мебели', (
     const { page } = app;
     const initial = await roomItems(page, roomId);
     assert.ok(initial.length >= 2, `мебели в спальне: ${initial.length}`);
-    const historyBeforePreview = await page.evaluate(async () => {
-      const { history } = await import('./ui/state.js');
-      return { undo: history.undo.length, redo: history.redo.length };
-    });
 
     const ids = await buildVariants(page);
     assert.ok(ids.length >= 2);
     assert.deepEqual(await roomItems(page, roomId), initial, 'предпросмотр не меняет координаты');
-    const canvasBeforePreview = await canvasHash(page);
-
-    const previewButtons = page.locator('[data-layout-preview]');
-    assert.equal(await previewButtons.count(), ids.length, 'у каждого варианта есть предпросмотр');
-    await page.locator(`[data-layout-variant="${ids[0]}"] [data-layout-preview]`).click();
-    await page.waitForFunction(({ expectedRoomId, expectedLayoutId }) => {
-      const preview = window.__kepler.state.layoutPreview;
-      return preview?.roomId === expectedRoomId
-        && preview.layoutId === expectedLayoutId
-        && Array.isArray(preview.items)
-        && preview.items.length > 0;
-    }, { expectedRoomId: roomId, expectedLayoutId: ids[0] });
-    const firstPreview = await page.evaluate(() => {
-      const preview = window.__kepler.state.layoutPreview;
-      return {
-        roomId: preview.roomId,
-        layoutId: preview.layoutId,
-        items: preview.items.map((item) => ({ id: item.id, x: item.x, y: item.y, rotation: item.rotation || 0 })),
-      };
-    });
-    assert.equal(firstPreview.roomId, roomId);
-    assert.equal(firstPreview.layoutId, ids[0]);
-    assert.ok(firstPreview.items.every((item) => (
-      item.id && [item.x, item.y, item.rotation].every(Number.isFinite)
-    )));
-    assert.deepEqual(await roomItems(page, roomId), initial, 'первый preview не меняет проект');
-    assert.deepEqual(await page.evaluate(async () => {
-      const { history } = await import('./ui/state.js');
-      return { undo: history.undo.length, redo: history.redo.length };
-    }), historyBeforePreview, 'первый preview не пишет историю');
-    assert.notEqual(await canvasHash(page), canvasBeforePreview, 'preview действительно виден на плане');
-    const firstCard = page.locator(`[data-layout-variant="${ids[0]}"]`);
-    assert.equal(await firstCard.getAttribute('aria-current'), 'true');
-    assert.equal(await firstCard.evaluate((element) => element.classList.contains('is-previewing')), true);
-    assert.equal(await firstCard.locator('[data-layout-preview-close]').evaluate((element) => document.activeElement === element), true,
-      'фокус остаётся на управлении активного варианта');
-
-    await page.locator(`[data-layout-variant="${ids[1]}"] [data-layout-preview]`).click();
-    await page.waitForFunction((expectedLayoutId) => (
-      window.__kepler.state.layoutPreview?.layoutId === expectedLayoutId
-    ), ids[1]);
-    const secondCard = page.locator(`[data-layout-variant="${ids[1]}"]`);
-    assert.notEqual(await firstCard.getAttribute('aria-current'), 'true');
-    assert.equal(await firstCard.evaluate((element) => element.classList.contains('is-previewing')), false);
-    assert.equal(await secondCard.getAttribute('aria-current'), 'true');
-    assert.equal(await secondCard.evaluate((element) => element.classList.contains('is-previewing')), true);
-    assert.equal(await secondCard.locator('[data-layout-preview-close]').evaluate((element) => document.activeElement === element), true,
-      'при переключении фокус следует за активным вариантом');
-    assert.deepEqual(await roomItems(page, roomId), initial, 'смена preview не меняет проект');
-    assert.deepEqual(await page.evaluate(async () => {
-      const { history } = await import('./ui/state.js');
-      return { undo: history.undo.length, redo: history.redo.length };
-    }), historyBeforePreview, 'смена preview не пишет историю');
-
-    await secondCard.locator('[data-layout-preview-close]').click();
-    await page.waitForFunction(() => window.__kepler.state.layoutPreview == null);
-    assert.equal(await page.locator('.layout-variant.is-previewing').count(), 0);
-    assert.equal(await secondCard.locator('[data-layout-preview]').evaluate((element) => document.activeElement === element), true,
-      'после закрытия фокус возвращается к предпросмотру того же варианта');
-    assert.equal(await canvasHash(page), canvasBeforePreview, 'закрытие возвращает исходное изображение плана');
-    assert.deepEqual(await roomItems(page, roomId), initial, 'закрытие preview возвращает исходный вид без мутации');
-    assert.deepEqual(await page.evaluate(async () => {
-      const { history } = await import('./ui/state.js');
-      return { undo: history.undo.length, redo: history.redo.length };
-    }), historyBeforePreview, 'закрытие preview не пишет историю');
-
-    await page.locator(`[data-layout-variant="${ids[1]}"] [data-layout-preview]`).click();
-    await page.waitForFunction((expectedLayoutId) => (
-      window.__kepler.state.layoutPreview?.layoutId === expectedLayoutId
-    ), ids[1]);
-    const selectedPreviewPose = await page.evaluate(() => window.__kepler.state.layoutPreview.items
-      .map((item) => ({ id: item.id, x: item.x, y: item.y, rotation: item.rotation || 0 }))
-      .sort((a, b) => a.id.localeCompare(b.id)));
 
     await applyVariant(page, 1);
-    assert.equal(await page.evaluate(() => window.__kepler.state.layoutPreview), null, 'применение очищает preview');
-    assert.deepEqual((await roomItems(page, roomId)).map(({ id, x, y, rotation }) => ({ id, x, y, rotation })), selectedPreviewPose,
-      'применён именно показанный вариант');
     const initialPose = initial.map(({ id, x, y, rotation }) => ({ id, x, y, rotation }));
     await page.waitForFunction((before) => {
       const state = window.__kepler.state;
