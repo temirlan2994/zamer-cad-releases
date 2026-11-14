@@ -16,11 +16,15 @@ import { clearDrawSnap } from './draw-snap-ui.js';
 import { groupHandleId } from '../core/group-handles.js';
 import { lsHandleKey } from '../core/landscape-handles.js';
 import { isRoofPlan } from './plan-roofs.js';
+import { clearLayoutPreview } from './layout-preview.js';
 
 export function selectObject(selection) {
   // Касание: выбор откладывается до тапа (ui/input.js), чтобы панорама пальцем
   // ничего не выделяла.
   if (state.touchDeferSelect) { state.touchDeferred = { selection }; return; }
+  if (state.layoutPreview && (selection?.type !== 'room' || selection.id !== state.layoutPreview.roomId)) {
+    clearLayoutPreview();
+  }
   const split = state.splitEdit;
   if (split && (selection?.type !== 'wall' || selection.key !== split.key ||
     Math.abs((selection.from ?? split.from) - split.from) >= 1)) hideSplitInput();
@@ -56,6 +60,7 @@ export function setHint(text) {
 }
 
 export function setTool(tool, hint) {
+  clearLayoutPreview();
   // Инструмент плана этажа на «Плане крыши» — назад к плану этажа.
   if (isRoofPlan() && tool && tool.kind !== 'roof' && tool.kind !== 'align-view') {
     state.roofPlan = false;
@@ -79,6 +84,7 @@ export function setTool(tool, hint) {
 }
 
 export function cancelTool() {
+  clearLayoutPreview();
   const wasOpening = state.tool?.kind === 'place-opening';
   state.tool = null;
   state.draft = null;

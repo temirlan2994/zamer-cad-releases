@@ -139,6 +139,15 @@
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
           <div class="canvas-hint" id="canvasHint" hidden></div>
+          <div class="layout-preview-bar" id="layoutPreviewBar" role="region" aria-label="Предпросмотр расстановки" aria-live="polite" hidden>
+            <span class="layout-preview-bar-label" id="layoutPreviewLabel"></span>
+            <div class="layout-preview-bar-actions">
+              <button type="button" data-layout-preview-prev aria-label="Предыдущий вариант">←</button>
+              <button type="button" data-layout-preview-next aria-label="Следующий вариант">→</button>
+              <button type="button" class="primary" data-layout-preview-apply>Применить</button>
+              <button type="button" data-layout-preview-close aria-label="Закрыть предпросмотр">✕</button>
+            </div>
+          </div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->
           <button class="draft-done tool-done" id="toolDone" type="button" hidden>✓ Готово</button>

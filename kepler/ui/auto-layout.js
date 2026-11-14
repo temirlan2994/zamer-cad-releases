@@ -24,6 +24,9 @@ import { escapeHtml, toast } from './dom.js';
 import {
   LayoutSolveCancelledError, LayoutWorkerClient, StaleLayoutResultError,
 } from './layout-worker-client.js';
+import {
+  clearLayoutPreview, LAYOUT_PREVIEW_EVENT, setLayoutPreview,
+} from './layout-preview.js';
 import { state } from './state.js';
 import {
   bindWholeHomeLayout, invalidateWholeHomeVariants, wholeHomeLayoutHtml,
@@ -224,9 +227,122 @@ function activeRecord(room) {
   if (!record) return null;
   if (record.signature !== layoutSignature(state.project, room)) {
     cache().delete(room.id);
+    clearLayoutPreview(room.id);
     return null;
   }
   return record;
+}
+
+function previewItems(record, layout) {
+  const sources = new Map([
+    ...(state.project?.items || []),
+    ...(record.seedItems || []),
+  ].map((item) => [item.id, item]));
+  return (layout.placements || []).flatMap((pose) => {
+    const source = sources.get(pose.itemId);
+    return source ? [{ ...structuredClone(source), x: pose.x, y: pose.y, rotation: pose.rotation }] : [];
+  });
+}
+
+function startLayoutPreview(room, record, layout) {
+  if (!room || !record || !layout || record.signature !== layoutSignature(state.project, room)) {
+    invalidateLayoutVariants(room ? [room.id] : null);
+    toast('Комната изменилась — подберите варианты заново', true);
+    return false;
+  }
+  const layouts = record.result?.layouts || [];
+  const index = layouts.findIndex((candidate) => candidate.id === layout.id);
+  const items = previewItems(record, layout);
+  if (items.length !== (layout.placements || []).length) {
+    invalidateLayoutVariants([room.id]);
+    toast('Не удалось подготовить предпросмотр — подберите варианты заново', true);
+    return false;
+  }
+  setLayoutPreview({
+    roomId: room.id,
+    levelId: state.project.activeLevel,
+    layoutId: layout.id,
+    signature: record.signature,
+    label: layout.label || 'Вариант',
+    index: Math.max(0, index),
+    total: layouts.length,
+    itemIds: items.map((item) => item.id),
+    items,
+    placements: (layout.placements || []).map((pose) => ({ ...pose })),
+  });
+  // На телефоне освобождаем план; управление остаётся в плавающей панели.
+  import('./mobile.js').then(({ closeSheets }) => closeSheets()).catch(() => {});
+  return true;
+}
+
+function previewContext() {
+  const preview = state.layoutPreview;
+  if (!preview || preview.levelId !== state.project?.activeLevel) return null;
+  const room = roomById(state.project, preview.roomId);
+  if (!room) return null;
+  const record = activeRecord(room);
+  const layouts = record?.result?.layouts || [];
+  const index = layouts.findIndex((layout) => layout.id === preview.layoutId);
+  if (!record || index < 0) return null;
+  return { preview, room, record, layouts, layout: layouts[index], index };
+}
+
+function switchLayoutPreview(delta) {
+  const ctx = previewContext();
+  if (!ctx || ctx.layouts.length < 2) return;
+  const index = (ctx.index + delta + ctx.layouts.length) % ctx.layouts.length;
+  startLayoutPreview(ctx.room, ctx.record, ctx.layouts[index]);
+}
+
+function syncLayoutPreviewBar() {
+  const bar = globalThis.document?.getElementById('layoutPreviewBar');
+  const label = globalThis.document?.getElementById('layoutPreviewLabel');
+  if (!bar || !label) return;
+  const ctx = previewContext();
+  bar.hidden = !ctx;
+  if (!ctx) { label.textContent = ''; return; }
+  label.textContent = `${ctx.index + 1} из ${ctx.layouts.length} · ${ctx.layout.label || 'Вариант'} · проект не изменён`;
+  for (const button of bar.querySelectorAll('[data-layout-preview-prev], [data-layout-preview-next]')) {
+    button.disabled = ctx.layouts.length < 2;
+  }
+}
+
+function syncLayoutPreviewUi(event = null) {
+  const preview = state.layoutPreview;
+  const roomId = preview?.roomId || event?.detail?.previous?.roomId || null;
+  const selectedRoom = state.selection?.type === 'room' ? roomById(state.project, state.selection.id) : null;
+  if (selectedRoom && (!roomId || selectedRoom.id === roomId)) {
+    const box = globalThis.document?.querySelector('.auto-layout-results');
+    if (box) {
+      const restoreFocus = box.contains(document.activeElement);
+      const layoutId = preview?.layoutId || event?.detail?.previous?.layoutId || null;
+      box.innerHTML = variantsHtml(activeRecord(selectedRoom), selectedRoom);
+      if (restoreFocus && layoutId) {
+        const card = [...box.querySelectorAll('[data-layout-variant]')]
+          .find((element) => element.dataset.layoutVariant === layoutId);
+        const button = card?.querySelector(preview ? '[data-layout-preview-close]' : '[data-layout-preview]');
+        button?.focus({ preventScroll: true });
+      }
+    }
+  }
+  syncLayoutPreviewBar();
+}
+
+let previewControlsBound = false;
+function bindLayoutPreviewControls() {
+  if (previewControlsBound || !globalThis.document) return;
+  previewControlsBound = true;
+  document.addEventListener(LAYOUT_PREVIEW_EVENT, syncLayoutPreviewUi);
+  document.getElementById('layoutPreviewBar')?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-layout-preview-close]')) { clearLayoutPreview(); return; }
+    if (event.target.closest('[data-layout-preview-prev]')) { switchLayoutPreview(-1); return; }
+    if (event.target.closest('[data-layout-preview-next]')) { switchLayoutPreview(1); return; }
+    if (event.target.closest('[data-layout-preview-apply]')) {
+      const ctx = previewContext();
+      if (ctx) applyVariant(ctx.room, ctx.record, ctx.layout);
+    }
+  });
+  syncLayoutPreviewBar();
 }
 
 const metric = (value, suffix = '') => (value == null ? '—' : `${Math.round(value).toLocaleString('ru-RU')}${suffix}`);
@@ -258,7 +374,7 @@ function ergonomicsSummary(layout) {
   return `Эргономика: критических ошибок — ${errors}; предупреждений — ${warnings}`;
 }
 
-function variantsHtml(record) {
+function variantsHtml(record, room = null) {
   if (!record) return `<p class="empty-hint auto-layout-hint">Предложу до ${COUNT} проверенных вариантов; проект изменится только после выбора.</p>`;
   const { result } = record;
   if (result.status !== 'feasible' || !result.layouts?.length) {
@@ -273,7 +389,9 @@ function variantsHtml(record) {
     <p class="empty-hint auto-layout-coverage">Полный реестр: ${coverage.total || 0} правил · привязано ${coverage.bound || 0}${record.contractUnknowns ? ` · входов для уточнения: ${record.contractUnknowns}` : ''}</p>
     ${result.layouts.map((layout, index) => {
     const checks = checksSummary(layout);
-    return `<article class="layout-variant" data-layout-variant="${escapeHtml(layout.id)}">
+    const previewing = Boolean(room && state.layoutPreview?.roomId === room.id
+      && state.layoutPreview?.layoutId === layout.id);
+    return `<article class="layout-variant${previewing ? ' is-previewing' : ''}" data-layout-variant="${escapeHtml(layout.id)}"${previewing ? ' data-preview-active="true" aria-current="true"' : ''}>
         <div class="layout-variant-head">
           <strong>${index + 1}. ${escapeHtml(layout.label || 'Вариант')}</strong>
           <span>${Math.round(layout.score || 0)} баллов</span>
@@ -286,7 +404,11 @@ function variantsHtml(record) {
           ${checks.failed ? `<span>Компромиссов: ${checks.failed}</span>` : ''}
           ${checks.unknown ? `<span>Пока неизвестны: ${checks.unknown}${checks.hardUnknown ? `, обязательных ${checks.hardUnknown}` : ''}</span>` : ''}
         </div>
-        <button type="button" data-layout-apply="${escapeHtml(layout.id)}">Выбрать и применить</button>
+        ${previewing ? '<p class="layout-preview-note">На плане: синим — этот вариант, бледным — исходное положение. Проект не изменён.</p>' : ''}
+        <div class="layout-variant-actions">
+          <button type="button" ${previewing ? 'data-layout-preview-close' : `data-layout-preview="${escapeHtml(layout.id)}"`} aria-pressed="${previewing}" aria-controls="canvas">${previewing ? 'Скрыть с плана' : 'Посмотреть на плане'}</button>
+          <button type="button" data-layout-apply="${escapeHtml(layout.id)}">Применить этот вариант</button>
+        </div>
       </article>`;
   }).join('')}
   </div>`;
@@ -551,14 +673,14 @@ export function autoLayoutHtml(room) {
         <span>Перестраивать после изменения формы</span>
       </label>
       <button id="arrangeBtn" type="button">Авторасставить мебель</button>
-      <div class="auto-layout-results" aria-live="polite">${variantsHtml(record)}</div>
+      <div class="auto-layout-results" aria-live="polite">${variantsHtml(record, room)}</div>
       ${wholeHomeLayoutHtml()}
     </div>`;
 }
 
-function putResults(panel, record) {
+function putResults(panel, record, room) {
   const box = panel.querySelector('.auto-layout-results');
-  if (box) box.innerHTML = variantsHtml(record);
+  if (box) box.innerHTML = variantsHtml(record, room);
 }
 
 function commitProjectChange(apply) {
@@ -839,6 +961,7 @@ function applyVariant(room, record, layout) {
 
 export function bindAutoLayout(panel, room) {
   if (!panel || !room) return;
+  bindLayoutPreviewControls();
   bindLayoutBriefEditor(panel, room);
   bindWholeHomeLayout(panel, { onApplied: () => invalidateLayoutVariants() });
   const arrange = panel.querySelector('#arrangeBtn');
@@ -848,6 +971,7 @@ export function bindAutoLayout(panel, room) {
       running.cancel();
       return;
     }
+    clearLayoutPreview([room.id]);
     arrange.textContent = 'Готовлю варианты…';
     // Первый кадр показывает состояние кнопки, сам поиск идёт в Worker.
     requestAnimationFrame(async () => {
@@ -857,17 +981,17 @@ export function bindAutoLayout(panel, room) {
           else if (progress?.phase === 'solve') arrange.textContent = 'Ищу варианты — нажмите, чтобы отменить';
           else if (progress?.phase === 'validate') arrange.textContent = 'Проверяю варианты…';
         });
-        putResults(panel, record);
+        putResults(panel, record, room);
       } catch (error) {
-        if (error instanceof LayoutSolveCancelledError) putResults(panel, null);
+        if (error instanceof LayoutSolveCancelledError) putResults(panel, null, room);
         else if (error instanceof StaleLayoutResultError) {
-          putResults(panel, null);
+          putResults(panel, null, room);
           toast('Комната изменилась — подберите варианты заново', true);
         } else {
           console.error('Авторасстановка не посчиталась:', error);
           putResults(panel, {
             result: { status: 'search_budget_exhausted', diagnostics: ['Ошибка расчёта — проект не изменён'], layouts: [] },
-          });
+          }, room);
         }
       } finally {
         arrange.textContent = 'Авторасставить мебель';
@@ -883,15 +1007,20 @@ export function bindAutoLayout(panel, room) {
   });
 
   panel.querySelector('.auto-layout-results')?.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-layout-apply]');
-    if (!button) return;
     const record = activeRecord(room);
-    const layout = record?.result.layouts?.find((candidate) => candidate.id === button.dataset.layoutApply);
+    const close = event.target.closest('[data-layout-preview-close]');
+    if (close) { clearLayoutPreview([room.id]); return; }
+    const preview = event.target.closest('[data-layout-preview]');
+    const apply = event.target.closest('[data-layout-apply]');
+    const layoutId = preview?.dataset.layoutPreview || apply?.dataset.layoutApply;
+    if (!layoutId) return;
+    const layout = record?.result.layouts?.find((candidate) => candidate.id === layoutId);
     if (!record || !layout) {
       toast('Вариант устарел — подберите заново', true);
       return;
     }
-    button.disabled = true;
+    if (preview) { startLayoutPreview(room, record, layout); return; }
+    apply.disabled = true;
     applyVariant(room, record, layout);
   });
 }
@@ -942,11 +1071,13 @@ export function arrangeRoomsNow(roomIds, { force = false, itemIdsByRoom = null, 
 export function invalidateLayoutVariants(roomIds = null) {
   invalidateWholeHomeVariants();
   if (roomIds == null) {
+    clearLayoutPreview();
     roomWorkerClient.cancelAll();
     roomTasks.clear();
     cache().clear();
     return;
   }
+  clearLayoutPreview(roomIds);
   for (const roomId of roomIds) {
     roomTasks.get(roomId)?.cancel();
     roomTasks.delete(roomId);

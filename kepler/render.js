@@ -314,6 +314,17 @@ export function createRenderer(canvas) {
 
     // 6. Мебель (на генплане и в «Ландшафте» — без неё).
     const detail = opts.detail !== false && !landscape;
+    const layoutPreview = detail && !print && state.modeName === 'plan'
+      && state.layoutPreview?.levelId === state.project.activeLevel
+      ? state.layoutPreview : null;
+    const previewItems = layoutPreview?.items || [];
+    const previewById = new Map(previewItems.map((item) => [item.id, item]));
+    const shadowItems = layoutPreview
+      ? [
+        ...state.project.items.map((item) => previewById.get(item.id) || item),
+        ...previewItems.filter((item) => !state.project.items.some((source) => source.id === item.id)),
+      ]
+      : state.project.items;
     {
       // Этаж ниже — бледные стены (подложка для выравнивания этажей).
       if (!landscape && state.belowWalls?.length) {
@@ -432,7 +443,7 @@ export function createRenderer(canvas) {
       // готовый слой из кеша — поверх полов и стен (места стен в слое прозрачные),
       // под проёмами, мебелью и подписями.
       const planShadows = !print && !landscape && state.modeName === 'plan' && opts.site !== false && vd.shadows;
-      if (planShadows) drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark, display: vd });
+      if (planShadows) drawPlanShadows(ctx, { walls, items: detail ? shadowItems : [], dpr, scale, dark: lsDark, display: vd });
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.
       const overlapZones = landscape ? [] : (state.norms?.overlaps || []).filter((o) => o.levelId === state.project.activeLevel);
@@ -473,15 +484,72 @@ export function createRenderer(canvas) {
       // 6. Мебель (на генплане — без неё: opts.detail === false). С тенями — объёмная:
       // светлый непрозрачный верх, тень и ореол вокруг — из слоя теней.
       const itemTokens = planShadows ? { ...tokens, furnitureFill: lsDark ? '#454d58' : '#ffffff' } : tokens;
-      const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
+      const hoveredItems = layoutPreview ? new Set() : hoveredFurnitureIds(state.project.items, state.hover);
       for (const item of detail ? state.project.items : []) {
+        if (layoutPreview && previewById.has(item.id)) {
+          // Исходное положение остаётся тонким серым контуром — видно,
+          // насколько и откуда предлагается сдвинуть предмет.
+          ctx.save();
+          ctx.globalAlpha = 0.18;
+          ctx.setLineDash([px(5), px(4)]);
+          drawItem(ctx, item, itemTokens, px, false, false);
+          ctx.restore();
+          continue;
+        }
         const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
           (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
         const hovered = hoveredItems.has(item.id);
         drawItem(ctx, item, itemTokens, px, selected, hovered);
       }
+      if (layoutPreview) {
+        const originals = new Map(state.project.items.map((item) => [item.id, item]));
+        // Пунктир «было → будет» читается даже при большом сдвиге.
+        ctx.save();
+        ctx.strokeStyle = tokens.accent;
+        ctx.fillStyle = tokens.accent;
+        ctx.globalAlpha = 0.48;
+        ctx.lineWidth = px(1.2);
+        ctx.setLineDash([px(6), px(5)]);
+        for (const item of previewItems) {
+          const source = originals.get(item.id);
+          if (!source || Math.hypot(item.x - source.x, item.y - source.y) < px(8)) continue;
+          ctx.beginPath();
+          ctx.moveTo(source.x, source.y);
+          ctx.lineTo(item.x, item.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(item.x, item.y, px(2.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.setLineDash([]);
+        ctx.restore();
+
+        const previewTokens = {
+          ...itemTokens,
+          furniture: tokens.accent,
+          furnitureFill: 'rgba(31,117,255,0.18)',
+          wall: tokens.accent,
+        };
+        ctx.save();
+        ctx.globalAlpha = 0.92;
+        for (const item of previewItems) drawItem(ctx, item, previewTokens, px, false, false);
+        const previewRoom = state.project.rooms.find((room) => room.id === layoutPreview.roomId);
+        if (previewRoom) {
+          ctx.strokeStyle = tokens.accent;
+          ctx.lineWidth = px(1.5);
+          ctx.setLineDash([px(8), px(5)]);
+          ctx.beginPath();
+          polyPath(ctx, roomPolygon(previewRoom));
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
       // Эргономика мебели (ui/render-ergonomics.js): зоны и тесные места — только на экране.
-      if (detail && !print && state.modeName === 'plan') drawErgonomics(ctx, { st: state, walls, tokens, px, p2s, dpr, scale, print });
+      // Во время preview обычный слой анализировал бы старые координаты и
+      // вводил в заблуждение; точная сводка варианта остаётся в его карточке.
+      if (detail && !print && state.modeName === 'plan' && !layoutPreview) {
+        drawErgonomics(ctx, { st: state, walls, tokens, px, p2s, dpr, scale, print });
+      }
     }
 
     // 7. Участок поверх полов (граница, красная линия, въезд) и

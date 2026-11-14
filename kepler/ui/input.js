@@ -347,6 +347,12 @@ setSnapRehover((mods) => {
 
 function updateHoverAndGhost(world, plan, event) {
   lastHover = { world, plan };
+  if (state.layoutPreview) {
+    if (state.hover) state.hover = null;
+    canvas.style.cursor = 'grab';
+    requestDraw();
+    return;
+  }
   if (state.tool?.kind === 'align-view') {
     // «Выровнять вид»: привязка к рёбрам/углам стен, комнат, участка, соседей.
     const p = snapAlignPoint(world, event);
@@ -578,6 +584,7 @@ export function bindCanvasInput() {
   }, true);
   // Перетаскивание мебели из панели на план.
   canvas.addEventListener('dragover', (e) => {
+    if (state.layoutPreview) return;
     if (state.modeName === 'landscape' && (e.dataTransfer?.types || []).includes(LANDSCAPE_MIME)) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -590,6 +597,7 @@ export function bindCanvasInput() {
     e.dataTransfer.dropEffect = 'copy';
   });
   canvas.addEventListener('drop', (e) => {
+    if (state.layoutPreview) return;
     const rect = canvas.getBoundingClientRect();
     if (state.modeName === 'landscape') {
       const kind = e.dataTransfer?.getData(LANDSCAPE_MIME);
@@ -626,6 +634,12 @@ export function bindCanvasInput() {
     const world = pointerWorld(event); // участок — координаты съёмки
     const plan = worldToPlan(world); // дом — его собственные оси
     canvas.setPointerCapture(event.pointerId);
+    // Предпросмотр — режим чтения: на плане можно только панорамировать и
+    // масштабировать, но нельзя случайно передвинуть исходную мебель.
+    if (state.layoutPreview) {
+      drag = { kind: 'pan', start: screen, view: { ...state.view } };
+      return;
+    }
     // Деление стены: клик режет по линии деления.
     if (state.splitEdit && event.button === 0 && !spaceDown) {
       if (splitLiveClick(plan, screen, event.pointerType === 'touch')) return;
@@ -1089,7 +1103,7 @@ export function bindCanvasInput() {
     try { onCanvasPointerDown(event); } finally { state.touchDeferSelect = false; }
     const pending = state.touchDeferred;
     state.touchDeferred = null;
-    const holdable = touch && drag && (TOUCH_HOLD_KINDS.has(drag.kind) || drag.kind === 'pan');
+    const holdable = !state.layoutPreview && touch && drag && (TOUCH_HOLD_KINDS.has(drag.kind) || drag.kind === 'pan');
     if (!holdable) { if (pending) selectObject(pending.selection); return; }
     // Касанием выбор — только тапом, перемещение — после долгого нажатия.
     const hold = { kind: 'touch-hold', inner: drag, pending, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
@@ -1977,6 +1991,7 @@ export function bindCanvasInput() {
     requestDraw();
   });
   canvas.addEventListener('dblclick', (event) => {
+    if (state.layoutPreview) return;
     if (isRoofPlan()) { roofPlanDblClick(pointerScreen(event), worldToPlan(pointerWorld(event))); return; }
     if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
     if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
