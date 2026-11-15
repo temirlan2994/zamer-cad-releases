@@ -35,6 +35,23 @@ describe('выбор проектов при запуске', () => {
     assert.equal(await page.evaluate(() => window.__kepler.state.project.name), name);
     assert.deepEqual(app.errors, []);
   });
+
+  it('локальный черновик можно продолжить после перезагрузки, а новый проект требует подтверждения', async () => {
+    const { page } = app;
+    const before = await page.evaluate(() => window.__kepler.state.project.name);
+    await page.waitForTimeout(700);
+    await page.evaluate(() => sessionStorage.removeItem('kepler-startup-chosen'));
+    await page.reload();
+    await page.waitForFunction(() => Boolean(window.__kepler));
+    await page.waitForSelector('#startContinue:visible');
+    assert.match(await page.textContent('#startContinue'), /Продолжить текущий проект/);
+    await page.click('#startNew');
+    await page.waitForSelector('#warnCancel:visible');
+    await page.click('#warnCancel');
+    await page.click('#startContinue');
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), before);
+  });
 });
 
 describe('стартовые окна на телефоне', () => {

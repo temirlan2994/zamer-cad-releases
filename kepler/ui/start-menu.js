@@ -64,7 +64,11 @@ export function openStartMenu({ initial = false, broken = null } = {}) {
   const hasContent = projectHasContent();
   screen.dataset.initial = String(Boolean(initial));
   closeBtn.hidden = initial;
-  continueBtn.hidden = initial || !hasContent;
+  continueBtn.hidden = !hasContent;
+  if (hasContent) {
+    continueBtn.querySelector('b').textContent = 'Продолжить текущий проект';
+    continueBtn.querySelector('span').textContent = 'локальная копия на этом устройстве';
+  }
   document.querySelector('.app')?.setAttribute('inert', '');
   screen.hidden = false;
 }
@@ -77,7 +81,7 @@ export function closeStartMenu() {
 
 export function requestNewProject() {
   const warn = el('startWarn');
-  if (el('startScreen').dataset.initial === 'true') {
+  if (el('startScreen').dataset.initial === 'true' && !projectHasContent()) {
     newProject();
     closeStartMenu();
     toast('Новый проект создан');

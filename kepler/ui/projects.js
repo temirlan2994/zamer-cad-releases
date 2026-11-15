@@ -60,6 +60,15 @@ const fmtSize = (n) => (n > 1024 * 1024
   ? `${(n / 1024 / 1024).toFixed(1)} МБ`
   : `${Math.max(1, Math.round(n / 1024))} КБ`);
 
+function projectErrorText(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  if (code.includes('permission-denied') || /missing or insufficient permissions/i.test(message)) {
+    return 'Firestore не разрешил доступ. Опубликуйте обновлённые правила; локальный проект можно продолжить выше.';
+  }
+  return message || 'нет доступа';
+}
+
 function projectStats() {
   const levels = state.project?.levels || [];
   return { rooms: levels.reduce((sum, level) => sum + level.rooms.length, 0), levels: levels.length };
@@ -175,7 +184,7 @@ function watch() {
   stopWatching();
   if (!backend || !isProjectsOpen()) return;
   const fail = (error) => {
-    el('projectsList').innerHTML = `<p class="hint">Не удалось загрузить: ${escapeHtml(error?.message || 'нет доступа')}</p>`;
+    el('projectsList').innerHTML = `<p class="hint">Не удалось загрузить: ${escapeHtml(projectErrorText(error))}</p>`;
   };
   if (tab === 'mine') {
     unwatch = watchProjects(backend.db, backend.root, (list) => {
@@ -245,7 +254,7 @@ async function refreshStartProjects() {
     if (request !== startProjectsRequest) return;
     section.hidden = false;
     el('startRecentProjects').innerHTML = '';
-    status.textContent = `Не удалось загрузить: ${error?.message || 'нет доступа'}`;
+    status.textContent = `Не удалось загрузить: ${projectErrorText(error)}`;
   }
 }
 

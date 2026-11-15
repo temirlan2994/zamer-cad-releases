@@ -20,11 +20,23 @@ service cloud.firestore {
         && request.resource.data.s.size() <= 210000;
     }
 
+    function validPreview(value) {
+      return value == null
+        || (value is map
+          && value.keys().hasOnly(['v', 'rooms', 'site'])
+          && value.keys().hasAll(['v', 'rooms', 'site'])
+          && value.v == 1
+          && value.rooms is list
+          && value.rooms.size() <= 60
+          && value.site is list
+          && value.site.size() <= 80);
+    }
+
     function validProjectMeta() {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'createdAt', 'updatedAt', 'draftUpdatedAt', 'draftRevision',
-          'draftStats', 'name', 'head', 'versions', 'blobs'
+          'draftStats', 'name', 'head', 'versions', 'blobs', 'preview'
         ])
         && data.keys().hasAll(['createdAt', 'updatedAt', 'name', 'versions', 'blobs'])
         && data.createdAt is string
@@ -44,7 +56,8 @@ service cloud.firestore {
           || data.draftRevision is string)
         && (!('draftStats' in data)
           || data.draftStats == null
-          || data.draftStats is map);
+          || data.draftStats is map)
+        && (!('preview' in data) || validPreview(data.preview));
     }
 
     // Указатель текущего облачного черновика. Сам JSON и тяжёлые data: URL
@@ -53,7 +66,7 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'revision', 'hash', 'chunks', 'bytes', 'blobs',
-          'updatedAt', 'stats', 'name'
+          'updatedAt', 'stats', 'name', 'preview'
         ])
         && data.revision is string
         && validId(data.revision)
@@ -68,13 +81,17 @@ service cloud.firestore {
         && data.blobs.keys().size() <= 512
         && data.updatedAt is string
         && (!('stats' in data) || data.stats == null || data.stats is map)
-        && (!('name' in data) || (data.name is string && data.name.size() <= 200));
+        && (!('name' in data) || (data.name is string && data.name.size() <= 200))
+        && (!('preview' in data) || validPreview(data.preview));
     }
 
     // Личные проекты. Изоляция выполняется по Firebase Auth UID; знание
     // пути или идентификатора проекта не даёт доступа к чужим данным.
     match /data/users/{uid}/{pid} {
-      allow read, delete: if isOwner(uid) && validId(pid);
+      // LIST нельзя связывать с проверкой wildcard pid: Firestore Rules не
+      // являются фильтром и отклонят запрос всей коллекции проектов.
+      allow list: if isOwner(uid);
+      allow get, delete: if isOwner(uid) && validId(pid);
       allow create, update: if isOwner(uid) && validId(pid) && validProjectMeta();
 
       match /c/{part} {
