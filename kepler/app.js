@@ -43,6 +43,7 @@ import {
 } from './ui/storage-scope.js';
 import { shouldUseRemoteProject } from './ui/startup-cloud.js';
 import { syncProjectNameUi } from './ui/project-name.js';
+import { bindPwa } from './ui/pwa.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -58,6 +59,7 @@ bindView();
 bindTheme();
 bindSnapBar();
 bindErgonomics(); // режим «Эргономика»: кнопка, счётчик, настройки
+bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
 
 // Firebase восстанавливает Google-сессию асинхронно. До чтения локального
 // черновика узнаём UID, чтобы на общем компьютере один человек не увидел

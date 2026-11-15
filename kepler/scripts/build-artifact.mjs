@@ -7,7 +7,7 @@
 //
 //   node scripts/build-artifact.mjs [папка]     (по умолчанию dist/artifact)
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,6 +58,15 @@ export function buildArtifact(outDir, root = ROOT) {
   const scripts = assets.filter((a) => a.endsWith('.js'));
   const files = new Set(assets.filter((a) => !a.endsWith('.js')));
   for (const entry of scripts) for (const f of moduleGraph(entry, root)) files.add(f);
+  // Иконки перечислены внутри manifest, а service worker не является import.
+  for (const manifest of [...files].filter((f) => /\.webmanifest$/i.test(f))) {
+    const data = JSON.parse(readFileSync(join(root, manifest), 'utf8'));
+    for (const icon of data.icons || []) {
+      if (typeof icon.src !== 'string' || /^(?:[a-z]+:|\/)/i.test(icon.src)) continue;
+      files.add(posix.normalize(posix.join(posix.dirname(manifest), icon.src)));
+    }
+  }
+  if (existsSync(join(root, 'sw.js'))) files.add('sw.js');
   const list = [...files].sort();
 
   rmSync(outDir, { recursive: true, force: true });

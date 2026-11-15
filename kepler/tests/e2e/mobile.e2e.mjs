@@ -263,13 +263,13 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
   });
 
-  it('«⋯»: проекты, экспорт, файл, ТЭП, замечания, тема, справка; режимов там нет', async () => {
+  it('«⋯»: проекты, экспорт, файл, ТЭП, замечания, тема, справка и установка; режимов там нет', async () => {
     const { page } = app;
     await page.tap('#moreBtn');
     await settle(page);
     assert.equal(await has(page, 'sheet-more'), true);
     const keys = await page.$$eval('#mobileMore [data-more]', (ns) => ns.map((n) => n.dataset.more));
-    assert.deepEqual(keys, ['projects', 'export', 'menu', 'tep', 'issues', 'theme', 'help']);
+    assert.deepEqual(keys, ['projects', 'export', 'menu', 'tep', 'issues', 'theme', 'help', 'install']);
     assert.deepEqual(await offscreen(page), []);
     await page.tap('#mobileMore .sheet-close');
     await settle(page);
