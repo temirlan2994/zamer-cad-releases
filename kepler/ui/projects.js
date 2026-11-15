@@ -9,7 +9,7 @@ import {
   saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
 } from '../core/storage.js';
 import {
-  acquireEditLease, cancelEditLeaseRequest, EDIT_HEARTBEAT_MS,
+  acquireEditLease, cancelEditLeaseRequest, classifyObservedEditLease, EDIT_HEARTBEAT_MS,
   grantRequestedEditLease, heartbeatEditLease, leaseExpired, leaseHeldBy,
   newEditSessionId, rejectEditLeaseRequest, releaseEditLease,
   requestEditLease, takeoverEditLease, watchEditLease,
@@ -217,6 +217,13 @@ function clearPendingFor(pid) {
 }
 
 function markLeaseLost(lease, status = 'Право редактирования перешло на другое устройство', pidHint = null) {
+  // Тайм-аут, отсутствие документа и собственный lease не являются
+  // доказательством второго редактора. Это важно и для текста окна: свой
+  // компьютер никогда не должен подписываться как «другое устройство».
+  if (!lease || leaseHeldBy(lease, editorIdentity)) {
+    setSyncStatus('Не удалось подтвердить связь с облаком — изменения сохранены на устройстве', 'saving');
+    return false;
+  }
   const current = activeEditor && (!pidHint || activeEditor.pid === pidHint)
     ? stopLeaseMonitoring()
     : null;
@@ -236,40 +243,72 @@ function markLeaseLost(lease, status = 'Право редактирования 
     kind: 'moved', lease, deviceName: lease?.deviceName,
     status, localText,
   });
+  return true;
+}
+
+function markLeaseConnectionRestored(current) {
+  if (!current?.connectionUncertain) return;
+  current.connectionUncertain = false;
+  setSyncStatus('Связь с облаком восстановлена', 'saved');
 }
 
 async function maintainEditorLease(force = false) {
   const current = activeEditor;
   if (!current || !usesEditLease()) return false;
-  if (leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
-    markLeaseLost(current.lease, 'Не удалось вовремя подтвердить право редактирования');
-    return false;
-  }
   if (navigator.onLine === false) {
-    setSyncStatus('Офлайн — право редактирования подтверждено временно', 'saving');
+    current.connectionUncertain = true;
+    setSyncStatus('Офлайн — изменения сохраняются на этом устройстве', 'saving');
     return false;
   }
+  // Несколько событий могут одновременно попросить проверку (online,
+  // visibilitychange, autosave, snapshot). Все ждут один transaction, чтобы
+  // очередь черновика не осталась локальной из-за промежуточного false.
+  if (current.heartbeatPromise) return current.heartbeatPromise;
   const now = Date.now();
-  if (!force && now - current.lastHeartbeat < EDIT_HEARTBEAT_MS) return true;
-  if (current.heartbeatPending) return false;
-  current.heartbeatPending = true;
-  try {
-    const result = await heartbeatEditLease(backend.db, backend.root, current.pid, current.lease);
-    if (activeEditor !== current) return false;
-    if (result.status !== 'renewed') {
-      markLeaseLost(result.lease);
+  const expiresSoon = leaseExpired(current.lease, now + LEASE_SAFETY_MARGIN);
+  if (!force && !expiresSoon && now - current.lastHeartbeat < EDIT_HEARTBEAT_MS) return true;
+  const operation = (async () => {
+    try {
+      const result = await heartbeatEditLease(backend.db, backend.root, current.pid, current.lease);
+      if (activeEditor !== current) return false;
+      if (result.status === 'renewed') {
+        current.lease = result.lease;
+        current.lastHeartbeat = now;
+        markLeaseConnectionRestored(current);
+        return true;
+      }
+      const observed = classifyObservedEditLease(result.lease, editorIdentity, {
+        fromCache: false, hasPendingWrites: false,
+      });
+      if (observed === 'occupied') {
+        markLeaseLost(result.lease);
+        return false;
+      }
+      // Heartbeat мог опоздать после сна вкладки, хотя никто проект не
+      // забирал. Атомарно пытаемся получить lease снова: только occupied
+      // действительно подтверждает другой активный sessionId.
+      const acquired = await acquireEditLease(backend.db, backend.root, current.pid, editorIdentity);
+      if (activeEditor !== current) return false;
+      if (acquired.status === 'acquired') {
+        current.lease = acquired.lease;
+        current.lastHeartbeat = Date.now();
+        markLeaseConnectionRestored(current);
+        return true;
+      }
+      markLeaseLost(acquired.lease);
+      return false;
+    } catch {
+      if (activeEditor === current) {
+        current.connectionUncertain = true;
+        setSyncStatus('Нет связи с облаком — изменения сохранены на устройстве', 'saving');
+      }
       return false;
     }
-    current.lease = result.lease;
-    current.lastHeartbeat = now;
-    return true;
-  } catch (error) {
-    if (leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
-      markLeaseLost(current.lease, 'Не удалось подтвердить право редактирования');
-    }
-    return false;
-  } finally {
-    current.heartbeatPending = false;
+  })();
+  current.heartbeatPromise = operation;
+  try { return await operation; }
+  finally {
+    if (current.heartbeatPromise === operation) current.heartbeatPromise = null;
   }
 }
 
@@ -295,8 +334,18 @@ async function handoffRequested(lease) {
     if (!saved) throw new Error('Не удалось сохранить последние изменения');
     const granted = await grantRequestedEditLease(backend.db, backend.root, current.pid, current.lease);
     if (granted.status !== 'granted') {
-      markLeaseLost(granted.lease);
-      return;
+      const observed = classifyObservedEditLease(granted.lease, editorIdentity, {
+        fromCache: false, hasPendingWrites: false,
+      });
+      if (observed === 'occupied') {
+        markLeaseLost(granted.lease);
+        return;
+      }
+      const recovered = await maintainEditorLease(true);
+      if (!recovered && state.editLockReason === 'lost') return;
+      throw new Error(recovered
+        ? 'Передача не состоялась; право редактирования осталось здесь'
+        : 'Не удалось подтвердить передачу проекта');
     }
     if (activeEditor === current) stopLeaseMonitoring();
     clearPendingFor(current.pid);
@@ -321,24 +370,32 @@ async function handoffRequested(lease) {
 function startActiveEditor(pid, lease) {
   stopLeaseMonitoring();
   const current = {
-    pid, lease, unsubscribe: null, timer: null, lastHeartbeat: Date.now(), heartbeatPending: false,
+    pid, lease, unsubscribe: null, timer: null, lastHeartbeat: Date.now(),
+    heartbeatPromise: null, connectionUncertain: false,
   };
   activeEditor = current;
   state.editLeasePid = pid;
   state.editLocked = false;
   state.editLockReason = '';
   lostEditor = null;
-  current.unsubscribe = watchEditLease(backend.db, backend.root, pid, (next) => {
+  current.unsubscribe = watchEditLease(backend.db, backend.root, pid, (next, metadata) => {
     if (activeEditor !== current) return;
-    if (leaseHeldBy(next, editorIdentity)) {
+    const observed = classifyObservedEditLease(next, editorIdentity, metadata);
+    if (observed === 'owned') {
       current.lease = next;
+      markLeaseConnectionRestored(current);
       if (next.requestedSessionId && next.requestedSessionId !== editorIdentity.sessionId) handoffRequested(next);
       return;
     }
-    markLeaseLost(next);
+    if (observed === 'occupied') markLeaseLost(next);
+    else maintainEditorLease(true);
   }, (error) => {
-    if (activeEditor === current && leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
-      markLeaseLost(current.lease, error?.message || 'Связь с сервером потеряна');
+    if (activeEditor === current) {
+      current.connectionUncertain = true;
+      setSyncStatus(
+        `Нет связи с облаком — изменения сохранены на устройстве${error?.message ? ` (${error.message})` : ''}`,
+        'saving',
+      );
     }
   });
   current.timer = setInterval(() => { maintainEditorLease(); }, 10_000);
@@ -1054,9 +1111,18 @@ async function flushCloudDraft() {
             ok = false;
             lastError = error;
             if (!pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
-            if (String(error?.code || '').includes('permission-denied')) {
-              markLeaseLost(null, projectErrorText(error), pid);
-            }
+            continue;
+          }
+        }
+        if (leaseExpired(activeEditor.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
+          const renewed = sameBackend(backend, target) && await maintainEditorLease(true);
+          if (!renewed) {
+            ok = false;
+            lastError = new Error(state.editLocked
+              ? 'Проект передан другому устройству'
+              : 'Нет подтверждённой связи с облаком; повторим сохранение позже');
+            if (!state.editLocked && sameBackend(backend, target)
+              && !pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
             continue;
           }
         }
@@ -1073,8 +1139,15 @@ async function flushCloudDraft() {
         ok = false;
         lastError = error;
         if (error?.code === 'edit-lease-lost') {
-          clearPendingFor(pid);
-          markLeaseLost(null, error.message, pid);
+          const renewed = activeEditor?.pid === pid && sameBackend(backend, target)
+            ? await maintainEditorLease(true)
+            : false;
+          if (!state.editLocked && sameBackend(backend, target)
+            && latestDraftOrder.get(pid) === draft.order
+            && !pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
+          if (!state.editLocked) lastError = new Error(renewed
+            ? 'Право редактирования восстановлено; повторяем сохранение'
+            : 'Нет подтверждённой связи с облаком; изменения сохранены на устройстве');
           continue;
         }
         if (error?.code === 'cloud-timeout') rememberUncertainWrite(operation);
@@ -1135,17 +1208,28 @@ async function saveCurrent() {
       if (!lease) return;
       if (!activeEditor || activeEditor.pid !== pid) startActiveEditor(pid, lease);
     }
-    const editor = usesEditLease() ? activeEditorFence(pid) : null;
-    const { unchanged, meta } = await saveVersion(backend.db, backend.root, serializeProject(state.project), {
-      pid, note: el('prjNote').value.trim(), stats: projectStats(), editor,
-    });
+    const text = serializeProject(state.project);
+    const options = { pid, note: el('prjNote').value.trim(), stats: projectStats() };
+    let editor = usesEditLease() ? activeEditorFence(pid) : null;
+    let saved;
+    try {
+      saved = await saveVersion(backend.db, backend.root, text, { ...options, editor });
+    } catch (error) {
+      if (error?.code !== 'edit-lease-lost' || !await maintainEditorLease(true)) throw error;
+      editor = activeEditorFence(pid);
+      if (!editor) throw error;
+      saved = await saveVersion(backend.db, backend.root, text, { ...options, editor });
+    }
+    const { unchanged, meta } = saved;
     tweak(() => {});
     el('prjNote').value = '';
     if (backend.mode === 'cloud') setSyncStatus('Контрольная версия сохранена в облаке', 'saved');
     toast(unchanged ? 'Без изменений с последней версии' : `Версия сохранена (всего ${meta.versions.length})`);
   } catch (error) {
-    if (error?.code === 'edit-lease-lost') markLeaseLost(null, error.message, state.pid);
-    toast(`Не сохранилось: ${projectErrorText(error)}`, true);
+    const message = error?.code === 'edit-lease-lost' && !state.editLocked
+      ? 'Нет подтверждённой связи с облаком. Изменения остались на этом устройстве.'
+      : projectErrorText(error);
+    toast(`Не сохранилось: ${message}`, true);
   } finally {
     button.disabled = false;
   }
@@ -1474,7 +1558,10 @@ export function bindProjects(initialAccount = null) {
     if (hasPendingCloudDraft()) scheduleCloudDraft(null, { immediate: true });
   });
   window.addEventListener('offline', () => {
-    if (activeEditor) setSyncStatus('Офлайн — редактирование будет приостановлено, если связь не вернётся', 'saving');
+    if (activeEditor) {
+      activeEditor.connectionUncertain = true;
+      setSyncStatus('Офлайн — изменения сохраняются на этом устройстве', 'saving');
+    }
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {

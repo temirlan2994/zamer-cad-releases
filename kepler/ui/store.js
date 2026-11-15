@@ -15,6 +15,7 @@ import { setStairRise } from '../core/stairs.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
+import { massVoidTargetGeometryKey, pruneOrphanMassVoids } from '../core/mesh3d.js';
 import { toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
@@ -47,6 +48,24 @@ let autosaveTimer = null;
 let autosaveDirty = false;
 let heavyPending = false; // подложка из автосохранения ещё читается из IndexedDB
 const warned = new Set();
+let lastVoidTargetProject = null;
+let lastVoidTargetKey = '';
+
+// Cutter может осиротеть не только при собственной правке: пользователь
+// способен удалить или сдвинуть единственную комнату, стену, плиту либо
+// обычную массу, которую он вырезал. Дешёвую сигнатуру считаем после любой
+// завершённой правки, а сетки сравниваем только когда цели реально менялись.
+function pruneVoidsAfterTargetChange() {
+  const project = state.project;
+  const key = massVoidTargetGeometryKey(project);
+  const changed = project !== lastVoidTargetProject || key !== lastVoidTargetKey;
+  lastVoidTargetProject = project;
+  lastVoidTargetKey = key;
+  if (!changed || !project?.massVoids?.length) return [];
+  const removed = pruneOrphanMassVoids(project);
+  if (state.selection?.type === 'mass' && removed.includes(state.selection.id)) state.selection = null;
+  return removed;
+}
 
 // Стены, зазоры и стены этажа ниже — без записи в state (проверка до замены).
 function deriveAll(project) {
@@ -282,6 +301,7 @@ export function refreshIssues() {
 }
 
 export function afterChange() {
+  const removedVoids = pruneVoidsAfterTargetChange();
   // Привязки стен к осям (core/grid-pins.js): грань ушла с оси — привязка снята.
   if (state.project && syncGridPins(state.project).dropped) toast('Стена отвязана от оси');
   syncUnderlayImage();
@@ -296,6 +316,9 @@ export function afterChange() {
   syncProjectNameUi({ updateInput: document.activeElement?.id !== 'projectName' });
   requestDraw();
   scheduleAutosave();
+  if (removedVoids.length) {
+    toast(`Полая масса больше ничего не пересекает и удалена${removedVoids.length > 1 ? ` (${removedVoids.length})` : ''}`, true);
+  }
 }
 
 // ---------------------------------------------------------------- Автосохранение

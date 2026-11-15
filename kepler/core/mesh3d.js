@@ -1597,3 +1597,112 @@ export function buildHouseMesh(project, {
   if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
   return faces;
 }
+
+// Делает ли cutter хоть один реальный вырез в геометрии проекта. Сравниваем
+// только те слои, которые massVoids действительно умеют вычитать: стены,
+// полы, межэтажные перекрытия и обычные массы. Так полностью пустой или уже
+// перекрытый другим cutter объём не остаётся в проекте невидимым объектом.
+//
+// Проверка вызывается только по завершении создания/правки, поэтому две
+// детерминированные сборки сетки здесь предпочтительнее приблизительной AABB-
+// проверки: она корректно видит и cutter, целиком находящийся внутри тела.
+const MASS_VOID_TARGET_KINDS = new Set(['wall', 'floor', 'slab', 'mass']);
+const MASS_VOID_IMPACT_SENTINEL = Object.freeze({
+  id: 'void-impact-sentinel', name: '', x: 1e9, y: 1e9,
+  w: 100, d: 100, z0: 1e9, h: 100, rotation: 0,
+});
+
+// Дешёвая сигнатура только той геометрии, которую умеет резать massVoid.
+// Нужна UI-слою, чтобы после обычной правки комнаты/стены/перекрытия не
+// запускать тяжёлое сравнение сеток, если цели cutter-ов не менялись.
+// massVoids намеренно исключены: правка самого cutter проверяется отдельно.
+export function massVoidTargetGeometryKey(project) {
+  if (!project) return '';
+  const settings = project.settings || {};
+  const massShape = (mass) => [mass.id, mass.x, mass.y, mass.w, mass.d, mass.z0, mass.h, mass.rotation || 0];
+  const stairShape = (item) => [item.id, item.x, item.y, item.w, item.h, item.rotation || 0, item.toLevel || ''];
+  return JSON.stringify({
+    settings: [settings.partition, settings.exterior, settings.bearing, settings.wallsEngine || ''],
+    masses: (project.masses || []).map(massShape),
+    levels: (project.levels || []).map((level) => ({
+      id: level.id,
+      elevation: level.elevation,
+      height: level.height,
+      rooms: level.rooms || [],
+      openings: level.openings || [],
+      wallOverrides: level.wallOverrides || {},
+      walls: level.walls || [],
+      slabOpenings: level.slabOpenings || [],
+      stairs: (level.items || []).filter((item) => item.kind === 'stairs').map(stairShape),
+    })),
+  });
+}
+
+function faceAreaOnAxis(points, axis) {
+  const [a, b] = axis === 'x' ? ['y', 'z'] : axis === 'y' ? ['x', 'z'] : ['x', 'y'];
+  let twice = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i]; const q = points[(i + 1) % points.length];
+    twice += p[a] * q[b] - q[a] * p[b];
+  }
+  return Math.abs(twice) / 2;
+}
+
+// Cutter может лишь разбить ту же плоскость на большее число граней, даже
+// когда геометрически ничего не вырезал. Поэтому сравниваем не массив граней,
+// а суммарную площадь каждой ориентированной плоскости каждого объекта.
+function massVoidTargetFingerprint(project) {
+  const areas = new Map();
+  for (const face of buildHouseMesh(project, {
+    roof: false, site: false, landscape: false, furniture: false,
+    levels: 'all', masses: true, roofs: false,
+  })) {
+    if (!MASS_VOID_TARGET_KINDS.has(face.kind) || !face.pts?.length) continue;
+    const n = face.normal || {};
+    const axis = ['x', 'y', 'z'].reduce((best, key) => (Math.abs(n[key] || 0) > Math.abs(n[best] || 0) ? key : best), 'x');
+    if (Math.abs(n[axis] || 0) < 0.5) continue;
+    const plane = face.pts.reduce((sum, point) => sum + point[axis], 0) / face.pts.length;
+    const owner = face.massId || face.roomId || face.ref?.key || '';
+    const key = [face.kind, owner, face.level || '', axis, n[axis] > 0 ? 1 : -1, Math.round(plane * 1000) / 1000].join('|');
+    areas.set(key, (areas.get(key) || 0) + faceAreaOnAxis(face.pts, axis));
+  }
+  return JSON.stringify([...areas].sort(([a], [b]) => a.localeCompare(b)).map(([key, area]) => [key, Math.round(area * 1000) / 1000]));
+}
+
+export function massVoidCutsProject(project, cutter) {
+  if (!project || !cutter) return false;
+  const others = (project.massVoids || []).filter((item) => item?.id !== cutter.id);
+  // Наличие massVoids включает точный v2-построитель и у старых v1-стен.
+  // Один одинаковый cutter далеко от модели держит обе сравниваемые сцены в
+  // одном режиме и не даёт ложного «пересечения» из-за смены алгоритма.
+  const stable = [...others, MASS_VOID_IMPACT_SENTINEL];
+  const without = { ...project, massVoids: stable };
+  const withCutter = { ...project, massVoids: [...stable, cutter] };
+  return massVoidTargetFingerprint(without) !== massVoidTargetFingerprint(withCutter);
+}
+
+// Убирает orphan/redundant cutters после любого изменения геометрии. Идём
+// по порядку: первый полезный cutter остаётся, последующие полностью
+// дублирующие его вырез удаляются, но частично добавляющие вырез сохраняются.
+export function pruneOrphanMassVoids(project) {
+  const source = Array.isArray(project?.massVoids) ? project.massVoids : [];
+  if (!source.length) return [];
+  const kept = [];
+  const removed = [];
+  const stable = [MASS_VOID_IMPACT_SENTINEL];
+  let fingerprint = massVoidTargetFingerprint({ ...project, massVoids: stable });
+  for (const cutter of source) {
+    const nextStable = [...stable, cutter];
+    const next = massVoidTargetFingerprint({ ...project, massVoids: nextStable });
+    if (next !== fingerprint) {
+      kept.push(cutter);
+      stable.push(cutter);
+      fingerprint = next;
+    } else removed.push(cutter.id);
+  }
+  if (removed.length) {
+    if (kept.length) project.massVoids = kept;
+    else delete project.massVoids;
+  }
+  return removed;
+}

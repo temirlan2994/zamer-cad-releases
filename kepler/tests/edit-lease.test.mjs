@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDb } from '../core/memdb.js';
 import {
-  acquireEditLease, cancelEditLeaseRequest, grantRequestedEditLease,
+  acquireEditLease, cancelEditLeaseRequest, classifyObservedEditLease, grantRequestedEditLease,
   heartbeatEditLease, leaseFence, leaseHeldBy, readEditLease,
   rejectEditLeaseRequest, releaseEditLease, requestEditLease, takeoverEditLease, watchEditLease,
 } from '../core/edit-lease.js';
@@ -75,6 +75,30 @@ test('активный lease нельзя забрать без force, истё�
   assert.equal(afterExpiry.status, 'acquired');
   assert.equal(afterExpiry.lease.epoch, 2);
   assert.equal(afterExpiry.lease.sessionId, B.sessionId);
+});
+
+test('локальный тайм-аут и кэш не выдаются за подтверждённое другое устройство', async () => {
+  const ownExpired = {
+    ...A, epoch: 1, acquiredAt: 1_000, heartbeatAt: 1_000, expiresAt: 2_000,
+    requestedSessionId: null, requestedDeviceId: null, requestedDeviceName: null, requestedAt: null,
+  };
+  const foreignActive = { ...ownExpired, ...B, epoch: 2, expiresAt: 10_000 };
+  assert.equal(classifyObservedEditLease(ownExpired, A, { fromCache: false }, 5_000), 'available');
+  assert.equal(classifyObservedEditLease(ownExpired, A, { fromCache: true }, 5_000), 'unconfirmed');
+  assert.equal(classifyObservedEditLease(foreignActive, A, { fromCache: true }, 5_000), 'unconfirmed');
+  assert.equal(classifyObservedEditLease(foreignActive, A, { fromCache: false }, 5_000), 'occupied');
+  assert.equal(classifyObservedEditLease(null, A, { fromCache: false }, 5_000), 'available');
+  assert.equal(classifyObservedEditLease({ ...foreignActive, expiresAt: 4_000 }, A, { fromCache: false }, 5_000), 'available');
+});
+
+test('после сна тот же сеанс продлевает истёкший lease без ложного конфликта', async () => {
+  const db = createMemoryDb();
+  const first = await acquireEditLease(db, ROOT, PID, A, { now: 1_000, ttlMs: 1_000 });
+  const resumed = await acquireEditLease(db, ROOT, PID, A, { now: 5_000, ttlMs: 1_000 });
+  assert.equal(resumed.status, 'acquired');
+  assert.equal(resumed.renewed, true);
+  assert.equal(resumed.lease.sessionId, first.lease.sessionId);
+  assert.equal(resumed.lease.epoch, first.lease.epoch);
 });
 
 test('release не удаляет fencing history и разрешает следующий epoch', async () => {

@@ -85,6 +85,17 @@ export function leaseExpired(lease, at = Date.now()) {
   return !Number.isFinite(expiry) || expiry <= nowMs(at);
 }
 
+// Snapshot из локального Firestore-кэша не доказывает, что проект уже
+// редактирует другой сеанс. UI может блокировать редактор только по свежему
+// серверному snapshot; отсутствие/истечение lease означает попытку получить
+// его заново, а не «другое устройство».
+export function classifyObservedEditLease(lease, identity, metadata = null, at = Date.now()) {
+  if (metadata?.fromCache !== false || metadata?.hasPendingWrites === true) return 'unconfirmed';
+  if (!lease || leaseExpired(lease, at)) return 'available';
+  if (leaseHeldBy(lease, identity)) return 'owned';
+  return 'occupied';
+}
+
 export function leaseFence(lease) {
   return lease ? { editorSession: lease.sessionId, editorEpoch: lease.epoch } : null;
 }

@@ -49,7 +49,7 @@ import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
 import {
   MASS_HINT, MASS_VOID_HINT, addMass, massBaseSnap, massById, massIsVoid, massLevelHeight, massVoids, masses,
-  replaceMassLive, solidMassList, updateMass,
+  pruneUnusedMassVoidLive, replaceMassLive, solidMassList, updateMass,
 } from './masses.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, snapshot } from './store.js';
@@ -312,9 +312,9 @@ function commitTool(t) {
   Object.assign(t, { stage: 'corner', a: null, b: null, h: null, screen2: null, held: {}, snaps: [] });
   hideNum();
   env.label(null);
-  addMass(m);
+  const added = addMass(m);
   env.hint(stageHint(t));
-  return m;
+  return added;
 }
 
 // Клик (или тап) инструментом.
@@ -708,11 +708,13 @@ export function finishMassDrag() {
   env.label(null);
   if (!d) return;
   if (d.snaps?.length) env.hint();
-  if (!d.changed) { env.redraw(true); return; }
+  const removedSelf = pruneUnusedMassVoidLive(d.id);
+  if (!d.changed && !removedSelf) { env.redraw(true); return; }
   refreshDerived();
   pushHistory(d.before);
   afterChange();
-  selectObject({ type: 'mass', id: d.id });
+  if (removedSelf) toast('Полая масса больше ничего не пересекает и удалена', true);
+  else selectObject({ type: 'mass', id: d.id });
 }
 
 export function cancelMassDrag() {

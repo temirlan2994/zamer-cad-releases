@@ -9,6 +9,7 @@ import {
   MASS_H_DEFAULT, MASS_MIN, allMasses, copyMass, createMass, createMassVoid, floorsLabel, massExtent, massSnapCoords, massStats, massStep,
   resizeMass, rotateMass90, snapValue, solidMasses, stackMass, voidMasses,
 } from '../core/masses.js';
+import { massVoidCutsProject } from '../core/mesh3d.js';
 import { wallSnapCoords } from '../core/walls.js';
 import { escapeHtml, toast } from './dom.js';
 import { state } from './state.js';
@@ -31,6 +32,7 @@ export const massById = (id) => masses().find((m) => m.id === id) || null;
 export const massIsVoid = (id) => massVoids().some((m) => m.id === id);
 export const selectedMass = () => (state.selection?.type === 'mass' ? massById(state.selection.id) : null);
 export const isMassTool = () => state.tool?.kind === 'mass';
+const massGeometryKey = (mass) => [mass.x, mass.y, mass.w, mass.d, mass.z0, mass.h, mass.rotation].join('|');
 
 // Высота этажа для подписей «≈ N этажей»: активный этаж (или первый).
 export function massLevelHeight() {
@@ -57,6 +59,10 @@ export function massBaseSnap(skip = null) {
 
 export function addMass(mass) {
   const isVoid = mass.id.startsWith('void-');
+  if (isVoid && !massVoidCutsProject(state.project, mass)) {
+    toast('Полая масса ничего не пересекает и удалена', true);
+    return null;
+  }
   mutate(() => {
     if (isVoid) state.project.massVoids = [...massVoids(), mass];
     else state.project.masses = [...solidMassList(), mass];
@@ -69,19 +75,43 @@ export function updateMass(id, fn) {
   const m = massById(id);
   if (!m) return null;
   let next = null;
+  let removed = false;
+  const wasVoid = massIsVoid(id);
   mutate(() => {
     next = fn(m);
-    if (massIsVoid(id)) state.project.massVoids = massVoids().map((x) => (x.id === id ? next : x));
-    else state.project.masses = solidMassList().map((x) => (x.id === id ? next : x));
+    const geometryChanged = massGeometryKey(next) !== massGeometryKey(m);
+    if (wasVoid) {
+      if (!geometryChanged || massVoidCutsProject(state.project, next)) state.project.massVoids = massVoids().map((x) => (x.id === id ? next : x));
+      else {
+        state.project.massVoids = massVoids().filter((x) => x.id !== id);
+        if (!state.project.massVoids.length) delete state.project.massVoids;
+        next = null;
+        removed = true;
+      }
+    } else state.project.masses = solidMassList().map((x) => (x.id === id ? next : x));
+    if (removed && state.selection?.type === 'mass' && state.selection.id === id) state.selection = null;
   });
-  return next;
+  if (removed) toast('Полая масса больше ничего не пересекает и удалена', true);
+  return massById(id);
+}
+
+// Жест 3D меняет модель без mutate, чтобы всё движение было одной записью
+// Undo. По отпусканию мыши удаляем потерявший цель cutter тем же жестом.
+export function pruneUnusedMassVoidLive(id) {
+  const mass = massById(id);
+  if (!mass || !massIsVoid(id) || massVoidCutsProject(state.project, mass)) return false;
+  state.project.massVoids = massVoids().filter((item) => item.id !== id);
+  if (!state.project.massVoids.length) delete state.project.massVoids;
+  if (state.selection?.type === 'mass' && state.selection.id === id) state.selection = null;
+  return true;
 }
 
 export function deleteMass(id) {
   const m = massById(id);
   if (!m) return;
+  const wasVoid = massIsVoid(id);
   mutate(() => {
-    if (massIsVoid(id)) {
+    if (wasVoid) {
       state.project.massVoids = massVoids().filter((x) => x.id !== id);
       if (!state.project.massVoids.length) delete state.project.massVoids;
     } else {
@@ -103,8 +133,7 @@ export function duplicateMass(id, offset = null) {
 }
 
 export function rotateMass(id) {
-  updateMass(id, (m) => rotateMass90(m));
-  toast('Масса повёрнута на 90° · Ctrl+Z — отменить');
+  if (updateMass(id, (m) => rotateMass90(m))) toast('Масса повёрнута на 90° · Ctrl+Z — отменить');
 }
 
 export function groundMass(id) {
@@ -178,9 +207,9 @@ export function massPlanClick(plan, event) {
   let m = t.void ? createMassVoid(spec, massVoids()) : createMass(spec, solidMassList());
   if (!t.void && !m.z0) m = stackMass(m, solidMassList());
   t.a = null; t.stage = 'corner';
-  addMass(m);
+  const added = addMass(m);
   setHint(planHintA(t));
-  toast(`${m.name}: ${m.w} × ${m.d} × ${m.h} мм · ${t.void ? 'вырезает пересечённые объёмы' : 'форма — в 3D'}`);
+  if (added) toast(`${m.name}: ${m.w} × ${m.d} × ${m.h} мм · ${t.void ? 'вырезает пересечённые объёмы' : 'форма — в 3D'}`);
 }
 
 // Живая правка одним 3D-жестом: история оформляется в mass3d.js.

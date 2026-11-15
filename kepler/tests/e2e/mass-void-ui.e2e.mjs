@@ -19,6 +19,14 @@ describe('Полая масса: инструмент и свойства', () =
   });
 
   it('два клика на плане создают massVoids, а не обычную массу', async () => {
+    await app.page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const store = await import('./ui/store.js');
+      const st = window.__kepler.state;
+      st.project.rooms = [createRoom('living', -5000, -5000, 10000, 10000)];
+      store.refreshDerived();
+      (await import('./ui/view.js')).requestDraw();
+    });
     const points = await app.page.evaluate(async () => {
       const v = await import('./ui/view.js');
       const st = window.__kepler.state;

@@ -118,6 +118,7 @@ const CLICK_SLOP = 5; // px — дальше это вращение, а не к
 const HOLD_MS = 450; // удержание пальцем — перетаскивание ручки
 let sets = null; // коробки стен и проёмов, грани для луча (кеш до пересборки)
 let hover = null; // { key, level, face, normal, kind } — ручка выбранной стены под мышью
+let massVoidHoverId = null; // невидимый cutter подсвечивается только под курсором
 let edit = null; // жест правки стены
 
 // Объекты выбираются (стены — и правятся) только в «Плане» (в «Участке»/
@@ -284,23 +285,26 @@ function initGl(canvas) {
 
 const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture', 'stairs']);
 
-// Полые массы остаются видимыми и выбираемыми даже внутри стены. Слабая
-// заливка проходит обычный depth-test, а оранжевый каркас рисуется поверх
-// сцены — иначе полностью вложенный cutter было бы невозможно найти снова.
+// Полая масса обычно полностью невидима. Её невидимый pick-box остаётся
+// активным, а заливка и каркас появляются только под курсором либо после
+// выбора (когда нужны гизмо и ручки правки).
 function massVoidOverlay() {
   if (!opts.masses || !state.project?.massVoids?.length) return [];
   const selected = state.selection?.type === 'mass' ? state.selection.id : null;
+  const visible = new Set([selected, massVoidHoverId].filter(Boolean));
+  if (!visible.size) return [];
   const out = [];
   for (const f of massVoidFaces(state.project.massVoids)) {
+    if (!visible.has(f.voidId)) continue;
     const hot = selected === f.voidId;
     out.push({
-      ...f, kind: 'overlay', color: '#ef6c32', alpha: hot ? 0.11 : 0.055,
+      ...f, kind: 'overlay', color: '#ef6c32', alpha: hot ? 0.11 : 0.075,
       twoSided: true, noEdges: true, edges: [],
     });
     out.push({
       ...f, kind: 'overlay', color: '#ef6c32', alpha: 0, onTop: true, flat: true, twoSided: true,
       edges: f.pts.map((p, i) => [p, f.pts[(i + 1) % f.pts.length]]),
-      edgeRgba: hot ? [0.94, 0.31, 0.08, 1] : [0.94, 0.31, 0.08, 0.72],
+      edgeRgba: hot ? [0.94, 0.31, 0.08, 1] : [0.94, 0.31, 0.08, 0.9],
     });
   }
   return out;
@@ -575,9 +579,10 @@ function requestRender() {
 // Камера смотрит на центр дома (стены и полы) с расстояния по его размеру;
 // участок и соседи при этом могут уходить за край — колесом можно отдалить.
 function frameHouse() {
-  const voidPts = opts.masses ? massVoidFaces(state.project?.massVoids || []).flatMap((f) => f.pts) : [];
-  const house = faces.filter((f) => f.kind === 'wall' || f.kind === 'floor' || f.kind === 'mass').flatMap((f) => f.pts)
-    .concat(voidPts).map(W);
+  // Скрытый cutter не должен отдалять камеру: кадр строится по видимой
+  // геометрии дома и обычным массам. Выбор cutter по-прежнему работает
+  // через его невидимый pick-box.
+  const house = faces.filter((f) => f.kind === 'wall' || f.kind === 'floor' || f.kind === 'mass').flatMap((f) => f.pts).map(W);
   const pts = house.length ? house : faces.flatMap((f) => f.pts).map(W);
   if (!pts.length) return;
   const min = (k) => Math.min(...pts.map((p) => p[k]));
@@ -752,6 +757,7 @@ export function open3d() {
   syncMassControl();
   rebuildScene();
   hover = null;
+  massVoidHoverId = null;
   uploadGeometry();
   frameHouse();
   requestRender();
@@ -769,6 +775,7 @@ export function close3d() {
   hideNumber();
   active = false;
   hover = null;
+  massVoidHoverId = null;
   el('view3d').hidden = true;
   document.body.classList.remove('v3-open');
   el('view3dBtn')?.classList.remove('active');
@@ -845,26 +852,42 @@ const GRIP_CURSOR = { height: 'ns-resize', move: 'move', thickness: 'col-resize'
 function updateHover(e) {
   const openingHandle = wallsEditable() ? openingHandleAt(e) : null;
   if (openingHandle) {
+    const changed = massVoidHoverId !== null;
+    massVoidHoverId = null;
+    if (changed) { uploadOverlay(); requestRender(); }
     el('canvas3d').style.cursor = openingHandle.id === 'top' || openingHandle.id === 'bottom' ? 'ns-resize' : 'ew-resize';
     return;
   }
   if (state.selection?.type === 'roof' && wallsEditable()) {
     const r = roofHoverAt(e);
     if (r.changed) { uploadOverlay(); requestRender(); }
-    if (r.cursor) { el('canvas3d').style.cursor = r.cursor; return; }
+    if (r.cursor) {
+      if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); requestRender(); }
+      el('canvas3d').style.cursor = r.cursor;
+      return;
+    }
   } else if (clearRoofHover()) { uploadOverlay(); requestRender(); }
   if (state.selection?.type === 'mass' && wallsEditable()) {
     const r = massHoverAt(e);
     if (r.changed) { uploadGeometry(); requestRender(); }
-    if (r.cursor) { el('canvas3d').style.cursor = r.cursor; return; }
+    if (r.cursor) {
+      if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); requestRender(); }
+      el('canvas3d').style.cursor = r.cursor;
+      return;
+    }
   } else if (clearMassHover()) { uploadGeometry(); requestRender(); }
   const hit = pickWithMass(e);
+  const nextVoid = hit?.type === 'mass' && massIsVoid(hit.id) ? hit.id : null;
+  const voidChanged = nextVoid !== massVoidHoverId;
+  massVoidHoverId = nextVoid;
   const grip = gripAt(hit, e);
   const next = grip ? { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind } : null;
   el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : (hit ? 'pointer' : '');
   const same = (!next && !hover) || (next && hover && next.key === hover.key && next.face === hover.face && sameNormal(next.normal, hover.normal));
   hover = next;
-  if (!same) { uploadGeometry(); requestRender(); }
+  if (!same) uploadGeometry();
+  else if (voidChanged) uploadOverlay();
+  if (!same || voidChanged) requestRender();
 }
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
@@ -890,6 +913,7 @@ function clickSelect(hit) {
     state.touchDeferSelect = defer;
   }
   hover = null;
+  massVoidHoverId = null;
   clearMassHover();
   refreshHighlight();
 }
@@ -1129,6 +1153,7 @@ function onMove(e) {
   if (gesture.kind === 'mass') { moveMassDrag(e); return; }
   if (gesture.kind === 'roof') { moveRoofDrag(e); return; }
   if (gesture.kind === 'pinch') {
+    if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); }
     const [a, b] = [...pointers.values()];
     if (!b) return;
     const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
@@ -1142,6 +1167,9 @@ function onMove(e) {
       gesture.click = false;
       clearTimeout(gesture.hold);
     }
+    // После сдвига/вращения камеры прежняя точка попадания уже невалидна.
+    // Сразу прячем cutter, а на pointerup заново проверяем объект под мышью.
+    if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); }
     const dx = e.clientX - gesture.x;
     const dy = e.clientY - gesture.y;
     gesture.x = e.clientX;
@@ -1208,7 +1236,10 @@ function onUp(e) {
     clickSelect(g.hit);
     return;
   }
-  if (!pointers.size) gesture = null;
+  if (!pointers.size) {
+    gesture = null;
+    if (e.pointerType === 'mouse' && active) updateHover(e);
+  }
   else if (gesture?.kind === 'pinch') {
     const [p] = [...pointers.values()];
     gesture = { kind: 'orbit', x: p.x, y: p.y };
@@ -1371,12 +1402,20 @@ export function bind3d() {
   canvas.addEventListener('pointercancel', onCancel);
   canvas.addEventListener('pointerleave', () => {
     const hadMass = !gesture && clearMassHover();
+    const hadVoid = massVoidHoverId !== null;
+    massVoidHoverId = null;
     if (massToolOn() && !gesture) setMassLabel(null);
     if (openingToolOn() && !gesture) { resetOpeningTool(); uploadOverlay(); requestRender(); }
-    if ((!hover && !hadMass) || gesture) return;
+    if (gesture) {
+      if (hadVoid) { uploadOverlay(); requestRender(); }
+      return;
+    }
+    if (!hover && !hadMass && !hadVoid) return;
+    const hadGeometryHover = Boolean(hover) || hadMass;
     hover = null;
     canvas.style.cursor = '';
-    uploadGeometry();
+    if (hadGeometryHover) uploadGeometry();
+    else uploadOverlay();
     requestRender();
   });
   canvas.addEventListener('dblclick', onDblClick);
@@ -1384,6 +1423,7 @@ export function bind3d() {
     e.preventDefault();
     cam.dist = Math.min(400000, Math.max(3000, cam.dist * Math.exp(e.deltaY * 0.0012)));
     if (state.selection?.type === 'mass' || state.selection?.type === 'opening' || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
+    updateHover(e); // камера изменилась — заново проверяем cutter под курсором
     requestRender();
   }, { passive: false });
   new ResizeObserver(() => requestRender()).observe(canvas);
@@ -1415,6 +1455,7 @@ export function debug3d() {
     masses: faces.filter((f) => f.kind === 'mass').length / 6, massLayer: opts.masses,
     massVoids: state.project?.massVoids?.length || 0,
     massVoidOverlayFaces: massVoidOverlay().length,
+    massVoidHoverId,
     undergroundFaces: faces.filter((f) => f.kind === 'massUnder' && f.pts.length).length,
     waterline: faces.filter((f) => f.kind === 'massLine').reduce((t, f) => t + f.edges.length, 0),
     roofs: new Set(faces.filter((f) => f.roofId).map((f) => f.roofId)).size,

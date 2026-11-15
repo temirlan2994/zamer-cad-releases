@@ -5,7 +5,9 @@ import { area } from '../core/geom/poly.js';
 import {
   createMass, createMassVoid, massSketch, normalizeMassVoids, solidMasses, voidMasses,
 } from '../core/masses.js';
-import { buildHouseMesh, massFaces } from '../core/mesh3d.js';
+import {
+  buildHouseMesh, massFaces, massVoidCutsProject, massVoidTargetGeometryKey, pruneOrphanMassVoids,
+} from '../core/mesh3d.js';
 import { pickBoxes } from '../core/pick3d.js';
 import {
   createLevel, createProject, createRoom, deserializeProject, hasContent, serializeProject,
@@ -60,6 +62,54 @@ test('3D массы: сквозной cutter оставляет внутренн
   assert.ok(faces.every((f) => f.massId === solid.id && f.kind === 'mass'));
 });
 
+test('impact: пустой cutter и простое касание не считаются вырезом', () => {
+  const p = createProject('impact');
+  const solid = createMass({ x: 0, y: 0, w: 1000, d: 1000, z0: 0, h: 1000 });
+  p.masses = [solid];
+  const far = createMassVoid({ x: 5000, y: 5000, w: 1000, d: 1000, z0: 0, h: 1000 });
+  const touching = createMassVoid({ x: 1000, y: 0, w: 1000, d: 1000, z0: 0, h: 1000 });
+  const cutting = createMassVoid({ x: 900, y: 0, w: 1000, d: 1000, z0: 0, h: 1000 });
+  assert.equal(massVoidCutsProject(p, far), false);
+  assert.equal(massVoidCutsProject(p, touching), false);
+  assert.equal(massVoidCutsProject(p, cutting), true);
+});
+
+test('impact: cutter пола полезен, orphan после удаления цели очищается', () => {
+  const p = createProject('cleanup');
+  p.rooms.push(createRoom('living', 0, 0, 6000, 6000));
+  const cut = createMassVoid({ x: 3000, y: 3000, w: 1200, d: 1200, z0: 0, h: 1000 });
+  assert.equal(massVoidCutsProject(p, cut), true);
+  p.massVoids = [cut];
+  assert.deepEqual(pruneOrphanMassVoids(p), []);
+  p.rooms = [];
+  assert.deepEqual(pruneOrphanMassVoids(p), [cut.id]);
+  assert.equal('massVoids' in p, false);
+});
+
+test('impact: полностью дублирующий cutter удаляется, первый остаётся', () => {
+  const p = createProject('dedupe');
+  p.masses = [createMass({ x: 0, y: 0, w: 4000, d: 4000, z0: 0, h: 3000 })];
+  const a = createMassVoid({ x: 0, y: 0, w: 1000, d: 1000, z0: 0, h: 3000 });
+  const b = createMassVoid({ x: 0, y: 0, w: 1000, d: 1000, z0: 0, h: 3000 });
+  p.massVoids = [a, b];
+  assert.deepEqual(pruneOrphanMassVoids(p), [b.id]);
+  assert.deepEqual(p.massVoids.map((m) => m.id), [a.id]);
+});
+
+test('target key не запускает тяжёлую очистку от мебели/имени, но видит цели cutter', () => {
+  const p = createProject('key');
+  const initial = massVoidTargetGeometryKey(p);
+  p.name = 'Другое имя';
+  p.items.push({ id: 'chair', kind: 'chair', x: 0, y: 0, w: 500, h: 500, rotation: 0 });
+  p.massVoids = [createMassVoid({ x: 0, y: 0, w: 500, d: 500, h: 500 })];
+  assert.equal(massVoidTargetGeometryKey(p), initial, 'имя, мебель и сами cutters не являются целями');
+  p.items.push({ id: 'stair', kind: 'stairs', x: 0, y: 0, w: 1000, h: 3000, rotation: 0 });
+  assert.notEqual(massVoidTargetGeometryKey(p), initial, 'лестница меняет автоматический проём перекрытия');
+  p.items.pop();
+  p.rooms.push(createRoom('living', 0, 0, 4000, 4000));
+  assert.notEqual(massVoidTargetGeometryKey(p), initial, 'комната создаёт пол и стены');
+});
+
 test('void режет пол, межэтажную плиту и стены по своему диапазону Z', () => {
   const p = createProject('дом с пустотой');
   p.rooms.push(createRoom('living', 0, 0, 6000, 6000));
@@ -69,6 +119,8 @@ test('void режет пол, межэтажную плиту и стены по
   // Один cutter проходит сквозь плиту и пол L2, второй — через наружную стену L1.
   const vertical = createMassVoid({ x: 3000, y: 3000, w: 1600, d: 1600, z0: 2700, h: 800 });
   const wallCut = createMassVoid({ x: 0, y: 1000, w: 1200, d: 1200, z0: 500, h: 1800 });
+  assert.equal(massVoidCutsProject(p, vertical), true, 'пересечение пола/плиты — полезный cutter');
+  assert.equal(massVoidCutsProject(p, wallCut), true, 'cutter стены полезен и без обычных масс');
   p.massVoids = [vertical, wallCut];
   const faces = buildHouseMesh(p);
   const floors2 = faces.filter((f) => f.kind === 'floor' && f.level === 'L2');
