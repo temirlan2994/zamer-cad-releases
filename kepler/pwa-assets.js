@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "4329035b12ff67e6",
+  "version": "052388c04b029024",
   "assets": [
     "./",
     "./app.js",
@@ -9,6 +9,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./assets/icons/icon-512.png",
     "./assets/icons/icon-maskable-512.png",
     "./core/autolayout.js",
+    "./core/bedside.js",
     "./core/blocks.js",
     "./core/bound-rooms.js",
     "./core/building.js",
@@ -83,6 +84,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/pdf.js",
     "./core/pick3d.js",
     "./core/plan-shadows.js",
+    "./core/polygon-edge.js",
     "./core/project-preview.js",
     "./core/railings.js",
     "./core/roofs.js",
@@ -215,6 +217,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/slab-ui.js",
     "./ui/snap.js",
     "./ui/split-input.js",
+    "./ui/stair-library.js",
     "./ui/start-menu.js",
     "./ui/startup-cloud.js",
     "./ui/state.js",

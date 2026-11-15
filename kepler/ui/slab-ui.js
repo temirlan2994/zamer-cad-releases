@@ -8,10 +8,12 @@
 
 import {
   createSlabOpening, dragSlabRect, findSlabOpening, removeSlabOpening, resetSlabOpeningAuto,
-  setSlabOpeningPolygon, setSlabOpeningRect, slabOpeningArea, slabOpeningPolygon, slabOpeningStair,
+  setSlabOpeningPolygon, setSlabOpeningRect, slabHandlePoints, slabOpeningArea, slabOpeningPolygon, slabOpeningStair,
 } from '../core/slab-openings.js';
+import { dragPolygonEdge, polygonEdgeAxis, polygonEdgeMode } from '../core/polygon-edge.js';
 import { snapWallPoint } from '../core/wall-manual.js';
 import { canvas, escapeHtml, toast } from './dom.js';
+import { clearObjGuides, guideDelta, startGuideSession } from './guides-ui.js';
 import { SLAB_HANDLE } from './render-slab.js';
 import { gridStep } from './snap.js';
 import { state } from './state.js';
@@ -40,7 +42,8 @@ function pointInPolygon(point, polygon) {
   return inside;
 }
 
-// Что под курсором (экран): { id, part: <ручка> | 'edge' } или null.
+// Что под курсором (экран): ручка, конкретная грань выбранного контура или
+// тело. Первый клик по невыбранному проёму остаётся обычным выбором/сдвигом.
 export function hitSlab(screen) {
   if (state.modeName !== 'plan' || state.roofPlan) return null;
   const ui = state._slabUI || [];
@@ -55,20 +58,37 @@ export function hitSlab(screen) {
   let best = null;
   for (const r of ui) {
     const P = r.P;
-    let d = Infinity;
-    for (let i = 0; i < P.length; i += 1) d = Math.min(d, segDist(screen, P[i], P[(i + 1) % P.length]));
+    let edge = -1; let edgeD = Infinity;
+    for (let i = 0; i < P.length; i += 1) {
+      const d = segDist(screen, P[i], P[(i + 1) % P.length]);
+      if (d < edgeD) { edgeD = d; edge = i; }
+    }
+    if (r.id === sel && edgeD <= tol) return { id: r.id, part: `e:${edge}` };
+    let d = edgeD;
     if (!r.polygon && P.length === 4) d = Math.min(d, segDist(screen, P[0], P[2]), segDist(screen, P[1], P[3]));
     if (pointInPolygon(screen, P)) d = Math.min(d, tol);
     const L = r.label;
     if (L && screen.x >= L.x0 && screen.x <= L.x1 && screen.y >= L.y0 && screen.y <= L.y1) d = 0;
     if (d <= tol && (!best || d < best.d)) best = { d, id: r.id };
   }
-  return best ? { id: best.id, part: 'edge' } : null;
+  return best ? { id: best.id, part: 'body' } : null;
 }
 
 export function slabHoverTarget(screen) {
   const hit = hitSlab(screen);
+  state.slabEdgeHover = hit?.part?.startsWith('e:') ? { id: hit.id, index: Number(hit.part.slice(2)) } : null;
   return hit ? { type: 'slab', levelId: state.project.activeLevel, id: hit.id } : null;
+}
+
+function guideSession(id, moving, frames = null) {
+  return startGuideSession({
+    space: 'plan', moving, frames, equal: false,
+    exclude: { slabs: new Set([id]) },
+  });
+}
+
+function handlePoint(opening, handle) {
+  return slabHandlePoints(opening).find((p) => p.id === handle) || null;
 }
 
 // Нажатие: ручка выбранного — правка размера, контур — выбор и сдвиг. → drag или null.
@@ -81,10 +101,29 @@ export function slabPointerDown(event, screen, plan) {
   selectObject({ type: 'slab', levelId, id: o.id });
   const base = {
     levelId, id: o.id, start: { x: o.x, y: o.y, w: o.w, h: o.h },
-    points: slabOpeningPolygon(o).map((p) => ({ ...p })), plan0: { x: plan.x, y: plan.y }, before: snapshot(), moved: false,
+    points: slabOpeningPolygon(o).map((p) => ({ ...p })), polygonal: Boolean(o.outline?.length),
+    plan0: { x: plan.x, y: plan.y }, before: snapshot(), moved: false,
   };
-  if (hit.part === 'edge') return { kind: 'slab-move', ...base };
-  if (hit.part.startsWith('v:')) return { kind: 'slab-polygon', index: Number(hit.part.slice(2)), ...base };
+  if (hit.part === 'body') return {
+    kind: 'slab-move', guides: guideSession(o.id, [{ id: o.id, pts: base.points }]), ...base,
+  };
+  if (hit.part.startsWith('e:')) {
+    const index = Number(hit.part.slice(2));
+    const a = base.points[index]; const b = base.points[(index + 1) % base.points.length];
+    if (!a || !b) return null;
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    state.slabEdge = { id: o.id, index };
+    return {
+      kind: 'slab-edge', index, guides: guideSession(o.id, [{ id: o.id, pts: [a, b] }], [angle]), ...base,
+    };
+  }
+  if (hit.part.startsWith('v:')) {
+    const index = Number(hit.part.slice(2));
+    return {
+      kind: 'slab-polygon', index,
+      guides: guideSession(o.id, [{ id: o.id, pts: [base.points[index]] }], [0]), ...base,
+    };
+  }
   if (hit.part.startsWith('m:')) {
     const edge = Number(hit.part.slice(2));
     const a = base.points[edge]; const b = base.points[(edge + 1) % base.points.length];
@@ -96,47 +135,104 @@ export function slabPointerDown(event, screen, plan) {
       state.selection = { type: 'slab', levelId, id: rec.id };
     }
     requestDraw();
-    return { kind: 'slab-polygon', index: edge + 1, inserted: true, ...base, moved: true };
+    const index = edge + 1;
+    return {
+      kind: 'slab-polygon', index, inserted: true,
+      guides: guideSession(base.id, [{ id: base.id, pts: [base.points[index]] }], [0]), ...base, moved: true,
+    };
   }
-  return { kind: 'slab-handle', handle: hit.part, ...base };
+  const hp = handlePoint(o, hit.part);
+  return {
+    kind: 'slab-handle', handle: hit.part, handlePoint: hp ? { x: hp.x, y: hp.y } : { ...base.plan0 },
+    guides: guideSession(o.id, [{ id: o.id, pts: [hp || base.plan0] }], [0]), ...base,
+  };
 }
 
 export function slabDragMove(drag, plan, event) {
   const g = event?.shiftKey ? 1 : gridStep();
   let rect; let polygon = null;
   if (drag.kind === 'slab-move') {
-    const dx = Math.round((plan.x - drag.plan0.x) / g) * g;
-    const dy = Math.round((plan.y - drag.plan0.y) / g) * g;
+    const raw = { x: plan.x - drag.plan0.x, y: plan.y - drag.plan0.y };
+    const grid = { x: Math.round(raw.x / g) * g, y: Math.round(raw.y / g) * g };
+    const { x: dx, y: dy } = guideDelta(drag.guides, raw, grid, event);
     if (!drag.moved && !dx && !dy) return;
-    if (findSlabOpening(state.project, drag.levelId, drag.id)?.outline?.length) {
+    if (drag.polygonal) {
       polygon = drag.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
     } else rect = { ...drag.start, x: drag.start.x + dx, y: drag.start.y + dy };
   } else if (drag.kind === 'slab-polygon') {
+    const p0 = drag.points[drag.index];
+    const raw = { x: plan.x - p0.x, y: plan.y - p0.y };
+    const grid = {
+      x: Math.round(plan.x / g) * g - p0.x,
+      y: Math.round(plan.y / g) * g - p0.y,
+    };
+    const d = guideDelta(drag.guides, raw, grid, event);
+    if (!drag.moved && Math.abs(d.x) < 0.5 && Math.abs(d.y) < 0.5) return;
     polygon = drag.points.map((p, i) => (i === drag.index
-      ? { x: Math.round(plan.x / g) * g, y: Math.round(plan.y / g) * g } : { ...p }));
+      ? { x: p0.x + d.x, y: p0.y + d.y } : { ...p }));
+  } else if (drag.kind === 'slab-edge') {
+    const rawPointer = { x: plan.x - drag.plan0.x, y: plan.y - drag.plan0.y };
+    const lockPx = state.coarsePointer ? 8 : 3;
+    if (!drag.edgeMode && Math.hypot(rawPointer.x, rawPointer.y) * (state.view?.scale || 1) < lockPx) return;
+    drag.edgeMode ||= polygonEdgeMode(drag.points, drag.index, rawPointer);
+    const axis = polygonEdgeAxis(drag.points, drag.index, drag.edgeMode);
+    if (!axis) return;
+    const scalar = rawPointer.x * axis.x + rawPointer.y * axis.y;
+    const raw = { x: axis.x * scalar, y: axis.y * scalar };
+    const gridMove = dragPolygonEdge(drag.points, drag.index, raw, { mode: drag.edgeMode, snap: g });
+    if (!gridMove) return;
+    // guideFrames нормализует угол по модулю 90°. Поэтому локальная ось U
+    // иногда совпадает с нормалью исходного ребра; определяем её фактически.
+    const frameAngle = drag.guides?.index?.frames?.[0]?.angle || 0;
+    const frameU = { x: Math.cos(frameAngle), y: Math.sin(frameAngle) };
+    const localAxis = Math.abs(axis.x * frameU.x + axis.y * frameU.y) >= 0.5 ? 'u' : 'v';
+    const d = guideDelta(drag.guides, raw, gridMove.delta, event, null, { axis: localAxis });
+    const moved = dragPolygonEdge(drag.points, drag.index, d, { mode: drag.edgeMode });
+    if (!moved) return;
+    if (moved.clamped) clearObjGuides();
+    drag.edgeResult = moved;
+    polygon = moved.points;
   } else {
-    rect = dragSlabRect(drag.start, drag.handle, plan, g);
+    const p0 = drag.handlePoint;
+    const raw = { x: plan.x - p0.x, y: plan.y - p0.y };
+    const grid = {
+      x: Math.round(plan.x / g) * g - p0.x,
+      y: Math.round(plan.y / g) * g - p0.y,
+    };
+    const handleAxis = drag.handle.length === 1 ? (drag.handle === 'n' || drag.handle === 's' ? 'v' : 'u') : null;
+    const d = guideDelta(drag.guides, raw, grid, event, null, handleAxis ? { axis: handleAxis } : null);
+    rect = dragSlabRect(drag.start, drag.handle, { x: p0.x + d.x, y: p0.y + d.y }, 1);
+    if (!drag.moved && rect.x === drag.start.x && rect.y === drag.start.y
+      && rect.w === drag.start.w && rect.h === drag.start.h) return;
   }
   // Авто-проём при первой правке становится ручным — выбор идёт за записью.
   const rec = polygon
     ? setSlabOpeningPolygon(state.project, drag.levelId, drag.id, polygon)
     : setSlabOpeningRect(state.project, drag.levelId, drag.id, rect);
-  if (!rec) return;
+  if (!rec) { clearObjGuides(); requestDraw(); return; }
   if (rec.id !== drag.id) {
     drag.id = rec.id;
     state.selection = { type: 'slab', levelId: drag.levelId, id: rec.id };
+    if (state.slabEdge) state.slabEdge.id = rec.id;
   }
   drag.moved = true;
   state.slabLabel = drag.kind === 'slab-handle'
     ? { x: plan.x, y: plan.y, text: `Проём ${rec.w} × ${rec.h} мм · ${HANDLE_TITLES[drag.handle]}` }
     : drag.kind === 'slab-polygon'
       ? { x: plan.x, y: plan.y, text: `Контур · ${(slabOpeningArea(rec) / 1e6).toFixed(2).replace('.', ',')} м² · ${slabOpeningPolygon(rec).length} вершин` }
+      : drag.kind === 'slab-edge'
+        ? {
+          x: plan.x, y: plan.y,
+          text: `Грань · ${drag.edgeMode === 'along' ? 'по оси' : 'перпендикулярно'} ${Math.round(Math.abs(drag.edgeResult?.d || 0))} мм${drag.edgeResult?.clamped ? ' · предел формы' : ''}`,
+        }
       : { x: plan.x, y: plan.y, text: `Проём: сдвиг ${rec.x - drag.start.x}, ${rec.y - drag.start.y} мм` };
   requestDraw();
 }
 
 export function slabDragEnd(drag) {
   state.slabLabel = null;
+  state.slabEdge = null;
+  clearObjGuides();
   if (!drag.moved) { requestDraw(); return; }
   refreshDerived();
   pushHistory(drag.before);
@@ -202,7 +298,7 @@ export function finishSlabOpeningTool() {
   const levelId = state.project.activeLevel;
   cancelTool();
   selectObject({ type: 'slab', levelId, id: rec.id });
-  toast(`Проём создан · ${(slabOpeningArea(rec) / 1e6).toFixed(2).replace('.', ',')} м² · тяните вершины и «+» на рёбрах`);
+  toast(`Проём создан · ${(slabOpeningArea(rec) / 1e6).toFixed(2).replace('.', ',')} м² · тяните вершины, линии и «+» на рёбрах`);
   return true;
 }
 
@@ -223,7 +319,7 @@ export function makeSlabFreeShape(sel = state.selection) {
   mutate(() => { rec = setSlabOpeningPolygon(state.project, sel.levelId, o.id, slabOpeningPolygon(o)); });
   if (rec) {
     selectObject({ type: 'slab', levelId: sel.levelId, id: rec.id });
-    toast('Свободный контур включён: тяните вершины, «+» добавляет новую');
+    toast('Свободный контур включён: тяните вершины или линии, «+» добавляет новую вершину');
   }
 }
 
@@ -282,7 +378,7 @@ export function renderSlabProps(panel, sel) {
     <p class="subtitle">${o.auto
     ? `Автоматически по лестнице${fromName ? ` с этажа «${fromName}»` : ''}: габарит маршей и площадок + 100 мм. Следует за лестницей. Тяните сторону или угол на плане — станет ручным.`
     : stair ? 'Изменён вручную: за лестницей больше не следует.' : 'Ручной проём.'}
-      ${o.outline?.length ? ` Свободный контур: ${slabOpeningPolygon(o).length} вершин; тяните круги, «+» на рёбрах добавляет вершину.` : ''}</p>
+      ${o.outline?.length ? ` Свободный контур: ${slabOpeningPolygon(o).length} вершин; тяните круги или саму линию (вдоль/перпендикулярно), «+» добавляет вершину. Во время движения видны привязки и расстояния.` : ' Тяните сторону вдали от квадратной ручки, чтобы двигать линию вдоль или перпендикулярно; появятся привязки и расстояния.'}</p>
     <div class="prop-block">
       <div class="prop-grid">
         <label class="prop-field"><span>Ширина (X), мм</span><input id="slabW" type="number" step="50" min="300" value="${o.w}"></label>

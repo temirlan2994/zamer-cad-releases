@@ -53,6 +53,65 @@ export function stairBuild(item) {
   return STAIR_BUILDS.some((b) => b.id === item?.stairBuild) ? item.stairBuild : 'open';
 }
 
+// Готовые стили из библиотеки. Геометрия лестницы остаётся параметрической,
+// а эти поля отвечают за назначение и внешний вид в 3D. Поля необязательные:
+// старые проекты выглядят как прежняя интерьерная деревянная лестница.
+export const STAIR_ENVIRONMENTS = [
+  { id: 'interior', title: 'Интерьерная' },
+  { id: 'exterior', title: 'Наружная' },
+];
+
+export const STAIR_MATERIALS = [
+  { id: 'wood', title: 'Дерево' },
+  { id: 'concrete', title: 'Бетон' },
+  { id: 'metal', title: 'Металл' },
+];
+
+export const STAIR_RAILINGS = [
+  { id: 'none', title: 'Без ограждения' },
+  { id: 'wood', title: 'Деревянные' },
+  { id: 'metal', title: 'Металлические' },
+  { id: 'glass', title: 'Стеклянные' },
+];
+
+export const STAIR_STYLE_PRESETS = [
+  { id: 'interior-wood', title: 'Деревянная открытая', environment: 'interior', material: 'wood', railing: 'wood', build: 'open', shape: 'straight' },
+  { id: 'interior-concrete', title: 'Бетонная монолитная', environment: 'interior', material: 'concrete', railing: 'metal', build: 'closed', shape: 'l' },
+  { id: 'interior-glass', title: 'Металл и стекло', environment: 'interior', material: 'metal', railing: 'glass', build: 'open', shape: 'u' },
+  { id: 'interior-cantilever', title: 'Консольная деревянная', environment: 'interior', material: 'wood', railing: 'glass', build: 'cantilever', shape: 'straight' },
+  { id: 'exterior-concrete', title: 'Наружная бетонная', environment: 'exterior', material: 'concrete', railing: 'metal', build: 'closed', shape: 'straight' },
+  { id: 'exterior-metal', title: 'Наружная металлическая', environment: 'exterior', material: 'metal', railing: 'metal', build: 'open', shape: 'straight' },
+  { id: 'exterior-wood', title: 'Наружная деревянная', environment: 'exterior', material: 'wood', railing: 'wood', build: 'open', shape: 'l' },
+];
+
+const validId = (list, value, fallback) => (list.some((entry) => entry.id === value) ? value : fallback);
+
+export function stairAppearance(item) {
+  const build = stairBuild(item);
+  return {
+    environment: validId(STAIR_ENVIRONMENTS, item?.stairEnvironment, 'interior'),
+    material: validId(STAIR_MATERIALS, item?.stairMaterial, 'wood'),
+    // У старого монолита ограждения не было; у открытой лестницы были
+    // металлические перила. Так старые файлы сохраняют прежний вид.
+    railing: validId(STAIR_RAILINGS, item?.stairRailing, build === 'closed' ? 'none' : 'metal'),
+  };
+}
+
+export function stairStylePreset(value) {
+  const id = typeof value === 'string' ? value : value?.stairStyle;
+  return STAIR_STYLE_PRESETS.find((preset) => preset.id === id) || STAIR_STYLE_PRESETS[0];
+}
+
+export function applyStairStylePreset(item, presetId = STAIR_STYLE_PRESETS[0].id) {
+  const preset = stairStylePreset(presetId);
+  item.stairStyle = preset.id;
+  item.stairEnvironment = preset.environment;
+  item.stairMaterial = preset.material;
+  item.stairRailing = preset.railing;
+  item.stairBuild = preset.build;
+  return item;
+}
+
 // Подъёмы: по высоте этажа (≈175 мм) или заданное число.
 export function stairRisers(item, fallbackHeight = 3000) {
   const floorH = item?.floorHeight || fallbackHeight;

@@ -74,6 +74,8 @@ describe('лестница: П-образная в 3 марша и ручки м
     await page.waitForFunction(() => window.__kepler.state.project.items.some((i) => i.kind === 'stairs'));
     const s = await stair();
     assert.equal(s.stairShape, 'u3');
+    assert.equal(s.stairStyle, 'interior-wood');
+    assert.equal(s.stairMaterial, 'wood');
     const k = await calc();
     assert.deepEqual(k.flights, [5, 4, 5]);
     assert.equal(k.treads + 2, k.risers - 1, 'три марша и две площадки — по высоте этажа');

@@ -2,7 +2,7 @@
 
 import { furnitureDef, isOpenRoom, roomType } from '../core/catalog.js';
 import { itemsEditable, pickStackHit } from '../core/hit-stack.js';
-import { STAIR_FIELDS, applyStairPreset, dragStairHandle, stairHandleLabel } from '../core/stairs.js';
+import { STAIR_FIELDS, applyStairPreset, applyStairStylePreset, dragStairHandle, stairHandleLabel } from '../core/stairs.js';
 import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
 import { activeLevel, roomById } from '../core/model.js';
 import { determineParent, snapRoomPosition, validateRoomPlacement } from '../core/rooms.js';
@@ -52,7 +52,7 @@ import {
 } from './landscape.js';
 import { closeLibrarySheet } from './mobile.js';
 import {
-  addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
+  addBedsideNightstand, addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
   placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
@@ -371,7 +371,10 @@ function updateHoverAndGhost(world, plan, event) {
     };
     withDefaultComp(item);
     // Лестница — сразу рассчитанная по высоте этажа, выбранной формы.
-    if (item.kind === 'stairs') applyStairPreset(item, state.tool.stairShape || 'straight', activeLevel(state.project)?.height || 3000);
+    if (item.kind === 'stairs') {
+      applyStairPreset(item, state.tool.stairShape || 'straight', activeLevel(state.project)?.height || 3000);
+      applyStairStylePreset(item, state.tool.stairPreset);
+    }
     state.ghostItem = item;
     requestDraw();
     return;
@@ -757,8 +760,8 @@ export function bindCanvasInput() {
       const t = state.tool;
       if (t.kind === 'place-room') { tapOrNow(event, screen, () => placeRoomAt(plan)); return; }
       if (t.kind === 'place-furniture') {
-        const { itemKind, rotation = 0, stairShape } = t;
-        tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation, { stairShape }); });
+        const { itemKind, rotation = 0, stairShape, stairPreset } = t;
+        tapOrNow(event, screen, () => { cancelTool(); addFurnitureAt(itemKind, plan.x, plan.y, rotation, { stairShape, stairPreset }); });
         return;
       }
       if (t.kind === 'place-opening') { state.openingFree = event.shiftKey; tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
@@ -844,6 +847,17 @@ export function bindCanvasInput() {
     // Маркер нестандартного зазора «≠ N мм» — выделить пару и предложить стыковку.
     const gapHit = onRoomHandle ? null : gapMarkerAt(screen.x, screen.y);
     if (gapHit) { focusGap(gapHit); return; }
+
+    // «+» слева/справа у кровати — раньше обычных ручек группы и выбора
+    // предметов, потому что кнопка лежит как раз в месте будущей тумбы.
+    if (state._bedsideUI?.spots?.length) {
+      const tolPx = state.coarsePointer ? 6 : 3;
+      const spot = state._bedsideUI.spots.find((entry) => Math.hypot(entry.x - screen.x, entry.y - screen.y) <= entry.r + tolPx);
+      if (spot) {
+        addBedsideNightstand(state._bedsideUI.bedId, spot.side);
+        return;
+      }
+    }
 
     // Кнопки «+» выделенного дивана-конструктора — раньше ручек и перетаскивания.
     if (state.selection?.type === 'item' && state._sofaUI?.itemId === state.selection.id) {
@@ -2008,6 +2022,9 @@ export function cancelActiveGesture() {
   state.groupRotateDeg = null;
   state.guides = [];
   state.objGuides = null;
+  state.slabLabel = null;
+  state.slabEdge = null;
+  state.slabEdgeHover = null;
   requestDraw();
 }
 

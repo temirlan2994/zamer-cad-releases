@@ -139,6 +139,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await settle(page);
     assert.equal(await has(page, 'sheet-stairs'), true);
     assert.deepEqual(await page.$$eval('#mobileCat [aria-pressed="true"]', (ns) => ns.map((n) => n.dataset.cat)), ['stairs']);
+    assert.ok(await page.$$eval('#mobileStairs [data-stair-preset]', (nodes) => nodes.length) >= 6, 'есть интерьерные и наружные пресеты');
     await page.tap('#mobileStairs [data-stair="l"]');
     const t = await page.evaluate(() => window.__kepler.state.tool);
     assert.equal(t?.itemKind, 'stairs');

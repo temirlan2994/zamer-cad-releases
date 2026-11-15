@@ -41,7 +41,7 @@ import {
 } from './props-site.js';
 import { resizeVerdict } from './snap.js';
 import {
-  STAIR_BUILDS, STAIR_SHAPES, applyStairPreset, stairBuild, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
+  STAIR_BUILDS, STAIR_ENVIRONMENTS, STAIR_MATERIALS, STAIR_RAILINGS, STAIR_SHAPES, applyStairPreset, stairAppearance, stairBuild, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
 } from '../core/stairs.js';
 import { presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
@@ -842,7 +842,16 @@ function renderItemProps(panel, item) {
     const c = stairCalculation(item, activeLevel(state.project)?.height || 3000);
     const comfortable = c.okRiser && c.okTread && c.okComfort;
     const byLevels = Boolean(item.toLevel && item.toLevel !== 'none');
+    const appearance = stairAppearance(item);
+    const opts = (list, value) => list.map((entry) => `<option value="${entry.id}" ${entry.id === value ? 'selected' : ''}>${entry.title}</option>`).join('');
     stairsBlock = `
+      <h3>Назначение и отделка</h3>
+      <div class="prop-block">
+        <label class="prop-field"><span>Размещение</span><select id="stairEnvironment">${opts(STAIR_ENVIRONMENTS, appearance.environment)}</select></label>
+        <label class="prop-field"><span>Материал</span><select id="stairMaterial">${opts(STAIR_MATERIALS, appearance.material)}</select></label>
+        <label class="prop-field"><span>Ограждение</span><select id="stairRailing">${opts(STAIR_RAILINGS, appearance.railing)}</select></label>
+        <p class="empty-hint">Материал и ограждение сразу меняют лестницу в 3D.</p>
+      </div>
       <h3>Форма лестницы</h3>
       <div class="stair-shape">
         ${STAIR_SHAPES.map((shape) => `<button type="button" data-stair-shape="${shape.id}" class="${c.shape === shape.id ? 'active' : ''}">${shape.title}</button>`).join('')}
@@ -921,9 +930,15 @@ function renderItemProps(panel, item) {
     });
   });
   panel.querySelector('#stairBuild')?.addEventListener('change', (e) => {
-    mutate(() => { item.stairBuild = e.target.value; });
+    mutate(() => { item.stairBuild = e.target.value; delete item.stairStyle; });
     selectObject({ type: 'item', id: item.id });
   });
+  for (const [id, field] of [['stairEnvironment', 'stairEnvironment'], ['stairMaterial', 'stairMaterial'], ['stairRailing', 'stairRailing']]) {
+    panel.querySelector(`#${id}`)?.addEventListener('change', (e) => {
+      mutate(() => { item[field] = e.target.value; delete item.stairStyle; });
+      selectObject({ type: 'item', id: item.id });
+    });
+  }
   panel.querySelector('#stairFit')?.addEventListener('click', () => {
     mutate(() => {
       applyStairPreset(item, stairShape(item), item.floorHeight || activeLevel(state.project)?.height || 3000);

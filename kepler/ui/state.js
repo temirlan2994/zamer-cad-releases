@@ -9,7 +9,7 @@ export const state = {
   flash: null, // { rects, levelId } — мгновенная подсветка места замечания
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
-  libraryTab: 'rooms', // 'rooms' | 'furniture' — вкладка библиотеки (в режиме «План»)
+  libraryTab: 'rooms', // 'rooms' | 'furniture' | 'stairs' — вкладка библиотеки (в режиме «План»)
   libraryPinned: false, // библиотека открыта кнопкой «Помещение»/«Мебель» (без активного размещения)
   propsTab: 'props', // 'props' | 'views' | 'sheets' | 'tep' — вкладка правой панели (ui/props.js)
   tepTab: 'tep', // 'rooms' (экспликация) | 'tep' (показатели) — подвкладка «ТЭП» (ui/props-tep.js)
@@ -62,6 +62,8 @@ export const state = {
   drawSnap: null, // { point, kind, label, guides, markers, tooltip, prev }
   dynInput: null, // { field: 'length'|'angle', length, angle }
   objGuides: null, // умные направляющие перемещения (ui/guides-ui.js): [{ type, from, to, label }]
+  slabEdge: null, // активная грань проёма { id, index } во время перетаскивания
+  slabEdgeHover: null, // грань выбранного проёма под указателем
   rejected: new Map(), // roomId -> причины отказов расстановки
   layoutVariants: new Map(), // roomId -> эфемерные варианты авторасстановки (не сохраняются в проект)
   calibration: null, // {p1, p2, measured}

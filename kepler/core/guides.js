@@ -173,7 +173,9 @@ function bestOnAxis(f, idx, M, tol, reach, ax, opts) {
  * привязаны (null, если рамка повёрнута относительно осей пространства);
  * guides — [{ type, from, to, label? }] для рисования.
  */
-export function snapGuides(index, boxes, delta, { tol = 1, reach = Infinity, equal = true, enabled = true, format = null } = {}) {
+export function snapGuides(index, boxes, delta, {
+  tol = 1, reach = Infinity, equal = true, enabled = true, format = null, axis = null,
+} = {}) {
   const none = { delta: { x: delta.x, y: delta.y }, snapped: false, angle: 0, snapU: false, snapV: false, axes: { x: false, y: false }, guides: [] };
   if (!enabled || !index?.frames?.length) return none;
   let pick = null;
@@ -182,8 +184,11 @@ export function snapGuides(index, boxes, delta, { tol = 1, reach = Infinity, equ
     if (!B) return;
     const d = rot(delta.x, delta.y, f.c, f.s);
     const M = shift(B, d.x, d.y);
-    const bx = bestOnAxis(f, f.xs, M, tol, reach, 'x', { equal });
-    const by = bestOnAxis(f, f.ys, M, tol, reach, 'y', { equal });
+    // axis ограничивает привязку одной осью локальной рамки: 'u' — X,
+    // 'v' — Y. Это нужно при сдвиге наклонного ребра строго вдоль него или
+    // строго перпендикулярно: направляющая не должна увести ребро со своей оси.
+    const bx = axis === 'v' ? null : bestOnAxis(f, f.xs, M, tol, reach, 'x', { equal });
+    const by = axis === 'u' ? null : bestOnAxis(f, f.ys, M, tol, reach, 'y', { equal });
     if (!bx && !by) return;
     const score = Math.min(bx ? bx.d : Infinity, by ? by.d : Infinity);
     if (!pick || score < pick.score - EPS) pick = { f, M, bx, by, score };

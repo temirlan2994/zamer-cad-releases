@@ -5,7 +5,7 @@ import { buildHouseMesh } from '../core/mesh3d.js';
 import { buildSection } from '../core/section.js';
 import { createItem, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
 import {
-  STAIR_BUILDS, applyStairPreset, dragStairHandle, stairBuild, materializeStair, setStairParam, stairCalculation, stairHandles, stairLayout, stairPreset,
+  STAIR_BUILDS, STAIR_STYLE_PRESETS, applyStairPreset, applyStairStylePreset, dragStairHandle, stairAppearance, stairBuild, materializeStair, setStairParam, stairCalculation, stairHandles, stairLayout, stairPreset,
 } from '../core/stairs.js';
 
 test('быстрые формы лестницы подбирают компактные габариты', () => {
@@ -233,6 +233,30 @@ test('конструкция лестницы: по умолчанию «Отк�
   assert.equal(back.items.find((i) => i.kind === 'stairs').stairBuild, 'cantilever');
 });
 
+test('библиотека лестниц: интерьерные и наружные пресеты задают материал, конструкцию и перила', () => {
+  assert.ok(STAIR_STYLE_PRESETS.some((p) => p.environment === 'interior' && p.material === 'wood'));
+  assert.ok(STAIR_STYLE_PRESETS.some((p) => p.environment === 'exterior' && p.material === 'concrete'));
+  assert.ok(STAIR_STYLE_PRESETS.some((p) => p.railing === 'glass'));
+  const stair = make('straight');
+  applyStairStylePreset(stair, 'exterior-metal');
+  assert.equal(stair.stairStyle, 'exterior-metal');
+  assert.equal(stair.stairBuild, 'open');
+  assert.deepEqual(stairAppearance(stair), { environment: 'exterior', material: 'metal', railing: 'metal' });
+  const project = createProject('Стили');
+  project.items.push(stair);
+  const back = deserializeProject(serializeProject(project)).items.find((i) => i.kind === 'stairs');
+  assert.deepEqual(stairAppearance(back), { environment: 'exterior', material: 'metal', railing: 'metal' });
+  assert.equal(back.stairStyle, 'exterior-metal');
+});
+
+test('старые лестницы сохраняют прежнее ограждение: открытая с перилами, монолит без них', () => {
+  assert.deepEqual(stairAppearance({}), { environment: 'interior', material: 'wood', railing: 'metal' });
+  assert.deepEqual(stairAppearance({ stairBuild: 'closed' }), { environment: 'interior', material: 'wood', railing: 'none' });
+  const legacy = stairMesh('straight').faces;
+  assert.equal(legacy.find((f) => f.part === 'tread').color, '#d3b68e', 'старый файл сохраняет нейтральную палитру');
+  assert.equal(legacy.find((f) => f.part === 'rail').color, '#6f6a63');
+});
+
 test('открытая лестница: проступи-плиты, тетивы, площадка на стойках, перила; под маршем пусто', () => {
   for (const shape of ['straight', 'l', 'u', 'u3']) {
     const { s, faces } = stairMesh(shape);
@@ -261,6 +285,26 @@ test('закрытая лестница — прежний монолит: ст�
   assert.ok(p.riser > 0, 'подступенки другим тоном');
   assert.ok(faces.filter((f) => f.part === 'riser').every((f) => f.color !== faces.find((x) => x.part === 'tread').color));
   assert.equal(Math.min(...faces.flatMap((f) => f.pts.map((q) => q.z))), 0, 'монолит стоит на полу');
+});
+
+test('стиль из библиотеки меняет материал и ограждение реальной 3D-лестницы', () => {
+  const mesh = (preset) => {
+    const project = createProject(preset);
+    const stair = make('l');
+    applyStairStylePreset(stair, preset);
+    project.items.push(stair);
+    return buildHouseMesh(project).filter((f) => f.kind === 'stairs');
+  };
+  const wood = mesh('interior-wood');
+  const concrete = mesh('interior-concrete');
+  assert.notEqual(wood.find((f) => f.part === 'tread').color, concrete.find((f) => f.part === 'tread').color, 'материал меняет палитру');
+  assert.ok(concrete.some((f) => f.part === 'rail'), 'у монолитного пресета есть выбранные металлические перила');
+  const project = createProject('Без перил');
+  const stair = make('straight');
+  applyStairStylePreset(stair, 'interior-wood');
+  stair.stairRailing = 'none';
+  project.items.push(stair);
+  assert.equal(buildHouseMesh(project).some((f) => f.kind === 'stairs' && f.part === 'rail'), false);
 });
 
 test('консольная: толстые проступи без тетив и стоек, перила со свободной стороны', () => {

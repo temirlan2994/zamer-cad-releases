@@ -102,6 +102,21 @@ export function drawSlabOpenings(ctx, { st = state, p2s, tokens, print = false }
       label = { x0: cx - tw / 2, y0: ly - 2, x1: cx + tw / 2, y1: ly + 26 };
     }
     ctx.restore();
+    // Грань под курсором/в активном жесте — отдельной толстой линией. Так
+    // видно, что тянется именно линия, а не весь проём или одна вершина.
+    const edgeMark = st.slabEdge?.id === o.id
+      ? st.slabEdge
+      : st.hover?.type === 'slab' && st.hover.id === o.id && st.slabEdgeHover?.id === o.id
+        ? st.slabEdgeHover : null;
+    if (selected && edgeMark && Number.isInteger(edgeMark.index) && P[edgeMark.index]) {
+      const a = P[edgeMark.index]; const b = P[(edgeMark.index + 1) % P.length];
+      ctx.save();
+      ctx.strokeStyle = tokens.accent2;
+      ctx.lineWidth = 3.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.restore();
+    }
     const rec = { id: o.id, auto: o.auto, polygon: Boolean(o.outline?.length), P, label, handles: null };
     if (selected && !print) {
       rec.handles = o.outline?.length

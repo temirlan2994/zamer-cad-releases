@@ -55,6 +55,21 @@ test('отключение: enabled=false и неизменный сдвиг', (
   assert.deepEqual(res.delta, { x: 1, y: 2 });
 });
 
+test('ограничение локальной оси не уводит наклонное ребро со своей траектории', () => {
+  const a = Math.PI / 4;
+  const c = Math.cos(a); const s = Math.sin(a);
+  const R = (x, y) => ({ x: x * c - y * s, y: x * s + y * c });
+  const target = { pts: [R(0, -1000), R(100, -1000), R(100, -500), R(0, -500)] };
+  const moving = { pts: [R(6, 0), R(506, 0)] };
+  const along = run([target], [moving], { x: 0, y: 0 }, { axis: 'u' }, [a]);
+  assert.equal(along.snapped, true);
+  near(along.delta.x, -6 * c);
+  near(along.delta.y, -6 * s);
+  assert.ok(along.guides.every((g) => g.axis === 'x'));
+  const blocked = run([target], [moving], { x: 0, y: 0 }, { axis: 'v' }, [a]);
+  assert.equal(blocked.snapped, false, 'цель по U не должна привязывать разрешённую только V ось');
+});
+
 test('равные промежутки: между двумя объектами и вслед за парой', () => {
   // A [0..100], B [400..500]; движущийся шириной 100 — посередине при x = 200.
   const mid = run([rect(0, 0, 100, 100), rect(400, 0, 100, 100)], [rect(194, 30, 100, 40)], { x: 0, y: 0 }, { tol: 8 });

@@ -7,6 +7,7 @@ import { el, refs } from './dom.js';
 import { state } from './state.js';
 import { bindLandscapeLibrary, renderLandscapeLibrary } from './landscape.js';
 import { bindOpeningLibrary, renderOpeningLibrary } from './opening-library.js';
+import { renderStairLibrary } from './stair-library.js';
 import { renderToolstrip } from './toolstrip.js';
 import { cancelTool, startPlaceFurniture, startPlaceRoom } from './tools.js';
 
@@ -35,7 +36,7 @@ export function libraryWanted() {
   const t = state.tool;
   if (!t) return state.libraryPinned;
   if (ROOM_TOOLS.has(t.kind) || t.kind === 'place-opening') return true;
-  if (t.kind === 'place-furniture') return t.itemKind !== 'stairs' || state.libraryPinned;
+  if (t.kind === 'place-furniture') return true;
   return false;
 }
 
@@ -46,7 +47,7 @@ export function syncLibraryOpen() {
   if (t && !ROOM_TOOLS.has(t.kind) && t.kind !== 'place-furniture') state.libraryPinned = false;
   if (state.modeName !== 'plan') state.libraryPinned = false;
   if (t && ROOM_TOOLS.has(t.kind)) state.libraryTab = 'rooms';
-  else if (t?.kind === 'place-furniture' && t.itemKind !== 'stairs') state.libraryTab = 'furniture';
+  else if (t?.kind === 'place-furniture') state.libraryTab = t.itemKind === 'stairs' ? 'stairs' : 'furniture';
   document.body.classList.toggle('lib-open', libraryWanted());
   const plan = state.modeName === 'plan';
   const landscape = state.modeName === 'landscape';
@@ -54,6 +55,8 @@ export function syncLibraryOpen() {
   const bar = el('landscapeBar');
   if (bar) bar.hidden = !landscape;
   const openings = el('openingsBar');
+  const stairsBar = el('stairsBar');
+  if (stairsBar) stairsBar.hidden = true;
   const opening = plan && t?.kind === 'place-opening';
   if (openings) openings.hidden = !opening;
   if (!plan) {
@@ -67,6 +70,15 @@ export function syncLibraryOpen() {
     refs.libraryTop.hidden = true;
     refs.furnitureBar.hidden = true;
     renderOpeningLibrary();
+    return;
+  }
+  const stairs = t?.kind === 'place-furniture' && t.itemKind === 'stairs';
+  if (stairs) {
+    refs.libraryTabs.hidden = true;
+    refs.libraryTop.hidden = true;
+    refs.furnitureBar.hidden = true;
+    if (stairsBar) stairsBar.hidden = false;
+    renderStairLibrary();
     return;
   }
   const furn = state.libraryTab === 'furniture';
@@ -83,6 +95,7 @@ export function applyLibraryTab() {
 
 export function renderLibrary() {
   renderLandscapeLibrary(); // активная карточка ландшафта
+  renderStairLibrary();
   // План: помещения по категориям (заголовок группы + чипы); у чипа —
   // точка цвета типа, как пол на плане. Без размеров.
   refs.roomCards.innerHTML = '';
@@ -130,6 +143,7 @@ export function refreshLibraryTheme() {
   try { renderLandscapeLibrary(); } catch { /* каталога ещё нет */ }
   if (refs.furnitureItems?.childElementCount) renderFurnitureItems();
   renderOpeningLibrary();
+  renderStairLibrary();
 }
 
 export function renderFurnitureBar() {

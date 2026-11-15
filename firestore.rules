@@ -36,6 +36,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/data/users/$(uid)/$(pid)/lease/editor;
     }
 
+    function projectPath(uid, pid) {
+      return /databases/$(database)/documents/data/users/$(uid)/$(pid);
+    }
+
     function validOptionalLeaseRequest(data) {
       return (data.requestedSessionId == null
           && data.requestedDeviceId == null
@@ -128,6 +132,14 @@ service cloud.firestore {
           && lease.data.expiresAt > request.time);
     }
 
+    // Legacy-проект без editor lease сохраняет прежний протокол. У fenced-
+    // проекта дочерние данные можно удалять только после parent: старый PWA
+    // не способен повредить живой проект, а оборванный cleanup можно повторить.
+    function validProjectCleanup(uid, pid) {
+      return !exists(editorLeasePath(uid, pid))
+        || !exists(projectPath(uid, pid));
+    }
+
     function validProjectMeta() {
       let data = request.resource.data;
       return data.keys().hasOnly([
@@ -199,17 +211,23 @@ service cloud.firestore {
         && validProjectMetaFence(uid, pid, request.resource.data);
 
       match /c/{part} {
-        allow read, delete: if isOwner(uid) && validId(part);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid) && validId(part) && validChunk();
       }
 
       match /b/{part} {
-        allow read, delete: if isOwner(uid) && validId(part);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid) && validId(part) && validChunk();
       }
 
       match /draft/{draftId} {
-        allow read, delete: if isOwner(uid) && validId(draftId);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(draftId);
+        allow delete: if isOwner(uid) && validId(draftId) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid)
           && draftId == 'current'
           && validDraftPointer()
@@ -237,17 +255,23 @@ service cloud.firestore {
       }
 
       match /draft-c/{part} {
-        allow read, delete: if isOwner(uid) && validId(part);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid) && validId(part) && validChunk();
       }
 
       match /draft-b/{part} {
-        allow read, delete: if isOwner(uid) && validId(part);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid) && validId(part) && validChunk();
       }
 
       match /draft-blobs/{part} {
-        allow read, delete: if isOwner(uid) && validId(part);
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
         allow create, update: if isOwner(uid) && validId(part) && validChunk();
       }
     }

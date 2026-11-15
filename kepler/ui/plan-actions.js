@@ -22,7 +22,8 @@ import {
   clampOpeningOffset, deriveWalls, openingPos, setOpeningPos, sideEdge,
 } from '../core/walls.js';
 import { manualWallById, removeManualWall, setManualWallThickness } from '../core/wall-manual.js';
-import { applyStairPreset } from '../core/stairs.js';
+import { applyStairPreset, applyStairStylePreset } from '../core/stairs.js';
+import { bedsideNightstand, bedsideTarget, supportsBedsideNightstands } from '../core/bedside.js';
 import { clampWallThickness, setSharedWallThickness, setWallKind, setWallSpan } from '../core/wall-thickness.js';
 import { toast } from './dom.js';
 import { findWall, nearestWall } from './hit.js';
@@ -914,7 +915,7 @@ export function ungroupSelectedItems() {
 }
 
 // Добавляет предмет мебели в указанную мировую точку (центр предмета).
-export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straight' } = {}) {
+export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straight', stairPreset = null } = {}) {
   const fd = furnitureDef(kind);
   if (!fd) return;
   const item = createItem(
@@ -925,7 +926,10 @@ export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straigh
   );
   withDefaultComp(item); // стол — сразу со стульями, диван — из модулей
   // Лестница — рассчитана по высоте этажа (марши, площадки, ступени).
-  if (kind === 'stairs') applyStairPreset(item, stairShape || 'straight', activeLevel(state.project)?.height || 3000);
+  if (kind === 'stairs') {
+    applyStairPreset(item, stairShape || 'straight', activeLevel(state.project)?.height || 3000);
+    applyStairStylePreset(item, stairPreset);
+  }
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
   toast(item.comp?.type === 'kitchen'
@@ -935,6 +939,35 @@ export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straigh
     : isFixedSizeComp(item)
     ? `«${fd.title}» добавлен — «+» на концах добавляет модули, круг — поворот`
     : `«${fd.title}» добавлен — тяните углы для размера, круг — поворот`);
+}
+
+// «+» у изголовья добавляет настоящую тумбу, а не условный рисунок: так её
+// видят проверки спальни, спецификации и 3D. Обычная group связывает комплект
+// со всеми уже готовыми действиями перемещения, поворота, копии и удаления.
+export function addBedsideNightstand(bedId, side) {
+  const bed = state.project.items.find((item) => item.id === bedId);
+  if (!supportsBedsideNightstands(bed) || !['left', 'right'].includes(side)) return false;
+  // Не подмешиваем тумбы в пользовательскую группу с другой мебелью:
+  // сначала её можно явно разгруппировать. Наш комплект помечен bedsideSet.
+  if (bed.group && !bed.bedsideSet) return false;
+  if (bedsideNightstand(state.project.items, bed, side)) return false;
+  const def = furnitureDef('nightstand');
+  const target = bedsideTarget(bed, side, { w: def.w, h: def.h });
+  if (!target) return false;
+  const item = createItem('nightstand', target.x, target.y, target.w, target.h, target.rotation);
+  const setId = bed.bedsideSet || `bedset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const groupId = bed.group || `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  mutate(() => {
+    bed.bedsideSet = setId;
+    bed.group = groupId;
+    item.bedsideSet = setId;
+    item.bedsideSide = side;
+    item.group = groupId;
+    state.project.items.push(item);
+  });
+  selectGroup(groupId);
+  toast(`Прикроватная тумба добавлена ${side === 'left' ? 'слева' : 'справа'} · комплект двигается вместе`);
+  return true;
 }
 
 // Толщина стены. Общая стена остаётся общей: сторона соседа сдвигается так,

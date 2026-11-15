@@ -133,7 +133,10 @@ test('запоздалая ручная версия A не меняет head п
 });
 
 test('удаление сначала проверяет lease и старое устройство не удаляет карточку', async () => {
-  const db = createMemoryDb();
+  const writes = [];
+  const db = createMemoryDb({
+    onWrite(path, body) { writes.push({ path, body }); },
+  });
   const first = await acquireEditLease(db, ROOT, PID, A);
   await saveVersion(db, ROOT, project('Проект', 1), {
     pid: PID, editor: editor(first.lease),
@@ -146,7 +149,77 @@ test('удаление сначала проверяет lease и старое �
   );
   assert.equal((await getProject(db, ROOT, PID)).name, 'Проект');
 
+  writes.length = 0;
   await deleteProject(db, ROOT, PID, { editor: editor(second.lease) });
   assert.equal(await getProject(db, ROOT, PID), null);
   assert.equal(await loadDraft(db, ROOT, PID), null);
+
+  const parent = writes.findIndex(({ path, body }) => path === `${ROOT}/${PID}` && body === null);
+  const child = writes.findIndex(({ path, body }) => (
+    path.startsWith(`${ROOT}/${PID}/`)
+      && !path.startsWith(`${ROOT}/${PID}/lease/`)
+      && body === null
+  ));
+  assert.ok(parent >= 0, 'parent должен быть удалён');
+  assert.ok(child > parent, 'chunks удаляются только после parent');
+});
+
+test('обычные fenced save не запускают запрещённый GC старых chunks', async () => {
+  const writes = [];
+  const db = createMemoryDb({
+    onWrite(path, body) { writes.push({ path, body }); },
+  });
+  const held = await acquireEditLease(db, ROOT, PID, A);
+  const token = editor(held.lease);
+
+  const firstDraft = await saveDraft(db, ROOT, project('Черновик 1', 1), {
+    pid: PID, editor: token,
+  });
+  writes.length = 0;
+  await saveDraft(db, ROOT, project('Черновик 2', 2), {
+    pid: PID, editor: token,
+  });
+  assert.equal(writes.some(({ body }) => body === null), false);
+  assert.ok(db.dump()[`${ROOT}/${PID}/draft/${firstDraft.draft.revision}.0`]);
+
+  const firstVersion = await saveVersion(db, ROOT, project('Версия 1', 10), {
+    pid: PID, editor: token, keep: 1,
+  });
+  writes.length = 0;
+  await saveVersion(db, ROOT, project('Версия 2', 20), {
+    pid: PID, editor: token, keep: 1,
+  });
+  assert.equal(writes.some(({ body }) => body === null), false);
+  assert.ok(db.dump()[`${ROOT}/${PID}/c/${firstVersion.version.id}.0`]);
+});
+
+test('повторный cleanup удаляет orphan chunks после исчезновения parent при сохранённом lease', async () => {
+  const db = createMemoryDb();
+  const held = await acquireEditLease(db, ROOT, PID, A);
+  const token = editor(held.lease);
+  const firstDraft = await saveDraft(db, ROOT, project('Черновик 1', 1), {
+    pid: PID, editor: token,
+  });
+  await saveDraft(db, ROOT, project('Черновик 2', 2), {
+    pid: PID, editor: token,
+  });
+  const firstVersion = await saveVersion(db, ROOT, project('Версия 1', 10), {
+    pid: PID, editor: token, keep: 1,
+  });
+  await saveVersion(db, ROOT, project('Версия 2', 20), {
+    pid: PID, editor: token, keep: 1,
+  });
+
+  assert.ok(db.dump()[`${ROOT}/${PID}/draft/${firstDraft.draft.revision}.0`]);
+  assert.ok(db.dump()[`${ROOT}/${PID}/c/${firstVersion.version.id}.0`]);
+  await db.doc(`${ROOT}/${PID}`).delete(); // parent уже логически удалён
+
+  // Даже legacy/recovery-клиент без editor token может завершить cleanup:
+  // persistent lease остаётся, но живого parent больше нет.
+  await deleteProject(db, ROOT, PID);
+  const leftoverData = Object.keys(db.dump()).filter((path) => (
+    path.startsWith(`${ROOT}/${PID}/`) && !path.startsWith(`${ROOT}/${PID}/lease/`)
+  ));
+  assert.deepEqual(leftoverData, []);
+  assert.ok(db.dump()[`${ROOT}/${PID}/lease/editor`]);
 });

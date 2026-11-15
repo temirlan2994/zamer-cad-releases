@@ -103,7 +103,12 @@ describe('раскладка: колонка инструментов, библ�
     assert.deepEqual(await tool(page), { kind: 'place-furniture', item: 'stairs' });
     assert.equal(await active(page, '#stairsToolBtn'), true);
     assert.equal(await active(page, '#furnitureToolBtn'), false);
-    assert.equal(await page.isVisible('.library'), false, 'лестнице каталог не нужен');
+    assert.equal(await page.isVisible('.library'), true, 'у лестницы открыт свой каталог');
+    assert.equal(await page.isVisible('#stairsBar'), true);
+    assert.ok(await page.$$eval('#stairItems [data-stair-preset]', (nodes) => nodes.length) >= 3, 'в каталоге есть готовые лестницы');
+    await page.click('#stairCats [data-stair-environment="exterior"]');
+    await page.click('#stairItems [data-stair-preset="exterior-concrete"]');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.stairPreset), 'exterior-concrete');
     await page.click('#stairsToolBtn');
     assert.equal(await tool(page), null);
     assert.ok(same(await box(page, '#canvas'), canvas0), 'холст не менял размер');

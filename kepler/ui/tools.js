@@ -127,9 +127,9 @@ export function startPlaceOpening(openKind, presetWall = null) {
   document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
 }
 
-export function startPlaceFurniture(kind, title = 'мебель') {
+export function startPlaceFurniture(kind, title = 'мебель', options = {}) {
   closeLibrarySheet();
-  setTool({ kind: 'place-furniture', itemKind: kind, rotation: 0 },
+  setTool({ kind: 'place-furniture', itemKind: kind, rotation: 0, ...options },
     `Двигайте по плану и кликните, чтобы поставить «${title}» · Пробел — повернуть · Esc — отмена`);
   state.selection = null;
   renderProps();

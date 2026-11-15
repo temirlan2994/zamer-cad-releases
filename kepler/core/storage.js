@@ -416,7 +416,7 @@ export async function saveDraft(db, root, projectText, {
 
   // Не удаляем данные, если другая вкладка уже успела положить новый
   // указатель: её черновик мог переиспользовать прежний blob.
-  if (check.exists && check.data()?.revision === revision && before) {
+  if (!editor && check.exists && check.data()?.revision === revision && before) {
     await deleteChunks(db, draftColl(root, pid), before.revision, before.chunks);
     for (const [h, n] of Object.entries(before.blobs)) {
       if (!(h in blobChunks)) await deleteChunks(db, draftBlobsColl(root, pid), h, n);
@@ -575,9 +575,13 @@ export async function saveVersion(db, root, projectText, {
   }
   const { meta: saved, dropped, deadBlobs } = result;
 
-  // 3) уборка вытесненных версий и ненужных картинок
-  for (const v of dropped) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
-  for (const [h, n] of deadBlobs) await deleteChunks(db, `${root}/${pid}/b`, h, n);
+  // 3) У живого fenced-проекта Rules запрещают удаление chunks: иначе старый
+  // PWA-клиент мог бы воспользоваться теми же правами и повредить активную
+  // модель. Накопившиеся chunks удалит sweep после удаления parent проекта.
+  if (!editor) {
+    for (const v of dropped) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
+    for (const [h, n] of deadBlobs) await deleteChunks(db, `${root}/${pid}/b`, h, n);
+  }
   return { meta: { id: pid, ...saved }, version, unchanged: false };
 }
 
@@ -656,9 +660,9 @@ export async function loadVersion(db, root, pid, vid = null) {
 }
 
 async function deleteProjectMetaFenced(db, root, pid, editor) {
-  // Сначала проставляем fencing-поля (нужно для старых карточек), затем во
-  // второй транзакции снова сверяем lease и удаляем карточку. Если между
-  // транзакциями право перейдёт другому устройству, удаление отклонится.
+  // Сначала проставляем fencing-поля (для старых карточек), затем во второй
+  // транзакции снова проверяем lease и удаляем parent. Только после исчезновения
+  // parent Firestore Rules разрешают чистить chunks/draft.
   await editMetaTransaction(db, root, pid, editor, ({
     transaction, metaRef, metaSnap, expected,
   }) => {
@@ -674,21 +678,26 @@ async function deleteProjectMetaFenced(db, root, pid, editor) {
   });
 }
 
+const PROJECT_DATA_COLLECTIONS = ['c', 'b', 'draft', 'draft-c', 'draft-b', 'draft-blobs'];
+
+async function deleteProjectChildren(db, root, pid) {
+  for (const name of PROJECT_DATA_COLLECTIONS) {
+    const coll = `${root}/${pid}/${name}`;
+    const snapshot = await retry(() => db.collection(coll).get());
+    const ids = snapshot.docs.map((doc) => doc.id).filter(safeId);
+    await inBatches(ids, 4, (id) => retry(() => db.doc(`${coll}/${id}`).delete()));
+  }
+}
+
 export async function deleteProject(db, root, pid, { editor = null } = {}) {
   const meta = editor
     ? await deleteProjectMetaFenced(db, root, pid, editor)
     : await getProject(db, root, pid);
   try {
-    if (meta) {
-      const versions = Array.isArray(meta.versions) ? meta.versions.map(normalizedVersion).filter(Boolean) : [];
-      for (const v of versions) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
-      for (const [h, n] of Object.entries(meta.blobs || {}).slice(0, MAX_BLOBS)) {
-        await deleteChunks(db, `${root}/${pid}/b`, h, Number(n));
-      }
-    }
-    // Карточка удаляется следом целиком, поэтому промежуточное обновление её
-    // draft-полей не нужно (и для fenced-проекта потребовало бы editor token).
-    await deleteDraft(db, root, pid, { touchMeta: false });
+    // Sweep удаляет и chunks, оставленные безопасным fenced autosave/versions.
+    // Для fenced-проекта parent уже отсутствует; legacy-проект без lease тоже
+    // имеет право на cleanup до удаления parent.
+    await deleteProjectChildren(db, root, pid);
   } catch (error) {
     // При fenced-удалении карточка уже атомарно исчезла из списка. Остаточные
     // chunks безопасны и могут быть убраны позже; нельзя показывать проект как

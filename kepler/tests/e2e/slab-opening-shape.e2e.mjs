@@ -59,6 +59,8 @@ describe('проём перекрытия: Г-контур и вид нижне�
         lower.items.push(stair);
         upper = createLevel('2 этаж', 3000, 3000, 'L2-SLAB-SHAPE');
         upper.rooms.push(createRoom('hall', -5000, -5000, 10000, 10000));
+        // Цель направляющей: верхняя грань x=2350…2850, y=-1500.
+        upper.items.push(createItem('column', 2600, -1250, 500, 500));
         st.project.levels.push(upper);
         st.project.activeLevel = upper.id;
       });
@@ -150,6 +152,53 @@ describe('проём перекрытия: Г-контур и вид нижне�
     assert.equal(afterMove.id, before.id);
     assert.equal(afterMove.polygon.length, 6);
     assert.ok(afterMove.area <= before.area - 250_000, `${before.area} → ${afterMove.area}`);
+  });
+
+  it('сама грань движется перпендикулярно или вдоль оси и показывает направляющую с расстоянием', async () => {
+    const { page } = app;
+    const before = await selectedOpening(page);
+    const edge = [before.polygon[0], before.polygon[1]];
+    // Берём четверть ребра: далеко и от вершин, и от средней ручки «+».
+    const grabPlan = {
+      x: edge[0].x * 0.75 + edge[1].x * 0.25,
+      y: edge[0].y * 0.75 + edge[1].y * 0.25,
+    };
+    const from = await planToClient(page, grabPlan.x, grabPlan.y);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x, from.y + 30, { steps: 8 }); // к y=-1500
+    await page.waitForFunction(() => window.__kepler.state.slabEdge && window.__kepler.state.objGuides?.some((g) => g.label));
+    const live = await page.evaluate(() => ({
+      edge: window.__kepler.state.slabEdge,
+      label: window.__kepler.state.slabLabel?.text,
+      guides: window.__kepler.state.objGuides,
+    }));
+    assert.equal(live.edge.index, 0);
+    assert.match(live.label, /перпендикулярно/);
+    assert.ok(live.guides.some((g) => g.label), 'есть размер до ближайшего объекта');
+    await page.mouse.up();
+
+    const normal = await selectedOpening(page);
+    assert.equal(normal.polygon[0].y, before.polygon[0].y + 300);
+    assert.equal(normal.polygon[1].y, before.polygon[1].y + 300);
+    assert.deepEqual(normal.polygon.slice(2), before.polygon.slice(2), 'остальные вершины не сдвинуты');
+    assert.equal(await page.evaluate(() => window.__kepler.state.objGuides), null);
+
+    // То же ребро — теперь движение вдоль собственной оси на 500 мм.
+    const edge2 = [normal.polygon[0], normal.polygon[1]];
+    const grab2 = await planToClient(page,
+      edge2[0].x * 0.75 + edge2[1].x * 0.25,
+      edge2[0].y * 0.75 + edge2[1].y * 0.25);
+    await page.mouse.move(grab2.x, grab2.y);
+    await page.mouse.down();
+    await page.mouse.move(grab2.x + 50, grab2.y, { steps: 8 });
+    await page.waitForFunction(() => /по оси/.test(window.__kepler.state.slabLabel?.text || ''));
+    await page.mouse.up();
+    const along = await selectedOpening(page);
+    const alongDelta = along.polygon[0].x - normal.polygon[0].x;
+    assert.ok(alongDelta >= 500 && alongDelta <= 600, `сдвиг с учётом привязки: ${alongDelta}`);
+    assert.equal(along.polygon[1].x - normal.polygon[1].x, alongDelta);
+    assert.deepEqual(along.polygon.slice(2), normal.polygon.slice(2), 'две соседние вершины остаются на месте');
   });
 
   it('без ошибок в консоли', () => {

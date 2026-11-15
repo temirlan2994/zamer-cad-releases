@@ -46,6 +46,7 @@ import { openingGaps } from './core/opening-spacing.js';
 import { roomPolygon, roomRects, roomShapeArea, roomShapeHandles } from './core/room-shape.js';
 import { nominalShape } from './core/v7/eat-bridge.js';
 import { stairHandles, stairLayout, stairPath } from './core/stairs.js';
+import { missingBedsideSpots, supportsBedsideNightstands } from './core/bedside.js';
 import { itemsEditable } from './core/hit-stack.js';
 import { wallRoomDimensions } from './core/wall-edit.js';
 import { labelObstacles, planTextScale, roomLabelAnchor } from './core/label-anchor.js';
@@ -928,6 +929,7 @@ export function createRenderer(canvas) {
     state._sofaUI = null;
     state._kitchenUI = null;
     state._stairUI = null;
+    state._bedsideUI = null;
     state._tempDimsUI = null;
     if (selItem) {
       // Рамка, подпись размера, угловые квадраты (размер) и круги (поворот).
@@ -980,6 +982,10 @@ export function createRenderer(canvas) {
     const groupId = groupHandleId(state.selection);
     const groupBox = groupId ? groupBounds(groupItems(state.project, state.selection)) : null;
     if (groupBox && !print) drawGroupFrame(ctx, state, groupBox, groupId, p2s, tokens, scale);
+    if (!print) {
+      const bed = selectedBedsideBed(state);
+      if (bed) drawBedsidePlus(ctx, state, bed, p2s, tokens);
+    }
 
     if (state.ghost?.rect) {
       const g = state.ghost;
@@ -1988,6 +1994,41 @@ function drawSofaPlus(ctx, state, item, p2s, tokens) {
     ctx.beginPath(); ctx.moveTo(x - k, y); ctx.lineTo(x + k, y); ctx.moveTo(x, y - k); ctx.lineTo(x, y + k); ctx.stroke();
   }
   state._sofaUI = { itemId: item.id, spots };
+}
+
+// Кровать может быть выбрана одна (до первой тумбы) или как обычная группа
+// вместе с уже добавленными тумбами. В группе с несколькими кроватями ручки
+// не показываем: непонятно, к какой из них относится нажатие.
+function selectedBedsideBed(st) {
+  const sel = st.selection;
+  if (sel?.type === 'item') {
+    const item = st.project.items.find((candidate) => candidate.id === sel.id);
+    return supportsBedsideNightstands(item) && (!item.group || item.bedsideSet) ? item : null;
+  }
+  if (sel?.type !== 'multi' || sel.roomIds?.length) return null;
+  const ids = new Set(sel.itemIds || []);
+  const beds = st.project.items.filter((item) => ids.has(item.id) && supportsBedsideNightstands(item));
+  return beds.length === 1 && beds[0].bedsideSet ? beds[0] : null;
+}
+
+// Две быстрые кнопки у изголовья. Координаты одновременно являются центрами
+// будущих тумб, поэтому результат понятен ещё до клика.
+function drawBedsidePlus(ctx, st, bed, p2s, tokens) {
+  const r = st.coarsePointer ? 17 : 11;
+  const spots = missingBedsideSpots(st.project.items, bed).map((spot) => {
+    const p = p2s(spot.x, spot.y);
+    ctx.fillStyle = tokens.accent;
+    ctx.strokeStyle = tokens.surface;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = tokens.surface;
+    ctx.lineWidth = 2.2;
+    const k = r * 0.5;
+    ctx.beginPath(); ctx.moveTo(p.x - k, p.y); ctx.lineTo(p.x + k, p.y);
+    ctx.moveTo(p.x, p.y - k); ctx.lineTo(p.x, p.y + k); ctx.stroke();
+    return { side: spot.side, x: p.x, y: p.y, r };
+  });
+  st._bedsideUI = { bedId: bed.id, spots };
 }
 
 // Контур со своим радиусом у каждого угла [вл, вп, нп, нл].

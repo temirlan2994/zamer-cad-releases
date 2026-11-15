@@ -49,6 +49,21 @@ test('удаление карточки разрешено только влад
   assert.match(rules, /function validProjectDeleteFence[\s\S]*lease\.data\.expiresAt > request\.time/);
 });
 
+test('chunks живого fenced-проекта не удаляются, а после parent cleanup разрешён', () => {
+  assert.match(rules, /function projectPath\(uid, pid\)/);
+  assert.match(
+    rules,
+    /function validProjectCleanup\(uid, pid\) \{\s*return !exists\(editorLeasePath\(uid, pid\)\)\s*\|\| !exists\(projectPath\(uid, pid\)\);\s*\}/,
+  );
+  const guardedChildren = rules.match(
+    /allow delete:\s*if isOwner\(uid\) && validId\([^)]+\) && validProjectCleanup\(uid, pid\);/g,
+  ) || [];
+  assert.equal(guardedChildren.length, 6);
+  assert.equal((rules.match(/allow list:\s*if isOwner\(uid\);/g) || []).length, 7);
+  assert.doesNotMatch(rules, /deletionMarker|deletionLease|getAfter/);
+});
+
 test('старый клиент совместим только пока проект ещё не получил lease', () => {
   assert.match(rules, /!exists\(editorLeasePath\(uid, pid\)\)[\s\S]*!\('editorSession' in data\)[\s\S]*!\('editorEpoch' in data\)/);
+  assert.match(rules, /function validProjectCleanup\(uid, pid\)[\s\S]*return !exists\(editorLeasePath\(uid, pid\)\)/);
 });

@@ -9,6 +9,7 @@ import { formatLength } from '../core/draw-snap.js';
 import { toLocal, toWorld } from '../core/building.js';
 import { isPathShape, landscapeDef, objectCorners, objectPath } from '../core/landscape.js';
 import { houseFootprints } from '../core/landscape-tools.js';
+import { slabOpeningPolygon, slabOpenings } from '../core/slab-openings.js';
 import { wallRects } from '../core/walls.js';
 import { canvas } from './dom.js';
 import { snapSettings } from './draw-snap-ui.js';
@@ -82,6 +83,14 @@ function collectTargets(space, exclude = {}) {
     if (exclude.items?.has(it.id)) continue;
     add(itemShape(it), toSpaceFromPlan);
   }
+  // Другие проёмы — такие же геометрические цели, как стены и мебель. Это
+  // особенно полезно при правке вершины/грани проёма на одном этаже.
+  if (space === 'plan') {
+    for (const opening of slabOpenings(project, project.activeLevel)) {
+      if (exclude.slabs?.has(opening.id)) continue;
+      add({ id: opening.id, pts: slabOpeningPolygon(opening) }, toSpaceFromPlan);
+    }
+  }
   for (const w of state.walls || []) {
     if (exclude.walls?.(w)) continue;
     if (w.polys?.length) for (const poly of w.polys) add({ pts: poly }, toSpaceFromPlan);
@@ -121,13 +130,13 @@ export function screenAxis(space) {
  * ownAngles — оси самого объекта (рад); frames — явный список рамок
  * (например [0] для комнат); exclude — см. collectTargets.
  */
-export function startGuideSession({ space = 'world', moving, exclude = {}, ownAngles = [], frames = null }) {
+export function startGuideSession({ space = 'world', moving, exclude = {}, ownAngles = [], frames = null, equal = true }) {
   const box = viewBox(space);
   const targets = collectTargets(space, exclude).filter((sh) => inBox(sh, box));
   const angles = frames || [screenAxis(space), ...ownAngles];
   const index = prepareGuides(targets, angles);
   const scale = state.view?.scale || 1;
-  return { space, index, boxes: movingBoxes(index, moving), reach: box ? box.diag / scale : Infinity };
+  return { space, index, boxes: movingBoxes(index, moving), reach: box ? box.diag / scale : Infinity, equal };
 }
 
 function guidesToWorld(guides, space) {
@@ -142,10 +151,11 @@ function guidesToWorld(guides, space) {
  * магнитом (комнаты), направляющие по ним не применяются (только рамка 0).
  * Возвращает { x, y, snapped }; направляющие — в state.objGuides.
  */
-export function guideDelta(session, raw, grid, event, lock = null) {
+export function guideDelta(session, raw, grid, event, lock = null, options = null) {
   if (!session || !guidesOn(event)) { state.objGuides = null; return { x: grid.x, y: grid.y, snapped: false }; }
   const res = snapGuides(session.index, session.boxes, raw, {
     tol: GUIDE_TOL_PX / (state.view?.scale || 1), reach: session.reach, format: formatLength,
+    equal: session.equal !== false, axis: options?.axis || null,
   });
   if (lock && res.snapped && res.axes) {
     if (lock.x) res.axes.x = false;

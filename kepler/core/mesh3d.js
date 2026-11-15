@@ -21,7 +21,7 @@ import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
-import { stairBuild, stairLayout } from './stairs.js';
+import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
@@ -764,6 +764,12 @@ const STAIR_RISER_COLOR = '#b1a99d';
 const TREAD_COLOR = '#d3b68e';
 const STRINGER_COLOR = '#8e867b';
 const LANDING_COLOR = '#c2bbb0';
+const STAIR_PALETTES = {
+  wood: { body: '#b9895f', riser: '#9f704c', tread: '#d3a370', stringer: '#76523d', landing: '#c49368' },
+  concrete: { body: '#b9bab8', riser: '#9fa09e', tread: '#c9cac7', stringer: '#8f918f', landing: '#b5b6b3' },
+  metal: { body: '#73808a', riser: '#59656e', tread: '#929ea6', stringer: '#4d5861', landing: '#7e8a92' },
+};
+const STAIR_RAIL_COLORS = { wood: '#845b3b', metal: '#5b6670', glass: '#86bdcc' };
 const STAIR = {
   tread: 50, nose: 30, stringer: 60, stringerUp: 40, stringerDepth: 300, landing: 180,
   post: 80, cantTread: 80, railH: 900, rail: 50, baluster: 25, railInset: 40,
@@ -847,7 +853,7 @@ function innerSide(fr) {
 
 // Перила марша вдоль стороны tc: наклонный поручень над линией носков,
 // балясины по проступям, стойки на концах. top — потолок поручня.
-function flightRailing(fr, f, zFrom, riserH, tc, top) {
+function flightRailing(fr, f, zFrom, riserH, tc, top, color = RAILING_COLOR) {
   const S = STAIR;
   const g = fr.L / f.n;
   const nose = (s) => zFrom + riserH + (s * riserH) / g;
@@ -861,15 +867,15 @@ function flightRailing(fr, f, zFrom, riserH, tc, top) {
   const faces = framePrism(fr, [
     { s: sa, z: nose(sa) + S.railH - S.rail }, { s: sb, z: nose(sb) + S.railH - S.rail },
     { s: sb, z: nose(sb) + S.railH }, { s: sa, z: nose(sa) + S.railH },
-  ], t0, t1, RAILING_COLOR);
+  ], t0, t1, color);
   for (const s of [sa, sb]) {
-    faces.push(...frameBox(fr, s - S.rail / 2, s + S.rail / 2, t0, t1, tread(s), nose(s) + S.railH - S.rail, RAILING_COLOR, false));
+    faces.push(...frameBox(fr, s - S.rail / 2, s + S.rail / 2, t0, t1, tread(s), nose(s) + S.railH - S.rail, color, false));
   }
   const b = S.baluster / 2;
   for (let k = 0; k < f.n; k += 1) {
     const s = (k + 0.5) * g;
     if (s - sa < 2 * S.rail || sb - s < 2 * S.rail) continue;
-    faces.push(...frameBox(fr, s - b, s + b, tc - b, tc + b, tread(s), nose(s) + S.railH - S.rail, RAILING_COLOR, false));
+    faces.push(...frameBox(fr, s - b, s + b, tc - b, tc + b, tread(s), nose(s) + S.railH - S.rail, color, false));
   }
   return faces;
 }
@@ -898,13 +904,13 @@ function landingFreeEdges(l, flights) {
 }
 
 // Перила площадки по свободному краю (горизонтальный поручень, балясины).
-function landingRailing(e, zL) {
+function landingRailing(e, zL, color = RAILING_COLOR) {
   const S = STAIR;
   const faces = [];
   const c = e.c - e.out * S.railInset;
   const box = (a0, a1, w, z0, z1) => (e.axis === 'y'
-    ? boxFaces(a0, c - w / 2, a1, c + w / 2, z0, z1, RAILING_COLOR, 'stairs')
-    : boxFaces(c - w / 2, a0, c + w / 2, a1, z0, z1, RAILING_COLOR, 'stairs'));
+    ? boxFaces(a0, c - w / 2, a1, c + w / 2, z0, z1, color, 'stairs')
+    : boxFaces(c - w / 2, a0, c + w / 2, a1, z0, z1, color, 'stairs'));
   const top = zL + S.railH;
   faces.push(...box(e.a, e.b, S.rail, top - S.rail, top));
   const len = e.b - e.a;
@@ -927,6 +933,13 @@ function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
   for (const item of lp.items.filter((candidate) => candidate.kind === 'stairs')) {
     const lay = stairLayout(item, levelHeight);
     const build = stairBuild(item);
+    const appearance = stairAppearance(item);
+    const legacy = !(item.stairStyle || item.stairMaterial || item.stairRailing || item.stairEnvironment);
+    const colors = !legacy && STAIR_PALETTES[appearance.material] ? STAIR_PALETTES[appearance.material] : {
+      body: STAIR_COLOR, riser: STAIR_RISER_COLOR, tread: TREAD_COLOR, stringer: STRINGER_COLOR, landing: LANDING_COLOR,
+    };
+    const railColor = legacy ? RAILING_COLOR : STAIR_RAIL_COLORS[appearance.railing] || RAILING_COLOR;
+    const hasRailing = appearance.railing !== 'none';
     const rH = lay.riserH;
     const place = stairPlacer(item, levelId);
     const add = (list, extra) => { for (const f of list) faces.push(place(f, extra)); };
@@ -945,18 +958,17 @@ function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
         const zk = z0 + (f.startStep + k) * rH;
         if (build === 'closed') {
           // Монолит: ступень от пола; подступенок — тоном темнее.
-          for (const face of frameBox(fr, k * g, (k + 1) * g, 0, fr.W, z0, zk, STAIR_COLOR, false)) {
+          for (const face of frameBox(fr, k * g, (k + 1) * g, 0, fr.W, z0, zk, colors.body, false)) {
             const riser = face.normal.z < 0.5 && face.normal.x === -fr.d.x && face.normal.y === -fr.d.y;
-            faces.push(place(riser ? { ...face, color: STAIR_RISER_COLOR } : face, { part: face.normal.z > 0.5 ? 'tread' : riser ? 'riser' : 'side' }));
+            faces.push(place(riser ? { ...face, color: colors.riser } : face, { part: face.normal.z > 0.5 ? 'tread' : riser ? 'riser' : 'side' }));
           }
           continue;
         }
         const T = build === 'cantilever' ? S.cantTread : S.tread;
         const t0 = build === 'open' ? S.stringer : 0;
         const t1 = build === 'open' ? fr.W - S.stringer : fr.W;
-        addCut(frameBox(fr, Math.max(0, k * g - S.nose), (k + 1) * g, t0, t1, zk - T, zk, TREAD_COLOR), 'tread', zk - T);
+        addCut(frameBox(fr, Math.max(0, k * g - S.nose), (k + 1) * g, t0, t1, zk - T, zk, colors.tread), 'tread', zk - T);
       }
-      if (build === 'closed') continue;
       if (build === 'open') {
         // Тетивы: верх — на stringerUp над линией носков, низ параллелен, упирается в пол/площадку.
         const up = S.stringerUp;
@@ -969,30 +981,33 @@ function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
           { s: 0, z: zFrom + rH + up },
         ];
         if (s0 <= 0.5) profile[0] = { s: 0, z: zFrom + rH + up - D > zFrom ? zFrom + rH + up - D : zFrom };
-        for (const t of [0, fr.W - S.stringer]) add(framePrism(fr, profile, t, t + S.stringer, STRINGER_COLOR), { part: 'stringer', noCut: true });
+        for (const t of [0, fr.W - S.stringer]) add(framePrism(fr, profile, t, t + S.stringer, colors.stringer), { part: 'stringer', noCut: true });
       }
       // Перила: у прямой открытой — с обеих сторон; иначе — со стороны колодца.
-      const inset = build === 'open' ? S.stringer / 2 : S.railInset;
-      const sides = build === 'open' && straight ? [0, fr.W] : [straight ? fr.W : inner];
-      for (const side of sides) {
-        const tc = side === 0 ? inset : fr.W - inset;
-        add(flightRailing(fr, f, zFrom, rH, tc, top), { part: 'rail', noCut: true, noEdges: true });
+      if (hasRailing) {
+        const inset = build === 'open' ? S.stringer / 2 : S.railInset;
+        const sides = build === 'open' && straight ? [0, fr.W] : [straight ? fr.W : inner];
+        for (const side of sides) {
+          const tc = side === 0 ? inset : fr.W - inset;
+          add(flightRailing(fr, f, zFrom, rH, tc, top, railColor), { part: 'rail', noCut: true, noEdges: true });
+        }
       }
     }
     for (const l of lay.landings) {
       const zL = z0 + l.step * rH;
       if (build === 'closed') {
-        add(boxFaces(l.x, l.y, l.x + l.w, l.y + l.h, z0, zL, STAIR_COLOR, 'stairs'), { part: 'landing' });
+        add(boxFaces(l.x, l.y, l.x + l.w, l.y + l.h, z0, zL, colors.body, 'stairs'), { part: 'landing' });
+        if (hasRailing) for (const e of landingFreeEdges(l, lay.flights)) add(landingRailing(e, zL, railColor), { part: 'rail', noCut: true, noEdges: true });
         continue;
       }
-      addCut(solidBox(l.x, l.y, l.x + l.w, l.y + l.h, zL - S.landing, zL, LANDING_COLOR, 'stairs'), 'landing', zL - S.landing);
+      addCut(solidBox(l.x, l.y, l.x + l.w, l.y + l.h, zL - S.landing, zL, colors.landing, 'stairs'), 'landing', zL - S.landing);
       if (build === 'open' && zL - S.landing - z0 > 100) {
         const p = S.post;
         for (const [x, y] of [[l.x, l.y], [l.x + l.w - p, l.y], [l.x, l.y + l.h - p], [l.x + l.w - p, l.y + l.h - p]]) {
-          add(boxFaces(x, y, x + p, y + p, z0, zL - S.landing, STRINGER_COLOR, 'stairs'), { part: 'post', noCut: true });
+          add(boxFaces(x, y, x + p, y + p, z0, zL - S.landing, colors.stringer, 'stairs'), { part: 'post', noCut: true });
         }
       }
-      for (const e of landingFreeEdges(l, lay.flights)) add(landingRailing(e, zL), { part: 'rail', noCut: true, noEdges: true });
+      if (hasRailing) for (const e of landingFreeEdges(l, lay.flights)) add(landingRailing(e, zL, railColor), { part: 'rail', noCut: true, noEdges: true });
     }
   }
   return faces;

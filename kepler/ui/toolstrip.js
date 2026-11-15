@@ -234,10 +234,14 @@ function toggleFurniture() {
 // повторный клик — выйти.
 function toggleStairs() {
   const t = state.tool;
-  if (t?.kind === 'place-furniture' && t.itemKind === 'stairs') cancelTool();
+  if (t?.kind === 'place-furniture' && t.itemKind === 'stairs') {
+    state.libraryPinned = false;
+    cancelTool();
+  }
   else {
     if (t?.kind === 'wall') finishWallChain();
-    startPlaceFurniture('stairs', 'Лестничный марш');
+    state.libraryPinned = false;
+    startPlaceFurniture('stairs', 'Деревянная открытая', { stairPreset: 'interior-wood', stairShape: 'straight' });
     closeSheets();
   }
   renderToolstrip();

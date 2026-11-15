@@ -17,7 +17,7 @@ import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { state } from './state.js';
 import { renderToolstrip } from './toolstrip.js';
-import { STAIR_SHAPES } from '../core/stairs.js';
+import { STAIR_SHAPES, STAIR_STYLE_PRESETS } from '../core/stairs.js';
 import { cancelTool, startPlaceFurniture } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
 import { bindMobileCard, syncMobileCard } from './mobile-card.js';
@@ -374,7 +374,7 @@ function syncCatRow(plan) {
   }
 }
 
-// Лист «Лестница»: выбор формы, затем касание плана — поставить.
+// Лист «Лестница»: готовый стиль или отдельная форма, затем касание плана.
 const STAIR_ICONS = {
   straight: '<rect x="8" y="2.5" width="8" height="19" rx="1"/><path d="M8 6.5h8M8 10.5h8M8 14.5h8M8 18.5h8"/>',
   l: '<path d="M4 21.5V12h8V2.5h8v19z"/><path d="M4 16.5h8M12 7h8M12 12h8M12 16.5h8"/>',
@@ -384,25 +384,50 @@ const STAIR_ICONS = {
 function buildStairsSheet() {
   const box = el('mobileStairs');
   if (!box || box.querySelector('.ms-grid')) return;
+  const presetsTitle = document.createElement('h3');
+  presetsTitle.className = 'mm-title';
+  presetsTitle.textContent = 'Готовые лестницы';
+  const presets = document.createElement('div');
+  presets.className = 'ms-presets';
+  for (const group of [
+    { id: 'interior', title: 'Для интерьера' },
+    { id: 'exterior', title: 'Для улицы' },
+  ]) {
+    const section = document.createElement('section');
+    section.innerHTML = `<h4>${group.title}</h4><div class="mm-grid ms-style-grid">${STAIR_STYLE_PRESETS
+      .filter((preset) => preset.environment === group.id)
+      .map((preset) => `<button type="button" data-stair-preset="${preset.id}"><span aria-hidden="true">${preset.material === 'wood' ? '▤' : preset.material === 'concrete' ? '▦' : '▥'}</span>${preset.title}<small>${preset.railing === 'none' ? 'без ограждения' : `перила: ${preset.railing === 'glass' ? 'стекло' : preset.railing === 'wood' ? 'дерево' : 'металл'}`}</small></button>`).join('')}</div>`;
+    presets.appendChild(section);
+  }
   const h = document.createElement('h3');
   h.className = 'mm-title';
-  h.textContent = 'Лестница — форма';
+  h.textContent = 'Или выберите форму';
   const grid = document.createElement('div');
   grid.className = 'mm-grid ms-grid';
   grid.innerHTML = STAIR_SHAPES.map((sh) => `<button type="button" data-stair="${sh.id}">
     <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">${STAIR_ICONS[sh.id] || ''}</svg>${sh.title}</button>`).join('');
   const note = document.createElement('p');
   note.className = 'empty-hint';
-  note.textContent = 'Тип конструкции (закрытая, открытая, консольная) и размеры — в «Свойствах» после установки.';
-  box.append(h, grid, note);
+  note.textContent = 'Материал, ограждение, конструкцию, форму и размеры можно изменить в «Свойствах» после установки.';
+  box.append(presetsTitle, presets, h, grid, note);
+  presets.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-stair-preset]');
+    if (!button) return;
+    e.stopPropagation();
+    if (state.tool?.kind === 'wall') finishWallChain();
+    const preset = STAIR_STYLE_PRESETS.find((entry) => entry.id === button.dataset.stairPreset);
+    if (!preset) return;
+    startPlaceFurniture('stairs', preset.title, { stairPreset: preset.id, stairShape: preset.shape });
+    closeAll();
+    renderToolstrip();
+  });
   grid.addEventListener('click', (e) => {
     const b = e.target.closest('[data-stair]');
     if (!b) return;
     e.stopPropagation();
     if (state.tool?.kind === 'wall') finishWallChain();
     const sh = STAIR_SHAPES.find((x) => x.id === b.dataset.stair);
-    startPlaceFurniture('stairs', `Лестница: ${sh?.title || ''}`);
-    if (state.tool) state.tool.stairShape = b.dataset.stair;
+    startPlaceFurniture('stairs', `Лестница: ${sh?.title || ''}`, { stairPreset: 'interior-wood', stairShape: b.dataset.stair });
     closeAll();
     renderToolstrip();
   });
