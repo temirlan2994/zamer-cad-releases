@@ -8,9 +8,22 @@ import { FIREBASE_CONFIG, firebaseConfigured } from '../firebase-config.js';
 const SDK_VERSION = '11.10.0';
 const SDK_ROOT = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
 const APP_NAME = 'kepler-plan';
+const SESSION_KEY = 'kepler-firebase-session';
 
 let runtimePromise = null;
 const authListeners = new Set();
+
+export function firebaseSessionExpected() {
+  try { return globalThis.localStorage?.getItem(SESSION_KEY) === '1'; }
+  catch { return false; }
+}
+
+function rememberSession(active) {
+  try {
+    if (active) globalThis.localStorage?.setItem(SESSION_KEY, '1');
+    else globalThis.localStorage?.removeItem(SESSION_KEY);
+  } catch { /* приватный режим */ }
+}
 
 const account = (user) => (user ? {
   uid: String(user.uid),
@@ -135,6 +148,7 @@ export async function initializeFirebase() {
       let initial = true;
       runtime.authUnsubscribe = authApi.onAuthStateChanged(auth, (user) => {
         runtime.user = user || null;
+        rememberSession(Boolean(user));
         notifyAuth(runtime);
         if (initial) { initial = false; resolve(); }
       }, (error) => {
@@ -157,6 +171,9 @@ export async function initializeFirebase() {
 
 export async function firebaseState() {
   if (!firebaseConfigured()) return { configured: false, user: null, error: null };
+  // Первый гость не платит сетевой задержкой за SDK. После успешного входа
+  // маркер позволяет восстановить Firebase Auth при следующих открытиях.
+  if (!firebaseSessionExpected()) return { configured: true, user: null, error: null };
   try {
     const runtime = await initializeFirebase();
     return { configured: true, user: account(runtime?.user), error: null };
@@ -167,6 +184,12 @@ export async function firebaseState() {
 
 export function onFirebaseAuthChanged(listener) {
   authListeners.add(listener);
+  if (!firebaseSessionExpected()) {
+    queueMicrotask(() => {
+      if (authListeners.has(listener)) listener({ configured: true, user: null, error: null });
+    });
+    return () => authListeners.delete(listener);
+  }
   initializeFirebase()
     .then((runtime) => {
       if (runtime && authListeners.has(listener)) listener({ configured: true, user: account(runtime.user), error: null });
@@ -185,6 +208,7 @@ export async function firebaseSignInGoogle() {
     const provider = new runtime.authApi.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     const result = await runtime.authApi.signInWithPopup(runtime.auth, provider);
+    rememberSession(true);
     return account(result.user);
   } catch (error) {
     throw readableFirebaseError(error);
@@ -192,6 +216,10 @@ export async function firebaseSignInGoogle() {
 }
 
 export async function firebaseSignOut() {
-  const runtime = await initializeFirebase();
-  if (runtime) await runtime.authApi.signOut(runtime.auth);
+  try {
+    const runtime = await initializeFirebase();
+    if (runtime) await runtime.authApi.signOut(runtime.auth);
+  } finally {
+    rememberSession(false);
+  }
 }

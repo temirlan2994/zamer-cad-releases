@@ -8,10 +8,12 @@
 // Firebase Console → Project settings → Your apps → SDK setup and config.
 
 export const FIREBASE_CONFIG = Object.freeze({
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
-  appId: '',
+  apiKey: 'AIzaSyATxpNXc30buiGU4w2wrADr_PNvNsSE1uk',
+  authDomain: 'kepler-plan.firebaseapp.com',
+  projectId: 'kepler-plan',
+  storageBucket: 'kepler-plan.firebasestorage.app',
+  messagingSenderId: '245223238557',
+  appId: '1:245223238557:web:d5a78d71ba3ac5efffdd74',
 });
 
 export function firebaseConfigured(config = FIREBASE_CONFIG) {

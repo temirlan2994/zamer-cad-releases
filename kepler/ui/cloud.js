@@ -57,11 +57,14 @@ export function getBackend() {
     if (claude) return claude;
     if (firebaseConfigured()) {
       try {
-        const runtime = await withTimeout(initializeFirebase(), 8000);
-        if (runtime?.user) {
+        // firebaseState не грузит SDK для первого гостя; сеть нужна только
+        // при явном входе или восстановлении уже известной сессии.
+        const state = await withTimeout(firebaseState(), 8000);
+        if (state?.user) {
+          const runtime = await withTimeout(initializeFirebase(), 8000);
           const user = {
-            uid: String(runtime.user.uid), name: runtime.user.displayName || '',
-            email: runtime.user.email || '', photoURL: runtime.user.photoURL || '',
+            uid: String(state.user.uid), name: state.user.name || '',
+            email: state.user.email || '', photoURL: state.user.photoURL || '',
           };
           return {
             mode: 'cloud', provider: 'firebase', db: runtime.db, uid: user.uid,

@@ -1,12 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { firebaseConfigured } from '../firebase-config.js';
-import { createFirestoreAdapter } from '../ui/firebase.js';
+import { createFirestoreAdapter, firebaseSessionExpected } from '../ui/firebase.js';
 
 test('firebaseConfigured требует полный публичный web config', () => {
   assert.equal(firebaseConfigured({}), false);
   assert.equal(firebaseConfigured({ apiKey: 'a', authDomain: 'b', projectId: 'c', appId: '' }), false);
   assert.equal(firebaseConfigured({ apiKey: 'a', authDomain: 'b', projectId: 'c', appId: 'd' }), true);
+});
+
+test('Firebase SDK ожидается только для ранее начатой сессии', () => {
+  const previous = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (key) => (key === 'kepler-firebase-session' ? '1' : null) };
+  try { assert.equal(firebaseSessionExpected(), true); }
+  finally {
+    if (previous === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previous;
+  }
+  assert.equal(firebaseSessionExpected(), false);
 });
 
 test('Firestore adapter нормализует exists() и операции документов', async () => {
