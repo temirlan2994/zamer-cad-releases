@@ -1515,6 +1515,19 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 
 /* Панель «Проекты» */
+.start-account { margin: 10px 0 12px; }
+.start-google {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px;
+  text-align: left; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--surface-2);
+}
+.start-google:hover { border-color: var(--accent); }
+.start-google > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.start-google small { color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.start-google-mark {
+  display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 50%;
+  background: #fff; color: #4285f4; font-size: 17px; font-weight: 800;
+}
+.start-account-ready { padding: 9px 11px; border-radius: 8px; background: var(--ok-bg); color: var(--ok-text); font-size: 12.5px; }
 .projects-card { max-width: 640px; width: 100%; max-height: 86vh; overflow: auto; }
 .start-screen[data-busy="true"] .projects-card { pointer-events: none; opacity: 0.82; }
 .projects-account {

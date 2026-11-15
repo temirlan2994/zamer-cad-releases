@@ -11,6 +11,7 @@ describe('smoke', () => {
 
   it('при первом запуске — стартовое меню', async () => {
     assert.equal(await app.page.$eval('#startScreen', (n) => n.hidden), false);
+    assert.equal(await app.page.isVisible('#startGoogleSignIn'), true, 'вход Google доступен сразу');
   });
 
   it('пример загружается без ошибок', async () => {

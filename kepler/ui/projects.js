@@ -92,6 +92,9 @@ function renderAccount() {
   const signIn = el('googleSignIn');
   const signOut = el('googleSignOut');
   const accountButton = el('accountBtn');
+  const startAccount = el('startAccount');
+  const startSignIn = el('startGoogleSignIn');
+  const startReady = el('startAccountReady');
   if (user) {
     const title = user.name || user.email
       || (account.provider === 'claude' ? 'Аккаунт claude.ai' : 'Google-аккаунт');
@@ -110,6 +113,10 @@ function renderAccount() {
     signOut.hidden = account.provider !== 'firebase';
     accountButton.textContent = title.split(/\s+/)[0] || 'Аккаунт';
     accountButton.title = `${title}: облачные проекты`;
+    startAccount.hidden = false;
+    startSignIn.hidden = true;
+    startReady.hidden = false;
+    startReady.textContent = `✓ Выполнен вход: ${title}. Проекты сохраняются в личном облаке.`;
     return;
   }
   avatar.removeAttribute('src');
@@ -128,6 +135,11 @@ function renderAccount() {
   accountButton.title = account.configured
     ? 'Войти через Google и открыть облачные проекты'
     : 'Проекты этого браузера';
+  startAccount.hidden = !account.configured || account.provider !== 'firebase';
+  startSignIn.hidden = startAccount.hidden;
+  startSignIn.disabled = false;
+  startReady.hidden = true;
+  startReady.textContent = '';
 }
 
 function stopWatching() {
@@ -579,8 +591,8 @@ export function closeProjects(force = false) {
 }
 
 async function handleSignIn() {
-  const button = el('googleSignIn');
-  button.disabled = true;
+  const buttons = [el('googleSignIn'), el('startGoogleSignIn')];
+  buttons.forEach((button) => { button.disabled = true; });
   authAction = true;
   setProjectsBusy(true);
   try {
@@ -605,7 +617,7 @@ async function handleSignIn() {
   } finally {
     authAction = false;
     setProjectsBusy(false);
-    button.disabled = false;
+    buttons.forEach((button) => { button.disabled = false; });
   }
 }
 
@@ -642,6 +654,7 @@ export function bindProjects() {
   el('prjTabShared').addEventListener('click', () => setTab('shared'));
   el('prjSave').addEventListener('click', saveCurrent);
   el('googleSignIn').addEventListener('click', handleSignIn);
+  el('startGoogleSignIn').addEventListener('click', handleSignIn);
   el('googleSignOut').addEventListener('click', handleSignOut);
   el('projectsTransferBtn').addEventListener('click', transferLocalProjects);
   el('projectsList').addEventListener('click', (event) => {
