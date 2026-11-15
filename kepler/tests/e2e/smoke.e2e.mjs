@@ -11,7 +11,10 @@ describe('smoke', () => {
 
   it('при первом запуске — стартовое меню', async () => {
     assert.equal(await app.page.$eval('#startScreen', (n) => n.hidden), false);
-    assert.equal(await app.page.isVisible('#startGoogleSignIn'), true, 'вход Google доступен сразу');
+    assert.equal(await app.page.isVisible('#startProjectsView'), true, 'локальная разработка открывает выбор проектов');
+    assert.equal(await app.page.isVisible('#startNew'), true);
+    assert.equal(await app.page.isVisible('#startOpen'), true);
+    assert.equal(await app.page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 4);
   });
 
   it('пример загружается без ошибок', async () => {
@@ -76,6 +79,21 @@ describe('smoke', () => {
   });
 
   it('за всю сессию нет ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('обязательный вход', () => {
+  let app;
+  before(async () => { app = await startApp({ query: 'authGate=1' }); });
+  after(async () => { await app?.close(); });
+
+  it('до Google-входа показывает только экран аккаунта', async () => {
+    assert.equal(await app.page.isVisible('#startAuthView'), true);
+    assert.equal(await app.page.isVisible('#startGoogleSignIn'), true);
+    assert.equal(await app.page.isHidden('#startProjectsView'), true);
+    assert.equal(await app.page.isHidden('#startNew'), true);
+    assert.equal(await app.page.isHidden('#startOpen'), true);
     assert.deepEqual(app.errors, []);
   });
 });

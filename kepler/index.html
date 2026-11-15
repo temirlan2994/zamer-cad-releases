@@ -26,7 +26,6 @@
           <span class="top-sep" aria-hidden="true"></span>
           <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
           <button id="accountBtn" class="account-chip" type="button" title="Войти в Google-аккаунт и открыть облачные проекты">Войти</button>
-          <input type="file" id="fileInput" accept=".json,application/json" hidden />
           <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
           <div class="export-wrap">
             <button id="exportBtn" class="primary">Экспорт ▾</button>
@@ -263,34 +262,71 @@
       </nav>
     </div>
 
+    <input type="file" id="fileInput" accept=".json,application/json" hidden />
     <div id="toast" role="status"></div>
 
     <div class="start-screen" id="startScreen" hidden>
-      <div class="start-card">
-        <div class="start-head">
+      <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
+        <section class="startup-view startup-auth" id="startAuthView" hidden>
           <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
-          <button class="icon-btn" id="startClose" title="Закрыть" hidden>✕</button>
-        </div>
-        <div class="start-account" id="startAccount" hidden>
+          <div class="startup-auth-copy">
+            <span class="startup-auth-icon" aria-hidden="true">K</span>
+            <div>
+              <h1 id="startupTitle">Войдите в Kepler Plan</h1>
+              <p>Ваши проекты будут автоматически сохраняться в личном облаке и открываться на любом устройстве.</p>
+            </div>
+          </div>
           <button class="start-google" id="startGoogleSignIn" type="button">
             <span class="start-google-mark" aria-hidden="true">G</span>
-            <span><b>Войти через Google</b><small>личные проекты на любом устройстве</small></span>
+            <span><b>Продолжить с Google</b><small>безопасный вход в личный аккаунт</small></span>
           </button>
-          <div class="start-account-ready" id="startAccountReady" hidden></div>
-        </div>
-        <div id="startWarn" class="start-warn" hidden></div>
-        <div class="start-actions">
-          <button class="start-item" id="startContinue" hidden>
-            <b>Продолжить</b><span>вернуться к текущему проекту</span></button>
-          <button class="start-item accent" id="startNew">
-            <b>＋ Новый проект</b><span>чистый лист без топосъёмки и мебели</span></button>
-          <button class="start-item" id="startOpen">
-            <b>Открыть файл…</b><span>.kepler.json с компьютера</span></button>
-          <button class="start-item" id="startSample">
-            <b>Загрузить пример</b><span>демо-дом с участком и инсоляцией</span></button>
-        </div>
-        <div class="start-sub">Шаблоны домов — готовая планировка, двери и окна</div>
-        <div class="start-templates" id="startTemplates"></div>
+          <p class="startup-auth-status" id="startAuthStatus" role="status" aria-live="polite"></p>
+          <p class="startup-auth-note">Kepler Plan не получает пароль от вашего Google-аккаунта.</p>
+        </section>
+
+        <section class="startup-view startup-projects" id="startProjectsView" hidden>
+          <div class="start-head startup-projects-head">
+            <div>
+              <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+              <h1 id="startupProjectsTitle">Ваши проекты</h1>
+            </div>
+            <div class="startup-head-actions">
+              <div class="startup-profile" id="startProfile">
+                <img id="startAccountAvatar" alt="" referrerpolicy="no-referrer" hidden />
+                <span class="projects-account-placeholder" id="startAccountPlaceholder" aria-hidden="true">G</span>
+                <span><strong id="startAccountName">Аккаунт</strong><small id="startAccountEmail"></small></span>
+              </div>
+              <button id="startGoogleSignOut" type="button" hidden>Выйти</button>
+              <button class="icon-btn" id="startClose" title="Закрыть" hidden>✕</button>
+            </div>
+          </div>
+          <div id="startWarn" class="start-warn" hidden></div>
+          <div class="start-actions startup-actions">
+            <button class="start-item" id="startContinue" hidden>
+              <b>Продолжить</b><span>вернуться к текущему проекту</span></button>
+            <button class="start-item accent" id="startNew">
+              <b>＋ Создать проект</b><span>начать с чистого листа</span></button>
+            <button class="start-item" id="startOpen">
+              <b>Открыть проект</b><span>файл .kepler.json с компьютера</span></button>
+          </div>
+
+          <section class="startup-section" id="startRecentSection" hidden>
+            <div class="startup-section-head">
+              <h2>Последние проекты</h2>
+              <span id="startRecentStatus" role="status" aria-live="polite"></span>
+            </div>
+            <div class="startup-project-grid" id="startRecentProjects"></div>
+          </section>
+
+          <section class="startup-section" id="startExamplesSection">
+            <div class="startup-section-head">
+              <h2>Примеры</h2><span>готовые планы для быстрого старта</span>
+            </div>
+            <div class="start-templates startup-project-grid" id="startTemplates">
+              <button class="startup-project-card" id="startSample" type="button"></button>
+            </div>
+          </section>
+        </section>
       </div>
     </div>
 

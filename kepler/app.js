@@ -7,7 +7,7 @@
 // редактор. Ядро без DOM — в core/, отрисовка — в render.js.
 
 import { createProject, serializeProject } from './core/model.js';
-import { listProjects, loadVersion } from './core/storage.js';
+import { loadVersion } from './core/storage.js';
 import { exposeDebugApi } from './ui/debug.js';
 import { refs } from './ui/dom.js';
 import { bindCanvasInput } from './ui/input.js';
@@ -20,9 +20,8 @@ import {
   applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
 } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
-import { bindProjects } from './ui/projects.js';
+import { bindProjects, openProjectChooser } from './ui/projects.js';
 import { renderProps } from './ui/props.js';
-import { openStartMenu } from './ui/start-menu.js';
 import { state } from './ui/state.js';
 import {
   AUTOSAVE_EVENT, BROKEN_KEY, PID_KEY, bindAutosaveLifecycle, loadAutosave,
@@ -42,9 +41,7 @@ import { getBackend, prepareAccount } from './ui/cloud.js';
 import {
   getScopedItem, setScopedItem, setStorageScope,
 } from './ui/storage-scope.js';
-import {
-  shouldOpenRecentCloudProject, shouldUseRemoteProject,
-} from './ui/startup-cloud.js';
+import { shouldUseRemoteProject } from './ui/startup-cloud.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -68,7 +65,7 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
   const account = await prepareAccount();
   setStorageScope(account.uid);
   try { state.pid = getScopedItem(PID_KEY) || null; } catch { state.pid = null; }
-  bindProjects();
+  bindProjects(account);
   loadTheme();
   loadLandscapeStyle();
   loadLandscapeSun();
@@ -78,23 +75,20 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
   // подложка…) продолжается. Битое не роняет запуск: копия — в резерв,
   // старт с пустого проекта и предупреждение в стартовом меню.
   let saved = loadAutosave();
+  if (!saved.project) {
+    state.pid = null;
+    try { setScopedItem(PID_KEY, ''); } catch { /* хранилище недоступно */ }
+  }
   let openedFromCloud = false;
   let localNeedsCloudSync = false;
   if (account.signedIn) {
     try {
       const cloud = await getBackend();
       if (cloud.mode === 'cloud') {
-        // Если локальный черновик уже есть, отсутствие PID означает именно
-        // «Новый проект». Нельзя подставлять сюда последний облачный PID:
-        // следующая синхронизация перезаписала бы им старый проект.
-        if (shouldOpenRecentCloudProject(state.pid, saved.project)) {
-          const recent = await listProjects(cloud.db, cloud.root);
-          if (recent[0]?.id) {
-            state.pid = recent[0].id;
-            setScopedItem(PID_KEY, state.pid);
-          }
-        }
-        if (state.pid) {
+        // На старте больше не подставляем последний проект автоматически:
+        // пользователь сначала выбирает его в окне проектов. Сравниваем с
+        // облаком только уже известный локальный черновик этого PID.
+        if (state.pid && saved.project) {
           const remote = await loadVersion(cloud.db, cloud.root, state.pid);
           const remoteAt = remote.version?.at || remote.meta?.updatedAt || null;
           if (saved.project && !saved.savedAt) {
@@ -132,7 +126,6 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
     renderProps();
     renderSelectionToolbar();
   };
-  let showStart = !saved.project;
   try {
     start(saved.project || createProject());
     // Если большая подложка лежала отдельно в IndexedDB, сначала возвращаем
@@ -144,7 +137,6 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
     const text = serializeProject(saved.project, { pretty: false });
     try { setScopedItem(BROKEN_KEY, text); } catch { /* нет места */ }
     broken = { text, error };
-    showStart = true;
     start(createProject());
   }
   refs.statusScale.textContent = scaleLabel();
@@ -156,7 +148,7 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
       detail: { text: serializeProject(saved.project, { pretty: false }) },
     }));
   }
-  if (showStart) openStartMenu({ initial: true, broken });
+  await openProjectChooser({ initial: true, broken });
   exposeDebugApi();
 })().catch((error) => {
   console.error('Kepler Plan не запустился:', error);

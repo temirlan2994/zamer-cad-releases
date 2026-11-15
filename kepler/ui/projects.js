@@ -2,7 +2,8 @@
 // входа через Google/Firebase (или capability Claude в артефакте).
 // Облачный draft сохраняется отдельно от ручных версий.
 
-import { hasContent, serializeProject } from '../core/model.js';
+import { serializeProject } from '../core/model.js';
+import { projectPreviewSvg } from '../core/project-preview.js';
 import {
   deleteProject, listProjects, loadShared, loadVersion, newId, publishProject,
   saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
@@ -13,8 +14,9 @@ import {
   signInGoogle, signOutGoogle,
 } from './cloud.js';
 import { state } from './state.js';
+import { closeStartMenu, openStartMenu } from './start-menu.js';
 import {
-  GUEST_STORAGE_SCOPE, getScopedItem, getStorageScope, setScopedItem, setStorageScope,
+  GUEST_STORAGE_SCOPE, getScopedItem, getStorageScope, setScopedItem,
 } from './storage-scope.js';
 import {
   AUTOSAVE_EVENT, PID_KEY, discardAutosave, flushAutosave, pushHistory,
@@ -44,6 +46,7 @@ let syncChain = Promise.resolve(true);
 let authAction = false;
 let projectActionBusy = false;
 const expanded = new Set();
+let startProjectsRequest = 0;
 
 export const isProjectsOpen = () => !el('projectsScreen').hidden;
 
@@ -75,53 +78,78 @@ function setSyncStatus(text, status = '') {
 }
 
 function setProjectsBusy(busy) {
-  const screen = el('projectsScreen');
-  if (busy) {
-    screen.dataset.busy = 'true';
-    screen.setAttribute('aria-busy', 'true');
-  } else {
-    delete screen.dataset.busy;
-    screen.removeAttribute('aria-busy');
+  for (const screen of [el('projectsScreen'), el('startScreen')]) {
+    if (busy) {
+      screen.dataset.busy = 'true';
+      screen.setAttribute('aria-busy', 'true');
+    } else {
+      delete screen.dataset.busy;
+      screen.removeAttribute('aria-busy');
+    }
   }
+}
+
+function developmentGuestAllowed() {
+  const local = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+  return local && !new URLSearchParams(location.search).has('authGate');
+}
+
+function loginGateActive() {
+  return !account.signedIn && !developmentGuestAllowed();
+}
+
+function setProfile(prefix, user, fallback) {
+  const avatar = el(`${prefix}Avatar`);
+  const placeholder = el(`${prefix}Placeholder`);
+  const title = user?.name || user?.email || fallback;
+  el(`${prefix}Name`).textContent = title;
+  el(`${prefix}Email`).textContent = user?.email || (user ? 'Личное облако подключено' : 'Проекты этого браузера');
+  if (user?.photoURL) {
+    avatar.src = user.photoURL;
+    avatar.hidden = false;
+    placeholder.hidden = true;
+  } else {
+    avatar.removeAttribute('src');
+    avatar.hidden = true;
+    placeholder.hidden = false;
+  }
+  return title;
 }
 
 function renderAccount() {
   const user = account.user;
-  const avatar = el('projectsAccountAvatar');
-  const placeholder = el('projectsAccountPlaceholder');
   const signIn = el('googleSignIn');
   const signOut = el('googleSignOut');
   const accountButton = el('accountBtn');
-  const startAccount = el('startAccount');
   const startSignIn = el('startGoogleSignIn');
-  const startReady = el('startAccountReady');
+  const startSignOut = el('startGoogleSignOut');
+  const authView = el('startAuthView');
+  const projectsView = el('startProjectsView');
+  const startupCard = el('startScreen').querySelector('.startup-card');
+  const gated = loginGateActive();
+  authView.hidden = !gated;
+  projectsView.hidden = gated;
+  startupCard.classList.toggle('auth-only', gated);
+  startupCard.setAttribute('aria-labelledby', gated ? 'startupTitle' : 'startupProjectsTitle');
+  startSignIn.hidden = !gated;
+  startSignIn.disabled = !account.configured || account.provider !== 'firebase';
+  const authStatus = el('startAuthStatus');
+  authStatus.textContent = gated
+    ? account.error?.message || (!account.configured ? 'Вход через Google временно недоступен. Обновите страницу позже.' : '')
+    : '';
   if (user) {
-    const title = user.name || user.email
-      || (account.provider === 'claude' ? 'Аккаунт claude.ai' : 'Google-аккаунт');
-    el('projectsAccountName').textContent = title;
-    el('projectsAccountEmail').textContent = user.email || 'Личное облако подключено';
-    if (user.photoURL) {
-      avatar.src = user.photoURL;
-      avatar.hidden = false;
-      placeholder.hidden = true;
-    } else {
-      avatar.removeAttribute('src');
-      avatar.hidden = true;
-      placeholder.hidden = false;
-    }
+    const fallback = account.provider === 'claude' ? 'Аккаунт claude.ai' : 'Google-аккаунт';
+    const title = setProfile('projectsAccount', user, fallback);
+    setProfile('startAccount', user, fallback);
     signIn.hidden = true;
     signOut.hidden = account.provider !== 'firebase';
+    startSignOut.hidden = account.provider !== 'firebase';
     accountButton.textContent = title.split(/\s+/)[0] || 'Аккаунт';
     accountButton.title = `${title}: облачные проекты`;
-    startAccount.hidden = false;
-    startSignIn.hidden = true;
-    startReady.hidden = false;
-    startReady.textContent = `✓ Выполнен вход: ${title}. Проекты сохраняются в личном облаке.`;
     return;
   }
-  avatar.removeAttribute('src');
-  avatar.hidden = true;
-  placeholder.hidden = false;
+  setProfile('projectsAccount', null, 'Гостевой режим');
+  setProfile('startAccount', null, 'Локальная разработка');
   el('projectsAccountName').textContent = 'Гостевой режим';
   el('projectsAccountEmail').textContent = account.error
     ? account.error.message
@@ -131,15 +159,11 @@ function renderAccount() {
   signIn.hidden = !account.configured || account.provider !== 'firebase';
   signIn.disabled = false;
   signOut.hidden = true;
+  startSignOut.hidden = true;
   accountButton.textContent = account.configured ? 'Войти' : 'Локально';
   accountButton.title = account.configured
     ? 'Войти через Google и открыть облачные проекты'
     : 'Проекты этого браузера';
-  startAccount.hidden = !account.configured || account.provider !== 'firebase';
-  startSignIn.hidden = startAccount.hidden;
-  startSignIn.disabled = false;
-  startReady.hidden = true;
-  startReady.textContent = '';
 }
 
 function stopWatching() {
@@ -157,6 +181,7 @@ function watch() {
     unwatch = watchProjects(backend.db, backend.root, (list) => {
       projects = list;
       render();
+      if (!el('startProjectsView').hidden && !el('startScreen').hidden) renderStartProjects(projects);
     }, fail);
   } else {
     unwatch = watchShared(backend.db, (list) => {
@@ -173,6 +198,55 @@ function versionRows(project) {
       <small>${fmtSize(version.bytes || 0)}</small>
       <button type="button" data-act="open" data-pid="${escapeHtml(project.id)}" data-vid="${escapeHtml(version.id)}">Открыть</button>
     </div>`).join('');
+}
+
+function latestStats(project) {
+  return project.draftStats || project.versions?.[0]?.stats || null;
+}
+
+function renderStartProjects(list) {
+  const section = el('startRecentSection');
+  const box = el('startRecentProjects');
+  const status = el('startRecentStatus');
+  const recent = list.slice(0, 6);
+  section.hidden = recent.length === 0;
+  status.textContent = recent.length ? `${recent.length} последних` : '';
+  box.innerHTML = recent.map((project) => {
+    const stats = latestStats(project);
+    const current = project.id === state.pid;
+    const details = [fmtDate(project.updatedAt)];
+    if (stats?.rooms) details.push(`помещений: ${Number(stats.rooms)}`);
+    return `
+      <button class="startup-project-card${current ? ' current' : ''}" type="button"
+        data-act="open" data-pid="${escapeHtml(project.id)}">
+        <span class="startup-project-preview">${projectPreviewSvg(project.preview, stats)}</span>
+        <span class="startup-project-info">
+          <b>${escapeHtml(project.name || 'Без названия')}</b>
+          <small>${escapeHtml(details.filter(Boolean).join(' · ') || 'Облачный проект')}</small>
+        </span>
+      </button>`;
+  }).join('');
+}
+
+async function refreshStartProjects() {
+  const request = ++startProjectsRequest;
+  const section = el('startRecentSection');
+  const status = el('startRecentStatus');
+  if (loginGateActive() || el('startProjectsView').hidden) return;
+  section.hidden = false;
+  status.textContent = 'Загрузка…';
+  try {
+    if (!backend) await refreshBackend({ restartWatch: false });
+    const list = await listProjects(backend.db, backend.root);
+    if (request !== startProjectsRequest) return;
+    projects = list;
+    renderStartProjects(projects);
+  } catch (error) {
+    if (request !== startProjectsRequest) return;
+    section.hidden = false;
+    el('startRecentProjects').innerHTML = '';
+    status.textContent = `Не удалось загрузить: ${error?.message || 'нет доступа'}`;
+  }
 }
 
 function render() {
@@ -240,6 +314,7 @@ function openText(text, pid, missing) {
   tweak(() => {});
   fitView();
   closeProjects(true);
+  closeStartMenu();
   toast(missing?.length
     ? `Открыт «${state.project.name}», но картинка топосъёмки потерялась`
     : `Открыт проект «${state.project.name}»`, Boolean(missing?.length));
@@ -584,6 +659,22 @@ export async function openProjects() {
   setTab(backend.provider === 'claude' ? tab : 'mine');
 }
 
+export async function openProjectChooser(options = {}) {
+  if (options.initial && !options.broken && developmentGuestAllowed()) {
+    try {
+      if (sessionStorage.getItem('kepler-startup-chosen') === '1') return;
+    } catch { /* режим без sessionStorage */ }
+  }
+  openStartMenu(options);
+  renderAccount();
+  if (loginGateActive()) {
+    requestAnimationFrame(() => el('startGoogleSignIn').focus({ preventScroll: true }));
+    return;
+  }
+  requestAnimationFrame(() => el('startNew').focus({ preventScroll: true }));
+  await refreshStartProjects();
+}
+
 export function closeProjects(force = false) {
   if ((projectActionBusy || authAction) && !force) return;
   el('projectsScreen').hidden = true;
@@ -600,19 +691,14 @@ async function handleSignIn() {
     account = next;
     const uid = next.user?.uid;
     if (!uid) throw new Error('Google не вернул пользователя');
+    // Гостевой черновик остаётся в guest namespace. Scope меняет только
+    // следующий boot: иначе pagehide успел бы записать гостевой проект уже
+    // под UID вошедшего пользователя.
     flushAutosave();
-    setStorageScope(uid);
-    // Открытый гостевой черновик становится новым проектом этого аккаунта,
-    // но никогда не перезаписывает ранее открытый облачный PID.
-    state.pid = null;
-    setScopedItem(PID_KEY, '');
-    renderAccount();
-    await refreshBackend();
-    toast('Вход выполнен — проект будет сохраняться в Google-облаке');
-    if (state.project && hasContent(state.project)) {
-      scheduleCloudDraft(serializeProject(state.project, { pretty: false }), { immediate: true });
-    }
+    window.location.reload();
   } catch (error) {
+    account = { ...account, error };
+    renderAccount();
     toast(`Не удалось войти: ${error.message}`, true);
   } finally {
     authAction = false;
@@ -622,27 +708,27 @@ async function handleSignIn() {
 }
 
 async function handleSignOut() {
-  const button = el('googleSignOut');
-  button.disabled = true;
+  const buttons = [el('googleSignOut'), el('startGoogleSignOut')];
+  buttons.forEach((button) => { button.disabled = true; });
   authAction = true;
   setProjectsBusy(true);
   try {
     flushAutosave();
     if (!await flushCloudDraft()) throw new Error('проект ещё не синхронизирован; проверьте интернет и повторите выход');
     await signOutGoogle();
-    setStorageScope(GUEST_STORAGE_SCOPE);
-    // Перезагрузка закрывает проект вышедшего пользователя и поднимает
-    // отдельный гостевой черновик — данные аккаунтов не смешиваются.
+    // Scope остаётся прежним до pagehide, чтобы открытый проект не попал в
+    // guest namespace. Следующий boot сам выберет гостевой scope.
     window.location.reload();
   } catch (error) {
     authAction = false;
     setProjectsBusy(false);
-    button.disabled = false;
+    buttons.forEach((button) => { button.disabled = false; });
     toast(`Не удалось выйти: ${error.message}`, true);
   }
 }
 
-export function bindProjects() {
+export function bindProjects(initialAccount = null) {
+  if (initialAccount) account = initialAccount;
   try { state.pid = getScopedItem(PID_KEY) || null; } catch { state.pid = null; }
   el('projectsBtn').addEventListener('click', openProjects);
   el('accountBtn').addEventListener('click', openProjects);
@@ -656,8 +742,13 @@ export function bindProjects() {
   el('googleSignIn').addEventListener('click', handleSignIn);
   el('startGoogleSignIn').addEventListener('click', handleSignIn);
   el('googleSignOut').addEventListener('click', handleSignOut);
+  el('startGoogleSignOut').addEventListener('click', handleSignOut);
   el('projectsTransferBtn').addEventListener('click', transferLocalProjects);
   el('projectsList').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-act]');
+    if (button) onAction(button);
+  });
+  el('startRecentProjects').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-act]');
     if (button) onAction(button);
   });
@@ -683,7 +774,6 @@ export function bindProjects() {
     if (wasSignedIn && !next.signedIn && getStorageScope() !== GUEST_STORAGE_SCOPE) {
       flushAutosave();
       clearPendingCloudDrafts();
-      setStorageScope(GUEST_STORAGE_SCOPE);
       window.location.reload();
       return;
     }
@@ -691,13 +781,12 @@ export function bindProjects() {
       && (getStorageScope() !== nextUid || (previousUid && previousUid !== nextUid))) {
       flushAutosave();
       clearPendingCloudDrafts();
-      setStorageScope(nextUid);
-      try { state.pid = getScopedItem(PID_KEY) || null; } catch { state.pid = null; }
       window.location.reload();
       return;
     }
     await refreshBackend();
   });
+  renderAccount();
   getAccountState().then((next) => {
     account = next;
     renderAccount();

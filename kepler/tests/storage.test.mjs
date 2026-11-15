@@ -42,6 +42,18 @@ test('saveVersion/loadVersion: версии, без дубля при отсут
   assert.equal((await listProjects(db, root))[0].name, 'Дом');
 });
 
+test('карточка проекта хранит компактный эскиз вне истории версий', async () => {
+  const db = createMemoryDb();
+  const project = {
+    name: 'Дом с эскизом',
+    levels: [{ rooms: [{ id: 'r1', x: 0, y: 0, w: 4200, h: 3600 }] }],
+  };
+  const saved = await saveVersion(db, root, JSON.stringify(project), { pid: 'preview' });
+  assert.equal(saved.meta.preview.v, 1);
+  assert.equal(saved.meta.preview.rooms.length, 1);
+  assert.equal('preview' in saved.meta.versions[0], false, 'история версий не раздувается');
+});
+
 test('облачный черновик хранится отдельно и открывается без ручной версии', async () => {
   const db = createMemoryDb();
   const saved = await saveDraft(db, root, proj({ rooms: [7] }), {
@@ -85,6 +97,22 @@ test('ручная версия новее draft становится основ
   const opened = await loadVersion(db, root, 'manual-newer');
   assert.equal(opened.version.id, manual.version.id);
   assert.deepEqual(JSON.parse(opened.text).rooms, [9]);
+});
+
+test('старый draft не заменяет эскиз более новой ручной версии', async () => {
+  const db = createMemoryDb();
+  const project = (w) => JSON.stringify({
+    name: 'Дом', levels: [{ rooms: [{ id: 'r1', x: 0, y: 0, w, h: 3000 }] }],
+  });
+  const manual = await saveVersion(db, root, project(6000), {
+    pid: 'preview-order', now: new Date('2026-11-15T10:02:00Z'),
+  });
+  await saveDraft(db, root, project(2000), {
+    pid: 'preview-order', now: new Date('2026-11-15T10:00:00Z'),
+  });
+  const meta = (await listProjects(db, root)).find((item) => item.id === 'preview-order');
+  assert.deepEqual(meta.preview, manual.meta.preview);
+  assert.equal(meta.updatedAt, '2026-11-15T10:02:00.000Z');
 });
 
 test('draft не дублируется, меняется атомарно и очищает старые части', async () => {

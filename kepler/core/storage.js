@@ -14,6 +14,8 @@
 // Публикация «для просмотра»: root = shared/<uid>/p, оглавление — shared/<uid>
 // (читают все, кто открыл артефакт; пишет только автор).
 
+import { createProjectPreview } from './project-preview.js';
+
 export const CHUNK_BYTES = 200 * 1024;
 export const KEEP_VERSIONS = 30;
 // 256 × 200 КиБ ≈ 50 МиБ на один JSON/blob — уже намного больше обычного
@@ -76,6 +78,7 @@ function walkStrings(node, fn) {
 // Тяжёлые строки data:… выносятся в blobs[hash], в тексте — ссылка kblob:hash.
 export function splitHeavy(projectText) {
   const data = JSON.parse(projectText);
+  const preview = createProjectPreview(data);
   const blobs = {};
   walkStrings(data, (s) => {
     if (s.length <= HEAVY_MIN || !s.startsWith('data:')) return s;
@@ -83,7 +86,9 @@ export function splitHeavy(projectText) {
     blobs[h] = s;
     return BLOB_PREFIX + h;
   });
-  return { body: JSON.stringify(data), blobs, name: typeof data.name === 'string' ? data.name : '' };
+  return {
+    body: JSON.stringify(data), blobs, name: typeof data.name === 'string' ? data.name : '', preview,
+  };
 }
 
 // Обратно: ссылки kblob:hash → данные. Пропавшие картинки — null (и в missing).
@@ -168,7 +173,9 @@ function normalizedDraft(data) {
   return { ...clone(data), revision, chunks, blobs };
 }
 
-async function touchDraftMeta(db, root, pid, { at, name, revision, stats }) {
+async function touchDraftMeta(db, root, pid, {
+  at, name, revision, stats, preview,
+}) {
   const ref = db.doc(`${root}/${pid}`);
   let fields = {
     name: name || 'Без названия',
@@ -176,12 +183,18 @@ async function touchDraftMeta(db, root, pid, { at, name, revision, stats }) {
     draftUpdatedAt: at,
     draftRevision: revision,
     draftStats: stats,
+    preview: preview || null,
   };
   const snap = await retry(() => ref.get());
   if (snap.exists) {
     const current = snap.data() || {};
     if (String(current.updatedAt || '') > String(at)) {
-      fields = { ...fields, name: current.name || fields.name, updatedAt: current.updatedAt };
+      fields = {
+        ...fields,
+        name: current.name || fields.name,
+        updatedAt: current.updatedAt,
+        preview: current.preview || fields.preview,
+      };
     }
     await retry(() => ref.update(fields));
     return { id: pid, ...clone(current), ...fields };
@@ -199,20 +212,23 @@ export async function saveDraft(db, root, projectText, {
 } = {}) {
   if (!pid) throw new Error('Нет идентификатора проекта');
   const at = now.toISOString();
-  const { body, blobs, name } = splitHeavy(projectText);
+  const {
+    body, blobs, name, preview,
+  } = splitHeavy(projectText);
   const hash = hashText(body);
   const ref = draftRef(db, root, pid);
   const beforeSnap = await retry(() => ref.get());
   const before = beforeSnap.exists ? normalizedDraft(beforeSnap.data()) : null;
   if (before?.hash === hash) {
     const meta = await getProject(db, root, pid);
-    const savedMeta = meta?.draftRevision === before.revision
+    const savedMeta = meta?.draftRevision === before.revision && (!preview || meta.preview)
       ? meta
       : await touchDraftMeta(db, root, pid, {
         at: before.updatedAt || at,
         name: name || before.name,
         revision: before.revision,
         stats: before.stats ?? stats,
+        preview: before.preview || preview,
       });
     return { meta: savedMeta, draft: before, unchanged: true };
   }
@@ -233,6 +249,7 @@ export async function saveDraft(db, root, projectText, {
     bytes: body.length,
     blobs: blobChunks,
     stats,
+    preview,
   };
   await retry(() => ref.set(draft));
   // Карточка следует за фактическим указателем, даже если другая вкладка
@@ -245,6 +262,7 @@ export async function saveDraft(db, root, projectText, {
       name: active.name || name,
       revision: active.revision,
       stats: active.stats ?? stats,
+      preview: active.preview || preview,
     })
     : await getProject(db, root, pid);
   const finalCheck = await retry(() => ref.get());
@@ -256,6 +274,7 @@ export async function saveDraft(db, root, projectText, {
       name: active.name || name,
       revision: active.revision,
       stats: active.stats ?? stats,
+      preview: active.preview || preview,
     });
     check = finalCheck;
   }
@@ -323,13 +342,18 @@ export async function saveVersion(db, root, projectText, {
   const meta = snap.exists ? clone(snap.data()) : { createdAt: at, versions: [], blobs: {} };
   meta.versions = Array.isArray(meta.versions) ? meta.versions : [];
   meta.blobs = meta.blobs && typeof meta.blobs === 'object' ? meta.blobs : {};
-  const { body, blobs, name } = splitHeavy(projectText);
+  const {
+    body, blobs, name, preview,
+  } = splitHeavy(projectText);
   const hash = hashText(body);
   if (meta.versions[0]?.hash === hash && meta.versions.length <= keep) {
+    let changed = false;
     if (note && !meta.versions[0].note) { // подпись к уже сохранённому
       meta.versions[0].note = note;
-      await retry(() => metaRef.set(meta));
+      changed = true;
     }
+    if (preview && !meta.preview) { meta.preview = preview; changed = true; }
+    if (changed) await retry(() => metaRef.set(meta));
     return { meta: { id: pid, ...meta }, version: meta.versions[0], unchanged: true };
   }
 
@@ -356,7 +380,7 @@ export async function saveVersion(db, root, projectText, {
     if (latest && (attempt > 0 || latest.head !== meta.head || latest.updatedAt !== meta.updatedAt)) {
       base = rebaseMeta(latest, blobs, written);
     }
-    result = buildMeta(base, version, keep, name, at);
+    result = buildMeta(base, version, keep, name, at, preview);
     await retry(() => metaRef.set(result.meta));
     const check = await retry(() => metaRef.get());
     if (!check.exists || (check.data()?.versions || []).some((v) => v?.id === vid)) break;
@@ -380,7 +404,7 @@ function rebaseMeta(latest, blobs, written) {
 }
 
 // Карточка с новой версией сверху: лишние версии и ненужные картинки — на уборку.
-function buildMeta(base, version, keep, name, at) {
+function buildMeta(base, version, keep, name, at, preview) {
   const meta = { ...base, blobs: { ...base.blobs } };
   const versions = [version, ...(base.versions || []).filter((v) => v?.id !== version.id)];
   const dropped = versions.slice(keep);
@@ -388,7 +412,10 @@ function buildMeta(base, version, keep, name, at) {
   const live = new Set(meta.versions.flatMap((v) => v.blobs || []));
   const deadBlobs = Object.entries(meta.blobs).filter(([h]) => !live.has(h));
   for (const [h] of deadBlobs) delete meta.blobs[h];
-  Object.assign(meta, { name: name || meta.name || 'Без названия', updatedAt: at, head: version.id });
+  Object.assign(meta, {
+    name: name || meta.name || 'Без названия', updatedAt: at, head: version.id,
+    preview: preview || meta.preview || null,
+  });
   return { meta, dropped, deadBlobs };
 }
 

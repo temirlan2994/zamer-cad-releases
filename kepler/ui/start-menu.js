@@ -1,10 +1,12 @@
 // Стартовое меню: продолжить, новый, пример, открыть, шаблоны.
 
 import { hasContent } from '../core/model.js';
+import { createProjectPreview, projectPreviewSvg } from '../core/project-preview.js';
 import { TEMPLATES } from '../core/templates.js';
 import { saveFile } from './cloud.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { handleExport, loadTemplate, newProject } from './files.js';
+import { buildSample } from './sample.js';
 import { state } from './state.js';
 
 const projectHasContent = () => hasContent(state.project);
@@ -25,18 +27,29 @@ function showBroken(warn, broken) {
   warn.querySelector('#warnBrokenHide').addEventListener('click', () => { warn.hidden = true; });
 }
 
-// Кнопки шаблонов строятся один раз.
+function exampleContent(title, note, project) {
+  const preview = createProjectPreview(project);
+  return `
+    <span class="startup-project-preview">${projectPreviewSvg(preview)}</span>
+    <span class="startup-project-info"><b>${escapeHtml(title)}</b><small>${escapeHtml(note)}</small></span>`;
+}
+
+// Карточки примеров строятся один раз.
 function renderTemplates() {
   const box = el('startTemplates');
-  if (!box || box.childElementCount) return;
+  if (!box || box.dataset.ready === 'true') return;
+  const sample = el('startSample');
+  sample.innerHTML = exampleContent('Демо-дом с участком', 'участок, рельеф и инсоляция', buildSample().project);
   for (const t of TEMPLATES) {
     const btn = document.createElement('button');
-    btn.className = 'start-item';
+    btn.type = 'button';
+    btn.className = 'startup-project-card';
     btn.dataset.template = t.id;
-    btn.innerHTML = `<b>${t.title}</b><span>${t.note}</span>`;
+    btn.innerHTML = exampleContent(t.title, t.note, t.build());
     btn.addEventListener('click', () => { loadTemplate(t.id); closeStartMenu(); });
     box.appendChild(btn);
   }
+  box.dataset.ready = 'true';
 }
 
 export function openStartMenu({ initial = false, broken = null } = {}) {
@@ -49,17 +62,27 @@ export function openStartMenu({ initial = false, broken = null } = {}) {
   warn.innerHTML = '';
   if (broken?.text) showBroken(warn, broken);
   const hasContent = projectHasContent();
-  closeBtn.hidden = initial && !hasContent;
-  continueBtn.hidden = initial && !hasContent;
+  screen.dataset.initial = String(Boolean(initial));
+  closeBtn.hidden = initial;
+  continueBtn.hidden = initial || !hasContent;
+  document.querySelector('.app')?.setAttribute('inert', '');
   screen.hidden = false;
 }
 
 export function closeStartMenu() {
   el('startScreen').hidden = true;
+  document.querySelector('.app')?.removeAttribute('inert');
+  try { sessionStorage.setItem('kepler-startup-chosen', '1'); } catch { /* режим без sessionStorage */ }
 }
 
 export function requestNewProject() {
   const warn = el('startWarn');
+  if (el('startScreen').dataset.initial === 'true') {
+    newProject();
+    closeStartMenu();
+    toast('Новый проект создан');
+    return;
+  }
   if (projectHasContent()) {
     // Спрашиваем подтверждение, прежде чем стереть текущий проект.
     warn.hidden = false;

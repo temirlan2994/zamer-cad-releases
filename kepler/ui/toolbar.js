@@ -6,7 +6,8 @@ import { handleExport, loadSample, openProjectFile } from './files.js';
 import { applyLibraryTab } from './library.js';
 import { setEditorMode } from './modes.js';
 import { finishDraft } from './site-actions.js';
-import { closeStartMenu, openStartMenu, requestNewProject } from './start-menu.js';
+import { openProjectChooser } from './projects.js';
+import { closeStartMenu, requestNewProject } from './start-menu.js';
 import { state } from './state.js';
 import { mutate, redo, tweak, undo } from './store.js';
 import { cycleTheme } from './theme.js';
@@ -96,7 +97,7 @@ export function bindToolbar() {
     else if (e.key === 'Escape') { e.preventDefault(); hideCalInput(); toast('Калибровка отменена'); }
   });
   el('themeBtn').addEventListener('click', cycleTheme);
-  el('menuBtn').addEventListener('click', () => openStartMenu());
+  el('menuBtn').addEventListener('click', () => { openProjectChooser(); });
   el('startClose').addEventListener('click', closeStartMenu);
   el('startContinue').addEventListener('click', closeStartMenu);
   el('startNew').addEventListener('click', requestNewProject);

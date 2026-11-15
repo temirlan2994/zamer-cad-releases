@@ -9,7 +9,7 @@ describe('шаблоны и удобства', () => {
   after(async () => { await app?.close(); });
 
   it('стартовое меню: три шаблона; двухэтажный открывается с этажами', async () => {
-    const titles = await app.page.$$eval('#startTemplates .start-item b', (ns) => ns.map((n) => n.textContent));
+    const titles = await app.page.$$eval('#startTemplates [data-template] b', (ns) => ns.map((n) => n.textContent));
     assert.equal(titles.length, 3);
     await app.page.click('#startTemplates [data-template="two-storey"]');
     await app.page.waitForSelector('#startScreen', { state: 'hidden' });
