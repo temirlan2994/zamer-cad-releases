@@ -17,11 +17,26 @@ const ios = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.pla
 const mobileViewport = () => globalThis.matchMedia?.('(max-width: 760px)').matches || /Android|Mobile/.test(navigator.userAgent);
 
 function syncInstallButtons() {
-  const show = !installedThisSession && !displayStandalone() && Boolean(installPrompt || ios() || mobileViewport());
+  const installed = installedThisSession || displayStandalone();
+  const availableHere = Boolean(installPrompt || ios() || mobileViewport());
+  const show = !installed && availableHere;
   for (const id of ['startInstallBtn', 'mobileInstallBtn']) {
     const button = el(id);
     if (button) button.hidden = !show;
   }
+  const projectsButton = el('startProjectsInstallBtn');
+  if (!projectsButton) return;
+  projectsButton.hidden = !(installed || availableHere);
+  projectsButton.disabled = installed;
+  projectsButton.dataset.installed = String(installed);
+  const mark = projectsButton.querySelector('.start-install-mark');
+  const title = projectsButton.querySelector('b');
+  const note = projectsButton.querySelector('small');
+  if (mark) mark.textContent = installed ? '✓' : '⇩';
+  if (title) title.textContent = installed ? 'Приложение уже установлено' : 'Установить приложение';
+  if (note) note.textContent = installed
+    ? 'открыто с главного экрана · обновляется автоматически'
+    : 'добавить kep•ler 3D на главный экран телефона';
 }
 
 function closeInstallHelp() {
@@ -148,7 +163,7 @@ async function registerWorker() {
 
 export function bindPwa() {
   syncInstallButtons();
-  for (const id of ['startInstallBtn', 'mobileInstallBtn']) el(id)?.addEventListener('click', requestInstall);
+  for (const id of ['startInstallBtn', 'startProjectsInstallBtn', 'mobileInstallBtn']) el(id)?.addEventListener('click', requestInstall);
   el('installHelpClose')?.addEventListener('click', closeInstallHelp);
   el('installHelpScreen')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeInstallHelp();

@@ -21,9 +21,14 @@ describe('установка приложения на телефон и офл�
       window.dispatchEvent(event);
     });
     assert.equal(await page.$eval('#startInstallBtn', (button) => !button.hidden), true);
+    assert.equal(await page.isVisible('#startProjectsInstallBtn'), true);
     assert.equal(await page.$eval('#mobileInstallBtn', (button) => !button.hidden), true);
-    await page.$eval('#startInstallBtn', (button) => button.click());
+    await page.click('#startProjectsInstallBtn');
     assert.equal(await page.evaluate(() => window.__pwaInstallPrompted), 1);
+    await page.waitForFunction(() => document.getElementById('startProjectsInstallBtn').disabled);
+    assert.match(await page.textContent('#startProjectsInstallBtn'), /уже установлено/i);
+    assert.equal(await page.$eval('#startInstallBtn', (button) => button.hidden), true);
+    assert.equal(await page.$eval('#mobileInstallBtn', (button) => button.hidden), true);
   });
 
   it('на iPhone показывает короткую инструкцию «На экран Домой»', async () => {
@@ -38,11 +43,43 @@ describe('установка приложения на телефон и офл�
     });
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler));
-    assert.equal(await page.$eval('#startInstallBtn', (button) => !button.hidden), true);
-    await page.$eval('#startInstallBtn', (button) => button.click());
+    assert.equal(await page.isVisible('#startProjectsInstallBtn'), true);
+    await page.click('#startProjectsInstallBtn');
     assert.equal(await page.isVisible('#installHelpScreen'), true);
     await page.tap('#installHelpClose');
     assert.equal(await page.isVisible('#installHelpScreen'), false);
+  });
+
+  it('в уже установленном приложении экран проектов показывает его состояние', async () => {
+    const { page } = app;
+    await page.addInitScript(() => {
+      const browserMatchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query) => {
+        if (query !== '(display-mode: standalone)') return browserMatchMedia(query);
+        return {
+          matches: true,
+          media: query,
+          onchange: null,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => true,
+        };
+      };
+    });
+    await page.reload();
+    await page.waitForFunction(() => Boolean(window.__kepler));
+    const state = await page.$eval('#startProjectsInstallBtn', (button) => ({
+      visible: !button.hidden,
+      disabled: button.disabled,
+      text: button.textContent,
+    }));
+    assert.equal(state.visible, true);
+    assert.equal(state.disabled, true);
+    assert.match(state.text, /уже установлено/i);
+    assert.equal(await page.$eval('#startInstallBtn', (button) => button.hidden), true);
+    assert.equal(await page.$eval('#mobileInstallBtn', (button) => button.hidden), true);
   });
 
   it('service worker управляет страницей и открывает её без сети', async () => {
