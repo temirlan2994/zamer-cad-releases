@@ -3,14 +3,23 @@
 // на этаже ниже — тонкий бледный штрих (проём над головой); ручки выбранного.
 // Лёгкий модуль (render.js): только core и state. Логика — ui/slab-ui.js.
 
-import { slabHandlePoints, slabOpenings } from '../core/slab-openings.js';
+import {
+  slabHandlePoints, slabOpeningArea, slabOpeningPolygon, slabOpeningSourceLevel, slabOpenings,
+} from '../core/slab-openings.js';
 import { state } from './state.js';
 
 export const SLAB_HANDLE = 9; // px — сторона квадрата ручки
 
-function corners(o) {
-  return [{ x: o.x, y: o.y }, { x: o.x + o.w, y: o.y }, { x: o.x + o.w, y: o.y + o.h }, { x: o.x, y: o.y + o.h }];
-}
+const path = (ctx, points) => {
+  ctx.beginPath();
+  points.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+};
+
+const midpointHandles = (points) => points.map((p, i) => {
+  const q = points[(i + 1) % points.length];
+  return { id: `m:${i}`, kind: 'midpoint', x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+});
 
 function levelAbove(project) {
   const list = [...project.levels].sort((a, b) => a.elevation - b.elevation);
@@ -19,11 +28,11 @@ function levelAbove(project) {
 }
 
 // → state._slabUI: [{ id, auto, P (экранные углы), handles? }] для попадания.
-export function drawSlabOpenings(ctx, { p2s, tokens, print = false }) {
-  state._slabUI = [];
-  const project = state.project;
+export function drawSlabOpenings(ctx, { st = state, p2s, tokens, print = false }) {
+  st._slabUI = [];
+  const project = st.project;
   if (!project?.levels) return;
-  const sel = state.selection?.type === 'slab' ? state.selection.id : null;
+  const sel = st.selection?.type === 'slab' ? st.selection.id : null;
   // Этаж ниже: проём над головой — тонко.
   const above = levelAbove(project);
   if (above && !print) {
@@ -33,47 +42,50 @@ export function drawSlabOpenings(ctx, { p2s, tokens, print = false }) {
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 4]);
     for (const o of slabOpenings(project, above.id)) {
-      const P = corners(o).map((p) => p2s(p.x, p.y));
-      ctx.beginPath();
-      P.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      ctx.closePath();
+      const P = slabOpeningPolygon(o).map((p) => p2s(p.x, p.y));
+      path(ctx, P);
       ctx.stroke();
     }
     ctx.restore();
   }
   for (const o of slabOpenings(project, project.activeLevel)) {
     const selected = o.id === sel;
-    const hovered = !selected && state.hover?.type === 'slab' && state.hover.id === o.id;
+    const hovered = !selected && st.hover?.type === 'slab' && st.hover.id === o.id;
     const color = selected ? tokens.accent : hovered ? tokens.hover : tokens.line;
-    const P = corners(o).map((p) => p2s(p.x, p.y));
+    const polygon = slabOpeningPolygon(o);
+    const P = polygon.map((p) => p2s(p.x, p.y));
     ctx.save();
-    ctx.beginPath();
-    P.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-    ctx.closePath();
-    ctx.fillStyle = selected ? 'rgba(31, 117, 255, 0.08)' : 'rgba(120, 130, 145, 0.08)';
+    path(ctx, P);
+    ctx.fillStyle = selected ? 'rgba(31, 117, 255, 0.045)' : 'rgba(70, 125, 160, 0.035)';
     ctx.fill();
     ctx.strokeStyle = color;
     ctx.lineWidth = selected || hovered ? 2 : 1.4;
     ctx.setLineDash(o.auto ? [8, 4] : [12, 4, 2, 4]);
     ctx.stroke();
-    // Диагонали — условное обозначение проёма.
-    ctx.setLineDash([]);
-    ctx.lineWidth = 0.9;
-    ctx.globalAlpha = 0.6;
+    // Редкая диагональная штриховка отличает пустоту от пола и не закрывает
+    // лестницу нижнего этажа.
+    const minX = Math.min(...P.map((p) => p.x)); const maxX = Math.max(...P.map((p) => p.x));
+    const minY = Math.min(...P.map((p) => p.y)); const maxY = Math.max(...P.map((p) => p.y));
+    path(ctx, P); ctx.clip();
+    ctx.setLineDash([]); ctx.lineWidth = 0.7; ctx.globalAlpha = 0.18;
     ctx.beginPath();
-    ctx.moveTo(P[0].x, P[0].y); ctx.lineTo(P[2].x, P[2].y);
-    ctx.moveTo(P[1].x, P[1].y); ctx.lineTo(P[3].x, P[3].y);
+    for (let x = minX - (maxY - minY); x <= maxX; x += 22) {
+      ctx.moveTo(x, maxY); ctx.lineTo(x + (maxY - minY), minY);
+    }
     ctx.stroke();
     ctx.globalAlpha = 1;
     // Подпись у верхней кромки (по экрану).
     const top = P.reduce((a, p) => (p.y < a.y ? p : a), P[0]);
-    const cx = P.reduce((s, p) => s + p.x, 0) / 4;
-    const cy = P.reduce((s, p) => s + p.y, 0) / 4;
+    const cx = P.reduce((s, p) => s + p.x, 0) / P.length;
+    const cy = P.reduce((s, p) => s + p.y, 0) / P.length;
     const wpx = Math.max(...P.map((p) => p.x)) - Math.min(...P.map((p) => p.x));
     let label = null;
     if (wpx > 70) {
-      const text = `Проём в перекрытии${o.auto ? '' : ' (ручной)'}`;
-      const size = `${Math.round(o.w)} × ${Math.round(o.h)}`;
+      const source = slabOpeningSourceLevel(project, project.activeLevel, o);
+      const text = `Проём${source ? ` · виден «${source.name}»` : ' в перекрытии'}`;
+      const size = o.outline?.length
+        ? `${(slabOpeningArea(o) / 1e6).toFixed(2).replace('.', ',')} м² · ${P.length} вершин`
+        : `${Math.round(o.w)} × ${Math.round(o.h)}`;
       ctx.font = '600 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
@@ -90,24 +102,37 @@ export function drawSlabOpenings(ctx, { p2s, tokens, print = false }) {
       label = { x0: cx - tw / 2, y0: ly - 2, x1: cx + tw / 2, y1: ly + 26 };
     }
     ctx.restore();
-    const rec = { id: o.id, auto: o.auto, P, label, handles: null };
+    const rec = { id: o.id, auto: o.auto, polygon: Boolean(o.outline?.length), P, label, handles: null };
     if (selected && !print) {
-      rec.handles = slabHandlePoints(o).map((h) => ({ ...h, s: p2s(h.x, h.y) }));
+      rec.handles = o.outline?.length
+        ? [
+          ...polygon.map((p, i) => ({ id: `v:${i}`, kind: 'vertex', ...p })),
+          ...midpointHandles(polygon),
+        ].map((h) => ({ ...h, s: p2s(h.x, h.y) }))
+        : slabHandlePoints(o).map((h) => ({ ...h, kind: 'rect', s: p2s(h.x, h.y) }));
       for (const h of rec.handles) {
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = tokens.accent;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        if (h.id.length === 1) ctx.rect(h.s.x - SLAB_HANDLE / 2, h.s.y - SLAB_HANDLE / 2, SLAB_HANDLE, SLAB_HANDLE);
-        else ctx.arc(h.s.x, h.s.y, SLAB_HANDLE / 2, 0, Math.PI * 2);
+        if (h.kind === 'midpoint' || (h.kind === 'rect' && h.id.length === 1)) {
+          const size = h.kind === 'midpoint' ? SLAB_HANDLE - 2 : SLAB_HANDLE;
+          ctx.rect(h.s.x - size / 2, h.s.y - size / 2, size, size);
+        } else ctx.arc(h.s.x, h.s.y, SLAB_HANDLE / 2, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        if (h.kind === 'midpoint') {
+          ctx.beginPath();
+          ctx.moveTo(h.s.x - 2, h.s.y); ctx.lineTo(h.s.x + 2, h.s.y);
+          ctx.moveTo(h.s.x, h.s.y - 2); ctx.lineTo(h.s.x, h.s.y + 2);
+          ctx.stroke();
+        }
       }
     }
-    state._slabUI.push(rec);
+    st._slabUI.push(rec);
   }
   // Подпись при перетаскивании ручки (ui/slab-ui.js).
-  const lab = state.slabLabel;
+  const lab = st.slabLabel;
   if (lab && !print) {
     const p = p2s(lab.x, lab.y);
     ctx.save();
@@ -123,4 +148,33 @@ export function drawSlabOpenings(ctx, { p2s, tokens, print = false }) {
     ctx.fillText(lab.text, p.x, p.y - 24);
     ctx.restore();
   }
+}
+
+// Черновик инструмента: произвольный контур по точкам.
+export function drawSlabOpeningDraft(ctx, { st = state, p2s, tokens }) {
+  const tool = st.tool;
+  if (tool?.kind !== 'slab-opening' || (!tool.points.length && !tool.cursor)) return;
+  const points = [...tool.points, ...(tool.cursor ? [tool.cursor] : [])].map((p) => p2s(p.x, p.y));
+  if (!points.length) return;
+  ctx.save();
+  ctx.strokeStyle = tokens.accent;
+  ctx.fillStyle = 'rgba(31, 117, 255, 0.08)';
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([8, 5]);
+  ctx.beginPath();
+  points.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  if (tool.snapStart && tool.points.length >= 3) ctx.closePath();
+  if (tool.points.length >= 3) { ctx.closePath(); ctx.fill(); }
+  ctx.stroke();
+  ctx.setLineDash([]);
+  for (const p of tool.points) {
+    ctx.beginPath(); ctx.arc(p2s(p.x, p.y).x, p2s(p.x, p.y).y, 4, 0, Math.PI * 2); ctx.fill();
+  }
+  if (tool.points.length) {
+    const first = p2s(tool.points[0].x, tool.points[0].y);
+    ctx.strokeStyle = tool.snapStart ? tokens.accent2 : tokens.accent;
+    ctx.lineWidth = tool.snapStart ? 2.4 : 1.2;
+    ctx.beginPath(); ctx.arc(first.x, first.y, tool.snapStart ? 10 : 7, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
 }

@@ -605,7 +605,13 @@ function renderPlaceOpeningProps(panel, compact = false) {
         <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
     </div>`;
   // Библиотека проёмов подсвечивает карточку по новым параметрам.
-  const save = (next) => { Object.assign(preset, next); renderPlaceOpeningProps(panel, compact); renderOpeningLibrary(); requestDraw(); };
+  const save = (next) => {
+    Object.assign(preset, next);
+    renderPlaceOpeningProps(panel, compact);
+    renderOpeningLibrary();
+    document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
+    requestDraw();
+  };
   panel.querySelector('#presetType').addEventListener('change', (e) => {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });

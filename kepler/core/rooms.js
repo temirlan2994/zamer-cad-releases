@@ -8,7 +8,8 @@ import {
 import { checkRectBuildable } from './site.js';
 import { rectCornersWorld } from './building.js';
 import { isUpperLevel } from './model.js';
-import { slabOpenings } from './slab-openings.js';
+import { massBox } from './masses.js';
+import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import {
   roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
 } from './room-shape.js';
@@ -318,7 +319,16 @@ export function roomNetAreaM2(project, room) {
     subtractRects.push(...shapeClips(parts, roomRects(eater)));
   }
   // Проём в перекрытии под этим этажом (над лестницей) — не пол помещения.
-  subtractRects.push(...shapeClips(parts, slabOpenings(project, project.activeLevel)));
+  const slabCuts = slabOpenings(project, project.activeLevel).flatMap((o) => slabOpeningCutRects(o));
+  subtractRects.push(...shapeClips(parts, slabCuts));
+  // Полая масса, проходящая через отметку пола, удаляет ту же площадь и в
+  // расчётах — иначе 3D показывал бы отверстие, а свойства и ведомость нет.
+  const level = (project.levels || []).find((l) => l.id === project.activeLevel);
+  const floorZ = Number(level?.elevation) || 0;
+  const voidCuts = (project.massVoids || []).map(massBox)
+    .filter((b) => b.z0 <= floorZ + 2.5 && b.z1 >= floorZ - 0.5)
+    .map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 }));
+  subtractRects.push(...shapeClips(parts, voidCuts));
   area -= rectUnionArea(subtractRects);
   return Math.max(0, area) / 1_000_000;
 }

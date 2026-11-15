@@ -22,7 +22,7 @@ import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { roomRects } from './room-shape.js';
 import { stairBuild, stairLayout } from './stairs.js';
-import { slabOpenings } from './slab-openings.js';
+import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
@@ -48,6 +48,58 @@ export function boxFaces(x0, y0, x1, y1, z0, z1, color, kind) {
     { pts: [v(x0, y1, z0), v(x0, y0, z0), v(x0, y0, z1), v(x0, y1, z1)], normal: v(-1, 0, 0), color, kind },
     { pts: [v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), v(x1, y0, z1)], normal: v(1, 0, 0), color, kind },
   ];
+}
+
+const boxOverlap3d = (a, b) => Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0.5 &&
+  Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 0.5 && Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) > 0.5;
+
+// Ортогональный solid − union(cuts). Используется для вычитающих масс и
+// частичных ниш в плитах. Ячейки одной плоскости пока не сливаются: noEdges
+// не даёт внутренних линий, а геометрия и нормали остаются точными.
+export function orthoCutFaces(solids, cuts, { color = '#cccccc', kind = 'solid', meta = () => ({}) } = {}) {
+  const src = (solids || []).filter((b) => b && b.x1 - b.x0 > 0.5 && b.y1 - b.y0 > 0.5 && b.z1 - b.z0 > 0.5);
+  if (!src.length) return [];
+  const relevant = (cuts || []).filter((c) => src.some((s) => boxOverlap3d(s, c)));
+  const ax = gridAxis([...src, ...relevant].flatMap((b) => [b.x0, b.x1]));
+  const ay = gridAxis([...src, ...relevant].flatMap((b) => [b.y0, b.y1]));
+  const az = gridAxis([...src, ...relevant].flatMap((b) => [b.z0, b.z1]));
+  const xs = ax.coords; const ys = ay.coords; const zs = az.coords;
+  const nx = xs.length - 1; const ny = ys.length - 1; const nz = zs.length - 1;
+  const owner = new Int32Array(nx * ny * nz).fill(-1);
+  const key = (i, j, k) => (k * ny + j) * nx + i;
+  // Границы каждого бокса уже входят в сжатые оси: заполняем его диапазон
+  // напрямую, без поиска по всем solid/cut для каждой клетки.
+  const range = (b) => ({
+    i0: ax.at(b.x0), i1: ax.at(b.x1), j0: ay.at(b.y0), j1: ay.at(b.y1), k0: az.at(b.z0), k1: az.at(b.z1),
+  });
+  src.forEach((b, si) => {
+    const r = range(b);
+    for (let k = r.k0; k < r.k1; k += 1) for (let j = r.j0; j < r.j1; j += 1) for (let i = r.i0; i < r.i1; i += 1) {
+      const at = key(i, j, k);
+      if (owner[at] < 0) owner[at] = si;
+    }
+  });
+  for (const b of relevant) {
+    const r = range(b);
+    for (let k = r.k0; k < r.k1; k += 1) for (let j = r.j0; j < r.j1; j += 1) for (let i = r.i0; i < r.i1; i += 1) {
+      owner[key(i, j, k)] = -1;
+    }
+  }
+  const at = (i, j, k) => (i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz ? owner[key(i, j, k)] : -1);
+  const out = [];
+  const add = (pts, normal, face, si) => out.push({ pts, normal, color, kind, face, noEdges: true, ...meta(src[si], si, face) });
+  for (let k = 0; k < nz; k += 1) for (let j = 0; j < ny; j += 1) for (let i = 0; i < nx; i += 1) {
+    const si = at(i, j, k);
+    if (si < 0) continue;
+    const x0 = xs[i]; const x1 = xs[i + 1]; const y0 = ys[j]; const y1 = ys[j + 1]; const z0 = zs[k]; const z1 = zs[k + 1];
+    if (at(i, j, k + 1) < 0) add([v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1)], v(0, 0, 1), 'top', si);
+    if (at(i, j, k - 1) < 0) add([v(x0, y1, z0), v(x1, y1, z0), v(x1, y0, z0), v(x0, y0, z0)], v(0, 0, -1), 'bottom', si);
+    if (at(i + 1, j, k) < 0) add([v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), v(x1, y0, z1)], v(1, 0, 0), 'px', si);
+    if (at(i - 1, j, k) < 0) add([v(x0, y1, z0), v(x0, y0, z0), v(x0, y0, z1), v(x0, y1, z1)], v(-1, 0, 0), 'nx', si);
+    if (at(i, j + 1, k) < 0) add([v(x1, y1, z0), v(x0, y1, z0), v(x0, y1, z1), v(x1, y1, z1)], v(0, 1, 0), 'py', si);
+    if (at(i, j - 1, k) < 0) add([v(x0, y0, z0), v(x1, y0, z0), v(x1, y0, z1), v(x0, y0, z1)], v(0, -1, 0), 'ny', si);
+  }
+  return out;
 }
 
 // Кусок стены по оси: для горизонтальной стены ось — X, иначе — Y.
@@ -239,6 +291,18 @@ export function levelWallSolids(lp, walls, height) {
     const top = Math.min(wallTop - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
     voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id });
+  }
+  const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
+  const elevation = Number(level?.elevation) || 0;
+  for (const m of lp.massVoids || []) {
+    const b = massBox(m);
+    const bottom = Math.max(0, b.z0 - elevation);
+    const top = Math.min(height, b.z1 - elevation);
+    if (top - bottom < 0.5) continue;
+    voids.push({
+      r: { x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 },
+      bottom, top, kind: 'mass-void', wall: null, rec: -1, id: m.id,
+    });
   }
   return { recs, voids };
 }
@@ -444,7 +508,7 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
 function levelWalls(lp, z0, height, levelId) {
   const faces = [];
   const walls = deriveWalls(lp);
-  if (walls.some((w) => w.rects)) return levelWallsV2(lp, walls, z0, height, levelId);
+  if (walls.some((w) => w.rects) || lp.massVoids?.length) return levelWallsV2(lp, walls, z0, height, levelId);
   const cuts = new Map(); // стена → [{ a0, a1, bottom, top, kind }]
   for (const o of lp.openings) {
     const placed = openingRect(lp, o, walls);
@@ -518,7 +582,7 @@ function subtractFloorRect(base, cut) {
 function levelFloors(lp, z, levelId) {
   const faces = [];
   // Проём в перекрытии под этажом (над лестницей) — пол вырезан.
-  const holes = slabOpenings(lp, levelId);
+  const holes = slabOpenings(lp, levelId).flatMap((o) => slabOpeningCutRects(o));
   // Сначала комнаты верхнего уровня, вложенные — чуть выше (видны поверх).
   const order = [...lp.rooms].sort((a, b) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)));
   for (const r of order) {
@@ -528,7 +592,10 @@ function levelFloors(lp, z, levelId) {
     const shaftCuts = lp.rooms.filter((shaft) => isShaft(shaft) &&
       (shaft.parentId === r.id || (!shaft.parentId && !r.parentId))).flatMap(roomRects);
     let floorParts = roomRects(r);
-    for (const cut of [...shaftCuts, ...holes]) floorParts = floorParts.flatMap((part) => subtractFloorRect(part, cut));
+    const massCuts = (lp.massVoids || []).map(massBox)
+      .filter((b) => b.z0 <= zz + 0.5 && b.z1 >= zz - 0.5)
+      .map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 }));
+    for (const cut of [...shaftCuts, ...holes, ...massCuts]) floorParts = floorParts.flatMap((part) => subtractFloorRect(part, cut));
     for (const part of floorParts) {
       faces.push({
         pts: [v(part.x, part.y, zz), v(part.x + part.w, part.y, zz), v(part.x + part.w, part.y + part.h, zz), v(part.x, part.y + part.h, zz)],
@@ -953,7 +1020,9 @@ function slabCuts(lower, upper) {
       for (const p of roomRects(r)) cuts.push({ x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h });
     }
   }
-  for (const o of slabOpenings(upper, upper.activeLevel)) cuts.push({ x0: o.x, y0: o.y, x1: o.x + o.w, y1: o.y + o.h });
+  for (const o of slabOpenings(upper, upper.activeLevel)) {
+    for (const r of slabOpeningCutRects(o)) cuts.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+  }
   return cuts;
 }
 
@@ -1247,7 +1316,15 @@ export function roofFaces(project, roofs = project?.roofs, { color = null, alpha
 function interfloorFaces(lower, upper, z) {
   const t = (upper.settings?.exterior || 250) + SLAB_OUTSET;
   const grid = regionGrid([levelFootprint(lower, t), levelFootprint(upper, t)], slabCuts(lower, upper));
-  return slabFaces(grid, z - SLAB_T, z - 1, SLAB_COLOR, 'slab', { bottom: true });
+  const z0 = z - SLAB_T; const z1 = z - 1;
+  const voids = (upper.massVoids || []).map(massBox).filter((b) => b.z0 < z1 - 0.5 && b.z1 > z0 + 0.5);
+  if (!voids.length) return slabFaces(grid, z0, z1, SLAB_COLOR, 'slab', { bottom: true });
+  const solids = [];
+  for (let j = 0; j < grid.ny; j += 1) for (let i = 0; i < grid.nx; i += 1) {
+    if (!grid.mask[j * grid.nx + i]) continue;
+    solids.push({ x0: grid.xs[i], y0: grid.ys[j], x1: grid.xs[i + 1], y1: grid.ys[j + 1], z0, z1 });
+  }
+  return orthoCutFaces(solids, voids, { color: SLAB_COLOR, kind: 'slab' });
 }
 
 const GROUND_LOW = [0xb9, 0xc9, 0xa6];
@@ -1421,11 +1498,18 @@ export function shownLevelIds(project, mode = 'all') {
 // прозрачной становится только выбранная, см. faceAlpha в ui/view3d.js): 6 граней kind
 // 'mass' с massId и face ('top' | 'bottom' | 'px' | 'nx' | 'py' | 'ny').
 // Только для окна 3D (опция masses у buildHouseMesh).
-export function massFaces(masses, { alpha = 1 } = {}) {
+export function massFaces(masses, { alpha = 1, voids = [] } = {}) {
   const out = [];
   for (const m of masses || []) {
     const b = massBox(m);
     const color = m.color || MASS_COLOR_3D;
+    const cuts = (voids || []).map(massBox).filter((cut) => boxOverlap3d(b, cut));
+    if (cuts.length) {
+      out.push(...orthoCutFaces([{ ...b, mass: m }], cuts, {
+        color, kind: 'mass', meta: () => ({ massId: m.id, alpha }),
+      }));
+      continue;
+    }
     const P = {
       a: v(b.x0, b.y0, b.z0), b: v(b.x1, b.y0, b.z0), c: v(b.x1, b.y1, b.z0), d: v(b.x0, b.y1, b.z0),
       A: v(b.x0, b.y0, b.z1), B: v(b.x1, b.y0, b.z1), C: v(b.x1, b.y1, b.z1), D: v(b.x0, b.y1, b.z1),
@@ -1442,6 +1526,12 @@ export function massFaces(masses, { alpha = 1 } = {}) {
     quad('px', ['b', 'c', 'C', 'B'], v(1, 0, 0), []);
   }
   return out;
+}
+
+// Полупрозрачные боксы cutter-ов: UI может показывать их при выборе/правке,
+// при этом они не участвуют в solid/pick без явного использования функции.
+export function massVoidFaces(voids, { alpha = 0.12 } = {}) {
+  return massFaces(voids, { alpha }).map((f) => ({ ...f, kind: 'massVoid', voidId: f.massId }));
 }
 
 // Крыши, видимые при режиме этажей: этаж крыши показан и этаж над ним тоже
@@ -1487,7 +1577,7 @@ export function buildHouseMesh(project, {
   if (site) faces.push(...siteFaces(project, { terrainScale }));
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
   if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
-  if (masses) faces.push(...massFaces(project.masses));
+  if (masses) faces.push(...massFaces(project.masses, { voids: project.massVoids || [] }));
   // Часть масс под землёй (рельеф и слой «Участок») — бледно сквозь землю.
   if (masses && site && project.masses?.length) faces.push(...massGroundFaces(project.masses, terrainHeightFn(project, terrainScale)));
   return faces;

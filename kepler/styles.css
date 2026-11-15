@@ -1920,6 +1920,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 }
 .to-body { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .to-body::-webkit-scrollbar { display: none; }
+.to-body:has(input, select) { flex: 0 0 auto; }
 .to-body > * { flex: none; }
 .to-body .prop-block { flex-direction: row; align-items: center; gap: 12px; padding: 0; background: none; border-radius: 0; }
 .to-body .prop-grid { display: flex; gap: 12px; }
@@ -1933,7 +1934,7 @@ body:not(.mode-landscape) .ls-sun { display: none; }
 .to-keys { flex: none; margin-left: auto; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 /* Подсказка инструмента (#canvasHint) — справа в строке, до двух строк */
 .tool-options .canvas-hint {
-  position: static; flex: 0 1 auto; max-width: 52%; margin-left: auto; padding: 0; transform: none;
+  position: static; flex: 0 1 auto; min-width: 0; max-width: 52%; margin-left: auto; padding: 0; transform: none;
   border: 0; border-radius: 0; background: none; box-shadow: none; pointer-events: auto;
   color: var(--muted); font-size: 11.5px; line-height: 1.3; text-align: right;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

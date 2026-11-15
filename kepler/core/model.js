@@ -15,7 +15,7 @@ import { reconcileEats } from './v7/eat-bridge.js';
 import { SCHEMA7 } from './v7/model.js';
 import { convertBoundRooms } from './bound-rooms.js';
 import { normalizeViewsAndSheets } from './views.js';
-import { normalizeMasses } from './masses.js';
+import { normalizeMasses, normalizeMassVoids } from './masses.js';
 import { normalizeRoofs } from './roofs.js';
 import { normalizeGrids } from './grid-axes.js';
 import { cleanRoomPins, cleanWallPins } from './grid-pins-model.js';
@@ -217,9 +217,10 @@ export function hasContent(project) {
   if (!project || typeof project !== 'object') return false;
   const levels = Array.isArray(project.levels) ? project.levels : [];
   if (levels.length > 1) return true;
-  if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length)) return true;
+  if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length || l?.slabOpenings?.length)) return true;
   if (Array.isArray(project.variants) && project.variants.length) return true;
   if (Array.isArray(project.masses) && project.masses.length) return true;
+  if (Array.isArray(project.massVoids) && project.massVoids.length) return true;
   if (Array.isArray(project.roofs) && project.roofs.length) return true;
   if (Array.isArray(project.grids) && project.grids.length) return true;
   const s = project.site;
@@ -509,6 +510,8 @@ export function normalizeProject(data) {
   // Массы (core/masses.js): необязательно, без смены схемы; пустой список не хранится.
   const masses = normalizeMasses(data.masses);
   if (masses.length) data.masses = masses; else delete data.masses;
+  const massVoids = normalizeMassVoids(data.massVoids);
+  if (massVoids.length) data.massVoids = massVoids; else delete data.massVoids;
   // Крыши-плиты (core/roofs.js): необязательно, без смены схемы; у крыши свой
   // контур, старые крыши над помещениями (roomIds) получают контур по ним;
   // пустой список не хранится.

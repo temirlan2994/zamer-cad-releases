@@ -43,13 +43,15 @@ let cache = { key: null, sketch: null, lines: null };
 // Эскиз активного этажа (кеш по массам и этажу).
 export function activeMassSketch(project = state.project) {
   const masses = project?.masses;
-  if (!masses?.length) return null;
+  const voids = project?.massVoids || [];
+  if (!masses?.length && !voids.length) return null;
   const level = (project.levels || []).find((l) => l.id === project.activeLevel);
   if (!level) return null;
-  const key = `${level.id}|${level.elevation}|${level.height}|${JSON.stringify(masses)}`;
+  const key = `${level.id}|${level.elevation}|${level.height}|${JSON.stringify(masses)}|${JSON.stringify(voids)}`;
   if (cache.key !== key) {
-    const sketch = massSketch(masses, level);
-    cache = { key, sketch: sketch.rects.length ? sketch : null, lines: sketch.rects.length ? sketchLines(sketch) : null };
+    const sketch = massSketch(masses || [], level, voids);
+    const visible = sketch.rects.length || sketch.voidRects.length;
+    cache = { key, sketch: visible ? sketch : null, lines: visible ? sketchLines(sketch) : null };
   }
   return cache.sketch;
 }

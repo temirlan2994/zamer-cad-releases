@@ -62,7 +62,9 @@ import { drawMassOverlay, drawMassSketch } from './ui/render-masses.js';
 import { drawRoofOutlines, drawRoofPlan } from './ui/render-roofs.js';
 import { drawSectionDraft, drawSectionHandles, drawSectionMarks } from './ui/render-section.js';
 import { drawPlanSections } from './ui/render-plan-section.js';
-import { drawSlabOpenings } from './ui/render-slab.js';
+import { drawSlabOpeningDraft, drawSlabOpenings } from './ui/render-slab.js';
+import { levelProject } from './core/model.js';
+import { slabOpeningPolygon, slabOpeningSourceLevel, slabOpenings } from './core/slab-openings.js';
 import { drawPlanGrids } from './ui/render-axes.js';
 import { drawErgonomics } from './ui/render-ergonomics.js';
 import { drawPlanShadows } from './ui/plan-shadows.js';
@@ -106,6 +108,67 @@ function cssTokens(style = getComputedStyle(document.documentElement)) {
 
 function printTokens() {
   return { ...cssTokens(null), canvas: '#ffffff', roomFill: lightFill };
+}
+
+function pointInRing(p, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const a = ring[j]; const b = ring[i];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+// Сквозь проём верхнего этажа виден реальный план источника снизу. Это
+// только графическая подложка: нижние объекты не попадают в hit-test.
+function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
+  st._slabUnderlay = [];
+  if (st.modeName !== 'plan' || st.roofPlan) return;
+  const openings = slabOpenings(st.project, st.project.activeLevel);
+  for (const opening of openings) {
+    const source = slabOpeningSourceLevel(st.project, st.project.activeLevel, opening);
+    if (!source) continue;
+    const polygon = slabOpeningPolygon(opening);
+    const lp = levelProject(st.project, source.id);
+    const lowerWalls = deriveWalls(lp);
+    const lowerState = { ...st, project: lp, selection: null, hover: null };
+    const touching = (item) => pointInRing({ x: item.x, y: item.y }, polygon) ||
+      itemCorners(item).some((p) => pointInRing(p, polygon));
+    const visibleItems = lp.items.filter(touching);
+    st._slabUnderlay.push({
+      openingId: opening.id, sourceLevelId: source.id,
+      itemIds: visibleItems.map((i) => i.id), stairIds: visibleItems.filter((i) => i.kind === 'stairs').map((i) => i.id),
+    });
+    ctx.save();
+    ctx.beginPath();
+    polygon.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.clip();
+    const minX = Math.min(...polygon.map((p) => p.x)); const maxX = Math.max(...polygon.map((p) => p.x));
+    const minY = Math.min(...polygon.map((p) => p.y)); const maxY = Math.max(...polygon.map((p) => p.y));
+    ctx.fillStyle = tokens.surface;
+    ctx.fillRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
+    ctx.fillStyle = print ? 'rgba(215,225,232,0.32)' : 'rgba(84,148,175,0.12)';
+    ctx.fillRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
+    ctx.globalAlpha = print ? 0.34 : 0.46;
+    for (const room of lp.rooms) drawFloor(ctx, room, tokens, px);
+    ctx.fillStyle = tokens.wall;
+    ctx.globalAlpha = print ? 0.42 : 0.52;
+    for (const wall of lowerWalls) {
+      if (wall.hidden) continue;
+      if (wall.kind === 'chamfer') {
+        ctx.beginPath();
+        wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.closePath(); ctx.fill();
+      } else for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+    }
+    ctx.globalAlpha = print ? 0.48 : 0.58;
+    for (const op of lp.openings) drawOpening(ctx, lowerState, op, lowerWalls, tokens, px);
+    for (const item of lp.items.filter((i) => i.kind !== 'stairs')) drawItem(ctx, item, tokens, px, false, false);
+    ctx.globalAlpha = print ? 0.72 : 0.9;
+    for (const item of lp.items.filter((i) => i.kind === 'stairs')) drawItem(ctx, item, tokens, px, false, false);
+    ctx.restore();
+  }
 }
 
 // Мировая точка -> экранная с учётом поворота вида.
@@ -480,6 +543,7 @@ export function createRenderer(canvas) {
         const hovered = hoveredItems.has(item.id);
         drawItem(ctx, item, itemTokens, px, selected, hovered);
       }
+      if (!landscape) drawSlabUnderlays(ctx, state, tokens, px, { print });
       // Эргономика мебели (ui/render-ergonomics.js): зоны и тесные места — только на экране.
       if (detail && !print && state.modeName === 'plan') drawErgonomics(ctx, { st: state, walls, tokens, px, p2s, dpr, scale, print });
     }
@@ -752,7 +816,10 @@ export function createRenderer(canvas) {
     const ghostOp = state.ghostDoor || state.ghostOpeningFull;
     if (ghostOp && !print) drawOpeningGhostDims(ctx, state, ghostOp, walls, p2s, tokens);
     // Проёмы в перекрытии (ui/render-slab.js): над лестницей — авто, ручные.
-    if (state.modeName === 'plan' && !state.roofPlan) drawSlabOpenings(ctx, { p2s, tokens, print });
+    if (state.modeName === 'plan' && !state.roofPlan) {
+      drawSlabOpenings(ctx, { st: state, p2s, tokens, print });
+      if (!print) drawSlabOpeningDraft(ctx, { st: state, p2s, tokens });
+    }
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
     // Координационные оси (ui/render-axes.js): тонко поверх плана; на листе плана — по настройке.

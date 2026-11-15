@@ -23,6 +23,7 @@ import { closeSheets, isPhone, openLibrarySheet } from './mobile.js';
 import { cancelTool } from './tools.js';
 import { bindToolstrip, setTip } from './toolstrip.js';
 import { fitView, zoomAt } from './view.js';
+import { finishSlabOpeningTool } from './slab-ui.js';
 
 // Кнопка на панели инструментов: иконка и короткая подпись режима.
 export function updateDimModeBtn() {
@@ -93,7 +94,9 @@ export function bindToolbar() {
     else if (e.key === 'Escape') { e.preventDefault(); hideDimInput(); }
   });
   el('dimInputOk').addEventListener('click', () => applyDimInput());
-  el('draftDone').addEventListener('click', () => finishDraft());
+  el('draftDone').addEventListener('click', () => {
+    if (state.tool?.kind === 'slab-opening') finishSlabOpeningTool(); else finishDraft();
+  });
   bindElevInput();
   el('calInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); applyCalibration(Number(el('calInput').value)); }

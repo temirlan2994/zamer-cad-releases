@@ -71,7 +71,9 @@ import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-
 import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
-import { slabDragEnd, slabDragMove, slabHoverTarget, slabPointerDown } from './slab-ui.js';
+import {
+  finishSlabOpeningTool, slabDragEnd, slabDragMove, slabHoverTarget, slabPointerDown, slabToolClick, slabToolHover,
+} from './slab-ui.js';
 import {
   isRoofPlan, roofPlanDblClick, roofPlanDragCancel, roofPlanDragEnd, roofPlanDragMove, roofPlanHover, roofPlanPointerDown,
 } from './roof-plan.js';
@@ -429,6 +431,7 @@ function updateHoverAndGhost(world, plan, event) {
     requestDraw();
     return;
   }
+  if (state.tool?.kind === 'slab-opening') { slabToolHover(plan, event); return; }
   if (state.draft) {
     // Возврат к первой точке (от 3 точек) — замыкание; иначе привязки черчения.
     updateDraftCursor(world, event);
@@ -758,6 +761,7 @@ export function bindCanvasInput() {
         return;
       }
       if (t.kind === 'place-opening') { state.openingFree = event.shiftKey; tapOrNow(event, screen, () => placeOpeningAt(plan)); return; }
+      if (t.kind === 'slab-opening') { tapOrNow(event, screen, () => slabToolClick(plan, event)); return; }
       if (t.kind === 'wall') {
         const mods = { shiftKey: event.shiftKey };
         tapOrNow(event, screen, () => wallToolClick(plan, mods));
@@ -1979,6 +1983,7 @@ export function bindCanvasInput() {
   canvas.addEventListener('dblclick', (event) => {
     if (isRoofPlan()) { roofPlanDblClick(pointerScreen(event), worldToPlan(pointerWorld(event))); return; }
     if (state.modeName === 'landscape') { landscapeDblClick(pointerWorld(event)); return; }
+    if (state.tool?.kind === 'slab-opening') { finishSlabOpeningTool(); return; }
     if (state.draft && (state.draft.kind === 'redline' || state.draft.kind === 'road')) finishDraft();
     if (state.tool?.kind === 'wall') finishWallChain();
     if (state.modeName === 'plan' && !state.tool) planSectionDblClick(pointerScreen(event));

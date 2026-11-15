@@ -39,6 +39,7 @@ import { massKey } from './mass3d.js';
 import { handleGridKey } from './grids.js';
 import { isRoofTool, toggleRoofTool } from './roofs.js';
 import { roofPolyKey } from './roof-plan.js';
+import { slabToolKey, startSlabOpeningTool } from './slab-ui.js';
 
 export let spaceDown = false;
 
@@ -64,9 +65,15 @@ function handle3dKey(event) {
   const tag = event.target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
   const mod = event.ctrlKey || event.metaKey;
+  if (!mod && !event.altKey && event.code === 'Space' && state.tool?.kind === 'place-opening') {
+    event.preventDefault();
+    rotatePlacementPreview();
+    document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
+    return true;
+  }
   // Инструмент «Масса»: цифры и Enter — точный размер (ui/mass3d.js); M — вкл/выкл.
   if (massKey(event)) return true;
-  if (!mod && !event.altKey && event.code === 'KeyM' && state.modeName === 'plan') { toggleMassTool(); return true; }
+  if (!mod && !event.altKey && event.code === 'KeyM' && state.modeName === 'plan') { toggleMassTool(event.shiftKey); return true; }
   if (!mod && !event.altKey && !event.shiftKey && event.code === 'KeyK' && state.modeName === 'plan') { toggleRoofTool(); return true; }
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
     event.preventDefault();
@@ -196,6 +203,7 @@ export function bindKeyboard() {
     }
     // Контур крыши по точкам: Enter — замкнуть, Backspace — точка назад, Esc — бросить (ui/roof-plan.js).
     if (roofPolyKey(event)) { event.preventDefault(); return; }
+    if (slabToolKey(event)) { event.preventDefault(); return; }
     if (event.key === 'Enter' && state.draft) { finishDraft(); return; }
     // Инструмент «Стена»: Enter и Esc заканчивают цепочку (стены остаются).
     if ((event.key === 'Enter' || event.key === 'Escape') && state.tool?.kind === 'wall') { finishWallChain(); return; }
@@ -204,14 +212,19 @@ export function bindKeyboard() {
       startPlanSectionTool();
       return;
     }
-    // M без выбора — инструмент «Масса» (с выбором M — зеркало).
+    // M без выбора — инструмент «Масса», Shift+M — вычитающая масса.
     if (event.code === 'KeyM' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool && !state.selection) {
-      startMassTool();
+      startMassTool(event.shiftKey);
       return;
     }
     if (event.key === 'Escape' && state.tool?.kind === 'mass') { planMassBack(); return; }
     if (event.code === 'KeyW' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool) {
       startWallTool();
+      return;
+    }
+    if (event.code === 'KeyO' && !event.ctrlKey && !event.metaKey && !event.altKey && state.modeName === 'plan' && !state.tool) {
+      startSlabOpeningTool();
+      import('./toolstrip.js').then((m) => m.renderToolstrip());
       return;
     }
     if (event.key === 'Escape') {

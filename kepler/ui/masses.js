@@ -6,8 +6,8 @@
 // Выбор массы — state.selection = { type: 'mass', id }.
 
 import {
-  MASS_H_DEFAULT, MASS_MIN, copyMass, createMass, floorsLabel, massSnapCoords, massStats, massStep,
-  resizeMass, rotateMass90, snapValue, stackMass,
+  MASS_H_DEFAULT, MASS_MIN, allMasses, copyMass, createMass, createMassVoid, floorsLabel, massExtent, massSnapCoords, massStats, massStep,
+  resizeMass, rotateMass90, snapValue, solidMasses, stackMass, voidMasses,
 } from '../core/masses.js';
 import { wallSnapCoords } from '../core/walls.js';
 import { escapeHtml, toast } from './dom.js';
@@ -18,11 +18,17 @@ import { cancelTool, selectObject, setHint, setTool } from './tools.js';
 import { requestDraw } from './view.js';
 
 export const MASS_HINT = 'Масса: клик — угол, клик — противоположный угол, потянуть вверх — высота, клик — готово · Enter/числа — точный размер · Esc';
+export const MASS_VOID_HINT = 'Полая масса: постройте вычитающий объём как обычную массу · он вырежет стены, полы, перекрытия и массы · Esc';
 const PLAN_HINT_A = 'Масса: клик — угол основания · Shift — без привязки, Ctrl — квадрат · Esc — выйти';
 const PLAN_HINT_B = 'Масса: клик — противоположный угол (высота 3000 мм, правка — в «Свойствах») · Esc — назад';
+const planHintA = (t) => (t?.void ? 'Полая масса: клик — угол вычитающего объёма · Shift — без привязки · Esc — выйти' : PLAN_HINT_A);
+const planHintB = (t) => (t?.void ? 'Полая масса: клик — противоположный угол · высота — в «Свойствах» и 3D' : PLAN_HINT_B);
 
-export const masses = () => state.project?.masses || [];
+export const masses = () => allMasses(state.project);
+export const solidMassList = () => solidMasses(state.project);
+export const massVoids = () => voidMasses(state.project);
 export const massById = (id) => masses().find((m) => m.id === id) || null;
+export const massIsVoid = (id) => massVoids().some((m) => m.id === id);
 export const selectedMass = () => (state.selection?.type === 'mass' ? massById(state.selection.id) : null);
 export const isMassTool = () => state.tool?.kind === 'mass';
 
@@ -50,7 +56,11 @@ export function massBaseSnap(skip = null) {
 // ---------------------------------------------------------------- команды
 
 export function addMass(mass) {
-  mutate(() => { state.project.masses = [...masses(), mass]; });
+  const isVoid = mass.id.startsWith('void-');
+  mutate(() => {
+    if (isVoid) state.project.massVoids = [...massVoids(), mass];
+    else state.project.masses = [...solidMassList(), mass];
+  });
   selectObject({ type: 'mass', id: mass.id });
   return mass;
 }
@@ -61,7 +71,8 @@ export function updateMass(id, fn) {
   let next = null;
   mutate(() => {
     next = fn(m);
-    state.project.masses = masses().map((x) => (x.id === id ? next : x));
+    if (massIsVoid(id)) state.project.massVoids = massVoids().map((x) => (x.id === id ? next : x));
+    else state.project.masses = solidMassList().map((x) => (x.id === id ? next : x));
   });
   return next;
 }
@@ -70,8 +81,13 @@ export function deleteMass(id) {
   const m = massById(id);
   if (!m) return;
   mutate(() => {
-    state.project.masses = masses().filter((x) => x.id !== id);
-    if (!state.project.masses.length) delete state.project.masses;
+    if (massIsVoid(id)) {
+      state.project.massVoids = massVoids().filter((x) => x.id !== id);
+      if (!state.project.massVoids.length) delete state.project.massVoids;
+    } else {
+      state.project.masses = solidMassList().filter((x) => x.id !== id);
+      if (!state.project.masses.length) delete state.project.masses;
+    }
   });
   if (state.selection?.type === 'mass' && state.selection.id === id) selectObject(null);
   toast(`«${m.name}» удалена · Ctrl+Z — вернуть`);
@@ -80,7 +96,10 @@ export function deleteMass(id) {
 export function duplicateMass(id, offset = null) {
   const m = massById(id);
   if (!m) return null;
-  return addMass(copyMass(m, masses(), offset));
+  if (!massIsVoid(id)) return addMass(copyMass(m, solidMassList(), offset));
+  const { ex } = massExtent(m);
+  const o = offset || { x: ex + 1000, y: 0 };
+  return addMass(createMassVoid({ ...m, id: undefined, name: `${m.name} копия`, x: m.x + o.x, y: m.y + o.y }, massVoids()));
 }
 
 export function rotateMass(id) {
@@ -94,16 +113,16 @@ export function groundMass(id) {
 
 // ---------------------------------------------------------------- инструмент на плане
 
-export function startMassTool() {
+export function startMassTool(voidMode = false) {
   if (state.modeName !== 'plan') { toast('Массы создаются в режиме «План» и в 3D', true); return; }
-  setTool({ kind: 'mass', stage: 'corner', a: null, b: null, cursor: null }, PLAN_HINT_A);
+  setTool({ kind: 'mass', void: Boolean(voidMode), stage: 'corner', a: null, b: null, cursor: null }, voidMode ? MASS_VOID_HINT : PLAN_HINT_A);
   state.selection = null;
   renderProps();
   document.dispatchEvent(new CustomEvent('kepler:mass-tool'));
 }
 
-export function toggleMassTool() {
-  if (!isMassTool()) { startMassTool(); return; }
+export function toggleMassTool(voidMode = false) {
+  if (!isMassTool() || Boolean(state.tool?.void) !== Boolean(voidMode)) { startMassTool(voidMode); return; }
   cancelTool();
   document.dispatchEvent(new CustomEvent('kepler:mass-tool'));
 }
@@ -113,7 +132,7 @@ export function massToolBack() {
   const t = state.tool;
   if (t?.kind !== 'mass') return false;
   if (t.stage === 'height') { t.stage = 'base'; t.h = null; }
-  else if (t.stage === 'base') { t.stage = 'corner'; t.a = null; t.b = null; setHint(PLAN_HINT_A); }
+  else if (t.stage === 'base') { t.stage = 'corner'; t.a = null; t.b = null; setHint(planHintA(t)); }
   else { cancelTool(); document.dispatchEvent(new CustomEvent('kepler:mass-tool')); }
   requestDraw();
   return true;
@@ -148,19 +167,26 @@ export function massPlanClick(plan, event) {
   if (!t.a) {
     t.a = p;
     t.stage = 'base';
-    setHint(PLAN_HINT_B);
+    setHint(planHintB(t));
     requestDraw();
     return;
   }
   const w = Math.abs(p.x - t.a.x); const d = Math.abs(p.y - t.a.y);
   if (w < MASS_MIN || d < MASS_MIN) { toast(`Основание массы — не меньше ${MASS_MIN} мм`, true); return; }
   const level = (state.project.levels || []).find((l) => l.id === state.project.activeLevel);
-  let m = createMass({ x: (p.x + t.a.x) / 2, y: (p.y + t.a.y) / 2, w, d, z0: Number(level?.elevation) || 0, h: MASS_H_DEFAULT }, masses());
-  if (!m.z0) m = stackMass(m, masses());
+  const spec = { x: (p.x + t.a.x) / 2, y: (p.y + t.a.y) / 2, w, d, z0: Number(level?.elevation) || 0, h: MASS_H_DEFAULT };
+  let m = t.void ? createMassVoid(spec, massVoids()) : createMass(spec, solidMassList());
+  if (!t.void && !m.z0) m = stackMass(m, solidMassList());
   t.a = null; t.stage = 'corner';
   addMass(m);
-  setHint(PLAN_HINT_A);
-  toast(`${m.name}: ${m.w} × ${m.d} × ${m.h} мм · высота — в «Свойствах», форма — в 3D`);
+  setHint(planHintA(t));
+  toast(`${m.name}: ${m.w} × ${m.d} × ${m.h} мм · ${t.void ? 'вырезает пересечённые объёмы' : 'форма — в 3D'}`);
+}
+
+// Живая правка одним 3D-жестом: история оформляется в mass3d.js.
+export function replaceMassLive(id, next) {
+  if (massIsVoid(id)) state.project.massVoids = massVoids().map((m) => (m.id === id ? next : m));
+  else state.project.masses = solidMassList().map((m) => (m.id === id ? next : m));
 }
 
 // ---------------------------------------------------------------- «Свойства»
@@ -171,9 +197,10 @@ const numField = (id, label, value, step = 100) => `
 
 export function renderMassProps(panel, m) {
   const st = massStats(m, massLevelHeight());
+  const isVoid = massIsVoid(m.id);
   panel.innerHTML = `
-    <h2>Масса</h2>
-    <p class="subtitle">Концептуальная форма · ${escapeHtml(floorsLabel(m.h, massLevelHeight()))}</p>
+    <h2>${isVoid ? 'Полая масса' : 'Масса'}</h2>
+    <p class="subtitle">${isVoid ? 'Вычитающий объём: удаляет пересечённую геометрию' : `Концептуальная форма · ${escapeHtml(floorsLabel(m.h, massLevelHeight()))}`}</p>
     <div class="prop-block" id="massProps">
       <label class="prop-field"><span>Название</span>
         <input id="massName" type="text" maxlength="60" value="${escapeHtml(m.name)}"></label>
@@ -184,7 +211,7 @@ export function renderMassProps(panel, m) {
         ${numField('massZ0', 'Отметка низа, мм', m.z0)}
       </div>
       <div class="prop-row"><span>Площадь основания</span><strong id="massArea">${st.area.toFixed(1)} м²</strong></div>
-      <div class="prop-row"><span>Объём</span><strong id="massVolume">${st.volume.toFixed(1)} м³</strong></div>
+      <div class="prop-row"><span>${isVoid ? 'Вычитаемый объём' : 'Объём'}</span><strong id="massVolume">${st.volume.toFixed(1)} м³</strong></div>
       <div class="prop-row"><span>Этажей</span><strong>≈ ${st.floors}</strong></div>
       <div class="prop-grid">
         <button type="button" id="massRotate" title="Повернуть на 90° вокруг центра (R)">↻ Повернуть 90°</button>
@@ -192,7 +219,7 @@ export function renderMassProps(panel, m) {
         <button type="button" id="massCopy" title="Копия рядом (Ctrl+D)">Копировать</button>
         <button type="button" id="massDelete" class="danger">Удалить</button>
       </div>
-      <p class="hint">В 3D у выбранной массы: стрелки гизмо — перенос по оси (квадрат — по плоскости), точки — размер (противоположная грань стоит). Двойной клик по точке — число. На плане этажа масса видна эскизом.</p>
+      <p class="hint">В 3D у выбранной ${isVoid ? 'полой ' : ''}массы: стрелки гизмо — перенос, точки — размер. ${isVoid ? 'Оранжевый каркас показывает объём вычитания.' : 'На плане этажа масса видна эскизом.'}</p>
     </div>`;
   const id = m.id;
   panel.querySelector('#massName').addEventListener('change', (e) => {

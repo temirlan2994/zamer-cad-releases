@@ -289,7 +289,7 @@ function finishTool() {
 }
 
 // Второй ряд «Рисовать»: зеркала кнопок колонки инструментов текущего режима.
-const PLAN_DRAW = ['wallToolBtn', 'roofToolBtn', 'massToolBtn', 'gridToolBtn', 'sectionToolBtn'];
+const PLAN_DRAW = ['wallToolBtn', 'slabOpeningToolBtn', 'roofToolBtn', 'massToolBtn', 'massVoidToolBtn', 'gridToolBtn', 'sectionToolBtn'];
 const drawSource = new WeakMap(); // кнопка ряда → кнопка колонки
 let drawKey = '';
 
@@ -531,7 +531,7 @@ export function bindMobile() {
   // Подсказки без клавиш: «Готово» заканчивает цепочку стен и контур, у остальных — выход.
   bindTouchHints({
     isPhone,
-    context: () => ({ tool: Boolean(state.tool), finish: state.tool?.kind === 'wall' || Boolean(state.draft) || FINISH_TOOLS.includes(state.tool?.kind) }),
+    context: () => ({ tool: Boolean(state.tool), finish: state.tool?.kind === 'wall' || state.tool?.kind === 'slab-opening' || Boolean(state.draft) || FINISH_TOOLS.includes(state.tool?.kind) }),
   });
   // Этажи — вверху слева, «⚠» — сразу за ними: ширина кнопок этажей в --level-w.
   const dock = el('levelDock');

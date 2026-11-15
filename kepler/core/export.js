@@ -25,7 +25,7 @@ import { isPathShape, landscapeDef, objectAreaM2, objectLengthM, pathParams, ret
 import { LANDSCAPE_DXF_LAYERS, landscapeDxfEntities } from './landscape-report.js';
 import { plantSchedule, plantScheduleExport } from './landscape-plants.js';
 import { structuralOutline } from './mesh3d.js';
-import { slabOpenings, stairTargetLevel } from './slab-openings.js';
+import { slabOpeningArea, slabOpeningPolygon, slabOpenings, stairTargetLevel } from './slab-openings.js';
 import { buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2 } from './site.js';
 import { northInBuilding, toWorld } from './building.js';
 import {
@@ -169,8 +169,8 @@ function buildLevelExport(project, level) {
     // Проёмы в перекрытии под этажом (core/slab-openings.js): авто — по лестнице.
     slab_openings: slabOpenings(project, level.id).map((o) => ({
       id: o.id, source: o.auto ? 'stair' : 'manual', stair: o.stairId || null,
-      polygon: [{ x: o.x, y: o.y }, { x: o.x + o.w, y: o.y }, { x: o.x + o.w, y: o.y + o.h }, { x: o.x, y: o.y + o.h }],
-      size: { w: o.w, h: o.h }, area_m2: Number(((o.w * o.h) / 1_000_000).toFixed(3)),
+      polygon: slabOpeningPolygon(o),
+      size: { w: o.w, h: o.h }, area_m2: Number((slabOpeningArea(o) / 1_000_000).toFixed(3)),
     })),
     connections: {
       doors,
@@ -202,6 +202,7 @@ export function buildStructuredExport(project) {
     // Массы (core/masses.js): боксы в осях дома — центр основания x, y, размеры
     // w, d, низ z0, высота h, поворот (кратно 90°). Необязательно.
     ...(project.masses?.length ? { masses: project.masses.map((m) => ({ ...m })) } : {}),
+    ...(project.massVoids?.length ? { mass_voids: project.massVoids.map((m) => ({ ...m })) } : {}),
     // Координационные оси (core/grid-axes.js): { id, label, kind 'x'|'y', at,
     // from?, to?, hidden? } в осях дома, мм. Необязательно.
     ...(project.grids?.length ? { grids: project.grids.map((g) => ({ ...g })) } : {}),

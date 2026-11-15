@@ -9,10 +9,11 @@
 // верх другой массы); h — высота; rotation — 0/90/180/270 (кратно 90°: при
 // 90/270 ширина идёт вдоль y дома). Всё — в мм.
 //
-// Вычитания (пустот) и скошенных граней в этом шаге нет; объединение — только
-// для контура эскиза на плане (core/geom: целые 0,5 мм).
+// project.massVoids[] хранит такие же ортогональные боксы-резаки отдельно от
+// сплошных масс. Скошенных граней пока нет; контур сечения собирается через
+// union/difference (core/geom: целые 0,5 мм).
 
-import { union } from './geom/poly.js';
+import { difference, union } from './geom/poly.js';
 
 export const MASS_MIN = 100; // мм — меньше бокс не делаем
 export const MASS_MAX = 300000;
@@ -28,6 +29,11 @@ let counter = 0;
 const newId = () => {
   counter += 1;
   return `mass-${Date.now().toString(36)}-${counter.toString(36)}`;
+};
+let voidCounter = 0;
+const newVoidId = () => {
+  voidCounter += 1;
+  return `void-${Date.now().toString(36)}-${voidCounter.toString(36)}`;
 };
 
 const num = (v) => {
@@ -58,6 +64,14 @@ export function createMass({
     rotation: normRot(rotation),
   };
   if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) m.color = color;
+  return m;
+}
+
+// Вычитающая масса хранится отдельно от обычных: старый клиент проигнорирует
+// massVoids, а не превратит cutter в сплошной объём.
+export function createMassVoid(opts = {}, existing = []) {
+  const m = createMass({ ...opts, name: opts.name || `Полая масса ${existing.length + 1}` }, []);
+  m.id = newVoidId();
   return m;
 }
 
@@ -92,6 +106,25 @@ export function normalizeMasses(list) {
   }
   return out;
 }
+
+export function normalizeMassVoids(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of list) {
+    const m = normalizeMass(raw);
+    if (!m) continue;
+    if (!m.id.startsWith('void-') || seen.has(m.id)) m.id = newVoidId();
+    if (!raw.name || !String(raw.name).trim()) m.name = 'Полая масса';
+    seen.add(m.id);
+    out.push(m);
+  }
+  return out;
+}
+
+export const solidMasses = (project) => (Array.isArray(project?.masses) ? project.masses : []);
+export const voidMasses = (project) => (Array.isArray(project?.massVoids) ? project.massVoids : []);
+export const allMasses = (project) => [...solidMasses(project), ...voidMasses(project)];
 
 // Размеры основания по осям дома (поворот 90/270 меняет местами).
 export function massExtent(m) {
@@ -268,10 +301,13 @@ export function unionOutline(rects) {
 // основания масс этажа, outline — объединённый контур, segments — рёбра
 // контура (для привязок), points — его вершины, labels — подписи (имя у
 // верхнего левого угла каждой массы).
-export function massSketch(masses, level) {
+export function massSketch(masses, level, voids = []) {
   const list = levelMasses(masses, level);
   const rects = list.map((m) => { const b = massBox(m); return { id: m.id, name: m.name, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 }; });
-  const outline = unionOutline(rects);
+  const voidRects = levelMasses(voids, level).map((m) => { const b = massBox(m); return { id: m.id, name: m.name, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 }; });
+  const solidOutline = unionOutline(rects);
+  const outline = voidRects.length && solidOutline.length
+    ? difference(solidOutline, ...voidRects.map((r) => [[rectRing(r)]])) : solidOutline;
   const segments = [];
   const points = [];
   for (const poly of outline) {
@@ -284,7 +320,7 @@ export function massSketch(masses, level) {
       }
     }
   }
-  return { rects, outline, segments, points };
+  return { rects, voidRects, outline, segments, points };
 }
 
 // Линии привязки эскиза: вертикальные (x = const) и горизонтальные рёбра с

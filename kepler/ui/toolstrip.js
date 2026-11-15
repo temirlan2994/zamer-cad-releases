@@ -25,6 +25,7 @@ import { togglePlanSectionTool } from './plan-section.js';
 import { toggleMassTool } from './masses.js';
 import { toggleRoofTool } from './roofs.js';
 import { toggleGridTool } from './grids.js';
+import { startSlabOpeningTool } from './slab-ui.js';
 
 const svg = (inner) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
@@ -86,7 +87,7 @@ const SHORT = {
 };
 const PLAN_LABELS = {
   selectToolBtn: 'Выбор', wallToolBtn: 'Стена', boundRoomBtn: 'Помещение', doorToolBtn: 'Дверь', windowToolBtn: 'Окно',
-  furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', massToolBtn: 'Масса', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
+  furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', slabOpeningToolBtn: 'Проём', massToolBtn: 'Масса', massVoidToolBtn: 'Пустота', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
   sectionToolBtn: 'Разрез', ergoToolBtn: 'Эргономика', viewBtn: 'Поворот', fitBtn: 'Вписать',
 };
 function ensurePlanLabels() {
@@ -189,11 +190,13 @@ export function renderToolstrip() {
     || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
   toggle('stairsToolBtn', stairs);
+  toggle('slabOpeningToolBtn', t?.kind === 'slab-opening');
   toggle('sectionToolBtn', t?.kind === 'psec');
-  toggle('massToolBtn', t?.kind === 'mass');
+  toggle('massToolBtn', t?.kind === 'mass' && !t.void);
+  toggle('massVoidToolBtn', t?.kind === 'mass' && Boolean(t.void));
   toggle('roofToolBtn', t?.kind === 'roof');
   toggle('gridToolBtn', t?.kind === 'grid');
-  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'sectionToolBtn', 'massToolBtn', 'roofToolBtn', 'gridToolBtn']) {
+  for (const id of ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'slabOpeningToolBtn', 'sectionToolBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn', 'gridToolBtn']) {
     const b = el(id);
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
@@ -247,12 +250,24 @@ export function bindToolstrip() {
     applyLibraryTab();
   });
   el('stairsToolBtn')?.addEventListener('click', toggleStairs);
+  el('slabOpeningToolBtn')?.addEventListener('click', () => {
+    if (state.tool?.kind === 'wall') finishWallChain();
+    startSlabOpeningTool();
+    closeSheets();
+    renderToolstrip();
+  });
   el('doorToolBtn')?.addEventListener('click', () => placeOpening('door'));
   el('windowToolBtn')?.addEventListener('click', () => placeOpening('window'));
   el('furnitureToolBtn')?.addEventListener('click', toggleFurniture);
   el('massToolBtn')?.addEventListener('click', () => {
     if (state.tool?.kind === 'wall') finishWallChain();
-    toggleMassTool();
+    toggleMassTool(false);
+    if (state.tool) closeSheets();
+    renderToolstrip();
+  });
+  el('massVoidToolBtn')?.addEventListener('click', () => {
+    if (state.tool?.kind === 'wall') finishWallChain();
+    toggleMassTool(true);
     if (state.tool) closeSheets();
     renderToolstrip();
   });

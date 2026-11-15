@@ -240,7 +240,7 @@ function landscapeBlock() {
 
 // Эскиз масс (ui/plan-masses.js) — только когда в проекте есть массы.
 function massBlock() {
-  const count = state.project.masses?.length || 0;
+  const count = (state.project.masses?.length || 0) + (state.project.massVoids?.length || 0);
   if (!count) return '';
   const pref = planMassPref();
   return `
@@ -248,7 +248,7 @@ function massBlock() {
     <div class="prop-block" id="viewsMasses">
       <label class="check-row"><input type="checkbox" id="viewsMassOn" ${pref.on ? 'checked' : ''}><span>Показывать эскиз масс на плане</span><em>${count}</em></label>
       <label class="check-row"><input type="checkbox" id="viewsMassOutline" ${pref.outlineOnly ? 'checked' : ''} ${pref.on ? '' : 'disabled'}><span>Только контур</span></label>
-      <p class="hint">Сечение масс на высоте окна этажа (1650 мм над полом) — под комнатами и стенами; комнаты и стены липнут к его рёбрам. На плане не выбирается, на листы и экспорт не влияет.</p>
+      <p class="hint">Сечение масс на высоте окна этажа (1650 мм над полом); полые массы показаны оранжевым и вырезают эскиз. Комнаты и стены липнут к рёбрам.</p>
     </div>`;
 }
 

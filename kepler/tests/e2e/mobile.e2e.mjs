@@ -89,7 +89,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.equal(await page.isVisible('#mobileDraw'), false);
     await page.tap('#mobileBar [data-sheet="draw"]');
     const labels = await page.$$eval('#mobileDraw button', (ns) => ns.map((n) => n.textContent.trim()));
-    assert.deepEqual(labels, ['Стена', 'Крыша', 'Масса', 'Ось', 'Разрез', 'Готово']);
+    assert.deepEqual(labels, ['Стена', 'Проём', 'Крыша', 'Масса', 'Пустота', 'Ось', 'Разрез', 'Готово']);
     assert.equal(await page.getAttribute('#mobileBar [data-sheet="draw"]', 'aria-pressed'), 'true');
     await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'wall');

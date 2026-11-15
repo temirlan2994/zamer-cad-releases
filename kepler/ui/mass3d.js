@@ -36,7 +36,7 @@
 // те же ручки с увеличенной зоной попадания.
 
 import {
-  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, createMass, faceSize, floorsLabel, massBox,
+  FACE_NORMAL, MASS_H_DEFAULT, MASS_MIN, createMass, createMassVoid, faceSize, floorsLabel, massBox,
   massStep, setFaceSize,
 } from '../core/masses.js';
 import {
@@ -47,12 +47,16 @@ import { axisTargets, snapContact, snapLabel, snapMove, snapTolerances } from '.
 import { basePlane, pickMass, rayPlaneZ } from '../core/pick3d.js';
 import { massFaces } from '../core/mesh3d.js';
 import { toast } from './dom.js';
-import { MASS_HINT, addMass, massBaseSnap, massById, massLevelHeight, masses, updateMass } from './masses.js';
+import {
+  MASS_HINT, MASS_VOID_HINT, addMass, massBaseSnap, massById, massIsVoid, massLevelHeight, massVoids, masses,
+  replaceMassLive, solidMassList, updateMass,
+} from './masses.js';
 import { state } from './state.js';
 import { afterChange, pushHistory, refreshDerived, snapshot } from './store.js';
 import { selectObject } from './tools.js';
 
 const GHOST = '#3d7fe0';
+const VOID_GHOST = '#ef6c32';
 const SNAP_COLOR = '#f76b15'; // подсветка цели магнита
 const SNAP_EDGE = [0.97, 0.42, 0.08, 1];
 const PREF_KEY = 'kepler-3d-layers'; // общий ключ слоёв 3D (ui/view3d.js), поле massSnap
@@ -71,7 +75,13 @@ export const massDragging = () => Boolean(drag);
 export const massHover = () => hover;
 
 export function massBoxes() {
-  return masses().map((m) => ({ id: m.id, ...massBox(m) }));
+  return solidMassList().map((m) => ({ id: m.id, ...massBox(m) }));
+}
+
+// Отдельно для 3D-pick: cutter не считается опорой, но его каркас можно
+// выбрать и править тем же гизмо.
+export function massVoidBoxes() {
+  return massVoids().map((m) => ({ id: m.id, ...massBox(m) }));
 }
 
 // ---------------------------------------------------------------- магнит
@@ -210,10 +220,11 @@ function setStage(t, stage) {
 }
 
 function stageHint(t) {
-  if (t.stage === 'base') return 'Масса: клик — противоположный угол · Shift — без привязки, Ctrl — квадрат · цифры — ширина, Tab — глубина · Esc — назад';
-  if (t.stage === 'height' && t.touch) return 'Масса: тап выше основания — высота по пальцу, масса готова · Esc — назад';
-  if (t.stage === 'height') return 'Масса: тяните вверх — высота, клик — готово · Shift — шаг 10 мм · цифры + Enter — высота · Esc — назад';
-  return MASS_HINT;
+  const name = t.void ? 'Полая масса' : 'Масса';
+  if (t.stage === 'base') return `${name}: клик — противоположный угол · Shift — без привязки, Ctrl — квадрат · цифры — ширина, Tab — глубина · Esc — назад`;
+  if (t.stage === 'height' && t.touch) return `${name}: тап выше основания — высота по пальцу, объём готов · Esc — назад`;
+  if (t.stage === 'height') return `${name}: тяните вверх — высота, клик — готово · Shift — шаг 10 мм · цифры + Enter — высота · Esc — назад`;
+  return t.void ? MASS_VOID_HINT : MASS_HINT;
 }
 
 export function massToolHint() {
@@ -294,9 +305,10 @@ export function massToolMove(e) {
 function commitTool(t) {
   const w = Math.abs(t.b.x - t.a.x);
   const d = Math.abs(t.b.y - t.a.y);
-  const m = createMass({
+  const spec = {
     x: (t.a.x + t.b.x) / 2, y: (t.a.y + t.b.y) / 2, w, d, z0: t.z, h: t.h || MASS_H_DEFAULT,
-  }, masses());
+  };
+  const m = t.void ? createMassVoid(spec, massVoids()) : createMass(spec, solidMassList());
   Object.assign(t, { stage: 'corner', a: null, b: null, h: null, screen2: null, held: {}, snaps: [] });
   hideNum();
   env.label(null);
@@ -347,19 +359,20 @@ export function massOverlay() {
   if (!env) return [];
   const out = [];
   const t = tool();
+  const ghostColor = t?.void ? VOID_GHOST : GHOST;
   const k = env.worldPerPx();
   if (t?.a && t.b && (t.stage === 'base' || t.stage === 'height')) {
     const x0 = Math.min(t.a.x, t.b.x); const x1 = Math.max(t.a.x, t.b.x);
     const y0 = Math.min(t.a.y, t.b.y); const y1 = Math.max(t.a.y, t.b.y);
     if (t.stage === 'height' && t.h > 0) {
-      const ghost = massFaces([{ id: 'ghost', x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, d: y1 - y0, z0: t.z, h: t.h, rotation: 0, color: GHOST }], { alpha: 0.3 });
-      for (const f of ghost) out.push({ ...f, kind: 'overlay', twoSided: true, edgeRgba: [0.15, 0.4, 0.85, 0.9] });
+      const ghost = massFaces([{ id: 'ghost', x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, d: y1 - y0, z0: t.z, h: t.h, rotation: 0, color: ghostColor }], { alpha: t.void ? 0.14 : 0.3 });
+      for (const f of ghost) out.push({ ...f, kind: 'overlay', twoSided: true, edgeRgba: t.void ? [0.94, 0.31, 0.08, 1] : [0.15, 0.4, 0.85, 0.9] });
     } else if (x1 - x0 > 0.5 || y1 - y0 > 0.5) {
       const z = t.z + 2;
       const P = [{ x: x0, y: y0, z }, { x: x1, y: y0, z }, { x: x1, y: y1, z }, { x: x0, y: y1, z }];
       out.push({
-        pts: P, normal: { x: 0, y: 0, z: 1 }, color: GHOST, alpha: 0.3, kind: 'overlay', twoSided: true,
-        edges: P.map((p, i) => [p, P[(i + 1) % 4]]), edgeRgba: [0.15, 0.4, 0.85, 0.95],
+        pts: P, normal: { x: 0, y: 0, z: 1 }, color: ghostColor, alpha: t.void ? 0.14 : 0.3, kind: 'overlay', twoSided: true,
+        edges: P.map((p, i) => [p, P[(i + 1) % 4]]), edgeRgba: t.void ? [0.94, 0.31, 0.08, 1] : [0.15, 0.4, 0.85, 0.95],
       });
     }
   }
@@ -372,14 +385,14 @@ export function massOverlay() {
     for (let k = -R; k <= R; k += 1000) {
       edges.push([{ x: cx + k, y: cy - R, z }, { x: cx + k, y: cy + R, z }], [{ x: cx - R, y: cy + k, z }, { x: cx + R, y: cy + k, z }]);
     }
-    out.push({ pts: [], normal: { x: 0, y: 0, z: 1 }, color: GHOST, alpha: 0, kind: 'overlay', edges, edgeRgba: [0.2, 0.32, 0.5, 0.16] });
+    out.push({ pts: [], normal: { x: 0, y: 0, z: 1 }, color: ghostColor, alpha: 0, kind: 'overlay', edges, edgeRgba: t.void ? [0.94, 0.31, 0.08, 0.18] : [0.2, 0.32, 0.5, 0.16] });
   }
   if (t?.cursor && (t.stage === 'corner' || !t.stage)) {
     const s = 5 * k;
     const c = t.cursor;
     const z = (c.z || 0) + 2;
     const P = [{ x: c.x - s, y: c.y - s, z }, { x: c.x + s, y: c.y - s, z }, { x: c.x + s, y: c.y + s, z }, { x: c.x - s, y: c.y + s, z }];
-    out.push({ pts: P, normal: { x: 0, y: 0, z: 1 }, color: GHOST, alpha: 0.85, kind: 'overlay', twoSided: true });
+    out.push({ pts: P, normal: { x: 0, y: 0, z: 1 }, color: ghostColor, alpha: 0.85, kind: 'overlay', twoSided: true });
   }
   // Магнит: плоскость стыка и целевая масса.
   if (t?.snaps?.length && t.stage) out.push(...snapOverlay(t.snaps));
@@ -430,7 +443,8 @@ function gripOverlay(m, k) {
     for (const l of [0, 1]) wire.push([C(a[0], a[1], l), C(b[0], b[1], l)]);
     wire.push([C(a[0], a[1], 0), C(a[0], a[1], 1)]);
   }
-  out.push({ ...top, pts: [C(0, 0, 0), C(1, 0, 0), C(1, 1, 0)], color: '#ffffff', alpha: 0, edges: wire, edgeRgba: [0.24, 0.5, 0.88, 0.55] });
+  const voidMode = massIsVoid(m.id);
+  out.push({ ...top, pts: [C(0, 0, 0), C(1, 0, 0), C(1, 1, 0)], color: '#ffffff', alpha: 0, edges: wire, edgeRgba: voidMode ? [0.94, 0.31, 0.08, 0.9] : [0.24, 0.5, 0.88, 0.55] });
   // Точки размера (сначала невидимые стороны — ниже в стопке).
   const list = MASS_HANDLES.map((h) => ({ h, p: handlePoint(box, h.s), front: handleFacing(h.s, B.f) }))
     .sort((a, b) => Number(a.front) - Number(b.front));
@@ -665,7 +679,7 @@ export function moveMassDrag(e) {
   if (!drag) return;
   const next = drag.handle ? dragHandle(e) : dragGizmo(e);
   if (!next) return;
-  state.project.masses = masses().map((m) => (m.id === drag.id ? next : m));
+  replaceMassLive(drag.id, next);
   drag.changed = JSON.stringify(next) !== JSON.stringify(drag.start);
   const b = massBox(next);
   let text;
@@ -707,7 +721,7 @@ export function cancelMassDrag() {
   env?.label(null);
   if (!d) return;
   env.hint();
-  state.project.masses = masses().map((m) => (m.id === d.id ? d.start : m));
+  replaceMassLive(d.id, d.start);
   env.redraw(true);
 }
 
@@ -849,7 +863,7 @@ export function debugMass3d() {
   const m = !t && env ? selectedMass() : null;
   const scr = m ? gripScreen(m) : null;
   return {
-    tool: Boolean(t), stage: t?.stage || null, a: t?.a || null, b: t?.b || null, z: t?.z ?? null, h: t?.h ?? null,
+    tool: Boolean(t), void: Boolean(t?.void), stage: t?.stage || null, a: t?.a || null, b: t?.b || null, z: t?.z ?? null, h: t?.h ?? null,
     dragging: Boolean(drag), part: drag?.part || null, hover, num: numField?.kind || null,
     gizmo: scr ? scr.gizmo : null,
     // Магнит: первая притянутая цель жеста или инструмента и все подписи.

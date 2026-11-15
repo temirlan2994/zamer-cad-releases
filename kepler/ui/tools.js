@@ -105,6 +105,7 @@ export function cancelTool() {
   renderLibrary();
   renderSelectionToolbar();
   if (wasOpening) renderProps();
+  if (wasOpening) document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
   requestDraw();
 }
 
@@ -123,6 +124,7 @@ export function startPlaceOpening(openKind, presetWall = null) {
     ? 'Кликайте по стенам — можно ставить несколько дверей · Пробел — петли / направление · Esc — выход'
     : 'Кликайте по наружным стенам — можно ставить несколько окон · Esc — выход');
   renderProps();
+  document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
 }
 
 export function startPlaceFurniture(kind, title = 'мебель') {

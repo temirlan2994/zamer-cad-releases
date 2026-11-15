@@ -2,7 +2,7 @@
 
 import { composeView, rectCornersWorld, toLocal, toWorld } from '../core/building.js';
 import { neighborRectCorners } from '../core/site.js';
-import { massRect } from '../core/masses.js';
+import { allMasses, massRect } from '../core/masses.js';
 import { projectPoint, underlayHandles, unprojectPoint } from '../render.js';
 import { canvas, refs, renderer } from './dom.js';
 import { findWall } from './hit.js';
@@ -73,7 +73,7 @@ export function requestDraw() {
     renderer.draw(state);
     // «Готово» видна, пока чертится ломаная (на телефоне нет Enter).
     const done = document.getElementById('draftDone');
-    if (done) done.hidden = !state.draft;
+    if (done) done.hidden = !state.draft && state.tool?.kind !== 'slab-opening';
   });
 }
 
@@ -160,7 +160,7 @@ export function fitView() {
   const siteView = state.modeName === 'site' || state.modeName === 'landscape';
   // Массы (core/masses.js) — основания в осях дома: эскиз тоже вписывается.
   if (state.modeName === 'plan') {
-    for (const m of state.project.masses || []) {
+    for (const m of allMasses(state.project)) {
       pts.push(...rectCornersWorld(state.project.building, massRect(m)));
     }
   }

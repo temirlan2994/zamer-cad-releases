@@ -16,6 +16,7 @@ import { findWall } from './hit.js';
 import { state } from './state.js';
 import { activeGrids } from './plan-grids.js';
 import { wallPins } from '../core/grid-pins.js';
+import { allMasses } from '../core/masses.js';
 
 const button = (action, icon, text, key = '', extra = '') => `
   <button type="button" data-selection-action="${action}" ${extra} title="${escapeHtml(text)}${key ? ` (${key})` : ''}">
@@ -111,10 +112,10 @@ function contentForSelection(sel) {
     };
   }
   if (sel.type === 'mass') {
-    const mass = (state.project.masses || []).find((m) => m.id === sel.id);
+    const mass = allMasses(state.project).find((m) => m.id === sel.id);
     if (!mass) return null;
     return {
-      label: `${mass.name} · ${Math.round(mass.w)} × ${Math.round(mass.d)} × ${Math.round(mass.h)} мм`,
+      label: `${mass.id.startsWith('void-') ? 'Полая масса · ' : ''}${mass.name} · ${Math.round(mass.w)} × ${Math.round(mass.d)} × ${Math.round(mass.h)} мм`,
       html: `${button('duplicate', '⧉', 'Копировать', 'Ctrl+D')}${button('rotate', '↻', 'Повернуть 90°', 'R')}${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,
     };
   }

@@ -36,8 +36,8 @@ import { cancelTool, selectObject } from './tools.js';
 import { deleteSectionView } from './plan-section.js';
 import { deleteSlab } from './slab-ui.js';
 import { deleteSelectedRailing } from './railing-actions.js';
-import { addMass, deleteMass, duplicateMass, massById, masses, rotateMass } from './masses.js';
-import { copyMass } from '../core/masses.js';
+import { addMass, deleteMass, duplicateMass, massById, massVoids, masses, rotateMass } from './masses.js';
+import { copyMass, createMassVoid } from '../core/masses.js';
 import { deleteRoof } from './roofs.js';
 import { deleteGrid } from './grids.js';
 import { requestDraw } from './view.js';
@@ -722,7 +722,10 @@ export function pasteSelection() {
     const c = objectClipboard;
     c.pastes += 1;
     const step = 1000 * c.pastes;
-    addMass(copyMass(c.mass, masses(), { x: step, y: step }));
+    const copy = c.mass.id.startsWith('void-')
+      ? createMassVoid({ ...c.mass, id: undefined, name: `${c.mass.name} копия`, x: c.mass.x + step, y: c.mass.y + step }, massVoids())
+      : copyMass(c.mass, masses(), { x: step, y: step });
+    addMass(copy);
     return true;
   }
   return false;

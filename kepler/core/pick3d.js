@@ -136,7 +136,9 @@ export function pickBoxes(project, levelIds = null) {
       }
     }
     for (const q of voids) {
-      if (!q.id) continue;
+      // Вычитающая масса использует тот же внутренний список пустот, но не
+      // является дверью/окном. Её выбирает отдельный mass picker по каркасу.
+      if (!q.id || q.kind === 'mass-void') continue;
       openings.push({
         x0: q.r.x, y0: q.r.y, x1: q.r.x + q.r.w, y1: q.r.y + q.r.h, z0: q.bottom + elev, z1: q.top + elev,
         type: 'opening', id: q.id, kind: q.kind, levelId: level.id,
