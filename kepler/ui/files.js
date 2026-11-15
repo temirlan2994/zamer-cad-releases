@@ -13,6 +13,7 @@ import { refs, toast } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
 import { planGridPref } from './plan-grids.js';
+import { safeProjectFileName, syncProjectNameUi } from './project-name.js';
 import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
@@ -24,7 +25,7 @@ import { fitView } from './view.js';
 const download = (filename, data, mime) => saveFile(filename, data, mime);
 
 export function safeFileName() {
-  return (state.project.name || 'kepler-plan').replace(/[^\wа-яА-ЯёЁ -]/g, '').trim().replace(/\s+/g, '-') || 'kepler-plan';
+  return safeProjectFileName();
 }
 
 export function handleExport(kind) {
@@ -106,7 +107,7 @@ export function openProjectFile(file) {
       state.pid = null;
       if (before) pushHistory(before, beforePid);
       fitView();
-      refs.projectName.value = state.project.name;
+      syncProjectNameUi();
       toast(`Открыт проект «${state.project.name}»`);
     } catch (error) {
       toast(`Не удалось открыть: ${error.message}`, true);
@@ -129,7 +130,6 @@ export function loadTemplate(id) {
   refreshDerived();
   applyModeRotation();
   if (before) pushHistory(before, beforePid);
-  refs.projectName.value = state.project.name;
   afterChange();
   fitView();
 }
@@ -145,7 +145,6 @@ export function loadSample() {
   refreshDerived();
   applyModeRotation();
   if (before) pushHistory(before, beforePid);
-  refs.projectName.value = project.name;
   afterChange();
   fitView();
 }
@@ -178,7 +177,6 @@ export function newProject() {
   refreshDerived();
   applyModeRotation();
   if (before) pushHistory(before, beforePid);
-  refs.projectName.value = state.project.name;
   afterChange();
   fitView();
 }

@@ -69,6 +69,14 @@ test('облачный черновик хранится отдельно и о�
   assert.deepEqual(JSON.parse(opened.text).rooms, [7]);
 });
 
+test('переименование черновика обновляет карточку и сам проект', async () => {
+  const db = createMemoryDb();
+  await saveDraft(db, root, proj({ name: 'Старое имя' }), { pid: 'rename-draft' });
+  await saveDraft(db, root, proj({ name: 'Новое имя' }), { pid: 'rename-draft' });
+  assert.equal((await listProjects(db, root))[0].name, 'Новое имя');
+  assert.equal(JSON.parse((await loadDraft(db, root, 'rename-draft')).text).name, 'Новое имя');
+});
+
 test('свежий draft побеждает ручную версию, explicit version остаётся доступной', async () => {
   const db = createMemoryDb();
   const manual = await saveVersion(db, root, proj({ rooms: [1] }), {

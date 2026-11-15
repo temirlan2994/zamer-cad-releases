@@ -22,7 +22,7 @@ export function pdfTextString(text) {
   return `<${hex.toUpperCase()}>`;
 }
 
-export function buildImagePdf(pages, { title = '', producer = 'Kepler Plan' } = {}) {
+export function buildImagePdf(pages, { title = '', producer = 'kep•ler 3D' } = {}) {
   if (!pages.length) throw new Error('PDF: нет страниц');
   const chunks = [];
   const offsets = [];

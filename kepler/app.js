@@ -42,6 +42,7 @@ import {
   getScopedItem, setScopedItem, setStorageScope,
 } from './ui/storage-scope.js';
 import { shouldUseRemoteProject } from './ui/startup-cloud.js';
+import { syncProjectNameUi } from './ui/project-name.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -116,7 +117,7 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
     refreshDerived();
     applyModeRotation();
     syncUnderlayImage();
-    refs.projectName.value = state.project.name;
+    syncProjectNameUi();
     refreshNorms();
     refreshIssues();
     renderLibrary();
@@ -151,7 +152,7 @@ bindErgonomics(); // режим «Эргономика»: кнопка, счёт
   await openProjectChooser({ initial: true, broken });
   exposeDebugApi();
 })().catch((error) => {
-  console.error('Kepler Plan не запустился:', error);
+  console.error('kep•ler 3D не запустился:', error);
   refs.toast.textContent = `Не удалось запустить редактор: ${error?.message || 'ошибка'}`;
   refs.toast.classList.add('show');
 });

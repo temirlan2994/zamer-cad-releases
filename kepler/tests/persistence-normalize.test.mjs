@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  createProject, createRoom, deserializeProject, fileDataV6, hasContent, normalizeProject, serializeProject,
+  createProject, createRoom, deserializeProject, fileDataV6, hasContent, normalizeProject,
+  normalizeProjectName, serializeProject,
 } from '../core/model.js';
 import { createLandscapeObject } from '../core/landscape.js';
 import { deriveWalls } from '../core/walls.js';
@@ -21,6 +22,12 @@ function useEverywhere(project) {
   normsReport(project);
   buildStructuredExport(project);
 }
+
+test('название проекта: пробелы, пустое значение и лимит облака', () => {
+  assert.equal(normalizeProjectName('  Дом у моря  '), 'Дом у моря');
+  assert.equal(normalizeProjectName('   '), 'Без названия');
+  assert.equal(Array.from(normalizeProjectName('Я'.repeat(250))).length, 200);
+});
 
 test('битые комнаты: null, строки, NaN — отброшены; числа-строки приведены', () => {
   const data = base();

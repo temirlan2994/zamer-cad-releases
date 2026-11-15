@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Kepler Plan</title>
+    <title>kep•ler 3D</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%23384250%27/%3E%3Crect x=%274%27 y=%274%27 width=%278%27 height=%278%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%271.5%27/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
     <meta name="theme-color" content="#1f75ff" />
@@ -12,8 +12,8 @@
     <div class="app">
       <!-- Шапка: название и проект, режимы (План / Участок / 3D), общие действия. Инструментов рисования здесь нет. -->
       <header class="topbar">
-        <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
-        <input id="projectName" class="project-name" value="Новый дом" aria-label="Название проекта" />
+        <div class="brand">kep•ler <span>3D</span><small>концепт-планировщик домов</small></div>
+        <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
         <div class="mode-tabs" role="tablist" aria-label="Режим">
           <button id="modePlanBtn" class="tab active" role="tab">План</button>
           <button type="button" id="landscapeBtn" class="tab" role="tab" aria-pressed="false" title="Ландшафт: растения, дорожки, площадки, посадка по участку">Ландшафт</button>
@@ -268,11 +268,11 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+          <div class="brand">kep•ler <span>3D</span><small>концепт-планировщик домов</small></div>
           <div class="startup-auth-copy">
             <span class="startup-auth-icon" aria-hidden="true">K</span>
             <div>
-              <h1 id="startupTitle">Войдите в Kepler Plan</h1>
+              <h1 id="startupTitle">Войдите в kep•ler 3D</h1>
               <p>Ваши проекты будут автоматически сохраняться в личном облаке и открываться на любом устройстве.</p>
             </div>
           </div>
@@ -281,13 +281,13 @@
             <span><b>Продолжить с Google</b><small>безопасный вход в личный аккаунт</small></span>
           </button>
           <p class="startup-auth-status" id="startAuthStatus" role="status" aria-live="polite"></p>
-          <p class="startup-auth-note">Kepler Plan не получает пароль от вашего Google-аккаунта.</p>
+          <p class="startup-auth-note">kep•ler 3D не получает пароль от вашего Google-аккаунта.</p>
         </section>
 
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand">Kepler <span>Plan</span><small>концепт-планировщик домов</small></div>
+              <div class="brand">kep•ler <span>3D</span><small>концепт-планировщик домов</small></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">

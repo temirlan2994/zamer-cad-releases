@@ -10,6 +10,7 @@ import { buildSectionDxf, sectionProfile } from '../core/landscape-section.js';
 import { saveFile } from './cloud.js';
 import { escapeHtml, toast } from './dom.js';
 import { setSheetSectionsPref, sheetSectionsPref } from './landscape-style.js';
+import { safeProjectFileName } from './project-name.js';
 import { snapLs, snapPoint } from './landscape.js';
 import { chainsWithout, dragPrev } from './draw-snap-ui.js';
 import { hitSectionHandle } from './render-section.js';
@@ -250,8 +251,7 @@ function renderSectionView() {
 }
 
 function fileBase(sec) {
-  const name = (state.project.name || 'kepler-plan').replace(/[^\wа-яА-ЯёЁ -]/g, '').trim().replace(/\s+/g, '-') || 'kepler-plan';
-  return `${name}-разрез-${sec.name}`;
+  return `${safeProjectFileName()}-разрез-${sec.name}`;
 }
 
 export function downloadSectionSvg(sec = current()) {

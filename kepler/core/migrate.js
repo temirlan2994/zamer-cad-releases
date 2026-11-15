@@ -108,10 +108,10 @@ export function schemaVersion(schema) {
 export function migrateProject(data) {
   const version = schemaVersion(data?.schema);
   if (version == null || version < 1) {
-    throw new Error('Это не файл проекта Kepler Plan');
+    throw new Error('Это не файл проекта kep•ler 3D');
   }
   if (version > SCHEMA_VERSION) {
-    throw new Error(`Файл создан более новой версией Kepler Plan (формат ${version}, `
+    throw new Error(`Файл создан более новой версией kep•ler 3D (формат ${version}, `
       + `здесь поддерживается до ${SCHEMA_VERSION}). Обновите приложение.`);
   }
   let out = JSON.parse(JSON.stringify(data));

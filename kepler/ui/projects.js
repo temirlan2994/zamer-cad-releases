@@ -8,11 +8,14 @@ import {
   deleteProject, listProjects, loadShared, loadVersion, newId, publishProject,
   saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
 } from '../core/storage.js';
-import { el, escapeHtml, refs, toast } from './dom.js';
+import { el, escapeHtml, toast } from './dom.js';
 import {
   getAccountState, getBackend, getLocalBackend, onAccountChange,
   signInGoogle, signOutGoogle,
 } from './cloud.js';
+import {
+  currentProjectName, PROJECT_NAME_EVENT, syncProjectNameUi,
+} from './project-name.js';
 import { state } from './state.js';
 import { closeStartMenu, openStartMenu } from './start-menu.js';
 import {
@@ -230,7 +233,7 @@ function renderStartProjects(list) {
         data-act="open" data-pid="${escapeHtml(project.id)}">
         <span class="startup-project-preview">${projectPreviewSvg(project.preview, stats)}</span>
         <span class="startup-project-info">
-          <b>${escapeHtml(project.name || 'Без названия')}</b>
+          <b>${escapeHtml(current ? currentProjectName() : project.name || 'Без названия')}</b>
           <small>${escapeHtml(details.filter(Boolean).join(' · ') || 'Облачный проект')}</small>
         </span>
       </button>`;
@@ -278,7 +281,7 @@ function render() {
       return `
       <div class="prj-row${current ? ' current' : ''}">
         <div class="prj-main">
-          <b>${escapeHtml(project.name || 'Без названия')}</b>${current ? ' <em>(открыт)</em>' : ''}
+          <b>${escapeHtml(current ? currentProjectName() : project.name || 'Без названия')}</b>${current ? ' <em>(открыт)</em>' : ''}
           <small>${escapeHtml(fmtDate(project.updatedAt))} · версий: ${versions.length}${draft}</small>
         </div>
         <div class="prj-actions">
@@ -312,14 +315,15 @@ function render() {
   }).join('');
 }
 
-function openText(text, pid, missing) {
+function openText(text, pid, missing, name = null) {
   const before = snapshot();
   const beforePid = state.pid;
   restoreFrom(text);
+  if (pid && name) state.project.name = name;
   pushHistory(before, beforePid);
   state.pid = pid;
   setScopedItem(PID_KEY, pid || '');
-  refs.projectName.value = state.project.name;
+  syncProjectNameUi();
   tweak(() => {});
   fitView();
   closeProjects(true);
@@ -346,6 +350,7 @@ function assignPendingDraft() {
   const pid = state.pid || newId('p');
   state.pid = pid;
   setScopedItem(PID_KEY, pid);
+  syncProjectNameUi();
   pendingCloudDrafts.set(pid, { ...pendingUnassignedDraft, pid });
   latestDraftOrder.set(pid, pendingUnassignedDraft.order);
   pendingUnassignedDraft = null;
@@ -358,6 +363,7 @@ function scheduleCloudDraft(text, { immediate = false } = {}) {
       const pid = state.pid || newId('p');
       state.pid = pid;
       setScopedItem(PID_KEY, pid);
+      syncProjectNameUi();
       pendingCloudDrafts.set(pid, { ...draft, pid });
       latestDraftOrder.set(pid, draft.order);
     } else {
@@ -484,6 +490,7 @@ async function saveCurrent() {
     });
     state.pid = pid;
     setScopedItem(PID_KEY, pid);
+    syncProjectNameUi();
     tweak(() => {});
     el('prjNote').value = '';
     if (backend.mode === 'cloud') setSyncStatus('Контрольная версия сохранена в облаке', 'saved');
@@ -508,13 +515,15 @@ async function onAction(button) {
       if (expanded.has(pid)) expanded.delete(pid); else expanded.add(pid);
       render();
     } else if (act === 'open') {
+      const meta = projects.find((candidate) => candidate.id === pid);
+      const name = state.pid === pid ? currentProjectName() : meta?.name;
       flushAutosave();
       if (!await flushCloudDraft()) {
         toast('Текущий проект ещё не попал в облако. Проверьте интернет и повторите.', true);
         return;
       }
       const { text, missing } = await loadVersion(backend.db, backend.root, pid, vid || null);
-      openText(text, pid, missing);
+      openText(text, pid, missing, name);
     } else if (act === 'open-shared') {
       flushAutosave();
       if (!await flushCloudDraft()) {
@@ -544,12 +553,13 @@ async function onAction(button) {
       if (state.pid === pid) {
         state.pid = null;
         setScopedItem(PID_KEY, '');
+        syncProjectNameUi();
         discardAutosave();
       }
       toast('Проект удалён');
     } else if (act === 'publish') {
       if (backend.provider !== 'claude') throw new Error('Общие публикации недоступны для Google-облака');
-      if (!window.confirm('Опубликовать снимок? Его смогут открыть все пользователи, вошедшие в Kepler Plan.')) return;
+      if (!window.confirm('Опубликовать снимок? Его смогут открыть все пользователи, вошедшие в kep•ler 3D.')) return;
       flushAutosave();
       if (!await flushCloudDraft()) {
         toast('Сначала дождитесь сохранения проекта в облако.', true);
@@ -762,7 +772,13 @@ export function bindProjects(initialAccount = null) {
     if (button) onAction(button);
   });
   document.addEventListener(AUTOSAVE_EVENT, (event) => {
-    scheduleCloudDraft(event.detail?.text, { immediate: document.visibilityState === 'hidden' });
+    scheduleCloudDraft(event.detail?.text, {
+      immediate: event.detail?.immediate === true || document.visibilityState === 'hidden',
+    });
+  });
+  document.addEventListener(PROJECT_NAME_EVENT, () => {
+    if (isProjectsOpen()) render();
+    if (!el('startProjectsView').hidden && !el('startScreen').hidden) renderStartProjects(projects);
   });
   window.addEventListener('online', () => {
     if (hasPendingCloudDraft()) scheduleCloudDraft(null, { immediate: true });

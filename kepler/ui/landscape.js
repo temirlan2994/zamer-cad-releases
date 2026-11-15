@@ -35,6 +35,7 @@ import { saveFile } from './cloud.js';
 import { LS_STYLES, drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
 import { setLandscapeStyle, setSheetStylePref, sheetStylePref } from './landscape-style.js';
 import { el, escapeHtml, toast } from './dom.js';
+import { safeProjectFileName } from './project-name.js';
 import { gridStep } from './snap.js';
 import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
 import { guideDelta, landscapeShape, startGuideSession } from './guides-ui.js';
@@ -1737,13 +1738,9 @@ function renderDrawProps(panel) {
 function bindCommon(panel) {
 }
 
-function safeName() {
-  return (state.project.name || 'kepler-plan').replace(/[^\wа-яА-ЯёЁ -]/g, '').trim().replace(/\s+/g, '-') || 'kepler-plan';
-}
-
 export function downloadLandscapeCsv() {
   if (!landscapeObjects().length) { toast('Ландшафт пуст — ведомость нечего выгружать', true); return; }
-  saveFile(`${safeName()}-ландшафт.csv`, buildLandscapeCsv(state.project), 'text/csv;charset=utf-8');
+  saveFile(`${safeProjectFileName()}-ландшафт.csv`, buildLandscapeCsv(state.project), 'text/csv;charset=utf-8');
   toast('Ведомость озеленения и малых форм (CSV)');
 }
 

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Kepler Plan — быстрый концепт-планировщик домов (чистый JS + canvas)",
+  "description": "kep•ler 3D — быстрый концепт-планировщик домов (чистый JS + canvas)",
   "scripts": {
     "serve": "node scripts/serve.mjs",
     "lint": "eslint .",

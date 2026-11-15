@@ -151,8 +151,8 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
 
   // --- Владелец, контекст, единицы
   const person = add("IFCPERSON($,$,'',$,$,$,$,$)");
-  const org = add("IFCORGANIZATION($,'Kepler Plan',$,$,$)");
-  const owner = add(`IFCOWNERHISTORY(${add(`IFCPERSONANDORGANIZATION(${person},${org},$)`)},${add(`IFCAPPLICATION(${org},'1.0','Kepler Plan','KeplerPlan')`)},$,.NOCHANGE.,$,$,$,${Math.floor(timestamp.getTime() / 1000)})`);
+  const org = add("IFCORGANIZATION($,'kep•ler 3D',$,$,$)");
+  const owner = add(`IFCOWNERHISTORY(${add(`IFCPERSONANDORGANIZATION(${person},${org},$)`)},${add(`IFCAPPLICATION(${org},'1.0','kep•ler 3D','KeplerPlan')`)},$,.NOCHANGE.,$,$,$,${Math.floor(timestamp.getTime() / 1000)})`);
   const origin = pt(0, 0, 0);
   const zUp = dir(0, 0, 1);
   const xDir = dir(1, 0, 0);
@@ -384,7 +384,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     'ISO-10303-21;',
     'HEADER;',
     "FILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');",
-    `FILE_NAME(${stepString(`${project.name || 'kepler'}.ifc`)},'${stamp}',(''),('Kepler Plan'),'Kepler Plan','Kepler Plan','');`,
+    `FILE_NAME(${stepString(`${project.name || 'kepler'}.ifc`)},'${stamp}',(''),('kep•ler 3D'),'kep•ler 3D','kep•ler 3D','');`,
     "FILE_SCHEMA(('IFC4'));",
     'ENDSEC;',
     'DATA;',

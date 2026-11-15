@@ -40,5 +40,5 @@ export function listen(server, port = 0) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = createServer();
   const port = await listen(server, Number(process.env.PORT) || 8080);
-  console.log(`Kepler Plan: http://127.0.0.1:${port}/`);
+  console.log(`kep•ler 3D: http://127.0.0.1:${port}/`);
 }

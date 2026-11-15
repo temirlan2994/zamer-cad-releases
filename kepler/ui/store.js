@@ -15,7 +15,7 @@ import { setStairRise } from '../core/stairs.js';
 import { findNearMissGaps } from '../core/gaps.js';
 import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
-import { el, toast } from './dom.js';
+import { toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
 import { applyModeRotation } from './modes.js';
@@ -30,6 +30,7 @@ import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
 import { arrangeRoomsNow, AUTO_LAYOUT_AVAILABLE } from './auto-layout.js';
+import { syncProjectNameUi } from './project-name.js';
 import {
   getScopedItem, removeScopedItem, scopedKey, setScopedItem,
 } from './storage-scope.js';
@@ -99,7 +100,7 @@ export function parseProjectText(text) {
   try {
     raw = JSON.parse(text, (_k, v) => (typeof v === 'string' && v.startsWith(MEM_REF) ? heavyById.get(v.slice(MEM_REF.length)) ?? null : v));
   } catch {
-    throw new Error('Файл не является JSON-проектом Kepler Plan');
+    throw new Error('Файл не является JSON-проектом kep•ler 3D');
   }
   return projectFromData(raw);
 }
@@ -288,6 +289,7 @@ export function afterChange() {
   renderLevelBar();
   refresh3d(); // открытый 3D-вид следует за правками
   renderViewPanel(); // угол вида режима (поле, «Сбросить», активная кнопка)
+  syncProjectNameUi({ updateInput: document.activeElement?.id !== 'projectName' });
   requestDraw();
   scheduleAutosave();
 }
@@ -328,7 +330,7 @@ function trySet(text) {
 const storedBlobs = new Set();
 
 // Немедленная запись (без дебаунса). true — записано.
-export function flushAutosave() {
+export function flushAutosave({ cloudImmediate = false } = {}) {
   clearTimeout(autosaveTimer);
   autosaveTimer = null;
   if (!autosaveDirty || !state.project) return false;
@@ -348,7 +350,9 @@ export function flushAutosave() {
   // draft с более длинным debounce. Событие не меняет локальную надёжность:
   // при отсутствии аккаунта или сети редактор продолжает работать как раньше.
   if (globalThis.document && typeof globalThis.CustomEvent === 'function') {
-    document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, { detail: { text } }));
+    document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, {
+      detail: { text, immediate: cloudImmediate },
+    }));
   }
   if (trySet(text)) return true;
   const blobs = {};
@@ -486,8 +490,6 @@ export function restoreFrom(text) {
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
-    const name = el('projectName');
-    if (name) name.value = state.project.name;
     applyModeRotation();
     afterChange();
   } catch (error) {
@@ -497,8 +499,6 @@ export function restoreFrom(text) {
     state.layoutVariants = prev.layoutVariants;
     try {
       refreshDerived();
-      const name = el('projectName');
-      if (name) name.value = state.project.name;
       applyModeRotation();
       afterChange();
     } catch { /* прежний проект рисовался — должен и сейчас */ }
@@ -522,6 +522,7 @@ function step(from, to) {
   }
   to.push(current);
   state.pid = entry.pid;
+  syncProjectNameUi();
 }
 
 export function undo() { step(history.undo, history.redo); }

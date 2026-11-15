@@ -35,6 +35,7 @@ import {
 } from './sheet-viewports.js';
 import { sheetStylePref } from './landscape-style.js';
 import { closeSheets, isPhone } from './mobile.js';
+import { PROJECT_NAME_EVENT } from './project-name.js';
 import { history, state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 
@@ -143,7 +144,7 @@ function serial(entry) {
 }
 
 function stampOf(key) {
-  return `${key}/${serial(history.undo.at(-1))}/${serial(history.redo.at(-1))}/${history.undo.length}/${state.project.activeLevel}/${sheetStylePref()}`;
+  return `${key}/${serial(history.undo.at(-1))}/${serial(history.redo.at(-1))}/${history.undo.length}/${state.project.activeLevel}/${sheetStylePref()}/${state.project.name}`;
 }
 
 // После правок (в т. ч. Ctrl+Z): перерисовать или закрыть, если листа нет.
@@ -158,6 +159,8 @@ export function refreshSheetView() {
   }
   if (cache?.stamp !== stampOf(state.sheetOpen) || cache.project !== state.project) renderSheetView();
 }
+
+document.addEventListener(PROJECT_NAME_EVENT, refreshSheetView);
 
 function renderSheetView() {
   const box = el('sheetView');

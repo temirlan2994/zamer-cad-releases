@@ -103,12 +103,17 @@ export function isUpperLevel(project, levelId = project.activeLevel) {
   return Boolean(project.levels?.length > 1 && groundLevel(project).id !== levelId);
 }
 
+export function normalizeProjectName(value, fallback = 'Без названия') {
+  const name = typeof value === 'string' ? value.trim() : '';
+  return Array.from(name || fallback).slice(0, 200).join('');
+}
+
 export function createProject(name = 'Новый дом') {
   const level = createLevel('1 этаж', 0, DEFAULT_LEVEL_HEIGHT, 'L1');
   return attachLevelAccessors({
     schema: SCHEMA,
     revision: 0,
-    name,
+    name: normalizeProjectName(name),
     settings: {
       partition: DEFAULT_PARTITION,
       exterior: DEFAULT_EXTERIOR,
@@ -230,7 +235,7 @@ export function deserializeProject(text) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new Error('Файл не является JSON-проектом Kepler Plan');
+    throw new Error('Файл не является JSON-проектом kep•ler 3D');
   }
   return projectFromData(raw);
 }
@@ -240,7 +245,7 @@ export function projectFromData(raw) {
   const v7 = isV7Data(raw);
   const ver = schemaVersion(raw?.schema);
   if (ver != null && ver > 7) {
-    throw new Error(`Файл создан более новой версией Kepler Plan (формат ${ver}, `
+    throw new Error(`Файл создан более новой версией kep•ler 3D (формат ${ver}, `
       + 'здесь поддерживается до 7). Обновите приложение.');
   }
   const data = migrateProject(v7 ? toV6Data(raw) : raw);
@@ -457,7 +462,7 @@ function cleanSite(site) {
 // Заполняет необязательные поля текущей схемы значениями по умолчанию и
 // чистит содержимое этажей и участка от битых элементов.
 export function normalizeProject(data) {
-  data.name = typeof data.name === 'string' && data.name ? data.name : 'Без названия';
+  data.name = normalizeProjectName(data.name);
   data.revision = Number(data.revision) || 0;
   const levels = Array.isArray(data.levels) ? data.levels.filter(isObj) : [];
   data.levels = levels.map((l, i) => ({

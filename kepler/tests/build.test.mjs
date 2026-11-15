@@ -18,7 +18,7 @@ test('все модули ui/ достижимы из app.js (нет забыт�
 
 test('страница артефакта — фрагмент из index.html', () => {
   const page = artifactPage(html);
-  assert.match(page, /^<title>Kepler Plan<\/title>/);
+  assert.match(page, /^<title>kep•ler 3D<\/title>/);
   assert.ok(page.includes('href="./styles.css"'));
   assert.ok(page.includes('<script type="module" src="./app.js"></script>'));
   assert.ok(!/<(html|head|body)[\s>]/.test(page), 'без обёртки документа');

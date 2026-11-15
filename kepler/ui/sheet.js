@@ -164,7 +164,7 @@ export function frameAndStamp(ctx, { project, title, denominator, scaleText = nu
   text(`Лист ${sheetNo} из ${sheetCount}`, x0 + 64, y0 + 30, 3.5);
   text(new Date().toLocaleDateString('ru-RU'), x0 + 124, y0 + 30, 3.5);
   text(subtitle || '', x0 + 4, y0 + 40, 3.2);
-  text('Kepler Plan · концептуальное решение, не рабочая документация', x0 + 4, y0 + 50, 2.6, 400, '#555');
+  text('kep•ler 3D · концептуальное решение, не рабочая документация', x0 + 4, y0 + 50, 2.6, 400, '#555');
 }
 
 // Экспликация этажа в левой нижней полосе (две колонки при нехватке места).

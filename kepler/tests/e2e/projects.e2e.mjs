@@ -8,7 +8,7 @@ describe('проекты в браузере', () => {
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('сохранить версию → правка → вторая версия → открыть первую', async () => {
+  it('сохранить версию → правка → вторая версия → открыть первую без отката имени', async () => {
     const { page } = app;
     await page.click('#projectsBtn');
     await page.waitForSelector('#projectsScreen:not([hidden]) #prjSave:not([disabled])');
@@ -32,7 +32,8 @@ describe('проекты в браузере', () => {
     await page.waitForSelector('.prj-ver');
     await page.click('.prj-ver:last-child [data-act="open"]'); // самая старая версия
     await page.waitForFunction(() => document.getElementById('projectsScreen').hidden);
-    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), name0);
+    assert.notEqual(name0, 'Дом v2');
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), 'Дом v2');
     assert.deepEqual(app.errors, []);
   });
 

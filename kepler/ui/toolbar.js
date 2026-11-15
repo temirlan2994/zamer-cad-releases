@@ -7,9 +7,12 @@ import { applyLibraryTab } from './library.js';
 import { setEditorMode } from './modes.js';
 import { finishDraft } from './site-actions.js';
 import { openProjectChooser } from './projects.js';
+import { normalizeProjectName, syncProjectNameUi } from './project-name.js';
 import { closeStartMenu, requestNewProject } from './start-menu.js';
 import { state } from './state.js';
-import { mutate, redo, tweak, undo } from './store.js';
+import {
+  flushAutosave, pushHistory, redo, snapshot, tweak, undo,
+} from './store.js';
 import { cycleTheme } from './theme.js';
 import { applyCalibration, hideCalInput, loadUnderlayFile } from './underlay.js';
 import { bindViewPanel } from './view-align.js';
@@ -127,7 +130,52 @@ export function bindToolbar() {
   refs.exportDropdown.querySelectorAll('[data-export]').forEach((btn) => {
     btn.addEventListener('click', () => handleExport(btn.dataset.export));
   });
-  refs.projectName.addEventListener('change', () => {
-    mutate(() => { state.project.name = refs.projectName.value.trim() || state.project.name; });
+  let nameBefore = null;
+  let nameBeforePid = null;
+  let nameBeforeValue = null;
+  refs.projectName.addEventListener('focus', () => {
+    nameBeforeValue = state.project.name;
+    refs.projectName.select();
+  });
+  const rememberNameBefore = () => {
+    if (nameBefore) return;
+    nameBefore = snapshot();
+    nameBeforePid = state.pid;
+  };
+  refs.projectName.addEventListener('input', () => {
+    const name = normalizeProjectName(refs.projectName.value);
+    if (name === state.project.name) return;
+    rememberNameBefore();
+    tweak(() => { state.project.name = name; });
+    syncProjectNameUi({ updateInput: false });
+  });
+  refs.projectName.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      refs.projectName.blur();
+    } else if (event.key === 'Escape' && nameBeforeValue !== null) {
+      event.preventDefault();
+      tweak(() => { state.project.name = nameBeforeValue; });
+      refs.projectName.value = nameBeforeValue;
+      syncProjectNameUi();
+      nameBefore = null;
+      nameBeforePid = null;
+      nameBeforeValue = null;
+      refs.projectName.blur();
+    }
+  });
+  refs.projectName.addEventListener('blur', () => {
+    const name = normalizeProjectName(refs.projectName.value);
+    if (name !== state.project.name) {
+      rememberNameBefore();
+      tweak(() => { state.project.name = name; });
+    }
+    refs.projectName.value = state.project.name;
+    syncProjectNameUi();
+    if (nameBefore && nameBeforeValue !== state.project.name) pushHistory(nameBefore, nameBeforePid);
+    nameBefore = null;
+    nameBeforePid = null;
+    nameBeforeValue = null;
+    flushAutosave({ cloudImmediate: true });
   });
 }
