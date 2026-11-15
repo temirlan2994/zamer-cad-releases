@@ -96,8 +96,9 @@ describe('ручные стены', () => {
     const { page } = app;
     const saved = await page.evaluate(async () => {
       const store = await import('./ui/store.js');
+      const { getScopedItem } = await import('./ui/storage-scope.js');
       store.flushAutosave();
-      return JSON.parse(localStorage.getItem('kepler-plan-autosave')).schema;
+      return JSON.parse(getScopedItem('kepler-plan-autosave')).schema;
     });
     assert.equal(saved, 'kepler-plan/7');
     await page.reload();

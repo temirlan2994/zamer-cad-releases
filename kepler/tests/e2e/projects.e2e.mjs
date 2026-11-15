@@ -89,4 +89,22 @@ describe('проекты и отмена', () => {
     await page.keyboard.press('Control+z');
     assert.ok(await rooms() > 0, 'пример остался на месте');
   });
+
+  it('окно «Проекты» не пропускает Ctrl+Z к открытому чертежу', async () => {
+    const { page } = app;
+    const before = await page.evaluate(() => window.__kepler.state.project.name);
+    await page.evaluate(async () => {
+      const store = await import('./ui/store.js');
+      const { state } = await import('./ui/state.js');
+      store.mutate(() => { state.project.name = 'Не менять под окном'; });
+    });
+    await page.waitForFunction(() => window.__kepler.state.project.name === 'Не менять под окном');
+    await page.click('#projectsBtn');
+    await page.waitForSelector('#projectsScreen:not([hidden])');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), 'Не менять под окном');
+    await page.click('#projectsClose');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), before);
+  });
 });

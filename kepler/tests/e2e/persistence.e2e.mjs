@@ -10,8 +10,9 @@ const KEY = 'kepler-plan-autosave';
 async function reloadWith(page, text) {
   await page.evaluate(async ([key, value]) => {
     const store = await import('./ui/store.js');
+    const scope = await import('./ui/storage-scope.js');
     store.flushAutosave();
-    localStorage.setItem(key, value);
+    scope.setScopedItem(key, value);
   }, [KEY, text]);
   await page.reload();
   await page.waitForFunction(() => Boolean(window.__kepler));
@@ -66,11 +67,14 @@ describe('сохранение и восстановление', () => {
     const broken = JSON.stringify({ schema: 'kepler-plan/5', name: 'Битый', levels: 'нет' });
     await reloadWith(page, broken);
     await page.waitForSelector('#startScreen:not([hidden])');
-    const s = await page.evaluate(() => ({
-      backup: localStorage.getItem('kepler-plan-autosave-broken'),
-      warn: document.getElementById('startWarn').textContent,
-      rooms: window.__kepler.state.project.rooms.length,
-    }));
+    const s = await page.evaluate(async () => {
+      const { getScopedItem } = await import('./ui/storage-scope.js');
+      return {
+        backup: getScopedItem('kepler-plan-autosave-broken'),
+        warn: document.getElementById('startWarn').textContent,
+        rooms: window.__kepler.state.project.rooms.length,
+      };
+    });
     assert.equal(s.backup, broken);
     assert.match(s.warn, /не открылся/);
     assert.equal(s.rooms, 0);
@@ -111,10 +115,11 @@ describe('сохранение и восстановление', () => {
     const { page } = app;
     const saved = await page.evaluate(async () => {
       const store = await import('./ui/store.js');
+      const { getScopedItem } = await import('./ui/storage-scope.js');
       const { state } = await import('./ui/state.js');
       store.mutate(() => { state.project.name = 'Перед закрытием'; });
       window.dispatchEvent(new Event('pagehide'));
-      return JSON.parse(localStorage.getItem('kepler-plan-autosave')).name;
+      return JSON.parse(getScopedItem('kepler-plan-autosave')).name;
     });
     assert.equal(saved, 'Перед закрытием');
   });
@@ -147,10 +152,12 @@ describe('сохранение и восстановление', () => {
     const { page } = app;
     const s = await page.evaluate(async () => {
       const store = await import('./ui/store.js');
+      const { getScopedItem, scopedKey } = await import('./ui/storage-scope.js');
       const { state } = await import('./ui/state.js');
       const orig = Storage.prototype.setItem;
+      const autosaveKey = scopedKey('kepler-plan-autosave');
       Storage.prototype.setItem = function setItem(k, v) {
-        if (k === 'kepler-plan-autosave' && String(v).length > 200000) throw new DOMException('full', 'QuotaExceededError');
+        if (k === autosaveKey && String(v).length > 200000) throw new DOMException('full', 'QuotaExceededError');
         return orig.call(this, k, v);
       };
       try {
@@ -159,7 +166,7 @@ describe('сохранение и восстановление', () => {
       } finally {
         Storage.prototype.setItem = orig;
       }
-      const saved = localStorage.getItem('kepler-plan-autosave');
+      const saved = getScopedItem('kepler-plan-autosave');
       return { name: JSON.parse(saved).name, len: saved.length, src: JSON.parse(saved).site.underlay?.src, toast: document.getElementById('toast').textContent };
     });
     assert.equal(s.name, 'Квота');

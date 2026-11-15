@@ -25,6 +25,7 @@
           <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
           <span class="top-sep" aria-hidden="true"></span>
           <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
+          <button id="accountBtn" class="account-chip" type="button" title="Войти в Google-аккаунт и открыть облачные проекты">Войти</button>
           <input type="file" id="fileInput" accept=".json,application/json" hidden />
           <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
           <div class="export-wrap">
@@ -291,6 +292,25 @@
         <div class="start-head">
           <b class="help-title">Проекты</b>
           <button class="icon-btn" id="projectsClose" title="Закрыть (Esc)">✕</button>
+        </div>
+        <div class="projects-account" id="projectsAccount">
+          <div class="projects-account-profile">
+            <img id="projectsAccountAvatar" alt="" referrerpolicy="no-referrer" hidden />
+            <span class="projects-account-placeholder" id="projectsAccountPlaceholder" aria-hidden="true">G</span>
+            <span>
+              <strong id="projectsAccountName">Гостевой режим</strong>
+              <small id="projectsAccountEmail">Проекты доступны только в этом браузере</small>
+            </span>
+          </div>
+          <div class="projects-account-actions">
+            <button class="primary" id="googleSignIn" type="button">Войти через Google</button>
+            <button id="googleSignOut" type="button" hidden>Выйти</button>
+          </div>
+        </div>
+        <p class="cloud-sync-status" id="cloudSyncStatus" role="status" aria-live="polite"></p>
+        <div class="projects-transfer" id="projectsTransfer" hidden>
+          <span>В этом браузере есть локальные проекты.</span>
+          <button id="projectsTransferBtn" type="button">Скопировать их в облако</button>
         </div>
         <p class="hint" id="projectsMode"></p>
         <div class="library-tabs">

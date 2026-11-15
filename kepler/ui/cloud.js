@@ -6,7 +6,12 @@
 
 import { buildZip } from '../core/zip.js';
 import { userRoot } from '../core/storage.js';
+import { firebaseConfigured } from '../firebase-config.js';
 import { toast } from './dom.js';
+import {
+  firebaseSignInGoogle, firebaseSignOut, firebaseState, initializeFirebase,
+  onFirebaseAuthChanged,
+} from './firebase.js';
 import { createLocalDb } from './localdb.js';
 
 const withTimeout = (promise, ms) => Promise.race([
@@ -14,25 +19,117 @@ const withTimeout = (promise, ms) => Promise.race([
   new Promise((resolve) => { setTimeout(() => resolve(null), ms); }),
 ]);
 
-let backendPromise = null;
+let claudeBackendPromise = null;
+let localBackendPromise = null;
+
+async function claudeBackend() {
+  if (!globalThis.claude?.use) return null;
+  claudeBackendPromise ??= (async () => {
+    try {
+      const claude = globalThis.claude;
+      const [db, user] = await Promise.all([withTimeout(claude.use('db'), 8000), withTimeout(claude.use('user'), 8000)]);
+      if (!db || !user?.id) return null;
+      const uid = await user.id();
+      return uid ? {
+        mode: 'cloud', provider: 'claude', db, uid: String(uid),
+        root: userRoot(uid), persistent: true,
+        user: { uid: String(uid), name: '', email: '', photoURL: '' },
+      } : null;
+    } catch { return null; }
+  })();
+  return claudeBackendPromise;
+}
+
+async function localBackend() {
+  localBackendPromise ??= createLocalDb().then((local) => ({
+    mode: 'browser', provider: 'local', db: local.db, uid: 'local',
+    root: userRoot('local'), persistent: local.persistent, user: null,
+  }));
+  return localBackendPromise;
+}
+
+export function getLocalBackend() { return localBackend(); }
 
 // → { mode: 'cloud' | 'browser', db, uid, root, persistent }
 export function getBackend() {
-  backendPromise ??= (async () => {
-    try {
-      const claude = globalThis.claude;
-      if (claude?.use) {
-        const [db, user] = await Promise.all([withTimeout(claude.use('db'), 8000), withTimeout(claude.use('user'), 8000)]);
-        if (db && user?.id) {
-          const uid = await user.id();
-          if (uid) return { mode: 'cloud', db, uid: String(uid), root: userRoot(uid), persistent: true };
+  return (async () => {
+    const claude = await claudeBackend();
+    if (claude) return claude;
+    if (firebaseConfigured()) {
+      try {
+        const runtime = await withTimeout(initializeFirebase(), 8000);
+        if (runtime?.user) {
+          const user = {
+            uid: String(runtime.user.uid), name: runtime.user.displayName || '',
+            email: runtime.user.email || '', photoURL: runtime.user.photoURL || '',
+          };
+          return {
+            mode: 'cloud', provider: 'firebase', db: runtime.db, uid: user.uid,
+            root: userRoot(user.uid), persistent: true, user,
+          };
         }
-      }
-    } catch { /* нет облака — работаем в браузере */ }
-    const local = await createLocalDb();
-    return { mode: 'browser', db: local.db, uid: 'local', root: userRoot('local'), persistent: local.persistent };
+      } catch { /* Firebase недоступен — локальный режим остаётся рабочим */ }
+    }
+    return localBackend();
   })();
-  return backendPromise;
+}
+
+export async function getAccountState() {
+  const claude = await claudeBackend();
+  if (claude) return { provider: 'claude', configured: true, signedIn: true, user: claude.user, error: null };
+  const state = await withTimeout(firebaseState(), 8000) || {
+    configured: firebaseConfigured(), user: null,
+    error: new Error('Google/Firebase пока не отвечает — доступен локальный режим'),
+  };
+  return {
+    provider: state.configured ? 'firebase' : 'local',
+    configured: state.configured,
+    signedIn: Boolean(state.user),
+    user: state.user,
+    error: state.error,
+  };
+}
+
+// Вызывается до loadAutosave(): так локальные ключи сразу получают namespace
+// текущего Google/Claude uid и один пользователь общего компьютера не увидит
+// черновик другого.
+export async function prepareAccount() {
+  const state = await getAccountState();
+  return { ...state, uid: state.user?.uid || 'guest' };
+}
+
+export async function getInitialAccountUid() {
+  return (await prepareAccount()).uid;
+}
+
+export async function initializeCloud() {
+  await getAccountState();
+  return getBackend();
+}
+
+export function onAccountChange(listener) {
+  if (globalThis.claude?.use) {
+    getAccountState().then(listener);
+    return () => {};
+  }
+  if (!firebaseConfigured()) {
+    queueMicrotask(() => listener({ provider: 'local', configured: false, signedIn: false, user: null, error: null }));
+    return () => {};
+  }
+  return onFirebaseAuthChanged((state) => listener({
+    provider: 'firebase', configured: state.configured,
+    signedIn: Boolean(state.user), user: state.user, error: state.error,
+  }));
+}
+
+export async function signInGoogle() {
+  await firebaseSignInGoogle();
+  return getAccountState();
+}
+
+export async function signOutGoogle() {
+  await firebaseSignOut();
+  return getAccountState();
 }
 
 // Расширения, которые принимает capability `downloads`.

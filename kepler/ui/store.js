@@ -30,10 +30,15 @@ import { syncUnderlayImage } from './underlay.js';
 import { requestDraw } from './view.js';
 import { refresh3d } from './view3d.js';
 import { arrangeRoomsNow, AUTO_LAYOUT_AVAILABLE } from './auto-layout.js';
+import {
+  getScopedItem, removeScopedItem, scopedKey, setScopedItem,
+} from './storage-scope.js';
 
 export const AUTOSAVE_KEY = 'kepler-plan-autosave';
+export const AUTOSAVE_AT_KEY = `${AUTOSAVE_KEY}-at`;
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
 export const BROKEN_KEY = `${AUTOSAVE_KEY}-broken`; // резерв битого автосохранения
+export const AUTOSAVE_EVENT = 'kepler:autosave';
 const OWNER_KEY = `${AUTOSAVE_KEY}-tab`; // какая вкладка записала автосохранение последней
 const TAB_ID = newId('tab');
 
@@ -308,13 +313,14 @@ function scheduleAutosave() {
 
 function trySet(text) {
   try {
-    localStorage.setItem(AUTOSAVE_KEY, text);
+    setScopedItem(AUTOSAVE_KEY, text);
   } catch {
     return false;
   }
   try {
-    localStorage.setItem(PID_KEY, state.pid || '');
-    localStorage.setItem(OWNER_KEY, TAB_ID);
+    setScopedItem(PID_KEY, state.pid || '');
+    setScopedItem(OWNER_KEY, TAB_ID);
+    setScopedItem(AUTOSAVE_AT_KEY, new Date().toISOString());
   } catch { /* главное записано */ }
   return true;
 }
@@ -338,13 +344,20 @@ export function flushAutosave() {
     console.error('Автосохранение: проект не сериализуется', error);
     return false;
   }
+  // Облачный слой слушает уже готовый полный JSON и сохраняет отдельный
+  // draft с более длинным debounce. Событие не меняет локальную надёжность:
+  // при отсутствии аккаунта или сети редактор продолжает работать как раньше.
+  if (globalThis.document && typeof globalThis.CustomEvent === 'function') {
+    document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, { detail: { text } }));
+  }
   if (trySet(text)) return true;
   const blobs = {};
   const lite = JSON.stringify(state.project, (_k, v) => {
     if (!isHeavy(v)) return v;
     const h = heavyId(v);
-    blobs[h] = v;
-    return IDB_REF + h;
+    const storageId = scopedKey(`${AUTOSAVE_KEY}-blob-${h}`);
+    blobs[storageId] = v;
+    return IDB_REF + storageId;
   });
   if (lite.length < text.length && trySet(lite)) {
     for (const [h, s] of Object.entries(blobs)) {
@@ -369,7 +382,7 @@ export function bindAutosaveLifecycle() {
     if (document.visibilityState === 'hidden') flushAutosave();
   });
   window.addEventListener('storage', (e) => {
-    if (e.key === OWNER_KEY && e.newValue && e.newValue !== TAB_ID) {
+    if (e.key === scopedKey(OWNER_KEY) && e.newValue && e.newValue !== TAB_ID) {
       warnOnce('tabs', 'Проект открыт ещё в одной вкладке: автосохранение у них общее, и последняя правка перезапишет другую. Работайте в одной вкладке.');
     }
   });
@@ -379,15 +392,15 @@ export function bindAutosaveLifecycle() {
 // не вышло — в IndexedDB.
 function backupBroken(text) {
   try {
-    localStorage.setItem(BROKEN_KEY, text);
+    setScopedItem(BROKEN_KEY, text);
     return;
   } catch { /* нет места — ниже */ }
   try {
-    localStorage.removeItem(AUTOSAVE_KEY);
-    localStorage.setItem(BROKEN_KEY, text);
+    removeScopedItem(AUTOSAVE_KEY);
+    setScopedItem(BROKEN_KEY, text);
     return;
   } catch { /* и так нет */ }
-  putBlob(BROKEN_KEY, text).catch(() => {});
+  putBlob(scopedKey(BROKEN_KEY), text).catch(() => {});
 }
 
 // Ссылки kidb:<хеш> → null; держатели запоминаются, чтобы вернуть данные
@@ -407,15 +420,17 @@ function detachIdbRefs(node, out) {
 // { broken, error } — сохранение не открылось, копия убрана в резерв.
 export function loadAutosave() {
   let saved;
-  try { saved = localStorage.getItem(AUTOSAVE_KEY); } catch { return { project: null }; }
+  try { saved = getScopedItem(AUTOSAVE_KEY); } catch { return { project: null }; }
   if (!saved) return { project: null };
+  let savedAt = null;
+  try { savedAt = getScopedItem(AUTOSAVE_AT_KEY); } catch { /* старый черновик без даты */ }
   try {
     const project = deserializeProject(saved);
     const refs = [];
     detachIdbRefs(project, refs);
     deriveAll(project); // упадёт здесь, а не после замены проекта
     if (!hasContent(project) && !refs.length) return { project: null };
-    return { project, refs };
+    return { project, refs, savedAt };
   } catch (error) {
     console.error('Автосохранение не открылось:', error);
     backupBroken(saved);
@@ -425,9 +440,9 @@ export function loadAutosave() {
 
 // Вернуть подложку из IndexedDB в открытый при запуске проект.
 export function restoreHeavyRefs(project, refs) {
-  if (!refs?.length) return;
+  if (!refs?.length) return Promise.resolve();
   heavyPending = true;
-  Promise.all(refs.map((r) => getBlob(r.id).then((s) => ({ ...r, s }), () => ({ ...r, s: null }))))
+  return Promise.all(refs.map((r) => getBlob(r.id).then((s) => ({ ...r, s }), () => ({ ...r, s: null }))))
     .then((list) => {
       heavyPending = false;
       if (state.project !== project) return;
@@ -439,6 +454,18 @@ export function restoreHeavyRefs(project, refs) {
       syncUnderlayImage();
       requestDraw();
     });
+}
+
+// Явное удаление открытого облачного проекта не должно оставлять его
+// локальный черновик, который при следующем запуске создал бы проект заново.
+export function discardAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  autosaveDirty = false;
+  try {
+    removeScopedItem(AUTOSAVE_KEY);
+    removeScopedItem(AUTOSAVE_AT_KEY);
+  } catch { /* локальное хранилище недоступно */ }
 }
 
 // Замена проекта текстом (файл, версия, отмена). Сначала разбор и расчёт

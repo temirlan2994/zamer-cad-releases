@@ -1516,6 +1516,30 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 
 /* Панель «Проекты» */
 .projects-card { max-width: 640px; width: 100%; max-height: 86vh; overflow: auto; }
+.start-screen[data-busy="true"] .projects-card { pointer-events: none; opacity: 0.82; }
+.projects-account {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 8px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+}
+.projects-account-profile { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.projects-account-profile > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.projects-account-profile strong, .projects-account-profile small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projects-account-profile small { color: var(--muted); }
+.projects-account-profile img, .projects-account-placeholder {
+  flex: none; width: 34px; height: 34px; border-radius: 50%;
+}
+.projects-account-profile img { display: block; object-fit: cover; }
+.projects-account-placeholder { display: grid; place-items: center; background: #fff; color: #4285f4; font-size: 18px; font-weight: 800; }
+.projects-account-actions { display: flex; flex: none; gap: 6px; }
+.cloud-sync-status { min-height: 1.4em; margin: 6px 0; color: var(--muted); font-size: 12.5px; }
+.cloud-sync-status:empty { display: none; }
+.cloud-sync-status[data-state="saved"] { color: var(--ok-text); }
+.cloud-sync-status[data-state="saving"] { color: var(--accent); }
+.cloud-sync-status[data-state="error"] { color: var(--danger); }
+.projects-transfer {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 12.5px;
+}
 .projects-save { display: flex; gap: 8px; margin: 10px 0; }
 .projects-save input { flex: 1; min-width: 0; }
 .projects-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1527,6 +1551,18 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .prj-vers { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
 .prj-ver { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
 .prj-ver span { flex: 1; }
+.account-chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-chip[data-sync="saving"] { box-shadow: inset 3px 0 var(--accent); }
+.account-chip[data-sync="saved"] { box-shadow: inset 3px 0 var(--ok-text); }
+.account-chip[data-sync="error"] { box-shadow: inset 3px 0 var(--danger); }
+
+@media (max-width: 640px) {
+  .projects-account { align-items: stretch; flex-direction: column; }
+  .projects-account-profile small { overflow: visible; white-space: normal; }
+  .projects-account-actions > button { flex: 1; min-height: 40px; }
+  .projects-transfer { align-items: stretch; flex-direction: column; }
+  #accountBtn { display: none; }
+}
 
 /* --- Рельеф (отметки высот) --- */
 .terrain-warn {

@@ -93,6 +93,9 @@ export function bindKeyboard() {
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }
     if (event.key === 'Escape' && isProjectsOpen()) { closeProjects(); return; }
+    // Пока окно проектов открыто (в том числе во время облачной записи или
+    // удаления), никакие команды плана — даже Ctrl+Z/Y — не проходят вниз.
+    if (isProjectsOpen()) return;
     // Вид открыт двойным кликом на листе — Esc закрывает его и возвращает лист.
     // В 3D Esc сначала отменяет жест и снимает выбор, без выбора — закрывает вид.
     if (event.key === 'Escape' && is3dOpen()) {

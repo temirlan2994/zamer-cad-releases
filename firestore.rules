@@ -1,0 +1,129 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validId(value) {
+      return value.matches('^[A-Za-z0-9._:@+~-]{1,128}$');
+    }
+
+    function validChunk() {
+      return request.resource.data.keys().hasOnly(['s'])
+        && request.resource.data.s is string
+        && request.resource.data.s.size() <= 210000;
+    }
+
+    function validProjectMeta() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'createdAt', 'updatedAt', 'draftUpdatedAt', 'draftRevision',
+          'draftStats', 'name', 'head', 'versions', 'blobs'
+        ])
+        && data.keys().hasAll(['createdAt', 'updatedAt', 'name', 'versions', 'blobs'])
+        && data.createdAt is string
+        && data.updatedAt is string
+        && data.name is string
+        && data.name.size() <= 200
+        && data.versions is list
+        && data.versions.size() <= 30
+        && data.blobs is map
+        && data.blobs.keys().size() <= 512
+        && (!('head' in data) || data.head == null || data.head is string)
+        && (!('draftUpdatedAt' in data)
+          || data.draftUpdatedAt == null
+          || data.draftUpdatedAt is string)
+        && (!('draftRevision' in data)
+          || data.draftRevision == null
+          || data.draftRevision is string)
+        && (!('draftStats' in data)
+          || data.draftStats == null
+          || data.draftStats is map);
+    }
+
+    // Указатель текущего облачного черновика. Сам JSON и тяжёлые data: URL
+    // лежат в chunk-документах, поэтому pointer остаётся небольшим.
+    function validDraftPointer() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'revision', 'hash', 'chunks', 'bytes', 'blobs',
+          'updatedAt', 'stats', 'name'
+        ])
+        && data.revision is string
+        && validId(data.revision)
+        && data.hash is string
+        && data.hash.size() <= 160
+        && data.chunks is int
+        && data.chunks >= 1
+        && data.chunks <= 256
+        && data.bytes is int
+        && data.bytes >= 0
+        && data.blobs is map
+        && data.blobs.keys().size() <= 512
+        && data.updatedAt is string
+        && (!('stats' in data) || data.stats == null || data.stats is map)
+        && (!('name' in data) || (data.name is string && data.name.size() <= 200));
+    }
+
+    // Личные проекты. Изоляция выполняется по Firebase Auth UID; знание
+    // пути или идентификатора проекта не даёт доступа к чужим данным.
+    match /data/users/{uid}/{pid} {
+      allow read, delete: if isOwner(uid) && validId(pid);
+      allow create, update: if isOwner(uid) && validId(pid) && validProjectMeta();
+
+      match /c/{part} {
+        allow read, delete: if isOwner(uid) && validId(part);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /b/{part} {
+        allow read, delete: if isOwner(uid) && validId(part);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft/{draftId} {
+        allow read, delete: if isOwner(uid) && validId(draftId);
+        allow create, update: if isOwner(uid)
+          && draftId == 'current'
+          && validDraftPointer();
+        allow create, update: if isOwner(uid)
+          && draftId != 'current'
+          && validId(draftId)
+          && validChunk();
+      }
+
+      match /draft-c/{part} {
+        allow read, delete: if isOwner(uid) && validId(part);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft-b/{part} {
+        allow read, delete: if isOwner(uid) && validId(part);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft-blobs/{part} {
+        allow read, delete: if isOwner(uid) && validId(part);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+    }
+
+    // Глобальные публикации намеренно выключены для Firebase: задача этого
+    // backend — только личные файлы. Это исключает чтение недоверенных
+    // проектов и расход общей квоты чужими публикациями.
+    match /shared/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Всё, что не описано выше, закрыто.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

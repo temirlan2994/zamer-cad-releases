@@ -6,6 +6,9 @@
 //   <root>/<pid>/c/<vid>.<i>   текст версии кусками ≤ 200 КиБ (лимит документа 256 КиБ)
 //   <root>/<pid>/b/<hash>.<i>  тяжёлые данные (картинка топосъёмки) — одна копия
 //                              на все версии, удаляется, когда на неё никто не ссылается
+//   <root>/<pid>/draft/current последний облачный черновик (указатель)
+//   <root>/<pid>/draft/<rev>.<i> части текста черновика
+//   <root>/<pid>/draft-blobs/<hash>.<i> тяжёлые данные черновика
 //
 // Личные проекты: root = data/users/<uid> — видит только владелец.
 // Публикация «для просмотра»: root = shared/<uid>/p, оглавление — shared/<uid>
@@ -13,8 +16,13 @@
 
 export const CHUNK_BYTES = 200 * 1024;
 export const KEEP_VERSIONS = 30;
+// 256 × 200 КиБ ≈ 50 МиБ на один JSON/blob — уже намного больше обычного
+// проекта, но не позволяет повреждённым метаданным запустить тысячи чтений.
+const MAX_CHUNKS = 256;
+const MAX_BLOBS = 512;
 const HEAVY_MIN = 4096; // строки data:… длиннее — в отдельные документы
 const BLOB_PREFIX = 'kblob:';
+const SAFE_ID = /^[A-Za-z0-9._:@+~-]{1,128}$/;
 
 // cyrb53 + длина — быстрый некриптографический отпечаток (символы [0-9a-z]).
 export function hashText(text) {
@@ -33,6 +41,8 @@ export function hashText(text) {
 export function newId(prefix) {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
+
+const safeId = (value) => typeof value === 'string' && SAFE_ID.test(value);
 
 const encoder = new TextEncoder();
 const docBytes = (s) => encoder.encode(JSON.stringify({ s })).length;
@@ -109,20 +119,27 @@ async function inBatches(items, size, fn) {
 
 async function writeChunks(db, coll, prefix, text) {
   const parts = chunkText(text);
+  if (parts.length > MAX_CHUNKS) throw new Error('Проект слишком большой для облачного хранения');
   await inBatches(parts.map((s, i) => [i, s]), 4, ([i, s]) => retry(() => db.doc(`${coll}/${prefix}.${i}`).set({ s })));
   return parts.length;
 }
 
 async function readChunks(db, coll, prefix, count) {
-  const parts = await Promise.all(Array.from({ length: count }, (_, i) => retry(() => db.doc(`${coll}/${prefix}.${i}`).get())));
-  return parts.map((snap, i) => {
+  if (!safeId(prefix) || !Number.isInteger(count) || count < 1 || count > MAX_CHUNKS) {
+    throw new Error('Некорректное описание частей проекта');
+  }
+  const parts = Array(count);
+  await inBatches(Array.from({ length: count }, (_, i) => i), 8, async (i) => {
+    const snap = await retry(() => db.doc(`${coll}/${prefix}.${i}`).get());
     const s = snap.exists ? snap.data()?.s : undefined;
     if (typeof s !== 'string') throw new Error(`Нет части ${i + 1} из ${count} (${prefix}) — данные повреждены или нет доступа`);
-    return s;
-  }).join('');
+    parts[i] = s;
+  });
+  return parts.join('');
 }
 
 async function deleteChunks(db, coll, prefix, count) {
+  if (!safeId(prefix) || !Number.isInteger(count) || count < 1 || count > MAX_CHUNKS) return;
   await inBatches(Array.from({ length: count }, (_, i) => i), 4, (i) => retry(() => db.doc(`${coll}/${prefix}.${i}`).delete()));
 }
 
@@ -131,6 +148,167 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 export async function getProject(db, root, pid) {
   const snap = await retry(() => db.doc(`${root}/${pid}`).get());
   return snap.exists ? { id: pid, ...clone(snap.data()) } : null;
+}
+
+const draftColl = (root, pid) => `${root}/${pid}/draft`;
+const draftBlobsColl = (root, pid) => `${root}/${pid}/draft-blobs`;
+const draftRef = (db, root, pid) => db.doc(`${draftColl(root, pid)}/current`);
+
+function normalizedDraft(data) {
+  if (!data || typeof data !== 'object') return null;
+  const revision = typeof data.revision === 'string' ? data.revision : '';
+  const chunks = Number(data.chunks);
+  if (!safeId(revision) || !Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) return null;
+  const blobs = data.blobs && typeof data.blobs === 'object' && !Array.isArray(data.blobs)
+    ? Object.fromEntries(Object.entries(data.blobs)
+      .filter(([h, n]) => safeId(h) && Number.isInteger(Number(n)) && Number(n) > 0 && Number(n) <= MAX_CHUNKS)
+      .slice(0, MAX_BLOBS)
+      .map(([h, n]) => [h, Number(n)]))
+    : {};
+  return { ...clone(data), revision, chunks, blobs };
+}
+
+async function touchDraftMeta(db, root, pid, { at, name, revision, stats }) {
+  const ref = db.doc(`${root}/${pid}`);
+  let fields = {
+    name: name || 'Без названия',
+    updatedAt: at,
+    draftUpdatedAt: at,
+    draftRevision: revision,
+    draftStats: stats,
+  };
+  const snap = await retry(() => ref.get());
+  if (snap.exists) {
+    const current = snap.data() || {};
+    if (String(current.updatedAt || '') > String(at)) {
+      fields = { ...fields, name: current.name || fields.name, updatedAt: current.updatedAt };
+    }
+    await retry(() => ref.update(fields));
+    return { id: pid, ...clone(current), ...fields };
+  }
+  const meta = { createdAt: at, versions: [], blobs: {}, head: null, ...fields };
+  await retry(() => ref.set(meta));
+  return { id: pid, ...meta };
+}
+
+// Фоновое облачное сохранение. Черновик отделён от ручных версий: частые
+// правки не засоряют их список, а последний проект можно продолжить на
+// другом устройстве. Указатель пишется только после всех частей.
+export async function saveDraft(db, root, projectText, {
+  pid, stats = null, now = new Date(),
+} = {}) {
+  if (!pid) throw new Error('Нет идентификатора проекта');
+  const at = now.toISOString();
+  const { body, blobs, name } = splitHeavy(projectText);
+  const hash = hashText(body);
+  const ref = draftRef(db, root, pid);
+  const beforeSnap = await retry(() => ref.get());
+  const before = beforeSnap.exists ? normalizedDraft(beforeSnap.data()) : null;
+  if (before?.hash === hash) {
+    const meta = await getProject(db, root, pid);
+    const savedMeta = meta?.draftRevision === before.revision
+      ? meta
+      : await touchDraftMeta(db, root, pid, {
+        at: before.updatedAt || at,
+        name: name || before.name,
+        revision: before.revision,
+        stats: before.stats ?? stats,
+      });
+    return { meta: savedMeta, draft: before, unchanged: true };
+  }
+
+  const blobChunks = {};
+  for (const [h, text] of Object.entries(blobs)) {
+    blobChunks[h] = before?.blobs?.[h]
+      || await writeChunks(db, draftBlobsColl(root, pid), h, text);
+  }
+  const revision = newId('d');
+  const chunks = await writeChunks(db, draftColl(root, pid), revision, body);
+  const draft = {
+    revision,
+    updatedAt: at,
+    name: name || 'Без названия',
+    hash,
+    chunks,
+    bytes: body.length,
+    blobs: blobChunks,
+    stats,
+  };
+  await retry(() => ref.set(draft));
+  // Карточка следует за фактическим указателем, даже если другая вкладка
+  // успела заменить его между записью частей и этим чтением.
+  let check = await retry(() => ref.get());
+  let active = check.exists ? normalizedDraft(check.data()) : null;
+  let meta = active
+    ? await touchDraftMeta(db, root, pid, {
+      at: active.updatedAt || at,
+      name: active.name || name,
+      revision: active.revision,
+      stats: active.stats ?? stats,
+    })
+    : await getProject(db, root, pid);
+  const finalCheck = await retry(() => ref.get());
+  const finalActive = finalCheck.exists ? normalizedDraft(finalCheck.data()) : null;
+  if (finalActive && finalActive.revision !== active?.revision) {
+    active = finalActive;
+    meta = await touchDraftMeta(db, root, pid, {
+      at: active.updatedAt || at,
+      name: active.name || name,
+      revision: active.revision,
+      stats: active.stats ?? stats,
+    });
+    check = finalCheck;
+  }
+
+  // Не удаляем данные, если другая вкладка уже успела положить новый
+  // указатель: её черновик мог переиспользовать прежний blob.
+  if (check.exists && check.data()?.revision === revision && before) {
+    await deleteChunks(db, draftColl(root, pid), before.revision, before.chunks);
+    for (const [h, n] of Object.entries(before.blobs)) {
+      if (!(h in blobChunks)) await deleteChunks(db, draftBlobsColl(root, pid), h, n);
+    }
+  }
+  return { meta, draft, unchanged: false, superseded: active?.revision !== revision };
+}
+
+export async function loadDraft(db, root, pid) {
+  const snap = await retry(() => draftRef(db, root, pid).get());
+  if (!snap.exists) return null;
+  const draft = normalizedDraft(snap.data());
+  if (!draft) throw new Error('Облачный черновик повреждён');
+  const body = await readChunks(db, draftColl(root, pid), draft.revision, draft.chunks);
+  const blobs = {};
+  for (const [h, n] of Object.entries(draft.blobs)) {
+    blobs[h] = await readChunks(db, draftBlobsColl(root, pid), h, n);
+  }
+  const { text, missing } = joinHeavy(body, blobs);
+  return { text, draft, missing };
+}
+
+export async function deleteDraft(db, root, pid) {
+  const ref = draftRef(db, root, pid);
+  const snap = await retry(() => ref.get());
+  if (!snap.exists) return false;
+  const draft = normalizedDraft(snap.data());
+  if (draft) {
+    await deleteChunks(db, draftColl(root, pid), draft.revision, draft.chunks);
+    for (const [h, n] of Object.entries(draft.blobs)) {
+      await deleteChunks(db, draftBlobsColl(root, pid), h, n);
+    }
+  }
+  await retry(() => ref.delete());
+  const metaRef = db.doc(`${root}/${pid}`);
+  const metaSnap = await retry(() => metaRef.get());
+  if (metaSnap.exists) {
+    const meta = metaSnap.data() || {};
+    await retry(() => metaRef.update({
+      draftUpdatedAt: null,
+      draftRevision: null,
+      draftStats: null,
+      updatedAt: meta.versions?.[0]?.at || meta.createdAt || meta.updatedAt || null,
+    }));
+  }
+  return true;
 }
 
 // Сохранить новую версию. Без изменений с последней версии — ничего не
@@ -214,16 +392,50 @@ function buildMeta(base, version, keep, name, at) {
   return { meta, dropped, deadBlobs };
 }
 
+function normalizedVersion(value) {
+  if (!value || typeof value !== 'object' || !safeId(value.id)) return null;
+  const chunks = Number(value.chunks);
+  if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) return null;
+  const blobs = Array.isArray(value.blobs)
+    ? value.blobs.filter(safeId).slice(0, MAX_BLOBS)
+    : [];
+  return { ...clone(value), id: value.id, chunks, blobs };
+}
+
 // Текст проекта нужной версии (по умолчанию — последней).
 export async function loadVersion(db, root, pid, vid = null) {
   const meta = await getProject(db, root, pid);
   if (!meta) throw new Error('Проект не найден (удалён или нет доступа)');
-  const version = vid ? meta.versions.find((v) => v.id === vid) : meta.versions[0];
+  const versions = Array.isArray(meta.versions) ? meta.versions.map(normalizedVersion).filter(Boolean) : [];
+  const version = vid ? versions.find((v) => v.id === vid) : versions[0];
+  if (!vid && meta.draftUpdatedAt && (!version || String(meta.draftUpdatedAt) > String(version.at || ''))) {
+    try {
+      const saved = await loadDraft(db, root, pid);
+      if (saved) {
+        return {
+          text: saved.text,
+          meta,
+          version: {
+            id: 'draft', at: saved.draft.updatedAt, note: 'Автосохранение',
+            bytes: saved.draft.bytes, stats: saved.draft.stats, isDraft: true,
+          },
+          missing: saved.missing,
+          draft: saved.draft,
+        };
+      }
+    } catch (error) {
+      if (!version) throw error;
+      // Повреждённый черновик не блокирует последнюю ручную версию.
+    }
+  }
   if (!version) throw new Error('Версия не найдена');
   const body = await readChunks(db, `${root}/${pid}/c`, version.id, version.chunks);
   const blobs = {};
   for (const h of version.blobs || []) {
-    blobs[h] = meta.blobs[h] ? await readChunks(db, `${root}/${pid}/b`, h, meta.blobs[h]) : undefined;
+    const count = Number(meta.blobs?.[h]);
+    blobs[h] = Number.isInteger(count) && count > 0 && count <= MAX_CHUNKS
+      ? await readChunks(db, `${root}/${pid}/b`, h, count)
+      : undefined;
   }
   const { text, missing } = joinHeavy(body, blobs);
   return { text, meta, version, missing };
@@ -231,16 +443,25 @@ export async function loadVersion(db, root, pid, vid = null) {
 
 export async function deleteProject(db, root, pid) {
   const meta = await getProject(db, root, pid);
-  if (!meta) return;
-  for (const v of meta.versions || []) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
-  for (const [h, n] of Object.entries(meta.blobs || {})) await deleteChunks(db, `${root}/${pid}/b`, h, n);
-  await retry(() => db.doc(`${root}/${pid}`).delete());
+  if (meta) {
+    const versions = Array.isArray(meta.versions) ? meta.versions.map(normalizedVersion).filter(Boolean) : [];
+    for (const v of versions) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
+    for (const [h, n] of Object.entries(meta.blobs || {}).slice(0, MAX_BLOBS)) {
+      await deleteChunks(db, `${root}/${pid}/b`, h, Number(n));
+    }
+  }
+  await deleteDraft(db, root, pid);
+  if (meta) await retry(() => db.doc(`${root}/${pid}`).delete());
 }
 
 const byDateDesc = (a, b) => String(b.updatedAt || b.at || '').localeCompare(String(a.updatedAt || a.at || ''));
 
 function projectsFrom(snap) {
-  return snap.docs.filter((d) => d.exists && Array.isArray(d.data()?.versions)).map((d) => ({ id: d.id, ...clone(d.data()) })).sort(byDateDesc);
+  return snap.docs.filter((d) => d.exists && Array.isArray(d.data()?.versions)).map((d) => {
+    const data = clone(d.data());
+    data.versions = data.versions.map(normalizedVersion).filter(Boolean).slice(0, KEEP_VERSIONS);
+    return { id: d.id, ...data };
+  }).sort(byDateDesc);
 }
 
 export async function listProjects(db, root) {
@@ -265,7 +486,7 @@ export async function publishProject(db, uid, projectText, { pid, stats = null, 
   const snap = await retry(() => ref.get());
   const items = (snap.exists ? clone(snap.data()?.items || []) : []).filter((it) => it.pid !== pid);
   items.unshift({ pid, name: meta.name, at: version.at, stats: version.stats ?? stats });
-  await retry(() => ref.set({ items, updatedAt: version.at }));
+  await retry(() => ref.set({ items: items.slice(0, 100), updatedAt: version.at }));
   return { meta, version };
 }
 
@@ -281,8 +502,16 @@ export async function unpublishProject(db, uid, pid) {
 
 function sharedFrom(snap) {
   return snap.docs.flatMap((d) => (d.exists ? (d.data()?.items || []) : [])
-    .filter((it) => it && typeof it.pid === 'string')
-    .map((it) => ({ ...clone(it), owner: d.id })))
+    .filter((it) => it && safeId(it.pid))
+    .map((it) => ({
+      pid: it.pid,
+      name: typeof it.name === 'string' ? it.name.slice(0, 200) : 'Без названия',
+      at: typeof it.at === 'string' ? it.at.slice(0, 64) : '',
+      stats: it.stats && typeof it.stats === 'object'
+        ? { rooms: Number.isFinite(Number(it.stats.rooms)) ? Number(it.stats.rooms) : 0 }
+        : null,
+      owner: d.id,
+    })))
     .sort(byDateDesc);
 }
 
