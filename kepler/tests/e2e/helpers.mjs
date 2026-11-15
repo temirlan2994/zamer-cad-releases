@@ -22,7 +22,11 @@ export async function startApp({ width = 1280, height = 820, debug = true, mobil
   const port = await listen(server);
   // UTF-8-локаль: иначе Chromium на Linux с LANG=C/POSIX сохраняет файлы
   // с кириллицей в имени как «download» (имя нельзя перевести в кодировку ФС).
-  const browser = await chromium.launch({ env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } });
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined;
+  const browser = await chromium.launch({
+    executablePath,
+    env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
+  });
   const page = mobile
     ? await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage()
     : await browser.newPage({ viewport: { width, height } });

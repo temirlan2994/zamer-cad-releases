@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "9795287eb43b7750",
+  "version": "4329035b12ff67e6",
   "assets": [
     "./",
     "./app.js",
@@ -19,6 +19,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/draw-snap.js",
     "./core/duplicate-room.js",
     "./core/dxf.js",
+    "./core/edit-lease.js",
     "./core/elevation.js",
     "./core/ergonomics.js",
     "./core/export.js",
@@ -138,6 +139,8 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/dim-input.js",
     "./ui/dom.js",
     "./ui/draw-snap-ui.js",
+    "./ui/edit-guard.js",
+    "./ui/edit-lock-ui.js",
     "./ui/elevation-view.js",
     "./ui/ergonomics.js",
     "./ui/files.js",

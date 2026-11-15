@@ -1604,6 +1604,25 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .install-card > p { margin: 2px 0; color: var(--text); font-size: 13.5px; line-height: 1.5; }
 .install-card ol { margin: 4px 0 8px; padding-left: 24px; color: var(--text); font-size: 14px; line-height: 1.75; }
 .install-card .hint { color: var(--muted); font-size: 11.5px; }
+.start-screen.edit-lock-screen {
+  z-index: 180; align-items: center; padding: max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+}
+.edit-lock-card { width: min(470px, 100%); align-items: stretch; text-align: center; }
+.edit-lock-icon {
+  display: grid; place-items: center; align-self: center; width: 54px; height: 54px; border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); color: var(--accent);
+  font-size: 27px; font-weight: 800;
+}
+.edit-lock-copy { display: flex; flex-direction: column; gap: 8px; }
+.edit-lock-copy p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.edit-lock-device { align-self: center; padding: 5px 9px; border-radius: 999px; background: var(--surface-2); color: var(--text) !important; font-size: 12px !important; }
+.edit-lock-status { min-height: 1.4em; margin: -4px 0; color: var(--accent); font-size: 12.5px; line-height: 1.4; }
+.edit-lock-status:empty { display: none; }
+.edit-lock-status[data-state="error"] { color: var(--danger); }
+.edit-lock-actions { display: flex; flex-direction: column; gap: 8px; }
+.edit-lock-actions button { min-height: 44px; }
+.edit-lock-card > .hint { margin: -4px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
 .projects-card { max-width: 640px; width: 100%; max-height: 86vh; overflow: auto; }
 .start-screen[data-busy="true"] .start-card { pointer-events: none; opacity: 0.82; }
 .projects-account {

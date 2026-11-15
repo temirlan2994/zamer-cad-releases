@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDb } from '../core/memdb.js';
 import {
-  chunkText, deleteDraft, deleteProject, listProjects, listShared, loadDraft, loadShared,
+  chunkText, deleteDraft, deleteProject, getProject, listProjects, listShared, loadDraft, loadShared,
   loadVersion, publishProject, saveDraft, saveVersion, splitHeavy, joinHeavy,
   unpublishProject, userRoot, DB_RULES,
 } from '../core/storage.js';
@@ -67,6 +67,33 @@ test('облачный черновик хранится отдельно и о�
   const opened = await loadVersion(db, root, 'draft-only');
   assert.equal(opened.version.isDraft, true);
   assert.deepEqual(JSON.parse(opened.text).rooms, [7]);
+});
+
+test('getProject/loadDraft могут явно прочитать указатели с сервера', async () => {
+  const memory = createMemoryDb();
+  const serverPaths = [];
+  const db = {
+    ...memory,
+    doc(path) {
+      const ref = memory.doc(path);
+      return {
+        ...ref,
+        getServer: async () => {
+          serverPaths.push(path);
+          return ref.getServer();
+        },
+      };
+    },
+  };
+  await saveDraft(db, root, proj({ rooms: [5] }), { pid: 'server-read' });
+  serverPaths.length = 0;
+
+  await getProject(db, root, 'server-read', { server: true });
+  await loadDraft(db, root, 'server-read', { server: true });
+  assert.deepEqual(serverPaths, [
+    `${root}/server-read`,
+    `${root}/server-read/draft/current`,
+  ]);
 });
 
 test('переименование черновика обновляет карточку и сам проект', async () => {

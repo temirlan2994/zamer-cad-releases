@@ -6,7 +6,7 @@ import { handleExport, loadSample, openProjectFile } from './files.js';
 import { applyLibraryTab } from './library.js';
 import { setEditorMode } from './modes.js';
 import { finishDraft } from './site-actions.js';
-import { openProjectChooser } from './projects.js';
+import { continueCurrentProject, openProjectChooser } from './projects.js';
 import { normalizeProjectName, syncProjectNameUi } from './project-name.js';
 import { closeStartMenu, requestNewProject } from './start-menu.js';
 import { state } from './state.js';
@@ -105,7 +105,7 @@ export function bindToolbar() {
   el('themeBtn').addEventListener('click', cycleTheme);
   el('menuBtn').addEventListener('click', () => { openProjectChooser(); });
   el('startClose').addEventListener('click', closeStartMenu);
-  el('startContinue').addEventListener('click', closeStartMenu);
+  el('startContinue').addEventListener('click', () => { continueCurrentProject(); });
   el('startNew').addEventListener('click', requestNewProject);
   el('startSample').addEventListener('click', () => { loadSample(); closeStartMenu(); });
   el('startOpen').addEventListener('click', () => refs.fileInput.click());

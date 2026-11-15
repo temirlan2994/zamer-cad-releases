@@ -409,6 +409,24 @@
       </div>
     </div>
 
+    <div class="start-screen edit-lock-screen" id="editLockScreen" hidden>
+      <div class="start-card edit-lock-card" role="alertdialog" aria-modal="true"
+        aria-labelledby="editLockTitle" aria-describedby="editLockText editLockHint">
+        <div class="edit-lock-icon" aria-hidden="true">⇄</div>
+        <div class="edit-lock-copy">
+          <b class="help-title" id="editLockTitle">Проект открыт на другом устройстве</b>
+          <p id="editLockText">Чтобы изменения не перезаписали друг друга, редактирование здесь приостановлено.</p>
+          <p class="edit-lock-device" id="editLockDevice" hidden></p>
+        </div>
+        <p class="edit-lock-status" id="editLockStatus" role="status" aria-live="polite"></p>
+        <div class="edit-lock-actions">
+          <button class="primary" id="editLockContinue" type="button">Продолжить редактирование здесь</button>
+          <button id="editLockProjects" type="button">Вернуться к проектам</button>
+        </div>
+        <p class="hint" id="editLockHint">При продолжении будет загружена последняя сохранённая модель из облака.</p>
+      </div>
+    </div>
+
     <script src="./pwa-assets.js"></script>
     <script type="module" src="./app.js"></script>
   </body>

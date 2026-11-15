@@ -35,6 +35,7 @@ function docSnapshot(path, body) {
 export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
   const docs = new Map(Object.entries(initial).map(([p, b]) => [checkPath(p, true), freeze(b)]));
   const listeners = new Set();
+  let transactionChain = Promise.resolve();
 
   const childrenOf = (collPath) => {
     const prefix = `${collPath}/`;
@@ -120,10 +121,12 @@ export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
 
   function doc(path) {
     const p = checkPath(path, true);
+    const get = async () => docSnapshot(p, docs.get(p));
     return {
       id: p.slice(p.lastIndexOf('/') + 1),
       path: p,
-      get: async () => docSnapshot(p, docs.get(p)),
+      get,
+      getServer: get,
       set: async (data) => {
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw Object.assign(new Error('тело — объект'), { code: 'invalid_argument' });
         await write(p, data);
@@ -154,5 +157,43 @@ export function createMemoryDb({ initial = {}, onWrite = null } = {}) {
     };
   }
 
-  return { doc, collection, applyRemote, dump: () => Object.fromEntries(docs) };
+  function runTransaction(update) {
+    const execute = async () => {
+      const staged = new Map();
+      const bodyAt = (path) => (staged.has(path) ? staged.get(path) : docs.get(path));
+      const refPath = (ref) => checkPath(ref?.path, true);
+      const transaction = {
+        get: async (ref) => {
+          const path = refPath(ref);
+          return docSnapshot(path, bodyAt(path));
+        },
+        set: (ref, data, options = undefined) => {
+          const path = refPath(ref);
+          if (!data || typeof data !== 'object' || Array.isArray(data)) throw new TypeError('тело — объект');
+          const next = options?.merge && bodyAt(path) ? { ...bodyAt(path), ...data } : data;
+          staged.set(path, freeze(next));
+        },
+        update: (ref, data) => {
+          const path = refPath(ref);
+          const current = bodyAt(path);
+          if (current === undefined) throw Object.assign(new Error('нет документа'), { code: 'invalid_argument' });
+          staged.set(path, freeze({ ...current, ...data }));
+        },
+        delete: (ref) => { staged.set(refPath(ref), undefined); },
+      };
+      const result = await update(transaction);
+      for (const [path, body] of staged) await write(path, body === undefined ? null : body);
+      return result;
+    };
+    const result = transactionChain.then(execute, execute);
+    transactionChain = result.catch(() => {});
+    return result;
+  }
+
+  return {
+    doc, collection, applyRemote, runTransaction,
+    serverTimestamp: () => new Date().toISOString(),
+    timestampFromMillis: (ms) => new Date(ms).toISOString(),
+    dump: () => Object.fromEntries(docs),
+  };
 }

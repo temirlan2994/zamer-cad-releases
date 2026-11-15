@@ -83,6 +83,7 @@ import {
 import { eatersOf, liftRoom } from '../core/v7/eat-bridge.js';
 import { materializeRailings, moveRailingEnd } from '../core/railings.js';
 import { state } from './state.js';
+import { registerEditGestureCancel } from './edit-guard.js';
 import { afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot } from './store.js';
 import { arrangeRoomsNow } from './auto-layout.js';
 import { activeSiteLayer, cancelTool, positionWallButtons, selectObject } from './tools.js';
@@ -1087,6 +1088,10 @@ export function bindCanvasInput() {
   // перетаскивание — панорама (иначе объекты уезжают при случайных касаниях).
   // Ручки (размер, поворот, вершины) срабатывают сразу.
   canvas.addEventListener('pointerdown', (event) => {
+    if (state.editLocked) {
+      event.preventDefault();
+      return;
+    }
     const touch = event.pointerType === 'touch';
     state.touchDeferSelect = touch;
     state.touchDeferred = null;
@@ -1964,21 +1969,7 @@ export function bindCanvasInput() {
   });
   canvas.addEventListener('pointercancel', (event) => {
     touches.delete(event.pointerId);
-    canvas.parentElement?.classList.remove('move-armed');
-    if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
-    if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) {
-      restoreFrom(drag.before);
-      // before у жеста по делению — снимок до деления: деление тоже снято.
-      if (drag.kind === 'shape-resize') state.pendingRoomSplit = null;
-    }
-    drag = null;
-    state.marquee = null;
-    state.ghost = null;
-    state.kitchenLabel = null;
-    state.groupRotateDeg = null;
-    state.guides = [];
-    state.objGuides = null;
-    requestDraw();
+    cancelActiveGesture();
   });
   canvas.addEventListener('dblclick', (event) => {
     if (isRoofPlan()) { roofPlanDblClick(pointerScreen(event), worldToPlan(pointerWorld(event))); return; }
@@ -1998,3 +1989,26 @@ export function bindCanvasInput() {
     if (state.splitEdit) splitLiveMove(worldToPlan(pointerWorld(event)));
   }, { passive: false });
 }
+
+// Потеря облачного lease может прийти во время pointer capture. Откатываем
+// незавершённый жест тем же способом, что системный pointercancel, прежде
+// чем показать блокирующее окно другого устройства.
+export function cancelActiveGesture() {
+  touches.clear();
+  canvas.parentElement?.classList.remove('move-armed');
+  if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
+  if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) {
+    restoreFrom(drag.before);
+    if (drag.kind === 'shape-resize') state.pendingRoomSplit = null;
+  }
+  drag = null;
+  state.marquee = null;
+  state.ghost = null;
+  state.kitchenLabel = null;
+  state.groupRotateDeg = null;
+  state.guides = [];
+  state.objGuides = null;
+  requestDraw();
+}
+
+registerEditGestureCancel(cancelActiveGesture);

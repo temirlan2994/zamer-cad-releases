@@ -68,18 +68,32 @@ function wrapQuerySnapshot(snapshot) {
 // api — набор функций modular Firestore. Параметр явный, чтобы адаптер
 // проверялся unit-тестом без загрузки SDK и сети.
 export function createFirestoreAdapter(firestore, api) {
-  const makeDoc = (ref) => ({
-    id: ref.id,
-    path: ref.path,
-    get: async () => wrapDocSnapshot(await api.getDoc(ref)),
-    set: async (data, options = undefined) => (options
-      ? api.setDoc(ref, data, options)
-      : api.setDoc(ref, data)),
-    update: async (data) => api.updateDoc(ref, data),
-    delete: async () => api.deleteDoc(ref),
-    onSnapshot: (next, error) => api.onSnapshot(ref, (snap) => next(wrapDocSnapshot(snap)), error),
-    collection: (subpath) => makeCollection(api.collection(ref, subpath)),
-  });
+  const rawRefs = new WeakMap();
+  const makeDoc = (ref) => {
+    const wrapped = {
+      id: ref.id,
+      path: ref.path,
+      get: async () => wrapDocSnapshot(await api.getDoc(ref)),
+      getServer: async () => wrapDocSnapshot(await (typeof api.getDocFromServer === 'function'
+        ? api.getDocFromServer(ref)
+        : api.getDoc(ref))),
+      set: async (data, options = undefined) => (options
+        ? api.setDoc(ref, data, options)
+        : api.setDoc(ref, data)),
+      update: async (data) => api.updateDoc(ref, data),
+      delete: async () => api.deleteDoc(ref),
+      onSnapshot: (next, error) => api.onSnapshot(ref, (snap) => next(wrapDocSnapshot(snap)), error),
+      collection: (subpath) => makeCollection(api.collection(ref, subpath)),
+    };
+    rawRefs.set(wrapped, ref);
+    return wrapped;
+  };
+
+  const rawRef = (wrapped) => {
+    const ref = rawRefs.get(wrapped);
+    if (!ref) throw new TypeError('Транзакция получила документ другого хранилища');
+    return ref;
+  };
 
   const makeQuery = (base, constraints = []) => {
     const ref = constraints.length ? api.query(base, ...constraints) : base;
@@ -99,10 +113,23 @@ export function createFirestoreAdapter(firestore, api) {
     add: async (data) => makeDoc(await api.addDoc(ref, data)),
   });
 
-  return {
+  const adapter = {
     doc: (path) => makeDoc(api.doc(firestore, path)),
     collection: (path) => makeCollection(api.collection(firestore, path)),
+    serverTimestamp: () => (typeof api.serverTimestamp === 'function' ? api.serverTimestamp() : new Date()),
+    timestampFromMillis: (ms) => (api.Timestamp?.fromMillis ? api.Timestamp.fromMillis(ms) : new Date(ms)),
   };
+  if (typeof api.runTransaction === 'function') {
+    adapter.runTransaction = (update, options = undefined) => api.runTransaction(firestore, (transaction) => update({
+      get: async (ref) => wrapDocSnapshot(await transaction.get(rawRef(ref))),
+      set: (ref, data, setOptions = undefined) => (setOptions
+        ? transaction.set(rawRef(ref), data, setOptions)
+        : transaction.set(rawRef(ref), data)),
+      update: (ref, data) => transaction.update(rawRef(ref), data),
+      delete: (ref) => transaction.delete(rawRef(ref)),
+    }), options);
+  }
+  return adapter;
 }
 
 async function loadSdk() {

@@ -32,11 +32,108 @@ service cloud.firestore {
           && value.site.size() <= 80);
     }
 
+    function editorLeasePath(uid, pid) {
+      return /databases/$(database)/documents/data/users/$(uid)/$(pid)/lease/editor;
+    }
+
+    function validOptionalLeaseRequest(data) {
+      return (data.requestedSessionId == null
+          && data.requestedDeviceId == null
+          && data.requestedDeviceName == null
+          && data.requestedAt == null)
+        || (data.requestedSessionId is string
+          && validId(data.requestedSessionId)
+          && data.requestedDeviceId is string
+          && validId(data.requestedDeviceId)
+          && data.requestedDeviceName is string
+          && data.requestedDeviceName.size() <= 120
+          && data.requestedAt is timestamp);
+    }
+
+    // Короткая аренда единственного редактора. Истёкший heartbeat не может
+    // держать проект заблокированным навсегда; takeover всегда повышает epoch.
+    function validEditorLease() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'sessionId', 'deviceId', 'deviceName', 'epoch',
+          'acquiredAt', 'heartbeatAt', 'expiresAt',
+          'requestedSessionId', 'requestedDeviceId', 'requestedDeviceName', 'requestedAt'
+        ])
+        && data.keys().hasAll([
+          'sessionId', 'deviceId', 'deviceName', 'epoch',
+          'acquiredAt', 'heartbeatAt', 'expiresAt',
+          'requestedSessionId', 'requestedDeviceId', 'requestedDeviceName', 'requestedAt'
+        ])
+        && data.sessionId is string
+        && validId(data.sessionId)
+        && data.deviceId is string
+        && validId(data.deviceId)
+        && data.deviceName is string
+        && data.deviceName.size() <= 120
+        && data.epoch is int
+        && data.epoch >= 1
+        && data.acquiredAt is timestamp
+        && data.heartbeatAt is timestamp
+        && data.expiresAt is timestamp
+        && data.expiresAt <= request.time + duration.value(2, 'm')
+        && validOptionalLeaseRequest(data);
+    }
+
+    function sameEditorLease() {
+      let next = request.resource.data;
+      let previous = resource.data;
+      return next.sessionId == previous.sessionId
+        && next.deviceId == previous.deviceId
+        && next.epoch == previous.epoch
+        && next.acquiredAt == previous.acquiredAt;
+    }
+
+    function validDraftFence(uid, pid, data) {
+      let lease = get(editorLeasePath(uid, pid));
+      return (!exists(editorLeasePath(uid, pid))
+          && !('editorSession' in data)
+          && !('editorEpoch' in data))
+        || (exists(editorLeasePath(uid, pid))
+          && data.editorSession is string
+          && validId(data.editorSession)
+          && data.editorEpoch is int
+          && data.editorEpoch >= 1
+          && lease.data.sessionId == data.editorSession
+          && lease.data.epoch == data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
+    function validProjectMetaFence(uid, pid, data) {
+      let lease = get(editorLeasePath(uid, pid));
+      return (!exists(editorLeasePath(uid, pid))
+          && !('editorSession' in data)
+          && !('editorEpoch' in data))
+        || (exists(editorLeasePath(uid, pid))
+          && data.editorSession is string
+          && validId(data.editorSession)
+          && data.editorEpoch is int
+          && data.editorEpoch >= 1
+          && lease.data.sessionId == data.editorSession
+          && lease.data.epoch == data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
+    function validProjectDeleteFence(uid, pid) {
+      let lease = get(editorLeasePath(uid, pid));
+      return !exists(editorLeasePath(uid, pid))
+        || (resource.data.editorSession is string
+          && resource.data.editorEpoch is int
+          && lease.data.sessionId == resource.data.editorSession
+          && lease.data.epoch == resource.data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
     function validProjectMeta() {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'createdAt', 'updatedAt', 'draftUpdatedAt', 'draftRevision',
-          'draftStats', 'name', 'head', 'versions', 'blobs', 'preview'
+          'draftStats', 'name', 'head', 'versions', 'blobs', 'preview',
+          'editorSession', 'editorEpoch'
         ])
         && data.keys().hasAll(['createdAt', 'updatedAt', 'name', 'versions', 'blobs'])
         && data.createdAt is string
@@ -66,7 +163,8 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'revision', 'hash', 'chunks', 'bytes', 'blobs',
-          'updatedAt', 'stats', 'name', 'preview'
+          'updatedAt', 'stats', 'name', 'preview',
+          'editorSession', 'editorEpoch'
         ])
         && data.revision is string
         && validId(data.revision)
@@ -91,8 +189,14 @@ service cloud.firestore {
       // LIST нельзя связывать с проверкой wildcard pid: Firestore Rules не
       // являются фильтром и отклонят запрос всей коллекции проектов.
       allow list: if isOwner(uid);
-      allow get, delete: if isOwner(uid) && validId(pid);
-      allow create, update: if isOwner(uid) && validId(pid) && validProjectMeta();
+      allow get: if isOwner(uid) && validId(pid);
+      allow delete: if isOwner(uid)
+        && validId(pid)
+        && validProjectDeleteFence(uid, pid);
+      allow create, update: if isOwner(uid)
+        && validId(pid)
+        && validProjectMeta()
+        && validProjectMetaFence(uid, pid, request.resource.data);
 
       match /c/{part} {
         allow read, delete: if isOwner(uid) && validId(part);
@@ -108,11 +212,28 @@ service cloud.firestore {
         allow read, delete: if isOwner(uid) && validId(draftId);
         allow create, update: if isOwner(uid)
           && draftId == 'current'
-          && validDraftPointer();
+          && validDraftPointer()
+          && validDraftFence(uid, pid, request.resource.data);
         allow create, update: if isOwner(uid)
           && draftId != 'current'
           && validId(draftId)
           && validChunk();
+      }
+
+      match /lease/{leaseId} {
+        allow read: if isOwner(uid) && leaseId == 'editor';
+        allow create: if isOwner(uid)
+          && leaseId == 'editor'
+          && validEditorLease()
+          && request.resource.data.epoch == 1
+          && request.resource.data.expiresAt > request.time;
+        allow update: if isOwner(uid)
+          && leaseId == 'editor'
+          && validEditorLease()
+          && (sameEditorLease()
+            || (request.resource.data.epoch == resource.data.epoch + 1
+              && request.resource.data.expiresAt > request.time));
+        allow delete: if false;
       }
 
       match /draft-c/{part} {

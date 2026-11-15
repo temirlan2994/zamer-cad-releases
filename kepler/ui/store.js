@@ -232,6 +232,7 @@ export function reflowLayoutChanges(beforeText, { roomIds = [], force = false } 
 }
 
 export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
+  if (state.editLocked) return false;
   const before = snapshot();
   fn();
   // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
@@ -243,13 +244,16 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   reflowLayoutChanges(before, { roomIds: arrange, force: arrange.length > 0 });
   if (!skipHistory) pushHistory(before);
   afterChange();
+  return true;
 }
 
 // Лёгкое изменение без истории (настройки солнца, прозрачность подложки).
 export function tweak(fn) {
+  if (state.editLocked) return false;
   fn();
   scheduleAutosave();
   requestDraw();
+  return true;
 }
 
 // Нормы (инсоляция, площади, свет, высота) — пересчёт после изменений.
@@ -509,7 +513,15 @@ export function restoreFrom(text) {
 // Шаг истории: текущее — в стек to, запись из from — в проект. Не открылась
 // запись — стеки как были.
 function step(from, to) {
-  if (!from.length) return;
+  if (state.editLocked || !from.length) return;
+  const next = from[from.length - 1];
+  // В облачном режиме нельзя Ctrl+Z перейти в проект, lease которого эта
+  // вкладка не получала. Для локального режима прежнее поведение сохраняем.
+  if (state.editLeasePid && next.pid !== state.pid) {
+    clearHistory();
+    toast('История другого облачного проекта очищена');
+    return;
+  }
   const current = { text: snapshot(), pid: state.pid };
   const entry = from.pop();
   try {
@@ -528,3 +540,8 @@ function step(from, to) {
 export function undo() { step(history.undo, history.redo); }
 
 export function redo() { step(history.redo, history.undo); }
+
+export function clearHistory() {
+  history.undo.length = 0;
+  history.redo.length = 0;
+}

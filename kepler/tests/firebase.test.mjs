@@ -52,3 +52,31 @@ test('Firestore adapter нормализует exists() и операции до
     ['delete', 'data/users'],
   ]);
 });
+
+test('Firestore adapter передаёт документы в transaction и timestamp API', async () => {
+  const writes = [];
+  const ref = (path) => ({ path, id: path.split('/').at(-1) });
+  const api = {
+    doc: (_parent, path) => ref(path),
+    collection: (_parent, path) => ({ path }),
+    serverTimestamp: () => ({ server: true }),
+    Timestamp: { fromMillis: (ms) => ({ ms }) },
+    runTransaction: async (_firestore, update) => update({
+      get: async (raw) => ({ id: raw.id, exists: () => true, data: () => ({ epoch: 2 }) }),
+      set: (raw, data) => { writes.push([raw.path, data]); },
+      update() {},
+      delete() {},
+    }),
+  };
+  const db = createFirestoreAdapter('firestore', api);
+  const document = db.doc('data/users');
+  const epoch = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(document);
+    transaction.set(document, { epoch: snapshot.data().epoch + 1 });
+    return snapshot.data().epoch;
+  });
+  assert.equal(epoch, 2);
+  assert.deepEqual(writes, [['data/users', { epoch: 3 }]]);
+  assert.deepEqual(db.serverTimestamp(), { server: true });
+  assert.deepEqual(db.timestampFromMillis(123), { ms: 123 });
+});

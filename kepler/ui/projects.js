@@ -5,9 +5,15 @@
 import { serializeProject } from '../core/model.js';
 import { projectPreviewSvg } from '../core/project-preview.js';
 import {
-  deleteProject, listProjects, loadShared, loadVersion, newId, publishProject,
+  deleteProject, getProject, hashText, listProjects, loadDraft, loadShared, loadVersion, newId, publishProject,
   saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
 } from '../core/storage.js';
+import {
+  acquireEditLease, cancelEditLeaseRequest, EDIT_HEARTBEAT_MS,
+  grantRequestedEditLease, heartbeatEditLease, leaseExpired, leaseHeldBy,
+  newEditSessionId, rejectEditLeaseRequest, releaseEditLease,
+  requestEditLease, takeoverEditLease, watchEditLease,
+} from '../core/edit-lease.js';
 import { el, escapeHtml, toast } from './dom.js';
 import {
   getAccountState, getBackend, getLocalBackend, onAccountChange,
@@ -22,13 +28,22 @@ import {
   GUEST_STORAGE_SCOPE, getScopedItem, getStorageScope, setScopedItem,
 } from './storage-scope.js';
 import {
-  AUTOSAVE_EVENT, PID_KEY, discardAutosave, flushAutosave, pushHistory,
-  restoreFrom, snapshot, tweak,
+  AUTOSAVE_EVENT, PID_KEY, clearHistory, discardAutosave,
+  flushAutosave, pushHistory, restoreFrom, snapshot, tweak,
 } from './store.js';
 import { fitView } from './view.js';
+import { cancelEditingGesture } from './edit-guard.js';
+import {
+  bindEditLockUi, hideEditLock, setEditLockBusy, showEditLock,
+} from './edit-lock-ui.js';
+import { PROJECT_REPLACED_EVENT } from './files.js';
 
 const CLOUD_SAVE_DELAY = 5000;
 const CLOUD_SAVE_TIMEOUT = 15000;
+const LEASE_REQUEST_TIMEOUT = 12_000;
+const LEASE_SAFETY_MARGIN = 15_000;
+const DEVICE_ID_KEY = 'kepler-edit-device-id';
+const SESSION_ID_KEY = 'kepler-edit-session-id';
 
 let backend = null;
 let account = {
@@ -50,6 +65,56 @@ let authAction = false;
 let projectActionBusy = false;
 const expanded = new Set();
 let startProjectsRequest = 0;
+let activeEditor = null; // { pid, lease, unsubscribe, timer, lastHeartbeat }
+let handoffBusy = false;
+let pendingLeaseFlow = null;
+let lostEditor = null; // { pid, lease, localText }
+let replacementBusy = false;
+let deleteBusyPid = null;
+
+function storedId(storage, key, prefix) {
+  try {
+    let value = storage?.getItem(key) || '';
+    if (!/^[A-Za-z0-9._:@+~-]{1,128}$/.test(value)) {
+      value = `${prefix}${newEditSessionId()}`.slice(0, 128);
+      storage?.setItem(key, value);
+    }
+    return value;
+  } catch {
+    return `${prefix}${newEditSessionId()}`.slice(0, 128);
+  }
+}
+
+function deviceName() {
+  const ua = navigator.userAgent || '';
+  if (/iPhone/i.test(ua)) return 'iPhone';
+  if (/iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/Android/i.test(ua)) return 'Android-телефон';
+  if (/Windows/i.test(ua)) return 'Компьютер Windows';
+  if (/Mac/i.test(ua)) return 'Компьютер Mac';
+  if (/Linux/i.test(ua)) return 'Компьютер Linux';
+  return 'Другое устройство';
+}
+
+function pageSessionId() {
+  let reload = false;
+  try {
+    reload = performance.getEntriesByType?.('navigation')?.[0]?.type === 'reload';
+  } catch { /* старый браузер */ }
+  // sessionStorage клонируется при «Дублировать вкладку». Повторно используем
+  // token только при настоящем reload; новая/дублированная вкладка получает
+  // отдельного редактора и не может притвориться владельцем lease.
+  if (!reload) {
+    try { globalThis.sessionStorage?.removeItem(SESSION_ID_KEY); } catch { /* приватный режим */ }
+  }
+  return storedId(globalThis.sessionStorage, SESSION_ID_KEY, 'tab');
+}
+
+const editorIdentity = {
+  deviceId: storedId(globalThis.localStorage, DEVICE_ID_KEY, 'dev'),
+  sessionId: pageSessionId(),
+  deviceName: deviceName(),
+};
 
 export const isProjectsOpen = () => !el('projectsScreen').hidden;
 
@@ -99,6 +164,272 @@ function setProjectsBusy(busy) {
       screen.removeAttribute('aria-busy');
     }
   }
+}
+
+function usesEditLease(target = backend) {
+  return Boolean(target?.mode === 'cloud' && target.provider === 'firebase'
+    && typeof target.db?.runTransaction === 'function');
+}
+
+function stopLeaseMonitoring() {
+  if (!activeEditor) return null;
+  const current = activeEditor;
+  current.unsubscribe?.();
+  clearInterval(current.timer);
+  activeEditor = null;
+  state.editLeasePid = null;
+  return current;
+}
+
+async function detachActiveEditor({ release = true } = {}) {
+  const current = stopLeaseMonitoring();
+  if (!current || !release || !usesEditLease()) return current;
+  try { await releaseEditLease(backend.db, backend.root, current.pid, current.lease); }
+  catch { /* expiry всё равно освободит закрытый проект */ }
+  return current;
+}
+
+function lockEditor(reason, {
+  kind = 'moved', lease = null, deviceName: label = '', status = '', localText = null,
+} = {}) {
+  cancelEditingGesture();
+  state.editLocked = true;
+  state.editLockReason = reason;
+  const text = localText || (() => {
+    try { return serializeProject(state.project, { pretty: false }); } catch { return null; }
+  })();
+  if (state.pid) lostEditor = { pid: state.pid, lease, localText: text };
+  showEditLock({ kind, deviceName: label || lease?.deviceName || '', status });
+}
+
+function unlockEditor() {
+  state.editLocked = false;
+  state.editLockReason = '';
+  lostEditor = null;
+  hideEditLock();
+  if (el('startScreen').hidden) document.querySelector('.app')?.removeAttribute('inert');
+}
+
+function clearPendingFor(pid) {
+  if (!pid) return;
+  pendingCloudDrafts.delete(pid);
+  latestDraftOrder.delete(pid);
+}
+
+function markLeaseLost(lease, status = 'Право редактирования перешло на другое устройство', pidHint = null) {
+  const current = activeEditor && (!pidHint || activeEditor.pid === pidHint)
+    ? stopLeaseMonitoring()
+    : null;
+  const pid = current?.pid || pidHint || state.pid;
+  if (pid && state.pid && pid !== state.pid) {
+    clearPendingFor(pid);
+    return;
+  }
+  cancelEditingGesture();
+  let localText = null;
+  try {
+    flushAutosave();
+    localText = serializeProject(state.project, { pretty: false });
+  } catch { /* резерв остаётся в localStorage, если сериализация возможна */ }
+  clearPendingFor(pid);
+  lockEditor('lost', {
+    kind: 'moved', lease, deviceName: lease?.deviceName,
+    status, localText,
+  });
+}
+
+async function maintainEditorLease(force = false) {
+  const current = activeEditor;
+  if (!current || !usesEditLease()) return false;
+  if (leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
+    markLeaseLost(current.lease, 'Не удалось вовремя подтвердить право редактирования');
+    return false;
+  }
+  if (navigator.onLine === false) {
+    setSyncStatus('Офлайн — право редактирования подтверждено временно', 'saving');
+    return false;
+  }
+  const now = Date.now();
+  if (!force && now - current.lastHeartbeat < EDIT_HEARTBEAT_MS) return true;
+  if (current.heartbeatPending) return false;
+  current.heartbeatPending = true;
+  try {
+    const result = await heartbeatEditLease(backend.db, backend.root, current.pid, current.lease);
+    if (activeEditor !== current) return false;
+    if (result.status !== 'renewed') {
+      markLeaseLost(result.lease);
+      return false;
+    }
+    current.lease = result.lease;
+    current.lastHeartbeat = now;
+    return true;
+  } catch (error) {
+    if (leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
+      markLeaseLost(current.lease, 'Не удалось подтвердить право редактирования');
+    }
+    return false;
+  } finally {
+    current.heartbeatPending = false;
+  }
+}
+
+async function handoffRequested(lease) {
+  if (handoffBusy || !activeEditor || !leaseHeldBy(lease, activeEditor.lease)) return;
+  // Удаление сначала атомарно убирает карточку проекта. До этого момента
+  // нельзя автоматически передать lease и открыть на втором устройстве уже
+  // частично очищенные данные.
+  if (deleteBusyPid === activeEditor.pid) return;
+  handoffBusy = true;
+  const current = activeEditor;
+  lockEditor('handoff', {
+    kind: 'moved', lease, deviceName: lease.requestedDeviceName,
+    status: 'Сохраняем последние изменения перед передачей…',
+  });
+  const localText = (() => {
+    try { return serializeProject(state.project, { pretty: false }); } catch { return null; }
+  })();
+  setEditLockBusy(true, 'Сохраняем последние изменения перед передачей…');
+  try {
+    flushAutosave({ cloudImmediate: true });
+    const saved = await flushCloudDraft();
+    if (!saved) throw new Error('Не удалось сохранить последние изменения');
+    const granted = await grantRequestedEditLease(backend.db, backend.root, current.pid, current.lease);
+    if (granted.status !== 'granted') {
+      markLeaseLost(granted.lease);
+      return;
+    }
+    if (activeEditor === current) stopLeaseMonitoring();
+    clearPendingFor(current.pid);
+    lostEditor = { pid: current.pid, lease: granted.lease, localText };
+    state.editLocked = true;
+    state.editLockReason = 'lost';
+    setEditLockBusy(false, 'Последняя модель сохранена в облаке и передана другому устройству.');
+  } catch (error) {
+    if (activeEditor === current) {
+      try { await rejectEditLeaseRequest(backend.db, backend.root, current.pid, current.lease); } catch { /* сеть ниже */ }
+      state.editLocked = false;
+      state.editLockReason = '';
+      lostEditor = null;
+      hideEditLock();
+      toast(`Не удалось передать проект: ${error.message}`, true);
+    }
+  } finally {
+    handoffBusy = false;
+  }
+}
+
+function startActiveEditor(pid, lease) {
+  stopLeaseMonitoring();
+  const current = {
+    pid, lease, unsubscribe: null, timer: null, lastHeartbeat: Date.now(), heartbeatPending: false,
+  };
+  activeEditor = current;
+  state.editLeasePid = pid;
+  state.editLocked = false;
+  state.editLockReason = '';
+  lostEditor = null;
+  current.unsubscribe = watchEditLease(backend.db, backend.root, pid, (next) => {
+    if (activeEditor !== current) return;
+    if (leaseHeldBy(next, editorIdentity)) {
+      current.lease = next;
+      if (next.requestedSessionId && next.requestedSessionId !== editorIdentity.sessionId) handoffRequested(next);
+      return;
+    }
+    markLeaseLost(next);
+  }, (error) => {
+    if (activeEditor === current && leaseExpired(current.lease, Date.now() + LEASE_SAFETY_MARGIN)) {
+      markLeaseLost(current.lease, error?.message || 'Связь с сервером потеряна');
+    }
+  });
+  current.timer = setInterval(() => { maintainEditorLease(); }, 10_000);
+  hideEditLock();
+  return current;
+}
+
+function finishPendingLease(lease) {
+  const pending = pendingLeaseFlow;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pending.unsubscribe?.();
+  pendingLeaseFlow = null;
+  pending.resolve(lease || null);
+}
+
+function waitForRequestedLease(pid, occupied, { kind = 'occupied' } = {}) {
+  if (pendingLeaseFlow) throw new Error('Передача другого проекта уже выполняется');
+  state.editLocked = true;
+  state.editLockReason = 'waiting';
+  cancelEditingGesture();
+  showEditLock({
+    kind, deviceName: occupied?.deviceName,
+    status: 'Чтобы забрать редактирование, нажмите кнопку ниже.',
+  });
+  return new Promise((resolve) => {
+    pendingLeaseFlow = {
+      pid, occupied, kind, resolve, requested: false, forceReady: false,
+      unsubscribe: null, timer: null,
+    };
+  });
+}
+
+function watchPendingLease(pending) {
+  pending.unsubscribe?.();
+  pending.unsubscribe = watchEditLease(backend.db, backend.root, pending.pid, (lease) => {
+    if (pendingLeaseFlow !== pending) return;
+    if (leaseHeldBy(lease, editorIdentity)) {
+      finishPendingLease(lease);
+      return;
+    }
+    pending.occupied = lease;
+    if (pending.requested && lease?.requestedSessionId !== editorIdentity.sessionId) {
+      clearTimeout(pending.timer);
+      pending.forceReady = true;
+      setEditLockBusy(false, 'Другое устройство не передало проект. Нажмите ещё раз, чтобы забрать редактирование.', 'error');
+    }
+  }, (error) => setEditLockBusy(false, error?.message || 'Нет связи с сервером', 'error'));
+}
+
+async function requestPendingLease() {
+  const pending = pendingLeaseFlow;
+  if (!pending) return;
+  setEditLockBusy(true, pending.forceReady
+    ? 'Забираем право редактирования…'
+    : 'Ждём сохранения с другого устройства…');
+  try {
+    if (pending.forceReady) {
+      const result = await takeoverEditLease(backend.db, backend.root, pending.pid, editorIdentity, { force: true });
+      if (result.status !== 'acquired') throw new Error('Не удалось забрать редактирование');
+      finishPendingLease(result.lease);
+      return;
+    }
+    const result = await requestEditLease(backend.db, backend.root, pending.pid, editorIdentity);
+    if (result.status === 'acquired' || result.status === 'owned') {
+      finishPendingLease(result.lease);
+      return;
+    }
+    pending.requested = true;
+    pending.occupied = result.lease;
+    watchPendingLease(pending);
+    clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      if (pendingLeaseFlow !== pending) return;
+      pending.forceReady = true;
+      setEditLockBusy(false, 'Устройство не отвечает. Нажмите ещё раз, чтобы принудительно продолжить здесь.', 'error');
+    }, LEASE_REQUEST_TIMEOUT);
+  } catch (error) {
+    setEditLockBusy(false, error.message || 'Не удалось запросить передачу', 'error');
+  }
+}
+
+async function acquireProjectLease(pid, { kind = 'occupied' } = {}) {
+  if (!usesEditLease()) return { lease: null, contended: false };
+  if (activeEditor?.pid === pid && leaseHeldBy(activeEditor.lease, editorIdentity)) {
+    return { lease: activeEditor.lease, contended: false };
+  }
+  const result = await acquireEditLease(backend.db, backend.root, pid, editorIdentity);
+  if (result.status === 'acquired') return { lease: result.lease, contended: false };
+  const lease = await waitForRequestedLease(pid, result.lease, { kind });
+  return { lease, contended: true };
 }
 
 function developmentGuestAllowed() {
@@ -315,12 +646,12 @@ function render() {
   }).join('');
 }
 
-function openText(text, pid, missing, name = null) {
+function openText(text, pid, missing, name = null, { resetHistory = false } = {}) {
   const before = snapshot();
   const beforePid = state.pid;
   restoreFrom(text);
   if (pid && name) state.project.name = name;
-  pushHistory(before, beforePid);
+  if (resetHistory) clearHistory(); else pushHistory(before, beforePid);
   state.pid = pid;
   setScopedItem(PID_KEY, pid || '');
   syncProjectNameUi();
@@ -331,6 +662,253 @@ function openText(text, pid, missing, name = null) {
   toast(missing?.length
     ? `Открыт «${state.project.name}», но картинка топосъёмки потерялась`
     : `Открыт проект «${state.project.name}»`, Boolean(missing?.length));
+}
+
+async function loadLatestServerProject(pid, vid = null, { fallbackText = null } = {}) {
+  if (vid) return loadVersion(backend.db, backend.root, pid, vid);
+  const meta = await getProject(backend.db, backend.root, pid, { server: true });
+  if (!meta) {
+    if (fallbackText) return {
+      text: fallbackText, meta: null, missing: [], localOnly: true,
+    };
+    throw new Error('Проект не найден (возможно, он удалён)');
+  }
+  const draft = await loadDraft(backend.db, backend.root, pid, { server: true });
+  if (draft) {
+    return {
+      text: draft.text, meta, missing: draft.missing,
+      version: { id: 'draft', at: draft.draft.updatedAt, isDraft: true },
+      draft: draft.draft,
+    };
+  }
+  return loadVersion(backend.db, backend.root, pid);
+}
+
+function backupName(text) {
+  try {
+    const value = JSON.parse(text)?.name;
+    return typeof value === 'string' && value.trim() ? value.trim() : 'Проект';
+  } catch { return 'Проект'; }
+}
+
+async function backupLocalDifference(localText, remoteText) {
+  if (!localText || !remoteText || hashText(localText) === hashText(remoteText)) return null;
+  const stamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  let body;
+  try {
+    const data = JSON.parse(localText);
+    data.name = `${backupName(localText)} — резерв ${stamp}`;
+    body = JSON.stringify(data);
+  } catch { body = localText; }
+  const pid = newId('p');
+  try {
+    await saveVersion(backend.db, backend.root, body, {
+      pid, note: 'Автоматическая копия перед загрузкой модели с другого устройства', stats: projectStats(),
+    });
+    toast('Несинхронизированные изменения сохранены отдельным резервным проектом');
+    return pid;
+  } catch {
+    try {
+      const local = await getLocalBackend();
+      await saveVersion(local.db, local.root, body, {
+        pid, note: 'Локальный резерв перед передачей между устройствами', stats: projectStats(),
+      });
+      toast('Изменения сохранены локальной резервной копией', true);
+      return pid;
+    } catch {
+      toast('Не удалось создать резерв; локальный черновик оставлен в браузере', true);
+      return null;
+    }
+  }
+}
+
+async function preserveQueuedProjectBeforeSwitch(targetPid) {
+  const currentPid = state.pid;
+  if (activeEditor || !currentPid || currentPid === targetPid) return true;
+  const queued = pendingCloudDrafts.get(currentPid) || pendingUnassignedDraft;
+  if (!queued?.text) return true;
+  const backupPid = await backupLocalDifference(queued.text, '{}');
+  if (!backupPid) {
+    toast('Сначала сохраните текущий локальный проект: его облачная копия ещё не подтверждена.', true);
+    return false;
+  }
+  clearPendingFor(currentPid);
+  if (pendingUnassignedDraft === queued) pendingUnassignedDraft = null;
+  return true;
+}
+
+async function releaseCandidateLease(pid, lease) {
+  if (!lease || !usesEditLease()) return;
+  if (activeEditor?.pid === pid && leaseHeldBy(activeEditor.lease, lease)) return;
+  try { await releaseEditLease(backend.db, backend.root, pid, lease); } catch { /* best effort */ }
+}
+
+async function activateLoadedProject(pid, lease, loaded, name = null, { localBackup = null } = {}) {
+  state.editLocked = true;
+  state.editLockReason = 'loading';
+  cancelEditingGesture();
+  if (localBackup) await backupLocalDifference(localBackup, loaded.text);
+  if (activeEditor) await detachActiveEditor({ release: activeEditor.pid !== pid });
+  try {
+    // Сначала восстанавливаем inert стартового окна, затем openText закрывает
+    // его. Иначе edit-lock мог вернуть устаревший inert уже открытому редактору.
+    hideEditLock();
+    openText(loaded.text, pid, loaded.missing, name || loaded.meta?.name, { resetHistory: true });
+    if (lease) startActiveEditor(pid, lease); else unlockEditor();
+    // openText выполнялся под логической блокировкой, поэтому его tweak не
+    // планировал локальное сохранение. Повторяем после подтверждённого lease.
+    tweak(() => {});
+    if (loaded.localOnly) scheduleCloudDraft(loaded.text, { immediate: true });
+  } catch (error) {
+    await releaseCandidateLease(pid, lease);
+    throw error;
+  }
+}
+
+export async function continueCurrentProject() {
+  if (!state.pid) { unlockEditor(); closeStartMenu(); return true; }
+  try {
+    if (!backend) backend = await getBackend();
+  } catch (error) {
+    toast(`Не удалось открыть облако: ${projectErrorText(error)}`, true);
+    return false;
+  }
+  if (!usesEditLease()) { unlockEditor(); closeStartMenu(); return true; }
+  const pid = state.pid;
+  let localText = null;
+  let candidateLease = null;
+  try { localText = serializeProject(state.project, { pretty: false }); } catch { /* загрузка ниже покажет ошибку */ }
+  try {
+    const { lease } = await acquireProjectLease(pid, { kind: 'occupied' });
+    if (!lease) return false;
+    candidateLease = lease;
+    setEditLockBusy(true, 'Загружаем последнюю модель из облака…');
+    const loaded = await loadLatestServerProject(pid, null, { fallbackText: localText });
+    await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup: localText });
+    return true;
+  } catch (error) {
+    await releaseCandidateLease(pid, candidateLease);
+    const message = projectErrorText(error);
+    if (el('editLockScreen').hidden) toast(`Не удалось открыть проект: ${message}`, true);
+    else setEditLockBusy(false, message, 'error');
+    return false;
+  }
+}
+
+async function reclaimLostProject() {
+  const lost = lostEditor;
+  if (!lost?.pid || !usesEditLease()) return;
+  let candidateLease = null;
+  setEditLockBusy(true, 'Проверяем право редактирования…');
+  try {
+    let result = await acquireEditLease(backend.db, backend.root, lost.pid, editorIdentity);
+    let lease = result.status === 'acquired' ? result.lease : null;
+    if (!lease) {
+      const waiting = waitForRequestedLease(lost.pid, result.lease, { kind: 'moved' });
+      await requestPendingLease();
+      lease = await waiting;
+    }
+    if (!lease) return;
+    candidateLease = lease;
+    setEditLockBusy(true, 'Загружаем последнюю модель из облака…');
+    const loaded = await loadLatestServerProject(lost.pid, null, { fallbackText: lost.localText });
+    await activateLoadedProject(lost.pid, lease, loaded, loaded.meta?.name, { localBackup: lost.localText });
+  } catch (error) {
+    await releaseCandidateLease(lost.pid, candidateLease);
+    setEditLockBusy(false, projectErrorText(error), 'error');
+  }
+}
+
+async function handleEditLockContinue() {
+  if (pendingLeaseFlow) { await requestPendingLease(); return; }
+  if (lostEditor) await reclaimLostProject();
+}
+
+async function handleEditLockProjects() {
+  const pending = pendingLeaseFlow;
+  setEditLockBusy(true, 'Возвращаемся к проектам…');
+  if (pending) {
+    try {
+      await cancelEditLeaseRequest(backend.db, backend.root, pending.pid, editorIdentity);
+      const current = await acquireEditLease(backend.db, backend.root, pending.pid, editorIdentity);
+      if (current.status === 'acquired' && leaseHeldBy(current.lease, editorIdentity)) {
+        await releaseCandidateLease(pending.pid, current.lease);
+      }
+    } catch { /* запрос мог уже исчезнуть */ }
+    finishPendingLease(null);
+  }
+  hideEditLock();
+  if (activeEditor) {
+    state.editLocked = false;
+    state.editLockReason = '';
+    lostEditor = null;
+    return;
+  }
+  state.editLocked = true;
+  state.editLockReason = 'choose-project';
+  await openProjectChooser({ initial: true });
+}
+
+async function saveReplacementBackup(text) {
+  if (!text) return;
+  try {
+    const local = await getLocalBackend();
+    await saveVersion(local.db, local.root, text, {
+      pid: newId('p'), note: 'Резерв перед переключением проекта', stats: null,
+    });
+    toast('Последние изменения прежнего проекта сохранены локальной резервной копией', true);
+  } catch {
+    toast('Не удалось синхронизировать прежний проект; его локальная копия оставлена в браузере', true);
+  }
+}
+
+function handleProjectReplaced(event) {
+  if (replacementBusy) {
+    state.editLocked = true;
+    state.editLockReason = 'switching-project';
+    return;
+  }
+  const previousPid = event.detail?.previousPid || null;
+  const previousText = event.detail?.previousText || null;
+  const current = activeEditor?.pid === previousPid ? activeEditor : null;
+  if (!current) {
+    if (previousPid && usesEditLease()) clearHistory();
+    unlockEditor();
+    tweak(() => {});
+    return;
+  }
+  replacementBusy = true;
+  const target = backend;
+  state.editLocked = true;
+  state.editLockReason = 'switching-project';
+  cancelEditingGesture();
+  showEditLock({
+    kind: 'saving',
+    status: 'Отправляем последние изменения в облако…',
+  });
+  setEditLockBusy(true, 'Отправляем последние изменения в облако…');
+  setSyncStatus('Сохраняем прежний проект…', 'saving');
+  // files.js уже вызвал flushAutosave до замены модели, поэтому очередь
+  // содержит именно прежний снимок, хотя state.project теперь уже новый.
+  void (async () => {
+    let saved = false;
+    try {
+      saved = await flushCloudDraft();
+    } catch { /* ниже останется локальная резервная копия */ }
+    if (!saved) {
+      await saveReplacementBackup(previousText);
+      clearPendingFor(previousPid);
+    }
+    if (activeEditor === current) stopLeaseMonitoring();
+    if (usesEditLease(target)) {
+      releaseEditLease(target.db, target.root, previousPid, current.lease)
+        .catch(() => { /* при офлайне аренда сама истечёт */ });
+    }
+    clearHistory();
+    replacementBusy = false;
+    unlockEditor();
+    tweak(() => {});
+  })();
 }
 
 const hasPendingCloudDraft = () => Boolean(pendingUnassignedDraft || pendingCloudDrafts.size);
@@ -452,8 +1030,40 @@ async function flushCloudDraft() {
     let savedAt = null;
     let lastError = null;
     for (const [pid, draft] of entries) {
+      let editor = null;
+      if (usesEditLease(target)) {
+        if (!activeEditor || activeEditor.pid !== pid || !leaseHeldBy(activeEditor.lease, editorIdentity)) {
+          // Стартовый список проектов ещё не означает, что пользователь
+          // решил редактировать локально открытый проект.
+          if (!el('startScreen').hidden || pid !== state.pid) {
+            ok = false;
+            if (sameBackend(backend, target) && !pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
+            continue;
+          }
+          try {
+            const acquired = await acquireEditLease(target.db, target.root, pid, editorIdentity);
+            if (acquired.status !== 'acquired') {
+              ok = false;
+              lastError = new Error('Этот проект уже редактируется на другом устройстве');
+              if (!pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
+              markLeaseLost(acquired.lease, lastError.message, pid);
+              continue;
+            }
+            startActiveEditor(pid, acquired.lease);
+          } catch (error) {
+            ok = false;
+            lastError = error;
+            if (!pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
+            if (String(error?.code || '').includes('permission-denied')) {
+              markLeaseLost(null, projectErrorText(error), pid);
+            }
+            continue;
+          }
+        }
+        editor = { sessionId: activeEditor.lease.sessionId, epoch: activeEditor.lease.epoch };
+      }
       const operation = saveDraft(target.db, target.root, draft.text, {
-        pid, stats: draft.stats,
+        pid, stats: draft.stats, editor,
       });
       try {
         const saved = await withSaveTimeout(operation);
@@ -462,6 +1072,11 @@ async function flushCloudDraft() {
       } catch (error) {
         ok = false;
         lastError = error;
+        if (error?.code === 'edit-lease-lost') {
+          clearPendingFor(pid);
+          markLeaseLost(null, error.message, pid);
+          continue;
+        }
         if (error?.code === 'cloud-timeout') rememberUncertainWrite(operation);
         // Более новый снимок того же проекта уже содержит все прошлые правки.
         if (sameBackend(backend, target) && latestDraftOrder.get(pid) === draft.order
@@ -471,12 +1086,33 @@ async function flushCloudDraft() {
     if (sameBackend(backend, target)) {
       if (ok) setSyncStatus(`Сохранено в облаке ${fmtDate(savedAt)}`, 'saved');
       else setSyncStatus(`Не удалось синхронизировать: ${lastError?.message || 'ошибка'}`, 'error');
-      if (hasPendingCloudDraft() && !uncertainCloudWrites.size) scheduleCloudDraft(null);
+      if (hasPendingCloudDraft() && !uncertainCloudWrites.size && el('startScreen').hidden) scheduleCloudDraft(null);
     }
     return ok;
   };
   syncChain = syncChain.then(run, run);
   return syncChain;
+}
+
+function activeEditorFence(pid = state.pid) {
+  if (!activeEditor || activeEditor.pid !== pid || !leaseHeldBy(activeEditor.lease, editorIdentity)) return null;
+  return { sessionId: activeEditor.lease.sessionId, epoch: activeEditor.lease.epoch };
+}
+
+async function flushActiveProject(message = 'Текущий проект ещё не попал в облако. Проверьте интернет и повторите.') {
+  if (!activeEditor) return true;
+  flushAutosave({ cloudImmediate: true });
+  if (await flushCloudDraft()) return true;
+  toast(message, true);
+  return false;
+}
+
+async function flushBeforeSwitch(message = 'Текущий проект ещё не попал в облако. Проверьте интернет и повторите.') {
+  if (activeEditor) return flushActiveProject(message);
+  flushAutosave({ cloudImmediate: true });
+  if (await flushCloudDraft()) return true;
+  toast(message, true);
+  return false;
 }
 
 async function saveCurrent() {
@@ -485,18 +1121,31 @@ async function saveCurrent() {
   try {
     if (!backend) backend = await getBackend();
     const pid = state.pid || newId('p');
+    if (!state.pid) {
+      state.pid = pid;
+      setScopedItem(PID_KEY, pid);
+      syncProjectNameUi();
+    }
+    if (usesEditLease()) {
+      if (activeEditor && activeEditor.pid !== pid) {
+        if (!await flushActiveProject()) return;
+        await detachActiveEditor();
+      }
+      const { lease } = await acquireProjectLease(pid, { kind: 'occupied' });
+      if (!lease) return;
+      if (!activeEditor || activeEditor.pid !== pid) startActiveEditor(pid, lease);
+    }
+    const editor = usesEditLease() ? activeEditorFence(pid) : null;
     const { unchanged, meta } = await saveVersion(backend.db, backend.root, serializeProject(state.project), {
-      pid, note: el('prjNote').value.trim(), stats: projectStats(),
+      pid, note: el('prjNote').value.trim(), stats: projectStats(), editor,
     });
-    state.pid = pid;
-    setScopedItem(PID_KEY, pid);
-    syncProjectNameUi();
     tweak(() => {});
     el('prjNote').value = '';
     if (backend.mode === 'cloud') setSyncStatus('Контрольная версия сохранена в облаке', 'saved');
     toast(unchanged ? 'Без изменений с последней версии' : `Версия сохранена (всего ${meta.versions.length})`);
   } catch (error) {
-    toast(`Не сохранилось: ${error.message}`, true);
+    if (error?.code === 'edit-lease-lost') markLeaseLost(null, error.message, state.pid);
+    toast(`Не сохранилось: ${projectErrorText(error)}`, true);
   } finally {
     button.disabled = false;
   }
@@ -517,44 +1166,76 @@ async function onAction(button) {
     } else if (act === 'open') {
       const meta = projects.find((candidate) => candidate.id === pid);
       const name = state.pid === pid ? currentProjectName() : meta?.name;
-      flushAutosave();
-      if (!await flushCloudDraft()) {
-        toast('Текущий проект ещё не попал в облако. Проверьте интернет и повторите.', true);
-        return;
+      if (usesEditLease()) {
+        if (!await preserveQueuedProjectBeforeSwitch(pid)) return;
+        if (!await flushActiveProject()) return;
+        let lease = null;
+        try {
+          ({ lease } = await acquireProjectLease(pid, { kind: 'occupied' }));
+          if (!lease) return;
+          const localBackup = state.pid === pid
+            ? serializeProject(state.project, { pretty: false })
+            : null;
+          const loaded = await loadLatestServerProject(pid, vid || null);
+          await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup });
+        } catch (error) {
+          await releaseCandidateLease(pid, lease);
+          throw error;
+        }
+      } else {
+        flushAutosave();
+        if (!await flushCloudDraft()) {
+          toast('Текущий проект ещё не попал в облако. Проверьте интернет и повторите.', true);
+          return;
+        }
+        const { text, missing } = await loadVersion(backend.db, backend.root, pid, vid || null);
+        openText(text, pid, missing, name);
       }
-      const { text, missing } = await loadVersion(backend.db, backend.root, pid, vid || null);
-      openText(text, pid, missing, name);
     } else if (act === 'open-shared') {
-      flushAutosave();
-      if (!await flushCloudDraft()) {
-        toast('Текущий проект ещё не попал в облако. Проверьте интернет и повторите.', true);
-        return;
-      }
+      if (!await flushBeforeSwitch()) return;
       const { text, missing } = await loadShared(backend.db, owner, pid);
+      await detachActiveEditor();
       openText(text, null, missing);
     } else if (act === 'delete') {
       const project = projects.find((candidate) => candidate.id === pid);
       if (!window.confirm(`Удалить «${project?.name || 'проект'}» со всеми версиями?`)) return;
-      flushAutosave();
-      if (!await flushCloudDraft()) {
-        toast('Облачное сохранение ещё не подтвердилось. Дождитесь статуса и повторите удаление.', true);
-        return;
-      }
+      if (!await flushBeforeSwitch('Облачное сохранение ещё не подтвердилось. Дождитесь статуса и повторите удаление.')) return;
       if (hasPendingCloudDraft() || uncertainCloudWrites.size) {
         toast('Появились новые несохранённые изменения. Повторите удаление после синхронизации.', true);
         return;
+      }
+      let lease = null;
+      const wasActive = activeEditor?.pid === pid;
+      if (usesEditLease()) {
+        ({ lease } = await acquireProjectLease(pid, { kind: 'occupied' }));
+        if (!lease) return;
       }
       clearTimeout(syncTimer);
       syncTimer = null;
       pendingCloudDrafts.delete(pid);
       latestDraftOrder.delete(pid);
       if (state.pid === pid) pendingUnassignedDraft = null;
-      await deleteProject(backend.db, backend.root, pid);
+      deleteBusyPid = pid;
+      try {
+        const editor = lease ? { sessionId: lease.sessionId, epoch: lease.epoch } : null;
+        await deleteProject(backend.db, backend.root, pid, { editor });
+      } catch (error) {
+        if (!wasActive) await releaseCandidateLease(pid, lease);
+        throw error;
+      } finally {
+        deleteBusyPid = null;
+      }
+      if (wasActive) stopLeaseMonitoring();
+      if (lease) {
+        try { await releaseEditLease(backend.db, backend.root, pid, lease); } catch { /* lease истечёт */ }
+      }
       if (state.pid === pid) {
         state.pid = null;
         setScopedItem(PID_KEY, '');
         syncProjectNameUi();
         discardAutosave();
+        clearHistory();
+        unlockEditor();
       }
       toast('Проект удалён');
     } else if (act === 'publish') {
@@ -574,7 +1255,7 @@ async function onAction(button) {
       toast('Публикация снята');
     }
   } catch (error) {
-    toast(`Ошибка: ${error.message}`, true);
+    toast(`Ошибка: ${projectErrorText(error)}`, true);
   } finally {
     projectActionBusy = false;
     button.disabled = false;
@@ -657,7 +1338,9 @@ function updateModeText() {
 }
 
 async function refreshBackend({ restartWatch = true } = {}) {
-  backend = await getBackend();
+  const nextBackend = await getBackend();
+  if (activeEditor && backend && !sameBackend(backend, nextBackend)) await detachActiveEditor();
+  backend = nextBackend;
   updateModeText();
   const cloud = backend.mode === 'cloud';
   const sharedAvailable = backend.provider === 'claude';
@@ -734,6 +1417,7 @@ async function handleSignOut() {
   try {
     flushAutosave();
     if (!await flushCloudDraft()) throw new Error('проект ещё не синхронизирован; проверьте интернет и повторите выход');
+    await detachActiveEditor();
     await signOutGoogle();
     // Scope остаётся прежним до pagehide, чтобы открытый проект не попал в
     // guest namespace. Следующий boot сам выберет гостевой scope.
@@ -749,6 +1433,10 @@ async function handleSignOut() {
 export function bindProjects(initialAccount = null) {
   if (initialAccount) account = initialAccount;
   try { state.pid = getScopedItem(PID_KEY) || null; } catch { state.pid = null; }
+  bindEditLockUi({
+    onContinue: handleEditLockContinue,
+    onProjects: handleEditLockProjects,
+  });
   el('projectsBtn').addEventListener('click', openProjects);
   el('accountBtn').addEventListener('click', openProjects);
   el('projectsClose').addEventListener('click', () => closeProjects());
@@ -780,11 +1468,22 @@ export function bindProjects(initialAccount = null) {
     if (isProjectsOpen()) render();
     if (!el('startProjectsView').hidden && !el('startScreen').hidden) renderStartProjects(projects);
   });
-  window.addEventListener('online', () => {
+  document.addEventListener(PROJECT_REPLACED_EVENT, handleProjectReplaced);
+  window.addEventListener('online', async () => {
+    if (activeEditor && !await maintainEditorLease(true)) return;
     if (hasPendingCloudDraft()) scheduleCloudDraft(null, { immediate: true });
   });
+  window.addEventListener('offline', () => {
+    if (activeEditor) setSyncStatus('Офлайн — редактирование будет приостановлено, если связь не вернётся', 'saving');
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushAutosave({ cloudImmediate: true });
+      flushCloudDraft();
+    } else if (activeEditor) maintainEditorLease(true);
+  });
   window.addEventListener('pagehide', () => {
-    flushAutosave();
+    flushAutosave({ cloudImmediate: true });
     flushCloudDraft();
   });
   onAccountChange(async (next) => {

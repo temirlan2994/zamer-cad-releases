@@ -96,6 +96,7 @@ export function bindKeyboard() {
     if (btn && event.detail > 0 && document.activeElement === btn) btn.blur();
   });
   window.addEventListener('keydown', (event) => {
+    if (state.editLocked && !event.target?.closest?.('#editLockScreen')) return;
     if (state.splitEdit && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') && splitLiveKey(event)) { event.preventDefault(); return; }
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }

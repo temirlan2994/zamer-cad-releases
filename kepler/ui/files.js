@@ -18,11 +18,18 @@ import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
 import {
-  afterChange, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
+  afterChange, flushAutosave, pushHistory, refreshDerived, restoreFrom, snapshotIfContent,
 } from './store.js';
 import { fitView } from './view.js';
 
 const download = (filename, data, mime) => saveFile(filename, data, mime);
+export const PROJECT_REPLACED_EVENT = 'kepler:project-replaced';
+
+function announceProjectReplaced(previousPid, previousText = null) {
+  document.dispatchEvent(new CustomEvent(PROJECT_REPLACED_EVENT, {
+    detail: { previousPid: previousPid || null, previousText, pid: state.pid || null },
+  }));
+}
 
 export function safeFileName() {
   return safeProjectFileName();
@@ -101,10 +108,13 @@ export function openProjectFile(file) {
     try {
       const before = snapshotIfContent();
       const beforePid = state.pid;
+      const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
+      flushAutosave({ cloudImmediate: true });
       restoreFrom(String(reader.result));
       // Оси из файла — по порядку (автонумерация; ручные марки сохраняются).
       if (planGridPref().auto && state.project.grids?.length) state.project.grids = autoNumberGrids(state.project.grids);
       state.pid = null;
+      announceProjectReplaced(beforePid, previousText);
       if (before) pushHistory(before, beforePid);
       fitView();
       syncProjectNameUi();
@@ -121,10 +131,13 @@ export function openProjectFile(file) {
 export function loadTemplate(id) {
   const before = snapshotIfContent();
   const beforePid = state.pid;
+  const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
+  flushAutosave({ cloudImmediate: true });
   state.project = buildTemplate(id);
   // Шаблон — как любая правка: съедание по номиналам (core/v7/eat-bridge.js).
   for (const l of state.project.levels || []) reconcileEats(levelProject(state.project, l.id));
   state.pid = null;
+  announceProjectReplaced(beforePid, previousText);
   state.rejected = new Map();
   state.selection = null;
   refreshDerived();
@@ -137,9 +150,12 @@ export function loadTemplate(id) {
 export function loadSample() {
   const before = snapshotIfContent();
   const beforePid = state.pid;
+  const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
+  flushAutosave({ cloudImmediate: true });
   const { project, rejected } = buildSample();
   state.project = project;
   state.pid = null;
+  announceProjectReplaced(beforePid, previousText);
   state.rejected = rejected;
   state.selection = null;
   refreshDerived();
@@ -152,6 +168,8 @@ export function loadSample() {
 export function newProject() {
   const before = snapshotIfContent();
   const beforePid = state.pid;
+  const previousText = before ? serializeProject(state.project, { pretty: false }) : null;
+  flushAutosave({ cloudImmediate: true });
   state.pid = null;
   state.project = createProject(); // чистый участок: без топосъёмки, границы, соседей
   state.selection = null;
@@ -178,5 +196,6 @@ export function newProject() {
   applyModeRotation();
   if (before) pushHistory(before, beforePid);
   afterChange();
+  announceProjectReplaced(beforePid, previousText);
   fitView();
 }

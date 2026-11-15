@@ -150,8 +150,13 @@ async function deleteChunks(db, coll, prefix, count) {
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
-export async function getProject(db, root, pid) {
-  const snap = await retry(() => db.doc(`${root}/${pid}`).get());
+function getDoc(ref, server = false) {
+  return server && typeof ref.getServer === 'function' ? ref.getServer() : ref.get();
+}
+
+export async function getProject(db, root, pid, { server = false } = {}) {
+  const ref = db.doc(`${root}/${pid}`);
+  const snap = await retry(() => getDoc(ref, server));
   return snap.exists ? { id: pid, ...clone(snap.data()) } : null;
 }
 
@@ -170,14 +175,117 @@ function normalizedDraft(data) {
       .slice(0, MAX_BLOBS)
       .map(([h, n]) => [h, Number(n)]))
     : {};
-  return { ...clone(data), revision, chunks, blobs };
+  const editorSession = typeof data.editorSession === 'string' ? data.editorSession : null;
+  const editorEpoch = Number.isInteger(Number(data.editorEpoch)) ? Number(data.editorEpoch) : null;
+  return {
+    ...clone(data), revision, chunks, blobs, editorSession, editorEpoch,
+  };
+}
+
+function editLeaseLost(message = 'Право редактирования перешло на другое устройство') {
+  const error = new Error(message);
+  error.code = 'edit-lease-lost';
+  return error;
+}
+
+function validEditor(editor) {
+  const sessionId = String(editor?.sessionId || '');
+  const epoch = Number(editor?.epoch);
+  if (!safeId(sessionId) || !Number.isInteger(epoch) || epoch < 1) throw editLeaseLost('Нет подтверждённого права редактирования');
+  return { sessionId, epoch };
+}
+
+const editorLeaseRef = (db, root, pid) => db.doc(`${root}/${pid}/lease/editor`);
+
+function timestampMillis(value) {
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object' && Number.isFinite(Number(value.seconds))) {
+    return Number(value.seconds) * 1000 + Number(value.nanoseconds || 0) / 1e6;
+  }
+  return Date.parse(String(value));
+}
+
+async function assertEditorLease(db, root, pid, editor, at = Date.now()) {
+  const expected = validEditor(editor);
+  const snap = await retry(() => editorLeaseRef(db, root, pid).get());
+  const lease = snap.exists ? snap.data() : null;
+  if (!editorLeaseMatches(lease, expected, at)) throw editLeaseLost();
+  return expected;
+}
+
+function editorLeaseMatches(lease, expected, at = Date.now()) {
+  return Boolean(lease
+    && lease.sessionId === expected.sessionId
+    && Number(lease.epoch) === expected.epoch
+    && timestampMillis(lease.expiresAt) > Number(at));
+}
+
+function fencedMeta(meta, expected) {
+  return {
+    ...meta,
+    editorSession: expected.sessionId,
+    editorEpoch: expected.epoch,
+  };
+}
+
+function asEditLeaseError(error) {
+  if (error?.code === 'edit-lease-lost') return error;
+  if (String(error?.code || '').includes('permission-denied')) {
+    return editLeaseLost('Право редактирования истекло или передано');
+  }
+  return error;
+}
+
+async function editMetaTransaction(db, root, pid, editor, update) {
+  if (typeof db.runTransaction !== 'function') {
+    throw editLeaseLost('Хранилище не поддерживает безопасную блокировку');
+  }
+  const expected = validEditor(editor);
+  const leaseRef = editorLeaseRef(db, root, pid);
+  const metaRef = db.doc(`${root}/${pid}`);
+  try {
+    return await retry(() => db.runTransaction(async (transaction) => {
+      const leaseSnap = await transaction.get(leaseRef);
+      const metaSnap = await transaction.get(metaRef);
+      const lease = leaseSnap.exists ? leaseSnap.data() : null;
+      if (!editorLeaseMatches(lease, expected)) throw editLeaseLost();
+      return update({ transaction, metaRef, metaSnap, expected });
+    }));
+  } catch (error) {
+    throw asEditLeaseError(error);
+  }
+}
+
+async function writeDraftPointer(db, root, pid, ref, draft, editor, at = Date.now()) {
+  if (!editor) {
+    await retry(() => ref.set(draft));
+    return;
+  }
+  if (typeof db.runTransaction !== 'function') throw editLeaseLost('Хранилище не поддерживает безопасную блокировку');
+  const expected = validEditor(editor);
+  const leaseRef = editorLeaseRef(db, root, pid);
+  try {
+    await retry(() => db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(leaseRef);
+      const lease = snap.exists ? snap.data() : null;
+      if (!lease || lease.sessionId !== expected.sessionId || Number(lease.epoch) !== expected.epoch
+        || !(timestampMillis(lease.expiresAt) > Number(at))) throw editLeaseLost();
+      transaction.set(ref, draft);
+    }));
+  } catch (error) {
+    // Rules также проверяют срок lease по серверному времени. Истёкшая
+    // аренда выглядит как permission-denied и не должна уходить в retry.
+    throw asEditLeaseError(error);
+  }
 }
 
 async function touchDraftMeta(db, root, pid, {
-  at, name, revision, stats, preview,
+  at, name, revision, stats, preview, editor = null,
 }) {
   const ref = db.doc(`${root}/${pid}`);
-  let fields = {
+  const draftFields = {
     name: name || 'Без названия',
     updatedAt: at,
     draftUpdatedAt: at,
@@ -185,9 +293,8 @@ async function touchDraftMeta(db, root, pid, {
     draftStats: stats,
     preview: preview || null,
   };
-  const snap = await retry(() => ref.get());
-  if (snap.exists) {
-    const current = snap.data() || {};
+  const merge = (current = {}) => {
+    let fields = draftFields;
     if (String(current.updatedAt || '') > String(at)) {
       fields = {
         ...fields,
@@ -196,9 +303,29 @@ async function touchDraftMeta(db, root, pid, {
         preview: current.preview || fields.preview,
       };
     }
+    return fields;
+  };
+  if (editor) {
+    return editMetaTransaction(db, root, pid, editor, ({
+      transaction, metaRef, metaSnap, expected,
+    }) => {
+      const current = metaSnap.exists ? clone(metaSnap.data() || {}) : null;
+      const fields = merge(current || {});
+      const meta = fencedMeta(current
+        ? { ...current, ...fields }
+        : { createdAt: at, versions: [], blobs: {}, head: null, ...fields }, expected);
+      transaction.set(metaRef, meta);
+      return { id: pid, ...clone(meta) };
+    });
+  }
+  const snap = await retry(() => ref.get());
+  if (snap.exists) {
+    const current = snap.data() || {};
+    const fields = merge(current);
     await retry(() => ref.update(fields));
     return { id: pid, ...clone(current), ...fields };
   }
+  const fields = merge();
   const meta = { createdAt: at, versions: [], blobs: {}, head: null, ...fields };
   await retry(() => ref.set(meta));
   return { id: pid, ...meta };
@@ -208,7 +335,7 @@ async function touchDraftMeta(db, root, pid, {
 // правки не засоряют их список, а последний проект можно продолжить на
 // другом устройстве. Указатель пишется только после всех частей.
 export async function saveDraft(db, root, projectText, {
-  pid, stats = null, now = new Date(),
+  pid, stats = null, now = new Date(), editor = null,
 } = {}) {
   if (!pid) throw new Error('Нет идентификатора проекта');
   const at = now.toISOString();
@@ -220,6 +347,7 @@ export async function saveDraft(db, root, projectText, {
   const beforeSnap = await retry(() => ref.get());
   const before = beforeSnap.exists ? normalizedDraft(beforeSnap.data()) : null;
   if (before?.hash === hash) {
+    if (editor) await assertEditorLease(db, root, pid, editor);
     const meta = await getProject(db, root, pid);
     const savedMeta = meta?.draftRevision === before.revision && (!preview || meta.preview)
       ? meta
@@ -229,6 +357,7 @@ export async function saveDraft(db, root, projectText, {
         revision: before.revision,
         stats: before.stats ?? stats,
         preview: before.preview || preview,
+        editor,
       });
     return { meta: savedMeta, draft: before, unchanged: true };
   }
@@ -250,8 +379,12 @@ export async function saveDraft(db, root, projectText, {
     blobs: blobChunks,
     stats,
     preview,
+    ...(editor ? {
+      editorSession: validEditor(editor).sessionId,
+      editorEpoch: validEditor(editor).epoch,
+    } : {}),
   };
-  await retry(() => ref.set(draft));
+  await writeDraftPointer(db, root, pid, ref, draft, editor);
   // Карточка следует за фактическим указателем, даже если другая вкладка
   // успела заменить его между записью частей и этим чтением.
   let check = await retry(() => ref.get());
@@ -263,6 +396,7 @@ export async function saveDraft(db, root, projectText, {
       revision: active.revision,
       stats: active.stats ?? stats,
       preview: active.preview || preview,
+      editor,
     })
     : await getProject(db, root, pid);
   const finalCheck = await retry(() => ref.get());
@@ -275,6 +409,7 @@ export async function saveDraft(db, root, projectText, {
       revision: active.revision,
       stats: active.stats ?? stats,
       preview: active.preview || preview,
+      editor,
     });
     check = finalCheck;
   }
@@ -290,8 +425,9 @@ export async function saveDraft(db, root, projectText, {
   return { meta, draft, unchanged: false, superseded: active?.revision !== revision };
 }
 
-export async function loadDraft(db, root, pid) {
-  const snap = await retry(() => draftRef(db, root, pid).get());
+export async function loadDraft(db, root, pid, { server = false } = {}) {
+  const ref = draftRef(db, root, pid);
+  const snap = await retry(() => getDoc(ref, server));
   if (!snap.exists) return null;
   const draft = normalizedDraft(snap.data());
   if (!draft) throw new Error('Облачный черновик повреждён');
@@ -304,7 +440,7 @@ export async function loadDraft(db, root, pid) {
   return { text, draft, missing };
 }
 
-export async function deleteDraft(db, root, pid) {
+export async function deleteDraft(db, root, pid, { touchMeta = true } = {}) {
   const ref = draftRef(db, root, pid);
   const snap = await retry(() => ref.get());
   if (!snap.exists) return false;
@@ -316,6 +452,7 @@ export async function deleteDraft(db, root, pid) {
     }
   }
   await retry(() => ref.delete());
+  if (!touchMeta) return true;
   const metaRef = db.doc(`${root}/${pid}`);
   const metaSnap = await retry(() => metaRef.get());
   if (metaSnap.exists) {
@@ -330,31 +467,75 @@ export async function deleteDraft(db, root, pid) {
   return true;
 }
 
+function projectMeta(data, at) {
+  const meta = data ? clone(data) : { createdAt: at, versions: [], blobs: {} };
+  meta.versions = Array.isArray(meta.versions) ? meta.versions : [];
+  meta.blobs = meta.blobs && typeof meta.blobs === 'object' ? meta.blobs : {};
+  return meta;
+}
+
+async function saveUnchangedVersionFenced(db, root, pid, editor, {
+  at, hash, keep, note, preview,
+}) {
+  return editMetaTransaction(db, root, pid, editor, ({
+    transaction, metaRef, metaSnap, expected,
+  }) => {
+    if (!metaSnap.exists) return null;
+    const meta = projectMeta(metaSnap.data(), at);
+    if (meta.versions[0]?.hash !== hash || meta.versions.length > keep) return null;
+    if (note && !meta.versions[0].note) meta.versions[0].note = note;
+    if (preview && !meta.preview) meta.preview = preview;
+    const saved = fencedMeta(meta, expected);
+    transaction.set(metaRef, saved);
+    return { meta: { id: pid, ...saved }, version: saved.versions[0], unchanged: true };
+  });
+}
+
+async function saveVersionMetaFenced(db, root, pid, editor, {
+  at, blobs, written, version, keep, name, preview,
+}) {
+  return editMetaTransaction(db, root, pid, editor, ({
+    transaction, metaRef, metaSnap, expected,
+  }) => {
+    const fresh = projectMeta(metaSnap.exists ? metaSnap.data() : null, at);
+    const base = rebaseMeta(fresh, blobs, written);
+    const result = buildMeta(base, version, keep, name, at, preview);
+    result.meta = fencedMeta(result.meta, expected);
+    transaction.set(metaRef, result.meta);
+    return result;
+  });
+}
+
 // Сохранить новую версию. Без изменений с последней версии — ничего не
 // пишется (unchanged: true). keep — сколько версий хранить (старые удаляются).
 export async function saveVersion(db, root, projectText, {
-  pid, note = '', stats = null, keep = KEEP_VERSIONS, now = new Date(),
+  pid, note = '', stats = null, keep = KEEP_VERSIONS, now = new Date(), editor = null,
 } = {}) {
   if (!pid) throw new Error('Нет идентификатора проекта');
   const metaRef = db.doc(`${root}/${pid}`);
   const snap = await retry(() => metaRef.get());
   const at = now.toISOString();
-  const meta = snap.exists ? clone(snap.data()) : { createdAt: at, versions: [], blobs: {} };
-  meta.versions = Array.isArray(meta.versions) ? meta.versions : [];
-  meta.blobs = meta.blobs && typeof meta.blobs === 'object' ? meta.blobs : {};
+  const meta = projectMeta(snap.exists ? snap.data() : null, at);
   const {
     body, blobs, name, preview,
   } = splitHeavy(projectText);
   const hash = hashText(body);
   if (meta.versions[0]?.hash === hash && meta.versions.length <= keep) {
-    let changed = false;
-    if (note && !meta.versions[0].note) { // подпись к уже сохранённому
-      meta.versions[0].note = note;
-      changed = true;
+    if (editor) {
+      const saved = await saveUnchangedVersionFenced(db, root, pid, editor, {
+        at, hash, keep, note, preview,
+      });
+      if (saved) return saved;
+    } else {
+      let changed = false;
+      if (note && !meta.versions[0].note) { // подпись к уже сохранённому
+        meta.versions[0].note = note;
+        changed = true;
+      }
+      if (preview && !meta.preview) { meta.preview = preview; changed = true; }
+      if (changed) await retry(() => metaRef.set(meta));
+      return { meta: { id: pid, ...meta }, version: meta.versions[0], unchanged: true };
     }
-    if (preview && !meta.preview) { meta.preview = preview; changed = true; }
-    if (changed) await retry(() => metaRef.set(meta));
-    return { meta: { id: pid, ...meta }, version: meta.versions[0], unchanged: true };
   }
 
   // 1) данные: картинки (если новых нет — не пишутся), затем текст версии
@@ -374,17 +555,23 @@ export async function saveVersion(db, root, projectText, {
   const written = { ...meta.blobs };
   let base = meta;
   let result = null;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const fresh = await retry(() => metaRef.get());
-    const latest = fresh.exists ? clone(fresh.data()) : null;
-    if (latest && (attempt > 0 || latest.head !== meta.head || latest.updatedAt !== meta.updatedAt)) {
-      base = rebaseMeta(latest, blobs, written);
+  if (editor) {
+    result = await saveVersionMetaFenced(db, root, pid, editor, {
+      at, blobs, written, version, keep, name, preview,
+    });
+  } else {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const fresh = await retry(() => metaRef.get());
+      const latest = fresh.exists ? clone(fresh.data()) : null;
+      if (latest && (attempt > 0 || latest.head !== meta.head || latest.updatedAt !== meta.updatedAt)) {
+        base = rebaseMeta(latest, blobs, written);
+      }
+      result = buildMeta(base, version, keep, name, at, preview);
+      await retry(() => metaRef.set(result.meta));
+      const check = await retry(() => metaRef.get());
+      if (!check.exists || (check.data()?.versions || []).some((v) => v?.id === vid)) break;
+      base = result.meta;
     }
-    result = buildMeta(base, version, keep, name, at, preview);
-    await retry(() => metaRef.set(result.meta));
-    const check = await retry(() => metaRef.get());
-    if (!check.exists || (check.data()?.versions || []).some((v) => v?.id === vid)) break;
-    base = result.meta;
   }
   const { meta: saved, dropped, deadBlobs } = result;
 
@@ -468,17 +655,47 @@ export async function loadVersion(db, root, pid, vid = null) {
   return { text, meta, version, missing };
 }
 
-export async function deleteProject(db, root, pid) {
-  const meta = await getProject(db, root, pid);
-  if (meta) {
-    const versions = Array.isArray(meta.versions) ? meta.versions.map(normalizedVersion).filter(Boolean) : [];
-    for (const v of versions) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
-    for (const [h, n] of Object.entries(meta.blobs || {}).slice(0, MAX_BLOBS)) {
-      await deleteChunks(db, `${root}/${pid}/b`, h, Number(n));
+async function deleteProjectMetaFenced(db, root, pid, editor) {
+  // Сначала проставляем fencing-поля (нужно для старых карточек), затем во
+  // второй транзакции снова сверяем lease и удаляем карточку. Если между
+  // транзакциями право перейдёт другому устройству, удаление отклонится.
+  await editMetaTransaction(db, root, pid, editor, ({
+    transaction, metaRef, metaSnap, expected,
+  }) => {
+    if (!metaSnap.exists) return false;
+    transaction.set(metaRef, fencedMeta(metaSnap.data(), expected));
+    return true;
+  });
+  return editMetaTransaction(db, root, pid, editor, ({ transaction, metaRef, metaSnap }) => {
+    if (!metaSnap.exists) return null;
+    const meta = clone(metaSnap.data());
+    transaction.delete(metaRef);
+    return meta;
+  });
+}
+
+export async function deleteProject(db, root, pid, { editor = null } = {}) {
+  const meta = editor
+    ? await deleteProjectMetaFenced(db, root, pid, editor)
+    : await getProject(db, root, pid);
+  try {
+    if (meta) {
+      const versions = Array.isArray(meta.versions) ? meta.versions.map(normalizedVersion).filter(Boolean) : [];
+      for (const v of versions) await deleteChunks(db, `${root}/${pid}/c`, v.id, v.chunks);
+      for (const [h, n] of Object.entries(meta.blobs || {}).slice(0, MAX_BLOBS)) {
+        await deleteChunks(db, `${root}/${pid}/b`, h, Number(n));
+      }
     }
+    // Карточка удаляется следом целиком, поэтому промежуточное обновление её
+    // draft-полей не нужно (и для fenced-проекта потребовало бы editor token).
+    await deleteDraft(db, root, pid, { touchMeta: false });
+  } catch (error) {
+    // При fenced-удалении карточка уже атомарно исчезла из списка. Остаточные
+    // chunks безопасны и могут быть убраны позже; нельзя показывать проект как
+    // неудалённый и провоцировать повторное открытие полусостояния.
+    if (!editor) throw error;
   }
-  await deleteDraft(db, root, pid);
-  if (meta) await retry(() => db.doc(`${root}/${pid}`).delete());
+  if (meta && !editor) await retry(() => db.doc(`${root}/${pid}`).delete());
 }
 
 const byDateDesc = (a, b) => String(b.updatedAt || b.at || '').localeCompare(String(a.updatedAt || a.at || ''));

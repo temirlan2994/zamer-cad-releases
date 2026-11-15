@@ -67,6 +67,11 @@ export const state = {
   calibration: null, // {p1, p2, measured}
   underlayImg: null,
   pid: null, // идентификатор проекта в хранилище («Проекты»); null — ещё не сохранялся
+  // Облачный lease: при потере права редактирования UI и все центральные
+  // операции записи блокируются. editLeasePid задан только у владельца.
+  editLocked: false,
+  editLockReason: '',
+  editLeasePid: null,
 };
 
 export const history = { undo: [], redo: [] };
