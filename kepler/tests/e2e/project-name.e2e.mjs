@@ -75,6 +75,18 @@ describe('единое название проекта', () => {
     await page.evaluate(() => { window.__sheetSrcBeforeRename = document.getElementById('sheetViewImg').src; });
     await page.fill('#projectName', 'Дом с новым именем');
     await page.waitForFunction(() => document.getElementById('sheetViewImg')?.src !== window.__sheetSrcBeforeRename);
+    await page.press('#projectName', 'Enter');
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('не теряет cloud pid, выданный во время набора имени', async () => {
+    const { page } = app;
+    await page.evaluate(() => window.__kepler.newProject());
+    await page.fill('#projectName', 'Новый облачный дом');
+    await page.evaluate(() => { window.__kepler.state.pid = 'p-assigned-during-rename'; });
+    await page.press('#projectName', 'Enter');
+    await page.keyboard.press('Control+z');
+    assert.equal(await page.evaluate(() => window.__kepler.state.pid), 'p-assigned-during-rename');
     assert.deepEqual(app.errors, []);
   });
 });

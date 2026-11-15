@@ -172,7 +172,11 @@ export function bindToolbar() {
     }
     refs.projectName.value = state.project.name;
     syncProjectNameUi();
-    if (nameBefore && nameBeforeValue !== state.project.name) pushHistory(nameBefore, nameBeforePid);
+    if (nameBefore && nameBeforeValue !== state.project.name) {
+      // Первый cloud-autosave мог выдать новому проекту pid прямо во время
+      // набора. Undo имени должен сохранить эту привязку, а не снова сделать pid null.
+      pushHistory(nameBefore, nameBeforePid ?? state.pid);
+    }
     nameBefore = null;
     nameBeforePid = null;
     nameBeforeValue = null;

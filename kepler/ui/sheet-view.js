@@ -47,6 +47,8 @@ let ed = null; // камера листа пользователя: { key, k, ox
 let gesture = null; // { kind: 'move' | 'pan' | 'crop' | 'pinch', … }
 let resizeObs = null;
 let upgradeTimer = null; // отложенная перерисовка растра под зум
+let projectNameTimer = null; // штамп листа не пересобираем на каждую букву
+let projectNameSeen = null;
 const touches = new Map(); // пальцы на листе: pointerId → { x, y } (px холста)
 let viewOpener = null; // openView из ui/props-views.js (без циклического импорта)
 
@@ -160,7 +162,12 @@ export function refreshSheetView() {
   if (cache?.stamp !== stampOf(state.sheetOpen) || cache.project !== state.project) renderSheetView();
 }
 
-document.addEventListener(PROJECT_NAME_EVENT, refreshSheetView);
+document.addEventListener(PROJECT_NAME_EVENT, (event) => {
+  if (event.detail?.name === projectNameSeen) return;
+  projectNameSeen = event.detail?.name;
+  clearTimeout(projectNameTimer);
+  projectNameTimer = setTimeout(refreshSheetView, 150);
+});
 
 function renderSheetView() {
   const box = el('sheetView');
