@@ -2,7 +2,7 @@
 // привязка размеров и линий, Shift без привязки, ручки и Undo.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { clickToolbarTool, openNew, startApp } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const upperOpenings = (page) => page.evaluate(() => {
@@ -71,7 +71,7 @@ describe('3D: создание окон и дверей, межэтажная п
 
   it('клик по стене создаёт окно и копирует размеры окна нижнего этажа', async () => {
     const { page } = app;
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     await page.mouse.move(facade.x, facade.y, { steps: 5 });
     const ghost = (await d3(page)).openingTool;
     assert.equal(ghost.on, true);
@@ -163,7 +163,7 @@ describe('3D: создание окон и дверей, межэтажная п
 
   it('дверь создаётся на стене прямо в 3D, Пробел меняет сторону петель', async () => {
     const { page } = app;
-    await page.click('#doorToolBtn');
+    await clickToolbarTool(page, 'doorToolBtn');
     const doorFacade = await wallPoint(page, 4400);
     assert.ok(doorFacade, 'видна свободная часть стены для двери');
     await page.mouse.move(doorFacade.x, doorFacade.y, { steps: 5 });

@@ -15,6 +15,7 @@ describe('касание: долгое нажатие для перемещен�
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   const room = () => app.page.evaluate(() => { const r = window.__kepler.state.project.rooms[0]; return { x: r.x, y: r.y, cx: r.x + r.w / 2, cy: r.y + r.h / 2 }; });
   const panX = () => app.page.evaluate(() => window.__kepler.state.view.panX);
+  const sel = () => app.page.evaluate(() => window.__kepler.state.selection?.id ?? null);
 
   async function swipe(holdMs) {
     const r = await room();
@@ -22,6 +23,16 @@ describe('касание: долгое нажатие для перемещен�
     await touch('touchStart', p.x, p.y);
     await app.page.waitForTimeout(holdMs);
     for (let i = 1; i <= 6; i++) { await touch('touchMove', p.x + i * 8, p.y); await app.page.waitForTimeout(16); }
+    await touch('touchEnd');
+    await app.page.waitForTimeout(100);
+  }
+
+  async function tapRoom(holdMs = 0, move = false) {
+    const r = await room();
+    const p = await worldToClient(app.page, r.cx, r.cy);
+    await touch('touchStart', p.x, p.y);
+    await app.page.waitForTimeout(holdMs);
+    if (move) { for (let i = 1; i <= 5; i++) { await touch('touchMove', p.x + i * 8, p.y); await app.page.waitForTimeout(16); } }
     await touch('touchEnd');
     await app.page.waitForTimeout(100);
   }
@@ -34,25 +45,25 @@ describe('касание: долгое нажатие для перемещен�
     assert.notEqual(await panX(), pan0, 'план сдвинулся');
   });
 
-  it('долгое нажатие, затем свайп — комната двигается', async () => {
+  it('сначала тап выбирает комнату, и только следующий долгий жест двигает её', async () => {
+    await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
     const before = await room(); const pan0 = await panX();
+    // Даже долгое первое касание не должно вооружать перенос невыбранного объекта.
     await swipe(650);
-    const after = await room();
-    assert.notDeepEqual([after.x, after.y], [before.x, before.y], 'комната сдвинулась');
-    assert.equal(await panX(), pan0, 'панорамы нет');
+    const afterFirst = await room();
+    assert.deepEqual([afterFirst.x, afterFirst.y], [before.x, before.y], 'невыбранная комната осталась на месте');
+    assert.notEqual(await panX(), pan0, 'первый drag остаётся панорамой');
+    assert.equal(await sel(), null, 'drag не подменяет отдельный тап выбора');
+
+    await tapRoom();
+    assert.equal(await sel(), await app.page.evaluate(() => window.__kepler.state.project.rooms[0].id), 'тап выбрал комнату');
+    const selectedBefore = await room(); const selectedPan = await panX();
+    await swipe(650);
+    const afterSelected = await room();
+    assert.notDeepEqual([afterSelected.x, afterSelected.y], [selectedBefore.x, selectedBefore.y], 'выбранная комната сдвинулась');
+    assert.equal(await panX(), selectedPan, 'при переносе выбранной комнаты панорамы нет');
     assert.deepEqual(app.errors, []);
   });
-
-  const sel = () => app.page.evaluate(() => window.__kepler.state.selection?.id ?? null);
-  async function tapRoom(holdMs = 0, move = false) {
-    const r = await room();
-    const p = await worldToClient(app.page, r.cx, r.cy);
-    await touch('touchStart', p.x, p.y);
-    await app.page.waitForTimeout(holdMs);
-    if (move) { for (let i = 1; i <= 5; i++) { await touch('touchMove', p.x + i * 8, p.y); await app.page.waitForTimeout(16); } }
-    await touch('touchEnd');
-    await app.page.waitForTimeout(100);
-  }
 
   it('выбор: свайп по комнате не выбирает, тап выбирает, пустое место тапом снимает', async () => {
     await app.page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));

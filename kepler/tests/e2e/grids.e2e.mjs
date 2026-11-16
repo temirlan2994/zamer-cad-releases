@@ -6,7 +6,7 @@
 // телефон — инструмент виден и тапами ставит ось.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { clickToolbarTool, mobileSelectFamilyTool, openToolFamily, startApp, openSample, worldToClient } from './helpers.mjs';
 
 const grids = (page) => page.evaluate(() => window.__kepler.state.project.grids || []);
 const sel = (page) => page.evaluate(() => window.__kepler.state.selection);
@@ -60,14 +60,15 @@ describe('Координационные оси на плане', () => {
 
   it('кнопка «Ось» в колонке, подсказка, клавиша G', async () => {
     const { page } = app;
-    assert.ok(await page.isVisible('#gridToolBtn'));
+    assert.ok(await page.isVisible('#docsGroupBtn'));
+    await openToolFamily(page, 'gridToolBtn');
     assert.match(await page.textContent('#tbTip-grid'), /Ось.*Tab.*Esc/s);
     await page.keyboard.press('KeyG');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'grid');
     assert.ok(await page.$eval('#gridToolBtn', (b) => b.classList.contains('active')));
     await page.keyboard.press('KeyG');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
-    await page.click('#gridToolBtn');
+    await clickToolbarTool(page, 'gridToolBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'grid');
     assert.ok(await page.isVisible('#toGridKind'));
   });
@@ -280,18 +281,107 @@ describe('Координационные оси на плане', () => {
 });
 
 describe('Координационные оси на телефоне', () => {
-  let app;
+  let app; let cdp;
   before(async () => {
     app = await startApp({ mobile: true });
     await openSample(app.page);
+    cdp = await app.page.context().newCDPSession(app.page);
   });
   after(async () => { await app?.close(); });
+
+  const touch = (type, p) => cdp.send('Input.dispatchTouchEvent', {
+    type,
+    touchPoints: type === 'touchEnd' ? [] : [{ x: p.x, y: p.y }],
+  });
+
+  async function nextDraw(page) {
+    await page.evaluate(async () => {
+      (await import('./ui/view.js')).requestDraw();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+  }
+
+  async function touchTap(page, p) {
+    await touch('touchStart', p);
+    await touch('touchEnd', p);
+    await nextDraw(page);
+  }
+
+  async function touchDrag(page, from, to, { hold = 0, steps = 6 } = {}) {
+    await touch('touchStart', from);
+    if (hold) await page.waitForTimeout(hold);
+    for (let i = 1; i <= steps; i += 1) {
+      await touch('touchMove', {
+        x: from.x + ((to.x - from.x) * i) / steps,
+        y: from.y + ((to.y - from.y) * i) / steps,
+      });
+    }
+    await touch('touchEnd', to);
+    await nextDraw(page);
+  }
+
+  // Берём участок линии вне комнат и накладок. Так тест не зависит от
+  // масштаба и расположения дома на узком экране.
+  async function freeGridLinePoint(page, id) {
+    return page.evaluate(async (gid) => {
+      const canvas = document.getElementById('canvas');
+      const rect = canvas.getBoundingClientRect();
+      const ui = window.__kepler.state._gridUI.find((entry) => entry.id === gid);
+      const { screenToPlan } = await import('./ui/view.js');
+      const { hitPlanStack } = await import('./ui/hit.js');
+      if (!ui) throw new Error(`Нет экранной геометрии оси ${gid}`);
+      const dx = ui.B.x - ui.A.x; const dy = ui.B.y - ui.A.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const ux = dx / length; const uy = dy / length;
+      const candidates = [];
+      for (const inset of [4, 8, 16, 24, 32, 40, 56, 72]) {
+        candidates.push({ x: ui.A.x + ux * inset, y: ui.A.y + uy * inset });
+        candidates.push({ x: ui.B.x - ux * inset, y: ui.B.y - uy * inset });
+      }
+      for (const t of [0.08, 0.92, 0.15, 0.85, 0.25, 0.75, 0.5]) {
+        candidates.push({ x: ui.A.x + dx * t, y: ui.A.y + dy * t });
+      }
+      for (const p of candidates) {
+        const client = { x: rect.left + p.x, y: rect.top + p.y };
+        if (client.x < rect.left + 4 || client.x > rect.right - 4 || client.y < rect.top + 4 || client.y > rect.bottom - 4) continue;
+        if (document.elementFromPoint(client.x, client.y) !== canvas) continue;
+        if (ui.heads.some((head) => Math.hypot(p.x - head.x, p.y - head.y) <= 18)) continue;
+        if (hitPlanStack(screenToPlan(p.x, p.y)).length) continue;
+        return client;
+      }
+      throw new Error(`Нет свободной видимой точки на оси ${gid}`);
+    }, id);
+  }
+
+  async function visibleGridHead(page, id) {
+    return page.evaluate((gid) => {
+      const canvas = document.getElementById('canvas');
+      const rect = canvas.getBoundingClientRect();
+      const ui = window.__kepler.state._gridUI.find((entry) => entry.id === gid);
+      if (!ui) throw new Error(`Нет экранной геометрии оси ${gid}`);
+      for (const head of ui.heads) {
+        const other = ui.heads.find((entry) => entry.end !== head.end);
+        const p = { x: rect.left + head.x, y: rect.top + head.y };
+        if (p.x < rect.left + 16 || p.x > rect.right - 16 || p.y < rect.top + 16 || p.y > rect.bottom - 16) continue;
+        if (document.elementFromPoint(p.x, p.y) !== canvas) continue;
+        const ox = head.x - other.x; const oy = head.y - other.y;
+        const length = Math.hypot(ox, oy) || 1;
+        return { ...p, end: head.end, ux: ox / length, uy: oy / length };
+      }
+      throw new Error(`Нет видимой марки оси ${gid}`);
+    }, id);
+  }
+
+  const gridExtent = (page, id) => page.evaluate(async (gid) => {
+    const g = window.__kepler.state.project.grids.find((entry) => entry.id === gid);
+    return (await import('./core/grid-axes.js')).gridExtent(window.__kepler.state.project, g);
+  }, id);
 
   it('инструмент — в ряду «Рисовать», тапом ставит ось', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="draw"]');
-    assert.ok(await page.isVisible('#mobileDraw [data-draw="gridToolBtn"]'));
-    await page.tap('#mobileDraw [data-draw="gridToolBtn"]');
+    assert.ok(await page.isVisible('#mobileDraw [data-draw-family="docs"]'));
+    await mobileSelectFamilyTool(page, 'docs', 'gridToolBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'grid');
     const box = await canvasBox(page);
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.3);
@@ -299,6 +389,55 @@ describe('Координационные оси на телефоне', () => {
     const list = await grids(page);
     assert.equal(list.length, 1);
     assert.equal(list[0].label, '1');
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('ось и её марка двигаются только после отдельного тапа выбора', async () => {
+    const { page } = app;
+    await page.keyboard.press('Escape');
+    const grid = (await grids(page))[0];
+    const clearSelection = async () => {
+      await page.evaluate(async () => (await import('./ui/tools.js')).selectObject(null));
+      await nextDraw(page);
+    };
+
+    // Линия: первый hold+drag лишь панорамирует, но не сдвигает ось.
+    await clearSelection();
+    let line = await freeGridLinePoint(page, grid.id);
+    let ui = await gridUi(page, grid.id);
+    const lineLength = Math.hypot(ui.B.x - ui.A.x, ui.B.y - ui.A.y) || 1;
+    const normal = { x: -(ui.B.y - ui.A.y) / lineLength, y: (ui.B.x - ui.A.x) / lineLength };
+    const at0 = (await grids(page)).find((entry) => entry.id === grid.id).at;
+    await touchDrag(page, line, { x: line.x + normal.x * 48, y: line.y + normal.y * 48 }, { hold: 650 });
+    assert.equal((await grids(page)).find((entry) => entry.id === grid.id).at, at0, 'невыбранная ось не сдвинулась');
+    assert.equal(await sel(page), null, 'drag не заменяет отдельный тап');
+
+    line = await freeGridLinePoint(page, grid.id); // после панорамы экранная точка изменилась
+    await touchTap(page, line);
+    assert.deepEqual(await sel(page), { type: 'grid', id: grid.id }, 'тап выбрал ось');
+    line = await freeGridLinePoint(page, grid.id);
+    ui = await gridUi(page, grid.id);
+    const selectedLength = Math.hypot(ui.B.x - ui.A.x, ui.B.y - ui.A.y) || 1;
+    const selectedNormal = { x: -(ui.B.y - ui.A.y) / selectedLength, y: (ui.B.x - ui.A.x) / selectedLength };
+    await touchDrag(page, line, { x: line.x + selectedNormal.x * 48, y: line.y + selectedNormal.y * 48 }, { hold: 650 });
+    assert.notEqual((await grids(page)).find((entry) => entry.id === grid.id).at, at0, 'выбранная ось сдвинулась');
+
+    // Марка-ручка: тот же select-first, затем изменение длины без hold.
+    await clearSelection();
+    let head = await visibleGridHead(page, grid.id);
+    const extent0 = await gridExtent(page, grid.id);
+    await touchDrag(page, head, { x: head.x + head.ux * 48, y: head.y + head.uy * 48 });
+    assert.deepEqual(await gridExtent(page, grid.id), extent0, 'невыбранная марка не изменила длину');
+    assert.equal(await sel(page), null, 'drag марки не выбрал ось');
+
+    head = await visibleGridHead(page, grid.id); // после панорамы марка переехала
+    await touchTap(page, head);
+    assert.deepEqual(await sel(page), { type: 'grid', id: grid.id }, 'тап марки выбрал ось');
+    head = await visibleGridHead(page, grid.id);
+    const extentSelected = await gridExtent(page, grid.id);
+    await touchDrag(page, head, { x: head.x + head.ux * 48, y: head.y + head.uy * 48 });
+    const extentMoved = await gridExtent(page, grid.id);
+    assert.notEqual(extentMoved[head.end], extentSelected[head.end], 'ручка выбранной оси изменила длину');
     assert.deepEqual(app.errors, []);
   });
 });

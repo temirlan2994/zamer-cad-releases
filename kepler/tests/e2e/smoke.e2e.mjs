@@ -1,7 +1,7 @@
 // Дымовые e2e: загрузка, панели, вкладки, переключатели.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { clickToolbarTool, startApp, openSample } from './helpers.mjs';
 import { ROOM_CATEGORIES, ROOM_TYPES } from '../../core/catalog.js';
 
 describe('smoke', () => {
@@ -63,10 +63,10 @@ describe('smoke', () => {
   it('переключатель наружных размеров', async () => {
     const btn = '#dimModeBtn';
     const before = await app.page.textContent(btn);
-    await app.page.click(btn);
+    await clickToolbarTool(app.page, 'dimModeBtn');
     const after = await app.page.textContent(btn);
     assert.notEqual(before, after);
-    await app.page.click(btn);
+    await clickToolbarTool(app.page, 'dimModeBtn');
     assert.equal(await app.page.textContent(btn), before);
   });
 

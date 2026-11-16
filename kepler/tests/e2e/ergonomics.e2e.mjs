@@ -6,7 +6,7 @@
 // запоминается, печать без зон, на телефоне кнопка видна.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, worldToClient, zoomToItems } from './helpers.mjs';
+import { clickToolbarTool, openToolFamily, startApp, worldToClient, zoomToItems } from './helpers.mjs';
 
 const frame = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const drawn = async (page) => { await frame(page); return page.evaluate(() => window.__kepler.state._ergoDrawn); };
@@ -62,8 +62,9 @@ describe('режим «Эргономика»', () => {
   it('по умолчанию выключен: зон нет, кнопка в колонке с подсказкой', async () => {
     const { page } = app;
     assert.equal(await drawn(page), null);
-    assert.equal(await page.isVisible('#ergoToolBtn'), true);
+    assert.equal(await page.isVisible('#analysisGroupBtn'), true);
     assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'false');
+    await openToolFamily(page, 'ergoToolBtn');
     await page.hover('#ergoToolBtn');
     assert.equal(await page.isVisible('#tbTip-ergo'), true);
     assert.match(await page.textContent('#tbTip-ergo'), /Эргономика.*красным\/жёлтым.*E/);
@@ -162,11 +163,11 @@ describe('режим «Эргономика»', () => {
   it('выключение — зон нет; настройка запоминается после перезагрузки', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select(null));
-    await page.click('#ergoToolBtn');
+    await clickToolbarTool(page, 'ergoToolBtn');
     assert.equal(await drawn(page), null);
     assert.equal(await page.isHidden('#ergoBadge'), true);
     assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('kepler-ergo'))).on, false);
-    await page.click('#ergoToolBtn');
+    await clickToolbarTool(page, 'ergoToolBtn');
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler));
     assert.equal(await page.evaluate(async () => (await import('./ui/render-ergonomics.js')).ergoPref().on), true);

@@ -4,7 +4,7 @@
 // сам проём создаётся и редактируется только реальными событиями мыши.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { clickToolbarTool, openToolFamily, startApp, openNew } from './helpers.mjs';
 
 async function planToClient(page, x, y) {
   const box = await (await page.$('#canvas')).boundingBox();
@@ -79,8 +79,9 @@ describe('проём перекрытия: Г-контур и вид нижне�
 
   it('кнопка включает инструмент проёма', async () => {
     const { page } = app;
-    assert.equal(await page.isVisible('#slabOpeningToolBtn'), true);
-    await page.click('#slabOpeningToolBtn');
+    assert.equal(await page.isVisible('#openingsGroupBtn'), true);
+    await openToolFamily(page, 'slabOpeningToolBtn');
+    await clickToolbarTool(page, 'slabOpeningToolBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'slab-opening');
     assert.equal(await page.$eval('#slabOpeningToolBtn', (button) => button.classList.contains('active')), true);
     assert.equal(await page.$eval('#canvas', (canvas) => getComputedStyle(canvas).cursor), 'crosshair');

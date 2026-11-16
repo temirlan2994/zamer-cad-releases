@@ -5,7 +5,7 @@
 // отключают, Ctrl+Z одним шагом, создание с тем же магнитом, сохранение.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { clickToolbarTool, startApp, openNew } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const masses = (page) => page.evaluate(() => window.__kepler.state.project.masses || []);
@@ -229,7 +229,7 @@ describe('Массы: магнит в 3D', () => {
 
   it('создание: угол основания липнет к грани массы', async () => {
     const { page } = app;
-    await page.click('#massToolBtn');
+    await clickToolbarTool(page, 'massToolBtn');
     const a = await sc(page, { x: 19000, y: 1000, z: 0 });
     await page.mouse.move(a.x, a.y, { steps: 3 });
     await page.mouse.click(a.x, a.y);

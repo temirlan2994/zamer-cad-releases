@@ -11,6 +11,7 @@ import {
 const ROOT = userRoot('lease-user');
 const PID = 'lease-project';
 const A = { sessionId: 'session-a', deviceId: 'device-a', deviceName: 'Телефон A' };
+const A_REOPENED = { sessionId: 'session-a-reopened', deviceId: 'device-a', deviceName: 'Телефон A' };
 const B = { sessionId: 'session-b', deviceId: 'device-b', deviceName: 'Телефон B' };
 const project = (name, value) => JSON.stringify({ name, value, rooms: [] });
 const editor = (lease) => ({ sessionId: lease.sessionId, epoch: lease.epoch });
@@ -57,6 +58,33 @@ test('старое устройство после takeover не меняет dr
   assert.equal(current.draft.revision, savedByB.draft.revision);
   assert.equal(current.draft.editorSession, B.sessionId);
   assert.equal(current.draft.editorEpoch, second.lease.epoch);
+});
+
+test('повторный запуск на том же телефоне fencing-ом отсекает старый сеанс', async () => {
+  const db = createMemoryDb();
+  const first = await acquireEditLease(db, ROOT, PID, A);
+  await saveDraft(db, ROOT, project('До перезапуска', 1), {
+    pid: PID, editor: editor(first.lease),
+  });
+
+  const reopened = await acquireEditLease(db, ROOT, PID, A_REOPENED);
+  assert.equal(reopened.status, 'acquired');
+  assert.equal(reopened.lease.epoch, first.lease.epoch + 1);
+  await saveDraft(db, ROOT, project('После перезапуска', 2), {
+    pid: PID, editor: editor(reopened.lease),
+  });
+
+  await assert.rejects(
+    saveDraft(db, ROOT, project('Запоздавший старый сеанс', 3), {
+      pid: PID, editor: editor(first.lease),
+    }),
+    (error) => error?.code === 'edit-lease-lost',
+  );
+
+  const current = await loadDraft(db, ROOT, PID);
+  assert.deepEqual(JSON.parse(current.text), JSON.parse(project('После перезапуска', 2)));
+  assert.equal(current.draft.editorSession, A_REOPENED.sessionId);
+  assert.equal(current.draft.editorEpoch, reopened.lease.epoch);
 });
 
 test('параллельный поздний save A проигрывает действующему save B', async () => {

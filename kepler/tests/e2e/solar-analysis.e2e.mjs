@@ -3,7 +3,7 @@
 // настоящего окна, а не только расчёт фасадных часов.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { clickToolbarTool, openNew, startApp } from './helpers.mjs';
 
 async function scene(page) {
   return page.evaluate(async () => {
@@ -101,7 +101,7 @@ describe('световой анализ комнаты', () => {
     assert.match(await page.textContent('#propsPanel'), /Световой анализ/);
     assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'false');
 
-    await page.click('#sunAnalysisBtn');
+    await clickToolbarTool(page, 'sunAnalysisBtn');
     await page.waitForSelector('#solarLegend:not([hidden])');
     assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'true');
     assert.match(await page.textContent('#solarLegend'), /Прямое солнце/);
@@ -232,7 +232,7 @@ describe('световой анализ комнаты', () => {
 
   it('выключение убирает аналитическую легенду и не даёт ошибок', async () => {
     const { page } = app;
-    await page.click('#sunAnalysisBtn');
+    await clickToolbarTool(page, 'sunAnalysisBtn');
     assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'false');
     assert.equal(await page.isHidden('#solarLegend'), true);
     assert.deepEqual(app.errors, []);

@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { clickToolbarTool, openNew, startApp } from './helpers.mjs';
 
 describe('Полая масса: инструмент и свойства', () => {
   let app;
@@ -11,7 +11,7 @@ describe('Полая масса: инструмент и свойства', () =
   after(async () => { await app?.close(); });
 
   it('отдельная кнопка включает вычитающий режим', async () => {
-    await app.page.click('#massVoidToolBtn');
+    await clickToolbarTool(app.page, 'massVoidToolBtn');
     const tool = await app.page.evaluate(() => window.__kepler.state.tool);
     assert.equal(tool.kind, 'mass');
     assert.equal(tool.void, true);

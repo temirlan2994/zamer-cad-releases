@@ -2,9 +2,10 @@
 // (#mobileSnapRow, всегда открыт), под ним — параметры инструмента. Внизу —
 // навигация (#mobileBar): «Рисовать» · «Каталог» (в «Ландшафте» —
 // «Ландшафт») · «Свойства» · «Виды» · «3D». «Рисовать» выдвигает второй ряд
-// (#mobileDraw) с инструментами режима (стена, крыша, масса, ось, разрез; в
-// «Участке» и «Ландшафте» — свои) и «Готово»; «Каталог» — второй ряд
-// (#mobileCat): Помещение · Мебель · Окно · Дверь · Лестница · Готово.
+// (#mobileDraw) с инструментами режима. Родственные инструменты плана
+// («Проёмы», «Масса», «Документация», «Анализ») раскрываются отдельным рядом
+// иконок над лентой; в «Участке» и «Ландшафте» остаются свои инструменты.
+// «Каталог» (#mobileCat): Помещение · Мебель · Лестница · Готово.
 // Кнопки рядов — зеркала кнопок колонки инструментов (#toolStrip скрыт, его
 // обработчики работают). Листы (каталог, правая панель, «⋯», формы лестниц) —
 // над вторым рядом: ручка (45% / 88% высоты, вниз — закрыть) и «✕». В листе
@@ -16,7 +17,7 @@
 import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
 import { state } from './state.js';
-import { renderToolstrip } from './toolstrip.js';
+import { getPlanToolFamilies, renderToolstrip } from './toolstrip.js';
 import { STAIR_SHAPES, STAIR_STYLE_PRESETS } from '../core/stairs.js';
 import { cancelTool, startPlaceFurniture } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
@@ -53,6 +54,7 @@ function setPropsTab(tab) {
 
 function closeAll() {
   document.body.classList.remove(...SHEETS, TALL);
+  closeMobileToolFlyout();
 }
 
 // Кнопка нижней панели: открыть нужный лист или ряд, повторно — закрыть.
@@ -118,6 +120,7 @@ export const isPhone = () => Boolean(globalThis.matchMedia?.('(max-width: 640px)
 
 // Выбрали инструмент на панели инструментов — выдвижные панели уезжают.
 export function closeSheets() {
+  closeMobileToolFlyout();
   if (!anySheet()) return;
   closeAll();
   syncMobileBar();
@@ -210,8 +213,6 @@ function placeSnapBar() {
 const CAT_ITEMS = [
   { id: 'room', label: 'Помещение', src: 'boundRoomBtn' },
   { id: 'furniture', label: 'Мебель', src: 'furnitureToolBtn' },
-  { id: 'window', label: 'Окно', src: 'windowToolBtn' },
-  { id: 'door', label: 'Дверь', src: 'doorToolBtn' },
   { id: 'stairs', label: 'Лестница', src: 'stairsToolBtn' },
 ];
 
@@ -277,6 +278,7 @@ function toolFinishButton() {
 // разрез, массив или контур ландшафта, цепочку стен; иначе — выйти из
 // инструмента. Ряд убирается.
 function finishTool() {
+  closeMobileToolFlyout();
   const draft = el('draftDone');
   if (draft && !draft.hidden) { draft.click(); return; }
   const tool = state.tool;
@@ -289,31 +291,163 @@ function finishTool() {
 }
 
 // Второй ряд «Рисовать»: зеркала кнопок колонки инструментов текущего режима.
-const PLAN_DRAW = ['wallToolBtn', 'slabOpeningToolBtn', 'roofToolBtn', 'massToolBtn', 'massVoidToolBtn', 'gridToolBtn', 'sectionToolBtn'];
+// На плане родительская иконка раскрывает связанные инструменты в общий popup,
+// который находится вне прокручиваемого ряда и потому не обрезается overflow.
+const PLAN_DRAW = [
+  { type: 'tool', id: 'wallToolBtn' },
+  { type: 'family', id: 'openings' },
+  { type: 'tool', id: 'roofToolBtn' },
+  { type: 'family', id: 'mass' },
+  { type: 'family', id: 'docs' },
+  { type: 'family', id: 'analysis' },
+];
 const drawSource = new WeakMap(); // кнопка ряда → кнопка колонки
 let drawKey = '';
+let openMobileFamily = '';
+let mobileFamilyTrigger = null;
+
+const toolFamily = (id) => getPlanToolFamilies().find((family) => family.id === id);
+const familySources = (family) => (family?.childIds || []).map((id) => el(id)).filter(Boolean);
+
+function familyActive(family) {
+  const sources = familySources(family);
+  // «Размеры» — постоянная настройка, поэтому сами по себе не подсвечивают
+  // родителя «Документация». Состояние остаётся видно на дочерней кнопке.
+  const relevant = family?.activeChildIds
+    ? sources.filter((source) => family.activeChildIds.includes(source.id))
+    : sources;
+  return relevant.some((source) => source.classList.contains('active') || source.getAttribute('aria-pressed') === 'true');
+}
+
+function closeMobileToolFlyout({ restoreFocus = false } = {}) {
+  const flyout = el('mobileToolFlyout');
+  if (!flyout) return;
+  const trigger = mobileFamilyTrigger;
+  flyout.hidden = true;
+  flyout.replaceChildren();
+  flyout.removeAttribute('data-family');
+  openMobileFamily = '';
+  mobileFamilyTrigger = null;
+  el('mobileDraw')?.querySelectorAll('[data-draw-family]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+function positionMobileToolFlyout(trigger) {
+  const flyout = el('mobileToolFlyout');
+  if (!flyout || flyout.hidden || !trigger?.isConnected) return;
+  const gap = 8;
+  const edge = 8;
+  const triggerRect = trigger.getBoundingClientRect();
+  const flyoutRect = flyout.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const viewportWidth = viewport?.width || window.innerWidth;
+  const viewportHeight = viewport?.height || window.innerHeight;
+  const left = Math.max(viewportLeft + edge, Math.min(
+    triggerRect.left + (triggerRect.width - flyoutRect.width) / 2,
+    viewportLeft + viewportWidth - flyoutRect.width - edge,
+  ));
+  const preferredTop = triggerRect.top - flyoutRect.height - gap;
+  const top = preferredTop >= viewportTop + edge
+    ? preferredTop
+    : Math.min(viewportTop + viewportHeight - flyoutRect.height - edge, triggerRect.bottom + gap);
+  flyout.style.left = `${Math.round(left)}px`;
+  flyout.style.top = `${Math.round(Math.max(viewportTop + edge, top))}px`;
+}
+
+function openMobileToolFamily(id, trigger, { focusFirst = false } = {}) {
+  const flyout = el('mobileToolFlyout');
+  const family = toolFamily(id);
+  if (!flyout || !family || !trigger) return;
+  if (!flyout.hidden && openMobileFamily === id) {
+    closeMobileToolFlyout();
+    return;
+  }
+  closeMobileToolFlyout();
+  openMobileFamily = id;
+  mobileFamilyTrigger = trigger;
+  flyout.dataset.family = id;
+  flyout.setAttribute('aria-label', family.label || trigger.getAttribute('aria-label') || 'Варианты инструмента');
+  for (const source of familySources(family)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mobile-tool-child';
+    button.dataset.toolChild = source.id;
+    button.setAttribute('aria-label', source.getAttribute('aria-label') || source.querySelector('.tb-label')?.textContent.trim() || 'Инструмент');
+    const icon = source.querySelector('svg')?.cloneNode(true);
+    if (icon) {
+      icon.setAttribute('width', '22');
+      icon.setAttribute('height', '22');
+      button.appendChild(icon);
+    }
+    const on = source.classList.contains('active') || source.getAttribute('aria-pressed') === 'true';
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.disabled = Boolean(source.disabled);
+    flyout.appendChild(button);
+  }
+  flyout.hidden = false;
+  el('mobileDraw')?.querySelectorAll('[data-draw-family]').forEach((button) => {
+    button.setAttribute('aria-expanded', String(button === trigger));
+  });
+  positionMobileToolFlyout(trigger);
+  if (focusFirst) flyout.querySelector('button:not(:disabled)')?.focus();
+}
+
+function syncMobileToolFlyout() {
+  const flyout = el('mobileToolFlyout');
+  const family = toolFamily(openMobileFamily);
+  if (!flyout || flyout.hidden || !family || !mobileFamilyTrigger?.isConnected || !has(DRAW)) {
+    if (flyout && !flyout.hidden) closeMobileToolFlyout();
+    return;
+  }
+  for (const button of flyout.querySelectorAll('[data-tool-child]')) {
+    const source = el(button.dataset.toolChild);
+    const on = Boolean(source?.classList.contains('active') || source?.getAttribute('aria-pressed') === 'true');
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-pressed', String(on));
+    button.disabled = Boolean(source?.disabled);
+  }
+  positionMobileToolFlyout(mobileFamilyTrigger);
+}
 
 function drawSources() {
-  if (state.modeName === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])];
-  if (state.modeName === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])];
-  return PLAN_DRAW.map((id) => el(id)).filter(Boolean);
+  if (state.modeName === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  if (state.modeName === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
+  return PLAN_DRAW.map((entry) => entry.type === 'family'
+    ? { ...entry, family: toolFamily(entry.id) }
+    : { ...entry, source: el(entry.id) })
+    .filter((entry) => entry.type === 'family' ? Boolean(entry.family) : Boolean(entry.source));
 }
 const sourceId = (b) => b.id || b.dataset.siteTool || b.dataset.lsTool || '';
+const drawEntryId = (entry) => entry.type === 'family' ? `family:${entry.id}` : sourceId(entry.source);
 
 function syncDrawRow() {
   const row = el('mobileDraw');
   if (!row) return;
   row.hidden = !has(DRAW);
-  if (row.hidden) return;
+  if (row.hidden) { closeMobileToolFlyout(); return; }
   const src = drawSources();
-  const key = `${state.modeName}:${src.map(sourceId).join(',')}`;
+  const key = `${state.modeName}:${src.map(drawEntryId).join(',')}`;
   if (key !== drawKey) {
+    closeMobileToolFlyout();
     drawKey = key;
     row.replaceChildren();
-    for (const s of src) {
-      const b = rowButton(s.querySelector('svg'), s.querySelector('.tb-label')?.textContent.trim() || s.getAttribute('aria-label') || '');
-      b.dataset.draw = sourceId(s);
-      drawSource.set(b, s);
+    for (const entry of src) {
+      const source = entry.type === 'family' ? el(entry.family.parentId) : entry.source;
+      const label = entry.type === 'family'
+        ? (entry.family.label || source?.getAttribute('aria-label') || '')
+        : (source?.querySelector('.tb-label')?.textContent.trim() || source?.getAttribute('aria-label') || '');
+      const b = rowButton(source?.querySelector('svg'), label);
+      if (entry.type === 'family') {
+        b.dataset.drawFamily = entry.id;
+        b.setAttribute('aria-controls', 'mobileToolFlyout');
+        b.setAttribute('aria-expanded', 'false');
+      } else {
+        b.dataset.draw = sourceId(source);
+        drawSource.set(b, source);
+      }
       row.appendChild(b);
     }
     row.appendChild(doneButton());
@@ -325,6 +459,16 @@ function syncDrawRow() {
     b.setAttribute('aria-pressed', String(on));
     b.disabled = Boolean(s?.disabled);
   }
+  for (const b of row.querySelectorAll('[data-draw-family]')) {
+    const family = toolFamily(b.dataset.drawFamily);
+    const sources = familySources(family);
+    const on = familyActive(family);
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.disabled = !sources.length || sources.every((source) => source.disabled);
+    b.setAttribute('aria-expanded', String(!el('mobileToolFlyout')?.hidden && openMobileFamily === family?.id));
+  }
+  syncMobileToolFlyout();
 }
 
 function bindDrawRow() {
@@ -332,9 +476,53 @@ function bindDrawRow() {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     if (b.dataset.done) { finishTool(); return; }
+    if (b.dataset.drawFamily) {
+      openMobileToolFamily(b.dataset.drawFamily, b, { focusFirst: e.detail === 0 });
+      return;
+    }
+    closeMobileToolFlyout();
     drawSource.get(b)?.click(); // обработчик кнопки колонки (ui/toolbar.js, ui/toolstrip.js)
     syncMobileBar();
   });
+}
+
+function bindMobileToolFlyout() {
+  const flyout = el('mobileToolFlyout');
+  if (!flyout) return;
+  flyout.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-tool-child]');
+    if (!button || button.disabled) return;
+    const trigger = mobileFamilyTrigger;
+    const source = el(button.dataset.toolChild);
+    source?.click();
+    if (['doorToolBtn', 'windowToolBtn'].includes(button.dataset.toolChild)
+      && state.tool?.kind === 'place-opening') openLibrarySheet();
+    closeMobileToolFlyout();
+    if (e.detail === 0 && trigger?.isConnected) trigger.focus();
+    syncMobileBar();
+  });
+  flyout.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(e.key)) return;
+    e.preventDefault();
+    if (e.key === 'Escape') { closeMobileToolFlyout({ restoreFocus: true }); return; }
+    const buttons = [...flyout.querySelectorAll('button:not(:disabled)')];
+    if (!buttons.length) return;
+    const current = Math.max(0, buttons.indexOf(document.activeElement));
+    const next = e.key === 'Home' ? 0
+      : e.key === 'End' ? buttons.length - 1
+        : (current + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (flyout.hidden || flyout.contains(e.target) || mobileFamilyTrigger?.contains(e.target)) return;
+    closeMobileToolFlyout();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !flyout.hidden) closeMobileToolFlyout({ restoreFocus: true });
+  });
+  el('mobileDraw')?.addEventListener('scroll', () => closeMobileToolFlyout(), { passive: true });
+  window.addEventListener('resize', () => closeMobileToolFlyout());
+  window.addEventListener('orientationchange', () => closeMobileToolFlyout());
 }
 
 function pickCatalog(id) {
@@ -541,6 +729,7 @@ export function bindMobile() {
   attachGrip(el('mobileMore'), () => closeSheets());
   buildCatRow();
   bindDrawRow();
+  bindMobileToolFlyout();
   bindSheetHead();
   buildStairsSheet();
   attachGrip(el('mobileStairs'), () => closeSheets());

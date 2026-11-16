@@ -90,6 +90,50 @@ export async function openNew(page) {
   await page.waitForFunction(() => document.getElementById('startScreen').hidden);
 }
 
+// Плановые инструменты с общей родительской иконкой. На компьютере дочерняя
+// кнопка появляется в flyout при наведении/фокусе; на телефоне — в общем
+// popup над строкой «Рисовать». Эти помощники проходят тот же путь, что и
+// пользователь, вместо принудительного клика по скрытому DOM-элементу.
+export const TOOL_FAMILY_BY_CHILD = Object.freeze({
+  doorToolBtn: 'openings',
+  windowToolBtn: 'openings',
+  slabOpeningToolBtn: 'openings',
+  massToolBtn: 'mass',
+  massVoidToolBtn: 'mass',
+  gridToolBtn: 'docs',
+  sectionToolBtn: 'docs',
+  dimModeBtn: 'docs',
+  ergoToolBtn: 'analysis',
+  sunAnalysisBtn: 'analysis',
+});
+
+const TOOL_FAMILY_PARENT = Object.freeze({
+  openings: 'openingsGroupBtn',
+  mass: 'massGroupBtn',
+  docs: 'docsGroupBtn',
+  analysis: 'analysisGroupBtn',
+});
+
+export async function openToolFamily(page, childId) {
+  const family = TOOL_FAMILY_BY_CHILD[childId];
+  const parentId = TOOL_FAMILY_PARENT[family];
+  if (!family || !parentId) throw new Error(`Unknown toolbar family child: ${childId}`);
+  await page.hover(`#${parentId}`);
+  await page.waitForSelector(`#${childId}`, { state: 'visible' });
+}
+
+export async function clickToolbarTool(page, childId) {
+  await openToolFamily(page, childId);
+  await page.click(`#${childId}`);
+}
+
+export async function mobileSelectFamilyTool(page, family, childId) {
+  if (TOOL_FAMILY_BY_CHILD[childId] !== family) throw new Error(`${childId} is not in ${family}`);
+  await page.tap(`#mobileDraw [data-draw-family="${family}"]`);
+  await page.waitForSelector(`#mobileToolFlyout [data-tool-child="${childId}"]`, { state: 'visible' });
+  await page.tap(`#mobileToolFlyout [data-tool-child="${childId}"]`);
+}
+
 // Вызов отладочного API в странице.
 export function k(page, fn, arg) {
   return page.evaluate(fn, arg);

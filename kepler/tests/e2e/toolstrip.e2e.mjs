@@ -6,11 +6,19 @@
 // Раскладка целиком (библиотека, строка параметров) — layout.e2e.mjs.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import {
+  clickToolbarTool, mobileSelectFamilyTool, openSample, openToolFamily, startApp,
+} from './helpers.mjs';
 
 const tool = (page) => page.evaluate(() => window.__kepler.state.tool?.kind || null);
 const active = (page, sel) => page.$eval(sel, (n) => n.classList.contains('active'));
 const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'stairsToolBtn'];
+const FAMILIES = {
+  openings: ['doorToolBtn', 'windowToolBtn', 'slabOpeningToolBtn'],
+  mass: ['massToolBtn', 'massVoidToolBtn'],
+  docs: ['gridToolBtn', 'sectionToolBtn', 'dimModeBtn'],
+  analysis: ['ergoToolBtn', 'sunAnalysisBtn'],
+};
 
 describe('панель инструментов', () => {
   let app;
@@ -45,6 +53,56 @@ describe('панель инструментов', () => {
     }
     assert.match(await page.textContent('#wallToolBtn .tb-tip'), /\bW\b/);
     assert.equal(await page.$$eval('#toolStrip #orthoBtn, #toolStrip #snapMenuBtn, #toolStrip #snapBar', (ns) => ns.length), 0, 'привязки — не на панели');
+    const labels = await page.$$eval('#toolStrip .tb-label', (ns) => ns.map((n) => getComputedStyle(n).display));
+    assert.ok(labels.every((display) => display === 'none'), 'в колонке видны только иконки');
+  });
+
+  it('семейства раскрываются справа мышью и клавиатурой, закрываются снаружи', async () => {
+    const { page } = app;
+    for (const [family, children] of Object.entries(FAMILIES)) {
+      const parent = `#${family}GroupBtn`;
+      assert.equal(await page.isVisible(parent), true, `${family}: родитель виден`);
+      assert.equal(await page.getAttribute(parent, 'aria-controls'), `${family}ToolFlyout`, `${family}: popup связан с родителем`);
+      assert.equal(await page.$eval(parent, (n) => Boolean(n.querySelector('svg'))), true, `${family}: есть иконка`);
+      assert.deepEqual(await page.$$eval(`#${family}ToolFlyout > .tb-btn`, (ns) => ns.map((n) => n.id)), children);
+    }
+
+    await page.mouse.move(700, 350);
+    assert.equal(await page.isVisible('#doorToolBtn'), false, 'дочерние кнопки изначально скрыты');
+    await openToolFamily(page, 'doorToolBtn');
+    const [parent, flyout] = await Promise.all(['#openingsGroupBtn', '#openingsToolFlyout'].map((s) => page.locator(s).boundingBox()));
+    assert.ok(flyout.x >= parent.x + parent.width - 2, 'flyout прилегает справа к родителю');
+    await page.hover('#doorToolBtn');
+    assert.equal(await page.isVisible('#doorToolBtn'), true, 'курсор проходит с родителя на дочернюю кнопку');
+
+    await page.mouse.move(700, 350);
+    await page.focus('#openingsGroupBtn');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.isVisible('#doorToolBtn'), true, 'ArrowRight раскрывает семейство');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'doorToolBtn', 'фокус переходит к первому инструменту');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'openingsGroupBtn', 'Escape возвращает фокус родителю');
+
+    await page.click('#massGroupBtn');
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'true');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'false', 'Escape закрывает закреплённое семейство с родителя');
+    await page.click('#massGroupBtn');
+    await page.click('#canvas', { position: { x: 12, y: 12 } });
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'false', 'клик вне закрывает семейство');
+  });
+
+  it('родитель отражает активный дочерний инструмент, но не режим размеров', async () => {
+    const { page } = app;
+    await clickToolbarTool(page, 'massVoidToolBtn');
+    assert.equal(await active(page, '#massVoidToolBtn'), true);
+    assert.equal(await active(page, '#massGroupBtn'), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await active(page, '#massGroupBtn'), false);
+
+    await clickToolbarTool(page, 'dimModeBtn');
+    assert.equal(await active(page, '#docsGroupBtn'), false, 'режим наружных/осевых размеров не подсвечивает всё семейство');
+    await clickToolbarTool(page, 'dimModeBtn');
   });
 
   it('активный инструмент подсвечен; Esc и «Выбор» снимают', async () => {
@@ -63,14 +121,14 @@ describe('панель инструментов', () => {
     assert.equal(await active(page, '#wallToolBtn'), true);
     await page.click('#selectToolBtn');
     assert.equal(await tool(page), null);
-    await page.click('#doorToolBtn');
+    await clickToolbarTool(page, 'doorToolBtn');
     assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.openKind]), ['place-opening', 'door']);
     assert.equal(await active(page, '#doorToolBtn'), true);
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.openKind), 'window');
     assert.equal(await active(page, '#doorToolBtn'), false);
     assert.equal(await active(page, '#windowToolBtn'), true);
-    await page.click('#windowToolBtn'); // повторный клик — выйти
+    await clickToolbarTool(page, 'windowToolBtn'); // повторный клик — выйти
     assert.equal(await tool(page), null);
     await page.click('#boundRoomBtn');
     assert.equal(await tool(page), 'bound-room');
@@ -101,10 +159,10 @@ describe('панель инструментов', () => {
     assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
     // Размеры: подпись и подсветка меняются.
     assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Снаружи');
-    await page.click('#dimModeBtn');
+    await clickToolbarTool(page, 'dimModeBtn');
     assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Ось');
     assert.equal(await active(page, '#dimModeBtn'), false);
-    await page.click('#dimModeBtn');
+    await clickToolbarTool(page, 'dimModeBtn');
     assert.equal(await active(page, '#dimModeBtn'), true);
   });
 
@@ -112,7 +170,10 @@ describe('панель инструментов', () => {
     const { page } = app;
     assert.equal(await page.isVisible('#planTools'), true);
     assert.equal(await page.isHidden('#siteTools'), true);
-    await page.click('#modeSiteBtn');
+    await page.click('#docsGroupBtn');
+    assert.equal(await page.getAttribute('#docsGroupBtn', 'aria-expanded'), 'true');
+    await page.evaluate(() => document.getElementById('modeSiteBtn').click());
+    assert.equal(await page.getAttribute('#docsGroupBtn', 'aria-expanded'), 'false', 'смена режима закрывает семейство');
     assert.equal(await page.isHidden('#planTools'), true);
     assert.equal(await page.isVisible('#siteTools'), true);
     assert.equal(await page.isHidden('#landscapeTools'), true);
@@ -223,6 +284,35 @@ describe('панель инструментов на телефоне', () => {
     assert.equal(await active(page, '#mobileDraw [data-draw="wallToolBtn"]'), true, 'и её зеркало');
     await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
     assert.equal(await tool(page), null, 'повторное касание — выйти');
+
+    const familyButtons = await page.$$eval('#mobileDraw [data-draw-family]', (ns) => ns.map((n) => n.dataset.drawFamily));
+    assert.deepEqual(familyButtons, ['openings', 'mass', 'docs', 'analysis']);
+    const labels = await page.$$eval('#mobileDraw .mb-label', (ns) => ns.map((n) => getComputedStyle(n).display));
+    assert.ok(labels.every((display) => display === 'none'), 'мобильная строка тоже только из иконок');
+    await page.tap('#mobileDraw [data-draw-family="mass"]');
+    assert.equal(await page.isVisible('#mobileToolFlyout'), true);
+    const popupSizes = await page.$$eval('#mobileToolFlyout [data-tool-child]', (ns) => ns.map((n) => {
+      const r = n.getBoundingClientRect();
+      return [r.width, r.height];
+    }));
+    for (const [w, h] of popupSizes) assert.ok(w >= 44 && h >= 44, `дочерняя кнопка ${w}×${h}`);
+    await page.tap('#mobileToolFlyout [data-tool-child="massVoidToolBtn"]');
+    assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.void]), ['mass', true]);
+    assert.equal(await page.isVisible('#mobileToolFlyout'), false, 'после выбора popup закрыт');
+    assert.equal(await active(page, '#mobileDraw [data-draw-family="mass"]'), true, 'родитель показывает активный дочерний инструмент');
+    await page.keyboard.press('Escape');
+
+    await page.focus('#mobileDraw [data-draw-family="mass"]');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.toolChild), 'massToolBtn', 'клавиатура переводит фокус в popup');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.isVisible('#mobileToolFlyout'), false);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.drawFamily), 'mass', 'после выбора фокус возвращается к родителю');
+    await page.keyboard.press('Escape');
+
+    await mobileSelectFamilyTool(page, 'openings', 'windowToolBtn');
+    assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.openKind]), ['place-opening', 'window']);
+    await page.keyboard.press('Escape');
     // «Ландшафт»: «Массив» и «Выноска» без выделения недоступны — как в колонке.
     await page.evaluate(() => document.getElementById('landscapeBtn').click());
     await page.waitForFunction(() => document.querySelector('#mobileDraw [data-draw="array"]'));

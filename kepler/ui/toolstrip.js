@@ -81,6 +81,238 @@ const LANDSCAPE_TOOLS = [
     enabled: () => selectedIds().length > 0, action: () => labelLandscapeSelection() },
 ];
 
+// Семейства компактной панели «План». Дочерние кнопки сохраняют прежние
+// id и обработчики: на компьютере они раскрываются справа от родителя, а
+// мобильная панель использует тот же реестр для своего всплывающего ряда.
+export const PLAN_TOOL_FAMILIES = Object.freeze([
+  Object.freeze({
+    id: 'openings',
+    parentId: 'openingsGroupBtn',
+    flyoutId: 'openingsToolFlyout',
+    label: 'Проёмы',
+    note: 'дверь, окно или проём в перекрытии',
+    childIds: Object.freeze(['doorToolBtn', 'windowToolBtn', 'slabOpeningToolBtn']),
+  }),
+  Object.freeze({
+    id: 'mass',
+    parentId: 'massGroupBtn',
+    flyoutId: 'massToolFlyout',
+    label: 'Масса',
+    note: 'добавить или вычесть объём',
+    childIds: Object.freeze(['massToolBtn', 'massVoidToolBtn']),
+  }),
+  Object.freeze({
+    id: 'docs',
+    parentId: 'docsGroupBtn',
+    flyoutId: 'docsToolFlyout',
+    label: 'Документация',
+    note: 'оси, разрезы и размеры',
+    childIds: Object.freeze(['gridToolBtn', 'sectionToolBtn', 'dimModeBtn']),
+    activeChildIds: Object.freeze(['gridToolBtn', 'sectionToolBtn']),
+  }),
+  Object.freeze({
+    id: 'analysis',
+    parentId: 'analysisGroupBtn',
+    flyoutId: 'analysisToolFlyout',
+    label: 'Анализ',
+    note: 'эргономика и естественное освещение',
+    childIds: Object.freeze(['ergoToolBtn', 'sunAnalysisBtn']),
+  }),
+]);
+
+// Ленивый getter безопасен для существующего циклического импорта
+// toolstrip.js <-> mobile.js: мобильный модуль вызывает его только после
+// завершения инициализации модулей.
+export const getPlanToolFamilies = () => PLAN_TOOL_FAMILIES;
+
+const familyCloseTimers = new Map();
+let familyStateObserver = null;
+
+function familyNodes(def) {
+  const parent = el(def.parentId);
+  const flyout = el(def.flyoutId);
+  const box = parent?.closest('.tb-family') || flyout?.parentElement || null;
+  return { parent, flyout, box };
+}
+
+function clearFamilyTimer(def) {
+  const timer = familyCloseTimers.get(def.id);
+  if (timer) clearTimeout(timer);
+  familyCloseTimers.delete(def.id);
+}
+
+function setFamilyExpanded(def, expanded) {
+  const { parent, box } = familyNodes(def);
+  if (!parent || !box) return;
+  parent.setAttribute('aria-expanded', String(Boolean(expanded)));
+}
+
+function closeToolFamily(def, { dismiss = false, restoreFocus = false } = {}) {
+  clearFamilyTimer(def);
+  const { parent, box } = familyNodes(def);
+  if (!parent || !box) return;
+  box.classList.remove('open');
+  delete box.dataset.familyPinned;
+  box.classList.toggle('dismissed', Boolean(dismiss));
+  setFamilyExpanded(def, false);
+  if (restoreFocus) parent.focus({ preventScroll: true });
+}
+
+export function closePlanToolFamilies(exceptId = '') {
+  for (const def of PLAN_TOOL_FAMILIES) {
+    if (def.id !== exceptId) closeToolFamily(def, { dismiss: true });
+  }
+}
+
+function openToolFamily(def, { pinned = false, focusFirst = false } = {}) {
+  clearFamilyTimer(def);
+  closePlanToolFamilies(def.id);
+  const { parent, flyout, box } = familyNodes(def);
+  if (!parent || !flyout || !box) return;
+  box.classList.remove('dismissed');
+  box.classList.toggle('open', Boolean(pinned));
+  if (pinned) box.dataset.familyPinned = 'true';
+  else delete box.dataset.familyPinned;
+  setFamilyExpanded(def, true);
+  if (focusFirst) {
+    const first = def.childIds.map((id) => el(id)).find((btn) => btn && !btn.disabled);
+    first?.focus({ preventScroll: true });
+  }
+}
+
+function familyIsActive(def) {
+  const ids = def.activeChildIds || def.childIds;
+  return ids.some((id) => {
+    const child = el(id);
+    return child?.classList.contains('active') || child?.getAttribute('aria-pressed') === 'true';
+  });
+}
+
+export function syncPlanToolFamilies() {
+  for (const def of PLAN_TOOL_FAMILIES) {
+    const { parent } = familyNodes(def);
+    if (!parent) continue;
+    const active = familyIsActive(def);
+    parent.classList.toggle('active', active);
+    parent.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function bindPlanToolFamilies() {
+  const observedChildIds = new Set(PLAN_TOOL_FAMILIES.flatMap((def) => def.childIds));
+  for (const def of PLAN_TOOL_FAMILIES) {
+    const { parent, flyout, box } = familyNodes(def);
+    if (!parent || !flyout || !box || parent.dataset.familyBound === 'true') continue;
+    parent.dataset.familyBound = 'true';
+    parent.removeAttribute('aria-haspopup');
+    parent.setAttribute('aria-controls', def.flyoutId);
+    parent.setAttribute('aria-expanded', 'false');
+    flyout.setAttribute('role', 'toolbar');
+    flyout.setAttribute('aria-label', def.label);
+    setTip(parent, def.label, def.note);
+
+    box.addEventListener('pointerenter', () => {
+      clearFamilyTimer(def);
+      box.classList.remove('dismissed');
+      setFamilyExpanded(def, true);
+    });
+    box.addEventListener('pointerleave', () => {
+      clearFamilyTimer(def);
+      const timer = setTimeout(() => {
+        familyCloseTimers.delete(def.id);
+        if (box.dataset.familyPinned === 'true' || box.contains(document.activeElement)) return;
+        setFamilyExpanded(def, false);
+      }, 90);
+      familyCloseTimers.set(def.id, timer);
+    });
+    box.addEventListener('focusin', (event) => {
+      if (!box.contains(event.relatedTarget)) box.classList.remove('dismissed');
+      if (!box.classList.contains('dismissed')) setFamilyExpanded(def, true);
+    });
+    box.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (box.contains(document.activeElement)) return;
+        box.classList.remove('dismissed');
+        if (box.dataset.familyPinned !== 'true' && !box.matches(':hover')) setFamilyExpanded(def, false);
+      }, 0);
+    });
+
+    parent.addEventListener('click', () => {
+      parent.focus({ preventScroll: true });
+      const wasPinned = box.dataset.familyPinned === 'true';
+      if (wasPinned) closeToolFamily(def, { dismiss: true });
+      else openToolFamily(def, { pinned: true });
+    });
+    parent.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeToolFamily(def, { dismiss: true });
+        return;
+      }
+      if (!['Enter', ' ', 'ArrowRight', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      openToolFamily(def, { pinned: true, focusFirst: true });
+    });
+
+    flyout.addEventListener('keydown', (event) => {
+      const children = def.childIds.map((id) => el(id)).filter((btn) => btn && !btn.disabled);
+      const index = children.indexOf(document.activeElement);
+      if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeToolFamily(def, { dismiss: true, restoreFocus: true });
+        return;
+      }
+      if (!children.length || index < 0) return;
+      let next = null;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = children[(index + 1) % children.length];
+      else if (event.key === 'ArrowUp') next = children[(index - 1 + children.length) % children.length];
+      else if (event.key === 'Home') next = children[0];
+      else if (event.key === 'End') next = children[children.length - 1];
+      if (!next) return;
+      event.preventDefault();
+      next.focus({ preventScroll: true });
+    });
+    flyout.addEventListener('click', (event) => {
+      const child = event.target.closest('button');
+      if (!child || !def.childIds.includes(child.id)) return;
+      // Выбор не держит меню зафиксированным. Пока указатель остаётся над
+      // семейством, обычный hover продолжает показывать варианты.
+      box.classList.remove('open');
+      delete box.dataset.familyPinned;
+      setFamilyExpanded(def, box.matches(':hover') || box.contains(document.activeElement));
+    });
+  }
+
+  if (!familyStateObserver) {
+    const strip = el('toolStrip');
+    if (strip) {
+      familyStateObserver = new MutationObserver((records) => {
+        if (records.some(({ target }) => observedChildIds.has(target.id))) syncPlanToolFamilies();
+      });
+      familyStateObserver.observe(strip, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-pressed'] });
+    }
+  }
+
+  if (document.documentElement.dataset.planFamiliesOutsideBound !== 'true') {
+    document.documentElement.dataset.planFamiliesOutsideBound = 'true';
+    document.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('.tb-family')) return;
+      closePlanToolFamilies();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      const open = PLAN_TOOL_FAMILIES.some((def) => familyNodes(def).box?.classList.contains('open'));
+      if (!open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePlanToolFamilies();
+    });
+  }
+  syncPlanToolFamilies();
+}
+
 // Подписи под значками на телефоне (.tb-label; на компьютере скрыты — там подсказка .tb-tip).
 const SHORT = {
   underlay: 'Съёмка', boundary: 'Граница', redline: 'Кр.линия', neighbor: 'Сосед', terrain: 'Отметка', north: 'Север',
@@ -169,6 +401,7 @@ export function renderToolstrip() {
   const t = state.tool;
   const plan = el('planTools');
   if (plan) plan.hidden = mode !== 'plan';
+  if (mode !== 'plan') closePlanToolFamilies();
   refs.siteTools.hidden = mode !== 'site';
   const ls = el('landscapeTools');
   if (ls) ls.hidden = mode !== 'landscape';
@@ -200,6 +433,7 @@ export function renderToolstrip() {
     const b = el(id);
     if (b) b.setAttribute('aria-pressed', String(b.classList.contains('active')));
   }
+  syncPlanToolFamilies();
   renderToolOptions(); // строка параметров — только при смене инструмента
   syncMobileBar(); // подпись каталога на нижней навигации — по инструменту
 }
@@ -248,6 +482,7 @@ function toggleStairs() {
 }
 
 export function bindToolstrip() {
+  bindPlanToolFamilies();
   el('selectToolBtn')?.addEventListener('click', () => {
     if (!finishWallChain()) cancelTool();
     state.libraryPinned = false; // «Выбор» закрывает библиотеку

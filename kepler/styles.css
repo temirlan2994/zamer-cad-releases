@@ -384,6 +384,57 @@ button.issue-go:hover { background: var(--surface-2); }
 }
 .tb-btn.armed, #view3dBtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .tb-btn:disabled { opacity: 0.38; }
+.tb-family {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tb-family-trigger::after,
+#mobileDraw [data-draw-family]::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.tb-family-flyout {
+  position: absolute;
+  left: calc(100% - 1px);
+  top: 50%;
+  z-index: 96;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.tb-family:hover > .tb-family-flyout,
+.tb-family:focus-within > .tb-family-flyout,
+.tb-family.open > .tb-family-flyout {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+/* Escape/ArrowLeft возвращают фокус родителю, но не должны тут же открыть меню через :focus-within. */
+.tb-family.dismissed > .tb-family-flyout {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .tb-pop-wrap { position: relative; display: inline-flex; }
 .tb-pop {
   position: absolute;
@@ -2120,6 +2171,12 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 .tb-tip kbd { font: inherit; color: var(--muted); }
 .tb-btn:hover .tb-tip, .tb-btn:focus-visible .tb-tip { display: block; }
 .tb-pop-wrap:has(.tb-pop:not([hidden])) .tb-tip { display: none; } /* открыта панель вида — подсказка не мешает */
+.tb-family:hover > .tb-family-trigger .tb-tip,
+.tb-family:focus-within > .tb-family-trigger .tb-tip,
+.tb-family.open > .tb-family-trigger .tb-tip { display: none; }
+/* Подсказка дочернего инструмента появляется после всего ряда иконок, не закрывая соседние. */
+.tb-family-flyout > .tb-btn { position: static; }
+.tb-family-flyout > .tb-btn .tb-tip { left: calc(100% + 10px); }
 
 /* «Ландшафт» — зелёный, как прежняя плашка у этажей */
 #landscapeBtn.active { background: #4f8a3c; color: #fff; }
@@ -2452,7 +2509,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
    Виды · 3D; «Рисовать» и «Каталог» выдвигают второй ряд. Выбранный объект —
    карточка внизу. Каталог, правая панель и «⋯» — нижние листы: ручка
    (45% / 88%, вниз — закрыть) и «✕». На компьютере — скрыто. */
-.more-btn, .mobile-more, .sheet-grip, .mobile-snap-row, .mobile-cat, .mobile-card, .mobile-sheet-head, .fit-fab { display: none; }
+.more-btn, .mobile-more, .sheet-grip, .mobile-snap-row, .mobile-cat, .mobile-tool-flyout, .mobile-card, .mobile-sheet-head, .fit-fab { display: none; }
 
 @media (max-width: 640px) {
   /* --- Шапка --- */
@@ -2550,6 +2607,47 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     box-shadow: -8px 0 8px -6px rgba(24, 32, 43, 0.18);
   }
   .mobile-cat .mb-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Вторичные ряды — только иконки; подписи основной нижней навигации остаются. */
+  #mobileDraw .mb-label, #mobileCat .mb-label { display: none; }
+  #mobileDraw [data-draw-family] { position: relative; }
+  #mobileDraw [data-draw-family]::after { right: 7px; bottom: 8px; }
+  .mobile-tool-flyout {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 96;
+    align-items: center;
+    gap: 4px;
+    max-width: calc(100vw - 16px);
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .mobile-tool-flyout:not([hidden]) { display: flex; }
+  .mobile-tool-flyout button {
+    position: relative;
+    flex: 0 0 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text);
+  }
+  .mobile-tool-flyout button:hover,
+  .mobile-tool-flyout button:focus-visible { background: var(--surface-2); border-color: var(--border); }
+  .mobile-tool-flyout button.active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
   .ms-grid { grid-template-columns: repeat(2, 1fr); }
   .ms-grid button { height: 84px; font-size: 12px; }
   .ms-presets { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
@@ -2696,12 +2794,12 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .canvas-wrap .statusbar { margin-bottom: var(--ribbon-h); }
 }
 
-/* Планшет и сенсорный экран шире телефона: колонка шире, под значками — подписи (наведения нет). */
+/* Планшет и сенсорный экран шире телефона: те же компактные иконки, раскрытие — нажатием. */
 @media (min-width: 641px) and (pointer: coarse) {
-  .workspace { --tools-w: 64px; }
-  .toolstrip { overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
-  .toolstrip .tb-btn { flex-direction: column; gap: 2px; width: 58px; height: 50px; }
-  .toolstrip .tb-label { display: block; max-width: 56px; overflow: hidden; text-overflow: ellipsis; font-size: 9.5px; font-weight: 600; line-height: 1.1; }
+  .workspace { --tools-w: 52px; }
+  .toolstrip { overflow: visible; }
+  .toolstrip .tb-btn { width: 44px; height: 44px; min-width: 44px; padding: 0; }
+  .toolstrip .tb-label { display: none; }
   .toolstrip .tb-pop { position: fixed; left: calc(var(--tools-w) + 8px); top: auto; bottom: 12px; }
   .toolstrip .tb-tip { display: none !important; }
 }

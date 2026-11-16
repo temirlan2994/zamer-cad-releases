@@ -6,7 +6,7 @@
 //  • петля ручных стен → «Помещение» — обычная комната: ручки, поворот R.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { clickToolbarTool, startApp, openNew } from './helpers.mjs';
 
 async function planToClient(page, x, y) {
   const box = await (await page.$('#canvas')).boundingBox();
@@ -55,7 +55,7 @@ describe('проёмы-сироты и окна на мосту v7, дом 45°'
 
   it('дверь инструментом на правую стену A', async () => {
     const { page } = app;
-    await page.click('#doorToolBtn');
+    await clickToolbarTool(page, 'doorToolBtn');
     await clickPlan(page, 4100, 3400);
     await page.keyboard.press('Escape');
     const list = await openings(page);
@@ -82,7 +82,7 @@ describe('проёмы-сироты и окна на мосту v7, дом 45°'
   it('окно ставится инструментом на съеденную комнату', async () => {
     const { page } = app;
     assert.ok(await page.evaluate(() => window.__kepler.state.project.rooms.find((r) => r.id === 'A').eatBase), 'A съедена');
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     await clickPlan(page, 1500, -100);
     await page.keyboard.press('Escape');
     const win = (await openings(page)).find((o) => o.kind === 'window');

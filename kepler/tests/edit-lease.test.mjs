@@ -10,6 +10,7 @@ import {
 const ROOT = 'data/users/user1';
 const PID = 'project1';
 const A = { sessionId: 'session-a', deviceId: 'device-a', deviceName: 'Телефон A' };
+const A_REOPENED = { sessionId: 'session-a-reopened', deviceId: 'device-a', deviceName: 'Телефон A' };
 const B = { sessionId: 'session-b', deviceId: 'device-b', deviceName: 'Телефон B' };
 
 test('lease атомарно допускает только одного редактора', async () => {
@@ -22,6 +23,35 @@ test('lease атомарно допускает только одного ред
   const active = await readEditLease(db, ROOT, PID);
   assert.equal(active.epoch, 1);
   assert.ok(leaseHeldBy(active, first.status === 'acquired' ? A : B));
+});
+
+test('новый сеанс того же устройства автоматически возобновляет редактирование', async () => {
+  const db = createMemoryDb();
+  const first = await acquireEditLease(db, ROOT, PID, A, { now: 1_000, ttlMs: 5_000 });
+  const reopened = await acquireEditLease(db, ROOT, PID, A_REOPENED, { now: 1_100, ttlMs: 5_000 });
+
+  assert.equal(reopened.status, 'acquired');
+  assert.equal(reopened.lease.sessionId, A_REOPENED.sessionId);
+  assert.equal(reopened.lease.deviceId, A.deviceId);
+  assert.equal(reopened.lease.epoch, first.lease.epoch + 1, 'новый sessionId получает новый fencing epoch');
+  assert.equal((await heartbeatEditLease(db, ROOT, PID, first.lease, { now: 1_200 })).status, 'lost');
+  const renewed = await heartbeatEditLease(db, ROOT, PID, reopened.lease, { now: 1_200, ttlMs: 5_000 });
+  assert.equal(renewed.status, 'renewed');
+
+  const otherDevice = await acquireEditLease(db, ROOT, PID, B, { now: 1_300, ttlMs: 5_000 });
+  assert.equal(otherDevice.status, 'occupied', 'другое устройство по-прежнему не может забрать активный lease');
+  assert.ok(leaseHeldBy(otherDevice.lease, renewed.lease));
+});
+
+test('повторная кнопка в открытом окне конфликта сразу возвращает lease тому же устройству', async () => {
+  const db = createMemoryDb();
+  const first = await acquireEditLease(db, ROOT, PID, A, { now: 1_000, ttlMs: 5_000 });
+  const reopened = await requestEditLease(db, ROOT, PID, A_REOPENED, { now: 1_100, ttlMs: 5_000 });
+
+  assert.equal(reopened.status, 'acquired');
+  assert.equal(reopened.lease.sessionId, A_REOPENED.sessionId);
+  assert.equal(reopened.lease.epoch, first.lease.epoch + 1);
+  assert.equal(reopened.lease.requestedSessionId, null);
 });
 
 test('запрос передачи можно отменить, не меняя владельца', async () => {

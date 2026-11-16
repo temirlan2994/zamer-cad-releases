@@ -80,6 +80,10 @@ export function leaseHeldBy(lease, identityOrLease) {
     && (identityOrLease.epoch == null || lease.epoch === Number(identityOrLease.epoch)));
 }
 
+function leaseHeldByDevice(lease, identity) {
+  return Boolean(lease && identity && lease.deviceId === identity.deviceId);
+}
+
 export function leaseExpired(lease, at = Date.now()) {
   const expiry = timestampMs(lease?.expiresAt);
   return !Number.isFinite(expiry) || expiry <= nowMs(at);
@@ -152,15 +156,19 @@ export async function acquireEditLease(db, root, pid, editor, {
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const current = snapshot.exists ? normalizeEditLease(snapshot.data()) : null;
-    if (current && !leaseExpired(current, at) && !leaseHeldBy(current, identity)) {
+    const sameSession = leaseHeldBy(current, identity);
+    const sameDevice = leaseHeldByDevice(current, identity);
+    if (current && !leaseExpired(current, at) && !sameSession && !sameDevice) {
       return { status: 'occupied', lease: current };
     }
-    const same = leaseHeldBy(current, identity);
-    const lease = same
+    // После повторного запуска PWA sessionId меняется, а deviceId телефона
+    // остаётся прежним. Такой запуск забирает собственный lease сразу, но с
+    // новым epoch: прежняя вкладка теряет fencing и уже не может записывать.
+    const lease = sameSession
       ? renewedLease(db, current, at, ttlMs)
       : ownedLease(db, identity, (current?.epoch || 0) + 1, at, ttlMs);
     transaction.set(ref, lease);
-    return { status: 'acquired', lease: normalizeEditLease(lease), renewed: same };
+    return { status: 'acquired', lease: normalizeEditLease(lease), renewed: sameSession };
   });
 }
 
@@ -174,12 +182,14 @@ export async function requestEditLease(db, root, pid, editor, {
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const current = snapshot.exists ? normalizeEditLease(snapshot.data()) : null;
-    if (!current || leaseExpired(current, at)) {
+    const sameSession = leaseHeldBy(current, identity);
+    const sameDevice = leaseHeldByDevice(current, identity);
+    if (!current || leaseExpired(current, at) || (sameDevice && !sameSession)) {
       const lease = ownedLease(db, identity, (current?.epoch || 0) + 1, at, ttlMs);
       transaction.set(ref, lease);
       return { status: 'acquired', lease: normalizeEditLease(lease) };
     }
-    if (leaseHeldBy(current, identity)) {
+    if (sameSession) {
       const lease = renewedLease(db, current, at, ttlMs);
       transaction.set(ref, lease);
       return { status: 'owned', lease: normalizeEditLease(lease) };

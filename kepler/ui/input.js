@@ -102,6 +102,27 @@ const TOUCH_HOLD_SLOP = 9;
 const TOUCH_HOLD_KINDS = new Set(['building', 'neighbor', 'underlay', 'item', 'opening', 'room', 'multi', 'wall', 'entry', 'ls-move', 'grid-move']);
 let drag = null;
 
+const sameIdSet = (a = [], b = []) => a.length === b.length && a.every((id) => b.includes(id));
+
+// На сенсорном экране объект правится только если он уже был выбран до
+// pointerdown. Сравниваем смысл выбора, а не весь объект: у стены, например,
+// поле `at` меняется в зависимости от точки касания, но стена остаётся той же.
+function sameSelectedTarget(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.type !== b.type) return false;
+  if (a.type === 'wall') {
+    const sameFrom = a.from == null || b.from == null ? a.from == null && b.from == null : Math.abs(a.from - b.from) < 1;
+    return a.key === b.key && sameFrom;
+  }
+  if (a.type === 'site') return a.kind === b.kind && (a.id ?? null) === (b.id ?? null);
+  if (a.type === 'multi') return sameIdSet(a.roomIds, b.roomIds) && sameIdSet(a.itemIds, b.itemIds);
+  if (a.type === 'landscape') return sameIdSet(a.ids, b.ids);
+  if (a.type === 'railing') return a.roomId === b.roomId && a.id === b.id;
+  if (a.type === 'slab') return a.levelId === b.levelId && a.id === b.id;
+  if ('id' in a || 'id' in b) return a.id === b.id;
+  return false;
+}
+
 // До изменения формы запоминаем принадлежность мебели комнатам. После
 // уменьшения часть предметов может оказаться уже снаружи нового контура, но
 // авторасстановка всё равно должна вернуть их внутрь, а не незаметно забыть.
@@ -1107,30 +1128,40 @@ export function bindCanvasInput() {
       return;
     }
     const touch = event.pointerType === 'touch';
+    const selectionBefore = touch && state.selection ? structuredClone(state.selection) : state.selection;
     state.touchDeferSelect = touch;
     state.touchDeferred = null;
     try { onCanvasPointerDown(event); } finally { state.touchDeferSelect = false; }
     const pending = state.touchDeferred;
     state.touchDeferred = null;
-    const holdable = touch && drag && (TOUCH_HOLD_KINDS.has(drag.kind) || drag.kind === 'pan');
+    // Первое касание другого объекта — только выбор. Даже долгое удержание не
+    // должно сразу сдвигать его; если палец пошёл в сторону, это панорама.
+    // Ручки уже выбранного объекта сохраняют прежнее непосредственное действие.
+    const selectFirst = touch && drag && pending
+      && drag.kind !== 'tap' && drag.kind !== 'pan'
+      && !sameSelectedTarget(selectionBefore, pending.selection);
+    const holdable = touch && drag && (selectFirst || TOUCH_HOLD_KINDS.has(drag.kind) || drag.kind === 'pan');
     if (!holdable) { if (pending) selectObject(pending.selection); return; }
-    // Касанием выбор — только тапом, перемещение — после долгого нажатия.
+    // Касанием выбор — только тапом. Уже выбранное перемещается после долгого
+    // нажатия; пустое место тем же жестом начинает рамку выделения.
     const hold = { kind: 'touch-hold', inner: drag, pending, start: pointerScreen(event), view: { ...state.view }, timer: 0 };
-    hold.timer = setTimeout(() => {
-      if (drag !== hold) return;
-      if (hold.inner.kind === 'pan') {
-        // Долгое нажатие на пустом месте — рамка выделения (затем копировать, удалить, двигать).
-        const p = hold.start;
-        drag = { kind: 'marquee', start: p };
-        state.marquee = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
-        requestDraw();
-      } else {
-        if (pending) selectObject(pending.selection);
-        drag = hold.inner;
-      }
-      canvas.parentElement?.classList.add('move-armed');
-      try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
-    }, TOUCH_HOLD_MS);
+    if (!selectFirst) {
+      hold.timer = setTimeout(() => {
+        if (drag !== hold) return;
+        if (hold.inner.kind === 'pan') {
+          // Долгое нажатие на пустом месте — рамка выделения (затем копировать, удалить, двигать).
+          const p = hold.start;
+          drag = { kind: 'marquee', start: p };
+          state.marquee = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+          requestDraw();
+        } else {
+          if (pending) selectObject(pending.selection);
+          drag = hold.inner;
+        }
+        canvas.parentElement?.classList.add('move-armed');
+        try { navigator.vibrate?.(18); } catch { /* нет вибрации */ }
+      }, TOUCH_HOLD_MS);
+    }
     drag = hold;
   });
   canvas.addEventListener('pointermove', (event) => {

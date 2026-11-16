@@ -6,7 +6,7 @@
 // загрузка, создание двумя кликами на плане.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew, worldToClient } from './helpers.mjs';
+import { clickToolbarTool, openToolFamily, startApp, openNew, worldToClient } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const masses = (page) => page.evaluate(() => window.__kepler.state.project.masses || []);
@@ -87,14 +87,15 @@ describe('Массы: создание и правка в 3D, эскиз на п
 
   it('кнопка «Масса» в колонке, подсказка, клавиша M', async () => {
     const { page } = app;
-    assert.ok(await page.isVisible('#massToolBtn'));
+    assert.ok(await page.isVisible('#massGroupBtn'));
+    await openToolFamily(page, 'massToolBtn');
     assert.match(await page.textContent('#tbTip-mass'), /Масса/);
     await page.keyboard.press('KeyM');
     assert.equal((await d3(page)).mass.tool, true);
     assert.match(await page.textContent('#v3Hint'), /клик — угол/);
     await page.keyboard.press('KeyM');
     assert.equal((await d3(page)).mass.tool, false);
-    await page.click('#massToolBtn');
+    await clickToolbarTool(page, 'massToolBtn');
     assert.equal((await d3(page)).mass.tool, true);
     assert.ok(await page.$eval('#massToolBtn', (b) => b.classList.contains('active')));
   });
@@ -369,7 +370,7 @@ describe('Массы: создание и правка в 3D, эскиз на п
 
   it('на плане два клика инструментом создают массу высотой 3000', async () => {
     const { page } = app;
-    await page.click('#massToolBtn');
+    await clickToolbarTool(page, 'massToolBtn');
     const toClient = async (x, y) => {
       const wp = await page.evaluate(async (q) => (await import('./ui/view.js')).planToWorld(q), { x, y });
       return worldToClient(page, wp.x, wp.y);

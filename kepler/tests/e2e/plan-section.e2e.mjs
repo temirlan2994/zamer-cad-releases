@@ -5,7 +5,7 @@
 // линию, Ctrl+Z, переименование, удаление, файл, другой этаж, телефон.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, uploadText } from './helpers.mjs';
+import { clickToolbarTool, mobileSelectFamilyTool, startApp, openSample, uploadText } from './helpers.mjs';
 
 const st = (page, fn, arg) => page.evaluate(fn, arg);
 const sections = (page) => st(page, () => (window.__kepler.state.project.views || []).filter((v) => v.kind === 'section'));
@@ -59,7 +59,7 @@ describe('разрез по линии на плане — компьютер 12
   it('кнопка «Разрез»: подсказка с клавишей S; 2 клика + клик стороны — вид создан', async () => {
     const { page } = app;
     assert.match(await page.textContent('#sectionToolBtn .tb-tip'), /\bS\b/);
-    await page.click('#sectionToolBtn');
+    await clickToolbarTool(page, 'sectionToolBtn');
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'psec');
     assert.equal(await page.$eval('#sectionToolBtn', (n) => n.classList.contains('active')), true);
     const cx = Math.round((box.x0 + box.x1) / 2 / 100) * 100;
@@ -223,8 +223,8 @@ describe('разрез — телефон', () => {
   it('инструмент — в ряду «Рисовать»; тапы рисуют разрез', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="draw"]');
-    assert.equal(await page.isVisible('#mobileDraw [data-draw="sectionToolBtn"]'), true);
-    await page.tap('#mobileDraw [data-draw="sectionToolBtn"]');
+    assert.equal(await page.isVisible('#mobileDraw [data-draw-family="docs"]'), true);
+    await mobileSelectFamilyTool(page, 'docs', 'sectionToolBtn');
     assert.equal(await st(page, () => window.__kepler.state.tool?.kind), 'psec');
     const b = await houseBox(page);
     const cy = (b.y0 + b.y1) / 2;

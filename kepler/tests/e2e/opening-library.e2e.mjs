@@ -3,7 +3,7 @@
 // инструмента, строка параметров синхронна, вставка — серией, Esc закрывает.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { clickToolbarTool, startApp, openSample } from './helpers.mjs';
 import { OPENING_CATEGORIES, openingPresets } from '../../core/opening-catalog.js';
 
 describe('библиотека дверей и окон', () => {
@@ -34,7 +34,7 @@ describe('библиотека дверей и окон', () => {
   it('«Дверь»: библиотека с категориями, карточками и поиском', async () => {
     const { page } = app;
     assert.equal(await page.isVisible('.library'), false);
-    await page.click('#doorToolBtn');
+    await clickToolbarTool(page, 'doorToolBtn');
     assert.equal(await page.isVisible('.library'), true, 'библиотека выехала');
     assert.equal(await page.isVisible('#openingsBar'), true);
     assert.equal(await page.isVisible('#furnitureBar'), false);
@@ -96,7 +96,7 @@ describe('библиотека дверей и окон', () => {
 
   it('«Окно»: свои категории, поиск «в пол», панорамное ставится с пресетом; повторный клик закрывает', async () => {
     const { page } = app;
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     assert.equal(await page.textContent('#openingsTitle'), 'Окна');
     assert.deepEqual(await page.$$eval('#openingCats button', (ns) => ns.map((n) => n.dataset.cat)), OPENING_CATEGORIES.window.map((c) => c.id));
     await page.fill('#openSearch', 'в пол');
@@ -117,7 +117,7 @@ describe('библиотека дверей и окон', () => {
     await page.waitForFunction((n) => window.__kepler.state.project.openings.length > n, n0);
     const o = await page.evaluate(() => { const list = window.__kepler.state.project.openings; const x = list[list.length - 1]; return { kind: x.kind, type: x.type, width: x.width, sill: x.sill }; });
     assert.deepEqual(o, { kind: 'window', type: 'panoramic', width: 2400, sill: 100 });
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
     assert.equal(await page.isVisible('.library'), false);
   });

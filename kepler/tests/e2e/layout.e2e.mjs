@@ -6,7 +6,7 @@
 // свёрнутой секцией; телефон — строка инструментов и «⚠» на холсте.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { clickToolbarTool, mobileSelectFamilyTool, startApp, openSample } from './helpers.mjs';
 
 const box = (page, sel) => page.locator(sel).boundingBox();
 const tool = (page) => page.evaluate(() => {
@@ -32,7 +32,7 @@ describe('раскладка: колонка инструментов, библ�
     assert.ok(strip.y >= top.y + top.height - 1 && strip.x < 2, 'колонка под шапкой у левого края');
     assert.ok(strip.x + strip.width <= canvas.x + 1, 'колонка слева от холста');
     assert.ok(opts.y >= top.y + top.height - 1 && opts.y + opts.height <= canvas.y + 1 && opts.height <= 44, 'строка параметров — тонкая, над холстом');
-    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn', 'stairsToolBtn', 'dimModeBtn', 'viewBtn', 'fitBtn'];
+    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'openingsGroupBtn', 'furnitureToolBtn', 'stairsToolBtn', 'massGroupBtn', 'roofToolBtn', 'docsGroupBtn', 'analysisGroupBtn', 'viewBtn', 'fitBtn'];
     const rects = [];
     for (const id of ids) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} в колонке`);
@@ -117,7 +117,7 @@ describe('раскладка: колонка инструментов, библ�
   it('строка параметров: дверь — тип и размеры, стена — тип и толщина; подсказка справа', async () => {
     const { page } = app;
     assert.equal(await page.$eval('#toolOptionsBody', (n) => n.childElementCount), 0, '«Выбор» — без параметров');
-    await page.click('#doorToolBtn');
+    await clickToolbarTool(page, 'doorToolBtn');
     for (const sel of ['#presetType', '#presetW', '#presetH']) {
       assert.equal(await page.$eval(sel, (n) => Boolean(n.closest('#toolOptions'))), true, `${sel} в строке параметров`);
       assert.equal(await page.isVisible(sel), true);
@@ -129,7 +129,7 @@ describe('раскладка: колонка инструментов, библ�
     await page.fill('#presetW', '900');
     await page.press('#presetW', 'Tab');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool.preset.width), 900);
-    await page.click('#windowToolBtn');
+    await clickToolbarTool(page, 'windowToolBtn');
     assert.equal(await page.isVisible('#presetSill'), true, 'окно — подоконник');
     await page.keyboard.press('Escape');
     await page.click('#wallToolBtn');
@@ -188,8 +188,8 @@ describe('раскладка на телефоне', () => {
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
     assert.equal(await page.isVisible('#issuesBtn'), true);
     assert.equal(await page.isVisible('#toolOptions'), false, '«Выбор» — строки параметров нет');
-    await page.tap('#mobileBar [data-sheet="rooms"]');
-    await page.tap('#mobileCat [data-cat="door"]');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    await mobileSelectFamilyTool(page, 'openings', 'doorToolBtn');
     assert.equal(await page.isVisible('#presetW'), true, 'дверь — параметры');
     const opts = await box(page, '#toolOptions');
     assert.ok(opts.x >= 0 && opts.x + opts.width <= 390.5, 'в экране');

@@ -9,7 +9,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { clickToolbarTool, startApp, openSample, worldToClient } from './helpers.mjs';
 
 const SHOTS = process.env.KEPLER_SHOTS || '';
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: join(SHOTS, `${name}.png`) }); };
@@ -122,7 +122,7 @@ describe('Стены и оси: привязка по центру стены', 
   it('инструмент «Ось» ставит ось по центру перегородки (подпись «центр стены»)', async () => {
     const { page } = app;
     await page.keyboard.press('Escape');
-    await page.click('#gridToolBtn');
+    await clickToolbarTool(page, 'gridToolBtn');
     const y = box.y1 + 1200;
     // Горизонтальное движение — вертикальная ось (kind x).
     const s0 = await toClient(page, 4500, y);
