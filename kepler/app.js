@@ -46,6 +46,7 @@ import {
 import { shouldUseRemoteProject } from './ui/startup-cloud.js';
 import { syncProjectNameUi } from './ui/project-name.js';
 import { bindPwa } from './ui/pwa.js';
+import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
 
 // Обработчики событий — в том же порядке, что и раньше.
 bindCanvasInput();
@@ -67,6 +68,7 @@ bindSolarAnalysis(() => { // выбранная комната: прямое с�
 });
 bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
 bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
+bindProjectRoute(); // этапы подготовки участка, паспорт и карта возможностей
 
 // Firebase восстанавливает Google-сессию асинхронно. До чтения локального
 // черновика узнаём UID, чтобы на общем компьютере один человек не увидел
@@ -135,6 +137,7 @@ bindPwa(); // установка на телефон, офлайн-копия и
     applyLibraryTab();
     renderProps();
     renderSelectionToolbar();
+    renderProjectRoute();
   };
   try {
     start(saved.project || createProject());

@@ -1,7 +1,8 @@
 // Панель свойств в режиме «Участок»: настройки участка и его объекты.
 
 import { insolationZone } from '../core/insolation.js';
-import { buildZonePolygon, formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
+import { formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
+import { workingBuildableGeometry } from '../core/site-planning.js';
 import { setBuildingOrigin } from '../core/site-check.js';
 import { refs, toast } from './dom.js';
 import { applyModeRotation } from './modes.js';
@@ -60,7 +61,7 @@ function bindBuildingPosition(panel) {
 export function renderSiteSettings(panel) {
   const site = state.project.site;
   const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
-  const zone = site.boundary ? buildZonePolygon(site) : null;
+  const working = site.boundary ? workingBuildableGeometry(site) : null;
   const auto = insolationZone(site.location.lat);
   const hours = Math.floor(site.sun.time / 60);
   const mins = site.sun.time % 60;
@@ -72,20 +73,21 @@ export function renderSiteSettings(panel) {
     </div>
     <div class="prop-block">
       <div class="prop-row"><span>Площадь участка</span><strong>${site.boundary ? `${polygonAreaM2(site.boundary).toFixed(1)} м²` : '—'}</strong></div>
-      <div class="prop-row"><span>Зона застройки</span><strong>${zone ? `${polygonAreaM2(zone).toFixed(1)} м²` : '—'}</strong></div>
+      <div class="prop-row"><span>Рабочее пятно</span><strong>${working?.geometry?.length ? `${working.areaM2.toFixed(1)} м²` : '—'}</strong></div>
       <label class="prop-field"><span>Север, ° по часовой (0 = вверх съёмки)</span>
         <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
       ${buildingRotationField()}
       ${buildingPositionFields()}
     </div>
     ${terrainSection()}
-    <h3>Отступы застройки</h3>
+    <h3>Проектные ограничения</h3>
     <div class="prop-block">
       <label class="prop-field"><span>От границы участка, м</span>
         <input id="setbackB" type="number" step="0.1" min="0" value="${(site.setbackBoundary / 1000).toFixed(1)}"></label>
       <label class="prop-field"><span>От соседнего дома, м</span>
         <input id="setbackN" type="number" step="0.5" min="0" value="${(site.setbackNeighbor / 1000).toFixed(1)}"></label>
-      <label class="check-row"><input type="checkbox" id="showZone" ${site.showBuildZone ? 'checked' : ''}><span>Показывать зону застройки</span></label>
+      <label class="check-row"><input type="checkbox" id="showZone" ${site.showBuildZone ? 'checked' : ''}><span>Показывать рабочее пятно</span></label>
+      <p class="empty-hint">Эскизная проверка по введённым значениям, не нормативное заключение. Проверьте ограничения по правилам вашего региона.</p>
     </div>
     <h3>Инсоляция</h3>
     <div class="prop-block">

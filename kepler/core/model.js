@@ -226,7 +226,11 @@ export function hasContent(project) {
   const s = project.site;
   if (!s || typeof s !== 'object') return false;
   return Boolean(s.boundary?.length || s.redLine?.length || s.roads?.length || s.neighbors?.length
-    || s.entry || s.underlay || s.terrain?.points?.length || s.landscape?.objects?.length);
+    || s.entry || s.underlay || s.terrain?.points?.length || s.landscape?.objects?.length
+    // Явные решения в маршруте участка — тоже пользовательские данные. Даже
+    // до первой линии их нельзя терять после перезапуска приложения.
+    || s.planning?.withoutUnderlay || s.planning?.contextReviewed || s.planning?.flatTerrain
+    || s.planning?.constraintsConfirmed || s.planning?.referenceFootprint);
 }
 
 // Открытие файла любой поддерживаемой версии: разбор → миграции до текущей

@@ -41,6 +41,7 @@ export const AUTOSAVE_AT_KEY = `${AUTOSAVE_KEY}-at`;
 export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Проектов» сейчас открыт
 export const BROKEN_KEY = `${AUTOSAVE_KEY}-broken`; // резерв битого автосохранения
 export const AUTOSAVE_EVENT = 'kepler:autosave';
+export const PROJECT_CHANGE_EVENT = 'kepler:project-change';
 const OWNER_KEY = `${AUTOSAVE_KEY}-tab`; // какая вкладка записала автосохранение последней
 const TAB_ID = newId('tab');
 
@@ -50,6 +51,15 @@ let heavyPending = false; // подложка из автосохранения 
 const warned = new Set();
 let lastVoidTargetProject = null;
 let lastVoidTargetKey = '';
+
+// Независимые панели (например, «Маршрут проекта») подписываются на один
+// лёгкий сигнал и сами пересчитывают производные данные. В проект статус
+// таких панелей не записывается.
+function dispatchProjectChange() {
+  if (typeof globalThis.document?.dispatchEvent !== 'function'
+      || typeof globalThis.CustomEvent !== 'function') return;
+  globalThis.document.dispatchEvent(new globalThis.CustomEvent(PROJECT_CHANGE_EVENT));
+}
 
 // Cutter может осиротеть не только при собственной правке: пользователь
 // способен удалить или сдвинуть единственную комнату, стену, плиту либо
@@ -272,6 +282,7 @@ export function tweak(fn) {
   fn();
   scheduleAutosave();
   requestDraw();
+  dispatchProjectChange();
   return true;
 }
 
@@ -316,6 +327,7 @@ export function afterChange() {
   syncProjectNameUi({ updateInput: document.activeElement?.id !== 'projectName' });
   requestDraw();
   scheduleAutosave();
+  dispatchProjectChange();
   if (removedVoids.length) {
     toast(`Полая масса больше ничего не пересекает и удалена${removedVoids.length > 1 ? ` (${removedVoids.length})` : ''}`, true);
   }
@@ -510,10 +522,17 @@ export function restoreFrom(text) {
     selection: state.selection,
     rejected: new Map(state.rejected),
     layoutVariants: new Map(state.layoutVariants),
+    siteOpportunity: state.siteOpportunity,
+    siteOpportunityUI: state._siteOpportunityUI,
   };
   state.project = project;
   Object.assign(state, derived);
   state.selection = null;
+  // Карта относится к конкретному набору исходных данных. При открытии
+  // файла/версии (и при undo/redo) безопаснее попросить включить её снова,
+  // чем оставить на экране результат от прежней модели.
+  state.siteOpportunity = { on: false, result: null, signature: null };
+  state._siteOpportunityUI = null;
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
@@ -524,6 +543,8 @@ export function restoreFrom(text) {
     state.selection = prev.selection;
     state.rejected = prev.rejected;
     state.layoutVariants = prev.layoutVariants;
+    state.siteOpportunity = prev.siteOpportunity;
+    state._siteOpportunityUI = prev.siteOpportunityUI;
     try {
       refreshDerived();
       applyModeRotation();

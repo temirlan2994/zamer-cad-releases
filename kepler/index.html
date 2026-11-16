@@ -59,6 +59,34 @@
           <button type="button" id="moreBtn" class="icon-btn more-btn" aria-label="Ещё" aria-controls="mobileMore" aria-expanded="false">⋯</button>
         </div>
       </header>
+      <!-- Маршрут подготовки участка: короткая строка остаётся над рабочей областью,
+           подробности раскрываются поверх холста (на телефоне — нижним листом). -->
+      <section class="project-route" id="projectRoute" aria-label="Маршрут проекта">
+        <div class="project-route-bar">
+          <button type="button" class="project-route-summary" id="projectRouteToggle" aria-controls="projectRoutePanel" aria-expanded="false">
+            <span class="project-route-kicker">Маршрут проекта</span>
+            <strong id="projectRouteSummary">Участок · проверяем исходные данные</strong>
+            <span class="project-route-caret" aria-hidden="true">⌄</span>
+          </button>
+          <nav class="project-route-steps" id="projectRouteSteps" aria-label="Этапы подготовки участка"></nav>
+          <button type="button" class="project-route-passport" id="projectRoutePassport" aria-controls="projectRoutePanel" aria-expanded="false">
+            <span aria-hidden="true">▤</span>
+            <span>Паспорт участка</span>
+          </button>
+        </div>
+        <button type="button" class="project-route-scrim" id="projectRouteScrim" aria-label="Закрыть маршрут проекта" hidden></button>
+        <div class="project-route-panel" id="projectRoutePanel" role="dialog" aria-modal="false" aria-labelledby="projectRoutePanelTitle" hidden>
+          <header class="project-route-panel-head">
+            <div>
+              <div class="project-route-panel-kicker" id="projectRoutePanelKicker">Маршрут проекта</div>
+              <h2 id="projectRoutePanelTitle">Подготовка участка</h2>
+            </div>
+            <button type="button" class="project-route-close" id="projectRouteClose" aria-label="Закрыть маршрут проекта">×</button>
+          </header>
+          <div class="project-route-body" id="projectRouteBody"></div>
+        </div>
+        <p class="sr-only" id="projectRouteLive" aria-live="polite"></p>
+      </section>
       <main class="workspace">
         <!-- Колонка инструментов слева (ui/toolstrip.js): только значки, подсказка .tb-tip — своя, сразу при наведении.
              Наборы: общий «Выбор», «План» / «Участок» / «Ландшафт», переход в «Ландшафт», внизу — вид. Телефон — строка над холстом. -->
@@ -179,6 +207,13 @@
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
           <div class="canvas-hint" id="canvasHint" hidden></div>
+          <div class="site-opportunity-canvas-legend" id="siteOpportunityLegend" aria-label="Легенда карты возможностей" hidden>
+            <strong>Карта участка</strong>
+            <span><i data-tone="low"></i>ниже балл</span>
+            <span><i data-tone="high"></i>выше балл</span>
+            <span><i data-tone="unknown"></i>мало данных</span>
+            <span><i data-tone="candidate"></i>A–C варианты</span>
+          </div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->
           <button class="draft-done tool-done" id="toolDone" type="button" hidden>✓ Готово</button>

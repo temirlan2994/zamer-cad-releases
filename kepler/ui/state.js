@@ -25,6 +25,10 @@ export const state = {
   // Выбранная комната и слой световой карты. Это состояние вида: в проект
   // не сохраняется, а расчёт лениво кешируется в ui/render-solar.js.
   solarAnalysis: { on: false, roomId: null, mode: 'direct' },
+  // Расчётная карта возможностей участка. Это состояние вида:
+  // в файле проекта хранится только исходное пятно site.planning.referenceFootprint.
+  siteOpportunity: { on: false, result: null, signature: null },
+  siteBuildable: null, // производное рабочее пятно; обновляет «Маршрут проекта»
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

@@ -72,6 +72,19 @@ const SITE_TOOLS = [
     action: () => setTool({ kind: 'calibrate', points: [] }, 'Кликните две точки на топосъёмке с известным расстоянием (например, сторону участка)') },
 ];
 
+// Запуск существующего инструмента участка из внешнего интерфейса
+// («Маршрут проекта»). В отличие от клика по уже активной кнопке этот вызов
+// всегда оставляет нужный инструмент включённым.
+export function activateSiteTool(id) {
+  const def = SITE_TOOLS.find((item) => item.id === id);
+  const site = state.project?.site;
+  if (!def || (def.enabled && !def.enabled(site))) return false;
+  def.action(site);
+  closeSheets();
+  renderToolstrip();
+  return true;
+}
+
 const LANDSCAPE_TOOLS = [
   { id: 'section', name: 'Разрез', note: () => 'точки линии, Enter — вид сбоку',
     active: () => state.tool?.kind === 'ls-section', action: () => startSectionTool() },

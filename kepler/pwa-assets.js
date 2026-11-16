@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "03cb014188804f72",
+  "version": "87b23c238ae0a9b2",
   "assets": [
     "./",
     "./app.js",
@@ -30,6 +30,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/gap-fix.js",
     "./core/gaps.js",
     "./core/geom/clip.js",
+    "./core/geom/index.js",
     "./core/geom/poly.js",
     "./core/grid-axes.js",
     "./core/grid-pins-model.js",
@@ -95,6 +96,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/schedule.js",
     "./core/section.js",
     "./core/site-check.js",
+    "./core/site-planning.js",
     "./core/site.js",
     "./core/slab-openings.js",
     "./core/solar-analysis.js",
@@ -185,6 +187,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/plan-section.js",
     "./ui/plan-shadows.js",
     "./ui/project-name.js",
+    "./ui/project-route.js",
     "./ui/projects.js",
     "./ui/props-composite.js",
     "./ui/props-sheets.js",
@@ -206,6 +209,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/render-plan-section.js",
     "./ui/render-roofs.js",
     "./ui/render-section.js",
+    "./ui/render-site-opportunity.js",
     "./ui/render-slab.js",
     "./ui/render-solar.js",
     "./ui/roof-plan.js",

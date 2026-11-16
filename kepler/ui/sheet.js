@@ -15,7 +15,8 @@ import { groundLevel, levelProject, sortedLevels } from '../core/model.js';
 import { buildImagePdf } from '../core/pdf.js';
 import { roomSchedule } from '../core/schedule.js';
 import { tepReport, tepRows } from '../core/tep.js';
-import { buildZonePolygon, neighborRectCorners, polygonAreaM2 } from '../core/site.js';
+import { neighborRectCorners } from '../core/site.js';
+import { workingBuildableGeometry } from '../core/site-planning.js';
 import { deriveWalls } from '../core/walls.js';
 import { gridSegment, visibleGrids } from '../core/grid-axes.js';
 import { planGridPref } from './plan-grids.js';
@@ -226,8 +227,8 @@ function siteTable(ctx, project) {
   ctx.fillText('Технико-экономические показатели', x0, y0);
   ctx.font = '400 3px system-ui, sans-serif';
   const rows = tepRows(tepReport(project));
-  const zone = buildZonePolygon(project.site);
-  if (zone) rows.splice(1, 0, ['Зона застройки (с отступами)', `${fmt(polygonAreaM2(zone))} м²`]);
+  const working = workingBuildableGeometry(project.site);
+  if (working.geometry.length) rows.splice(1, 0, ['Рабочее пятно (эскиз)', `${fmt(working.areaM2)} м²`]);
   // Две колонки строк: название слева, значение справа.
   const perCol = Math.ceil(rows.length / 2);
   rows.forEach(([k, v], i) => {

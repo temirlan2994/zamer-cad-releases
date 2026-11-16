@@ -10,8 +10,84 @@ export const DEFAULT_SETBACK_BOUNDARY = 1500; // отступ от границ�
 export const DEFAULT_SETBACK_NEIGHBOR = 6000; // отступ от соседнего дома, мм
 export const DEFAULT_ROAD_WIDTH = 3500;
 
-export function createSite() {
+const finitePlanningNumber = (value) => value !== null && value !== undefined
+  && !(typeof value === 'string' && value.trim() === '') && Number.isFinite(Number(value));
+
+const signatureNumber = (value, fallback = null) => (finitePlanningNumber(value) ? Number(value) : fallback);
+
+// Подтверждение окружения относится к конкретному набору и геометрии соседей.
+// Сортировка делает снимок независимым от порядка объектов в массиве.
+export function contextNeighborSignature(neighbors = []) {
+  const rows = (Array.isArray(neighbors) ? neighbors : []).map((neighbor) => [
+    typeof neighbor?.id === 'string' ? neighbor.id : '',
+    signatureNumber(neighbor?.x),
+    signatureNumber(neighbor?.y),
+    signatureNumber(neighbor?.w),
+    signatureNumber(neighbor?.h),
+    signatureNumber(neighbor?.rot, 0),
+    signatureNumber(neighbor?.height, 6000),
+  ]);
+  rows.sort((a, b) => {
+    const left = JSON.stringify(a);
+    const right = JSON.stringify(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  return JSON.stringify(rows);
+}
+
+function normalizePlanning(raw = {}, site = null) {
+  if (!raw || typeof raw !== 'object') raw = {};
+  const confirmed = raw.constraintsConfirmed;
+  const footprint = raw.referenceFootprint;
+  const contextReviewed = raw.contextReviewed === true;
   return {
+    withoutUnderlay: raw.withoutUnderlay === true,
+    contextReviewed,
+    // Старый boolean при первой загрузке получает снимок текущего окружения.
+    contextSnapshot: contextReviewed
+      ? (typeof raw.contextSnapshot === 'string'
+        ? raw.contextSnapshot : contextNeighborSignature(site?.neighbors))
+      : null,
+    flatTerrain: raw.flatTerrain === true,
+    constraintsConfirmed: confirmed && finitePlanningNumber(confirmed.setbackBoundary)
+      && finitePlanningNumber(confirmed.setbackNeighbor)
+      ? {
+        setbackBoundary: Math.max(0, Number(confirmed.setbackBoundary)),
+        setbackNeighbor: Math.max(0, Number(confirmed.setbackNeighbor)),
+      }
+      : null,
+    referenceFootprint: footprint && finitePlanningNumber(footprint.width)
+      && finitePlanningNumber(footprint.depth)
+      && Number(footprint.width) >= 2000 && Number(footprint.depth) >= 2000
+      ? {
+        width: Math.min(100_000, Number(footprint.width)),
+        depth: Math.min(100_000, Number(footprint.depth)),
+        rotation: ((Number(footprint.rotation) || 0) % 360 + 360) % 360,
+      }
+      : null,
+  };
+}
+
+function bindContextReview(site, planning) {
+  let reviewed = planning.contextReviewed === true;
+  Object.defineProperty(planning, 'contextReviewed', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      if (!reviewed) return false;
+      return typeof planning.contextSnapshot !== 'string'
+        || planning.contextSnapshot === contextNeighborSignature(site.neighbors);
+    },
+    set(value) {
+      reviewed = value === true;
+      planning.contextSnapshot = reviewed ? contextNeighborSignature(site.neighbors) : null;
+    },
+  });
+  return planning;
+}
+
+export function createSite() {
+  const site = {
     north: 0, // направление севера: 0 = вверх экрана плана, по часовой
     location: { lat: 43.238, lon: 76.889, tz: 5 }, // широта/долгота/UTC-пояс
     solarVerified: false, // пользователь подтвердил координаты и направление севера
@@ -29,25 +105,34 @@ export function createSite() {
     norms: { day: null, hours: null }, // норма инсоляции: null — по широте (core/insolation.js)
     terrain: null, // рельеф: отметки высот (core/terrain.js); null — плоская земля
     landscape: { objects: [] }, // благоустройство (core/landscape.js)
+    // Только явные решения пользователя. Галочки «Маршрута проекта»
+    // вычисляются из модели и сюда не кэшируются.
+    planning: null,
   };
+  site.planning = bindContextReview(site, normalizePlanning({}, site));
+  return site;
 }
 
 export function ensureSite(project) {
   if (!project.site) project.site = createSite();
+  const source = project.site;
   const d = createSite();
-  project.site = {
+  const site = {
     ...d,
-    ...project.site,
-    location: { ...d.location, ...(project.site.location || {}) },
-    sun: { ...d.sun, ...(project.site.sun || {}) },
-    norms: { ...d.norms, ...(project.site.norms || {}) },
+    ...source,
+    location: { ...d.location, ...(source.location || {}) },
+    sun: { ...d.sun, ...(source.sun || {}) },
+    norms: { ...d.norms, ...(source.norms || {}) },
     // Необязательное поле (схема не меняется): битые точки и настройки
     // отбрасываются/заменяются умолчаниями, пустой рельеф — null.
-    terrain: normalizeTerrain(project.site.terrain),
+    terrain: normalizeTerrain(source.terrain),
     // Ландшафт — тоже необязательное поле: нет в старых проектах — пусто.
-    landscape: normalizeLandscape(project.site.landscape),
+    landscape: normalizeLandscape(source.landscape),
+    planning: null,
   };
-  return project.site;
+  site.planning = bindContextReview(site, normalizePlanning(source.planning, site));
+  project.site = site;
+  return site;
 }
 
 // ---------------------------------------------------------------- Полигоны

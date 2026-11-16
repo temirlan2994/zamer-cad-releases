@@ -72,6 +72,7 @@ import { drawPlanShadows } from './ui/plan-shadows.js';
 import { currentLightAnalysis, drawRoomLightAnalysis } from './ui/render-solar.js';
 import { VIEW_DISPLAY_DEFAULT, viewDisplay, viewIdOf } from './core/view-display.js';
 import { drawGridLocks } from './ui/grid-locks.js';
+import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -1089,8 +1090,19 @@ function polyPath(ctx, points, close = true) {
   if (close) ctx.closePath();
 }
 
+// «Маршрут проекта» кеширует точное MultiPolygon-пятно после каждой правки.
+// До его первого расчёта оставляем прежний быстрый inset как fallback.
+function buildableRings(state, site) {
+  if (Array.isArray(state.siteBuildable?.geometry)) {
+    return state.siteBuildable.geometry.flatMap((polygon) => polygon);
+  }
+  const legacy = buildZonePolygon(site);
+  return legacy ? [legacy] : [];
+}
+
 function drawSiteUnder(ctx, state, site, tokens, px, { sunShadow = true } = {}) {
   const hov = state.hover?.type === 'site-obj' ? state.hover : null;
+  drawSiteOpportunity(ctx, state, tokens, px);
   // Дороги.
   for (const road of site.roads || []) {
     if (road.points.length < 2) continue;
@@ -1113,14 +1125,14 @@ function drawSiteUnder(ctx, state, site, tokens, px, { sunShadow = true } = {}) 
   }
 
   const boundary = site.boundary;
-  const zone = site.showBuildZone && boundary ? buildZonePolygon(site) : null;
+  const zoneRings = site.showBuildZone && boundary ? buildableRings(state, site) : [];
 
   // Запретная полоса: участок минус зона застройки (красная штриховка).
   if (boundary && site.showBuildZone && state.modeName !== 'landscape') {
     ctx.save();
     ctx.beginPath();
     polyPath(ctx, boundary);
-    if (zone) polyPath(ctx, [...zone].reverse());
+    for (const ring of zoneRings) if (ring.length >= 3) polyPath(ctx, ring);
     ctx.clip('evenodd');
     paintHatch(ctx, boundary, 'rgba(225,75,75,0.07)', 'rgba(225,75,75,0.28)', px);
     ctx.restore();
@@ -1244,13 +1256,13 @@ function drawSiteOver(ctx, state, site, tokens, px) {
   }
 
   if (site.showBuildZone && site.boundary) {
-    const zone = buildZonePolygon(site);
-    if (zone) {
+    const zoneRings = buildableRings(state, site);
+    if (zoneRings.length) {
       ctx.strokeStyle = 'rgba(225,75,75,0.75)';
       ctx.lineWidth = px(1.4);
       ctx.setLineDash([px(10), px(6)]);
       ctx.beginPath();
-      polyPath(ctx, zone);
+      for (const ring of zoneRings) if (ring.length >= 3) polyPath(ctx, ring);
       ctx.stroke();
       ctx.setLineDash([]);
     }
