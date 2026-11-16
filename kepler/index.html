@@ -69,6 +69,10 @@
             <span class="project-route-caret" aria-hidden="true">⌄</span>
           </button>
           <nav class="project-route-steps" id="projectRouteSteps" aria-label="Этапы подготовки участка"></nav>
+          <button type="button" class="project-route-program" id="projectHomeProgram" aria-controls="projectRoutePanel" aria-expanded="false" data-status="unknown" aria-label="Программа дома: не задана">
+            <span class="project-route-program-icon" aria-hidden="true">⌂</span>
+            <span class="project-route-program-copy"><strong>Программа дома</strong><small id="projectHomeProgramStatus">Не задана</small></span>
+          </button>
           <button type="button" class="project-route-passport" id="projectRoutePassport" aria-controls="projectRoutePanel" aria-expanded="false">
             <span aria-hidden="true">▤</span>
             <span>Паспорт участка</span>
@@ -213,6 +217,12 @@
             <span><i data-tone="high"></i>выше балл</span>
             <span><i data-tone="unknown"></i>мало данных</span>
             <span><i data-tone="candidate"></i>A–C варианты</span>
+          </div>
+          <div class="home-program-canvas-legend" id="homeProgramLegend" aria-label="Легенда функциональных связей" hidden>
+            <strong>Связи дома</strong>
+            <span><i data-tone="direct"></i>прямой проход</span>
+            <span><i data-tone="reachable"></i>достижимо</span>
+            <span><i data-tone="adjacent"></i>нет прохода</span>
           </div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->

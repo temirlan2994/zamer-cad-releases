@@ -524,6 +524,8 @@ export function restoreFrom(text) {
     layoutVariants: new Map(state.layoutVariants),
     siteOpportunity: state.siteOpportunity,
     siteOpportunityUI: state._siteOpportunityUI,
+    homeProgramOverlay: state.homeProgramOverlay,
+    homeProgramUI: state._homeProgramUI,
   };
   state.project = project;
   Object.assign(state, derived);
@@ -533,6 +535,8 @@ export function restoreFrom(text) {
   // чем оставить на экране результат от прежней модели.
   state.siteOpportunity = { on: false, result: null, signature: null };
   state._siteOpportunityUI = null;
+  state.homeProgramOverlay = { on: false, result: null, signature: null };
+  state._homeProgramUI = null;
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
@@ -545,6 +549,8 @@ export function restoreFrom(text) {
     state.layoutVariants = prev.layoutVariants;
     state.siteOpportunity = prev.siteOpportunity;
     state._siteOpportunityUI = prev.siteOpportunityUI;
+    state.homeProgramOverlay = prev.homeProgramOverlay;
+    state._homeProgramUI = prev.homeProgramUI;
     try {
       refreshDerived();
       applyModeRotation();

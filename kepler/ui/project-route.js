@@ -3,8 +3,13 @@
 // а в проект записываются только явные решения пользователя.
 
 import { contextNeighborSignature } from '../core/site.js';
+import { analyzeHomeProgram } from '../core/home-program.js';
 import { siteOpportunity, sitePassport, sitePlanningRoute } from '../core/site-planning.js';
 import { escapeHtml, refs, toast } from './dom.js';
+import {
+  handleHomeProgramClick, handleHomeProgramInput, homeProgramHtml,
+  refreshHomeProgramOverlay,
+} from './home-program.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { setEditorMode } from './modes.js';
 import { renderProps } from './props.js';
@@ -112,6 +117,12 @@ const STATUS_LABEL = Object.freeze({
 });
 
 const STATUS_MARK = Object.freeze({ done: '✓', warning: '!', error: '×', unknown: '?' });
+const HOME_PROGRAM_STATUS = Object.freeze({
+  unknown: 'Не задана',
+  draft: 'Черновик',
+  incomplete: 'Не хватает',
+  ready: 'Готова',
+});
 
 let bound = false;
 let panelOpen = false;
@@ -310,7 +321,7 @@ function aggregateStatus(tasks) {
 
 function routeModel() {
   const project = state.project;
-  if (!project) return { stages: [], route: null, passport: null };
+  if (!project) return { stages: [], route: null, passport: null, homeProgram: null };
   const site = project.site || {};
   const route = safeCall(() => sitePlanningRoute(project), null);
   // sitePlanningRoute уже возвращает тот же паспорт. Повторный тяжёлый
@@ -342,7 +353,10 @@ function routeModel() {
       status: aggregateStatus(tasks),
     };
   });
-  return { stages, route, passport };
+  const homeProgram = safeCall(() => analyzeHomeProgram(project), {
+    status: 'unknown', summary: {}, targets: [], connections: [], warnings: [],
+  });
+  return { stages, route, passport, homeProgram };
 }
 
 function statusLabel(status) { return STATUS_LABEL[status] || STATUS_LABEL.unknown; }
@@ -351,7 +365,17 @@ function statusMark(status) { return STATUS_MARK[status] || STATUS_MARK.unknown;
 function renderStageBar(model) {
   const steps = byId('projectRouteSteps');
   const summary = byId('projectRouteSummary');
+  const program = byId('projectHomeProgram');
+  const programStatus = byId('projectHomeProgramStatus');
   if (!steps || !summary) return;
+  const homeStatus = model?.homeProgram?.status || 'unknown';
+  const homeLabel = HOME_PROGRAM_STATUS[homeStatus] || HOME_PROGRAM_STATUS.unknown;
+  if (program) {
+    program.dataset.status = homeStatus;
+    program.disabled = !state.project;
+    program.setAttribute('aria-label', `Программа дома: ${homeLabel.toLocaleLowerCase('ru-RU')}`);
+  }
+  if (programStatus) programStatus.textContent = homeLabel;
   if (!state.project) {
     summary.textContent = 'Маршрут станет доступен после открытия проекта';
     steps.replaceChildren();
@@ -635,6 +659,14 @@ function renderPanel(model) {
     body.innerHTML = renderPassport(model.passport);
     return;
   }
+  if (panelView === 'program') {
+    kicker.textContent = 'Этап 2 · сценарий жизни';
+    title.textContent = 'Программа дома';
+    body.innerHTML = state.project
+      ? homeProgramHtml(state.project)
+      : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы задать программу дома.</p>';
+    return;
+  }
   const stage = model.stages.find((item) => item.id === activeStage) || model.stages[0];
   if (!stage) {
     kicker.textContent = 'Маршрут проекта';
@@ -652,12 +684,14 @@ function syncOpenState() {
   const scrim = byId('projectRouteScrim');
   const toggle = byId('projectRouteToggle');
   const passport = byId('projectRoutePassport');
-  if (!panel || !scrim || !toggle || !passport) return;
+  const program = byId('projectHomeProgram');
+  if (!panel || !scrim || !toggle || !passport || !program) return;
   panel.hidden = !panelOpen;
   scrim.hidden = !panelOpen;
   panel.setAttribute('aria-modal', String(panelOpen && isPhone()));
   toggle.setAttribute('aria-expanded', String(panelOpen && panelView === 'stage'));
   passport.setAttribute('aria-expanded', String(panelOpen && panelView === 'passport'));
+  program.setAttribute('aria-expanded', String(panelOpen && panelView === 'program'));
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -677,7 +711,9 @@ function openPanel(view, stageId, opener) {
   syncOpenState();
   const close = byId('projectRouteClose');
   requestAnimationFrame(() => close?.focus({ preventScroll: true }));
-  announce(view === 'passport' ? 'Открыт паспорт участка' : 'Открыт этап маршрута проекта');
+  announce(view === 'passport' ? 'Открыт паспорт участка'
+    : view === 'program' ? 'Открыта программа дома'
+      : 'Открыт этап маршрута проекта');
 }
 
 function closePanel({ restoreFocus = true } = {}) {
@@ -854,6 +890,11 @@ function toggleOpportunity() {
 }
 
 function handleBodyClick(event) {
+  if (handleHomeProgramClick(event, {
+    closePanel,
+    announce,
+    rerender: renderProjectRoute,
+  })) return;
   const toolButton = event.target.closest('[data-route-tool]');
   if (toolButton) {
     showSiteTool(toolButton.dataset.routeTool);
@@ -881,7 +922,7 @@ function handleFootprintInput(event) {
 function focusableInPanel() {
   const panel = byId('projectRoutePanel');
   if (!panel) return [];
-  return [...panel.querySelectorAll('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+  return [...panel.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.hidden && element.getClientRects().length);
 }
 
@@ -951,6 +992,8 @@ export function renderProjectRoute() {
   state.siteBuildable = latestModel.passport?.buildable || null;
   const canvasLegend = byId('siteOpportunityLegend');
   if (canvasLegend) canvasLegend.hidden = !state.siteOpportunity?.on;
+  const homeProgramLegend = byId('homeProgramLegend');
+  if (homeProgramLegend) homeProgramLegend.hidden = !state.homeProgramOverlay?.on;
   renderStageBar(latestModel);
   root.classList.toggle('has-project', Boolean(state.project));
   if (panelOpen) renderPanel(latestModel);
@@ -966,8 +1009,9 @@ export function bindProjectRoute() {
   const steps = byId('projectRouteSteps');
   const toggle = byId('projectRouteToggle');
   const passport = byId('projectRoutePassport');
+  const program = byId('projectHomeProgram');
   const body = byId('projectRouteBody');
-  if (!root || !steps || !toggle || !passport || !body) return;
+  if (!root || !steps || !toggle || !passport || !program || !body) return;
   bound = true;
 
   toggle.addEventListener('click', () => {
@@ -977,6 +1021,10 @@ export function bindProjectRoute() {
   passport.addEventListener('click', () => {
     if (panelOpen && panelView === 'passport') closePanel();
     else openPanel('passport', null, passport);
+  });
+  program.addEventListener('click', () => {
+    if (panelOpen && panelView === 'program') closePanel();
+    else openPanel('program', null, program);
   });
   steps.addEventListener('click', (event) => {
     const button = event.target.closest('[data-route-stage]');
@@ -995,8 +1043,12 @@ export function bindProjectRoute() {
   byId('projectRouteClose')?.addEventListener('click', () => closePanel());
   byId('projectRouteScrim')?.addEventListener('click', () => closePanel());
   body.addEventListener('click', handleBodyClick);
-  body.addEventListener('input', handleFootprintInput);
+  body.addEventListener('input', (event) => {
+    handleFootprintInput(event);
+    handleHomeProgramInput(event);
+  });
   body.addEventListener('change', (event) => {
+    handleHomeProgramInput(event);
     const input = event.target.closest('[data-route-confirm]');
     if (input) handleConfirmation(input);
   });
@@ -1005,6 +1057,7 @@ export function bindProjectRoute() {
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
+    if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();
     if (state.siteOpportunity?.on) refreshSiteOpportunity();
     else {
       // Ошибка предварительного запуска относится к прежнему набору

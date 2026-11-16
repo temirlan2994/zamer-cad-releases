@@ -26,9 +26,13 @@ export const MANUAL_STATUSES = Object.freeze(['unknown', 'verified', 'not_requir
 
 const BRIEF_KEYS = new Set([
   'version', 'actors', 'capacity', 'fixedEngineering', 'storageInventory', 'uncertainty',
-  'scenarioSelections',
+  'scenarioSelections', 'homeProgram',
 ]);
 const SCENARIO_IDS = new Set(LAYOUT_SCENARIOS.map((scenario) => scenario.scenario_id));
+const HOME_PROGRAM_SOCIAL_MODES = new Set(['combined', 'separate', 'unknown']);
+export const HOME_PROGRAM_OPTION_KEYS = Object.freeze([
+  'guestBedroom', 'office', 'laundry', 'pantry', 'wardrobe', 'guestWc', 'garage', 'terrace',
+]);
 
 const isObj = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -215,6 +219,28 @@ function normalizeScenarioSelections(value, actorIds) {
   return result;
 }
 
+// Пользовательская программа помещений — только явно выбранные цели.
+// null у опции означает «ещё не решено» и не подменяется рекомендацией.
+export function normalizeHomeProgram(raw) {
+  if (!isObj(raw)) return null;
+  const options = isObj(raw.options) ? raw.options : {};
+  const normalized = {
+    confirmed: raw.confirmed === true,
+    socialMode: HOME_PROGRAM_SOCIAL_MODES.has(raw.socialMode) ? raw.socialMode : 'unknown',
+    bedroomCount: positiveInteger(raw.bedroomCount),
+    bathroomCount: positiveInteger(raw.bathroomCount),
+    options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [
+      key, typeof options[key] === 'boolean' ? options[key] : null,
+    ])),
+  };
+  const empty = !normalized.confirmed
+    && normalized.socialMode === 'unknown'
+    && normalized.bedroomCount == null
+    && normalized.bathroomCount == null
+    && HOME_PROGRAM_OPTION_KEYS.every((key) => normalized.options[key] == null);
+  return empty ? null : normalized;
+}
+
 export function createLayoutBrief() {
   return {
     version: LAYOUT_BRIEF_VERSION,
@@ -226,6 +252,7 @@ export function createLayoutBrief() {
     storageInventory: null,
     uncertainty: [],
     scenarioSelections: [],
+    homeProgram: null,
   };
 }
 
@@ -264,6 +291,7 @@ export function normalizeLayoutBrief(raw, {
       source.scenarioSelections ?? source.scenario_selections,
       actorIds,
     ),
+    homeProgram: normalizeHomeProgram(source.homeProgram),
   };
 }
 
@@ -277,7 +305,8 @@ export function layoutBriefIsEmpty(brief) {
     && brief.fixedEngineering == null
     && brief.storageInventory == null
     && !(brief.uncertainty?.length)
-    && !(brief.scenarioSelections?.length);
+    && !(brief.scenarioSelections?.length)
+    && normalizeHomeProgram(brief.homeProgram) == null;
 }
 
 export function ensureLayoutBrief(project) {

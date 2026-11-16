@@ -223,6 +223,9 @@ export function hasContent(project) {
   if (Array.isArray(project.massVoids) && project.massVoids.length) return true;
   if (Array.isArray(project.roofs) && project.roofs.length) return true;
   if (Array.isArray(project.grids) && project.grids.length) return true;
+  // Задание и программа дома — самостоятельная работа пользователя: проект
+  // должен автосохраняться ещё до появления первого помещения на плане.
+  if (!layoutBriefIsEmpty(project.layoutBrief)) return true;
   const s = project.site;
   if (!s || typeof s !== 'object') return false;
   return Boolean(s.boundary?.length || s.redLine?.length || s.roads?.length || s.neighbors?.length

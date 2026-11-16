@@ -29,6 +29,9 @@ export const state = {
   // в файле проекта хранится только исходное пятно site.planning.referenceFootprint.
   siteOpportunity: { on: false, result: null, signature: null },
   siteBuildable: null, // производное рабочее пятно; обновляет «Маршрут проекта»
+  // Функциональные связи программы дома — только экранный аналитический слой.
+  homeProgramOverlay: { on: false, result: null, signature: null },
+  _homeProgramUI: null,
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

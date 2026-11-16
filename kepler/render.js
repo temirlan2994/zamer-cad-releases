@@ -73,6 +73,7 @@ import { currentLightAnalysis, drawRoomLightAnalysis } from './ui/render-solar.j
 import { VIEW_DISPLAY_DEFAULT, viewDisplay, viewIdOf } from './core/view-display.js';
 import { drawGridLocks } from './ui/grid-locks.js';
 import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
+import { drawHomeProgramOverlay } from './ui/render-home-program.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -780,6 +781,10 @@ export function createRenderer(canvas) {
 
     // --- Экранный слой ---
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Логические связи программы дома — поверх геометрии, но под подписями.
+    // Это не фактические траектории людей: только доказанные связи помещений.
+    drawHomeProgramOverlay(ctx, { st: state, p2s, tokens, print });
 
     // Подписи и размеры зависят от масштаба: при отдалении шрифт меньше,
     // мельче 8 px подписи не рисуются, размеры скрываются раньше.
