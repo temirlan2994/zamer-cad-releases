@@ -60,6 +60,9 @@ import { bindWallPinBlock, wallPinBlock } from './grid-pin-ui.js';
 import {
   arrangeRoomsNow, AUTO_LAYOUT_AVAILABLE, autoLayoutHtml, bindAutoLayout,
 } from './auto-layout.js';
+import {
+  bindSolarAnalysisPanel, focusSolarRoom, solarAnalysisHtml,
+} from './solar-analysis.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -306,6 +309,7 @@ function changeRoomType(room, type) {
 
 function renderRoomProps(panel, room) {
   if (!room) { renderProjectProps(panel); return; }
+  focusSolarRoom(room.id);
   const def = roomType(room.type);
   const shaft = isShaft(room);
   const minRoomSize = shaft ? MIN_SHAFT_SIZE : MIN_ROOM_SIZE;
@@ -373,6 +377,7 @@ function renderRoomProps(panel, room) {
     ${roomRailingsHtml(room)}
     ${shaft ? '' : roomRoofHtml(room)}
     ${shaft ? '<div class="prop-block"><p class="empty-hint">Вертикальный проём без пола. Стены шахты строятся на всю высоту этажа.</p></div>' : ''}
+    ${shaft ? '' : solarAnalysisHtml(room)}
     ${shaft ? '' : `<h3>Мебель <span class="count-badge">${insideCount} шт.</span></h3>
     <div class="prop-block add-list">${furnitureRows || '<p class="empty-hint">Для этого типа нет набора</p>'}</div>`}
     ${rejectedHtml}
@@ -383,6 +388,7 @@ function renderRoomProps(panel, room) {
   });
   bindRoomRoof(panel);
   bindRoomRailings(panel, room);
+  if (!shaft) bindSolarAnalysisPanel(panel, room, renderProps);
   if (!shaft) bindAutoLayout(panel, room);
   panel.querySelector('#roomType')?.addEventListener('change', (e) => changeRoomType(room, e.target.value));
   // Размеры правят НОМИНАЛЬНУЮ форму (у съеденной — полную, до съедания):

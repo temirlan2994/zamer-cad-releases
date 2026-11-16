@@ -88,7 +88,7 @@ const SHORT = {
 const PLAN_LABELS = {
   selectToolBtn: 'Выбор', wallToolBtn: 'Стена', boundRoomBtn: 'Помещение', doorToolBtn: 'Дверь', windowToolBtn: 'Окно',
   furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', slabOpeningToolBtn: 'Проём', massToolBtn: 'Масса', massVoidToolBtn: 'Пустота', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
-  sectionToolBtn: 'Разрез', ergoToolBtn: 'Эргономика', viewBtn: 'Поворот', fitBtn: 'Вписать',
+  sectionToolBtn: 'Разрез', ergoToolBtn: 'Эргономика', sunAnalysisBtn: 'Свет', viewBtn: 'Поворот', fitBtn: 'Вписать',
 };
 function ensurePlanLabels() {
   for (const [id, text] of Object.entries(PLAN_LABELS)) {

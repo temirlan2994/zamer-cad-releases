@@ -46,7 +46,8 @@ export let spaceDown = false;
 // Поверх плана открыто окно (3D, справка, «Проекты», разрез,
 // стартовое меню) — план под ним клавишами не правится.
 export function planCovered() {
-  return is3dOpen() || isSectionOpen() || isSheetOpen() || isElevationOpen() || Boolean(document.querySelector('.start-screen:not([hidden])'));
+  return is3dOpen() || isSectionOpen() || isSheetOpen() || isElevationOpen() ||
+    Boolean(document.querySelector('.start-screen:not([hidden]), #solarReportDialog:not([hidden])'));
 }
 
 // Элемент, которому Enter/Space нужны самому (кнопка, ссылка, флажок…).
@@ -97,6 +98,9 @@ export function bindKeyboard() {
   });
   window.addEventListener('keydown', (event) => {
     if (state.editLocked && !event.target?.closest?.('#editLockScreen')) return;
+    // Модальный световой отчёт — снимок проекта. Пока он открыт, даже
+    // Ctrl+Z/Y не должны менять модель под уже рассчитанной таблицей.
+    if (document.querySelector('#solarReportDialog:not([hidden])')) return;
     if (state.splitEdit && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || '') && splitLiveKey(event)) { event.preventDefault(); return; }
     // 3D и справка закрываются по Esc откуда угодно (и с флажков 3D).
     if (event.key === 'Escape' && isHelpOpen()) { closeHelp(); return; }

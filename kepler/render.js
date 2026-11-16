@@ -69,6 +69,7 @@ import { slabOpeningPolygon, slabOpeningSourceLevel, slabOpenings } from './core
 import { drawPlanGrids } from './ui/render-axes.js';
 import { drawErgonomics } from './ui/render-ergonomics.js';
 import { drawPlanShadows } from './ui/plan-shadows.js';
+import { currentLightAnalysis, drawRoomLightAnalysis } from './ui/render-solar.js';
 import { VIEW_DISPLAY_DEFAULT, viewDisplay, viewIdOf } from './core/view-display.js';
 import { drawGridLocks } from './ui/grid-locks.js';
 
@@ -497,6 +498,14 @@ export function createRenderer(canvas) {
       // под проёмами, мебелью и подписями.
       const planShadows = !print && !landscape && state.modeName === 'plan' && opts.site !== false && vd.shadows;
       if (planShadows) drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark, display: vd });
+
+      // Карта прямого солнца или предварительной освещённости — аналитическая подложка:
+      // поверх пола/теней, но под проёмами, мебелью и подписями.
+      if (detail && !print && state.modeName === 'plan' && state.solarAnalysis?.on) {
+        const analysis = currentLightAnalysis();
+        const room = analysis && state.project.rooms.find((candidate) => candidate.id === analysis.roomId);
+        if (analysis && room) drawRoomLightAnalysis(ctx, { analysis, room, tokens, px });
+      }
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.
       const overlapZones = landscape ? [] : (state.norms?.overlaps || []).filter((o) => o.levelId === state.project.activeLevel);
@@ -2334,7 +2343,7 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Подпись комнаты (имя, площадь, инсоляция) в свободной части комнаты:
+// Подпись комнаты (имя, площадь, инсоляция фасада) в свободной части:
 // точку выбирает core/label-anchor.js по рамке подписи, пересчитанной в мм.
 // Экранная рамка подписи сохраняется в state._labelBoxes — от неё отходят
 // размер выбранной стены и кнопки двери.
@@ -2346,7 +2355,9 @@ function drawRoomLabel(ctx, state, room, w2s, tokens, obstacles = [], text = { f
   const k = text.font / 13;
   const fontOf = (weight, size) => `${weight}${(size * k).toFixed(1)}px system-ui, sans-serif`;
   const areaText = `${area.toFixed(1)} м²`;
-  const insText = showIns ? `☀ ${ins.windows ? formatDuration(ins.longest) : 'нет окон'}` : '';
+  // Это старый нормативный расчёт по окнам фасада, а не новая
+  // карта прямого солнца внутри. Подпись на плане делает разницу явной.
+  const insText = showIns ? `Фасад · ${ins.windows ? formatDuration(ins.longest) : 'нет окон'}` : '';
   ctx.font = fontOf('600 ', 13);
   let tw = ctx.measureText(room.name).width;
   if (!shaft) { ctx.font = fontOf('', 12); tw = Math.max(tw, ctx.measureText(areaText).width); }
@@ -2378,7 +2389,8 @@ function drawRoomLabel(ctx, state, room, w2s, tokens, obstacles = [], text = { f
   ctx.fillStyle = tokens.muted;
   ctx.font = fontOf('', 12);
   ctx.fillText(areaText, center.x, center.y + (12 - lift) * k);
-  // Инсоляция комнаты (при включённом солнце): зелёным — жилая в норме.
+  // Инсоляция фасада (при включённом солнце): зелёным — жилая в норме,
+  // серым — помещение, для которого жилая норма не применяется.
   if (showIns) {
     ctx.fillStyle = ins.living ? (ins.meets ? tokens.ok : tokens.danger) : tokens.muted;
     ctx.font = fontOf('600 ', 11);

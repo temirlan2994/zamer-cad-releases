@@ -40,6 +40,7 @@
               <button data-export="sheet-pdf">Листы PDF A3 (генплан и этажи)</button>
               <button data-export="sheet-png">Лист PNG (текущий этаж / генплан)</button>
               <button data-export="schedule-csv">Экспликация помещений (CSV для Excel)</button>
+              <button data-export="solar-report">Сезонный световой отчёт…</button>
               <button data-export="landscape-csv">Ведомость ландшафта (CSV)</button>
               <button data-export="ifc">IFC4 — BIM (Revit, ArchiCAD, Renga, просмотрщики)</button>
               <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
@@ -80,6 +81,7 @@
             <button type="button" class="tb-btn" id="sectionToolBtn" aria-label="Разрез" aria-describedby="tbTip-psec"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16" stroke-dasharray="4 2 1.5 2"/><circle cx="4" cy="12" r="2.2"/><circle cx="20" cy="12" r="2.2"/><path d="M2.5 17.5L4 20l1.5-2.5zM18.5 17.5L20 20l1.5-2.5z" fill="currentColor"/><path d="M4 14.2v3.3M20 14.2v3.3"/></svg><span class="tb-tip" role="tooltip" id="tbTip-psec"><b>Разрез</b> · клик — начало линии, клик — конец, клик — сторона взгляда; двойной клик по линии — вид · <kbd>S</kbd></span></button>
             <button type="button" class="tb-btn" id="dimModeBtn" aria-label="Размеры" aria-describedby="tbTip-dims"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7v10M20 7v10M4 12h16"/><path d="M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/></svg><span class="tb-label">Снаружи</span><span class="tb-tip" role="tooltip" id="tbTip-dims"><b>Размеры</b> · наружные — по внешней грани стен или по оси</span></button>
             <button type="button" class="tb-btn" id="ergoToolBtn" aria-label="Эргономика" aria-pressed="false" aria-describedby="tbTip-ergo"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="5" r="2"/><path d="M8.5 7.5v6M5.5 10h6M8.5 13.5L6 19M8.5 13.5L11 19"/><path d="M17 4v16M15.2 4h3.6M15.2 20h3.6"/></svg><span class="tb-badge" id="ergoBadge" hidden></span><span class="tb-tip" role="tooltip" id="tbTip-ergo"><b>Эргономика</b> · показывает тесные места и проходимость мебели красным/жёлтым · <kbd>E</kbd></span></button>
+            <button type="button" class="tb-btn" id="sunAnalysisBtn" aria-label="Световой анализ" aria-pressed="false" aria-describedby="tbTip-sun-analysis"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg><span class="tb-tip" role="tooltip" id="tbTip-sun-analysis"><b>Световой анализ</b> · прямое солнце, предварительные КЕО/люксы, остекление и сезонная сводка</span></button>
           </div>
           <div class="tb-group" id="siteTools" hidden></div>
           <div class="tb-group" id="landscapeTools" hidden></div>
@@ -206,6 +208,7 @@
           <!-- Открытый лист (двойной клик в «Листах») — ui/sheet-view.js. -->
           <div class="sheet-view" id="sheetView" role="dialog" aria-label="Лист" hidden></div>
           <div class="ls-sun" id="lsSunBar" role="group" aria-label="Тени по солнцу"></div>
+          <div class="solar-legend" id="solarLegend" role="status" aria-live="polite" hidden></div>
           <!-- Телефон: «Вписать» — круглая кнопка на плане (колонки инструментов нет). -->
           <button type="button" class="fit-fab" id="fitFab" aria-label="Вписать"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg></button>
           <div class="zoom-controls">
@@ -404,6 +407,31 @@
         <!-- Содержимое — из ui/help.js (HELP_SECTIONS). -->
         <div class="help-grid" id="helpGrid"></div>
       </div>
+    </div>
+
+    <div class="solar-report-dialog" id="solarReportDialog" role="dialog" aria-modal="true"
+      aria-labelledby="solarReportTitle" aria-describedby="solarReportStatus" aria-busy="false" hidden>
+      <section class="solar-report-card">
+        <div class="start-head">
+          <div>
+            <b class="help-title" id="solarReportTitle">Сезонный световой отчёт</b>
+            <p class="hint" id="solarReportSummary"></p>
+          </div>
+          <button class="icon-btn" id="solarReportClose" type="button" title="Закрыть (Esc)" aria-label="Закрыть">✕</button>
+        </div>
+        <p id="solarReportStatus" role="status" aria-live="polite">Отчёт ещё не рассчитан.</p>
+        <p class="hint solar-report-assumptions" id="solarReportAssumptions"></p>
+        <div class="solar-report-spinner" id="solarReportSpinner" aria-hidden="true" hidden>Расчёт…</div>
+        <div class="solar-report-scroll" role="region" aria-label="Сводная таблица светового отчёта" tabindex="0">
+          <table class="solar-report-table" id="solarReportTable" aria-label="Сезонная световая сводка по помещениям">
+            <tbody><tr><td class="hint">Откройте отчёт из меню экспорта, чтобы начать расчёт.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="solar-report-actions">
+          <button class="primary" id="solarReportCsv" type="button" disabled>Скачать CSV</button>
+          <button id="solarReportJson" type="button" disabled>Скачать JSON</button>
+        </div>
+      </section>
     </div>
 
     <div class="start-screen" id="installHelpScreen" role="dialog" aria-modal="true" aria-labelledby="installHelpTitle" hidden>

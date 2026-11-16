@@ -11,7 +11,7 @@ import { isUpperLevel } from './model.js';
 import { massBox } from './masses.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import {
-  roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects, roomShapeArea,
+  roomBoundaryEdges, roomContainsPoint, roomNotchRect, roomRects,
 } from './room-shape.js';
 
 export const MIN_ROOM_SIZE = 900;
@@ -290,12 +290,23 @@ export function eatersOf(project, room) {
   return result;
 }
 
-// Чистая площадь: внутренняя минус габариты вложенных помещений (со стенами)
-// и минус область, «съеденная» перекрывающими комнатами поверх этой.
-export function roomNetAreaM2(project, room) {
-  if (isShaft(room)) return 0;
+function subtractRect(rect, cut) {
+  const clip = intersectRect(rect, cut);
+  if (!clip) return [rect];
+  const out = [];
+  const right = rect.x + rect.w;
+  const bottom = rect.y + rect.h;
+  const clipRight = clip.x + clip.w;
+  const clipBottom = clip.y + clip.h;
+  if (clip.y > rect.y) out.push({ x: rect.x, y: rect.y, w: rect.w, h: clip.y - rect.y });
+  if (clipBottom < bottom) out.push({ x: rect.x, y: clipBottom, w: rect.w, h: bottom - clipBottom });
+  if (clip.x > rect.x) out.push({ x: rect.x, y: clip.y, w: clip.x - rect.x, h: clip.h });
+  if (clipRight < right) out.push({ x: clipRight, y: clip.y, w: right - clipRight, h: clip.h });
+  return out.filter((part) => part.w > 0.001 && part.h > 0.001);
+}
+
+function roomNetCuts(project, room) {
   const partition = project.settings?.partition || DEFAULT_PARTITION;
-  let area = roomShapeArea(room);
   const parts = roomRects(room);
   const subtractRects = [];
   for (const child of project.rooms) {
@@ -329,8 +340,23 @@ export function roomNetAreaM2(project, room) {
     .filter((b) => b.z0 <= floorZ + 2.5 && b.z1 >= floorZ - 0.5)
     .map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 }));
   subtractRects.push(...shapeClips(parts, voidCuts));
-  area -= rectUnionArea(subtractRects);
-  return Math.max(0, area) / 1_000_000;
+  return subtractRects;
+}
+
+// Чистая геометрия пола как набор неперекрывающихся прямоугольников.
+// Это та же геометрия, что и roomNetAreaM2: без вложенных комнат,
+// шахт, перекрывающих помещений, проёмов и полых масс.
+export function roomNetRects(project, room) {
+  if (isShaft(room)) return [];
+  let result = roomRects(room).map((part) => ({ ...part }));
+  for (const cut of roomNetCuts(project, room)) result = result.flatMap((part) => subtractRect(part, cut));
+  return result;
+}
+
+// Чистая площадь: внутренняя минус габариты вложенных помещений (со стенами)
+// и минус область, «съеденная» перекрывающими комнатами поверх этой.
+export function roomNetAreaM2(project, room) {
+  return rectUnionArea(roomNetRects(project, room)) / 1_000_000;
 }
 
 export function totalAreaM2(project) {

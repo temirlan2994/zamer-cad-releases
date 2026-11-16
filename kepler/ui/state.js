@@ -22,6 +22,9 @@ export const state = {
   planMass: null, // эскиз масс на плане: { on, outlineOnly } (ui/plan-masses.js, localStorage)
   ergo: null, // режим «Эргономика»: { on, okZones, heat, groups } (ui/render-ergonomics.js, localStorage)
   ergoFocus: null, // id находки эргономики, подсвеченной кнопкой «Показать»
+  // Выбранная комната и слой световой карты. Это состояние вида: в проект
+  // не сохраняется, а расчёт лениво кешируется в ui/render-solar.js.
+  solarAnalysis: { on: false, roomId: null, mode: 'direct' },
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

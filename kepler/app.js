@@ -37,6 +37,8 @@ import { syncUnderlayImage } from './ui/underlay.js';
 import { bindView, fitView, requestDraw, scaleLabel } from './ui/view.js';
 import { bindSnapBar } from './ui/draw-snap-ui.js';
 import { bindErgonomics } from './ui/ergonomics.js';
+import { bindSolarAnalysis } from './ui/solar-analysis.js';
+import { bindSolarReport } from './ui/solar-report-ui.js';
 import { getBackend, prepareAccount } from './ui/cloud.js';
 import {
   getScopedItem, setScopedItem, setStorageScope,
@@ -59,6 +61,11 @@ bindView();
 bindTheme();
 bindSnapBar();
 bindErgonomics(); // режим «Эргономика»: кнопка, счётчик, настройки
+bindSolarAnalysis(() => { // выбранная комната: прямое солнце и остекление
+  renderProps();
+  requestDraw();
+});
+bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
 bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
 
 // Firebase восстанавливает Google-сессию асинхронно. До чтения локального

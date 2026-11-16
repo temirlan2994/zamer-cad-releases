@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "052388c04b029024",
+  "version": "369f044624d3cd6c",
   "assets": [
     "./",
     "./app.js",
@@ -16,6 +16,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/catalog.js",
     "./core/clearance.js",
     "./core/composite.js",
+    "./core/daylight-analysis.js",
     "./core/dimensions.js",
     "./core/draw-snap.js",
     "./core/duplicate-room.js",
@@ -96,6 +97,8 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/site-check.js",
     "./core/site.js",
     "./core/slab-openings.js",
+    "./core/solar-analysis.js",
+    "./core/solar-report.js",
     "./core/solver-snapshot.js",
     "./core/stairs.js",
     "./core/storage.js",
@@ -204,6 +207,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/render-roofs.js",
     "./ui/render-section.js",
     "./ui/render-slab.js",
+    "./ui/render-solar.js",
     "./ui/roof-plan.js",
     "./ui/roof3d.js",
     "./ui/roofs.js",
@@ -216,6 +220,8 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/site-actions.js",
     "./ui/slab-ui.js",
     "./ui/snap.js",
+    "./ui/solar-analysis.js",
+    "./ui/solar-report-ui.js",
     "./ui/split-input.js",
     "./ui/stair-library.js",
     "./ui/start-menu.js",

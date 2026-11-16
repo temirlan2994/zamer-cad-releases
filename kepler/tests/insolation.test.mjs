@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, createLevel } from '../core/model.js';
 import {
-  insolationZone, insolationNorm, rayEnter, insolationReport, meetsNorm, formatDuration,
-  windowMorningExposure, windowsOf,
+  insolationZone, insolationNorm, rayEnter, rayRange, insolationReport, meetsNorm, formatDuration,
+  sunRayBlocked, windowMorningExposure, windowsOf,
 } from '../core/insolation.js';
 import { roomChecks, normsReport } from '../core/norms.js';
 
@@ -27,6 +27,24 @@ test('луч и выпуклый многоугольник: вход, пром�
   assert.equal(rayEnter({ x: 5, y: 5 }, { x: 0, y: 1 }, sq), 0);
   assert.equal(rayEnter({ x: -5, y: 5 }, { x: 1, y: 0 }, [...sq].reverse()), 5);
   assert.equal(rayEnter({ x: -5, y: 20 }, { x: 1, y: 0 }, sq), null);
+  assert.deepEqual(rayRange({ x: -5, y: 5 }, { x: 1, y: 0 }, sq), { enter: 5, exit: 15 });
+});
+
+test('высотный интервал: луч проходит под консолью, но не сквозь наземный объём', () => {
+  const sun = { dir: { x: 1, y: 0 }, tanAlt: 0.5 };
+  const origin = { x: -5, y: 5 };
+  assert.equal(sunRayBlocked(origin, 1000, sun, [{ poly: sq, bottom: 3000, top: 6000 }]), false);
+  assert.equal(sunRayBlocked(origin, 1000, sun, [{ poly: sq, bottom: 0, top: 6000 }]), true);
+
+  const long = [{ x: 0, y: 0 }, { x: 5000, y: 0 }, { x: 5000, y: 10 }, { x: 0, y: 10 }];
+  assert.equal(sunRayBlocked(origin, 1000, sun, [{ poly: long, bottom: 3000, top: 6000 }]), true);
+});
+
+test('грубый footprint своей комнаты в точке окна не является препятствием', () => {
+  const sun = { dir: { x: 1, y: 0 }, tanAlt: 0.5 };
+  const obstacle = { poly: sq, bottom: 0, top: 3000, roomId: 'R', levelId: 'L1' };
+  assert.equal(sunRayBlocked({ x: 5, y: 5 }, 900, sun, [obstacle], { roomId: 'R', levelId: 'L1' }), false);
+  assert.equal(sunRayBlocked({ x: 5, y: 5 }, 900, sun, [obstacle], { roomId: 'other', levelId: 'L1' }), true);
 });
 
 // Гостиная с окном на юг (низ плана; север = вверх) и спальня с окном на север.
@@ -70,12 +88,15 @@ test('поворот дома меняет инсоляцию: окно уход
 test('окно хранит id и локальную точку/нормаль фасада', () => {
   const { p, living } = house();
   const opening = p.openings.find((entry) => entry.roomId === living.id);
+  opening.sill = '1200';
+  opening.height = '5000';
   const win = windowsOf(p).find((entry) => entry.openingId === opening.id);
   assert.equal(win.roomId, living.id);
   assert.deepEqual(win.normalLocal, { x: 0, y: 1 });
   assert.equal(win.atLocal.x, 2500);
   assert.ok(win.atLocal.y > living.y + living.h);
   assert.deepEqual(win.at, win.atLocal); // дом пока без поворота и сдвига
+  assert.deepEqual({ sill: win.sill, height: win.height, z: win.z }, { sill: 1200, height: 1800, z: 1200 });
 });
 
 test('утренняя экспозиция известна только при известном участке и координатах', () => {

@@ -38,6 +38,7 @@ import { tweak } from './store.js';
 import { planRoofPref, setPlanRoofPref } from './render-roofs.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
 import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
+import { bindSolarViewBlock, solarViewBlock } from './solar-analysis.js';
 import {
   VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
@@ -316,6 +317,7 @@ export function viewSettingsHtml() {
     ${plan ? section('roofs', roofBlock()) : ''}
     ${plan ? section('grid', gridViewBlock()) : ''}
     ${plan ? section('ergo', ergoViewBlock()) : ''}
+    ${plan ? section('solar', solarViewBlock()) : ''}
     ${section('sheet', placeBlockHtml(activeViewId() || (plan ? `plan:${project.activeLevel}` : mode)))}
     </div>`;
 }
@@ -412,6 +414,7 @@ export function bindViewSettings(panel, rerender) {
   bindPlaceBlock(panel, activeViewId());
   bindGridViewBlock(panel, rerender);
   bindErgoViewBlock(panel, rerender);
+  bindSolarViewBlock(panel, rerender);
   panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
     setElevationScale(Number(b.dataset.elevScale));
     rerender();

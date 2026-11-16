@@ -1406,6 +1406,105 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .norm-list li.bad .link, .norm-list li.bad span { color: var(--warn-text); }
 .badge.ok { background: var(--ok-bg); color: var(--ok-text); }
 .badge.warn { background: var(--warn-bg); color: var(--warn-text); }
+
+/* Световой анализ выбранной комнаты: статусы отделены от цветовой карты,
+   чтобы зелёный означал подтверждённость, а не количество солнца. */
+.solar-analysis-panel .solar-analysis-status {
+  align-self: flex-start; padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 650;
+}
+.solar-analysis-status.ok { background: var(--ok-bg); color: var(--ok-text); }
+.solar-analysis-status.estimated { background: var(--warn-bg); color: var(--warn-text); }
+.solar-analysis-status.unknown { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.solar-analysis-panel .prop-row strong.ok { color: var(--ok-text); }
+.solar-analysis-panel .hint { margin: 2px 0 0; line-height: 1.4; }
+.solar-analysis-panel { gap: 8px; }
+.solar-analysis-tabs { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin: 0; }
+.solar-analysis-tabs .seg-opt {
+  min-width: 0; min-height: 34px; padding: 5px 7px; border: 0;
+  white-space: normal; line-height: 1.2; text-align: center;
+}
+.solar-analysis-tabs .seg-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.solar-analysis-panel [role="tabpanel"] { display: flex; flex-direction: column; gap: 7px; }
+.solar-analysis-panel details { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.solar-analysis-panel details summary { cursor: pointer; color: var(--text); font-size: 12px; font-weight: 650; }
+.solar-analysis-panel details ul, .solar-analysis-recommendations {
+  margin: 5px 0 0; padding-left: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.4;
+}
+.solar-analysis-recommendations { border-left: 3px solid var(--accent); padding: 6px 6px 6px 22px; }
+.solar-analysis-panel [data-solar-report-open] { width: 100%; min-height: 34px; }
+
+/* Сезонная световая сводка: отдельный экран поверх редактора. */
+.solar-report-dialog {
+  position: fixed; inset: 0; z-index: 125;
+  display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+    max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+  backdrop-filter: blur(5px);
+}
+.solar-report-card {
+  width: min(1080px, 100%); max-height: calc(100dvh - 32px); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 12px; padding: 18px;
+  overflow: hidden; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow);
+}
+.solar-report-card .start-head { flex: 0 0 auto; gap: 12px; }
+.solar-report-card .start-head > div { min-width: 0; }
+.solar-report-card #solarReportSummary { margin: 4px 0 0; line-height: 1.35; }
+#solarReportStatus { min-height: 18px; margin: 0; color: var(--muted); font-size: 12.5px; }
+.solar-report-assumptions { margin: -4px 0 0; line-height: 1.4; }
+.solar-report-spinner { color: var(--accent); font-size: 13px; font-weight: 650; }
+.solar-report-spinner::before {
+  content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+  vertical-align: -2px; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent); border-radius: 50%; animation: solar-report-spin 0.8s linear infinite;
+}
+@keyframes solar-report-spin { to { transform: rotate(360deg); } }
+.solar-report-scroll {
+  min-height: 140px; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--canvas);
+}
+.solar-report-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.solar-report-table {
+  width: 100%; min-width: 930px; border-collapse: separate; border-spacing: 0;
+  color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.solar-report-table th, .solar-report-table td {
+  padding: 8px 9px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  text-align: left; vertical-align: top; white-space: nowrap;
+}
+.solar-report-table th:last-child, .solar-report-table td:last-child { border-right: 0; }
+.solar-report-table thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface); font-weight: 700;
+}
+.solar-report-table tbody > tr:not(.solar-report-details-row):hover > * {
+  background: color-mix(in srgb, var(--accent) 6%, var(--canvas));
+}
+.solar-report-details-row > td { padding: 0 9px 8px; white-space: normal; background: var(--canvas); }
+.solar-report-details { color: var(--muted); }
+.solar-report-details > summary { padding: 7px 0; cursor: pointer; font-size: 11.5px; }
+.solar-report-details .solar-report-scroll { max-height: 270px; background: var(--surface); }
+.solar-report-details .solar-report-table { min-width: 650px; }
+.solar-report-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; }
+.solar-report-actions button { min-width: 132px; min-height: 36px; }
+@media (prefers-reduced-motion: reduce) { .solar-report-spinner::before { animation: none; } }
+@media (max-width: 640px) {
+  .solar-report-dialog { align-items: stretch; padding: 8px; }
+  .solar-report-card { max-height: calc(100dvh - 16px); padding: 12px; border-radius: 12px; gap: 9px; }
+  .solar-report-card .help-title { font-size: 16px; }
+  .solar-report-table { min-width: 860px; font-size: 11.5px; }
+  .solar-report-table th, .solar-report-table td { padding: 7px; }
+  .solar-report-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .solar-report-actions button { min-width: 0; width: 100%; min-height: 44px; }
+  #solarReportClose { min-width: 44px; min-height: 44px; }
+}
+@media (pointer: coarse) {
+  .solar-report-actions button, #solarReportClose { min-height: 44px; }
+  #solarReportClose { min-width: 44px; }
+  .solar-analysis-tabs .seg-opt, .solar-analysis-panel [data-solar-report-open] { min-height: 44px; }
+  .solar-analysis-panel .check-row { min-height: 44px; box-sizing: border-box; }
+}
 /* Положение дома на участке: зона застройки, отступ до соседа (props-site.js). */
 .site-check { margin: 6px 0 0; padding: 6px 8px; border-radius: 6px; font-size: 12px; line-height: 1.4; }
 .site-check.bad { background: var(--warn-bg); color: var(--warn-text); }
@@ -1906,6 +2005,35 @@ body:not(.mode-landscape) .ls-sun { display: none; }
   background: linear-gradient(90deg, rgb(74,82,170), rgb(92,160,196) 35%, rgb(150,204,120) 60%, rgb(244,214,92) 80%, rgb(246,150,62));
 }
 .canvas-wrap:has(.ls-section:not([hidden])) .ls-sun { display: none; }
+
+/* Компактная легенда карты прямого солнца. Сам слой и легенда — только
+   экран активного плана, в печать и другие виды не попадают. */
+.solar-legend {
+  position: absolute; top: 112px; right: 12px; z-index: 27;
+  width: 232px; max-width: calc(100% - 24px); box-sizing: border-box;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 6px;
+  padding: 8px 10px; pointer-events: none;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.solar-legend[hidden], body.mode-site .solar-legend, body.mode-landscape .solar-legend,
+body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-open .solar-legend,
+.canvas-wrap:has(.sheet-view:not([hidden])) .solar-legend { display: none; }
+.solar-legend-title { grid-column: 1 / -1; color: var(--text); font-size: 12.5px; font-weight: 650; }
+.solar-legend-scale {
+  grid-column: 1 / -1; height: 9px; border-radius: 5px;
+  background: linear-gradient(90deg, #b7c5d6, #78a9d1 25%, #f1cf63 50%, #ef9b3f 75%, #df642f);
+}
+.solar-legend-scale.daylight {
+  background: linear-gradient(90deg, #c7d0dc, #91b9d7 25%, #e2ca68 50%, #ed9743 75%, #d95e3b);
+}
+.solar-legend-tick { text-align: center; }
+.solar-legend-tick:nth-child(3) { text-align: left; }
+.solar-legend-tick:nth-child(6) { text-align: right; }
+.solar-legend-note { grid-column: 1 / -1; line-height: 1.3; }
+.solar-legend.estimated .solar-legend-note { color: var(--warn-text); }
+.solar-legend.unknown { width: auto; min-width: 180px; }
 @media (max-width: 700px) {
   .ls-sun { top: auto; bottom: 92px; right: 8px; width: 220px; }
 }
@@ -1916,6 +2044,10 @@ body:not(.mode-landscape) .ls-sun { display: none; }
     overflow-y: auto; overscroll-behavior: contain; padding: 6px 8px; gap: 4px; font-size: 12px;
   }
   .ls-sun .seg-opt { min-height: 30px; }
+  .solar-legend {
+    top: auto; right: 58px; bottom: calc(var(--ribbon-h) + 42px);
+    width: min(220px, calc(100% - 74px)); padding: 6px 8px; gap: 3px 5px;
+  }
 }
 
 /* Телефон: объект «взят» долгим нажатием — можно двигать. */

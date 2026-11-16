@@ -14,6 +14,7 @@ import { applyLibraryTab } from './library.js';
 import { applyModeRotation } from './modes.js';
 import { planGridPref } from './plan-grids.js';
 import { safeProjectFileName, syncProjectNameUi } from './project-name.js';
+import { exportSolarReport, openSolarReport } from './solar-report-ui.js';
 import { buildSample } from './sample.js';
 import { buildCurrentSheetPng, buildSheetsPdf } from './sheet.js';
 import { state } from './state.js';
@@ -63,6 +64,12 @@ export function handleExport(kind) {
   } else if (kind === 'schedule-csv') {
     download(`${safeFileName()}-экспликация.csv`, buildRoomScheduleCsv(state.project), 'text/csv;charset=utf-8');
     toast('Экспликация помещений (CSV) — откроется в Excel');
+  } else if (kind === 'solar-report') {
+    openSolarReport();
+  } else if (kind === 'solar-report-csv') {
+    exportSolarReport('csv');
+  } else if (kind === 'solar-report-json') {
+    exportSolarReport('json');
   } else if (kind === 'landscape-csv') {
     if (!state.project.site?.landscape?.objects?.length) { toast('Ландшафт пуст — добавьте объекты в режиме «Ландшафт»', true); return; }
     download(`${safeFileName()}-ландшафт.csv`, buildLandscapeCsv(state.project), 'text/csv;charset=utf-8');
