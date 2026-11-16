@@ -526,6 +526,9 @@ export function restoreFrom(text) {
     siteOpportunityUI: state._siteOpportunityUI,
     homeProgramOverlay: state.homeProgramOverlay,
     homeProgramUI: state._homeProgramUI,
+    homeFlowsUI: state._homeFlowsUI,
+    homeEngineeringOverlay: state.homeEngineeringOverlay,
+    homeEngineeringUI: state._homeEngineeringUI,
   };
   state.project = project;
   Object.assign(state, derived);
@@ -535,8 +538,14 @@ export function restoreFrom(text) {
   // чем оставить на экране результат от прежней модели.
   state.siteOpportunity = { on: false, result: null, signature: null };
   state._siteOpportunityUI = null;
-  state.homeProgramOverlay = { on: false, result: null, signature: null };
+  state.homeProgramOverlay = {
+    on: false, zones: false, routes: true, problemsOnly: false,
+    selectedScenarioId: null, result: null, signature: null,
+  };
   state._homeProgramUI = null;
+  state._homeFlowsUI = null;
+  state.homeEngineeringOverlay = { on: false, result: null, signature: null };
+  state._homeEngineeringUI = null;
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
@@ -551,6 +560,9 @@ export function restoreFrom(text) {
     state._siteOpportunityUI = prev.siteOpportunityUI;
     state.homeProgramOverlay = prev.homeProgramOverlay;
     state._homeProgramUI = prev.homeProgramUI;
+    state._homeFlowsUI = prev.homeFlowsUI;
+    state.homeEngineeringOverlay = prev.homeEngineeringOverlay;
+    state._homeEngineeringUI = prev.homeEngineeringUI;
     try {
       refreshDerived();
       applyModeRotation();

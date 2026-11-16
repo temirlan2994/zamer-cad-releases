@@ -26,9 +26,13 @@ export const MANUAL_STATUSES = Object.freeze(['unknown', 'verified', 'not_requir
 
 const BRIEF_KEYS = new Set([
   'version', 'actors', 'capacity', 'fixedEngineering', 'storageInventory', 'uncertainty',
-  'scenarioSelections', 'homeProgram',
+  'scenarioSelections', 'scenarioRouteBindings', 'homeProgram',
 ]);
 const SCENARIO_IDS = new Set(LAYOUT_SCENARIOS.map((scenario) => scenario.scenario_id));
+const SCENARIO_ROUTE_IDS = new Map(LAYOUT_SCENARIOS.map((scenario) => [
+  scenario.scenario_id,
+  new Set((scenario.route_pairs || []).map((route) => route.route_id)),
+]));
 const HOME_PROGRAM_SOCIAL_MODES = new Set(['combined', 'separate', 'unknown']);
 export const HOME_PROGRAM_OPTION_KEYS = Object.freeze([
   'guestBedroom', 'office', 'laundry', 'pantry', 'wardrobe', 'guestWc', 'garage', 'terrace',
@@ -219,6 +223,45 @@ function normalizeScenarioSelections(value, actorIds) {
   return result;
 }
 
+function normalizeRouteEndpoint(value, refs) {
+  const source = isObj(value) ? value : {};
+  return {
+    levelId: reference(source.levelId ?? source.level_id, refs.levelIds),
+    roomId: reference(source.roomId ?? source.room_id, refs.roomIds),
+  };
+}
+
+// Явная привязка абстрактного маршрута сценария к конкретным помещениям.
+// Название anchor_role само по себе не доказывает, где находится функция,
+// поэтому привязки сохраняются отдельно и никогда не выводятся автоматически.
+function normalizeScenarioRouteBindings(value, refs, actorIds) {
+  if (!Array.isArray(value)) return [];
+  const usedByRoute = new Map();
+  const result = [];
+  for (const raw of value) {
+    if (!isObj(raw)) continue;
+    const scenarioId = text(raw.scenarioId ?? raw.scenario_id);
+    const routeId = text(raw.routeId ?? raw.route_id);
+    if (!scenarioId || !routeId || !SCENARIO_ROUTE_IDS.get(scenarioId)?.has(routeId)) continue;
+    const scope = `${scenarioId}\u0000${routeId}`;
+    if (!usedByRoute.has(scope)) usedByRoute.set(scope, new Set());
+    const instanceId = uniqueId(
+      raw.instanceId ?? raw.instance_id ?? `${scenarioId}:${routeId}`,
+      'route', result.length, usedByRoute.get(scope),
+    );
+    result.push({
+      scenarioId,
+      routeId,
+      instanceId,
+      from: normalizeRouteEndpoint(raw.from ?? raw.fromEndpoint ?? raw.from_endpoint, refs),
+      to: normalizeRouteEndpoint(raw.to ?? raw.toEndpoint ?? raw.to_endpoint, refs),
+      actorPersonId: reference(raw.actorPersonId ?? raw.actor_person_id, actorIds),
+      sourceRef: text(raw.sourceRef ?? raw.source_ref) || 'user',
+    });
+  }
+  return result;
+}
+
 // Пользовательская программа помещений — только явно выбранные цели.
 // null у опции означает «ещё не решено» и не подменяется рекомендацией.
 export function normalizeHomeProgram(raw) {
@@ -252,6 +295,7 @@ export function createLayoutBrief() {
     storageInventory: null,
     uncertainty: [],
     scenarioSelections: [],
+    scenarioRouteBindings: [],
     homeProgram: null,
   };
 }
@@ -291,6 +335,11 @@ export function normalizeLayoutBrief(raw, {
       source.scenarioSelections ?? source.scenario_selections,
       actorIds,
     ),
+    scenarioRouteBindings: normalizeScenarioRouteBindings(
+      source.scenarioRouteBindings ?? source.scenario_route_bindings,
+      refs,
+      actorIds,
+    ),
     homeProgram: normalizeHomeProgram(source.homeProgram),
   };
 }
@@ -306,6 +355,7 @@ export function layoutBriefIsEmpty(brief) {
     && brief.storageInventory == null
     && !(brief.uncertainty?.length)
     && !(brief.scenarioSelections?.length)
+    && !(brief.scenarioRouteBindings?.length)
     && normalizeHomeProgram(brief.homeProgram) == null;
 }
 

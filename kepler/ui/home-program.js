@@ -3,6 +3,7 @@
 // явное сохранение и запуск существующего инструмента помещения.
 
 import { roomType } from '../core/catalog.js';
+import { analyzeHomeFlows } from '../core/home-flows.js';
 import { analyzeHomeProgram, suggestHomeProgram } from '../core/home-program.js';
 import {
   ensureLayoutBrief, HOME_PROGRAM_OPTION_KEYS,
@@ -143,6 +144,13 @@ function analysisOf(project) {
   });
 }
 
+function flowsAnalysisOf(project) {
+  return safeCall(() => analyzeHomeFlows(project), {
+    zones: { rooms: [], groups: [] }, functionalRoutes: [], scenarios: [],
+    summary: {}, warnings: ['Не удалось рассчитать схему связей дома'],
+  });
+}
+
 function targetRequired(target) {
   return Number(target?.required ?? target?.target ?? target?.count ?? 0) || 0;
 }
@@ -270,7 +278,8 @@ export function homeProgramHtml(project) {
   const suggestion = suggestedProgram(project);
   const proposedBedrooms = suggestion.bedroomCount;
   const proposedBathrooms = suggestion.bathroomCount;
-  const overlayOn = Boolean(state.homeProgramOverlay?.on);
+  const overlayOn = Boolean(state.homeProgramOverlay?.on
+    && state.homeProgramOverlay?.mode !== 'flows');
   const optionFields = HOME_PROGRAM_OPTION_KEYS.map((key) => `<label class="prop-field"><span>${escapeHtml(OPTION_LABELS[key] || key)}</span><select data-home-program-option="${escapeHtml(key)}">${triStateOptions(currentDraft.options[key])}</select></label>`).join('');
 
   return `<div class="home-program" data-home-program>
@@ -483,10 +492,15 @@ function addRoom(button, { closePanel, announce } = {}) {
 }
 
 function toggleOverlay({ closePanel, announce, rerender } = {}) {
-  const on = Boolean(state.homeProgramOverlay?.on);
+  const on = Boolean(state.homeProgramOverlay?.on
+    && state.homeProgramOverlay?.mode !== 'flows');
   if (on) {
-    state.homeProgramOverlay = { on: false, result: null, signature: null };
+    state.homeProgramOverlay = {
+      on: false, mode: 'program', zones: false, routes: true, problemsOnly: false,
+      selectedScenarioId: null, result: null, signature: null,
+    };
     state._homeProgramUI = null;
+    state._homeFlowsUI = null;
     requestDraw();
     rerender?.();
     requestAnimationFrame(() => document.querySelector('[data-home-program-action="toggle-overlay"]')?.focus({ preventScroll: true }));
@@ -505,7 +519,13 @@ function toggleOverlay({ closePanel, announce, rerender } = {}) {
     announce?.('Схему связей пока нельзя показать');
     return false;
   }
-  state.homeProgramOverlay = { on: true, result, signature: sourceSignature(state.project) };
+  state.homeEngineeringOverlay = { on: false, result: null, signature: null };
+  state._homeEngineeringUI = null;
+  state.homeProgramOverlay = {
+    on: true, mode: 'program', zones: false, routes: true, problemsOnly: false,
+    selectedScenarioId: null, result: flowsAnalysisOf(state.project),
+    signature: sourceSignature(state.project),
+  };
   closePanel?.({ restoreFocus: false });
   setEditorMode('plan');
   requestDraw();
@@ -534,16 +554,29 @@ export function resetHomeProgramDraft(project = null) {
 }
 
 export function refreshHomeProgramOverlay() {
-  if (!state.project || !state.homeProgramOverlay?.on) return null;
-  const result = analysisOf(state.project);
-  const availability = overlayAvailability(result, state.project);
+  if (!state.project || !state.homeProgramOverlay?.on
+    || state.homeProgramOverlay?.mode === 'flows') return null;
+  const programResult = analysisOf(state.project);
+  const availability = overlayAvailability(programResult, state.project);
   if (!availability.active.length) {
-    state.homeProgramOverlay = { on: false, result: null, signature: null };
+    state.homeProgramOverlay = {
+      ...state.homeProgramOverlay, on: false, result: null, signature: null,
+    };
     state._homeProgramUI = null;
+    state._homeFlowsUI = null;
     requestDraw();
-    return result;
+    return programResult;
   }
-  state.homeProgramOverlay = { on: true, result, signature: sourceSignature(state.project) };
+  const result = flowsAnalysisOf(state.project);
+  state.homeProgramOverlay = {
+    ...state.homeProgramOverlay,
+    on: true,
+    mode: 'program',
+    zones: false,
+    routes: true,
+    result,
+    signature: sourceSignature(state.project),
+  };
   requestDraw();
   return result;
 }

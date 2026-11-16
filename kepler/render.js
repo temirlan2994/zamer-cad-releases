@@ -73,7 +73,8 @@ import { currentLightAnalysis, drawRoomLightAnalysis } from './ui/render-solar.j
 import { VIEW_DISPLAY_DEFAULT, viewDisplay, viewIdOf } from './core/view-display.js';
 import { drawGridLocks } from './ui/grid-locks.js';
 import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
-import { drawHomeProgramOverlay } from './ui/render-home-program.js';
+import { drawHomeFlowsOverlay } from './ui/render-home-flows.js';
+import { drawHomeEngineeringOverlay } from './ui/render-home-engineering.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -784,7 +785,8 @@ export function createRenderer(canvas) {
 
     // Логические связи программы дома — поверх геометрии, но под подписями.
     // Это не фактические траектории людей: только доказанные связи помещений.
-    drawHomeProgramOverlay(ctx, { st: state, p2s, tokens, print });
+    drawHomeFlowsOverlay(ctx, { st: state, p2s, tokens, print });
+    drawHomeEngineeringOverlay(ctx, { st: state, p2s, tokens, print });
 
     // Подписи и размеры зависят от масштаба: при отдалении шрифт меньше,
     // мельче 8 px подписи не рисуются, размеры скрываются раньше.

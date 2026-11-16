@@ -10,6 +10,14 @@ import {
   handleHomeProgramClick, handleHomeProgramInput, homeProgramHtml,
   refreshHomeProgramOverlay,
 } from './home-program.js';
+import {
+  handleHomeFlowsClick, handleHomeFlowsInput, homeFlowsHtml,
+  refreshHomeFlowsOverlay,
+} from './home-flows.js';
+import {
+  handleHomeEngineeringClick, handleHomeEngineeringInput, homeEngineeringHtml,
+  refreshHomeEngineeringOverlay,
+} from './home-engineering.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { setEditorMode } from './modes.js';
 import { renderProps } from './props.js';
@@ -135,11 +143,98 @@ let footprintDraft = null;
 let footprintDraftProject = null;
 let footprintDraftDirty = false;
 
+const HOME_VIEWS = new Set(['program', 'flows', 'engineering']);
+const HOME_FOCUS_ATTRIBUTES = Object.freeze([
+  'data-home-view', 'data-route-action',
+  'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
+  'data-home-flow-scenario', 'data-home-flow-frequency-value',
+  'data-home-flow-frequency-period', 'data-home-flow-binding',
+  'data-home-flows-action', 'data-home-engineering-action',
+  'data-engineering-field', 'data-point-id', 'data-scenario-id',
+  'data-route-id', 'data-instance-id',
+]);
+
 const byId = (id) => document.getElementById(id);
 const finite = (value) => value !== null && value !== undefined
   && !(typeof value === 'string' && value.trim() === '') && Number.isFinite(Number(value));
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const cleanKey = (value) => String(value ?? '').toLocaleLowerCase('ru-RU').replace(/[^a-zа-яё0-9]+/g, '-').replace(/^-|-$/g, '');
+
+function renderedHomeView(body) {
+  if (body.querySelector('[data-home-program]')) return 'program';
+  if (body.querySelector('[data-home-flows]')) return 'flows';
+  if (body.querySelector('[data-home-engineering]')) return 'engineering';
+  return null;
+}
+
+function focusedHomeControl(body) {
+  const element = document.activeElement;
+  if (!element || !body.contains(element)) return null;
+  const attributes = HOME_FOCUS_ATTRIBUTES
+    .filter((name) => element.hasAttribute?.(name))
+    .map((name) => [name, element.getAttribute(name)]);
+  const pointId = element.closest?.('[data-engineering-point]')?.dataset.engineeringPoint || null;
+  const scenarioId = element.closest?.('[data-home-flow-scenario-id]')?.dataset.homeFlowScenarioId || null;
+  if (!attributes.length && !pointId && !scenarioId) return null;
+  let selectionStart = null;
+  let selectionEnd = null;
+  try {
+    selectionStart = element.selectionStart;
+    selectionEnd = element.selectionEnd;
+  } catch {
+    // number/select не поддерживают выделение текста — фокус всё равно сохраняем.
+  }
+  return {
+    tagName: element.tagName,
+    attributes,
+    pointId,
+    scenarioId,
+    selectionStart,
+    selectionEnd,
+  };
+}
+
+function captureHomePanelState(body, view) {
+  if (renderedHomeView(body) !== view) return null;
+  const panel = body.closest('.project-route-panel');
+  return {
+    scrollTop: panel?.scrollTop || 0,
+    focus: focusedHomeControl(body),
+    scenarios: [...body.querySelectorAll('[data-home-flow-scenario-id]')].map((details) => ({
+      id: details.dataset.homeFlowScenarioId,
+      open: details.open === true,
+    })),
+  };
+}
+
+function matchesHomeControl(element, identity) {
+  if (element.tagName !== identity.tagName) return false;
+  if (identity.attributes.some(([name, value]) => element.getAttribute(name) !== value)) return false;
+  const pointId = element.closest?.('[data-engineering-point]')?.dataset.engineeringPoint || null;
+  const scenarioId = element.closest?.('[data-home-flow-scenario-id]')?.dataset.homeFlowScenarioId || null;
+  return pointId === identity.pointId && scenarioId === identity.scenarioId;
+}
+
+function restoreHomePanelState(body, snapshot) {
+  if (!snapshot) return;
+  for (const item of snapshot.scenarios) {
+    const details = [...body.querySelectorAll('[data-home-flow-scenario-id]')]
+      .find((candidate) => candidate.dataset.homeFlowScenarioId === item.id);
+    if (details) details.open = item.open;
+  }
+  const panel = body.closest('.project-route-panel');
+  if (panel) panel.scrollTop = snapshot.scrollTop;
+  const identity = snapshot.focus;
+  if (!identity) return;
+  const target = [...body.querySelectorAll(identity.tagName.toLocaleLowerCase('en-US'))]
+    .find((candidate) => matchesHomeControl(candidate, identity));
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  if (Number.isInteger(identity.selectionStart) && Number.isInteger(identity.selectionEnd)) {
+    try { target.setSelectionRange(identity.selectionStart, identity.selectionEnd); } catch { /* не текстовое поле */ }
+  }
+  if (panel) panel.scrollTop = snapshot.scrollTop;
+}
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -659,12 +754,29 @@ function renderPanel(model) {
     body.innerHTML = renderPassport(model.passport);
     return;
   }
-  if (panelView === 'program') {
-    kicker.textContent = 'Этап 2 · сценарий жизни';
-    title.textContent = 'Программа дома';
+  if (HOME_VIEWS.has(panelView)) {
+    const preserved = captureHomePanelState(body, panelView);
+    const views = {
+      program: {
+        kicker: 'Этап 2 · сценарий жизни', title: 'Программа дома',
+        html: () => homeProgramHtml(state.project),
+      },
+      flows: {
+        kicker: 'Этап 3 · связи дома', title: 'Зоны и маршруты',
+        html: () => homeFlowsHtml(state.project, state),
+      },
+      engineering: {
+        kicker: 'Этап 4 · предварительная схема', title: 'Инженерные связи',
+        html: () => homeEngineeringHtml(state.project, state),
+      },
+    };
+    const current = views[panelView];
+    kicker.textContent = current.kicker;
+    title.textContent = current.title;
     body.innerHTML = state.project
-      ? homeProgramHtml(state.project)
-      : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы задать программу дома.</p>';
+      ? `${homeSystemNav(panelView)}${current.html()}`
+      : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы продолжить проектирование дома.</p>';
+    restoreHomePanelState(body, preserved);
     return;
   }
   const stage = model.stages.find((item) => item.id === activeStage) || model.stages[0];
@@ -679,6 +791,15 @@ function renderPanel(model) {
   body.innerHTML = renderStagePanel(stage);
 }
 
+function homeSystemNav(active) {
+  const views = [
+    ['program', 'Программа'],
+    ['flows', 'Зоны и маршруты'],
+    ['engineering', 'Инженерия'],
+  ];
+  return `<nav class="home-system-nav" aria-label="Этапы проектирования дома">${views.map(([id, label], index) => `<button type="button" data-route-action="open-home-view" data-home-view="${id}"${active === id ? ' aria-current="page"' : ''}><span>${index + 2}</span>${label}</button>`).join('')}</nav>`;
+}
+
 function syncOpenState() {
   const panel = byId('projectRoutePanel');
   const scrim = byId('projectRouteScrim');
@@ -691,7 +812,7 @@ function syncOpenState() {
   panel.setAttribute('aria-modal', String(panelOpen && isPhone()));
   toggle.setAttribute('aria-expanded', String(panelOpen && panelView === 'stage'));
   passport.setAttribute('aria-expanded', String(panelOpen && panelView === 'passport'));
-  program.setAttribute('aria-expanded', String(panelOpen && panelView === 'program'));
+  program.setAttribute('aria-expanded', String(panelOpen && HOME_VIEWS.has(panelView)));
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -713,6 +834,8 @@ function openPanel(view, stageId, opener) {
   requestAnimationFrame(() => close?.focus({ preventScroll: true }));
   announce(view === 'passport' ? 'Открыт паспорт участка'
     : view === 'program' ? 'Открыта программа дома'
+      : view === 'flows' ? 'Открыты зоны и маршруты'
+        : view === 'engineering' ? 'Открыт предварительный инженерный обзор'
       : 'Открыт этап маршрута проекта');
 }
 
@@ -725,6 +848,18 @@ function closePanel({ restoreFocus = true } = {}) {
     ? byId('projectRouteSteps')?.querySelector(`[data-route-stage="${lastOpenerStage}"]`)
     : lastOpener;
   if (restoreFocus && opener?.isConnected) opener.focus({ preventScroll: true });
+}
+
+function switchHomeView(view) {
+  if (!HOME_VIEWS.has(view)) return;
+  panelView = view;
+  renderProjectRoute();
+  requestAnimationFrame(() => {
+    byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`)?.focus({ preventScroll: true });
+  });
+  announce(view === 'program' ? 'Открыта программа дома'
+    : view === 'flows' ? 'Открыты зоны и маршруты'
+      : 'Открыт предварительный инженерный обзор');
 }
 
 function firstIncompleteStage(model) {
@@ -890,6 +1025,28 @@ function toggleOpportunity() {
 }
 
 function handleBodyClick(event) {
+  if (handleHomeFlowsClick(event, {
+    project: state.project,
+    state,
+    mutate,
+    closePanel,
+    announce,
+    rerender: renderProjectRoute,
+    requestDraw,
+    toast,
+    setEditorMode,
+  })) return;
+  if (handleHomeEngineeringClick(event, {
+    project: state.project,
+    state,
+    mutate,
+    closePanel,
+    announce,
+    rerender: renderProjectRoute,
+    requestDraw,
+    toast,
+    setEditorMode,
+  })) return;
   if (handleHomeProgramClick(event, {
     closePanel,
     announce,
@@ -903,7 +1060,8 @@ function handleBodyClick(event) {
   const actionButton = event.target.closest('[data-route-action]');
   if (!actionButton) return;
   const action = actionButton.dataset.routeAction;
-  if (action === 'show-zone') showWorkingZone();
+  if (action === 'open-home-view') switchHomeView(actionButton.dataset.homeView || 'program');
+  else if (action === 'show-zone') showWorkingZone();
   else if (action === 'open-constraints') openConstraintSettings();
   else if (action === 'open-solar-settings') openSolarSettings();
   else if (action === 'save-footprint') saveFootprint();
@@ -993,7 +1151,19 @@ export function renderProjectRoute() {
   const canvasLegend = byId('siteOpportunityLegend');
   if (canvasLegend) canvasLegend.hidden = !state.siteOpportunity?.on;
   const homeProgramLegend = byId('homeProgramLegend');
-  if (homeProgramLegend) homeProgramLegend.hidden = !state.homeProgramOverlay?.on;
+  if (homeProgramLegend) {
+    const flowsMode = state.homeProgramOverlay?.mode === 'flows';
+    homeProgramLegend.hidden = !state.homeProgramOverlay?.on;
+    const heading = homeProgramLegend.querySelector('strong');
+    if (heading) heading.textContent = flowsMode ? 'Зоны и схема связей' : 'Связи дома';
+    for (const item of homeProgramLegend.querySelectorAll('[data-layer="zone"]')) {
+      item.hidden = !flowsMode || state.homeProgramOverlay?.zones === false;
+    }
+    const routeItem = homeProgramLegend.querySelector('[data-layer="route"]');
+    if (routeItem) routeItem.hidden = state.homeProgramOverlay?.routes === false;
+  }
+  const homeEngineeringLegend = byId('homeEngineeringLegend');
+  if (homeEngineeringLegend) homeEngineeringLegend.hidden = !state.homeEngineeringOverlay?.on;
   renderStageBar(latestModel);
   root.classList.toggle('has-project', Boolean(state.project));
   if (panelOpen) renderPanel(latestModel);
@@ -1023,7 +1193,7 @@ export function bindProjectRoute() {
     else openPanel('passport', null, passport);
   });
   program.addEventListener('click', () => {
-    if (panelOpen && panelView === 'program') closePanel();
+    if (panelOpen && HOME_VIEWS.has(panelView)) closePanel();
     else openPanel('program', null, program);
   });
   steps.addEventListener('click', (event) => {
@@ -1049,6 +1219,14 @@ export function bindProjectRoute() {
   });
   body.addEventListener('change', (event) => {
     handleHomeProgramInput(event);
+    handleHomeFlowsInput(event, {
+      project: state.project, state, mutate,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
+    handleHomeEngineeringInput(event, {
+      project: state.project, state, mutate,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
     const input = event.target.closest('[data-route-confirm]');
     if (input) handleConfirmation(input);
   });
@@ -1057,7 +1235,12 @@ export function bindProjectRoute() {
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
-    if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();
+    if (state.homeProgramOverlay?.on && state.homeProgramOverlay.mode === 'flows') {
+      refreshHomeFlowsOverlay(state.project, state, requestDraw);
+    } else if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();
+    if (state.homeEngineeringOverlay?.on) {
+      refreshHomeEngineeringOverlay(state.project, state, requestDraw);
+    }
     if (state.siteOpportunity?.on) refreshSiteOpportunity();
     else {
       // Ошибка предварительного запуска относится к прежнему набору

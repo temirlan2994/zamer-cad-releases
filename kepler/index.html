@@ -218,11 +218,22 @@
             <span><i data-tone="unknown"></i>мало данных</span>
             <span><i data-tone="candidate"></i>A–C варианты</span>
           </div>
-          <div class="home-program-canvas-legend" id="homeProgramLegend" aria-label="Легенда функциональных связей" hidden>
-            <strong>Связи дома</strong>
-            <span><i data-tone="direct"></i>прямой проход</span>
-            <span><i data-tone="reachable"></i>достижимо</span>
-            <span><i data-tone="adjacent"></i>нет прохода</span>
+          <div class="home-program-canvas-legend" id="homeProgramLegend" aria-label="Легенда функциональных зон и связей" hidden>
+            <strong>Зоны и схема связей</strong>
+            <span data-layer="zone"><i data-tone="living"></i>жилые</span>
+            <span data-layer="zone"><i data-tone="kitchen"></i>кухня</span>
+            <span data-layer="zone"><i data-tone="wet"></i>мокрые</span>
+            <span data-layer="zone"><i data-tone="utility"></i>хозяйственные</span>
+            <span data-layer="zone"><i data-tone="circulation"></i>проходы</span>
+            <span data-layer="route"><i data-tone="route"></i>связь по дверям</span>
+          </div>
+          <div class="home-engineering-canvas-legend" id="homeEngineeringLegend" aria-label="Легенда предварительного инженерного обзора" hidden>
+            <strong>Инженерный обзор</strong>
+            <span><i data-tone="wet"></i>вода и сток</span>
+            <span><i data-tone="extract"></i>решить вытяжку</span>
+            <span><i data-tone="supply"></i>решить приток</span>
+            <span><i data-tone="point"></i>исходная точка</span>
+            <span><i data-tone="candidate"></i>кандидат связи</span>
           </div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->
