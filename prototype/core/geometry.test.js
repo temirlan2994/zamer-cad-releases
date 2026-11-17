@@ -1,5 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+
+test("dimension bounds include the displaced line and legacy offset geometry", () => {
+  const base = {type:"line",layer:"dimensions",x1:0,y1:0,x2:3000,y2:0};
+  assert.deepEqual(entityBounds({...base,dimX1:0,dimY1:12000,dimX2:3000,dimY2:12000}), {minX:0,maxX:3000,minY:0,maxY:12000});
+  assert.deepEqual(entityBounds({...base,offset:-12000}), {minX:0,maxX:3000,minY:-12000,maxY:0});
+});
+
+test("angular dimensions have finite bounds without linear x1/y1 fields", () => {
+  const bounds = entityBounds({type:"line",layer:"dimensions",dimensionKind:"angular",vertex:{x:0,y:0},arm1:{x:1000,y:0},arm2:{x:0,y:1000}});
+  assert.deepEqual(bounds,{minX:-1000,maxX:1000,minY:-1000,maxY:1000});
+});
 import {
   radToDeg,
   degToRad,

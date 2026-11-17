@@ -185,7 +185,7 @@ input {
 .project-home {
   background: var(--bg);
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   inset: 0;
   overflow: hidden;
   padding: 16px 12px calc(14px + env(safe-area-inset-bottom));
@@ -1874,3 +1874,60 @@ input {
     bottom: calc(62px + var(--keyboard-inset, 0px) + env(safe-area-inset-bottom));
   }
 }
+
+/* Mobile project library: compact content rows, with an independent scroll area. */
+[hidden] { display: none !important; }
+.cad-icon { width: 24px; height: 24px; flex: 0 0 auto; vertical-align: middle; pointer-events: none; }
+.project-home { padding: 24px 18px 16px; gap: 0; }
+.project-home-head { margin-bottom: 24px; gap: 12px; }
+.project-home-head > div:first-child { min-width: 0; flex: 1; }
+.project-home-head .account-badge { max-width: 100%; }
+.project-home-actions { flex: 0 0 auto; }
+.project-home .panel-kicker { font-size: 10px; letter-spacing: .16em; font-weight: 800; }
+.project-home h1 { font-size: 28px; line-height: 1.2; letter-spacing: -.04em; margin-top: 7px; }
+.account-badge { font-size: 12px; margin-top: 7px; }
+#createProjectButton { width: 48px; height: 48px; flex-basis: 48px; border-radius: 16px; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
+.project-home-actions .icon-button { width: 44px; height: 44px; border-radius: 14px; }
+.project-actions { gap: 10px; margin-bottom: 26px; }
+.project-search { height: 48px; border-radius: 14px; padding: 0 14px; gap: 10px; margin-bottom: 4px; }
+.project-search .cad-icon { width: 20px; height: 20px; }
+.project-search input { font-size: 14px; }
+.project-action-card { border-radius: 16px; padding: 14px 11px; min-height: 114px; gap: 9px; align-content: start; transition: border-color .15s, background .15s; }
+.project-action-card > .cad-icon { color: var(--accent); width: 26px; height: 26px; margin-bottom: 4px; }
+.project-action-card strong { font-size: 12px; font-weight: 700; line-height: 1.2; }
+.project-action-card span { font-size: 10px; line-height: 1.45; }
+.project-action-card:active { background: var(--surface-2); border-color: var(--accent); }
+.project-list-head { font-size: 10px; letter-spacing: .1em; margin-bottom: 12px; min-height: 30px; }
+.project-list-head button { min-height: 40px; padding: 0 4px; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.project-list { align-content: start; grid-auto-rows: max-content; gap: 12px; padding-bottom: 20px; }
+.project-empty { min-height: 180px; padding: 28px; border-radius: 18px; font-size: 14px; line-height: 1.65; background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.project-card { align-items: start; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; padding: 16px; border-radius: 18px; min-height: 0; box-shadow: 0 3px 14px color-mix(in srgb, #000 3%, transparent); }
+.project-card-preview { width: 64px; height: 72px; border-radius: 12px; background-size: 16px 16px; }
+.project-card-preview .cad-icon { width: 34px; height: 34px; stroke-width: 1.3; }
+.project-card-title strong { font-size: 15px; line-height: 1.35; }
+.project-card-meta { margin-top: 6px; font-size: 11px; line-height: 1.5; }
+.project-card-actions { flex-wrap: wrap; overflow: visible; gap: 6px; margin-top: 13px; }
+.project-card-actions button { font-size: 11px; min-height: 40px; border-radius: 10px; padding: 8px 10px; font-weight: 600; }
+.project-card-actions button[data-project-action="delete"] { color: #d65c66; }
+.tool-rail { border-radius: 18px 18px 0 0; padding-top: 8px; box-shadow: 0 -4px 20px color-mix(in srgb, #000 7%, transparent); }
+.tool { height: 54px; border-radius: 12px; gap: 4px; }
+.tool span { display: inline-flex; align-items: center; justify-content: center; }
+.tool small { font-size: 9px; font-weight: 600; }
+.tool.active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: transparent; box-shadow: none; color: var(--accent); }
+button:focus-visible, .project-action-card:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 359px) {
+  .project-home { padding: 18px 12px 12px; }
+  .project-actions { gap: 6px; }
+  .project-action-card { padding: 12px 8px; }
+  .project-card { grid-template-columns: 48px minmax(0, 1fr); padding: 12px; gap: 10px; }
+  .project-card-preview { width: 48px; height: 60px; }
+}
+
+/* Wall command keeps the canvas, cursor and line input controls in place. */
+.wall-options { position:absolute; z-index:6; left:10px; right:10px; bottom:86px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:10px; border:1px solid var(--border); border-radius:14px; background:var(--surface); box-shadow:0 8px 28px #0002; }
+.wall-options label { display:flex; flex-direction:column; gap:5px; color:var(--muted); font-size:11px; min-width:0; }
+.wall-options label span { display:flex; align-items:center; gap:3px; }
+.wall-options input:not([type=checkbox]), .wall-options select { width:100%; min-width:0; height:34px; border:1px solid var(--border); border-radius:7px; background:var(--canvas); color:var(--text); padding:4px; font:inherit; font-size:12px; }
+.wall-options .wall-chain { flex-direction:row; align-items:center; color:var(--text); }
+.wall-options button { min-height:38px; border:1px solid var(--border); border-radius:8px; background:var(--canvas); color:var(--text); font-size:12px; }
+.wall-options button[aria-pressed=true] { color:var(--accent); border-color:var(--accent); }

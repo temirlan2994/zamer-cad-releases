@@ -21,6 +21,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+import android.widget.FrameLayout;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
@@ -41,11 +42,14 @@ public final class MainActivity extends Activity {
 
     private final ExecutorService fileExecutor = Executors.newSingleThreadExecutor();
     private WebView webView;
+    private FrameLayout viewport;
+    private AppUpdater updater;
     private ValueCallback<Uri[]> filePathCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        updater = new AppUpdater(this);
         getWindow().setStatusBarColor(Color.rgb(248, 250, 253));
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
@@ -53,7 +57,12 @@ public final class MainActivity extends Activity {
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(248, 250, 253));
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        webView.setOnApplyWindowInsetsListener((view, insets) -> {
+        // Insets belong to the native parent: WebView padding does not resize
+        // the CSS viewport and lets fixed/absolute page content cover system bars.
+        viewport = new FrameLayout(this);
+        viewport.setBackgroundColor(Color.rgb(248, 250, 253));
+        viewport.addView(webView, new FrameLayout.LayoutParams(-1, -1));
+        viewport.setOnApplyWindowInsetsListener((view, insets) -> {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
@@ -65,9 +74,10 @@ public final class MainActivity extends Activity {
                     insets.getSystemWindowInsetBottom()
                 );
             }
-            return insets;
+            return insets.consumeSystemWindowInsets().consumeDisplayCutout();
         });
-        setContentView(webView);
+        setContentView(viewport);
+        viewport.requestApplyInsets();
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -104,6 +114,7 @@ public final class MainActivity extends Activity {
         } else {
             webView.restoreState(savedInstanceState);
         }
+        updater.checkAtStartup();
     }
 
     @Override
@@ -131,7 +142,14 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (updater != null) updater.onResume();
+    }
+
+    @Override
     protected void onDestroy() {
+        if (updater != null) updater.close();
         if (webView != null) {
             webView.removeJavascriptInterface("ZamerAndroid");
             webView.destroy();
@@ -141,6 +159,26 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface
+        public void showUpdates() {
+            runOnUiThread(() -> updater.showMenu());
+        }
+
+        @JavascriptInterface
+        public void setTheme(String theme) {
+            final boolean dark = "dark".equals(theme);
+            runOnUiThread(() -> {
+                if (webView == null || isDestroyed()) return;
+                int background = dark ? Color.rgb(16, 20, 27) : Color.rgb(245, 247, 250);
+                viewport.setBackgroundColor(background);
+                webView.setBackgroundColor(background);
+                getWindow().setStatusBarColor(background);
+                getWindow().setNavigationBarColor(background);
+                getWindow().getDecorView().setSystemUiVisibility(dark ? 0 :
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            });
+        }
+
         @JavascriptInterface
         public void saveTextFile(String requestedName, String requestedMimeType, String content) {
             final String fileName = sanitizeFileName(requestedName);
@@ -183,6 +221,14 @@ public final class MainActivity extends Activity {
 
     private final class LocalAssetClient extends WebViewClient {
         @Override
+        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            Uri uri = request.getUrl();
+            return !"https".equalsIgnoreCase(uri.getScheme())
+                || !"appassets.androidplatform.net".equalsIgnoreCase(uri.getHost())
+                || uri.getPath() == null || !uri.getPath().startsWith(APP_PATH_PREFIX);
+        }
+
+        @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             return loadAsset(request.getUrl());
         }
@@ -194,9 +240,12 @@ public final class MainActivity extends Activity {
         }
 
         private WebResourceResponse loadAsset(Uri uri) {
-            if (!"appassets.androidplatform.net".equalsIgnoreCase(uri.getHost())) return null;
+            // INTERNET is for the native updater only; remote pages/resources
+            // must never reach the WebView's JavaScript bridge.
+            if (!"https".equalsIgnoreCase(uri.getScheme())
+                || !"appassets.androidplatform.net".equalsIgnoreCase(uri.getHost())) return errorResponse(403, "Forbidden");
             String path = uri.getPath();
-            if (path == null || !path.startsWith(APP_PATH_PREFIX)) return null;
+            if (path == null || !path.startsWith(APP_PATH_PREFIX)) return errorResponse(403, "Forbidden");
             String relativePath = path.substring(APP_PATH_PREFIX.length());
             if (relativePath.isBlank()) relativePath = "index.html";
             if (relativePath.contains("..") || relativePath.startsWith("/")) return errorResponse(403, "Forbidden");

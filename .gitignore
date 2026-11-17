@@ -4,6 +4,7 @@ tools/
 node_modules/
 .DS_Store
 .claude/
+.codex-remote-attachments/
 tmp/
 prototype/project-state.json
 prototype/project-states/
@@ -13,3 +14,7 @@ prototype/phone-server*.log
 prototype/audit-*/
 prototype/downloads/
 dist/
+*.jks
+*.keystore
+*.p12
+keystore.properties

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=210" />
+    <link rel="stylesheet" href="./styles.css?v=211" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -44,6 +44,7 @@
             <span class="account-badge" id="accountBadge" hidden></span>
           </div>
           <div class="project-home-actions">
+            <button class="icon-button" id="appUpdatesButton" type="button" title="Обновления приложения" aria-label="Обновления приложения" hidden>↻</button>
             <button class="icon-button" id="logoutButton" type="button" title="Выйти" aria-label="Выйти" hidden>⎋</button>
             <button class="icon-button primary" id="createProjectButton" type="button" title="Создать проект" aria-label="Создать проект">+</button>
           </div>
@@ -64,7 +65,7 @@
           </button>
           <label class="project-action-card import-card">
             <strong>Импорт</strong>
-            <span>.zamer backup</span>
+            <span>Файл .zamer</span>
             <input id="projectImportInput" type="file" accept=".zamer,application/json" hidden />
           </label>
           <button class="project-action-card install-card" id="installAppButton" type="button">
@@ -114,7 +115,7 @@
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
-          <button class="tool active" data-tool="select"><span>↖</span><small>Выбор</small></button>
+          <button class="tool active" data-tool="select" aria-label="ESC — отменить команду и выбрать объект"><span>↖</span><small>ESC</small></button>
           <button class="tool" data-tool="line"><span>╱</span><small>Линия</small></button>
           <button class="tool" data-tool="wall"><span>▌</span><small>Стена</small></button>
           <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
@@ -122,6 +123,14 @@
           <button class="tool" data-tool="furniture"><span>🪑</span><small>Объект</small></button>
         </nav>
 
+        <div class="wall-options" id="wallOptions" hidden aria-label="Параметры стены">
+          <label>Толщина <span><input id="wallWidth" inputmode="decimal" value="180" aria-label="Толщина стены" /> мм</span></label>
+          <label>Привязка <select id="wallLocation" aria-label="Линия привязки стены"><option value="axis">Ось стены</option><option value="left">Левая грань</option><option value="right">Правая грань</option></select></label>
+          <label>Смещение <span><input id="wallOffset" inputmode="decimal" value="0" aria-label="Смещение стены" /> мм</span></label>
+          <label class="wall-chain"><input type="checkbox" id="wallChain" checked /> Цепочка</label>
+          <button id="wallFlip" type="button" aria-pressed="false" title="Развернуть сторону · Пробел">⇄ Сторона</button>
+          <button id="wallFinish" type="button">Завершить</button>
+        </div>
         <canvas id="cadCanvas" aria-label="Чертежный холст"></canvas>
         <div class="center-cursor" aria-hidden="true">
           <span class="cursor-line horizontal"></span>
@@ -254,7 +263,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=220"></script>
+    <script type="module" src="./app.js?v=225"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

@@ -94,6 +94,22 @@ export function normalizeScreenVector(dx, dy, fallbackX, fallbackY) {
 
 // Axis-aligned bounding box of any entity, in world coordinates.
 export function entityBounds(entity) {
+  if (entity.layer === "dimensions" && entity.type === "line") {
+    if (entity.dimensionKind === "angular") {
+      const radius = Math.max(distanceWorld(entity.vertex, entity.arm1), distanceWorld(entity.vertex, entity.arm2));
+      return {minX:entity.vertex.x-radius, maxX:entity.vertex.x+radius, minY:entity.vertex.y-radius, maxY:entity.vertex.y+radius};
+    }
+    const points = [{x:entity.x1,y:entity.y1}, {x:entity.x2,y:entity.y2}];
+    if ([entity.dimX1, entity.dimY1, entity.dimX2, entity.dimY2].every(Number.isFinite)) {
+      points.push({x:entity.dimX1,y:entity.dimY1}, {x:entity.dimX2,y:entity.dimY2});
+    } else if (entity.dimensionKind !== "leader") {
+      const length = Math.hypot(entity.x2-entity.x1, entity.y2-entity.y1) || 1;
+      const offset = entity.offset ?? 360;
+      const dx = -(entity.y2-entity.y1)/length*offset, dy = (entity.x2-entity.x1)/length*offset;
+      points.push({x:entity.x1+dx,y:entity.y1+dy}, {x:entity.x2+dx,y:entity.y2+dy});
+    }
+    return {minX:Math.min(...points.map(p=>p.x)), maxX:Math.max(...points.map(p=>p.x)), minY:Math.min(...points.map(p=>p.y)), maxY:Math.max(...points.map(p=>p.y))};
+  }
   if (entity.type === "text") {
     const height = Math.max(1, Math.abs(entity.height || 260));
     const width = Math.max(height * 0.8, String(entity.text || "").length * height * 0.58);

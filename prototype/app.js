@@ -1,7 +1,45 @@
-import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly } from "./core/interaction.js?v=225";
+import { wallFromReference } from "./core/walls.js";
+import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { defaultBlockSize, entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
+
+
+// Local vector icons share a 24px grid and never depend on platform emoji fonts.
+function cadIcon(name) {
+  const paths = {
+    cursor: '<path d="m5 3 14 9-7 2-3 7Z"/>',
+    line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
+    wall: '<path d="M5 4h5v16H5zM14 4h5v16h-5z"/>',
+    dimension: '<path d="M4 5v14m16-14v14M4 12h16m-12-3-4 3 4 3m8-6 4 3-4 3"/>',
+    text: '<path d="M5 5h14M12 5v15m-4 0h8"/>',
+    chair: '<path d="M7 13V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8M5 10v7h14v-7M7 17v4m10-4v4M5 13h14"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
+    file: '<path d="M14 3H6v18h12V7zM14 3v5h4M9 14h6m-3-3v6"/>',
+    plan: '<path d="M3 3h18v18H3zM3 11h9V3m0 8v5m0 5v-2m3-8h6"/>',
+    import: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>',
+    export: '<path d="M12 16V3m-4 4 4-4 4 4M4 16v5h16v-5"/>',
+    undo: '<path d="m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14"/>',
+    redo: '<path d="m16 4 5 5-5 5m5-5H11a7 7 0 0 0 0 14"/>',
+    layers: '<path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 17l10 5 10-5"/>',
+    moon: '<path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>',
+    polyline: '<path d="m3 18 6-12 6 12 6-12"/>',
+    circle: '<circle cx="12" cy="12" r="8"/>',
+    arc: '<path d="M3 18a9 9 0 0 1 18 0"/>',
+    rectangle: '<rect x="3" y="5" width="18" height="14" rx="1"/>',
+    angle: '<path d="M4 4v16h16M4 13a7 7 0 0 1 7 7"/>',
+    edit: '<path d="m4 16 12-12 4 4L8 20H4Zm10-10 4 4"/>',
+    exit: '<path d="M10 4H4v16h6m5-12 4 4-4 4m-6-4h10"/>',
+    update: '<path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 14 6M4 12a8 8 0 0 0 14 6"/>',
+  };
+  return `<svg class="cad-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.cursor}</svg>`;
+}
+function glyphIcon(glyph) {
+  return cadIcon(({ '↖':'cursor', '╱':'line', '▌':'wall', '↔':'dimension', '⟷':'dimension', 'T':'text', '🪑':'chair', '⌁':'polyline', '○':'circle', '⌒':'arc', '▭':'rectangle', '∠':'angle', '⊥':'dimension', '↗':'export', '▣':'rectangle', '+':'plus', '✎':'edit' })[glyph] || 'cursor');
+}
 
 const nativeApkMode = new URLSearchParams(window.location.search).get("apk") === "1" || Boolean(window.ZamerAndroid);
 const nativeFetchDelegate = window.fetch.bind(window);
@@ -315,7 +353,7 @@ const drawToolButtonVisuals = {
   rectangle: { icon: "▭", label: "Прямоуг." },
 };
 const dimensionToolButtonVisuals = {
-  aligned: { icon: "↔", label: "Параллельный" },
+  aligned: { icon: "↔", label: "Размер" },
   linear: { icon: "⟷", label: "Линейный" },
   angular: { icon: "∠", label: "Угол" },
   baseline: { icon: "⊥", label: "База" },
@@ -325,7 +363,7 @@ const annotationToolButtonVisuals = {
   leader: { icon: "↗", label: "Выноска" },
 };
 const selectModeButtonVisuals = {
-  select: { icon: "↖", label: "Выбор" },
+  select: { icon: "↖", label: "ESC" },
   window: { icon: "▣", label: "Рамка" },
   lasso: { icon: "⌁", label: "Лассо" },
   multi: { icon: "+", label: "Мульти" },
@@ -393,6 +431,8 @@ const layerMeta = {
 
 const state = {
   theme: "light",
+  directManipulationIds: new Set(),
+  wallSettings: { width: 180, location: "axis", offset: 0, flipped: false, chain: true },
   tool: "select",
   block: "sofa",
   drawTool: "line",
@@ -830,7 +870,7 @@ function renderAuthUi() {
   if (authModeButton) authModeButton.disabled = authState.busy;
   if (accountBadge) {
     accountBadge.hidden = !authState.user;
-    accountBadge.textContent = authState.user ? `Аккаунт: ${authState.user.login}` : "";
+    accountBadge.textContent = nativeApkMode ? "Офлайн · сохранение на телефоне" : (authState.user ? `Аккаунт: ${authState.user.login}` : "");
   }
   if (logoutButton) logoutButton.hidden = nativeApkMode || !authState.user;
 }
@@ -1049,7 +1089,7 @@ function renderProjectList() {
 
     const preview = document.createElement("div");
     preview.className = "project-card-preview";
-    preview.textContent = "⌁";
+    preview.innerHTML = cadIcon("plan");
 
     const main = document.createElement("div");
     main.className = "project-card-main";
@@ -1380,7 +1420,7 @@ async function openProject(projectId) {
 
   if (choice.source === "server") {
     await saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open");
-    updateSaveIndicator("saved", "С сервера", { autoDim: 2400 });
+    updateSaveIndicator("saved", nativeApkMode ? "На телефоне" : "С сервера", { autoDim: 2400 });
   } else if (shouldPush) {
     persistence.pendingSnapshot = persistence.lastHash;
     persistence.pendingSaveId = choice.project.clientSaveId || createClientSaveId();
@@ -1594,7 +1634,8 @@ function restoreProject(project) {
     if (project.theme === "light" || project.theme === "dark") {
       state.theme = project.theme;
       shell.dataset.theme = state.theme;
-      themeButton.textContent = state.theme === "light" ? "☾" : "☼";
+      themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
+      window.ZamerAndroid?.setTheme?.(state.theme);
     }
     if (typeof project.selectionFilter === "string") state.selectionFilter = project.selectionFilter;
     if (typeof project.furnitureTab === "string") state.furnitureTab = project.furnitureTab;
@@ -1813,7 +1854,7 @@ async function loadProjectSafely() {
         restoreProject(payload.project);
         await saveProjectToLocalStore(payload.project, "server-restore");
         statusChip.textContent = "Проект загружен с сервера";
-        updateSaveIndicator("saved", "С сервера", { autoDim: 2600 });
+        updateSaveIndicator("saved", nativeApkMode ? "На телефоне" : "С сервера", { autoDim: 2600 });
       } else {
         shouldPushLocalToServer = true;
         updateSaveIndicator("offline", "Локальная новее", { autoDim: 2600 });
@@ -1985,7 +2026,11 @@ function updateViewportLock() {
   const detectedInset = Math.max(rawInset, heightLoss);
   const keyboardInset = inputFocused && detectedInset > 80 ? Math.min(detectedInset, Math.max(0, stableViewportHeight - 240)) : 0;
 
-  if (!inputFocused || keyboardInset === 0) {
+  if (!inputFocused) {
+    // System-bar insets and split-screen can shrink the viewport after startup.
+    // Only hold its previous height while an input actually owns the keyboard.
+    stableViewportHeight = Math.max(viewportHeight, layoutHeight);
+  } else if (keyboardInset === 0) {
     stableViewportHeight = Math.max(stableViewportHeight, viewportHeight, layoutHeight);
   }
 
@@ -2505,6 +2550,7 @@ function setSelection(ids, options = {}) {
     state.selectedIds = [...new Set(nextIds)];
   }
   state.selectedId = state.selectedIds.at(-1) || null;
+  state.directManipulationIds = new Set([...state.directManipulationIds].filter(id => state.selectedIds.includes(id)));
   state.selectedEndpoint = null;
   if (state.furnitureResizeHandlesId && !state.selectedIds.includes(state.furnitureResizeHandlesId)) {
     state.furnitureResizeHandlesId = null;
@@ -4275,7 +4321,20 @@ function drawActiveSegment(c) {
     return;
   }
 
-  drawEditableSegment(start, end, c, { lineWidth: state.tool === "wall" ? 5 : 2.2 });
+  if (state.tool === "wall") {
+    const preview = wallFromReference("preview", start, end, state.wallSettings);
+    if (preview) {
+      const a = worldToScreen({x: preview.x1, y: preview.y1});
+      const b = worldToScreen({x: preview.x2, y: preview.y2});
+      ctx.save();
+      ctx.strokeStyle = c.accent;
+      ctx.globalAlpha = 0.25;
+      ctx.lineWidth = Math.max(2, preview.width * state.view.scale);
+      linePath(a.x, a.y, b.x, b.y);
+      ctx.restore();
+    }
+  }
+  drawEditableSegment(start, end, c, { lineWidth: 2.2, dashed: state.tool === "wall" });
   updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleInfo });
 }
 
@@ -6506,7 +6565,7 @@ function isGroupedDrawTool(tool) {
 function setToolButtonVisual(button, visual) {
   const icon = button?.querySelector("span");
   const label = button?.querySelector("small");
-  if (icon && visual?.icon) icon.textContent = visual.icon;
+  if (icon && visual?.icon) icon.innerHTML = glyphIcon(visual.icon);
   if (label && visual?.label) label.textContent = visual.label;
 }
 
@@ -6540,6 +6599,7 @@ function drawableSnapSegments() {
 }
 
 function syncToolButtons() {
+  document.getElementById("wallOptions").hidden = state.tool !== "wall";
   syncToolButtonVisuals();
   const editModeActive = state.tool === "select" && (Boolean(editableSelectionEntity()) || !selectToolMenu.hidden);
   tools.forEach((button) => {
@@ -6557,7 +6617,12 @@ function syncToolButtons() {
 }
 
 function setTool(tool) {
+  state.directManipulationIds.clear();
   state.tool = tool;
+  if (tool === "dimension" && !state.visibleLayers.has("dimensions")) {
+    state.visibleLayers.add("dimensions");
+    markProjectDirty("show-dimensions");
+  }
   hideLeaderTextEditor();
   if (tool !== "select") {
     state.selectTool = "select";
@@ -6838,6 +6903,7 @@ function activateSelectionTool() {
 }
 
 function toggleMainSelectTool() {
+  if (state.tool === "wall" && state.drawing) { finishWallChain(); return; }
   const nextSelectTool = state.tool === "select" && state.selectTool === "select" ? "window" : "select";
   state.selectTool = nextSelectTool;
   state.selectionDrag = null;
@@ -6974,8 +7040,26 @@ function drawToolLabel(tool) {
 }
 
 function pushEntity(entity) {
+  let joined = null;
+  if (entity?.type === "wall" && state.drawing?.previousWallId) {
+    const previous = state.entities.find(item => item.id === state.drawing.previousWallId);
+    if (previous && previous.width === entity.width) {
+      const ax = previous.x2 - previous.x1, ay = previous.y2 - previous.y1;
+      const bx = entity.x2 - entity.x1, by = entity.y2 - entity.y1;
+      const cross = ax * by - ay * bx;
+      if (Math.abs(cross) > 0.001) {
+        const t = ((entity.x1 - previous.x1) * by - (entity.y1 - previous.y1) * bx) / cross;
+        const x = previous.x1 + t * ax, y = previous.y1 + t * ay;
+        if (Math.hypot(x - previous.x2, y - previous.y2) <= entity.width * 4 && Math.hypot(x - entity.x1, y - entity.y1) <= entity.width * 4) {
+          joined = { id: previous.id, before: {x2: previous.x2, y2: previous.y2}, after: {x2:x, y2:y} };
+          Object.assign(previous, joined.after);
+          entity.x1 = x; entity.y1 = y;
+        }
+      }
+    }
+  }
   state.entities.push(entity);
-  state.undo.push({ type: "add", entity });
+  state.undo.push({ type: "add", entity, joined });
   state.redo.length = 0;
   state.selectedId = entity.id;
   state.selectedIds = [entity.id];
@@ -7002,7 +7086,7 @@ function createEntityFromDrawing() {
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
   if (state.tool === "arc") return arcEntity(id, state.drawing.start, arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end), state.drawing.arcEnd);
   if (state.tool === "wall") {
-    return wall(id, start.x, start.y, end.x, end.y);
+    return wallFromReference(id, start, end, state.wallSettings);
   }
   if (state.tool === "dimension") {
     const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
@@ -7182,7 +7266,7 @@ function commitCursorPoint() {
       state.endpointEditBefore = null;
       hideInlineEditors();
       resetSnapTracking();
-      if (state.tool === "line" || state.tool === "polyline") {
+      if (["line", "polyline", "wall"].includes(state.tool)) {
         state.selectedEndpoint = null;
         state.endpointEditBefore = null;
       }
@@ -7209,7 +7293,8 @@ function commitCursorPoint() {
         syncToolButtons();
         statusChip.textContent = "Линия завершена. Укажите первую точку новой линии";
       }
-      else if (["wall", "dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
+      else if (finishedTool === "wall") { continueWallChain(end); }
+      else if (["dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
   } else {
@@ -7355,7 +7440,9 @@ function applyExactInput() {
       return;
     }
     pushEntity(createEntityFromDrawing());
-    if (finishedTool === "line" || finishedTool === "wall") {
+    if (finishedTool === "wall") {
+      continueWallChain(end);
+    } else if (finishedTool === "line") {
       state.drawing = null;
       hideDrawToolMenu();
       state.selectTool = "select";
@@ -7600,6 +7687,56 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   state.gestureSuppressTap = false;
   const screen = getPointer(event);
+  if (state.tool === "select" && !state.moveCommand && !state.offsetCommand && !["window", "lasso"].includes(state.selectTool)) {
+    // Point editing is an explicit operation, independent of whole-object drag.
+    if (state.selectedEndpoint) {
+      const endpointGeometry = selectedEndpointGeometry();
+      if (!endpointGeometry) {
+        state.selectedEndpoint = null;
+        state.endpointEditBefore = null;
+        hideInlineEditors();
+        draw();
+        return;
+      }
+      state.pointer = {
+        id: event.pointerId,
+        screen,
+        startScreen: screen,
+        world: screenToWorld(screen),
+        moved: false,
+        mode: "endpoint-place",
+        targetId: state.selectedEndpoint.entityId,
+        before: state.endpointEditBefore || entityGeometry(endpointGeometry.entity),
+      };
+      statusChip.textContent = "Конец линии: тапните, чтобы поставить новую точку";
+      return;
+    }
+    const selectedLineEndpoint = pickSelectedLineEndpoint(screen);
+    if (selectedLineEndpoint && !requiresActivation(selectedLineEndpoint.entityId, state.selectedIds, state.directManipulationIds)) {
+      selectLineEndpoint(selectedLineEndpoint);
+      state.pointer = {
+        id: event.pointerId,
+        screen,
+        startScreen: screen,
+        world: screenToWorld(screen),
+        moved: true,
+        mode: "ui",
+        targetId: null,
+      };
+      return;
+    }
+  }
+  // A completed tap arms an object. Auto-selection after creation, undo or a
+  // command does not allow the next accidental contact to change geometry.
+  if (["select", "furniture"].includes(state.tool) && !state.moveCommand && !state.offsetCommand && !["window", "lasso"].includes(state.selectTool)) {
+    const controlEntity = hitFurnitureControl(screen)?.entity || hitCircleControl(screen)?.entity || hitDimensionControl(screen)?.entity;
+    const hitId = controlEntity?.id || (state.tool === "furniture" ? pickFurnitureEntity(screen) : pickEntity(screen));
+    const hitEntity = controlEntity || state.entities.find(entity => entity.id === hitId);
+    if (hitId && (!canDragEntityDirectly(hitEntity) || requiresActivation(hitId, state.selectedIds, state.directManipulationIds))) {
+      state.pointer = { id: event.pointerId, screen, startScreen: screen, world: screenToWorld(screen), moved: false, mode: "select-only", targetId: null, tapCandidateId: hitId, before: null };
+      return;
+    }
+  }
   const furnitureDimensionInput = hitFurnitureDimensionInput(screen);
   if (furnitureDimensionInput && focusFurnitureSizeInput(furnitureDimensionInput.kind)) {
     state.pointer = { id: event.pointerId, mode: "ui", moved: true, targetId: null };
@@ -7724,20 +7861,6 @@ canvas.addEventListener("pointerdown", (event) => {
     draw();
     return;
   }
-  const selectedLineEndpoint = state.tool === "select" ? pickSelectedLineEndpoint(screen) : null;
-  if (selectedLineEndpoint) {
-    selectLineEndpoint(selectedLineEndpoint);
-    state.pointer = {
-      id: event.pointerId,
-      screen,
-      startScreen: screen,
-      world: screenToWorld(screen),
-      moved: true,
-      mode: "ui",
-      targetId: null,
-    };
-    return;
-  }
   const lineEndpoint = state.tool === "line" || state.tool === "wall" ? pickLineEndpoint(screen) : null;
   const editingSelectedEndpoint =
     lineEndpoint &&
@@ -7756,32 +7879,10 @@ canvas.addEventListener("pointerdown", (event) => {
     };
     return;
   }
-  if (state.selectedEndpoint && state.tool === "select") {
-    const endpointGeometry = selectedEndpointGeometry();
-    if (!endpointGeometry) {
-      state.selectedEndpoint = null;
-      state.endpointEditBefore = null;
-      hideInlineEditors();
-      draw();
-      return;
-    }
-    state.pointer = {
-      id: event.pointerId,
-      screen,
-      startScreen: screen,
-      world: screenToWorld(screen),
-      moved: false,
-      mode: "endpoint-place",
-      targetId: state.selectedEndpoint.entityId,
-      before: state.endpointEditBefore || entityGeometry(endpointGeometry.entity),
-    };
-    statusChip.textContent = "Конец линии: тапните, чтобы поставить новую точку";
-    return;
-  }
   const hitId = state.tool === "select" ? pickEntity(screen) : state.tool === "furniture" ? pickFurnitureEntity(screen) : null;
   const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
   const hitIsSelected = hitId && (state.selectedId === hitId || (state.selectedIds || []).includes(hitId));
-  const canMoveHit = Boolean(hitEntity && hitIsSelected && (state.tool === "select" || state.tool === "furniture"));
+  const canMoveHit = Boolean(canDragEntityDirectly(hitEntity) && hitIsSelected && (state.tool === "select" || state.tool === "furniture"));
   const pointerMode = canMoveHit
     ? isDirectMoveAnnotation(hitEntity)
       ? "move"
@@ -7839,6 +7940,14 @@ canvas.addEventListener("pointermove", (event) => {
     state.pointer.moved = true;
     clearPointerLongPress();
   }
+  if (state.pointer.mode === "select-only") {
+    state.pointer.mode = activationGestureMode(state.pointer.moved);
+    if (state.pointer.mode === "select-only") return;
+    // This gesture belongs to the viewport, even while crossing other objects.
+    // Do not activate or move the object when the finger is released.
+    state.pointer.tapCandidateId = null;
+  }
+  if (!canStartGeometryDrag(state.pointer.mode, state.pointer.moved)) return;
   if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
     updateSelectionDrag(screen);
     state.pointer.screen = screen;
@@ -7953,7 +8062,17 @@ function finishCanvasPointer(event, canceled = false) {
     }
     return;
   }
-  if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
+  if (state.pointer?.mode === "select-only") {
+    if (!canceled && !state.pointer.moved) {
+      const hitId = state.pointer.tapCandidateId;
+      applyTapSelection(hitId);
+      if (state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
+      const entity = state.entities.find(item => item.id === hitId);
+      statusChip.textContent = canDragEntityDirectly(entity)
+        ? "Объект активирован. Теперь его можно перетащить"
+        : "Объект выбран. Для перемещения нажмите «Переместить»";
+    }
+  } else if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
     if (!canceled) {
       if (state.pointer.moved) {
         finishSelectionDrag();
@@ -8030,6 +8149,7 @@ function finishCanvasPointer(event, canceled = false) {
       }
       if (!(!hitId && state.furnitureEditId)) {
         applyTapSelection(hitId);
+        if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
       }
       if (shouldEditTextFromTap(hitEntity, state.pointer.startScreen)) {
         editTextEntity(hitEntity);
@@ -8039,6 +8159,7 @@ function finishCanvasPointer(event, canceled = false) {
       const hitId = state.pointer.tapCandidateId || state.pointer.targetId || pickFurnitureEntity(state.pointer.startScreen);
       state.furnitureEditId = null;
       setSelection(hitId);
+      if (hitId) state.directManipulationIds.add(hitId);
       statusChip.textContent = hitId ? "Мебель выбрана: двигайте пальцем, тяните углы или крутите" : "Перетащите блок из библиотеки на план";
       draw();
     } else {
@@ -9105,7 +9226,8 @@ keyboardInputs.forEach((input) => {
 themeButton.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
   shell.dataset.theme = state.theme;
-  themeButton.textContent = state.theme === "light" ? "☾" : "☼";
+  themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
+      window.ZamerAndroid?.setTheme?.(state.theme);
   draw();
   markProjectDirty("theme");
 });
@@ -9116,10 +9238,12 @@ annotationScaleSelect?.addEventListener("change", () => {
 });
 
 document.getElementById("undoButton").addEventListener("click", () => {
+  if (state.tool === "wall" && state.drawing) finishWallChain();
   const action = state.undo.pop();
   if (!action) return;
   if (action.type === "add") {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
+    if (action.joined) Object.assign(state.entities.find(item => item.id === action.joined.id) || {}, action.joined.before);
     state.redo.push(action);
     setSelection(state.entities.at(-1)?.id || null);
     markProjectDirty("undo-add");
@@ -9158,6 +9282,7 @@ document.getElementById("redoButton").addEventListener("click", () => {
   const action = state.redo.pop();
   if (!action) return;
   if (action.type === "add") {
+    if (action.joined) Object.assign(state.entities.find(item => item.id === action.joined.id) || {}, action.joined.after);
     state.entities.push(action.entity);
     state.undo.push(action);
     setSelection(action.entity.id);
@@ -9402,3 +9527,76 @@ function downloadFile(filename, content, mimeType) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
+
+// Enhance existing controls without replacing their listeners or accessible labels.
+for (const [id, icon] of Object.entries({createProjectButton:'plus', undoButton:'undo', redoButton:'redo', layersButton:'layers', exportButton:'import', logoutButton:'exit'})) {
+  const button = document.getElementById(id);
+  if (button) button.innerHTML = cadIcon(icon);
+}
+for (const [selector, icon] of [['#createBlankProjectButton','file'], ['#createApartmentProjectButton','plan'], ['.import-card','import']]) {
+  document.querySelector(selector)?.insertAdjacentHTML('afterbegin', cadIcon(icon));
+}
+document.querySelector('.project-search > span').innerHTML = cadIcon('search');
+for (const button of document.querySelectorAll('.tool[data-tool]')) {
+  const span = button.querySelector('span');
+  if (span && !span.querySelector('svg')) span.innerHTML = glyphIcon(span.textContent);
+}
+
+window.ZamerAndroid?.setTheme?.(state.theme);
+
+const appUpdatesButton = document.getElementById("appUpdatesButton");
+if (appUpdatesButton && window.ZamerAndroid?.showUpdates) {
+  appUpdatesButton.hidden = false;
+  appUpdatesButton.innerHTML = cadIcon("update");
+  appUpdatesButton.addEventListener("click", () => window.ZamerAndroid.showUpdates());
+}
+
+function finishWallChain() {
+  state.drawing = null;
+  state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  statusChip.textContent = "Цепочка завершена. Укажите начало стены · ESC — выход";
+  draw();
+}
+function continueWallChain(end) {
+  state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  state.drawing = state.wallSettings.chain ? { start: end, end, lockedEnd: false, previousWallId: state.selectedId } : null;
+  statusChip.textContent = state.wallSettings.chain
+    ? "Стена создана. Следующая точка · ESC — завершить цепочку"
+    : "Стена создана. Укажите начало следующей стены";
+}
+const wallOptions = document.getElementById("wallOptions");
+wallOptions.addEventListener("change", () => {
+  const widthInput = document.getElementById("wallWidth");
+  const offsetInput = document.getElementById("wallOffset");
+  state.wallSettings.width = Math.min(2000, Math.max(20, Number(widthInput.value.replace(",", ".")) || 180));
+  state.wallSettings.offset = Math.min(10000, Math.max(-10000, Number(offsetInput.value.replace(",", ".")) || 0));
+  state.wallSettings.location = document.getElementById("wallLocation").value;
+  state.wallSettings.chain = document.getElementById("wallChain").checked;
+  widthInput.value = state.wallSettings.width;
+  offsetInput.value = state.wallSettings.offset;
+  draw();
+});
+function flipWall() {
+  state.wallSettings.flipped = !state.wallSettings.flipped;
+  document.getElementById("wallFlip").setAttribute("aria-pressed", String(state.wallSettings.flipped));
+  statusChip.textContent = "Сторона стены изменена";
+  draw();
+}
+document.getElementById("wallFlip").addEventListener("click", flipWall);
+document.getElementById("wallFinish").addEventListener("click", finishWallChain);
+document.addEventListener("keydown", (event) => {
+  if (state.tool !== "wall" || event.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    if (state.drawing) finishWallChain(); else activatePlainSelect();
+  } else if (event.code === "Space") {
+    event.preventDefault();
+    flipWall();
+  }
+});

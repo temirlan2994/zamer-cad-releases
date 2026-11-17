@@ -3,7 +3,8 @@ plugins {
 }
 
 def generatedWebAssets = layout.buildDirectory.dir("generated/zamerWebAssets")
-def signingPropertiesFile = rootProject.file("keystore.properties")
+def signingPropertiesFile = new File(System.getenv("ZAMER_SIGNING_PROPERTIES") ?:
+    "${System.getProperty('user.home')}/.zamer-cad/signing/keystore.properties")
 def signingProperties = new java.util.Properties()
 if (signingPropertiesFile.exists()) {
     signingPropertiesFile.withInputStream { signingProperties.load(it) }
@@ -17,8 +18,9 @@ android {
         applicationId "com.zamercad.offline"
         minSdk 29
         targetSdk 35
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 8
+        versionName "0.1.7"
+        buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
     }
 
     signingConfigs {
@@ -39,13 +41,17 @@ android {
         release {
             minifyEnabled false
             shrinkResources false
-            if (signingPropertiesFile.exists()) signingConfig signingConfigs.release
+            signingConfig signingConfigs.release
         }
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     sourceSets {
@@ -71,4 +77,24 @@ tasks.register("syncWebAssets", Sync) {
 
 tasks.named("preBuild").configure {
     dependsOn(tasks.named("syncWebAssets"))
+}
+
+def validateReleaseSigning = tasks.register("validateReleaseSigning") {
+    doLast {
+        if (!signingPropertiesFile.isFile()) {
+            throw new GradleException("Release signing is missing. Configure ZAMER_SIGNING_PROPERTIES; see android-offline/README.md.")
+        }
+        ["storeFile", "storePassword", "keyAlias", "keyPassword"].each { name ->
+            if (!signingProperties.getProperty(name)?.trim()) {
+                throw new GradleException("Missing release signing property: ${name}")
+            }
+        }
+        if (!rootProject.file(signingProperties["storeFile"]).isFile()) {
+            throw new GradleException("Release keystore file does not exist.")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateReleaseSigning)
 }
