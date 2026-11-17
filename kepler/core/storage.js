@@ -14,7 +14,7 @@
 // Публикация «для просмотра»: root = shared/<uid>/p, оглавление — shared/<uid>
 // (читают все, кто открыл артефакт; пишет только автор).
 
-import { createProjectPreview } from './project-preview.js';
+import { createProjectPreview, safeProjectPreview } from './project-preview.js';
 
 export const CHUNK_BYTES = 200 * 1024;
 export const KEEP_VERSIONS = 30;
@@ -149,6 +149,12 @@ async function deleteChunks(db, coll, prefix, count) {
 }
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+
+function sameProjectPreview(a, b) {
+  const left = safeProjectPreview(a);
+  const right = safeProjectPreview(b);
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 function getDoc(ref, server = false) {
   return server && typeof ref.getServer === 'function' ? ref.getServer() : ref.get();
@@ -335,21 +341,30 @@ async function touchDraftMeta(db, root, pid, {
 // правки не засоряют их список, а последний проект можно продолжить на
 // другом устройстве. Указатель пишется только после всех частей.
 export async function saveDraft(db, root, projectText, {
-  pid, stats = null, now = new Date(), editor = null,
+  pid, stats = null, now = new Date(), editor = null, preview: previewOverride = null,
 } = {}) {
   if (!pid) throw new Error('Нет идентификатора проекта');
   const at = now.toISOString();
   const {
-    body, blobs, name, preview,
+    body, blobs, name, preview: generatedPreview,
   } = splitHeavy(projectText);
+  const explicitPreview = safeProjectPreview(previewOverride);
+  const preview = explicitPreview || generatedPreview;
   const hash = hashText(body);
   const ref = draftRef(db, root, pid);
   const beforeSnap = await retry(() => ref.get());
-  const before = beforeSnap.exists ? normalizedDraft(beforeSnap.data()) : null;
+  let before = beforeSnap.exists ? normalizedDraft(beforeSnap.data()) : null;
   if (before?.hash === hash) {
-    if (editor) await assertEditorLease(db, root, pid, editor);
+    const savedPreview = safeProjectPreview(before.preview);
+    const unchangedPreview = explicitPreview || (savedPreview?.v === 2 ? savedPreview : preview);
+    if (unchangedPreview && !sameProjectPreview(before.preview, unchangedPreview)) {
+      const updated = { ...clone(beforeSnap.data()), preview: unchangedPreview };
+      await writeDraftPointer(db, root, pid, ref, updated, editor);
+      before = normalizedDraft(updated);
+    } else if (editor) await assertEditorLease(db, root, pid, editor);
     const meta = await getProject(db, root, pid);
-    const savedMeta = meta?.draftRevision === before.revision && (!preview || meta.preview)
+    const savedMeta = meta?.draftRevision === before.revision
+      && (!before.preview || sameProjectPreview(meta?.preview, before.preview))
       ? meta
       : await touchDraftMeta(db, root, pid, {
         at: before.updatedAt || at,
@@ -484,7 +499,7 @@ async function saveUnchangedVersionFenced(db, root, pid, editor, {
     const meta = projectMeta(metaSnap.data(), at);
     if (meta.versions[0]?.hash !== hash || meta.versions.length > keep) return null;
     if (note && !meta.versions[0].note) meta.versions[0].note = note;
-    if (preview && !meta.preview) meta.preview = preview;
+    if (preview && !sameProjectPreview(meta.preview, preview)) meta.preview = preview;
     const saved = fencedMeta(meta, expected);
     transaction.set(metaRef, saved);
     return { meta: { id: pid, ...saved }, version: saved.versions[0], unchanged: true };
@@ -510,6 +525,7 @@ async function saveVersionMetaFenced(db, root, pid, editor, {
 // пишется (unchanged: true). keep — сколько версий хранить (старые удаляются).
 export async function saveVersion(db, root, projectText, {
   pid, note = '', stats = null, keep = KEEP_VERSIONS, now = new Date(), editor = null,
+  preview: previewOverride = null,
 } = {}) {
   if (!pid) throw new Error('Нет идентификатора проекта');
   const metaRef = db.doc(`${root}/${pid}`);
@@ -517,13 +533,17 @@ export async function saveVersion(db, root, projectText, {
   const at = now.toISOString();
   const meta = projectMeta(snap.exists ? snap.data() : null, at);
   const {
-    body, blobs, name, preview,
+    body, blobs, name, preview: generatedPreview,
   } = splitHeavy(projectText);
+  const explicitPreview = safeProjectPreview(previewOverride);
+  const preview = explicitPreview || generatedPreview;
   const hash = hashText(body);
   if (meta.versions[0]?.hash === hash && meta.versions.length <= keep) {
+    const savedPreview = safeProjectPreview(meta.preview);
+    const unchangedPreview = explicitPreview || (savedPreview?.v === 2 ? savedPreview : preview);
     if (editor) {
       const saved = await saveUnchangedVersionFenced(db, root, pid, editor, {
-        at, hash, keep, note, preview,
+        at, hash, keep, note, preview: unchangedPreview,
       });
       if (saved) return saved;
     } else {
@@ -532,7 +552,10 @@ export async function saveVersion(db, root, projectText, {
         meta.versions[0].note = note;
         changed = true;
       }
-      if (preview && !meta.preview) { meta.preview = preview; changed = true; }
+      if (unchangedPreview && !sameProjectPreview(meta.preview, unchangedPreview)) {
+        meta.preview = unchangedPreview;
+        changed = true;
+      }
       if (changed) await retry(() => metaRef.set(meta));
       return { meta: { id: pid, ...meta }, version: meta.versions[0], unchanged: true };
     }

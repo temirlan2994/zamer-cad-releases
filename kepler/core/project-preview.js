@@ -8,6 +8,9 @@ const WIDTH = 1000;
 const HEIGHT = 620;
 const MAX_RECTS = 60;
 const MAX_SITE_POINTS = 80;
+export const MAX_PROJECT_PREVIEW_IMAGE_CHARS = 180000;
+
+const PREVIEW_IMAGE = /^data:image\/(?:webp|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 const finite = (value) => Number.isFinite(Number(value));
 const round = (value) => Math.round(value * 10) / 10;
@@ -101,13 +104,31 @@ export function createProjectPreview(project) {
   };
 }
 
-function safePreview(preview) {
-  if (!preview || preview.v !== 1 || !Array.isArray(preview.rooms) || !Array.isArray(preview.site)) return null;
+// Единственная точка проверки preview перед HTML и облачным хранением.
+// v2 намеренно допускает только WebP/JPEG data URL и ровно два поля: SVG и
+// произвольные data: URL не должны попадать ни в DOM, ни в метаданные Firebase.
+export function safeProjectPreview(preview) {
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
+  if (preview.v === 2) {
+    const keys = Object.keys(preview);
+    if (keys.length !== 2 || !keys.includes('v') || !keys.includes('image')) return null;
+    if (typeof preview.image !== 'string'
+      || preview.image.length > MAX_PROJECT_PREVIEW_IMAGE_CHARS
+      || !PREVIEW_IMAGE.test(preview.image)) return null;
+    return { v: 2, image: preview.image };
+  }
+  if (preview.v !== 1 || !Array.isArray(preview.rooms) || !Array.isArray(preview.site)) return null;
   const rooms = preview.rooms.filter((rect) => rect && [rect.x, rect.y, rect.w, rect.h].every(finite)
     && Number(rect.w) > 0 && Number(rect.h) > 0).slice(0, MAX_RECTS);
   const site = preview.site.filter((point) => point && finite(point.x) && finite(point.y)).slice(0, MAX_SITE_POINTS);
   if (!rooms.length && site.length < 3) return null;
-  return { v: 1, rooms, site };
+  return {
+    v: 1,
+    rooms: rooms.map((rect) => ({
+      x: Number(rect.x), y: Number(rect.y), w: Number(rect.w), h: Number(rect.h),
+    })),
+    site: site.map((point) => ({ x: Number(point.x), y: Number(point.y) })),
+  };
 }
 
 // Старым карточкам без preview даём различимый план-заполнитель. После
@@ -131,10 +152,21 @@ export function fallbackProjectPreview(stats = null) {
 }
 
 export function projectPreviewSvg(preview, stats = null) {
-  const data = safePreview(preview) || fallbackProjectPreview(stats);
+  const safe = safeProjectPreview(preview);
+  const data = safe?.v === 1 ? safe : fallbackProjectPreview(stats);
   const site = data.site.length > 2
     ? `<polygon class="project-preview-site" points="${data.site.map((p) => `${Number(p.x)},${Number(p.y)}`).join(' ')}" />`
     : '';
   const rooms = data.rooms.map((rect, index) => `<rect class="project-preview-room project-preview-room-${index % 4}" x="${Number(rect.x)}" y="${Number(rect.y)}" width="${Number(rect.w)}" height="${Number(rect.h)}" rx="9" />`).join('');
   return `<svg viewBox="0 0 ${WIDTH} ${HEIGHT}" aria-hidden="true" focusable="false">${site}${rooms}</svg>`;
+}
+
+// Карточки новых проектов показывают растровый снимок настоящего плана.
+// Для старых проектов сохраняем прежний SVG: он заменится после автосохранения.
+export function projectPreviewHtml(preview, stats = null) {
+  const data = safeProjectPreview(preview);
+  if (data?.v === 2) {
+    return `<img class="project-preview-image" src="${data.image}" alt="" loading="lazy" decoding="async" draggable="false">`;
+  }
+  return projectPreviewSvg(data, stats);
 }

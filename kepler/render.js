@@ -221,9 +221,12 @@ export function createRenderer(canvas) {
   // opts (для печати листов): width/height — размер в CSS px, dpr — плотность,
   // print — светлая палитра без сетки, site: false — без слоёв участка,
   // detail: false — без мебели, подписей и размеров комнат (генплан).
+  // thumbnail — чистый презентационный план для карточки проекта: оформление
+  // как на печати, но с мягкими фиксированными тенями и без размеров/осей.
   function draw(state, opts = {}) {
     const print = Boolean(opts.print);
-    const tokens = print ? printTokens() : cssTokens();
+    const thumbnail = Boolean(opts.thumbnail);
+    const tokens = print || thumbnail ? printTokens() : cssTokens();
     const dpr = opts.dpr || window.devicePixelRatio || 1;
     const width = opts.width ?? canvas.clientWidth;
     const height = opts.height ?? canvas.clientHeight;
@@ -266,7 +269,9 @@ export function createRenderer(canvas) {
 
     const px = (v) => v / scale; // толщина линии в экранных пикселях
     // Отображение и освещение этого вида (core/view-display.js); листы — по умолчанию.
-    const vd = print ? VIEW_DISPLAY_DEFAULT : viewDisplay(state.project, viewIdOf(state.project, state.modeName));
+    const vd = thumbnail
+      ? { ...VIEW_DISPLAY_DEFAULT, rooms: 'color', shadows: true, light: 'fixed', length: 'short' }
+      : print ? VIEW_DISPLAY_DEFAULT : viewDisplay(state.project, viewIdOf(state.project, state.modeName));
 
     // 1. Сетка (на печати не нужна).
     setView(gridView);
@@ -500,8 +505,12 @@ export function createRenderer(canvas) {
       // Тени от стен и мебели (ui/plan-shadows.js) по настройке вида «Освещение»:
       // готовый слой из кеша — поверх полов и стен (места стен в слое прозрачные),
       // под проёмами, мебелью и подписями.
-      const planShadows = !print && !landscape && state.modeName === 'plan' && opts.site !== false && vd.shadows;
-      if (planShadows) drawPlanShadows(ctx, { walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark, display: vd });
+      const planShadows = !landscape && state.modeName === 'plan' && vd.shadows
+        && (thumbnail || (!print && opts.site !== false));
+      if (planShadows) drawPlanShadows(ctx, {
+        walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark,
+        display: vd, project: state.project, force: thumbnail,
+      });
 
       // Карта прямого солнца или предварительной освещённости — аналитическая подложка:
       // поверх пола/теней, но под проёмами, мебелью и подписями.
@@ -803,7 +812,7 @@ export function createRenderer(canvas) {
         for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens, obstacles, text, print);
       }
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-      if (text.dims) drawAllRoomDims(ctx, state, walls, p2s, tokens);
+      if (text.dims && !thumbnail) drawAllRoomDims(ctx, state, walls, p2s, tokens);
     }
     // Маркеры нестандартных зазоров «≠ N мм» (core/gaps.js) — только на экране
     // и при читаемом масштабе подписей.
@@ -846,7 +855,7 @@ export function createRenderer(canvas) {
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
     // Координационные оси (ui/render-axes.js): тонко поверх плана; на листе плана — по настройке.
-    if (state.modeName === 'plan' && opts.detail !== false) {
+    if (state.modeName === 'plan' && opts.detail !== false && !thumbnail) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawPlanGrids(ctx, { st: state, p2s, tokens, print });

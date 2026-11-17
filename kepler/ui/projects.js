@@ -3,7 +3,7 @@
 // Облачный draft сохраняется отдельно от ручных версий.
 
 import { serializeProject } from '../core/model.js';
-import { projectPreviewSvg } from '../core/project-preview.js';
+import { projectPreviewHtml } from '../core/project-preview.js';
 import {
   deleteProject, getProject, hashText, listProjects, loadDraft, loadShared, loadVersion, newId, publishProject,
   saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
@@ -37,6 +37,7 @@ import {
   bindEditLockUi, hideEditLock, setEditLockBusy, showEditLock,
 } from './edit-lock-ui.js';
 import { PROJECT_REPLACED_EVENT } from './files.js';
+import { createProjectThumbnail } from './project-thumbnail.js';
 
 const CLOUD_SAVE_DELAY = 5000;
 const CLOUD_SAVE_TIMEOUT = 15000;
@@ -140,6 +141,16 @@ function projectErrorText(error) {
 function projectStats() {
   const levels = state.project?.levels || [];
   return { rooms: levels.reduce((sum, level) => sum + level.rooms.length, 0), levels: levels.length };
+}
+
+function currentProjectThumbnail() {
+  try {
+    return createProjectThumbnail(state.project);
+  } catch {
+    // Старое SVG-превью остаётся безопасным запасным вариантом, если браузер
+    // не поддерживает кодирование canvas или модель ещё не готова к рендеру.
+    return null;
+  }
 }
 
 function setSyncStatus(text, status = '') {
@@ -619,7 +630,7 @@ function renderStartProjects(list) {
     return `
       <button class="startup-project-card${current ? ' current' : ''}" type="button"
         data-act="open" data-pid="${escapeHtml(project.id)}">
-        <span class="startup-project-preview">${projectPreviewSvg(project.preview, stats)}</span>
+        <span class="startup-project-preview">${projectPreviewHtml(project.preview, stats)}</span>
         <span class="startup-project-info">
           <b>${escapeHtml(current ? currentProjectName() : project.name || 'Без названия')}</b>
           <small>${escapeHtml(details.filter(Boolean).join(' · ') || 'Облачный проект')}</small>
@@ -993,7 +1004,13 @@ function assignPendingDraft() {
 
 function scheduleCloudDraft(text, { immediate = false } = {}) {
   if (typeof text === 'string' && text) {
-    const draft = { text, stats: projectStats(), order: ++draftOrder };
+    // Снимок создаётся вместе с конкретным JSON, пока state.project всё ещё
+    // относится к нему. Иначе при быстром переключении проектов в очередь
+    // могло попасть изображение уже следующей модели.
+    const preview = currentProjectThumbnail();
+    const draft = {
+      text, preview, stats: projectStats(), order: ++draftOrder,
+    };
     if (backend?.mode === 'cloud') {
       const pid = state.pid || newId('p');
       state.pid = pid;
@@ -1129,7 +1146,7 @@ async function flushCloudDraft() {
         editor = { sessionId: activeEditor.lease.sessionId, epoch: activeEditor.lease.epoch };
       }
       const operation = saveDraft(target.db, target.root, draft.text, {
-        pid, stats: draft.stats, editor,
+        pid, preview: draft.preview, stats: draft.stats, editor,
       });
       try {
         const saved = await withSaveTimeout(operation);
@@ -1209,7 +1226,12 @@ async function saveCurrent() {
       if (!activeEditor || activeEditor.pid !== pid) startActiveEditor(pid, lease);
     }
     const text = serializeProject(state.project);
-    const options = { pid, note: el('prjNote').value.trim(), stats: projectStats() };
+    const options = {
+      pid,
+      note: el('prjNote').value.trim(),
+      preview: currentProjectThumbnail(),
+      stats: projectStats(),
+    };
     let editor = usesEditLease() ? activeEditorFence(pid) : null;
     let saved;
     try {

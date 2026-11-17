@@ -54,6 +54,39 @@ test('карточка проекта хранит компактный эски
   assert.equal('preview' in saved.meta.versions[0], false, 'история версий не раздувается');
 });
 
+test('saveVersion заменяет старый эскиз на v2 даже без изменений модели', async () => {
+  const db = createMemoryDb();
+  const text = JSON.stringify({
+    name: 'Дом', levels: [{ rooms: [{ id: 'r1', x: 0, y: 0, w: 4200, h: 3600 }] }],
+  });
+  const first = await saveVersion(db, root, text, { pid: 'preview-v2-version' });
+  assert.equal(first.meta.preview.v, 1);
+  const preview = { v: 2, image: 'data:image/webp;base64,AAAA' };
+  const saved = await saveVersion(db, root, text, { pid: 'preview-v2-version', preview });
+  assert.equal(saved.unchanged, true);
+  assert.deepEqual(saved.meta.preview, preview);
+  assert.equal('preview' in saved.meta.versions[0], false);
+  const repeated = await saveVersion(db, root, text, { pid: 'preview-v2-version' });
+  assert.deepEqual(repeated.meta.preview, preview, 'фоновый v1 не понижает уже сохранённый v2');
+});
+
+test('saveDraft заменяет preview указателя и карточки на v2 при том же hash', async () => {
+  const db = createMemoryDb();
+  const text = JSON.stringify({
+    name: 'Дом', levels: [{ rooms: [{ id: 'r1', x: 0, y: 0, w: 4200, h: 3600 }] }],
+  });
+  const first = await saveDraft(db, root, text, { pid: 'preview-v2-draft' });
+  assert.equal(first.draft.preview.v, 1);
+  const preview = { v: 2, image: 'data:image/jpeg;base64,/9j/AA==' };
+  const saved = await saveDraft(db, root, text, { pid: 'preview-v2-draft', preview });
+  assert.equal(saved.unchanged, true);
+  assert.deepEqual(saved.draft.preview, preview);
+  assert.deepEqual(saved.meta.preview, preview);
+  assert.deepEqual((await loadDraft(db, root, 'preview-v2-draft')).draft.preview, preview);
+  const repeated = await saveDraft(db, root, text, { pid: 'preview-v2-draft' });
+  assert.deepEqual(repeated.draft.preview, preview, 'фоновый v1 не понижает уже сохранённый v2');
+});
+
 test('облачный черновик хранится отдельно и открывается без ручной версии', async () => {
   const db = createMemoryDb();
   const saved = await saveDraft(db, root, proj({ rooms: [7] }), {

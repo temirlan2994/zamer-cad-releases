@@ -15,6 +15,12 @@ test('Firestore принимает компактный preview в карточ�
   assert.match(rules, /function validPreview\(value\)/);
   assert.equal((rules.match(/'preview'/g) || []).length >= 3, true);
   assert.equal((rules.match(/validPreview\(data\.preview\)/g) || []).length, 2);
+  assert.match(rules, /value\.keys\(\)\.hasOnly\(\['v', 'image'\]\)/);
+  assert.match(rules, /value\.v == 2/);
+  assert.match(rules, /value\.image\.size\(\) <= 180000/);
+  assert.match(rules, /data:image\/webp;base64/);
+  assert.match(rules, /data:image\/jpeg;base64/);
+  assert.doesNotMatch(rules, /data:image\/png;base64/);
 });
 
 test('Firestore разрешает владельцу только короткую аренду редактора', () => {

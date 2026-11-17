@@ -234,12 +234,16 @@ function build({ casters, dir, s, want, dark, key, level }) {
 
 // Рисует тени на плане: ctx — в осях дома (как стены). items — мебель, если
 // она на плане видна. dark — тёмная тема холста. display — настройки вида
-// (core/view-display.js): light ('sun' | 'fixed'), length.
-export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark = false, display = {} }) {
-  if (!planShadowPref().on || !state.project) return;
-  trackPointers();
+// (core/view-display.js): light ('sun' | 'fixed'), length. Для фоновой
+// миниатюры project передаётся явно, а force обходит локальный выключатель и
+// задержки во время жеста: карточка должна сразу получить законченный кадр.
+export function drawPlanShadows(ctx, {
+  walls, items = [], dpr = 1, scale, dark = false, display = {},
+  project = state.project, force = false,
+}) {
+  if ((!force && !planShadowPref().on) || !project) return;
+  if (!force) trackPointers();
   const t0 = performance.now();
-  const project = state.project;
   const fixed = display.light === 'fixed';
   const light = fixed ? { ...FIXED_SHADOW_DIR, k: 0.3 } : landscapeShadow(project.site);
   const dir = fixed ? { ...FIXED_SHADOW_DIR } : planShadowDir(light, project.building);
@@ -256,7 +260,7 @@ export function drawPlanShadows(ctx, { walls, items = [], dpr = 1, scale, dark =
     const since = cache ? performance.now() - cache.builtAt : Infinity;
     // Другой этаж — сразу; нажатие — после него, а пока тянут — без тени (старая
     // отстаёт); иначе — не чаще MIN_GAP, последний раз — по таймеру.
-    if (!cache || cache.level !== level) cache = build({ casters, dir, s, want, dark, key, level });
+    if (force || !cache || cache.level !== level) cache = build({ casters, dir, s, want, dark, key, level });
     else if (pointers.size) {
       pending = true;
       if (cache.key !== key) { // геометрия меняется под пальцем — тень спрятана

@@ -29,7 +29,16 @@ describe('выбор проектов при запуске', () => {
     const card = '#startRecentProjects .startup-project-card';
     await page.waitForSelector(card);
     assert.equal(await page.textContent(`${card} b`), name);
-    assert.ok(await page.$$eval(`${card} svg .project-preview-room`, (nodes) => nodes.length) >= 4);
+    await page.waitForSelector(`${card} .startup-project-preview img`);
+    const preview = await page.$eval(`${card} .startup-project-preview img`, (image) => ({
+      complete: image.complete,
+      height: image.naturalHeight,
+      src: image.getAttribute('src'),
+      width: image.naturalWidth,
+    }));
+    assert.match(preview.src, /^data:image\/(?:webp|jpeg);base64,/);
+    assert.equal(preview.complete, true);
+    assert.ok(preview.width > 0 && preview.height > 0);
     await page.click(card);
     await page.waitForSelector('#startScreen', { state: 'hidden' });
     assert.equal(await page.evaluate(() => window.__kepler.state.project.name), name);

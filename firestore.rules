@@ -29,7 +29,15 @@ service cloud.firestore {
           && value.rooms is list
           && value.rooms.size() <= 60
           && value.site is list
-          && value.site.size() <= 80);
+          && value.site.size() <= 80)
+        || (value is map
+          && value.keys().hasOnly(['v', 'image'])
+          && value.keys().hasAll(['v', 'image'])
+          && value.v == 2
+          && value.image is string
+          && value.image.size() <= 180000
+          && (value.image.matches('^data:image/webp;base64,[A-Za-z0-9+/]+={0,2}$')
+            || value.image.matches('^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$')));
     }
 
     function editorLeasePath(uid, pid) {

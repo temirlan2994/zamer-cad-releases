@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createProjectPreview, fallbackProjectPreview, projectPreviewSvg,
+  createProjectPreview, fallbackProjectPreview, projectPreviewHtml, projectPreviewSvg,
+  safeProjectPreview,
 } from '../core/project-preview.js';
 import { buildTemplate } from '../core/templates.js';
 
@@ -21,6 +22,26 @@ test('старый проект без эскиза получает безоп�
   assert.equal(svg.includes('onload'), false);
   assert.equal((svg.match(/<rect /g) || []).length, 3);
   assert.equal((projectPreviewSvg({ v: 1, rooms: [], site: [] }, { rooms: 2 }).match(/<rect /g) || []).length, 2);
+});
+
+test('растровый эскиз v2 строго проверяется и безопасно выводится как изображение', () => {
+  const webp = { v: 2, image: 'data:image/webp;base64,AAAA' };
+  const jpeg = { v: 2, image: 'data:image/jpeg;base64,/9j/AA==' };
+  assert.deepEqual(safeProjectPreview(webp), webp);
+  assert.deepEqual(safeProjectPreview(jpeg), jpeg);
+  const html = projectPreviewHtml(webp);
+  assert.match(html, /^<img class="project-preview-image"/);
+  assert.match(html, /loading="lazy"/);
+  assert.match(html, /decoding="async"/);
+
+  assert.equal(safeProjectPreview({ ...webp, extra: 'нет' }), null, 'лишние поля запрещены');
+  assert.equal(safeProjectPreview({ v: 2, image: 'data:image/png;base64,AAAA' }), null);
+  assert.equal(safeProjectPreview({ v: 2, image: 'data:image/webp;base64,AAAA" onerror="x' }), null);
+  assert.equal(safeProjectPreview({
+    v: 2,
+    image: `data:image/webp;base64,${'A'.repeat(180000)}`,
+  }), null, 'общая длина data URL ограничена');
+  assert.match(projectPreviewHtml({ v: 2, image: 'javascript:alert(1)' }, { rooms: 2 }), /^<svg/);
 });
 
 test('эскиз дома не смешивает координаты плана и геодезическую границу участка', () => {
