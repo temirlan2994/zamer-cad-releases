@@ -5,7 +5,9 @@
 
 import { analyzeHomeCirculation } from './home-circulation.js';
 import { analyzeHomeClimateOverview } from './home-climate.js';
+import { analyzeHomeDeliverables } from './home-deliverables.js';
 import { analyzeHomeEngineering } from './home-engineering.js';
+import { analyzeHomeEnvelope } from './home-envelope.js';
 import { analyzeHomeFlows } from './home-flows.js';
 import { analyzeHomeProgram } from './home-program.js';
 import { collectIssues } from './issues.js';
@@ -23,6 +25,8 @@ const STAGE_TITLES = Object.freeze({
   engineering: 'Инженерные связи',
   circulation: 'Движение и проходы',
   climate: 'Свет и солнце',
+  envelope: 'Объём и фасады',
+  deliverables: 'Листы и выдача',
 });
 
 const READINESS_STAGE = Object.freeze({
@@ -181,11 +185,88 @@ function climateStage(result) {
   return stageRecord('climate', 'attention', 'Свет рассчитан предварительно; вывод не является нормативным заключением.');
 }
 
+function envelopeStage(result) {
+  if (result?.status === 'conflict' || array(result?.conflicts).length) {
+    return stageRecord('envelope', 'blocked', 'В геометрии объёма, кровли или вертикальных связей найден конфликт.');
+  }
+  if (result?.status === 'candidate') {
+    return stageRecord(
+      'envelope',
+      'attention',
+      'Объём и виды собраны как концепция; конструктив, теплотехника и нормативы не рассчитаны.',
+    );
+  }
+  return stageRecord('envelope', 'unknown', 'Геометрия объёма дома ещё не определена.');
+}
+
+function deliverablesStage(result) {
+  if (result?.status === 'ready') {
+    return stageRecord(
+      'deliverables',
+      'attention',
+      'Концептуальный комплект собран; это не готовность рабочей документации.',
+    );
+  }
+  if (result?.status === 'partial') {
+    return stageRecord('deliverables', 'attention', 'Часть концептуального комплекта отсутствует или требует проверки.');
+  }
+  return stageRecord('deliverables', 'unknown', 'Виды и листы концептуального комплекта ещё не собраны.');
+}
+
 function flattenIssueItems(report) {
   return array(report?.groups).flatMap((group) => array(group?.items));
 }
 
-function addAnalysisEntries({ project, siteRoute, program, flows, engineering, circulation, climate }, buckets) {
+function envelopeTarget(entry) {
+  if (entry?.target) return entry.target;
+  if (entry?.roofId) return { type: 'roof', id: entry.roofId };
+  if (entry?.stairId) return { type: 'item', id: entry.stairId };
+  if (entry?.openingId) return { type: 'slab', levelId: entry.levelId || null, id: entry.openingId };
+  if (entry?.area === 'section' && entry?.viewId) {
+    return { type: 'section', id: entry.viewId };
+  }
+  return null;
+}
+
+function envelopeEntry(entry, kind) {
+  const viewId = entry?.viewId || (entry?.roofId ? 'roofplan' : null);
+  return {
+    id: `envelope:${kind}:${entry?.id || 'entry'}`,
+    sourceId: entry?.id || null,
+    source: 'home-envelope',
+    stageId: 'envelope',
+    title: entry?.title || 'Объём и фасады',
+    text: entry?.text || 'Требуется проверить геометрию здания.',
+    area: entry?.area || null,
+    levelId: entry?.levelId || null,
+    viewId,
+    roofId: entry?.roofId || null,
+    stairId: entry?.stairId || null,
+    openingId: entry?.openingId || null,
+    slabOpeningId: entry?.openingId || null,
+    target: envelopeTarget(entry),
+    focus: entry?.focus || null,
+  };
+}
+
+function deliverableEntry(check, status) {
+  const viewIds = array(check?.viewIds);
+  return {
+    id: `deliverables:${status}:${check?.id || 'check'}`,
+    sourceId: check?.id || null,
+    source: 'home-deliverables',
+    stageId: 'deliverables',
+    title: check?.title || 'Комплект проекта',
+    text: check?.summary || 'Требуется проверить состав концептуального комплекта.',
+    viewId: check?.viewId || viewIds[0] || null,
+    viewIds,
+    action: check?.id === 'sheets' ? 'open-sheets' : null,
+  };
+}
+
+function addAnalysisEntries({
+  project, siteRoute, program, flows, engineering, circulation, climate, envelope, deliverables,
+}, buckets) {
   const { provenProblems, unknowns, checkedFacts } = buckets;
 
   for (const stage of array(siteRoute?.stages)) {
@@ -341,6 +422,50 @@ function addAnalysisEntries({ project, siteRoute, program, flows, engineering, c
       text: 'Для подтверждения нужны конечные lat/lon/tz/north и явное подтверждение пользователя.',
     });
   }
+
+  for (const conflict of array(envelope?.conflicts)) {
+    provenProblems.push({
+      ...envelopeEntry(conflict, 'conflict'),
+      severity: 'error',
+    });
+  }
+  for (const unknown of array(envelope?.unknowns)) {
+    unknowns.push(envelopeEntry(unknown, 'unknown'));
+  }
+  for (const fact of array(envelope?.facts)) {
+    checkedFacts.push(envelopeEntry(fact, 'fact'));
+  }
+
+  for (const item of array(deliverables?.checks)) {
+    if (item?.status === 'ready') checkedFacts.push(deliverableEntry(item, 'ready'));
+    else unknowns.push(deliverableEntry(item, item?.status || 'missing'));
+  }
+  for (const sheet of array(deliverables?.sheets?.user?.items)) {
+    if (sheet?.status === 'ready') continue;
+    unknowns.push({
+      id: `deliverables:sheet:${sheet?.id || 'unknown'}`,
+      sourceId: sheet?.id || null,
+      source: 'home-deliverables',
+      stageId: 'deliverables',
+      title: sheet?.title || 'Пользовательский лист',
+      text: sheet?.status === 'partial'
+        ? 'На листе есть пустые или удалённые виды.'
+        : 'На листе нет содержательного вида.',
+      sheetId: sheet?.id || null,
+      viewId: array(sheet?.emptyViewIds)[0] || array(sheet?.invalidViewIds)[0] || null,
+      viewIds: [...array(sheet?.emptyViewIds), ...array(sheet?.invalidViewIds)].filter(Boolean),
+      action: 'open-sheets',
+    });
+  }
+  for (const [index, warning] of array(deliverables?.warnings).entries()) {
+    unknowns.push({
+      id: `deliverables:warning:${index + 1}`,
+      source: 'home-deliverables',
+      stageId: 'deliverables',
+      title: 'Предупреждение комплекта',
+      text: String(warning),
+    });
+  }
 }
 
 /**
@@ -355,6 +480,10 @@ export function analyzeHomeReview(project = {}, options = {}) {
   const engineering = options.engineering ?? analyzeHomeEngineering(project);
   const circulation = options.circulation ?? analyzeHomeCirculation(project, { flows });
   const climate = options.climate ?? analyzeHomeClimateOverview(project);
+  // Итоговая панель не должна синхронно строить все фасады и разрезы:
+  // подробная геометрия откроется на самом этапе 8.
+  const envelope = options.envelope ?? analyzeHomeEnvelope(project, { inspectViewGeometry: false });
+  const deliverables = options.deliverables ?? analyzeHomeDeliverables(project);
   const readiness = options.readiness ?? layoutBriefReadiness(project);
   const issueReport = options.issues ?? collectIssues(project, options.issueOptions || {});
 
@@ -365,6 +494,8 @@ export function analyzeHomeReview(project = {}, options = {}) {
     engineeringStage(engineering),
     circulationStage(circulation),
     climateStage(climate),
+    envelopeStage(envelope),
+    deliverablesStage(deliverables),
   ];
   const provenProblems = [];
   const unknowns = [];
@@ -411,7 +542,9 @@ export function analyzeHomeReview(project = {}, options = {}) {
     }
   }
 
-  addAnalysisEntries({ project, siteRoute, program, flows, engineering, circulation, climate }, {
+  addAnalysisEntries({
+    project, siteRoute, program, flows, engineering, circulation, climate, envelope, deliverables,
+  }, {
     provenProblems, unknowns, checkedFacts,
   });
 

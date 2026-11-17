@@ -3696,7 +3696,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   top: -14px;
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
   margin: -14px -16px 13px;
   padding: 8px 16px;
@@ -3717,6 +3717,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   font-weight: 700;
 }
 .home-system-nav button > span {
+  position: relative;
   display: grid;
   width: 19px;
   height: 19px;
@@ -3726,12 +3727,46 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   background: var(--surface-2);
   font-size: 9.5px;
 }
+.home-system-nav button > span b { font: inherit; }
+.home-system-nav button > span i {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  width: 11px;
+  height: 11px;
+  place-items: center;
+  border: 1px solid var(--surface);
+  border-radius: 50%;
+  background: var(--muted);
+  color: #fff;
+  font-size: 7px;
+  font-style: normal;
+  line-height: 1;
+}
+.home-system-nav button[data-status="checked"] > span i { background: var(--ok-text); }
+.home-system-nav button[data-status="attention"] > span i { background: var(--warn-text); }
+.home-system-nav button[data-status="blocked"] > span i { background: var(--danger); }
 .home-system-nav button[aria-current="page"] {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
   background: color-mix(in srgb, var(--accent) 9%, var(--surface));
   color: var(--accent);
 }
 .home-system-nav button[aria-current="page"] > span { background: var(--accent); color: #fff; }
+.home-workflow-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -5px 0 12px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+.home-workflow-progress p { margin: 0; color: var(--muted); font-size: 9.5px; }
+.home-workflow-progress p strong { color: var(--text); }
+.home-workflow-continue { min-height: 34px; padding: 5px 10px; color: var(--accent); font-size: 10px; font-weight: 700; }
 
 .home-flows,
 .home-engineering { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
@@ -4360,6 +4395,9 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     scroll-snap-align: center;
   }
   .home-system-nav button > span { display: none; }
+  .home-workflow-progress { align-items: stretch; flex-direction: column; margin-bottom: 11px; }
+  .home-workflow-progress p { font-size: 12px; }
+  .home-workflow-continue { width: 100%; min-height: 44px; font-size: 13px; }
   .home-flows-summary,
   .home-engineering-summary { align-items: stretch; flex-direction: column; }
   .home-flows-summary dl { grid-template-columns: repeat(4, minmax(0, 1fr)); }

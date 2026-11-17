@@ -52,7 +52,7 @@ describe('свет и итоговая проверка проекта', () => {
 
   after(async () => { await app?.close(); });
 
-  it('показывает восемь доступных этапов и не выдаёт оценку света за норму', async () => {
+  it('показывает девять доступных этапов и не выдаёт оценку света за норму', async () => {
     const { page } = app;
     await openHomeView(page, 'climate', 'Свет и солнце');
     const nav = await page.evaluate(() => ({
@@ -60,7 +60,7 @@ describe('свет и итоговая проверка проекта', () => {
       current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
       selected: document.querySelector('[data-home-view="climate"]')?.getAttribute('aria-selected'),
     }));
-    assert.deepEqual(nav, { count: 8, current: 'climate', selected: 'true' });
+    assert.deepEqual(nav, { count: 9, current: 'climate', selected: 'true' });
     const text = await page.textContent('[data-home-climate]');
     assert.match(text, /Не нормативное заключение/i);
     assert.match(text, /ориентировочн|не подтвержден/i);
@@ -123,6 +123,9 @@ describe('свет и итоговая проверка проекта', () => {
     assert.match(text, /Не хватает данных|Недостаточно данных/i);
     assert.match(text, /Проверенные факты/i);
     assert.doesNotMatch(text, /общий балл|\d+\s*% готов/i);
+    assert.equal(await page.locator('[data-home-review-stage]').count(), 8);
+    assert.equal(await page.locator('[data-home-review-stage="envelope"]').count(), 1);
+    assert.equal(await page.locator('[data-home-review-stage="deliverables"]').count(), 1);
 
     await page.click('[data-home-review-view="climate"]');
     await page.waitForFunction(() => (

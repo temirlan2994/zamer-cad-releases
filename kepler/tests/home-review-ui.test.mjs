@@ -54,6 +54,17 @@ test('кнопка этапа передаёт точный id представ�
   assert.deepEqual(calls, ['climate']);
 });
 
+test('этапы объёма и выпуска доступны из общей проверки', () => {
+  const calls = [];
+  for (const view of ['envelope', 'deliverables']) {
+    const button = { dataset: { homeReviewAction: 'open-stage', homeReviewView: view } };
+    assert.equal(handleHomeReviewClick(click(button), {
+      openHomeView: (id) => calls.push(id),
+    }), true);
+  }
+  assert.deepEqual(calls, ['envelope', 'deliverables']);
+});
+
 test('этап участка возвращает в маршрут исходных данных', () => {
   let calls = 0;
   const button = { dataset: { homeReviewAction: 'open-stage', homeReviewView: 'site' } };
@@ -80,6 +91,39 @@ test('замечание передаётся существующему пер�
   assert.equal(handled, true);
   assert.equal(calls[0][0], 'close');
   assert.deepEqual(calls[1], ['go', issue]);
+});
+
+test('связанный лист имеет приоритет над видом, а вид — над объектом плана', () => {
+  const calls = [];
+  const sheet = {
+    id: 'sheet-finding', action: 'open-sheets', sheetId: 'A-01', viewId: '3d',
+    target: { type: 'room', id: 'R1' },
+  };
+  const view = {
+    id: 'view-finding', viewId: 'elev-N', target: { type: 'room', id: 'R2' },
+  };
+  const review = { unknowns: [sheet, view] };
+  assert.equal(handleHomeReviewClick(click({
+    dataset: {
+      homeReviewAction: 'open-finding-sheets', homeReviewKind: 'unknown', homeReviewItemId: sheet.id,
+    },
+  }), {
+    review,
+    closePanel: () => calls.push('close-sheet'),
+    openSheets: (id) => calls.push(['sheet', id]),
+  }), true);
+  assert.equal(handleHomeReviewClick(click({
+    dataset: {
+      homeReviewAction: 'open-finding-view', homeReviewKind: 'unknown', homeReviewItemId: view.id,
+    },
+  }), {
+    review,
+    closePanel: () => calls.push('close-view'),
+    openView: (id) => calls.push(['view', id]),
+  }), true);
+  assert.deepEqual(calls, [
+    'close-sheet', ['sheet', 'A-01'], 'close-view', ['view', 'elev-N'],
+  ]);
 });
 
 test('неизвестная команда не перехватывается', () => {

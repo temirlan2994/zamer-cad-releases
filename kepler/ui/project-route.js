@@ -25,10 +25,12 @@ import {
 import {
   handleHomeClimateClick, handleHomeClimateInput, homeClimateHtml,
 } from './home-climate.js';
-import { handleHomeReviewClick, homeReviewHtml } from './home-review.js';
+import {
+  handleHomeReviewClick, homeReviewHtml, homeReviewReport, normalizedHomeReviewStatus,
+} from './home-review.js';
 import { handleHomeEnvelopeClick, homeEnvelopeHtml } from './home-envelope.js';
 import { handleHomeDeliverablesClick, homeDeliverablesHtml } from './home-deliverables.js';
-import { handleExport } from './files.js';
+import { handleExport, PROJECT_REPLACED_EVENT } from './files.js';
 import { goToIssue } from './issues.js';
 import { switchLevel } from './levels.js';
 import { closeSheets, isPhone, toggleSheet } from './mobile.js';
@@ -38,6 +40,7 @@ import { renderProps } from './props.js';
 import { openView } from './props-views.js';
 import { setSolarAnalysis } from './solar-analysis.js';
 import { state } from './state.js';
+import { getScopedItem, setScopedItem } from './storage-scope.js';
 import { mutate, PROJECT_CHANGE_EVENT } from './store.js';
 import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
@@ -154,6 +157,16 @@ const CIRCULATION_PERIOD_LABEL = Object.freeze({
   year: 'проходов в год',
   event: 'проходов за событие',
 });
+const HOME_WORKFLOW_STORAGE_KEY = 'kepler-home-workflow-position/v1';
+const HOME_REVIEW_STATUS_LABEL = Object.freeze({
+  checked: 'Проверено',
+  attention: 'Требует внимания',
+  blocked: 'Есть препятствие',
+  unknown: 'Недостаточно данных',
+});
+const HOME_REVIEW_STATUS_MARK = Object.freeze({
+  checked: '✓', attention: '!', blocked: '×', unknown: '?',
+});
 
 let bound = false;
 let panelOpen = false;
@@ -165,6 +178,15 @@ let latestModel = null;
 let footprintDraft = null;
 let footprintDraftProject = null;
 let footprintDraftDirty = false;
+let workflowIdentity = null;
+let workflowProjectRef = null;
+let workflowPid = null;
+let lastWorkflowView = 'program';
+let workflowReviewCache = null;
+let workflowReviewProject = null;
+let workflowReviewMode = null;
+let workflowReviewDirty = false;
+let workflowReviewTimer = null;
 
 const HOME_VIEW_DEFS = Object.freeze([
   Object.freeze({
@@ -201,7 +223,7 @@ const HOME_VIEW_DEFS = Object.freeze([
     id: 'review', step: 7, label: 'Проверка',
     kicker: 'Этап 7 · сводка проекта', title: 'Проверка проекта',
     announce: 'Открыта сводная проверка проекта',
-    html: (project, currentState) => homeReviewHtml(project, currentState),
+    html: (project, currentState, review) => homeReviewHtml(project, currentState, { review }),
   }),
   Object.freeze({
     id: 'envelope', step: 8, label: 'Объём',
@@ -216,10 +238,19 @@ const HOME_VIEW_DEFS = Object.freeze([
     html: (project) => homeDeliverablesHtml(project),
   }),
 ]);
+const HOME_NAV_DEFS = Object.freeze([
+  Object.freeze({
+    id: 'site', step: 1, label: 'Участок',
+    announce: 'Открыт этап участка и исходных данных',
+  }),
+  ...HOME_VIEW_DEFS,
+]);
 const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
 const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
+const HOME_NAV_VIEWS = new Set(HOME_NAV_DEFS.map((view) => view.id));
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action',
+  'data-route-confirm', 'data-route-footprint', 'data-route-tool',
   'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
   'data-home-flow-scenario', 'data-home-flow-frequency-value',
   'data-home-flow-frequency-period', 'data-home-flow-binding',
@@ -247,6 +278,160 @@ const finite = (value) => value !== null && value !== undefined
   && !(typeof value === 'string' && value.trim() === '') && Number.isFinite(Number(value));
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const cleanKey = (value) => String(value ?? '').toLocaleLowerCase('ru-RU').replace(/[^a-zа-яё0-9]+/g, '-').replace(/^-|-$/g, '');
+
+function workflowProjectIdentity() {
+  if (!state.project) return null;
+  return state.pid ? `pid:${state.pid}` : state.project;
+}
+
+function workflowStorageKey(pid = state.pid) {
+  return `${HOME_WORKFLOW_STORAGE_KEY}:${encodeURIComponent(pid ? String(pid) : 'draft')}`;
+}
+
+function saveWorkflowPosition() {
+  if (!state.project) return;
+  const view = panelView === 'stage' ? 'site'
+    : HOME_VIEWS.has(panelView) ? panelView : lastWorkflowView;
+  if (HOME_NAV_VIEWS.has(view)) lastWorkflowView = view;
+  const key = workflowStorageKey();
+  if (!key) return;
+  try {
+    setScopedItem(key, JSON.stringify({
+      view: lastWorkflowView,
+      siteStage: STAGES.some((stage) => stage.id === activeStage) ? activeStage : STAGES[0].id,
+    }));
+  } catch { /* localStorage может быть отключён; маршрут остаётся рабочим в памяти */ }
+}
+
+function restoreWorkflowPosition() {
+  const identity = workflowProjectIdentity();
+  if (identity === workflowIdentity) return;
+  // Новый локальный проект получает pid при первом облачном/локальном
+  // сохранении. Это тот же открытый проект: переносим текущую позицию в его
+  // собственный scoped-ключ, а не сбрасываем пользователя на этап 2.
+  if (state.project && state.project === workflowProjectRef && !workflowPid && state.pid) {
+    workflowIdentity = identity;
+    workflowPid = state.pid;
+    saveWorkflowPosition();
+    return;
+  }
+  workflowIdentity = identity;
+  workflowProjectRef = state.project;
+  workflowPid = state.pid || null;
+  invalidateWorkflowReview({ clear: true });
+  lastWorkflowView = 'program';
+  activeStage = STAGES[0].id;
+  if (!state.project) return;
+  const key = workflowStorageKey();
+  if (key) {
+    try {
+      const saved = JSON.parse(getScopedItem(key) || 'null');
+      if (HOME_NAV_VIEWS.has(saved?.view)) lastWorkflowView = saved.view;
+      if (STAGES.some((stage) => stage.id === saved?.siteStage)) activeStage = saved.siteStage;
+    } catch { /* повреждённая локальная настройка не влияет на проект */ }
+  }
+  if (!panelOpen || panelView === 'stage' || HOME_VIEWS.has(panelView)) {
+    panelView = lastWorkflowView === 'site' ? 'stage' : lastWorkflowView;
+  }
+}
+
+function emptyCirculationProgress() {
+  return { status: 'unknown', routes: [], summary: {} };
+}
+
+function lightWorkflowIssues() {
+  const report = state.issues;
+  if (!report) return { groups: [], hidden: [] };
+  const groups = asArray(report.groups).map((group) => ({
+    ...group, items: [...asArray(group?.items)],
+  }));
+  const included = new Set(groups.map((group) => group.id));
+  // Панель замечаний может скрывать целые группы по личной настройке. Для
+  // шкалы это не означает, что проблема исчезла: summary всё равно содержит
+  // их число. Добавляем лёгкий маркер без повторного collectIssues().
+  for (const summary of asArray(report.summary)) {
+    if (included.has(summary?.id) || !(Number(summary?.count) > 0)) continue;
+    groups.push({
+      id: summary.id,
+      title: summary.title,
+      items: [{
+        id: `workflow-hidden-group:${summary.id}`,
+        group: summary.id,
+        severity: 'warn',
+        title: summary.title || 'Скрытая группа замечаний',
+        text: `В отключённой группе замечаний: ${Number(summary.count)}.`,
+      }],
+    });
+  }
+  return { groups, hidden: asArray(report.hidden) };
+}
+
+function calculateWorkflowReview(full) {
+  return homeReviewReport(state.project, state, full ? {} : {
+    circulation: state.homeCirculationOverlay?.on && state.homeCirculationOverlay?.result
+      ? state.homeCirculationOverlay.result : emptyCirculationProgress(),
+    issues: lightWorkflowIssues(),
+  });
+}
+
+function scheduleLightWorkflowReview() {
+  if (workflowReviewTimer != null) clearTimeout(workflowReviewTimer);
+  workflowReviewTimer = setTimeout(() => {
+    workflowReviewTimer = null;
+    if (!workflowReviewDirty || !state.project || panelView === 'review') return;
+    const project = state.project;
+    const report = calculateWorkflowReview(false);
+    if (project !== state.project) return;
+    workflowReviewCache = report;
+    workflowReviewProject = project;
+    workflowReviewMode = 'light';
+    workflowReviewDirty = false;
+    if (panelOpen) renderProjectRoute();
+  }, 80);
+}
+
+function cachedWorkflowReview({ full = panelView === 'review' } = {}) {
+  if (!state.project) return null;
+  const mode = full ? 'full' : 'light';
+  const incompatible = workflowReviewProject !== state.project
+    || workflowReviewMode !== mode || !workflowReviewCache;
+  if (incompatible || (full && workflowReviewDirty)) {
+    workflowReviewCache = calculateWorkflowReview(full);
+    workflowReviewProject = state.project;
+    workflowReviewMode = mode;
+    workflowReviewDirty = false;
+  } else if (workflowReviewDirty) {
+    // Пока пользователь меняет поля, оставляем прежние значки и обновляем
+    // их после короткой паузы. Содержимое активного этапа уже свежее.
+    scheduleLightWorkflowReview();
+  }
+  return workflowReviewCache;
+}
+
+function invalidateWorkflowReview({ clear = false } = {}) {
+  workflowReviewDirty = true;
+  if (workflowReviewTimer != null) clearTimeout(workflowReviewTimer);
+  workflowReviewTimer = null;
+  if (!clear) return;
+  workflowReviewCache = null;
+  workflowReviewProject = null;
+  workflowReviewMode = null;
+}
+
+function resetWorkflowForReplacement() {
+  workflowIdentity = null;
+  workflowProjectRef = null;
+  workflowPid = null;
+  invalidateWorkflowReview({ clear: true });
+  lastWorkflowView = 'program';
+  activeStage = STAGES[0].id;
+  if (panelView === 'stage' || HOME_VIEWS.has(panelView)) panelView = 'program';
+  // Событие означает явное «Новый/Пример/Открыть». Для нового локального
+  // черновика старую позицию draft не наследуем; сохранённый pid, напротив,
+  // будет лениво восстановлен своим ключом при следующем render.
+  if (state.project && !state.pid) saveWorkflowPosition();
+  renderProjectRoute();
+}
 
 function renderedHomeView(body) {
   if (body.querySelector('[data-home-program]')) return 'program';
@@ -288,7 +473,10 @@ function focusedHomeControl(body) {
 }
 
 function captureHomePanelState(body, view) {
-  if (renderedHomeView(body) !== view) return null;
+  const rendered = renderedHomeView(body);
+  const renderedSite = view === 'site'
+    && body.querySelector('.home-system-nav [data-home-view="site"][aria-current="page"]');
+  if (rendered !== view && !renderedSite) return null;
   const panel = body.closest('.project-route-panel');
   return {
     scrollTop: panel?.scrollTop || 0,
@@ -564,7 +752,7 @@ function renderStageBar(model) {
   if (program) {
     program.dataset.status = homeStatus;
     program.disabled = !state.project;
-    program.setAttribute('aria-label', `Программа дома: ${homeLabel.toLocaleLowerCase('ru-RU')}`);
+    program.setAttribute('aria-label', `Этапы дома · программа: ${homeLabel.toLocaleLowerCase('ru-RU')}`);
   }
   if (programStatus) programStatus.textContent = homeLabel;
   if (!state.project) {
@@ -853,10 +1041,11 @@ function renderPanel(model) {
   if (HOME_VIEWS.has(panelView)) {
     const preserved = captureHomePanelState(body, panelView);
     const current = HOME_VIEW_BY_ID.get(panelView) || HOME_VIEW_DEFS[0];
+    const review = cachedWorkflowReview({ full: panelView === 'review' });
     kicker.textContent = current.kicker;
     title.textContent = current.title;
     body.innerHTML = state.project
-      ? `${homeSystemNav(panelView)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-${current.id}">${current.html(state.project, state)}</div>`
+      ? `${homeSystemNav(panelView, review)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-${current.id}">${current.html(state.project, state, review)}</div>`
       : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы продолжить проектирование дома.</p>';
     restoreHomePanelState(body, preserved);
     return;
@@ -870,11 +1059,47 @@ function renderPanel(model) {
   }
   kicker.textContent = `Этап ${model.stages.indexOf(stage) + 1} из ${model.stages.length} · ${statusLabel(stage.status)}`;
   title.textContent = stage.title;
-  body.innerHTML = renderStagePanel(stage);
+  const preserved = captureHomePanelState(body, 'site');
+  const review = cachedWorkflowReview({ full: false });
+  body.innerHTML = `${homeSystemNav('site', review)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-site">${renderStagePanel(stage)}</div>`;
+  restoreHomePanelState(body, preserved);
 }
 
-function homeSystemNav(active) {
-  return `<nav class="home-system-nav" role="tablist" aria-label="Этапы проектирования дома">${HOME_VIEW_DEFS.map((view) => `<button type="button" id="homeViewTab-${view.id}" role="tab" aria-controls="homeSystemPanel" aria-selected="${active === view.id}" tabindex="${active === view.id ? '0' : '-1'}" data-route-action="open-home-view" data-home-view="${view.id}"${active === view.id ? ' aria-current="page"' : ''}><span>${view.step}</span>${view.label}</button>`).join('')}</nav>`;
+function homeWorkflowRows(review) {
+  const stages = new Map(asArray(review?.stages).map((stage) => [stage.id, stage]));
+  return HOME_NAV_DEFS.map((view) => {
+    const source = view.id === 'review' ? review : stages.get(view.id);
+    const status = normalizedHomeReviewStatus(source?.status);
+    return { ...view, status };
+  });
+}
+
+function nextWorkflowRow(rows, active) {
+  const start = Math.max(0, rows.findIndex((row) => row.id === active));
+  for (let offset = 1; offset < rows.length; offset += 1) {
+    const row = rows[(start + offset) % rows.length];
+    if (row.status !== 'checked') return row;
+  }
+  return null;
+}
+
+function homeSystemNav(active, review) {
+  const rows = homeWorkflowRows(review);
+  const checkedCount = rows.filter((row) => row.status === 'checked').length;
+  const attentionCount = rows.length - checkedCount;
+  const next = nextWorkflowRow(rows, active);
+  const tabs = rows.map((view) => {
+    const current = active === view.id;
+    const statusLabel = HOME_REVIEW_STATUS_LABEL[view.status];
+    const statusMark = HOME_REVIEW_STATUS_MARK[view.status];
+    return `<button type="button" id="homeViewTab-${view.id}" role="tab" aria-controls="homeSystemPanel" aria-selected="${current}" tabindex="${current ? '0' : '-1'}" data-route-action="open-home-view" data-home-view="${view.id}" data-status="${view.status}"${current ? ' aria-current="page"' : ''} aria-label="Этап ${view.step}: ${escapeHtml(view.label)}. ${escapeHtml(statusLabel)}"><span><b>${view.step}</b><i aria-hidden="true">${statusMark}</i></span>${escapeHtml(view.label)}</button>`;
+  }).join('');
+  const continueButton = next
+    ? `<button type="button" class="home-workflow-continue" data-route-action="continue-home-view" data-home-view="${next.id}">Продолжить: ${next.step}. ${escapeHtml(next.label)}</button>`
+    : attentionCount
+      ? '<button type="button" class="home-workflow-continue" disabled>Других этапов с замечаниями нет</button>'
+      : '<button type="button" class="home-workflow-continue" disabled>Все этапы без замечаний</button>';
+  return `<nav class="home-system-nav" role="tablist" aria-label="Этапы проектирования дома">${tabs}</nav><div class="home-workflow-progress"><p><strong>${checkedCount} из ${rows.length}</strong> этапов без замечаний</p>${continueButton}</div>`;
 }
 
 function syncOpenState() {
@@ -889,7 +1114,7 @@ function syncOpenState() {
   panel.setAttribute('aria-modal', String(panelOpen && isPhone()));
   toggle.setAttribute('aria-expanded', String(panelOpen && panelView === 'stage'));
   passport.setAttribute('aria-expanded', String(panelOpen && panelView === 'passport'));
-  program.setAttribute('aria-expanded', String(panelOpen && HOME_VIEWS.has(panelView)));
+  program.setAttribute('aria-expanded', String(panelOpen && (HOME_VIEWS.has(panelView) || panelView === 'stage')));
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -902,6 +1127,9 @@ function openPanel(view, stageId, opener) {
   closeSheets();
   panelView = view;
   if (stageId) activeStage = stageId;
+  if (view === 'stage') lastWorkflowView = 'site';
+  else if (HOME_VIEWS.has(view)) lastWorkflowView = view;
+  if (view === 'stage' || HOME_VIEWS.has(view)) saveWorkflowPosition();
   panelOpen = true;
   lastOpener = opener || document.activeElement;
   lastOpenerStage = opener?.dataset?.routeStage || null;
@@ -925,8 +1153,13 @@ function closePanel({ restoreFocus = true } = {}) {
 }
 
 function switchHomeView(view) {
-  if (!HOME_VIEWS.has(view)) return;
-  panelView = view;
+  if (!HOME_NAV_VIEWS.has(view)) return;
+  if (view === 'site') {
+    panelView = 'stage';
+    activeStage = firstIncompleteStage(latestModel);
+  } else panelView = view;
+  lastWorkflowView = view;
+  saveWorkflowPosition();
   renderProjectRoute();
   requestAnimationFrame(() => {
     const tab = byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`);
@@ -944,7 +1177,8 @@ function switchHomeView(view) {
     }
     tab?.focus({ preventScroll: true });
   });
-  announce(HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап проектирования дома');
+  announce(view === 'site' ? HOME_NAV_DEFS[0].announce
+    : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап проектирования дома');
 }
 
 function firstIncompleteStage(model) {
@@ -1126,6 +1360,16 @@ function disableSolarForAnotherOverlay(otherOverlayOn) {
   requestDraw();
 }
 
+function openSheetsPanel(sheetId = null) {
+  if (sheetId) state.sheetSel = String(sheetId).startsWith('user:')
+    ? String(sheetId) : `user:${sheetId}`;
+  if (isPhone()) toggleSheet('sheets');
+  else {
+    state.propsTab = 'sheets';
+    renderProps();
+  }
+}
+
 function handleBodyClick(event) {
   if (handleHomeDeliverablesClick(event, {
     openView: (viewId) => {
@@ -1134,11 +1378,7 @@ function handleBodyClick(event) {
     },
     openSheets: () => {
       closePanel({ restoreFocus: false });
-      if (isPhone()) toggleSheet('sheets');
-      else {
-        state.propsTab = 'sheets';
-        renderProps();
-      }
+      openSheetsPanel();
     },
     handleExport: (kind) => {
       closePanel({ restoreFocus: false });
@@ -1162,6 +1402,8 @@ function handleBodyClick(event) {
     state,
     openHomeView: switchHomeView,
     openSiteStage: () => openPanel('stage', firstIncompleteStage(latestModel), null),
+    openView: (viewId) => openView(viewId),
+    openSheets: (sheetId) => openSheetsPanel(sheetId),
     goToIssue: (entry) => {
       closePanel({ restoreFocus: false });
       goToIssue(entry);
@@ -1245,6 +1487,7 @@ function handleBodyClick(event) {
   if (!actionButton) return;
   const action = actionButton.dataset.routeAction;
   if (action === 'open-home-view') switchHomeView(actionButton.dataset.homeView || 'program');
+  else if (action === 'continue-home-view') switchHomeView(actionButton.dataset.homeView || 'program');
   else if (action === 'show-zone') showWorkingZone();
   else if (action === 'open-constraints') openConstraintSettings();
   else if (action === 'open-solar-settings') openSolarSettings();
@@ -1280,12 +1523,12 @@ function handleDocumentKeydown(event) {
   const homeNavKeys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
   if (!isPhone()) homeNavKeys.push('ArrowUp', 'ArrowDown');
   if (homeTab && homeNavKeys.includes(event.key)) {
-    const tabs = HOME_VIEW_DEFS.map((view) => view.id);
+    const tabs = HOME_NAV_DEFS.map((view) => view.id);
     const current = Math.max(0, tabs.indexOf(homeTab.dataset.homeView));
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
       : (current + (event.key === 'ArrowRight' ? 1
         : event.key === 'ArrowLeft' ? -1
-          : event.key === 'ArrowDown' ? 4 : -4) + tabs.length) % tabs.length;
+          : event.key === 'ArrowDown' ? 3 : -3) + tabs.length) % tabs.length;
     event.preventDefault();
     switchHomeView(tabs[next]);
     return;
@@ -1344,6 +1587,7 @@ export function refreshSiteOpportunity() {
 export function renderProjectRoute() {
   const root = byId('projectRoute');
   if (!root) return;
+  restoreWorkflowPosition();
   latestModel = routeModel();
   state.siteBuildable = latestModel.passport?.buildable || null;
   const canvasLegend = byId('siteOpportunityLegend');
@@ -1419,8 +1663,9 @@ export function bindProjectRoute() {
     else openPanel('passport', null, passport);
   });
   program.addEventListener('click', () => {
-    if (panelOpen && HOME_VIEWS.has(panelView)) closePanel();
-    else openPanel('program', null, program);
+    if (panelOpen && (HOME_VIEWS.has(panelView) || panelView === 'stage')) closePanel();
+    else if (lastWorkflowView === 'site') openPanel('stage', activeStage, program);
+    else openPanel(HOME_VIEWS.has(lastWorkflowView) ? lastWorkflowView : 'program', null, program);
   });
   steps.addEventListener('click', (event) => {
     const button = event.target.closest('[data-route-stage]');
@@ -1477,6 +1722,7 @@ export function bindProjectRoute() {
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
+    invalidateWorkflowReview();
     if (state.homeProgramOverlay?.on && state.homeProgramOverlay.mode === 'flows') {
       refreshHomeFlowsOverlay(state.project, state, requestDraw);
     } else if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();
@@ -1497,6 +1743,11 @@ export function bindProjectRoute() {
       renderProjectRoute();
     }
   });
+  document.addEventListener(PROJECT_REPLACED_EVENT, resetWorkflowForReplacement);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveWorkflowPosition();
+  });
+  globalThis.addEventListener?.('pagehide', saveWorkflowPosition);
   globalThis.addEventListener?.('resize', () => {
     if (panelOpen) syncOpenState();
   });

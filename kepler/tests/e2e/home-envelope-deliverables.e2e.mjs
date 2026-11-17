@@ -1,5 +1,5 @@
 // E2E этапов 8–9: фактическая геометрическая сводка, переход в 3D,
-// концептуальный комплект и доступная на телефоне лента из восьми этапов.
+// концептуальный комплект и доступная на телефоне лента из девяти этапов.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openNew, startApp } from './helpers.mjs';
@@ -65,11 +65,11 @@ describe('объём и концептуальный комплект', () => {
 
   after(async () => { await app?.close(); });
 
-  it('показывает восемь этапов, ТЭП, явную кровлю и честные ограничения', async () => {
+  it('показывает девять этапов, ТЭП, явную кровлю и честные ограничения', async () => {
     const { page } = app;
     await openHomeView(page, 'envelope', 'Объём и фасады');
 
-    assert.equal(await page.locator('.home-system-nav [role="tab"]').count(), 8);
+    assert.equal(await page.locator('.home-system-nav [role="tab"]').count(), 9);
     assert.equal(await page.getAttribute('[data-home-view="envelope"]', 'aria-current'), 'page');
     assert.match(await page.textContent('[data-home-envelope-section="roofs"]'), /Кровля E2E/);
     assert.match(await page.textContent('[data-home-envelope-section="views"]'), /Фасад Север|Фасады/i);
@@ -166,7 +166,7 @@ describe('этапы 8–9 на телефоне', () => {
         modal: document.getElementById('projectRoutePanel')?.getAttribute('aria-modal'),
       };
     });
-    assert.equal(result.count, 8);
+    assert.equal(result.count, 9);
     assert.equal(result.current, 'deliverables');
     assert.equal(result.modal, 'true');
     assert.equal(result.activeInside, true, JSON.stringify(result));
