@@ -133,17 +133,38 @@ describe('привязки — телефон 390', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('ряд над холстом, все кнопки видны; касание переключает', async () => {
+  it('переключатели открываются поверх плана, сохраняют настройку при повороте экрана', async () => {
     const { page } = app;
     const sel = '#snapBar [data-snap="objects"]';
-    const [pill, canvas] = await Promise.all(['#snapBar', '#canvas'].map((s) => box(page, s)));
-    assert.ok(pill.x >= 0, `в экране ${JSON.stringify(pill)}`);
-    assert.ok(pill.y + pill.height <= canvas.y + 1, 'над холстом');
-    assert.equal(await page.isVisible(sel), true, 'видна сразу');
+    await page.setViewportSize({ width: 320, height: 640 });
+    assert.equal(await page.isVisible(sel), false);
+    await page.tap('#mobileSnapBtn');
+    const panel = await box(page, '#mobileSnapRow');
+    assert.ok(panel.x >= 0 && panel.x + panel.width <= 320);
     const before = await page.getAttribute(sel, 'aria-pressed');
     await page.tap(sel);
-    assert.notEqual(await page.getAttribute(sel, 'aria-pressed'), before);
-    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+    const pressed = await page.getAttribute(sel, 'aria-pressed');
+    assert.notEqual(pressed, before);
+    await page.evaluate(() => {
+      const canvas = document.querySelector('#canvas');
+      canvas.addEventListener('pointerdown', () => { canvas.dataset.snapDismissTap = '1'; }, { once: true });
+    });
+    await page.touchscreen.tap(150, 540);
+    assert.equal(await page.isVisible('#mobileSnapRow'), false);
+    assert.equal(await page.getAttribute('#canvas', 'data-snap-dismiss-tap'), null, 'касание закрыло привязки без редактирования');
+    await page.tap('#mobileSnapBtn');
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForSelector('.statusbar #snapBar');
+    assert.equal(await page.getAttribute(sel, 'aria-pressed'), pressed);
+    assert.equal(await page.isVisible('#mobileSnapBtn'), false);
+    assert.equal(await page.isVisible('.project-route-bar #projectHomeProgram'), true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForSelector('.top-actions #projectHomeProgram');
+    assert.equal(await page.isVisible(sel), false);
+    await page.tap('#mobileSnapBtn');
+    await page.tap('#projectHomeProgram');
+    assert.equal(await page.isVisible('#mobileSnapRow'), false);
+    assert.equal(await page.isVisible('#projectRoutePanel'), true);
     assert.deepEqual(app.errors, []);
   });
 });

@@ -93,6 +93,11 @@ function riseSetText() {
 
 const fmtH = (h) => `${(Math.round(h * 2) / 2).toFixed(1).replace('.', ',').replace(',0', '')} ч`;
 
+function legendHtml() {
+  if (!state.lsSun?.analysis || !state.project?.site?.boundary?.length || !grid.summary || grid.pending) return '';
+  return `<span class="ls-sun-legend"><span>0 ч</span><i aria-hidden="true"></i><span>${fmtH(grid.summary.dayHours)}</span></span>`;
+}
+
 function summaryHtml() {
   const ls = state.lsSun;
   if (!ls.analysis) return '';
@@ -101,7 +106,7 @@ function summaryHtml() {
   if (!s || grid.pending) return '<p class="hint">Считаем освещённость…</p>';
   const beds = [...s.beds].sort((a, b) => a.hours - b.hours).slice(0, 6);
   return `
-    <div class="ls-sun-legend"><span>0 ч</span><i></i><span>${fmtH(s.dayHours)}</span></div>
+    ${legendHtml()}
     <div class="prop-row"><span>Участок, в среднем</span><strong>${fmtH(s.mean)} солнца</strong></div>
     <div class="prop-row"><span>Тень больше полудня</span><strong>${Math.round(s.shadyM2)} м²</strong></div>
     ${beds.map((b) => `<div class="prop-row"><span>${escapeHtml(b.title)}</span><strong>${fmtH(b.hours)} · ${sunClass(b.hours)}</strong></div>`).join('')}`;
@@ -110,6 +115,8 @@ function summaryHtml() {
 function renderSummary() {
   const box = bar?.querySelector('#lsSunSummary');
   if (box) box.innerHTML = summaryHtml();
+  const key = bar?.querySelector('.ls-sun-fold-key');
+  if (key) key.innerHTML = legendHtml();
 }
 
 function renderBar() {
@@ -118,6 +125,7 @@ function renderBar() {
   const key = [state.lsSun?.mode, state.lsSun?.analysis, site?.sun?.date, site?.sun?.time,
     site?.location?.lat, site?.location?.lon, site?.location?.tz, site?.north].join('|');
   if (key === barKey && site === renderedSite) return;
+  const expanded = site === renderedSite && bar.querySelector('#lsSunFold')?.getAttribute('aria-expanded') === 'true';
   barKey = key;
   renderedSite = site;
   const focused = bar.contains(document.activeElement) ? document.activeElement.id : '';
@@ -125,22 +133,33 @@ function renderBar() {
   state.lsSunDragging = false;
   const sun = state.lsSun?.mode === 'sun' && site;
   const time = sun ? landscapeSunTime(site) : 0;
-  bar.innerHTML = `<div class="ls-sun-row"><button type="button" data-landscape-climate>☀ Свет на участке →</button></div>
+  bar.dataset.mode = state.lsSun?.mode || 'default';
+  bar.innerHTML = `${sun ? `<button type="button" id="lsSunFold" aria-expanded="${expanded}" aria-controls="lsSunControls">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg>
+    <span class="sr-only">Солнце на участке</span><strong id="lsSunFoldClock">${fmtClock(time)}</strong>
+    <span class="ls-sun-fold-key">${legendHtml()}</span><span class="ls-sun-caret" aria-hidden="true"></span>
+  </button>` : ''}
+  <div id="lsSunControls"><div class="ls-sun-row"><button type="button" data-landscape-climate>☀ Свет на участке →</button></div>
     ${sun ? `<div class="ls-sun-row">
       <input id="lsSunTime" type="range" min="0" max="1439" step="1" value="${time}" aria-label="Время суток">
       <strong id="lsSunClock">${fmtClock(time)}</strong>
     </div>
     <div class="ls-sun-info" id="lsSunInfo">${escapeHtml(sunInfo())}<br><span>${escapeHtml(riseSetText())}</span></div>
-    <div id="lsSunSummary">${summaryHtml()}</div>` : ''}`;
+    <div id="lsSunSummary">${summaryHtml()}</div>` : ''}</div>`;
+  const fold = bar.querySelector('#lsSunFold');
+  fold?.addEventListener('click', () => {
+    fold.setAttribute('aria-expanded', String(fold.getAttribute('aria-expanded') !== 'true'));
+  });
   bar.querySelector('[data-landscape-climate]').addEventListener('click', (event) => {
     document.dispatchEvent(new CustomEvent('kepler:open-climate', { detail: { opener: event.currentTarget, location: true } }));
   });
   const slider = bar.querySelector('#lsSunTime');
-  if (focused === 'lsSunTime') slider?.focus({ preventScroll: true });
+  if (focused) bar.querySelector(`#${focused}`)?.focus({ preventScroll: true });
   slider?.addEventListener('input', () => {
     state.lsSunDragging = true;
     state.lsSunPreviewTime = Number(slider.value);
     bar.querySelector('#lsSunClock').textContent = fmtClock(state.lsSunPreviewTime);
+    bar.querySelector('#lsSunFoldClock').textContent = fmtClock(state.lsSunPreviewTime);
     updateInfo();
     redraw();
   });
@@ -159,7 +178,7 @@ function updateInfo() {
   if (info) info.innerHTML = `${escapeHtml(sunInfo())}<br><span>${escapeHtml(riseSetText())}</span>`;
 }
 
-// Плашка — в углу холста, видна только в «Ландшафте» (CSS .mode-landscape).
+// На телефоне раскрываем панель только при просмотре физических теней.
 export function bindLandscapeSun(requestDraw, mutate) {
   commit = mutate;
   redraw = requestDraw || redraw;
@@ -170,6 +189,18 @@ export function bindLandscapeSun(requestDraw, mutate) {
   for (const ev of ['wheel', 'pointerdown', 'mousedown', 'touchstart', 'dblclick']) {
     bar.addEventListener(ev, (e) => e.stopPropagation());
   }
+  bar.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const fold = bar.querySelector('#lsSunFold[aria-expanded="true"]');
+    if (!fold?.offsetWidth) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fold.setAttribute('aria-expanded', 'false');
+    fold.focus();
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!bar.contains(event.target)) bar.querySelector('#lsSunFold[aria-expanded="true"]')?.setAttribute('aria-expanded', 'false');
+  });
   document.addEventListener('kepler:project-change', renderBar);
   renderBar();
 }

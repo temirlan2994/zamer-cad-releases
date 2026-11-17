@@ -69,6 +69,9 @@ export const state = {
   lsSunPreviewTime: null,
   lsSunDragging: false,
   itemHandle: null, // { id, mode } — режим ручек мебели (core/item-handles.js); у группы id = 'group:…' (core/group-handles.js)
+  // На телефоне только явно выбранный диван показывает ручки модулей (null — выключены).
+  // На компьютере ручки появляются при выборе дивана, как обычно.
+  phoneSofaEdit: undefined,
   groupRotateDeg: null, // угол текущего поворота группы мебели — для подписи
   touchDeferSelect: false,
   touchDeferred: null,

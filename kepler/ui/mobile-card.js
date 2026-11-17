@@ -7,6 +7,9 @@
 // лист, карточка скрыта (лист её заменяет).
 
 import { el } from './dom.js';
+import { hideSofaMenu } from './props-composite.js';
+import { state } from './state.js';
+import { requestDraw } from './view.js';
 
 // Поля «Свойств», которые показываются в карточке (первые два найденных).
 const CHIP_FIELDS = [
@@ -84,12 +87,37 @@ function syncChips(card, body) {
   }));
 }
 
+function setSofaEdit(id) {
+  if (id === state.phoneSofaEdit) return;
+  state.phoneSofaEdit = id;
+  state._sofaUI = null;
+  if (state.sofaMenu) hideSofaMenu();
+  requestDraw();
+}
+
+function syncSofaModules(phone, show) {
+  const button = el('mobileSofaModules');
+  const item = show && document.body.dataset.toolContext === 'plan' && state.selection?.type === 'item'
+    ? state.project.items.find((candidate) => candidate.id === state.selection.id) : null;
+  const sofa = item?.comp?.type === 'sofa' ? item : null;
+  if (!phone) setSofaEdit(undefined);
+  else if (!sofa || sofa.id !== state.phoneSofaEdit) setSofaEdit(null);
+  button.hidden = !sofa;
+  button.dataset.itemId = sofa?.id || '';
+  button.setAttribute('aria-pressed', String(Boolean(sofa && sofa.id === state.phoneSofaEdit)));
+  const size = el('mobileSofaSize');
+  size.hidden = !sofa;
+  if (sofa) size.textContent = `${sofa.w} × ${sofa.h} мм`;
+}
+
 export function syncMobileCard() {
   const card = el('mobileCard');
   const bar = el('selectionToolbar');
   if (!card || !bar || !opts) return;
   placeToolbar();
-  const show = opts.isPhone() && !bar.hidden && !opts.sheetOpen();
+  const phone = opts.isPhone();
+  const show = phone && !bar.hidden && !opts.sheetOpen();
+  syncSofaModules(phone, show);
   if (show) opts.ensurePropsTab(); // размеры берутся из полей «Свойств» выбранного объекта
   card.hidden = !show;
   if (!show) { setCardHeight(0); return; }
@@ -111,6 +139,12 @@ export function bindMobileCard(options) {
   if (!card || !bar) return;
   home = { parent: bar.parentElement, next: bar.nextElementSibling };
   el('mobileCardProps')?.addEventListener('click', () => opts.openProps());
+  el('mobileSofaModules').addEventListener('click', (event) => {
+    const id = event.currentTarget.dataset.itemId;
+    if (!id || state.selection?.type !== 'item' || state.selection.id !== id || opts.sheetOpen()) return;
+    setSofaEdit(state.phoneSofaEdit === id ? null : id);
+    syncMobileCard();
+  });
   const chips = card.querySelector('.mc-chips');
   chips.addEventListener('change', (e) => {
     const input = e.target.closest('input[data-field]');

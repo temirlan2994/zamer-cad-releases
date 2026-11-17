@@ -51,15 +51,15 @@ export function renderOpeningLibrary() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.innerHTML = CATEGORY_ICONS[cat.id] || '';
-    btn.append(cat.title);
+    const label = cat.id === 'panoramic' ? 'В пол' : cat.title;
+    btn.append(label);
     btn.title = cat.title;
     btn.dataset.cat = cat.id;
-    btn.setAttribute('aria-label', cat.title);
-    if (cat.id === openCat[kind]) btn.classList.add('active');
+    btn.setAttribute('aria-label', label === cat.title ? cat.title : `${label} — ${cat.title.toLowerCase()}`);
     btn.addEventListener('click', () => {
       openCat[kind] = cat.id;
       if (el('openSearch')) el('openSearch').value = '';
-      renderOpeningLibrary();
+      renderOpeningItems();
     });
     cats.appendChild(btn);
   }
@@ -98,14 +98,19 @@ function renderOpeningItems() {
     preview.width = 240;
     preview.height = 132;
     chip.appendChild(preview);
+    const sizeLabel = `${preset.width} × ${preset.height} мм`;
+    const bareTitle = preset.title.replace(/\s+\d+(?:×\d+)?$/, '');
     const name = document.createElement('span');
     name.className = 'chip-name';
-    name.textContent = preset.title;
+    name.textContent = ['Окно', 'Дверь'].includes(bareTitle) ? sizeLabel : bareTitle;
     chip.appendChild(name);
-    const size = document.createElement('span');
-    size.className = 'chip-size';
-    size.textContent = `${preset.width} × ${preset.height} мм`;
-    chip.appendChild(size);
+    if (name.textContent !== sizeLabel) {
+      const size = document.createElement('span');
+      size.className = 'chip-size';
+      size.textContent = sizeLabel;
+      chip.appendChild(size);
+    }
+    chip.setAttribute('aria-label', `${bareTitle} ${sizeLabel}`);
     try { drawOpeningPreview(preview, preset, colors); } catch { /* превью не критично */ }
     chip.addEventListener('click', () => chooseOpeningPreset(preset));
     box.appendChild(chip);

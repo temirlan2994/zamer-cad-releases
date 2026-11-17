@@ -7,6 +7,9 @@ import { landscapeSections } from './landscape-section.js';
 import { sheetKey, sheetList, sheetNumber, sheetTitle } from './sheet.js';
 import { openSheet } from './sheet-view.js';
 import { state } from './state.js';
+import { addLevel } from './levels.js';
+import { isPhone, toggleSheet } from './mobile.js';
+import { selectObject } from './tools.js';
 import { escapeHtml } from './dom.js';
 
 const paths = {
@@ -69,13 +72,32 @@ export function bindWorkspaceViews() {
       const g = document.createElement('optgroup');
       g.label = name;
       g.append(...entries.map(([id, title]) => new Option(title, id)));
+      if (name === 'Планы' && isPhone()) {
+        const level = state.project.levels.find((item) => item.id === state.project.activeLevel);
+        g.append(new Option('＋ Добавить этаж', 'add-level'), new Option(`Свойства «${level.name}»`, 'level-properties'));
+      }
       picker.append(g);
     }
     picker.value = state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId();
   }
+  matchMedia('(max-width: 640px)').addEventListener('change', populate);
   picker.addEventListener('focus', populate);
   picker.addEventListener('pointerdown', populate);
-  picker.addEventListener('change', () => { if (picker.value) activate(picker.value); });
+  picker.addEventListener('change', () => {
+    const target = picker.value;
+    if (target === 'add-level' || target === 'level-properties') {
+      openView(`plan:${state.project.activeLevel}`);
+      if (target === 'add-level') { addLevel(); return; }
+      selectObject(null);
+      toggleSheet('props');
+      const section = document.getElementById('levelSection');
+      if (section) {
+        section.open = true;
+        section.querySelector('summary').focus({ preventScroll: true });
+        section.scrollIntoView({ block: 'start' });
+      }
+    } else if (target) activate(target);
+  });
 
   function render() {
     pending = false;
@@ -135,7 +157,7 @@ export function bindWorkspaceViews() {
     if (current && (current.offsetLeft < tabs.scrollLeft || current.offsetLeft + current.offsetWidth > tabs.scrollLeft + tabs.clientWidth)) {
       tabs.scrollLeft = current.offsetLeft - tabs.clientWidth / 2 + current.offsetWidth / 2;
     }
-    const stamp = JSON.stringify([groups, state.project.sheets?.map((s) => [s.id, s.name, s.no]), state.project.sheetsAuto, state.project.levels.map((l) => Boolean(l.rooms.length)), Boolean(state.project.site?.boundary?.length)]);
+    const stamp = JSON.stringify([groups, state.project.activeLevel, state.project.sheets?.map((s) => [s.id, s.name, s.no]), state.project.sheetsAuto, state.project.levels.map((l) => Boolean(l.rooms.length)), Boolean(state.project.site?.boundary?.length)]);
     if (stamp !== catalogStamp) { populate(); catalogStamp = stamp; }
     picker.value = active;
   }

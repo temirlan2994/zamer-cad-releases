@@ -65,3 +65,19 @@
 @media (prefers-reduced-motion: reduce) {
   .props .vs-sec > summary::after { transition: none; }
 }
+
+#mobilePropsTitle { display: none; }
+@media (max-width: 640px) {
+  #propsPanel { scroll-padding-top: 48px; }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) > .sheet-grip {
+    height: 48px; border-bottom: 1px solid var(--border);
+  }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) #mobilePropsTitle {
+    display: block; position: absolute; inset-inline: 14px 50px; top: 16px; margin: 0;
+    color: var(--text); font-size: 16px; line-height: 24px; font-weight: 650;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+  }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) .sheet-handle { align-self: start; margin-top: 6px; }
+  #propsPanel .sheet-close { width: 44px; height: 44px; }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) :is(#propsBody, #modeProps) > h2:first-of-type:not(:has(*)) { display: none; }
+}

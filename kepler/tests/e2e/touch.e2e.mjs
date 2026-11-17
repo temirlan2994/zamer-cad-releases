@@ -52,8 +52,8 @@ describe('телефон', () => {
     await app.page.tap('#roomCards .room-card >> text=Терраса');
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
-    const snap = await app.page.locator('#mobileSnapRow').boundingBox(); // холст — под рядом привязок
-    assert.ok(box0.y >= snap.y + snap.height - 1, 'холст под привязками');
+    const views = await app.page.locator('#workspaceViews').boundingBox();
+    assert.ok(box0.y >= views.y + views.height - 1, 'холст под видами');
     assert.equal(await app.page.evaluate(() => window.scrollY), 0, 'просмотр каталога не прокрутил страницу');
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {

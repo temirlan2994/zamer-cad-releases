@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="./section-views.css" />
     <link rel="stylesheet" href="./workspace-views.css" />
     <link rel="stylesheet" href="./workbench.css" />
+    <link rel="stylesheet" href="./furniture-catalog.css" />
     <meta name="theme-color" content="#25342f" />
     <meta name="application-name" content="kep•ler 3D" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -26,7 +27,7 @@
     <div class="app">
       <!-- Файлы и общие действия. Кнопки видов при запуске переходят в навигацию над чертежом. -->
       <header class="topbar">
-        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.1">v0.4.1</span></div>
         <button type="button" id="menuBtn" class="project-home" title="Открыть список проектов"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h7l2 2h8v12H3z"/><path d="M3 10h17"/></svg><span>Проекты</span></button>
         <span class="project-divider" aria-hidden="true">/</span>
         <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
@@ -80,8 +81,6 @@
           <button type="button" class="project-route-program" id="projectHomeProgram" aria-controls="projectRoutePanel" aria-expanded="false">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4v16h18M7 15l4-5 4 2 5-7"/></svg>
             <strong>Аналитика</strong><span id="projectHomeProgramStatus">0/9</span>
-            <span class="route-mobile-current" id="routeMobileCurrent">Участок</span>
-            <svg class="route-mobile-expander" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg>
           </button>
           <nav class="project-route-steps" id="projectRouteSteps" aria-label="Этапы проекта"></nav>
           <span class="route-current-section" id="routeCurrentSection" hidden></span>
@@ -99,7 +98,17 @@
         </div>
         <p class="sr-only" id="projectRouteLive" aria-live="polite"></p>
       </section>
-      <nav id="workspaceViews" aria-label="Открытые виды"></nav>
+      <div class="view-navigation">
+        <nav id="workspaceViews" aria-label="Открытые виды"></nav>
+        <div class="mobile-snap-controls" id="mobileSnapControls">
+          <button type="button" id="mobileSnapBtn" aria-label="Привязки" title="Привязки" aria-controls="mobileSnapRow" aria-expanded="false">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4v9a3 3 0 0 0 6 0V4h4v9a7 7 0 0 1-14 0zM5 8h4m6 0h4"/></svg>
+          </button>
+          <div class="mobile-snap-row" id="mobileSnapRow" role="group" aria-labelledby="mobileSnapHeading" hidden>
+            <strong id="mobileSnapHeading">Привязки</strong>
+          </div>
+        </div>
+      </div>
       <main class="workspace">
         <!-- Колонка инструментов слева (ui/toolstrip.js): только значки, подсказка .tb-tip — своя, сразу при наведении.
              Наборы: общий «Выбор», «План» / «Участок» / «Ландшафт», переход в «Ландшафт», внизу — вид. Телефон — строка над холстом. -->
@@ -168,11 +177,19 @@
             <p class="empty-hint" id="roomSearchEmpty" role="status" hidden>Помещение не найдено</p>
             <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
           </div>
+          <div id="objectCatalogTabs" class="object-catalog-tabs" hidden>
+            <div id="objectSections" role="group" aria-label="Разделы каталога"></div>
+            <button id="catalogSearchToggle" type="button" aria-label="Поиск мебели" aria-controls="furnSearch" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+              <span>Поиск</span>
+            </button>
+          </div>
           <div class="library-furniture" id="furnitureBar">
             <h2>Мебель</h2>
-            <input id="furnSearch" class="furn-search" type="search" placeholder="Найти предмет" aria-label="Поиск мебели" />
+            <input id="furnSearch" class="furn-search" type="search" placeholder="Название или размер, мм" aria-label="Поиск мебели" />
             <label class="catalog-filter"><span id="furnitureCatIcon" aria-hidden="true"></span><select id="furnitureCats" aria-label="Категория мебели"></select></label>
             <div class="furniture-body">
+              <div id="furnitureCategoryList" class="furniture-category-list" role="group" aria-label="Категории мебели"></div>
               <div class="furniture-items" id="furnitureItems"></div>
             </div>
           </div>
@@ -309,6 +326,7 @@
              ui/props-views.js, ui/props-sheets.js, ui/props-tep.js, ui/issues.js). Подсказка .ptab-tip — своя, сразу при наведении.
              Ничего не выбрано — «Свойства» показывают настройки активного вида (или листа), «Проект» — свёрнутой секцией. На телефоне «⚠» и замечания — на холсте. -->
         <aside class="props" id="propsPanel">
+          <h2 id="mobilePropsTitle"></h2>
           <div class="props-tabs" role="tablist" aria-label="Панель свойств">
             <button type="button" role="tab" class="ptab" id="propsTabMain" data-props-tab="props" aria-label="Свойства" aria-describedby="ptabTip-props"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="ptab-label">Свойства</span><span class="ptab-tip" role="tooltip" id="ptabTip-props"><b>Свойства</b></span></button>
             <button type="button" role="tab" class="ptab" id="propsTabViews" data-props-tab="views" aria-label="Виды" aria-describedby="ptabTip-views"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="ptab-label">Виды</span><span class="ptab-tip" role="tooltip" id="ptabTip-views"><b>Виды</b></span></button>
@@ -326,14 +344,17 @@
           <div class="props-body" id="propsBody"></div>
           <div class="issues-panel" id="issuesPanel" role="dialog" aria-label="Замечания и нормы" hidden></div>
         </aside>
-        <!-- Телефон: ряд привязок под шапкой (сюда переносится #snapBar), вторые ряды «Каталога» и «Рисовать», лист форм лестниц (ui/mobile.js). На компьютере скрыты. -->
-        <div class="mobile-snap-row" id="mobileSnapRow"></div>
+        <!-- Телефон: вторые ряды «Каталога» и «Рисовать», лист форм лестниц (ui/mobile.js). На компьютере скрыты. -->
         <div class="mobile-cat" id="mobileCat" role="toolbar" aria-label="Каталог" hidden></div>
         <div class="mobile-cat mobile-draw" id="mobileDraw" role="toolbar" aria-label="Рисовать" hidden></div>
         <div class="mobile-tool-flyout" id="mobileToolFlyout" role="toolbar" aria-label="Варианты инструмента" hidden></div>
         <!-- Телефон: выбранный объект — карточка вверху плана: название, размеры, «Свойства» и действия (#selectionToolbar переезжает сюда; ui/mobile-card.js). -->
         <div class="mobile-card" id="mobileCard" role="group" aria-label="Выбранный объект" hidden>
-          <div class="mc-head"><span class="mc-title" id="mobileCardTitle"></span><span class="mc-chips"></span><span class="mc-info"></span></div>
+          <div class="mc-head">
+            <div class="mc-name"><span class="mc-title" id="mobileCardTitle"></span><small id="mobileSofaSize" hidden></small></div>
+            <span class="mc-chips"></span><span class="mc-info"></span>
+            <button type="button" id="mobileSofaModules" title="Показать точки добавления модулей дивана" aria-pressed="false" hidden><span aria-hidden="true">⊞</span> Модули</button>
+          </div>
           <div class="mc-acts"><button type="button" class="mc-props" id="mobileCardProps"><span class="tool-icon" aria-hidden="true">☰</span><span class="tool-text">Свойства</span></button></div>
         </div>
         <div class="mobile-more mobile-stairs" id="mobileStairs" role="dialog" aria-label="Лестница"></div>
@@ -342,6 +363,7 @@
           <h3 class="mm-title">Проект</h3>
           <div class="mm-grid">
             <button type="button" data-more="projects"><span aria-hidden="true">◷</span>Версии</button>
+            <button type="button" data-more="download"><span aria-hidden="true">⇩</span>Скачать проект</button>
             <button type="button" data-more="export"><span aria-hidden="true">⇪</span>Экспорт</button>
             <button type="button" data-more="menu"><span aria-hidden="true">▤</span>Проекты</button>
             <button type="button" data-more="theme"><span aria-hidden="true">☀</span>Тема</button>
@@ -365,7 +387,7 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
+          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.1">v0.4.1</span></div>
           <div class="startup-auth-copy">
             <div>
               <h1 id="startupTitle">Ваши проекты</h1>
@@ -386,7 +408,7 @@
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
+              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.1">v0.4.1</span></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">

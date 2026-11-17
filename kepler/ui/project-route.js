@@ -759,7 +759,6 @@ function renderStageBar(model) {
   program.dataset.status = model?.homeProgram?.status || 'unknown';
   const rows = homeWorkflowRows(cachedWorkflowReview({ full: panelOpen && panelView === 'review' }));
   const checkedCount = rows.filter((row) => row.status === 'checked').length;
-  byId('routeMobileCurrent').textContent = rows.find((row) => row.id === lastWorkflowView)?.label || 'Участок';
   byId('projectHomeProgramStatus').textContent = `${checkedCount}/${rows.length}`;
   program.setAttribute('aria-label', `Аналитика проекта. Завершено ${checkedCount} из ${rows.length} этапов`);
   for (const view of rows) {
@@ -1746,7 +1745,7 @@ export function bindProjectRoute() {
     if (input) handleConfirmation(input);
   });
   document.addEventListener('pointerdown', (event) => {
-    if (panelOpen && !root.contains(event.target)) closePanel({ restoreFocus: false });
+    if (panelOpen && !root.contains(event.target) && !program.contains(event.target)) closePanel({ restoreFocus: false });
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {

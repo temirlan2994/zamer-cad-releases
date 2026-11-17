@@ -29,7 +29,8 @@ import { manualWallById, removeManualWall, setManualWallThickness } from '../cor
 import { applyStairPreset, applyStairStylePreset } from '../core/stairs.js';
 import { bedsideNightstand, bedsideTarget, supportsBedsideNightstands } from '../core/bedside.js';
 import { clampWallThickness, setSharedWallThickness, setWallKind, setWallSpan } from '../core/wall-thickness.js';
-import { toast } from './dom.js';
+import { announce, toast } from './dom.js';
+import { isPhone } from './mobile.js';
 import { findWall, nearestWall } from './hit.js';
 import { renderProps } from './props.js';
 import { openSplitInput } from './split-input.js';
@@ -946,8 +947,8 @@ export function ungroupSelectedItems() {
   toast('Группа расформирована');
 }
 
-// Добавляет предмет мебели в указанную мировую точку (центр предмета).
-export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straight', stairPreset = null } = {}) {
+// Та же геометрия и шаг для призрака перетаскивания и поставленного предмета.
+export function furnitureForPlacement(kind, x, y, rotation = 0, { stairShape = 'straight', stairPreset = null } = {}) {
   const fd = furnitureDef(kind);
   if (!fd) return;
   const item = createItem(
@@ -962,8 +963,20 @@ export function addFurnitureAt(kind, x, y, rotation = 0, { stairShape = 'straigh
     applyStairPreset(item, stairShape || 'straight', activeLevel(state.project)?.height || 3000);
     applyStairStylePreset(item, stairPreset);
   }
+  return item;
+}
+
+export function addFurnitureAt(kind, x, y, rotation = 0, options = {}) {
+  const item = furnitureForPlacement(kind, x, y, rotation, options);
+  if (!item) return;
+  const fd = furnitureDef(kind);
   mutate(() => { state.project.items.push(item); });
   selectObject({ type: 'item', id: item.id });
+  if (isPhone()) {
+    // Карточка выбранного предмета уже видна. Плашка закрыла бы каталог следующего предмета.
+    announce(`На плане — «${fd.title}»`);
+    return;
+  }
   toast(item.comp?.type === 'kitchen'
     ? `«${fd.title}» добавлена — форма и элементы в панели справа, элементы тянутся по кухне`
     : kind === 'stairs'

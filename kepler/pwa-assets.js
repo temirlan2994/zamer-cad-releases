@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "ff8277b6866aeb0b",
+  "version": "4356ff6ba11fa946",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -143,6 +143,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/zip.js",
     "./firebase-config.js",
     "./first-draw.css",
+    "./furniture-catalog.css",
     "./index.html",
     "./inspector.css",
     "./manifest.webmanifest",
@@ -165,6 +166,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/ergonomics.js",
     "./ui/files.js",
     "./ui/firebase.js",
+    "./ui/furniture-touch.js",
     "./ui/gaps.js",
     "./ui/grid-locks.js",
     "./ui/grid-pin-ui.js",

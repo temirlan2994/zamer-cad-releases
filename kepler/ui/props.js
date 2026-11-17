@@ -24,7 +24,7 @@ import { setWallDefaults } from '../core/wall-thickness.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import { findWall } from './hit.js';
 import { deleteLevel, switchLevel } from './levels.js';
-import { syncMobileBar } from './mobile.js';
+import { isPhone, syncMobileBar } from './mobile.js';
 import { renderTepPanel } from './props-tep.js';
 import {
   activeViewTitle, bindViewSettings, renderViewsPanel, viewSettingsHtml,
@@ -217,9 +217,27 @@ function renderProjectProps(panel) {
   // «Проект» внизу (раскрыта ли — помнится, пока открыта вкладка).
   const prev = panel.querySelector('#projectSection');
   if (prev) projectOpen = prev.open; // событие toggle приходит позже — читаем сразу
+  const phone = isPhone();
+  const levelSection = panel.querySelector('#levelSection');
+  const keepLevelOpen = levelSection?.open && levelSection.dataset.level === level.id;
+  const focusLevelSummary = keepLevelOpen && document.activeElement?.id === 'levelSummary';
+  const levelFields = `
+    <div class="prop-block">
+      <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Отметка пола, м</span>
+          <input id="levelElev" type="number" step="0.05" value="${(level.elevation / 1000).toFixed(2)}"></label>
+        <label class="prop-field"><span>Высота этажа, м</span>
+          <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
+      </div>
+      ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
+    </div>`;
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
     ${viewSettingsHtml()}
+    ${phone ? `<details class="vs-sec" id="levelSection" data-level="${escapeHtml(level.id)}"${keepLevelOpen ? ' open' : ''}>
+      <summary id="levelSummary">Параметры этажа</summary>${levelFields}
+    </details>` : ''}
     <details class="project-section" id="projectSection"${projectOpen ? ' open' : ''}>
     <summary id="projectSummary">Настройки проекта</summary>
     <div class="prop-block">
@@ -242,18 +260,9 @@ function renderProjectProps(panel) {
       </div>
       <p class="empty-hint">Толщина наружных стен обновится сразу. Для перегородок новое значение действует при следующей стыковке.</p>
     </div>
-    <h3>Этаж</h3>
-    <div class="prop-block">
-      <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
-      <div class="prop-grid">
-        <label class="prop-field"><span>Отметка пола, м</span>
-          <input id="levelElev" type="number" step="0.05" value="${(level.elevation / 1000).toFixed(2)}"></label>
-        <label class="prop-field"><span>Высота этажа, м</span>
-          <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
-      </div>
-      ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
-    </div>
+    ${phone ? '' : `<h3>Этаж</h3>${levelFields}`}
     </details>`;
+  if (focusLevelSummary) panel.querySelector('#levelSummary')?.focus({ preventScroll: true });
   panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
   bindViewSettings(panel, renderProps);
   bindBuildingRotation(panel);
@@ -647,7 +656,7 @@ export function renderToolOptions(force = false) {
   if (!bar.dataset.bound) {
     bar.dataset.bound = '1';
     placeCanvasHint();
-    phoneQuery()?.addEventListener?.('change', placeCanvasHint);
+    phoneQuery()?.addEventListener?.('change', () => { placeCanvasHint(); renderProps(); });
   }
   const t = state.tool;
   const furnLib = !t && state.libraryPinned && state.libraryTab === 'furniture' && state.modeName === 'plan';

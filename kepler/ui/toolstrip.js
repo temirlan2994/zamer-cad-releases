@@ -483,15 +483,10 @@ function placeOpening(kind) {
 function toggleFurniture() {
   if (isPhone()) toggleSheet('furniture');
   else {
-    const open = document.body.classList.contains('lib-open') && state.libraryTab === 'furniture' && state.modeName === 'plan';
-    if (open) {
-      state.libraryPinned = false;
-      if (state.tool?.kind === 'place-furniture') cancelTool();
-    } else {
-      if (state.tool && state.tool.kind !== 'place-furniture' && !finishWallChain()) cancelTool();
-      state.libraryTab = 'furniture';
-      state.libraryPinned = true;
-    }
+    const open = document.body.classList.contains('lib-open') && !refs.furnitureBar.hidden;
+    if (state.tool && !finishWallChain()) cancelTool();
+    if (!open) state.libraryTab = 'furniture';
+    state.libraryPinned = !open;
     applyLibraryTab();
   }
   renderToolstrip();

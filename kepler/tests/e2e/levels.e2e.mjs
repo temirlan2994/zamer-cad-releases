@@ -78,3 +78,36 @@ describe('этажи', () => {
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('этажи на телефоне', () => {
+  it('добавление, свойства, переход с участка и удаление через меню видов', async () => {
+    const app = await startApp({ mobile: true });
+    try {
+      const { page } = app;
+      await openNew(page);
+      const picker = page.locator('#workspaceViewPicker');
+      assert.equal(await page.isVisible('#levelDock'), false);
+      await picker.selectOption('landscape');
+      await picker.selectOption('add-level');
+      const created = await levels(page);
+      assert.equal(created.list.length, 2);
+      assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
+      await picker.selectOption('level-properties');
+      await page.waitForSelector('#levelSection[open] #levelName');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'levelSummary');
+      await page.fill('#levelName', 'Мансарда');
+      await page.press('#levelName', 'Tab');
+      await page.fill('#levelHeight', '3.6');
+      await page.press('#levelHeight', 'Tab');
+      await page.waitForFunction(() => window.__kepler.state.project.levels.at(-1).height === 3600);
+      await picker.selectOption('site');
+      await picker.selectOption({ label: 'Мансарда' });
+      assert.equal((await levels(page)).active, created.active);
+      await picker.selectOption('level-properties');
+      await page.tap('#deleteLevel');
+      await page.waitForFunction(() => window.__kepler.state.project.levels.length === 1);
+      await page.waitForFunction(() => ![...document.querySelector('#workspaceViewPicker').options].some((o) => o.textContent.includes('Мансарда')));
+      assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+  });
+});

@@ -3,7 +3,7 @@
 // активный подсвечен. «Свойства» без выбора — «Вид: …» и его настройки,
 // с выбором — свойства объекта; лист выбран или открыт — свойства листа.
 // «Листы»: двойной клик открывает лист на холсте, Esc закрывает.
-// «ТЭП»: подвкладки-значки «Экспликация помещений» и «ТЭП».
+// «Площади»: вкладки «Комнаты» и «Дом и участок».
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
@@ -145,7 +145,7 @@ describe('дерево видов, свойства вида, листы, ТЭП
     assert.deepEqual(app.errors, []);
   });
 
-  it('«ТЭП»: две подвкладки-значки, мгновенная подсказка, подвкладка помнится', async () => {
+  it('у вкладок площадей есть видимые названия и подсказки, выбор запоминается', async () => {
     const { page } = app;
     await page.click('#propsTabTep');
     const tabs = await page.$$eval('.tep-tabs > button', (ns) => ns.map((n) => ({
@@ -153,8 +153,8 @@ describe('дерево видов, свойства вида, листы, ТЭП
       sel: n.getAttribute('aria-selected'), text: [...n.childNodes].filter((c) => !c.classList?.contains('ptab-tip')).map((c) => c.textContent).join('').trim(),
     })));
     assert.deepEqual(tabs.map((t) => [t.id, t.label, t.role, t.title, t.text]), [
-      ['tepTabRooms', 'Экспликация помещений', 'tab', null, ''],
-      ['tepTabTep', 'ТЭП', 'tab', null, ''],
+      ['tepTabRooms', 'Комнаты', 'tab', null, 'Комнаты'],
+      ['tepTabTep', 'Дом и участок', 'tab', null, 'Дом и участок'],
     ]);
     assert.equal(await page.isVisible('#tepRows'), true);
     assert.equal(await page.$('#schedTable'), null);
@@ -163,7 +163,7 @@ describe('дерево видов, свойства вида, листы, ТЭП
     await page.hover('#tepTabRooms');
     const tip = await page.$eval('#tepTip-rooms', (n) => ({ d: getComputedStyle(n).display, t: n.textContent, r: n.getBoundingClientRect().toJSON() }));
     assert.notEqual(tip.d, 'none');
-    assert.ok(tip.t.startsWith('Экспликация помещений ·'), tip.t);
+    assert.ok(tip.t.startsWith('Комнаты ·'), tip.t);
     assert.ok(tip.r.x >= 0 && tip.r.x + tip.r.width <= 1280, JSON.stringify(tip.r));
     await page.click('#tepTabRooms');
     assert.equal(await page.getAttribute('#tepTabRooms', 'aria-selected'), 'true');
