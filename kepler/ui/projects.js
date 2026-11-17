@@ -206,7 +206,11 @@ function scheduleProjectThumbnailUpgrades(list) {
   const target = backend;
   if (!target || loginGateActive()) return;
   for (const project of list) {
-    if (safeProjectPreview(project?.preview)?.v === 2) continue;
+    const preview = safeProjectPreview(project?.preview);
+    // Первая версия растрового снимка сохранялась как WebP и намеренно
+    // скрывала детали листа. JPEG служит маркером нового снимка полного
+    // плана, поэтому существующие WebP-карточки один раз перерисуются.
+    if (preview?.v === 2 && preview.image.startsWith('data:image/jpeg;base64,')) continue;
     const key = previewUpgradeKey(target, project?.id);
     if (!project?.id || previewUpgradeQueued.has(key) || previewUpgradeDone.has(key)) continue;
     previewUpgradeQueued.add(key);

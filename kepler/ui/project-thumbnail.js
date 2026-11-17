@@ -1,6 +1,6 @@
-// Настоящая миниатюра проекта для стартового экрана. Это не отдельная
-// упрощённая схема: тот же canvas-рендер рисует первый надземный этаж со
-// стенами, проёмами, мебелью, подписями и мягкими тенями.
+// Настоящая миниатюра проекта для стартового экрана. Это снимок уже
+// существующего листа первого надземного этажа: тот же canvas-рендер рисует
+// стены, проёмы, мебель, подписи, сетку, оси, размеры и мягкие тени.
 
 import { levelProject } from '../core/model.js';
 import { roomPolygon } from '../core/room-shape.js';
@@ -77,8 +77,8 @@ function planBounds(project, walls) {
 
 function encode(canvas) {
   const attempts = [
-    ['image/webp', 0.78], ['image/webp', 0.66], ['image/webp', 0.54], ['image/webp', 0.42],
     ['image/jpeg', 0.76], ['image/jpeg', 0.62], ['image/jpeg', 0.48], ['image/jpeg', 0.36],
+    ['image/webp', 0.78], ['image/webp', 0.66], ['image/webp', 0.54], ['image/webp', 0.42],
   ];
   for (const [mime, quality] of attempts) {
     try {
@@ -135,6 +135,7 @@ export function createProjectThumbnail(project) {
     dpr: 1.5,
     print: true,
     thumbnail: true,
+    planSnapshot: true,
     site: false,
     detail: true,
   });

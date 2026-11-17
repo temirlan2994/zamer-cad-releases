@@ -226,6 +226,9 @@ export function createRenderer(canvas) {
   function draw(state, opts = {}) {
     const print = Boolean(opts.print);
     const thumbnail = Boolean(opts.thumbnail);
+    // Снимок плана для карточки проекта остаётся чистым (без выделения и
+    // инструментов), но повторяет сам лист: сетку, размеры и оси не прячем.
+    const planSnapshot = thumbnail && opts.planSnapshot === true;
     const tokens = print || thumbnail ? printTokens() : cssTokens();
     const dpr = opts.dpr || window.devicePixelRatio || 1;
     const width = opts.width ?? canvas.clientWidth;
@@ -275,7 +278,7 @@ export function createRenderer(canvas) {
 
     // 1. Сетка (на печати не нужна).
     setView(gridView);
-    if (!print) drawGrid(ctx, worldBox, scale, px, tokens);
+    if (!print || planSnapshot) drawGrid(ctx, worldBox, scale, px, tokens);
     setView(view); // дальше — участок в координатах съёмки
 
     // 2. Подложка-топосъёмка — ПОВЕРХ сетки, чтобы её было видно.
@@ -812,7 +815,7 @@ export function createRenderer(canvas) {
         for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens, obstacles, text, print);
       }
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-      if (text.dims && !thumbnail) drawAllRoomDims(ctx, state, walls, p2s, tokens);
+      if (text.dims && (!thumbnail || planSnapshot)) drawAllRoomDims(ctx, state, walls, p2s, tokens);
     }
     // Маркеры нестандартных зазоров «≠ N мм» (core/gaps.js) — только на экране
     // и при читаемом масштабе подписей.
@@ -855,7 +858,7 @@ export function createRenderer(canvas) {
     // Линии разрезов по плану этажа (ui/plan-section.js) и черновик инструмента.
     if (state.modeName === 'plan' && !print) drawPlanSections(ctx, { p2s, tokens });
     // Координационные оси (ui/render-axes.js): тонко поверх плана; на листе плана — по настройке.
-    if (state.modeName === 'plan' && opts.detail !== false && !thumbnail) {
+    if (state.modeName === 'plan' && opts.detail !== false && (!thumbnail || planSnapshot)) {
       ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawPlanGrids(ctx, { st: state, p2s, tokens, print });
