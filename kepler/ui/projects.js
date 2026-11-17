@@ -177,7 +177,10 @@ async function upgradeProjectThumbnail(target, project) {
       // лишней блокировки. Если lease уже существует, даже истёкший, запись
       // обязательно проходит через актуальный fencing epoch.
       if (observed) {
-        if (!leaseExpired(observed) && !leaseHeldBy(observed, editorIdentity)) return false;
+        // Не отбрасываем свежий lease заранее: после перезапуска PWA у того
+        // же телефона/компьютера меняется sessionId, но сохраняется deviceId.
+        // acquireEditLease безопасно отличит своё устройство от чужого и
+        // выдаст новый fencing epoch либо вернёт occupied.
         const acquired = await acquireEditLease(target.db, target.root, project.id, editorIdentity);
         if (acquired.status !== 'acquired') return false;
         lease = acquired.lease;
