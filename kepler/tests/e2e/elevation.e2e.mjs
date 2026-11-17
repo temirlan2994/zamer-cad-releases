@@ -53,6 +53,13 @@ describe('фасады — компьютер 1280', () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, -400);
     assert.ok((await drawn(page)).zoom > 1);
+    await page.click('#elevViewFit');
+    assert.equal((await drawn(page)).zoom, d.zoom);
+    await page.click('[data-cut-zoom="in"]');
+    assert.equal((await drawn(page)).zoom, d.zoom * 1.25);
+    await page.locator('#elevCanvas').press('0');
+    assert.equal((await drawn(page)).zoom, d.zoom);
+    assert.equal((await drawn(page)).scale, 100);
     assert.equal(await page.evaluate(async () => (await import('./ui/state.js')).history.undo.length), undo);
     await page.keyboard.press('Escape');
     assert.equal(await open(page), null);
@@ -123,8 +130,8 @@ describe('фасады — телефон', () => {
 
   it('фасад открывается из «Видов» и закрывается', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="views"]');
-    await page.tap('#viewTree [data-view="elev-S"]');
+    await page.locator('#workspaceViewPicker').focus();
+    await page.selectOption('#workspaceViewPicker', 'elev-S');
     assert.equal(await open(page), 'elev-S');
     assert.equal(await page.isVisible('#elevView'), true);
     assert.ok(await inkShare(page) > 0.005);

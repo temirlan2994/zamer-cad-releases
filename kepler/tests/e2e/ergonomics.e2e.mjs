@@ -6,7 +6,7 @@
 // запоминается, печать без зон, на телефоне кнопка видна.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, openToolFamily, startApp, worldToClient, zoomToItems } from './helpers.mjs';
+import { startApp, worldToClient, zoomToItems } from './helpers.mjs';
 
 const frame = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const drawn = async (page) => { await frame(page); return page.evaluate(() => window.__kepler.state._ergoDrawn); };
@@ -59,15 +59,14 @@ describe('режим «Эргономика»', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('по умолчанию выключен: зон нет, кнопка в колонке с подсказкой', async () => {
+  it('изначально выключен и доступен в разделе «Движение»', async () => {
     const { page } = app;
     assert.equal(await drawn(page), null);
-    assert.equal(await page.isVisible('#analysisGroupBtn'), true);
-    assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'false');
-    await openToolFamily(page, 'ergoToolBtn');
-    await page.hover('#ergoToolBtn');
-    assert.equal(await page.isVisible('#tbTip-ergo'), true);
-    assert.match(await page.textContent('#tbTip-ergo'), /Эргономика.*красным\/жёлтым.*E/);
+    await page.click('[data-route-view="circulation"]');
+    await page.click('[data-analysis-fold="ergo"] > summary');
+    assert.equal(await page.isChecked('#viewsErgoOn'), false);
+    assert.equal(await page.isDisabled('#viewsErgoHeat'), true);
+    await page.click('#projectRouteClose');
     assert.equal(await redAt(page, { x: 150, y: 1500 }), 0);
   });
 
@@ -77,9 +76,7 @@ describe('режим «Эргономика»', () => {
     await page.keyboard.press('e');
     const d = await drawn(page);
     assert.ok(d && d.error >= 1, JSON.stringify(d));
-    assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'true');
     assert.ok(await redAt(page, { x: 150, y: 1500 }) > 40, 'красная полоса слева от кровати');
-    assert.equal(await page.textContent('#ergoBadge'), `${d.error}·${d.warn}`);
     await page.click('#issuesBtn');
     const chip = await page.getAttribute('[data-issue-group="ergo"]', 'aria-pressed');
     assert.equal(chip, 'true');
@@ -119,7 +116,6 @@ describe('режим «Эргономика»', () => {
     assert.ok(Math.abs(x - 800) <= 50, `кровать x=${x}`);
     const d = await drawn(page);
     assert.equal(d.error, 0, JSON.stringify(d));
-    assert.equal(await page.textContent('#ergoBadge'), '✓');
     assert.equal(await redAt(page, { x: 1900 + 200, y: 1500 }), 0);
   });
 
@@ -163,15 +159,18 @@ describe('режим «Эргономика»', () => {
   it('выключение — зон нет; настройка запоминается после перезагрузки', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select(null));
-    await clickToolbarTool(page, 'ergoToolBtn');
+    await page.click('[data-route-view="circulation"]');
+    const fold = page.locator('[data-analysis-fold="ergo"]');
+    if (!await fold.evaluate((node) => node.open)) await fold.locator('summary').click();
+    await page.uncheck('#viewsErgoOn');
     assert.equal(await drawn(page), null);
-    assert.equal(await page.isHidden('#ergoBadge'), true);
+    assert.equal(await page.isDisabled('#viewsErgoHeat'), true);
     assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('kepler-ergo'))).on, false);
-    await clickToolbarTool(page, 'ergoToolBtn');
+    await page.check('#viewsErgoOn');
+    await page.click('[data-analysis-open="ergo-plan"]');
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler));
     assert.equal(await page.evaluate(async () => (await import('./ui/render-ergonomics.js')).ergoPref().on), true);
-    assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'true');
   });
 });
 
@@ -186,10 +185,8 @@ describe('режим «Эргономика» на телефоне', () => {
   it('колонки нет — режим включается чипом в «⚠ Замечаниях»', async () => {
     const { page } = app;
     await page.waitForFunction(() => document.getElementById('startScreen').hidden);
-    assert.equal(await page.isVisible('#ergoToolBtn'), false, 'колонка инструментов скрыта');
     await page.tap('#issuesBtn');
     await page.tap('#issuesPanel [data-issue-group="ergo"]');
-    assert.equal(await page.getAttribute('#ergoToolBtn', 'aria-pressed'), 'true');
     assert.equal(await page.getAttribute('#issuesPanel [data-issue-group="ergo"]', 'aria-pressed'), 'true');
   });
 });

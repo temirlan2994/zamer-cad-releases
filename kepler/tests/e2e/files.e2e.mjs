@@ -23,7 +23,7 @@ describe('файлы проекта', () => {
         building: project.building,
         rooms: project.rooms.length,
         viewDeg: ((view.rotation * 180) / Math.PI + 360) % 360,
-        aligned: document.getElementById('alignBtn').classList.contains('active'),
+        aligned: document.getElementById('viewBtn').classList.contains('active'),
       };
     });
     assert.equal(s.schema, SCHEMA);

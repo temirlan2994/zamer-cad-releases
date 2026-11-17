@@ -30,7 +30,7 @@ describe('повёрнутый дом', () => {
     assert.equal(s.rot, 30);
     assert.ok(Math.abs(s.view + 30) < 1e-9, `вид ${s.view}`);
     // Свой угол вида не задан — «Выровнять вид» не подсвечена, «План» идёт по осям дома.
-    assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), false);
+    assert.equal(await app.page.$eval('#viewBtn', (n) => n.classList.contains('active')), false);
   });
 
   it('в «Плане» комната тянется мышью по осям экрана', async () => {

@@ -16,6 +16,7 @@ import { bindKeyboard } from './ui/keyboard.js';
 import { renderLevelBar } from './ui/levels.js';
 import { bindMobile } from './ui/mobile.js';
 import { bind3d } from './ui/view3d.js';
+import { bindWorkspaceViews } from './ui/workspace-views.js';
 import {
   applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
 } from './ui/library.js';
@@ -25,7 +26,7 @@ import { renderProps } from './ui/props.js';
 import { state } from './ui/state.js';
 import {
   AUTOSAVE_EVENT, BROKEN_KEY, PID_KEY, bindAutosaveLifecycle, loadAutosave,
-  parseProjectText, refreshDerived, refreshIssues, refreshNorms, restoreHeavyRefs, tweak,
+  mutate, parseProjectText, refreshDerived, refreshIssues, refreshNorms, restoreHeavyRefs, tweak,
 } from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
 import { loadLandscapeStyle, loadLandscapeSun } from './ui/landscape-style.js';
@@ -81,7 +82,7 @@ bindProjectRoute(); // этапы подготовки участка, пасп�
   loadTheme();
   loadLandscapeStyle();
   loadLandscapeSun();
-  bindLandscapeSun(requestDraw);
+  bindLandscapeSun(requestDraw, mutate);
   bindAutosaveLifecycle();
   // Автосохранение: проект с любым содержимым (комнаты, ландшафт, рельеф,
   // подложка…) продолжается. Битое не роняет запуск: копия — в резерв,
@@ -152,6 +153,7 @@ bindProjectRoute(); // этапы подготовки участка, пасп�
     broken = { text, error };
     start(createProject());
   }
+  bindWorkspaceViews();
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);
   requestDraw();

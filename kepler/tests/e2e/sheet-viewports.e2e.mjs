@@ -272,8 +272,7 @@ describe('листы пользователя — телефон', () => {
 
   it('«На лист…» в «Свойствах» вида кладёт вид и открывает лист', async () => {
     const { page } = app;
-    await page.tap('#mobileBar [data-sheet="views"]');
-    await page.tap('#mobileSheetHead [data-tab="sheets"]');
+    await page.tap('#mobileBar [data-sheet="sheets"]');
     await page.tap('#sheetsAddBtn');
     assert.equal((await sheets(page)).length, 1);
     await page.tap('#mobileSheetHead [data-tab="views"]');

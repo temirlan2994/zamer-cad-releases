@@ -47,13 +47,13 @@ describe('smoke', () => {
 
   it('мебель: иконки категорий и превью-канвасы', async () => {
     await app.page.$eval('#libTabFurniture', (n) => n.click()); // библиотека открыта «Помещением»
-    const cats = await app.page.$$('#furnitureCats button');
+    const cats = await app.page.$$('#furnitureCats option[value]:not([value=""])');
     assert.equal(cats.length, 16);
     const chips = await app.page.$$('#furnitureItems .furniture-chip');
     const canvases = await app.page.$$('#furnitureItems .furniture-chip canvas');
     assert.ok(chips.length > 0);
     assert.equal(canvases.length, chips.length);
-    await cats[6].click(); // санузел
+    await app.page.selectOption('#furnitureCats', 'bath');
     const after = await app.page.$$('#furnitureItems .furniture-chip');
     assert.ok(after.length > 0);
     await app.page.$eval('#libTabRooms', (n) => n.click());

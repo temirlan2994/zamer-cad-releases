@@ -35,6 +35,9 @@ import {
 } from './sheet-viewports.js';
 import { sheetStylePref } from './landscape-style.js';
 import { closeSheets, isPhone } from './mobile.js';
+import { close3d, is3dOpen } from './view3d.js';
+import { closeElevation } from './elevation-view.js';
+import { closeSection, openSectionId } from './landscape-section.js';
 import { PROJECT_NAME_EVENT } from './project-name.js';
 import { history, state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
@@ -50,12 +53,17 @@ let upgradeTimer = null; // отложенная перерисовка раст
 let projectNameTimer = null; // штамп листа не пересобираем на каждую букву
 let projectNameSeen = null;
 const touches = new Map(); // пальцы на листе: pointerId → { x, y } (px холста)
+let originatingView = null; // вид, к которому возвращает «Закрыть лист»
+let readActiveView = null;
 let viewOpener = null; // openView из ui/props-views.js (без циклического импорта)
 
 const HANDLE_PX = 9; // радиус попадания в ручку обрезки
 const HANDLE_CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
 
-export function setViewOpener(fn) { viewOpener = fn; }
+export function setViewOpener(open, current) {
+  viewOpener = open;
+  readActiveView = current;
+}
 
 // Сообщить правой панели, что активный вид/лист сменился (ui/props.js слушает).
 export function notifyViewChange() {
@@ -83,6 +91,10 @@ export function sheetScaleOf(key) {
 
 export function openSheet(key) {
   if (!findSheet(key)) return false;
+  if (!isSheetOpen()) originatingView = { project: state.project, id: readActiveView?.() };
+  if (is3dOpen()) close3d();
+  if (openSectionId()) closeSection();
+  closeElevation();
   state.sheetReturn = null;
   if (state.sheetOpen !== key) { state.sheetVp = null; ed = null; }
   state.sheetOpen = key;
@@ -93,8 +105,10 @@ export function openSheet(key) {
   return true;
 }
 
-export function closeSheet() {
+export function closeSheet({ restoreView = false } = {}) {
   if (!isSheetOpen()) return;
+  const previous = originatingView;
+  originatingView = null;
   state.sheetOpen = null;
   state.sheetSel = null;
   state.sheetVp = null;
@@ -109,7 +123,9 @@ export function closeSheet() {
   resizeObs = null;
   const box = el('sheetView');
   if (box) { box.hidden = true; box.innerHTML = ''; delete box.dataset.key; }
-  notifyViewChange();
+  if (restoreView && previous?.id && previous.project === state.project && previous.id !== readActiveView?.()) {
+    viewOpener(previous.id);
+  } else notifyViewChange();
 }
 
 // PNG одного листа (150 dpi, как «Экспорт → Лист PNG»).
@@ -192,7 +208,7 @@ function renderSheetView() {
     <div class="sheet-view-body" id="sheetViewBody"><p class="hint">Готовлю лист…</p></div>`;
   box.querySelector('#sheetViewPdf').addEventListener('click', () => handleExport('sheet-pdf'));
   box.querySelector('#sheetViewPng').addEventListener('click', () => downloadSheetPng(key));
-  box.querySelector('#sheetViewClose').addEventListener('click', closeSheet);
+  box.querySelector('#sheetViewClose').addEventListener('click', () => closeSheet({ restoreView: true }));
   const stamp = stampOf(key);
   const put = () => {
     const body = box.querySelector('#sheetViewBody');
@@ -252,7 +268,7 @@ function renderEditor(box, key, found) {
     box.querySelector('#sheetViewFit').addEventListener('click', () => { ed = null; drawEditor(); });
     box.querySelector('#sheetViewPdf').addEventListener('click', () => handleExport('sheet-pdf'));
     box.querySelector('#sheetViewPng').addEventListener('click', () => downloadSheetPng(key));
-    box.querySelector('#sheetViewClose').addEventListener('click', closeSheet);
+    box.querySelector('#sheetViewClose').addEventListener('click', () => closeSheet({ restoreView: true }));
     bindEditor(box.querySelector('#sheetCanvas'));
     resizeObs?.disconnect();
     resizeObs = typeof ResizeObserver === 'function' ? new ResizeObserver(() => drawEditor()) : null;

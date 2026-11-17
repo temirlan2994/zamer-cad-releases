@@ -1,0 +1,142 @@
+/* Рабочие разделы аналитики. Ширина колонки зависит от панели и её навигации. */
+#projectRoutePanel { --muted: var(--desk-muted); }
+#projectRoutePanel button.primary { color: #1c2d22; background: var(--desk-lime); border-color: #a0b953; }
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables) {
+  container-type: inline-size;
+  font-size: 14px;
+  line-height: 1.45;
+  gap: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+  :where(p, li, dd, dt, small, strong, label, span, button, input, select, legend) {
+  font-size: 13px;
+}
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+  :where(h2, h3, legend) {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.3;
+}
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables) button {
+  min-height: 36px;
+}
+#projectRoutePanel .analysis-disclosure {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+#projectRoutePanel .analysis-disclosure > summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  border-radius: inherit;
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+#projectRoutePanel .analysis-disclosure > summary::-webkit-details-marker { display: none; }
+#projectRoutePanel .analysis-disclosure > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 160ms ease;
+}
+#projectRoutePanel .analysis-disclosure[open] > summary::after { transform: rotate(225deg); }
+#projectRoutePanel .analysis-disclosure > summary:hover { background: var(--surface-2); }
+#projectRoutePanel .analysis-disclosure > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+#projectRoutePanel .analysis-disclosure > :not(summary) { margin: 8px 12px 12px; }
+#projectRoutePanel .analysis-disclosure > ul { padding-inline-start: 22px; }
+#projectRoutePanel .analysis-disclosure > :is(.home-review-findings, .home-engineering-findings) { padding: 0; }
+#projectRoutePanel .analysis-disclosure > summary > span {
+  flex-shrink: 1;
+  white-space: normal;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+}
+#projectRoutePanel .home-engineering-cards { align-items: start; }
+#projectRoutePanel .home-engineering-status { text-align: end; }
+#projectRoutePanel [data-engineering-card][data-status="conflict"] .home-engineering-status { color: var(--danger); }
+#projectRoutePanel [data-engineering-card][data-status="proven"] .home-engineering-status { background: var(--ok-bg); color: var(--ok-text); }
+#projectRoutePanel .home-program-capacity-summary strong { color: var(--text); font-size: 16px; }
+#projectRoutePanel .home-program-stepper :is(input, button) { font-size: 16px; }
+#projectRoutePanel .home-program-stepper input {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+#projectRoutePanel .home-program-stepper input:focus-visible { outline: 2px solid var(--accent); }
+#projectRoutePanel .home-program :is(.home-program-person-card, .home-program-scenario-card) { padding: 12px; }
+#projectRoutePanel .home-program .prop-field > span { min-height: 0; }
+#projectRoutePanel .home-program-tristate label > span[aria-hidden] { font-size: 16px; }
+#projectRoutePanel :is(.home-envelope-summary, .home-review-summary, .home-circulation-summary, .home-flows-summary) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+#projectRoutePanel :is(.home-envelope-summary, .home-review-summary, .home-circulation-summary, .home-flows-summary) dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(94px, 100%), 1fr));
+  gap: 6px;
+}
+#projectRoutePanel :is(.home-envelope-summary, .home-review-summary, .home-circulation-summary, .home-flows-summary) dl > div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: start;
+  justify-content: end;
+  text-align: start;
+  gap: 3px;
+  padding: 9px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+#projectRoutePanel :is(.home-envelope-summary, .home-review-summary, .home-circulation-summary, .home-flows-summary) dd {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+#projectRoutePanel .home-program form { gap: 14px; }
+#projectRoutePanel .home-program-fieldset { padding: 12px; }
+#projectRoutePanel .home-program-savebar button { min-height: 42px; }
+#projectRoutePanel .home-envelope-view-actions button,
+#projectRoutePanel .home-deliverables-check-status { white-space: normal; }
+#projectRoutePanel .home-engineering-grid,
+#projectRoutePanel .home-deliverables-exports { grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr)); }
+
+@container (max-width: 565px) {
+  #projectRoutePanel :is(.home-engineering-cards, .home-flows-route-list, .home-circulation-routes, .home-circulation-anchors, .home-review-stages, .home-envelope-cards, .home-deliverables-checks, .home-program-scenario-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #projectRoutePanel :is(.home-program-person-card, .home-program-guests, .home-program-capacity-summary) { grid-column: 1 / -1; }
+}
+@media (pointer: coarse), (max-width: 720px) {
+  #projectRoutePanel .home-program-stepper { grid-template-columns: 44px 48px 44px; }
+  #projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+    :is(button, select, summary, input:not([type="checkbox"], [type="radio"])) { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #projectRoutePanel .analysis-disclosure > summary::after { transition: none; }
+}

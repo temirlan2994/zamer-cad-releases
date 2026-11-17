@@ -12,12 +12,11 @@ import {
 
 const tool = (page) => page.evaluate(() => window.__kepler.state.tool?.kind || null);
 const active = (page, sel) => page.$eval(sel, (n) => n.classList.contains('active'));
-const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'stairsToolBtn'];
+const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'stairsToolBtn'];
 const FAMILIES = {
   openings: ['doorToolBtn', 'windowToolBtn', 'slabOpeningToolBtn'],
   mass: ['massToolBtn', 'massVoidToolBtn'],
   docs: ['gridToolBtn', 'sectionToolBtn', 'dimModeBtn'],
-  analysis: ['ergoToolBtn', 'sunAnalysisBtn'],
 };
 
 describe('панель инструментов', () => {
@@ -34,7 +33,7 @@ describe('панель инструментов', () => {
     for (const id of [...MOVED, 'selectToolBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} на панели инструментов`);
     }
-    for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'modePlanBtn', 'modeSiteBtn', 'view3dBtn', 'projectName']) {
+    for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'projectName']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('.topbar'))), true, `#${id} в шапке`);
     }
     assert.equal(await page.$$eval('.topbar #fitBtn, .topbar #wallToolBtn, .topbar #dimModeBtn', (ns) => ns.length), 0);
@@ -150,11 +149,8 @@ describe('панель инструментов', () => {
   it('«Вид» — всплывающая панель; привязки — значками в строке состояния справа', async () => {
     const { page } = app;
     await page.click('#viewBtn');
-    assert.equal(await page.isVisible('#viewPanel'), true);
-    const [btn, panel] = await Promise.all(['#viewBtn', '#viewPanel'].map((s) => page.locator(s).boundingBox()));
-    assert.ok(panel.x >= btn.x + btn.width && panel.y >= 0 && panel.y + panel.height <= 820, `панель справа от колонки ${JSON.stringify(panel)}`);
-    await page.click('#viewBtn');
-    assert.equal(await page.isHidden('#viewPanel'), true);
+    assert.equal(await page.isVisible('#propsBody #viewsAngleInput'), true);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'viewsAngleInput');
     assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap .statusbar'))), true);
     assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
     // Размеры: подпись и подсветка меняются.
@@ -224,7 +220,7 @@ describe('свойства: вкладка «ТЭП и площади», уда�
     assert.equal(await page.isVisible('#propsTabMain'), true);
     assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true');
     const text = await page.textContent('#propsBody');
-    assert.match(text, /Проект/);
+    assert.match(text, /Настройки проекта/i);
     for (const s of ['Помещений', 'Варианты', 'Сгенерировать', 'Управление', 'Движок стен', 'Состав', 'Площадь застройки']) {
       assert.ok(!text.includes(s), `нет «${s}»`);
     }
@@ -286,7 +282,7 @@ describe('панель инструментов на телефоне', () => {
     assert.equal(await tool(page), null, 'повторное касание — выйти');
 
     const familyButtons = await page.$$eval('#mobileDraw [data-draw-family]', (ns) => ns.map((n) => n.dataset.drawFamily));
-    assert.deepEqual(familyButtons, ['openings', 'mass', 'docs', 'analysis']);
+    assert.deepEqual(familyButtons, ['openings', 'mass', 'docs']);
     const labels = await page.$$eval('#mobileDraw .mb-label', (ns) => ns.map((n) => getComputedStyle(n).display));
     assert.ok(labels.every((display) => display === 'none'), 'мобильная строка тоже только из иконок');
     await page.tap('#mobileDraw [data-draw-family="mass"]');

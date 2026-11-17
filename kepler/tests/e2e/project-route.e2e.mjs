@@ -7,6 +7,14 @@ import { openNew, startApp } from './helpers.mjs';
 const stage = (page, id) => page.locator(`[data-route-stage="${id}"]`);
 
 async function openStage(page, id) {
+  if (!await stage(page, id).isVisible()) {
+    if (await page.isVisible('#projectRoutePanel')) await page.click('#homeViewTab-site');
+    else if (await page.isVisible('[data-route-view="site"]')) await page.click('[data-route-view="site"]');
+    else {
+      await page.click('#projectHomeProgram');
+      await page.click('#homeViewTab-site');
+    }
+  }
   await stage(page, id).click();
   await page.waitForSelector('#projectRoutePanel:not([hidden])');
   await page.waitForFunction((stageId) => document.querySelector(`[data-route-stage="${stageId}"]`)?.getAttribute('aria-current') === 'step', id);
@@ -39,7 +47,7 @@ async function seedUsableSite(page) {
       };
     });
   });
-  await page.waitForFunction(() => document.querySelector('[data-route-stage="access"]'));
+  await page.waitForSelector('[data-route-view="site"]', { state: 'attached' });
 }
 
 describe('маршрут подготовки участка', () => {
@@ -55,13 +63,15 @@ describe('маршрут подготовки участка', () => {
   it('открывает этап и запускает существующий инструмент участка', async () => {
     const { page } = app;
     assert.equal(await page.isVisible('#projectRoute'), true);
-    assert.equal(await stage(page, 'foundation').getAttribute('data-route-status'), 'unknown');
+    assert.equal(await page.locator('#projectRouteSteps button').count(), 9);
+    assert.equal(await stage(page, 'foundation').isVisible(), false);
 
     await openStage(page, 'foundation');
-    assert.match(await page.textContent('#projectRoutePanelTitle'), /Основа/);
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Участок');
+    assert.match(await page.textContent('.project-route-stage-intro h3'), /Съёмка и границы/);
     await page.click('#projectRouteClose');
     await page.waitForFunction(() => document.getElementById('projectRoutePanel')?.hidden === true);
-    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.routeStage), 'foundation',
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.routeView), 'site',
       'после пересоздания панели фокус возвращается на актуальную кнопку этапа');
 
     await openStage(page, 'foundation');
@@ -143,6 +153,7 @@ describe('маршрут подготовки участка', () => {
 
   it('показывает рабочее пятно и при уже включённом слое', async () => {
     const { page } = app;
+    if (await page.isVisible('#projectRoutePanel')) await page.click('#projectRouteClose');
     await page.click('#modePlanBtn');
     await page.evaluate(() => { window.__kepler.state.project.site.showBuildZone = true; });
     await openStage(page, 'constraints');
@@ -171,6 +182,7 @@ describe('маршрут подготовки участка', () => {
     await page.waitForFunction((selector) => document.querySelector(selector)?.checked === true, context);
     assert.equal(await taskStatusByControl(page, context), 'done');
 
+    if (await page.isVisible('#projectRoutePanel')) await page.click('#projectRouteClose');
     await page.click('#modePlanBtn');
     await openStage(page, 'constraints');
 
@@ -233,7 +245,7 @@ describe('маршрут проекта на телефоне', () => {
 
   it('открывается нижним листом и освобождает холст при запуске инструмента', async () => {
     const { page } = app;
-    await page.tap('#projectRouteToggle');
+    await page.tap('#projectHomeProgram');
     await page.waitForSelector('#projectRoutePanel:not([hidden])');
     const [viewport, panel] = await Promise.all([
       page.evaluate(() => ({ width: innerWidth, height: innerHeight })),

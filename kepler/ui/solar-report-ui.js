@@ -14,6 +14,7 @@ let bound = false;
 let buildToken = 0;
 let currentReport = null;
 let previousFocus = null;
+let returnToClimate = false;
 
 const finite = (value) => value !== null && value !== '' && Number.isFinite(Number(value));
 
@@ -176,7 +177,7 @@ function visibleFocusTarget(node) {
 
 function reportReturnTarget(preferred = null) {
   return visibleFocusTarget(preferred) || visibleFocusTarget(el('exportBtn')) ||
-    visibleFocusTarget(el('moreBtn')) || visibleFocusTarget(el('sunAnalysisBtn'));
+    visibleFocusTarget(el('moreBtn')) || visibleFocusTarget(el('projectHomeProgram'));
 }
 
 function showDialog() {
@@ -196,8 +197,13 @@ export function closeSolarReport() {
   const dialog = el('solarReportDialog');
   dialog.hidden = true;
   dialog.setAttribute('aria-busy', 'false');
-  const target = reportReturnTarget(previousFocus);
-  target?.focus();
+  if (returnToClimate) {
+    document.dispatchEvent(new CustomEvent('kepler:open-climate'));
+    el('solarAnnualRun')?.focus();
+    returnToClimate = false;
+  } else {
+    reportReturnTarget(previousFocus)?.focus();
+  }
   previousFocus = null;
 }
 
@@ -208,7 +214,8 @@ function nextPaint() {
   });
 }
 
-export async function openSolarReport() {
+export async function openSolarReport(options = {}) {
+  returnToClimate = options.returnToClimate === true;
   showDialog();
   const token = ++buildToken;
   currentReport = null;

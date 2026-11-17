@@ -13,7 +13,7 @@ describe('единый маршрут дома', () => {
 
   after(async () => { await app?.close(); });
 
-  it('показывает девять статусов, продолжение и клавиатурную сетку 3×3', async () => {
+  it('показывает девять статусов, продолжение и вертикальную навигацию', async () => {
     const { page } = app;
     await page.click('#projectHomeProgram');
     await page.waitForSelector('#projectRoutePanel:not([hidden])');
@@ -33,13 +33,13 @@ describe('единый маршрут дома', () => {
       'climate', 'review', 'envelope', 'deliverables',
     ]);
     assert.ok(initial.statuses.every((status) => ['checked', 'attention', 'blocked', 'unknown'].includes(status)));
-    assert.equal(initial.columns, 3);
+    assert.equal(initial.columns, 1);
     assert.match(initial.progress, /из 9/);
-    assert.match(initial.continueText, /Продолжить/);
-    assert.equal(await page.getAttribute('.home-workflow-continue', 'data-home-view'), 'flows');
+    assert.match(initial.continueText, /Далее/);
+    assert.equal(await page.getAttribute('.home-workflow-continue', 'data-home-view'), 'program');
     await page.click('.home-workflow-continue');
     await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'flows'
+      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'program'
     ));
 
     await page.click('[data-home-view="site"]');
@@ -48,7 +48,7 @@ describe('единый маршрут дома', () => {
     ));
     await page.keyboard.press('ArrowDown');
     await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'engineering'
+      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'program'
     ));
     await page.keyboard.press('End');
     await page.waitForFunction(() => (
@@ -91,7 +91,7 @@ describe('единый маршрут дома', () => {
       renderProjectRoute();
     });
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('[data-home-view="program"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('[data-home-view="site"]', 'aria-current'), 'page');
     await page.click('#projectRouteClose');
 
     await page.evaluate(async () => {

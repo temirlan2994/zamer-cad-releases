@@ -92,6 +92,14 @@ describe('тени на плане', () => {
     const b0 = await builds(page);
     await page.mouse.move(c.x, c.y);
     await page.mouse.down();
+    const previewCreated = await page.evaluate(async () => {
+      const { createProject, createRoom } = await import('./core/model.js');
+      const { createProjectThumbnail } = await import('./ui/project-thumbnail.js');
+      const project = createProject('Другой проект');
+      project.rooms.push(createRoom('bedroom', 0, 0, 5100, 4600));
+      return Boolean(createProjectThumbnail(project)?.image);
+    });
+    assert.ok(previewCreated, 'карточка проекта сформирована между кадрами редактирования');
     for (let i = 1; i <= 6; i += 1) { await page.mouse.move(c.x + i * 10, c.y + i * 6); await page.waitForTimeout(30); }
     assert.equal(await page.evaluate(() => window.__kepler.state._planShadow.hidden), true, 'тянут — тень спрятана');
     assert.equal(await builds(page), b0, 'и не перестраивается');
@@ -151,12 +159,14 @@ describe('свойства вида — разделы по умолчанию',
   before(async () => { app = await startApp({ viewSections: 'default' }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('открыты «Отображение», «Освещение», «Лист»; поворот, сетка и прочее свёрнуты и помнятся', async () => {
+  it('сразу видно отображение, а тени, лист, слои и поворот раскрываются по запросу', async () => {
     const { page } = app;
     await page.click('#propsTabMain');
     const open = await page.$$eval('#propsBody details.vs-sec', (ns) => Object.fromEntries(ns.map((n) => [n.dataset.sec, n.open])));
     assert.equal(open.display, true);
-    assert.equal(open.light, true);
+    assert.equal(open.light, false);
+    assert.equal(open.sheet, false);
+    assert.equal(open.layers, false);
     assert.equal(open.rotation, false);
     assert.equal(open.grid, false);
     assert.equal(await page.isVisible('#viewsAngleInput'), false);

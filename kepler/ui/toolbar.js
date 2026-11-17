@@ -5,6 +5,7 @@ import { canvas, el, refs, toast } from './dom.js';
 import { handleExport, loadSample, openProjectFile } from './files.js';
 import { applyLibraryTab } from './library.js';
 import { setEditorMode } from './modes.js';
+import { openView } from './props-views.js';
 import { finishDraft } from './site-actions.js';
 import { continueCurrentProject, openProjectChooser } from './projects.js';
 import { normalizeProjectName, syncProjectNameUi } from './project-name.js';
@@ -40,9 +41,10 @@ export function updateDimModeBtn() {
 }
 
 export function bindToolbar() {
-  refs.modePlan.addEventListener('click', () => setEditorMode('plan'));
-  refs.modeSite.addEventListener('click', () => setEditorMode('site'));
-  el('landscapeBtn')?.addEventListener('click', () => setEditorMode('landscape'));
+  refs.modePlan.addEventListener('click', () => openView(refs.modePlan.dataset.workspaceView || `plan:${state.project.activeLevel}`));
+  refs.modeSite.addEventListener('click', () => openView('site'));
+  el('landscapeBtn')?.addEventListener('click', () => openView('landscape'));
+  el('view3dBtn')?.addEventListener('click', () => openView('3d'));
   // Вкладки библиотеки: открыта — остаётся открытой на выбранной вкладке.
   const libTab = (tab) => {
     state.libraryTab = tab;
@@ -118,20 +120,32 @@ export function bindToolbar() {
     refs.underlayInput.value = '';
   });
   el('saveBtn').addEventListener('click', () => handleExport('project'));
-  el('exportBtn').addEventListener('click', (event) => {
+  const exportButton = el('exportBtn');
+  function showExportMenu(open) {
+    refs.exportDropdown.hidden = !open;
+    exportButton.setAttribute('aria-expanded', String(open));
+  }
+  exportButton.addEventListener('click', (event) => {
     event.stopPropagation();
-    refs.exportDropdown.hidden = !refs.exportDropdown.hidden;
+    showExportMenu(refs.exportDropdown.hidden);
+    if (!refs.exportDropdown.hidden) refs.exportDropdown.querySelector('button')?.focus();
   });
   document.addEventListener('click', (event) => {
     if (!refs.exportDropdown.hidden && !refs.exportDropdown.contains(event.target)) {
-      refs.exportDropdown.hidden = true;
+      showExportMenu(false);
     }
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !refs.exportDropdown.hidden) refs.exportDropdown.hidden = true;
+    if (event.key === 'Escape' && !refs.exportDropdown.hidden) {
+      showExportMenu(false);
+      (exportButton.offsetWidth ? exportButton : el('moreBtn')).focus();
+    }
   });
   refs.exportDropdown.querySelectorAll('[data-export]').forEach((btn) => {
-    btn.addEventListener('click', () => handleExport(btn.dataset.export));
+    btn.addEventListener('click', () => {
+      (exportButton.offsetWidth ? exportButton : el('moreBtn')).focus();
+      handleExport(btn.dataset.export);
+    });
   });
   let nameBefore = null;
   let nameBeforePid = null;

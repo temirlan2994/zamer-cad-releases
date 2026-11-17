@@ -43,6 +43,11 @@ describe('типы помещений', () => {
     assert.deepEqual(groups.map((g) => g.title), ROOM_CATEGORIES.map((c) => c.title));
     assert.equal(groups.flatMap((g) => g.types).length, ROOM_TYPES.length);
     const names = await page.$$eval('#roomCards .room-card-name', (ns) => ns.map((n) => n.textContent));
+    await page.fill('#roomSearch', 'котель');
+    assert.deepEqual(await page.locator('#roomCards button:visible').allTextContents(), ['Котельная']);
+    await page.fill('#roomSearch', 'qqqq');
+    assert.equal(await page.isVisible('#roomSearchEmpty'), true);
+    await page.fill('#roomSearch', '');
     for (const t of ['Котельная', 'Постирочная', 'Гостевой санузел', 'Прихожая', 'Детская', 'Веранда']) assert.ok(names.includes(t), t);
     const dot = await page.$eval('#roomCards .room-card[data-type="boiler"] .room-dot', (n) => getComputedStyle(n).backgroundColor);
     const m = dot.match(/\d+/g).slice(0, 3).map(Number);

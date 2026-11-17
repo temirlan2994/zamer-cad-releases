@@ -117,7 +117,7 @@ export function bindKeyboard() {
     // Открытый лист (ui/sheet-view.js): Esc возвращает предыдущий вид.
     // Лист пользователя: Delete убирает выбранный вид, Esc снимает выбор.
     if (isSheetOpen() && handleSheetKey(event)) return;
-    if (event.key === 'Escape' && isSheetOpen()) { closeSheet(); return; }
+    if (event.key === 'Escape' && isSheetOpen()) { closeSheet({ restoreView: true }); return; }
     // Открытый фасад (ui/elevation-view.js): Esc — «Закрыть вид».
     if (event.key === 'Escape' && isElevationOpen()) { const back = state.sheetReturn; closeElevation(); if (back) returnToSheet(); return; }
     if (event.key === 'Escape' && state.sofaMenu) { hideSofaMenu(); return; }

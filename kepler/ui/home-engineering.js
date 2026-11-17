@@ -167,13 +167,14 @@ function findingsList(items, project, emptyText) {
 
 function overviewCard({ id, title, status, value, hint, body }) {
   const normalized = normalizedStatus(status);
-  return `<section class="home-engineering-card" data-engineering-card="${escapeHtml(id)}" data-status="${normalized}" aria-labelledby="homeEngineering-${escapeHtml(id)}">
-    <header>
-      <div><h3 id="homeEngineering-${escapeHtml(id)}">${escapeHtml(title)}</h3><p>${escapeHtml(hint)}</p></div>
+  return `<details class="home-engineering-card analysis-disclosure" data-analysis-fold="engineering-${escapeHtml(id)}" data-engineering-card="${escapeHtml(id)}" data-status="${normalized}"${normalized === 'conflict' ? ' open' : ''}>
+    <summary>
+      <strong>${escapeHtml(title)}</strong>
       <span class="home-engineering-status">${escapeHtml(statusLabel(normalized))}${value ? ` · ${escapeHtml(String(value))}` : ''}</span>
-    </header>
+    </summary>
+    <p>${escapeHtml(hint)}</p>
     ${body}
-  </section>`;
+  </details>`;
 }
 
 function analysisSections(project, analysis) {
@@ -295,11 +296,11 @@ function pointsEditor(project) {
       : 'Подтверждено отсутствие';
   return `<section class="home-engineering-editor" aria-labelledby="homeEngineeringPointsTitle">
     <header class="home-engineering-section-head">
-      <div><h3 id="homeEngineeringPointsTitle">Существующие фиксированные точки</h3><p>${escapeHtml(stateText)}. Это исходные ограничения, не будущая инженерная сеть.</p></div>
+      <div><h3 id="homeEngineeringPointsTitle">Точки подключения</h3><p>${escapeHtml(stateText)}</p></div>
     </header>
-    <div class="home-engineering-points">${array(points).map((point) => pointEditor(project, point)).join('') || '<p class="home-engineering-empty">Добавьте только реально известные точки или явно отметьте состояние обследования.</p>'}</div>
+    <div class="home-engineering-points">${array(points).map((point) => pointEditor(project, point)).join('')}</div>
     <div class="home-engineering-actions">
-      <button type="button" class="primary" data-home-engineering-action="add-point">+ Добавить известную точку</button>
+      <button type="button" class="primary" data-home-engineering-action="add-point">+ Добавить точку</button>
       <button type="button" data-home-engineering-action="mark-none">Подтвердить: точек нет</button>
       <button type="button" class="link" data-home-engineering-action="mark-unknown">Ещё не обследовано</button>
     </div>
@@ -318,13 +319,15 @@ export function homeEngineeringHtml(project, state = {}) {
   const overall = conflicts ? 'conflict' : normalizedStatus(analysis?.status);
   return `<div class="home-engineering" data-home-engineering>
     <div class="home-engineering-summary" data-status="${overall}">
-      <div><strong>${escapeHtml(statusLabel(overall))}</strong><span>Предварительная схема потребностей и исходных точек</span></div>
+      <div><strong>${escapeHtml(statusLabel(overall))}</strong><span>Вода и вентиляция</span></div>
       <button type="button" class="project-route-switch" role="switch" aria-checked="${overlayOn}" data-home-engineering-action="toggle-overlay"><span aria-hidden="true"></span>${overlayOn ? 'Показано на плане' : 'Показать на плане'}</button>
     </div>
-    <p class="home-engineering-disclaimer"><strong>Это не проект инженерных сетей.</strong> Сервис не прокладывает трубы и воздуховоды, не считает диаметры, уклоны, расходы воздуха или гидравлику.</p>
+    ${pointsEditor(project)}
     <div class="home-engineering-cards">${analysisSections(project, analysis)}</div>
     ${warnings.length ? `<section class="home-engineering-warnings" aria-labelledby="homeEngineeringWarnings"><h3 id="homeEngineeringWarnings">Что нужно уточнить</h3><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></section>` : ''}
-    ${pointsEditor(project)}
+    <details class="analysis-disclosure" data-analysis-fold="limitations"><summary>Границы расчёта</summary>
+      <p class="home-engineering-disclaimer">Предварительная проверка сопоставляет комнаты и точки подключения. Трассировку труб и воздуховодов, диаметры, уклоны и расходы определяют при проектировании сетей.</p>
+    </details>
   </div>`;
 }
 

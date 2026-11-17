@@ -498,14 +498,15 @@ export async function buildOneSheetPdf(project, key) {
 
 // Один лист PNG: генплан в режиме «Участок», иначе текущий этаж; при
 // открытом разрезе (sectionId) — лист разрезов, на котором он стоит.
-export function buildCurrentSheetPng(project, modeName, { sectionId = null } = {}) {
-  const specs = sheetPlan(project);
-  const want = (sectionId && specs.find((s) => s.kind === 'sections' && s.place.some((p) => p.item.id === sectionId)))
+export function buildCurrentSheetPng(project, modeName, { sheetId = null, sectionId = null } = {}) {
+  const specs = sheetId ? sheetList(project) : sheetPlan(project);
+  const want = sheetId ? specs.find((s) => sheetKey(s) === sheetId)
+    : (sectionId && specs.find((s) => s.kind === 'sections' && s.place.some((p) => p.item.id === sectionId)))
     || (modeName === 'site'
       ? specs.find((s) => s.kind === 'site')
       : specs.find((s) => s.kind === 'level' && s.levelId === project.activeLevel));
   if (!want) return null;
-  const count = sheetList(project).length;
+  const count = sheetId ? specs.length : sheetList(project).length;
   return loadSheetImages(want, project).then(() => {
     const sheet = renderSheet(project, want, specs.indexOf(want) + 1, count);
     return new Promise((resolve) => sheet.toBlob(resolve, 'image/png'));

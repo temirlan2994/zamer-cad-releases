@@ -6,7 +6,7 @@
 // загрузка, создание двумя кликами на плане.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, openToolFamily, startApp, openNew, worldToClient } from './helpers.mjs';
+import { with3dLayers, clickToolbarTool, openToolFamily, startApp, openNew, worldToClient } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const masses = (page) => page.evaluate(() => window.__kepler.state.project.masses || []);
@@ -122,7 +122,7 @@ describe('Массы: создание и правка в 3D, эскиз на п
     assert.deepEqual(await sel(page), { type: 'mass', id: list[0].id });
     assert.equal((await d3(page)).mass.stage, 'corner', 'инструмент остаётся для серии');
     assert.equal((await d3(page)).masses, 1);
-    assert.ok(await page.isVisible('#v3MassesWrap'));
+    await with3dLayers(page, async () => assert.ok(await page.isVisible('#v3MassesWrap')));
   });
 
   it('Esc — стадия назад; числа: ширина → Tab → глубина → Enter → высота → Enter', async () => {

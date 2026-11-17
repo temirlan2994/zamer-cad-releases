@@ -1,19 +1,10 @@
-// Тени по времени суток в «Ландшафте»: плашка «Солнце» поверх плана
-// (режим теней, время, дата, анализ освещённости) и кеш расчёта
-// (core/landscape-shadow.js). Настройки — только вид, в браузере.
+// Фактическое солнце рассчитывается по дате и времени проекта.
 
 import { state } from './state.js';
-import { setLandscapeSun, SUN_TIME_MAX, SUN_TIME_MIN } from './landscape-style.js';
 import {
-  SUN_DATES, fmtClock, formatSunLabel, rumbOf, shadowPolys, shadowSignature, sunClass, sunForSite,
+  fmtClock, formatSunLabel, rumbOf, shadowPolys, shadowSignature, sunClass, sunForSite,
   sunHoursGrid, sunHoursSummary, sunRiseSet,
 } from '../core/landscape-shadow.js';
-
-const MODES = [
-  { id: 'off', title: 'Выкл' },
-  { id: 'default', title: 'Обычные' },
-  { id: 'sun', title: 'Солнце' },
-];
 
 // Не из dom.js: render.js подключает этот файл, а dom.js требует document
 // (юнит-тесты рисования идут в Node).
@@ -21,6 +12,13 @@ const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&am
 
 let redraw = () => {};
 let bar = null;
+let commit = null;
+let renderedSite = null;
+let barKey = '';
+
+export function landscapeSunTime(site) {
+  return state.lsSunPreviewTime ?? site.sun.time;
+}
 
 const visKey = () => {
   const v = state.lsVis || {};
@@ -38,11 +36,13 @@ export function landscapeSunFrame(project, objects) {
   const ls = state.lsSun;
   if (ls?.mode !== 'sun' || !project?.site) return null;
   const simple = Boolean(state.lsSunDragging);
-  const key = `${ls.date}|${ls.time}|${shadowSignature(project)}|${visKey()}|${objects.length}|${simple ? 1 : 0}`;
+  const { date } = project.site.sun;
+  const time = landscapeSunTime(project.site);
+  const key = `${date}|${time}|${shadowSignature(project)}|${visKey()}|${objects.length}|${simple ? 1 : 0}`;
   if (frame.key === key) return frame.value;
-  const sun = sunForSite(project.site, ls.date, ls.time);
+  const sun = sunForSite(project.site, date, time);
   const polys = shadowPolys(project, sun, { objects, simple });
-  frame = { key, value: { sun, polys, simple, label: formatSunLabel(ls.date, ls.time) } };
+  frame = { key, value: { sun, polys, simple, label: formatSunLabel(date, time) } };
   return frame.value;
 }
 
@@ -55,13 +55,14 @@ let grid = { key: null, value: null, pending: null, timer: 0 };
 export function landscapeSunGrid(project, objects) {
   const ls = state.lsSun;
   if (ls?.mode !== 'sun' || !ls.analysis || !project?.site?.boundary?.length) return null;
-  const key = `${ls.date}|${shadowSignature(project)}|${visKey()}|${objects.length}`;
+  const { date } = project.site.sun;
+  const key = `${date}|${shadowSignature(project)}|${visKey()}|${objects.length}`;
   if (grid.key !== key && grid.pending !== key) {
     grid.pending = key;
     clearTimeout(grid.timer);
     grid.timer = setTimeout(() => {
       try {
-        const g = sunHoursGrid(project, ls.date, { objects });
+        const g = sunHoursGrid(project, date, { objects });
         grid = { key, value: g, pending: null, timer: 0, summary: sunHoursSummary(g, objects) };
       } catch {
         grid = { key, value: null, pending: null, timer: 0, summary: null };
@@ -76,10 +77,9 @@ export function landscapeSunGrid(project, objects) {
 // ------------------------------------------------------------ Плашка
 
 function sunInfo() {
-  const ls = state.lsSun;
   const site = state.project?.site;
   if (!site) return '';
-  const s = sunForSite(site, ls.date, ls.time);
+  const s = sunForSite(site, site.sun.date, landscapeSunTime(site));
   if (!s.up) return 'Солнце за горизонтом — теней нет';
   return `Солнце: ${rumbOf(s.azimuth)}, азимут ${Math.round(s.azimuth)}°, высота ${Math.round(s.altitude)}°`;
 }
@@ -87,7 +87,7 @@ function sunInfo() {
 function riseSetText() {
   const site = state.project?.site;
   if (!site) return '';
-  const { rise, set } = sunRiseSet(site, state.lsSun.date);
+  const { rise, set } = sunRiseSet(site, site.sun.date);
   return rise === null ? 'Полярная ночь' : `Восход ${fmtClock(rise)}, заход ${fmtClock(set)}`;
 }
 
@@ -114,67 +114,42 @@ function renderSummary() {
 
 function renderBar() {
   if (!bar) return;
-  const ls = state.lsSun;
-  const sun = ls.mode === 'sun';
-  const preset = SUN_DATES.find((d) => ls.date.slice(5) === d.id);
-  bar.innerHTML = `
-    <div class="ls-sun-row">
-      <span class="ls-sun-title">Тени</span>
-      <div class="seg" role="radiogroup" aria-label="Тени ландшафта">
-        ${MODES.map((m) => `<label class="seg-opt${ls.mode === m.id ? ' active' : ''}"><input type="radio" name="lsSunMode" value="${m.id}" ${ls.mode === m.id ? 'checked' : ''}><span>${m.title}</span></label>`).join('')}
-      </div>
-    </div>
-    ${sun ? `
-    <div class="ls-sun-row">
-      <input id="lsSunTime" type="range" min="${SUN_TIME_MIN}" max="${SUN_TIME_MAX}" step="15" value="${ls.time}" aria-label="Время суток">
-      <strong id="lsSunClock">${fmtClock(ls.time)}</strong>
-    </div>
-    <div class="ls-sun-row">
-      <select id="lsSunPreset" aria-label="Дата">
-        ${SUN_DATES.map((d) => `<option value="${d.id}" ${preset?.id === d.id ? 'selected' : ''}>${d.title}</option>`).join('')}
-        <option value="" ${preset ? '' : 'selected'}>Другая дата</option>
-      </select>
-      <input id="lsSunDate" type="date" value="${ls.date}" aria-label="Дата">
+  const site = state.project?.site;
+  const key = [state.lsSun?.mode, state.lsSun?.analysis, site?.sun?.date, site?.sun?.time,
+    site?.location?.lat, site?.location?.lon, site?.location?.tz, site?.north].join('|');
+  if (key === barKey && site === renderedSite) return;
+  barKey = key;
+  renderedSite = site;
+  const focused = bar.contains(document.activeElement) ? document.activeElement.id : '';
+  state.lsSunPreviewTime = null;
+  state.lsSunDragging = false;
+  const sun = state.lsSun?.mode === 'sun' && site;
+  const time = sun ? landscapeSunTime(site) : 0;
+  bar.innerHTML = `<div class="ls-sun-row"><button type="button" data-landscape-climate>☀ Свет на участке →</button></div>
+    ${sun ? `<div class="ls-sun-row">
+      <input id="lsSunTime" type="range" min="0" max="1439" step="1" value="${time}" aria-label="Время суток">
+      <strong id="lsSunClock">${fmtClock(time)}</strong>
     </div>
     <div class="ls-sun-info" id="lsSunInfo">${escapeHtml(sunInfo())}<br><span>${escapeHtml(riseSetText())}</span></div>
-    <label class="check-row"><input type="checkbox" id="lsSunAnalysis" ${ls.analysis ? 'checked' : ''}><span>Анализ освещённости (часы солнца)</span></label>
     <div id="lsSunSummary">${summaryHtml()}</div>` : ''}`;
-  bar.querySelectorAll('input[name="lsSunMode"]').forEach((r) => r.addEventListener('change', () => {
-    if (!r.checked) return;
-    setLandscapeSun({ mode: r.value });
-    renderBar();
-    redraw();
-  }));
-  const time = bar.querySelector('#lsSunTime');
-  if (time) {
-    time.addEventListener('input', () => {
-      state.lsSunDragging = true;
-      setLandscapeSun({ time: Number(time.value) });
-      bar.querySelector('#lsSunClock').textContent = fmtClock(state.lsSun.time);
-      updateInfo();
-      redraw();
-    });
-    time.addEventListener('change', () => {
-      state.lsSunDragging = false;
-      setLandscapeSun({ time: Number(time.value) });
-      redraw();
-    });
-  }
-  bar.querySelector('#lsSunPreset')?.addEventListener('change', (e) => {
-    if (!e.target.value) { bar.querySelector('#lsSunDate')?.focus(); return; }
-    setLandscapeSun({ date: `${state.lsSun.date.slice(0, 4)}-${e.target.value}` });
-    renderBar();
+  bar.querySelector('[data-landscape-climate]').addEventListener('click', (event) => {
+    document.dispatchEvent(new CustomEvent('kepler:open-climate', { detail: { opener: event.currentTarget, location: true } }));
+  });
+  const slider = bar.querySelector('#lsSunTime');
+  if (focused === 'lsSunTime') slider?.focus({ preventScroll: true });
+  slider?.addEventListener('input', () => {
+    state.lsSunDragging = true;
+    state.lsSunPreviewTime = Number(slider.value);
+    bar.querySelector('#lsSunClock').textContent = fmtClock(state.lsSunPreviewTime);
+    updateInfo();
     redraw();
   });
-  bar.querySelector('#lsSunDate')?.addEventListener('change', (e) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) return;
-    setLandscapeSun({ date: e.target.value });
-    renderBar();
-    redraw();
-  });
-  bar.querySelector('#lsSunAnalysis')?.addEventListener('change', (e) => {
-    setLandscapeSun({ analysis: e.target.checked });
-    renderBar();
+  slider?.addEventListener('change', () => {
+    state.lsSunDragging = false;
+    state.lsSunPreviewTime = null;
+    const minutes = Number(slider.value);
+    if (site.sun.time !== minutes) commit(() => { site.sun.time = minutes; });
+    updateInfo();
     redraw();
   });
 }
@@ -185,7 +160,8 @@ function updateInfo() {
 }
 
 // Плашка — в углу холста, видна только в «Ландшафте» (CSS .mode-landscape).
-export function bindLandscapeSun(requestDraw) {
+export function bindLandscapeSun(requestDraw, mutate) {
+  commit = mutate;
   redraw = requestDraw || redraw;
   if (typeof document === 'undefined') return;
   bar = document.getElementById('lsSunBar'); // index.html, в .canvas-wrap
@@ -194,6 +170,7 @@ export function bindLandscapeSun(requestDraw) {
   for (const ev of ['wheel', 'pointerdown', 'mousedown', 'touchstart', 'dblclick']) {
     bar.addEventListener(ev, (e) => e.stopPropagation());
   }
+  document.addEventListener('kepler:project-change', renderBar);
   renderBar();
 }
 

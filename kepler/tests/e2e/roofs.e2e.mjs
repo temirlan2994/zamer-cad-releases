@@ -10,7 +10,7 @@
 // точка выноса и стрелка Z тянутся, Delete; сохранение; фасад с выносом.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { with3dLayers, startApp, openNew } from './helpers.mjs';
 
 const SHOTS = process.env.KEPLER_SHOTS || '';
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
@@ -316,9 +316,9 @@ describe('Крыши-плиты: план крыши, правка контур�
     assert.ok(res.over >= 1199, `вынос на фасаде: ${res.over}`);
     assert.ok(res.tint);
     assert.equal(res.auto, 0, 'все помещения под крышами — автоплит нет');
-    await page.click('#v3Roof');
+    await with3dLayers(page, () => page.click('#v3Roof'));
     assert.equal((await d3(page)).roofFaces > 0, true);
-    await page.click('#v3Roof');
+    await with3dLayers(page, () => page.click('#v3Roof'));
   });
 
   it('ломать как стену: часть ребра — уступ, клик — излом, свободная вершина — косая грань; контур по точкам; 3D', async () => {

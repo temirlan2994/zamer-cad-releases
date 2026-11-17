@@ -7,10 +7,14 @@
 import {
   analyzeHomeClimateOverview, analyzeHomeClimateRoom, homeClimateRoomKey,
 } from '../core/home-climate.js';
+import { insolationZone } from '../core/insolation.js';
+import { formatSunInfo, sunPosition } from '../core/site.js';
 import { escapeHtml } from './dom.js';
 import {
   focusSolarRoom, setSolarAnalysis, setSolarMode,
 } from './solar-analysis.js';
+import { setLandscapeSun } from './landscape-style.js';
+import { refreshLandscapeSun } from './landscape-sun.js';
 import { openSolarReport } from './solar-report-ui.js';
 
 const array = (value) => (Array.isArray(value) ? value : []);
@@ -57,8 +61,7 @@ function safeRoom(project, room) {
     return analyzeHomeClimateRoom(project, {
       levelId: room.levelId,
       roomId: room.roomId,
-      date: project?._homeClimateDate,
-      maxCells: 120,
+      date: effectiveDate(project),
     }) || null;
   } catch (error) {
     console.error('Световой анализ помещения не рассчитался:', error);
@@ -73,7 +76,7 @@ function safeRoom(project, room) {
 }
 
 function keyOf(room) {
-  return room?.key || `${room?.levelId || ''}::${room?.roomId || room?.id || ''}`;
+  return room?.key || `${room?.levelId || ''}:${room?.roomId || room?.id || ''}`;
 }
 
 function roomIdOf(room) { return room?.roomId || room?.id || null; }
@@ -93,24 +96,22 @@ function preferredRoom(project, state, rooms) {
     || rooms[0] || null;
 }
 
-function effectiveDate(project, state) {
-  return state?.solarAnalysis?.date || project?.site?.sun?.date || '2026-06-21';
+function effectiveDate(project) {
+  return project?.site?.sun?.date || '2026-06-21';
 }
 
 function analyzeView(project, state = {}) {
   const overview = safeOverview(project);
   const rooms = array(overview.rooms);
   const room = preferredRoom(project, state, rooms);
-  // Дата хранится только в состоянии вида. В project временно не записываем
-  // её: core получает её ниже отдельным аргументом.
   let detail = null;
   let detailKey = null;
   if (room) {
     const options = {
+      ...state.solarAnalysis,
       levelId: room.levelId,
       roomId: roomIdOf(room),
-      date: effectiveDate(project, state),
-      maxCells: 120,
+      date: effectiveDate(project),
     };
     detailKey = homeClimateRoomKey(project, options);
     try {
@@ -163,9 +164,8 @@ function sourceCards(overview) {
   const cards = [];
   for (const id of order) {
     if (!(id in sources)) continue;
-    const semantic = id === 'climateFile' ? 'climate' : id;
-    if (used.has(semantic)) continue;
-    used.add(semantic);
+    if (id === 'climateFile' && sources.climate) { used.add(id); continue; }
+    used.add(id);
     cards.push(sourceCard(id, sources[id]));
   }
   for (const [id, source] of Object.entries(sources)) {
@@ -189,18 +189,34 @@ function roomOptions(rooms, active) {
   return [...byLevel.entries()].map(([level, entries]) => `<optgroup label="${escapeHtml(level)}">${entries.map((room) => `<option value="${escapeHtml(keyOf(room))}"${keyOf(room) === keyOf(active) ? ' selected' : ''}>${escapeHtml(roomTitle(room))}</option>`).join('')}</optgroup>`).join('');
 }
 
-function roomCards(rooms, active) {
-  if (!rooms.length) return '<p class="home-climate-empty">Сначала добавьте помещения на план.</p>';
-  return `<div class="home-climate-rooms">${rooms.map((room) => {
-    const activeRoom = keyOf(room) === keyOf(active);
-    const windows = Number(room.windowCount || 0);
-    const glazing = finite(room.glazingAreaM2) ? `${number(room.glazingAreaM2, 2)} м² остекления`
-      : windows ? `${windows} окон` : 'нет наружных окон';
-    return `<button type="button" data-home-climate-action="select-room" data-home-climate-room-key="${escapeHtml(keyOf(room))}" aria-pressed="${activeRoom}">
-      <strong>${escapeHtml(roomTitle(room))}</strong>
-      <span>${escapeHtml(room.levelName || room.levelId || '')}${room.levelId || room.levelName ? ' · ' : ''}${escapeHtml(glazing)}</span>
-    </button>`;
-  }).join('')}</div>`;
+function locationPanel(site, state) {
+  if (!site) return '';
+  const { location, sun } = site;
+  const auto = insolationZone(location.lat);
+  const clock = [Math.floor(sun.time / 60) % 24, sun.time % 60].map((n) => String(n).padStart(2, '0')).join(':');
+  const field = (id, title, attributes, value) => `<label><span>${title}</span><input id="${id}" data-climate-setting="${id}" ${attributes} value="${escapeHtml(String(value ?? ''))}"></label>`;
+  return `<details data-climate-location data-analysis-fold="location" class="climate-fold">
+    <summary>⌖ &nbsp; Координаты и солнце <small>${site.solarVerified ? '✓ Проверены' : 'Уточнить'}</small></summary>
+    <div class="climate-fields">
+      ${field('lat', 'Широта, °', 'type="number" required min="-90" max="90" step="any"', location.lat)}
+      ${field('lon', 'Долгота, °', 'type="number" required min="-180" max="180" step="any"', location.lon)}
+      ${field('tz', 'Часовой пояс UTC', 'type="number" required min="-12" max="14" step="0.25"', location.tz)}
+      ${field('northDeg', 'Север, ° от верха съёмки ↻', 'type="number" required step="any"', site.north)}
+      ${field('sunTime', 'Местное время', 'type="time" required', clock)}
+      <label><span>Тени ландшафта</span><select data-climate-setting="landscapeMode">${[['default', 'Условные'], ['sun', 'По солнцу'], ['off', 'Скрыты']].map(([mode, label]) => `<option value="${mode}" ${state.lsSun?.mode === mode ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      ${field('bh', 'Высота дома для тени, м', 'type="number" required min="2" step="any"', site.buildingHeight / 1000)}
+    </div>
+    <div class="climate-switches">
+      <label><input data-climate-setting="verified" type="checkbox" ${site.solarVerified ? 'checked' : ''}> Координаты и север проверены</label>
+      <label><input data-climate-setting="enabled" type="checkbox" ${sun.enabled ? 'checked' : ''}> Тень дома на участке</label>
+    </div>
+    <button type="button" class="climate-map-site" data-home-climate-action="landscape-map" aria-pressed="${state.lsSun?.mode === 'sun' && state.lsSun?.analysis === true}">${state.lsSun?.mode === 'sun' && state.lsSun?.analysis ? 'Скрыть карту солнца на участке' : 'Карта солнца на участке'}</button>
+    <p>${escapeHtml(formatSunInfo(sunPosition(location.lat, location.lon, location.tz, sun.date, sun.time)))}</p>
+    <details data-analysis-fold="norm"><summary>Ориентир инсоляции</summary>
+      <div class="climate-fields">${field('normHours','Продолжительность, ч', `type="number" min="0.5" step="0.5" placeholder="${auto.hours}"`,site.norms?.hours)}
+      ${field('normDay','Месяц и день', `pattern="[0-9]{2}-[0-9]{2}" placeholder="${auto.day}"`,site.norms?.day)}</div>
+    </details>
+  </details>`;
 }
 
 function statusText(status, kind) {
@@ -209,7 +225,7 @@ function statusText(status, kind) {
     if (status === 'preliminary') return ['Предварительная оценка', 'estimated'];
   }
   if (kind === 'direct') {
-    if (status === 'verified') return ['По подтверждённым исходным данным', 'verified'];
+    if (status === 'verified') return ['Проверенные данные', 'verified'];
     if (status === 'estimated') return ['Ориентировочно', 'estimated'];
     if (status === 'missing') return ['Не хватает координат или севера', 'unknown'];
   }
@@ -220,7 +236,14 @@ function metric(label, value, note = '') {
   return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>${note ? `<small>${escapeHtml(note)}</small>` : ''}</div>`;
 }
 
-function roomDetail(project, state, room, detail) {
+function lightHeading(title, status, kind) {
+  const symbol = kind === 'daylight'
+    ? '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 4v16M4 12h16"/>'
+    : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>';
+  return `<div class="home-climate-card-head"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">${symbol}</svg></i><div><h4>${title}</h4><span>${escapeHtml(status)}</span></div></div>`;
+}
+
+function roomDetail(state, room, detail) {
   if (!room || !detail) return '';
   const daylight = detail.daylight || {};
   const direct = detail.directSun || detail.direct || {};
@@ -231,7 +254,6 @@ function roomDetail(project, state, room, detail) {
   const [sunLabel, sunCss] = statusText(direct.status, 'direct');
   const ratio = Number(glazing.ratio);
   const ratioText = ratio > 0 ? `1:${number(1 / ratio, 1)}` : '—';
-  const confidence = daylight.confidence?.level === 'medium' ? 'средняя уверенность' : 'низкая уверенность';
   const directOn = state?.solarAnalysis?.on === true && state.solarAnalysis.mode === 'direct'
     && state.solarAnalysis.roomId === roomIdOf(room);
   const daylightOn = state?.solarAnalysis?.on === true && state.solarAnalysis.mode === 'daylight'
@@ -239,36 +261,35 @@ function roomDetail(project, state, room, detail) {
   const assumptions = array(detail.assumptions).map((item) => typeof item === 'string' ? item : item?.text).filter(Boolean);
   const warnings = array(detail.warnings).map((item) => typeof item === 'string' ? item : item?.text).filter(Boolean);
   return `<section class="home-climate-detail" aria-labelledby="homeClimateRoomTitle">
-    <header><div><h3 id="homeClimateRoomTitle">${escapeHtml(roomTitle(room))}</h3><p>${escapeHtml(room.levelName || room.levelId || '')}</p></div><span>Эскизная оценка</span></header>
+    <h3 id="homeClimateRoomTitle" class="sr-only">${escapeHtml(roomTitle(room))}</h3>
     <div class="home-climate-analysis-grid">
       <article data-analysis="daylight" data-status="${dayCss}">
-        <div class="home-climate-card-head"><h4>Дневной свет</h4><span>${escapeHtml(dayLabel)}</span></div>
-        <dl>
-          ${metric('Средний КЕО (DF)', finite(daylight.meanDaylightFactor) ? `${number(daylight.meanDaylightFactor, 2)} %` : '—')}
-          ${metric('Средняя освещённость', finite(daylight.meanLux) ? `${number(daylight.meanLux, 0)} лк` : '—')}
-          ${metric('Площадь ≥ 300 лк', percent(daylight.coverage300), confidence)}
-          ${metric('Остекление', `${finite(glazing.areaM2 ?? glazing.area) ? `${number(glazing.areaM2 ?? glazing.area, 2)} м² · ` : ''}${ratioText}`, 'Ориентир 1:8, не нормативный вывод')}
-        </dl>
-        <button type="button" aria-pressed="${daylightOn}" data-home-climate-action="toggle-map" data-home-climate-map="daylight" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}">${daylightOn ? 'Скрыть карту освещённости' : 'Карта КЕО и люксов'}</button>
+        ${lightHeading('Дневной свет', dayLabel, 'daylight')}
+        <p class="climate-value">${number(daylight.meanLux, 0)} <small>лк в среднем</small></p>
+        <button type="button" aria-pressed="${daylightOn}" data-home-climate-action="toggle-map" data-home-climate-map="daylight" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}">${daylightOn ? 'Скрыть карту освещённости' : 'Карта освещённости'}</button>
       </article>
       <article data-analysis="direct" data-status="${sunCss}">
-        <div class="home-climate-card-head"><h4>Прямое солнце</h4><span>${escapeHtml(sunLabel)}</span></div>
-        <label><span>Расчётный день</span><input type="date" data-home-climate-date value="${escapeHtml(effectiveDate(project, state))}"></label>
-        <dl>
-          ${metric('Максимум в комнате', duration(direct.maxMinutes))}
-          ${metric('В среднем по площади', duration(direct.meanMinutes))}
-          ${metric('Освещённая площадь', percent(direct.litShare))}
-          ${metric('Площадь с ≥ 2 ч', percent(direct.coverage2h), 'Порог отображения, не заключение о норме')}
-        </dl>
+        ${lightHeading('Прямое солнце', sunLabel, 'direct')}
+        <p class="climate-value">${duration(direct.meanMinutes)} <small>в среднем</small></p>
         <button type="button" aria-pressed="${directOn}" data-home-climate-action="toggle-map" data-home-climate-map="direct" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}">${directOn ? 'Скрыть карту прямого солнца' : 'Карта прямого солнца'}</button>
       </article>
     </div>
-    <div class="home-climate-context">
+    <details data-analysis-fold="detail" class="climate-fold"><summary>Показатели и допущения</summary>
+      <label class="climate-glass">Светопропускание стекла, % <input type="number" id="daylightTransmittance" data-climate-setting="glass" min="10" max="100" value="${Math.round((state.solarAnalysis?.transmittance ?? 0.7) * 100)}"></label>
+      <dl class="climate-metrics">
+        ${metric('Средний КЕО', `${number(daylight.meanDaylightFactor, 2)} %`)}${metric('Минимальный КЕО', `${number(daylight.minDaylightFactor, 2)} %`)}
+        ${metric('Площадь ≥ 300 лк', percent(daylight.coverage300))}${metric('Площадь ≥ 2 % КЕО', percent(daylight.coverageDaylightFactor))}
+        ${metric('Видимость неба', percent(daylight.meanWindowSkyVisibility))}${metric('Остекление', `${number(glazing.areaM2, 2)} м² · ${ratioText}`)}
+        ${metric('Солнце · максимум', duration(direct.maxMinutes))}${metric('Освещённая площадь', percent(direct.litShare))}${metric('Солнце ≥ 2 ч', percent(direct.coverage2h))}
+      </dl>
+      <div class="home-climate-context">
       <div><strong>Инсоляционный ориентир</strong><span>${insolation.status && insolation.status !== 'unknown' ? escapeHtml(insolation.label || insolation.summary || 'Рассчитан по настройкам проекта') : 'Не хватает подтверждённых координат, часового пояса или севера'}</span></div>
       <div><strong>Тепловой комфорт</strong><span>${thermal.status === 'screening_hint' ? escapeHtml(thermal.summary || 'Есть скрининговый сигнал — требуется теплотехнический расчёт') : 'Не рассчитан: нужны климатический файл, ограждения, стекло, нагрузки и HVAC'}</span></div>
     </div>
+    ${(daylight.recommendations || []).length ? `<ul>${daylight.recommendations.map((r) => `<li>${escapeHtml(r.text)}</li>`).join('')}</ul>` : ''}
     ${warnings.length ? `<ul class="home-climate-warnings">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}
     ${assumptions.length ? `<details><summary>Допущения расчёта</summary><ul>${assumptions.map((assumption) => `<li>${escapeHtml(assumption)}</li>`).join('')}</ul></details>` : ''}
+    </details>
   </section>`;
 }
 
@@ -287,20 +308,18 @@ export function homeClimateHtml(project, state = {}) {
   }
   const warnings = array(view.overview?.warnings).filter(Boolean);
   return `<div class="home-climate" data-home-climate>
-    <section class="home-climate-intro">
-      <div><strong>Свет и солнце</strong><span>Предварительная оценка по геометрии проекта</span></div>
-      <p><strong>Не нормативное заключение.</strong> Карты не рассчитывают температуру, воздухообмен, перегрев или CFD.</p>
-    </section>
-    <ul class="home-climate-sources" aria-label="Качество исходных данных">${sourceCards(view.overview)}</ul>
-    ${view.rooms.length ? `<label class="home-climate-room-select"><span>Помещение</span><select data-home-climate-room>${roomOptions(view.rooms, view.room)}</select></label>` : ''}
-    ${roomCards(view.rooms, view.room)}
-    ${roomDetail(project, state, view.room, view.detail)}
-    ${warnings.length ? `<section class="home-climate-warnings" aria-labelledby="homeClimateWarnings"><h3 id="homeClimateWarnings">Что нужно уточнить</h3><ul>${warnings.map((warning) => `<li>${escapeHtml(typeof warning === 'string' ? warning : warning.text || warning.reason || '')}</li>`).join('')}</ul></section>` : ''}
-    <div class="home-climate-actions">
-      <button type="button" data-home-climate-action="open-solar-settings" data-route-action="open-solar-settings">Настроить координаты и север</button>
-      <button type="button" data-home-climate-action="open-report">Сезонная световая сводка…</button>
+    <div class="climate-target">
+      ${view.rooms.length ? `<label><span>Помещение</span><select data-home-climate-room>${roomOptions(view.rooms, view.room)}</select></label>` : '<p>Добавьте помещение на план.</p>'}
+      <label><span>Дата</span><input type="date" required data-home-climate-date value="${escapeHtml(effectiveDate(project))}"></label>
     </div>
-    <p class="home-climate-disclaimer">Сезонная сводка запускается отдельно и использует 12 реперных дней. Это не годовая почасовая симуляция и не экспертиза.</p>
+    ${roomDetail(state, view.room, view.detail)}
+    ${locationPanel(project.site, state)}
+    <details data-analysis-fold="sources" class="climate-fold"><summary>Исходные данные и точность</summary>
+      <ul class="home-climate-sources">${sourceCards(view.overview)}</ul>
+      ${warnings.length ? `<ul>${warnings.map((w) => `<li>${escapeHtml(typeof w === 'string' ? w : w.text || w.reason || '')}</li>`).join('')}</ul>` : ''}
+      <p>Не нормативное заключение. Карты не рассчитывают температуру, воздухообмен, перегрев или CFD.</p>
+    </details>
+    <button type="button" id="solarAnnualRun" class="climate-report" data-solar-report-open data-home-climate-action="open-report">▤ &nbsp; Сезонная световая сводка</button>
   </div>`;
 }
 
@@ -348,19 +367,24 @@ export function handleHomeClimateClick(event, deps = {}) {
   const { project, state } = deps;
   if (!project || !state) return false;
   const action = button.dataset.homeClimateAction;
-  if (action === 'open-solar-settings') return false; // общий обработчик маршрута
-  const apis = solarApis(deps);
-  if (action === 'select-room') {
-    const room = selectClimateRoom(project, state, button.dataset.homeClimateRoomKey);
-    if (!room) return false;
-    apis.focus(roomIdOf(room));
+  if (action === 'landscape-map') {
+    const enabled = !(state.lsSun?.mode === 'sun' && state.lsSun?.analysis);
+    setLandscapeSun({ mode: 'sun', analysis: enabled });
+    if (enabled) {
+      disableOtherOverlays(state);
+      if (state.solarAnalysis?.on) solarApis(deps).analysis(false, state.solarAnalysis.roomId);
+      deps.closePanel?.({ restoreFocus: false });
+      deps.setEditorMode?.('landscape');
+    }
+    refreshLandscapeSun();
+    deps.requestDraw?.();
     deps.rerender?.();
-    deps.announce?.(`Выбрано помещение ${roomTitle(room)}`);
     return true;
   }
+  const apis = solarApis(deps);
   if (action === 'open-report') {
     deps.closePanel?.({ restoreFocus: false });
-    void apis.report();
+    void apis.report({ returnToClimate: true });
     deps.announce?.('Запущена сезонная световая сводка');
     return true;
   }
@@ -378,14 +402,14 @@ export function handleHomeClimateClick(event, deps = {}) {
     deps.announce?.('Световая карта скрыта');
     return true;
   }
+  deps.closePanel?.({ restoreFocus: false });
+  deps.setEditorMode?.('plan');
   disableOtherOverlays(state);
   if (levelId && project.activeLevel !== levelId) deps.switchLevel?.(levelId);
   state.selection = { type: 'room', id: roomId };
   apis.focus(roomId);
   apis.mode(mode, deps.requestDraw);
   apis.analysis(true, roomId);
-  deps.closePanel?.({ restoreFocus: false });
-  deps.setEditorMode?.('plan');
   deps.requestDraw?.();
   deps.rerender?.();
   deps.announce?.(mode === 'daylight'
@@ -396,7 +420,7 @@ export function handleHomeClimateClick(event, deps = {}) {
 
 /** Обрабатывает выбор помещения и расчётного дня. */
 export function handleHomeClimateInput(event, deps = {}) {
-  const input = event?.target?.closest?.('[data-home-climate-room], [data-home-climate-date]');
+  const input = event?.target?.closest?.('[data-home-climate-room], [data-home-climate-date], [data-climate-setting]');
   if (!input || !input.closest?.('[data-home-climate]')) return false;
   const { project, state } = deps;
   if (!project || !state) return false;
@@ -409,12 +433,45 @@ export function handleHomeClimateInput(event, deps = {}) {
   }
   if (input.hasAttribute?.('data-home-climate-date')) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.value || ''))) return true;
-    state.solarAnalysis = { ...object(state.solarAnalysis), date: input.value };
+    deps.mutate?.(() => { project.site.sun.date = input.value; });
+    if (state.solarAnalysis) delete state.solarAnalysis.date;
+    refreshLandscapeSun();
     deps.requestDraw?.();
     deps.rerender?.();
     return true;
   }
-  return false;
+  const key = input.dataset?.climateSetting;
+  if (!key || !project.site) return false;
+  if (!input.reportValidity()) return true;
+  const site = project.site;
+  const value = input.value;
+  if (key === 'glass') {
+    state.solarAnalysis = { ...object(state.solarAnalysis), transmittance: Number(value) / 100 };
+  } else if (key === 'landscapeMode') {
+    setLandscapeSun({ mode: value });
+  } else {
+    deps.mutate?.(() => {
+      if (['lat', 'lon', 'tz'].includes(key)) {
+        site.location[key] = Number(value);
+        site.solarVerified = false;
+      } else if (key === 'northDeg') {
+        site.north = ((Number(value) % 360) + 360) % 360;
+        site.solarVerified = false;
+      } else if (key === 'verified') site.solarVerified = input.checked;
+      else if (key === 'enabled') site.sun.enabled = input.checked;
+      else if (key === 'sunTime') {
+        const [hours, minutes] = value.split(':').map(Number);
+        site.sun.time = hours * 60 + minutes;
+      } else if (key === 'bh') site.buildingHeight = Math.round(Number(value) * 1000);
+      else if (key === 'normHours') site.norms = { ...site.norms, hours: value ? Number(value) : null };
+      else if (key === 'normDay') site.norms = { ...site.norms, day: value || null };
+    });
+    if (key === 'northDeg') deps.applyModeRotation?.();
+  }
+  refreshLandscapeSun();
+  deps.requestDraw?.();
+  deps.rerender?.();
+  return true;
 }
 
 /** Обновляет производную сводку после изменения геометрии проекта. */

@@ -209,7 +209,6 @@ function renderElevationProps(panel) {
 }
 
 function renderProjectProps(panel) {
-  const rooms = state.project.rooms;
   const site = state.project.site;
   const hasSite = Boolean(site?.boundary?.length || site?.underlay);
   const level = activeLevel(state.project);
@@ -220,12 +219,9 @@ function renderProjectProps(panel) {
   if (prev) projectOpen = prev.open; // событие toggle приходит позже — читаем сразу
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
-    ${rooms.length ? '' : `<div class="props-empty">
-      <p class="empty-hint">Начните с «Помещения»: тип комнаты из каталога — и клик на плане. Комнаты стыкуются сами.</p>
-    </div>`}
     ${viewSettingsHtml()}
     <details class="project-section" id="projectSection"${projectOpen ? ' open' : ''}>
-    <summary id="projectSummary">Проект <small>поворот, единицы, стены, этаж</small></summary>
+    <summary id="projectSummary">Настройки проекта</summary>
     <div class="prop-block">
       ${hasSite ? buildingRotationField() : ''}
       <label class="prop-field"><span>Размеры на плане</span>
@@ -244,7 +240,7 @@ function renderProjectProps(panel) {
         <label class="prop-field"><span>Перегородки</span>
           <input id="defPartition" data-wall-default="partition" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${wallClassThickness(state.project.settings, 'partition')}"></label>
       </div>
-      <p class="empty-hint">Наружные стены без своей толщины меняются сразу. Новая перегородка — для новых стыковок: уже построенные сохраняют свою толщину.</p>
+      <p class="empty-hint">Толщина наружных стен обновится сразу. Для перегородок новое значение действует при следующей стыковке.</p>
     </div>
     <h3>Этаж</h3>
     <div class="prop-block">
@@ -255,7 +251,7 @@ function renderProjectProps(panel) {
         <label class="prop-field"><span>Высота этажа, м</span>
           <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
       </div>
-      ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : '<p class="empty-hint">Второй этаж — кнопка «+» внизу слева на плане.</p>'}
+      ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
     </div>
     </details>`;
   panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
@@ -325,7 +321,7 @@ function renderRoomProps(panel, room) {
     const fd = furnitureDef(entry.kind);
     return `<div class="add-row">
       <span>${fd.title}</span><em>${fd.w}×${fd.h}</em>
-      <button class="add-btn" data-add="${entry.kind}" title="Добавить в центр комнаты">+</button>
+      <button class="add-btn" data-add="${entry.kind}" title="Добавить в центр комнаты" aria-label="Добавить в комнату: ${escapeHtml(fd.title)}">+</button>
     </div>`;
   }).join('');
 
@@ -347,8 +343,8 @@ function renderRoomProps(panel, room) {
       ${overlaps.map((o) => {
     const eats = myIdx > state.project.rooms.indexOf(o); // эта комната выше → съедает o
     return `<div class="prop-row overlap-row" data-other="${o.id}">
-          <span>${eats ? `съедает «${escapeHtml(o.name)}»` : `«${escapeHtml(o.name)}» съедает эту`}</span>
-          <button class="link" data-swap="${o.id}">поменять</button>
+          <span>Площадь у «${escapeHtml(eats ? room.name : o.name)}»</span>
+          <button class="link" data-swap="${o.id}" title="Передать площадь пересечения другой комнате">Передать «${escapeHtml(eats ? o.name : room.name)}»</button>
         </div>`;
   }).join('')}
     </div>` : '';
@@ -366,9 +362,9 @@ function renderRoomProps(panel, room) {
         <label class="prop-field"><span>Ширина, мм</span><input id="roomW" type="number" step="50" min="${minRoomSize}" value="${nominal.w}"></label>
         <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${nominal.h}"></label>
       </div>
-      ${eaten ? '<p class="empty-hint" id="roomNominalHint">Размеры — полной формы блока; площадь — видимой части (без съеденного соседями).</p>' : ''}
-      ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м (пусто — по этажу)</span>
-        <input id="roomCeil" type="number" step="0.05" min="2" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
+      ${eaten ? '<p class="empty-hint" id="roomNominalHint">Размеры заданы до пересечения. Площадь учитывает границы соседних комнат.</p>' : ''}
+      ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м</span>
+        <input id="roomCeil" type="number" step="0.05" min="2" title="Пустое поле использует высоту этажа" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
       `}
       <div class="prop-row"><span>${shaft ? 'Площадь отверстия' : 'Площадь (чистая)'}</span><strong>${(shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room)).toFixed(2)} м²</strong></div>
     </div>
@@ -465,7 +461,7 @@ function renderWallProps(panel, wall) {
   const set = state.project.settings;
   panel.innerHTML = `
     <h2>Стена</h2>
-    <p class="subtitle">${subtitle}</p>
+    <p class="subtitle">${escapeHtml(subtitle)}</p>
     <div class="prop-block">
       <div class="prop-row"><span>Длина</span><strong>${length} мм</strong></div>
       <label class="prop-field"><span>Толщина, мм (${WALL_T_MIN}–${WALL_T_MAX})</span>
@@ -479,9 +475,7 @@ function renderWallProps(panel, wall) {
       <label class="prop-field"><span>Высота, мм (пусто — по этажу)</span>
         <input id="wallH" type="number" step="50" min="100" value="${state.project.wallOverrides?.[wall.key]?.top?.height ?? ''}"></label>
     </div>
-    <p class="empty-hint">${wall.kind === 'shared'
-    ? 'Тип и скрытие — только у выделенного участка. Толщина общей стены — зазор между комнатами: меняется для пары, соседняя комната (и всё за ней) сдвигается, стыковка сохраняется.'
-    : 'Толщина, тип и скрытие меняются только у выделенного участка. Смена типа даёт толщину этого класса, если толщина не задавалась вручную.'}</p>
+    ${wall.kind === 'shared' ? '<p class="empty-hint">При изменении толщины сдвинутся примыкающие комнаты.</p>' : ''}
     ${wallPinBlock(wall)}`;
   bindWallPinBlock(panel, wall);
 
@@ -531,7 +525,7 @@ function renderManualWallProps(panel, wall) {
       <label class="prop-field"><span>Высота, мм (пусто — по этажу, ${levelH})</span>
         <input id="wallH" type="number" step="50" min="100" value="${height}"></label>
     </div>
-    <p class="empty-hint">Тяните стену — сдвиг, круглые ручки на концах — длина. Примыкающие ручные стены едут вместе. Del — удалить вместе с проёмами.</p>
+    <p class="empty-hint">Перетащите конец стены, чтобы изменить длину.</p>
     ${wallPinBlock(wall)}`;
   bindWallPinBlock(panel, wall);
 
@@ -739,7 +733,7 @@ function renderOpeningProps(panel, opening) {
 
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
-    <p class="subtitle">${opening.host ? 'Ручная стена' : `Стена «${room?.name}»`}</p>
+    <p class="subtitle">${opening.host ? 'Ручная стена' : room ? `Стена «${escapeHtml(room.name)}»` : 'Стена'}</p>
     <div class="elev-wrap">${elevationSVG(opening)}</div>
     <div class="prop-block">
       <label class="prop-field"><span>Тип</span>
@@ -752,7 +746,7 @@ function renderOpeningProps(panel, opening) {
         <label class="prop-field"><span>Высота, мм</span>
           <input id="openH" type="number" step="50" min="300" value="${opening.height || (isDoor ? 2100 : 1500)}"></label>
       </div>
-      ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
+      ${isDoor ? '' : `<label class="prop-field"><span>Высота подоконника, мм</span>
         <input id="openSill" type="number" step="50" min="0" value="${opening.sill || 0}"></label>`}
     </div>
     <h3>Положение на стене</h3>
@@ -765,8 +759,7 @@ function renderOpeningProps(panel, opening) {
       </div>
       <label class="prop-field"><span>От начала стены, мм</span>
         <input id="openOff" type="number" step="50" value="${Math.round(openingPos(opening))}"></label>
-    </div>
-    ${isDoor ? '<p class="empty-hint">Петли и направление открывания меняются в единой панели над планом.</p>' : ''}`;
+    </div>`;
 
   const commitOpening = (fn) => {
     mutate(fn);
@@ -856,7 +849,6 @@ function renderItemProps(panel, item) {
         <label class="prop-field"><span>Размещение</span><select id="stairEnvironment">${opts(STAIR_ENVIRONMENTS, appearance.environment)}</select></label>
         <label class="prop-field"><span>Материал</span><select id="stairMaterial">${opts(STAIR_MATERIALS, appearance.material)}</select></label>
         <label class="prop-field"><span>Ограждение</span><select id="stairRailing">${opts(STAIR_RAILINGS, appearance.railing)}</select></label>
-        <p class="empty-hint">Материал и ограждение сразу меняют лестницу в 3D.</p>
       </div>
       <h3>Форма лестницы</h3>
       <div class="stair-shape">
@@ -881,7 +873,7 @@ function renderItemProps(panel, item) {
   }
   panel.innerHTML = `
     <h2>${itemTitle(item.kind)}</h2>
-    <p class="subtitle">${isStairs ? 'Выберите форму — размеры и ступени рассчитаются автоматически. Стрелка показывает подъём.' : fixed && item.comp?.type === 'kitchen' ? 'Кухня-конструктор: форма, длины и элементы — ниже; элементы тянутся на плане' : fixed ? 'Собирается из модулей: «+» на концах дивана или список ниже' : item.comp ? 'Размер — столешница; стулья расставляются по сторонам сами' : 'Свободный объект: перетаскивается куда угодно, едет вместе с комнатой'}</p>
+    ${fixed ? '<p class="subtitle">Размер определяется модулями.</p>' : item.comp ? '<p class="subtitle">Размеры столешницы</p>' : ''}
     <div class="prop-block">
       <div class="prop-grid">
         <label class="prop-field"><span>${isStairs ? 'Габарит по X, мм' : fixed ? 'Общая ширина, мм' : 'Ширина, мм'}</span><input id="itemW" type="number" step="50" min="200" value="${item.w}" ${fixed ? 'readonly' : ''}></label>
@@ -893,8 +885,7 @@ function renderItemProps(panel, item) {
     </div>
     ${stairsBlock}
     ${compositeSection(item)}
-    ${ergoItemSection(item)}
-    <p class="empty-hint">Копирование, поворот, отражение и удаление — в единой панели над планом.</p>`;
+    ${ergoItemSection(item)}`;
   const applySize = () => {
     if (fixed) return; // диван-конструктор: размер — по модулям
     const w = Math.max(200, Number(panel.querySelector('#itemW').value) || item.w);
@@ -1069,5 +1060,5 @@ function renderMultiProps(panel, sel) {
       <div class="prop-row"><span>Комнат</span><strong>${sel.roomIds.length}</strong></div>
       <div class="prop-row"><span>Мебели</span><strong>${sel.itemIds.length}</strong></div>
     </div>
-    <p class="empty-hint">Shift-клик добавляет или убирает объект. Все действия с выделением находятся в панели над планом.</p>`;
+    <p class="empty-hint desktop-selection-hint">Shift + клик меняет состав выделения.</p>`;
 }

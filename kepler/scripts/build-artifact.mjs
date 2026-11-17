@@ -2,7 +2,7 @@
 //
 // Страница артефакта — это <title>, ссылки на стили и содержимое <body>:
 // обёртку документа добавляет площадка при публикации. Рядом кладутся
-// styles.css и все модули, достижимые из app.js по статическим импортам,
+// таблицы стилей и модули, достижимые из app.js,
 // с теми же относительными путями, плюс manifest.json со списком файлов.
 //
 //   node scripts/build-artifact.mjs [папка]     (по умолчанию dist/artifact)
@@ -27,6 +27,7 @@ export function assetSource(root, file) {
 }
 
 const IMPORT_RE = /^\s*(?:import|export)\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|^\s*import\s*['"](\.{1,2}\/[^'"]+)['"]/gm;
+const DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
 const MODULE_URL_RE = /new\s+URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g;
 
 // Все локальные модули, достижимые из entry (пути от корня, через «/»).
@@ -38,6 +39,9 @@ export function moduleGraph(entry, root = ROOT) {
     const code = readFileSync(assetSource(root, rel), 'utf8');
     for (const m of code.matchAll(IMPORT_RE)) {
       visit(posix.normalize(posix.join(posix.dirname(rel), m[1] || m[2])));
+    }
+    for (const m of code.matchAll(DYNAMIC_IMPORT_RE)) {
+      visit(posix.normalize(posix.join(posix.dirname(rel), m[1])));
     }
     // Module Worker не является import-выражением, но его entry и весь его
     // статический граф должны лежать рядом со страницей артефакта.
@@ -78,7 +82,10 @@ export function buildArtifact(outDir, root = ROOT) {
       files.add(posix.normalize(posix.join(posix.dirname(manifest), icon.src)));
     }
   }
-  if (existsSync(join(root, 'sw.js'))) files.add('sw.js');
+  if (existsSync(join(root, 'sw.js'))) {
+    files.add('sw.js');
+    files.add('index.html'); // Точка старта PWA и страница для офлайн-переходов.
+  }
   const list = [...files].sort();
 
   rmSync(outDir, { recursive: true, force: true });

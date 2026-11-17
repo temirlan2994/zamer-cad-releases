@@ -21,10 +21,10 @@ describe('раскладка: колонка инструментов, библ�
   before(async () => { app = await startApp({ width: 1440, height: 860 }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('шапка — режимы и общие действия; колонка инструментов слева от холста', async () => {
+  it('виды — вкладками над холстом, инструменты — в колонке слева', async () => {
     const { page } = app;
     for (const id of ['modePlanBtn', 'modeSiteBtn', 'view3dBtn']) {
-      assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('.topbar .mode-tabs'))), true, `#${id} — режим в шапке`);
+      assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#workspaceViews [role=tablist]'))), true, `#${id} — в строке видов`);
     }
     assert.equal(await page.$$eval('.topbar .tb-btn, .topbar #wallToolBtn, .topbar #doorToolBtn', (ns) => ns.length), 0, 'в шапке нет инструментов');
     const [top, strip, canvas, opts] = await Promise.all(['.topbar', '#toolStrip', '#canvas', '#toolOptions'].map((s) => box(page, s)));
@@ -32,7 +32,7 @@ describe('раскладка: колонка инструментов, библ�
     assert.ok(strip.y >= top.y + top.height - 1 && strip.x < 2, 'колонка под шапкой у левого края');
     assert.ok(strip.x + strip.width <= canvas.x + 1, 'колонка слева от холста');
     assert.ok(opts.y >= top.y + top.height - 1 && opts.y + opts.height <= canvas.y + 1 && opts.height <= 44, 'строка параметров — тонкая, над холстом');
-    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'openingsGroupBtn', 'furnitureToolBtn', 'stairsToolBtn', 'massGroupBtn', 'roofToolBtn', 'docsGroupBtn', 'analysisGroupBtn', 'viewBtn', 'fitBtn'];
+    const ids = ['selectToolBtn', 'wallToolBtn', 'boundRoomBtn', 'openingsGroupBtn', 'furnitureToolBtn', 'stairsToolBtn', 'massGroupBtn', 'roofToolBtn', 'docsGroupBtn', 'viewBtn', 'fitBtn'];
     const rects = [];
     for (const id of ids) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} в колонке`);
@@ -42,6 +42,35 @@ describe('раскладка: колонка инструментов, библ�
       assert.ok(rects[i].y >= rects[i - 1].y + rects[i - 1].height - 1, `${ids[i]} ниже ${ids[i - 1]}`);
       assert.ok(Math.abs(rects[i].x - rects[0].x) < 2, `${ids[i]} в одной колонке`);
     }
+  });
+
+  it('стрелки переключают виды с клавиатуры и сохраняют фокус во вкладках', async () => {
+    const { page } = app;
+    await page.focus('#modePlanBtn');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.activeElement?.id === 'view3dBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
+    assert.equal(await page.isVisible('#view3d'), true);
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.activeElement?.id === 'modeSiteBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => document.activeElement?.id === 'modePlanBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
+  });
+
+  it('закрытая вкладка фасада возвращает предыдущий вид, фасад остаётся в каталоге', async () => {
+    const { page } = app;
+    await page.click('#modeSiteBtn');
+    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    await page.locator('#workspaceViews .wv-close').click();
+    await page.waitForFunction(() => document.activeElement?.id === 'modeSiteBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
+    assert.equal(await page.locator('.wv-tabs [data-workspace-view="elev-N"]').count(), 0);
+    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    const tab = page.locator('.wv-tabs [data-workspace-view="elev-N"]');
+    await tab.focus();
+    await page.keyboard.press('Delete');
+    await tab.waitFor({ state: 'detached' });
+    await page.click('#modePlanBtn');
   });
 
   it('значки без title; подсказка — сразу при наведении: название, что делает, клавиша', async () => {
@@ -76,7 +105,10 @@ describe('раскладка: колонка инструментов, библ�
     const lib = await box(page, '.library');
     const strip = await box(page, '#toolStrip');
     assert.ok(Math.abs(lib.x - (strip.x + strip.width)) < 2, 'рядом с колонкой');
-    assert.ok(same(await box(page, '#canvas'), canvas0), 'холст на месте');
+    const canvasWithCatalog = await box(page, '#canvas');
+    assert.equal(canvasWithCatalog.x, canvas0.x);
+    assert.equal(canvasWithCatalog.width, canvas0.width, 'каталог лежит поверх плана');
+    assert.ok(canvasWithCatalog.y - canvas0.y <= (await box(page, '#toolOptions')).height + 1, 'по высоте добавляется только строка параметров');
     await page.click('#roomCards .room-card >> text=Кухня');
     assert.equal((await tool(page)).kind, 'place-room');
     assert.equal(await page.isVisible('#roomCards'), true, 'библиотека остаётся при размещении');

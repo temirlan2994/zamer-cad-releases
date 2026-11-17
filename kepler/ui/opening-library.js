@@ -51,6 +51,7 @@ export function renderOpeningLibrary() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.innerHTML = CATEGORY_ICONS[cat.id] || '';
+    btn.append(cat.title);
     btn.title = cat.title;
     btn.dataset.cat = cat.id;
     btn.setAttribute('aria-label', cat.title);
@@ -70,7 +71,11 @@ function renderOpeningItems() {
   const box = el('openingItems');
   if (!kind || !box) return;
   const query = (el('openSearch')?.value || '').trim();
-  el('openingCats')?.classList.toggle('searching', Boolean(query));
+  for (const button of el('openingCats').children) {
+    const active = !query && button.dataset.cat === openCat[kind];
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
   const list = query ? searchOpeningPresets(kind, query) : openingPresets(kind, openCat[kind]);
   const css = getComputedStyle(document.documentElement);
   const colors = {
@@ -86,7 +91,9 @@ function renderOpeningItems() {
     chip.className = 'furniture-chip opening-chip';
     chip.dataset.preset = preset.id;
     chip.title = `${preset.title} · ${openingTypeTitle(kind, preset.type)} · ${preset.width}×${preset.height} мм${kind === 'window' ? ` · подоконник ${preset.sill}` : ''}`;
-    if (presetMatches(preset, state.tool.preset, levelHeight())) chip.classList.add('active');
+    const active = presetMatches(preset, state.tool.preset, levelHeight());
+    chip.classList.toggle('active', active);
+    chip.setAttribute('aria-pressed', String(active));
     const preview = document.createElement('canvas');
     preview.width = 240;
     preview.height = 132;
@@ -97,7 +104,7 @@ function renderOpeningItems() {
     chip.appendChild(name);
     const size = document.createElement('span');
     size.className = 'chip-size';
-    size.textContent = `${openingTypeTitle(kind, preset.type)} · ${preset.width}×${preset.height}`;
+    size.textContent = `${preset.width} × ${preset.height} мм`;
     chip.appendChild(size);
     try { drawOpeningPreview(preview, preset, colors); } catch { /* превью не критично */ }
     chip.addEventListener('click', () => chooseOpeningPreset(preset));

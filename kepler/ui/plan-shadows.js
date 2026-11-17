@@ -56,8 +56,8 @@ const MAX_SIDE = 1400; // предел стороны слоя, px
 const MIN_GAP = 140; // мс между перестройками, пока план меняется
 const ZOOM_SLACK = 1.7; // во сколько раз может разойтись масштаб, пока слой годится
 
-let cache = null; // { canvas, x, y, w, h, ppm, want, key, level, builtAt }
-let layer = null;
+// Карточка может рисоваться между двумя кадрами перетаскивания.
+const caches = { plan: null, thumbnail: null };
 let scratch = null;
 let tiny = null;
 let timer = 0;
@@ -195,7 +195,7 @@ function paint(g, { casters, dir, s, ppm, x0, y0, W, H, tones, contact }) {
 
 let contactLayer = null;
 
-function build({ casters, dir, s, want, dark, key, level }) {
+function build({ casters, dir, s, want, dark, key, level }, previousLayer) {
   const b = shadowBounds(casters, dir, s);
   const longest = Math.max(...casters.map((c) => c.z1 * s));
   const softMm = SOFT_MM(longest);
@@ -207,7 +207,7 @@ function build({ casters, dir, s, want, dark, key, level }) {
   const ppm = Math.min(want, MAX_SIDE / Math.max(wMm, hMm));
   const W = Math.max(1, Math.ceil(wMm * ppm));
   const H = Math.max(1, Math.ceil(hMm * ppm));
-  layer = canvasOf(layer, W, H);
+  const layer = canvasOf(previousLayer, W, H);
   contactLayer = canvasOf(contactLayer, W, H);
   const g = layer.getContext('2d');
   const q = contactLayer.getContext('2d');
@@ -227,8 +227,6 @@ function build({ casters, dir, s, want, dark, key, level }) {
   for (const c of casters) if (c.kind === 'wall') trace(g, c.poly);
   g.fill();
   toAlphaMask(layer);
-  const stats = state._planShadow || (state._planShadow = { builds: 0, ms: 0 });
-  stats.builds += 1;
   return { canvas: layer, x: x0, y: y0, w: W / ppm, h: H / ppm, ppm, want, key, level, builtAt: performance.now() };
 }
 
@@ -253,6 +251,8 @@ export function drawPlanShadows(ctx, {
   const level = project.activeLevel;
   const key = shadowKey(casters, `${level}|${dark ? 1 : 0}|${Math.round(dir.x * 1000)},${Math.round(dir.y * 1000)}|${Math.round(s * 1000)}`);
   const want = Math.max(1e-4, scale * Math.min(dpr, 2) * QUALITY);
+  const target = force ? 'thumbnail' : 'plan';
+  let cache = caches[target];
   // Слой годится, пока масштаб разошёлся не больше чем в ZOOM_SLACK раз (сравниваем
   // с запрошенным при построении: слой, урезанный по MAX_SIDE, не перестраивается зря).
   const fits = cache && cache.want <= want * ZOOM_SLACK && cache.want * ZOOM_SLACK >= want;
@@ -260,15 +260,22 @@ export function drawPlanShadows(ctx, {
     const since = cache ? performance.now() - cache.builtAt : Infinity;
     // Другой этаж — сразу; нажатие — после него, а пока тянут — без тени (старая
     // отстаёт); иначе — не чаще MIN_GAP, последний раз — по таймеру.
-    if (force || !cache || cache.level !== level) cache = build({ casters, dir, s, want, dark, key, level });
-    else if (pointers.size) {
+    const waitForGesture = !force && cache?.level === level;
+    if (waitForGesture && pointers.size) {
       pending = true;
       if (cache.key !== key) { // геометрия меняется под пальцем — тень спрятана
         (state._planShadow || (state._planShadow = { builds: 0, ms: 0 })).hidden = true;
         return;
       }
-    } else if (since >= MIN_GAP) cache = build({ casters, dir, s, want, dark, key, level });
-    else later(MIN_GAP - since);
+    } else if (waitForGesture && since < MIN_GAP) later(MIN_GAP - since);
+    else {
+      cache = build({ casters, dir, s, want, dark, key, level }, cache?.canvas);
+      caches[target] = cache;
+      if (!force) {
+        const stats = state._planShadow || (state._planShadow = { builds: 0, ms: 0 });
+        stats.builds += 1;
+      }
+    }
   }
   ctx.save();
   // Точка слоя ≤ 3 точек экрана — без сглаживания (тень и так размыта; растяжение со
@@ -276,6 +283,7 @@ export function drawPlanShadows(ctx, {
   ctx.imageSmoothingEnabled = (scale * dpr) / cache.ppm > 3;
   ctx.drawImage(cache.canvas, cache.x, cache.y, cache.w, cache.h);
   ctx.restore();
+  if (force) return;
   const stats = state._planShadow || (state._planShadow = { builds: 0, ms: 0 });
   stats.ms = performance.now() - t0;
   stats.hidden = false;

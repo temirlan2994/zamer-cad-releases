@@ -9,11 +9,17 @@ describe('выбор проектов при запуске', () => {
   before(async () => { app = await startApp(); });
   after(async () => { await app?.close(); });
 
-  it('у нового пользователя сначала показаны примеры с эскизами', async () => {
+  it('у нового пользователя примеры показывают снимки планов', async () => {
     const { page } = app;
     assert.equal(await page.isHidden('#startRecentSection'), true);
     assert.equal(await page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 4);
-    assert.ok(await page.$$eval('#startTemplates svg .project-preview-room', (nodes) => nodes.length) > 8);
+    const images = page.locator('#startTemplates .project-preview-image');
+    assert.equal(await images.count(), 4);
+    for (const image of await images.all()) {
+      await image.scrollIntoViewIfNeeded();
+      await image.evaluate((node) => node.decode());
+      assert.equal(await image.evaluate((node) => node.naturalWidth), 640);
+    }
   });
 
   it('сохранённый проект появляется первым с настоящей миниатюрой и открывается карточкой', async () => {
@@ -85,13 +91,36 @@ describe('выбор проектов при запуске', () => {
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler));
     await page.waitForSelector('#startContinue:visible');
-    assert.match(await page.textContent('#startContinue'), /Продолжить текущий проект/);
+    assert.equal(await page.textContent('#startContinue span'), before);
     await page.click('#startNew');
     await page.waitForSelector('#warnCancel:visible');
     await page.click('#warnCancel');
     await page.click('#startContinue');
     await page.waitForSelector('#startScreen', { state: 'hidden' });
     assert.equal(await page.evaluate(() => window.__kepler.state.project.name), before);
+  });
+});
+
+describe('первый чертёж', () => {
+  it('обе команды включают инструмент, а первая отдельная стена убирает приглашение и сохраняется', async () => {
+    const app = await startApp();
+    try {
+      const { page } = app;
+      await page.click('#startNew');
+      await page.click('#firstDrawActions [data-first-tool="boundRoomBtn"]');
+      await page.locator('#firstDrawActions').waitFor({ state: 'hidden' });
+      assert.equal(await page.isVisible('#roomCards'), true);
+      await page.click('#selectToolBtn');
+      await page.click('#firstDrawActions [data-first-tool="wallToolBtn"]');
+      const rect = await page.locator('#canvas').boundingBox();
+      await page.mouse.click(rect.x + rect.width * .35, rect.y + rect.height * .5);
+      await page.mouse.click(rect.x + rect.width * .60, rect.y + rect.height * .5);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.evaluate(() => window.__kepler.state.project.walls.length), 1);
+      await page.locator('#firstDrawActions').waitFor({ state: 'hidden' });
+      await page.click('#menuBtn');
+      assert.equal(await page.isVisible('#startContinue'), true);
+    } finally { await app.close(); }
   });
 });
 

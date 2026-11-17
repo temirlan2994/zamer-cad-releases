@@ -17,6 +17,7 @@ import {
 import { snapWallPoint } from '../core/wall-manual.js';
 import { escapeHtml, toast } from './dom.js';
 import { snapSettings } from './draw-snap-ui.js';
+import { sectionIcon } from './section-icons.js';
 import { closeElevation, openElevation, openElevationId, refreshElevationView } from './elevation-view.js';
 import { gridStep } from './snap.js';
 import { state } from './state.js';
@@ -26,9 +27,9 @@ import { cancelTool, selectObject, setHint, setTool } from './tools.js';
 import { requestDraw } from './view.js';
 
 const MIN_LEN = 300; // мм — короче линия разреза не бывает
-const HINT_A = 'Разрез: кликните начало линии · Ctrl — орто, Shift — без привязки · Esc — отмена';
-const HINT_B = 'Разрез: кликните конец линии · Esc — отмена';
-const HINT_SIDE = 'Разрез: кликните с той стороны, куда смотреть (или Enter) · Esc — отмена';
+const HINT_A = 'Укажите начало разреза';
+const HINT_B = 'Укажите конец линии';
+const HINT_SIDE = 'Укажите сторону взгляда';
 
 export const isPlanSectionTool = () => state.tool?.kind === 'psec';
 
@@ -92,7 +93,7 @@ function commitTool() {
   });
   cancelTool();
   selectObject({ type: 'section', id: view.id });
-  toast(`${view.name} создан · двойной клик по линии или пункт в «Видах» — открыть`);
+  toast(`${view.name} создан`);
 }
 
 // Enter — принять сторону под курсором. true — клавиша съедена.
@@ -224,19 +225,18 @@ export function renderSectionProps(panel, view) {
   const auto = houseDepth(state.project, view);
   panel.innerHTML = `
     <h2>Разрез</h2>
-    <p class="subtitle">${level ? `План «${escapeHtml(level.name)}» · ` : ''}линия ${fr ? (fr.len / 1000).toFixed(2) : '—'} м</p>
+    <p class="subtitle">${level ? `${escapeHtml(level.name)} · ` : ''}${fr ? (fr.len / 1000).toLocaleString('ru', { maximumFractionDigits: 2 }) : '—'} м</p>
     <div class="prop-block" id="secProps">
+      <button type="button" id="secOpen" class="primary">${sectionIcon('section')} Открыть разрез</button>
       <label class="prop-field"><span>Название</span>
         <input id="secName" type="text" maxlength="40" value="${escapeHtml(view.name)}"></label>
       <button type="button" id="secFlip" title="Смотреть в другую сторону от линии">⇄ Развернуть</button>
       <label class="prop-field"><span>Глубина видимости, мм</span>
         <input id="secDepth" type="number" step="100" min="100" inputmode="numeric" value="${view.depth ?? ''}" placeholder="до габарита дома (${auto})"></label>
-      <div class="prop-row"><span>Масштаб</span><strong>1:${scale}</strong></div>
+      <div class="prop-row"><span>Масштаб на листе</span></div>
       <div class="elev-scale" role="radiogroup" aria-label="Масштаб разреза">
         ${VIEW_SCALES.map((s) => `<button type="button" role="radio" data-sec-scale="${s}" aria-checked="${s === scale}"${s === scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
       </div>
-      <button type="button" id="secOpen" class="primary">Открыть вид</button>
-      <p class="hint">Тяните квадраты на концах — длина и угол линии, кружок посередине или саму линию — сдвиг. Двойной клик по линии — открыть вид.</p>
       <button type="button" id="secDelete" class="danger">Удалить разрез</button>
     </div>`;
   const id = view.id;

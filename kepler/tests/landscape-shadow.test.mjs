@@ -192,11 +192,10 @@ test('сетка «солнечных часов»: открытое место 
 test('настройки вида теней: умолчания без localStorage и сохранение в состоянии', () => {
   const s = loadLandscapeSun();
   assert.equal(s.mode, 'default');
-  assert.equal(s.time, 15 * 60);
-  assert.match(s.date, /^\d{4}-06-21$/);
-  setLandscapeSun({ mode: 'sun', time: 7 * 60 });
+  assert.equal(s.analysis, false);
+  setLandscapeSun({ mode: 'sun', analysis: true });
   assert.equal(state.lsSun.mode, 'sun');
-  assert.equal(state.lsSun.time, 420);
+  assert.equal(state.lsSun.analysis, true);
 });
 
 test('короб не затеняет свою засыпку в анализе освещённости', () => {

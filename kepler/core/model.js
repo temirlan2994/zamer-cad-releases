@@ -217,7 +217,7 @@ export function hasContent(project) {
   if (!project || typeof project !== 'object') return false;
   const levels = Array.isArray(project.levels) ? project.levels : [];
   if (levels.length > 1) return true;
-  if (levels.some((l) => l?.rooms?.length || l?.items?.length || l?.openings?.length || l?.slabOpenings?.length)) return true;
+  if (levels.some((l) => l?.rooms?.length || l?.walls?.length || l?.items?.length || l?.openings?.length || l?.slabOpenings?.length)) return true;
   if (Array.isArray(project.variants) && project.variants.length) return true;
   if (Array.isArray(project.masses) && project.masses.length) return true;
   if (Array.isArray(project.massVoids) && project.massVoids.length) return true;

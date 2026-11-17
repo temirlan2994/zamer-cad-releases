@@ -10,12 +10,12 @@ import { fmtMark } from '../core/elevation.js';
 
 const LIGHT = {
   bg: '#fbfcfe', line: '#2b313a', text: '#18202b', muted: '#687486', ground: '#4a5a3a', dim: '#5a6576',
-  cut: '#59616d', hatch: '#8c939d', cutLine: '#111821', glass: '#3f7fb8',
+  cut: '#374845', hatch: '#728681', cutLine: '#192525', glass: '#347089', datum: '#d8e0de', soil: '#e6e4dc',
   fill: { wall: '#e9e6e1', window: '#bcd8ef', door: '#c9a07a', slab: '#cdc8bf', roof: '#a9b1bb', stair: '#d6d0c6', plinth: '#b5ab9e', other: '#dedbd6' },
 };
 const DARK = {
   bg: '#0d1118', line: '#cfd8e3', text: '#eef4fb', muted: '#8c9aac', ground: '#9fb68a', dim: '#9aa8ba',
-  cut: '#a9b4c2', hatch: '#7d8896', cutLine: '#f2f6fb', glass: '#7fb4e6',
+  cut: '#abbab5', hatch: '#82948c', cutLine: '#f2f6fb', glass: '#93bfce', datum: '#344247', soil: '#303631',
   fill: { wall: '#3a4049', window: '#2e5274', door: '#6f5038', slab: '#4b4842', roof: '#5a6474', stair: '#4a4640', plinth: '#55504a', other: '#41444a' },
 };
 
@@ -32,15 +32,21 @@ export function elevationColors(canvasBg = '') {
 // (1:100 при zoom = 1 — как на бумаге при 96 dpi).
 export const PX_PER_MM = 96 / 25.4;
 // Не помещается (телефон, 1:50) — уменьшается до размера холста; zoom в ответе.
-export function fitElevation(el, cssW, cssH, scale, zoom = 1) {
+export function fitElevation(el, cssW, cssH, scale) {
   const b = el.bounds;
   const k0 = PX_PER_MM / scale;
-  const w = Math.max(1, b.u1 - b.u0);
-  const h = Math.max(1, b.z1 - b.z0);
-  const fit = Math.min((cssW - 200) / (w * k0), (cssH - 110) / (h * k0));
-  const z = fit > 0 ? Math.min(zoom, fit) : zoom;
-  const k = k0 * z;
-  return { k, zoom: z, ox: cssW / 2 - ((b.u0 + b.u1) / 2) * k - 70, oy: cssH / 2 + ((b.z0 + b.z1) / 2) * k - 14 };
+  const ground = el.ground || [];
+  const u0 = Math.min(b.u0, ...ground.map((p) => p.u));
+  const u1 = Math.max(b.u1, ...ground.map((p) => p.u));
+  const z0 = Math.min(b.z0, ...ground.map((p) => p.z));
+  const z1 = Math.max(b.z1, ...ground.map((p) => p.z));
+  // Поле отметок справа и полоса инструментов снизу.
+  const left = cssW < 560 ? 12 : Math.max(28, cssW * 0.06);
+  const right = cssW < 560 ? 108 : 152;
+  const availableW = Math.max(1, cssW - left - right);
+  const availableH = Math.max(1, cssH - 120);
+  const k = Math.min(availableW / Math.max(1, u1 - u0), availableH / Math.max(1, z1 - z0), k0 * 4);
+  return { k, zoom: k / k0, ox: left + availableW / 2 - (u0 + u1) * k / 2, oy: (cssH - 40) / 2 + (z0 + z1) * k / 2 };
 }
 
 // Координаты — по пикселям устройства: соседние грани стыкуются без
@@ -164,12 +170,31 @@ function drawCuts(ctx, el, view, c, fillS, lineS) {
 }
 
 // Нарисовать фасад. opts: { view: {k, ox, oy}, colors, marks, title }.
-export function drawElevation(ctx, el, { view, colors = LIGHT, marks = true, title = '', dpr = 1 } = {}) {
+export function drawElevation(ctx, el, { view, colors = LIGHT, marks = true, title = '', presentation = false, dpr = 1 } = {}) {
   const c = colors;
   const fillS = snapper(view, dpr);
   const lineS = snapper(view, dpr, true);
   ctx.save();
   ctx.lineCap = 'square';
+  if (presentation && (el.polys.length || el.cuts?.length)) {
+    if (marks) {
+      ctx.setLineDash([6, 6]);
+      ctx.strokeStyle = c.datum;
+      for (const level of el.levels) {
+        const y = lineS.y(level.z);
+        ctx.beginPath(); ctx.moveTo(fillS.x(el.bounds.u0) - 20, y); ctx.lineTo(fillS.x(el.bounds.u1) + 44, y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (el.ground?.length > 1) {
+      const grd = el.ground;
+      path(ctx, grd, fillS);
+      for (let i = grd.length - 1; i >= 0; i -= 1) ctx.lineTo(fillS.x(grd[i].u), fillS.y(grd[i].z) + 8);
+      ctx.closePath();
+      ctx.fillStyle = c.soil;
+      ctx.fill();
+    }
+  }
   for (const p of el.polys) {
     path(ctx, p.pts, fillS);
     ctx.closePath();

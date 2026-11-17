@@ -1,11 +1,10 @@
 // Панель свойств в режиме «Участок»: настройки участка и его объекты.
 
-import { insolationZone } from '../core/insolation.js';
-import { formatSunInfo, polygonAreaM2, sunPosition } from '../core/site.js';
+import { openClimatePanel } from './solar-analysis.js';
+import { polygonAreaM2 } from '../core/site.js';
 import { workingBuildableGeometry } from '../core/site-planning.js';
 import { setBuildingOrigin } from '../core/site-check.js';
 import { refs, toast } from './dom.js';
-import { applyModeRotation } from './modes.js';
 import { deleteSelection } from './plan-actions.js';
 import { setBuildingRotation } from './site-actions.js';
 import { state } from './state.js';
@@ -14,7 +13,6 @@ import { selectObject, setTool, startDraw } from './tools.js';
 import { applyCalibration } from './underlay.js';
 import { bindTerrainSection, renderTerrainPointProps, terrainSection } from './props-terrain.js';
 import { importUnderlayMarks } from './terrain.js';
-import { requestDraw } from './view.js';
 
 // --- Свойства участка ---
 
@@ -60,11 +58,7 @@ function bindBuildingPosition(panel) {
 
 export function renderSiteSettings(panel) {
   const site = state.project.site;
-  const sun = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
   const working = site.boundary ? workingBuildableGeometry(site) : null;
-  const auto = insolationZone(site.location.lat);
-  const hours = Math.floor(site.sun.time / 60);
-  const mins = site.sun.time % 60;
   panel.innerHTML = `
     <h2>Участок</h2>
     <div class="prop-block">
@@ -74,8 +68,6 @@ export function renderSiteSettings(panel) {
     <div class="prop-block">
       <div class="prop-row"><span>Площадь участка</span><strong>${site.boundary ? `${polygonAreaM2(site.boundary).toFixed(1)} м²` : '—'}</strong></div>
       <div class="prop-row"><span>Рабочее пятно</span><strong>${working?.geometry?.length ? `${working.areaM2.toFixed(1)} м²` : '—'}</strong></div>
-      <label class="prop-field"><span>Север, ° по часовой (0 = вверх съёмки)</span>
-        <input id="northDeg" type="number" step="1" value="${Math.round(site.north)}"></label>
       ${buildingRotationField()}
       ${buildingPositionFields()}
     </div>
@@ -89,45 +81,13 @@ export function renderSiteSettings(panel) {
       <label class="check-row"><input type="checkbox" id="showZone" ${site.showBuildZone ? 'checked' : ''}><span>Показывать рабочее пятно</span></label>
       <p class="empty-hint">Эскизная проверка по введённым значениям, не нормативное заключение. Проверьте ограничения по правилам вашего региона.</p>
     </div>
-    <h3>Инсоляция</h3>
-    <div class="prop-block">
-      <label class="check-row"><input type="checkbox" id="sunEnabled" ${site.sun.enabled ? 'checked' : ''}><span>Показывать солнце и тени</span></label>
-      <div class="prop-grid">
-        <label class="prop-field"><span>Широта</span><input id="lat" type="number" step="0.001" value="${site.location.lat}"></label>
-        <label class="prop-field"><span>Долгота</span><input id="lon" type="number" step="0.001" value="${site.location.lon}"></label>
-      </div>
-      <div class="prop-grid">
-        <label class="prop-field"><span>Пояс UTC+</span><input id="tz" type="number" step="1" value="${site.location.tz}"></label>
-        <label class="prop-field"><span>Высота дома, м</span><input id="bh" type="number" step="0.5" min="2" value="${(site.buildingHeight / 1000).toFixed(1)}"></label>
-      </div>
-      <label class="check-row"><input type="checkbox" id="solarVerified" ${site.solarVerified ? 'checked' : ''}>
-        <span>Координаты и направление севера проверены</span></label>
-      <label class="prop-field"><span>Дата</span><input id="sunDate" type="date" value="${site.sun.date}"></label>
-      <label class="prop-field"><span>Время: <b id="sunTimeLabel">${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</b></span>
-        <input id="sunTime" type="range" min="0" max="1440" step="15" value="${site.sun.time}"></label>
-      <div class="prop-row"><span>Солнце</span><strong id="sunInfo">${formatSunInfo(sun)}</strong></div>
-      <div class="prop-grid">
-        <label class="prop-field"><span>Норма инсоляции, ч</span>
-          <input id="normHours" type="number" step="0.5" min="0.5" placeholder="${auto.hours}" value="${site.norms?.hours ?? ''}"></label>
-        <label class="prop-field"><span>Расчётный день</span>
-          <input id="normDay" placeholder="ММ-ДД: ${auto.day}" value="${site.norms?.day ?? ''}"></label>
-      </div>
-      <p class="empty-hint">Пусто — по широте участка: ${auto.zone} зона, ${String(auto.hours).replace('.', ',')} ч на ${auto.day.split('-').reverse().join('.')} (СанПиН). Часы по комнатам видны на плане при включённом солнце.</p>
-    </div>
-    <p class="empty-hint">Границу, красную линию, въезд и дорогу добавляйте инструментами слева. По умолчанию здесь север вверх; повернуть вид — кнопка ⟲ у правого края холста (у «Плана», «Участка» и «Ландшафта» свой угол, данные не меняются).</p>`;
+    <div class="prop-actions"><button type="button" data-climate-location-link>☀ Север и солнце →</button></div>`;
 
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   bindBuildingRotation(panel);
   bindBuildingPosition(panel);
   bindTerrainSection(panel);
-  panel.querySelector('#northDeg').addEventListener('change', (e) => {
-    mutate(() => {
-      site.north = ((Number(e.target.value) || 0) % 360 + 360) % 360;
-      site.solarVerified = false;
-    });
-    applyModeRotation();
-    requestDraw();
-  });
+  panel.querySelector('[data-climate-location-link]').addEventListener('click', (e) => openClimatePanel(e.currentTarget, { location: true }));
   panel.querySelector('#setbackB').addEventListener('change', (e) => {
     mutate(() => { site.setbackBoundary = Math.max(0, Number(e.target.value) || 0) * 1000; });
   });
@@ -137,44 +97,7 @@ export function renderSiteSettings(panel) {
   panel.querySelector('#showZone').addEventListener('change', (e) => {
     mutate(() => { site.showBuildZone = e.target.checked; });
   });
-  panel.querySelector('#sunEnabled').addEventListener('change', (e) => {
-    tweak(() => { site.sun.enabled = e.target.checked; });
-  });
-  panel.querySelector('#solarVerified').addEventListener('change', (e) => {
-    mutate(() => { site.solarVerified = e.target.checked; });
-  });
-  const updateSun = () => {
-    const s = sunPosition(site.location.lat, site.location.lon, site.location.tz, site.sun.date, site.sun.time);
-    const info = panel.querySelector('#sunInfo');
-    if (info) info.textContent = formatSunInfo(s);
-  };
-  for (const [id, apply] of [
-    ['lat', (v) => { site.location.lat = Number(v) || 0; site.solarVerified = false; }],
-    ['lon', (v) => { site.location.lon = Number(v) || 0; site.solarVerified = false; }],
-    ['tz', (v) => { site.location.tz = Number(v) || 0; site.solarVerified = false; }],
-    ['bh', (v) => { site.buildingHeight = Math.max(2000, (Number(v) || 6) * 1000); }],
-    ['sunDate', (v) => { if (/^\d{4}-\d{2}-\d{2}$/.test(v)) site.sun.date = v; }],
-  ]) {
-    panel.querySelector(`#${id}`).addEventListener('change', (e) => {
-      mutate(() => apply(e.target.value));
-      updateSun();
-    });
-  }
-  panel.querySelector('#normHours').addEventListener('change', (e) => {
-    const v = Number(String(e.target.value).replace(',', '.'));
-    mutate(() => { site.norms = { ...site.norms, hours: v > 0 ? v : null }; });
-  });
-  panel.querySelector('#normDay').addEventListener('change', (e) => {
-    const v = e.target.value.trim();
-    mutate(() => { site.norms = { ...site.norms, day: /^\d\d-\d\d$/.test(v) ? v : null }; });
-  });
-  panel.querySelector('#sunTime').addEventListener('input', (e) => {
-    tweak(() => { site.sun.time = Number(e.target.value); });
-    const h = Math.floor(site.sun.time / 60);
-    const m = site.sun.time % 60;
-    panel.querySelector('#sunTimeLabel').textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    updateSun();
-  });
+
 }
 
 export function renderSiteObjectProps(panel, sel) {

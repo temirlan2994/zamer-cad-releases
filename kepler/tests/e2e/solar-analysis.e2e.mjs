@@ -3,7 +3,7 @@
 // настоящего окна, а не только расчёт фасадных часов.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, openNew, startApp } from './helpers.mjs';
+import { openNew, startApp } from './helpers.mjs';
 
 async function scene(page) {
   return page.evaluate(async () => {
@@ -98,12 +98,11 @@ describe('световой анализ комнаты', () => {
   it('включается для выбранной комнаты и показывает проверенную карту', async () => {
     const { page } = app;
     await page.waitForSelector('#roomName');
-    assert.match(await page.textContent('#propsPanel'), /Световой анализ/);
-    assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'false');
-
-    await clickToolbarTool(page, 'sunAnalysisBtn');
+    assert.match(await page.textContent('#propsPanel'), /Свет в помещении/);
+    await page.click('[data-open-climate]');
+    assert.equal(await page.getAttribute('[data-home-climate-map="direct"]', 'aria-pressed'), 'false');
+    await page.click('[data-home-climate-map="direct"]');
     await page.waitForSelector('#solarLegend:not([hidden])');
-    assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'true');
     assert.match(await page.textContent('#solarLegend'), /Прямое солнце/);
 
     const value = await analysis(page);
@@ -131,18 +130,19 @@ describe('световой анализ комнаты', () => {
 
     await page.evaluate((id) => window.__kepler.select({ type: 'room', id }), ids.roomId);
     await page.waitForSelector('#roomName');
-    assert.match(await page.textContent('#propsPanel'), /Остекление[\s\S]*4[,.]8/);
+    await page.click('[data-open-climate]');
+    await page.click('[data-analysis-fold="detail"] > summary');
+    assert.match(await page.textContent('.climate-metrics'), /Остекление[\s\S]*4[,.]8/);
   });
 
   it('переключается на эскизные КЕО/люксы и реагирует на стекло', async () => {
     const { page } = app;
-    await page.focus('#solarDirectTab');
-    await page.keyboard.press('ArrowRight');
+    assert.match(await page.textContent('[data-home-climate]'), /Предварительная оценка/);
+    await page.focus('[data-home-climate-map="daylight"]');
+    await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__kepler.state.solarAnalysis?.mode === 'daylight');
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'solarDaylightTab');
-    await page.waitForSelector('[data-daylight-metric="lux-mean"]');
+    await page.waitForSelector('#solarLegend:not([hidden])');
     assert.match(await page.textContent('#solarLegend'), /Освещённость|500\+ лк/);
-    assert.match(await page.textContent('#solarAnalysisPanel'), /Предварительная оценка|Предварительно/);
 
     const before = await page.evaluate(async () => {
       const { currentDaylightAnalysis } = await import('./ui/solar-analysis.js');
@@ -152,6 +152,9 @@ describe('световой анализ комнаты', () => {
     assert.ok(before.df > 0 && before.lux > 0, JSON.stringify(before));
     assert.ok(before.coverage300 >= 0 && before.coverage300 <= 1, JSON.stringify(before));
 
+    await page.click('[data-open-climate]');
+    const detail = page.locator('[data-analysis-fold="detail"]');
+    if (!await detail.evaluate((node) => node.open)) await detail.locator('summary').first().click();
     await page.fill('#daylightTransmittance', '30');
     await page.locator('#daylightTransmittance').blur();
     await page.waitForFunction(async (previous) => {
@@ -197,6 +200,7 @@ describe('световой анализ комнаты', () => {
     await page.keyboard.press('Escape');
     assert.equal(await page.isHidden('#solarReportDialog'), true);
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'solarAnnualRun');
+    await page.click('#projectRouteClose');
   });
 
   it('показывает живой progress, отменяет большой отчёт и чисто открывается снова', async () => {
@@ -232,8 +236,9 @@ describe('световой анализ комнаты', () => {
 
   it('выключение убирает аналитическую легенду и не даёт ошибок', async () => {
     const { page } = app;
-    await clickToolbarTool(page, 'sunAnalysisBtn');
-    assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'false');
+    await page.click('[data-open-climate]');
+    await page.click('[data-home-climate-map][aria-pressed="true"]');
+    assert.equal(await page.locator('[data-home-climate-map][aria-pressed="true"]').count(), 0);
     assert.equal(await page.isHidden('#solarLegend'), true);
     assert.deepEqual(app.errors, []);
   });
@@ -250,31 +255,17 @@ describe('световой анализ на телефоне', () => {
 
   after(async () => { await app?.close(); });
 
-  it('включается из свойств комнаты; запасной вход синхронен', async () => {
+  it('открывается для выбранной комнаты из мобильных свойств', async () => {
     const { page } = app;
-    assert.equal(await page.isVisible('#sunAnalysisBtn'), false, 'колонка инструментов скрыта');
 
     // Основной телефонный путь: выбранная комната → «Свойства».
     await page.tap('#mobileBar [data-sheet="props"]');
-    await page.waitForSelector('#solarAnalysisOn', { state: 'visible' });
-    assert.equal(await page.isChecked('#solarAnalysisOn'), false);
-    await page.tap('#solarAnalysisOn');
+    await page.tap('[data-open-climate]');
+    await page.waitForSelector('[data-home-climate-map="direct"]');
+    assert.equal(await page.getAttribute('[data-home-climate-map="direct"]', 'aria-pressed'), 'false');
+    await page.tap('[data-home-climate-map="direct"]');
     await page.waitForFunction(() => window.__kepler.state.solarAnalysis?.on === true);
-    await page.waitForSelector('#solarLegend:not([hidden])', { state: 'visible' });
-    assert.equal(await page.isChecked('#solarAnalysisOn'), true);
-
-    // Запасной путь — «Свойства» активного вида без выделения. Он должен
-    // отражать то же состояние, а не включать второй независимый режим.
-    await page.tap('#mobileBar [data-sheet="props"]'); // закрыть лист
-    await page.evaluate(() => window.__kepler.select(null));
-    await page.tap('#mobileBar [data-sheet="props"]');
-
-    const section = '#propsPanel details[data-sec="solar"]';
-    await page.waitForSelector(section);
-    if (!await page.$eval(section, (node) => node.open)) await page.tap(`${section} > summary`);
-    await page.waitForSelector('#viewsSolarOn', { state: 'visible' });
-    assert.match(await page.textContent('#viewsSolar'), /Световой анализ|Карта прямого солнца/);
-    assert.equal(await page.isChecked('#viewsSolarOn'), true);
+    await page.waitForSelector('#solarLegend:not([hidden])');
 
     const legend = await page.locator('#solarLegend').boundingBox();
     assert.ok(legend && legend.x >= 0 && legend.y >= 0, JSON.stringify(legend));

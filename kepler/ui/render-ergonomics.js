@@ -37,7 +37,7 @@ function write(v) {
 }
 
 // Обработчики от ui/ergonomics.js: перерисовать, счётчик на кнопке, смена настроек.
-export const ergoHooks = { redraw: null, counts: null, changed: null };
+export const ergoHooks = { redraw: null, changed: null };
 
 export function ergoPref() {
   if (!state.ergo) state.ergo = normalizeErgoPref(read());
@@ -177,10 +177,9 @@ function arrow(ctx, a, b, size) {
 export function drawErgonomics(ctx, o) {
   const { st, tokens, px, p2s, dpr, scale, print } = o;
   st._ergoDrawn = null;
-  if (print || !ergoOn()) { ergoHooks.counts?.(null); return; }
+  if (print || !ergoOn()) return;
   const pref = ergoPref();
   const res = ergoAnalysis(st.project, o.walls || st.walls, { live: true });
-  ergoHooks.counts?.(res.counts);
   const C = isDark(tokens.canvas) ? COLORS.dark : COLORS.light;
   const focus = st.ergoFocus || null;
   const drawn = { error: 0, warn: 0, ok: 0, heat: 0, triangle: 0, ms: Math.round(res.ms * 10) / 10 };

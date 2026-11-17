@@ -1,51 +1,17 @@
 // Режим «Эргономика» (core/ergonomics.js, рисует ui/render-ergonomics.js):
-// кнопка в колонке инструментов (#ergoToolBtn, клавиша E) со счётчиком
-// ошибок и замечаний, блок настроек во «Видах» (группы правил, нормальные
-// зоны, тепловая карта), блок «Эргономика предмета» в «Свойствах» выбранного
-// предмета (находки, «Показать», «Исправить» — сдвиг одним шагом истории).
+// Клавиша E включает анализ, настройки находятся в «Аналитика → Движение».
+// Свойства выбранного предмета позволяют показать и исправить зазор.
 // Замечания режима — группа «Эргономика» во вкладке «⚠» (core/issues.js).
 
 import { ERGO_GROUPS, roomOfItem, suggestErgoFix } from '../core/ergonomics.js';
 import { itemBounds } from '../core/clearance.js';
 import { unionRect } from '../core/issues.js';
-import { el, escapeHtml, toast } from './dom.js';
+import { escapeHtml, toast } from './dom.js';
 import { renderProps } from './props.js';
 import { ergoAnalysis, ergoFindings, ergoHooks, ergoOn, ergoPref, setErgoPref } from './render-ergonomics.js';
 import { state } from './state.js';
 import { mutate, refreshIssues } from './store.js';
 import { requestDraw, showPlanRect } from './view.js';
-
-let lastBadge = '';
-
-// Счётчик на кнопке: «3 · 5» (ошибки · замечания); режим выключен — скрыт.
-function syncBadge(counts) {
-  const badge = el('ergoBadge');
-  if (!badge) return;
-  const text = counts && ergoOn() ? (counts.error || counts.warn ? `${counts.error}·${counts.warn}` : '✓') : '';
-  const cls = !counts ? '' : counts.error ? 'error' : counts.warn ? 'warn' : 'ok';
-  const key = `${text}|${cls}`;
-  if (key === lastBadge) return;
-  lastBadge = key;
-  badge.textContent = text;
-  badge.hidden = !text;
-  badge.className = `tb-badge ${cls}`;
-  const btn = el('ergoToolBtn');
-  if (btn) {
-    btn.dataset.errors = String(counts?.error || 0);
-    btn.dataset.warns = String(counts?.warn || 0);
-    btn.setAttribute('aria-label', counts && ergoOn()
-      ? `Эргономика: ошибок ${counts.error}, замечаний ${counts.warn}` : 'Эргономика');
-  }
-}
-
-export function syncErgoButton() {
-  const btn = el('ergoToolBtn');
-  if (!btn) return;
-  const on = ergoPref().on;
-  btn.classList.toggle('active', on);
-  btn.setAttribute('aria-pressed', String(on));
-  if (!on) syncBadge(null);
-}
 
 export function toggleErgo(on = !ergoPref().on) {
   setErgoPref({ on });
@@ -59,15 +25,11 @@ export function toggleErgo(on = !ergoPref().on) {
 
 export function bindErgonomics() {
   ergoHooks.redraw = requestDraw;
-  ergoHooks.counts = syncBadge;
   ergoHooks.changed = () => {
-    syncErgoButton();
     refreshIssues();
     renderProps();
     requestDraw();
   };
-  el('ergoToolBtn')?.addEventListener('click', () => toggleErgo());
-  syncErgoButton();
 }
 
 // Клавиша E — вкл/выкл (в «Плане»).
@@ -78,23 +40,23 @@ export function handleErgoKey(event) {
   return true;
 }
 
-// ------------------------------------------------------------ «Виды»: настройки
+// Настройки для раздела «Движение и проходы».
 
 export function ergoViewBlock() {
   const pref = ergoPref();
   const counts = pref.on ? ergoAnalysis().counts : null;
   const dis = pref.on ? '' : 'disabled';
   return `
-    <h3>Эргономика мебели</h3>
+    <details class="analysis-disclosure" data-analysis-fold="ergo"><summary>Проходы у мебели${counts ? ` · ${counts.error + counts.warn}` : ''}</summary>
     <div class="prop-block" id="viewsErgo">
-      <label class="check-row"><input type="checkbox" id="viewsErgoOn" ${pref.on ? 'checked' : ''}><span>Анализ эргономики</span>${counts ? `<em>${counts.error}·${counts.warn}</em>` : ''}</label>
+      <label class="check-row"><input type="checkbox" id="viewsErgoOn" ${pref.on ? 'checked' : ''}><span>Проверять зазоры у мебели <kbd>E</kbd></span>${counts ? `<em>${counts.error}·${counts.warn}</em>` : ''}</label>
       <div class="views-ls-groups${pref.on ? '' : ' off'}">
         ${ERGO_GROUPS.map((g) => `<label class="check-row"><input type="checkbox" data-ergo-group="${g.id}" ${pref.groups[g.id] ? 'checked' : ''} ${dis}><span>${escapeHtml(g.title)}</span></label>`).join('')}
       </div>
       <label class="check-row"><input type="checkbox" id="viewsErgoOk" ${pref.okZones ? 'checked' : ''} ${dis}><span>Показывать нормальные зоны (зелёным)</span></label>
       <label class="check-row"><input type="checkbox" id="viewsErgoHeat" ${pref.heat ? 'checked' : ''} ${dis}><span>Проходимость (тепловая карта)</span></label>
-      <p class="hint">Красным — меньше нормы (ошибка), жёлтым — тесно. Зазоры меряются по зоне пользования: перед шкафом, сбоку кровати, за стулом. Проходимость: красное — уже 600 мм, жёлтое — уже 800. Клавиша <kbd>E</kbd>. На листы и печать не выводится.</p>
-    </div>`;
+      <button type="button" data-analysis-open="ergo-plan" ${dis}>Показать на плане</button>
+    </div></details>`;
 }
 
 export function bindErgoViewBlock(panel, rerender) {

@@ -38,6 +38,7 @@ export function safeFileName() {
 
 export function handleExport(kind) {
   refs.exportDropdown.hidden = true;
+  document.getElementById('exportBtn').setAttribute('aria-expanded', 'false');
   if (kind === 'project') {
     download(`${safeFileName()}.kepler.json`, serializeProject(state.project), 'application/json');
     toast('Файл проекта сохраняется (.kepler.json)');
@@ -56,11 +57,12 @@ export function handleExport(kind) {
     });
   } else if (kind === 'sheet-png') {
     const png = buildCurrentSheetPng(state.project, state.modeName === 'landscape' ? 'site' : state.modeName, {
+      sheetId: state.sheetOpen,
       sectionId: state.modeName === 'landscape' ? state.lsSectionId : null,
     });
     if (!png) { toast(state.modeName !== 'plan' ? 'Для генплана нужна граница участка' : 'На этом этаже нет комнат', true); return; }
     png.then((blob) => download(`${safeFileName()}-лист.png`, blob, 'image/png'));
-    toast('PNG: лист A3, 150 dpi');
+    toast('Подготовка листа PNG');
   } else if (kind === 'schedule-csv') {
     download(`${safeFileName()}-экспликация.csv`, buildRoomScheduleCsv(state.project), 'text/csv;charset=utf-8');
     toast('Экспликация помещений (CSV) — откроется в Excel');

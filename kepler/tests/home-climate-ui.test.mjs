@@ -176,9 +176,9 @@ test('выбор комнаты и даты остаётся состояние�
     closest: (selector) => (selector === '[data-home-climate]' ? {} : null),
   };
   event.target.closest = (selector) => selector.includes('[data-home-climate-date]') ? dateInput : null;
-  assert.equal(handleHomeClimateInput(event, { project, state }), true);
-  assert.equal(state.solarAnalysis.date, '2026-12-21');
-  assert.equal(project.site?.sun?.date === '2026-12-21', false);
+  assert.equal(handleHomeClimateInput(event, { project, state, mutate: (change) => change() }), true);
+  assert.equal(state.solarAnalysis.date, undefined);
+  assert.equal(project.site.sun.date, '2026-12-21');
 });
 
 test('refresh обновляет только производную сводку', () => {

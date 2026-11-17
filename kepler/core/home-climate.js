@@ -170,19 +170,10 @@ export function analyzeHomeClimateOverview(project = {}) {
   };
 }
 
-function detailOptions(options) {
-  return {
-    ...options,
-    cell: hasFiniteValue(options.cell) ? Number(options.cell) : 1000,
-    maxCells: hasFiniteValue(options.maxCells) ? Math.min(120, Math.max(16, Number(options.maxCells))) : 120,
-    workplane: hasFiniteValue(options.workplane) ? Number(options.workplane) : 800,
-  };
-}
-
 /** Ключ подробной сводки: обе световые модели и инженерные исходные данные. */
 export function homeClimateRoomKey(project = {}, options = {}) {
   const levelId = options.levelId || project?.activeLevel;
-  const opts = detailOptions({ ...options, levelId });
+  const opts = { ...options, levelId };
   return JSON.stringify({
     overview: homeClimateOverviewKey(project),
     daylight: roomDaylightAnalysisKey(project, opts),
@@ -201,7 +192,7 @@ export function analyzeHomeClimateRoom(project = {}, options = {}) {
   const room = array(level?.rooms).find((candidate) => candidate.id === options.roomId);
   if (!level || !room) return null;
 
-  const opts = detailOptions({ ...options, levelId, roomId: room.id });
+  const opts = { ...options, levelId, roomId: room.id };
   const daylightRaw = roomDaylightAnalysis(project, opts);
   const directRaw = roomSunlightAnalysis(project, opts);
   if (!daylightRaw || !directRaw) return null;
@@ -247,6 +238,8 @@ export function analyzeHomeClimateRoom(project = {}, options = {}) {
       windows: daylightRaw.windows,
       meanDaylightFactor: daylightRaw.meanDaylightFactor,
       meanLux: daylightRaw.meanLux,
+      minDaylightFactor: daylightRaw.minDaylightFactor,
+      coverageDaylightFactor: daylightRaw.coverageDaylightFactor,
       coverage300: daylightRaw.coverage300,
       coverageLux: daylightRaw.coverageLux,
       uniformity: daylightRaw.uniformity,

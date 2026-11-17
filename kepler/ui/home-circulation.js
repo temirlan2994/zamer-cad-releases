@@ -234,10 +234,9 @@ function routeCards(routes) {
 function profileControls(view) {
   const preset = PROFILE_WIDTHS.includes(view.profileWidthMm);
   return `<fieldset class="home-circulation-profile">
-    <legend>Расчётный профиль прохода</legend>
+    <legend>Ширина для проверки прохода</legend>
     <div role="group" aria-label="Ширина расчётного профиля">${PROFILE_WIDTHS.map((width) => `<button type="button" data-home-circulation-action="set-profile" data-circulation-profile="${width}" aria-pressed="${view.profileWidthMm === width}">${width} мм</button>`).join('')}</div>
     <label class="prop-field"><span>Свой размер, мм</span><input type="number" min="300" max="2000" step="10" inputmode="decimal" data-circulation-width value="${escapeHtml(preset ? '' : view.profileWidthMm)}" placeholder="например, 750"></label>
-    <p>Это размер тестового профиля для геометрического расчёта, а не автоматически назначенная норма или габарит жильца.</p>
   </fieldset>`;
 }
 
@@ -369,7 +368,6 @@ export function homeCirculationHtml(project, state = {}) {
         <div><dt>Неизвестно</dt><dd>${counts.unknown}</dd></div>
       </dl>
     </div>
-    <p class="home-circulation-disclaimer"><strong>Дискретный геометрический расчёт.</strong> Он учитывает текущие стены, двери и напольную мебель, но не является нормативной проверкой эвакуации или доступности. Разрешение сетки и уровень доказательства указаны в результате.</p>
     ${profileControls(view)}
     <div class="home-circulation-layer-controls" aria-label="Слои анализа движения">
       <button type="button" class="project-route-switch" role="switch" aria-checked="${view.routes}" data-home-circulation-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
@@ -379,14 +377,17 @@ export function homeCirculationHtml(project, state = {}) {
     </div>
     ${metricControls(view, periods, unknownFrequencyCount)}
     <section class="home-circulation-section" aria-labelledby="homeCirculationRoutesTitle">
-      <div class="home-program-section-head"><div><h3 id="homeCirculationRoutesTitle">Рассчитанные маршруты</h3><p>Линия строится вокруг мебели; заблокированные и неизвестные пути не дорисовываются.</p></div></div>
+      <div class="home-program-section-head"><h3 id="homeCirculationRoutesTitle">Маршруты</h3></div>
       ${routeCards(routes)}
     </section>
     <section class="home-circulation-section" aria-labelledby="homeCirculationAnchorsTitle">
-      <div class="home-program-section-head"><div><h3 id="homeCirculationAnchorsTitle">Точные точки сценариев</h3><p>Выберите мебель или дверь. Без выбора маршрут остаётся приблизительным.</p></div></div>
+      <div class="home-program-section-head"><div><h3 id="homeCirculationAnchorsTitle">Начало и конец пути</h3><p>Укажите дверь или предмет мебели для точного маршрута.</p></div></div>
       ${anchorEditors(project)}
     </section>
     ${warningsHtml(result)}
+    <details class="analysis-disclosure" data-analysis-fold="method"><summary>Как рассчитывается путь</summary>
+      <p class="home-circulation-disclaimer">Дискретный геометрический расчёт учитывает ширину прохода, стены, двери и напольную мебель. Он не является нормативной проверкой эвакуации или доступности.</p>
+    </details>
   </div>`;
 }
 

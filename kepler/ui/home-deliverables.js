@@ -193,13 +193,12 @@ export function homeDeliverablesHtml(project, options = {}) {
     <section class="home-deliverables-summary" aria-labelledby="homeDeliverablesTitle">
       <div>
         <h2 id="homeDeliverablesTitle">Листы и выдача</h2>
-        <p>Проверено по текущей модели: ${ready} из ${total}</p>
+        <p>Готово ${ready} из ${total}</p>
       </div>
       <strong>${STATUS[status].label}</strong>
     </section>
-    <p class="home-deliverables-lead">Соберите виды на листах и только затем выгружайте комплект. Проверка ниже оценивает наличие материалов, но не их профессиональную достаточность.</p>
     <section aria-labelledby="homeDeliverablesChecksTitle">
-      <h2 id="homeDeliverablesChecksTitle">Чек-лист комплекта</h2>
+      <h2 id="homeDeliverablesChecksTitle">Состав комплекта</h2>
       ${checksHtml(project, analysis)}
     </section>
     <section aria-labelledby="homeDeliverablesSheetsTitle">
@@ -212,10 +211,10 @@ export function homeDeliverablesHtml(project, options = {}) {
       ${exportsHtml(analysis)}
     </section>
     ${warningsHtml(analysis)}
-    <section class="home-deliverables-caveat" aria-labelledby="homeDeliverablesLimitsTitle">
-      <h2 id="homeDeliverablesLimitsTitle">Что этот комплект не подтверждает</h2>
+    <details class="analysis-disclosure" data-analysis-fold="limitations">
+      <summary>Границы проверки комплекта</summary>
       ${limitationsHtml(analysis)}
-    </section>
+    </details>
   </div>`;
 }
 

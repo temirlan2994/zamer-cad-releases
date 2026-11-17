@@ -41,7 +41,7 @@ describe('шаблоны и удобства', () => {
     assert.ok(found.length >= 1 && found.every((t) => /ванн/i.test(t)), found.join(', '));
     await app.page.fill('#furnSearch', 'нет-такой-мебели');
     assert.match(await app.page.textContent('#furnitureItems'), /Ничего не нашлось/);
-    await app.page.click('#furnitureCats button >> nth=0');
+    await app.page.selectOption('#furnitureCats', 'seating');
     assert.equal(await app.page.inputValue('#furnSearch'), '');
     assert.ok(await app.page.$$eval('#furnitureItems .furniture-chip', (ns) => ns.length) > 0);
     await app.page.$eval('#libTabRooms', (n) => n.click());

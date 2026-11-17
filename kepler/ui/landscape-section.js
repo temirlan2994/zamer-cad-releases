@@ -9,18 +9,23 @@ import {
 import { buildSectionDxf, sectionProfile } from '../core/landscape-section.js';
 import { saveFile } from './cloud.js';
 import { escapeHtml, toast } from './dom.js';
+import { closeElevation } from './elevation-view.js';
+import { closeSheet } from './sheet-view.js';
+import { close3d } from './view3d.js';
+import { setEditorMode } from './modes.js';
 import { setSheetSectionsPref, sheetSectionsPref } from './landscape-style.js';
 import { safeProjectFileName } from './project-name.js';
 import { snapLs, snapPoint } from './landscape.js';
 import { chainsWithout, dragPrev } from './draw-snap-ui.js';
 import { hitSectionHandle } from './render-section.js';
 import { SECTION_STYLES, sectionSvg } from './landscape-section-svg.js';
+import { sectionIcon } from './section-icons.js';
 import { state } from './state.js';
 import { afterChange, mutate, pushHistory, snapshot } from './store.js';
 import { cancelTool, selectObject, setTool } from './tools.js';
 import { requestDraw, worldToScreen } from './view.js';
 
-const HINT = 'Разрез: кликайте точки линии · Enter или двойной клик — готово · Backspace — убрать точку · Shift — без привязки · Esc — отмена';
+const HINT = 'Отметьте точки разреза. Двойной клик или Enter завершит линию.';
 let view = null; // { id } открытого разреза
 let secStyle = null;
 
@@ -97,7 +102,6 @@ export function renderSectionToolProps(panel) {
     <div class="prop-block" id="lsSectionTool">
       <p class="hint">${escapeHtml(HINT)}</p>
       <div class="prop-row"><span>Точек · длина</span><strong id="lsSecPts">0 · 0 м</strong></div>
-      <p class="hint">Сторону взгляда и глубину вида можно сменить в окне разреза.</p>
     </div>
     <div class="prop-actions">
       <button type="button" id="lsSecFinish">Готово (Enter)</button>
@@ -121,7 +125,7 @@ export function sectionsBlockHtml() {
       ${list.map((s) => `<div class="prop-row ls-sec-row">
         <label class="ls-sec-sheet" title="Вывести на лист PDF"><input type="checkbox" data-ls-sec-sheet="${escapeHtml(s.id)}" ${off.has(s.id) ? '' : 'checked'} ${pref.on ? '' : 'disabled'}><span>Разрез ${escapeHtml(s.name)}–${escapeHtml(s.name)} · ${(polylineLength(s.points) / 1000).toFixed(1).replace('.', ',')} м</span></label>
         <button type="button" class="link" data-ls-sec="${escapeHtml(s.id)}">Открыть</button></div>`).join('')}
-      ${list.length ? `<label class="check-row"><input type="checkbox" id="lsSecSheetOn" ${pref.on ? 'checked' : ''}><span>Разрезы на листе PDF (отмеченные выше)</span></label>` : '<p class="hint">Линия разреза — вид участка сбоку: земля и рельеф, площадки с отметками, стенки, лестницы, растения, дом.</p>'}
+      ${list.length ? `<label class="check-row"><input type="checkbox" id="lsSecSheetOn" ${pref.on ? 'checked' : ''}><span>Включить выбранные в PDF</span></label>` : ''}
       <button type="button" id="lsSectionNew">Новый разрез</button>
     </div>`;
 }
@@ -154,21 +158,25 @@ function host() {
   box = document.createElement('div');
   box.id = 'lsSectionView';
   box.className = 'ls-section';
-  box.setAttribute('role', 'dialog');
+  box.setAttribute('role', 'region');
   box.setAttribute('aria-label', 'Разрез участка');
   box.hidden = true;
   (document.querySelector('.canvas-wrap') || document.body).appendChild(box);
   return box;
 }
 
-export function openSection(id) {
+export function openSection(id, { full = false } = {}) {
   if (!landscapeSections().some((s) => s.id === id)) return false;
-  view = { id };
+  close3d();
+  closeSheet();
+  closeElevation();
+  if (state.modeName !== 'landscape') setEditorMode('landscape');
+  view = { id, full };
   state.lsSectionId = id; // подсветка линии на плане (render.js)
   if (!secStyle) secStyle = state.lsStyle === 'drawing' ? 'drawing' : 'sketch';
   state.lsSecVertex = null;
   renderSectionView();
-  revealLine(landscapeSections().find((s) => s.id === id));
+  if (!full) revealLine(landscapeSections().find((s) => s.id === id));
   requestDraw();
   document.dispatchEvent(new CustomEvent('kepler:view')); // дерево видов: разрез — активный вид
   return true;
@@ -204,24 +212,38 @@ function renderSectionView() {
   const prof = profileOf(sec);
   const svg = prof ? sectionSvg(prof, { style: secStyle }) : '<p class="hint">Линия слишком короткая</p>';
   box.hidden = false;
+  box.classList.toggle('cut-full', view.full);
+  const toggleTitle = view.full ? 'Показать линию на плане' : 'Развернуть разрез';
   box.innerHTML = `
-    <div class="ls-section-bar">
-      <strong class="ls-section-title">Разрез <input id="lsSecName" class="ls-sec-name" maxlength="4" value="${escapeHtml(sec.name)}" aria-label="Буква разреза" title="Буква (обозначение) разреза">–<span id="lsSecName2">${escapeHtml(sec.name)}</span></strong>
+    <div class="ls-section-bar cut-view-bar">
+      <span class="cut-view-symbol">${sectionIcon('terrain')}</span>
+      <strong class="ls-section-title">Разрез <input id="lsSecName" class="ls-sec-name" maxlength="4" value="${escapeHtml(sec.name)}" aria-label="Буква разреза" title="Буква разреза">–<span id="lsSecName2">${escapeHtml(sec.name)}</span></strong>
+      <button type="button" data-section-layout title="${toggleTitle}" aria-label="${toggleTitle}">${sectionIcon(view.full ? 'split' : 'full')}</button>
+      <details class="cut-view-menu"><summary title="Действия с разрезом" aria-label="Действия с разрезом">${sectionIcon('more')}</summary>
+        <div><button type="button" id="lsSecSvg">Скачать SVG</button>
+        <button type="button" id="lsSecDxf">Скачать DXF</button>
+        <button type="button" id="lsSecDel">Удалить разрез</button></div>
+      </details>
+      <button type="button" id="lsSecClose" title="Закрыть разрез (Esc)" aria-label="Закрыть разрез">${sectionIcon('back')}</button>
+    </div>
+    <div class="cut-view-options">
       <div class="seg" role="radiogroup" aria-label="Стиль разреза">
         ${SECTION_STYLES.map((st) => `<label class="seg-opt${secStyle === st.id ? ' active' : ''}"><input type="radio" name="lsSecStyle" value="${st.id}" ${secStyle === st.id ? 'checked' : ''}><span>${st.title}</span></label>`).join('')}
       </div>
       <label class="ls-section-field"><span>Взгляд</span><select id="lsSecSide">
-        <option value="left" ${sec.side === 'left' ? 'selected' : ''}>налево по ходу линии</option>
-        <option value="right" ${sec.side === 'right' ? 'selected' : ''}>направо по ходу линии</option>
+        <option value="left" ${sec.side === 'left' ? 'selected' : ''}>Налево</option>
+        <option value="right" ${sec.side === 'right' ? 'selected' : ''}>Направо</option>
       </select></label>
       <label class="ls-section-field"><span>Глубина, м</span><input id="lsSecDepth" type="number" min="${SECTION_DEPTH_MIN / 1000}" max="${SECTION_DEPTH_MAX / 1000}" step="1" value="${Math.round(sec.depth / 1000)}"></label>
-      <span class="hint ls-section-hint">На плане: тяните точки линии · «+» или двойной клик по линии — точка · двойной клик по точке — убрать · ⇄ — сторона взгляда</span>
-      <button type="button" id="lsSecSvg" title="Скачать разрез в SVG">SVG</button>
-      <button type="button" id="lsSecDxf" title="Скачать разрез в DXF (слой LANDSCAPE_SECTION)">DXF</button>
-      <button type="button" id="lsSecDel">Удалить</button>
-      <button type="button" id="lsSecClose">✕ Закрыть</button>
     </div>
     <div class="ls-section-body" id="lsSecBody" title="Разрез — как лист печати: белый фон в любой теме">${svg}</div>`;
+  box.querySelector('[data-section-layout]').addEventListener('click', () => {
+    view.full = !view.full;
+    renderSectionView();
+    if (!view.full) revealLine(sec);
+    requestDraw();
+    box.querySelector('[data-section-layout]').focus();
+  });
   box.querySelectorAll('input[name="lsSecStyle"]').forEach((r) => r.addEventListener('change', () => {
     if (!r.checked) return;
     secStyle = r.value;
@@ -237,8 +259,17 @@ function renderSectionView() {
     if (!Number.isFinite(v) || v <= 0) return;
     mutate(() => { sec.depth = Math.min(SECTION_DEPTH_MAX, Math.max(SECTION_DEPTH_MIN, Math.round(v * 1000))); });
   });
-  box.querySelector('#lsSecSvg').addEventListener('click', () => downloadSectionSvg(sec));
-  box.querySelector('#lsSecDxf').addEventListener('click', () => downloadSectionDxf(sec));
+  const menu = box.querySelector('.cut-view-menu');
+  menu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu.open) {
+      menu.open = false;
+      menu.querySelector('summary').focus();
+      e.stopPropagation();
+    }
+  });
+  menu.addEventListener('focusout', (e) => { if (!menu.contains(e.relatedTarget)) menu.open = false; });
+  box.querySelector('#lsSecSvg').addEventListener('click', () => { downloadSectionSvg(sec); menu.open = false; });
+  box.querySelector('#lsSecDxf').addEventListener('click', () => { downloadSectionDxf(sec); menu.open = false; });
   box.querySelector('#lsSecDel').addEventListener('click', () => {
     mutate(() => {
       const list = landscapeSections();
