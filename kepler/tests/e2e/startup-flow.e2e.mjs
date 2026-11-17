@@ -1,0 +1,133 @@
+import {
+  after, before, describe, it,
+} from 'node:test';
+import assert from 'node:assert/strict';
+import { openSample, startApp } from './helpers.mjs';
+
+describe('выбор проектов при запуске', () => {
+  let app;
+  before(async () => { app = await startApp(); });
+  after(async () => { await app?.close(); });
+
+  it('у нового пользователя сначала показаны примеры с эскизами', async () => {
+    const { page } = app;
+    assert.equal(await page.isHidden('#startRecentSection'), true);
+    assert.equal(await page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.length), 4);
+    assert.ok(await page.$$eval('#startTemplates svg .project-preview-room', (nodes) => nodes.length) > 8);
+  });
+
+  it('сохранённый проект появляется первым с настоящей миниатюрой и открывается карточкой', async () => {
+    const { page } = app;
+    await openSample(page);
+    const name = await page.evaluate(() => window.__kepler.state.project.name);
+    await page.click('#projectsBtn');
+    await page.waitForSelector('#prjSave:not([disabled])');
+    await page.click('#prjSave');
+    await page.waitForSelector('.prj-row .prj-main small:has-text("версий: 1")');
+    await page.click('#projectsClose');
+    await page.click('#menuBtn');
+    const card = '#startRecentProjects .startup-project-card';
+    await page.waitForSelector(card);
+    assert.equal(await page.textContent(`${card} b`), name);
+    await page.waitForSelector(`${card} .startup-project-preview img`);
+    const preview = await page.$eval(`${card} .startup-project-preview img`, (image) => ({
+      complete: image.complete,
+      height: image.naturalHeight,
+      src: image.getAttribute('src'),
+      width: image.naturalWidth,
+    }));
+    assert.match(preview.src, /^data:image\/(?:webp|jpeg);base64,/);
+    assert.equal(preview.complete, true);
+    assert.ok(preview.width > 0 && preview.height > 0);
+    assert.equal(await page.$eval(card, (node) => getComputedStyle(node).userSelect), 'none',
+      'двойной клик по карточке не выделяет её текст');
+    await page.click(card);
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), name);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('старую схематичную карточку сама заменяет настоящим снимком без проекта-резерва', async () => {
+    const { page } = app;
+    const pid = await page.evaluate(async () => {
+      const { createProjectPreview } = await import('./core/project-preview.js');
+      const { getLocalBackend } = await import('./ui/cloud.js');
+      const target = await getLocalBackend();
+      const id = window.__kepler.state.pid;
+      await target.db.doc(`${target.root}/${id}`).update({
+        preview: createProjectPreview(window.__kepler.state.project),
+      });
+      return id;
+    });
+    await page.click('#menuBtn');
+    const card = `#startRecentProjects .startup-project-card[data-pid="${pid}"]`;
+    await page.waitForSelector(`${card} .startup-project-preview img`);
+    const stored = await page.evaluate(async (id) => {
+      const { getLocalBackend } = await import('./ui/cloud.js');
+      const target = await getLocalBackend();
+      const projects = await target.db.collection(target.root).get();
+      const meta = await target.db.doc(`${target.root}/${id}`).get();
+      return { count: projects.docs.length, preview: meta.data()?.preview };
+    }, pid);
+    assert.equal(stored.count, 1, 'миграция не создаёт копию «резерв»');
+    assert.equal(stored.preview.v, 2);
+    assert.match(stored.preview.image, /^data:image\/(?:webp|jpeg);base64,/);
+    await page.click(card);
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('локальный черновик можно продолжить после перезагрузки, а новый проект требует подтверждения', async () => {
+    const { page } = app;
+    const before = await page.evaluate(() => window.__kepler.state.project.name);
+    await page.waitForTimeout(700);
+    await page.evaluate(() => sessionStorage.removeItem('kepler-startup-chosen'));
+    await page.reload();
+    await page.waitForFunction(() => Boolean(window.__kepler));
+    await page.waitForSelector('#startContinue:visible');
+    assert.match(await page.textContent('#startContinue'), /Продолжить текущий проект/);
+    await page.click('#startNew');
+    await page.waitForSelector('#warnCancel:visible');
+    await page.click('#warnCancel');
+    await page.click('#startContinue');
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.project.name), before);
+  });
+});
+
+describe('стартовые окна на телефоне', () => {
+  let login;
+  let chooser;
+  before(async () => {
+    login = await startApp({ mobile: true, query: 'authGate=1' });
+    chooser = await startApp({ mobile: true });
+  });
+  after(async () => {
+    await login?.close();
+    await chooser?.close();
+  });
+
+  it('окно входа помещается в 390×844, кнопка не меньше 44 px', async () => {
+    const card = await login.page.$eval('.startup-card', (node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, sw: node.scrollWidth, cw: node.clientWidth };
+    });
+    const button = await login.page.$eval('#startGoogleSignIn', (node) => node.getBoundingClientRect().height);
+    assert.ok(card.x >= 0 && card.y >= 0 && card.right <= 390 && card.bottom <= 844);
+    assert.ok(card.sw <= card.cw + 1);
+    assert.ok(button >= 44);
+  });
+
+  it('проекты и примеры складываются в одну колонку', async () => {
+    const { page } = chooser;
+    const actions = await page.$$eval('#startNew, #startOpen', (nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+    const cards = await page.$$eval('#startTemplates .startup-project-card', (nodes) => nodes.slice(0, 2).map((node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, width: rect.width };
+    }));
+    assert.ok(actions.every((height) => height >= 44));
+    assert.equal(Math.round(cards[0].x), Math.round(cards[1].x));
+    assert.equal(Math.round(cards[0].width), Math.round(cards[1].width));
+    assert.deepEqual(chooser.errors, []);
+  });
+});

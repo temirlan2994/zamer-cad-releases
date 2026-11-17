@@ -1,0 +1,325 @@
+// e2e колонки инструментов (ui/toolstrip.js) и вкладки «ТЭП»
+// (ui/props-tep.js): кнопки-иконки с подсказками, подсветка активного
+// инструмента, наборы «План» / «Участок» / «Ландшафт», всплывающие «Вид»,
+// привязки внизу холста, шапка без инструментов; удалённые блоки «Варианты»,
+// «Управление», «Движок стен»; телефон — прокручиваемая строка.
+// Раскладка целиком (библиотека, строка параметров) — layout.e2e.mjs.
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  clickToolbarTool, mobileSelectFamilyTool, openSample, openToolFamily, startApp,
+} from './helpers.mjs';
+
+const tool = (page) => page.evaluate(() => window.__kepler.state.tool?.kind || null);
+const active = (page, sel) => page.$eval(sel, (n) => n.classList.contains('active'));
+const MOVED = ['fitBtn', 'wallToolBtn', 'boundRoomBtn', 'dimModeBtn', 'viewBtn', 'alignBtn', 'stairsToolBtn'];
+const FAMILIES = {
+  openings: ['doorToolBtn', 'windowToolBtn', 'slabOpeningToolBtn'],
+  mass: ['massToolBtn', 'massVoidToolBtn'],
+  docs: ['gridToolBtn', 'sectionToolBtn', 'dimModeBtn'],
+  analysis: ['ergoToolBtn', 'sunAnalysisBtn'],
+};
+
+describe('панель инструментов', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openSample(app.page);
+  });
+  after(async () => { await app?.close(); });
+
+  it('кнопки в колонке, в шапке — режимы и общие действия', async () => {
+    const { page } = app;
+    assert.equal(await page.isVisible('#toolStrip'), true);
+    for (const id of [...MOVED, 'selectToolBtn', 'doorToolBtn', 'windowToolBtn', 'furnitureToolBtn']) {
+      assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#toolStrip'))), true, `#${id} на панели инструментов`);
+    }
+    for (const id of ['undoBtn', 'redoBtn', 'themeBtn', 'helpBtn', 'projectsBtn', 'menuBtn', 'saveBtn', 'exportBtn', 'modePlanBtn', 'modeSiteBtn', 'view3dBtn', 'projectName']) {
+      assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('.topbar'))), true, `#${id} в шапке`);
+    }
+    assert.equal(await page.$$eval('.topbar #fitBtn, .topbar #wallToolBtn, .topbar #dimModeBtn', (ns) => ns.length), 0);
+    // Колонка — под шапкой, слева от холста.
+    const [top, strip, canvas] = await Promise.all(['.topbar', '#toolStrip', '#canvas'].map((s) => page.locator(s).boundingBox()));
+    assert.ok(strip.y >= top.y + top.height - 1 && canvas.x >= strip.x + strip.width - 1, 'шапка → колонка | холст');
+    // Иконка, подсказка (.tb-tip, без title) с названием, подпись — не длиннее одного слова.
+    const btns = await page.$$eval('#toolStrip .tb-btn', (ns) => ns.filter((n) => n.offsetParent).map((n) => ({
+      id: n.id, svg: Boolean(n.querySelector('svg')), title: n.hasAttribute('title') ? '' : n.querySelector('.tb-tip')?.textContent || '', label: n.getAttribute('aria-label'),
+      text: n.querySelector('.tb-label')?.textContent.trim() || '',
+    })));
+    assert.ok(btns.length >= 10, `кнопок ${btns.length}`); // «Орто» и «Привязки» переехали вниз холста
+    for (const b of btns) {
+      assert.ok(b.svg && b.title.length > 3 && b.label, `кнопка ${b.id}: иконка и подсказка`);
+      assert.ok(!/\s/.test(b.text), `подпись ${b.id} «${b.text}» — одно слово`);
+    }
+    assert.match(await page.textContent('#wallToolBtn .tb-tip'), /\bW\b/);
+    assert.equal(await page.$$eval('#toolStrip #orthoBtn, #toolStrip #snapMenuBtn, #toolStrip #snapBar', (ns) => ns.length), 0, 'привязки — не на панели');
+    const labels = await page.$$eval('#toolStrip .tb-label', (ns) => ns.map((n) => getComputedStyle(n).display));
+    assert.ok(labels.every((display) => display === 'none'), 'в колонке видны только иконки');
+  });
+
+  it('семейства раскрываются справа мышью и клавиатурой, закрываются снаружи', async () => {
+    const { page } = app;
+    for (const [family, children] of Object.entries(FAMILIES)) {
+      const parent = `#${family}GroupBtn`;
+      assert.equal(await page.isVisible(parent), true, `${family}: родитель виден`);
+      assert.equal(await page.getAttribute(parent, 'aria-controls'), `${family}ToolFlyout`, `${family}: popup связан с родителем`);
+      assert.equal(await page.$eval(parent, (n) => Boolean(n.querySelector('svg'))), true, `${family}: есть иконка`);
+      assert.deepEqual(await page.$$eval(`#${family}ToolFlyout > .tb-btn`, (ns) => ns.map((n) => n.id)), children);
+    }
+
+    await page.mouse.move(700, 350);
+    assert.equal(await page.isVisible('#doorToolBtn'), false, 'дочерние кнопки изначально скрыты');
+    await openToolFamily(page, 'doorToolBtn');
+    const [parent, flyout] = await Promise.all(['#openingsGroupBtn', '#openingsToolFlyout'].map((s) => page.locator(s).boundingBox()));
+    assert.ok(flyout.x >= parent.x + parent.width - 2, 'flyout прилегает справа к родителю');
+    await page.hover('#doorToolBtn');
+    assert.equal(await page.isVisible('#doorToolBtn'), true, 'курсор проходит с родителя на дочернюю кнопку');
+
+    await page.mouse.move(700, 350);
+    await page.focus('#openingsGroupBtn');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.isVisible('#doorToolBtn'), true, 'ArrowRight раскрывает семейство');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'doorToolBtn', 'фокус переходит к первому инструменту');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'openingsGroupBtn', 'Escape возвращает фокус родителю');
+
+    await page.click('#massGroupBtn');
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'true');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'false', 'Escape закрывает закреплённое семейство с родителя');
+    await page.click('#massGroupBtn');
+    await page.click('#canvas', { position: { x: 12, y: 12 } });
+    assert.equal(await page.getAttribute('#massGroupBtn', 'aria-expanded'), 'false', 'клик вне закрывает семейство');
+  });
+
+  it('родитель отражает активный дочерний инструмент, но не режим размеров', async () => {
+    const { page } = app;
+    await clickToolbarTool(page, 'massVoidToolBtn');
+    assert.equal(await active(page, '#massVoidToolBtn'), true);
+    assert.equal(await active(page, '#massGroupBtn'), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await active(page, '#massGroupBtn'), false);
+
+    await clickToolbarTool(page, 'dimModeBtn');
+    assert.equal(await active(page, '#docsGroupBtn'), false, 'режим наружных/осевых размеров не подсвечивает всё семейство');
+    await clickToolbarTool(page, 'dimModeBtn');
+  });
+
+  it('активный инструмент подсвечен; Esc и «Выбор» снимают', async () => {
+    const { page } = app;
+    assert.equal(await active(page, '#selectToolBtn'), true);
+    await page.click('#wallToolBtn');
+    assert.equal(await tool(page), 'wall');
+    assert.equal(await active(page, '#wallToolBtn'), true);
+    assert.equal(await active(page, '#selectToolBtn'), false);
+    await page.keyboard.press('Escape');
+    assert.equal(await tool(page), null);
+    assert.equal(await active(page, '#wallToolBtn'), false);
+    assert.equal(await active(page, '#selectToolBtn'), true);
+    await page.keyboard.press('w'); // клавиша осталась
+    assert.equal(await tool(page), 'wall');
+    assert.equal(await active(page, '#wallToolBtn'), true);
+    await page.click('#selectToolBtn');
+    assert.equal(await tool(page), null);
+    await clickToolbarTool(page, 'doorToolBtn');
+    assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.openKind]), ['place-opening', 'door']);
+    assert.equal(await active(page, '#doorToolBtn'), true);
+    await clickToolbarTool(page, 'windowToolBtn');
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.openKind), 'window');
+    assert.equal(await active(page, '#doorToolBtn'), false);
+    assert.equal(await active(page, '#windowToolBtn'), true);
+    await clickToolbarTool(page, 'windowToolBtn'); // повторный клик — выйти
+    assert.equal(await tool(page), null);
+    await page.click('#boundRoomBtn');
+    assert.equal(await tool(page), 'bound-room');
+    assert.equal(await active(page, '#boundRoomBtn'), true);
+    await page.click('#boundRoomBtn');
+    assert.equal(await tool(page), null);
+  });
+
+  it('«Мебель» открывает каталог мебели', async () => {
+    const { page } = app;
+    await page.click('#furnitureToolBtn');
+    assert.equal(await page.isVisible('#furnitureBar'), true);
+    assert.equal(await active(page, '#furnitureToolBtn'), true);
+    await page.$eval('#libTabRooms', (n) => n.click());
+    assert.equal(await active(page, '#furnitureToolBtn'), false);
+    assert.equal(await page.isVisible('#roomCards'), true);
+  });
+
+  it('«Вид» — всплывающая панель; привязки — значками в строке состояния справа', async () => {
+    const { page } = app;
+    await page.click('#viewBtn');
+    assert.equal(await page.isVisible('#viewPanel'), true);
+    const [btn, panel] = await Promise.all(['#viewBtn', '#viewPanel'].map((s) => page.locator(s).boundingBox()));
+    assert.ok(panel.x >= btn.x + btn.width && panel.y >= 0 && panel.y + panel.height <= 820, `панель справа от колонки ${JSON.stringify(panel)}`);
+    await page.click('#viewBtn');
+    assert.equal(await page.isHidden('#viewPanel'), true);
+    assert.equal(await page.$eval('#snapBar', (n) => Boolean(n.closest('.canvas-wrap .statusbar'))), true);
+    assert.equal(await page.$$eval('#snapBar [data-snap]', (ns) => ns.length), 6, 'Орто, Полярка, Объекты, Выравнивание, Магнит блоков, Направляющие');
+    // Размеры: подпись и подсветка меняются.
+    assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Снаружи');
+    await clickToolbarTool(page, 'dimModeBtn');
+    assert.equal((await page.textContent('#dimModeBtn .tb-label')).trim(), 'Ось');
+    assert.equal(await active(page, '#dimModeBtn'), false);
+    await clickToolbarTool(page, 'dimModeBtn');
+    assert.equal(await active(page, '#dimModeBtn'), true);
+  });
+
+  it('режимы меняют набор: «Участок» — слои участка, «Ландшафт» — разрез, массив, выноска', async () => {
+    const { page } = app;
+    assert.equal(await page.isVisible('#planTools'), true);
+    assert.equal(await page.isHidden('#siteTools'), true);
+    await page.click('#docsGroupBtn');
+    assert.equal(await page.getAttribute('#docsGroupBtn', 'aria-expanded'), 'true');
+    await page.evaluate(() => document.getElementById('modeSiteBtn').click());
+    assert.equal(await page.getAttribute('#docsGroupBtn', 'aria-expanded'), 'false', 'смена режима закрывает семейство');
+    assert.equal(await page.isHidden('#planTools'), true);
+    assert.equal(await page.isVisible('#siteTools'), true);
+    assert.equal(await page.isHidden('#landscapeTools'), true);
+    assert.equal(await page.isHidden('.library'), true, 'левая панель без каталога скрыта');
+    const names = await page.$$eval('#siteTools .tb-btn', (ns) => ns.map((n) => n.getAttribute('aria-label')));
+    assert.deepEqual(names, ['Топосъёмка', 'Граница участка', 'Красная линия', 'Дорога', 'Въезд', 'Соседний дом', 'Отметка высоты', 'Север по 2 точкам', 'Калибровка']);
+    // «Рука» режима участка не должна оставаться после включения черчения.
+    await page.evaluate(() => {
+      window.__kepler.state.project.site.boundary = null;
+      document.getElementById('canvas').style.cursor = 'grab';
+    });
+    await page.click('#siteTools [aria-label="Граница участка"]');
+    assert.equal(await tool(page), 'draw');
+    assert.equal(await page.$eval('#canvas', (n) => n.style.cursor), 'crosshair');
+    await page.keyboard.press('Escape');
+    await page.click('#siteTools [aria-label="Север по 2 точкам"]');
+    assert.equal(await tool(page), 'north');
+    assert.equal(await active(page, '#siteTools [aria-label="Север по 2 точкам"]'), true);
+    assert.equal(await active(page, '#selectToolBtn'), false);
+    await page.click('#siteTools [aria-label="Север по 2 точкам"]'); // повторный — выйти
+    assert.equal(await tool(page), null);
+    await page.click('#landscapeBtn');
+    assert.equal(await page.isHidden('#siteTools'), true);
+    assert.equal(await page.isVisible('#landscapeTools'), true);
+    assert.equal(await page.isVisible('#lsItems'), true, 'каталог ландшафта слева');
+    assert.equal(await page.$eval('#landscapeTools [data-ls-tool="array"]', (n) => n.disabled), true, 'массив — только с выделением');
+    await page.click('#landscapeTools [data-ls-tool="section"]');
+    assert.equal(await tool(page), 'ls-section');
+    assert.equal(await active(page, '#landscapeTools [data-ls-tool="section"]'), true);
+    await page.keyboard.press('Escape');
+    await page.click('#modePlanBtn');
+    assert.equal(await page.isVisible('#planTools'), true);
+    assert.equal(await page.isVisible('.library'), false, '«План» без инструмента — библиотека не занимает холст');
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('свойства: вкладка «ТЭП и площади», удалённые блоки', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openSample(app.page);
+  });
+  after(async () => { await app?.close(); });
+
+  it('«Проект» — параметры без площадей, вариантов, клавиш и движка стен', async () => {
+    const { page } = app;
+    assert.equal(await page.isVisible('#propsTabMain'), true);
+    assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true');
+    const text = await page.textContent('#propsBody');
+    assert.match(text, /Проект/);
+    for (const s of ['Помещений', 'Варианты', 'Сгенерировать', 'Управление', 'Движок стен', 'Состав', 'Площадь застройки']) {
+      assert.ok(!text.includes(s), `нет «${s}»`);
+    }
+    for (const sel of ['#wallsEngineSel', '#variantSave', '#variantGenerate', '#compareScreen', '.hotkeys', '#propsPanel .variant-list']) {
+      assert.equal(await page.$(sel), null, `нет ${sel}`);
+    }
+    assert.ok(await page.$('#levelName'), 'этаж остаётся');
+    assert.ok(await page.$('#unitsSel'), 'единицы остаются');
+  });
+
+  it('вкладка: подвкладки «ТЭП» (показатели дома) и «Экспликация»; строка выбирает помещение', async () => {
+    const { page } = app;
+    await page.click('#propsTabTep');
+    assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true');
+    const house = await page.textContent('#tepHouse');
+    assert.match(house, /Помещений/);
+    assert.match(house, /площадь/i);
+    const tep = await page.textContent('#tepRows');
+    assert.match(tep, /Площадь застройки/);
+    assert.match(tep, /Общая площадь дома/);
+    assert.equal(await page.$('#schedTable'), null, 'экспликация — на своей подвкладке');
+    await page.click('#tepTabRooms');
+    assert.equal(await page.$('#tepRows'), null);
+    const rooms = await page.evaluate(() => window.__kepler.state.project.levels.reduce((n, l) => n + l.rooms.length, 0));
+    assert.equal(await page.$$eval('#schedTable [data-sched-room]', (ns) => ns.length), rooms);
+    assert.match(await page.textContent('#schedTable tfoot'), /Общая/);
+    // Перерисовка панели (правка) не сбрасывает вкладку и подвкладку.
+    await page.evaluate(() => window.__kepler.select(null));
+    assert.equal(await page.isVisible('#schedTable'), true);
+    const id = await page.$eval('#schedTable [data-sched-room]', (n) => n.dataset.schedRoom);
+    await page.click(`#schedTable [data-sched-room="${id}"]`);
+    assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'room', id });
+    assert.equal(await page.getAttribute('#propsTabMain', 'aria-selected'), 'true', 'выбор объекта — вкладка «Свойства»');
+    assert.ok(await page.$('#roomName'), 'свойства помещения');
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('панель инструментов на телефоне', () => {
+  let app;
+  before(async () => {
+    app = await startApp({ mobile: true });
+    await openSample(app.page);
+  });
+  after(async () => { await app?.close(); });
+
+  it('колонки нет: ряд «Рисовать» зеркалит её кнопки — нажатие, подсветка, недоступность', async () => {
+    const { page } = app;
+    assert.equal(await page.isVisible('#toolStrip'), false, 'колонка скрыта');
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'страница не шире экрана');
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    const sizes = await page.$$eval('#mobileDraw button', (ns) => ns.map((n) => n.getBoundingClientRect()).map((r) => [r.width, r.height]));
+    for (const [w, h] of sizes) assert.ok(w >= 44 && h >= 44, `кнопка ${w}×${h}`);
+    await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
+    assert.equal(await tool(page), 'wall');
+    assert.equal(await active(page, '#wallToolBtn'), true, 'кнопка колонки включена');
+    assert.equal(await active(page, '#mobileDraw [data-draw="wallToolBtn"]'), true, 'и её зеркало');
+    await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
+    assert.equal(await tool(page), null, 'повторное касание — выйти');
+
+    const familyButtons = await page.$$eval('#mobileDraw [data-draw-family]', (ns) => ns.map((n) => n.dataset.drawFamily));
+    assert.deepEqual(familyButtons, ['openings', 'mass', 'docs', 'analysis']);
+    const labels = await page.$$eval('#mobileDraw .mb-label', (ns) => ns.map((n) => getComputedStyle(n).display));
+    assert.ok(labels.every((display) => display === 'none'), 'мобильная строка тоже только из иконок');
+    await page.tap('#mobileDraw [data-draw-family="mass"]');
+    assert.equal(await page.isVisible('#mobileToolFlyout'), true);
+    const popupSizes = await page.$$eval('#mobileToolFlyout [data-tool-child]', (ns) => ns.map((n) => {
+      const r = n.getBoundingClientRect();
+      return [r.width, r.height];
+    }));
+    for (const [w, h] of popupSizes) assert.ok(w >= 44 && h >= 44, `дочерняя кнопка ${w}×${h}`);
+    await page.tap('#mobileToolFlyout [data-tool-child="massVoidToolBtn"]');
+    assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.void]), ['mass', true]);
+    assert.equal(await page.isVisible('#mobileToolFlyout'), false, 'после выбора popup закрыт');
+    assert.equal(await active(page, '#mobileDraw [data-draw-family="mass"]'), true, 'родитель показывает активный дочерний инструмент');
+    await page.keyboard.press('Escape');
+
+    await page.focus('#mobileDraw [data-draw-family="mass"]');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.toolChild), 'massToolBtn', 'клавиатура переводит фокус в popup');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.isVisible('#mobileToolFlyout'), false);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.drawFamily), 'mass', 'после выбора фокус возвращается к родителю');
+    await page.keyboard.press('Escape');
+
+    await mobileSelectFamilyTool(page, 'openings', 'windowToolBtn');
+    assert.deepEqual(await page.evaluate(() => [window.__kepler.state.tool?.kind, window.__kepler.state.tool?.openKind]), ['place-opening', 'window']);
+    await page.keyboard.press('Escape');
+    // «Ландшафт»: «Массив» и «Выноска» без выделения недоступны — как в колонке.
+    await page.evaluate(() => document.getElementById('landscapeBtn').click());
+    await page.waitForFunction(() => document.querySelector('#mobileDraw [data-draw="array"]'));
+    assert.equal(await page.$eval('#mobileDraw [data-draw="array"]', (n) => n.disabled), true);
+    assert.equal(await page.$eval('#mobileDraw [data-draw="section"]', (n) => n.disabled), false);
+    await page.evaluate(() => document.getElementById('modePlanBtn').click());
+    await page.keyboard.press('Escape');
+    assert.deepEqual(app.errors, []);
+  });
+});

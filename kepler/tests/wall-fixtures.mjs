@@ -1,0 +1,445 @@
+// «Тяжёлые» стыки стен — фикстуры для инвариантов (tests/wall-invariants.test.mjs)
+// и для сравнения старой deriveWalls с будущей геометрической deriveWallsV2
+// (см. docs/walls-geometry-design.md). Все координаты кратны 10 мм, чтобы
+// растеризация с шагом 10 мм была точной.
+//
+// Толщины по умолчанию: наружная 250, несущая 200, перегородка 100.
+// Общая стена возникает только при зазоре, равном её толщине (100 или override).
+
+import { createProject, createRoom } from '../core/model.js';
+import { deriveWalls, ownKey, sharedKey } from '../core/walls.js';
+import { createLoopRoom } from '../core/bound-rooms.js';
+import { reconcileEats } from '../core/v7/eat-bridge.js';
+
+let seq = 0;
+function room(type, x, y, w, h, extra = {}) {
+  const r = createRoom(type, x, y, w, h);
+  seq += 1;
+  r.id = `${type}${seq}`; // стабильные id — читаемые сообщения тестов
+  return Object.assign(r, extra);
+}
+
+function project(name, rooms, overrides = {}) {
+  const p = createProject(name);
+  p.rooms.push(...rooms);
+  Object.assign(p.wallOverrides, overrides);
+  return p;
+}
+
+// 1. Две комнаты встык через перегородку 100.
+export function twoRooms() {
+  const a = room('hall', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 0, 4000, 3000);
+  return project('две комнаты', [a, b]);
+}
+
+// 2. Т-стык: две комнаты сверху, одна длинная снизу.
+export function teeJoint() {
+  const a = room('bedroom', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 0, 3900, 3000);
+  const c = room('living', 0, 3100, 8000, 3000);
+  return project('Т-стык', [a, b, c]);
+}
+
+// 3. Крест: четыре комнаты 2×2, узел в центре.
+export function crossJoint() {
+  const a = room('bedroom', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 0, 4000, 3000);
+  const c = room('kitchen', 0, 3100, 4000, 3000);
+  const d = room('living', 4100, 3100, 4000, 3000);
+  return project('крест', [a, b, c, d]);
+}
+
+// 4. Г-комната (вырез ne) и прямоугольная комната справа от её нижней части:
+// верх соседа коллинеарен грани выреза (y = 3000), обе — наружные.
+export function lRoomWithNeighbour() {
+  const l = room('living', 0, 0, 6000, 6000, { notch: { corner: 'ne', w: 3000, h: 3000 } });
+  const r = room('bedroom', 6100, 3000, 3000, 3000);
+  return project('Г + прямоугольник', [l, r]);
+}
+
+// 5. Ступенчатая комната (контур, две ступени) с кухней в вырезе: у кухни
+// общие стены с обеими гранями ступени и наружная стена слева сверху.
+// Плюс шахта, пересекающая наружную стену гостиной (случай «Гостиная 3»).
+export function steppedWithKitchenAndShaft() {
+  const living = room('living', 0, 0, 6000, 6000, {
+    outline: [
+      { x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 6000 }, { x: 4000, y: 6000 },
+      { x: 4000, y: 4000 }, { x: 2000, y: 4000 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 },
+    ],
+  });
+  const kitchen = room('kitchen', 0, 4100, 3900, 1900);
+  const shaft = room('shaft', 5600, 1000, 800, 800);
+  return project('ступени + кухня + шахта', [living, kitchen, shaft]);
+}
+
+// 6. Ступенчатая комната (вырез sw) с соседом, заполняющим вырез через
+// перегородки 100; левая и нижняя грани соседа коллинеарны граням гостиной.
+export function notchFilledByNeighbour() {
+  const living = room('living', 0, 0, 6000, 6000, { notch: { corner: 'sw', w: 3000, h: 3000 } });
+  const kitchen = room('kitchen', 0, 3100, 2900, 2900);
+  return project('вырез + сосед', [living, kitchen]);
+}
+
+// 7. Шахта внутри комнаты у её стены (колонна/шахта «в стене»).
+export function shaftInWall() {
+  const a = room('living', 0, 0, 6000, 4000);
+  const b = room('bedroom', 6100, 0, 3000, 4000);
+  const shaft = room('shaft', 5700, 1500, 700, 700); // перекрывает общую стену
+  return project('шахта в общей стене', [a, b, shaft]);
+}
+
+// 8. Разные толщины в одном узле: несущая 200 (A|B), перегородки 100 (C|D,
+// A|C, B|D), наружная 250 и своя толщина 300 у верхней стены A.
+// Вертикальная стена смещается в узле (A|B 200 против C|D 100).
+export function mixedThicknessNode() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4200, 0, 3800, 3000);
+  const c = room('kitchen', 0, 3100, 4100, 3000);
+  const d = room('bedroom', 4200, 3100, 3800, 3000);
+  return project('разные толщины', [a, b, c, d], {
+    [sharedKey(a.id, b.id)]: { kind: 'bearing', thickness: 200 },
+    [ownKey(a.id, 0)]: { thickness: 300 },
+  });
+}
+
+// 9. Терраса вплотную к наружной стене (зазор = 250) — без стен и перил там.
+export function terraceNextTo() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const t = room('terrace', 0, 4250, 5000, 2500);
+  return project('терраса', [a, t]);
+}
+
+// 10. Вложенная комната (санузел в углу спальни) — внутренние перегородки
+// к спальне, две грани совпадают с гранями родителя.
+export function nestedRoom() {
+  const bed = room('bedroom', 0, 0, 5000, 4000);
+  const bath = room('bathroom', 0, 0, 2000, 1800, { parentId: bed.id });
+  return project('вложенная', [bed, bath]);
+}
+
+// 11. Две комнаты со сдвигом по фасаду: общая стена короче сторон, у торцов
+// общей стены встречаются наружные стены обеих комнат.
+export function offsetPair() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 1000, 4000, 3000);
+  return project('сдвиг по фасаду', [a, b]);
+}
+
+// 12. Сосед в вырезе выступает за грань Г-комнаты: верх соседа частично
+// общий с гранью выреза, частично наружный; угол Г-комнаты упирается в него.
+export function notchNeighbourOverhang() {
+  const living = room('living', 0, 0, 6000, 6000, { notch: { corner: 'sw', w: 3000, h: 3000 } });
+  const kitchen = room('kitchen', -1500, 3100, 4400, 2900);
+  return project('сосед выступает из выреза', [living, kitchen]);
+}
+
+// 13. Две Г-комнаты, сцепленные вырезами (ступенчатая перегородка).
+export function interlockedL() {
+  const a = room('living', 0, 0, 6000, 5000, { notch: { corner: 'se', w: 3000, h: 2000 } });
+  const b = room('bedroom', 0, 3100, 6000, 4900, { notch: { corner: 'nw', w: 3100, h: 2000 } });
+  return project('сцепленные Г', [a, b]);
+}
+
+// 14. Шахта на наружном углу дома (перекрывает оба угла стен).
+export function shaftAtCorner() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const shaft = room('shaft', -400, -400, 800, 800);
+  return project('шахта на углу', [a, shaft]);
+}
+
+// 15. Вложенная комната у общей стены родителя с соседом.
+export function nestedAtSharedWall() {
+  const bed = room('bedroom', 0, 0, 5000, 4000);
+  const hall = room('hall', 5100, 0, 3000, 4000);
+  const bath = room('bathroom', 3000, 1000, 2000, 2000, { parentId: bed.id });
+  return project('вложенная у общей', [bed, hall, bath]);
+}
+
+// 16. Узкая комната по центру длинной стороны большой (два Т-узла) и Г-сосед.
+export function centeredNeighbourAndL() {
+  const big = room('living', 0, 0, 8000, 5000);
+  const small = room('bathroom', 3000, 5100, 2000, 2000);
+  const l = room('bedroom', 5100, 5100, 4000, 4000, { notch: { corner: 'se', w: 1500, h: 1500 } });
+  return project('Т-узлы + Г', [big, small, l]);
+}
+
+// 17. Две Г-комнаты образуют замкнутый двор (световой карман 2,0 × 1,9 м):
+// общая стена кончается у внутреннего угла Г-соседа.
+export function courtyardBetweenL() {
+  const a = room('living', 0, 0, 6000, 5000, { notch: { corner: 'se', w: 3000, h: 2000 } });
+  const b = room('bedroom', 3100, 3100, 5000, 4000, { notch: { corner: 'nw', w: 2000, h: 2000 } });
+  return project('двор между Г', [a, b]);
+}
+
+// 18. Две комнаты касаются углами по диагонали (зазор 100 по обеим осям):
+// наружные стены углов перекрываются, но не должны заходить в комнаты.
+export function diagonalCorners() {
+  const a = room('bedroom', 0, 0, 3000, 3000);
+  const b = room('bedroom', 3100, 3100, 3000, 3000);
+  return project('углы по диагонали', [a, b]);
+}
+
+// 19. Терраса в 100 от наружной стены, короче её (из проекта пользователя):
+// стена дома остаётся полной толщины — терраса лежит под ней.
+export function terraceAtPartitionGap() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const t = room('terrace', 1000, 4100, 3000, 2000);
+  return project('терраса на зазоре 100', [a, t]);
+}
+
+// 20. Две комнаты на нестандартном зазоре 50 (не общая стена) и спина к
+// спине на зазоре 480 (две наружные стены почти сходятся) — «Гостиная 3».
+export function nearGapRooms() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('stairs-room', 1000, 3050, 4000, 3000);
+  const c = room('bedroom', 5480, 3050, 3000, 3000);
+  return project('зазоры 50 и 480', [a, b, c]);
+}
+
+// Скрытая стена («линия разделения»): Т-стык, где стена между левой верхней
+// и нижней комнатами скрыта. Её клетки остаются в W (дыры нет), узел Т ведёт
+// видимая стена a|b, скрытая не забирает углы (инвариант g).
+export function hiddenWallTee() {
+  const a = room('kitchen', 0, 0, 4000, 3000);
+  const b = room('bedroom', 4100, 0, 3900, 3000);
+  const c = room('living', 0, 3100, 8000, 3000);
+  return project('скрытая стена в Т-стыке', [a, b, c], { [sharedKey(a.id, c.id)]: { hidden: true } });
+}
+
+// ---------------------------------------------------------------- Съедание перекрытых комнат
+// Комната, поставленная поверх другой, «съедает» её (мост v7,
+// core/v7/eat-bridge.js): нижняя теряет пересечение и зазор под перегородку
+// 100 — между ними обычная общая стена. Фикстура — модель ПОСЛЕ съедания.
+
+function eaten(name, rooms, order) {
+  const p = project(name, rooms);
+  for (const id of order) reconcileEats(p, { touched: [id] });
+  return p;
+}
+
+// Угловое налезание: нижняя становится Г.
+export function eatCorner() {
+  const a = room('living', 0, 0, 4000, 4000);
+  const b = room('bedroom', 3000, 3000, 3000, 3000);
+  return eaten('съедание: угол', [a, b], [b.id]);
+}
+
+// Верхняя заходит в нижнюю с края: у нижней вырез (П).
+export function eatEdgeBite() {
+  const a = room('living', 0, 0, 6000, 4000);
+  const b = room('kitchen', 2000, 3000, 2000, 2500);
+  return eaten('съедание: вырез с края', [a, b], [b.id]);
+}
+
+// Вплотную по всей стороне: нижняя просто укорачивается.
+export function eatFullSide() {
+  const a = room('living', 0, 0, 5000, 4000);
+  const b = room('bedroom', 4000, 0, 3000, 4000);
+  return eaten('съедание: по всей стороне', [a, b], [b.id]);
+}
+
+// Три комнаты цепочкой: b съедает a, затем c — b.
+export function eatChain() {
+  const a = room('living', 0, 0, 4000, 4000);
+  const b = room('bedroom', 3000, 1000, 4000, 4000);
+  const c = room('kitchen', 6000, 2000, 3000, 3000);
+  return eaten('съедание: цепочка из трёх', [a, b, c], [b.id, c.id]);
+}
+
+export const EAT_FIXTURES = { eatCorner, eatEdgeBite, eatFullSide, eatChain };
+
+// ---------------------------------------------------------------- Микроступеньки
+// Помещения со сдвигом 10–50 мм (неточная расстановка + съедание по номиналу
+// соседа) — вырезки из проекта пользователя 2026-11-09 (Новый дом, этаж 1),
+// размеры округлены до 10 мм под растр инвариантов. Раньше: ступеньки в гранях,
+// выступ 100×150 в углу у скрытой стены, торцы наружных стен «ёлочкой».
+// Инварианты (c) и (d) к ним не применяются: ступенька тоньше 50 мм
+// заполняется стеной (стена закрывает полоску пола, толщина на участке
+// меняется на величину сдвига) — см. JOG_TOL в core/walls-v2.js.
+
+// Угол у скрытой стены: Гостиная (грань со сдвигом 10 мм), Холл (вырез 10×20
+// у угла), Гардеробная (сдвиг 50 мм). Гостиная|Холл — скрытая стена.
+export function jogCornerHidden() {
+  const living = room('living', 0, 0, 5610, 6970, {
+    outline: [
+      { x: 5600, y: 0 }, { x: 5600, y: 5850 }, { x: 5610, y: 5850 }, { x: 5610, y: 6970 },
+      { x: 0, y: 6970 }, { x: 0, y: 0 },
+    ],
+  });
+  const hall = room('hall', 5700, 3790, 4000, 1980, {
+    outline: [
+      { x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 1980 }, { x: 10, y: 1980 }, { x: 10, y: 1960 }, { x: 0, y: 1960 },
+    ],
+  });
+  const wardrobe = room('wardrobe-room', 5660, 5870, 1950, 3020, {
+    outline: [
+      { x: 0, y: 1200 }, { x: 50, y: 1200 }, { x: 50, y: 0 }, { x: 1950, y: 0 }, { x: 1950, y: 3020 }, { x: 0, y: 3020 },
+    ],
+  });
+  return project('сдвиги у угла со скрытой стеной', [living, hall, wardrobe], {
+    [sharedKey(living.id, hall.id)]: { hidden: true },
+  });
+}
+
+// Постирочная со сдвигом правой грани 20 мм у конца соседнего холла.
+export function jogStepFace() {
+  const laundry = room('laundry', 0, 0, 2400, 3010, {
+    outline: [
+      { x: 0, y: 0 }, { x: 2380, y: 0 }, { x: 2380, y: 2370 }, { x: 2400, y: 2370 }, { x: 2400, y: 3010 }, { x: 0, y: 3010 },
+    ],
+  });
+  const hall = room('hall', 2480, -500, 3000, 2770);
+  return project('сдвиг грани у конца соседа', [laundry, hall]);
+}
+
+// Три комнаты в ряд (Спальня, Санузел, Постирочная): низ на −0/+10/−10 мм —
+// наружная стена снизу без «ёлочки» торцов.
+export function jogBottomsInRow() {
+  const a = room('bedroom', 0, 0, 4950, 3020);
+  const b = room('bathroom', 5050, 0, 3100, 3030);
+  const c = room('laundry', 8250, 0, 2400, 3010);
+  return project('низ комнат со сдвигом', [a, b, c]);
+}
+
+export const JOG_FIXTURES = { jogCornerHidden, jogStepFace, jogBottomsInRow };
+
+// ---------------------------------------------------------------- Ручные стены (этап B)
+// project.walls — ручные стены активного этажа; проект с ними всегда идёт
+// на движок v2 (wallsEngine). Ось — в осях дома, толщина 200/100.
+
+function manualProject(name, rooms, walls) {
+  const p = project(name, rooms);
+  p.walls.push(...walls.map(([ax, ay, bx, by, thickness = 200, extra = {}], i) => ({
+    id: `mw${i + 1}`, axis: { kind: 'line', a: { x: ax, y: ay }, b: { x: bx, y: by } },
+    justify: 'center', thickness, typeId: null, wallType: 'partition',
+    base: { offset: 0 }, top: { level: null, offset: 0, height: null }, hidden: false, roomBounding: true,
+    ...extra,
+  })));
+  return p;
+}
+
+// Одна стена без комнат.
+export function manualWallAlone() {
+  return manualProject('ручная стена одна', [], [[0, 0, 4000, 0]]);
+}
+
+// Две ручные стены углом: торцы сходятся в точке осей — угол без щели.
+export function manualCorner() {
+  return manualProject('ручной угол', [], [[0, 0, 3000, 0], [3000, 0, 3000, 2000, 100]]);
+}
+
+// Ручная стена Т-образно упирается снаружи в наружную стену комнаты.
+export function manualTeeIntoRoom() {
+  const a = room('living', 0, 0, 5000, 4000);
+  return manualProject('ручная стена в Т', [a], [[2500, 4250, 2500, 7000]]);
+}
+
+// Ручная стена пересекает наружную стену комнаты и кончается внутри неё.
+export function manualCrossesRoomWall() {
+  const a = room('living', 0, 0, 5000, 4000);
+  return manualProject('ручная стена крестом', [a], [[-2000, 2000, 3000, 2000, 100]]);
+}
+
+// Ручная перегородка делит комнату от грани до грани (торцы на внутренних
+// гранях наружных стен; привязка — по левой грани).
+export function manualThroughRoom() {
+  const a = room('living', 0, 0, 6000, 4000);
+  return manualProject('ручная стена через комнату', [a], [[3000, 0, 3000, 4000, 100, { justify: 'left' }]]);
+}
+
+// Две отдельные комнаты, проход между ними закрыт двумя ручными стенами по
+// осям наружных стен: внутри — замкнутый карман 1,5 × 3 м (двор).
+export function manualClosesCorridor() {
+  const a = room('living', 0, 0, 4000, 3000);
+  const b = room('bedroom', 5500, 0, 4000, 3000);
+  return manualProject('ручные стены закрывают проход', [a, b], [
+    [4250, 3125, 5250, 3125, 250], [4250, -125, 5250, -125, 250],
+  ]);
+}
+
+// ---------------------------------------------------------------- Помещения из петель (этап C)
+// Петля ручных стен → обычная комната (core/bound-rooms.js, createLoopRoom).
+
+function withLoopRooms(p, seeds) {
+  for (const [x, y, type = 'living'] of seeds) {
+    const res = createLoopRoom(p, deriveWalls(p), { x, y }, { type });
+    if (!res.ok) throw new Error(`фикстура ${p.name}: ${res.reason}`);
+  }
+  return p;
+}
+
+const loop = (pts, t = 200) => pts.map((a, i) => {
+  const b = pts[(i + 1) % pts.length];
+  return [a[0], a[1], b[0], b[1], t];
+});
+
+// Прямоугольная петля из 4 ручных стен.
+export function loopRect() {
+  return withLoopRooms(manualProject('петля: прямоугольник', [], loop([[0, 0], [5000, 0], [5000, 4000], [0, 4000]])), [[2500, 2000]]);
+}
+
+// Г-образная петля.
+export function loopL() {
+  return withLoopRooms(manualProject('петля: Г', [], loop([[0, 0], [6000, 0], [6000, 3000], [3000, 3000], [3000, 5000], [0, 5000]])), [[1000, 1000]]);
+}
+
+// Петля с торчащим концом: верхняя стена длиннее — остаётся ручной.
+export function loopTee() {
+  return withLoopRooms(manualProject('петля: торчащий конец', [], [
+    [0, 0, 7000, 0], [5000, 0, 5000, 4000], [5000, 4000, 0, 4000], [0, 4000, 0, 0],
+  ]), [[2500, 2000]]);
+}
+
+// Две комнаты через общую ручную стену.
+export function loopTwo() {
+  return withLoopRooms(manualProject('петли: две через стену', [], [
+    ...loop([[0, 0], [8000, 0], [8000, 4000], [0, 4000]]), [4000, 0, 4000, 4000, 100],
+  ]), [[2000, 2000], [6000, 2000, 'bedroom']]);
+}
+
+// Смешанная петля: кольцо блок-комнаты + три ручные стены (коридор).
+export function loopMixed() {
+  const a = room('bedroom', 0, 0, 4000, 4000);
+  return withLoopRooms(manualProject('помещение: блок + ручные', [a], [
+    [4000, -100, 7000, -100], [7000, -100, 7000, 4100], [7000, 4100, 4000, 4100],
+  ]), [[5500, 2000, 'corridor']]);
+}
+
+export const LOOP_ROOM_FIXTURES = { loopRect, loopL, loopTee, loopTwo, loopMixed };
+
+export const MANUAL_WALL_FIXTURES = {
+  manualWallAlone,
+  manualCorner,
+  manualTeeIntoRoom,
+  manualCrossesRoomWall,
+  manualThroughRoom,
+  manualClosesCorridor,
+  ...LOOP_ROOM_FIXTURES,
+};
+
+export const WALL_FIXTURES = {
+  hiddenWallTee,
+  twoRooms,
+  teeJoint,
+  crossJoint,
+  lRoomWithNeighbour,
+  steppedWithKitchenAndShaft,
+  notchFilledByNeighbour,
+  shaftInWall,
+  mixedThicknessNode,
+  terraceNextTo,
+  nestedRoom,
+  offsetPair,
+  notchNeighbourOverhang,
+  interlockedL,
+  shaftAtCorner,
+  nestedAtSharedWall,
+  centeredNeighbourAndL,
+  courtyardBetweenL,
+  diagonalCorners,
+  terraceAtPartitionGap,
+  nearGapRooms,
+  ...EAT_FIXTURES,
+  ...JOG_FIXTURES,
+};

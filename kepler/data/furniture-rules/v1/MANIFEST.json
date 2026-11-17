@@ -1,0 +1,97 @@
+{
+  "version": "1.0.0",
+  "created_at": "2026-11-14",
+  "files": [
+    {
+      "name": "ACCEPTANCE_CASES_RU.json",
+      "bytes": 68170,
+      "sha256": "47c85504c5e8f89e09a871f5acb5fb2bfb27d1c3cd874963c0ae48f427bd3b14"
+    },
+    {
+      "name": "BRIEF_TEMPLATE_RU.json",
+      "bytes": 28447,
+      "sha256": "f688044785642153751e1ca68f7f70b75690650c78c8f19fe1cb34f2f86a6d9f"
+    },
+    {
+      "name": "EVALUATORS_RU.json",
+      "bytes": 14417,
+      "sha256": "57015f43c1cbedeed2dc3423cfc74e2653a5da372bf65bdc1d99473ad126139a"
+    },
+    {
+      "name": "FURNITURE_RULES_RU.json",
+      "bytes": 893615,
+      "sha256": "9dc7b0caad47de5dedd661fcc598001d94381e212d950a1b101d3760665eda5a"
+    },
+    {
+      "name": "FURNITURE_RULES_RU.txt",
+      "bytes": 374387,
+      "sha256": "e340c3939ee01bc10390bc08447b3f75ba24d6ddee8fc0dbc84c68c063d1d106"
+    },
+    {
+      "name": "INTEGRATION_RU.txt",
+      "bytes": 24559,
+      "sha256": "210f64eeb0ac0bab7f76852955cf2e095e19418ce5c99819d1b51fb3d37fc696"
+    },
+    {
+      "name": "PACKAGE_VALIDATION.json",
+      "bytes": 322,
+      "sha256": "c8e4c5db2110fcd1a3de6da5d96f6cf8fa7b97fe09dacfe4d1e806dd14de9858"
+    },
+    {
+      "name": "PROFILES_RU.json",
+      "bytes": 14111,
+      "sha256": "d18e83349735a5beb4aa4c6bc389fdf2ee34effd70213aa8cf0aec849ed10e3d"
+    },
+    {
+      "name": "README_RU.txt",
+      "bytes": 5955,
+      "sha256": "6950fb4f4b5d3f5f93837e952b1ee7682b69d2fc10d2c141c8fdc2a1069e9c76"
+    },
+    {
+      "name": "REFERENCE_PLANS_RU.json",
+      "bytes": 4010,
+      "sha256": "f903d649e49034c9273c9c174729fa19aa9fab322c8e2f9813ec29b83934bcd7"
+    },
+    {
+      "name": "SCENARIO_LIBRARY_RU.json",
+      "bytes": 250626,
+      "sha256": "5887dc161e947ace3ea363e71642c6bc130a88a8a49344ee652c54a256f60f7d"
+    },
+    {
+      "name": "START_PROMPT_RU.txt",
+      "bytes": 23830,
+      "sha256": "95bcea72c6b53e8e25656b4b37daff10ee78697503f5701b5367d9f23ca94e1b"
+    },
+    {
+      "name": "layout_output.example.json",
+      "bytes": 5278,
+      "sha256": "38bea135c360696fa6aa18ef83e661751fdb94791ee57c1f5ad7df2859355b54"
+    },
+    {
+      "name": "layout_output.schema.json",
+      "bytes": 14286,
+      "sha256": "e1439b899eb24cf177d96977f8873aa169c6b4977969c44cae27eaf70233277c"
+    },
+    {
+      "name": "project_input.example.json",
+      "bytes": 7895,
+      "sha256": "2ad71316270224901d8026048dbbfee1d5c6d987b55806b5db727ae4d1d9124c"
+    },
+    {
+      "name": "project_input.schema.json",
+      "bytes": 32306,
+      "sha256": "d6c94f86807f4467795e18e4dc3a7f9287eb121debd9646cc6926ac346af2db7"
+    },
+    {
+      "name": "rule.schema.json",
+      "bytes": 2158,
+      "sha256": "13ee0e759197bb6ed46f19948abe4726c6151a2b4eaba2a5675a8084f2cc2ddc"
+    },
+    {
+      "name": "validate_package.py",
+      "bytes": 6318,
+      "sha256": "78fd372ced2944634170ad3a2f0451fc923697ff1654e59556b8d096fbb62f07"
+    }
+  ],
+  "scope": "Deliverable files only; research scratch and third-party source documents are not bundled."
+}

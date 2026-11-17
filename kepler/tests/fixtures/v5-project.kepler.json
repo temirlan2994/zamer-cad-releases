@@ -1,0 +1,997 @@
+{
+ "schema": "kepler-plan/5",
+ "revision": 0,
+ "name": "Фикстура: проект пользователя 2026-11 (Гостиная 3)",
+ "settings": {
+  "partition": 100,
+  "exterior": 250,
+  "bearing": 200,
+  "dimOuter": true,
+  "units": "m"
+ },
+ "levels": [
+  {
+   "id": "L1",
+   "name": "1 этаж",
+   "elevation": 0,
+   "height": 3000,
+   "rooms": [
+    {
+     "id": "room-mw0o740z-60",
+     "type": "stairs-room",
+     "name": "Лестница",
+     "x": 18800,
+     "y": -7300,
+     "w": 6500,
+     "h": 5650,
+     "parentId": null,
+     "outline": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 2800,
+       "y": 0
+      },
+      {
+       "x": 2800,
+       "y": 1950
+      },
+      {
+       "x": 6500,
+       "y": 1950
+      },
+      {
+       "x": 6500,
+       "y": 5650
+      },
+      {
+       "x": 0,
+       "y": 5650
+      }
+     ]
+    },
+    {
+     "id": "room-mw0o740z-61",
+     "type": "bathroom",
+     "name": "Санузел",
+     "x": 25400,
+     "y": -5350,
+     "w": 1600,
+     "h": 3700,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0o740z-62",
+     "type": "living",
+     "name": "Гостиная",
+     "x": 13200,
+     "y": -350,
+     "w": 5000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0o740z-63",
+     "type": "bedroom",
+     "name": "Спальня",
+     "x": 18300,
+     "y": -350,
+     "w": 3000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0o740z-64",
+     "type": "dining",
+     "name": "Столовая",
+     "x": 21400,
+     "y": -350,
+     "w": 3000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0o740z-65",
+     "type": "hall",
+     "name": "Холл",
+     "x": 24500,
+     "y": -350,
+     "w": 2500,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0op39u-1",
+     "type": "living",
+     "name": "Гостиная 2",
+     "x": -9300,
+     "y": -2750,
+     "w": 5000,
+     "h": 8500,
+     "parentId": null,
+     "outline": [
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 5000,
+       "y": 0
+      },
+      {
+       "x": 5000,
+       "y": 8500
+      },
+      {
+       "x": 0,
+       "y": 8500
+      },
+      {
+       "x": 0,
+       "y": 6334.616783695182
+      },
+      {
+       "x": 2950,
+       "y": 6334.616783695182
+      },
+      {
+       "x": 2950,
+       "y": 3400
+      },
+      {
+       "x": 0,
+       "y": 3400
+      }
+     ]
+    },
+    {
+     "id": "room-mw0q1nih-e",
+     "type": "balcony",
+     "name": "Балкон",
+     "x": 8950,
+     "y": -2600,
+     "w": 3000,
+     "h": 1200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw10dtxi-1",
+     "type": "living",
+     "name": "Гостиная 2 — копия",
+     "x": -4200,
+     "y": 1550,
+     "w": 5000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw10duv8-2",
+     "type": "living",
+     "name": "Гостиная 2 — копия — копия",
+     "x": 900,
+     "y": -2750,
+     "w": 5000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw10e7vk-3",
+     "type": "living",
+     "name": "Гостиная 2 — копия",
+     "x": -4200,
+     "y": -2750,
+     "w": 5000,
+     "h": 4200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0q21lb-f",
+     "type": "terrace",
+     "name": "Терраса",
+     "x": 9400,
+     "y": 850,
+     "w": 3700,
+     "h": 3200,
+     "parentId": null
+    },
+    {
+     "id": "room-mw1zwnds-1",
+     "type": "corridor",
+     "name": "Коридор",
+     "x": 13200,
+     "y": -1550,
+     "w": 13800,
+     "h": 1100,
+     "parentId": null
+    },
+    {
+     "id": "room-mw0o740z-5z",
+     "type": "bedroom",
+     "name": "Спальня 2",
+     "x": 8350,
+     "y": -6250,
+     "w": 8900,
+     "h": 3550,
+     "parentId": null,
+     "outline": [
+      {
+       "x": 3400,
+       "y": 0
+      },
+      {
+       "x": 8900,
+       "y": 0
+      },
+      {
+       "x": 8900,
+       "y": 3550
+      },
+      {
+       "x": 0,
+       "y": 3550
+      },
+      {
+       "x": 0,
+       "y": 0
+      },
+      {
+       "x": 1550,
+       "y": 0
+      },
+      {
+       "x": 1550,
+       "y": 1315.4603969251684
+      },
+      {
+       "x": 3400,
+       "y": 1315.4603969251684
+      }
+     ]
+    },
+    {
+     "id": "room-mw0op58h-2",
+     "type": "living",
+     "name": "Гостиная 3",
+     "x": 19650,
+     "y": -10100,
+     "w": 6150,
+     "h": 4250,
+     "parentId": null,
+     "outline": [
+      {
+       "x": 600,
+       "y": 0
+      },
+      {
+       "x": 2433.5005516258534,
+       "y": 0
+      },
+      {
+       "x": 2433.5005516258534,
+       "y": 1600
+      },
+      {
+       "x": 5100,
+       "y": 1600
+      },
+      {
+       "x": 5100,
+       "y": 3450
+      },
+      {
+       "x": 6150,
+       "y": 3450
+      },
+      {
+       "x": 6150,
+       "y": 4250
+      },
+      {
+       "x": 2433.5005516258534,
+       "y": 4250
+      },
+      {
+       "x": 2433.5005516258534,
+       "y": 2750
+      },
+      {
+       "x": 0,
+       "y": 2750
+      },
+      {
+       "x": 0,
+       "y": 1252.6959476418833
+      },
+      {
+       "x": 600,
+       "y": 1252.6959476418833
+      }
+     ]
+    }
+   ],
+   "openings": [
+    {
+     "id": "window-mw0o740z-6c",
+     "kind": "window",
+     "roomId": "room-mw0o740z-5z",
+     "side": 0,
+     "offset": 4200,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6d",
+     "kind": "door",
+     "roomId": "room-mw0o740z-60",
+     "side": 2,
+     "offset": 1400,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6e",
+     "kind": "door",
+     "roomId": "room-mw0o740z-61",
+     "side": 2,
+     "offset": 800,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw0o740z-6f",
+     "kind": "window",
+     "roomId": "room-mw0o740z-61",
+     "side": 0,
+     "offset": 800,
+     "width": 600,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw0o740z-6h",
+     "kind": "window",
+     "roomId": "room-mw0o740z-62",
+     "side": 2,
+     "offset": 1500,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw0o740z-6i",
+     "kind": "window",
+     "roomId": "room-mw0o740z-62",
+     "side": 2,
+     "offset": 3500,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw0o740z-6j",
+     "kind": "window",
+     "roomId": "room-mw0o740z-62",
+     "side": 3,
+     "offset": 2250,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6k",
+     "kind": "door",
+     "roomId": "room-mw0o740z-63",
+     "side": 0,
+     "offset": 2500,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": false
+    },
+    {
+     "id": "window-mw0o740z-6l",
+     "kind": "window",
+     "roomId": "room-mw0o740z-63",
+     "side": 2,
+     "offset": 1650,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6m",
+     "kind": "door",
+     "roomId": "room-mw0o740z-64",
+     "side": 0,
+     "offset": 500,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw0o740z-6n",
+     "kind": "window",
+     "roomId": "room-mw0o740z-64",
+     "side": 2,
+     "offset": 1350,
+     "width": 1500,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6o",
+     "kind": "door",
+     "roomId": "room-mw0o740z-65",
+     "side": 0,
+     "offset": 1250,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw0o740z-6p",
+     "kind": "door",
+     "roomId": "room-mw0o740z-65",
+     "side": 2,
+     "offset": 1250,
+     "width": 900,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw10j27a-bj",
+     "kind": "door",
+     "roomId": "room-mw10dtxi-1",
+     "side": 2,
+     "offset": 855.2244938457688,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false
+    },
+    {
+     "id": "door-mw10jiru-cu",
+     "kind": "door",
+     "roomId": "room-mw10e7vk-3",
+     "side": 2,
+     "offset": 1068.869795704598,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false
+    },
+    {
+     "id": "door-mw10jnjo-dm",
+     "kind": "door",
+     "roomId": "room-mw10e7vk-3",
+     "side": 1,
+     "offset": 2081.449894782645,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false
+    },
+    {
+     "id": "door-mw10o4rf-xq",
+     "kind": "door",
+     "roomId": "room-mw10duv8-2",
+     "side": 2,
+     "offset": 4404.36920748539,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": true,
+     "hingeStart": false
+    },
+    {
+     "id": "door-mw10o98j-yp",
+     "kind": "door",
+     "roomId": "room-mw10duv8-2",
+     "side": 2,
+     "offset": 2044.5762791907678,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": false
+    },
+    {
+     "id": "window-mw21ispe-1g",
+     "kind": "window",
+     "roomId": "room-mw0op39u-1",
+     "side": "outline-5",
+     "offset": 4873.18544550759,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw21j04y-2m",
+     "kind": "window",
+     "roomId": "room-mw0op39u-1",
+     "side": "outline-6",
+     "offset": 1601.1559308556907,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw21x4vg-2e",
+     "kind": "window",
+     "roomId": "room-mw10duv8-2",
+     "side": 1,
+     "offset": 1101.059007407241,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw21x8cl-3j",
+     "kind": "window",
+     "roomId": "room-mw10duv8-2",
+     "side": 1,
+     "offset": 3012.868409776174,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw21xbt9-4e",
+     "kind": "window",
+     "roomId": "room-mw10duv8-2",
+     "side": 0,
+     "offset": 3654.4609735818185,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "window-mw21xew0-5v",
+     "kind": "window",
+     "roomId": "room-mw10duv8-2",
+     "side": 0,
+     "offset": 1364.0754519319075,
+     "width": 1200,
+     "height": 1500,
+     "sill": 900,
+     "swingIn": true,
+     "hingeStart": true
+    },
+    {
+     "id": "door-mw21xscf-83",
+     "kind": "door",
+     "roomId": "room-mw10duv8-2",
+     "side": 2,
+     "offset": 927.7672017074385,
+     "width": 800,
+     "height": 2100,
+     "sill": 0,
+     "swingIn": false,
+     "hingeStart": true
+    }
+   ],
+   "items": [
+    {
+     "id": "item-mw10omoc-yq",
+     "kind": "sofa",
+     "x": 2750,
+     "y": -1500,
+     "w": 2200,
+     "h": 950,
+     "rotation": 270,
+     "comp": {
+      "type": "sofa",
+      "depth": 950,
+      "dir": 0,
+      "modules": [
+       {
+        "type": "arm",
+        "w": 200
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "arm",
+        "w": 200
+       }
+      ]
+     },
+     "group": "grp-mw10pm2q"
+    },
+    {
+     "id": "item-mw10oqjd-yr",
+     "kind": "sofa",
+     "x": 5200,
+     "y": -1500,
+     "w": 2200,
+     "h": 950,
+     "rotation": 90,
+     "comp": {
+      "type": "sofa",
+      "depth": 950,
+      "dir": 0,
+      "modules": [
+       {
+        "type": "arm",
+        "w": 200
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "arm",
+        "w": 200
+       }
+      ]
+     },
+     "group": "grp-mw10pm2q"
+    },
+    {
+     "id": "item-mw10pa8v-ys",
+     "kind": "coffee-table",
+     "x": 4000,
+     "y": -1600,
+     "w": 900,
+     "h": 600,
+     "rotation": 90,
+     "group": "grp-mw10pm2q"
+    },
+    {
+     "id": "item-mw21yd2a-84",
+     "kind": "sofa",
+     "x": -2300,
+     "y": -1400,
+     "w": 2200,
+     "h": 950,
+     "rotation": 270,
+     "comp": {
+      "type": "sofa",
+      "depth": 950,
+      "dir": 0,
+      "modules": [
+       {
+        "type": "arm",
+        "w": 200
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "arm",
+        "w": 200
+       }
+      ]
+     },
+     "group": "grp-mw21yd2a-0"
+    },
+    {
+     "id": "item-mw21yd2a-85",
+     "kind": "coffee-table",
+     "x": -1050,
+     "y": -1500,
+     "w": 900,
+     "h": 600,
+     "rotation": 90,
+     "group": "grp-mw21yd2a-0"
+    },
+    {
+     "id": "item-mw21yd2a-86",
+     "kind": "sofa",
+     "x": 150,
+     "y": -1400,
+     "w": 2200,
+     "h": 950,
+     "rotation": 90,
+     "comp": {
+      "type": "sofa",
+      "depth": 950,
+      "dir": 0,
+      "modules": [
+       {
+        "type": "arm",
+        "w": 200
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "arm",
+        "w": 200
+       }
+      ]
+     },
+     "group": "grp-mw21yd2a-0"
+    },
+    {
+     "id": "item-mw23xnmv-3",
+     "kind": "kitchen-u",
+     "x": 22200,
+     "y": -3834.54,
+     "w": 3600,
+     "h": 2200,
+     "rotation": 0,
+     "comp": {
+      "type": "kitchen",
+      "shape": "U",
+      "len": {
+       "left": 2200,
+       "main": 3600,
+       "right": 2200
+      },
+      "depth": 600,
+      "mirror": false,
+      "baseW": 600,
+      "upper": false,
+      "items": [
+       {
+        "type": "sink",
+        "side": "main",
+        "x": 600,
+        "w": 1000
+       },
+       {
+        "type": "fridge",
+        "side": "right",
+        "x": 1600,
+        "w": 600
+       }
+      ]
+     }
+    },
+    {
+     "id": "item-mw2415iz-4",
+     "kind": "ac-unit",
+     "x": -1150,
+     "y": -2625,
+     "w": 900,
+     "h": 250,
+     "rotation": 0
+    },
+    {
+     "id": "item-mw241eq0-5",
+     "kind": "sofa",
+     "x": -1300,
+     "y": 450,
+     "w": 2200,
+     "h": 950,
+     "rotation": 180,
+     "comp": {
+      "type": "sofa",
+      "depth": 950,
+      "dir": 0,
+      "modules": [
+       {
+        "type": "arm",
+        "w": 200
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "seat",
+        "w": 900
+       },
+       {
+        "type": "arm",
+        "w": 200
+       }
+      ]
+     }
+    }
+   ],
+   "wallOverrides": {}
+  },
+  {
+   "id": "level-mw11g325-g",
+   "name": "2 этаж",
+   "elevation": 3000,
+   "height": 3000,
+   "rooms": [
+    {
+     "id": "room-mw11g327-h",
+     "type": "stairs-room",
+     "name": "Лестница",
+     "x": 22500,
+     "y": -5350,
+     "w": 2800,
+     "h": 3400,
+     "parentId": null
+    }
+   ],
+   "openings": [],
+   "items": [],
+   "wallOverrides": {}
+  }
+ ],
+ "activeLevel": "L1",
+ "building": {
+  "rotation": 1.8476102659946037,
+  "origin": {
+   "x": 92.53540546467411,
+   "y": -444.3327369973149
+  }
+ },
+ "site": {
+  "north": 0,
+  "location": {
+   "lat": 43.238,
+   "lon": 76.889,
+   "tz": 5
+  },
+  "sun": {
+   "date": "2026-06-21",
+   "time": 720,
+   "enabled": false
+  },
+  "buildingHeight": 6000,
+  "setbackBoundary": 1500,
+  "setbackNeighbor": 6000,
+  "showBuildZone": true,
+  "boundary": [
+   {
+    "x": -11700,
+    "y": 7100
+   },
+   {
+    "x": 34000,
+    "y": 8600
+   },
+   {
+    "x": 34600,
+    "y": -13400
+   },
+   {
+    "x": 17100,
+    "y": -13900
+   },
+   {
+    "x": 16800,
+    "y": -7700
+   },
+   {
+    "x": -11300,
+    "y": -8500
+   }
+  ],
+  "redLine": [
+   {
+    "x": 28300,
+    "y": -13600
+   },
+   {
+    "x": 27800,
+    "y": 8500
+   }
+  ],
+  "roads": [
+   {
+    "id": "road-mw0o399r-3m9",
+    "points": [
+     {
+      "x": 36800,
+      "y": -26900
+     },
+     {
+      "x": 35700,
+      "y": 16000
+     }
+    ],
+    "width": 3500,
+    "closed": false
+   }
+  ],
+  "neighbors": [
+   {
+    "id": "nbr-mw0o3z0v-6do",
+    "x": -500,
+    "y": -16600,
+    "w": 8000,
+    "h": 8000,
+    "rot": 0,
+    "height": 6000
+   },
+   {
+    "id": "nbr-mw0o41va-sm",
+    "x": -8156.189368114463,
+    "y": -9754.638230039833,
+    "w": 6087.621263771073,
+    "h": 2309.2764600796636,
+    "rot": 0,
+    "height": 6000
+   },
+   {
+    "id": "nbr-mw0o472u-1ww",
+    "x": 1700,
+    "y": 16600,
+    "w": 11269.906690379183,
+    "h": 11407.467631448664,
+    "rot": 0,
+    "height": 6000
+   },
+   {
+    "id": "nbr-mw0o4jff-6ur",
+    "x": 4793.313569554692,
+    "y": -18321.735517501656,
+    "w": 2586.627139109384,
+    "h": 3956.5289649966853,
+    "rot": 0,
+    "height": 6000
+   }
+  ],
+  "entry": {
+   "x": 34468.607668598845,
+   "y": -8582.281181957685,
+   "dir": -178.4377750831576
+  },
+  "norms": {
+   "day": null,
+   "hours": null
+  },
+  "redLineClosed": false
+ }
+}
