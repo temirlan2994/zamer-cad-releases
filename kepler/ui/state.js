@@ -49,6 +49,10 @@ export const state = {
     result: null, signature: null,
   },
   _homeCirculationUI: null,
+  // Выбор помещения этапа «Свет и солнце». Сам световой слой продолжает
+  // использовать единое состояние solarAnalysis и существующий renderer;
+  // здесь хранится только эфемерное состояние маршрутной панели.
+  _homeClimateUI: null,
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

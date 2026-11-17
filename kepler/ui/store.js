@@ -531,6 +531,8 @@ export function restoreFrom(text) {
     homeEngineeringUI: state._homeEngineeringUI,
     homeCirculationOverlay: state.homeCirculationOverlay,
     homeCirculationUI: state._homeCirculationUI,
+    homeClimateUI: state._homeClimateUI,
+    solarAnalysis: state.solarAnalysis,
   };
   state.project = project;
   Object.assign(state, derived);
@@ -554,6 +556,8 @@ export function restoreFrom(text) {
     result: null, signature: null,
   };
   state._homeCirculationUI = null;
+  state._homeClimateUI = null;
+  state.solarAnalysis = { on: false, roomId: null, mode: 'direct' };
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
@@ -573,6 +577,8 @@ export function restoreFrom(text) {
     state._homeEngineeringUI = prev.homeEngineeringUI;
     state.homeCirculationOverlay = prev.homeCirculationOverlay;
     state._homeCirculationUI = prev.homeCirculationUI;
+    state._homeClimateUI = prev.homeClimateUI;
+    state.solarAnalysis = prev.solarAnalysis;
     try {
       refreshDerived();
       applyModeRotation();

@@ -22,9 +22,16 @@ import {
   handleHomeCirculationClick, handleHomeCirculationInput, homeCirculationHtml,
   refreshHomeCirculationOverlay,
 } from './home-circulation.js';
+import {
+  handleHomeClimateClick, handleHomeClimateInput, homeClimateHtml,
+} from './home-climate.js';
+import { handleHomeReviewClick, homeReviewHtml } from './home-review.js';
+import { goToIssue } from './issues.js';
+import { switchLevel } from './levels.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { setEditorMode } from './modes.js';
 import { renderProps } from './props.js';
+import { setSolarAnalysis } from './solar-analysis.js';
 import { state } from './state.js';
 import { mutate, PROJECT_CHANGE_EVENT } from './store.js';
 import { activateSiteTool } from './toolstrip.js';
@@ -154,7 +161,46 @@ let footprintDraft = null;
 let footprintDraftProject = null;
 let footprintDraftDirty = false;
 
-const HOME_VIEWS = new Set(['program', 'flows', 'engineering', 'circulation']);
+const HOME_VIEW_DEFS = Object.freeze([
+  Object.freeze({
+    id: 'program', step: 2, label: 'Программа',
+    kicker: 'Этап 2 · сценарий жизни', title: 'Программа дома',
+    announce: 'Открыта программа дома',
+    html: (project) => homeProgramHtml(project),
+  }),
+  Object.freeze({
+    id: 'flows', step: 3, label: 'Связи',
+    kicker: 'Этап 3 · связи дома', title: 'Зоны и маршруты',
+    announce: 'Открыты зоны и маршруты',
+    html: (project, currentState) => homeFlowsHtml(project, currentState),
+  }),
+  Object.freeze({
+    id: 'engineering', step: 4, label: 'Инженерия',
+    kicker: 'Этап 4 · предварительная схема', title: 'Инженерные связи',
+    announce: 'Открыт предварительный инженерный обзор',
+    html: (project, currentState) => homeEngineeringHtml(project, currentState),
+  }),
+  Object.freeze({
+    id: 'circulation', step: 5, label: 'Движение',
+    kicker: 'Этап 5 · маршруты внутри помещений', title: 'Движение и проходы',
+    announce: 'Открыты движение и проходы',
+    html: (project, currentState) => homeCirculationHtml(project, currentState),
+  }),
+  Object.freeze({
+    id: 'climate', step: 6, label: 'Свет',
+    kicker: 'Этап 6 · предварительная оценка', title: 'Свет и солнце',
+    announce: 'Открыт предварительный анализ света и солнца',
+    html: (project, currentState) => homeClimateHtml(project, currentState),
+  }),
+  Object.freeze({
+    id: 'review', step: 7, label: 'Проверка',
+    kicker: 'Этап 7 · сводка проекта', title: 'Проверка проекта',
+    announce: 'Открыта сводная проверка проекта',
+    html: (project, currentState) => homeReviewHtml(project, currentState),
+  }),
+]);
+const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
+const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action',
   'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
@@ -167,6 +213,13 @@ const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-circulation-width', 'data-circulation-layer',
   'data-circulation-metric', 'data-circulation-period',
   'data-circulation-anchor',
+  'data-home-climate-action', 'data-home-climate-room',
+  'data-home-climate-room-key', 'data-home-climate-room-id',
+  'data-home-climate-level-id', 'data-home-climate-map',
+  'data-home-climate-date', 'data-home-climate-mode',
+  'data-home-review-action', 'data-home-review-view',
+  'data-home-review-issue', 'data-home-review-kind',
+  'data-home-review-item-id',
 ]);
 
 const byId = (id) => document.getElementById(id);
@@ -180,6 +233,8 @@ function renderedHomeView(body) {
   if (body.querySelector('[data-home-flows]')) return 'flows';
   if (body.querySelector('[data-home-engineering]')) return 'engineering';
   if (body.querySelector('[data-home-circulation]')) return 'circulation';
+  if (body.querySelector('[data-home-climate]')) return 'climate';
+  if (body.querySelector('[data-home-review]')) return 'review';
   return null;
 }
 
@@ -775,29 +830,11 @@ function renderPanel(model) {
   }
   if (HOME_VIEWS.has(panelView)) {
     const preserved = captureHomePanelState(body, panelView);
-    const views = {
-      program: {
-        kicker: 'Этап 2 · сценарий жизни', title: 'Программа дома',
-        html: () => homeProgramHtml(state.project),
-      },
-      flows: {
-        kicker: 'Этап 3 · связи дома', title: 'Зоны и маршруты',
-        html: () => homeFlowsHtml(state.project, state),
-      },
-      engineering: {
-        kicker: 'Этап 4 · предварительная схема', title: 'Инженерные связи',
-        html: () => homeEngineeringHtml(state.project, state),
-      },
-      circulation: {
-        kicker: 'Этап 5 · маршруты внутри помещений', title: 'Движение и проходы',
-        html: () => homeCirculationHtml(state.project, state),
-      },
-    };
-    const current = views[panelView];
+    const current = HOME_VIEW_BY_ID.get(panelView) || HOME_VIEW_DEFS[0];
     kicker.textContent = current.kicker;
     title.textContent = current.title;
     body.innerHTML = state.project
-      ? `${homeSystemNav(panelView)}${current.html()}`
+      ? `${homeSystemNav(panelView)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-${current.id}">${current.html(state.project, state)}</div>`
       : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы продолжить проектирование дома.</p>';
     restoreHomePanelState(body, preserved);
     return;
@@ -815,13 +852,7 @@ function renderPanel(model) {
 }
 
 function homeSystemNav(active) {
-  const views = [
-    ['program', 'Программа'],
-    ['flows', 'Зоны и маршруты'],
-    ['engineering', 'Инженерия'],
-    ['circulation', 'Движение'],
-  ];
-  return `<nav class="home-system-nav" aria-label="Этапы проектирования дома">${views.map(([id, label], index) => `<button type="button" data-route-action="open-home-view" data-home-view="${id}"${active === id ? ' aria-current="page"' : ''}><span>${index + 2}</span>${label}</button>`).join('')}</nav>`;
+  return `<nav class="home-system-nav" role="tablist" aria-label="Этапы проектирования дома">${HOME_VIEW_DEFS.map((view) => `<button type="button" id="homeViewTab-${view.id}" role="tab" aria-controls="homeSystemPanel" aria-selected="${active === view.id}" tabindex="${active === view.id ? '0' : '-1'}" data-route-action="open-home-view" data-home-view="${view.id}"${active === view.id ? ' aria-current="page"' : ''}><span>${view.step}</span>${view.label}</button>`).join('')}</nav>`;
 }
 
 function syncOpenState() {
@@ -857,11 +888,7 @@ function openPanel(view, stageId, opener) {
   const close = byId('projectRouteClose');
   requestAnimationFrame(() => close?.focus({ preventScroll: true }));
   announce(view === 'passport' ? 'Открыт паспорт участка'
-    : view === 'program' ? 'Открыта программа дома'
-      : view === 'flows' ? 'Открыты зоны и маршруты'
-        : view === 'engineering' ? 'Открыт предварительный инженерный обзор'
-          : view === 'circulation' ? 'Открыты движение и проходы'
-      : 'Открыт этап маршрута проекта');
+    : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап маршрута проекта');
 }
 
 function closePanel({ restoreFocus = true } = {}) {
@@ -895,10 +922,7 @@ function switchHomeView(view) {
     }
     tab?.focus({ preventScroll: true });
   });
-  announce(view === 'program' ? 'Открыта программа дома'
-    : view === 'flows' ? 'Открыты зоны и маршруты'
-      : view === 'engineering' ? 'Открыт предварительный инженерный обзор'
-        : 'Открыты движение и проходы');
+  announce(HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап проектирования дома');
 }
 
 function firstIncompleteStage(model) {
@@ -1053,6 +1077,7 @@ function toggleOpportunity() {
     announce('Карта возможностей не построена: недостаточно исходных данных');
     return;
   }
+  if (state.solarAnalysis?.on) setSolarAnalysis(false);
   state.siteOpportunity = { on: true, result, signature };
   closePanel({ restoreFocus: false });
   closeSheets();
@@ -1073,7 +1098,36 @@ function disableCirculationForAnotherOverlay(otherOverlayOn) {
   renderProjectRoute();
 }
 
+function disableSolarForAnotherOverlay(otherOverlayOn) {
+  if (!otherOverlayOn || !state.solarAnalysis?.on) return;
+  setSolarAnalysis(false);
+  requestDraw();
+}
+
 function handleBodyClick(event) {
+  if (handleHomeReviewClick(event, {
+    project: state.project,
+    state,
+    openHomeView: switchHomeView,
+    openSiteStage: () => openPanel('stage', firstIncompleteStage(latestModel), null),
+    goToIssue: (entry) => {
+      closePanel({ restoreFocus: false });
+      goToIssue(entry);
+    },
+    closePanel,
+    announce,
+  })) return;
+  if (handleHomeClimateClick(event, {
+    project: state.project,
+    state,
+    closePanel,
+    announce,
+    rerender: renderProjectRoute,
+    requestDraw,
+    toast,
+    setEditorMode,
+    switchLevel,
+  })) return;
   if (handleHomeCirculationClick(event, {
     project: state.project,
     state,
@@ -1084,7 +1138,10 @@ function handleBodyClick(event) {
     requestDraw,
     toast,
     setEditorMode,
-  })) return;
+  })) {
+    disableSolarForAnotherOverlay(state.homeCirculationOverlay?.on === true);
+    return;
+  }
   const handledFlows = handleHomeFlowsClick(event, {
     project: state.project,
     state,
@@ -1098,6 +1155,7 @@ function handleBodyClick(event) {
   });
   if (handledFlows) {
     disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
+    disableSolarForAnotherOverlay(state.homeProgramOverlay?.on === true);
     return;
   }
   const handledEngineering = handleHomeEngineeringClick(event, {
@@ -1113,6 +1171,7 @@ function handleBodyClick(event) {
   });
   if (handledEngineering) {
     disableCirculationForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
+    disableSolarForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
     return;
   }
   const handledProgram = handleHomeProgramClick(event, {
@@ -1122,6 +1181,7 @@ function handleBodyClick(event) {
   });
   if (handledProgram) {
     disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
+    disableSolarForAnotherOverlay(state.homeProgramOverlay?.on === true);
     return;
   }
   const toolButton = event.target.closest('[data-route-tool]');
@@ -1162,6 +1222,16 @@ function handleDocumentKeydown(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
     closePanel();
+    return;
+  }
+  const homeTab = event.target?.closest?.('.home-system-nav [data-home-view]');
+  if (homeTab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    const tabs = HOME_VIEW_DEFS.map((view) => view.id);
+    const current = Math.max(0, tabs.indexOf(homeTab.dataset.homeView));
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    switchHomeView(tabs[next]);
     return;
   }
   if (event.key !== 'Tab' || !isPhone()) return;
@@ -1222,6 +1292,19 @@ export function renderProjectRoute() {
   state.siteBuildable = latestModel.passport?.buildable || null;
   const canvasLegend = byId('siteOpportunityLegend');
   if (canvasLegend) canvasLegend.hidden = !state.siteOpportunity?.on;
+  // restore/undo сбрасывают экранное состояние без обращения к DOM. Здесь
+  // синхронизируем общую кнопку и легенду, чтобы старая карта не оставалась
+  // визуально включённой после открытия другой версии проекта.
+  const solarOn = state.solarAnalysis?.on === true;
+  const solarLegend = byId('solarLegend');
+  if (solarLegend && !solarOn) solarLegend.hidden = true;
+  const solarButton = byId('sunAnalysisBtn');
+  if (solarButton) {
+    solarButton.classList.toggle('active', solarOn);
+    solarButton.setAttribute('aria-pressed', String(solarOn));
+    solarButton.setAttribute('aria-label', state.solarAnalysis?.mode === 'daylight'
+      ? 'Карта освещённости' : 'Карта прямого солнца');
+  }
   const homeProgramLegend = byId('homeProgramLegend');
   if (homeProgramLegend) {
     const flowsMode = state.homeProgramOverlay?.mode === 'flows';
@@ -1307,6 +1390,10 @@ export function bindProjectRoute() {
       project: state.project, state, mutate,
       rerender: renderProjectRoute, requestDraw, toast,
     });
+    handleHomeClimateInput(event, {
+      project: state.project, state,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
   });
   body.addEventListener('change', (event) => {
     handleHomeProgramInput(event);
@@ -1320,6 +1407,10 @@ export function bindProjectRoute() {
     });
     handleHomeCirculationInput(event, {
       project: state.project, state, mutate,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
+    handleHomeClimateInput(event, {
+      project: state.project, state,
       rerender: renderProjectRoute, requestDraw, toast,
     });
     const input = event.target.closest('[data-route-confirm]');
@@ -1339,6 +1430,7 @@ export function bindProjectRoute() {
     if (state.homeCirculationOverlay?.on) {
       refreshHomeCirculationOverlay(state.project, state, requestDraw);
     }
+    if (state.solarAnalysis?.on) requestDraw();
     if (state.siteOpportunity?.on) refreshSiteOpportunity();
     else {
       // Ошибка предварительного запуска относится к прежнему набору
