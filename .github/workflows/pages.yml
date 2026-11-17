@@ -2,9 +2,10 @@ name: Kepler Plan — GitHub Pages
 
 on:
   push:
-    branches: [claude/awesome-gates-znrtlm]
+    branches: [source]
     paths:
       - 'kepler/**'
+      - 'shared/cad/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -32,12 +33,12 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Версия и офлайн-файлы PWA
-        run: node kepler/scripts/build-pwa-assets.mjs "$GITHUB_SHA"
+        run: node kepler/scripts/build-pages.mjs "$GITHUB_SHA"
 
       - name: Подготовка сайта
         uses: actions/upload-pages-artifact@v3
         with:
-          path: kepler
+          path: dist/kepler-pages
 
       - name: Публикация
         id: deployment

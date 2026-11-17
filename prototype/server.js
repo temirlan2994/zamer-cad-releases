@@ -4,6 +4,10 @@ const path = require("path");
 const crypto = require("crypto");
 
 const root = __dirname;
+// Development serves the same files that the Docker image embeds under core/.
+const sharedCad = path.resolve(root, "../shared/cad");
+const sharedCadFiles = new Set(["core/geometry.js", "core/blocks.js", "core/dxf-writer.js"]);
+const useSharedCadSources = fs.existsSync(sharedCad);
 const dataRoot = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : root;
 const port = process.env.PORT || 4187;
 const host = process.env.HOST || "127.0.0.1";
@@ -83,7 +87,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
-  fs.readFile(filePath, (error, content) => {
+  const modulePath = relative.split(path.sep).join("/");
+  const sourcePath = useSharedCadSources && sharedCadFiles.has(modulePath)
+    ? path.join(sharedCad, path.basename(filePath))
+    : filePath;
+
+  fs.readFile(sourcePath, (error, content) => {
     if (error) {
       response.writeHead(404);
       response.end("Not found");

@@ -8,7 +8,7 @@ import {
 } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT, moduleGraph, pageAssets } from './build-artifact.mjs';
+import { ROOT, assetSource, moduleGraph, pageAssets } from './build-artifact.mjs';
 
 const clean = (path) => posix.normalize(String(path).replace(/^\.\//, ''));
 
@@ -25,7 +25,7 @@ export function pwaFiles(root = ROOT) {
     }
   }
   return [...files].filter((file) => {
-    const path = join(root, file);
+    const path = assetSource(root, file);
     return file === 'pwa-assets.js' || (existsSync(path) && statSync(path).isFile());
   }).sort();
 }
@@ -37,7 +37,7 @@ export function pwaAssetData(root = ROOT, requestedVersion = null) {
     const hash = createHash('sha256');
     for (const file of files) {
       if (file === 'pwa-assets.js') continue;
-      hash.update(file).update('\0').update(readFileSync(join(root, file))).update('\0');
+      hash.update(file).update('\0').update(readFileSync(assetSource(root, file))).update('\0');
     }
     version = hash.digest('hex').slice(0, 16);
   }

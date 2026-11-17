@@ -79,6 +79,12 @@ test("server keeps project revisions safe across conflicts and restart", { timeo
   let server = startServer(port, dataDir);
   try {
     await waitForHealth(baseUrl, server);
+    for (const module of ["geometry.js", "blocks.js", "dxf-writer.js"]) {
+      const response = await fetch(`${baseUrl}/core/${module}`);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), fs.readFileSync(path.join(__dirname, "../shared/cad", module), "utf8"));
+    }
+
     const login = `sync-${Date.now()}`;
     const password = "reliable-pass-123";
     const register = await jsonRequest(`${baseUrl}/api/auth/register`, {

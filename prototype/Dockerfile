@@ -7,10 +7,11 @@ ENV NODE_ENV=production \
     PORT=4187 \
     DATA_DIR=/data
 
-COPY package.json server.js index.html app.js styles.css sw.js manifest.webmanifest ./
-COPY core ./core
-COPY assets ./assets
-COPY icons ./icons
+COPY prototype/package.json prototype/server.js prototype/index.html prototype/app.js prototype/styles.css prototype/sw.js prototype/manifest.webmanifest ./
+COPY prototype/core ./core
+COPY prototype/assets ./assets
+COPY prototype/icons ./icons
+COPY shared/cad/*.js ./core/
 
 RUN mkdir -p /data && chown -R node:node /app /data
 

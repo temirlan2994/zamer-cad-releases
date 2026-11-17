@@ -13,6 +13,18 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PAGE = 'kepler-plan.html';
+// The published app keeps its existing module URLs and includes the actual shared code.
+const SHARED_CAD = resolve(ROOT, '../shared/cad');
+const SHARED_MODULES = new Map([
+  ['core/zamer/geometry.js', 'geometry.js'],
+  ['core/zamer/blocks.js', 'blocks.js'],
+  ['core/zamer/dxf-writer.js', 'dxf-writer.js'],
+]);
+
+export function assetSource(root, file) {
+  const sharedModule = resolve(root) === ROOT && SHARED_MODULES.get(file);
+  return sharedModule ? join(SHARED_CAD, sharedModule) : join(root, file);
+}
 
 const IMPORT_RE = /^\s*(?:import|export)\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|^\s*import\s*['"](\.{1,2}\/[^'"]+)['"]/gm;
 const MODULE_URL_RE = /new\s+URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g;
@@ -23,7 +35,7 @@ export function moduleGraph(entry, root = ROOT) {
   const visit = (rel) => {
     if (seen.has(rel)) return;
     seen.add(rel);
-    const code = readFileSync(join(root, rel), 'utf8');
+    const code = readFileSync(assetSource(root, rel), 'utf8');
     for (const m of code.matchAll(IMPORT_RE)) {
       visit(posix.normalize(posix.join(posix.dirname(rel), m[1] || m[2])));
     }
@@ -74,7 +86,7 @@ export function buildArtifact(outDir, root = ROOT) {
   writeFileSync(join(outDir, PAGE), artifactPage(html));
   for (const f of list) {
     mkdirSync(dirname(join(outDir, f)), { recursive: true });
-    copyFileSync(join(root, f), join(outDir, f));
+    copyFileSync(assetSource(root, f), join(outDir, f));
   }
   writeFileSync(join(outDir, 'manifest.json'), `${JSON.stringify({ page: PAGE, files: list }, null, 2)}\n`);
   return { page: join(outDir, PAGE), files: list };

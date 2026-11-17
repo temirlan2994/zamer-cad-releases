@@ -1,0 +1,33 @@
+name: Zamer CAD
+
+on:
+  push:
+    branches: [source]
+    paths: ['prototype/**', 'android-offline/**', 'shared/cad/**', '.github/workflows/zamer.yml']
+  pull_request:
+    paths: ['prototype/**', 'android-offline/**', 'shared/cad/**', '.github/workflows/zamer.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+        working-directory: prototype
+      - run: npm run check:encoding
+        working-directory: prototype
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - run: bash ./gradlew assembleDebug lintDebug
+        working-directory: android-offline

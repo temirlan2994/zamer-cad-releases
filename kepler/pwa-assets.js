@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "62346b7a32ae7111",
+  "version": "0c1c5a77bc50f7b0",
   "assets": [
     "./",
     "./app.js",
@@ -137,6 +137,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/walls.js",
     "./core/whole-home-layout.js",
     "./core/zamer/blocks.js",
+    "./core/zamer/dxf-writer.js",
     "./core/zamer/dxf.js",
     "./core/zamer/geometry.js",
     "./core/zip.js",

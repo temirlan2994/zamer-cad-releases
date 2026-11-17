@@ -1,6 +1,8 @@
 services:
   zamer:
-    build: .
+    build:
+      context: ..
+      dockerfile: prototype/Dockerfile
     restart: unless-stopped
     environment:
       HOST: 0.0.0.0

@@ -2,10 +2,10 @@ name: Kepler Plan
 
 on:
   push:
-    branches: [main]
-    paths: ['kepler/**', '.github/workflows/kepler.yml']
+    branches: [source]
+    paths: ['kepler/**', 'shared/cad/**', '.github/workflows/kepler.yml']
   pull_request:
-    paths: ['kepler/**', '.github/workflows/kepler.yml']
+    paths: ['kepler/**', 'shared/cad/**', '.github/workflows/kepler.yml']
   workflow_dispatch:
 
 permissions:

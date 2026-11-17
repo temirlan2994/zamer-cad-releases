@@ -49,6 +49,11 @@ test('сборка кладёт страницу, стили, модули и м
     assert.ok(existsSync(join(out, PAGE)));
     assert.ok(files.includes('styles.css') && files.includes('app.js') && files.includes('ui/input.js'));
     assert.ok(files.includes('workers/layout-worker.js'));
+    for (const module of ['geometry.js', 'blocks.js', 'dxf-writer.js']) {
+      const rel = `core/zamer/${module}`;
+      assert.ok(files.includes(rel), rel);
+      assert.deepEqual(readFileSync(join(out, rel)), readFileSync(join(ROOT, '../shared/cad', module)));
+    }
     for (const f of files) assert.ok(existsSync(join(out, f)), f);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.deepEqual(manifest.files, files);

@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assetSource } from './build-artifact.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TYPES = {
@@ -23,7 +24,8 @@ export function createServer(root = ROOT) {
     if (rel === '/') rel = '/index.html';
     const file = path.join(root, path.normalize(rel));
     if (!file.startsWith(root)) { res.writeHead(403); res.end(); return; }
-    fs.readFile(file, (err, data) => {
+    const asset = path.relative(root, file).split(path.sep).join('/');
+    fs.readFile(assetSource(root, asset), (err, data) => {
       if (err) { res.writeHead(404); res.end('404'); return; }
       res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
       res.end(data);

@@ -40,7 +40,7 @@ TTL: Auto
 На сервере клонируйте репозиторий и перейдите в папку приложения:
 
 ```bash
-git clone <URL-репозитория>
+git clone --branch source <URL-репозитория>
 cd <папка-репозитория>/prototype
 cp .env.example .env
 ```
