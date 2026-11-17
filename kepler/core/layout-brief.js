@@ -225,10 +225,24 @@ function normalizeScenarioSelections(value, actorIds) {
 
 function normalizeRouteEndpoint(value, refs) {
   const source = isObj(value) ? value : {};
-  return {
+  const out = {
     levelId: reference(source.levelId ?? source.level_id, refs.levelIds),
     roomId: reference(source.roomId ?? source.room_id, refs.roomIds),
   };
+  const nested = isObj(source.anchor) ? source.anchor : {};
+  const anchorType = text(
+    source.anchorType ?? source.anchor_type ?? nested.type ?? nested.kind,
+  );
+  const anchorId = text(source.anchorId ?? source.anchor_id ?? nested.id);
+  if (anchorId && (anchorType === 'item' || anchorType === 'opening')) {
+    const allowed = anchorType === 'item' ? refs.itemIds : refs.openingIds;
+    const known = anchorType === 'item' ? refs.itemIdsKnown : refs.openingIdsKnown;
+    if (!known || allowed.has(anchorId)) {
+      out.anchorType = anchorType;
+      out.anchorId = anchorId;
+    }
+  }
+  return out;
 }
 
 // Явная привязка абстрактного маршрута сценария к конкретным помещениям.
@@ -300,11 +314,19 @@ export function createLayoutBrief() {
   };
 }
 
-export function normalizeLayoutBrief(raw, {
-  levelIds = [], roomIds = [], itemIds = [],
-} = {}) {
+export function normalizeLayoutBrief(raw, options = {}) {
+  const {
+    levelIds = [], roomIds = [], itemIds = [], openingIds = [],
+  } = options;
   const source = isObj(raw) ? raw : {};
-  const refs = { levelIds: idSet(levelIds), roomIds: idSet(roomIds), itemIds: idSet(itemIds) };
+  const refs = {
+    levelIds: idSet(levelIds),
+    roomIds: idSet(roomIds),
+    itemIds: idSet(itemIds),
+    openingIds: idSet(openingIds),
+    itemIdsKnown: Object.prototype.hasOwnProperty.call(options, 'itemIds'),
+    openingIdsKnown: Object.prototype.hasOwnProperty.call(options, 'openingIds'),
+  };
   const actorUsed = new Set();
   const actors = (Array.isArray(source.actors) ? source.actors : [])
     .map((actor, index) => normalizeActor(actor, index, actorUsed));
@@ -363,10 +385,12 @@ export function ensureLayoutBrief(project) {
   const levelIds = (project?.levels || []).map((level) => level.id);
   const rooms = (project?.levels || []).flatMap((level) => level.rooms || []);
   const items = (project?.levels || []).flatMap((level) => level.items || []);
+  const openings = (project?.levels || []).flatMap((level) => level.openings || []);
   const brief = normalizeLayoutBrief(project?.layoutBrief, {
     levelIds,
     roomIds: rooms.map((room) => room.id),
     itemIds: items.map((item) => item.id),
+    openingIds: openings.map((opening) => opening.id),
   });
   if (project && typeof project === 'object') project.layoutBrief = brief;
   return brief;

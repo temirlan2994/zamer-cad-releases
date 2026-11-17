@@ -548,6 +548,7 @@ export function normalizeProject(data) {
     levelIds: data.levels.map((level) => level.id),
     roomIds: data.levels.flatMap((level) => level.rooms.map((room) => room.id)),
     itemIds: data.levels.flatMap((level) => level.items.map((item) => item.id)),
+    openingIds: data.levels.flatMap((level) => level.openings.map((opening) => opening.id)),
   });
   if (layoutBriefIsEmpty(layoutBrief)) delete data.layoutBrief; else data.layoutBrief = layoutBrief;
   ensureSite(data);

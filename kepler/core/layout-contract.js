@@ -406,6 +406,7 @@ export function projectToLayoutInput(project, opts = {}) {
     levelIds: project.levels.map((level) => level.id),
     roomIds: project.levels.flatMap((level) => level.rooms.map((room) => room.id)),
     itemIds: project.levels.flatMap((level) => level.items.map((item) => item.id)),
+    openingIds: project.levels.flatMap((level) => level.openings.map((opening) => opening.id)),
   });
   const actorSource = hasOwn(opts, 'actors') ? opts.actors : storedBrief.actors;
   const actors = (Array.isArray(actorSource) ? actorSource : []).map(actorRecord);

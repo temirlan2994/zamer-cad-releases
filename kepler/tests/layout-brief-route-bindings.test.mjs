@@ -4,10 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeHomeFlows } from '../core/home-flows.js';
 import {
-  createLayoutBrief, layoutBriefIsEmpty, normalizeLayoutBrief,
+  createLayoutBrief, ensureLayoutBrief, layoutBriefIsEmpty, normalizeLayoutBrief,
 } from '../core/layout-brief.js';
 import {
-  createProject, createRoom, deserializeProject, serializeProject,
+  createItem, createOpening, createProject, createRoom, deserializeProject, serializeProject,
 } from '../core/model.js';
 
 function projectWithRooms() {
@@ -128,4 +128,96 @@ test('одна привязка делает layoutBrief непустым, пу�
     scenarioRouteBindings: [{ scenarioId: 'SCN014', routeId: 'bed_to_door' }],
   });
   assert.equal(layoutBriefIsEmpty(brief), false);
+});
+
+test('якоря предмета и проёма переживают сохранение и открытие проекта', () => {
+  const { project, bedroom, entrance, levelId } = projectWithRooms();
+  const bed = createItem('bed-double', 1200, 1200, 1800, 2100);
+  bed.id = 'ITEM-BED';
+  project.items.push(bed);
+  const door = createOpening('door', entrance.id, 0, 900, 900);
+  door.id = 'OPENING-ENTRY';
+  project.openings.push(door);
+  project.layoutBrief = {
+    scenarioSelections: [{ scenarioId: 'SCN014', enabled: true, mandatory: true }],
+    scenarioRouteBindings: [{
+      scenarioId: 'SCN014', routeId: 'bed_to_door', instanceId: 'точный-путь',
+      from: {
+        levelId, roomId: bedroom.id, anchorType: 'item', anchorId: bed.id,
+      },
+      to: {
+        levelId, roomId: entrance.id, anchorType: 'opening', anchorId: door.id,
+      },
+    }],
+  };
+
+  const loaded = deserializeProject(serializeProject(project));
+  const binding = loaded.layoutBrief.scenarioRouteBindings[0];
+  assert.deepEqual(binding.from, {
+    levelId, roomId: bedroom.id, anchorType: 'item', anchorId: bed.id,
+  });
+  assert.deepEqual(binding.to, {
+    levelId, roomId: entrance.id, anchorType: 'opening', anchorId: door.id,
+  });
+});
+
+test('snake_case и вложенный anchor нормализуются в плоские поля', () => {
+  const brief = normalizeLayoutBrief({
+    scenario_route_bindings: [{
+      scenario_id: 'SCN014', route_id: 'bed_to_door',
+      from_endpoint: {
+        level_id: 'L1', room_id: 'R1', anchor_type: 'item', anchor_id: 'I1',
+      },
+      to_endpoint: {
+        level_id: 'L1', room_id: 'R2', anchor: { kind: 'opening', id: 'O1' },
+      },
+    }],
+  }, {
+    levelIds: ['L1'], roomIds: ['R1', 'R2'], itemIds: ['I1'], openingIds: ['O1'],
+  });
+
+  assert.deepEqual(brief.scenarioRouteBindings[0].from, {
+    levelId: 'L1', roomId: 'R1', anchorType: 'item', anchorId: 'I1',
+  });
+  assert.deepEqual(brief.scenarioRouteBindings[0].to, {
+    levelId: 'L1', roomId: 'R2', anchorType: 'opening', anchorId: 'O1',
+  });
+});
+
+test('удалённые и пустые якоря очищаются, помещения сохраняются', () => {
+  const brief = normalizeLayoutBrief({
+    scenarioRouteBindings: [{
+      scenarioId: 'SCN014', routeId: 'bed_to_door',
+      from: {
+        levelId: 'L1', roomId: 'R1', anchorType: 'item', anchorId: 'ITEM-DELETED',
+      },
+      to: {
+        levelId: 'L1', roomId: 'R2', anchorType: 'opening', anchorId: '',
+      },
+    }],
+  }, {
+    levelIds: ['L1'], roomIds: ['R1', 'R2'], itemIds: ['I1'], openingIds: ['O1'],
+  });
+
+  assert.deepEqual(brief.scenarioRouteBindings[0].from, { levelId: 'L1', roomId: 'R1' });
+  assert.deepEqual(brief.scenarioRouteBindings[0].to, { levelId: 'L1', roomId: 'R2' });
+});
+
+test('ensureLayoutBrief очищает якорь, удалённый из проекта', () => {
+  const { project, bedroom, entrance, levelId } = projectWithRooms();
+  project.layoutBrief = {
+    scenarioRouteBindings: [{
+      scenarioId: 'SCN014', routeId: 'bed_to_door',
+      from: {
+        levelId, roomId: bedroom.id, anchorType: 'item', anchorId: 'ITEM-DELETED',
+      },
+      to: {
+        levelId, roomId: entrance.id, anchorType: 'opening', anchorId: 'OPENING-DELETED',
+      },
+    }],
+  };
+
+  const binding = ensureLayoutBrief(project).scenarioRouteBindings[0];
+  assert.deepEqual(binding.from, { levelId, roomId: bedroom.id });
+  assert.deepEqual(binding.to, { levelId, roomId: entrance.id });
 });

@@ -40,6 +40,15 @@ export const state = {
   // но не автоматически проложенные трубы/воздуховоды.
   homeEngineeringOverlay: { on: false, result: null, signature: null },
   _homeEngineeringUI: null,
+  // Детальные маршруты внутри помещений и производная карта нагрузки.
+  // Настройки относятся только к виду; в проекте сохраняются лишь явные
+  // привязки сценарных точек к мебели или дверям.
+  homeCirculationOverlay: {
+    on: false, routes: true, heatmap: true, bottlenecks: true,
+    metric: 'route_count', period: null, profileWidthMm: 600,
+    result: null, signature: null,
+  },
+  _homeCirculationUI: null,
   planLs: null, // ландшафт на плане: { on, plants, covers, … } (ui/plan-landscape.js, localStorage)
   views: {
     plan: { scale: 0.08, panX: 120, panY: 120 },

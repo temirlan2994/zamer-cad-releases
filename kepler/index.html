@@ -235,6 +235,12 @@
             <span><i data-tone="point"></i>исходная точка</span>
             <span><i data-tone="candidate"></i>кандидат связи</span>
           </div>
+          <div class="home-circulation-canvas-legend" id="homeCirculationLegend" aria-label="Легенда расчётных маршрутов движения" hidden>
+            <strong>Движение и проходы</strong>
+            <span data-layer="route"><i data-tone="route"></i>расчётный маршрут</span>
+            <span data-layer="heat"><i data-tone="heat"></i><b data-circulation-legend-metric>наложение маршрутов</b></span>
+            <span data-layer="bottleneck"><i data-tone="narrow"></i>расчётное узкое место</span>
+          </div>
           <button class="draft-done" id="draftDone" type="button" hidden>✓ Готово</button>
           <!-- Телефон: инструмент включён, а ряда с «Готово» нет (например, «Дверь» из карточки) — выйти (ui/mobile.js). -->
           <button class="draft-done tool-done" id="toolDone" type="button" hidden>✓ Готово</button>

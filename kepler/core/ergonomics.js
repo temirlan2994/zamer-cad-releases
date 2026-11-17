@@ -28,9 +28,10 @@ import { DEFAULT_PARTITION, furnitureDef, isRoundItem, isStructural } from './ca
 import { compositeParts, isFixedSizeComp } from './composite.js';
 import { itemsInRoom } from './furnish.js';
 import { furniture3d } from './furniture3d.js';
-import { roomContainsPoint, roomPolygon } from './room-shape.js';
+import { roomContainsPoint, roomPolygon, roomRects } from './room-shape.js';
 import { nestedOuterRect } from './rooms.js';
-import { doorLeaves, openingRect } from './walls.js';
+import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
+import { doorLeaves, openingRect, wallRects } from './walls.js';
 
 export const ERGO_CELL = 50; // шаг сетки проходимости, мм
 export const ERGO_FLUSH = 50; // «вплотную»: зазор до 50 мм — предмет приставлен намеренно
@@ -458,8 +459,8 @@ function distanceFrom(src, cols, rows) {
 }
 
 // Сетка комнаты: свободные клетки, расстояния, классы ширины прохода.
-function passGrid(room, inside, floorPolys) {
-  const C = ERGO_CELL;
+function passGrid(room, inside, floorPolys, cellMm = ERGO_CELL) {
+  const C = Math.max(25, Math.round(Number(cellMm) || ERGO_CELL));
   // Сетка с полями в одну клетку: поля — «стена».
   const x0 = room.x - C; const y0 = room.y - C;
   const cols = Math.ceil(room.w / C) + 2; const rows = Math.ceil(room.h / C) + 2;
@@ -494,6 +495,131 @@ function passGrid(room, inside, floorPolys) {
   const s300 = fits(ERGO_NORMS.passage.crit / 2);
   const s400 = fits(ERGO_NORMS.passage.need / 2);
   return { x0, y0, cols, rows, cell: C, free, d2, s300, s400 };
+}
+
+// Единая сетка свободного пола для аналитических маршрутов. Она использует
+// те же точные контуры сложных помещений и повёрнутой/составной мебели, что
+// и основной анализ эргономики. Ширина в clearanceMm — расчётный диаметр
+// свободного пространства в центре клетки, а не нормативный обмер.
+export function buildRoomWalkGrid(project, room, walls = [], { cellMm = ERGO_CELL } = {}) {
+  const partition = project?.settings?.partition || DEFAULT_PARTITION;
+  const children = (project?.rooms || []).filter((candidate) => candidate.parentId === room.id);
+  const inside = (x, y) => roomContainsPoint(room, x, y)
+    && !children.some((child) => roomContainsPoint(child, x, y));
+  const floorPolys = [];
+  const obstacles = [];
+  const addObstacle = (polygon, meta) => {
+    floorPolys.push(polygon);
+    obstacles.push({ ...meta, polygon, bounds: bboxOf(polygon) });
+  };
+  for (const child of children) {
+    // roomRects — точное неперекрывающееся разложение Г-/П-контура. Рост
+    // каждой части добавляет стену вокруг помещения, не закрывая целиком
+    // свободную вогнутую часть его bbox.
+    for (const part of roomRects(child)) {
+      const rect = {
+        x: part.x - partition,
+        y: part.y - partition,
+        w: part.w + partition * 2,
+        h: part.h + partition * 2,
+      };
+      addObstacle([
+        { x: rect.x, y: rect.y }, { x: rect.x + rect.w, y: rect.y },
+        { x: rect.x + rect.w, y: rect.y + rect.h }, { x: rect.x, y: rect.y + rect.h },
+      ], { kind: 'nested_room', id: child.id });
+    }
+  }
+  const wallId = (wall) => wall?.wallId || wall?.id || wall?.key || null;
+  const doorCuts = (project?.openings || []).filter((opening) => opening.kind === 'door')
+    .map((opening) => openingRect(project, opening, walls))
+    .filter(Boolean)
+    .map((placed) => ({ wallId: wallId(placed.wall), rect: placed.rect }));
+  const subtractRect = (base, cut) => {
+    const x0 = Math.max(base.x, cut.x); const y0 = Math.max(base.y, cut.y);
+    const x1 = Math.min(base.x + base.w, cut.x + cut.w);
+    const y1 = Math.min(base.y + base.h, cut.y + cut.h);
+    if (x1 <= x0 || y1 <= y0) return [base];
+    return [
+      { x: base.x, y: base.y, w: base.w, h: y0 - base.y },
+      { x: base.x, y: y1, w: base.w, h: base.y + base.h - y1 },
+      { x: base.x, y: y0, w: x0 - base.x, h: y1 - y0 },
+      { x: x1, y: y0, w: base.x + base.w - x1, h: y1 - y0 },
+    ].filter((rect) => rect.w > 1e-6 && rect.h > 1e-6);
+  };
+  for (const wall of walls || []) {
+    if (wall.hidden || (wall.kind !== 'manual' && wall.source !== 'manual')) continue;
+    let parts = wallRects(wall);
+    for (const cut of doorCuts) {
+      if (cut.wallId && cut.wallId === wallId(wall)) parts = parts.flatMap((part) => subtractRect(part, cut.rect));
+    }
+    for (const rect of parts) {
+      addObstacle([
+        { x: rect.x, y: rect.y }, { x: rect.x + rect.w, y: rect.y },
+        { x: rect.x + rect.w, y: rect.y + rect.h }, { x: rect.x, y: rect.y + rect.h },
+      ], { kind: 'wall', id: wallId(wall) });
+    }
+  }
+  // Проём в перекрытии — не пол. В том числе учитываем автоматически
+  // выведенные проёмы над лестницами; межэтажный коннектор проверяется
+  // отдельно и не даёт обычному маршруту пройти через пустоту.
+  for (const opening of slabOpenings(project, project?.activeLevel)) {
+    for (const rect of slabOpeningCutRects(opening, Math.max(25, Number(cellMm) || ERGO_CELL))) {
+      addObstacle([
+        { x: rect.x, y: rect.y }, { x: rect.x + rect.w, y: rect.y },
+        { x: rect.x + rect.w, y: rect.y + rect.h }, { x: rect.x, y: rect.y + rect.h },
+      ], { kind: 'slab_opening', id: opening.id });
+    }
+  }
+  const itemIds = [];
+  for (const item of itemsInRoom(project, room)) {
+    // Для общего анализа эргономики отдельный стул считается подвижным, но
+    // точный маршрут не должен рисоваться сквозь его текущее положение.
+    if (!onFloor(item.kind) && !isChair(item.kind) && !isFixedSizeComp(item)) continue;
+    itemIds.push(item.id);
+    const frames = itemFrames(item);
+    // Dining-композит не fixed-size: itemFrames уже содержит столешницу,
+    // а видимые стулья добавляем по их точным трансформированным частям.
+    if (item?.comp?.type === 'dining') {
+      const own = frame(item.x, item.y, item.w, item.h, item.rotation, item.mirrored);
+      for (const part of compositeParts(item)) {
+        const center = toHouse(own, part.x, part.y);
+        const rotation = (item.mirrored ? -(part.rotation || 0) : (part.rotation || 0))
+          + (item.rotation || 0);
+        frames.push({
+          f: frame(center.x, center.y, part.w, part.h, rotation, item.mirrored),
+          kind: part.kind,
+        });
+      }
+    }
+    for (const entry of frames) {
+      addObstacle(rectPoly(entry.f, entry.round), { kind: 'item', id: item.id });
+    }
+  }
+  const grid = passGrid(room, inside, floorPolys, cellMm);
+  const boundary = roomPolygon(room);
+  const clearanceMm = new Uint16Array(grid.free.length);
+  for (let index = 0; index < clearanceMm.length; index += 1) {
+    if (!grid.free[index]) continue;
+    const x = grid.x0 + ((index % grid.cols) + 0.5) * grid.cell;
+    const y = grid.y0 + (Math.floor(index / grid.cols) + 0.5) * grid.cell;
+    let radius2 = Infinity;
+    for (let edge = 0; edge < boundary.length; edge += 1) {
+      radius2 = Math.min(radius2, segDist2(x, y, boundary[edge], boundary[(edge + 1) % boundary.length]));
+    }
+    let radius = Math.sqrt(radius2);
+    for (const polygon of floorPolys) radius = Math.min(radius, polyDist(polygon, x, y));
+    clearanceMm[index] = Math.min(65535, Math.max(0, Math.floor(radius * 2)));
+  }
+  return {
+    roomId: room.id,
+    ...grid,
+    clearanceMm,
+    obstaclePolygons: floorPolys,
+    obstacles,
+    containsPoint: inside,
+    roomBoundary: boundary,
+    itemIds,
+  };
 }
 
 // Классы ширины прохода свободных клеток: 1 — уже 600, 2 — 600–800, 3 — норма.

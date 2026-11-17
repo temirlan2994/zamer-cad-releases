@@ -140,9 +140,16 @@ function functionalRouteRecords(program, levelsById) {
           ? roomKey(check.levelId, check.fromRoomId) : null,
         toRoomKey: check?.levelId && check?.toRoomId
           ? roomKey(check.levelId, check.toRoomId) : null,
+        fromEndpoint: check?.levelId && check?.fromRoomId
+          ? { levelId: check.levelId, roomId: check.fromRoomId, anchorType: null, anchorId: null }
+          : null,
+        toEndpoint: check?.levelId && check?.toRoomId
+          ? { levelId: check.levelId, roomId: check.toRoomId, anchorType: null, anchorId: null }
+          : null,
         pathRoomKeys: check?.levelId
           ? pathRoomIds.map((id) => roomKey(check.levelId, id)) : [],
         transitionKeys: transitions.map(({ transitionKey }) => transitionKey),
+        transitions,
         reason: check?.reason || connection?.reason || '',
       });
     });
@@ -159,8 +166,16 @@ function selectionFrequency(selection) {
 }
 
 function normalizedEndpoint(endpoint) {
-  if (!endpoint || typeof endpoint !== 'object') return { levelId: null, roomId: null };
-  return { levelId: text(endpoint.levelId), roomId: text(endpoint.roomId) };
+  if (!endpoint || typeof endpoint !== 'object') {
+    return { levelId: null, roomId: null, anchorType: null, anchorId: null };
+  }
+  const anchor = endpoint.anchor && typeof endpoint.anchor === 'object' ? endpoint.anchor : {};
+  return {
+    levelId: text(endpoint.levelId),
+    roomId: text(endpoint.roomId),
+    anchorType: text(endpoint.anchorType ?? anchor.type),
+    anchorId: text(endpoint.anchorId ?? anchor.id),
+  };
 }
 
 function scenarioRouteRecord({ scenario, definition, binding, instanceIndex, levelsById }) {
@@ -177,9 +192,12 @@ function scenarioRouteRecord({ scenario, definition, binding, instanceIndex, lev
     toAnchorRole: definition.to_anchor_role,
     fromRoomKey: from.levelId && from.roomId ? roomKey(from.levelId, from.roomId) : null,
     toRoomKey: to.levelId && to.roomId ? roomKey(to.levelId, to.roomId) : null,
+    fromEndpoint: from,
+    toEndpoint: to,
     levelId: from.levelId && from.levelId === to.levelId ? from.levelId : null,
     pathRoomKeys: [],
     transitionKeys: [],
+    transitions: [],
     topologyEvidence: null,
     physicalPathStatus: 'unknown',
     sourceRef: text(binding?.sourceRef),
@@ -225,6 +243,7 @@ function scenarioRouteRecord({ scenario, definition, binding, instanceIndex, lev
     reasonCode: path.length === 2 ? 'direct_passage' : 'connected_passage',
     pathRoomKeys: path.map((id) => roomKey(from.levelId, id)),
     transitionKeys: transitions.map(({ transitionKey }) => transitionKey),
+    transitions,
     topologyEvidence: 'door_graph',
     reason: path.length === 2
       ? 'Есть прямой переход между помещениями.'

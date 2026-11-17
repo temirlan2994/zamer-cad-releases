@@ -18,6 +18,10 @@ import {
   handleHomeEngineeringClick, handleHomeEngineeringInput, homeEngineeringHtml,
   refreshHomeEngineeringOverlay,
 } from './home-engineering.js';
+import {
+  handleHomeCirculationClick, handleHomeCirculationInput, homeCirculationHtml,
+  refreshHomeCirculationOverlay,
+} from './home-circulation.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { setEditorMode } from './modes.js';
 import { renderProps } from './props.js';
@@ -131,6 +135,13 @@ const HOME_PROGRAM_STATUS = Object.freeze({
   incomplete: 'Не хватает',
   ready: 'Готова',
 });
+const CIRCULATION_PERIOD_LABEL = Object.freeze({
+  day: 'проходов в день',
+  week: 'проходов в неделю',
+  month: 'проходов в месяц',
+  year: 'проходов в год',
+  event: 'проходов за событие',
+});
 
 let bound = false;
 let panelOpen = false;
@@ -143,7 +154,7 @@ let footprintDraft = null;
 let footprintDraftProject = null;
 let footprintDraftDirty = false;
 
-const HOME_VIEWS = new Set(['program', 'flows', 'engineering']);
+const HOME_VIEWS = new Set(['program', 'flows', 'engineering', 'circulation']);
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action',
   'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
@@ -152,6 +163,10 @@ const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-flows-action', 'data-home-engineering-action',
   'data-engineering-field', 'data-point-id', 'data-scenario-id',
   'data-route-id', 'data-instance-id',
+  'data-home-circulation-action', 'data-circulation-profile',
+  'data-circulation-width', 'data-circulation-layer',
+  'data-circulation-metric', 'data-circulation-period',
+  'data-circulation-anchor',
 ]);
 
 const byId = (id) => document.getElementById(id);
@@ -164,6 +179,7 @@ function renderedHomeView(body) {
   if (body.querySelector('[data-home-program]')) return 'program';
   if (body.querySelector('[data-home-flows]')) return 'flows';
   if (body.querySelector('[data-home-engineering]')) return 'engineering';
+  if (body.querySelector('[data-home-circulation]')) return 'circulation';
   return null;
 }
 
@@ -199,6 +215,7 @@ function captureHomePanelState(body, view) {
   const panel = body.closest('.project-route-panel');
   return {
     scrollTop: panel?.scrollTop || 0,
+    navScrollLeft: body.querySelector('.home-system-nav')?.scrollLeft || 0,
     focus: focusedHomeControl(body),
     scenarios: [...body.querySelectorAll('[data-home-flow-scenario-id]')].map((details) => ({
       id: details.dataset.homeFlowScenarioId,
@@ -224,6 +241,8 @@ function restoreHomePanelState(body, snapshot) {
   }
   const panel = body.closest('.project-route-panel');
   if (panel) panel.scrollTop = snapshot.scrollTop;
+  const nav = body.querySelector('.home-system-nav');
+  if (nav) nav.scrollLeft = snapshot.navScrollLeft || 0;
   const identity = snapshot.focus;
   if (!identity) return;
   const target = [...body.querySelectorAll(identity.tagName.toLocaleLowerCase('en-US'))]
@@ -769,6 +788,10 @@ function renderPanel(model) {
         kicker: 'Этап 4 · предварительная схема', title: 'Инженерные связи',
         html: () => homeEngineeringHtml(state.project, state),
       },
+      circulation: {
+        kicker: 'Этап 5 · маршруты внутри помещений', title: 'Движение и проходы',
+        html: () => homeCirculationHtml(state.project, state),
+      },
     };
     const current = views[panelView];
     kicker.textContent = current.kicker;
@@ -796,6 +819,7 @@ function homeSystemNav(active) {
     ['program', 'Программа'],
     ['flows', 'Зоны и маршруты'],
     ['engineering', 'Инженерия'],
+    ['circulation', 'Движение'],
   ];
   return `<nav class="home-system-nav" aria-label="Этапы проектирования дома">${views.map(([id, label], index) => `<button type="button" data-route-action="open-home-view" data-home-view="${id}"${active === id ? ' aria-current="page"' : ''}><span>${index + 2}</span>${label}</button>`).join('')}</nav>`;
 }
@@ -836,6 +860,7 @@ function openPanel(view, stageId, opener) {
     : view === 'program' ? 'Открыта программа дома'
       : view === 'flows' ? 'Открыты зоны и маршруты'
         : view === 'engineering' ? 'Открыт предварительный инженерный обзор'
+          : view === 'circulation' ? 'Открыты движение и проходы'
       : 'Открыт этап маршрута проекта');
 }
 
@@ -855,11 +880,25 @@ function switchHomeView(view) {
   panelView = view;
   renderProjectRoute();
   requestAnimationFrame(() => {
-    byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`)?.focus({ preventScroll: true });
+    const tab = byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`);
+    const nav = tab?.closest('.home-system-nav');
+    if (tab && nav && nav.scrollWidth > nav.clientWidth) {
+      // На телефоне вкладки образуют собственную горизонтальную ленту.
+      // scrollIntoView у некоторых Chromium прокручивает внешний экран,
+      // поэтому центрируем кнопку именно внутри nav.
+      nav.scrollTo({
+        left: tab.offsetLeft - (nav.clientWidth - tab.offsetWidth) / 2,
+        behavior: 'auto',
+      });
+    } else {
+      tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
+    tab?.focus({ preventScroll: true });
   });
   announce(view === 'program' ? 'Открыта программа дома'
     : view === 'flows' ? 'Открыты зоны и маршруты'
-      : 'Открыт предварительный инженерный обзор');
+      : view === 'engineering' ? 'Открыт предварительный инженерный обзор'
+        : 'Открыты движение и проходы');
 }
 
 function firstIncompleteStage(model) {
@@ -1024,8 +1063,18 @@ function toggleOpportunity() {
   announce('Карта возможностей показана');
 }
 
+function disableCirculationForAnotherOverlay(otherOverlayOn) {
+  if (!otherOverlayOn || !state.homeCirculationOverlay?.on) return;
+  state.homeCirculationOverlay = {
+    ...state.homeCirculationOverlay, on: false, result: null, signature: null,
+  };
+  state._homeCirculationUI = null;
+  requestDraw();
+  renderProjectRoute();
+}
+
 function handleBodyClick(event) {
-  if (handleHomeFlowsClick(event, {
+  if (handleHomeCirculationClick(event, {
     project: state.project,
     state,
     mutate,
@@ -1036,7 +1085,7 @@ function handleBodyClick(event) {
     toast,
     setEditorMode,
   })) return;
-  if (handleHomeEngineeringClick(event, {
+  const handledFlows = handleHomeFlowsClick(event, {
     project: state.project,
     state,
     mutate,
@@ -1046,12 +1095,35 @@ function handleBodyClick(event) {
     requestDraw,
     toast,
     setEditorMode,
-  })) return;
-  if (handleHomeProgramClick(event, {
+  });
+  if (handledFlows) {
+    disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
+    return;
+  }
+  const handledEngineering = handleHomeEngineeringClick(event, {
+    project: state.project,
+    state,
+    mutate,
     closePanel,
     announce,
     rerender: renderProjectRoute,
-  })) return;
+    requestDraw,
+    toast,
+    setEditorMode,
+  });
+  if (handledEngineering) {
+    disableCirculationForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
+    return;
+  }
+  const handledProgram = handleHomeProgramClick(event, {
+    closePanel,
+    announce,
+    rerender: renderProjectRoute,
+  });
+  if (handledProgram) {
+    disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
+    return;
+  }
   const toolButton = event.target.closest('[data-route-tool]');
   if (toolButton) {
     showSiteTool(toolButton.dataset.routeTool);
@@ -1164,6 +1236,21 @@ export function renderProjectRoute() {
   }
   const homeEngineeringLegend = byId('homeEngineeringLegend');
   if (homeEngineeringLegend) homeEngineeringLegend.hidden = !state.homeEngineeringOverlay?.on;
+  const homeCirculationLegend = byId('homeCirculationLegend');
+  if (homeCirculationLegend) {
+    const view = state.homeCirculationOverlay || {};
+    homeCirculationLegend.hidden = !view.on;
+    const routeItem = homeCirculationLegend.querySelector('[data-layer="route"]');
+    const heatItem = homeCirculationLegend.querySelector('[data-layer="heat"]');
+    const bottleneckItem = homeCirculationLegend.querySelector('[data-layer="bottleneck"]');
+    if (routeItem) routeItem.hidden = view.routes === false;
+    if (heatItem) heatItem.hidden = view.heatmap === false;
+    if (bottleneckItem) bottleneckItem.hidden = view.bottlenecks === false;
+    const metric = homeCirculationLegend.querySelector('[data-circulation-legend-metric]');
+    if (metric) metric.textContent = view.metric === 'frequency'
+      ? CIRCULATION_PERIOD_LABEL[view.period] || 'частота выбранного периода'
+      : 'число рассчитанных маршрутов';
+  }
   renderStageBar(latestModel);
   root.classList.toggle('has-project', Boolean(state.project));
   if (panelOpen) renderPanel(latestModel);
@@ -1216,6 +1303,10 @@ export function bindProjectRoute() {
   body.addEventListener('input', (event) => {
     handleFootprintInput(event);
     handleHomeProgramInput(event);
+    handleHomeCirculationInput(event, {
+      project: state.project, state, mutate,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
   });
   body.addEventListener('change', (event) => {
     handleHomeProgramInput(event);
@@ -1224,6 +1315,10 @@ export function bindProjectRoute() {
       rerender: renderProjectRoute, requestDraw, toast,
     });
     handleHomeEngineeringInput(event, {
+      project: state.project, state, mutate,
+      rerender: renderProjectRoute, requestDraw, toast,
+    });
+    handleHomeCirculationInput(event, {
       project: state.project, state, mutate,
       rerender: renderProjectRoute, requestDraw, toast,
     });
@@ -1240,6 +1335,9 @@ export function bindProjectRoute() {
     } else if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();
     if (state.homeEngineeringOverlay?.on) {
       refreshHomeEngineeringOverlay(state.project, state, requestDraw);
+    }
+    if (state.homeCirculationOverlay?.on) {
+      refreshHomeCirculationOverlay(state.project, state, requestDraw);
     }
     if (state.siteOpportunity?.on) refreshSiteOpportunity();
     else {

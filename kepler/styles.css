@@ -643,6 +643,7 @@ body.mode-site .library { display: none; }
 .site-opportunity-canvas-legend { display: none; }
 .home-program-canvas-legend { display: none; }
 .home-engineering-canvas-legend { display: none; }
+.home-circulation-canvas-legend { display: none; }
 body.mode-site .site-opportunity-canvas-legend:not([hidden]) {
   position: absolute;
   left: 12px;
@@ -694,12 +695,33 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-engineering-canvas
   font-size: 10px;
   pointer-events: none;
 }
+body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas-legend:not([hidden]) {
+  position: absolute;
+  right: 12px;
+  bottom: 34px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--muted);
+  box-shadow: var(--shadow);
+  font-size: 10px;
+  pointer-events: none;
+}
 .home-program-canvas-legend strong,
-.home-engineering-canvas-legend strong { color: var(--text); font-size: 10.5px; }
+.home-engineering-canvas-legend strong,
+.home-circulation-canvas-legend strong { color: var(--text); font-size: 10.5px; }
 .home-program-canvas-legend span,
-.home-engineering-canvas-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.home-engineering-canvas-legend span,
+.home-circulation-canvas-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.home-circulation-canvas-legend b { font: inherit; font-weight: 400; }
 .home-program-canvas-legend i,
-.home-engineering-canvas-legend i { width: 12px; height: 8px; border-radius: 2px; background: #728096; }
+.home-engineering-canvas-legend i,
+.home-circulation-canvas-legend i { width: 12px; height: 8px; border-radius: 2px; background: #728096; }
 .home-program-canvas-legend i[data-tone="living"] { background: #795bd7; }
 .home-program-canvas-legend i[data-tone="kitchen"] { background: #278fc1; }
 .home-program-canvas-legend i[data-tone="wet"] { background: #14a1a4; }
@@ -711,6 +733,9 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-engineering-canvas
 .home-engineering-canvas-legend i[data-tone="supply"] { background: #3975c4; }
 .home-engineering-canvas-legend i[data-tone="point"] { border-radius: 50%; background: #136f83; }
 .home-engineering-canvas-legend i[data-tone="candidate"] { border: 1px dashed #9a6500; background: transparent; }
+.home-circulation-canvas-legend i[data-tone="route"] { height: 3px; border-radius: 999px; background: #16865c; }
+.home-circulation-canvas-legend i[data-tone="heat"] { background: linear-gradient(90deg, #4f8edc, #7f58c2, #dd8433); }
+.home-circulation-canvas-legend i[data-tone="narrow"] { border-radius: 50%; background: #d19a24; }
 .site-opportunity-canvas-legend strong { color: var(--text); font-size: 10.5px; }
 .site-opportunity-canvas-legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .site-opportunity-canvas-legend i { width: 12px; height: 8px; border-radius: 2px; background: rgb(49, 125, 246); }
@@ -3383,8 +3408,17 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     justify-content: center;
     gap: 4px 9px;
   }
+  body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas-legend:not([hidden]) {
+    right: 8px;
+    left: 8px;
+    bottom: calc(var(--ribbon-h) + 8px);
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px 9px;
+  }
   .home-program-canvas-legend strong,
-  .home-engineering-canvas-legend strong { width: 100%; text-align: center; }
+  .home-engineering-canvas-legend strong,
+  .home-circulation-canvas-legend strong { width: 100%; text-align: center; }
 
   .project-route-scrim {
     position: fixed;
@@ -3662,7 +3696,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   top: -14px;
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
   margin: -14px -16px 13px;
   padding: 8px 16px;
@@ -3851,6 +3885,134 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 .home-engineering-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .home-engineering-actions button { min-height: 36px; font-size: 10.5px; }
 
+/* Этап 5: геометрические маршруты, нагрузка и узкие места. */
+.home-circulation { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+.home-circulation-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--muted);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.home-circulation-summary > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.home-circulation-summary > div:first-child strong { font-size: 13px; }
+.home-circulation-summary > div:first-child span { color: var(--muted); font-size: 10.5px; }
+.home-circulation-summary[data-status="clear"] { border-left-color: var(--ok-text); }
+.home-circulation-summary[data-status="narrow"],
+.home-circulation-summary[data-status="approximate"],
+.home-circulation-summary[data-status="partial"] { border-left-color: var(--warn-text); }
+.home-circulation-summary[data-status="blocked"] { border-left-color: var(--danger); }
+.home-circulation-summary dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(46px, auto));
+  gap: 5px;
+  margin: 0;
+}
+.home-circulation-summary dl > div { padding: 5px 7px; border-radius: 7px; background: var(--surface-2); text-align: center; }
+.home-circulation-summary dt { color: var(--muted); font-size: 8.5px; }
+.home-circulation-summary dd { margin: 1px 0 0; font-size: 12px; font-weight: 750; }
+.home-circulation-disclaimer {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.home-circulation-disclaimer strong { color: var(--text); }
+.home-circulation-profile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, .42fr);
+  gap: 8px 10px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.home-circulation-profile legend { padding: 0 5px; font-size: 11px; font-weight: 750; }
+.home-circulation-profile > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 5px;
+}
+.home-circulation-profile > div button { min-height: 36px; font-size: 10.5px; }
+.home-circulation-profile > div button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-weight: 750;
+}
+.home-circulation-profile .prop-field > span { min-height: 0; font-size: 9.5px; }
+.home-circulation-profile input { min-height: 36px; }
+.home-circulation-profile > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 9.5px; line-height: 1.4; }
+.home-circulation-layer-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.home-circulation-layer-controls .home-circulation-show { min-height: 34px; margin-left: auto; font-size: 11px; }
+.home-circulation-metric {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 9px;
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+.home-circulation-metric .prop-field > span { min-height: 0; font-size: 9.5px; }
+.home-circulation-metric select { min-height: 36px; }
+.home-circulation-warning,
+.home-circulation-hint { grid-column: 1 / -1; margin: 0; padding: 7px 8px; border-radius: 7px; font-size: 9.5px; line-height: 1.4; }
+.home-circulation-warning { background: var(--warn-bg); color: var(--warn-text); }
+.home-circulation-hint { background: var(--surface); color: var(--muted); }
+.home-circulation-section { padding-top: 12px; border-top: 1px solid var(--border); }
+.home-circulation-empty { margin: 8px 0 0; padding: 9px; border-radius: 8px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; }
+.home-circulation-routes,
+.home-circulation-anchors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.home-circulation-route,
+.home-circulation-anchor {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.home-circulation-route[data-status="clear"],
+.home-circulation-anchor[data-status="ready"] { border-left-color: var(--ok-text); }
+.home-circulation-route[data-status="narrow"],
+.home-circulation-route[data-status="approximate"],
+.home-circulation-route[data-status="partial"] { border-left-color: var(--warn-text); }
+.home-circulation-route[data-status="blocked"] { border-left-color: var(--danger); }
+.home-circulation-route > header,
+.home-circulation-anchor > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.home-circulation-route > header strong,
+.home-circulation-anchor > header strong { min-width: 0; font-size: 11px; }
+.home-circulation-route > header span,
+.home-circulation-anchor > header span { flex: none; color: var(--muted); font-size: 9px; }
+.home-circulation-route dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 8px 0 0; }
+.home-circulation-route dl > div { min-width: 0; padding: 5px 6px; border-radius: 6px; background: var(--surface-2); }
+.home-circulation-route dt { color: var(--muted); font-size: 8.5px; }
+.home-circulation-route dd { margin: 1px 0 0; overflow-wrap: anywhere; font-size: 10px; font-weight: 700; }
+.home-circulation-route > p,
+.home-circulation-anchor > p { margin: 7px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.4; }
+.home-circulation-anchor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
+.home-circulation-anchor-grid .prop-field > span { min-height: 2.5em; font-size: 9.5px; }
+.home-circulation-anchor-grid select { min-height: 36px; }
+.home-circulation-warnings {
+  margin: 0;
+  padding: 9px 10px 9px 27px;
+  border-radius: 9px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 10.5px;
+}
+.home-circulation-warnings li + li { margin-top: 3px; }
+
 @media (max-width: 640px) {
   .home-program { gap: 12px; }
   .home-program-summary { align-items: flex-start; gap: 9px; padding: 10px; }
@@ -3880,10 +4042,17 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .home-program-connections > li { padding-top: 10px; padding-bottom: 10px; }
   .home-system-nav {
     top: -11px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     margin: -11px -12px 11px;
     padding: 7px 12px;
   }
-  .home-system-nav button { min-height: 44px; padding: 5px; font-size: 9.5px; }
+  .home-system-nav button {
+    min-width: 0;
+    min-height: 44px;
+    padding: 5px 3px;
+    font-size: 9.5px;
+  }
   .home-system-nav button > span { display: none; }
   .home-flows-summary,
   .home-engineering-summary { align-items: stretch; flex-direction: column; }
@@ -3910,4 +4079,20 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .home-engineering-point > header button { min-height: 44px; }
   .home-engineering-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .home-engineering-actions button { min-height: 44px; }
+  .home-circulation-summary { align-items: stretch; flex-direction: column; }
+  .home-circulation-summary dl { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .home-circulation-summary dl > div { padding: 5px 2px; }
+  .home-circulation-profile { grid-template-columns: minmax(0, 1fr); }
+  .home-circulation-profile > div button,
+  .home-circulation-profile input,
+  .home-circulation-metric select,
+  .home-circulation-anchor-grid select { min-height: 44px; font-size: 13px; }
+  .home-circulation-layer-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-circulation-layer-controls .project-route-switch,
+  .home-circulation-layer-controls .home-circulation-show { min-height: 44px; justify-content: center; margin-left: 0; }
+  .home-circulation-metric,
+  .home-circulation-routes,
+  .home-circulation-anchors,
+  .home-circulation-anchor-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-circulation-anchor-grid .prop-field > span { min-height: 0; }
 }

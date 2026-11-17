@@ -529,6 +529,8 @@ export function restoreFrom(text) {
     homeFlowsUI: state._homeFlowsUI,
     homeEngineeringOverlay: state.homeEngineeringOverlay,
     homeEngineeringUI: state._homeEngineeringUI,
+    homeCirculationOverlay: state.homeCirculationOverlay,
+    homeCirculationUI: state._homeCirculationUI,
   };
   state.project = project;
   Object.assign(state, derived);
@@ -546,6 +548,12 @@ export function restoreFrom(text) {
   state._homeFlowsUI = null;
   state.homeEngineeringOverlay = { on: false, result: null, signature: null };
   state._homeEngineeringUI = null;
+  state.homeCirculationOverlay = {
+    on: false, routes: true, heatmap: true, bottlenecks: true,
+    metric: 'route_count', period: null, profileWidthMm: 600,
+    result: null, signature: null,
+  };
+  state._homeCirculationUI = null;
   state.rejected.clear();
   state.layoutVariants.clear();
   try {
@@ -563,6 +571,8 @@ export function restoreFrom(text) {
     state._homeFlowsUI = prev.homeFlowsUI;
     state.homeEngineeringOverlay = prev.homeEngineeringOverlay;
     state._homeEngineeringUI = prev.homeEngineeringUI;
+    state.homeCirculationOverlay = prev.homeCirculationOverlay;
+    state._homeCirculationUI = prev.homeCirculationUI;
     try {
       refreshDerived();
       applyModeRotation();

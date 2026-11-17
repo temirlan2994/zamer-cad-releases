@@ -75,6 +75,7 @@ import { drawGridLocks } from './ui/grid-locks.js';
 import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
 import { drawHomeFlowsOverlay } from './ui/render-home-flows.js';
 import { drawHomeEngineeringOverlay } from './ui/render-home-engineering.js';
+import { drawHomeCirculationOverlay } from './ui/render-home-circulation.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -787,6 +788,7 @@ export function createRenderer(canvas) {
     // Это не фактические траектории людей: только доказанные связи помещений.
     drawHomeFlowsOverlay(ctx, { st: state, p2s, tokens, print });
     drawHomeEngineeringOverlay(ctx, { st: state, p2s, tokens, print });
+    drawHomeCirculationOverlay(ctx, { st: state, p2s, tokens, print });
 
     // Подписи и размеры зависят от масштаба: при отдалении шрифт меньше,
     // мельче 8 px подписи не рисуются, размеры скрываются раньше.
