@@ -8,6 +8,13 @@ import { ROOT, PAGE, moduleGraph, artifactPage, buildArtifact } from '../scripts
 
 const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
 
+test('номер версии совпадает с package.json и виден у каждого логотипа', () => {
+  const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const badges = [...html.matchAll(/<span class="app-version"[^>]*>([^<]+)<\/span>/g)];
+  assert.equal(badges.length, 3);
+  for (const badge of badges) assert.equal(badge[1], `v${version}`);
+});
+
 test('все модули ui/ достижимы из app.js (нет забытых файлов)', () => {
   const graph = new Set(moduleGraph('app.js'));
   for (const f of readdirSync(join(ROOT, 'ui'))) assert.ok(graph.has(`ui/${f}`), `ui/${f} не подключён`);
