@@ -52,7 +52,7 @@ describe('свет и итоговая проверка проекта', () => {
 
   after(async () => { await app?.close(); });
 
-  it('показывает шесть доступных этапов и не выдаёт оценку света за норму', async () => {
+  it('показывает восемь доступных этапов и не выдаёт оценку света за норму', async () => {
     const { page } = app;
     await openHomeView(page, 'climate', 'Свет и солнце');
     const nav = await page.evaluate(() => ({
@@ -60,7 +60,7 @@ describe('свет и итоговая проверка проекта', () => {
       current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
       selected: document.querySelector('[data-home-view="climate"]')?.getAttribute('aria-selected'),
     }));
-    assert.deepEqual(nav, { count: 6, current: 'climate', selected: 'true' });
+    assert.deepEqual(nav, { count: 8, current: 'climate', selected: 'true' });
     const text = await page.textContent('[data-home-climate]');
     assert.match(text, /Не нормативное заключение/i);
     assert.match(text, /ориентировочн|не подтвержден/i);
@@ -153,18 +153,19 @@ describe('этапы света и проверки на телефоне', () =
         ...tabs,
         ...document.querySelectorAll('[data-home-review-action]'),
       ].filter((node) => node.getClientRects().length);
-      const rects = tabs.map((node) => node.getBoundingClientRect());
+      const active = document.querySelector('.home-system-nav [aria-current="page"]');
+      const activeRect = active?.getBoundingClientRect();
       return {
         current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
         modal: document.getElementById('projectRoutePanel')?.getAttribute('aria-modal'),
         heights: controls.map((node) => node.getBoundingClientRect().height),
-        tabsInside: rects.every((rect) => rect.left >= -1 && rect.right <= innerWidth + 1),
+        activeInside: Boolean(activeRect && activeRect.left >= -1 && activeRect.right <= innerWidth + 1),
         noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth + 1,
       };
     });
     assert.equal(result.current, 'review');
     assert.equal(result.modal, 'true');
-    assert.equal(result.tabsInside, true, JSON.stringify(result));
+    assert.equal(result.activeInside, true, JSON.stringify(result));
     assert.equal(result.noDocumentOverflow, true, JSON.stringify(result));
     assert.ok(result.heights.length >= 6);
     assert.ok(result.heights.every((height) => height >= 44), JSON.stringify(result));

@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "0a108329a9cb34b0",
+  "version": "c9d0579a04e7766e",
   "assets": [
     "./",
     "./app.js",
@@ -40,7 +40,9 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/hit-stack.js",
     "./core/home-circulation.js",
     "./core/home-climate.js",
+    "./core/home-deliverables.js",
     "./core/home-engineering.js",
+    "./core/home-envelope.js",
     "./core/home-flows.js",
     "./core/home-program.js",
     "./core/home-review.js",
@@ -167,7 +169,9 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/hit.js",
     "./ui/home-circulation.js",
     "./ui/home-climate.js",
+    "./ui/home-deliverables.js",
     "./ui/home-engineering.js",
+    "./ui/home-envelope.js",
     "./ui/home-flows.js",
     "./ui/home-program.js",
     "./ui/home-review.js",

@@ -26,11 +26,16 @@ import {
   handleHomeClimateClick, handleHomeClimateInput, homeClimateHtml,
 } from './home-climate.js';
 import { handleHomeReviewClick, homeReviewHtml } from './home-review.js';
+import { handleHomeEnvelopeClick, homeEnvelopeHtml } from './home-envelope.js';
+import { handleHomeDeliverablesClick, homeDeliverablesHtml } from './home-deliverables.js';
+import { handleExport } from './files.js';
 import { goToIssue } from './issues.js';
 import { switchLevel } from './levels.js';
-import { closeSheets, isPhone } from './mobile.js';
+import { closeSheets, isPhone, toggleSheet } from './mobile.js';
 import { setEditorMode } from './modes.js';
+import { startPlanSectionTool } from './plan-section.js';
 import { renderProps } from './props.js';
+import { openView } from './props-views.js';
 import { setSolarAnalysis } from './solar-analysis.js';
 import { state } from './state.js';
 import { mutate, PROJECT_CHANGE_EVENT } from './store.js';
@@ -198,6 +203,18 @@ const HOME_VIEW_DEFS = Object.freeze([
     announce: 'Открыта сводная проверка проекта',
     html: (project, currentState) => homeReviewHtml(project, currentState),
   }),
+  Object.freeze({
+    id: 'envelope', step: 8, label: 'Объём',
+    kicker: 'Этап 8 · геометрия здания', title: 'Объём и фасады',
+    announce: 'Открыта геометрическая сводка здания',
+    html: (project) => homeEnvelopeHtml(project),
+  }),
+  Object.freeze({
+    id: 'deliverables', step: 9, label: 'Выпуск',
+    kicker: 'Этап 9 · концептуальный комплект', title: 'Листы и выдача',
+    announce: 'Открыт концептуальный комплект проекта',
+    html: (project) => homeDeliverablesHtml(project),
+  }),
 ]);
 const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
 const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
@@ -220,6 +237,9 @@ const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-review-action', 'data-home-review-view',
   'data-home-review-issue', 'data-home-review-kind',
   'data-home-review-item-id',
+  'data-home-envelope-action', 'data-home-envelope-view',
+  'data-home-deliverables-action', 'data-home-deliverables-view',
+  'data-home-deliverables-kind',
 ]);
 
 const byId = (id) => document.getElementById(id);
@@ -235,6 +255,8 @@ function renderedHomeView(body) {
   if (body.querySelector('[data-home-circulation]')) return 'circulation';
   if (body.querySelector('[data-home-climate]')) return 'climate';
   if (body.querySelector('[data-home-review]')) return 'review';
+  if (body.querySelector('[data-home-envelope]')) return 'envelope';
+  if (body.querySelector('[data-home-deliverables]')) return 'deliverables';
   return null;
 }
 
@@ -1105,6 +1127,36 @@ function disableSolarForAnotherOverlay(otherOverlayOn) {
 }
 
 function handleBodyClick(event) {
+  if (handleHomeDeliverablesClick(event, {
+    openView: (viewId) => {
+      closePanel({ restoreFocus: false });
+      openView(viewId);
+    },
+    openSheets: () => {
+      closePanel({ restoreFocus: false });
+      if (isPhone()) toggleSheet('sheets');
+      else {
+        state.propsTab = 'sheets';
+        renderProps();
+      }
+    },
+    handleExport: (kind) => {
+      closePanel({ restoreFocus: false });
+      handleExport(kind);
+    },
+    announce,
+  })) return;
+  if (handleHomeEnvelopeClick(event, {
+    open3d: () => openView('3d'),
+    openRoofPlan: () => openView('roofplan'),
+    openView,
+    startSection: () => {
+      openView(`plan:${state.project.activeLevel}`);
+      startPlanSectionTool();
+    },
+    closePanel,
+    announce,
+  })) return;
   if (handleHomeReviewClick(event, {
     project: state.project,
     state,
@@ -1225,11 +1277,15 @@ function handleDocumentKeydown(event) {
     return;
   }
   const homeTab = event.target?.closest?.('.home-system-nav [data-home-view]');
-  if (homeTab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+  const homeNavKeys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!isPhone()) homeNavKeys.push('ArrowUp', 'ArrowDown');
+  if (homeTab && homeNavKeys.includes(event.key)) {
     const tabs = HOME_VIEW_DEFS.map((view) => view.id);
     const current = Math.max(0, tabs.indexOf(homeTab.dataset.homeView));
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-      : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      : (current + (event.key === 'ArrowRight' ? 1
+        : event.key === 'ArrowLeft' ? -1
+          : event.key === 'ArrowDown' ? 4 : -4) + tabs.length) % tabs.length;
     event.preventDefault();
     switchHomeView(tabs[next]);
     return;

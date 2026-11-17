@@ -223,17 +223,20 @@ describe('этапы дома на телефоне', () => {
       const panelNode = document.getElementById('projectRoutePanel');
       const buttons = [...document.querySelectorAll('.home-system-nav button')];
       const rects = buttons.map((button) => button.getBoundingClientRect());
+      const active = document.querySelector('.home-system-nav [aria-current="page"]')?.getBoundingClientRect();
       return {
         modal: panelNode.getAttribute('aria-modal'),
         current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
         heights: rects.map((rect) => rect.height),
-        insideViewport: rects.every((rect) => rect.left >= 0 && rect.right <= innerWidth + 1),
+        activeInsideViewport: Boolean(active && active.left >= -1 && active.right <= innerWidth + 1),
+        noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth + 1,
       };
     });
     assert.equal(result.modal, 'true');
     assert.equal(result.current, 'flows');
     assert.ok(result.heights.every((height) => height >= 42), JSON.stringify(result));
-    assert.equal(result.insideViewport, true);
+    assert.equal(result.activeInsideViewport, true);
+    assert.equal(result.noDocumentOverflow, true);
     assert.deepEqual(app.errors, []);
   });
 });
