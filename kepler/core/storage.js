@@ -166,6 +166,33 @@ export async function getProject(db, root, pid, { server = false } = {}) {
   return snap.exists ? { id: pid, ...clone(snap.data()) } : null;
 }
 
+// Обновляет только миниатюру карточки, не создавая новую версию и не
+// превращая сохранённую версию в черновик. Это нужно для одноразовой
+// миграции старых схематичных preview после загрузки полного проекта.
+export async function updateProjectPreview(db, root, pid, preview, { editor = null } = {}) {
+  const safe = safeProjectPreview(preview);
+  if (safe?.v !== 2) throw new Error('Некорректная миниатюра проекта');
+  const ref = db.doc(`${root}/${pid}`);
+  if (editor) {
+    return editMetaTransaction(db, root, pid, editor, ({
+      transaction, metaRef, metaSnap, expected,
+    }) => {
+      if (!metaSnap.exists) throw new Error('Проект не найден');
+      const current = clone(metaSnap.data());
+      if (sameProjectPreview(current.preview, safe)) return { id: pid, ...current };
+      const updated = fencedMeta({ ...current, preview: safe }, expected);
+      transaction.set(metaRef, updated);
+      return { id: pid, ...clone(updated) };
+    });
+  }
+  const snap = await retry(() => ref.get());
+  if (!snap.exists) throw new Error('Проект не найден');
+  const current = clone(snap.data());
+  if (sameProjectPreview(current.preview, safe)) return { id: pid, ...current };
+  await retry(() => ref.update({ preview: safe }));
+  return { id: pid, ...current, preview: safe };
+}
+
 const draftColl = (root, pid) => `${root}/${pid}/draft`;
 const draftBlobsColl = (root, pid) => `${root}/${pid}/draft-blobs`;
 const draftRef = (db, root, pid) => db.doc(`${draftColl(root, pid)}/current`);

@@ -39,9 +39,41 @@ describe('выбор проектов при запуске', () => {
     assert.match(preview.src, /^data:image\/(?:webp|jpeg);base64,/);
     assert.equal(preview.complete, true);
     assert.ok(preview.width > 0 && preview.height > 0);
+    assert.equal(await page.$eval(card, (node) => getComputedStyle(node).userSelect), 'none',
+      'двойной клик по карточке не выделяет её текст');
     await page.click(card);
     await page.waitForSelector('#startScreen', { state: 'hidden' });
     assert.equal(await page.evaluate(() => window.__kepler.state.project.name), name);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('старую схематичную карточку сама заменяет настоящим снимком без проекта-резерва', async () => {
+    const { page } = app;
+    const pid = await page.evaluate(async () => {
+      const { createProjectPreview } = await import('./core/project-preview.js');
+      const { getLocalBackend } = await import('./ui/cloud.js');
+      const target = await getLocalBackend();
+      const id = window.__kepler.state.pid;
+      await target.db.doc(`${target.root}/${id}`).update({
+        preview: createProjectPreview(window.__kepler.state.project),
+      });
+      return id;
+    });
+    await page.click('#menuBtn');
+    const card = `#startRecentProjects .startup-project-card[data-pid="${pid}"]`;
+    await page.waitForSelector(`${card} .startup-project-preview img`);
+    const stored = await page.evaluate(async (id) => {
+      const { getLocalBackend } = await import('./ui/cloud.js');
+      const target = await getLocalBackend();
+      const projects = await target.db.collection(target.root).get();
+      const meta = await target.db.doc(`${target.root}/${id}`).get();
+      return { count: projects.docs.length, preview: meta.data()?.preview };
+    }, pid);
+    assert.equal(stored.count, 1, 'миграция не создаёт копию «резерв»');
+    assert.equal(stored.preview.v, 2);
+    assert.match(stored.preview.image, /^data:image\/(?:webp|jpeg);base64,/);
+    await page.click(card);
+    await page.waitForSelector('#startScreen', { state: 'hidden' });
     assert.deepEqual(app.errors, []);
   });
 

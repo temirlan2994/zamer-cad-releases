@@ -4,7 +4,7 @@ import { createMemoryDb } from '../core/memdb.js';
 import {
   chunkText, deleteDraft, deleteProject, getProject, listProjects, listShared, loadDraft, loadShared,
   loadVersion, publishProject, saveDraft, saveVersion, splitHeavy, joinHeavy,
-  unpublishProject, userRoot, DB_RULES,
+  unpublishProject, updateProjectPreview, userRoot, DB_RULES,
 } from '../core/storage.js';
 
 const root = userRoot('u1');
@@ -52,6 +52,24 @@ test('карточка проекта хранит компактный эски
   assert.equal(saved.meta.preview.v, 1);
   assert.equal(saved.meta.preview.rooms.length, 1);
   assert.equal('preview' in saved.meta.versions[0], false, 'история версий не раздувается');
+});
+
+test('фоновая миграция меняет только миниатюру и не создаёт резерв или новую версию', async () => {
+  const db = createMemoryDb();
+  const text = JSON.stringify({
+    name: 'Старый дом', levels: [{ rooms: [{ id: 'r1', x: 0, y: 0, w: 4200, h: 3600 }] }],
+  });
+  const saved = await saveVersion(db, root, text, { pid: 'preview-upgrade' });
+  const head = saved.meta.head;
+  const versions = saved.meta.versions.length;
+  const preview = { v: 2, image: 'data:image/webp;base64,AAAA' };
+  const upgraded = await updateProjectPreview(db, root, 'preview-upgrade', preview);
+  assert.deepEqual(upgraded.preview, preview);
+  assert.equal(upgraded.head, head);
+  assert.equal(upgraded.versions.length, versions);
+  assert.equal((await listProjects(db, root)).length, 1, 'отдельный проект «резерв» не появился');
+  assert.equal(await loadDraft(db, root, 'preview-upgrade'), null, 'миграция не создаёт черновик');
+  assert.equal((await loadVersion(db, root, 'preview-upgrade')).text, text);
 });
 
 test('saveVersion заменяет старый эскиз на v2 даже без изменений модели', async () => {

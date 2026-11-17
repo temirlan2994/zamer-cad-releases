@@ -2,16 +2,16 @@
 // входа через Google/Firebase (или capability Claude в артефакте).
 // Облачный draft сохраняется отдельно от ручных версий.
 
-import { serializeProject } from '../core/model.js';
-import { projectPreviewHtml } from '../core/project-preview.js';
+import { deserializeProject, serializeProject } from '../core/model.js';
+import { projectPreviewHtml, safeProjectPreview } from '../core/project-preview.js';
 import {
   deleteProject, getProject, hashText, listProjects, loadDraft, loadShared, loadVersion, newId, publishProject,
-  saveDraft, saveVersion, unpublishProject, watchProjects, watchShared,
+  saveDraft, saveVersion, unpublishProject, updateProjectPreview, watchProjects, watchShared,
 } from '../core/storage.js';
 import {
   acquireEditLease, cancelEditLeaseRequest, classifyObservedEditLease, EDIT_HEARTBEAT_MS,
   grantRequestedEditLease, heartbeatEditLease, leaseExpired, leaseHeldBy,
-  newEditSessionId, rejectEditLeaseRequest, releaseEditLease,
+  newEditSessionId, readEditLease, rejectEditLeaseRequest, releaseEditLease,
   requestEditLease, takeoverEditLease, watchEditLease,
 } from '../core/edit-lease.js';
 import { el, escapeHtml, toast } from './dom.js';
@@ -60,8 +60,11 @@ let pendingUnassignedDraft = null;
 const pendingCloudDrafts = new Map();
 const latestDraftOrder = new Map();
 const uncertainCloudWrites = new Set();
+const previewUpgradeQueued = new Set();
+const previewUpgradeDone = new Set();
 let draftOrder = 0;
 let syncChain = Promise.resolve(true);
+let previewUpgradeChain = Promise.resolve();
 let authAction = false;
 let projectActionBusy = false;
 const expanded = new Set();
@@ -150,6 +153,69 @@ function currentProjectThumbnail() {
     // Старое SVG-превью остаётся безопасным запасным вариантом, если браузер
     // не поддерживает кодирование canvas или модель ещё не готова к рендеру.
     return null;
+  }
+}
+
+const previewUpgradeKey = (target, pid) => `${target?.provider || ''}|${target?.root || ''}|${pid}`;
+
+async function upgradeProjectThumbnail(target, project) {
+  if (!target || backend !== target || !project?.id) return false;
+  const loaded = await loadLatestServerProject(project.id);
+  if (backend !== target) return false;
+  const preview = createProjectThumbnail(deserializeProject(loaded.text));
+  if (!preview) return true;
+
+  let lease = null;
+  let borrowedLease = false;
+  let editor = null;
+  if (usesEditLease(target)) {
+    if (activeEditor?.pid === project.id && leaseHeldBy(activeEditor.lease, editorIdentity)) {
+      lease = activeEditor.lease;
+    } else {
+      const observed = await readEditLease(target.db, target.root, project.id);
+      // Совсем старый проект без lease можно обновить по legacy-правилам без
+      // лишней блокировки. Если lease уже существует, даже истёкший, запись
+      // обязательно проходит через актуальный fencing epoch.
+      if (observed) {
+        if (!leaseExpired(observed) && !leaseHeldBy(observed, editorIdentity)) return false;
+        const acquired = await acquireEditLease(target.db, target.root, project.id, editorIdentity);
+        if (acquired.status !== 'acquired') return false;
+        lease = acquired.lease;
+        borrowedLease = true;
+      }
+    }
+    if (lease) editor = { sessionId: lease.sessionId, epoch: lease.epoch };
+  }
+
+  try {
+    await updateProjectPreview(target.db, target.root, project.id, preview, { editor });
+  } finally {
+    if (borrowedLease) {
+      try { await releaseEditLease(target.db, target.root, project.id, lease); } catch { /* lease сам истечёт */ }
+    }
+  }
+  if (backend === target) {
+    const current = projects.find((candidate) => candidate.id === project.id);
+    if (current) current.preview = preview;
+    if (!el('startProjectsView').hidden && !el('startScreen').hidden) renderStartProjects(projects);
+  }
+  return true;
+}
+
+function scheduleProjectThumbnailUpgrades(list) {
+  const target = backend;
+  if (!target || loginGateActive()) return;
+  for (const project of list) {
+    if (safeProjectPreview(project?.preview)?.v === 2) continue;
+    const key = previewUpgradeKey(target, project?.id);
+    if (!project?.id || previewUpgradeQueued.has(key) || previewUpgradeDone.has(key)) continue;
+    previewUpgradeQueued.add(key);
+    previewUpgradeChain = previewUpgradeChain.then(async () => {
+      try {
+        if (await upgradeProjectThumbnail(target, project)) previewUpgradeDone.add(key);
+      } catch { /* проект мог быть удалён или открыт на другом устройстве — повторим при следующем запуске */ }
+      finally { previewUpgradeQueued.delete(key); }
+    });
   }
 }
 
@@ -637,6 +703,9 @@ function renderStartProjects(list) {
         </span>
       </button>`;
   }).join('');
+  // Старые карточки содержат только прямоугольную схему. Полные проекты
+  // загружаются по одному в фоне и получают настоящий снимок первого этажа.
+  scheduleProjectThumbnailUpgrades(list);
 }
 
 async function refreshStartProjects() {
@@ -759,8 +828,13 @@ function backupName(text) {
   } catch { return 'Проект'; }
 }
 
+function projectTextHash(text) {
+  try { return hashText(JSON.stringify(JSON.parse(text))); }
+  catch { return hashText(String(text || '')); }
+}
+
 async function backupLocalDifference(localText, remoteText) {
-  if (!localText || !remoteText || hashText(localText) === hashText(remoteText)) return null;
+  if (!localText || !remoteText || projectTextHash(localText) === projectTextHash(remoteText)) return null;
   const stamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   let body;
   try {
@@ -795,13 +869,18 @@ async function preserveQueuedProjectBeforeSwitch(targetPid) {
   if (activeEditor || !currentPid || currentPid === targetPid) return true;
   const queued = pendingCloudDrafts.get(currentPid) || pendingUnassignedDraft;
   if (!queued?.text) return true;
-  const backupPid = await backupLocalDifference(queued.text, '{}');
-  if (!backupPid) {
-    toast('Сначала сохраните текущий локальный проект: его облачная копия ещё не подтверждена.', true);
+  // Обычное переключение не должно плодить проекты «— резерв». Сначала
+  // подтверждаем тот же автосохранённый черновик в основном проекте. Если
+  // облако недоступно или проект занят другим устройством, переключение
+  // блокируется, а локальный автосейв остаётся на месте.
+  const saved = await flushCloudDraft({ allowStartLease: true });
+  const stillPending = pendingCloudDrafts.has(currentPid)
+    || latestDraftOrder.has(currentPid) || pendingUnassignedDraft === queued;
+  if (!saved || stillPending || uncertainCloudWrites.size) {
+    toast('Основной проект ещё не сохранился в облаке. Дождитесь подтверждения и повторите.', true);
     return false;
   }
-  clearPendingFor(currentPid);
-  if (pendingUnassignedDraft === queued) pendingUnassignedDraft = null;
+  if (activeEditor?.pid === currentPid) await detachActiveEditor();
   return true;
 }
 
@@ -1073,7 +1152,7 @@ function restoreQueuedEntries(entries, target) {
   }
 }
 
-async function flushCloudDraft() {
+async function flushCloudDraft({ allowStartLease = false } = {}) {
   clearTimeout(syncTimer);
   syncTimer = null;
   if (backend?.mode !== 'cloud') return true;
@@ -1108,8 +1187,11 @@ async function flushCloudDraft() {
       if (usesEditLease(target)) {
         if (!activeEditor || activeEditor.pid !== pid || !leaseHeldBy(activeEditor.lease, editorIdentity)) {
           // Стартовый список проектов ещё не означает, что пользователь
-          // решил редактировать локально открытый проект.
-          if (!el('startScreen').hidden || pid !== state.pid) {
+          // решил редактировать локально открытый проект. Явное переключение
+          // — исключение: перед ним разрешено подтвердить уже готовый автосейв
+          // в основном проекте, не создавая отдельный «резерв».
+          const canSaveBeforeSwitch = allowStartLease && pid === state.pid;
+          if ((!el('startScreen').hidden && !canSaveBeforeSwitch) || pid !== state.pid) {
             ok = false;
             if (sameBackend(backend, target) && !pendingCloudDrafts.has(pid)) pendingCloudDrafts.set(pid, draft);
             continue;
@@ -1564,6 +1646,9 @@ export function bindProjects(initialAccount = null) {
   el('startRecentProjects').addEventListener('click', (event) => {
     const button = event.target.closest('button[data-act]');
     if (button) onAction(button);
+  });
+  el('startRecentProjects').addEventListener('dblclick', (event) => {
+    if (event.target.closest('.startup-project-card')) event.preventDefault();
   });
   document.addEventListener(AUTOSAVE_EVENT, (event) => {
     scheduleCloudDraft(event.detail?.text, {

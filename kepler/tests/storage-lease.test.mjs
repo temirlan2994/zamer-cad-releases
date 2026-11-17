@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDb } from '../core/memdb.js';
 import { acquireEditLease, takeoverEditLease } from '../core/edit-lease.js';
 import {
-  deleteProject, getProject, loadDraft, saveDraft, saveVersion, userRoot,
+  deleteProject, getProject, loadDraft, saveDraft, saveVersion, updateProjectPreview, userRoot,
 } from '../core/storage.js';
 
 const ROOT = userRoot('lease-user');
@@ -58,6 +58,25 @@ test('старое устройство после takeover не меняет dr
   assert.equal(current.draft.revision, savedByB.draft.revision);
   assert.equal(current.draft.editorSession, B.sessionId);
   assert.equal(current.draft.editorEpoch, second.lease.epoch);
+});
+
+test('фоновая миниатюра подчиняется тому же fencing, что основной проект', async () => {
+  const db = createMemoryDb();
+  const first = await acquireEditLease(db, ROOT, PID, A);
+  await saveVersion(db, ROOT, project('Дом', 1), {
+    pid: PID, editor: editor(first.lease),
+  });
+  const second = await takeoverEditLease(db, ROOT, PID, B, { force: true });
+  const oldPreview = { v: 2, image: 'data:image/webp;base64,AAAA' };
+  const newPreview = { v: 2, image: 'data:image/webp;base64,BBBB' };
+  await assert.rejects(
+    updateProjectPreview(db, ROOT, PID, oldPreview, { editor: editor(first.lease) }),
+    (error) => error?.code === 'edit-lease-lost',
+  );
+  const saved = await updateProjectPreview(db, ROOT, PID, newPreview, { editor: editor(second.lease) });
+  assert.deepEqual(saved.preview, newPreview);
+  assert.equal(saved.editorSession, B.sessionId);
+  assert.equal(saved.editorEpoch, second.lease.epoch);
 });
 
 test('повторный запуск на том же телефоне fencing-ом отсекает старый сеанс', async () => {
