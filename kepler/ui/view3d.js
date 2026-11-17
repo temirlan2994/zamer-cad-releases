@@ -25,7 +25,7 @@ import {
   boxFaces, buildHouseMesh, buildLevelWalls, massFaces, massVoidFaces, shownLevelIds, terrainHeightFn,
 } from '../core/mesh3d.js';
 import { massGroundFaces } from '../core/mass-ground.js';
-import { LEVEL_KEYS } from '../core/model.js';
+import { LEVEL_KEYS, sortedLevels } from '../core/model.js';
 import {
   axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, screenRay,
 } from '../core/pick3d.js';
@@ -35,7 +35,9 @@ import {
 import { el, toast } from './dom.js';
 import { closeElevation } from './elevation-view.js';
 import { switchLevel } from './levels.js';
-import { isSiteView } from './modes.js';
+import { closeSection, openSectionId } from './landscape-section.js';
+import { setEditorMode } from './modes.js';
+import { closeSheet } from './sheet-view.js';
 import { reconcileOpenings } from './plan-actions.js';
 import { state } from './state.js';
 import {
@@ -121,9 +123,8 @@ let hover = null; // { key, level, face, normal, kind } — ручка выбр�
 let massVoidHoverId = null; // невидимый cutter подсвечивается только под курсором
 let edit = null; // жест правки стены
 
-// Объекты выбираются (стены — и правятся) только в «Плане» (в «Участке»/
-// «Ландшафте» план не правится).
-const wallsEditable = () => !isSiteView();
+// Рабочая модель доступна из любого вида проекта.
+const wallsEditable = () => !state.editLocked;
 
 function selectedRef() {
   const sel = state.selection;
@@ -600,11 +601,11 @@ function syncReliefControl() {
 }
 
 
-const HINT_IDLE = 'Клик — выбрать стену, помещение, проём или мебель (и на плане) · тянуть — вращать, колесо — масштаб';
+const HINT_IDLE = 'Тяните, чтобы вращать · Нажмите на объект, чтобы выбрать';
 const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копировать/вставить/дублировать · R — повернуть мебель · Esc — снять выбор';
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
-const HINT_SITE = 'Стены выбираются и правятся в режиме «План»';
+const HINT_SITE = 'Редактирование приостановлено';
 const HINT_MASS = 'Масса: стрелки гизмо — переместить · точки — размер · R — повернуть · Delete';
 const HINT_MASS_TOUCH = HINT_MASS;
 const HINT_ROOF = 'Крыша: точки — вынос (по плоскости плиты), синяя стрелка — высота · двойной клик — число · Shift — без привязки · Delete';
@@ -701,6 +702,15 @@ function syncLayerControls() {
   if (ms) ms.checked = opts.masses;
 }
 
+function syncWorkingFloor() {
+  const select = el('v3WorkingLevel');
+  const levels = sortedLevels(state.project);
+  const unchanged = select.options.length === levels.length && levels.every((level, index) =>
+    select.options[index].value === level.id && select.options[index].text === level.name);
+  if (!unchanged) select.replaceChildren(...levels.map((level) => new Option(level.name, level.id)));
+  select.value = state.project.activeLevel;
+}
+
 // Флажок «Массы» виден, когда массы есть или идёт инструмент «Масса».
 function syncMassControl() {
   const hasMasses = Boolean(state.project?.masses?.length || state.project?.massVoids?.length);
@@ -735,6 +745,7 @@ function rebuildRoofs() {
 
 export function refresh3d() {
   if (!active || edit || massDragging() || roofDragging()) return;
+  syncWorkingFloor();
   syncReliefControl();
   syncMassControl();
   rebuildScene();
@@ -743,29 +754,46 @@ export function refresh3d() {
   setHint();
 }
 
+let cameraProject = null;
+let workingLevel = null;
+let returnLevel = null;
+let returnMode = 'plan';
 export function open3d() {
-  closeElevation(); // фасад на холсте уступает 3D
+  if (active) return;
+  closeSheet();
+  if (openSectionId()) closeSection();
+  closeElevation();
+  returnLevel = state.project.activeLevel;
+  returnMode = state.modeName;
+  if (state.tool && !massToolOn() && !roofToolOn() && !openingToolOn()) cancelTool();
+  if (returnMode !== 'plan') setEditorMode('plan');
+  if (cameraProject === state.project && workingLevel && !state.tool && !state.selection) switchLevel(workingLevel, { planView: false });
   active = true;
   el('view3d').hidden = false;
-  document.body.classList.add('v3-open'); // этажи — поверх 3D
+  document.body.classList.add('v3-open');
   el('view3dBtn')?.classList.add('active');
   syncReliefControl();
   resetMassTool();
   resetOpeningTool();
   if (massToolOn()) opts.masses = true;
   syncLayerControls();
+  syncWorkingFloor();
   syncMassControl();
   rebuildScene();
   hover = null;
   massVoidHoverId = null;
   uploadGeometry();
-  frameHouse();
+  if (cameraProject !== state.project) {
+    frameHouse();
+    cameraProject = state.project;
+  }
   requestRender();
   setHint();
   document.dispatchEvent(new CustomEvent('kepler:view')); // дерево видов, «Свойства»
 }
 
 export function close3d() {
+  if (!active) return;
   if (edit) cancelEdit();
   if (massDragging()) cancelMassDrag();
   if (roofDragging()) cancelRoofDrag();
@@ -777,8 +805,12 @@ export function close3d() {
   hover = null;
   massVoidHoverId = null;
   el('view3d').hidden = true;
+  el('view3d').querySelector('.v3-layers').open = false;
   document.body.classList.remove('v3-open');
   el('view3dBtn')?.classList.remove('active');
+  workingLevel = state.project.activeLevel;
+  if (returnLevel) switchLevel(returnLevel, { planView: false });
+  if (returnMode !== 'plan') setEditorMode(returnMode);
   document.dispatchEvent(new CustomEvent('kepler:view'));
 }
 
@@ -1285,8 +1317,19 @@ function onDblClick(e) {
 
 export function bind3d() {
   const canvas = el('canvas3d');
-  el('view3dBtn')?.addEventListener('click', () => (active ? close3d() : open3d()));
+  const layers = el('view3d').querySelector('.v3-layers');
+  document.addEventListener('pointerdown', (event) => {
+    if (layers.open && !layers.contains(event.target)) layers.open = false;
+  });
+  layers.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !layers.open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    layers.open = false;
+    layers.querySelector('summary').focus();
+  });
   el('v3Close')?.addEventListener('click', close3d);
+  el('v3WorkingLevel')?.addEventListener('change', (event) => switchLevel(event.target.value));
   el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });

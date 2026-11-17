@@ -1,8 +1,9 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "62346b7a32ae7111",
+  "version": "ff8277b6866aeb0b",
   "assets": [
     "./",
+    "./analysis-panels.css",
     "./app.js",
     "./assets/icons/apple-touch-icon.png",
     "./assets/icons/icon-192.png",
@@ -141,10 +142,14 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/zamer/geometry.js",
     "./core/zip.js",
     "./firebase-config.js",
+    "./first-draw.css",
     "./index.html",
+    "./inspector.css",
     "./manifest.webmanifest",
     "./pwa-assets.js",
     "./render.js",
+    "./route-workspace.css",
+    "./section-views.css",
     "./styles.css",
     "./sw.js",
     "./ui/auto-layout.js",
@@ -236,6 +241,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/roof3d.js",
     "./ui/roofs.js",
     "./ui/sample.js",
+    "./ui/section-icons.js",
     "./ui/selection-toolbar.js",
     "./ui/sheet-sections.js",
     "./ui/sheet-view.js",
@@ -267,6 +273,9 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/view3d.js",
     "./ui/wall-tool.js",
     "./ui/whole-home-layout.js",
-    "./workers/layout-worker.js"
+    "./ui/workspace-views.js",
+    "./workbench.css",
+    "./workers/layout-worker.js",
+    "./workspace-views.css"
   ]
 });

@@ -1633,7 +1633,6 @@ export function bindProjects(initialAccount = null) {
     onProjects: handleEditLockProjects,
   });
   el('projectsBtn').addEventListener('click', openProjects);
-  el('accountBtn').addEventListener('click', openProjects);
   el('projectsClose').addEventListener('click', () => closeProjects());
   el('projectsScreen').addEventListener('click', (event) => {
     if (event.target.id === 'projectsScreen') closeProjects();

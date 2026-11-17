@@ -1,8 +1,4 @@
-// e2e «Ландшафт»: тени по времени суток — плашка «Тени» (Выкл / Обычные /
-// Солнце) видна только в «Ландшафте», ползунок времени и дата меняют
-// солнце, вечером тени длиннее (холст темнее), пока тянут ползунок —
-// упрощённый расчёт, настройки — в браузере (не в проекте), анализ
-// освещённости показывает сводку, оба стиля рисуются без ошибок консоли.
+// Свет на участке использует общую дату и время проекта.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openSample } from './helpers.mjs';
@@ -29,6 +25,16 @@ const setTime = async (page, minutes) => {
   await redraw(page);
 };
 
+async function setSun(page, { mode, date } = {}) {
+  await page.click('[data-landscape-climate]');
+  if (mode) await page.selectOption('[data-climate-setting="landscapeMode"]', mode);
+  if (date) {
+    await page.fill('[data-home-climate-date]', date);
+    await page.locator('[data-home-climate-date]').blur();
+  }
+  await page.click('#projectRouteClose');
+}
+
 describe('ландшафт: тени по солнцу', () => {
   let app;
   before(async () => {
@@ -54,19 +60,19 @@ describe('ландшафт: тени по солнцу', () => {
     await page.click('#landscapeBtn');
     await page.waitForFunction(() => window.__kepler.state.modeName === 'landscape');
     assert.equal(await page.isVisible('#lsSunBar'), true);
-    assert.match(await page.textContent('#lsSunBar'), /Выкл.*Обычные.*Солнце/s);
+    assert.match(await page.textContent('#lsSunBar'), /Свет на участке/);
     assert.equal(await page.$('#lsSunTime'), null, 'ползунок — только в режиме «Солнце»');
   });
 
   it('«Солнце»: ползунок, дата, подпись; вечером тени длиннее', async () => {
     const { page } = app;
-    await page.click('#lsSunBar label.seg-opt:has(input[value="off"])');
+    await setSun(page, { mode: 'off' });
     await redraw(page);
     const off = await meanLum(page);
-    await page.click('#lsSunBar label.seg-opt:has(input[value="sun"])');
+    await setSun(page, { mode: 'sun' });
     assert.equal(await page.evaluate(() => window.__kepler.state.lsSun.mode), 'sun');
     assert.ok(await page.$('#lsSunTime'));
-    await page.selectOption('#lsSunPreset', '06-21');
+    await setSun(page, { date: '2026-06-21' });
     await setTime(page, 12 * 60);
     const noon = await meanLum(page);
     assert.match(await page.textContent('#lsSunInfo'), /высота \d+°/);
@@ -76,22 +82,22 @@ describe('ландшафт: тени по солнцу', () => {
     assert.ok(noon < off, `тени в полдень темнее «Выкл»: ${noon} < ${off}`);
     assert.ok(evening < noon - 0.5, `вечером длиннее: ${evening} < ${noon}`);
     // Ночью солнца нет.
-    await page.selectOption('#lsSunPreset', '12-21');
+    await setSun(page, { date: '2026-12-21' });
     await setTime(page, 20 * 60 + 30);
     assert.match(await page.textContent('#lsSunInfo'), /за горизонтом/);
-    const sun = await page.evaluate(() => window.__kepler.state.lsSun);
+    const sun = await page.evaluate(() => window.__kepler.state.project.site.sun);
     assert.equal(sun.time, 20 * 60 + 30);
     assert.match(sun.date, /-12-21$/);
-    // Настройка — в браузере, не в проекте.
+    // Только режим отображения хранится в браузере.
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-ls-sun')));
     assert.equal(saved.mode, 'sun');
-    assert.equal(saved.time, 20 * 60 + 30);
+    assert.equal(saved.time, undefined);
     assert.equal(await page.evaluate(() => 'lsSun' in window.__kepler.state.project.site), false);
   });
 
   it('пока тянут ползунок — упрощённый расчёт, после — полный', async () => {
     const { page } = app;
-    await page.selectOption('#lsSunPreset', '06-21');
+    await setSun(page, { date: '2026-06-21' });
     await page.evaluate(() => {
       const el = document.getElementById('lsSunTime');
       el.value = '600';
@@ -109,13 +115,16 @@ describe('ландшафт: тени по солнцу', () => {
       const L = await import('./core/landscape.js');
       window.__kepler.state.project.site.landscape.objects.push(L.createLandscapeObject('bed-rect', 3000, 9500));
     });
-    await page.check('#lsSunAnalysis');
+    await page.click('[data-landscape-climate]');
+    await page.click('[data-home-climate-action="landscape-map"]');
     await redraw(page);
     await page.waitForFunction(() => /Участок, в среднем/.test(document.getElementById('lsSunSummary')?.textContent || ''));
     const text = await page.textContent('#lsSunSummary');
     assert.match(text, /Клумба прямоугольная/);
     assert.match(text, /(солнце|полутень|тень)/);
-    await page.uncheck('#lsSunAnalysis');
+    await page.click('[data-landscape-climate]');
+    await page.click('[data-home-climate-action="landscape-map"]');
+    await page.click('#projectRouteClose');
   });
 
   it('оба стиля и все режимы рисуются без ошибок консоли', async () => {
@@ -123,7 +132,7 @@ describe('ландшафт: тени по солнцу', () => {
     for (const style of ['drawing', 'sketch']) {
       await page.evaluate(async (s) => (await import('./ui/landscape-style.js')).setLandscapeStyle(s), style);
       for (const mode of ['sun', 'default', 'off', 'sun']) {
-        await page.click(`#lsSunBar label.seg-opt:has(input[value="${mode}"])`);
+        await setSun(page, { mode });
         await redraw(page);
       }
     }

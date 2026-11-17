@@ -1,6 +1,7 @@
 // Вид: перевод координат экран ↔ мир, перерисовка, масштаб, «показать всё».
 
 import { composeView, rectCornersWorld, toLocal, toWorld } from '../core/building.js';
+import { hasContent } from '../core/model.js';
 import { neighborRectCorners } from '../core/site.js';
 import { allMasses, massRect } from '../core/masses.js';
 import { projectPoint, underlayHandles, unprojectPoint } from '../render.js';
@@ -71,6 +72,11 @@ export function requestDraw() {
   requestAnimationFrame(() => {
     drawQueued = false;
     renderer.draw(state);
+    const firstDraw = document.getElementById('firstDrawActions');
+    if (firstDraw) firstDraw.hidden = !state.project || state.modeName !== 'plan' || Boolean(
+      state.tool || state.selection || state.editLocked || state.roofPlan || state.sheetOpen ||
+      state.elevOpen || state.libraryPinned || state.project.views?.length || hasContent(state.project)
+    );
     // «Готово» видна, пока чертится ломаная (на телефоне нет Enter).
     const done = document.getElementById('draftDone');
     if (done) done.hidden = !state.draft && state.tool?.kind !== 'slab-opening';
@@ -229,5 +235,28 @@ export function showPlanRect(rect, opts = {}) {
 }
 
 export function bindView() {
-  new ResizeObserver(() => requestDraw()).observe(canvas);
+  const actions = document.getElementById('firstDrawActions');
+  for (const action of actions.querySelectorAll('[data-first-tool]')) {
+    const tool = document.getElementById(action.dataset.firstTool);
+    const icon = tool.querySelector('svg').cloneNode(true);
+    action.prepend(icon);
+    action.addEventListener('click', () => tool.click());
+  }
+  // Параметры инструмента занимают строку только пока он активен. Когда
+  // она закрывается после клика, оставляем чертёж под указателем.
+  const options = document.getElementById('toolOptions');
+  let previousHeight = options.offsetHeight;
+  let previousTop = canvas.getBoundingClientRect().top;
+  let previousMode = state.modeName;
+  new ResizeObserver(() => {
+    const height = options.offsetHeight;
+    const top = canvas.getBoundingClientRect().top;
+    const shift = previousTop - top;
+    if (window.innerWidth > 640 && previousMode === state.modeName && height !== previousHeight &&
+        Math.abs(shift - (previousHeight - height)) < 2) state.view.panY += shift;
+    previousHeight = height;
+    previousTop = top;
+    previousMode = state.modeName;
+    requestDraw();
+  }).observe(canvas);
 }

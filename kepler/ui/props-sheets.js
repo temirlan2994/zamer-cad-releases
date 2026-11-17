@@ -91,7 +91,7 @@ export function renderSheetsPanel(panel) {
     });
   });
   panel.querySelectorAll('[data-sheet-open]').forEach((b) => b.addEventListener('click', () => {
-    if (b.dataset.sheetOpen === state.sheetOpen) closeSheet();
+    if (b.dataset.sheetOpen === state.sheetOpen) closeSheet({ restoreView: true });
     else openSheet(b.dataset.sheetOpen);
   }));
   panel.querySelectorAll('[data-sheet-del]').forEach((b) => b.addEventListener('click', () => deleteUserSheet(b.dataset.sheetDel)));
@@ -147,7 +147,7 @@ export function renderSheetProps(panel) {
     </div>
     <p class="hint">Автолист: масштаб и раскладка — по чертежу. Свою раскладку видов — на листе «+ Лист» во вкладке «Листы».</p>
     ${open ? '' : '<button type="button" class="link" id="sheetPropBack">← Свойства вида</button>'}`;
-  panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet() : openSheet(key)));
+  panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet({ restoreView: true }) : openSheet(key)));
   panel.querySelector('#sheetPropPng').addEventListener('click', () => downloadSheetPng(key));
   panel.querySelector('#sheetPropPdf').addEventListener('click', () => handleExport('sheet-pdf'));
   panel.querySelector('#sheetPropLsScreen')?.addEventListener('change', (e) => {
@@ -195,7 +195,7 @@ function renderUserSheetProps(panel, key, found) {
   panel.querySelector('#sheetPropNo').addEventListener('change', (e) => editUserSheet(id, { no: e.target.value }));
   panel.querySelector('#sheetPropFormat').addEventListener('change', (e) => editUserSheet(id, { format: e.target.value }));
   panel.querySelector('#sheetPropOrient').addEventListener('change', (e) => editUserSheet(id, { orient: e.target.value }));
-  panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet() : openSheet(key)));
+  panel.querySelector('#sheetPropOpen').addEventListener('click', () => (open ? closeSheet({ restoreView: true }) : openSheet(key)));
   panel.querySelector('#sheetPropPdfOne').addEventListener('click', () => downloadSheetPdf(key));
   panel.querySelector('#sheetPropPng').addEventListener('click', () => downloadSheetPng(key));
   panel.querySelector('#sheetPropPdf').addEventListener('click', () => handleExport('sheet-pdf'));

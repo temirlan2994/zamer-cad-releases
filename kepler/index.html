@@ -8,7 +8,14 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png" />
     <link rel="stylesheet" href="./styles.css" />
-    <meta name="theme-color" content="#1f75ff" />
+    <link rel="stylesheet" href="./first-draw.css" />
+    <link rel="stylesheet" href="./route-workspace.css" />
+    <link rel="stylesheet" href="./analysis-panels.css" />
+    <link rel="stylesheet" href="./inspector.css" />
+    <link rel="stylesheet" href="./section-views.css" />
+    <link rel="stylesheet" href="./workspace-views.css" />
+    <link rel="stylesheet" href="./workbench.css" />
+    <meta name="theme-color" content="#25342f" />
     <meta name="application-name" content="kep•ler 3D" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="kep•ler 3D" />
@@ -17,9 +24,11 @@
   </head>
   <body>
     <div class="app">
-      <!-- Шапка: название и проект, режимы (План / Участок / 3D), общие действия. Инструментов рисования здесь нет. -->
+      <!-- Файлы и общие действия. Кнопки видов при запуске переходят в навигацию над чертежом. -->
       <header class="topbar">
-        <div class="brand">kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.3.3">v0.3.3</span><small>концепт-планировщик домов</small></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
+        <button type="button" id="menuBtn" class="project-home" title="Открыть список проектов"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h7l2 2h8v12H3z"/><path d="M3 10h17"/></svg><span>Проекты</span></button>
+        <span class="project-divider" aria-hidden="true">/</span>
         <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
         <div class="mode-tabs" role="tablist" aria-label="Режим">
           <button id="modePlanBtn" class="tab active" role="tab">План</button>
@@ -28,55 +37,54 @@
           <button type="button" class="tab" id="view3dBtn" aria-label="3D" title="3D-просмотр дома: тяните — вращать, колесо — масштаб, Shift/правая кнопка — сдвиг">3D</button>
         </div>
         <div class="top-actions">
-          <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)">⟲</button>
-          <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)">⟳</button>
+          <button id="undoBtn" class="icon-btn" title="Отменить (Ctrl+Z)" aria-label="Отменить"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5-5 5 5 5M4 10h9a7 7 0 0 1 7 7"/></svg></button>
+          <button id="redoBtn" class="icon-btn" title="Повторить (Ctrl+Shift+Z)" aria-label="Повторить"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 5 5 5-5 5m4-5h-9a7 7 0 0 0-7 7"/></svg></button>
           <span class="top-sep" aria-hidden="true"></span>
-          <button id="projectsBtn" title="Проекты: сохранённые версии, мои и общие">▤ Проекты</button>
-          <button id="accountBtn" class="account-chip" type="button" title="Войти в Google-аккаунт и открыть облачные проекты">Войти</button>
-          <button id="saveBtn" class="primary" title="Скачать файл проекта">Сохранить</button>
+          <button id="projectsBtn" class="revision-button" title="Версии и облачные проекты"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2 7M3 5v6h6m3-4v5l3 2"/></svg><span>Версии</span><span id="accountBtn" class="account-chip"></span></button>
+          <button id="saveBtn" title="Скачать файл проекта" aria-label="Скачать файл проекта"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg><span>Скачать</span></button>
           <div class="export-wrap">
-            <button id="exportBtn" class="primary">Экспорт ▾</button>
-            <div class="export-dropdown" id="exportDropdown" hidden>
-              <button data-export="sheet-pdf">Листы PDF A3 (генплан и этажи)</button>
-              <button data-export="sheet-png">Лист PNG (текущий этаж / генплан)</button>
-              <button data-export="schedule-csv">Экспликация помещений (CSV для Excel)</button>
-              <button data-export="solar-report">Сезонный световой отчёт…</button>
-              <button data-export="landscape-csv">Ведомость ландшафта (CSV)</button>
-              <button data-export="ifc">IFC4 — BIM (Revit, ArchiCAD, Renga, просмотрщики)</button>
-              <button data-export="json">Структурированный JSON (для Revit-плагина)</button>
-              <button data-export="dxf">DXF-чертёж</button>
-              <button data-export="dxf-revit">DXF со слоями для Revit</button>
-              <button data-export="dxf-site">DXF генплан (дом на участке, координаты съёмки)</button>
-              <button data-export="zip">Всё одним архивом (.zip): проект, DXF, IFC, CSV</button>
-              <button data-export="copy">Копировать проект в буфер</button>
+            <button id="exportBtn" aria-expanded="false" aria-controls="exportDropdown"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12v7h14v-7m-7 3V3m-5 5 5-5 5 5"/></svg><span>Экспорт</span></button>
+            <div class="export-dropdown" id="exportDropdown" aria-label="Экспорт" hidden>
+              <div class="export-group"><strong>Листы и чертежи</strong>
+                <button data-export="sheet-pdf">Комплект листов <b>PDF</b></button>
+                <button data-export="sheet-png">Текущий лист <b>PNG</b></button>
+                <button data-export="dxf">Планы этажей <b>DXF</b></button>
+                <button data-export="dxf-site">Генплан <b>DXF</b></button>
+              </div>
+              <div class="export-group"><strong>Модель</strong>
+                <button data-export="ifc">Модель BIM <b>IFC4</b></button>
+                <button data-export="dxf-revit">Слои для Revit <b>DXF</b></button>
+                <button data-export="json">Для плагина Revit <b>JSON</b></button>
+              </div>
+              <div class="export-group"><strong>Ведомости</strong>
+                <button data-export="schedule-csv">Помещения <b>CSV</b></button>
+                <button data-export="landscape-csv">Ландшафт <b>CSV</b></button>
+                <button data-export="solar-report">Сезонный световой отчёт</button>
+              </div>
+              <div class="export-group"><strong>Весь проект</strong>
+                <button data-export="zip">Скачать комплект <b>ZIP</b></button>
+                <button data-export="copy">Скопировать проект</button>
+              </div>
             </div>
           </div>
           <span class="top-sep" aria-hidden="true"></span>
-          <button id="themeBtn" class="icon-btn" title="Светлая / тёмная тема">☀</button>
-          <button id="helpBtn" class="icon-btn" title="Справка: управление и горячие клавиши (? или F1)">?</button>
-          <button id="menuBtn" class="icon-btn" title="Главное меню: новый проект, открыть, пример" aria-label="Меню">☰</button>
+          <button id="themeBtn" class="icon-btn" aria-label="Сменить тему" title="Светлая / тёмная тема">☀</button>
+          <button id="helpBtn" class="icon-btn" aria-label="Справка" title="Справка: управление и горячие клавиши (? или F1)">?</button>
           <!-- Телефон: «⋯» — лист «Ещё» (режимы, проекты, экспорт, справка, тема; ui/mobile.js). На компьютере скрыта. -->
           <button type="button" id="moreBtn" class="icon-btn more-btn" aria-label="Ещё" aria-controls="mobileMore" aria-expanded="false">⋯</button>
         </div>
       </header>
-      <!-- Маршрут подготовки участка: короткая строка остаётся над рабочей областью,
-           подробности раскрываются поверх холста (на телефоне — нижним листом). -->
+      <!-- Маршрут дома. Подробности этапа раскрываются поверх чертежа. -->
       <section class="project-route" id="projectRoute" aria-label="Маршрут проекта">
         <div class="project-route-bar">
-          <button type="button" class="project-route-summary" id="projectRouteToggle" aria-controls="projectRoutePanel" aria-expanded="false">
-            <span class="project-route-kicker">Маршрут проекта</span>
-            <strong id="projectRouteSummary">Участок · проверяем исходные данные</strong>
-            <span class="project-route-caret" aria-hidden="true">⌄</span>
+          <button type="button" class="project-route-program" id="projectHomeProgram" aria-controls="projectRoutePanel" aria-expanded="false">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4v16h18M7 15l4-5 4 2 5-7"/></svg>
+            <strong>Аналитика</strong><span id="projectHomeProgramStatus">0/9</span>
+            <span class="route-mobile-current" id="routeMobileCurrent">Участок</span>
+            <svg class="route-mobile-expander" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg>
           </button>
-          <nav class="project-route-steps" id="projectRouteSteps" aria-label="Этапы подготовки участка"></nav>
-          <button type="button" class="project-route-program" id="projectHomeProgram" aria-controls="projectRoutePanel" aria-expanded="false" data-status="unknown" aria-label="Этапы дома: программа не задана">
-            <span class="project-route-program-icon" aria-hidden="true">⌂</span>
-            <span class="project-route-program-copy"><strong>Этапы дома</strong><small id="projectHomeProgramStatus">Не задана</small></span>
-          </button>
-          <button type="button" class="project-route-passport" id="projectRoutePassport" aria-controls="projectRoutePanel" aria-expanded="false">
-            <span aria-hidden="true">▤</span>
-            <span>Паспорт участка</span>
-          </button>
+          <nav class="project-route-steps" id="projectRouteSteps" aria-label="Этапы проекта"></nav>
+          <span class="route-current-section" id="routeCurrentSection" hidden></span>
         </div>
         <button type="button" class="project-route-scrim" id="projectRouteScrim" aria-label="Закрыть маршрут проекта" hidden></button>
         <div class="project-route-panel" id="projectRoutePanel" role="dialog" aria-modal="false" aria-labelledby="projectRoutePanelTitle" hidden>
@@ -91,6 +99,7 @@
         </div>
         <p class="sr-only" id="projectRouteLive" aria-live="polite"></p>
       </section>
+      <nav id="workspaceViews" aria-label="Открытые виды"></nav>
       <main class="workspace">
         <!-- Колонка инструментов слева (ui/toolstrip.js): только значки, подсказка .tb-tip — своя, сразу при наведении.
              Наборы: общий «Выбор», «План» / «Участок» / «Ландшафт», переход в «Ландшафт», внизу — вид. Телефон — строка над холстом. -->
@@ -127,29 +136,13 @@
                 <button type="button" class="tb-btn" id="dimModeBtn" aria-label="Размеры" aria-describedby="tbTip-dims"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7v10M20 7v10M4 12h16"/><path d="M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/></svg><span class="tb-label">Снаружи</span><span class="tb-tip" role="tooltip" id="tbTip-dims"><b>Размеры</b> · наружные — по внешней грани стен или по оси</span></button>
               </div>
             </div>
-            <div class="tb-family" data-tool-family="analysis">
-              <button type="button" class="tb-btn tb-family-trigger" id="analysisGroupBtn" aria-label="Анализ" aria-describedby="tbTip-analysis" aria-expanded="false" aria-controls="analysisToolFlyout"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/><circle cx="18" cy="5" r="2.5"/><path d="M18 1v1M18 8v1M14 5h1M21 5h1"/></svg><span class="tb-tip" role="tooltip" id="tbTip-analysis"><b>Анализ</b> · эргономика и естественный свет</span></button>
-              <div class="tb-family-flyout" id="analysisToolFlyout" role="toolbar" aria-label="Инструменты анализа">
-                <button type="button" class="tb-btn" id="ergoToolBtn" aria-label="Эргономика" aria-pressed="false" aria-describedby="tbTip-ergo"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="5" r="2"/><path d="M8.5 7.5v6M5.5 10h6M8.5 13.5L6 19M8.5 13.5L11 19"/><path d="M17 4v16M15.2 4h3.6M15.2 20h3.6"/></svg><span class="tb-badge" id="ergoBadge" hidden></span><span class="tb-tip" role="tooltip" id="tbTip-ergo"><b>Эргономика</b> · показывает тесные места и проходимость мебели красным/жёлтым · <kbd>E</kbd></span></button>
-                <button type="button" class="tb-btn" id="sunAnalysisBtn" aria-label="Световой анализ" aria-pressed="false" aria-describedby="tbTip-sun-analysis"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg><span class="tb-tip" role="tooltip" id="tbTip-sun-analysis"><b>Световой анализ</b> · прямое солнце, предварительные КЕО/люксы, остекление и сезонная сводка</span></button>
-              </div>
-            </div>
           </div>
           <div class="tb-group" id="siteTools" hidden></div>
           <div class="tb-group" id="landscapeTools" hidden></div>
           <span class="tb-sep" aria-hidden="true"></span>
           <div class="tb-group" id="viewTools">
-            <div class="view-ctl tb-pop-wrap" id="viewCtl">
-              <button type="button" class="tb-btn" id="viewBtn" aria-label="Поворот вида" aria-describedby="tbTip-view" aria-expanded="false" aria-controls="viewPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/><path d="M8 14h8"/></svg><span class="tb-tip" role="tooltip" id="tbTip-view"><b>Поворот вида</b> · выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой); во время выравнивания — отмена</span></button>
-              <div class="view-panel tb-pop" id="viewPanel" role="dialog" aria-label="Поворот вида" hidden>
-                <strong id="viewPanelTitle">Поворот вида</strong>
-                <button id="alignBtn" type="button" title="Кликните 2 точки вдоль линии (стена, край участка, сосед, подложка) — линия станет горизонтальной. Крутится весь вид, данные не меняются. Повторный клик — отмена">⟲ Выровнять вид по двум точкам</button>
-                <label class="prop-field"><span>Поворот вида, ° (по часовой)</span>
-                  <input id="viewAngleInput" type="number" step="0.5" inputmode="decimal"></label>
-                <button id="viewAngleReset" type="button" title="Вернуть вид по умолчанию: «План» — по осям дома, «Участок» и «Ландшафт» — север вверх">Сбросить</button>
-                <button id="axesToViewBtn" type="button" title="Повернуть оси дома (данные) так, чтобы они шли по экрану этого вида. Дом повернётся на участке на месте; Ctrl+Z — вернуть">Развернуть оси дома по виду</button>
-                <p class="empty-hint" id="viewPanelHint"></p>
-              </div>
+            <div class="view-ctl" id="viewCtl">
+              <button type="button" class="tb-btn" id="viewBtn" aria-label="Поворот вида" aria-describedby="tbTip-view" aria-controls="propsPanel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/><path d="M8 14h8"/></svg><span class="tb-tip" role="tooltip" id="tbTip-view"><b>Поворот вида</b> · выровнять по двум точкам, угол, сброс (у «Плана», «Участка» и «Ландшафта» — свой); во время выравнивания — отмена</span></button>
             </div>
             <button type="button" class="tb-btn" id="fitBtn" aria-label="Вписать" aria-describedby="tbTip-fit"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg><span class="tb-tip" role="tooltip" id="tbTip-fit"><b>Вписать</b> · весь план в экран</span></button>
           </div>
@@ -162,54 +155,58 @@
         </div>
 
         <!-- Библиотека — выезжает рядом с колонкой, только когда нужна: «Помещение» — типы комнат, «Мебель» — каталог, «Ландшафт» — каталог участка. -->
-        <aside class="library">
+        <aside class="library" aria-label="Библиотека объектов">
           <div class="library-tabs" id="libraryTabs">
             <button id="libTabRooms" class="lib-tab active" type="button">Помещения</button>
             <button id="libTabFurniture" class="lib-tab" type="button">Мебель</button>
           </div>
           <div class="library-top" id="libraryTop">
             <h2 id="libraryTitle" hidden>Помещения</h2>
-            <p class="hint" id="libraryHint">Кликните тип, затем место на плане. Комнаты стыкуются сами.</p>
+            <p class="hint" id="libraryHint" hidden></p>
+            <input id="roomSearch" class="furn-search" type="search" placeholder="Найти помещение" aria-label="Найти помещение" />
             <div class="room-cards" id="roomCards"></div>
+            <p class="empty-hint" id="roomSearchEmpty" role="status" hidden>Помещение не найдено</p>
             <input type="file" id="underlayInput" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,image/jpeg,image/png,application/pdf" hidden />
           </div>
           <div class="library-furniture" id="furnitureBar">
-            <p class="hint furn-hint">Клик — поставить курсором · Пробел — повернуть · или перетащите на план</p>
-            <input id="furnSearch" class="furn-search" type="search" placeholder="Поиск мебели: диван, ванна, шкаф…" aria-label="Поиск мебели" />
+            <h2>Мебель</h2>
+            <input id="furnSearch" class="furn-search" type="search" placeholder="Найти предмет" aria-label="Поиск мебели" />
+            <label class="catalog-filter"><span id="furnitureCatIcon" aria-hidden="true"></span><select id="furnitureCats" aria-label="Категория мебели"></select></label>
             <div class="furniture-body">
-              <div class="furniture-cats" id="furnitureCats"></div>
               <div class="furniture-items" id="furnitureItems"></div>
             </div>
           </div>
           <!-- Готовые лестницы: интерьер/улица, материал и ограждение (ui/stair-library.js). -->
           <div class="library-furniture library-stairs" id="stairsBar" hidden>
             <h2>Лестницы</h2>
-            <p class="hint furn-hint">Выберите вариант, затем место на плане · форму и размеры можно изменить</p>
+            <div class="catalog-choices" id="stairCats" role="group" aria-label="Назначение лестницы"></div>
             <div class="furniture-body">
-              <div class="furniture-cats" id="stairCats"></div>
               <div class="furniture-items stair-items" id="stairItems"></div>
             </div>
           </div>
           <!-- Двери / окна: каталог пресетов при активном инструменте (ui/opening-library.js). -->
           <div class="library-furniture library-openings" id="openingsBar" hidden>
             <h2 id="openingsTitle">Двери</h2>
-            <p class="hint furn-hint">Клик — размер и тип; ставьте на стены подряд · Esc — выход</p>
-            <input id="openSearch" class="furn-search" type="search" placeholder="Поиск: 900, входная, в пол…" aria-label="Поиск дверей и окон" />
+            <input id="openSearch" class="furn-search" type="search" placeholder="Название или размер, мм" aria-label="Поиск дверей и окон" />
+            <div class="catalog-choices" id="openingCats" role="group" aria-label="Тип проёма"></div>
             <div class="furniture-body">
-              <div class="furniture-cats" id="openingCats"></div>
               <div class="furniture-items" id="openingItems"></div>
             </div>
           </div>
           <div class="library-furniture library-landscape" id="landscapeBar" hidden>
             <h2>Ландшафт</h2>
-            <div class="ls-tabs" id="lsTabs" role="tablist" aria-label="Категории ландшафта"></div>
-            <input id="lsSearch" class="furn-search" type="search" placeholder="Поиск: сосна, бассейн, парковка…" aria-label="Поиск по ландшафту" />
+            <input id="lsSearch" class="furn-search" type="search" placeholder="Найти на участке" aria-label="Поиск по ландшафту" />
+            <div class="ls-tabs" id="lsTabs" role="group" aria-label="Категории ландшафта"></div>
             <div class="furniture-items ls-items" id="lsItems"></div>
           </div>
         </aside>
 
         <section class="canvas-wrap">
           <canvas id="canvas"></canvas>
+          <div id="firstDrawActions" class="first-draw" role="group" aria-label="Начать план" hidden>
+            <button type="button" data-first-tool="wallToolBtn">Начертить стену</button>
+            <button type="button" data-first-tool="boundRoomBtn">Поставить комнату</button>
+          </div>
           <div class="canvas-hint" id="canvasHint" hidden></div>
           <div class="site-opportunity-canvas-legend" id="siteOpportunityLegend" aria-label="Легенда карты возможностей" hidden>
             <strong>Карта участка</strong>
@@ -267,16 +264,19 @@
           <div class="view3d" id="view3d" hidden>
             <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
             <div class="view3d-bar">
+              <label class="v3-floor" title="Рабочий этаж"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m2 7 8-4 8 4-8 4-8-4Zm0 4 8 4 8-4M2 15l8 4 8-4"/></svg><span>Рабочий этаж</span><select id="v3WorkingLevel" aria-label="Рабочий этаж в 3D"></select></label>
+              <details class="v3-layers"><summary>Слои</summary><div class="v3-layers-panel">
               <label class="check-row"><input type="checkbox" id="v3Roof"><span>Крыша</span></label>
               <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
               <label class="check-row"><input type="checkbox" id="v3Landscape" checked><span>Ландшафт</span></label>
               <label class="check-row"><input type="checkbox" id="v3Furniture" checked><span>Мебель</span></label>
               <label class="check-row" id="v3MassesWrap" title="Массы — концептуальные боксы формы дома (инструмент «Масса», M)" hidden><input type="checkbox" id="v3Masses" checked><span>Массы</span></label>
               <label class="check-row" id="v3MassSnapWrap" title="Магнит масс: блоки липнут к граням соседних масс, отметкам этажей и земле · Alt или Shift при перетаскивании — без магнита" hidden><input type="checkbox" id="v3MassSnap" checked><span>Магнит масс</span></label>
-              <label class="check-row v3-levels" title="Какие этажи показывать; активный этаж — кнопками этажей внизу слева (PgUp/PgDn)"><span>Этажи</span><select id="v3Levels" aria-label="Этажи в 3D"><option value="all">Все</option><option value="upto">До активного</option><option value="only">Только активный</option></select></label>
+              <label class="check-row v3-levels"><span>Видимость этажей</span><select id="v3Levels" aria-label="Этажи в 3D"><option value="all">Все</option><option value="upto">До рабочего</option><option value="only">Только рабочий</option></select></label>
               <label class="check-row" id="v3ReliefWrap" title="Вертикальный масштаб рельефа" hidden><span>Рельеф ×<b id="v3ReliefVal">1</b></span><input type="range" id="v3Relief" min="1" max="5" step="1" value="1"></label>
-              <button id="v3Fit" type="button">Вписать</button>
-              <button id="v3Close" type="button">✕ Закрыть</button>
+              </div></details>
+              <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>
+              <button id="v3Close" aria-label="Закрыть 3D-вид" title="Закрыть 3D-вид" type="button">×</button>
             </div>
             <div class="view3d-hint" id="v3Hint" aria-live="polite"></div>
             <input class="view3d-num" id="v3Num" type="number" step="10" min="1" inputmode="numeric" hidden />
@@ -313,16 +313,11 @@
             <button type="button" role="tab" class="ptab" id="propsTabMain" data-props-tab="props" aria-label="Свойства" aria-describedby="ptabTip-props"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="ptab-label">Свойства</span><span class="ptab-tip" role="tooltip" id="ptabTip-props"><b>Свойства</b></span></button>
             <button type="button" role="tab" class="ptab" id="propsTabViews" data-props-tab="views" aria-label="Виды" aria-describedby="ptabTip-views"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="ptab-label">Виды</span><span class="ptab-tip" role="tooltip" id="ptabTip-views"><b>Виды</b></span></button>
             <button type="button" role="tab" class="ptab" id="propsTabSheets" data-props-tab="sheets" aria-label="Листы" aria-describedby="ptabTip-sheets"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 17h7M13 14h3"/></svg><span class="ptab-label">Листы</span><span class="ptab-tip" role="tooltip" id="ptabTip-sheets"><b>Листы</b></span></button>
-            <button type="button" role="tab" class="ptab" id="propsTabTep" data-props-tab="tep" aria-label="ТЭП" aria-describedby="ptabTip-tep"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 9h17M3.5 14.5h17M10 9v11"/></svg><span class="ptab-label">ТЭП</span><span class="ptab-tip" role="tooltip" id="ptabTip-tep"><b>ТЭП</b></span></button>
+            <button type="button" role="tab" class="ptab" id="propsTabTep" data-props-tab="tep" aria-label="Площади" aria-describedby="ptabTip-tep"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 9h17M3.5 14.5h17M10 9v11"/></svg><span class="ptab-label">Площади</span><span class="ptab-tip" role="tooltip" id="ptabTip-tep"><b>Площади</b></span></button>
             <button type="button" role="tab" class="ptab issues-btn ok" id="issuesBtn" aria-expanded="false" aria-controls="issuesPanel" aria-label="Замечания и нормы" aria-describedby="ptabTip-issues"><span class="issues-icon" aria-hidden="true">⚠</span><span class="issues-label">Замечания</span><span class="issues-count" id="issuesCount" hidden>0</span><span class="ptab-tip" role="tooltip" id="ptabTip-issues"><b>Замечания</b></span></button>
           </div>
-          <!-- Телефон, лист «Виды»: режим (План / Участок / Ландшафт) и «Виды · Листы» вместо вкладок панели (ui/mobile.js). -->
+          <!-- Телефон: листы и дерево видов для работы с ними (ui/mobile.js). -->
           <div class="mobile-sheet-head" id="mobileSheetHead" hidden>
-            <div class="mm-modes" role="group" aria-label="Режим">
-              <button type="button" data-mode="plan">План</button>
-              <button type="button" data-mode="site">Участок</button>
-              <button type="button" data-mode="landscape">Ландшафт</button>
-            </div>
             <div class="msh-tabs" role="tablist" aria-label="Виды и листы">
               <button type="button" role="tab" data-tab="views">Виды</button>
               <button type="button" role="tab" data-tab="sheets">Листы</button>
@@ -346,24 +341,21 @@
         <div class="mobile-more" id="mobileMore" role="dialog" aria-label="Ещё">
           <h3 class="mm-title">Проект</h3>
           <div class="mm-grid">
-            <button type="button" data-more="projects"><span aria-hidden="true">▤</span>Проекты</button>
+            <button type="button" data-more="projects"><span aria-hidden="true">◷</span>Версии</button>
             <button type="button" data-more="export"><span aria-hidden="true">⇪</span>Экспорт</button>
-            <button type="button" data-more="menu"><span aria-hidden="true">☰</span>Файл</button>
-            <button type="button" data-more="tep"><span aria-hidden="true">▦</span>ТЭП</button>
-            <button type="button" data-more="issues"><span aria-hidden="true">⚠</span>Замечания</button>
+            <button type="button" data-more="menu"><span aria-hidden="true">▤</span>Проекты</button>
             <button type="button" data-more="theme"><span aria-hidden="true">☀</span>Тема</button>
             <button type="button" data-more="help"><span aria-hidden="true">?</span>Справка</button>
             <button type="button" data-more="install" id="mobileInstallBtn" hidden><span aria-hidden="true">⇩</span>Установить</button>
           </div>
         </div>
       </main>
-      <!-- Телефон: нижняя навигация — Рисовать · Каталог · Свойства · Виды · 3D (ui/mobile.js). На компьютере скрыта. -->
+      <!-- Телефон: нижняя навигация — Рисовать · Каталог · Свойства · Листы (ui/mobile.js). На компьютере скрыта. -->
       <nav class="mobile-bar" id="mobileBar" aria-label="Панели">
         <button type="button" data-sheet="draw"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4.2L16.3 4.5a2.2 2.2 0 0 1 3.2 3.2L8.2 19z"/><path d="M14.3 6.5l3.2 3.2"/></svg><span class="mb-label">Рисовать</span></button>
         <button type="button" data-sheet="rooms"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/></svg><span class="mb-label">Каталог</span></button>
         <button type="button" data-sheet="props"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="mb-label">Свойства</span></button>
-        <button type="button" data-sheet="views"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="mb-label">Виды</span></button>
-        <button type="button" data-sheet="3d"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="mb-label">3D</span></button>
+        <button type="button" data-sheet="sheets"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7m-7 4h5"/></svg><span class="mb-label">Листы</span></button>
       </nav>
     </div>
 
@@ -373,30 +365,28 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand">kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.3.3">v0.3.3</span><small>концепт-планировщик домов</small></div>
+          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
           <div class="startup-auth-copy">
-            <span class="startup-auth-icon" aria-hidden="true">K</span>
             <div>
-              <h1 id="startupTitle">Войдите в kep•ler 3D</h1>
-              <p>Ваши проекты будут автоматически сохраняться в личном облаке и открываться на любом устройстве.</p>
+              <h1 id="startupTitle">Ваши проекты</h1>
+              <p>Войдите, чтобы продолжить чертёж с любого устройства.</p>
             </div>
           </div>
           <button class="start-google" id="startGoogleSignIn" type="button">
             <span class="start-google-mark" aria-hidden="true">G</span>
-            <span><b>Продолжить с Google</b><small>безопасный вход в личный аккаунт</small></span>
+            <span><b>Войти через Google</b></span>
           </button>
           <button class="start-install" id="startInstallBtn" type="button" hidden>
             <span class="start-install-mark" aria-hidden="true">⇩</span>
-            <span><b>Установить kep•ler 3D</b><small>иконка на экране телефона · обновляется автоматически</small></span>
+            <span><b>Установить приложение</b></span>
           </button>
           <p class="startup-auth-status" id="startAuthStatus" role="status" aria-live="polite"></p>
-          <p class="startup-auth-note">kep•ler 3D не получает пароль от вашего Google-аккаунта.</p>
         </section>
 
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand">kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.3.3">v0.3.3</span><small>концепт-планировщик домов</small></div>
+              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.0">v0.4.0</span></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">
@@ -406,21 +396,20 @@
                 <span><strong id="startAccountName">Аккаунт</strong><small id="startAccountEmail"></small></span>
               </div>
               <button id="startGoogleSignOut" type="button" hidden>Выйти</button>
-              <button class="icon-btn" id="startClose" title="Закрыть" hidden>✕</button>
+              <button class="icon-btn" id="startClose" aria-label="Закрыть проекты" title="Закрыть" hidden>✕</button>
             </div>
           </div>
           <div id="startWarn" class="start-warn" hidden></div>
-          <button class="start-install start-project-install" id="startProjectsInstallBtn" type="button" hidden>
-            <span class="start-install-mark" aria-hidden="true">⇩</span>
-            <span><b>Установить приложение</b><small>добавить kep•ler 3D на главный экран телефона</small></span>
-          </button>
           <div class="start-actions startup-actions">
-            <button class="start-item" id="startContinue" hidden>
-              <b>Продолжить</b><span>вернуться к текущему проекту</span></button>
-            <button class="start-item accent" id="startNew">
-              <b>＋ Создать проект</b><span>начать с чистого листа</span></button>
-            <button class="start-item" id="startOpen">
-              <b>Открыть проект</b><span>файл .kepler.json с компьютера</span></button>
+            <button type="button" class="start-item accent" id="startNew">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <b>Создать проект</b></button>
+            <button type="button" class="start-item" id="startOpen" title="Открыть .kepler.json с устройства">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18V6a1 1 0 0 1 1-1h5l2 2h8v3M3 18l3-8h15l-3 9H4z"/></svg>
+              <b>Открыть файл</b></button>
+            <button type="button" class="start-item" id="startContinue" title="Продолжить локальный чертёж на этом устройстве" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v9h12m-5-5 5 5-5 5"/></svg>
+              <b>Продолжить</b><span></span></button>
           </div>
 
           <section class="startup-section" id="startRecentSection" hidden>
@@ -433,12 +422,16 @@
 
           <section class="startup-section" id="startExamplesSection">
             <div class="startup-section-head">
-              <h2>Примеры</h2><span>готовые планы для быстрого старта</span>
+              <h2>Примеры</h2>
             </div>
             <div class="start-templates startup-project-grid" id="startTemplates">
               <button class="startup-project-card" id="startSample" type="button"></button>
             </div>
           </section>
+          <button class="start-install start-project-install" id="startProjectsInstallBtn" type="button" hidden>
+            <span class="start-install-mark" aria-hidden="true">⇩</span>
+            <span><b>Установить приложение</b></span>
+          </button>
         </section>
       </div>
     </div>

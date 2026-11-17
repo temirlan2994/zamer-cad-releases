@@ -107,8 +107,9 @@ describe('свет и итоговая проверка проекта', () => {
       renderProjectRoute();
     });
     assert.equal(await page.isHidden('#solarLegend'), true);
-    assert.equal(await page.getAttribute('#sunAnalysisBtn', 'aria-pressed'), 'false');
-    assert.equal(await page.locator('#sunAnalysisBtn').evaluate((node) => node.classList.contains('active')), false);
+    await openHomeView(page, 'climate', 'Свет и солнце');
+    assert.equal(await page.locator('[data-home-climate-map][aria-pressed="true"]').count(), 0);
+    await page.click('#projectRouteClose');
     assert.deepEqual(app.errors, []);
   });
 
@@ -127,7 +128,8 @@ describe('свет и итоговая проверка проекта', () => {
     assert.equal(await page.locator('[data-home-review-stage="envelope"]').count(), 1);
     assert.equal(await page.locator('[data-home-review-stage="deliverables"]').count(), 1);
 
-    await page.click('[data-home-review-view="climate"]');
+    await page.click('[data-review-stage-list] > summary');
+    await page.click('[data-review-stage-list] [data-home-review-view="climate"]');
     await page.waitForFunction(() => (
       document.querySelector('#projectRoutePanelTitle')?.textContent === 'Свет и солнце'
     ));

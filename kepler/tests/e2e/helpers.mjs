@@ -14,9 +14,9 @@ import { createServer, listen } from '../../scripts/serve.mjs';
 // только тест теней.
 // viewSections: 'open' (по умолчанию) — все разделы «Свойств» вида раскрыты
 // (тесты работают с полями поворота, сетки и т. п. напрямую); 'default' —
-// как у пользователя: раскрыты только «Отображение», «Освещение», «Лист».
+// как у пользователя: раскрыто только «Отображение».
 export const ALL_ISSUE_GROUPS = ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry'];
-export const VIEW_SECTIONS = ['display', 'light', 'rotation', 'landscape', 'masses', 'roofs', 'grid', 'ergo', 'sheet'];
+export const VIEW_SECTIONS = ['display', 'light', 'rotation', 'layers', 'grid', 'ergo', 'sheet'];
 export async function startApp({ width = 1280, height = 820, debug = true, mobile = false, query = '', issueGroups = null, planShadows = false, viewSections = 'open' } = {}) {
   const server = createServer();
   const port = await listen(server);
@@ -62,6 +62,13 @@ export async function startApp({ width = 1280, height = 820, debug = true, mobil
   };
 }
 
+// Открываем список слоёв так же, как пользователь, и освобождаем холст после выбора.
+export async function with3dLayers(page, edit) {
+  const toggle = page.locator('.v3-layers summary');
+  await toggle.click();
+  try { await edit(); } finally { await toggle.click(); }
+}
+
 // Стартовое меню → «Загрузить пример» / «Новый проект».
 export async function openSample(page) {
   await page.click('#startSample');
@@ -103,15 +110,12 @@ export const TOOL_FAMILY_BY_CHILD = Object.freeze({
   gridToolBtn: 'docs',
   sectionToolBtn: 'docs',
   dimModeBtn: 'docs',
-  ergoToolBtn: 'analysis',
-  sunAnalysisBtn: 'analysis',
 });
 
 const TOOL_FAMILY_PARENT = Object.freeze({
   openings: 'openingsGroupBtn',
   mass: 'massGroupBtn',
   docs: 'docsGroupBtn',
-  analysis: 'analysisGroupBtn',
 });
 
 export async function openToolFamily(page, childId) {

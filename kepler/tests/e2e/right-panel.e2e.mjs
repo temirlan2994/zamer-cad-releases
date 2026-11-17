@@ -1,5 +1,5 @@
 // e2e: правая панель — ряд из 5 значков (Свойства, Виды, Листы, ТЭП,
-// Замечания): без title и без подписей, у каждого — aria-label, role=tab и
+// Замечания): подпись у активного раздела, у каждого — aria-label, role=tab и
 // мгновенная подсказка только название вкладки, не выходящая за экран;
 // клик переключает панели и aria-selected. «Виды» — дерево видов; настройки
 // вида (поворот — те же команды, что панель ⟲; ландшафт на плане) — во
@@ -14,7 +14,7 @@ const TABS = [
   { id: 'propsTabMain', label: 'Свойства', body: '#projectSection' },
   { id: 'propsTabViews', label: 'Виды', body: '#viewTree' },
   { id: 'propsTabSheets', label: 'Листы', body: '#sheetsList' },
-  { id: 'propsTabTep', label: 'ТЭП', body: '#tepHouse' },
+  { id: 'propsTabTep', label: 'Площади', body: '#tepHouse' },
   { id: 'issuesBtn', label: 'Замечания', body: '#issuesPanel' },
 ];
 const TIPS = ['ptabTip-props', 'ptabTip-views', 'ptabTip-sheets', 'ptabTip-tep', 'ptabTip-issues'];
@@ -24,10 +24,10 @@ describe('правая панель — 5 значков, компьютер 128
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('5 кнопок только значками: без title, с aria-label и role=tab', async () => {
+  it('пять вкладок со значками, доступными именами и подписью активного раздела', async () => {
     const { page } = app;
     const btns = await page.$$eval('#propsPanel .props-tabs > button', (ns) => ns.map((n) => ({
-      id: n.id, title: n.getAttribute('title'), label: n.getAttribute('aria-label'), role: n.getAttribute('role'),
+      id: n.id, title: n.getAttribute('title'), label: n.getAttribute('aria-label'), role: n.getAttribute('role'), selected: n.getAttribute('aria-selected') === 'true',
       icon: Boolean(n.querySelector('svg, .issues-icon')),
       text: [...n.querySelectorAll(':scope > :not(.ptab-tip)')].filter((c) => c.offsetParent && !c.classList.contains('issues-icon') && !c.classList.contains('issues-count')).map((c) => c.textContent).join('').trim(),
     })));
@@ -37,7 +37,7 @@ describe('правая панель — 5 значков, компьютер 128
       assert.ok(b.label?.startsWith(TABS[i].label), `${b.id}: aria-label ${b.label}`);
       assert.equal(b.role, 'tab');
       assert.ok(b.icon, `${b.id}: значок`);
-      assert.equal(b.text, '', `${b.id}: без подписи`);
+      assert.equal(b.text, b.selected ? TABS[i].label : '', `${b.id}: подпись текущего раздела`);
     }
     const row = await page.locator('#propsPanel .props-tabs').boundingBox();
     const boxes = await Promise.all(TABS.map((t) => page.locator(`#${t.id}`).boundingBox()));
@@ -78,14 +78,14 @@ describe('правая панель — 5 значков, компьютер 128
     assert.deepEqual(app.errors, []);
   });
 
-  it('«Свойства» вида: поворот вида — те же команды, что панель ⟲', async () => {
+  it('«Свойства» вида: кнопка поворота открывает настройки вида', async () => {
     const { page } = app;
     await page.click('#propsTabMain');
     await page.fill('#viewsAngleInput', '15');
     await page.press('#viewsAngleInput', 'Tab');
     await page.click('#viewBtn');
-    assert.equal(await page.inputValue('#viewAngleInput'), '15');
-    await page.click('#viewBtn');
+    assert.equal(await page.inputValue('#viewsAngleInput'), '15');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'viewsAngleInput');
     assert.equal(await page.isEnabled('#viewsAngleReset'), true);
     await page.click('#viewsAngleReset');
     assert.equal(await page.inputValue('#viewsAngleInput'), '0');
@@ -115,20 +115,21 @@ describe('правая панель — телефон 390', () => {
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('вкладок панели нет: «Свойства» и «Виды» — кнопки навигации, «Листы» — в «Видах», ТЭП — в «⋯»; «⚠» — на холсте', async () => {
+  it('свойства и листы открываются из нижней навигации, таблица площадей из аналитики, замечания с холста', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="props"]');
     await page.waitForTimeout(300);
     for (const id of ['propsTabMain', 'propsTabViews', 'propsTabSheets', 'propsTabTep']) assert.equal(await page.isVisible(`#${id}`), false, id);
     assert.equal(await page.$eval('#issuesBtn', (n) => Boolean(n.closest('.canvas-wrap'))), true);
-    await page.tap('#mobileBar [data-sheet="views"]');
+    await page.tap('#mobileBar [data-sheet="sheets"]');
     await page.waitForTimeout(300);
-    assert.equal(await page.isVisible('#viewTree'), true);
-    await page.tap('#mobileSheetHead [data-tab="sheets"]');
     assert.equal(await page.isVisible('#sheetsPdfBtn'), true);
-    await page.tap('#moreBtn');
-    await page.tap('#mobileMore [data-more="tep"]');
-    assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true', 'ТЭП из «⋯»');
+    await page.tap('#mobileBar [data-sheet="sheets"]');
+    await page.tap('#projectHomeProgram');
+    await page.tap('#projectRoutePanel [data-home-view="envelope"]');
+    await page.tap('[data-analysis-open="tep"]');
+    assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true');
+    assert.equal(await page.isVisible('#schedTable'), true);
     assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390);
     assert.deepEqual(app.errors, []);
   });

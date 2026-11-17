@@ -6,11 +6,12 @@
 import {
   createItem, createLevel, createRoom, levelBelow, sortedLevels,
 } from '../core/model.js';
-import { el, toast } from './dom.js';
+import { el, refs, toast } from './dom.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { afterChange, mutate, refreshDerived } from './store.js';
 import { cancelTool } from './tools.js';
+import { scaleLabel } from './view.js';
 
 export function renderLevelBar() {
   const bar = el('levelBar');
@@ -56,8 +57,20 @@ export function renderLevelBar() {
   bar.appendChild(add);
 }
 
+// Панорамирование и масштаб принадлежат вкладке плана. Рабочий этаж
+// модели 3D можно менять независимо, не сдвигая соответствующие чертежи.
+const planCameras = new WeakMap();
+function rememberPlan(project) {
+  let cameras = planCameras.get(project);
+  if (!cameras) { cameras = new Map(); planCameras.set(project, cameras); }
+  const { scale, panX, panY, rotation } = state.view;
+  const { x = 0, y = 0 } = project.building?.origin || {};
+  cameras.set(project.activeLevel, { scale, panX, panY, rotation, x, y });
+  return cameras;
+}
+
 // Переключение этажа — не правка проекта: в историю не попадает.
-export function switchLevel(id) {
+export function switchLevel(id, { planView = state.modeName === 'plan' && !document.body.classList.contains('v3-open') } = {}) {
   const project = state.project;
   if (id === project.activeLevel || !project.levels.some((l) => l.id === id)) return;
   cancelTool();
@@ -65,6 +78,14 @@ export function switchLevel(id) {
   state.hover = null;
   state.ghost = null;
   state.ghostItem = null;
+  if (planView) {
+    const saved = rememberPlan(project).get(id);
+    const origin = project.building?.origin;
+    if (saved && saved.rotation === state.view.rotation && saved.x === (origin?.x ?? 0) && saved.y === (origin?.y ?? 0)) {
+      Object.assign(state.view, { scale: saved.scale, panX: saved.panX, panY: saved.panY });
+      refs.statusScale.textContent = scaleLabel();
+    }
+  }
   project.activeLevel = id;
   refreshDerived();
   afterChange();
@@ -86,6 +107,7 @@ export function addLevel() {
   const project = state.project;
   const list = sortedLevels(project);
   const top = list[list.length - 1];
+  if (state.modeName === 'plan') rememberPlan(project);
   const level = createLevel(`${list.length + 1} этаж`, top.elevation + top.height, top.height);
   const stairs = top.rooms.filter((r) => r.type === 'stairs-room');
   cancelTool();

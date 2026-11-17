@@ -55,7 +55,7 @@ import {
   drawHouseShadow, drawLandscapeArrayPreview, drawLandscapeDraft, drawLandscapeGhost, drawLandscapeGround, drawLandscapeOverlay, drawLandscapeRaised,
   drawLandscapeSiteBase, drawSunGrid, drawSunShadows, landscapeShadow, lsPalette, visibleLandscape,
 } from './ui/render-landscape.js';
-import { landscapeSunFrame, landscapeSunGrid } from './ui/landscape-sun.js';
+import { landscapeSunFrame, landscapeSunGrid, landscapeSunTime } from './ui/landscape-sun.js';
 import { formatSunLabel, sunForSite } from './core/landscape-shadow.js';
 import { luminance } from './ui/render-landscape-kit.js';
 import { PLAN_LS_ALPHA, planLandscapeObjects, planLandscapePref } from './ui/plan-landscape.js';
@@ -1488,7 +1488,8 @@ function drawCompass(ctx, state, site, width, tokens) {
   // времени плашки, и подпись даты/времени под компасом.
   const lsSun = state.modeName === 'landscape' && state.lsSun?.mode === 'sun' ? state.lsSun : null;
   if (lsSun) {
-    const sun = sunForSite({ ...site, north: 0 }, lsSun.date, lsSun.time);
+    const time = landscapeSunTime(site);
+    const sun = sunForSite({ ...site, north: 0 }, site.sun.date, time);
     ctx.save();
     ctx.rotate((sun.azimuth * Math.PI) / 180);
     const sy = -r - 2;
@@ -1508,7 +1509,7 @@ function drawCompass(ctx, state, site, width, tokens) {
     ctx.fill();
     ctx.restore();
     ctx.rotate(-angle);
-    const text = formatSunLabel(lsSun.date, lsSun.time) + (sun.up ? '' : ' · солнце за горизонтом');
+    const text = formatSunLabel(site.sun.date, time) + (sun.up ? '' : ' · солнце за горизонтом');
     ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -2760,7 +2761,7 @@ function structuralPath(ctx, kind, w, h) {
   else ctx.rect(-w / 2, -h / 2, w, h);
 }
 
-export function drawGlyphPreview(canvas, kind, w, h, stroke) {
+export function drawGlyphPreview(canvas, kind, w, h, stroke, options = null) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -2788,7 +2789,7 @@ export function drawGlyphPreview(canvas, kind, w, h, stroke) {
   } else {
     const whole = isFixedSizeComp(sample);
     drawParts(ctx, compositeParts(sample), sample, whole);
-    if (!whole) drawGlyph(ctx, kind, w, h);
+    if (!whole) drawGlyph(ctx, kind, w, h, options);
   }
   ctx.restore();
 }

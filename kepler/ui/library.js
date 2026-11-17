@@ -23,9 +23,15 @@ let projectLibraryBound = false;
 // инструменты участка на панели инструментов (ui/toolstrip.js), левая
 // панель скрыта.
 export function bindFurnitureSearch() {
-  el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
   if (!projectLibraryBound) {
     projectLibraryBound = true;
+    el('roomSearch').addEventListener('input', filterRooms);
+    el('furnSearch').addEventListener('input', renderFurnitureItems);
+    refs.furnitureCats.addEventListener('change', () => {
+      furnitureCat = refs.furnitureCats.value;
+      el('furnSearch').value = '';
+      renderFurnitureItems();
+    });
     document.addEventListener(PROJECT_CHANGE_EVENT, () => renderLibrary());
   }
   bindLandscapeLibrary();
@@ -95,6 +101,14 @@ export function syncLibraryOpen() {
   refs.libTabFurniture.classList.toggle('active', furn);
   refs.libraryTop.hidden = furn;
   refs.furnitureBar.hidden = !furn;
+  if (furn) {
+    for (const card of refs.furnitureItems.children) {
+      if (!card.dataset.kind) continue;
+      const active = t?.kind === 'place-furniture' && t.itemKind === card.dataset.kind;
+      card.classList.toggle('active', active);
+      card.setAttribute('aria-pressed', String(active));
+    }
+  }
 }
 
 export function applyLibraryTab() {
@@ -104,7 +118,6 @@ export function applyLibraryTab() {
 
 export function renderLibrary() {
   renderLandscapeLibrary(); // активная карточка ландшафта
-  renderStairLibrary();
   // План: помещения по категориям (заголовок группы + чипы); у чипа —
   // точка цвета типа, как пол на плане. Без размеров.
   refs.roomCards.innerHTML = '';
@@ -113,7 +126,7 @@ export function renderLibrary() {
     const box = document.createElement('section');
     box.className = 'room-group room-group-program';
     box.dataset.cat = 'program';
-    box.innerHTML = '<h3 class="room-group-title">По программе <small>перетащите на план</small></h3>';
+    box.innerHTML = '<h3 class="room-group-title">По программе</h3>';
     const chips = document.createElement('div');
     chips.className = 'room-group-chips';
     for (const need of needs) chips.appendChild(roomCard(need.def, { count: need.count, program: true }));
@@ -133,7 +146,25 @@ export function renderLibrary() {
     refs.roomCards.appendChild(box);
   }
 
+  filterRooms();
   renderToolstrip(); // инструменты участка и подсветка активного — на панели инструментов
+}
+
+function filterRooms() {
+  const normalize = (s) => s.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+  const query = normalize(el('roomSearch').value.trim());
+  let found = false;
+  for (const group of refs.roomCards.children) {
+    const matchesGroup = normalize(group.querySelector('h3').textContent).includes(query);
+    let visible = false;
+    for (const card of group.querySelectorAll('.room-card')) {
+      card.hidden = !matchesGroup && !normalize(card.textContent).includes(query);
+      if (!card.hidden) visible = true;
+    }
+    group.hidden = !visible;
+    if (visible) found = true;
+  }
+  el('roomSearchEmpty').hidden = found || !query;
 }
 
 function programRoomNeeds() {
@@ -160,7 +191,9 @@ function roomCard(def, { count = 0, program = false } = {}) {
   card.draggable = true;
   card.dataset.type = def.type;
   card.title = `${def.title} · ${def.w}×${def.h} мм`;
-  if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
+  const active = state.tool?.kind === 'place-room' && state.tool.type === def.type;
+  card.setAttribute('aria-pressed', String(active));
+  card.classList.toggle('active', active);
   card.innerHTML = `<span class="room-dot" style="--dot:${roomColors(def.type).swatch}"></span><span class="room-card-name">${def.title}</span>${count > 0 ? `<span class="program-room-count">×${count}</span>` : ''}`;
   card.addEventListener('click', () => {
     if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
@@ -190,43 +223,38 @@ export function renderFurnitureBar() {
   // (applyLibraryTab).
   if (state.modeName !== 'plan') return;
 
-  refs.furnitureCats.innerHTML = '';
-  for (const cat of FURNITURE_CATEGORIES) {
-    const btn = document.createElement('button');
-    btn.innerHTML = CATEGORY_ICONS[cat.id] || '';
-    btn.title = cat.title;
-    btn.setAttribute('aria-label', cat.title);
-    if (cat.id === furnitureCat) btn.classList.add('active');
-    btn.addEventListener('click', () => {
-      furnitureCat = cat.id;
-      if (el('furnSearch')) el('furnSearch').value = '';
-      renderFurnitureBar();
-    });
-    refs.furnitureCats.appendChild(btn);
+  if (!refs.furnitureCats.options.length) {
+    refs.furnitureCats.add(new Option('Все категории', ''));
+    for (const cat of FURNITURE_CATEGORIES) refs.furnitureCats.add(new Option(cat.title, cat.id));
   }
-
   renderFurnitureItems();
 }
 
 // Поиск по всему каталогу (название или код), иначе — выбранная категория.
 function furnitureList() {
   const q = (el('furnSearch')?.value || '').trim().toLowerCase();
-  if (!q) return furnitureByCategory(furnitureCat);
+  if (!q) return furnitureCat ? furnitureByCategory(furnitureCat) : allFurniture();
   return allFurniture().filter((f) => f.title.toLowerCase().includes(q) || f.kind.includes(q));
 }
 
 function renderFurnitureItems() {
   const searching = Boolean((el('furnSearch')?.value || '').trim());
-  refs.furnitureCats.classList.toggle('searching', searching);
+  refs.furnitureCats.value = searching ? '' : furnitureCat;
+  el('furnitureCatIcon').innerHTML = CATEGORY_ICONS[refs.furnitureCats.value || 'misc'];
   const stroke = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#7f90a5';
   refs.furnitureItems.innerHTML = '';
   const list = furnitureList();
   if (!list.length) refs.furnitureItems.innerHTML = '<p class="empty-hint">Ничего не нашлось</p>';
   for (const item of list) {
-    const chip = document.createElement('div');
+    const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'furniture-chip';
+    chip.dataset.kind = item.kind;
+    const active = state.tool?.kind === 'place-furniture' && state.tool.itemKind === item.kind;
+    chip.classList.toggle('active', active);
+    chip.setAttribute('aria-pressed', String(active));
     chip.draggable = true;
-    chip.title = `Перетащите «${item.title}» на план (${item.w}×${item.h} мм)`;
+    chip.title = `${item.title} · ${item.w} × ${item.h} мм`;
     const preview = document.createElement('canvas');
     preview.width = 240;
     preview.height = 132;
@@ -237,7 +265,7 @@ function renderFurnitureItems() {
     chip.appendChild(name);
     const size = document.createElement('span');
     size.className = 'chip-size';
-    size.textContent = `${item.w}×${item.h}`;
+    size.textContent = `${item.w} × ${item.h} мм`;
     chip.appendChild(size);
     try { drawGlyphPreview(preview, item.kind, item.w, item.h, stroke); } catch { /* превью не критично */ }
     chip.addEventListener('dragstart', (e) => {

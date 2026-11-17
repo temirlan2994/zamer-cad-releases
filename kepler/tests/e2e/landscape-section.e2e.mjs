@@ -106,9 +106,11 @@ describe('ландшафт: разрез участка', () => {
 
   it('скачивание SVG и DXF (слой LANDSCAPE_SECTION)', async () => {
     const { page } = app;
+    await page.click('.cut-view-menu summary');
     const svg = await download(page, () => page.click('#lsSecSvg'));
     assert.match(svg.name, /разрез-А\.svg$/);
     assert.match(svg.text, /<svg[^>]+viewBox/);
+    await page.click('.cut-view-menu summary');
     const dxf = await download(page, () => page.click('#lsSecDxf'));
     assert.match(dxf.name, /\.dxf$/);
     assert.match(dxf.text, /LANDSCAPE_SECTION/);
@@ -123,6 +125,10 @@ describe('ландшафт: разрез участка', () => {
     await shot(page, 'section-plan');
     await clickWorld(page, 12000, 2600);
     await page.waitForSelector('#lsSectionView:not([hidden])');
+    await page.click('[data-section-layout]');
+    assert.ok(await page.locator('#lsSectionView.cut-full').isVisible());
+    await page.click('[data-section-layout]');
+    await page.click('.cut-view-menu summary');
     await page.click('#lsSecDel');
     assert.deepEqual(await sections(page), []);
     assert.equal(await page.isHidden('#lsSectionView'), true);

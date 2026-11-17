@@ -3,7 +3,7 @@
 // переносе гизмо подземный слой пересобирается.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { with3dLayers, startApp, openNew } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const sc = (page, p) => page.evaluate((q) => window.__kepler.screen3d(q), p);
@@ -61,12 +61,12 @@ describe('Масса на рельефе: подземная часть', () => 
     await page.waitForTimeout(120);
     const on = await pixel(page, p.x, p.y);
     assert.ok(diff(on, unselected) > 12, `после выбора подземная часть видна: ${on} / ${unselected}`);
-    await page.uncheck('#v3Masses');
+    await with3dLayers(page, () => page.uncheck('#v3Masses'));
     await page.waitForTimeout(80);
     assert.equal((await d3(page)).undergroundFaces, 0);
     const ground = await pixel(page, p.x, p.y);
     assert.ok(diff(on, ground) > 12, `подземная часть отличается от земли: ${on} / ${ground}`);
-    await page.check('#v3Masses');
+    await with3dLayers(page, () => page.check('#v3Masses'));
     await page.waitForTimeout(80);
     assert.equal(diff(await pixel(page, p.x, p.y), on) < 4, true);
     if (process.env.KEPLER_MASS_SHOTS) {
@@ -80,10 +80,10 @@ describe('Масса на рельефе: подземная часть', () => 
 
   it('без слоя «Участок» подземного слоя нет', async () => {
     const { page } = app;
-    await page.uncheck('#v3Site');
+    await with3dLayers(page, () => page.uncheck('#v3Site'));
     await page.waitForTimeout(80);
     assert.equal((await d3(page)).undergroundFaces, 0);
-    await page.check('#v3Site');
+    await with3dLayers(page, () => page.check('#v3Site'));
     await page.waitForTimeout(80);
     assert.ok((await d3(page)).undergroundFaces > 0);
   });

@@ -188,15 +188,14 @@ describe('дерево видов и листы — телефон 390', () => {
   it('вид и лист из нижнего листа открываются во весь холст', async () => {
     const { page } = app;
     const sheetOpen = () => page.evaluate(() => document.body.classList.contains('sheet-props'));
-    await page.tap('#mobileBar [data-sheet="views"]');
+    await page.tap('#mobileBar [data-sheet="sheets"]');
+    await page.tap('#mobileSheetHead [data-tab="views"]');
     await page.tap('[data-view="roofplan"]');
     assert.equal(await sheetOpen(), false, 'нижний лист уехал');
-    await page.tap('#mobileBar [data-sheet="views"]');
-    await page.tap('#mobileSheetHead [data-mode="site"]'); // «Участок» — переключатель режима сверху
+    await page.tap('#modeSiteBtn');
     assert.equal((await st(page)).mode, 'site');
     assert.equal(await sheetOpen(), false, 'нижний лист уехал');
-    await page.tap('#mobileBar [data-sheet="views"]');
-    await page.tap('#mobileSheetHead [data-tab="sheets"]');
+    await page.tap('#mobileBar [data-sheet="sheets"]');
     await page.tap('#sheetsList [data-sheet-open="site"]');
     assert.equal(await page.isVisible('#sheetView'), true);
     assert.equal(await sheetOpen(), false);

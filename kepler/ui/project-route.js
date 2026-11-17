@@ -31,10 +31,11 @@ import {
 import { handleHomeEnvelopeClick, homeEnvelopeHtml } from './home-envelope.js';
 import { handleHomeDeliverablesClick, homeDeliverablesHtml } from './home-deliverables.js';
 import { handleExport, PROJECT_REPLACED_EVENT } from './files.js';
-import { goToIssue } from './issues.js';
+import { goToIssue, setIssuesOpen } from './issues.js';
+import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
 import { switchLevel } from './levels.js';
 import { closeSheets, isPhone, toggleSheet } from './mobile.js';
-import { setEditorMode } from './modes.js';
+import { applyModeRotation } from './modes.js';
 import { startPlanSectionTool } from './plan-section.js';
 import { renderProps } from './props.js';
 import { openView } from './props-views.js';
@@ -49,33 +50,29 @@ import { requestDraw } from './view.js';
 const STAGES = Object.freeze([
   Object.freeze({
     id: 'foundation',
-    title: 'Основа',
-    short: 'Основа',
-    intro: 'Подготовьте исходную съёмку и замкнутую границу участка.',
+    title: 'Съёмка и границы',
+    short: 'Границы',
     aliases: ['foundation', 'basis', 'base', 'source', 'source-data', 'основа'],
     tasks: ['underlay', 'boundary'],
   }),
   Object.freeze({
     id: 'access',
     title: 'Доступ и окружение',
-    short: 'Доступ',
-    intro: 'Укажите, как попадают на участок, и внесите известное окружение.',
+    short: 'Подъезд',
     aliases: ['access', 'access-context', 'доступ'],
     tasks: ['road', 'entry', 'neighbor'],
   }),
   Object.freeze({
     id: 'conditions',
     title: 'Солнце и рельеф',
-    short: 'Условия',
-    intro: 'Подтвердите ориентацию по северу и задайте поверхность участка.',
+    short: 'Солнце и рельеф',
     aliases: ['conditions', 'environment', 'sun-terrain', 'solar-terrain', 'terrain-solar', 'условия'],
     tasks: ['north', 'terrain'],
   }),
   Object.freeze({
     id: 'constraints',
     title: 'Ограничения',
-    short: 'Пятно',
-    intro: 'Проверьте проектные отступы и рабочее пятно для размещения дома.',
+    short: 'Застройка',
     aliases: ['constraints', 'envelope', 'placement', 'build-zone', 'ограничения', 'пятно'],
     tasks: ['constraints', 'zone'],
   }),
@@ -84,54 +81,45 @@ const STAGES = Object.freeze([
 const TASKS = Object.freeze({
   underlay: Object.freeze({
     title: 'Топосъёмка или подложка',
-    why: 'Помогает сверять границы, существующие объекты и размеры.',
     tool: 'underlay',
     aliases: ['underlay', 'survey', 'topography', 'base-map', 'подложка', 'топосъёмка'],
   }),
   boundary: Object.freeze({
     title: 'Граница участка',
-    why: 'От неё считаются площадь, отступы и доступное рабочее пятно.',
     tool: 'boundary',
     aliases: ['boundary', 'site-boundary', 'parcel', 'граница'],
   }),
   road: Object.freeze({
     title: 'Дорога',
-    why: 'Нужна для оценки подъезда и положения входной группы.',
     tool: 'road',
     aliases: ['road', 'roads', 'street', 'дорога'],
   }),
   entry: Object.freeze({
     title: 'Въезд на участок',
-    why: 'Связывает дорогу с будущими маршрутами автомобиля и пешеходов.',
     tool: 'entry',
     aliases: ['entry', 'entrance', 'gate', 'driveway', 'въезд'],
   }),
   neighbor: Object.freeze({
     title: 'Соседние здания',
-    why: 'Их положение влияет на приватность, тени и проектные ограничения.',
     tool: 'neighbor',
     aliases: ['neighbor', 'neighbors', 'context', 'surroundings', 'соседи'],
   }),
   north: Object.freeze({
     title: 'Север и координаты',
-    why: 'Без подтверждённой ориентации нельзя честно сравнивать освещённость.',
     tool: 'north',
     aliases: ['north', 'solar', 'location', 'orientation', 'север', 'солнце'],
   }),
   terrain: Object.freeze({
     title: 'Рельеф',
-    why: 'Отметки высот позволяют учитывать уклон и перепады участка.',
     tool: 'terrain',
     aliases: ['terrain', 'relief', 'elevation', 'рельеф', 'высоты'],
   }),
   constraints: Object.freeze({
     title: 'Проектные отступы',
-    why: 'Значения задаёт и подтверждает пользователь для конкретного проекта.',
     aliases: ['constraints', 'setbacks', 'constraint-confirmation', 'отступы'],
   }),
   zone: Object.freeze({
     title: 'Рабочее пятно',
-    why: 'Показывает область по введённым ограничениям и буферам соседних зданий.',
     aliases: ['zone', 'buildable', 'build-zone', 'working-zone', 'envelope', 'рабочее-пятно'],
   }),
 });
@@ -144,12 +132,7 @@ const STATUS_LABEL = Object.freeze({
 });
 
 const STATUS_MARK = Object.freeze({ done: '✓', warning: '!', error: '×', unknown: '?' });
-const HOME_PROGRAM_STATUS = Object.freeze({
-  unknown: 'Не задана',
-  draft: 'Черновик',
-  incomplete: 'Не хватает',
-  ready: 'Готова',
-});
+
 const CIRCULATION_PERIOD_LABEL = Object.freeze({
   day: 'проходов в день',
   week: 'проходов в неделю',
@@ -173,7 +156,7 @@ let panelOpen = false;
 let panelView = 'stage';
 let activeStage = STAGES[0].id;
 let lastOpener = null;
-let lastOpenerStage = null;
+let lastOpenerView = null;
 let latestModel = null;
 let footprintDraft = null;
 let footprintDraftProject = null;
@@ -181,7 +164,7 @@ let footprintDraftDirty = false;
 let workflowIdentity = null;
 let workflowProjectRef = null;
 let workflowPid = null;
-let lastWorkflowView = 'program';
+let lastWorkflowView = 'site';
 let workflowReviewCache = null;
 let workflowReviewProject = null;
 let workflowReviewMode = null;
@@ -211,7 +194,7 @@ const HOME_VIEW_DEFS = Object.freeze([
     id: 'circulation', step: 5, label: 'Движение',
     kicker: 'Этап 5 · маршруты внутри помещений', title: 'Движение и проходы',
     announce: 'Открыты движение и проходы',
-    html: (project, currentState) => homeCirculationHtml(project, currentState),
+    html: (project, currentState) => `${ergoViewBlock()}${homeCirculationHtml(project, currentState)}`,
   }),
   Object.freeze({
     id: 'climate', step: 6, label: 'Свет',
@@ -249,7 +232,7 @@ const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
 const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
 const HOME_NAV_VIEWS = new Set(HOME_NAV_DEFS.map((view) => view.id));
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
-  'data-home-view', 'data-route-action',
+  'data-home-view', 'data-route-action', 'data-route-stage', 'data-climate-setting',
   'data-route-confirm', 'data-route-footprint', 'data-route-tool',
   'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
   'data-home-program-bedroom', 'data-bedroom-field', 'data-home-program-step',
@@ -310,7 +293,7 @@ function restoreWorkflowPosition() {
   if (identity === workflowIdentity) return;
   // Новый локальный проект получает pid при первом облачном/локальном
   // сохранении. Это тот же открытый проект: переносим текущую позицию в его
-  // собственный scoped-ключ, а не сбрасываем пользователя на этап 2.
+  // собственный scoped-ключ, а не сбрасываем открытый этап.
   if (state.project && state.project === workflowProjectRef && !workflowPid && state.pid) {
     workflowIdentity = identity;
     workflowPid = state.pid;
@@ -321,7 +304,7 @@ function restoreWorkflowPosition() {
   workflowProjectRef = state.project;
   workflowPid = state.pid || null;
   invalidateWorkflowReview({ clear: true });
-  lastWorkflowView = 'program';
+  lastWorkflowView = 'site';
   activeStage = STAGES[0].id;
   if (!state.project) return;
   const key = workflowStorageKey();
@@ -380,7 +363,7 @@ function scheduleLightWorkflowReview() {
   if (workflowReviewTimer != null) clearTimeout(workflowReviewTimer);
   workflowReviewTimer = setTimeout(() => {
     workflowReviewTimer = null;
-    if (!workflowReviewDirty || !state.project || panelView === 'review') return;
+    if (!workflowReviewDirty || !state.project || (panelOpen && panelView === 'review')) return;
     const project = state.project;
     const report = calculateWorkflowReview(false);
     if (project !== state.project) return;
@@ -388,7 +371,7 @@ function scheduleLightWorkflowReview() {
     workflowReviewProject = project;
     workflowReviewMode = 'light';
     workflowReviewDirty = false;
-    if (panelOpen) renderProjectRoute();
+    renderProjectRoute();
   }, 80);
 }
 
@@ -396,7 +379,7 @@ function cachedWorkflowReview({ full = panelView === 'review' } = {}) {
   if (!state.project) return null;
   const mode = full ? 'full' : 'light';
   const incompatible = workflowReviewProject !== state.project
-    || workflowReviewMode !== mode || !workflowReviewCache;
+    || (full && workflowReviewMode !== 'full') || !workflowReviewCache;
   if (incompatible || (full && workflowReviewDirty)) {
     workflowReviewCache = calculateWorkflowReview(full);
     workflowReviewProject = state.project;
@@ -421,13 +404,14 @@ function invalidateWorkflowReview({ clear = false } = {}) {
 }
 
 function resetWorkflowForReplacement() {
+  byId('projectRouteSteps')?.replaceChildren();
   workflowIdentity = null;
   workflowProjectRef = null;
   workflowPid = null;
   invalidateWorkflowReview({ clear: true });
-  lastWorkflowView = 'program';
+  lastWorkflowView = 'site';
   activeStage = STAGES[0].id;
-  if (panelView === 'stage' || HOME_VIEWS.has(panelView)) panelView = 'program';
+  if (panelView === 'stage' || HOME_VIEWS.has(panelView)) panelView = 'stage';
   // Событие означает явное «Новый/Пример/Открыть». Для нового локального
   // черновика старую позицию draft не наследуем; сохранённый pid, напротив,
   // будет лениво восстановлен своим ключом при следующем render.
@@ -455,7 +439,8 @@ function focusedHomeControl(body) {
     .map((name) => [name, element.getAttribute(name)]);
   const pointId = element.closest?.('[data-engineering-point]')?.dataset.engineeringPoint || null;
   const scenarioId = element.closest?.('[data-home-flow-scenario-id]')?.dataset.homeFlowScenarioId || null;
-  if (!attributes.length && !pointId && !scenarioId) return null;
+  const foldId = element.closest?.('[data-analysis-fold]')?.dataset.analysisFold || null;
+  if (!attributes.length && !pointId && !scenarioId && !(foldId && element.tagName === 'SUMMARY')) return null;
   let selectionStart = null;
   let selectionEnd = null;
   try {
@@ -469,6 +454,7 @@ function focusedHomeControl(body) {
     attributes,
     pointId,
     scenarioId,
+    foldId,
     selectionStart,
     selectionEnd,
   };
@@ -484,6 +470,7 @@ function captureHomePanelState(body, view) {
     scrollTop: panel?.scrollTop || 0,
     navScrollLeft: body.querySelector('.home-system-nav')?.scrollLeft || 0,
     focus: focusedHomeControl(body),
+    folds: [...body.querySelectorAll('details[data-analysis-fold]')].map((node) => [node.dataset.analysisFold, node.open]),
     scenarios: [...body.querySelectorAll('[data-home-flow-scenario-id]')].map((details) => ({
       id: details.dataset.homeFlowScenarioId,
       open: details.open === true,
@@ -496,11 +483,16 @@ function matchesHomeControl(element, identity) {
   if (identity.attributes.some(([name, value]) => element.getAttribute(name) !== value)) return false;
   const pointId = element.closest?.('[data-engineering-point]')?.dataset.engineeringPoint || null;
   const scenarioId = element.closest?.('[data-home-flow-scenario-id]')?.dataset.homeFlowScenarioId || null;
-  return pointId === identity.pointId && scenarioId === identity.scenarioId;
+  const foldId = element.closest?.('[data-analysis-fold]')?.dataset.analysisFold || null;
+  return pointId === identity.pointId && scenarioId === identity.scenarioId && foldId === identity.foldId;
 }
 
 function restoreHomePanelState(body, snapshot) {
   if (!snapshot) return;
+  const folds = new Map(snapshot.folds);
+  for (const node of body.querySelectorAll('details[data-analysis-fold]')) {
+    if (folds.has(node.dataset.analysisFold)) node.open = folds.get(node.dataset.analysisFold);
+  }
   for (const item of snapshot.scenarios) {
     const details = [...body.querySelectorAll('[data-home-flow-scenario-id]')]
       .find((candidate) => candidate.dataset.homeFlowScenarioId === item.id);
@@ -743,34 +735,57 @@ function routeModel() {
 function statusLabel(status) { return STATUS_LABEL[status] || STATUS_LABEL.unknown; }
 function statusMark(status) { return STATUS_MARK[status] || STATUS_MARK.unknown; }
 
+const ROUTE_ICON = Object.freeze({
+  site: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z M9 3v15 M15 6v15',
+  program: 'M3 10l9-7 9 7 M5 9v12h14V9 M10 21v-7h4v7',
+  flows: 'M3 4h6v5H3z M15 15h6v5h-6z M6 9v8h9 M9 6h9v9',
+  engineering: 'M3 7h7v5h5V7h6 M5 4v6 M19 4v6 M10 14v5h5v-5',
+  circulation: 'M3 18h9a3 3 0 0 0 0-6h-1a3 3 0 0 1 0-6h9 M17 3l3 3-3 3',
+  climate: 'M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5L19 19 M5 19l1.5-1.5 M17.5 6.5L19 5 M17 12a5 5 0 1 1-10 0 5 5 0 1 1 10 0',
+  review: 'M8 3h8v3H8z M8 5H5v16h14V5h-3 M8 13l3 3 5-6',
+  envelope: 'M3 7l9-5 9 5v10l-9 5-9-5z M3 7l9 5 9-5 M12 12v10',
+  deliverables: 'M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h5',
+});
+
+function stageIcon(view) {
+  return `<svg class="route-symbol" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ROUTE_ICON[view.id]}"/></svg>`;
+}
+
 function renderStageBar(model) {
   const steps = byId('projectRouteSteps');
-  const summary = byId('projectRouteSummary');
   const program = byId('projectHomeProgram');
-  const programStatus = byId('projectHomeProgramStatus');
-  if (!steps || !summary) return;
-  const homeStatus = model?.homeProgram?.status || 'unknown';
-  const homeLabel = HOME_PROGRAM_STATUS[homeStatus] || HOME_PROGRAM_STATUS.unknown;
-  if (program) {
-    program.dataset.status = homeStatus;
-    program.disabled = !state.project;
-    program.setAttribute('aria-label', `Этапы дома · программа: ${homeLabel.toLocaleLowerCase('ru-RU')}`);
+  if (!steps || !program) return;
+  program.disabled = !state.project;
+  program.dataset.status = model?.homeProgram?.status || 'unknown';
+  const rows = homeWorkflowRows(cachedWorkflowReview({ full: panelOpen && panelView === 'review' }));
+  const checkedCount = rows.filter((row) => row.status === 'checked').length;
+  byId('routeMobileCurrent').textContent = rows.find((row) => row.id === lastWorkflowView)?.label || 'Участок';
+  byId('projectHomeProgramStatus').textContent = `${checkedCount}/${rows.length}`;
+  program.setAttribute('aria-label', `Аналитика проекта. Завершено ${checkedCount} из ${rows.length} этапов`);
+  for (const view of rows) {
+    let button = steps.querySelector(`[data-route-view="${view.id}"]`);
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'project-route-step';
+      button.dataset.routeView = view.id;
+      button.setAttribute('aria-controls', 'projectRoutePanel');
+      button.innerHTML = `${stageIcon(view)}<span>${escapeHtml(view.label)}</span><i class="route-status" aria-hidden="true"></i>`;
+      steps.append(button);
+    }
+    button.disabled = program.disabled;
+    const previous = button.dataset.status;
+    if (previous === view.status) continue;
+    const label = `${view.step}. ${view.label} · ${HOME_REVIEW_STATUS_LABEL[view.status]}`;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.dataset.status = view.status;
+    const mark = button.querySelector('.route-status');
+    mark.textContent = HOME_REVIEW_STATUS_MARK[view.status];
+    if (previous && view.status === 'checked' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      mark.animate([{ transform: 'scale(.85)' }, { transform: 'scale(1.2)' }, { transform: 'scale(1)' }], { duration: 260 });
+    }
   }
-  if (programStatus) programStatus.textContent = homeLabel;
-  if (!state.project) {
-    summary.textContent = 'Маршрут станет доступен после открытия проекта';
-    steps.replaceChildren();
-    return;
-  }
-  const done = model.stages.filter((stage) => stage.status === 'done').length;
-  summary.textContent = `Участок · ${done} из ${model.stages.length} этапов`;
-  steps.innerHTML = model.stages.map((stage, index) => {
-    const current = panelOpen && panelView === 'stage' && activeStage === stage.id;
-    return `<button type="button" class="project-route-step${current ? ' active' : ''}" data-route-stage="${stage.id}" data-status="${stage.status}" data-route-status="${stage.status}"${current ? ' aria-current="step"' : ''} aria-label="Этап ${index + 1}: ${escapeHtml(stage.title)}. ${statusLabel(stage.status)}">
-      <span class="project-route-step-mark" aria-hidden="true">${stage.status === 'unknown' ? index + 1 : statusMark(stage.status)}</span>
-      <span class="project-route-step-copy"><strong>${escapeHtml(stage.short)}</strong><small>${statusLabel(stage.status)}</small></span>
-    </button>`;
-  }).join('<span class="project-route-connector" aria-hidden="true"></span>');
 }
 
 function checked(value) { return value ? ' checked' : ''; }
@@ -778,26 +793,26 @@ function checked(value) { return value ? ' checked' : ''; }
 function confirmationControl(taskId, site) {
   const planning = site?.planning || {};
   if (taskId === 'underlay' && !site?.underlay) {
-    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="withoutUnderlay"${checked(planning.withoutUnderlay)}> <span><strong>Работать без подложки</strong><small>Осознанное допущение; исходные объекты придётся вносить вручную.</small></span></label>`;
+    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="withoutUnderlay"${checked(planning.withoutUnderlay)}> <span><strong>Внести данные вручную, без подложки</strong></span></label>`;
   }
   if (taskId === 'neighbor') {
-    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="contextReviewed"${checked(contextReviewMatches(site))}> <span><strong>Окружение просмотрено</strong><small>Все известные сейчас дороги и соседние здания внесены. После их изменения потребуется повторная проверка.</small></span></label>`;
+    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="contextReviewed"${checked(contextReviewMatches(site))}> <span><strong>Все известные дороги и соседние здания нанесены</strong></span></label>`;
   }
   if (taskId === 'terrain' && asArray(site?.terrain?.points).length < 3) {
-    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="flatTerrain"${checked(planning.flatTerrain)}> <span><strong>Считать участок плоским</strong><small>Использовать только как эскизное допущение до получения отметок.</small></span></label>`;
+    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="flatTerrain"${checked(planning.flatTerrain)}> <span><strong>Считать участок плоским</strong><small>Для эскиза, пока нет отметок высот.</small></span></label>`;
   }
   if (taskId === 'constraints') {
-    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="constraintsConfirmed"${checked(constraintsMatch(site))}> <span><strong>Я проверил(а) текущие отступы</strong><small>Повторное подтверждение потребуется после изменения значений.</small></span></label>`;
+    return `<label class="project-route-confirm"><input type="checkbox" data-route-confirm="constraintsConfirmed"${checked(constraintsMatch(site))}> <span><strong>Значения отступов проверены</strong></span></label>`;
   }
   return '';
 }
 
 function toolActionLabel(taskId, site) {
-  if (taskId === 'underlay') return site?.underlay ? 'Показать и поправить' : 'Импортировать';
-  if (taskId === 'boundary') return site?.boundary ? 'Показать и поправить' : 'Начертить границу';
-  if (taskId === 'road') return asArray(site?.roads).length ? 'Показать и поправить' : 'Добавить дорогу';
-  if (taskId === 'entry') return site?.entry ? 'Показать и поправить' : 'Поставить въезд';
-  if (taskId === 'neighbor') return 'Открыть инструмент';
+  if (taskId === 'underlay') return site?.underlay ? 'Изменить' : 'Импортировать';
+  if (taskId === 'boundary') return site?.boundary ? 'Изменить' : 'Начертить границу';
+  if (taskId === 'road') return asArray(site?.roads).length ? 'Изменить' : 'Добавить дорогу';
+  if (taskId === 'entry') return site?.entry ? 'Изменить' : 'Поставить въезд';
+  if (taskId === 'neighbor') return 'Начертить здание';
   if (taskId === 'north') return 'Задать север';
   if (taskId === 'terrain') return 'Добавить отметки';
   return '';
@@ -806,17 +821,16 @@ function toolActionLabel(taskId, site) {
 function renderTask(task, site) {
   let action = '';
   if (task.definition.tool) action = `<button type="button" class="project-route-task-action" data-route-tool="${task.definition.tool}">${toolActionLabel(task.id, site)}</button>`;
-  else if (task.id === 'constraints') action = '<button type="button" class="project-route-task-action" data-route-action="open-constraints">Открыть настройки отступов</button>';
+  else if (task.id === 'constraints') action = '<button type="button" class="project-route-task-action" data-route-action="open-constraints">Настроить отступы</button>';
   else if (task.id === 'zone') action = '<button type="button" class="project-route-task-action" data-route-action="show-zone">Показать на плане</button>';
   if (task.id === 'north' && !site?.solarVerified) {
-    action += '<button type="button" class="project-route-task-action secondary" data-route-action="open-solar-settings">Ввести координаты и подтвердить</button>';
+    action += '<button type="button" class="project-route-task-action secondary" data-route-action="open-solar-settings">Указать координаты</button>';
   }
   return `<article class="project-route-task" data-route-task="${task.id}" data-status="${task.status}" data-route-status="${task.status}">
     <span class="project-route-task-mark" aria-hidden="true">${statusMark(task.status)}</span>
     <div class="project-route-task-main">
       <div class="project-route-task-title"><h3>${escapeHtml(task.definition.title)}</h3><span>${statusLabel(task.status)}</span></div>
       <p>${escapeHtml(task.reason)}</p>
-      <p class="project-route-why"><strong>Зачем:</strong> ${escapeHtml(task.definition.why)}</p>
       ${confirmationControl(task.id, site)}
       ${action}
     </div>
@@ -916,11 +930,11 @@ function renderFootprint(site) {
   const result = state.siteOpportunity?.result || null;
   return `<section class="project-route-footprint" aria-labelledby="projectRouteFootprintTitle">
     <div class="project-route-section-head">
-      <div><h3 id="projectRouteFootprintTitle">Проверочный габарит дома</h3><p>Введите ориентировочный прямоугольник. Без размеров нельзя проверить, помещается ли дом целиком.</p></div>
+      <div><h3 id="projectRouteFootprintTitle">Габариты дома</h3><p>По ним рассчитывается карта возможного размещения.</p></div>
     </div>
     <form class="project-route-footprint-form" id="projectRouteFootprintForm">
-      <label>Ширина, м<input name="width" data-route-footprint="width" type="number" min="2" max="100" step="0.1" inputmode="decimal" value="${escapeHtml(draft.width)}" placeholder="например, 12"></label>
-      <label>Глубина, м<input name="depth" data-route-footprint="depth" type="number" min="2" max="100" step="0.1" inputmode="decimal" value="${escapeHtml(draft.depth)}" placeholder="например, 10"></label>
+      <label>Ширина, м<input name="width" data-route-footprint="width" type="number" min="2" max="100" step="0.1" inputmode="decimal" value="${escapeHtml(draft.width)}" placeholder="12"></label>
+      <label>Глубина, м<input name="depth" data-route-footprint="depth" type="number" min="2" max="100" step="0.1" inputmode="decimal" value="${escapeHtml(draft.depth)}" placeholder="10"></label>
       <label>Поворот, °<input name="rotation" data-route-footprint="rotation" type="number" step="1" value="${escapeHtml(draft.rotation)}"></label>
       <button type="button" data-route-action="save-footprint">Сохранить габарит</button>
     </form>
@@ -943,12 +957,12 @@ function renderStagePanel(stage) {
   const site = state.project?.site || {};
   const tasks = stage?.tasks || [];
   const done = tasks.filter((task) => task.status === 'done').length;
-  return `<div class="project-route-stage-intro">
-    <p>${escapeHtml(stage?.intro || '')}</p>
-    <span>${done} из ${tasks.length}</span>
-  </div>
+  const groups = latestModel.stages.map((group) => `<button type="button" data-route-stage="${group.id}" data-route-status="${group.status}" data-status="${group.status}"${stage.id === group.id ? ' aria-current="step"' : ''}><i aria-hidden="true">${statusMark(group.status)}</i>${escapeHtml(group.short)}</button>`).join('');
+  return `<div class="route-site-groups" role="group" aria-label="Подразделы участка">${groups}</div>
+  <div class="project-route-stage-intro"><h3>${escapeHtml(stage.title)}</h3><span>${done} из ${tasks.length}</span></div>
   <div class="project-route-task-list">${tasks.map((task) => renderTask(task, site)).join('')}</div>
-  ${stage?.id === 'constraints' ? renderFootprint(site) : ''}`;
+  ${stage?.id === 'constraints' ? renderFootprint(site) : ''}
+  <button type="button" class="route-passport-link" data-route-action="passport">Паспорт участка <span aria-hidden="true">↗</span></button>`;
 }
 
 function terrainRange(site) {
@@ -1020,10 +1034,9 @@ function renderPassport(passport) {
     factCard('Проектные отступы', `${(Number(site?.setbackBoundary || 0) / 1000).toLocaleString('ru-RU')} м / ${(Number(site?.setbackNeighbor || 0) / 1000).toLocaleString('ru-RU')} м`, factReason('constraints', 'От границы / от соседнего здания.'), factStatus('constraints')),
     factCard('Рабочее пятно', workingArea == null ? 'Не рассчитано' : `${Number(workingArea).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м²`, `${factReason('zone')} По введённым ограничениям; не юридическая разрешённая зона.`.trim(), buildableStatus),
   ];
-  return `<div class="project-route-passport-intro"><p>Фактическая сводка исходных данных. Она обновляется вместе с моделью и не дублирует значения проекта.</p></div>
-    <div class="project-route-facts">${facts.join('')}</div>
+  return `<div class="project-route-facts">${facts.join('')}</div>
     <section class="project-route-unknowns" aria-labelledby="projectRouteUnknownTitle">
-      <h3 id="projectRouteUnknownTitle">Что неизвестно или требует исправления</h3>
+      <h3 id="projectRouteUnknownTitle">Что ещё проверить</h3>
       ${unknown.length ? `<ul>${unknown.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>Обязательные исходные данные для текущего маршрута собраны.</p>'}
     </section>
     <p class="project-route-disclaimer"><strong>Эскизная проверка, не нормативное заключение.</strong> Значения отступов и полноту исходных данных нужно проверить по документам участка и правилам вашего региона.</p>`;
@@ -1035,20 +1048,21 @@ function renderPanel(model) {
   const kicker = byId('projectRoutePanelKicker');
   if (!body || !title || !kicker) return;
   if (panelView === 'passport') {
-    kicker.textContent = 'Факты без предположений';
+    kicker.textContent = 'Участок / Исходные данные';
     title.textContent = 'Паспорт участка';
-    body.innerHTML = renderPassport(model.passport);
+    body.innerHTML = `<button type="button" class="route-passport-link" data-route-action="open-home-view" data-home-view="site">← Участок</button>${renderPassport(model.passport)}`;
     return;
   }
   if (HOME_VIEWS.has(panelView)) {
     const preserved = captureHomePanelState(body, panelView);
     const current = HOME_VIEW_BY_ID.get(panelView) || HOME_VIEW_DEFS[0];
     const review = cachedWorkflowReview({ full: panelView === 'review' });
-    kicker.textContent = current.kicker;
+    kicker.textContent = `Аналитика / Этап ${current.step} из ${HOME_NAV_DEFS.length}`;
     title.textContent = current.title;
     body.innerHTML = state.project
       ? `${homeSystemNav(panelView, review)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-${current.id}">${current.html(state.project, state, review)}</div>`
       : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы продолжить проектирование дома.</p>';
+    if (panelView === 'circulation') bindErgoViewBlock(body, renderProjectRoute);
     restoreHomePanelState(body, preserved);
     return;
   }
@@ -1059,8 +1073,8 @@ function renderPanel(model) {
     body.innerHTML = '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы начать подготовку участка.</p>';
     return;
   }
-  kicker.textContent = `Этап ${model.stages.indexOf(stage) + 1} из ${model.stages.length} · ${statusLabel(stage.status)}`;
-  title.textContent = stage.title;
+  kicker.textContent = `Аналитика / Этап 1 из ${HOME_NAV_DEFS.length}`;
+  title.textContent = 'Участок';
   const preserved = captureHomePanelState(body, 'site');
   const review = cachedWorkflowReview({ full: false });
   body.innerHTML = `${homeSystemNav('site', review)}<div class="home-system-panel" id="homeSystemPanel" role="tabpanel" aria-labelledby="homeViewTab-site">${renderStagePanel(stage)}</div>`;
@@ -1094,29 +1108,29 @@ function homeSystemNav(active, review) {
     const current = active === view.id;
     const statusLabel = HOME_REVIEW_STATUS_LABEL[view.status];
     const statusMark = HOME_REVIEW_STATUS_MARK[view.status];
-    return `<button type="button" id="homeViewTab-${view.id}" role="tab" aria-controls="homeSystemPanel" aria-selected="${current}" tabindex="${current ? '0' : '-1'}" data-route-action="open-home-view" data-home-view="${view.id}" data-status="${view.status}"${current ? ' aria-current="page"' : ''} aria-label="Этап ${view.step}: ${escapeHtml(view.label)}. ${escapeHtml(statusLabel)}"><span><b>${view.step}</b><i aria-hidden="true">${statusMark}</i></span>${escapeHtml(view.label)}</button>`;
+    return `<button type="button" id="homeViewTab-${view.id}" role="tab" aria-controls="homeSystemPanel" aria-selected="${current}" tabindex="${current ? '0' : '-1'}" data-route-action="open-home-view" data-home-view="${view.id}" data-status="${view.status}"${current ? ' aria-current="page"' : ''} title="${escapeHtml(statusLabel)}" aria-label="Этап ${view.step}. ${escapeHtml(view.label)}. ${escapeHtml(statusLabel)}">${stageIcon(view)}${escapeHtml(view.label)}<i class="route-status" aria-hidden="true">${statusMark}</i></button>`;
   }).join('');
   const continueButton = next
-    ? `<button type="button" class="home-workflow-continue" data-route-action="continue-home-view" data-home-view="${next.id}">Продолжить: ${next.step}. ${escapeHtml(next.label)}</button>`
+    ? `<button type="button" class="home-workflow-continue" data-route-action="continue-home-view" data-home-view="${next.id}">Далее · ${escapeHtml(next.label)} →</button>`
     : attentionCount
       ? '<button type="button" class="home-workflow-continue" disabled>Других этапов с замечаниями нет</button>'
       : '<button type="button" class="home-workflow-continue" disabled>Все этапы без замечаний</button>';
-  return `<nav class="home-system-nav" role="tablist" aria-label="Этапы проектирования дома">${tabs}</nav><div class="home-workflow-progress"><p><strong>${checkedCount} из ${rows.length}</strong> этапов без замечаний</p>${continueButton}</div>`;
+  return `<nav class="home-system-nav" role="tablist" aria-orientation="${isPhone() ? 'horizontal' : 'vertical'}" aria-label="Этапы проекта">${tabs}</nav><div class="home-workflow-progress"><p><strong>${checkedCount} из ${rows.length}</strong> готово</p><progress max="${rows.length}" value="${checkedCount}" aria-label="Готовность проекта"></progress>${continueButton}</div>`;
 }
 
 function syncOpenState() {
   const panel = byId('projectRoutePanel');
   const scrim = byId('projectRouteScrim');
-  const toggle = byId('projectRouteToggle');
-  const passport = byId('projectRoutePassport');
   const program = byId('projectHomeProgram');
-  if (!panel || !scrim || !toggle || !passport || !program) return;
+  if (!panel || !scrim || !program) return;
   panel.hidden = !panelOpen;
   scrim.hidden = !panelOpen;
+  byId('projectRouteSteps').hidden = panelOpen;
+  const breadcrumb = byId('routeCurrentSection');
+  breadcrumb.hidden = !panelOpen;
+  breadcrumb.textContent = byId('projectRoutePanelTitle').textContent;
   panel.setAttribute('aria-modal', String(panelOpen && isPhone()));
-  toggle.setAttribute('aria-expanded', String(panelOpen && panelView === 'stage'));
-  passport.setAttribute('aria-expanded', String(panelOpen && panelView === 'passport'));
-  program.setAttribute('aria-expanded', String(panelOpen && (HOME_VIEWS.has(panelView) || panelView === 'stage')));
+  program.setAttribute('aria-expanded', String(panelOpen));
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -1132,13 +1146,14 @@ function openPanel(view, stageId, opener) {
   if (view === 'stage') lastWorkflowView = 'site';
   else if (HOME_VIEWS.has(view)) lastWorkflowView = view;
   if (view === 'stage' || HOME_VIEWS.has(view)) saveWorkflowPosition();
+  if (!panelOpen) {
+    lastOpener = opener || document.activeElement;
+    lastOpenerView = lastOpener?.dataset?.routeView || null;
+  }
   panelOpen = true;
-  lastOpener = opener || document.activeElement;
-  lastOpenerStage = opener?.dataset?.routeStage || null;
   renderProjectRoute();
   syncOpenState();
-  const close = byId('projectRouteClose');
-  requestAnimationFrame(() => close?.focus({ preventScroll: true }));
+  byId('projectRouteClose')?.focus({ preventScroll: true });
   announce(view === 'passport' ? 'Открыт паспорт участка'
     : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап маршрута проекта');
 }
@@ -1148,10 +1163,10 @@ function closePanel({ restoreFocus = true } = {}) {
   panelOpen = false;
   syncOpenState();
   announce('Маршрут проекта закрыт');
-  const opener = lastOpenerStage
-    ? byId('projectRouteSteps')?.querySelector(`[data-route-stage="${lastOpenerStage}"]`)
+  const opener = lastOpenerView
+    ? byId('projectRouteSteps')?.querySelector(`[data-route-view="${lastOpenerView}"]`)
     : lastOpener;
-  if (restoreFocus && opener?.isConnected) opener.focus({ preventScroll: true });
+  if (restoreFocus) (opener?.isConnected ? opener : byId('projectHomeProgram'))?.focus({ preventScroll: true });
 }
 
 function switchHomeView(view) {
@@ -1163,22 +1178,21 @@ function switchHomeView(view) {
   lastWorkflowView = view;
   saveWorkflowPosition();
   renderProjectRoute();
-  requestAnimationFrame(() => {
-    const tab = byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`);
-    const nav = tab?.closest('.home-system-nav');
-    if (tab && nav && nav.scrollWidth > nav.clientWidth) {
-      // На телефоне вкладки образуют собственную горизонтальную ленту.
-      // scrollIntoView у некоторых Chromium прокручивает внешний экран,
-      // поэтому центрируем кнопку именно внутри nav.
-      nav.scrollTo({
-        left: tab.offsetLeft - (nav.clientWidth - tab.offsetWidth) / 2,
-        behavior: 'auto',
-      });
-    } else {
-      tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-    }
-    tab?.focus({ preventScroll: true });
-  });
+  byId('projectRoutePanel').scrollTop = 0;
+  const tab = byId('projectRouteBody')?.querySelector(`[data-home-view="${view}"]`);
+  const nav = tab?.closest('.home-system-nav');
+  if (tab && nav && nav.scrollWidth > nav.clientWidth) {
+    // На телефоне вкладки образуют собственную горизонтальную ленту.
+    // scrollIntoView у некоторых Chromium прокручивает внешний экран,
+    // поэтому центрируем кнопку именно внутри nav.
+    nav.scrollTo({
+      left: tab.offsetLeft - (nav.clientWidth - tab.offsetWidth) / 2,
+      behavior: 'auto',
+    });
+  } else {
+    tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
+  tab?.focus({ preventScroll: true });
   announce(view === 'site' ? HOME_NAV_DEFS[0].announce
     : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап проектирования дома');
 }
@@ -1245,7 +1259,7 @@ function showSiteTool(id) {
   if (!state.project?.site) return;
   closePanel({ restoreFocus: false });
   closeSheets();
-  setEditorMode('site');
+  openView('site');
   if (id === 'underlay' && !state.project.site.underlay) {
     refs.underlayInput?.click();
     return;
@@ -1264,7 +1278,7 @@ function showWorkingZone() {
   }
   closePanel({ restoreFocus: false });
   closeSheets();
-  setEditorMode('site');
+  openView('site');
   requestDraw();
   toast('Показано рабочее пятно по введённым ограничениям', true);
 }
@@ -1275,9 +1289,7 @@ function openConstraintSettings() {
   cancelTool();
   state.selection = null;
   state.propsTab = 'props';
-  setEditorMode('site');
-  // setEditorMode ничего не делает при уже открытом «Участке», поэтому
-  // общие свойства участка обновляем явно после снятия выбора.
+  openView('site');
   renderProps();
   requestAnimationFrame(() => {
     if (isPhone()) byId('mobileBar')?.querySelector('[data-sheet="props"]')?.click();
@@ -1285,18 +1297,13 @@ function openConstraintSettings() {
   });
 }
 
-function openSolarSettings() {
-  closePanel({ restoreFocus: false });
-  closeSheets();
-  cancelTool();
-  state.selection = null;
-  state.propsTab = 'props';
-  setEditorMode('site');
-  renderProps();
-  requestAnimationFrame(() => {
-    if (isPhone()) byId('mobileBar')?.querySelector('[data-sheet="props"]')?.click();
-    else byId('lat')?.focus({ preventScroll: true });
-  });
+function openSolarSettings(opener = document.activeElement) {
+  openPanel('climate', null, opener);
+  const location = byId('projectRouteBody')?.querySelector('[data-climate-location]');
+  if (location) {
+    location.open = true;
+    requestAnimationFrame(() => location.querySelector('#lat')?.focus());
+  }
 }
 
 function hasOpportunityPositions(result) {
@@ -1339,7 +1346,7 @@ function toggleOpportunity() {
   state.siteOpportunity = { on: true, result, signature };
   closePanel({ restoreFocus: false });
   closeSheets();
-  setEditorMode('site');
+  openView('site');
   requestDraw();
   renderProjectRoute();
   toast('Показана карта возможностей участка');
@@ -1372,7 +1379,29 @@ function openSheetsPanel(sheetId = null) {
   }
 }
 
+function openAnalysisView(mode) {
+  openView(mode === 'plan' ? `plan:${state.project.activeLevel}` : mode);
+}
+
 function handleBodyClick(event) {
+  const destination = event.target.closest('[data-analysis-open]')?.dataset.analysisOpen;
+  if (destination) {
+    closePanel({ restoreFocus: false });
+    closeSheets();
+    if (destination === 'ergo-plan') openView(`plan:${state.project.activeLevel}`);
+    if (destination === 'issues') {
+      event.stopPropagation();
+      setIssuesOpen(true);
+      byId('issuesPanel')?.querySelector('button')?.focus();
+    }
+    if (destination === 'tep') {
+      if (isPhone()) toggleSheet('props');
+      byId('propsTabTep')?.click();
+      byId('tepTabRooms')?.click();
+      byId('tepTabRooms')?.focus();
+    }
+    return;
+  }
   if (handleHomeDeliverablesClick(event, {
     openView: (viewId) => {
       closePanel({ restoreFocus: false });
@@ -1421,7 +1450,7 @@ function handleBodyClick(event) {
     rerender: renderProjectRoute,
     requestDraw,
     toast,
-    setEditorMode,
+    setEditorMode: openAnalysisView,
     switchLevel,
   })) return;
   if (handleHomeCirculationClick(event, {
@@ -1433,7 +1462,7 @@ function handleBodyClick(event) {
     rerender: renderProjectRoute,
     requestDraw,
     toast,
-    setEditorMode,
+    setEditorMode: openAnalysisView,
   })) {
     disableSolarForAnotherOverlay(state.homeCirculationOverlay?.on === true);
     return;
@@ -1447,7 +1476,7 @@ function handleBodyClick(event) {
     rerender: renderProjectRoute,
     requestDraw,
     toast,
-    setEditorMode,
+    setEditorMode: openAnalysisView,
   });
   if (handledFlows) {
     disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
@@ -1463,7 +1492,7 @@ function handleBodyClick(event) {
     rerender: renderProjectRoute,
     requestDraw,
     toast,
-    setEditorMode,
+    setEditorMode: openAnalysisView,
   });
   if (handledEngineering) {
     disableCirculationForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
@@ -1480,6 +1509,14 @@ function handleBodyClick(event) {
     disableSolarForAnotherOverlay(state.homeProgramOverlay?.on === true);
     return;
   }
+  const group = event.target.closest('[data-route-stage]');
+  if (group) {
+    activeStage = group.dataset.routeStage;
+    saveWorkflowPosition();
+    renderProjectRoute();
+    byId('projectRouteBody')?.querySelector('[data-route-stage][aria-current="step"]')?.focus({ preventScroll: true });
+    return;
+  }
   const toolButton = event.target.closest('[data-route-tool]');
   if (toolButton) {
     showSiteTool(toolButton.dataset.routeTool);
@@ -1492,7 +1529,12 @@ function handleBodyClick(event) {
   else if (action === 'continue-home-view') switchHomeView(actionButton.dataset.homeView || 'program');
   else if (action === 'show-zone') showWorkingZone();
   else if (action === 'open-constraints') openConstraintSettings();
-  else if (action === 'open-solar-settings') openSolarSettings();
+  else if (action === 'open-solar-settings') openSolarSettings(actionButton);
+  else if (action === 'passport') {
+    panelView = 'passport';
+    renderProjectRoute();
+    byId('projectRouteClose').focus();
+  }
   else if (action === 'save-footprint') saveFootprint();
   else if (action === 'toggle-opportunity') toggleOpportunity();
 }
@@ -1530,7 +1572,7 @@ function handleDocumentKeydown(event) {
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
       : (current + (event.key === 'ArrowRight' ? 1
         : event.key === 'ArrowLeft' ? -1
-          : event.key === 'ArrowDown' ? 3 : -3) + tabs.length) % tabs.length;
+          : event.key === 'ArrowDown' ? 1 : -1) + tabs.length) % tabs.length;
     event.preventDefault();
     switchHomeView(tabs[next]);
     return;
@@ -1600,13 +1642,6 @@ export function renderProjectRoute() {
   const solarOn = state.solarAnalysis?.on === true;
   const solarLegend = byId('solarLegend');
   if (solarLegend && !solarOn) solarLegend.hidden = true;
-  const solarButton = byId('sunAnalysisBtn');
-  if (solarButton) {
-    solarButton.classList.toggle('active', solarOn);
-    solarButton.setAttribute('aria-pressed', String(solarOn));
-    solarButton.setAttribute('aria-label', state.solarAnalysis?.mode === 'daylight'
-      ? 'Карта освещённости' : 'Карта прямого солнца');
-  }
   const homeProgramLegend = byId('homeProgramLegend');
   if (homeProgramLegend) {
     const flowsMode = state.homeProgramOverlay?.mode === 'flows';
@@ -1649,33 +1684,28 @@ export function bindProjectRoute() {
   }
   const root = byId('projectRoute');
   const steps = byId('projectRouteSteps');
-  const toggle = byId('projectRouteToggle');
-  const passport = byId('projectRoutePassport');
   const program = byId('projectHomeProgram');
   const body = byId('projectRouteBody');
-  if (!root || !steps || !toggle || !passport || !program || !body) return;
+  if (!root || !steps || !program || !body) return;
   bound = true;
-
-  toggle.addEventListener('click', () => {
-    if (panelOpen && panelView === 'stage') closePanel();
-    else openPanel('stage', firstIncompleteStage(latestModel), toggle);
-  });
-  passport.addEventListener('click', () => {
-    if (panelOpen && panelView === 'passport') closePanel();
-    else openPanel('passport', null, passport);
+  document.addEventListener('kepler:open-climate', (event) => {
+    if (event.detail?.location) openSolarSettings(event.detail.opener);
+    else openPanel('climate', null, event.detail?.opener);
   });
   program.addEventListener('click', () => {
-    if (panelOpen && (HOME_VIEWS.has(panelView) || panelView === 'stage')) closePanel();
-    else if (lastWorkflowView === 'site') openPanel('stage', activeStage, program);
-    else openPanel(HOME_VIEWS.has(lastWorkflowView) ? lastWorkflowView : 'program', null, program);
+    if (panelOpen) closePanel();
+    else if (HOME_VIEWS.has(lastWorkflowView)) openPanel(lastWorkflowView, null, program);
+    else openPanel('stage', activeStage, program);
   });
   steps.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-route-stage]');
-    if (button) openPanel('stage', button.dataset.routeStage, button);
+    const button = event.target.closest('[data-route-view]');
+    if (!button) return;
+    if (button.dataset.routeView === 'site') openPanel('stage', firstIncompleteStage(latestModel), button);
+    else openPanel(button.dataset.routeView, null, button);
   });
   steps.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const buttons = [...steps.querySelectorAll('[data-route-stage]')];
+    const buttons = [...steps.querySelectorAll('[data-route-view]')];
     if (!buttons.length) return;
     const current = Math.max(0, buttons.indexOf(document.activeElement));
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
@@ -1691,10 +1721,6 @@ export function bindProjectRoute() {
     handleHomeProgramInput(event);
     handleHomeCirculationInput(event, {
       project: state.project, state, mutate,
-      rerender: renderProjectRoute, requestDraw, toast,
-    });
-    handleHomeClimateInput(event, {
-      project: state.project, state,
       rerender: renderProjectRoute, requestDraw, toast,
     });
   });
@@ -1713,7 +1739,7 @@ export function bindProjectRoute() {
       rerender: renderProjectRoute, requestDraw, toast,
     });
     handleHomeClimateInput(event, {
-      project: state.project, state,
+      project: state.project, state, mutate, applyModeRotation,
       rerender: renderProjectRoute, requestDraw, toast,
     });
     const input = event.target.closest('[data-route-confirm]');

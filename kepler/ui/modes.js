@@ -88,4 +88,5 @@ export function setEditorMode(mode) {
   renderViewPanel(); // у режима свой угол вида
   refs.statusScale.textContent = scaleLabel();
   requestDraw();
+  document.dispatchEvent(new CustomEvent('kepler:view'));
 }

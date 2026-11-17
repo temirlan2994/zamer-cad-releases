@@ -1,23 +1,24 @@
 // Телефон (≤640px): план во всю ширину. Сверху — ряд привязок
 // (#mobileSnapRow, всегда открыт), под ним — параметры инструмента. Внизу —
 // навигация (#mobileBar): «Рисовать» · «Каталог» (в «Ландшафте» —
-// «Ландшафт») · «Свойства» · «Виды» · «3D». «Рисовать» выдвигает второй ряд
+// «Ландшафт») · «Свойства» · «Листы». «Рисовать» выдвигает второй ряд
 // (#mobileDraw) с инструментами режима. Родственные инструменты плана
-// («Проёмы», «Масса», «Документация», «Анализ») раскрываются отдельным рядом
+// («Проёмы», «Масса», «Документация») раскрываются отдельным рядом
 // иконок над лентой; в «Участке» и «Ландшафте» остаются свои инструменты.
 // «Каталог» (#mobileCat): Помещение · Мебель · Лестница · Готово.
 // Кнопки рядов — зеркала кнопок колонки инструментов (#toolStrip скрыт, его
 // обработчики работают). Листы (каталог, правая панель, «⋯», формы лестниц) —
 // над вторым рядом: ручка (45% / 88% высоты, вниз — закрыть) и «✕». В листе
-// «Виды» — режим и «Виды · Листы» (#mobileSheetHead). Выбранный объект —
+// В шапке листов (#mobileSheetHead) доступны виды для оформления. Выбранный объект —
 // карточка вверху плана (ui/mobile-card.js), под ней — этажи и «⚠»;
 // «Вписать» — круглая кнопка на плане.
 // На больших экранах всё это скрыто, классы ни на что не влияют (styles.css).
 
 import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
+import { stairPresetCard } from './stair-library.js';
 import { state } from './state.js';
-import { getPlanToolFamilies, renderToolstrip } from './toolstrip.js';
+import { availableModelTool, getPlanToolFamilies, renderToolstrip, toolContext } from './toolstrip.js';
 import { STAIR_SHAPES, STAIR_STYLE_PRESETS } from '../core/stairs.js';
 import { cancelTool, startPlaceFurniture } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
@@ -41,14 +42,14 @@ function libraryKindActive(kind) {
   return (state.libraryTab === 'furniture') === (kind === 'furniture');
 }
 
-// Вкладка правой панели, к которой относится кнопка навигации: «Листы» — раздел «Видов».
+// Мобильная кнопка «Листы» открывает листы и дерево видов для их оформления.
 const PANEL_TAB = { props: 'props', views: 'views', sheets: 'sheets' };
 const navTab = () => (['views', 'sheets'].includes(state.propsTab) ? state.propsTab : 'props');
 const viewsTab = () => navTab() !== 'props';
 
 function setPropsTab(tab) {
   if (state.propsTab === tab && !el('issuesBtn')?.getAttribute('aria-expanded')?.includes('true')) return;
-  const id = { props: 'propsTabMain', views: 'propsTabViews', sheets: 'propsTabSheets', tep: 'propsTabTep' }[tab];
+  const id = { props: 'propsTabMain', views: 'propsTabViews', sheets: 'propsTabSheets' }[tab];
   el(id)?.click(); // обработчик вкладок (ui/props.js) — закрывает замечания и перерисовывает
 }
 
@@ -58,7 +59,7 @@ function closeAll() {
 }
 
 // Кнопка нижней панели: открыть нужный лист или ряд, повторно — закрыть.
-// kind: 'draw' | 'rooms' | 'furniture' | 'stairs' | 'props' | 'views' | 'sheets' | 'more' | '3d'.
+// kind: 'draw' | 'rooms' | 'furniture' | 'stairs' | 'props' | 'views' | 'sheets' | 'more'.
 export function toggleSheet(kind) {
   // «Рисовать» — второй ряд инструментов; «Каталог» в «Плане» — второй ряд
   // каталога. Открыт один из двух.
@@ -73,14 +74,8 @@ export function toggleSheet(kind) {
   }
   document.body.classList.remove(DRAW);
   if (kind !== 'furniture' && kind !== 'stairs') document.body.classList.remove(CAT);
-  if (kind === '3d') {
-    closeAll();
-    el('view3dBtn')?.click();
-    syncMobileBar();
-    return;
-  }
   let already;
-  if (PANEL_TAB[kind]) already = has(PROPS) && navTab() === PANEL_TAB[kind];
+  if (PANEL_TAB[kind]) already = has(PROPS) && (kind === 'sheets' ? viewsTab() : navTab() === PANEL_TAB[kind]);
   else if (kind === 'more') already = has(MORE);
   else if (kind === 'stairs') already = has(STAIRS);
   else already = libraryKindActive(kind);
@@ -138,21 +133,26 @@ export function syncMobileBar() {
   const bar = el('mobileBar');
   if (!bar || !state.project) return;
   const btn = (kind) => bar.querySelector(`[data-sheet="${kind}"]`);
+  const context = toolContext();
+  const drawing = context === 'drawing';
+  const catalog = !drawing && context !== 'model' && context !== 'site';
+  if (!catalog) document.body.classList.remove(CAT);
+  if (drawing) document.body.classList.remove(DRAW);
+  btn('draw').hidden = drawing;
   const lib = btn('rooms');
   if (lib) {
     const label = lib.querySelector('.mb-label') || lib;
     const text = state.modeName === 'landscape' ? 'Ландшафт' : 'Каталог';
     if (label.textContent !== text) label.textContent = text;
     // «Участок»: инструменты — в «Рисовать», каталога нет.
-    lib.hidden = state.modeName === 'site';
+    lib.hidden = !catalog;
     lib.classList.toggle('active', has(LIB));
   }
   const props = has(PROPS);
   btn('draw')?.classList.toggle('active', has(DRAW));
   btn('props')?.classList.toggle('active', props && !viewsTab());
-  btn('views')?.classList.toggle('active', props && viewsTab());
+  btn('sheets')?.classList.toggle('active', props && viewsTab());
   btn('props')?.classList.toggle('dot', Boolean(state.selection)); // есть что смотреть
-  btn('3d')?.classList.toggle('active', Boolean(el('view3dBtn')?.classList.contains('active')));
   if (lib && state.modeName === 'plan') lib.classList.toggle('active', has(CAT));
   syncCatRow(state.modeName === 'plan');
   syncDrawRow();
@@ -165,7 +165,7 @@ export function syncMobileBar() {
   syncMobileCard();
 }
 
-// Шапка листа «Виды»: режим и «Виды · Листы». Пока открыт этот лист,
+// В шапке листов можно переключиться на дерево видов. Пока открыт этот лист,
 // заголовок и пояснение вкладки скрыты (data-tab у панели, styles.css).
 function syncSheetHead() {
   const head = el('mobileSheetHead');
@@ -173,7 +173,6 @@ function syncSheetHead() {
   if (!head || !panel) return;
   head.hidden = !viewsTab();
   if (panel.dataset.tab !== state.propsTab) panel.dataset.tab = state.propsTab;
-  for (const b of head.querySelectorAll('[data-mode]')) b.classList.toggle('active', b.dataset.mode === state.modeName);
   for (const b of head.querySelectorAll('[data-tab]')) {
     const on = b.dataset.tab === state.propsTab;
     b.classList.toggle('active', on);
@@ -181,16 +180,10 @@ function syncSheetHead() {
   }
 }
 
-const MODE_BUTTONS = { plan: 'modePlanBtn', site: 'modeSiteBtn', landscape: 'landscapeBtn' };
 function bindSheetHead() {
   el('mobileSheetHead')?.addEventListener('click', (e) => {
-    const mode = e.target.closest('[data-mode]')?.dataset.mode;
     const tab = e.target.closest('[data-tab]')?.dataset.tab;
-    if (mode) {
-      closeSheets(); // режим сменили — план свободен
-      if (mode !== state.modeName) el(MODE_BUTTONS[mode])?.click();
-      syncMobileBar();
-    } else if (tab) {
+    if (tab) {
       setPropsTab(tab);
       syncMobileBar();
     }
@@ -299,7 +292,6 @@ const PLAN_DRAW = [
   { type: 'tool', id: 'roofToolBtn' },
   { type: 'family', id: 'mass' },
   { type: 'family', id: 'docs' },
-  { type: 'family', id: 'analysis' },
 ];
 const drawSource = new WeakMap(); // кнопка ряда → кнопка колонки
 let drawKey = '';
@@ -307,7 +299,7 @@ let openMobileFamily = '';
 let mobileFamilyTrigger = null;
 
 const toolFamily = (id) => getPlanToolFamilies().find((family) => family.id === id);
-const familySources = (family) => (family?.childIds || []).map((id) => el(id)).filter(Boolean);
+const familySources = (family) => (family?.childIds || []).filter((id) => toolContext() !== 'model' || availableModelTool(id)).map((id) => el(id)).filter(Boolean);
 
 function familyActive(family) {
   const sources = familySources(family);
@@ -415,7 +407,9 @@ function syncMobileToolFlyout() {
 function drawSources() {
   if (state.modeName === 'site') return [...(el('siteTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
   if (state.modeName === 'landscape') return [...(el('landscapeTools')?.querySelectorAll('.tb-btn') || [])].map((source) => ({ type: 'tool', source }));
-  return PLAN_DRAW.map((entry) => entry.type === 'family'
+  const model = toolContext() === 'model';
+  const entries = PLAN_DRAW.filter((entry) => !model || availableModelTool(entry.type === 'family' ? toolFamily(entry.id)?.parentId : entry.id));
+  return entries.map((entry) => entry.type === 'family'
     ? { ...entry, family: toolFamily(entry.id) }
     : { ...entry, source: el(entry.id) })
     .filter((entry) => entry.type === 'family' ? Boolean(entry.family) : Boolean(entry.source));
@@ -582,22 +576,24 @@ function buildStairsSheet() {
     { id: 'exterior', title: 'Для улицы' },
   ]) {
     const section = document.createElement('section');
-    section.innerHTML = `<h4>${group.title}</h4><div class="mm-grid ms-style-grid">${STAIR_STYLE_PRESETS
-      .filter((preset) => preset.environment === group.id)
-      .map((preset) => `<button type="button" data-stair-preset="${preset.id}"><span aria-hidden="true">${preset.material === 'wood' ? '▤' : preset.material === 'concrete' ? '▦' : '▥'}</span>${preset.title}<small>${preset.railing === 'none' ? 'без ограждения' : `перила: ${preset.railing === 'glass' ? 'стекло' : preset.railing === 'wood' ? 'дерево' : 'металл'}`}</small></button>`).join('')}</div>`;
+    const heading = document.createElement('h4');
+    heading.textContent = group.title;
+    const cards = document.createElement('div');
+    cards.className = 'mm-grid ms-style-grid';
+    for (const preset of STAIR_STYLE_PRESETS.filter((entry) => entry.environment === group.id)) {
+      cards.appendChild(stairPresetCard(preset));
+    }
+    section.append(heading, cards);
     presets.appendChild(section);
   }
   const h = document.createElement('h3');
   h.className = 'mm-title';
-  h.textContent = 'Или выберите форму';
+  h.textContent = 'По форме';
   const grid = document.createElement('div');
   grid.className = 'mm-grid ms-grid';
   grid.innerHTML = STAIR_SHAPES.map((sh) => `<button type="button" data-stair="${sh.id}">
     <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">${STAIR_ICONS[sh.id] || ''}</svg>${sh.title}</button>`).join('');
-  const note = document.createElement('p');
-  note.className = 'empty-hint';
-  note.textContent = 'Материал, ограждение, конструкцию, форму и размеры можно изменить в «Свойствах» после установки.';
-  box.append(presetsTitle, presets, h, grid, note);
+  box.append(presetsTitle, presets, h, grid);
   presets.addEventListener('click', (e) => {
     const button = e.target.closest('[data-stair-preset]');
     if (!button) return;
@@ -680,8 +676,6 @@ function bindMore() {
     const key = b.dataset.more;
     if (key === 'theme') { ACTIONS.theme(); return; } // лист остаётся: видно, как сменилась тема
     closeSheets();
-    if (key === 'tep') { document.body.classList.add(PROPS); setPropsTab('tep'); syncMobileBar(); return; }
-    if (key === 'issues') { click('issuesBtn'); return; }
     ACTIONS[key]?.();
     syncMobileBar();
   });

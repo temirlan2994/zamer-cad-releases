@@ -9,7 +9,7 @@ import { siteWarning } from '../core/rooms.js';
 import { roomPolygon } from '../core/room-shape.js';
 import { neighborRectCorners } from '../core/site.js';
 import {
-  buildingAlignedToView, customViewAngle, defaultViewAngle, isPlanEmpty, lineViewAngle, resetViewAngle, setViewAngle, viewAngle,
+  buildingAlignedToView, customViewAngle, isPlanEmpty, lineViewAngle, resetViewAngle, setViewAngle, viewAngle,
 } from '../core/view-angles.js';
 import { wallRects } from '../core/walls.js';
 import { underlayHandles } from '../render.js';
@@ -18,7 +18,8 @@ import { snapAt } from './draw-snap-ui.js';
 import { applyModeRotation } from './modes.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
-import { cancelTool, setHint, setTool } from './tools.js';
+import { cancelTool, selectObject, setHint, setTool } from './tools.js';
+import { isPhone, toggleSheet } from './mobile.js';
 import { refreshViewsPanel } from './props-views.js';
 import { planToWorld, requestDraw, screenToWorld, worldToPlan } from './view.js';
 
@@ -120,11 +121,8 @@ export function startAlignView() {
   }
   // Панель прячется, чтобы не закрывать холст; повторный клик по ⟲ (или по
   // «Выровнять» в панели) отменяет инструмент.
-  setViewPanelOpen(false);
   setTool({ kind: 'align-view', points: [] },
     'Кликните две точки вдоль линии (стена, край участка, сосед, подложка) — она станет горизонтальной · Esc — отмена');
-  el('alignBtn')?.classList.add('armed');
-  el('viewBtn')?.classList.add('armed');
 }
 
 export function addAlignViewPoint(world) {
@@ -146,64 +144,29 @@ export function addAlignViewPoint(world) {
 
 // ------------------------------------------------------------ Панель
 
-export function setViewPanelOpen(open) {
-  const panel = el('viewPanel');
-  if (!panel) return;
-  panel.hidden = !open;
-  el('viewBtn')?.setAttribute('aria-expanded', String(open));
-  if (open) renderViewPanel();
-}
-
 export function renderViewPanel() {
-  const project = state.project;
-  if (!project) return;
-  const mode = state.modeName || 'plan';
-  const custom = customViewAngle(project, mode);
-  el('viewBtn')?.classList.toggle('active', custom != null);
+  if (!state.project) return;
+  el('viewBtn')?.classList.toggle('active', customViewAngle(state.project, state.modeName) != null);
   el('viewBtn')?.classList.toggle('armed', state.tool?.kind === 'align-view');
-  const align = el('alignBtn');
-  if (align) {
-    align.classList.toggle('active', custom != null);
-    align.classList.toggle('armed', state.tool?.kind === 'align-view');
-  }
-  const title = el('viewPanelTitle');
-  if (title) title.textContent = `Поворот вида ${MODE_TITLES[mode] || ''}`;
-  const input = el('viewAngleInput');
-  if (input && document.activeElement !== input) input.value = String(viewAngle(project, mode));
-  const reset = el('viewAngleReset');
-  if (reset) reset.disabled = custom == null;
-  const axes = el('axesToViewBtn');
-  if (axes) axes.disabled = isPlanEmpty(project);
-  const hint = el('viewPanelHint');
-  if (hint) {
-    hint.textContent = custom != null
-      ? `Задан вручную. ${DEFAULT_HINTS[mode]} (${fmt(defaultViewAngle(project, mode))}). У каждого режима свой угол.`
-      : `${DEFAULT_HINTS[mode]}. У каждого режима свой угол; данные проекта не меняются.`;
-  }
-  refreshViewsPanel(); // вкладка «Виды» правой панели — те же поля
+  refreshViewsPanel();
 }
 
 export function bindViewPanel() {
-  el('viewBtn')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (state.tool?.kind === 'align-view') { startAlignView(); return; } // повторный клик — отмена
-    setViewPanelOpen(el('viewPanel').hidden);
-  });
-  el('alignBtn')?.addEventListener('click', () => startAlignView());
-  el('viewAngleInput')?.addEventListener('change', (e) => {
-    const v = Number(String(e.target.value).replace(',', '.'));
-    if (!Number.isFinite(v)) { renderViewPanel(); return; }
-    const res = applyViewAngle(v);
-    if (res.axesChanged) toast('План пуст — оси дома тоже встали по экрану');
-  });
-  el('viewAngleReset')?.addEventListener('click', () => resetViewAngleCmd());
-  el('axesToViewBtn')?.addEventListener('click', () => axesToViewCmd());
-  document.addEventListener('click', (event) => {
-    const panel = el('viewPanel');
-    if (panel && !panel.hidden && !el('viewCtl')?.contains(event.target)) setViewPanelOpen(false);
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && el('viewPanel') && !el('viewPanel').hidden) setViewPanelOpen(false);
+  el('viewBtn')?.addEventListener('click', () => {
+    if (state.tool?.kind === 'align-view') { startAlignView(); return; }
+    if (state.tool) cancelTool();
+    state.sheetSel = null;
+    if (state.selection) selectObject(null);
+    if (isPhone() && !document.body.classList.contains('sheet-props')) toggleSheet('props');
+    el('propsTabMain').click();
+    const group = document.querySelector('#propsBody details[data-sec="rotation"]');
+    if (!group) return;
+    const parent = group.closest('#viewSection');
+    if (parent) parent.open = true;
+    group.open = true;
+    const input = el('viewsAngleInput');
+    input?.focus({ preventScroll: true });
+    group.scrollIntoView({ block: 'nearest' });
   });
   renderViewPanel();
 }

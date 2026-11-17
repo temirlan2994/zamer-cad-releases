@@ -15,6 +15,7 @@ async function openProgram(page) {
   }
   await page.click(programButton);
   await page.waitForSelector(`${panel}:not([hidden])`);
+  if (await page.getAttribute('#homeViewTab-program', 'aria-selected') !== 'true') await page.click('#homeViewTab-program');
   await page.waitForFunction(() => document.querySelector('#projectRoutePanelTitle')?.textContent === 'Программа дома');
 }
 
@@ -48,6 +49,11 @@ describe('программа дома', () => {
     await openProgram(page);
     assert.equal(await page.getAttribute(programButton, 'aria-expanded'), 'true');
     assert.match(await page.textContent('.home-program-preliminary'), /Предварительно предложено/);
+    assert.equal(await page.isVisible('.home-program-frequency'), false);
+    await page.fill('[data-home-program-field="guestCount"]', '5');
+    assert.equal(await page.isVisible('.home-program-frequency'), true);
+    assert.equal(await page.textContent('[data-program-seats="guests"]'), '7');
+    await page.fill('[data-home-program-field="guestCount"]', '0');
 
     await step(page, 'adultCount', '1');
     await step(page, 'childCount', '1', 2);

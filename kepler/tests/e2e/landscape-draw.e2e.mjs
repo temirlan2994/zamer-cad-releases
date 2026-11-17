@@ -5,7 +5,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { startApp, openSample, worldToClient } from './helpers.mjs';
+import { with3dLayers, startApp, openSample, worldToClient } from './helpers.mjs';
 
 const objects = (page) => page.evaluate(() => (window.__kepler.state.project.site.landscape?.objects || [])
   .map((o) => ({ id: o.id, kind: o.kind, points: o.points, width: o.width, smooth: o.smooth, variant: o.variant, locked: o.locked })));
@@ -206,10 +206,10 @@ describe('ландшафт: рисование и помощники', () => {
     await page.click('#view3dBtn');
     const faces = () => page.evaluate(async () => (await import('./ui/view3d.js')).debug3d?.().faces ?? null);
     const on = await faces();
-    await page.uncheck('#v3Landscape');
+    await with3dLayers(page, () => page.uncheck('#v3Landscape'));
     const off = await faces();
     if (on !== null) assert.ok(on > off, `${on} > ${off}`);
-    await page.check('#v3Landscape');
+    await with3dLayers(page, () => page.check('#v3Landscape'));
     await page.keyboard.press('Escape');
   });
 

@@ -1,7 +1,7 @@
 // e2e 3D-просмотра: открытие, вращение, масштаб, крыша, закрытие по Esc.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { with3dLayers, startApp, openSample } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 
@@ -39,7 +39,7 @@ describe('3D', () => {
 
   it('крыша добавляет грани; Esc закрывает 3D', async () => {
     const without = (await d3(app.page)).faces;
-    await app.page.check('#v3Roof');
+    await with3dLayers(app.page, () => app.page.check('#v3Roof'));
     assert.ok((await d3(app.page)).faces > without);
     await app.page.keyboard.press('Escape');
     assert.equal(await app.page.isVisible('#view3d'), false);
@@ -58,7 +58,7 @@ describe('стены и колонны', () => {
 
   it('категория «Стены и колонны»: стена перетаскивается на план и видна в 3D', async () => {
     await app.page.click('#furnitureToolBtn');
-    await app.page.click('#furnitureCats button[aria-label="Стены и колонны"]');
+    await app.page.selectOption('#furnitureCats', { label: 'Стены и колонны' });
     const names = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
     assert.deepEqual(names, ['Стена', 'Колонна', 'Колонна круглая']);
     await app.page.evaluate(() => {

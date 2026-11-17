@@ -1175,6 +1175,11 @@ function renderLandscapeItems() {
   const box = el('lsItems');
   if (!box) return;
   const q = (el('lsSearch')?.value || '').trim();
+  for (const button of el('lsTabs').children) {
+    const active = !q && button.dataset.lsCat === category;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
   const list = q ? searchLandscape(q) : landscapeByCategory(category);
   box.innerHTML = '';
   if (!list.length) { box.innerHTML = '<p class="empty-hint">Ничего не нашлось</p>'; return; }
@@ -1188,7 +1193,8 @@ function renderLandscapeItems() {
       box.appendChild(h);
     }
     const shape = isPathShape(def);
-    const chip = document.createElement('div');
+    const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'furniture-chip ls-chip';
     chip.draggable = true;
     chip.dataset.lsKind = def.kind;
@@ -1196,7 +1202,8 @@ function renderLandscapeItems() {
       ? `«${def.title}»: клик — рисовать ${def.shape === 'line' ? 'линию по точкам' : 'контур по точкам или прямоугольником'}`
       : `«${def.title}»: клик — ставить курсором, или перетащите на участок`;
     const active = (state.tool?.kind === 'place-landscape' || state.tool?.kind === 'draw-landscape') && state.tool.lsKind === def.kind;
-    if (active) chip.classList.add('active');
+    chip.classList.toggle('active', active);
+    chip.setAttribute('aria-pressed', String(active));
     const preview = document.createElement('canvas');
     preview.width = 240;
     preview.height = 132;

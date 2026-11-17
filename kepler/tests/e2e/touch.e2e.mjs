@@ -53,7 +53,8 @@ describe('телефон', () => {
     assert.equal(await app.page.evaluate(() => document.body.classList.contains('sheet-library')), false, 'библиотека уехала');
     const box0 = await canvasBox(app.page);
     const snap = await app.page.locator('#mobileSnapRow').boundingBox(); // холст — под рядом привязок
-    assert.ok(box0.y >= snap.y + snap.height - 1 && box0.y < 170, `холст не уехал прокруткой: y=${box0.y}`);
+    assert.ok(box0.y >= snap.y + snap.height - 1, 'холст под привязками');
+    assert.equal(await app.page.evaluate(() => window.scrollY), 0, 'просмотр каталога не прокрутил страницу');
     // Пустое место под домом.
     const at = await app.page.evaluate(() => {
       const k = window.__kepler;
@@ -115,8 +116,7 @@ describe('телефон', () => {
   });
 
   it('выбор инструмента участка закрывает нижнюю панель', async () => {
-    await app.page.tap('#mobileBar [data-sheet="views"]'); // телефон: режимы — в листе «Виды»
-    await app.page.tap('#mobileSheetHead [data-mode="site"]');
+    await app.page.tap('#modeSiteBtn');
     assert.equal(await app.page.isHidden('#mobileBar [data-sheet="rooms"]'), true, 'в «Участке» каталога нет');
     await app.page.tap('#mobileBar [data-sheet="draw"]');
     await app.page.tap('#mobileBar [data-sheet="props"]'); // лист поверх ряда — ряд закрылся

@@ -37,9 +37,9 @@ describe('поворот вида', () => {
     const { page } = app;
     const s0 = await snap(page);
     await page.click('#viewBtn');
-    await page.fill('#viewAngleInput', '25');
-    await page.press('#viewAngleInput', 'Enter');
-    await page.locator('#viewAngleInput').blur();
+    await page.fill('#viewsAngleInput', '25');
+    await page.press('#viewsAngleInput', 'Enter');
+    await page.locator('#viewsAngleInput').blur();
     const s1 = await snap(page);
     assert.equal(s1.angles?.plan, 25);
     assert.ok(Math.abs(s1.view + 25) < 0.01, `вид ${s1.view}`);
@@ -54,8 +54,8 @@ describe('поворот вида', () => {
       const x = window.__kepler.state.project.rooms.find((q) => q.type === 'living');
       return { x: x.x, y: x.y, w: x.w, h: x.h };
     });
-    if (await page.$eval('#viewPanel', (n) => n.hidden)) await page.click('#viewBtn');
-    await page.click('#alignBtn');
+    await page.click('#viewBtn');
+    await page.click('#viewsAlignBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'align-view');
     // Клики чуть мимо углов (несимметрично): без привязки линия шла бы под углом.
     const a = await client(page, 'planToScreen', r.x + 50, r.y + 50);
@@ -80,8 +80,8 @@ describe('поворот вида', () => {
 
   it('повторный клик по ⟲ во время выравнивания — отмена', async () => {
     const { page } = app;
-    if (await page.$eval('#viewPanel', (n) => n.hidden)) await page.click('#viewBtn');
-    await page.click('#alignBtn');
+    await page.click('#viewBtn');
+    await page.click('#viewsAlignBtn');
     assert.equal(await page.$eval('#viewBtn', (n) => n.classList.contains('armed')), true);
     await page.click('#viewBtn');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
@@ -95,7 +95,7 @@ describe('поворот вида', () => {
     const s0 = await snap(page);
     assert.ok(Math.abs(angDiff(-s0.view, s0.north)) < 0.01, 'по умолчанию север вверх');
     await page.click('#viewBtn');
-    await page.click('#alignBtn');
+    await page.click('#viewsAlignBtn');
     // Линия под −30° на экране, от центра холста; Shift — без привязок.
     const box = await (await page.$('#canvas')).boundingBox();
     const c = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -147,7 +147,7 @@ describe('поворот вида', () => {
     if ((await snap(page)).mode !== 'plan') await page.click('#modePlanBtn');
     const s0 = await snap(page);
     await page.click('#viewBtn');
-    await page.click('#viewAngleReset');
+    await page.click('#viewsAngleReset');
     const s1 = await snap(page);
     assert.equal(s1.angles?.plan, undefined);
     assert.equal(s1.angles?.site, s0.angles.site, '«Участок» не тронут');
@@ -160,7 +160,7 @@ describe('поворот вида', () => {
     await page.click('#modeSiteBtn');
     const s0 = await snap(page);
     await page.click('#viewBtn');
-    await page.click('#axesToViewBtn');
+    await page.click('#viewsAxesBtn');
     const s1 = await snap(page);
     assert.ok(angDiff(s1.building.rotation, s0.building.rotation) > 1, 'дом повернулся');
     assert.ok(angDiff(s1.building.rotation % 90, ((s0.angles.site % 90) + 90) % 90) < 0.01
@@ -189,10 +189,9 @@ describe('поворот вида: автоматические оси при в
 
     // На непустом плане угол вида сам по себе оси дома не меняет.
     await page.click('#viewBtn');
-    await page.fill('#viewAngleInput', '37');
-    await page.press('#viewAngleInput', 'Enter');
-    await page.locator('#viewAngleInput').blur();
-    if (!(await page.$eval('#viewPanel', (node) => node.hidden))) await page.click('#viewBtn');
+    await page.fill('#viewsAngleInput', '37');
+    await page.press('#viewsAngleInput', 'Enter');
+    await page.locator('#viewsAngleInput').blur();
 
     const before = await page.evaluate(() => {
       const s = window.__kepler.state;

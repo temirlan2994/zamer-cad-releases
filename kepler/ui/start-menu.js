@@ -1,12 +1,13 @@
 // Стартовое меню: продолжить, новый, пример, открыть, шаблоны.
 
 import { hasContent } from '../core/model.js';
-import { createProjectPreview, projectPreviewSvg } from '../core/project-preview.js';
+import { createProjectPreview, projectPreviewHtml } from '../core/project-preview.js';
 import { TEMPLATES } from '../core/templates.js';
 import { saveFile } from './cloud.js';
 import { el, escapeHtml, toast } from './dom.js';
 import { handleExport, loadTemplate, newProject } from './files.js';
 import { buildSample } from './sample.js';
+import { createProjectThumbnail } from './project-thumbnail.js';
 import { state } from './state.js';
 
 const projectHasContent = () => hasContent(state.project);
@@ -28,9 +29,10 @@ function showBroken(warn, broken) {
 }
 
 function exampleContent(title, note, project) {
-  const preview = createProjectPreview(project);
+  let preview;
+  try { preview = createProjectThumbnail(project); } catch { /* Canvas может быть недоступен. */ }
   return `
-    <span class="startup-project-preview">${projectPreviewSvg(preview)}</span>
+    <span class="startup-project-preview">${projectPreviewHtml(preview || createProjectPreview(project))}</span>
     <span class="startup-project-info"><b>${escapeHtml(title)}</b><small>${escapeHtml(note)}</small></span>`;
 }
 
@@ -65,10 +67,7 @@ export function openStartMenu({ initial = false, broken = null } = {}) {
   screen.dataset.initial = String(Boolean(initial));
   closeBtn.hidden = initial;
   continueBtn.hidden = !hasContent;
-  if (hasContent) {
-    continueBtn.querySelector('b').textContent = 'Продолжить текущий проект';
-    continueBtn.querySelector('span').textContent = 'локальная копия на этом устройстве';
-  }
+  if (hasContent) continueBtn.querySelector('span').textContent = state.project.name;
   document.querySelector('.app')?.setAttribute('inert', '');
   screen.hidden = false;
 }

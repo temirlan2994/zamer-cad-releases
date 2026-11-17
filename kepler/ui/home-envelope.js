@@ -280,11 +280,11 @@ function warningsHtml(report) {
 
 function limitationsHtml(report) {
   const limitations = [...new Set(array(report.limitations).map(warningText).filter(Boolean))];
-  if (!limitations.length) return '';
-  return `<section class="home-envelope-limitations" aria-labelledby="homeEnvelopeLimitationsTitle">
-    <h2 id="homeEnvelopeLimitationsTitle">Границы обзора</h2>
+  return `<details class="analysis-disclosure" data-analysis-fold="limitations">
+    <summary>Границы проверки модели</summary>
+    <p class="home-envelope-disclaimer">Модель не подтверждает несущую способность, теплотехнику или пожарную безопасность здания.</p>
     <ul>${limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
-  </section>`;
+  </details>`;
 }
 
 /** Разметка этапа 8: факты модели и переходы к существующим рабочим видам. */
@@ -304,8 +304,8 @@ export function homeEnvelopeHtml(project, options = {}) {
     <section class="home-envelope-summary" data-status="${escapeHtml(status)}" aria-labelledby="homeEnvelopeSummaryTitle">
       <div><h2 id="homeEnvelopeSummaryTitle">Геометрия объёма</h2><p>${escapeHtml(STATUS_LABELS[status])}</p></div>
       <dl class="home-envelope-metrics">${summaryMetrics(report).map(metricHtml).join('')}</dl>
+      <button type="button" data-analysis-open="tep">Таблица площадей</button>
     </section>
-    <p class="home-envelope-disclaimer"><strong>Это эскизная геометрическая сводка, а не расчёт готовности здания.</strong> Наличие этажей, кровли, лестниц, проёмов, фасадов и 3D-вида не подтверждает несущую способность, состав ограждений, теплотехнику, влагорежим, пожарную безопасность или соответствие нормам.</p>
     <div class="home-envelope-cards">
       <section class="home-envelope-card" data-home-envelope-section="levels" data-status="${levels.length ? 'observed' : 'unknown'}" aria-labelledby="homeEnvelopeLevelsTitle">
         <header><div><h2 id="homeEnvelopeLevelsTitle">Этажи и отметки</h2><p>${levels.length ? `${levels.length} ${levels.length === 1 ? 'этаж' : 'этажа'}` : 'Нет данных'}</p></div><span>${levels.length ? 'По модели' : 'Не задано'}</span></header>
@@ -317,11 +317,11 @@ export function homeEnvelopeHtml(project, options = {}) {
         <button type="button" data-home-envelope-action="open-roof-plan">Открыть план крыши</button>
       </section>
       <section class="home-envelope-card" data-home-envelope-section="vertical" aria-labelledby="homeEnvelopeVerticalTitle">
-        <header><div><h2 id="homeEnvelopeVerticalTitle">Вертикальные элементы</h2><p>Лестницы и проёмы между этажами</p></div><span>По модели</span></header>
+        <header><h2 id="homeEnvelopeVerticalTitle">Лестницы и проёмы</h2></header>
         ${verticalHtml(report, project)}
       </section>
       <section class="home-envelope-card" data-home-envelope-section="views" aria-labelledby="homeEnvelopeViewsTitle">
-        <header><div><h2 id="homeEnvelopeViewsTitle">Рабочие виды</h2><p>3D, кровля, фасады и разрезы</p></div><span>Открыть редактор</span></header>
+        <header><h2 id="homeEnvelopeViewsTitle">Открыть чертёж</h2></header>
         ${viewsHtml(report, project)}
       </section>
     </div>

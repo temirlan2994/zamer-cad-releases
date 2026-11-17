@@ -11,7 +11,7 @@ import { polygonAreaM2 } from '../core/site.js';
 import { el, refs } from './dom.js';
 import { labelLandscapeSelection, selectedIds } from './landscape.js';
 import { startLandscapeArray } from './landscape-array.js';
-import { startSectionTool } from './landscape-section.js';
+import { isSectionOpen, startSectionTool } from './landscape-section.js';
 import { applyLibraryTab, syncLibraryOpen } from './library.js';
 import { closeSheets, isPhone, syncMobileBar, toggleSheet } from './mobile.js';
 import { renderToolOptions } from './props.js';
@@ -123,14 +123,6 @@ export const PLAN_TOOL_FAMILIES = Object.freeze([
     childIds: Object.freeze(['gridToolBtn', 'sectionToolBtn', 'dimModeBtn']),
     activeChildIds: Object.freeze(['gridToolBtn', 'sectionToolBtn']),
   }),
-  Object.freeze({
-    id: 'analysis',
-    parentId: 'analysisGroupBtn',
-    flyoutId: 'analysisToolFlyout',
-    label: 'Анализ',
-    note: 'эргономика и естественное освещение',
-    childIds: Object.freeze(['ergoToolBtn', 'sunAnalysisBtn']),
-  }),
 ]);
 
 // Ленивый getter безопасен для существующего циклического импорта
@@ -188,7 +180,7 @@ function openToolFamily(def, { pinned = false, focusFirst = false } = {}) {
   else delete box.dataset.familyPinned;
   setFamilyExpanded(def, true);
   if (focusFirst) {
-    const first = def.childIds.map((id) => el(id)).find((btn) => btn && !btn.disabled);
+    const first = def.childIds.map((id) => el(id)).find((btn) => btn && !btn.disabled && !btn.hidden);
     first?.focus({ preventScroll: true });
   }
 }
@@ -269,7 +261,7 @@ function bindPlanToolFamilies() {
     });
 
     flyout.addEventListener('keydown', (event) => {
-      const children = def.childIds.map((id) => el(id)).filter((btn) => btn && !btn.disabled);
+      const children = def.childIds.map((id) => el(id)).filter((btn) => btn && !btn.disabled && !btn.hidden);
       const index = children.indexOf(document.activeElement);
       if (event.key === 'Escape' || event.key === 'ArrowLeft') {
         event.preventDefault();
@@ -333,7 +325,7 @@ const SHORT = {
 const PLAN_LABELS = {
   selectToolBtn: 'Выбор', wallToolBtn: 'Стена', boundRoomBtn: 'Помещение', doorToolBtn: 'Дверь', windowToolBtn: 'Окно',
   furnitureToolBtn: 'Мебель', stairsToolBtn: 'Лестница', slabOpeningToolBtn: 'Проём', massToolBtn: 'Масса', massVoidToolBtn: 'Пустота', roofToolBtn: 'Крыша', gridToolBtn: 'Ось',
-  sectionToolBtn: 'Разрез', ergoToolBtn: 'Эргономика', sunAnalysisBtn: 'Свет', viewBtn: 'Поворот', fitBtn: 'Вписать',
+  sectionToolBtn: 'Разрез', viewBtn: 'Поворот', fitBtn: 'Вписать',
 };
 function ensurePlanLabels() {
   for (const [id, text] of Object.entries(PLAN_LABELS)) {
@@ -407,13 +399,41 @@ const toggle = (id, on) => {
 
 // Состояние кнопок: режим, активный инструмент, выделение. Вызывается при
 // смене инструмента (ui/library.js renderLibrary) и панели свойств.
+const MODEL_TOOLS = new Set(['openingsGroupBtn', 'doorToolBtn', 'windowToolBtn', 'massGroupBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn']);
+
+export function toolContext() {
+  if (state.sheetOpen || state.elevationOpen || isSectionOpen()) return 'drawing';
+  return document.body.classList.contains('v3-open') ? 'model' : state.modeName;
+}
+export const availableModelTool = (id) => MODEL_TOOLS.has(id);
+
+function syncContextTools() {
+  const context = toolContext();
+  if (document.body.dataset.toolContext === context) return;
+  const strip = el('toolStrip');
+  const model = context === 'model';
+  document.body.dataset.toolContext = context;
+  strip.hidden = context === 'drawing';
+  const plan = el('planTools');
+  if (plan) {
+    for (const entry of plan.children) {
+      const button = entry.matches('.tb-family') ? entry.firstElementChild : entry;
+      entry.hidden = model && !availableModelTool(button.id);
+    }
+    for (const child of plan.querySelectorAll('.tb-family-flyout > button')) {
+      child.hidden = model && !availableModelTool(child.id);
+    }
+  }
+  el('viewTools').hidden = model;
+}
+
 export function renderToolstrip() {
   const strip = el('toolStrip');
   if (!strip || !state.project) return;
   const mode = state.modeName;
   const t = state.tool;
-  const plan = el('planTools');
-  if (plan) plan.hidden = mode !== 'plan';
+  syncContextTools();
+  el('planTools').hidden = mode !== 'plan';
   if (mode !== 'plan') closePlanToolFamilies();
   refs.siteTools.hidden = mode !== 'site';
   const ls = el('landscapeTools');
@@ -495,6 +515,7 @@ function toggleStairs() {
 }
 
 export function bindToolstrip() {
+  document.addEventListener('kepler:view', syncContextTools);
   bindPlanToolFamilies();
   el('selectToolBtn')?.addEventListener('click', () => {
     if (!finishWallChain()) cancelTool();

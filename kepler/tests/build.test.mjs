@@ -1,7 +1,7 @@
 // Сборка артефакта из index.html и целостность страницы.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ROOT, PAGE, moduleGraph, artifactPage, buildArtifact } from '../scripts/build-artifact.mjs';
@@ -23,6 +23,18 @@ test('все модули ui/ достижимы из app.js (нет забыт�
   assert.ok(graph.has('core/layout-worker-handler.js'), 'зависимости Worker не попали в граф');
 });
 
+test('отложенно открываемый инструмент и его зависимости включаются в сборку', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kepler-module-graph-'));
+  try {
+    writeFileSync(join(root, 'app.js'), "export const open = () => import('./inspector.js');");
+    writeFileSync(join(root, 'inspector.js'), "import './icons.js';");
+    writeFileSync(join(root, 'icons.js'), '');
+    assert.deepEqual(moduleGraph('app.js', root), ['app.js', 'icons.js', 'inspector.js']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('страница артефакта — фрагмент из index.html', () => {
   const page = artifactPage(html);
   assert.match(page, /^<title>kep•ler 3D<\/title>/);
@@ -32,14 +44,17 @@ test('страница артефакта — фрагмент из index.html',
   assert.ok(page.includes('id="canvas"'));
 });
 
-test('каждый id, который ищет код, есть в index.html', () => {
+test('каждый id, который ищет код, создаётся страницей или панелью', () => {
   const ids = new Set();
+  const templates = [html];
   for (const f of readdirSync(join(ROOT, 'ui'))) {
     const code = readFileSync(join(ROOT, 'ui', f), 'utf8');
+    templates.push(code);
     for (const m of code.matchAll(/(?:\bel|getElementById)\('([\w-]+)'\)/g)) ids.add(m[1]);
   }
   assert.ok(ids.size > 20);
-  for (const id of ids) assert.ok(html.includes(`id="${id}"`), `в index.html нет #${id}`);
+  const markup = templates.join('\n');
+  for (const id of ids) assert.ok(markup.includes(`id="${id}"`), `отсутствует #${id}`);
 });
 
 test('сборка кладёт страницу, стили, модули и манифест', () => {
@@ -48,6 +63,10 @@ test('сборка кладёт страницу, стили, модули и м
     const { files } = buildArtifact(out);
     assert.ok(existsSync(join(out, PAGE)));
     assert.ok(files.includes('styles.css') && files.includes('app.js') && files.includes('ui/input.js'));
+    for (const style of html.matchAll(/<link\s[^>]*rel="stylesheet"[^>]*href="\.\/([^"]+)"/g)) {
+      assert.ok(files.includes(style[1]), style[1]);
+      assert.ok(readFileSync(join(out, PAGE), 'utf8').includes(style[0]));
+    }
     assert.ok(files.includes('workers/layout-worker.js'));
     for (const f of files) assert.ok(existsSync(join(out, f)), f);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));

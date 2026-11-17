@@ -352,7 +352,7 @@ const cookIcon = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 20h28
 function stepperHtml(field, value, { min, max, label }) {
   return `<div class="home-program-stepper" role="group" aria-label="${escapeHtml(label)}">
     <button type="button" data-home-program-action="step" data-home-program-step="${escapeHtml(field)}" data-delta="-1" aria-label="Уменьшить: ${escapeHtml(label)}"${Number(value) <= min ? ' disabled' : ''}>−</button>
-    <input type="number" readonly tabindex="-1" min="${min}" max="${max}" value="${escapeHtml(String(value))}" data-home-program-field="${escapeHtml(field)}" aria-label="${escapeHtml(label)}">
+    <input type="number" inputmode="numeric"${field === 'bedroomCount' ? ' readonly tabindex="-1"' : ''} min="${min}" max="${max}" value="${escapeHtml(String(value))}" data-home-program-field="${escapeHtml(field)}" aria-label="${escapeHtml(label)}">
     <button type="button" data-home-program-action="step" data-home-program-step="${escapeHtml(field)}" data-delta="1" aria-label="Добавить: ${escapeHtml(label)}"${Number(value) >= max ? ' disabled' : ''}>+</button>
   </div>`;
 }
@@ -381,34 +381,33 @@ function scenarioHtml(currentDraft) {
   return `<div class="home-program-scenario-grid">
     <article class="home-program-person-card">
       <span class="home-program-scenario-icon">${personIcon('adult')}</span>
-      <div class="home-program-scenario-copy"><strong>Взрослые</strong><small>Родители тоже считаются взрослыми</small></div>
+      <div class="home-program-scenario-copy"><strong>Взрослые</strong></div>
       ${stepperHtml('adultCount', adults, { min: 1, max: 20, label: 'Количество взрослых' })}
     </article>
     <article class="home-program-person-card">
       <span class="home-program-scenario-icon child">${personIcon('child')}</span>
-      <div class="home-program-scenario-copy"><strong>Дети</strong><small>Постоянно живущие дети</small></div>
+      <div class="home-program-scenario-copy"><strong>Дети</strong></div>
       ${stepperHtml('childCount', children, { min: 0, max: 20, label: 'Количество детей' })}
     </article>
     <div class="home-program-capacity-summary">
-      <span><strong>${residents}</strong> постоянно живут</span>
-      <span><strong>${residents}</strong> мест за столом каждый день</span>
-      <span><strong>${totalAtTable}</strong> мест, когда приходят гости</span>
+      <span>Мест за столом в будни <strong data-program-seats="daily">${residents}</strong></span>
+      <span${guests ? '' : ' hidden'}>С гостями <strong data-program-seats="guests">${totalAtTable}</strong></span>
     </div>
     <article class="home-program-scenario-card home-program-guests">
       <span class="home-program-scenario-icon">${guestIcon}</span>
-      <div class="home-program-scenario-copy"><strong>Сколько гостей принимаете одновременно</strong><small>Дополнительно к жильцам. На это число рассчитываются стол и стулья.</small></div>
+      <div class="home-program-scenario-copy"><strong>Гостей за одним столом</strong></div>
       ${stepperHtml('guestCount', guests, { min: 0, max: 30, label: 'Количество гостей одновременно' })}
       <div class="home-program-presets" aria-label="Быстрый выбор количества гостей">
         ${[0, 2, 5, 10].map((value) => `<button type="button" data-home-program-action="guest-preset" data-home-program-preset="${value}" aria-pressed="${guests === value}">${value === 0 ? 'Без гостей' : `до ${value}`}</button>`).join('')}
         <button type="button" data-home-program-action="guest-preset" data-home-program-preset="11" aria-pressed="${guests > 10}">10+</button>
       </div>
-      <fieldset class="home-program-frequency"><legend>Как часто принимаете гостей</legend><div>
+      <fieldset class="home-program-frequency"${guests ? '' : ' hidden'}><legend>Как часто принимаете гостей</legend><div>
         ${GUEST_FREQUENCIES.map(([id, title, note]) => `<label><input type="radio" name="home-program-guest-frequency" value="${id}" data-home-program-field="guestFrequency"${currentDraft.guestFrequency === id ? ' checked' : ''}><span><strong>${title}</strong><small>${note}</small></span></label>`).join('')}
       </div></fieldset>
     </article>
     <article class="home-program-scenario-card home-program-cooks">
       <span class="home-program-scenario-icon">${cookIcon}</span>
-      <div class="home-program-scenario-copy"><strong>Сколько человек готовят вместе</strong><small>Одновременно работают у столешницы. Для двух и более нужен более широкий проход.</small></div>
+      <div class="home-program-scenario-copy"><strong>Сколько человек готовят вместе?</strong></div>
       ${stepperHtml('simultaneousCooks', countValue(currentDraft.simultaneousCooks, 1), { min: 1, max: 6, label: 'Количество одновременно готовящих' })}
     </article>
   </div>`;
@@ -416,7 +415,7 @@ function scenarioHtml(currentDraft) {
 
 function bedroomsHtml(currentDraft) {
   return `<section class="home-program-bedrooms">
-    <header><div><strong>Спальни</strong><small>Каждая спальня задаётся отдельно</small></div>
+    <header><div><strong>Спальни</strong></div>
       ${stepperHtml('bedroomCount', currentDraft.bedrooms.length, { min: 1, max: 30, label: 'Количество спален' })}
     </header>
     <div class="home-program-bedroom-list" role="list">
@@ -450,6 +449,7 @@ function optionsHtml(currentDraft) {
 export function homeProgramHtml(project) {
   const currentDraft = seedDraft(project);
   const analysis = analysisOf(project);
+  const summary = analysis?.summary || {};
   const status = analysis?.status || 'unknown';
   const saved = project?.layoutBrief?.homeProgram;
   const suggestion = suggestedProgram(project);
@@ -457,15 +457,18 @@ export function homeProgramHtml(project) {
   const overlayOn = Boolean(state.homeProgramOverlay?.on
     && state.homeProgramOverlay?.mode !== 'flows');
   return `<div class="home-program" data-home-program>
-    <div class="home-program-summary" data-status="${escapeHtml(status)}">
-      <div><strong>${statusLabel(status)}</strong><span>${escapeHtml(analysis?.summary?.text || analysis?.summary?.label || 'Программа сравнивает пожелания с фактическим планом.')}</span></div>
-      <span>${Number(analysis?.summary?.present ?? analysis?.summary?.complete ?? 0) || 0} / ${Number(analysis?.summary?.total ?? array(analysis?.targets).length) || 0}</span>
-    </div>
-    ${currentDraft.preliminary || saved?.confirmed !== true ? `<p class="home-program-preliminary"><strong>Предварительно предложено системой.</strong> Проверьте значения и сохраните — до этого они не считаются требованиями.</p>` : ''}
+    ${summary.total ? `<div class="home-program-summary" data-status="${escapeHtml(status)}">
+      <div><strong>${statusLabel(status)}</strong><span>Помещения на плане</span>
+        ${summary.accessIssueCount ? `<small>Проблем с доступом · ${Number(summary.accessIssueCount)}</small>` : ''}
+        ${summary.connectionIssues ? `<small>Проблем со связями · ${Number(summary.connectionIssues)}</small>` : ''}
+      </div>
+      <span>${Number(summary.present ?? summary.complete ?? 0) || 0} / ${Number(summary.total ?? array(analysis?.targets).length) || 0}</span>
+    </div>` : ''}
+    ${currentDraft.preliminary || saved?.confirmed !== true ? '<p class="home-program-preliminary"><strong>Предварительно предложено.</strong> Выберите состав семьи и сохраните программу.</p>' : ''}
     ${draftError ? `<p class="home-program-error" role="alert" tabindex="-1">${escapeHtml(draftError)}</p>` : ''}
     <form id="homeProgramForm" novalidate>
       <fieldset class="home-program-fieldset">
-        <legend>Состав и сценарий</legend>
+        <legend>Жильцы и гости</legend>
         ${scenarioHtml(currentDraft)}
       </fieldset>
       <fieldset class="home-program-fieldset">
@@ -487,11 +490,11 @@ export function homeProgramHtml(project) {
       </div>
     </form>
     <section class="home-program-section" aria-labelledby="homeProgramTargetsTitle">
-      <div class="home-program-section-head"><div><h3 id="homeProgramTargetsTitle">Помещения</h3><p>Сравнение программы с комнатами на всех этажах.</p></div></div>
+      <div class="home-program-section-head"><h3 id="homeProgramTargetsTitle">Помещения на плане</h3></div>
       ${renderTargets(analysis)}
     </section>
     <section class="home-program-section" aria-labelledby="homeProgramLinksTitle">
-      <div class="home-program-section-head"><div><h3 id="homeProgramLinksTitle">Связи дома</h3><p>Логические связи по реальным дверям и проёмам, не траектории ходьбы.</p></div>
+      <div class="home-program-section-head"><h3 id="homeProgramLinksTitle">Проходы между комнатами</h3>
         <button type="button" class="project-route-switch" role="switch" aria-checked="${overlayOn}" data-home-program-action="toggle-overlay"><span aria-hidden="true"></span>${overlayOn ? 'Показаны' : 'Показать на плане'}</button>
       </div>
       ${renderConnections(analysis)}
@@ -517,6 +520,25 @@ export function handleHomeProgramInput(event) {
     } else return false;
   } else if (field.dataset.homeProgramField) {
     currentDraft[field.dataset.homeProgramField] = field.value;
+    const stepper = field.closest('.home-program-stepper');
+    if (stepper) {
+      stepper.querySelector('[data-delta="-1"]').disabled = Number(field.value) <= Number(field.min);
+      stepper.querySelector('[data-delta="1"]').disabled = Number(field.value) >= Number(field.max);
+    }
+    if (['adultCount', 'childCount', 'guestCount'].includes(field.dataset.homeProgramField)) {
+      const panel = field.closest('[data-home-program]');
+      const guests = countValue(currentDraft.guestCount);
+      const residents = countValue(currentDraft.adultCount) + countValue(currentDraft.childCount);
+      const guestSeats = panel.querySelector('[data-program-seats="guests"]');
+      panel.querySelector('[data-program-seats="daily"]').textContent = residents;
+      guestSeats.textContent = guests + residents;
+      guestSeats.parentElement.hidden = !guests;
+      panel.querySelector('.home-program-frequency').hidden = !guests;
+      for (const preset of panel.querySelectorAll('[data-home-program-preset]')) {
+        const value = Number(preset.dataset.homeProgramPreset);
+        preset.setAttribute('aria-pressed', String(value === 11 ? guests > 10 : value === guests));
+      }
+    }
   }
   currentDraft.preliminary = true;
   draftDirty = true;

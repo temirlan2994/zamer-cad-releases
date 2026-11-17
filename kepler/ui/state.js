@@ -65,8 +65,8 @@ export const state = {
   // Стиль графики ландшафта: 'sketch' | 'drawing' (ui/landscape-style.js).
   lsStyle: 'sketch',
   // Тени ландшафта по солнцу (ui/landscape-style.js, ui/landscape-sun.js):
-  // { mode: 'off'|'default'|'sun', date, time, analysis }; dragging — тянут ползунок.
-  lsSun: { mode: 'default', date: '2026-06-21', time: 900, analysis: false },
+  lsSun: { mode: 'default', analysis: false },
+  lsSunPreviewTime: null,
   lsSunDragging: false,
   itemHandle: null, // { id, mode } — режим ручек мебели (core/item-handles.js); у группы id = 'group:…' (core/group-handles.js)
   groupRotateDeg: null, // угол текущего поворота группы мебели — для подписи

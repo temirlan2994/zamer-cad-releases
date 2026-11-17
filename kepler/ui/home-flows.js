@@ -366,7 +366,6 @@ export function homeFlowsHtml(project, state = {}) {
         <div><dt>Неизвестно</dt><dd>${Number(summary.unknownRouteCount) || 0}</dd></div>
       </dl>
     </div>
-    <p class="home-flow-disclaimer"><strong>Это схема функциональных связей.</strong> Она проверяет граф помещений и дверей, но пока не измеряет точную траекторию человека вокруг мебели, ширину прохода или столкновения. Толщина линии означает число явных требований и выбранных сценариев, а не число проходящих людей.</p>
     <div class="home-flow-layer-controls" aria-label="Слои анализа">
       <button type="button" class="project-route-switch" role="switch" aria-checked="${zonesOn}" data-home-flows-action="toggle-zones"><span aria-hidden="true"></span>Зоны</button>
       <button type="button" class="project-route-switch" role="switch" aria-checked="${routesOn}" data-home-flows-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
@@ -374,18 +373,21 @@ export function homeFlowsHtml(project, state = {}) {
       <button type="button" class="primary home-flow-show" data-home-flows-action="toggle-overlay">${overlayOn ? 'Скрыть с плана' : 'Показать на плане'}</button>
     </div>
     <section class="home-flows-section" aria-labelledby="homeFlowsZonesTitle">
-      <div class="home-program-section-head"><div><h3 id="homeFlowsZonesTitle">Функциональные зоны</h3><p>Классификация следует типам помещений каталога.</p></div></div>
+      <div class="home-program-section-head"><h3 id="homeFlowsZonesTitle">Зоны дома</h3></div>
       ${zoneCards(result)}
     </section>
     <section class="home-flows-section" aria-labelledby="homeFlowsFunctionalTitle">
-      <div class="home-program-section-head"><div><h3 id="homeFlowsFunctionalTitle">Связи программы</h3><p>Проверяются по реальным дверям и открытым границам.</p></div></div>
+      <div class="home-program-section-head"><h3 id="homeFlowsFunctionalTitle">Проходы по программе</h3></div>
       ${functionalRoutesHtml(result)}
     </section>
     <section class="home-flows-section" aria-labelledby="homeFlowsScenariosTitle">
-      <div class="home-program-section-head"><div><h3 id="homeFlowsScenariosTitle">Сценарии жизни</h3><p>Включите нужный сценарий и явно укажите помещения его маршрутов.</p></div></div>
+      <div class="home-program-section-head"><h3 id="homeFlowsScenariosTitle">Сценарии жизни</h3></div>
       ${scenarioCards(project, result)}
     </section>
     ${warningsHtml(result)}
+    <details class="analysis-disclosure" data-analysis-fold="legend"><summary>Как читать линии</summary>
+      <p class="home-flow-disclaimer">Линия соединяет помещения через двери и открытые проёмы. Толщина показывает, сколько сценариев и требований используют эту связь. Схема не измеряет точную траекторию вокруг мебели. Её можно проверить в разделе «Движение».</p>
+    </details>
   </div>`;
 }
 

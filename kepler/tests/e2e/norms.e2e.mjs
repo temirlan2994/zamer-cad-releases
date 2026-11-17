@@ -35,6 +35,8 @@ describe('нормы', () => {
 
   it('норма на участке: 20 ч не выполнить, пусто — снова по широте', async () => {
     await app.page.click('#modeSiteBtn');
+    await app.page.click('[data-climate-location-link]');
+    await app.page.click('[data-analysis-fold="norm"] > summary');
     await app.page.fill('#normHours', '20');
     await app.page.locator('#normHours').blur();
     let ok = await app.page.evaluate(() => window.__kepler.state.norms.insolation.ok);
@@ -45,6 +47,7 @@ describe('нормы', () => {
     await app.page.locator('#normHours').blur();
     const n = await app.page.evaluate(() => window.__kepler.state.norms.insolation.norm.hours);
     assert.equal(n, 1.5, 'Алматы — южная зона, 1,5 ч');
+    await app.page.click('#projectRouteClose');
     await app.page.keyboard.press('Control+z'); // отмена тоже пересчитывает
     ok = await app.page.evaluate(() => window.__kepler.state.norms.insolation.norm.hours);
     assert.equal(ok, 20);

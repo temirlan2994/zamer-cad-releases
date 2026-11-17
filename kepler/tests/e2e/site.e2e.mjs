@@ -42,7 +42,7 @@ describe('участок', () => {
   it('«Выровнять вид» в пустом «Плане» (вариант А): оси дома встают по линии, комнаты прямые', async () => {
     await app.page.click('#modePlanBtn');
     await app.page.click('#viewBtn');
-    await app.page.click('#alignBtn');
+    await app.page.click('#viewsAlignBtn');
     // Две точки вдоль линии участка под 30° (координаты съёмки); Shift — без привязок.
     await app.page.keyboard.down('Shift');
     await clickWorld(app.page, 0, 0);
@@ -57,7 +57,7 @@ describe('участок', () => {
     assert.ok(Math.abs(s.rot - 30) < 0.5, `поворот дома ${s.rot}`);
     assert.ok(Math.abs(s.view + (30 * Math.PI) / 180) < 0.01, 'вид «Плана» повёрнут на 30°');
     assert.ok(Math.abs(s.lineDy) < 1, 'линия участка на экране горизонтальна');
-    assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), true);
+    assert.equal(await app.page.$eval('#viewBtn', (n) => n.classList.contains('active')), true);
 
     // Новая комната — прямая на экране «Плана» и параллельна линии участка.
     await dropOnCanvas(app.page, 'application/x-kepler-room', 'living');
@@ -78,7 +78,7 @@ describe('участок', () => {
     const before = await data();
     await app.page.click('#modePlanBtn');
     await app.page.click('#viewBtn');
-    await app.page.click('#viewAngleReset');
+    await app.page.click('#viewsAngleReset');
     const s = await app.page.evaluate(() => ({
       custom: window.__kepler.state.project.settings.viewAngles?.plan ?? null,
       view: (window.__kepler.state.view.rotation * 180) / Math.PI,
@@ -87,7 +87,7 @@ describe('участок', () => {
     assert.equal(s.custom, null);
     assert.ok(Math.abs(s.view + s.rot) < 0.01, `вид ${s.view}, дом ${s.rot}`);
     assert.equal(await data(), before, 'данные дома не изменились');
-    assert.equal(await app.page.$eval('#alignBtn', (n) => n.classList.contains('active')), false);
+    assert.equal(await app.page.$eval('#viewBtn', (n) => n.classList.contains('active')), false);
   });
 
   it('без ошибок в консоли', () => {

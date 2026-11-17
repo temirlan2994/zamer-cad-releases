@@ -65,7 +65,7 @@ export function setTool(tool, hint) {
   state.tool = tool;
   state.draft = null;
   clearDrawSnap();
-  for (const id of ['alignBtn', 'viewBtn']) el(id)?.classList.toggle('armed', tool?.kind === 'align-view');
+  for (const id of ['viewsAlignBtn', 'viewBtn']) el(id)?.classList.toggle('armed', tool?.kind === 'align-view');
   state.ghostLandscape = null;
   state.ghost = null;
   state.ghostItem = null;
@@ -93,7 +93,7 @@ export function cancelTool() {
   state.calCursor = null;
   state.northCursor = null;
   state.alignCursor = null;
-  for (const id of ['alignBtn', 'viewBtn']) el(id)?.classList.remove('armed'); // «Выровнять вид» (ui/view-align.js)
+  for (const id of ['viewsAlignBtn', 'viewBtn']) el(id)?.classList.remove('armed'); // «Выровнять вид» (ui/view-align.js)
   state.ghostDoor = null;
   state.ghostLandscape = null;
   state.guides = [];

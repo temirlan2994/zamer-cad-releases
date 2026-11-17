@@ -9,7 +9,7 @@ import { totalAreaM2 } from '../core/rooms.js';
 import { roomSchedule, scheduleTotals } from '../core/schedule.js';
 import { tepReport, tepRows } from '../core/tep.js';
 import { escapeHtml } from './dom.js';
-import { switchLevel } from './levels.js';
+import { activeViewId, openView } from './props-views.js';
 import { state } from './state.js';
 import { selectObject } from './tools.js';
 
@@ -41,21 +41,21 @@ function scheduleHtml(schedule) {
 
 const TEP_TABS = [
   {
-    id: 'rooms', btn: 'tepTabRooms', label: 'Экспликация помещений',
+    id: 'rooms', btn: 'tepTabRooms', label: 'Комнаты',
     tip: 'номер, название и площадь помещений по этажам',
     icon: '<path d="M4 5h16v14H4z"/><path d="M4 9h16M8 9v10"/><path d="M11 12.5h6M11 15.5h4"/>',
   },
   {
-    id: 'tep', btn: 'tepTabTep', label: 'ТЭП',
+    id: 'tep', btn: 'tepTabTep', label: 'Дом и участок',
     tip: 'площади дома, застройка и показатели участка',
     icon: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
   },
 ];
 
 function tepTabsHtml(active) {
-  return `<div class="tep-tabs" role="tablist" aria-label="ТЭП и экспликация">${TEP_TABS.map((t) => `
+  return `<div class="tep-tabs" role="tablist" aria-label="Площади">${TEP_TABS.map((t) => `
     <button type="button" role="tab" class="ptab tep-tab${t.id === active ? ' active' : ''}" id="${t.btn}" data-tep-tab="${t.id}"
-      aria-label="${t.label}" aria-selected="${t.id === active}" aria-describedby="tepTip-${t.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${t.icon}</svg><span class="ptab-tip" role="tooltip" id="tepTip-${t.id}"><b>${t.label}</b> · ${t.tip}</span></button>`).join('')}
+      aria-label="${t.label}" aria-selected="${t.id === active}" aria-describedby="tepTip-${t.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${t.icon}</svg><span>${t.label}</span><span class="ptab-tip" role="tooltip" id="tepTip-${t.id}"><b>${t.label}</b> · ${t.tip}</span></button>`).join('')}
   </div>`;
 }
 
@@ -70,12 +70,12 @@ export function renderTepPanel(panel) {
   if (tab === 'rooms') {
     body = `
     <h2>Экспликация помещений</h2>
-    ${roomsTotal ? scheduleHtml(schedule) : '<p class="empty-hint">Помещений пока нет — таблица заполнится сама.</p>'}
-    <p class="empty-hint">Площади — чистые, вложенные помещения отнимают площадь у родителя. Выгрузка — «Экспорт ▾ → Экспликация (CSV)».</p>`;
+    ${roomsTotal ? scheduleHtml(schedule) : '<p class="empty-hint">Добавьте первое помещение на план.</p>'}
+    <p class="empty-hint">Площади внутри стен. Вложенные комнаты учтены отдельно.</p>`;
   } else {
     const allArea = project.levels.reduce((sum, l) => sum + totalAreaM2(levelProject(project, l.id)), 0);
     body = `
-    <h2>ТЭП</h2>
+    <h2>Площади дома и участка</h2>
     <h3>Дом</h3>
     <div class="prop-block" id="tepHouse">
       ${row(`Помещений${multi ? ' на этаже' : ''}`, project.rooms.length)}
@@ -94,8 +94,8 @@ export function renderTepPanel(panel) {
   }));
   panel.querySelectorAll('[data-sched-room]').forEach((tr) => {
     const go = () => {
-      if (state.modeName !== 'plan') return;
-      if (tr.dataset.schedLevel !== project.activeLevel) switchLevel(tr.dataset.schedLevel);
+      const target = `plan:${tr.dataset.schedLevel}`;
+      if (activeViewId() !== target) openView(target);
       selectObject({ type: 'room', id: tr.dataset.schedRoom });
     };
     tr.addEventListener('click', go);

@@ -41,7 +41,7 @@ for (const theme of ['light', 'dark']) {
       assert.ok(card.height <= H && card.y >= 0, `карточка ${JSON.stringify(card)}`);
       assert.ok(inViewport(await box(page, '#helpClose')), '«✕» в экране');
       const text = await page.textContent('#helpGrid');
-      for (const s of ['Ландшафт', 'Пальцы', 'Shift+A', 'Удержание', 'Временные размеры', 'Засадить', 'Тени', 'Разрез']) {
+      for (const s of ['Ландшафт', 'Пальцы', 'Shift+A', 'Удержание', 'Временные размеры', 'Засадить', 'Аналитика → Свет', 'Разрез']) {
         assert.ok(text.includes(s), `нет «${s}»`);
       }
       assert.ok(!text.includes('50 мм (Shift — 500)'), 'старый шаг стрелок');
@@ -72,14 +72,8 @@ for (const theme of ['light', 'dark']) {
       const { page } = app;
       await jsClick(page, '#landscapeBtn');
       await page.waitForFunction(() => document.body.classList.contains('mode-landscape'));
-      await page.evaluate(() => {
-        const r = document.querySelector('#lsSunBar input[value="sun"]');
-        r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true }));
-      });
-      await page.evaluate(() => {
-        const c = document.getElementById('lsSunAnalysis');
-        c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      await page.tap('[data-landscape-climate]');
+      await page.tap('[data-home-climate-action="landscape-map"]');
       await page.waitForTimeout(400);
       await frame(page);
       const sun = await box(page, '#lsSunBar');
@@ -88,10 +82,9 @@ for (const theme of ['light', 'dark']) {
       assert.ok(sun.width <= W * 0.65, `ширина плашки ${sun.width}`);
       assert.ok(inViewport(sun));
       await shot(page, `m-${theme}-sun`);
-      await page.evaluate(() => {
-        const r = document.querySelector('#lsSunBar input[value="off"]');
-        r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true }));
-      });
+      await page.tap('[data-landscape-climate]');
+      await page.selectOption('[data-climate-setting="landscapeMode"]', 'off');
+      await page.tap('#projectRouteClose');
     });
 
     it('окно разреза: «Закрыть» в экране, чертёж не сжат', async () => {

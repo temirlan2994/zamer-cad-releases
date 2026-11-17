@@ -5,7 +5,7 @@
 // отключают, Ctrl+Z одним шагом, создание с тем же магнитом, сохранение.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, startApp, openNew } from './helpers.mjs';
+import { with3dLayers, clickToolbarTool, startApp, openNew } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const masses = (page) => page.evaluate(() => window.__kepler.state.project.masses || []);
@@ -87,7 +87,7 @@ describe('Массы: магнит в 3D', () => {
 
   it('флажок «Магнит масс» в панели 3D, по умолчанию включён', async () => {
     const { page } = app;
-    assert.ok(await page.isVisible('#v3MassSnapWrap'));
+    await with3dLayers(page, async () => assert.ok(await page.isVisible('#v3MassSnapWrap')));
     assert.equal(await page.isChecked('#v3MassSnap'), true);
     assert.equal((await d3(page)).mass.magnet, true);
   });
@@ -143,17 +143,17 @@ describe('Массы: магнит в 3D', () => {
     assert.equal((await byName(page, 'Масса 1')).x, A.x);
     // Флажок «Магнит масс» — выкл (запоминается), жест не липнет.
     await select(page, A.id);
-    await page.uncheck('#v3MassSnap');
+    await with3dLayers(page, () => page.uncheck('#v3MassSnap'));
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-3d-layers')).massSnap), false);
     g = await gizmoPath(page, 'x', [{ x: 2000 - tol.tol * 0.5 }]);
     await gesture(page, g.a, g.pts, async (_i, s) => assert.equal(s.mass.snap, null));
     assert.notEqual(box(await byName(page, 'Масса 1')).x1, 10000);
     await page.keyboard.press('Control+z');
-    await page.check('#v3MassSnap');
+    await with3dLayers(page, () => page.check('#v3MassSnap'));
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-3d-layers')).massSnap), true);
     // Слои 3D (флажок «Мебель») не затирают магнит.
-    await page.uncheck('#v3Furniture');
-    await page.check('#v3Furniture');
+    await with3dLayers(page, () => page.uncheck('#v3Furniture'));
+    await with3dLayers(page, () => page.check('#v3Furniture'));
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('kepler-3d-layers')).massSnap), true);
   });
 
@@ -209,10 +209,18 @@ describe('Массы: магнит в 3D', () => {
   it('точка размера центра грани липнет к грани соседа; размер в подписи', async () => {
     const { page } = app;
     await select(page, A.id);
-    const s0 = await d3(page);
-    const tol = s0.mass.snapTol.x;
-    const h = s0.mass.handles.px;
+    // Малый вид может совместить экранные проекции гизмо и задней грани.
+    // Приближаем камеру, пока ручка грани доступна для отдельного клика.
+    const canvas = page.locator('#canvas3d');
+    let zoomSteps = 0;
+    let h = (await d3(page)).mass.handles.px;
+    while (await partAt(page, h) !== 'px' && zoomSteps < 4) {
+      await canvas.dispatchEvent('wheel', { deltaY: -160 });
+      zoomSteps++;
+      h = (await d3(page)).mass.handles.px;
+    }
     assert.equal(await partAt(page, h), 'px');
+    const tol = (await d3(page)).mass.snapTol.x;
     const m = await byName(page, 'Масса 1');
     const o = await sc(page, { x: box(m).x1, y: m.y, z: m.z0 + m.h / 2 });
     const t = await sc(page, { x: 10000 - tol.tol * 0.4, y: m.y, z: m.z0 + m.h / 2 });
@@ -225,6 +233,7 @@ describe('Массы: магнит в 3D', () => {
     assert.deepEqual([b.x0, b.x1], [0, 10000]);
     await page.keyboard.press('Control+z');
     assert.equal(box(await byName(page, 'Масса 1')).x1, 8000);
+    if (zoomSteps) await canvas.dispatchEvent('wheel', { deltaY: 160 * zoomSteps });
   });
 
   it('создание: угол основания липнет к грани массы', async () => {

@@ -52,7 +52,10 @@ export function buildZip(files, now = new Date()) {
 
     const entry = new DataView(new ArrayBuffer(46));
     entry.setUint32(0, 0x02014b50, true);
-    entry.setUint16(4, 20, true);
+    // Пути в формате Unix. С признаком MS-DOS Info-ZIP может
+    // перекодировать кириллицу из OEM даже при установленном флаге UTF-8.
+    entry.setUint16(4, 0x0314, true);
+    entry.setUint32(38, 0o100644 * 0x10000, true); // обычный файл с правами чтения
     entry.setUint16(6, 20, true);
     entry.setUint16(8, 0x0800, true);
     entry.setUint16(12, time, true);

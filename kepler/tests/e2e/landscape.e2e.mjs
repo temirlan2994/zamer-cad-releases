@@ -25,12 +25,10 @@ describe('ландшафт', () => {
   before(async () => { app = await startApp(); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('кнопка «Ландшафт» — в шапке между «План» и «Участок»', async () => {
-    const chip = await app.page.$('.mode-tabs #landscapeBtn');
-    assert.ok(chip, 'кнопка в переключателе режимов');
-    assert.match(await chip.textContent(), /Ландшафт/);
-    const order = await app.page.$$eval('.mode-tabs .tab', (els) => els.map((e) => e.id));
-    assert.deepEqual(order.slice(0, 3), ['modePlanBtn', 'landscapeBtn', 'modeSiteBtn']);
+  it('«Ландшафт» доступен среди открытых видов и в каталоге видов', async () => {
+    const chip = app.page.getByRole('tab', { name: 'Ландшафт', exact: true }).first();
+    assert.ok(await chip.isVisible());
+    assert.equal(await app.page.locator('#workspaceViewPicker option[value="landscape"]').textContent(), 'Ландшафт');
     // Список этажей не изменился (кнопка — вне #levelBar).
     const bar = await app.page.$$eval('#levelBar button', (els) => els.map((e) => e.textContent));
     assert.deepEqual(bar, ['1 этаж', '+']);
@@ -39,7 +37,7 @@ describe('ландшафт', () => {
   it('клик переводит в режим «Ландшафт»: вид участка и свой каталог', async () => {
     await app.page.click('#landscapeBtn');
     assert.equal(await mode(app.page), 'landscape');
-    assert.equal(await app.page.getAttribute('#landscapeBtn', 'aria-pressed'), 'true');
+    assert.equal(await app.page.getAttribute('#landscapeBtn', 'aria-selected'), 'true');
     assert.equal(await app.page.isVisible('#landscapeBar'), true);
     assert.equal(await app.page.isVisible('#libraryTabs'), false);
     assert.equal(await app.page.$$eval('#levelBar button.active', (els) => els.length), 0, 'этаж не подсвечен');
@@ -131,7 +129,7 @@ describe('ландшафт', () => {
     assert.equal(await mode(app.page), 'plan');
     assert.equal(await app.page.isVisible('#landscapeBar'), false);
     assert.equal(await app.page.isVisible('.library'), false, 'в «Плане» без инструмента библиотеки нет');
-    assert.equal(await app.page.getAttribute('#landscapeBtn', 'aria-pressed'), 'false');
+    assert.equal(await app.page.getAttribute('#landscapeBtn', 'aria-selected'), 'false');
     assert.equal(await app.page.$$eval('#levelBar button.active', (els) => els.length), 1);
     // Верхний переключатель «План / Участок» работает как раньше.
     await app.page.click('#modeSiteBtn');

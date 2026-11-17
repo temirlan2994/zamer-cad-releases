@@ -65,8 +65,8 @@ test('этап показывает факты модели и не объявл
   assert.match(html, /Геометрия объёма/);
   assert.match(html, /Этажи и отметки/);
   assert.match(html, /Явные кровли/);
-  assert.match(html, /Вертикальные элементы/);
-  assert.match(html, /Рабочие виды/);
+  assert.match(html, /Лестницы и проёмы/);
+  assert.match(html, /Открыть чертёж/);
   assert.match(html, /не подтверждает несущую способность/i);
   assert.match(html, /теплотехнику/i);
   assert.doesNotMatch(html, /конструктивн\w* готов|теплотехн\w* готов|норма выполнена/i);

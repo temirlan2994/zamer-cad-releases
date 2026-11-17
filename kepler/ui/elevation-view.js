@@ -15,6 +15,9 @@ import { el, escapeHtml } from './dom.js';
 import { closeSheets, isPhone } from './mobile.js';
 import { closeSheet, notifyViewChange } from './sheet-view.js';
 import { elevationColors, drawElevation, fitElevation } from './render-elevation.js';
+import { sectionIcon } from './section-icons.js';
+import { closeSection, isSectionOpen } from './landscape-section.js';
+import { close3d } from './view3d.js';
 import { history, state } from './state.js';
 import { mutate } from './store.js';
 
@@ -32,6 +35,10 @@ export function elevationView(id = state.elevationOpen) {
 }
 
 export const elevationTitle = (view) => `${view.name} 1:${viewScale(view)}`;
+
+function titleHtml(view) {
+  return `${escapeHtml(view.name)} <small title="Масштаб на листе">1:${viewScale(view)}</small>`;
+}
 
 function stampOf(id) {
   return `${id}/${history.undo.length}/${history.redo.length}`;
@@ -51,6 +58,8 @@ function geometry() {
 export function openElevation(id) {
   const view = findView(state.project, id);
   if (!view || (view.kind !== 'elevation' && view.kind !== 'section')) return false;
+  close3d();
+  if (isSectionOpen()) closeSection();
   closeSheet();
   if (isPhone()) closeSheets(); // телефон: нижний лист уезжает, вид — во весь холст
   state.elevationOpen = id;
@@ -102,7 +111,7 @@ export function refreshElevationView() {
   if (!elevationView()) { closeElevation(); return; }
   if (!document.getElementById('elevView')?.querySelector('#elevCanvas')) { renderElevationView(); return; }
   const title = document.getElementById('elevView')?.querySelector('#elevViewTitle');
-  if (title) title.textContent = elevationTitle(elevationView());
+  if (title) title.innerHTML = titleHtml(elevationView());
   if (cam && cam.scale !== viewScale(elevationView())) cam = null;
   draw();
 }
@@ -113,17 +122,25 @@ function renderElevationView() {
   if (!box || !view) return;
   box.hidden = false;
   box.innerHTML = `
-    <div class="elev-view-bar">
-      <b class="elev-view-title" id="elevViewTitle">${escapeHtml(elevationTitle(view))}</b>
-      <span class="elev-view-meta">колесо — масштаб · тяните — сдвиг · двойной клик — вписать</span>
-      <span class="elev-view-gap"></span>
-      <button type="button" id="elevViewFit">Вписать</button>
-      <button type="button" id="elevViewClose">✕ Закрыть вид</button>
+    <div class="elev-view-bar cut-view-bar">
+      <span class="cut-view-symbol">${sectionIcon(view.kind === 'section' ? 'section' : 'elevation')}</span>
+      <b class="elev-view-title" id="elevViewTitle">${titleHtml(view)}</b>
+      <button type="button" class="cut-back" id="elevViewClose" title="Закрыть вид (Esc)" aria-label="Закрыть вид">${sectionIcon('back')}<span>Назад</span></button>
     </div>
-    <div class="elev-view-body" id="elevViewBody"><canvas id="elevCanvas" aria-label="${escapeHtml(view.name)}"></canvas></div>`;
+    <div class="elev-view-body" id="elevViewBody">
+      <canvas id="elevCanvas" tabindex="0" aria-label="${escapeHtml(view.name)}" title="Стрелки — сдвиг, + и − — масштаб, 0 — вписать"></canvas>
+      <div class="cut-zoom" role="group" aria-label="Масштаб вида">
+        <button type="button" data-cut-zoom="out" title="Отдалить" aria-label="Отдалить">${sectionIcon('minus')}</button>
+        <button type="button" id="elevViewFit" title="Вписать чертёж" aria-label="Вписать чертёж">${sectionIcon('fit')}</button>
+        <button type="button" data-cut-zoom="in" title="Приблизить" aria-label="Приблизить">${sectionIcon('plus')}</button>
+      </div>
+    </div>`;
   box.querySelector('#elevViewClose').addEventListener('click', closeElevation);
   box.querySelector('#elevViewFit').addEventListener('click', () => { cam = null; draw(); });
   const canvas = box.querySelector('#elevCanvas');
+  for (const button of box.querySelectorAll('[data-cut-zoom]')) {
+    button.addEventListener('click', () => zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, button.dataset.cutZoom === 'in' ? 1.25 : 0.8));
+  }
   bindCanvas(canvas);
   observers?.forEach((o) => o.disconnect());
   observers = [];
@@ -161,7 +178,9 @@ function draw() {
   }
   const geo = geometry();
   const scale = viewScale(view);
-  if (!cam || cam.id !== view.id) cam = { ...fitElevation(geo, w, h, scale, 1), scale, id: view.id };
+  if (!cam || cam.id !== view.id || (cam.fitted && (cam.width !== w || cam.height !== h))) {
+    cam = { ...fitElevation(geo, w, h, scale), scale, id: view.id, fitted: true, width: w, height: h };
+  }
   const colors = elevationColors(getComputedStyle(document.documentElement).getPropertyValue('--canvas'));
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -173,7 +192,7 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.fillText(view.kind === 'section' ? 'Пусто: линия разреза не проходит через дом.' : 'Пусто: на плане нет стен — нарисуйте помещения.', w / 2, h / 2);
   }
-  drawElevation(ctx, geo, { view: cam, colors, marks: view.marks !== false, title: elevationTitle(view), dpr });
+  drawElevation(ctx, geo, { view: cam, colors, marks: view.marks !== false, presentation: true, dpr });
   // Рамка обрезки вида на листе (viewport.crop — мм от u0/z1 чертежа):
   // пунктиром, как граница обрезки Revit; правится ручками на листе.
   const place = viewPlacement(state.project, view.id);
@@ -212,11 +231,28 @@ function zoomAt(sx, sy, factor) {
   cam.oy = sy - (sy - cam.oy) * f;
   cam.k *= f;
   cam.zoom = z;
+  cam.fitted = false;
   draw();
 }
 
 function bindCanvas(canvas) {
   const local = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  canvas.addEventListener('keydown', (event) => {
+    if (!cam || event.ctrlKey || event.altKey || event.metaKey) return;
+    const amount = event.shiftKey ? 100 : 32;
+    switch (event.key) {
+      case '+': case '=': zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 1.25); break;
+      case '-': zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2, 0.8); break;
+      case '0': cam = null; draw(); break;
+      case 'ArrowLeft': cam.ox += amount; cam.fitted = false; draw(); break;
+      case 'ArrowRight': cam.ox -= amount; cam.fitted = false; draw(); break;
+      case 'ArrowUp': cam.oy += amount; cam.fitted = false; draw(); break;
+      case 'ArrowDown': cam.oy -= amount; cam.fitted = false; draw(); break;
+      default: return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = local(e);
@@ -244,10 +280,14 @@ function bindCanvas(canvas) {
     if (!drag) return;
     cam.ox += p.x - drag.x;
     cam.oy += p.y - drag.y;
+    cam.fitted = false;
     drag = { ...p };
     draw();
   });
-  const up = (e) => { pointers.delete(e.pointerId); if (!pointers.size) drag = null; };
+  const up = (e) => {
+    pointers.delete(e.pointerId);
+    drag = pointers.size === 1 ? pointers.values().next().value : null;
+  };
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('dblclick', () => { cam = null; draw(); });

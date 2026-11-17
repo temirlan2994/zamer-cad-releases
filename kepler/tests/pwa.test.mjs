@@ -114,7 +114,7 @@ test('сборка страницы содержит весь устанавли
       assert.ok(files.includes(rel), `${rel} попал в артефакт`);
       assert.ok(existsSync(join(out, rel)), `${rel} скопирован`);
     }
-    for (const rel of ['sw.js', 'pwa-assets.js']) {
+    for (const rel of ['index.html', 'sw.js', 'pwa-assets.js']) {
       assert.ok(files.includes(rel), `${rel} попал в артефакт`);
       assert.ok(existsSync(join(out, rel)), `${rel} скопирован`);
     }

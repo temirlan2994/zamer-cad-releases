@@ -175,7 +175,7 @@ export function homeReviewHtml(project, state = {}, options = {}) {
   const status = overallStatus(review, counts);
   return `<div class="home-review" data-home-review>
     <section class="home-review-summary" data-status="${escapeHtml(status)}" aria-labelledby="homeReviewSummaryTitle">
-      <div><h2 id="homeReviewSummaryTitle">Проблемы, неизвестное и проверенное</h2><p>${escapeHtml(STATUS_LABELS[status])}</p></div>
+      <div><h2 id="homeReviewSummaryTitle">Итог проверки</h2><p>${escapeHtml(STATUS_LABELS[status])}</p></div>
       <dl>
         <div><dt>Проблемы</dt><dd>${counts.problems}</dd></div>
         <div><dt>Не хватает данных</dt><dd>${counts.unknowns}</dd></div>
@@ -183,27 +183,31 @@ export function homeReviewHtml(project, state = {}, options = {}) {
         <div><dt>Скрыто</dt><dd>${counts.hidden}</dd></div>
       </dl>
     </section>
-    <p class="home-review-disclaimer"><strong>Это эскизная сводка, а не экспертиза и не разрешение на строительство.</strong> Проверено означает только результат перечисленной проверки по текущим данным. Неизвестное не считается пройденным, а скрытое замечание не считается исправленным.</p>
-    <section class="home-review-section" aria-labelledby="homeReviewStagesTitle">
-      <h2 id="homeReviewStagesTitle">Этапы проектирования</h2>
-      ${stageCards(review)}
-    </section>
     <section class="home-review-section" aria-labelledby="homeReviewProblemsTitle">
-      <h2 id="homeReviewProblemsTitle">Доказанные проблемы</h2>
-      ${findingRows(review?.provenProblems, 'problem', 'Доказанных проблем по выполненным проверкам не найдено. Это не означает, что неизвестные данные проверены.')}
+      <h2 id="homeReviewProblemsTitle">Что исправить</h2>
+      <button type="button" data-analysis-open="issues">Журнал замечаний</button>
+      ${findingRows(review?.provenProblems, 'problem', 'В выполненных проверках проблем не найдено.')}
     </section>
-    <section class="home-review-section" aria-labelledby="homeReviewUnknownsTitle">
-      <h2 id="homeReviewUnknownsTitle">Недостаточно данных и допущения</h2>
-      ${findingRows(review?.unknowns, 'unknown', 'Для выполненных проверок неизвестные данные не зафиксированы.')}
-    </section>
-    <section class="home-review-section" aria-labelledby="homeReviewCheckedTitle">
-      <h2 id="homeReviewCheckedTitle">Проверенные факты</h2>
+    <details class="analysis-disclosure" data-analysis-fold="unknowns"${!counts.problems && counts.unknowns ? ' open' : ''}>
+      <summary>Что уточнить <span>${counts.unknowns}</span></summary>
+      ${findingRows(review?.unknowns, 'unknown', 'Все исходные данные для этих проверок заданы.')}
+    </details>
+    <details class="analysis-disclosure" data-analysis-fold="checked">
+      <summary>Проверенные факты <span>${counts.checked}</span></summary>
       ${findingRows(review?.checkedFacts, 'checked', 'Подтверждённых фактов пока нет.', { checked: true })}
-    </section>
-    <section class="home-review-section home-review-hidden" aria-labelledby="homeReviewHiddenTitle">
-      <h2 id="homeReviewHiddenTitle">Скрытые пользователем</h2>
+    </details>
+    <details class="analysis-disclosure" data-analysis-fold="hidden">
+      <summary>Скрытые пользователем <span>${counts.hidden}</span></summary>
       ${findingRows(review?.hidden, 'hidden', 'Скрытых замечаний нет.', { hidden: true })}
-    </section>
+    </details>
+    <details class="analysis-disclosure" data-analysis-fold="stages" data-review-stage-list>
+      <summary>Итоги по разделам</summary>
+      ${stageCards(review)}
+    </details>
+    <details class="analysis-disclosure" data-analysis-fold="legend">
+      <summary>Как читать проверку</summary>
+      <p class="home-review-disclaimer">Это эскизная сводка, не экспертиза. Зелёная отметка означает выполненную проверку. Скрытое замечание остаётся в отчёте, пока оно не исправлено.</p>
+    </details>
   </div>`;
 }
 

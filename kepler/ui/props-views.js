@@ -6,8 +6,7 @@
 // Восток — ui/elevation-view.js).
 // Клик (и двойной клик) открывает вид; активный подсвечен.
 // Настройки активного вида — во вкладке «Свойства», когда ничего не выбрано
-// (ui/props.js): поворот вида (те же команды, что и панель ⟲ на колонке
-// инструментов — ui/view-align.js), подложка-съёмка, наружные размеры,
+// (ui/props.js): поворот вида, подложка-съёмка, наружные размеры,
 // ландшафт под домом (ui/plan-landscape.js), 3D. Только вид: данные проекта
 // меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
@@ -32,13 +31,9 @@ import {
 } from './plan-landscape.js';
 import { planMassPref, setPlanMassPref } from './plan-masses.js';
 import { setViewDisplay, viewDisplay, viewIdOf } from '../core/view-display.js';
-import { setLandscapeSun } from './landscape-style.js';
-import { refreshLandscapeSun } from './landscape-sun.js';
 import { tweak } from './store.js';
 import { planRoofPref, setPlanRoofPref } from './render-roofs.js';
 import { bindGridViewBlock, gridViewBlock } from './grids.js';
-import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
-import { bindSolarViewBlock, solarViewBlock } from './solar-analysis.js';
 import {
   VIEW_MIME, addUserSheet, closeSheet, isSheetOpen, notifyViewChange, openSheet, placeViewOnSheet, setViewOpener,
 } from './sheet-view.js';
@@ -88,6 +83,7 @@ export function openView(id) {
   closeSheet();
   state.sheetSel = null;
   state.sheetReturn = null; // двойной клик на листе (ui/sheet-view.js) вернёт его сам
+  if (openSectionId() && id !== `section:${openSectionId()}`) closeSection();
   if (isWindowView(id)) {
     if (is3dOpen()) close3d();
     openElevation(id);
@@ -114,12 +110,12 @@ export function openView(id) {
     if (openSectionId()) closeSection();
   } else if (id.startsWith('section:')) {
     setEditorMode('landscape');
-    openSection(id.slice(8));
+    openSection(id.slice(8), { full: true });
   }
   notifyViewChange();
 }
 
-setViewOpener(openView); // двойной клик по виду на листе
+setViewOpener(openView, activeViewId); // двойной клик по виду на листе
 setRoofPlanOpener(() => { if (activeViewId() !== ROOF_PLAN_VIEW) openView(ROOF_PLAN_VIEW); });
 
 // ------------------------------------------------------------ дерево видов
@@ -153,7 +149,6 @@ export function renderViewsPanel(panel) {
   ];
   panel.innerHTML = `
     <h2>Виды</h2>
-    <p class="subtitle">Виды проекта, как в диспетчере Revit: клик — открыть. Настройки вида — во вкладке «Свойства».</p>
     <div class="view-tree" id="viewTree" role="tree" aria-label="Виды проекта">
       ${treeGroup('plans', 'Планы этажей', levels.map((l) => treeItem(`plan:${l.id}`, l.name, active)), 'Этажей нет', true)}
       ${treeGroup('roof', 'Кровля', [treeItem(ROOF_PLAN_VIEW, 'План крыши', active, '', false)])}
@@ -161,7 +156,7 @@ export function renderViewsPanel(panel) {
       ${treeGroup('landscape', 'Ландшафт', [treeItem('landscape', 'Ландшафт', active)])}
       ${treeGroup('3d', '3D', [treeItem('3d', '3D-вид', active)])}
       ${treeGroup('sections', 'Разрезы', secItems,
-    'Разрезов нет: инструмент «Разрез» (S) на плане этажа; разрезы участка — в режиме «Ландшафт».')}
+    'Проведите линию разреза на плане (S).')}
       ${treeGroup('facades', 'Фасады', facadeViews(project).map((v) => treeItem(v.id, v.name, active)), 'Фасадов нет')}
     </div>`;
   panel.querySelectorAll('[data-vt-group]').forEach((d) => d.addEventListener('toggle', () => { openGroups[d.dataset.vtGroup] = d.open; }));
@@ -204,7 +199,6 @@ function placeBlockHtml(viewId) {
         ${sheets.map((s) => `<button type="button" data-place-sheet="${escapeHtml(s.id)}">Лист ${escapeHtml(s.no)} — ${escapeHtml(s.name)}</button>`).join('')}
         <button type="button" data-place-sheet="" id="viewPlaceNew">+ Новый лист</button>
       </div>
-      <p class="hint">Или перетащите вид из вкладки «Виды» на открытый лист.</p>
     </div>`;
 }
 
@@ -228,14 +222,12 @@ function landscapeBlock() {
   const pref = planLandscapePref();
   const count = state.project.site?.landscape?.objects?.length || 0;
   return `
-    <h3>Ландшафт на плане</h3>
     <div class="prop-block views-ls" id="viewsLandscape">
-      <label class="check-row"><input type="checkbox" id="viewsLsOn" ${pref.on ? 'checked' : ''}><span>Показывать ландшафт на плане</span><em>${count}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsLsOn" ${pref.on ? 'checked' : ''}><span>Ландшафт</span><em>${count}</em></label>
       <div class="views-ls-groups${pref.on ? '' : ' off'}">
         ${PLAN_LS_GROUPS.map((g) => `<label class="check-row"><input type="checkbox" data-plan-ls="${g.id}" ${pref[g.id] ? 'checked' : ''} ${pref.on ? '' : 'disabled'}><span>${escapeHtml(g.title)}</span></label>`).join('')}
       </div>
-      <button type="button" id="viewsLsPlanOnly">Только планировки</button>
-      <p class="hint">Ландшафт — приглушённо под домом, чтобы видеть, куда чертить. На плане он не выбирается; правка — в режиме «Ландшафт». На листы и экспорт не влияет.</p>
+      <button type="button" id="viewsLsPlanOnly">Отключить все слои ландшафта</button>
     </div>`;
 }
 
@@ -245,11 +237,10 @@ function massBlock() {
   if (!count) return '';
   const pref = planMassPref();
   return `
-    <h3>Эскиз масс</h3>
     <div class="prop-block" id="viewsMasses">
-      <label class="check-row"><input type="checkbox" id="viewsMassOn" ${pref.on ? 'checked' : ''}><span>Показывать эскиз масс на плане</span><em>${count}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsMassOn" ${pref.on ? 'checked' : ''}><span>Массы</span><em>${count}</em></label>
       <label class="check-row"><input type="checkbox" id="viewsMassOutline" ${pref.outlineOnly ? 'checked' : ''} ${pref.on ? '' : 'disabled'}><span>Только контур</span></label>
-      <p class="hint">Сечение масс на высоте окна этажа (1650 мм над полом); полые массы показаны оранжевым и вырезают эскиз. Комнаты и стены липнут к рёбрам.</p>
+      <p class="hint">Сечение на высоте 1,65 м.</p>
     </div>`;
 }
 
@@ -259,12 +250,10 @@ function roofBlock() {
   if (!count) return '';
   const pref = planRoofPref();
   return `
-    <h3>Крыши</h3>
     <div class="prop-block" id="viewsRoofs">
-      ${state.roofPlan ? '' : '<button type="button" id="viewsRoofPlanBtn">Открыть «План крыши»</button>'}
-      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Показывать контур кровли на плане этажа</span><em>${count}</em></label>
-      <label class="check-row"><input type="checkbox" id="viewsRoofPrint" ${pref.print ? 'checked' : ''}><span>Контур кровли на листах</span></label>
-      <p class="hint">Крыши чертятся и правятся на «Плане крыши» (дерево «Виды» → «Кровля», K). На плане этажа — только бледный штрих по этой настройке, клики он не ловит.</p>
+      <label class="check-row"><input type="checkbox" id="viewsRoofOn" ${pref.on ? 'checked' : ''}><span>Контур кровли</span><em>${count}</em></label>
+      <label class="check-row"><input type="checkbox" id="viewsRoofPrint" ${pref.print ? 'checked' : ''}><span>Печатать контур на листах</span></label>
+      ${state.roofPlan ? '' : '<button type="button" id="viewsRoofPlanBtn">Открыть план крыши</button>'}
     </div>`;
 }
 
@@ -278,20 +267,17 @@ export function viewSettingsHtml() {
     return `
     <div class="prop-block" id="viewsSettings">
       ${sec ? '<button type="button" id="elevFlipBtn" title="Смотреть в другую сторону от линии; Ctrl+Z — вернуть">⇄ Развернуть</button>' : ''}
-      <div class="prop-row"><span>Масштаб</span><strong id="elevScaleVal">1:${scale}</strong></div>
-      <div class="elev-scale" id="elevScale" role="radiogroup" aria-label="Масштаб фасада">
+      <div class="prop-row"><span>Масштаб на листе</span></div>
+      <div class="elev-scale" id="elevScale" role="radiogroup" aria-label="Масштаб на листе">
         ${VIEW_SCALES.map((s) => `<button type="button" role="radio" data-elev-scale="${s}" aria-checked="${s === scale}"${s === scale ? ' class="active"' : ''}>1:${s}</button>`).join('')}
       </div>
       <label class="check-row"><input type="checkbox" id="elevMarks" ${view?.marks !== false ? 'checked' : ''}><span>Отметки уровней</span></label>
-      <p class="hint">Только просмотр: колесо — масштаб, тяните — сдвиг. ${sec ? 'Линия, глубина и название — выберите линию разреза на плане.' : 'Сторона — по северу участка и повороту дома.'}</p>
-      <button type="button" id="elevCloseBtn">✕ Закрыть вид</button>
     </div>${placeBlockHtml(openElevationId())}`;
   }
   if (is3dOpen()) {
     return `
     <div class="prop-block" id="viewsSettings">
-      <p class="hint">Слои, рельеф и «Вписать» — на панели над 3D-видом.</p>
-      <button type="button" id="views3dBtn">Закрыть 3D-вид</button>
+      <div class="prop-row"><span>Рабочий этаж</span><strong>${escapeHtml(project.levels.find((level) => level.id === project.activeLevel)?.name || '')}</strong></div>
     </div>${placeBlockHtml('3d')}`;
   }
   const mode = state.modeName || 'plan';
@@ -300,7 +286,7 @@ export function viewSettingsHtml() {
   return `
     <div id="viewsSettings">
     ${section('display', displayBlock(mode))}
-    ${section('light', lightBlock(mode))}
+    ${mode === 'landscape' ? '' : section('light', lightBlock(mode))}
     ${section('rotation', `
     <h3>Поворот вида</h3>
     <div class="prop-block" id="viewsRotation">
@@ -312,23 +298,22 @@ export function viewSettingsHtml() {
         <button type="button" id="viewsAxesBtn" ${isPlanEmpty(project) ? 'disabled' : ''} title="Повернуть оси дома (данные) по экрану этого вида; Ctrl+Z — вернуть">Оси дома по виду</button>
       </div>
     </div>`)}
-    ${plan ? section('landscape', landscapeBlock()) : ''}
-    ${plan ? section('masses', massBlock()) : ''}
-    ${plan ? section('roofs', roofBlock()) : ''}
+    ${plan ? section('layers', `<h3>Слои плана</h3>${landscapeBlock()}${massBlock()}${roofBlock()}`) : ''}
     ${plan ? section('grid', gridViewBlock()) : ''}
-    ${plan ? section('ergo', ergoViewBlock()) : ''}
-    ${plan ? section('solar', solarViewBlock()) : ''}
     ${section('sheet', placeBlockHtml(activeViewId() || (plan ? `plan:${project.activeLevel}` : mode)))}
     </div>`;
 }
 
 // --- Разделы настроек вида: сворачиваются, раскрытость помнится (браузер) ---
-// Открыты сразу «Отображение» и «Освещение», остальное — по нажатию.
+// При первом открытии видны основные параметры отображения.
 const SECTIONS_KEY = 'kepler-view-sections';
-const SECTIONS_OPEN = { display: true, light: true, sheet: true };
+const SECTIONS_OPEN = { display: true };
 function sectionsState() {
   if (!state.viewSections) {
     try { state.viewSections = JSON.parse(localStorage.getItem(SECTIONS_KEY) || '{}') || {}; } catch { state.viewSections = {}; }
+    if (!Object.hasOwn(state.viewSections, 'layers')) {
+      state.viewSections.layers = ['landscape', 'masses', 'roofs'].some((key) => state.viewSections[key] === true);
+    }
   }
   return state.viewSections;
 }
@@ -366,8 +351,6 @@ function displayBlock(mode) {
     </div>`;
 }
 
-const LS_SUN_MODES = [['off', 'Выкл'], ['default', 'Обычные'], ['sun', 'Солнце']];
-
 // «Освещение»: план — тени от стен и мебели (свет, длина), у всех видов —
 // тень дома по солнцу участка; «Ландшафт» — его тени (как на плашке «Тени»).
 function lightBlock(mode) {
@@ -376,16 +359,9 @@ function lightBlock(mode) {
   const sunOn = Boolean(project.site?.sun?.enabled);
   const sunRow = sunOn
     ? `<label class="check-row"><input type="checkbox" id="viewsSunShadow" ${vd.sunShadow ? 'checked' : ''}><span>Тень дома по солнцу</span></label>`
-    : '<p class="hint">Солнце по дате и времени включается в «Участке» (свойства участка → «Солнце»).</p>';
-  if (mode === 'landscape') {
-    return `
-    <h3>Освещение</h3>
-    <div class="prop-block" id="viewsLight">
-      <div class="views-row"><span>Тени</span>${seg('viewsLsSun', LS_SUN_MODES, state.lsSun?.mode || 'default')}</div>
-    </div>`;
-  }
+    : '';
   return `
-    <h3>Освещение</h3>
+    <h3>Тени вида</h3>
     <div class="prop-block" id="viewsLight">
       ${mode === 'plan' ? `
       <label class="check-row"><input type="checkbox" id="viewsShadows" ${vd.shadows ? 'checked' : ''}><span>Тени от стен и мебели</span></label>
@@ -396,7 +372,7 @@ function lightBlock(mode) {
     </div>`;
 }
 
-// Поворот вида поменялся снаружи (панель ⟲, выравнивание по точкам).
+// Обновить поля после выравнивания по двум точкам.
 export function refreshViewsPanel() {
   if (!state.project) return;
   const mode = state.modeName || 'plan';
@@ -413,14 +389,11 @@ export function refreshViewsPanel() {
 export function bindViewSettings(panel, rerender) {
   bindPlaceBlock(panel, activeViewId());
   bindGridViewBlock(panel, rerender);
-  bindErgoViewBlock(panel, rerender);
-  bindSolarViewBlock(panel, rerender);
   panel.querySelectorAll('[data-elev-scale]').forEach((b) => b.addEventListener('click', () => {
     setElevationScale(Number(b.dataset.elevScale));
     rerender();
   }));
   panel.querySelector('#elevMarks')?.addEventListener('change', (e) => { setElevationMarks(e.target.checked); rerender(); });
-  panel.querySelector('#elevCloseBtn')?.addEventListener('click', () => closeElevation());
   panel.querySelector('#elevFlipBtn')?.addEventListener('click', () => { flipSectionView(openElevationId()); rerender(); });
   panel.querySelector('#viewsAlignBtn')?.addEventListener('click', () => {
     startAlignView();
@@ -455,13 +428,6 @@ export function bindViewSettings(panel, rerender) {
   for (const [name, key] of [['viewsRooms', 'rooms'], ['viewsLight', 'light'], ['viewsLength', 'length']]) {
     panel.querySelectorAll(`input[name="${name}"]`).forEach((r) => r.addEventListener('change', () => { if (r.checked) display({ [key]: r.value }); }));
   }
-  panel.querySelectorAll('input[name="viewsLsSun"]').forEach((r) => r.addEventListener('change', () => {
-    if (!r.checked) return;
-    setLandscapeSun({ mode: r.value });
-    refreshLandscapeSun();
-    requestDraw();
-    rerender();
-  }));
   panel.querySelector('#viewsLsOn')?.addEventListener('change', (e) => {
     const pref = planLandscapePref();
     // Включили после «Только планировки» — вернуть группы по умолчанию.
