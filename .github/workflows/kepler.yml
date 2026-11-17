@@ -42,7 +42,8 @@ jobs:
         run: npm run lint
 
       - name: Юнит-тесты ядра
-        run: npm test
+        # The wall performance test needs to avoid CPU contention with other test files.
+        run: node --test --test-concurrency=1 tests/*.test.mjs
 
       - name: e2e (Playwright)
         run: npm run test:e2e
