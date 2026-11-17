@@ -3,7 +3,9 @@
 // перезагрузки, «Сбросить», «Развернуть оси дома по виду», касания.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, openNew } from './helpers.mjs';
+import {
+  dropOnCanvas, startApp, openSample, openNew,
+} from './helpers.mjs';
 
 const snap = (page) => page.evaluate(() => {
   const s = window.__kepler.state;
@@ -171,6 +173,78 @@ describe('поворот вида', () => {
   });
 
   it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('поворот вида: автоматические оси при вставке помещения', () => {
+  let app;
+  before(async () => { app = await startApp(); await openNew(app.page); });
+  after(async () => { await app?.close(); });
+
+  it('на непустом плане оси встают по виду, а один Ctrl+Z возвращает и комнату, и поворот', async () => {
+    const { page } = app;
+    await dropOnCanvas(page, 'application/x-kepler-room', 'living');
+    await page.waitForFunction(() => window.__kepler.state.project.rooms.length === 1);
+
+    // На непустом плане угол вида сам по себе оси дома не меняет.
+    await page.click('#viewBtn');
+    await page.fill('#viewAngleInput', '37');
+    await page.press('#viewAngleInput', 'Enter');
+    await page.locator('#viewAngleInput').blur();
+    if (!(await page.$eval('#viewPanel', (node) => node.hidden))) await page.click('#viewBtn');
+
+    const before = await page.evaluate(() => {
+      const s = window.__kepler.state;
+      return {
+        building: structuredClone(s.project.building),
+        ids: s.project.rooms.map((room) => room.id),
+        angle: s.project.settings.viewAngles?.plan,
+      };
+    });
+    assert.equal(before.angle, 37);
+
+    await page.evaluate(async () => (await import('./ui/tools.js')).startPlaceRoom('bedroom'));
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'place-room');
+    const box = await (await page.$('#canvas')).boundingBox();
+    const click = { x: box.x + box.width * 0.78, y: box.y + box.height * 0.76 };
+    await page.mouse.click(click.x, click.y);
+    await page.waitForFunction((count) => window.__kepler.state.project.rooms.length === count + 1, before.ids.length);
+
+    const placed = await page.evaluate((oldIds) => {
+      const k = window.__kepler;
+      const room = k.state.project.rooms.find((candidate) => !oldIds.includes(candidate.id));
+      const canvasBox = document.getElementById('canvas').getBoundingClientRect();
+      const center = k.planToScreen(room.x + room.w / 2, room.y + room.h / 2);
+      const a = k.planToScreen(room.x, room.y);
+      const b = k.planToScreen(room.x + room.w, room.y);
+      return {
+        building: structuredClone(k.state.project.building),
+        angle: k.state.project.settings.viewAngles.plan,
+        center: { x: canvasBox.left + center.x, y: canvasBox.top + center.y },
+        edgeDeg: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+      };
+    }, before.ids);
+
+    const aligned = Math.min(...[0, 90, 180, 270]
+      .map((quarter) => angDiff(placed.building.rotation, placed.angle + quarter)));
+    assert.ok(aligned < 0.01, `оси ${placed.building.rotation}°, вид ${placed.angle}°`);
+    assert.ok(angDiff(placed.building.rotation, before.building.rotation) > 1, 'оси дома автоматически повернулись');
+    assert.ok(Math.hypot(placed.center.x - click.x, placed.center.y - click.y) < 30,
+      `центр сместился от клика: ${JSON.stringify({ click, center: placed.center })}`);
+    const edgeAligned = Math.min(...[0, 90, 180, 270].map((quarter) => angDiff(placed.edgeDeg, quarter)));
+    assert.ok(edgeAligned < 0.01, `грань помещения под ${placed.edgeDeg}°`);
+
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction((count) => window.__kepler.state.project.rooms.length === count, before.ids.length);
+    const undone = await page.evaluate(() => ({
+      building: structuredClone(window.__kepler.state.project.building),
+      ids: window.__kepler.state.project.rooms.map((room) => room.id),
+      angle: window.__kepler.state.project.settings.viewAngles?.plan,
+    }));
+    assert.deepEqual(undone.ids, before.ids, 'один Undo удалил новую комнату');
+    assert.deepEqual(undone.building, before.building, 'тот же Undo вернул прежние оси дома');
+    assert.equal(undone.angle, before.angle, 'пользовательский угол вида сохранился');
     assert.deepEqual(app.errors, []);
   });
 });

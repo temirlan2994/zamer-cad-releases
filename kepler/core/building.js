@@ -107,6 +107,54 @@ export function buildingCenter(project) {
   return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 }
 
+// Центр всего содержимого в локальных осях дома. Нужен операциям, которые
+// поворачивают единый building: опора только по активному этажу сдвинула бы
+// нижние этажи, массы или крышу, когда текущий этаж пуст.
+export function buildingContentCenter(project) {
+  const points = [];
+  const add = (x, y) => {
+    if (Number.isFinite(Number(x)) && Number.isFinite(Number(y))) points.push({ x: Number(x), y: Number(y) });
+  };
+  const rect = (value, center = false) => {
+    if (!value) return;
+    const w = Number(value.w); const h = Number(value.h ?? value.d);
+    if (!(w >= 0) || !(h >= 0)) { add(value.x, value.y); return; }
+    const x = Number(value.x); const y = Number(value.y);
+    if (center) {
+      add(x - w / 2, y - h / 2); add(x + w / 2, y + h / 2);
+    } else {
+      add(x, y); add(x + w, y + h);
+    }
+  };
+  const polygon = (value, ox = 0, oy = 0) => {
+    for (const point of Array.isArray(value) ? value : []) add(Number(ox) + Number(point?.x), Number(oy) + Number(point?.y));
+  };
+
+  for (const level of Array.isArray(project?.levels) ? project.levels : []) {
+    for (const room of level?.rooms || []) rect(room);
+    for (const item of level?.items || []) rect(item, true);
+    for (const wall of level?.walls || []) {
+      add(wall?.axis?.a?.x ?? wall?.a?.x, wall?.axis?.a?.y ?? wall?.a?.y);
+      add(wall?.axis?.b?.x ?? wall?.b?.x, wall?.axis?.b?.y ?? wall?.b?.y);
+    }
+    for (const opening of level?.slabOpenings || []) {
+      if (opening?.outline?.length) polygon(opening.outline, opening.x, opening.y);
+      else rect(opening);
+    }
+  }
+  for (const mass of [...(project?.masses || []), ...(project?.massVoids || [])]) rect(mass, true);
+  for (const roof of project?.roofs || []) polygon(roof?.outline);
+  for (const grid of project?.grids || []) {
+    if (grid?.kind === 'x') { add(grid.at, grid.from); add(grid.at, grid.to); }
+    else if (grid?.kind === 'y') { add(grid.from, grid.at); add(grid.to, grid.at); }
+  }
+  if (!points.length) return null;
+  return {
+    x: (Math.min(...points.map((point) => point.x)) + Math.max(...points.map((point) => point.x))) / 2,
+    y: (Math.min(...points.map((point) => point.y)) + Math.max(...points.map((point) => point.y))) / 2,
+  };
+}
+
 // Направление на север в осях дома: градусы по часовой от «вверх» плана.
 export function northInBuilding(north, b) {
   return normDeg((north || 0) - (b?.rotation || 0));

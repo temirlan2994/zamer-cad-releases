@@ -13,6 +13,12 @@ export { normalizeHomeProgram };
 const SOCIAL_MODES = new Set(['combined', 'separate']);
 const BEDROOM_TYPES = Object.freeze(['bedroom', 'master-bedroom', 'kids-room']);
 const BATHROOM_TYPES = Object.freeze(['bathroom', 'shower-room', 'tub-room']);
+const BEDROOM_TARGETS = Object.freeze({
+  main: Object.freeze({ id: 'bedrooms-main', title: 'Основные спальни', types: ['master-bedroom'], canonical: 'master-bedroom' }),
+  adult: Object.freeze({ id: 'bedrooms-adult', title: 'Обычные спальни', types: ['bedroom'], canonical: 'bedroom' }),
+  child: Object.freeze({ id: 'bedrooms-child', title: 'Детские спальни', types: ['kids-room'], canonical: 'kids-room' }),
+  guest: Object.freeze({ id: 'bedrooms-guest', title: 'Гостевые спальни', types: ['guest-bedroom'], canonical: 'guest-bedroom' }),
+});
 
 const OPTION_TARGETS = Object.freeze({
   guestBedroom: Object.freeze({ id: 'guest-bedroom', title: 'Гостевая спальня', types: ['guest-bedroom'], canonical: 'guest-bedroom' }),
@@ -91,9 +97,21 @@ function mergeProgram(input, suggested) {
     socialMode: input?.socialMode && input.socialMode !== 'unknown'
       ? input.socialMode : suggested.socialMode,
     bedroomCount: input?.bedroomCount ?? suggested.bedroomCount,
+    bedrooms: Array.isArray(input?.bedrooms) ? input.bedrooms : suggested.bedrooms,
     bathroomCount: input?.bathroomCount ?? suggested.bathroomCount,
     options,
   };
+}
+
+function suggestedBedrooms(count, childCount) {
+  if (!(count > 0)) return null;
+  const children = Math.min(Math.max(0, count - 1), Math.ceil(Math.max(0, childCount || 0) / 2));
+  return Array.from({ length: count }, (_, index) => ({
+    id: `bedroom-${index + 1}`,
+    kind: index === 0 ? 'main' : index <= children ? 'child' : 'adult',
+    ensuite: null,
+    wardrobe: null,
+  }));
 }
 
 /**
@@ -103,13 +121,22 @@ function mergeProgram(input, suggested) {
 export function suggestHomeProgram(project = {}) {
   const actors = Array.isArray(project?.layoutBrief?.actors) ? project.layoutBrief.actors : [];
   const capacity = project?.layoutBrief?.capacity || {};
-  const occupants = actors.length || null;
+  const adultCount = finiteInteger(capacity.adultCount);
+  const childCount = finiteInteger(capacity.childCount);
+  const householdCount = adultCount != null || childCount != null
+    ? Math.max(0, adultCount || 0) + Math.max(0, childCount || 0) : null;
+  const occupants = actors.length || householdCount || null;
   const dailySeats = finiteInteger(capacity.dailySeats);
   const guestSeats = finiteInteger(capacity.guestSeats);
+  const storedGuestCount = finiteInteger(capacity.guestCount);
+  const guestCount = storedGuestCount != null ? Math.max(0, storedGuestCount)
+    : dailySeats != null && guestSeats != null ? Math.max(0, guestSeats - dailySeats) : null;
+  const bedroomCount = occupants ? Math.max(1, Math.ceil(occupants / 2)) : null;
   const program = {
     confirmed: false,
     socialMode: occupants ? 'combined' : 'unknown',
-    bedroomCount: occupants ? Math.max(1, Math.ceil(occupants / 2)) : null,
+    bedroomCount,
+    bedrooms: suggestedBedrooms(bedroomCount, childCount),
     bathroomCount: occupants ? Math.max(1, Math.ceil(occupants / 4)) : null,
     options: emptyOptions(),
   };
@@ -131,9 +158,9 @@ export function suggestHomeProgram(project = {}) {
       reasons.wardrobe = 'Для двух и более жильцов предложена отдельная гардеробная.';
     }
   }
-  if (guestSeats >= 4) {
+  if (guestCount >= 4) {
     program.options.guestWc = true;
-    reasons.guestWc = 'При четырёх и более гостевых местах предложен гостевой санузел.';
+    reasons.guestWc = 'Если одновременно приходят четыре и более гостей, предложен гостевой санузел.';
   }
   const warnings = [];
   if (!occupants) warnings.push('Состав семьи не задан — число спален и санузлов не предлагается.');
@@ -141,19 +168,21 @@ export function suggestHomeProgram(project = {}) {
   return {
     status: occupants ? 'preliminary' : 'unknown',
     program,
-    facts: { occupants, dailySeats, guestSeats },
+    facts: {
+      occupants, adultCount, childCount, dailySeats, guestSeats, guestCount,
+    },
     reasons,
     warnings,
   };
 }
 
-function makeTarget({ id, title, types, canonical, count, source }, records) {
+function makeTarget({ id, title, types, canonical, count, source, requirements = null }, records) {
   const matched = records.filter((record) => types.includes(record.type));
   const presentCount = matched.length;
   const targetAreaM2 = defaultArea(canonical) * count;
   const actualAreaM2 = matched.reduce((sum, room) => sum + room.areaM2, 0);
   const missingCount = Math.max(0, count - presentCount);
-  return {
+  const target = {
     id,
     title,
     roomTypes: [...types],
@@ -168,6 +197,8 @@ function makeTarget({ id, title, types, canonical, count, source }, records) {
     status: missingCount ? (presentCount ? 'partial' : 'missing') : 'done',
     rooms: matched.map(({ room: _room, ...room }) => room),
   };
+  if (requirements) target.requirements = requirements;
+  return target;
 }
 
 function targetList(input, suggestion, effective, records) {
@@ -186,21 +217,63 @@ function targetList(input, suggestion, effective, records) {
       add({ id: 'kitchen', title: 'Кухня', types: ['kitchen'], canonical: 'kitchen', count: 1, source });
     }
   }
-  if (effective.bedroomCount != null) {
+  const explicitBedrooms = Array.isArray(input?.bedrooms) ? input.bedrooms : null;
+  if (explicitBedrooms?.length) {
+    for (const [kind, definition] of Object.entries(BEDROOM_TARGETS)) {
+      const rows = explicitBedrooms.filter((bedroom) => bedroom.kind === kind);
+      if (!rows.length) continue;
+      add({
+        ...definition,
+        count: rows.length,
+        source: confirmed ? 'confirmed' : 'draft',
+        requirements: {
+          ensuite: {
+            required: rows.filter((bedroom) => bedroom.ensuite === true).length,
+            notRequired: rows.filter((bedroom) => bedroom.ensuite === false).length,
+            unknown: rows.filter((bedroom) => bedroom.ensuite == null).length,
+            status: rows.some((bedroom) => bedroom.ensuite === true || bedroom.ensuite == null) ? 'unknown' : 'not_required',
+          },
+          wardrobe: {
+            required: rows.filter((bedroom) => bedroom.wardrobe === true).length,
+            notRequired: rows.filter((bedroom) => bedroom.wardrobe === false).length,
+            unknown: rows.filter((bedroom) => bedroom.wardrobe == null).length,
+          },
+        },
+      });
+    }
+  } else if (effective.bedroomCount != null) {
     add({
       id: 'bedrooms', title: 'Спальни жильцов', types: BEDROOM_TYPES,
       canonical: 'bedroom', count: effective.bedroomCount,
       source: explicitSource(input?.bedroomCount, suggestion.bedroomCount, confirmed),
     });
   }
-  if (effective.bathroomCount != null) {
+  const bedroomEnsuites = explicitBedrooms?.filter((bedroom) => bedroom.ensuite === true).length || 0;
+  if (effective.bathroomCount != null || bedroomEnsuites) {
+    const commonBathrooms = Math.max(0, effective.bathroomCount || 0);
     add({
-      id: 'bathrooms', title: 'Основные санузлы', types: BATHROOM_TYPES,
-      canonical: 'bathroom', count: effective.bathroomCount,
+      id: 'bathrooms', title: bedroomEnsuites ? 'Санузлы — общие и при спальнях' : 'Основные санузлы', types: BATHROOM_TYPES,
+      canonical: 'bathroom', count: commonBathrooms + bedroomEnsuites,
       source: explicitSource(input?.bathroomCount, suggestion.bathroomCount, confirmed),
+      requirements: bedroomEnsuites ? { common: commonBathrooms, ensuite: bedroomEnsuites } : null,
     });
   }
+  const bedroomWardrobes = explicitBedrooms?.filter((bedroom) => bedroom.wardrobe === true).length || 0;
+  const explicitGuestBedroom = explicitBedrooms?.some((bedroom) => bedroom.kind === 'guest') || false;
   for (const key of HOME_PROGRAM_OPTION_KEYS) {
+    if (key === 'guestBedroom' && explicitGuestBedroom) continue;
+    if (key === 'wardrobe' && explicitBedrooms) {
+      const count = bedroomWardrobes + (effective.options.wardrobe === true ? 1 : 0);
+      if (count) {
+        add({
+          ...OPTION_TARGETS.wardrobe,
+          title: bedroomWardrobes ? 'Гардеробные' : OPTION_TARGETS.wardrobe.title,
+          count,
+          source: confirmed ? 'confirmed' : 'draft',
+        });
+      }
+      continue;
+    }
     if (effective.options[key] !== true) continue;
     const definition = OPTION_TARGETS[key];
     add({
@@ -445,7 +518,16 @@ export function analyzeHomeProgram(project = {}) {
   if (!input || input.socialMode === 'unknown') unresolvedFields.push('socialMode');
   if (!input || input.bedroomCount == null) unresolvedFields.push('bedroomCount');
   if (!input || input.bathroomCount == null) unresolvedFields.push('bathroomCount');
-  for (const key of HOME_PROGRAM_OPTION_KEYS) if (!input || input.options[key] == null) unresolvedFields.push(`options.${key}`);
+  const explicitBedrooms = Array.isArray(input?.bedrooms) ? input.bedrooms : null;
+  for (const bedroom of explicitBedrooms || []) {
+    if (bedroom.ensuite == null) unresolvedFields.push(`bedrooms.${bedroom.id}.ensuite`);
+    if (bedroom.wardrobe == null) unresolvedFields.push(`bedrooms.${bedroom.id}.wardrobe`);
+  }
+  for (const key of HOME_PROGRAM_OPTION_KEYS) {
+    // Явный список спален сам отвечает, нужна ли гостевая спальня.
+    if (key === 'guestBedroom' && explicitBedrooms) continue;
+    if (!input || input.options[key] == null) unresolvedFields.push(`options.${key}`);
+  }
 
   const missingRooms = targets.reduce((sum, target) => sum + target.missingCount, 0);
   const requiredConnectionIssues = connections.filter((connection) => connection.required && !connection.acceptable);
@@ -464,6 +546,9 @@ export function analyzeHomeProgram(project = {}) {
 
   const warnings = [...suggestion.warnings];
   if (unresolvedFields.length) warnings.push(`Не решено полей программы: ${unresolvedFields.length}.`);
+  if (explicitBedrooms?.some((bedroom) => bedroom.ensuite === true)) {
+    warnings.push('Свой санузел сохранён как требование спальни, но его связь с конкретной комнатой пока не доказана планом.');
+  }
   if (connections.some((connection) => connection.status === 'unknown' && connection.sourceRoomIds.length && connection.targetRoomIds.length)) {
     warnings.push('Часть связей проходит между этажами; без доказанного межэтажного коннектора они оставлены неизвестными.');
   }

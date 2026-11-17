@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   createSite, polygonAreaM2, insetPolygon, checkRectBuildable,
-  sunPosition, shadowVector, shadowPolygon, nearestPointOnPolyline,
+  sunPosition, shadowVector, shadowPolygon, nearestPointOnPolyline, polylineMidpoints,
 } from '../core/site.js';
 
 const rectPoly = (x, y, w, h) => [
@@ -13,6 +13,17 @@ const rectPoly = (x, y, w, h) => [
 
 test('площадь полигона: участок 20×30 м = 600 м²', () => {
   assert.equal(polygonAreaM2(rectPoly(0, 0, 20000, 30000)), 600);
+});
+
+test('середины сторон дают позиции вставки новых углов, включая замыкающую сторону', () => {
+  const boundary = rectPoly(0, 0, 20000, 30000);
+  assert.deepEqual(polylineMidpoints(boundary, true), [
+    { x: 10000, y: 0, index: 1, from: 0, to: 1 },
+    { x: 20000, y: 15000, index: 2, from: 1, to: 2 },
+    { x: 10000, y: 30000, index: 3, from: 2, to: 3 },
+    { x: 0, y: 15000, index: 4, from: 3, to: 0 },
+  ]);
+  assert.equal(polylineMidpoints(boundary).length, 3, 'открытая ломаная не замыкается');
 });
 
 test('инсет границы: отступ 1,5 м уменьшает участок с каждой стороны', () => {

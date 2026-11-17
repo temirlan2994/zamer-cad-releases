@@ -111,7 +111,7 @@ export function cancelTool() {
 
 export function startPlaceRoom(type) {
   closeLibrarySheet(); // телефон: освободить план для касания
-  setTool({ kind: 'place-room', type, rotation: 0 }, `Кликните на плане, чтобы разместить «${roomType(type).title}» · Пробел — повернуть · Esc — отмена`);
+  setTool({ kind: 'place-room', type, rotation: 0 }, `Кликните на плане, чтобы разместить «${roomType(type).title}» — помещение встанет по текущему повороту вида · Пробел — повернуть · Esc — отмена`);
   state.selection = null;
   renderProps();
 }

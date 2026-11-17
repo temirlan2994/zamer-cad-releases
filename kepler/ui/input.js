@@ -43,7 +43,7 @@ import { hideSofaMenu, openSofaMenu } from './props-composite.js';
 import { canvas, el, refs, toast } from './dom.js';
 import {
   findWall, hitGroupHandle, hitItem, hitItemHandle, hitManualWallEnd, hitNeighborHandle, hitOpening, hitOpeningHandle, hitRailingEnd, hitRoom,
-  hitPlanStack, hitRoomHandle, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
+  hitPlanStack, hitRoomHandle, hitSiteMidpoint, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
 import {
@@ -53,7 +53,7 @@ import {
 import { closeLibrarySheet } from './mobile.js';
 import {
   addBedsideNightstand, addFurnitureAt, autoDockAfterGesture, computeOpeningParams, eatOverlapsAfter, openingSnapOpts, placeOpeningAt,
-  placeRoomAt, reconcileOpenings, selectGroup, toggleInMulti, toggleOpeningFlip,
+  placeRoomAt, reconcileOpenings, roomPlacementContext, selectGroup, toggleInMulti, toggleOpeningFlip,
 } from './plan-actions.js';
 import {
   addDraftPoint, addNorthPoint, computeEntryAt, finishDraft, placeNeighborAt, updateDraftCursor,
@@ -401,21 +401,27 @@ function updateHoverAndGhost(world, plan, event) {
     return;
   }
   if (state.tool?.kind === 'place-room') {
+    const placement = roomPlacementContext(plan);
+    const placementPlan = placement.at;
+    const placementProject = placement.project;
     const def = roomType(state.tool.type);
     const turned = (state.tool.rotation || 0) % 180 !== 0;
     const w = turned ? def.h : def.w;
     const h = turned ? def.w : def.h;
-    let x = plan.x - w / 2;
-    let y = plan.y - h / 2;
-    const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
-    let snapped = snapRoomPosition(state.project, { id: '__ghost__', type: def.type, w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
+    let x = placementPlan.x - w / 2;
+    let y = placementPlan.y - h / 2;
+    const parentId = def.open ? null : determineParent(placementProject, { x, y, w, h }, null);
+    let snapped = snapRoomPosition(placementProject, { id: '__ghost__', type: def.type, w, h }, x, y, 14 / state.view.scale, parentId, gridStep());
     // Эскиз масс: свободные оси липнут к рёбрам контура (ui/block-gesture.js).
     if (!event?.shiftKey && !event?.altKey) snapped = sketchMagnet({ ...snapped, guides: [...snapped.guides] }, { x, y, w, h });
     x = snapped.x; y = snapped.y;
-    const verdict = validateRoomPlacement(state.project, { type: def.type, x, y, w, h, parentId }, null);
-    state.guides = snapped.guides;
+    const verdict = validateRoomPlacement(placementProject, { type: def.type, x, y, w, h, parentId }, null);
+    // Пока сам дом ещё не повернут, его старые направляющие визуально не
+    // совпали бы с предпросмотром будущих осей.
+    state.guides = placement.building ? [] : snapped.guides;
     state.ghost = {
       rect: { x, y, w, h },
+      building: placement.building,
       valid: verdict.ok,
       warn: Boolean(verdict.warning),
       label: parentId ? `Вложить в «${roomById(state.project, parentId)?.name}»` : undefined,
@@ -473,6 +479,14 @@ function updateHoverAndGhost(world, plan, event) {
     const next = tp ? { type: 'site-obj', kind: 'terrain-point', id: tp.id } : null;
     canvas.style.cursor = tp ? 'move' : 'crosshair';
     if (JSON.stringify(next) !== JSON.stringify(state.hover)) { state.hover = next; requestDraw(); }
+    return;
+  }
+  if (state.tool?.kind === 'edit') {
+    const screen = event?.clientX !== undefined ? pointerScreen(event) : worldToScreen(world.x, world.y);
+    const vertex = hitSiteVertex(screen);
+    const midpoint = state.tool.target === 'boundary' ? hitSiteMidpoint(screen) : null;
+    canvas.style.cursor = midpoint && (!vertex || midpoint.distance < vertex.distance)
+      ? 'copy' : vertex ? 'move' : 'crosshair';
     return;
   }
   if (state.tool) return;
@@ -766,6 +780,19 @@ export function bindCanvasInput() {
     }
     if (layer === 'boundary' || layer === 'redline' || layer === 'road') {
       const v = hitSiteVertex(screen);
+      const midpoint = layer === 'boundary' ? hitSiteMidpoint(screen) : null;
+      // На короткой стороне мобильные зоны попадания вершины и средней
+      // ручки пересекаются. Выбираем действительно ближайший значок.
+      if (midpoint && (!v || midpoint.distance < v.distance)) {
+        const before = snapshot();
+        midpoint.points.splice(midpoint.index, 0, { x: midpoint.x, y: midpoint.y });
+        drag = {
+          kind: 'site-vertex', siteKind: midpoint.kind, index: midpoint.index,
+          points: midpoint.points, before, moved: true, inserted: true,
+        };
+        requestDraw();
+        return;
+      }
       if (v) {
         drag = { kind: 'site-vertex', siteKind: v.kind, id: v.id, index: v.index, points: v.points, before: snapshot(), moved: false };
         return;

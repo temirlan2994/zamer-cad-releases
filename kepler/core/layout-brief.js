@@ -37,6 +37,8 @@ const HOME_PROGRAM_SOCIAL_MODES = new Set(['combined', 'separate', 'unknown']);
 export const HOME_PROGRAM_OPTION_KEYS = Object.freeze([
   'guestBedroom', 'office', 'laundry', 'pantry', 'wardrobe', 'guestWc', 'garage', 'terrace',
 ]);
+export const HOME_PROGRAM_BEDROOM_KINDS = Object.freeze(['main', 'adult', 'child', 'guest']);
+export const HOME_GUEST_FREQUENCIES = Object.freeze(['rare', 'monthly', 'weekly']);
 
 const isObj = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -281,15 +283,27 @@ function normalizeScenarioRouteBindings(value, refs, actorIds) {
 export function normalizeHomeProgram(raw) {
   if (!isObj(raw)) return null;
   const options = isObj(raw.options) ? raw.options : {};
+  const hasBedrooms = Array.isArray(raw.bedrooms);
+  const bedroomIds = new Set();
+  const bedrooms = hasBedrooms ? raw.bedrooms.slice(0, 30).map((entry, index) => {
+    const source = isObj(entry) ? entry : {};
+    return {
+      id: uniqueId(source.id, 'bedroom', index, bedroomIds),
+      kind: enumValue(source.kind, HOME_PROGRAM_BEDROOM_KINDS, 'adult'),
+      ensuite: typeof source.ensuite === 'boolean' ? source.ensuite : null,
+      wardrobe: typeof source.wardrobe === 'boolean' ? source.wardrobe : null,
+    };
+  }) : null;
   const normalized = {
     confirmed: raw.confirmed === true,
     socialMode: HOME_PROGRAM_SOCIAL_MODES.has(raw.socialMode) ? raw.socialMode : 'unknown',
-    bedroomCount: positiveInteger(raw.bedroomCount),
+    bedroomCount: bedrooms?.length || positiveInteger(raw.bedroomCount),
     bathroomCount: positiveInteger(raw.bathroomCount),
     options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [
       key, typeof options[key] === 'boolean' ? options[key] : null,
     ])),
   };
+  if (hasBedrooms) normalized.bedrooms = bedrooms;
   const empty = !normalized.confirmed
     && normalized.socialMode === 'unknown'
     && normalized.bedroomCount == null
@@ -335,16 +349,23 @@ export function normalizeLayoutBrief(raw, options = {}) {
   const storageUsed = new Set();
   const uncertaintyUsed = new Set();
   const capacity = isObj(source.capacity) ? source.capacity : {};
+  const normalizedCapacity = {
+    ...capacity,
+    dailySeats: integer(capacity.dailySeats),
+    guestSeats: integer(capacity.guestSeats),
+    simultaneousCooks: positiveInteger(capacity.simultaneousCooks),
+  };
+  if (Object.prototype.hasOwnProperty.call(capacity, 'adultCount')) normalizedCapacity.adultCount = integer(capacity.adultCount);
+  if (Object.prototype.hasOwnProperty.call(capacity, 'childCount')) normalizedCapacity.childCount = integer(capacity.childCount);
+  if (Object.prototype.hasOwnProperty.call(capacity, 'guestCount')) normalizedCapacity.guestCount = integer(capacity.guestCount);
+  if (Object.prototype.hasOwnProperty.call(capacity, 'guestFrequency')) {
+    normalizedCapacity.guestFrequency = enumValue(capacity.guestFrequency, HOME_GUEST_FREQUENCIES, null);
+  }
   return {
     ...source,
     version: LAYOUT_BRIEF_VERSION,
     actors,
-    capacity: {
-      ...capacity,
-      dailySeats: integer(capacity.dailySeats),
-      guestSeats: integer(capacity.guestSeats),
-      simultaneousCooks: positiveInteger(capacity.simultaneousCooks),
-    },
+    capacity: normalizedCapacity,
     fixedEngineering: Array.isArray(source.fixedEngineering)
       ? source.fixedEngineering.map((point, index) => normalizeEngineering(point, index, engineeringUsed, refs))
       : null,
@@ -504,9 +525,9 @@ export function layoutBriefReadiness(project, { itemIds = null } = {}) {
   sections.push(readinessSection(
     'capacity', 'Места', capacityReady ? 'ready' : (capacitySome ? 'partial' : 'missing'),
     capacityReady
-      ? `${brief.capacity.dailySeats} ежедневно · ${brief.capacity.guestSeats} гостевых · ${brief.capacity.simultaneousCooks} готовят`
+      ? `${brief.capacity.dailySeats} каждый день · ${brief.capacity.guestSeats} всего при гостях${brief.capacity.guestCount == null ? '' : ` (${brief.capacity.guestCount} гостей)`} · ${brief.capacity.simultaneousCooks} готовят вместе`
       : (capacitySome ? 'заполнено частично' : 'не заданы'),
-    capacityReady ? [] : ['Указать ежедневные и гостевые места, а также сколько человек готовят одновременно'],
+    capacityReady ? [] : ['Указать постоянных жильцов, гостей и сколько человек готовят вместе'],
   ));
 
   const scenarios = brief.scenarioSelections || [];

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toWorld, toLocal, rectCornersWorld, rotateBuildingAbout, composeView,
-  rotationAlongLine, buildingCenter, northInBuilding,
+  rotationAlongLine, buildingCenter, buildingContentCenter, northInBuilding,
 } from '../core/building.js';
 import { dimTextAngle, projectPoint } from '../render.js';
 import { createProject, createRoom } from '../core/model.js';
@@ -60,6 +60,17 @@ test('север в осях дома и центр дома', () => {
   assert.equal(buildingCenter(p), null);
   p.rooms.push(createRoom('living', 0, 0, 4000, 2000), createRoom('kitchen', 4100, 0, 2000, 3000));
   assert.deepEqual(buildingCenter(p), { x: 3050, y: 1500 });
+});
+
+test('центр всего дома учитывает неактивные этажи и локальные объекты', () => {
+  const p = createProject();
+  p.levels.push({
+    id: 'L2', name: '2 этаж', elevation: 3000, height: 3000,
+    rooms: [createRoom('bedroom', 10000, 20000, 4000, 2000)],
+    items: [], openings: [], wallOverrides: {}, walls: [],
+  });
+  p.masses = [{ x: -5000, y: 0, w: 2000, d: 4000 }];
+  assert.deepEqual(buildingContentCenter(p), { x: 4000, y: 10000 });
 });
 
 test('зона застройки проверяется по настоящим (повёрнутым) углам дома', () => {

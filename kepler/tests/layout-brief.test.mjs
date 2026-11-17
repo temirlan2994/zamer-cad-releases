@@ -72,6 +72,36 @@ test('нормализация чистит enum, дубликаты id и сс�
   }).capacity.simultaneousCooks, null);
 });
 
+test('состав семьи и сценарий гостей нормализуются, не меняя старый capacity', () => {
+  const brief = normalizeLayoutBrief({
+    capacity: {
+      dailySeats: 5,
+      guestSeats: 11,
+      simultaneousCooks: 2,
+      adultCount: '2',
+      childCount: '3',
+      guestCount: '6',
+      guestFrequency: 'weekly',
+    },
+  });
+  assert.deepEqual(brief.capacity, {
+    dailySeats: 5,
+    guestSeats: 11,
+    simultaneousCooks: 2,
+    adultCount: 2,
+    childCount: 3,
+    guestCount: 6,
+    guestFrequency: 'weekly',
+  });
+  const invalid = normalizeLayoutBrief({
+    capacity: { adultCount: -1, childCount: 'нет', guestCount: -2, guestFrequency: 'постоянно' },
+  }).capacity;
+  assert.equal(invalid.adultCount, null);
+  assert.equal(invalid.childCount, null);
+  assert.equal(invalid.guestCount, null);
+  assert.equal(invalid.guestFrequency, null);
+});
+
 test('layoutBrief и паспортные поля мебели переживают файл kepler-plan/7', () => {
   const project = createProject('Исходные данные');
   const item = createItem('fridge', 1000, 1200, 700, 700);

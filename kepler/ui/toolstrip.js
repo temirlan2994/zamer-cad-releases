@@ -53,7 +53,7 @@ const SITE_TOOLS = [
       ? editHint('топосъёмка — двигайте, тяните углы')
       : 'Нажмите «Импортировать топосъёмку» в панели справа · PDF / JPG / PNG / DXF') },
   { id: 'boundary', name: 'Граница участка', note: (s) => (s?.boundary ? `${polygonAreaM2(s.boundary).toFixed(0)} м² · правка` : 'полигон по точкам'),
-    action: (s) => (s?.boundary ? startEditLayer('boundary', { type: 'site', kind: 'boundary' }, editHint('граница — тяните вершины')) : startDraw('boundary')) },
+    action: (s) => (s?.boundary ? startEditLayer('boundary', { type: 'site', kind: 'boundary' }, 'Правка границы: тяните квадратные вершины; нажмите круг с +, чтобы добавить угол · Esc — выйти') : startDraw('boundary')) },
   { id: 'redline', name: 'Красная линия', note: (s) => (s?.redLine ? 'правка' : 'линия застройки'),
     action: (s) => (s?.redLine ? startEditLayer('redline', { type: 'site', kind: 'redline' }, editHint('красная линия — тяните вершины')) : startDraw('redline')) },
   { id: 'road', name: 'Дорога', note: (s) => (s?.roads?.length ? 'правка / новая' : 'ось + ширина'),

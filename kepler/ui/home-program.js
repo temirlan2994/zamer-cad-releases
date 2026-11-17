@@ -13,7 +13,6 @@ import { escapeHtml, toast } from './dom.js';
 import { setEditorMode } from './modes.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
-import { startPlaceRoom } from './tools.js';
 import { requestDraw } from './view.js';
 
 const OPTION_LABELS = Object.freeze({
@@ -21,11 +20,26 @@ const OPTION_LABELS = Object.freeze({
   office: 'Кабинет',
   laundry: 'Постирочная',
   pantry: 'Кладовая продуктов',
-  wardrobe: 'Гардеробная',
+  wardrobe: 'Общая гардеробная',
   guestWc: 'Гостевой санузел',
   garage: 'Гараж',
   terrace: 'Терраса',
 });
+
+const BEDROOM_KIND_LABELS = Object.freeze({
+  main: 'Основная',
+  adult: 'Обычная',
+  child: 'Детская',
+  guest: 'Гостевая',
+});
+
+const GUEST_FREQUENCIES = Object.freeze([
+  ['rare', 'Редко', 'несколько раз в год'],
+  ['monthly', 'Иногда', '1–2 раза в месяц'],
+  ['weekly', 'Часто', 'каждую неделю'],
+]);
+
+const VISIBLE_OPTION_KEYS = HOME_PROGRAM_OPTION_KEYS.filter((key) => key !== 'guestBedroom');
 
 const STATUS_LABELS = Object.freeze({
   unknown: 'Не задана',
@@ -86,6 +100,52 @@ function inputValue(value) {
   return value == null ? '' : String(value);
 }
 
+function countValue(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : fallback;
+}
+
+function bedroomDrafts(source, suggestion, count, childCount, { useSuggestion = true, legacyGuest = false } = {}) {
+  const existing = array(source?.bedrooms).length
+    ? source.bedrooms
+    : useSuggestion ? array(suggestion?.bedrooms) : [];
+  if (existing.length) return existing.slice(0, 30).map((bedroom, index) => ({
+    id: String(bedroom?.id || `bedroom-${index + 1}`),
+    kind: BEDROOM_KIND_LABELS[bedroom?.kind] ? bedroom.kind : (index === 0 ? 'main' : 'adult'),
+    ensuite: typeof bedroom?.ensuite === 'boolean' ? bedroom.ensuite : null,
+    wardrobe: typeof bedroom?.wardrobe === 'boolean' ? bedroom.wardrobe : null,
+  }));
+  const total = Math.max(1, Math.min(30, countValue(count, 1)));
+  const childRooms = Math.min(Math.max(0, total - 1), Math.ceil(countValue(childCount) / 2));
+  const result = Array.from({ length: total }, (_, index) => ({
+    id: `bedroom-${index + 1}`,
+    kind: index === 0 ? 'main' : index <= childRooms ? 'child' : 'adult',
+    ensuite: null,
+    wardrobe: null,
+  }));
+  // В старой модели «гостевая спальня» была отдельной опцией поверх числа
+  // спален жильцов. Не заменяем ею последнюю жилую комнату.
+  if (legacyGuest && result.length < 30) result.push({
+    id: `bedroom-${result.length + 1}`, kind: 'guest', ensuite: null, wardrobe: null,
+  });
+  return result;
+}
+
+function resizeDraftBedrooms(currentDraft, count) {
+  const desired = Math.max(1, Math.min(30, countValue(count, 1)));
+  while (currentDraft.bedrooms.length < desired) {
+    let suffix = currentDraft.bedrooms.length + 1;
+    const used = new Set(currentDraft.bedrooms.map(({ id }) => id));
+    while (used.has(`bedroom-${suffix}`)) suffix += 1;
+    currentDraft.bedrooms.push({
+      id: `bedroom-${suffix}`, kind: currentDraft.bedrooms.length ? 'adult' : 'main',
+      ensuite: null, wardrobe: null,
+    });
+  }
+  currentDraft.bedrooms.length = desired;
+  currentDraft.bedroomCount = String(desired);
+}
+
 function seedDraft(project) {
   const signature = sourceSignature(project);
   if (project !== draftProject) {
@@ -100,13 +160,32 @@ function seedDraft(project) {
   const saved = brief.homeProgram || null;
   const suggestion = suggestedProgram(project);
   const source = saved || suggestion;
+  const actors = array(brief.actors);
+  const capacity = brief.capacity || {};
+  const profiledChildren = actors.filter((actor) => actor?.mobilityProfile === 'child'
+    || actor?.householdGroup === 'child').length;
+  const childCount = countValue(capacity.childCount, profiledChildren);
+  const adultFallback = actors.length ? Math.max(1, actors.length - childCount) : 2;
+  const adultCount = Math.max(1, countValue(capacity.adultCount, adultFallback));
+  const dailySeats = adultCount + childCount;
+  const guestCount = countValue(capacity.guestCount,
+    Math.max(0, countValue(capacity.guestSeats) - countValue(capacity.dailySeats, dailySeats)));
+  const legacyGuest = Boolean(saved && !array(saved.bedrooms).length && saved.options?.guestBedroom === true);
+  const baseBedroomCount = source.bedroomCount || suggestion.bedroomCount || 1;
+  const bedroomCount = Math.min(30, countValue(baseBedroomCount, 1) + (legacyGuest ? 1 : 0));
   draft = {
-    actorCount: inputValue(array(brief.actors).length || suggestion.actorCount || suggestion.occupantCount || ''),
-    dailySeats: inputValue(brief.capacity?.dailySeats),
-    guestSeats: inputValue(brief.capacity?.guestSeats),
-    simultaneousCooks: inputValue(brief.capacity?.simultaneousCooks),
+    adultCount: String(adultCount),
+    childCount: String(childCount),
+    guestCount: String(guestCount),
+    guestFrequency: GUEST_FREQUENCIES.some(([id]) => id === capacity.guestFrequency)
+      ? capacity.guestFrequency : 'rare',
+    simultaneousCooks: inputValue(capacity.simultaneousCooks ?? 1),
     socialMode: source.socialMode || 'unknown',
-    bedroomCount: inputValue(source.bedroomCount),
+    bedroomCount: inputValue(bedroomCount),
+    bedrooms: bedroomDrafts(source, suggestion, baseBedroomCount, childCount, {
+      useSuggestion: !saved,
+      legacyGuest,
+    }),
     bathroomCount: inputValue(source.bathroomCount),
     options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [
       key, typeof source.options?.[key] === 'boolean' ? source.options[key] : null,
@@ -125,12 +204,6 @@ function selectOptions(value, options) {
 
 function triStateValue(value) {
   return value === true ? 'yes' : value === false ? 'no' : 'unknown';
-}
-
-function triStateOptions(value) {
-  return selectOptions(triStateValue(value), [
-    ['unknown', 'Не решено'], ['yes', 'Нужно'], ['no', 'Не нужно'],
-  ]);
 }
 
 function statusLabel(status) {
@@ -191,7 +264,6 @@ function renderTargets(analysis) {
       ? 'preliminary' : missing > 0 ? 'missing' : target.status || 'ready';
     return `<article class="home-program-target" data-status="${escapeHtml(stateName)}">
       <div><strong>${escapeHtml(title)}</strong><span>нужно ${required} · есть ${present}${area == null ? '' : ` · площадь ≈ ${area.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} м²`}</span></div>
-      ${missing > 0 && type ? `<button type="button" data-home-program-action="add-room" data-room-type="${escapeHtml(type)}">Добавить ${escapeHtml(String(title).toLocaleLowerCase('ru-RU'))} на план</button>` : ''}
     </article>`;
   }).join('')}</div>`;
 }
@@ -270,18 +342,120 @@ function warningsHtml(analysis) {
   return warnings.length ? `<ul class="home-program-warnings">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : '';
 }
 
+const personIcon = (kind) => kind === 'child'
+  ? '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="13" r="6"/><path d="M15 42l3-14h12l3 14M24 19v15M14 26h20"/></svg>'
+  : '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="10" r="7"/><path d="M13 43l4-18h14l4 18M24 17v18M12 25h24"/></svg>';
+
+const guestIcon = '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="18" cy="14" r="6"/><circle cx="32" cy="17" r="5"/><path d="M8 42l3-17h14l3 17M26 42l2-14h10l3 14"/></svg>';
+const cookIcon = '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 20h28v20H10zM14 20v-5h20v5M17 29h14M17 35h8"/><circle cx="17" cy="10" r="3"/><circle cx="24" cy="8" r="3"/><circle cx="31" cy="10" r="3"/></svg>';
+
+function stepperHtml(field, value, { min, max, label }) {
+  return `<div class="home-program-stepper" role="group" aria-label="${escapeHtml(label)}">
+    <button type="button" data-home-program-action="step" data-home-program-step="${escapeHtml(field)}" data-delta="-1" aria-label="Уменьшить: ${escapeHtml(label)}"${Number(value) <= min ? ' disabled' : ''}>−</button>
+    <input type="number" readonly tabindex="-1" min="${min}" max="${max}" value="${escapeHtml(String(value))}" data-home-program-field="${escapeHtml(field)}" aria-label="${escapeHtml(label)}">
+    <button type="button" data-home-program-action="step" data-home-program-step="${escapeHtml(field)}" data-delta="1" aria-label="Добавить: ${escapeHtml(label)}"${Number(value) >= max ? ' disabled' : ''}>+</button>
+  </div>`;
+}
+
+function triStateHtml(value, { name, label, attributes }) {
+  const current = triStateValue(value);
+  const states = [
+    ['yes', '✓', 'Нужно'],
+    ['no', '×', 'Не нужно'],
+    ['unknown', '?', 'Ещё не решено'],
+  ];
+  return `<fieldset class="home-program-tristate"><legend>${escapeHtml(label)}</legend><div role="radiogroup" aria-label="${escapeHtml(label)}">
+    ${states.map(([id, symbol, title]) => `<label data-state="${id}" title="${escapeHtml(title)}">
+      <input type="radio" name="${escapeHtml(name)}" value="${id}" ${attributes}${current === id ? ' checked' : ''} aria-label="${escapeHtml(`${label}: ${title}`)}">
+      <span aria-hidden="true">${symbol}</span><span class="sr-only">${escapeHtml(title)}</span>
+    </label>`).join('')}
+  </div></fieldset>`;
+}
+
+function scenarioHtml(currentDraft) {
+  const adults = countValue(currentDraft.adultCount, 1);
+  const children = countValue(currentDraft.childCount);
+  const guests = countValue(currentDraft.guestCount);
+  const residents = adults + children;
+  const totalAtTable = residents + guests;
+  return `<div class="home-program-scenario-grid">
+    <article class="home-program-person-card">
+      <span class="home-program-scenario-icon">${personIcon('adult')}</span>
+      <div class="home-program-scenario-copy"><strong>Взрослые</strong><small>Родители тоже считаются взрослыми</small></div>
+      ${stepperHtml('adultCount', adults, { min: 1, max: 20, label: 'Количество взрослых' })}
+    </article>
+    <article class="home-program-person-card">
+      <span class="home-program-scenario-icon child">${personIcon('child')}</span>
+      <div class="home-program-scenario-copy"><strong>Дети</strong><small>Постоянно живущие дети</small></div>
+      ${stepperHtml('childCount', children, { min: 0, max: 20, label: 'Количество детей' })}
+    </article>
+    <div class="home-program-capacity-summary">
+      <span><strong>${residents}</strong> постоянно живут</span>
+      <span><strong>${residents}</strong> мест за столом каждый день</span>
+      <span><strong>${totalAtTable}</strong> мест, когда приходят гости</span>
+    </div>
+    <article class="home-program-scenario-card home-program-guests">
+      <span class="home-program-scenario-icon">${guestIcon}</span>
+      <div class="home-program-scenario-copy"><strong>Сколько гостей принимаете одновременно</strong><small>Дополнительно к жильцам. На это число рассчитываются стол и стулья.</small></div>
+      ${stepperHtml('guestCount', guests, { min: 0, max: 30, label: 'Количество гостей одновременно' })}
+      <div class="home-program-presets" aria-label="Быстрый выбор количества гостей">
+        ${[0, 2, 5, 10].map((value) => `<button type="button" data-home-program-action="guest-preset" data-home-program-preset="${value}" aria-pressed="${guests === value}">${value === 0 ? 'Без гостей' : `до ${value}`}</button>`).join('')}
+        <button type="button" data-home-program-action="guest-preset" data-home-program-preset="11" aria-pressed="${guests > 10}">10+</button>
+      </div>
+      <fieldset class="home-program-frequency"><legend>Как часто принимаете гостей</legend><div>
+        ${GUEST_FREQUENCIES.map(([id, title, note]) => `<label><input type="radio" name="home-program-guest-frequency" value="${id}" data-home-program-field="guestFrequency"${currentDraft.guestFrequency === id ? ' checked' : ''}><span><strong>${title}</strong><small>${note}</small></span></label>`).join('')}
+      </div></fieldset>
+    </article>
+    <article class="home-program-scenario-card home-program-cooks">
+      <span class="home-program-scenario-icon">${cookIcon}</span>
+      <div class="home-program-scenario-copy"><strong>Сколько человек готовят вместе</strong><small>Одновременно работают у столешницы. Для двух и более нужен более широкий проход.</small></div>
+      ${stepperHtml('simultaneousCooks', countValue(currentDraft.simultaneousCooks, 1), { min: 1, max: 6, label: 'Количество одновременно готовящих' })}
+    </article>
+  </div>`;
+}
+
+function bedroomsHtml(currentDraft) {
+  return `<section class="home-program-bedrooms">
+    <header><div><strong>Спальни</strong><small>Каждая спальня задаётся отдельно</small></div>
+      ${stepperHtml('bedroomCount', currentDraft.bedrooms.length, { min: 1, max: 30, label: 'Количество спален' })}
+    </header>
+    <div class="home-program-bedroom-list" role="list">
+      ${currentDraft.bedrooms.map((bedroom, index) => `<article class="home-program-bedroom-row" role="listitem" data-bedroom-id="${escapeHtml(bedroom.id)}">
+        <label class="home-program-bedroom-type"><span>Спальня ${index + 1}</span><select data-home-program-bedroom="${escapeHtml(bedroom.id)}" data-bedroom-field="kind" aria-label="Тип спальни ${index + 1}">
+          ${selectOptions(bedroom.kind, Object.entries(BEDROOM_KIND_LABELS))}
+        </select></label>
+        ${triStateHtml(bedroom.ensuite, {
+    name: `${bedroom.id}-ensuite`, label: 'Свой санузел',
+    attributes: `data-home-program-bedroom="${escapeHtml(bedroom.id)}" data-bedroom-field="ensuite"`,
+  })}
+        ${triStateHtml(bedroom.wardrobe, {
+    name: `${bedroom.id}-wardrobe`, label: 'Гардеробная',
+    attributes: `data-home-program-bedroom="${escapeHtml(bedroom.id)}" data-bedroom-field="wardrobe"`,
+  })}
+      </article>`).join('')}
+    </div>
+  </section>`;
+}
+
+function optionsHtml(currentDraft) {
+  return `<div class="home-program-option-cards">${VISIBLE_OPTION_KEYS.map((key) => `<article class="home-program-option-card">
+    <strong>${escapeHtml(OPTION_LABELS[key] || key)}</strong>
+    ${triStateHtml(currentDraft.options[key], {
+    name: `home-program-option-${key}`, label: OPTION_LABELS[key] || key,
+    attributes: `data-home-program-option="${escapeHtml(key)}"`,
+  })}
+  </article>`).join('')}</div>`;
+}
+
 export function homeProgramHtml(project) {
   const currentDraft = seedDraft(project);
   const analysis = analysisOf(project);
   const status = analysis?.status || 'unknown';
   const saved = project?.layoutBrief?.homeProgram;
   const suggestion = suggestedProgram(project);
-  const proposedBedrooms = suggestion.bedroomCount;
   const proposedBathrooms = suggestion.bathroomCount;
   const overlayOn = Boolean(state.homeProgramOverlay?.on
     && state.homeProgramOverlay?.mode !== 'flows');
-  const optionFields = HOME_PROGRAM_OPTION_KEYS.map((key) => `<label class="prop-field"><span>${escapeHtml(OPTION_LABELS[key] || key)}</span><select data-home-program-option="${escapeHtml(key)}">${triStateOptions(currentDraft.options[key])}</select></label>`).join('');
-
   return `<div class="home-program" data-home-program>
     <div class="home-program-summary" data-status="${escapeHtml(status)}">
       <div><strong>${statusLabel(status)}</strong><span>${escapeHtml(analysis?.summary?.text || analysis?.summary?.label || 'Программа сравнивает пожелания с фактическим планом.')}</span></div>
@@ -292,26 +466,21 @@ export function homeProgramHtml(project) {
     <form id="homeProgramForm" novalidate>
       <fieldset class="home-program-fieldset">
         <legend>Состав и сценарий</legend>
-        <div class="home-program-grid">
-          <label class="prop-field"><span>Жильцов</span><input type="number" min="1" max="30" step="1" data-home-program-field="actorCount" value="${escapeHtml(currentDraft.actorCount)}"></label>
-          <label class="prop-field"><span>Ежедневных мест</span><input type="number" min="0" max="100" step="1" data-home-program-field="dailySeats" value="${escapeHtml(currentDraft.dailySeats)}"></label>
-          <label class="prop-field"><span>Гостевых мест</span><input type="number" min="0" max="100" step="1" data-home-program-field="guestSeats" value="${escapeHtml(currentDraft.guestSeats)}"></label>
-          <label class="prop-field"><span>Одновременно готовят</span><input type="number" min="1" max="20" step="1" data-home-program-field="simultaneousCooks" value="${escapeHtml(currentDraft.simultaneousCooks)}"></label>
-        </div>
+        ${scenarioHtml(currentDraft)}
       </fieldset>
       <fieldset class="home-program-fieldset">
         <legend>Основные помещения</legend>
-        <div class="home-program-grid">
+        <div class="home-program-grid home-program-main-grid">
           <label class="prop-field"><span>Кухня и гостиная</span><select data-home-program-field="socialMode">${selectOptions(currentDraft.socialMode, [
     ['unknown', 'Не решено'], ['combined', 'Вместе'], ['separate', 'Раздельно'],
   ])}</select></label>
-          <label class="prop-field"><span>Спален${finite(proposedBedrooms) ? ` · предложено ${Number(proposedBedrooms)}` : ''}</span><input type="number" min="1" max="30" step="1" data-home-program-field="bedroomCount" value="${escapeHtml(currentDraft.bedroomCount)}"></label>
-          <label class="prop-field"><span>Основных санузлов${finite(proposedBathrooms) ? ` · предложено ${Number(proposedBathrooms)}` : ''}</span><input type="number" min="1" max="20" step="1" data-home-program-field="bathroomCount" value="${escapeHtml(currentDraft.bathroomCount)}"></label>
+          <label class="prop-field"><span>Общих санузлов${finite(proposedBathrooms) ? ` · предложено ${Number(proposedBathrooms)}` : ''}</span><input type="number" min="1" max="20" step="1" data-home-program-field="bathroomCount" value="${escapeHtml(currentDraft.bathroomCount)}"></label>
         </div>
+        ${bedroomsHtml(currentDraft)}
       </fieldset>
       <fieldset class="home-program-fieldset">
         <legend>Дополнительные помещения</legend>
-        <div class="home-program-grid home-program-options">${optionFields}</div>
+        ${optionsHtml(currentDraft)}
       </fieldset>
       <div class="home-program-savebar">
         <button type="button" class="primary" data-home-program-action="save">Сохранить программу</button>
@@ -332,12 +501,20 @@ export function homeProgramHtml(project) {
 }
 
 export function handleHomeProgramInput(event) {
-  const field = event.target?.closest?.('[data-home-program-field], [data-home-program-option]');
+  const field = event.target?.closest?.('[data-home-program-field], [data-home-program-option], [data-home-program-bedroom]');
   if (!field || !field.closest('[data-home-program]') || !state.project) return false;
   const currentDraft = seedDraft(state.project);
   if (field.dataset.homeProgramOption) {
     currentDraft.options[field.dataset.homeProgramOption] = field.value === 'yes'
       ? true : field.value === 'no' ? false : null;
+  } else if (field.dataset.homeProgramBedroom) {
+    const bedroom = currentDraft.bedrooms.find(({ id }) => id === field.dataset.homeProgramBedroom);
+    if (!bedroom) return false;
+    const key = field.dataset.bedroomField;
+    if (key === 'kind' && BEDROOM_KIND_LABELS[field.value]) bedroom.kind = field.value;
+    else if (key === 'ensuite' || key === 'wardrobe') {
+      bedroom[key] = field.value === 'yes' ? true : field.value === 'no' ? false : null;
+    } else return false;
   } else if (field.dataset.homeProgramField) {
     currentDraft[field.dataset.homeProgramField] = field.value;
   }
@@ -405,16 +582,23 @@ function resizeActors(brief, desired) {
 
 function validateDraft(currentDraft) {
   const values = {
-    actorCount: optionalInteger(currentDraft.actorCount, { min: 1, max: 30 }),
-    dailySeats: optionalInteger(currentDraft.dailySeats, { min: 0, max: 100 }),
-    guestSeats: optionalInteger(currentDraft.guestSeats, { min: 0, max: 100 }),
-    simultaneousCooks: optionalInteger(currentDraft.simultaneousCooks, { min: 1, max: 20 }),
-    bedroomCount: optionalInteger(currentDraft.bedroomCount, { min: 1, max: 30 }),
+    adultCount: optionalInteger(currentDraft.adultCount, { min: 1, max: 20 }),
+    childCount: optionalInteger(currentDraft.childCount, { min: 0, max: 20 }),
+    guestCount: optionalInteger(currentDraft.guestCount, { min: 0, max: 30 }),
+    simultaneousCooks: optionalInteger(currentDraft.simultaneousCooks, { min: 1, max: 6 }),
+    bedroomCount: currentDraft.bedrooms.length,
     bathroomCount: optionalInteger(currentDraft.bathroomCount, { min: 1, max: 20 }),
   };
   if (Object.values(values).some(Number.isNaN)) {
     return { ok: false, message: 'Проверьте количества: нужны целые числа в указанных диапазонах.' };
   }
+  if (!GUEST_FREQUENCIES.some(([id]) => id === currentDraft.guestFrequency)) {
+    return { ok: false, message: 'Укажите, как часто вы принимаете гостей.' };
+  }
+  values.actorCount = values.adultCount + values.childCount;
+  values.dailySeats = values.actorCount;
+  values.guestSeats = values.actorCount + values.guestCount;
+  values.guestFrequency = currentDraft.guestFrequency;
   return { ok: true, values };
 }
 
@@ -448,15 +632,24 @@ function saveProgram({ rerender } = {}) {
     const brief = ensureLayoutBrief(state.project);
     const resized = resizeActors(brief, validation.values.actorCount);
     if (!resized.ok) { resizeError = resized.message; return; }
+    brief.capacity.adultCount = validation.values.adultCount;
+    brief.capacity.childCount = validation.values.childCount;
     brief.capacity.dailySeats = validation.values.dailySeats;
+    brief.capacity.guestCount = validation.values.guestCount;
     brief.capacity.guestSeats = validation.values.guestSeats;
+    brief.capacity.guestFrequency = validation.values.guestFrequency;
     brief.capacity.simultaneousCooks = validation.values.simultaneousCooks;
     brief.homeProgram = {
       confirmed: true,
       socialMode: currentDraft.socialMode || 'unknown',
       bedroomCount: validation.values.bedroomCount,
+      bedrooms: currentDraft.bedrooms.map((bedroom) => ({ ...bedroom })),
       bathroomCount: validation.values.bathroomCount,
-      options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [key, currentDraft.options[key] ?? null])),
+      options: Object.fromEntries(HOME_PROGRAM_OPTION_KEYS.map((key) => [
+        key, key === 'guestBedroom'
+          ? currentDraft.bedrooms.some(({ kind }) => kind === 'guest')
+          : currentDraft.options[key] ?? null,
+      ])),
     };
   });
   if (!changed || resizeError) {
@@ -473,21 +666,6 @@ function saveProgram({ rerender } = {}) {
   toast('Программа дома сохранена');
   rerender?.();
   requestAnimationFrame(() => document.querySelector('[data-home-program-action="save"]')?.focus({ preventScroll: true }));
-  return true;
-}
-
-function addRoom(button, { closePanel, announce } = {}) {
-  const type = button.dataset.roomType;
-  const definition = roomType(type);
-  if (!definition) {
-    toast('Не удалось определить тип помещения', true);
-    return false;
-  }
-  closePanel?.({ restoreFocus: false });
-  setEditorMode('plan');
-  startPlaceRoom(type);
-  toast(`Разместите «${definition.title}» на плане`);
-  announce?.(`Включён инструмент: ${definition.title}`);
   return true;
 }
 
@@ -539,8 +717,35 @@ export function handleHomeProgramClick(event, callbacks = {}) {
   const button = event.target?.closest?.('[data-home-program-action]');
   if (!button || !button.closest('[data-home-program]')) return false;
   const action = button.dataset.homeProgramAction;
+  if (action === 'step' || action === 'guest-preset') {
+    const currentDraft = seedDraft(state.project);
+    const field = action === 'step' ? button.dataset.homeProgramStep : 'guestCount';
+    const bounds = {
+      adultCount: [1, 20], childCount: [0, 20], guestCount: [0, 30],
+      simultaneousCooks: [1, 6], bedroomCount: [1, 30],
+    }[field];
+    if (!bounds) return false;
+    const current = field === 'bedroomCount'
+      ? currentDraft.bedrooms.length : countValue(currentDraft[field], bounds[0]);
+    const requested = action === 'guest-preset'
+      ? countValue(button.dataset.homeProgramPreset, current)
+      : current + Number(button.dataset.delta || 0);
+    const next = Math.max(bounds[0], Math.min(bounds[1], requested));
+    if (field === 'bedroomCount') resizeDraftBedrooms(currentDraft, next);
+    else currentDraft[field] = String(next);
+    currentDraft.preliminary = true;
+    draftDirty = true;
+    draftError = '';
+    callbacks.rerender?.();
+    requestAnimationFrame(() => {
+      const selector = action === 'guest-preset'
+        ? `[data-home-program-preset="${button.dataset.homeProgramPreset}"]`
+        : `[data-home-program-step="${field}"][data-delta="${button.dataset.delta}"]`;
+      document.querySelector(selector)?.focus({ preventScroll: true });
+    });
+    return true;
+  }
   if (action === 'save') return saveProgram(callbacks);
-  if (action === 'add-room') return addRoom(button, callbacks);
   if (action === 'toggle-overlay') return toggleOverlay(callbacks);
   return false;
 }

@@ -3,7 +3,11 @@
 import { applyOpeningPreset } from '../core/opening-preset.js';
 import { DOOR_WIDTH, GRID_STEP, WINDOW_WIDTH, furnitureDef, gridStepForScale, isOpenRoom, roomType } from '../core/catalog.js';
 import { itemsInRoom, reclaimItemsFromChild } from '../core/furnish.js';
-import { activeLevel, createItem, createOpening, createRoom, removeRoom, roomById } from '../core/model.js';
+import {
+  activeLevel, createItem, createOpening, createRoom, levelProject, removeRoom, roomById,
+} from '../core/model.js';
+import { buildingContentCenter, toLocal, toWorld } from '../core/building.js';
+import { buildingAlignedToView } from '../core/view-angles.js';
 import { isFixedSizeComp, withDefaultComp } from '../core/composite.js';
 import { editKitchen } from '../core/kitchen.js';
 import { OPENING_GAP, fitOpeningOffset, resolveOpeningConflicts, snapOpeningOffset } from '../core/opening-spacing.js';
@@ -97,19 +101,44 @@ export function toggleSelectedWallHidden() {
   toast(hidden ? 'Стена скрыта · Ctrl+Z — вернуть' : 'Стена снова показана');
 }
 
+// Кадр будущего помещения: при повернутом пользовательском виде возвращает
+// координаты и копию проекта уже в тех осях, которые применятся по клику.
+// Используется и предпросмотром, и самой вставкой — поэтому призрак не меняет
+// ориентацию в последний момент.
+export function roomPlacementContext(at) {
+  // Комнаты живут в единых локальных осях дома. Если пользователь повернул
+  // сам вид «Плана», при вставке без отдельной команды подстраиваем под него
+  // оси всего дома. Поворот и новая комната входят в одну Undo-операцию.
+  // Точку курсора переводим через мир, поэтому помещение не «прыгает».
+  const pivot = buildingContentCenter(state.project) || at;
+  const alignedBuilding = state.modeName === 'plan'
+    ? buildingAlignedToView(state.project, 'plan', pivot)
+    : null;
+  const placementAt = alignedBuilding
+    ? toLocal(alignedBuilding, toWorld(state.project.building, at))
+    : at;
+  const placementProject = alignedBuilding
+    ? levelProject({ ...state.project, building: alignedBuilding }, state.project.activeLevel)
+    : state.project;
+  return { at: placementAt, project: placementProject, building: alignedBuilding };
+}
+
 // Точки — в локальных координатах дома (см. core/building.js).
 export function placeRoomAt(at, typeOverride = null) {
+  const placement = roomPlacementContext(at);
+  const { building: alignedBuilding, project: placementProject } = placement;
+  const placementAt = placement.at;
   const type = typeOverride || state.tool.type;
   const def = roomType(type);
   const turned = !typeOverride && (state.tool?.rotation || 0) % 180 !== 0;
   const w = turned ? def.h : def.w;
   const h = turned ? def.w : def.h;
-  let x = at.x - w / 2;
-  let y = at.y - h / 2;
-  const parentId = def.open ? null : determineParent(state.project, { x, y, w, h }, null);
-  const snapped = snapRoomPosition(state.project, { id: '__ghost__', type, w, h }, x, y, 14 / state.view.scale, parentId);
+  let x = placementAt.x - w / 2;
+  let y = placementAt.y - h / 2;
+  const parentId = def.open ? null : determineParent(placementProject, { x, y, w, h }, null);
+  const snapped = snapRoomPosition(placementProject, { id: '__ghost__', type, w, h }, x, y, 14 / state.view.scale, parentId);
   x = snapped.x; y = snapped.y;
-  const verdict = validateRoomPlacement(state.project, { type, x, y, w, h, parentId }, null);
+  const verdict = validateRoomPlacement(placementProject, { type, x, y, w, h, parentId }, null);
   if (!verdict.ok) { toast(verdict.reason, true); return; }
   const room = createRoom(type, x, y, w, h);
   room.parentId = parentId;
@@ -123,6 +152,7 @@ export function placeRoomAt(at, typeOverride = null) {
   }
   let eaten = null;
   mutate(() => {
+    if (alignedBuilding) state.project.building = alignedBuilding;
     state.project.rooms.push(room);
     if (stair) state.project.items.push(stair);
     // Мебель родителя из-под нового помещения вытаскивается.
@@ -135,10 +165,12 @@ export function placeRoomAt(at, typeOverride = null) {
   cancelTool();
   selectObject(stair ? { type: 'item', id: stair.id } : { type: 'room', id: room.id });
   const eatText = eatSummary(eaten);
-  if (verdict.warning) toast(`⚠ ${verdict.warning} — поставлено, проверьте отступы${eatText ? `. ${eatText}` : ''}`, true);
-  else if (eatText) toast(eatText, Boolean(eaten.failed.length || eaten.lost.length));
-  else if (stair) toast('Лестница создана и рассчитана по высоте этажа — выберите форму справа');
-  else if (parentId) toast(`«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`);
+  const alignedText = alignedBuilding ? 'Оси дома автоматически развёрнуты по текущему виду.' : '';
+  if (verdict.warning) toast(`${alignedText ? `${alignedText} ` : ''}⚠ ${verdict.warning} — поставлено, проверьте отступы${eatText ? `. ${eatText}` : ''}`, true);
+  else if (eatText) toast(`${alignedText ? `${alignedText} ` : ''}${eatText}`, Boolean(alignedBuilding || eaten.failed.length || eaten.lost.length));
+  else if (stair) toast(`${alignedText ? `${alignedText} ` : ''}Лестница создана и рассчитана по высоте этажа — выберите форму справа`, Boolean(alignedBuilding));
+  else if (parentId) toast(`${alignedText ? `${alignedText} ` : ''}«${room.name}» вложена в «${roomById(state.project, parentId).name}» и отнимает её площадь`, Boolean(alignedBuilding));
+  else if (alignedText) toast(`${alignedText} Ctrl+Z вернёт и помещение, и поворот.`, true);
 }
 
 // Расчёт параметров проёма под курсором: позиция, сторона открывания и петли

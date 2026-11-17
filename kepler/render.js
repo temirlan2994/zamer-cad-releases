@@ -28,7 +28,7 @@ import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './co
 import { RAILING_INSET, roomRailings } from './core/railings.js';
 import {
   buildZonePolygon, neighborBuffers, neighborRectCorners, polygonAreaM2, sunPosition,
-  shadowVector, shadowPolygonFromCorners,
+  polylineMidpoints, shadowVector, shadowPolygonFromCorners,
 } from './core/site.js';
 import { computeRoomEdges, computeBuildingOutline } from './core/rooms.js';
 import { composeView, rectCornersWorld } from './core/building.js';
@@ -671,6 +671,8 @@ export function createRenderer(canvas) {
     setView(pv);
     if (state.ghost?.rect) {
       const g = state.ghost;
+      const ghostView = g.building ? composeView(view, g.building) : pv;
+      setView(ghostView);
       // valid+warn — янтарный (можно ставить, но с предупреждением);
       // valid — синий; invalid — красный (ставить нельзя).
       if (g.warn) { ctx.fillStyle = 'rgba(225,140,30,0.16)'; ctx.strokeStyle = '#e08c1e'; }
@@ -681,6 +683,7 @@ export function createRenderer(canvas) {
       ctx.fillRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
       ctx.strokeRect(g.rect.x, g.rect.y, g.rect.w, g.rect.h);
       ctx.setLineDash([]);
+      setView(pv);
     }
     if (state.ghostItem) {
       ctx.save();
@@ -1011,7 +1014,9 @@ export function createRenderer(canvas) {
       // Размер призрака — над его верхней (на экране) гранью, на подложке:
       // в центре он ложился на имя комнаты.
       const r = g.rect;
-      const sc = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => p2s(x, y));
+      const ghostPv = g.building ? composeView(view, g.building) : pv;
+      const ghostP2s = (x, y) => projectPoint(ghostPv, x, y);
+      const sc = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => ghostP2s(x, y));
       const topY = Math.min(...sc.map((q) => q.y));
       const midX = sc.reduce((sum, q) => sum + q.x, 0) / 4;
       const color = g.warn ? '#e08c1e' : (g.valid ? tokens.accent : tokens.danger);
@@ -1392,6 +1397,30 @@ function drawSiteLabels(ctx, state, site, w2s, tokens) {
       : sel.kind === 'redline' ? site.redLine
         : sel.kind === 'road' ? site.roads.find((r) => r.id === sel.id)?.points : null;
     if (points) {
+      // Круг с плюсом посередине стороны добавляет новый угол. На коротких
+      // экранных отрезках скрываем его, чтобы не перекрывать вершины.
+      if (sel.kind === 'boundary' && state.tool?.kind === 'edit' && state.tool.target === 'boundary') {
+        for (const handle of polylineMidpoints(points, true)) {
+          const a = w2s(points[handle.from].x, points[handle.from].y);
+          const b = w2s(points[handle.to].x, points[handle.to].y);
+          if (Math.hypot(b.x - a.x, b.y - a.y) < SITE_INSERT_HANDLE_MIN_EDGE_PX) continue;
+          const p = w2s(handle.x, handle.y);
+          const r = (HANDLE_SIZE + 2) / 2;
+          ctx.fillStyle = tokens.surface;
+          ctx.strokeStyle = tokens.accent;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(p.x - 2.5, p.y);
+          ctx.lineTo(p.x + 2.5, p.y);
+          ctx.moveTo(p.x, p.y - 2.5);
+          ctx.lineTo(p.x, p.y + 2.5);
+          ctx.stroke();
+        }
+      }
       for (const point of points) {
         const p = w2s(point.x, point.y);
         ctx.fillStyle = '#ffffff';
@@ -3265,6 +3294,7 @@ function drawWitness(ctx, a, b) {
 }
 
 export const HANDLE_SIZE = 9;
+export const SITE_INSERT_HANDLE_MIN_EDGE_PX = HANDLE_SIZE * 4;
 
 // Ручки съеденной комнаты — на её НОМИНАЛЬНОЙ форме (core/v7/eat-bridge.js):
 // жест правит номинал, видимая форма пересчитывается (срез 3 этапа 2).

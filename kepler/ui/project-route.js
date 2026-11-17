@@ -252,6 +252,8 @@ const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action',
   'data-route-confirm', 'data-route-footprint', 'data-route-tool',
   'data-home-program-field', 'data-home-program-option', 'data-home-program-action',
+  'data-home-program-bedroom', 'data-bedroom-field', 'data-home-program-step',
+  'data-home-program-preset', 'data-delta',
   'data-home-flow-scenario', 'data-home-flow-frequency-value',
   'data-home-flow-frequency-period', 'data-home-flow-binding',
   'data-home-flows-action', 'data-home-engineering-action',

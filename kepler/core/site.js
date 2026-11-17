@@ -137,6 +137,27 @@ export function ensureSite(project) {
 
 // ---------------------------------------------------------------- Полигоны
 
+// Точки вставки новых вершин посередине каждого отрезка. index — позиция,
+// куда нужно вставить вершину: у замыкающего ребра это конец массива.
+export function polylineMidpoints(points, closed = false) {
+  if (!Array.isArray(points) || points.length < 2) return [];
+  const count = closed ? points.length : points.length - 1;
+  const handles = [];
+  for (let from = 0; from < count; from += 1) {
+    const to = (from + 1) % points.length;
+    const a = points[from];
+    const b = points[to];
+    handles.push({
+      x: (a.x + b.x) / 2,
+      y: (a.y + b.y) / 2,
+      index: from + 1,
+      from,
+      to,
+    });
+  }
+  return handles;
+}
+
 export function polygonArea(points) {
   let sum = 0;
   for (let i = 0; i < points.length; i += 1) {

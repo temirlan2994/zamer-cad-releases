@@ -1,7 +1,10 @@
 // Библиотека (выезжает слева у колонки инструментов): вкладки, карточки
 // помещений, каталог мебели.
 
-import { FURNITURE_CATEGORIES, allFurniture, furnitureByCategory, roomColors, roomTypesByCategory } from '../core/catalog.js';
+import {
+  FURNITURE_CATEGORIES, allFurniture, furnitureByCategory, roomColors, roomType, roomTypesByCategory,
+} from '../core/catalog.js';
+import { analyzeHomeProgram } from '../core/home-program.js';
 import { drawGlyphPreview } from '../render.js';
 import { el, refs } from './dom.js';
 import { state } from './state.js';
@@ -10,8 +13,10 @@ import { bindOpeningLibrary, renderOpeningLibrary } from './opening-library.js';
 import { renderStairLibrary } from './stair-library.js';
 import { renderToolstrip } from './toolstrip.js';
 import { cancelTool, startPlaceFurniture, startPlaceRoom } from './tools.js';
+import { PROJECT_CHANGE_EVENT } from './store.js';
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
+let projectLibraryBound = false;
 
 // Вкладки библиотеки: в режиме «План» переключают «Помещения» / «Мебель»
 // (как вкладки обозревателя в Revit). В режиме «Участок» каталога нет —
@@ -19,6 +24,10 @@ let furnitureCat = FURNITURE_CATEGORIES[0].id;
 // панель скрыта.
 export function bindFurnitureSearch() {
   el('furnSearch')?.addEventListener('input', () => renderFurnitureItems());
+  if (!projectLibraryBound) {
+    projectLibraryBound = true;
+    document.addEventListener(PROJECT_CHANGE_EVENT, () => renderLibrary());
+  }
   bindLandscapeLibrary();
   bindOpeningLibrary();
 }
@@ -99,6 +108,18 @@ export function renderLibrary() {
   // План: помещения по категориям (заголовок группы + чипы); у чипа —
   // точка цвета типа, как пол на плане. Без размеров.
   refs.roomCards.innerHTML = '';
+  const needs = programRoomNeeds();
+  if (needs.length) {
+    const box = document.createElement('section');
+    box.className = 'room-group room-group-program';
+    box.dataset.cat = 'program';
+    box.innerHTML = '<h3 class="room-group-title">По программе <small>перетащите на план</small></h3>';
+    const chips = document.createElement('div');
+    chips.className = 'room-group-chips';
+    for (const need of needs) chips.appendChild(roomCard(need.def, { count: need.count, program: true }));
+    box.appendChild(chips);
+    refs.roomCards.appendChild(box);
+  }
   for (const group of roomTypesByCategory()) {
     if (!group.types.length) continue;
     const box = document.createElement('section');
@@ -115,14 +136,32 @@ export function renderLibrary() {
   renderToolstrip(); // инструменты участка и подсветка активного — на панели инструментов
 }
 
-function roomCard(def) {
+function programRoomNeeds() {
+  let targets;
+  try { targets = analyzeHomeProgram(state.project).targets || []; } catch { return []; }
+  const byType = new Map();
+  for (const target of targets) {
+    const type = target.canonicalType || target.addType;
+    const count = Math.max(0, Number(target.missingCount) || 0);
+    if (!type || !count) continue;
+    const def = roomType(type);
+    if (!def) continue;
+    const existing = byType.get(type);
+    if (existing) existing.count += count;
+    else byType.set(type, { def, count });
+  }
+  return [...byType.values()];
+}
+
+function roomCard(def, { count = 0, program = false } = {}) {
   const card = document.createElement('button');
   card.className = 'room-card names-only';
+  if (program) card.classList.add('program-room-card');
   card.draggable = true;
   card.dataset.type = def.type;
   card.title = `${def.title} · ${def.w}×${def.h} мм`;
   if (state.tool?.kind === 'place-room' && state.tool.type === def.type) card.classList.add('active');
-  card.innerHTML = `<span class="room-dot" style="--dot:${roomColors(def.type).swatch}"></span><span class="room-card-name">${def.title}</span>`;
+  card.innerHTML = `<span class="room-dot" style="--dot:${roomColors(def.type).swatch}"></span><span class="room-card-name">${def.title}</span>${count > 0 ? `<span class="program-room-count">×${count}</span>` : ''}`;
   card.addEventListener('click', () => {
     if (state.tool?.kind === 'place-room' && state.tool.type === def.type) cancelTool();
     else startPlaceRoom(def.type);

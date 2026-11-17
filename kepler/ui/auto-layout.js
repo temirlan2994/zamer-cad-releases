@@ -529,11 +529,11 @@ function layoutBriefEditorHtml(room) {
     </details>
     ${actorsEditorHtml(brief.actors)}
     <details class="layout-brief-subsection" ${briefSectionAttrs('capacity')}>
-      <summary>Вместимость <small>${brief.capacity.dailySeats ?? '—'} + ${brief.capacity.guestSeats ?? '—'} · готовят ${brief.capacity.simultaneousCooks ?? '—'}</small></summary>
+      <summary>Вместимость <small>${brief.capacity.dailySeats ?? '—'} каждый день · ${brief.capacity.guestSeats ?? '—'} при гостях · готовят вместе ${brief.capacity.simultaneousCooks ?? '—'}</small></summary>
       <div class="prop-grid layout-brief-capacity">
-        <label class="prop-field"><span>Ежедневных мест</span><input data-capacity="dailySeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.dailySeats)}"></label>
-        <label class="prop-field"><span>Гостевых мест</span><input data-capacity="guestSeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.guestSeats)}"></label>
-        <label class="prop-field"><span>Одновременно готовят</span><input data-capacity="simultaneousCooks" type="number" min="1" step="1" value="${fieldValue(brief.capacity.simultaneousCooks)}"></label>
+        <label class="prop-field"><span>Мест каждый день</span><input data-capacity="dailySeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.dailySeats)}"></label>
+        <label class="prop-field"><span>Всего мест при гостях</span><input data-capacity="guestSeats" type="number" min="0" step="1" value="${fieldValue(brief.capacity.guestSeats)}"></label>
+        <label class="prop-field"><span>Готовят вместе</span><input data-capacity="simultaneousCooks" type="number" min="1" step="1" value="${fieldValue(brief.capacity.simultaneousCooks)}"></label>
       </div>
     </details>
     ${scenariosEditorHtml(brief.scenarioSelections)}

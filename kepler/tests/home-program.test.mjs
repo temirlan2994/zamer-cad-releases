@@ -61,7 +61,9 @@ test('рекомендация по семье предварительная и
   const project = createProject('Семья');
   project.layoutBrief = {
     actors: Array.from({ length: 7 }, (_, index) => ({ id: `A${index}`, alias: `Жилец ${index + 1}` })),
-    capacity: { dailySeats: 7, guestSeats: 6, simultaneousCooks: 2 },
+    capacity: {
+      dailySeats: 7, guestSeats: 13, guestCount: 6, adultCount: 4, childCount: 3, simultaneousCooks: 2,
+    },
   };
   const suggestion = suggestHomeProgram(project);
   assert.equal(suggestion.status, 'preliminary');
@@ -88,6 +90,77 @@ test('homeProgram нормализует enum, положительные кол
   assert.equal(program.options.office, true);
   assert.equal(program.options.garage, false);
   assert.equal(program.options.terrace, null);
+});
+
+test('homeProgram хранит до 30 типизированных спален с уникальными id', () => {
+  const program = normalizeHomeProgram({
+    confirmed: true,
+    socialMode: 'combined',
+    bedroomCount: 9,
+    bathroomCount: 2,
+    bedrooms: [
+      { id: 'sleep', kind: 'main', ensuite: true, wardrobe: null },
+      { id: 'sleep', kind: 'child', ensuite: false, wardrobe: true },
+      { id: '', kind: 'неизвестная', ensuite: 'да', wardrobe: false },
+    ],
+    options: resolvedOptions(),
+  });
+  assert.equal(program.bedroomCount, 3, 'явный список задаёт число спален');
+  assert.deepEqual(program.bedrooms, [
+    { id: 'sleep', kind: 'main', ensuite: true, wardrobe: null },
+    { id: 'sleep-2', kind: 'child', ensuite: false, wardrobe: true },
+    { id: 'bedroom-3', kind: 'adult', ensuite: null, wardrobe: false },
+  ]);
+});
+
+test('явные типы спален дают отдельные цели без дубля гостевой', () => {
+  const project = createProject('Спальни по составу');
+  project.layoutBrief = {
+    homeProgram: confirmedProgram({
+      bedroomCount: 4,
+      bedrooms: [
+        { id: 'main', kind: 'main', ensuite: true, wardrobe: true },
+        { id: 'kid-1', kind: 'child', ensuite: false, wardrobe: false },
+        { id: 'kid-2', kind: 'child', ensuite: null, wardrobe: null },
+        { id: 'guest', kind: 'guest', ensuite: false, wardrobe: false },
+      ],
+      options: resolvedOptions({ guestBedroom: true, wardrobe: false }),
+    }),
+  };
+  const result = analyzeHomeProgram(project);
+  const bedrooms = result.targets.filter((target) => target.id.startsWith('bedrooms-'));
+  assert.deepEqual(bedrooms.map(({ id, count, canonicalType }) => ({ id, count, canonicalType })), [
+    { id: 'bedrooms-main', count: 1, canonicalType: 'master-bedroom' },
+    { id: 'bedrooms-child', count: 2, canonicalType: 'kids-room' },
+    { id: 'bedrooms-guest', count: 1, canonicalType: 'guest-bedroom' },
+  ]);
+  assert.equal(result.targets.filter((target) => target.canonicalType === 'guest-bedroom').length, 1);
+  const wardrobe = result.targets.find((target) => target.id === 'wardrobe');
+  assert.equal(wardrobe.count, 1);
+  const bathrooms = result.targets.find((target) => target.id === 'bathrooms');
+  assert.equal(bathrooms.count, 2, 'общий санузел и санузел при спальне считаются отдельно');
+  assert.deepEqual(bathrooms.requirements, { common: 1, ensuite: 1 });
+  assert.equal(bedrooms[0].requirements.ensuite.status, 'unknown', 'свой санузел — требование, не доказанный результат');
+  assert.ok(result.unresolvedFields.includes('bedrooms.kid-2.ensuite'));
+  assert.ok(result.warnings.some((warning) => /конкретной комнатой/i.test(warning)));
+});
+
+test('гостевой санузел предлагается по числу гостей, legacy выводится из общего числа мест', () => {
+  const explicit = createProject('Гости');
+  explicit.layoutBrief = {
+    actors: [{ id: 'a1' }, { id: 'a2' }],
+    capacity: { dailySeats: 2, guestSeats: 7, guestCount: 5 },
+  };
+  assert.equal(suggestHomeProgram(explicit).program.options.guestWc, true);
+  assert.equal(suggestHomeProgram(explicit).facts.guestCount, 5);
+
+  const legacy = createProject('Старые гости');
+  legacy.layoutBrief = {
+    actors: [{ id: 'a1' }, { id: 'a2' }],
+    capacity: { dailySeats: 2, guestSeats: 6 },
+  };
+  assert.equal(suggestHomeProgram(legacy).facts.guestCount, 4);
+  assert.equal(suggestHomeProgram(legacy).program.options.guestWc, true);
 });
 
 test('программа дома делает проект непустым до первого помещения', () => {

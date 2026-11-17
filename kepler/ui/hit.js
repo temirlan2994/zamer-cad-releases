@@ -5,12 +5,12 @@ import { isOpenRoom, isShaft } from '../core/catalog.js';
 import { itemsEditable, planHitStack } from '../core/hit-stack.js';
 import { itemRect } from '../core/furnish.js';
 import { roomById } from '../core/model.js';
-import { distanceToPolyline } from '../core/site.js';
+import { distanceToPolyline, polylineMidpoints } from '../core/site.js';
 import { openingRect, wallContains, wallDistance } from '../core/walls.js';
 import { roomContainsPoint } from '../core/room-shape.js';
 import { RAILING_INSET, roomRailings } from '../core/railings.js';
 import {
-  HANDLE_SIZE, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
+  HANDLE_SIZE, SITE_INSERT_HANDLE_MIN_EDGE_PX, itemCorners, itemRotators, neighborCorners, neighborRotators, openingHandles,
   roomHandles, rotateVec, underlayCenter, underlayHandles, underlayRotators,
 } from '../render.js';
 import { inItemCore, itemEdgeHandles, itemHandleMode } from '../core/item-handles.js';
@@ -195,7 +195,28 @@ export function hitSiteVertex(screen) {
   for (let i = 0; i < points.length; i += 1) {
     const p = worldToScreen(points[i].x, points[i].y);
     if (Math.abs(p.x - screen.x) <= tol() && Math.abs(p.y - screen.y) <= tol()) {
-      return { kind: sel.kind, id: sel.id, index: i, points };
+      return {
+        kind: sel.kind, id: sel.id, index: i, points,
+        distance: Math.hypot(p.x - screen.x, p.y - screen.y),
+      };
+    }
+  }
+  return null;
+}
+
+// Круглые ручки посередине сторон выбранной границы: клик вставляет угол.
+export function hitSiteMidpoint(screen) {
+  const sel = state.selection;
+  const points = sel?.type === 'site' && sel.kind === 'boundary' ? state.project.site.boundary : null;
+  if (!points) return null;
+  for (const handle of polylineMidpoints(points, true)) {
+    const a = worldToScreen(points[handle.from].x, points[handle.from].y);
+    const b = worldToScreen(points[handle.to].x, points[handle.to].y);
+    if (Math.hypot(b.x - a.x, b.y - a.y) < SITE_INSERT_HANDLE_MIN_EDGE_PX) continue;
+    const p = worldToScreen(handle.x, handle.y);
+    const distance = Math.hypot(p.x - screen.x, p.y - screen.y);
+    if (distance <= tol()) {
+      return { kind: 'boundary', points, ...handle, distance };
     }
   }
   return null;
