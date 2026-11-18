@@ -618,16 +618,124 @@ input {
 .snap-panel {
   align-items: center;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px var(--border);
   display: flex;
+  gap: 6px;
   min-width: 0;
-  padding: 7px 10px;
+  padding: 0 10px;
+  position: relative;
+  z-index: 11;
 }
 
 .snap-panel .snap-row {
+  flex: 1 1 auto;
   justify-content: flex-start;
   min-width: 0;
-  width: 100%;
+}
+
+.snap-more {
+  flex: 0 0 auto;
+}
+
+.snap-more summary {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 700;
+  gap: 4px;
+  justify-content: center;
+  list-style: none;
+  min-height: 44px;
+  padding: 0 7px;
+  touch-action: manipulation;
+}
+
+.snap-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.snap-more summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.snap-more summary::after,
+.tool-with-menu small::after {
+  border-bottom: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  content: "";
+  display: inline-block;
+  height: 4px;
+  width: 4px;
+}
+
+.snap-more summary::after {
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.snap-more[open] summary::after,
+.tool-with-menu small::after {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.snap-more-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 16%, transparent);
+  display: grid;
+  gap: 5px;
+  min-width: 184px;
+  padding: 6px;
+  position: absolute;
+  right: 10px;
+  top: calc(100% + 4px);
+}
+
+.snap-more:not([open]) .snap-more-panel {
+  display: none;
+}
+
+.snap-more-panel button,
+.snap-more-step {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  min-height: 44px;
+  text-align: left;
+}
+
+.snap-more-panel button {
+  color: var(--text);
+}
+
+.snap-more-panel button span {
+  flex: 0 0 1em;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.snap-more-step {
+  color: var(--muted);
+  font-size: 0.78rem;
+  justify-content: space-between;
+  padding-left: 8px;
+}
+
+.snap-more-step select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font: inherit;
+  min-height: 44px;
+  min-width: 62px;
+  padding: 0 7px;
 }
 
 .workspace {
@@ -638,6 +746,7 @@ input {
 }
 
 .line-command-panel {
+  --line-error: #a7222a;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -670,6 +779,17 @@ input {
   grid-template-columns: 1fr;
 }
 
+.line-mode-control,
+.line-radius-control {
+  align-items: center;
+  color: var(--muted);
+  display: grid;
+  font-size: 0.8rem;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-left: 4px;
+}
+
 .line-copy-option {
   align-items: center;
   display: flex;
@@ -684,16 +804,6 @@ input {
   height: 22px;
   min-height: 0;
   width: 22px;
-}
-
-.line-radius-control {
-  align-items: center;
-  color: var(--muted);
-  display: grid;
-  font-size: 0.8rem;
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr);
-  padding-left: 4px;
 }
 
 .line-command-panel input,
@@ -736,9 +846,19 @@ input {
 }
 
 .line-command-panel .line-command-primary {
+  background: color-mix(in srgb, var(--accent) 86%, #000);
+  border-color: transparent;
+  color: #fff;
+}
+
+.app-shell[data-theme="dark"] .line-command-panel {
+  --line-error: #ffadb1;
+}
+
+.app-shell[data-theme="dark"] .line-command-panel .line-command-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--bg);
 }
 
 .line-command-panel .line-command-submit {
@@ -754,11 +874,28 @@ input {
   flex: 1 1 auto;
 }
 
+.app-shell.keyboard-open .line-chain-actions {
+  display: none;
+}
+
 .line-command-hint {
   color: var(--muted);
   font-size: 0.74rem;
   line-height: 1.35;
   margin: 2px 4px;
+}
+
+.line-command-error {
+  color: var(--line-error);
+  font-size: 0.8rem;
+  grid-column: 1 / -1;
+  line-height: 1.35;
+  margin: 2px 4px;
+}
+
+.line-command-panel input[aria-invalid="true"] {
+  border-color: var(--line-error);
+  outline-color: var(--line-error);
 }
 
 #cadCanvas {
@@ -811,6 +948,12 @@ input {
   color: var(--muted);
   font-size: 0.52rem;
   line-height: 1;
+}
+
+.tool-with-menu small {
+  align-items: center;
+  display: flex;
+  gap: 4px;
 }
 
 .tool.active {
@@ -1043,16 +1186,36 @@ input {
   gap: 6px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  scrollbar-color: var(--muted) var(--surface-2);
+  scrollbar-width: thin;
 }
 
 .select-tool-menu::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.select-tool-menu::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 99px;
 }
 
 .select-tool-menu button {
   flex: 0 0 76px;
   min-width: 76px;
+}
+
+.select-tool-menu:has(.line-edit-action:not([hidden])) {
+  bottom: calc(74px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-auto-columns: 70px;
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  grid-template-rows: repeat(2, 44px);
+}
+
+.select-tool-menu:has(.line-edit-action:not([hidden])) button {
+  height: 44px;
+  min-width: 0;
 }
 
 .select-mode-menu {
@@ -1412,9 +1575,9 @@ input {
   display: inline-flex;
   font-size: 1.08rem;
   font-weight: 900;
-  height: 34px;
+  height: 44px;
   justify-content: center;
-  min-width: 42px;
+  min-width: 44px;
   padding: 0;
 }
 
@@ -2045,8 +2208,14 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
   .project-action-card { padding: 12px 8px; }
   .project-card { grid-template-columns: 48px minmax(0, 1fr); padding: 12px; gap: 10px; }
   .project-card-preview { width: 48px; height: 60px; }
+  .topbar {
+    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) 46px repeat(5, 35px);
+    padding-inline: 8px;
+  }
+  .annotation-scale-control { padding-inline: 3px; }
+  .annotation-scale-control select { width: 35px; }
   .snap-panel .snap-row { gap: 4px; }
-  .snap-panel .snap.icon-snap { min-width: 39px; }
 }
 
 /* Wall command keeps the canvas, cursor and line input controls in place. */

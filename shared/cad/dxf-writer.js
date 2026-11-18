@@ -57,18 +57,37 @@ export function dxfContinuousLineType() {
   return ["0", "LTYPE", "2", "CONTINUOUS", "70", "0", "3", "Solid line", "72", "65", "73", "0", "40", "0"];
 }
 
-export function dxfLine(x1, y1, x2, y2, layer, z1 = 0, z2 = z1) {
-  if (![x1, y1, x2, y2].every(finiteNumber)) return [];
+export function dxfLine(x1, y1, x2, y2, layer, z1 = 0, z2 = z1, preservePrecision = false) {
+  if (![x1, y1, x2, y2].every(preservePrecision ? Number.isFinite : finiteNumber)) return [];
+  if (preservePrecision && x1 === x2 && y1 === y2) return [];
+  const format = preservePrecision ? exactDxfCoordinate : roundDxf;
   return [
     "0", "LINE",
     "8", layer || "measure",
-    "10", roundDxf(x1),
-    "20", roundDxf(-y1),
+    "10", format(x1),
+    "20", format(-y1),
     "30", finiteNumber(z1) && z1 ? roundDxf(z1) : "0",
-    "11", roundDxf(x2),
-    "21", roundDxf(-y2),
+    "11", format(x2),
+    "21", format(-y2),
     "31", finiteNumber(z2) && z2 ? roundDxf(z2) : "0",
   ];
+}
+
+function exactDxfCoordinate(value) {
+  return String(Number(value));
+}
+
+function appendDxfPolyline(out, { points, closed }, layer) {
+  if (!Array.isArray(points) || points.length < (closed ? 3 : 2)) return;
+  for (const point of points) {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+  }
+  // AC1009 uses a POLYLINE with following VERTEX records, terminated by SEQEND.
+  out.push("0", "POLYLINE", "8", layer, "66", "1", "10", "0", "20", "0", "30", "0", "70", closed ? "1" : "0");
+  for (const { x, y } of points) {
+    out.push("0", "VERTEX", "8", layer, "10", exactDxfCoordinate(x), "20", exactDxfCoordinate(-y), "30", "0");
+  }
+  out.push("0", "SEQEND", "8", layer);
 }
 
 // Точка с отметкой Z (рельеф).
@@ -82,11 +101,20 @@ export function dxfCircle(cx, cy, radius, layer) {
   return ["0", "CIRCLE", "8", layer || "measure", "10", roundDxf(cx), "20", roundDxf(-cy), "30", "0", "40", roundDxf(Math.abs(radius))];
 }
 
-export function dxfArc(arc, layer) {
-  let startDeg = normalizeDegrees(radToDeg(-arc.startAngle));
-  let endDeg = normalizeDegrees(radToDeg(-arc.endAngle));
+export function dxfArc(arc, layer, preservePrecision = false) {
+  const { center, radius, startAngle, endAngle } = arc;
+  if (preservePrecision && (![center.x, center.y, radius, startAngle, endAngle].every(Number.isFinite) || radius <= 0)) return [];
+  const normalize = preservePrecision ? exactArcAngle : normalizeDegrees;
+  const format = preservePrecision ? exactDxfCoordinate : roundDxf;
+  let startDeg = normalize(radToDeg(-startAngle));
+  let endDeg = normalize(radToDeg(-endAngle));
   if (arc.counterClockwise) [startDeg, endDeg] = [endDeg, startDeg];
-  return ["0", "ARC", "8", layer || "measure", "10", roundDxf(arc.center.x), "20", roundDxf(-arc.center.y), "30", "0", "40", roundDxf(arc.radius), "50", roundDxf(startDeg), "51", roundDxf(endDeg)];
+  return ["0", "ARC", "8", layer || "measure", "10", format(center.x), "20", format(-center.y), "30", "0", "40", format(radius), "50", format(startDeg), "51", format(endDeg)];
+}
+
+function exactArcAngle(degrees) {
+  const remainder = degrees % 360;
+  return remainder < 0 ? (remainder + 360) % 360 : remainder;
 }
 
 export function dxfText(entity, layer) {
@@ -191,7 +219,7 @@ function dxfLayerName(layer, layerMap) {
 // options.extraLayers — дополнительные слои [{ key, name, color }]
 // (например, генплан: участок, красная линия, зона застройки).
 export function writeDxf(entities, options = {}) {
-  const { includeSiteGeometry = false } = options;
+  const { includeSiteGeometry = false, preserveLinePrecision = false } = options;
   const baseLayers = options.profile === "revit" ? REVIT_LAYER_DEFS : DEFAULT_LAYER_DEFS;
   const layerDefs = includeSiteGeometry ? [...baseLayers, ...(options.extraLayers || [])] : baseLayers.filter((layer) => layer.key !== "axes");
   const layerMap = new Map(layerDefs.map((layer) => [layer.key, layer.name]));
@@ -242,7 +270,10 @@ export function writeDxf(entities, options = {}) {
     } else if (entity.type === "line") {
       const z1 = includeSiteGeometry ? entity.z1 ?? 0 : 0;
       const z2 = includeSiteGeometry ? entity.z2 ?? z1 : 0;
-      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, dxfLayerName(entity.layer, layerMap), z1, z2));
+      const preservePrecision = preserveLinePrecision && entity.layer !== "dimensions";
+      lines.push(...dxfLine(entity.x1, entity.y1, entity.x2, entity.y2, dxfLayerName(entity.layer, layerMap), z1, z2, preservePrecision));
+    } else if (entity.type === "polyline") {
+      appendDxfPolyline(lines, entity, dxfLayerName(entity.layer, layerMap));
     } else if (includeSiteGeometry && entity.type === "point") {
       lines.push(...dxfPoint(entity.x, entity.y, entity.z, dxfLayerName(entity.layer, layerMap)));
     } else if (entity.type === "block") {
@@ -265,8 +296,10 @@ export function writeDxf(entities, options = {}) {
         lines.push(...dxfLine(a.x, a.y, b.x, b.y, dxfLayerName(entity.layer, layerMap)));
       }
     } else if (entity.type === "arc") {
+      if (preserveLinePrecision && ![entity.start, entity.through, entity.end].every((point) =>
+        Number.isFinite(point?.x) && Number.isFinite(point?.y))) continue;
       const arc = arcGeometry(entity.start, entity.through, entity.end);
-      if (arc) lines.push(...dxfArc(arc, dxfLayerName(entity.layer, layerMap)));
+      if (arc) lines.push(...dxfArc(arc, dxfLayerName(entity.layer, layerMap), preserveLinePrecision));
     } else if (entity.type === "text") {
       lines.push(...dxfText(entity, dxfLayerName(entity.layer || "dimensions", layerMap)));
     }

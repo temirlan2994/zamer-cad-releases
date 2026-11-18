@@ -45,6 +45,17 @@ test("buildDxf emits one LINE per line entity", () => {
   assert.equal(countRecords(dxf, "LINE"), 1);
 });
 
+test("both Zamer DXF profiles preserve tiny line geometry and do not emit Infinity or corrupt endpoints", () => {
+  const line = { type: "line", x1: 0, y1: 0, x2: 0.0004, y2: 0, layer: "measure" };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build([line, { ...line, x2: 1e307 }, { ...line, x2: null }, { ...line, x2: 0 }]);
+    assert.equal(countRecords(dxf, "LINE"), 2);
+    assert.ok(dxf.includes("\n11\n0.0004\n"));
+    assert.ok(dxf.includes("\n11\n1e+307\n"));
+    assert.ok(!dxf.includes("Infinity"));
+  }
+});
+
 test("buildDxf expands a wall into 3 lines (two faces + centerline)", () => {
   const dxf = buildDxf([{ type: "wall", x1: 0, y1: 0, x2: 1000, y2: 0, width: 180 }]);
   assert.equal(countRecords(dxf, "LINE"), 3);
@@ -68,6 +79,20 @@ test("buildDxf exports a rectangle as 4 lines", () => {
 test("buildDxf exports a non-collinear arc", () => {
   const dxf = buildDxf([{ type: "arc", start: { x: 100, y: 0 }, through: { x: 0, y: 100 }, end: { x: -100, y: 0 }, layer: "measure" }]);
   assert.equal(countRecords(dxf, "ARC"), 1);
+});
+
+test("Zamer DXF preserves a sub-millimeter fillet arc radius and its angular span", () => {
+  const radius = 0.00025;
+  const entity = {
+    type: "arc", layer: "measure",
+    start: { x: radius, y: 0 },
+    through: { x: radius - radius / Math.sqrt(2), y: radius - radius / Math.sqrt(2) },
+    end: { x: 0, y: radius },
+  };
+  const dxf = buildDxf([entity]);
+  assert.equal(countRecords(dxf, "ARC"), 1);
+  const parsedRadius = Number(dxf.match(/\n0\nARC\n[\s\S]*?\n40\n([^\n]+)/)?.[1]);
+  assert.ok(Math.abs(parsedRadius - radius) < 1e-12);
 });
 
 test("buildDxf exports text annotations", () => {

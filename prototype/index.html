@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=227" />
+    <link rel="stylesheet" href="./styles.css?v=228" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -111,16 +111,31 @@
           <button class="snap icon-snap" data-snap="mid" title="Середина" aria-label="Середина"><span class="snap-symbol snap-mid-symbol" aria-hidden="true"></span></button>
           <button class="snap icon-snap active" data-snap="polar" title="Углы с шагом 5°" aria-label="Углы 5 градусов">∠</button>
           <button class="snap icon-snap" type="button" data-snap="ortho" title="Орто" aria-label="Орто" aria-pressed="false">∟</button>
-          <button class="snap icon-snap" type="button" data-snap="intersection" title="Пересечение" aria-label="Пересечение" aria-pressed="false">×</button>
-          <button class="snap icon-snap" type="button" data-snap="perpendicular" title="Перпендикуляр" aria-label="Перпендикуляр" aria-pressed="false">⊥</button>
-          <button class="snap icon-snap" data-snap="nearest" title="Ближайшая точка на объекте" aria-label="Ближайшая точка на объекте" aria-pressed="false"><span aria-hidden="true">⋈</span></button>
         </div>
+        <details class="snap-more" id="snapMore">
+          <summary aria-label="Ещё привязки">Ещё</summary>
+          <div class="snap-more-panel">
+            <button class="snap" type="button" data-snap="intersection" aria-pressed="false"><span aria-hidden="true">×</span> Пересечение</button>
+            <button class="snap" type="button" data-snap="perpendicular" aria-pressed="false"><span aria-hidden="true">⊥</span> Перпендикуляр</button>
+            <button class="snap" type="button" data-snap="nearest" aria-pressed="false"><span aria-hidden="true">⋈</span> Ближайшая точка</button>
+            <label class="snap-more-step" id="linePolarSettings">
+              <span>Шаг угла</span>
+              <select id="linePolarStep">
+                <option value="5">5°</option>
+                <option value="15">15°</option>
+                <option value="30">30°</option>
+                <option value="45">45°</option>
+                <option value="90">90°</option>
+              </select>
+            </label>
+          </div>
+        </details>
       </section>
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
           <button class="tool active" data-tool="select" aria-label="ESC — отменить команду и выбрать объект"><span>↖</span><small>ESC</small></button>
-          <button class="tool" data-tool="line"><span>╱</span><small>Линия</small></button>
+          <button class="tool tool-with-menu" data-tool="line" title="Линия. Повторное касание — фигуры" aria-description="Повторное касание открывает выбор фигуры"><span>╱</span><small>Линия</small></button>
           <button class="tool" data-tool="wall"><span>▌</span><small>Стена</small></button>
           <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
           <button class="tool" data-tool="annotation"><span>T</span><small>Аннотации</small></button>
@@ -135,12 +150,13 @@
           <button id="wallFlip" type="button" aria-pressed="false" title="Развернуть сторону · Пробел">⇄ Сторона</button>
           <button id="wallFinish" type="button">Завершить</button>
         </div>
-        <section class="line-command-panel" id="lineOptions" hidden aria-label="Построение линии">
+        <section class="line-command-panel" id="lineOptions" hidden aria-label="Построение">
           <form class="line-command-form" id="linePointForm">
-            <input id="linePointInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Точная точка" placeholder="X,Y · @dX,dY · @L&lt;угол" title="Координаты X,Y, смещение @dX,dY или @длина&lt;угол. Для текущего направления введите длину." />
+            <input id="linePointInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Точная точка" aria-describedby="linePointError" placeholder="X,Y · @dX,dY · @L&lt;угол" title="Координаты X,Y, смещение @dX,dY или @длина&lt;угол. Для текущего направления введите длину." />
             <button class="line-command-primary line-command-submit" type="submit" aria-label="Поставить точную точку">✓</button>
+            <p class="line-command-error" id="linePointError" role="alert" hidden></p>
           </form>
-          <div class="line-command-actions">
+          <div class="line-command-actions line-chain-actions" id="lineChainActions" hidden>
             <button id="lineUndo" type="button" disabled>Убрать отрезок</button>
             <button id="lineClose" type="button" disabled>Замкнуть</button>
             <button id="lineFinish" type="button">Завершить</button>
@@ -148,6 +164,21 @@
         </section>
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
           <p class="line-command-hint" id="lineEditHint" role="status" hidden></p>
+          <label class="line-mode-control" id="lineBoundaryControl" hidden>
+            <span>Границы</span>
+            <select id="lineBoundaryMode">
+              <option value="auto">Все видимые · грани стен</option>
+              <option value="axis">Все видимые · оси стен</option>
+              <option value="selected">Выбрать границы</option>
+            </select>
+          </label>
+          <label class="line-mode-control" id="lineBreakControl" hidden>
+            <span>Разрыв</span>
+            <select id="lineBreakMode">
+              <option value="gap">Между точками</option>
+              <option value="point">В одной точке</option>
+            </select>
+          </label>
           <label class="line-radius-control" id="lineEditRadiusControl" hidden>
             <span>Радиус, мм</span>
             <input id="lineEditRadius" type="number" min="0" step="any" value="0" inputmode="decimal" enterkeyhint="done" />
@@ -167,6 +198,7 @@
           </form>
           <div class="line-command-actions">
             <button id="lineEditCancel" type="button">Отмена</button>
+            <button id="lineEditApply" class="line-command-primary" type="button" hidden>Подтвердить</button>
             <button id="lineEditFinish" class="line-command-primary" type="button" hidden>Соединить</button>
           </div>
         </section>
@@ -221,7 +253,7 @@
           <input id="leaderTextInput" type="text" autocomplete="off" placeholder="Текст выноски" aria-label="Текст выноски" />
           <button type="submit" aria-label="Готово">✓</button>
         </form>
-        <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" hidden>
+        <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" role="region" aria-label="Команды правки" hidden>
           <button data-select-tool="cycle"><span>▣</span><small>Рамка</small></button>
           <button data-action="move"><span>↕</span><small>Переместить</small></button>
           <button data-action="resize"><span>↔</span><small>Размер</small></button>
@@ -309,7 +341,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=227"></script>
+    <script type="module" src="./app.js?v=228"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

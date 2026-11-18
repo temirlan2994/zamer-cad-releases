@@ -2,6 +2,16 @@ import { arcGeometry, normalizeAnglePositive } from "./geometry.js";
 
 const POINT_EPSILON = 0.000001;
 const PARALLEL_EPSILON = 1e-12;
+// At this magnitude a double still resolves thousandths of a millimeter.
+export const MAX_LINE_COORDINATE = 1e12;
+
+export function isLinePoint(point) {
+  return validPoint(point) && Math.abs(point.x) <= MAX_LINE_COORDINATE && Math.abs(point.y) <= MAX_LINE_COORDINATE;
+}
+
+export function isValidLine(line) {
+  return Boolean(lineFrame(line)) && isLinePoint({ x: line.x1, y: line.y1 }) && isLinePoint({ x: line.x2, y: line.y2 });
+}
 
 function lineFrame(line) {
   if (!line || ![line.x1, line.y1, line.x2, line.y2].every(Number.isFinite)) return null;
@@ -13,7 +23,7 @@ function lineFrame(line) {
 }
 
 function validPoint(point) {
-  return point && Number.isFinite(point.x) && Number.isFinite(point.y);
+  return Number.isFinite(point?.x) && Number.isFinite(point?.y);
 }
 
 function cross(ax, ay, bx, by) {
@@ -56,8 +66,10 @@ export function lineCrossing(firstLine, secondLine, { extendFirst = false, exten
   if (!extendSecond && !withinSegment(secondDistance, second)) return null;
   const t = firstDistance / first.length;
   const u = secondDistance / second.length;
+  const point = segmentPoint(firstLine, first, firstDistance);
+  if (!validPoint(point)) return null;
   return {
-    ...segmentPoint(firstLine, first, firstDistance),
+    ...point,
     t: extendFirst ? t : Math.max(0, Math.min(1, t)),
     u: extendSecond ? u : Math.max(0, Math.min(1, u)),
   };
@@ -78,38 +90,48 @@ function piece(line, frame, start, end) {
 function circleDistances(frame, center, radius) {
   if (!validPoint(center) || !Number.isFinite(radius) || radius <= POINT_EPSILON) return [];
   const perpendicular = Math.abs(cross(center.x - frame.x, center.y - frame.y, frame.dx, frame.dy));
-  if (perpendicular > radius + POINT_EPSILON) return [];
+  if (!Number.isFinite(perpendicular) || perpendicular > radius + POINT_EPSILON) return [];
   const closest = projection(frame, center);
-  const offset = Math.sqrt(Math.max(0, radius - perpendicular) * (radius + perpendicular));
+  const ratio = perpendicular / radius;
+  const offset = radius * Math.sqrt(Math.max(0, 1 - ratio) * (1 + ratio));
+  if (!Number.isFinite(closest) || !Number.isFinite(offset)) return [];
   if (offset <= POINT_EPSILON) return [closest];
-  return [closest - offset, closest + offset];
+  return [closest - offset, closest + offset].filter(Number.isFinite);
 }
 
-function arcDistances(frame, boundary) {
+function circleGeometry(boundary) {
+  if (boundary?.type === "circle") {
+    const { cx: x, cy: y, radius } = boundary;
+    const center = { x, y };
+    return validPoint(center) && Number.isFinite(radius) && radius > POINT_EPSILON ? { center, radius } : null;
+  }
+  if (boundary?.type !== "arc") return null;
   const { start, through, end } = boundary;
-  if (![start, through, end].every(validPoint)) return [];
+  if (![start, through, end].every(validPoint)) return null;
   const arc = arcGeometry(start, through, end);
-  if (!arc) return [];
+  if (!arc || !validPoint(arc.center) || !Number.isFinite(arc.radius) || arc.radius <= POINT_EPSILON) return null;
   const direction = arc.counterClockwise ? 1 : -1;
   const span = normalizeAnglePositive((arc.endAngle - arc.startAngle) * direction);
-  const tolerance = POINT_EPSILON / arc.radius;
-  return circleDistances(frame, arc.center, arc.radius).filter((distance) => {
-    const point = pointAt(frame, distance);
-    const angle = Math.atan2(point.y - arc.center.y, point.x - arc.center.x);
-    const along = normalizeAnglePositive((angle - arc.startAngle) * direction);
-    return along <= span + tolerance || 2 * Math.PI - along <= tolerance;
-  });
+  return { center: arc.center, radius: arc.radius, start, end, startAngle: arc.startAngle, span, direction };
+}
+
+function onCircleSpan(circle, point) {
+  if (!circle.start) return true;
+  const angle = Math.atan2(point.y - circle.center.y, point.x - circle.center.x);
+  const along = normalizeAnglePositive((angle - circle.startAngle) * circle.direction);
+  const tolerance = POINT_EPSILON / circle.radius;
+  return along <= circle.span + tolerance || 2 * Math.PI - along <= tolerance;
 }
 
 function boundaryDistances(frame, boundaries) {
   const distances = [];
   for (const boundary of boundaries) {
-    if (boundary?.type === "circle") {
-      distances.push(...circleDistances(frame, { x: boundary.cx, y: boundary.cy }, boundary.radius));
-      continue;
-    }
-    if (boundary?.type === "arc") {
-      distances.push(...arcDistances(frame, boundary));
+    if (boundary?.type === "circle" || boundary?.type === "arc") {
+      const circle = circleGeometry(boundary);
+      if (circle) {
+        const crossings = circleDistances(frame, circle.center, circle.radius);
+        distances.push(...crossings.filter((distance) => onCircleSpan(circle, pointAt(frame, distance))));
+      }
       continue;
     }
     const edge = lineFrame(boundary);
@@ -120,12 +142,174 @@ function boundaryDistances(frame, boundaries) {
   return distances;
 }
 
+function snapShape(boundary) {
+  const circle = circleGeometry(boundary);
+  if (circle) return { circle };
+  const frame = lineFrame(boundary);
+  return frame ? { frame, boundary } : null;
+}
+
+function radialPoint(circle, point, side = 1) {
+  const dx = point.x - circle.center.x;
+  const dy = point.y - circle.center.y;
+  const length = Math.hypot(dx, dy);
+  if (!(length > POINT_EPSILON)) return circle.start ?? { x: circle.center.x + circle.radius, y: circle.center.y };
+  return {
+    x: circle.center.x + (dx / length) * circle.radius * side,
+    y: circle.center.y + (dy / length) * circle.radius * side,
+  };
+}
+
+function nearestOnShape(shape, point) {
+  if (shape.frame) {
+    const { boundary, frame } = shape;
+    const distance = Math.max(0, Math.min(frame.length, projection(frame, point)));
+    return segmentPoint(boundary, frame, distance);
+  }
+  const { circle } = shape;
+  const projected = radialPoint(circle, point);
+  if (onCircleSpan(circle, projected)) return projected;
+  const fromStart = Math.hypot(point.x - circle.start.x, point.y - circle.start.y);
+  const fromEnd = Math.hypot(point.x - circle.end.x, point.y - circle.end.y);
+  return fromStart <= fromEnd ? circle.start : circle.end;
+}
+
+function boundedSnap(point, threshold, type) {
+  let best = null;
+  let distance = threshold;
+  return {
+    consider(candidate) {
+      if (!validPoint(candidate)) return;
+      const next = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+      if (next <= distance && (!best || next < distance)) {
+        best = { x: candidate.x, y: candidate.y, type };
+        distance = next;
+      }
+    },
+    get point() { return best; },
+    get distance() { return distance; },
+  };
+}
+
+export function nearestBoundaryPoint(point, boundaries, threshold) {
+  if (!validPoint(point) || !(threshold >= 0)) return null;
+  const snap = boundedSnap(point, threshold, "nearest");
+  for (const boundary of boundaries) {
+    const shape = snapShape(boundary);
+    if (shape) snap.consider(nearestOnShape(shape, point));
+  }
+  return snap.point;
+}
+
+export function nearestPerpendicular(point, start, boundaries, threshold) {
+  if (!validPoint(point) || !validPoint(start) || !(threshold >= 0)) return null;
+  const snap = boundedSnap(point, threshold, "perpendicular");
+  for (const boundary of boundaries) {
+    const shape = snapShape(boundary);
+    if (!shape) continue;
+    if (shape.frame) {
+      const { frame } = shape;
+      const foot = projection(frame, start);
+      if (withinSegment(foot, frame)) {
+        const candidate = segmentPoint(boundary, frame, foot);
+        if (Math.hypot(candidate.x - start.x, candidate.y - start.y) > POINT_EPSILON) snap.consider(candidate);
+      }
+      continue;
+    }
+    const { circle } = shape;
+    if (Math.hypot(start.x - circle.center.x, start.y - circle.center.y) <= POINT_EPSILON) {
+      snap.consider(nearestOnShape(shape, point));
+      continue;
+    }
+    for (const side of [1, -1]) {
+      const candidate = radialPoint(circle, start, side);
+      if (onCircleSpan(circle, candidate) && Math.hypot(candidate.x - start.x, candidate.y - start.y) > POINT_EPSILON) {
+        snap.consider(candidate);
+      }
+    }
+  }
+  return snap.point;
+}
+
+function intersectCircles(first, second, consider) {
+  const dx = second.center.x - first.center.x;
+  const dy = second.center.y - first.center.y;
+  const distance = Math.hypot(dx, dy);
+  const r1 = first.radius;
+  const r2 = second.radius;
+  const sum = r1 + r2;
+  const difference = r1 - r2;
+  if (!(distance > POINT_EPSILON && distance <= sum + POINT_EPSILON && distance + POINT_EPSILON >= Math.abs(difference))) return;
+  const along = ((difference / distance) * sum + distance) / 2;
+  const ratio = along / r1;
+  const offset = r1 * Math.sqrt(Math.max(0, (1 - ratio) * (1 + ratio)));
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const x = first.center.x + along * ux;
+  const y = first.center.y + along * uy;
+  for (const side of offset <= POINT_EPSILON ? [0] : [1, -1]) {
+    const candidate = { x: x - side * uy * offset, y: y + side * ux * offset };
+    if (onCircleSpan(first, candidate) && onCircleSpan(second, candidate)) consider(candidate);
+  }
+}
+
+function intersectShapes(first, second, consider) {
+  if (first.frame && second.frame) {
+    const hit = crossingDistances(first.frame, second.frame);
+    if (hit && withinSegment(hit.firstDistance, first.frame) && withinSegment(hit.secondDistance, second.frame)) {
+      consider(segmentPoint(first.boundary, first.frame, hit.firstDistance));
+    }
+    return;
+  }
+  if (first.circle && second.circle) {
+    intersectCircles(first.circle, second.circle, consider);
+    return;
+  }
+  const { frame, boundary } = first.frame ? first : second;
+  const circle = first.circle ?? second.circle;
+  for (const distance of circleDistances(frame, circle.center, circle.radius)) {
+    if (!withinSegment(distance, frame)) continue;
+    const candidate = segmentPoint(boundary, frame, distance);
+    if (onCircleSpan(circle, candidate)) consider(candidate);
+  }
+}
+
+// A boundary farther than our best crossing cannot improve it. Visit local
+// boundaries in distance order and retain only the best point, not all pairs.
+export function nearestIntersection(point, boundaries, threshold) {
+  if (!validPoint(point) || !(threshold >= 0)) return null;
+  const candidates = [];
+  for (const boundary of boundaries) {
+    const shape = snapShape(boundary);
+    if (!shape) continue;
+    const nearest = nearestOnShape(shape, point);
+    const distance = Math.hypot(point.x - nearest.x, point.y - nearest.y);
+    if (distance <= threshold + POINT_EPSILON) candidates.push({ shape, distance });
+  }
+  if (candidates.length < 2) return null;
+  const direction = candidates[0].shape.frame;
+  if (direction && candidates.every(({ shape: { frame } }) =>
+    frame && cross(direction.dx, direction.dy, frame.dx, frame.dy) === 0)) return null;
+  candidates.sort((a, b) => a.distance - b.distance);
+  const snap = boundedSnap(point, threshold, "intersection");
+  for (let i = 0; i < candidates.length - 1; i += 1) {
+    if (candidates[i].distance > snap.distance + POINT_EPSILON) break;
+    for (let j = i + 1; j < candidates.length; j += 1) {
+      if (candidates[j].distance > snap.distance + POINT_EPSILON) break;
+      intersectShapes(candidates[i].shape, candidates[j].shape, snap.consider);
+      if (snap.point && snap.distance <= POINT_EPSILON) return snap.point;
+    }
+  }
+  return snap.point;
+}
+
 // Trim removes the interval containing the pick, bounded by the nearest
 // intersections on either side of it. Outer intervals end at the line tips.
 export function trimLine(line, boundaries, pick) {
   const frame = lineFrame(line);
   if (!frame || !validPoint(pick)) return null;
   const pickDistance = Math.max(0, Math.min(frame.length, projection(frame, pick)));
+  if (!Number.isFinite(pickDistance)) return null;
   let start = 0;
   let end = frame.length;
   for (const distance of boundaryDistances(frame, boundaries)) {
@@ -146,7 +330,9 @@ export function trimLine(line, boundaries, pick) {
 export function extendLine(line, boundaries, pick) {
   const frame = lineFrame(line);
   if (!frame || !validPoint(pick)) return null;
-  const fromStart = projection(frame, pick) < frame.length / 2;
+  const pickDistance = projection(frame, pick);
+  if (!Number.isFinite(pickDistance)) return null;
+  const fromStart = pickDistance < frame.length / 2;
   let nearest = fromStart ? -Infinity : Infinity;
   for (const distance of boundaryDistances(frame, boundaries)) {
     if (fromStart && distance < -POINT_EPSILON) nearest = Math.max(nearest, distance);
@@ -163,6 +349,7 @@ export function splitLine(line, first, second = first) {
   if (!frame || !validPoint(first) || !validPoint(second)) return null;
   const a = Math.max(0, Math.min(frame.length, projection(frame, first)));
   const b = Math.max(0, Math.min(frame.length, projection(frame, second)));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   const start = Math.min(a, b);
   const end = Math.abs(a - b) <= POINT_EPSILON ? start : Math.max(a, b);
   if (start === end && (start <= POINT_EPSILON || start >= frame.length - POINT_EPSILON)) return null;
@@ -186,6 +373,7 @@ export function joinLines(line, others) {
     for (const point of [first, second]) {
       if (Math.abs(cross(point.x - frame.x, point.y - frame.y, frame.dx, frame.dy)) > POINT_EPSILON) return null;
       const distance = projection(frame, point);
+      if (!Number.isFinite(distance)) return null;
       start = Math.min(start, distance);
       end = Math.max(end, distance);
     }

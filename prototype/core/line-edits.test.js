@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extendLine, joinLines, lineCrossing, mirrorLine, parallelLine, scaleLine, splitLine, trimLine } from "./line-edits.js";
+import {
+  MAX_LINE_COORDINATE, extendLine, isLinePoint, isValidLine, joinLines, lineCrossing,
+  mirrorLine, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine,
+  scaleLine, splitLine, trimLine,
+} from "./line-edits.js";
 
 const segment = (x1, y1, x2, y2) => ({ x1, y1, x2, y2 });
 const point = (x, y = 0) => ({ x, y });
@@ -126,4 +130,54 @@ test("scales a line uniformly around a supplied base point", () => {
   assert.equal(scaleLine(horizontal, point(0), 0), null);
   assert.equal(scaleLine(horizontal, point(0), -1), null);
   assert.equal(scaleLine(horizontal, point(0), Infinity), null);
+});
+
+test("rejects non-finite, degenerate or out-of-range newly written line geometry", () => {
+  assert.equal(isLinePoint(point(MAX_LINE_COORDINATE, -MAX_LINE_COORDINATE)), true);
+  assert.equal(isLinePoint(point(MAX_LINE_COORDINATE + 1, 0)), false);
+  assert.equal(isLinePoint(point(Infinity, 0)), false);
+  assert.equal(isValidLine(null), false);
+  assert.equal(isValidLine(segment(0, 0, 0.0004, 0)), true);
+  assert.equal(isValidLine(segment(0, 0, 0, 0)), false);
+  assert.equal(isValidLine(segment(0, 0, 1e307, 0)), false);
+  assert.equal(splitLine(segment(-1e308, 0, -1e308, 100), point(1e308), point(5)), null);
+});
+
+test("finds intersections on finite lines and the actual angular spans of arcs", () => {
+  const circle = { type: "circle", cx: 50, cy: 0, radius: 20 };
+  const arc = { type: "arc", start: point(50, -20), through: point(70), end: point(50, 20) };
+  assert.deepEqual(nearestIntersection(point(28), [horizontal, circle], 10), { x: 30, y: 0, type: "intersection" });
+  assert.equal(nearestIntersection(point(28), [horizontal, arc], 10), null);
+  assert.deepEqual(nearestIntersection(point(69), [horizontal, arc], 10), { x: 70, y: 0, type: "intersection" });
+  assert.equal(nearestIntersection(point(70), [segment(0, 0, 65, 0), arc], 10), null);
+});
+
+test("finds the closer of two circle-circle intersections without using coincident curves", () => {
+  const a = { type: "circle", cx: 0, cy: 0, radius: 5 };
+  const b = { type: "circle", cx: 6, cy: 0, radius: 5 };
+  assert.deepEqual(nearestIntersection(point(3, -5), [a, b], 10), { x: 3, y: -4, type: "intersection" });
+  assert.deepEqual(nearestIntersection(point(3, 5), [a, b], 10), { x: 3, y: 4, type: "intersection" });
+  assert.equal(nearestIntersection(point(5), [a, a], 1), null);
+  const tangent = { ...b, cx: 10 };
+  assert.deepEqual(nearestIntersection(point(5), [a, tangent], 0.001), { x: 5, y: 0, type: "intersection" });
+});
+
+test("ignores parallel boundaries in either direction and still finds crossings with other shapes", () => {
+  const parallel = [segment(0, 0, 100, 0), segment(100, 10, 0, 10)];
+  assert.equal(nearestIntersection(point(50, 5), parallel, 10), null);
+  assert.deepEqual(nearestIntersection(point(50), [...parallel, segment(50, -1, 50, 1)], 10),
+    { x: 50, y: 0, type: "intersection" });
+});
+
+test("snaps to radial perpendiculars and to the closest point of a trimmed arc", () => {
+  const circle = { type: "circle", cx: 0, cy: 0, radius: 10 };
+  const rightArc = { type: "arc", start: point(0, -10), through: point(10), end: point(0, 10) };
+  const foot = nearestPerpendicular(point(6, 6), point(20, 20), [circle], 5);
+  assert.ok(Math.abs(foot.x - 10 / Math.sqrt(2)) < 1e-9);
+  assert.ok(Math.abs(foot.x - foot.y) < 1e-9);
+  assert.equal(foot.type, "perpendicular");
+  assert.equal(nearestPerpendicular(point(-10), point(15), [rightArc], 2), null);
+  assert.deepEqual(nearestBoundaryPoint(point(-8, -6), [rightArc], 15), { x: 0, y: -10, type: "nearest" });
+  assert.deepEqual(nearestBoundaryPoint(point(20), [rightArc], 15), { x: 10, y: 0, type: "nearest" });
+  assert.deepEqual(nearestPerpendicular(point(7, 10), point(6, 2), [segment(0, 10, 20, 10)], 5), { x: 6, y: 10, type: "perpendicular" });
 });

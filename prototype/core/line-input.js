@@ -11,6 +11,12 @@ function readNumber(text, commaDecimal = false) {
   return DECIMAL.test(value) ? Number(value) : NaN;
 }
 
+export function parseLineDecimal(text) {
+  if (typeof text !== "string") return null;
+  const value = readNumber(text, true);
+  return Number.isFinite(value) ? value : null;
+}
+
 function resultPoint(x, y) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x: x || 0, y: y || 0 };
@@ -29,6 +35,12 @@ function directionAt(degrees) {
   }
 }
 
+export function linePolarPoint(base, length, angle) {
+  if (!finitePoint(base) || !Number.isFinite(length) || length < 0 || !Number.isFinite(angle)) return null;
+  const unit = directionAt(-angle);
+  return resultPoint(base.x + length * unit.x, base.y + length * unit.y);
+}
+
 // CAD input is Y-up with counterclockwise angles. The drawing uses Y-down.
 // In pairs, a semicolon allows commas inside decimal numbers: 10,5;20,25.
 export function parseLinePoint(input, { base = null, direction = null } = {}) {
@@ -41,12 +53,11 @@ export function parseLinePoint(input, { base = null, direction = null } = {}) {
 
   if (expression.includes("<")) {
     const fields = expression.split("<");
-    if (!relative || fields.length !== 2) return null;
+    if (fields.length !== 2) return null;
     const length = readNumber(fields[0], true);
     const angle = readNumber(fields[1], true);
-    if (!(length > 0) || !Number.isFinite(angle)) return null;
-    const unit = directionAt(-angle);
-    return resultPoint(base.x + length * unit.x, base.y + length * unit.y);
+    if (relative && length === 0) return null;
+    return linePolarPoint(relative ? base : { x: 0, y: 0 }, length, angle);
   }
 
   const commaDecimal = expression.includes(";");

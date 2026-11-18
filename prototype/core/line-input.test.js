@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { constrainLinePoint, parseLinePoint } from "./line-input.js";
+import { constrainLinePoint, linePolarPoint, parseLineDecimal, parseLinePoint } from "./line-input.js";
 
 const base = { x: 100, y: 200 };
 
@@ -14,6 +14,8 @@ test("absolute and relative CAD coordinates invert Y and retain decimal precisio
 });
 
 test("polar coordinates use positive counterclockwise angles and exact cardinal axes", () => {
+  assert.deepEqual(parseLinePoint("20.25<90"), { x: 0, y: -20.25 });
+  assert.deepEqual(parseLinePoint("#20,25<-90", { base }), { x: 0, y: 20.25 });
   assert.deepEqual(parseLinePoint("@20.25<90", { base }), { x: 100, y: 179.75 });
   assert.deepEqual(parseLinePoint("@20,25<-90", { base }), { x: 100, y: 220.25 });
   assert.deepEqual(parseLinePoint("@10<540", { base }), { x: 90, y: 200 });
@@ -32,11 +34,19 @@ test("a bare distance advances along the supplied world-space direction", () => 
 });
 
 test("malformed, non-finite and incomplete input does not resolve", () => {
-  for (const value of [null, "", "@1", "#1", "1,", "1,2,3", "1.1,5;2", "@-1<90", "@1<", "@1<2<3", "1<2", "@1<Infinity", "1 mm,2", `1${"0".repeat(400)},1`]) {
+  for (const value of [null, "", "@1", "#1", "1,", "1,2,3", "1.1,5;2", "@-1<90", "@1<", "@1<2<3", "1<abc", "@1<Infinity", "1 mm,2", `1${"0".repeat(400)},1`]) {
     assert.equal(parseLinePoint(value, { base }), null, String(value));
   }
   assert.equal(parseLinePoint("@1,2"), null);
   assert.equal(parseLinePoint("@1<90"), null);
+});
+
+test("metric entry validates decimals and preserves exact cardinal angles", () => {
+  assert.equal(parseLineDecimal(" -45,25 "), -45.25);
+  assert.equal(parseLineDecimal(""), null);
+  assert.equal(parseLineDecimal("bad"), null);
+  assert.equal(parseLineDecimal("0"), 0);
+  assert.deepEqual(linePolarPoint(base, 0.25, 90), { x: 100, y: 199.75 });
 });
 
 test("orthogonal constraint projects onto the nearest axis without rotating a length", () => {

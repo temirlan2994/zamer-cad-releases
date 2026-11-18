@@ -56,22 +56,36 @@ export function angleBetweenPoints(a, b) {
 // angles, winding). Returns null for (near-)collinear points. Shared by the
 // renderer and DXF export so the drawn arc and the exported arc stay identical.
 export function arcGeometry(start, through, end) {
-  const d = 2 * (start.x * (through.y - end.y) + through.x * (end.y - start.y) + end.x * (start.y - through.y));
-  if (Math.abs(d) < 0.001) return null;
-  const startSq = start.x * start.x + start.y * start.y;
-  const throughSq = through.x * through.x + through.y * through.y;
-  const endSq = end.x * end.x + end.y * end.y;
-  const center = {
-    x: (startSq * (through.y - end.y) + throughSq * (end.y - start.y) + endSq * (start.y - through.y)) / d,
-    y: (startSq * (end.x - through.x) + throughSq * (start.x - end.x) + endSq * (through.x - start.x)) / d,
+  // Work relative to the start and scale the chords before squaring them.
+  // Absolute coordinates lose the precision of a small arc far from zero.
+  const tx = through.x - start.x;
+  const ty = through.y - start.y;
+  const ex = end.x - start.x;
+  const ey = end.y - start.y;
+  const scale = Math.max(Math.abs(tx), Math.abs(ty), Math.abs(ex), Math.abs(ey));
+  if (!Number.isFinite(scale) || scale === 0) return null;
+  const ax = tx / scale;
+  const ay = ty / scale;
+  const bx = ex / scale;
+  const by = ey / scale;
+  const determinant = ax * by - ay * bx;
+  const aLength = Math.hypot(ax, ay);
+  const bLength = Math.hypot(bx, by);
+  if (Math.abs(determinant) <= 8 * Number.EPSILON * aLength * bLength) return null;
+  const aSquared = ax * ax + ay * ay;
+  const bSquared = bx * bx + by * by;
+  const dx = (aSquared * by - bSquared * ay) / (2 * determinant);
+  const dy = (bSquared * ax - aSquared * bx) / (2 * determinant);
+  const center = { x: start.x + dx * scale, y: start.y + dy * scale };
+  const radius = Math.hypot(dx, dy) * scale;
+  if (![center.x, center.y, radius].every(Number.isFinite) || radius === 0) return null;
+  return {
+    center,
+    radius,
+    startAngle: Math.atan2(-dy, -dx),
+    endAngle: Math.atan2(by - dy, bx - dx),
+    counterClockwise: determinant > 0,
   };
-  const radius = distanceWorld(center, start);
-  const startAngle = angleBetweenPoints(center, start);
-  const throughAngle = angleBetweenPoints(center, through);
-  const endAngle = angleBetweenPoints(center, end);
-  const ccwSpan = normalizeAnglePositive(endAngle - startAngle);
-  const ccwThrough = normalizeAnglePositive(throughAngle - startAngle);
-  return { center, radius, startAngle, endAngle, counterClockwise: ccwThrough <= ccwSpan };
 }
 
 // --- Measurement & hit-testing primitives (pure predicates) ---

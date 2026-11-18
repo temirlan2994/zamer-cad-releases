@@ -658,6 +658,7 @@ function defaultProjectPayload(client, body = {}) {
     theme: source.theme === "dark" ? "dark" : "light",
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
+    polarStep: [5, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
     visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     selectionFilter: source.selectionFilter || "all",
