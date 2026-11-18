@@ -3,6 +3,9 @@ import { wallFromReference } from "./core/walls.js";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { defaultBlockSize, entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
+import { constrainLinePoint, parseLinePoint } from "./core/line-input.js";
+import { extendLine, joinLines, lineCrossing, mirrorLine, parallelLine, scaleLine, splitLine, trimLine } from "./core/line-edits.js";
+import { filletLines } from "./core/line-fillet.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
 
 
@@ -265,6 +268,20 @@ const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll(".snap")];
 let blocks = [...document.querySelectorAll(".block")];
+const lineUi = Object.fromEntries([
+  "lineOptions", "linePointForm", "linePointInput", "lineUndo", "lineClose", "lineFinish",
+  "lineEditOptions", "lineEditHint", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
+  "lineLengthMode", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorControl", "lineMirrorDelete",
+].map((id) => [id, document.getElementById(id)]));
+const lineKeyboardInputs = [lineUi.linePointInput, lineUi.lineLengthInput, lineUi.lineEditRadius];
+const lineEditActions = new Set(["trim", "extend", "break", "join", "lengthen", "fillet", "scale"]);
+const lineOnlyEditActions = new Set([...lineEditActions, "offset", "mirror"]);
+const lineQuantityModes = {
+  lengthen: [["total", "Длина (мм)"], ["delta", "Прирост (мм)"], ["percent", "Длина (%)"], ["dynamic", "По точке"]],
+  offset: [["distance", "Расстояние (мм)"], ["through", "Через точку"]],
+  scale: [["factor", "Коэффициент"]],
+};
+const linePointEpsilon = 1e-6;
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
@@ -451,6 +468,7 @@ const state = {
   drawing: null,
   moveCommand: null,
   offsetCommand: null,
+  lineEdit: null,
   pointer: null,
   activePointers: new Map(),
   pinch: null,
@@ -896,6 +914,7 @@ function resetProjectSession() {
   setSelection([]);
   state.drawing = null;
   state.command = null;
+  state.lineEdit = null;
   state.moveCommand = null;
   state.offsetCommand = null;
   state.inlineEdit = null;
@@ -1645,6 +1664,7 @@ function restoreProject(project) {
     state.drawing = null;
     state.moveCommand = null;
     state.offsetCommand = null;
+    state.lineEdit = null;
     state.pointer = null;
     state.pinch = null;
     state.inlineEdit = null;
@@ -2007,7 +2027,7 @@ function resizeCanvas() {
 }
 
 function isKeyboardInputFocused() {
-  return keyboardInputs.includes(document.activeElement);
+  return keyboardInputs.includes(document.activeElement) || lineKeyboardInputs.includes(document.activeElement);
 }
 
 function lockDocumentScroll() {
@@ -2040,7 +2060,7 @@ function updateViewportLock() {
   document.documentElement.style.setProperty("--confirm-keyboard-inset", `${confirmKeyboardInset}px`);
   shell.classList.toggle("keyboard-open", keyboardInset > 0);
   if (keyboardConfirmButton) {
-    keyboardConfirmButton.hidden = !inputFocused;
+    keyboardConfirmButton.hidden = !keyboardInputs.includes(document.activeElement);
     positionKeyboardConfirmButton();
   }
   lockDocumentScroll();
@@ -2261,6 +2281,8 @@ function renderFrame() {
     hideInlineEditors();
   }
   syncSelectionActions();
+  syncLineControls();
+  drawLineEditMarks(c);
   drawSelectionDrag(c);
   drawDimensionSnapHint(c);
   if (state.tool !== "dimension") drawSnapTracking(c);
@@ -2489,6 +2511,7 @@ function editableSelectionEntity() {
     !state.drawing &&
     !state.moveCommand &&
     !state.offsetCommand &&
+    !state.lineEdit &&
     state.tool === "select" &&
     isLayerVisible(primary.layer)
     ? primary
@@ -2505,8 +2528,9 @@ function isDirectMoveAnnotation(entity) {
 
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
-  if (!selected.length || !["select", "furniture"].includes(state.tool) || state.drawing || state.moveCommand || state.offsetCommand) return false;
+  if (!selected.length || !["select", "furniture"].includes(state.tool) || state.drawing || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
   if (action === "delete") return true;
+  if (lineEditActions.has(action)) return state.tool === "select" && selected.length === 1 && isDraftLine(selected[0]);
   if (selected.length !== 1) return false;
   const entity = selected[0];
   if (action === "move") return true;
@@ -2985,7 +3009,7 @@ function drawLineEntity(entity, c) {
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   linePath(p1.x, p1.y, p2.x, p2.y);
-  if (selected) {
+  if (selected && !state.lineEdit) {
     drawEndpointHandle(p1, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
     drawEndpointHandle(p2, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "end", c);
   }
@@ -3037,7 +3061,7 @@ function drawArcEntity(entity, c) {
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   ctx.beginPath();
-  ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, arc.counterClockwise);
+  ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, !arc.counterClockwise);
   ctx.stroke();
   if (selected) [entity.start, entity.through, entity.end].forEach((point) => { const pt = worldToScreen(point); drawHandle(pt.x, pt.y, c); });
   ctx.restore();
@@ -3600,7 +3624,7 @@ function drawSelection(entity, c) {
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(center.x, center.y, radius, arc.startAngle, arc.endAngle, arc.counterClockwise);
+    ctx.arc(center.x, center.y, radius, arc.startAngle, arc.endAngle, !arc.counterClockwise);
     ctx.stroke();
     [entity.start, entity.through, entity.end].map(worldToScreen).forEach((point) => drawHandle(point.x, point.y, c));
     const label = worldToScreen(entity.through);
@@ -3619,10 +3643,12 @@ function drawSelection(entity, c) {
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = 2;
   linePath(p1.x, p1.y, p2.x, p2.y);
+  if (state.lineEdit) return;
   drawEndpointHandle(p1, startActive, c);
   drawEndpointHandle(p2, endActive, c);
   if (!startActive && !endActive) {
     const m = midpoint(p1, p2);
+    if (isDraftLine(entity) && distanceWorld(p1, p2) > 38) drawEndpointHandle(m, false, c);
     const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
     drawBadge(`${metrics.length} мм`, m.x, m.y - 24, c, false, true);
   }
@@ -4296,6 +4322,7 @@ function drawActiveSegment(c) {
   const p2 = worldToScreen(end);
   const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
   const angleInfo = activeAngleInfo(start, end);
+  if (state.tool === "line") metrics.length = Math.round(distanceWorld(start, end) * 1000) / 1000;
   const m = midpoint(p1, p2);
 
   if (state.tool === "dimension") {
@@ -4620,6 +4647,7 @@ function updateSelectedEndpointEditors(previewMoving = null) {
   const { fixed, moving } = geometry;
   const displayMoving = previewMoving || moving;
   const metrics = segmentMetrics(fixed.x, fixed.y, displayMoving.x, displayMoving.y);
+  if (isDraftLine(geometry.entity)) metrics.length = Math.round(distanceWorld(fixed, displayMoving) * 1000) / 1000;
   const angleInfo = activeAngleInfo(fixed, displayMoving);
   const p1 = worldToScreen(fixed);
   const p2 = worldToScreen(displayMoving);
@@ -4637,7 +4665,7 @@ function updateSelectedEndpointEditors(previewMoving = null) {
   syncInlineEditorWidth(lengthInput);
   syncInlineEditorWidth(angleInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
-  if (angleEditor) angleEditor.hidden = true;
+  if (angleEditor && !isDraftLine(geometry.entity)) angleEditor.hidden = true;
 }
 
 function selectedEndpointGeometry() {
@@ -4655,7 +4683,7 @@ function selectedEndpointGeometry() {
 function setSelectedEndpointPosition(point) {
   const endpoint = state.selectedEndpoint;
   const entity = endpoint ? state.entities.find((item) => item.id === endpoint.entityId) : null;
-  if (!entity || entity.type === "block") return;
+  if (!entity || entity.type === "block" || ![point.x, point.y].every(Number.isFinite)) return;
   if (endpoint.point === "start") {
     entity.x1 = point.x;
     entity.y1 = point.y;
@@ -4672,6 +4700,10 @@ function commitSelectedEndpointCursorPoint(beforeOverride = null) {
   const { entity } = geometry;
   const before = beforeOverride || state.endpointEditBefore || entityGeometry(entity);
   const point = cursorWorld();
+  if (distanceWorld(geometry.fixed, point) <= linePointEpsilon) {
+    statusChip.textContent = "Концы линии должны различаться";
+    return false;
+  }
   setSelectedEndpointPosition(point);
   const after = entityGeometry(entity);
   if (geometryChanged(before, after)) {
@@ -4877,7 +4909,7 @@ function startMoveLikeCommand(entity, mode) {
   state.endpointEditBefore = null;
   hideInlineEditors();
   state.snaps.add("end");
-  state.snaps.add("polar");
+  if (!state.snaps.has("ortho")) state.snaps.add("polar");
   syncSnapButtons();
   syncCommandState();
   updateTopMetricInputs(0, 0);
@@ -4930,6 +4962,10 @@ function applySelectionAction(action) {
   }
 
   if (!actionEntity) return;
+  if (isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) {
+    startLineEdit(action, actionEntity);
+    return;
+  }
   if (action === "move") {
     startMoveLikeCommand(actionEntity, "move");
     return;
@@ -5044,6 +5080,11 @@ function positionInlineEditor(editor, x, y, avoidEditor = null) {
     }
   }
 
+  if (isLineSnapContext() &&
+      Math.abs(safeX - rect.width / 2) <= editorWidth / 2 + 22 &&
+      Math.abs(safeY - rect.height / 2) <= editorHeight / 2 + 22) {
+    safeY = rect.height / 2 + (editorHeight / 2 + 24) * (editor === lengthEditor ? -1 : 1);
+  }
   editor.style.left = `${safeX}px`;
   editor.style.top = `${safeY}px`;
 }
@@ -5301,9 +5342,12 @@ function applyInlineValue(kind, options = {}) {
 
   let nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
   let nextRad = currentRad;
-  if (kind === "angle" && Number.isFinite(typedAngle)) {
-    const angleInfo = state.inlineEdit.angleInfo;
-    if (angleInfo?.hasReference) {
+  const angleInfo = state.inlineEdit.angleInfo;
+  if (state.tool === "line" && !String(lengthInput.value).trim()) return;
+  if (kind === "angle" && String(angleInput.value).trim() && Number.isFinite(typedAngle)) {
+    if (angleInfo?.cadAngle) {
+      nextRad = -(typedAngle % 360) * Math.PI / 180;
+    } else if (angleInfo?.hasReference) {
       const sign = angleInfo.deltaRad < 0 ? -1 : 1;
       nextRad = angleInfo.referenceRad + sign * (typedAngle * Math.PI) / 180;
     } else {
@@ -5335,7 +5379,9 @@ function applySelectedEndpointInlineValue(kind, options = {}) {
   let nextRad = currentRad;
   if (kind === "angle" && Number.isFinite(typedAngle)) {
     const angleInfo = state.inlineEdit?.angleInfo || activeAngleInfo(fixed, moving);
-    if (angleInfo?.hasReference) {
+    if (angleInfo?.cadAngle) {
+      nextRad = -(typedAngle % 360) * Math.PI / 180;
+    } else if (angleInfo?.hasReference) {
       const sign = angleInfo.deltaRad < 0 ? -1 : 1;
       nextRad = angleInfo.referenceRad + sign * (typedAngle * Math.PI) / 180;
     } else {
@@ -5777,6 +5823,15 @@ function drawCursorSnap(c) {
     drawMidSnapMarker(p, c);
   } else if (snap?.type === "nearest") {
     drawNearestSnapMarker(p, c);
+  } else if (snap?.type === "intersection" || snap?.type === "perpendicular") {
+    const size = 7;
+    if (snap.type === "intersection") {
+      linePath(p.x - size, p.y - size, p.x + size, p.y + size);
+      linePath(p.x - size, p.y + size, p.x + size, p.y - size);
+    } else {
+      linePath(p.x - size, p.y + size, p.x + size, p.y + size);
+      linePath(p.x, p.y - size, p.x, p.y + size);
+    }
   } else {
     ctx.beginPath();
     ctx.rect(p.x - 6, p.y - 6, 12, 12);
@@ -5861,21 +5916,65 @@ function nearestSegmentSnapThreshold() {
   return 14 / state.view.scale;
 }
 
-function nearestObjectSnap(point, { includeNearestSegment = false } = {}) {
+function isLineSnapContext() {
+  return state.tool === "line" || isDraftLine(selectedEndpointGeometry()?.entity) ||
+    state.pointer?.mode === "line-grip" || ["offset", "mirror", "scale"].includes(state.lineEdit?.mode);
+}
+
+function nearestDraftLineSnap(point, start) {
+  const perpendicular = start && state.snaps.has("perpendicular");
+  const intersection = state.snaps.has("intersection");
+  if (!perpendicular && !intersection) return null;
+  const threshold = objectSnapThreshold();
+  const excluded = state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId;
+  const segments = drawableSnapSegments().filter(({ p1, p2, entity }) =>
+    entity.id !== excluded && pointToSegmentDistance(point, p1, p2) <= threshold);
+  const candidates = [];
+  if (perpendicular) {
+    for (const { p1, p2 } of segments) {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const lengthSq = dx * dx + dy * dy;
+      const t = ((start.x - p1.x) * dx + (start.y - p1.y) * dy) / lengthSq;
+      if (t >= 0 && t <= 1) {
+        const foot = { x: p1.x + t * dx, y: p1.y + t * dy, type: "perpendicular" };
+        if (distanceWorld(foot, start) > linePointEpsilon) candidates.push(foot);
+      }
+    }
+  }
+  if (intersection) {
+    const lines = segments.map(({ p1, p2 }) => ({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }));
+    for (let i = 0; i < lines.length; i += 1) {
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const crossing = lineCrossing(lines[i], lines[j]);
+        if (crossing) candidates.push({ x: crossing.x, y: crossing.y, type: "intersection" });
+      }
+    }
+  }
+  return nearestSnapCandidate(point, candidates, threshold);
+}
+
+function nearestObjectSnap(point, { includeNearestSegment = false, start = null } = {}) {
   const objectThreshold = objectSnapThreshold();
   const midpointThreshold = midpointSnapThreshold();
   const nearestThreshold = nearestSegmentSnapThreshold();
+  const lineContext = isLineSnapContext();
+  const excluded = lineContext ? state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId : null;
+  if (lineContext) {
+    const explicit = nearestDraftLineSnap(point, start);
+    if (explicit) return explicit;
+  }
   const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
   if (useObjectSnap) {
-    const corner = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
+    const corner = nearestSnapCandidate(point, snapCandidates({ includeCorners: true, excludeId: excluded }), objectThreshold);
     if (corner) return corner;
   }
   if (state.snaps.has("mid")) {
-    const mid = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+    const mid = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: !lineContext, excludeId: excluded }), midpointThreshold);
     if (mid) return mid;
   }
-  if (useObjectSnap && includeNearestSegment) {
-    return nearestPointOnDrawableSegment(point, nearestThreshold);
+  if (includeNearestSegment && (lineContext ? state.snaps.has("nearest") : useObjectSnap)) {
+    return nearestPointOnDrawableSegment(point, nearestThreshold, excluded);
   }
   return null;
 }
@@ -5951,6 +6050,10 @@ function rectangleCorners(entity) {
 
 function activeAngleInfo(start, end) {
   const currentRad = angleBetweenPoints(start, end);
+  if (isLineSnapContext()) {
+    const degrees = normalizeDegrees(Math.round(-radToDeg(currentRad) * 1000) / 1000);
+    return { referenceRad: 0, deltaRad: currentRad, degrees, hasReference: false, cadAngle: true };
+  }
   const reference = nearestAngleReference(start, currentRad);
   if (!reference) {
     const referenceRad = nearestCardinalReferenceRad(currentRad);
@@ -6160,7 +6263,7 @@ function resolveSnapWorld(point) {
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  snap = nearestObjectSnap(point);
+  snap = nearestObjectSnap(point, { includeNearestSegment: state.tool === "line" });
   if (snap) {
     result = { x: snap.x, y: snap.y };
   } else if (canUseSnapTracking()) {
@@ -6217,7 +6320,17 @@ function resolveLineLikeSnap(point, start) {
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  snap = nearestObjectSnap(point, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
+  const ortho = isLineSnapContext() && state.snaps.has("ortho");
+  snap = nearestObjectSnap(point, { includeNearestSegment: !ortho && trackingDrawingTools.has(state.tool), start });
+  if (ortho && !snap) {
+    const constrained = constrainLinePoint(start, point);
+    if (!constrained) return { point: result, snap: null };
+    if (state.snaps.has("grid")) {
+      if (constrained.x !== start.x) constrained.x = snapValueToGrid(constrained.x);
+      if (constrained.y !== start.y) constrained.y = snapValueToGrid(constrained.y);
+    }
+    return { point: constrained, snap: null };
+  }
   if (snap) {
     result = { x: snap.x, y: snap.y };
   } else {
@@ -6350,9 +6463,10 @@ function projectPointToInfiniteLine(point, origin, angle) {
   return { x, y, distance: Math.hypot(point.x - x, point.y - y) };
 }
 
-function nearestPointOnDrawableSegment(point, threshold) {
+function nearestPointOnDrawableSegment(point, threshold, excludeId = null) {
   let best = null;
   for (const segment of drawableSnapSegments()) {
+    if (segment.entity.id === excludeId) continue;
     const hit = projectPointToSegmentWorld(point, segment.p1, segment.p2);
     if (hit.distance > threshold) continue;
     const score = hit.distance;
@@ -6377,10 +6491,10 @@ function nearestSnapCandidate(point, candidates, threshold) {
   return best;
 }
 
-function snapCandidates({ includeCorners = false, includeMidpoints = false, includeCenters = false } = {}) {
+function snapCandidates({ includeCorners = false, includeMidpoints = false, includeCenters = false, excludeId = null } = {}) {
   const candidates = [];
   for (const entity of state.entities) {
-    if (!isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
+    if (entity.id === excludeId || !isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
     for (const point of objectPointRefs(entity)) {
       const role = point.snapRole || point.pointKey;
       const allowed =
@@ -6388,11 +6502,11 @@ function snapCandidates({ includeCorners = false, includeMidpoints = false, incl
         (includeMidpoints && role === "mid") ||
         (includeCenters && role === "center");
       if (allowed) {
-        candidates.push({ ...point, label: point.label || snapPointLabel(role) });
+        candidates.push({ ...point, entityId: entity.id, label: point.label || snapPointLabel(role) });
       }
     }
   }
-  return candidates.map((candidate) => attachSnapReference(candidate));
+  return candidates;
 }
 
 function snapPointLabel(role) {
@@ -6401,12 +6515,6 @@ function snapPointLabel(role) {
   if (role === "corner") return "Угол";
   if (role === "quadrant") return "Квадрант";
   return "Конец";
-}
-
-function attachSnapReference(candidate) {
-  if (candidate.entityId) return candidate;
-  const ref = nearestObjectPointRef(candidate);
-  return ref ? { ...candidate, ...ref } : candidate;
 }
 
 function dimensionRefFromSnap(snap) {
@@ -6461,21 +6569,6 @@ function preserveDimensionLineOffset(entity, previous) {
   entity.dimX2 = endAnchor.x;
   entity.dimY2 = endAnchor.y;
   entity.offset = dimensionOffsetFromPoint(start, end, startAnchor);
-}
-
-function nearestObjectPointRef(point) {
-  let best = null;
-  for (const entity of state.entities) {
-    if (!isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
-    for (const candidate of objectPointRefs(entity)) {
-      const distance = distanceWorld(point, candidate);
-      if (distance > 2) continue;
-      if (!best || distance < best.distance) {
-        best = { entityId: entity.id, pointKey: candidate.pointKey, distance };
-      }
-    }
-  }
-  return best ? { entityId: best.entityId, pointKey: best.pointKey } : null;
 }
 
 function objectPointRefs(entity) {
@@ -6630,6 +6723,9 @@ function setTool(tool) {
   state.drawing = null;
   state.moveCommand = null;
   state.offsetCommand = null;
+  state.lineEdit = null;
+  lineUi.linePointInput.value = "";
+  lineUi.linePointInput.removeAttribute("aria-invalid");
   state.selectionDrag = null;
   syncCommandState();
   if (["line", "polyline", "circle", "arc", "rectangle", "wall", "dimension", "text"].includes(tool)) {
@@ -6652,7 +6748,7 @@ function setTool(tool) {
   syncToolButtons();
   const copy = {
     select: "Выбор: тапните объект. Мебель двигается только когда она выбрана",
-    line: "Линия: подведите курсор и тапните холст",
+    line: "Линия: укажите первую точку курсором или введите координаты",
     polyline: "Полилиния: каждый тап добавляет следующий сегмент",
     circle: "Круг: укажите центр, затем радиус",
     arc: "Дуга: старт, точка на дуге, конец",
@@ -6680,7 +6776,11 @@ function setTool(tool) {
 }
 
 function syncSnapButtons() {
-  snaps.forEach((button) => button.classList.toggle("active", state.snaps.has(button.dataset.snap)));
+  snaps.forEach((button) => {
+    const enabled = state.snaps.has(button.dataset.snap);
+    button.classList.toggle("active", enabled);
+    button.setAttribute("aria-pressed", String(enabled));
+  });
 }
 
 function syncDrawToolMenu() {
@@ -6700,8 +6800,6 @@ function syncAnnotationToolMenu() {
 }
 
 function syncSelectToolMenu() {
-  const selected = selectedEntities();
-  const furnitureOnly = selected.length === 1 && selected[0]?.type === "block";
   selectToolMenu?.querySelectorAll("[data-select-tool]").forEach((button) => {
     button.hidden = true;
   });
@@ -6723,6 +6821,7 @@ function syncSelectToolMenu() {
   }
   selectToolMenu?.querySelectorAll("button[data-action]").forEach((button) => {
     button.disabled = !canApplySelectionAction(button.dataset.action);
+    if (button.classList.contains("line-edit-action")) button.hidden = button.disabled;
   });
 }
 
@@ -7144,6 +7243,537 @@ function continueDimensionAfterCreate(metrics) {
   state.drawing = null;
 }
 
+function isDraftLine(entity) {
+  return entity?.type === "line" && entity.layer !== "dimensions" && !entity.dimensionKind &&
+    [entity.x1, entity.y1, entity.x2, entity.y2].every(Number.isFinite);
+}
+
+function newLineId(type = "line") {
+  return `${type}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function syncLineControls() {
+  const drawing = state.tool === "line" ? state.drawing : null;
+  const size = drawing?.lineSegments?.length ?? 0;
+  const edit = state.lineEdit;
+  lineUi.lineOptions.hidden = state.tool !== "line" || !drawToolMenu.hidden;
+  lineUi.lineUndo.disabled = size === 0;
+  lineUi.lineClose.disabled = size < 2;
+  lineUi.lineFinish.disabled = !drawing;
+  lineUi.lineEditOptions.hidden = !edit;
+  lineUi.lineEditForm.hidden = !lineQuantityModes[edit?.mode];
+  lineUi.lineEditRadiusControl.hidden = edit?.mode !== "fillet";
+  lineUi.lineMirrorControl.hidden = edit?.mode !== "mirror";
+  lineUi.lineEditFinish.hidden = !["join", "offset"].includes(edit?.mode);
+  lineUi.lineEditFinish.disabled = edit?.mode === "join" && !edit.joinIds.length;
+  const finishLabel = edit?.mode === "offset" ? "Завершить" : "Соединить";
+  if (lineUi.lineEditFinish.textContent !== finishLabel) lineUi.lineEditFinish.textContent = finishLabel;
+}
+
+function setLineEditHint(text) {
+  if (lineUi.lineEditHint.textContent !== text) lineUi.lineEditHint.textContent = text;
+  lineUi.lineEditHint.hidden = !text;
+}
+
+function commitLinePoint(point) {
+  if (state.tool !== "line") return false;
+  const draft = state.drawing;
+  if (!draft) {
+    setSelection(null);
+    state.drawing = { lineOrigin: point, lineSegments: [], start: point, end: point, lockedEnd: false };
+    hideDrawToolMenu();
+    statusChip.textContent = "Линия: укажите следующую точку";
+  } else {
+    const start = draft.start;
+    const length = distanceWorld(start, point);
+    if (!Number.isFinite(length) || length <= linePointEpsilon) {
+      statusChip.textContent = "Линия: укажите другую точку";
+      draw();
+      return false;
+    }
+    const entity = line(newLineId(), start.x, start.y, point.x, point.y);
+    pushEntity(entity);
+    draft.lineSegments.push(entity);
+    draft.start = point;
+    draft.end = point;
+    draft.lockedEnd = false;
+    statusChip.textContent = `Отрезок ${Math.round(length * 1000) / 1000} мм. Следующая точка или «Завершить»`;
+  }
+  resetSnapTracking();
+  hideInlineEditors();
+  draw();
+  return true;
+}
+
+function finishLineCommand() {
+  if (state.tool !== "line" || !state.drawing) return;
+  state.drawing = null;
+  lineUi.linePointInput.value = "";
+  hideInlineEditors();
+  resetSnapTracking();
+  statusChip.textContent = "Линия завершена. Можно указать первую точку новой линии";
+  draw();
+}
+
+function closeLineCommand() {
+  const draft = state.tool === "line" ? state.drawing : null;
+  if (!draft || draft.lineSegments.length < 2) return;
+  if (distanceWorld(draft.start, draft.lineOrigin) > linePointEpsilon) commitLinePoint(draft.lineOrigin);
+  finishLineCommand();
+}
+
+function undoLineSegment() {
+  const draft = state.tool === "line" ? state.drawing : null;
+  const last = draft?.lineSegments.at(-1);
+  const action = state.undo.at(-1);
+  if (!last || action?.type !== "add" || action.entity !== last) return;
+  draft.lineSegments.pop();
+  state.undo.pop();
+  state.redo.push(action);
+  state.entities = state.entities.filter((entity) => entity !== last);
+  draft.start = { x: last.x1, y: last.y1 };
+  draft.end = draft.start;
+  draft.lockedEnd = false;
+  setSelection(draft.lineSegments.at(-1)?.id);
+  resetSnapTracking();
+  hideInlineEditors();
+  markProjectDirty("undo-line-segment");
+  statusChip.textContent = "Последний отрезок убран. Укажите следующую точку";
+  draw();
+}
+
+function submitLinePoint() {
+  const input = lineUi.linePointInput;
+  const draft = state.drawing;
+  const base = draft?.start;
+  const cursor = base ? cursorWorld() : null;
+  let direction = base ? { x: cursor.x - base.x, y: cursor.y - base.y } : null;
+  if (direction && Math.hypot(direction.x, direction.y) <= linePointEpsilon) {
+    const last = draft.lineSegments.at(-1);
+    direction = last ? { x: last.x2 - last.x1, y: last.y2 - last.y1 } : null;
+  }
+  const point = parseLinePoint(input.value, { base, direction });
+  if (!point) {
+    statusChip.textContent = base
+      ? "Введите X,Y, @ΔX,ΔY, @длина<угол или длину по направлению курсора"
+      : "Введите абсолютные координаты первой точки X,Y";
+    input.setAttribute("aria-invalid", "true");
+    return;
+  }
+  input.removeAttribute("aria-invalid");
+  if (!commitLinePoint(point)) return;
+  input.value = "";
+  const area = canvas.getBoundingClientRect();
+  const view = worldToScreen(point);
+  if (view.x < 24 || view.x > area.width - 24 || view.y < 24 || view.y > area.height - 148) {
+    centerViewOnWorldPoint(point);
+    draw();
+  }
+}
+
+function lineEditEntity(id) {
+  return state.entities.find((entity) => entity.id === id && isDraftLine(entity) && isLayerVisible(entity.layer));
+}
+
+function pickDraftLine(screen) {
+  let best = null;
+  let distance = 18;
+  for (const entity of state.entities) {
+    if (!isDraftLine(entity) || !isLayerVisible(entity.layer)) continue;
+    const next = distanceToEntityScreen(screen, entity);
+    if (next <= distance) {
+      best = entity;
+      distance = next;
+    }
+  }
+  return best;
+}
+
+function startLineEdit(mode, entity) {
+  state.lineEdit = { mode, sourceId: entity.id, joinIds: [], firstPick: null, amount: null };
+  state.selectedEndpoint = null;
+  state.endpointEditBefore = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  hideSelectToolMenu();
+  lineUi.lineLengthInput.value = "";
+  lineUi.lineLengthInput.removeAttribute("aria-invalid");
+  const modes = lineQuantityModes[mode];
+  if (modes) {
+    lineUi.lineLengthMode.replaceChildren(...modes.map(([value, label]) => new Option(label, value)));
+    syncLineQuantityFields();
+  }
+  lineUi.lineMirrorDelete.checked = false;
+  const prompts = {
+    trim: "Обрезать: коснитесь части линии, которую нужно убрать",
+    extend: "Удлинить: коснитесь линии ближе к нужному концу",
+    break: "Разрыв: укажите первую точку на выбранной линии",
+    join: "Соединить: выберите линии на той же прямой",
+    lengthen: "Длина: введите значение и выберите конец на линии",
+    fillet: "Скругление: коснитесь сохраняемой стороны первой линии",
+    offset: "Смещение: введите расстояние или выберите «Через точку»",
+    mirror: "Зеркало: укажите первую точку оси отражения",
+    scale: "Масштаб: введите коэффициент и укажите базовую точку",
+  };
+  setLineEditHint(prompts[mode]);
+  draw();
+}
+
+function endLineEdit(text) {
+  state.lineEdit = null;
+  setLineEditHint("");
+  statusChip.textContent = text;
+  draw();
+}
+
+function boundarySegments(excludedId) {
+  const straight = drawableSnapSegments().filter(({ entity }) => entity.id !== excludedId).map(({ p1, p2 }) => ({
+    x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+  }));
+  return straight.concat(state.entities.filter((entity) =>
+    entity.id !== excludedId && isLayerVisible(entity.layer) && ["circle", "arc"].includes(entity.type)));
+}
+
+function lineWithNewLength(entity, point, amount, mode) {
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  const current = distanceWorld(start, end);
+  const target = mode === "delta" ? current + amount : mode === "percent" ? current * amount / 100 : amount;
+  if (!Number.isFinite(target) || target <= linePointEpsilon || current <= linePointEpsilon) return null;
+  const moveStart = distanceWorld(point, start) < distanceWorld(point, end);
+  const fixed = moveStart ? end : start;
+  const moving = moveStart ? start : end;
+  const x = fixed.x + (moving.x - fixed.x) * target / current;
+  const y = fixed.y + (moving.y - fixed.y) * target / current;
+  return moveStart ? { x1: x, y1: y, x2: end.x, y2: end.y } : { x1: start.x, y1: start.y, x2: x, y2: y };
+}
+
+function syncLineQuantityFields() {
+  const mode = lineUi.lineLengthMode.value;
+  const form = lineUi.lineEditForm;
+  const input = lineUi.lineLengthInput;
+  const pointOnly = mode === "through" || mode === "dynamic";
+  const scale = mode === "factor";
+  form.dataset.fields = pointOnly ? "mode" : scale ? "value" : "";
+  lineUi.lineLengthMode.hidden = scale;
+  input.hidden = pointOnly;
+  form.querySelector("button[type=submit]").hidden = pointOnly;
+  input.inputMode = mode === "delta" ? "text" : "decimal";
+  input.placeholder = scale ? "Например, 1.5" : mode === "distance" ? "Расстояние, мм" : "Значение";
+  input.setAttribute("aria-label", scale ? "Коэффициент масштаба" : mode === "distance" ? "Расстояние смещения" : "Новая длина линии");
+}
+
+function submitLineLength() {
+  const edit = state.lineEdit;
+  if (!lineQuantityModes[edit?.mode]) return;
+  const input = lineUi.lineLengthInput;
+  const mode = lineUi.lineLengthMode.value;
+  const value = input.value.trim();
+  const amount = /^[-+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(value) ? Number(value.replace(",", ".")) : NaN;
+  if (!Number.isFinite(amount) || (mode !== "delta" && amount <= 0)) {
+    input.setAttribute("aria-invalid", "true");
+    setLineEditHint("Введите допустимое числовое значение");
+    return;
+  }
+  edit.amount = amount;
+  edit.lengthMode = mode;
+  input.removeAttribute("aria-invalid");
+  const next = {
+    distance: "Коснитесь нужной стороны исходной линии",
+    factor: "Укажите базовую точку масштабирования",
+  };
+  setLineEditHint(next[mode] || "Коснитесь линии ближе к концу, который нужно изменить");
+  input.blur();
+  draw();
+}
+
+function finishLineJoin() {
+  const edit = state.lineEdit;
+  if (edit?.mode !== "join" || !edit.joinIds.length) return;
+  const source = lineEditEntity(edit.sourceId);
+  const others = edit.joinIds.map(lineEditEntity).filter(Boolean);
+  const coordinates = joinLines(source, others);
+  if (!coordinates) {
+    setLineEditHint("Выберите линии на той же прямой");
+    return;
+  }
+  commitLineEdit([[source, [coordinates]], ...others.map((entity) => [entity, []])], "Линии соединены");
+}
+
+function pickLineEditPoint(screen) {
+  const edit = state.lineEdit;
+  if (!edit) return;
+  const source = lineEditEntity(edit.sourceId);
+  if (!source) return endLineEdit("Линия недоступна");
+  const point = screenToWorld(screen);
+  if (["offset", "mirror", "scale"].includes(edit.mode)) {
+    placeLineTransform(edit, source, point);
+    return;
+  }
+  if (edit.mode === "lengthen" && edit.lengthMode === "dynamic" && edit.firstPick) {
+    const target = lineEditEntity(edit.dynamicLineId);
+    if (!target) return endLineEdit("Линия недоступна");
+    const start = { x: target.x1, y: target.y1 };
+    const end = { x: target.x2, y: target.y2 };
+    const fromStart = distanceWorld(edit.firstPick, start) < distanceWorld(edit.firstPick, end);
+    const fixed = fromStart ? end : start;
+    const moving = fromStart ? start : end;
+    const unit = normalizeWorldVector(moving.x - fixed.x, moving.y - fixed.y);
+    if (!unit) return setLineEditHint("У выбранной линии нет длины");
+    const length = (point.x - fixed.x) * unit.x + (point.y - fixed.y) * unit.y;
+    const result = lineWithNewLength(target, edit.firstPick, length, "total");
+    if (!result) return setLineEditHint("Поставьте точку на стороне выбранного конца");
+    commitLineEdit([[target, [result]]], "Длина изменена");
+    return;
+  }
+  const hit = pickDraftLine(screen);
+  if (edit.mode === "join") {
+    if (!hit || hit === source || !joinLines(source, [hit])) {
+      setLineEditHint("Выберите линию на той же прямой");
+      return;
+    }
+    edit.joinIds = edit.joinIds.includes(hit.id) ? edit.joinIds.filter((id) => id !== hit.id) : [...edit.joinIds, hit.id];
+    setSelection([source.id, ...edit.joinIds]);
+    setLineEditHint(`Выбрано линий: ${edit.joinIds.length + 1}`);
+    draw();
+    return;
+  }
+  if (edit.mode === "fillet") {
+    if (!edit.firstPick) {
+      if (hit !== source) return setLineEditHint("Сначала коснитесь сохраняемой стороны выбранной линии");
+      edit.firstPick = point;
+      setLineEditHint("Коснитесь сохраняемой стороны второй линии");
+      draw();
+      return;
+    }
+    if (!hit || hit === source) return setLineEditHint("Выберите вторую линию");
+    const radiusInput = lineUi.lineEditRadius;
+    const radius = radiusInput.valueAsNumber;
+    const result = filletLines(source, hit, edit.firstPick, point, radius);
+    if (!result) {
+      setLineEditHint("Скругление невозможно. Проверьте радиус и стороны линий");
+      return;
+    }
+    const arc = result.arc ? [arcEntity(newLineId("arc"), result.arc.start, result.arc.through, result.arc.end, source.layer)] : [];
+    commitLineEdit([[source, [result.first]], [hit, [result.second]]], "Скругление построено", arc);
+    return;
+  }
+  if (edit.mode === "break" && hit !== source) {
+    setLineEditHint("Укажите точку на выбранной линии");
+    return;
+  }
+  if (!hit) {
+    setLineEditHint("Коснитесь линии на чертеже");
+    return;
+  }
+  if (edit.mode === "break") {
+    if (!edit.firstPick) {
+      const a = { x: source.x1, y: source.y1 };
+      const b = { x: source.x2, y: source.y2 };
+      edit.firstPick = projectPointToSegmentWorld(point, a, b);
+      setLineEditHint("Вторая точка убирает промежуток. Повторный тап делит линию");
+      draw();
+      return;
+    }
+    const second = distanceWorld(edit.firstPick, point) <= 8 / state.view.scale ? edit.firstPick : point;
+    const pieces = splitLine(source, edit.firstPick, second);
+    if (!pieces) return setLineEditHint("Укажите точку внутри линии");
+    commitLineEdit([[source, pieces]], "Разрыв выполнен");
+    return;
+  }
+  if (edit.mode === "lengthen") {
+    if (edit.lengthMode === "dynamic") {
+      edit.firstPick = point;
+      edit.dynamicLineId = hit.id;
+      setLineEditHint("Укажите точку для новой длины вдоль линии");
+      draw();
+      return;
+    }
+    if (edit.amount === null) return setLineEditHint("Сначала укажите длину и нажмите галочку");
+    const coordinates = lineWithNewLength(hit, point, edit.amount, edit.lengthMode);
+    if (!coordinates) return setLineEditHint("Итоговая длина должна быть больше нуля");
+    commitLineEdit([[hit, [coordinates]]], "Длина изменена");
+    return;
+  }
+  const boundaries = boundarySegments(hit.id);
+  if (edit.mode === "trim") {
+    const pieces = trimLine(hit, boundaries, point);
+    if (!pieces) return setLineEditHint("Нет пересечения для обрезки в этой точке");
+    commitLineEdit([[hit, pieces]], "Линия обрезана");
+  } else {
+    const coordinates = extendLine(hit, boundaries, point);
+    if (!coordinates) return setLineEditHint("В направлении выбранного конца нет границы");
+    commitLineEdit([[hit, [coordinates]]], "Линия удлинена");
+  }
+}
+
+function placeLineTransform(edit, source, raw) {
+  if (edit.mode === "offset") {
+    const through = lineUi.lineLengthMode.value === "through";
+    if (!through && edit.amount === null) return setLineEditHint("Укажите расстояние и нажмите галочку");
+    const point = through ? resolveSnapWorld(raw).point : raw;
+    const coordinates = parallelLine(source, point, through ? null : edit.amount);
+    if (!coordinates) return setLineEditHint("Укажите точку вне оси исходной линии");
+    pushEntity({ ...source, ...coordinates, id: newLineId() });
+    setSelection(source.id);
+    setLineEditHint("Смещение создано. Укажите следующую точку или завершите");
+    draw();
+    return;
+  }
+  if (edit.mode === "scale") {
+    if (edit.amount === null) return setLineEditHint("Укажите коэффициент и нажмите галочку");
+    const coordinates = scaleLine(source, resolveSnapWorld(raw).point, edit.amount);
+    if (!coordinates) return setLineEditHint("Масштабирование невозможно с этим коэффициентом");
+    commitLineEdit([[source, [coordinates]]], "Масштаб линии изменён");
+    return;
+  }
+  if (!edit.firstPick) {
+    edit.firstPick = resolveSnapWorld(raw).point;
+    setLineEditHint("Укажите вторую точку оси отражения");
+    draw();
+    return;
+  }
+  const second = resolveLineLikeSnap(raw, edit.firstPick).point;
+  const coordinates = mirrorLine(source, edit.firstPick, second);
+  if (!coordinates) return setLineEditHint("Точки оси отражения должны различаться");
+  if (lineUi.lineMirrorDelete.checked) {
+    commitLineEdit([[source, [coordinates]]], "Линия отражена");
+  } else {
+    pushEntity({ ...source, ...coordinates, id: newLineId() });
+    endLineEdit("Отражённая копия создана");
+  }
+}
+
+// Each line operation, including splits and fillets, is one undoable edit.
+function commitLineEdit(replacements, message, added = []) {
+  const replaced = new Map(replacements.map(([entity, pieces]) => [
+    entity.id,
+    pieces.map((coordinates, index) => ({ ...entity, ...coordinates, id: index === 0 ? entity.id : newLineId() })),
+  ]));
+  const selection = [...replaced.values()].flat().map(({ id }) => id);
+  const before = [];
+  const after = [];
+  state.entities = state.entities.flatMap((entity, index) => {
+    const pieces = replaced.get(entity.id);
+    if (pieces) {
+      before.push({ entity, index });
+      return pieces;
+    }
+    const dimension = remapLineDimension(entity, replaced);
+    if (dimension !== entity) {
+      before.push({ entity, index });
+      replaced.set(entity.id, [dimension]);
+    }
+    return [dimension];
+  }).concat(added);
+  const newIds = new Set([...replaced.values()].flat().concat(added).map(({ id }) => id));
+  state.entities.forEach((entity, index) => {
+    if (newIds.has(entity.id)) after.push({ entity, index });
+  });
+  state.undo.push({ type: "line-edit", before, after });
+  state.redo.length = 0;
+  endLineEdit(message);
+  setSelection(selection.length === 1 ? selection[0] : null);
+  markProjectDirty("line-edit");
+  draw();
+}
+
+function remapLineDimension(entity, replaced) {
+  if (entity.layer !== "dimensions") return entity;
+  let edited = entity;
+  for (const referenceName of ["refStart", "refEnd"]) {
+    const ref = entity[referenceName];
+    const pieces = replaced.get(ref?.entityId);
+    if (!pieces) continue;
+    const point = dimensionLinkedPoint(ref);
+    const exact = point && pieces.flatMap((piece) => objectPointRefs(piece).map((candidate) => ({
+      ...candidate, entityId: piece.id,
+    }))).find((candidate) => distanceWorld(point, candidate) <= linePointEpsilon);
+    if (!exact && pieces.some((piece) => piece.id === ref.entityId)) continue;
+    if (exact?.entityId === ref.entityId && exact.pointKey === ref.pointKey) continue;
+    if (edited === entity) edited = { ...entity };
+    if (exact) edited[referenceName] = { entityId: exact.entityId, pointKey: exact.pointKey };
+    else delete edited[referenceName];
+  }
+  return edited;
+}
+
+function restoreLineEdit(remove, insert) {
+  const removeIds = new Set(remove.map(({ entity }) => entity.id));
+  state.entities = state.entities.filter((entity) => !removeIds.has(entity.id));
+  for (const { entity, index } of insert) state.entities.splice(index, 0, entity);
+  setSelection(null);
+  markProjectDirty("line-history");
+  draw();
+}
+
+function drawLineEditMarks(c) {
+  const pointer = state.pointer;
+  if (pointer?.mode === "line-grip" && pointer.preview) {
+    const { x1, y1, x2, y2 } = pointer.preview;
+    drawEditableSegment({ x: x1, y: y1 }, { x: x2, y: y2 }, c, { dashed: true });
+  }
+  if (!state.lineEdit?.firstPick) return;
+  const p = worldToScreen(state.lineEdit.firstPick);
+  drawEndpointHandle(p, true, c);
+}
+
+function previewLineGrip(pointer, screen) {
+  const entity = lineEditEntity(pointer.grip.entityId);
+  if (!entity) return;
+  const start = { x: entity.x1, y: entity.y1 };
+  const end = { x: entity.x2, y: entity.y2 };
+  const grip = pointer.grip.point;
+  const origin = grip === "middle" ? midpoint(start, end) : grip === "start" ? start : end;
+  const candidate = {
+    x: origin.x + (screen.x - pointer.startScreen.x) / state.view.scale,
+    y: origin.y + (screen.y - pointer.startScreen.y) / state.view.scale,
+  };
+  if (grip === "middle") {
+    const target = isLineSnapContext() && state.snaps.has("ortho")
+      ? resolveLineLikeSnap(candidate, origin).point
+      : resolveSnapWorld(candidate).point;
+    const dx = target.x - origin.x;
+    const dy = target.y - origin.y;
+    pointer.preview = { x1: start.x + dx, y1: start.y + dy, x2: end.x + dx, y2: end.y + dy };
+  } else {
+    const fixed = grip === "start" ? end : start;
+    const target = resolveLineLikeSnap(candidate, fixed).point;
+    pointer.preview = distanceWorld(fixed, target) <= linePointEpsilon
+      ? null
+      : grip === "start"
+        ? { x1: target.x, y1: target.y, x2: end.x, y2: end.y }
+        : { x1: start.x, y1: start.y, x2: target.x, y2: target.y };
+  }
+}
+
+function finishLineGrip(pointer) {
+  const entity = lineEditEntity(pointer.grip.entityId);
+  if (!entity) return;
+  if (!pointer.moved) {
+    if (pointer.grip.point === "middle") {
+      const base = midpoint({ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y2 });
+      startMoveLikeCommand(entity, "move");
+      centerViewOnWorldPoint(base);
+      commitMoveCommandPoint(base);
+    } else {
+      selectLineEndpoint(pointer.grip);
+    }
+    return;
+  }
+  const before = entityGeometry(entity);
+  if (pointer.preview && geometryChanged(before, pointer.preview)) {
+    const after = pointer.preview;
+    applyEntityGeometry(entity, after);
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    statusChip.textContent = pointer.grip.point === "middle" ? "Линия перемещена" : "Конец линии обновлён";
+  }
+  pointer.preview = null;
+  resetSnapTracking();
+  draw();
+}
+
 function selectLineEndpoint(endpoint) {
   const entity = state.entities.find((item) => item.id === endpoint?.entityId);
   if (!entity || entity.type === "block") return false;
@@ -7260,7 +7890,11 @@ function commitCursorPoint() {
     draw();
     return;
   }
-  if (["line", "polyline", "wall", "circle", "rectangle", "arc"].includes(state.tool)) {
+  if (state.tool === "line") {
+    commitLinePoint(state.drawing?.lockedEnd ? state.drawing.end : world);
+    return;
+  }
+  if (["polyline", "wall", "circle", "rectangle", "arc"].includes(state.tool)) {
     if (!state.drawing) {
       setSelection(null);
       state.endpointEditBefore = null;
@@ -7284,16 +7918,7 @@ function commitCursorPoint() {
       if (!validShape) { statusChip.textContent = `${drawingToolName(finishedTool)}: нужна другая точка`; draw(); return; }
       pushEntity(createEntityFromDrawing());
       statusChip.textContent = drawingDoneLabel(finishedTool, metrics);
-      if (finishedTool === "line") {
-        state.drawing = null;
-        state.selectedEndpoint = null;
-        state.endpointEditBefore = null;
-        resetSnapTracking();
-        hideDrawToolMenu();
-        syncToolButtons();
-        statusChip.textContent = "Линия завершена. Укажите первую точку новой линии";
-      }
-      else if (finishedTool === "wall") { continueWallChain(end); }
+      if (finishedTool === "wall") { continueWallChain(end); }
       else if (["dimension", "circle", "rectangle", "arc"].includes(finishedTool)) { state.drawing = null; hideDrawToolMenu(); if (finishedTool !== "dimension") { state.selectTool = "select"; setTool("select"); } statusChip.textContent = drawingFinishedStatus(finishedTool); }
       else if (finishedTool === "polyline") { state.drawing = { start: end, end, lockedEnd: false }; statusChip.textContent = `Полилиния ${metrics.length} мм. Следующий сегмент`; }
     }
@@ -7431,6 +8056,10 @@ function applyExactInput() {
   };
   if (state.drawing) {
     const finishedTool = state.tool;
+    if (finishedTool === "line") {
+      commitLinePoint(end);
+      return;
+    }
     state.drawing.end = end;
     if (state.tool === "dimension") {
       state.drawing.lockedEnd = true;
@@ -7442,11 +8071,6 @@ function applyExactInput() {
     pushEntity(createEntityFromDrawing());
     if (finishedTool === "wall") {
       continueWallChain(end);
-    } else if (finishedTool === "line") {
-      state.drawing = null;
-      hideDrawToolMenu();
-      state.selectTool = "select";
-      setTool("select");
     } else if (finishedTool === "polyline") {
       state.drawing = { start: end, end, lockedEnd: false };
       statusChip.textContent = "Полилиния: следующий сегмент";
@@ -7687,6 +8311,10 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   state.gestureSuppressTap = false;
   const screen = getPointer(event);
+  if (state.lineEdit) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
+    return;
+  }
   if (state.tool === "select" && !state.moveCommand && !state.offsetCommand && !["window", "lasso"].includes(state.selectTool)) {
     // Point editing is an explicit operation, independent of whole-object drag.
     if (state.selectedEndpoint) {
@@ -7713,16 +8341,21 @@ canvas.addEventListener("pointerdown", (event) => {
     }
     const selectedLineEndpoint = pickSelectedLineEndpoint(screen);
     if (selectedLineEndpoint && !requiresActivation(selectedLineEndpoint.entityId, state.selectedIds, state.directManipulationIds)) {
-      selectLineEndpoint(selectedLineEndpoint);
-      state.pointer = {
-        id: event.pointerId,
-        screen,
-        startScreen: screen,
-        world: screenToWorld(screen),
-        moved: true,
-        mode: "ui",
-        targetId: null,
-      };
+      const entity = state.entities.find((item) => item.id === selectedLineEndpoint.entityId);
+      if (isDraftLine(entity)) {
+        state.pointer = {
+          id: event.pointerId,
+          screen,
+          startScreen: screen,
+          moved: false,
+          mode: "line-grip",
+          grip: selectedLineEndpoint,
+          preview: null,
+        };
+      } else {
+        selectLineEndpoint(selectedLineEndpoint);
+        state.pointer = { id: event.pointerId, mode: "ui", moved: true };
+      }
       return;
     }
   }
@@ -7947,6 +8580,13 @@ canvas.addEventListener("pointermove", (event) => {
     // Do not activate or move the object when the finger is released.
     state.pointer.tapCandidateId = null;
   }
+  if (state.pointer.mode === "line-grip") {
+    if (state.pointer.moved) {
+      previewLineGrip(state.pointer, screen);
+      draw();
+    }
+    return;
+  }
   if (!canStartGeometryDrag(state.pointer.mode, state.pointer.moved)) return;
   if (state.pointer.mode === "selection-window" || state.pointer.mode === "selection-lasso") {
     updateSelectionDrag(screen);
@@ -8059,6 +8699,7 @@ function finishCanvasPointer(event, canceled = false) {
       state.gestureSuppressTap = false;
       state.pointer = null;
       state.dimensionSnapHint = null;
+      draw();
     }
     return;
   }
@@ -8089,6 +8730,10 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
       forceMoveCursorVisible();
     }
+  } else if (state.pointer.mode === "line-grip") {
+    finishLineGrip(state.pointer);
+  } else if (state.pointer.mode === "line-edit") {
+    if (!state.pointer.moved) pickLineEditPoint(state.pointer.startScreen);
   } else if (state.pointer?.mode === "offset-command") {
     if (!canceled && !state.pointer.moved) {
       commitOffsetCommandPoint(rawCursorWorld());
@@ -8567,10 +9212,12 @@ function pickSelectedLineEndpoint(screen) {
   if (!entity || (entity.type !== "line" && entity.type !== "wall") || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
   let best = null;
   let bestDistance = 20;
-  const endpoints = [
-    { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
-    { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
-  ];
+  const start = worldToScreen({ x: entity.x1, y: entity.y1 });
+  const end = worldToScreen({ x: entity.x2, y: entity.y2 });
+  const endpoints = [{ point: "start", screen: start }, { point: "end", screen: end }];
+  if (isDraftLine(entity) && distanceWorld(start, end) > 38) {
+    endpoints.push({ point: "middle", screen: midpoint(start, end) });
+  }
   for (const endpoint of endpoints) {
     const distance = Math.hypot(screen.x - endpoint.screen.x, screen.y - endpoint.screen.y);
     if (distance < bestDistance) {
@@ -8733,15 +9380,21 @@ snaps.forEach((button) => {
     if (state.snaps.has(snap)) {
       state.snaps.delete(snap);
     } else {
+      if (snap === "ortho") state.snaps.delete("polar");
+      if (snap === "polar") state.snaps.delete("ortho");
       state.snaps.add(snap);
     }
-    button.classList.toggle("active", state.snaps.has(snap));
+    syncSnapButtons();
     markProjectDirty("snaps");
     const names = {
       grid: "Сетка",
       end: "Конец",
       mid: "Середина",
-      polar: "Углы 5°",
+      polar: "Полярное отслеживание 5°",
+      ortho: "Орто",
+      intersection: "Пересечение",
+      perpendicular: "Перпендикуляр",
+      nearest: "Ближайшая точка",
     };
     statusChip.textContent = `${names[snap]}: ${state.snaps.has(snap) ? "включено" : "выключено"}`;
     draw();
@@ -9107,11 +9760,21 @@ projectTitle?.addEventListener("click", () => {
 
 lengthInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
+  if (state.tool === "line" || isDraftLine(selectedEndpointGeometry()?.entity)) {
+    event.preventDefault();
+    confirmKeyboardInput();
+    return;
+  }
   applyInlineValue("length", { recordUndo: false });
   lengthInput.blur();
 });
 angleInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
+  if (state.tool === "line" || isDraftLine(selectedEndpointGeometry()?.entity)) {
+    event.preventDefault();
+    confirmKeyboardInput();
+    return;
+  }
   applyInlineValue("angle", { recordUndo: false });
   angleInput.blur();
 });
@@ -9160,6 +9823,65 @@ topLengthInput?.addEventListener("blur", () => {
 topAngleInput?.addEventListener("blur", () => {
   applyTopMetricValue("angle", { recordUndo: false });
   commitNumericInputEdit();
+});
+
+lineUi.linePointForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitLinePoint();
+});
+lineUi.linePointInput.addEventListener("input", () => lineUi.linePointInput.removeAttribute("aria-invalid"));
+lineUi.lineUndo.addEventListener("click", undoLineSegment);
+lineUi.lineClose.addEventListener("click", closeLineCommand);
+lineUi.lineFinish.addEventListener("click", finishLineCommand);
+lineUi.lineEditCancel.addEventListener("click", () => {
+  const sourceId = state.lineEdit?.sourceId;
+  endLineEdit("Правка отменена");
+  setSelection(sourceId);
+});
+lineUi.lineEditFinish.addEventListener("click", () => {
+  if (state.lineEdit?.mode === "offset") endLineEdit("Смещение завершено");
+  else finishLineJoin();
+});
+lineUi.lineEditForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitLineLength();
+});
+lineUi.lineLengthInput.addEventListener("input", () => {
+  if (!state.lineEdit) return;
+  state.lineEdit.amount = null;
+  lineUi.lineLengthInput.removeAttribute("aria-invalid");
+});
+lineUi.lineLengthMode.addEventListener("change", () => {
+  if (!state.lineEdit) return;
+  const mode = lineUi.lineLengthMode.value;
+  state.lineEdit.amount = null;
+  state.lineEdit.firstPick = null;
+  state.lineEdit.lengthMode = mode;
+  syncLineQuantityFields();
+  if (mode === "through") setLineEditHint("Коснитесь точки, через которую пройдёт параллельная линия");
+  else if (mode === "dynamic") setLineEditHint("Коснитесь линии ближе к нужному концу");
+  else setLineEditHint("Введите значение и нажмите галочку");
+  draw();
+});
+lineUi.lineEditRadius.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") lineUi.lineEditRadius.blur();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.target.closest("input, textarea, select, [contenteditable], button")) return;
+  if (state.lineEdit && event.key === "Escape") {
+    event.preventDefault();
+    lineUi.lineEditCancel.click();
+  } else if (state.lineEdit && ["join", "offset"].includes(state.lineEdit.mode) && event.key === "Enter") {
+    event.preventDefault();
+    lineUi.lineEditFinish.click();
+  } else if (state.tool === "line" && (event.key === "Enter" || event.key === "Escape")) {
+    event.preventDefault();
+    if (event.key === "Escape" && !state.drawing) activatePlainSelect();
+    else finishLineCommand();
+  } else if (state.tool === "line" && event.key === "F8") {
+    event.preventDefault();
+    document.querySelector('[data-snap="ortho"]').click();
+  }
 });
 
 selectionActions?.addEventListener("click", (event) => {
@@ -9238,10 +9960,18 @@ annotationScaleSelect?.addEventListener("change", () => {
 });
 
 document.getElementById("undoButton").addEventListener("click", () => {
+  if (state.tool === "line" && state.drawing) {
+    undoLineSegment();
+    return;
+  }
+  if (state.lineEdit) endLineEdit("Правка отменена");
   if (state.tool === "wall" && state.drawing) finishWallChain();
   const action = state.undo.pop();
   if (!action) return;
-  if (action.type === "add") {
+  if (action.type === "line-edit") {
+    state.redo.push(action);
+    restoreLineEdit(action.after, action.before);
+  } else if (action.type === "add") {
     state.entities = state.entities.filter((entity) => entity !== action.entity);
     if (action.joined) Object.assign(state.entities.find(item => item.id === action.joined.id) || {}, action.joined.before);
     state.redo.push(action);
@@ -9279,9 +10009,14 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.getElementById("redoButton").addEventListener("click", () => {
+  if (state.tool === "line" && state.drawing) finishLineCommand();
+  if (state.lineEdit) endLineEdit("Правка отменена");
   const action = state.redo.pop();
   if (!action) return;
-  if (action.type === "add") {
+  if (action.type === "line-edit") {
+    state.undo.push(action);
+    restoreLineEdit(action.before, action.after);
+  } else if (action.type === "add") {
     if (action.joined) Object.assign(state.entities.find(item => item.id === action.joined.id) || {}, action.joined.after);
     state.entities.push(action.entity);
     state.undo.push(action);

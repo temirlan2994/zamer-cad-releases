@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=211" />
+    <link rel="stylesheet" href="./styles.css?v=227" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -110,6 +110,10 @@
           <button class="snap icon-snap active" data-snap="end" title="Конец" aria-label="Конец"><span class="snap-symbol snap-end-symbol" aria-hidden="true"></span></button>
           <button class="snap icon-snap" data-snap="mid" title="Середина" aria-label="Середина"><span class="snap-symbol snap-mid-symbol" aria-hidden="true"></span></button>
           <button class="snap icon-snap active" data-snap="polar" title="Углы с шагом 5°" aria-label="Углы 5 градусов">∠</button>
+          <button class="snap icon-snap" type="button" data-snap="ortho" title="Орто" aria-label="Орто" aria-pressed="false">∟</button>
+          <button class="snap icon-snap" type="button" data-snap="intersection" title="Пересечение" aria-label="Пересечение" aria-pressed="false">×</button>
+          <button class="snap icon-snap" type="button" data-snap="perpendicular" title="Перпендикуляр" aria-label="Перпендикуляр" aria-pressed="false">⊥</button>
+          <button class="snap icon-snap" data-snap="nearest" title="Ближайшая точка на объекте" aria-label="Ближайшая точка на объекте" aria-pressed="false"><span aria-hidden="true">⋈</span></button>
         </div>
       </section>
 
@@ -131,6 +135,41 @@
           <button id="wallFlip" type="button" aria-pressed="false" title="Развернуть сторону · Пробел">⇄ Сторона</button>
           <button id="wallFinish" type="button">Завершить</button>
         </div>
+        <section class="line-command-panel" id="lineOptions" hidden aria-label="Построение линии">
+          <form class="line-command-form" id="linePointForm">
+            <input id="linePointInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Точная точка" placeholder="X,Y · @dX,dY · @L&lt;угол" title="Координаты X,Y, смещение @dX,dY или @длина&lt;угол. Для текущего направления введите длину." />
+            <button class="line-command-primary line-command-submit" type="submit" aria-label="Поставить точную точку">✓</button>
+          </form>
+          <div class="line-command-actions">
+            <button id="lineUndo" type="button" disabled>Убрать отрезок</button>
+            <button id="lineClose" type="button" disabled>Замкнуть</button>
+            <button id="lineFinish" type="button">Завершить</button>
+          </div>
+        </section>
+        <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
+          <p class="line-command-hint" id="lineEditHint" role="status" hidden></p>
+          <label class="line-radius-control" id="lineEditRadiusControl" hidden>
+            <span>Радиус, мм</span>
+            <input id="lineEditRadius" type="number" min="0" step="any" value="0" inputmode="decimal" enterkeyhint="done" />
+          </label>
+          <label class="line-copy-option" id="lineMirrorControl" hidden>
+            <input id="lineMirrorDelete" type="checkbox" /> Удалить исходную линию
+          </label>
+          <form class="line-command-form line-length-form" id="lineEditForm" hidden>
+            <select id="lineLengthMode" aria-label="Способ изменения длины">
+              <option value="total">Длина (мм)</option>
+              <option value="delta">Прирост (мм)</option>
+              <option value="percent">Длина (%)</option>
+              <option value="dynamic">По точке</option>
+            </select>
+            <input id="lineLengthInput" type="text" autocomplete="off" inputmode="decimal" enterkeyhint="done" aria-label="Новая длина линии" />
+            <button class="line-command-primary line-command-submit" type="submit" aria-label="Применить изменение длины">✓</button>
+          </form>
+          <div class="line-command-actions">
+            <button id="lineEditCancel" type="button">Отмена</button>
+            <button id="lineEditFinish" class="line-command-primary" type="button" hidden>Соединить</button>
+          </div>
+        </section>
         <canvas id="cadCanvas" aria-label="Чертежный холст"></canvas>
         <div class="center-cursor" aria-hidden="true">
           <span class="cursor-line horizontal"></span>
@@ -187,8 +226,15 @@
           <button data-action="move"><span>↕</span><small>Переместить</small></button>
           <button data-action="resize"><span>↔</span><small>Размер</small></button>
           <button data-action="delete"><span>⌫</span><small>Удалить</small></button>
+          <button class="line-edit-action" type="button" data-action="trim" hidden><span aria-hidden="true">✂</span><small>Обрезать</small></button>
+          <button class="line-edit-action" type="button" data-action="extend" hidden><span aria-hidden="true">⇥</span><small>Удлинить</small></button>
+          <button class="line-edit-action" type="button" data-action="break" hidden><span aria-hidden="true">╱ ╱</span><small>Разорвать</small></button>
+          <button class="line-edit-action" type="button" data-action="join" hidden><span aria-hidden="true">⤨</span><small>Соединить</small></button>
+          <button class="line-edit-action" type="button" data-action="fillet" hidden><span aria-hidden="true">◜</span><small>Скруглить</small></button>
+          <button class="line-edit-action" type="button" data-action="lengthen" hidden><span aria-hidden="true">↔</span><small>Длина</small></button>
           <button data-action="copy"><span>⧉</span><small>Копия</small></button>
           <button data-action="rotate"><span>↻</span><small>Поворот</small></button>
+          <button class="line-edit-action" type="button" data-action="scale" hidden><span aria-hidden="true">⤢</span><small>Масштаб</small></button>
           <button data-action="mirror"><span>⇆</span><small>Зеркало</small></button>
           <button data-action="offset"><span>∥</span><small>Смещение</small></button>
           <button data-select-tool="filter"><span>⛃</span><small>Фильтр</small></button>
@@ -263,7 +309,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=225"></script>
+    <script type="module" src="./app.js?v=227"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
