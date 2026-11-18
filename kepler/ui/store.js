@@ -461,7 +461,7 @@ function detachIdbRefs(node, out) {
 // Чтение автосохранения при запуске. Ничего не бросает:
 // { project } — проект (или null, если сохранения нет/оно пустое);
 // { broken, error } — сохранение не открылось, копия убрана в резерв.
-export function loadAutosave() {
+export function loadAutosave({ includeEmpty = false } = {}) {
   let saved;
   try { saved = getScopedItem(AUTOSAVE_KEY); } catch { return { project: null }; }
   if (!saved) return { project: null };
@@ -472,7 +472,7 @@ export function loadAutosave() {
     const refs = [];
     detachIdbRefs(project, refs);
     deriveAll(project); // упадёт здесь, а не после замены проекта
-    if (!hasContent(project) && !refs.length) return { project: null };
+    if (!includeEmpty && !hasContent(project) && !refs.length) return { project: null };
     return { project, refs, savedAt };
   } catch (error) {
     console.error('Автосохранение не открылось:', error);

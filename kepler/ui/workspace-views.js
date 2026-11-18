@@ -13,7 +13,6 @@ import { selectObject } from './tools.js';
 import { escapeHtml } from './dom.js';
 
 const paths = {
-  views: 'M3 4h7v7H3zM14 4h7v7h-7zM3 15h7v5H3zM14 15h7v5h-7z',
   plan: 'M3 4h18v16H3zM11 4v8H3m8-3h10m-6 0v6',
   model: 'm12 2 9 5v10l-9 5-9-5V7zM3 7l9 5 9-5m-9 5v10',
   site: 'm3 5 6-2 6 3 6-2v15l-6 2-6-3-6 2zm6-2v15m6-12v15',
@@ -49,10 +48,6 @@ export function bindWorkspaceViews() {
   const plan = document.getElementById('modePlanBtn');
   const defaults = new Map([['3d', 'view3dBtn'], ['site', 'modeSiteBtn'], ['landscape', 'landscapeBtn']]
     .map(([id, button]) => [id, document.getElementById(button)]));
-  nav.innerHTML = `<label class="wv-catalog">${icon('views')}<span>Все виды</span><span aria-hidden="true">⌄</span>
-    <select id="workspaceViewPicker" aria-label="Все виды проекта"></select></label>
-    <div class="wv-tabs" role="tablist" aria-label="Виды на рабочем столе"></div>
-    <button type="button" class="wv-close" aria-label="Закрыть вкладку" hidden>×</button>`;
   const tabs = nav.querySelector('.wv-tabs');
   const closeTab = nav.querySelector('.wv-close');
   const picker = nav.querySelector('select');
@@ -154,6 +149,7 @@ export function bindWorkspaceViews() {
       closeTab.title = `Закрыть вкладку «${current.dataset.title}»`;
       closeTab.setAttribute('aria-label', closeTab.title);
     }
+    nav.hidden = false;
     if (current && (current.offsetLeft < tabs.scrollLeft || current.offsetLeft + current.offsetWidth > tabs.scrollLeft + tabs.clientWidth)) {
       tabs.scrollLeft = current.offsetLeft - tabs.clientWidth / 2 + current.offsetWidth / 2;
     }

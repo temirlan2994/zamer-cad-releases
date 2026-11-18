@@ -109,6 +109,16 @@ body {
   flex-direction: column;
 }
 
+.editor-boot {
+  position: fixed; inset: 0; z-index: 99;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px; background: var(--bg); color: var(--text); text-align: center;
+}
+.editor-boot img { border-radius: 10px; }
+.editor-boot a { color: var(--text); }
+#editorBoot:not([hidden]) + .app { opacity: 0; }
+body:has(#startScreen:not([hidden]), #editLockScreen:not([hidden])) #editorBoot { visibility: hidden; }
+
 /* --- Шапка --- */
 .topbar {
   position: relative;
@@ -163,27 +173,6 @@ body {
 }
 
 .top-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-
-.mode-tabs {
-  display: flex;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px;
-  gap: 3px;
-}
-.mode-tabs .tab {
-  border: 0;
-  background: transparent;
-  padding: 5px 14px;
-  border-radius: 7px;
-  font-weight: 600;
-  color: var(--muted);
-}
-.mode-tabs .tab.active {
-  background: var(--accent);
-  color: #fff;
-}
 
 button {
   font: inherit;
@@ -2270,9 +2259,6 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 .top-actions > button, .top-actions .export-wrap > button { height: 32px; padding-top: 0; padding-bottom: 0; }
 .top-actions .icon-btn { min-width: 34px; padding: 0 8px; }
 .top-sep { width: 1px; height: 22px; margin: 0 4px; background: var(--border); }
-.mode-tabs .tab { padding: 4px 13px; }
-/* 3D открыт — режим под ним остаётся, но не залит */
-.mode-tabs:has(#view3dBtn.active) .tab.active:not(#view3dBtn) { background: transparent; color: var(--accent); }
 
 /* --- Подсказки кнопок инструментов — как у привязок, но справа от колонки --- */
 .tb-btn { position: relative; }
@@ -2663,7 +2649,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 @media (max-width: 640px) {
   /* --- Шапка --- */
   .topbar { flex-wrap: nowrap; gap: 4px; padding: max(6px, env(safe-area-inset-top, 0px)) 8px 6px; }
-  .topbar .brand, .topbar .mode-tabs, .top-sep, #projectsBtn, #exportBtn, #themeBtn, #helpBtn, #menuBtn { display: none; }
+  .topbar .brand, .top-sep, #projectsBtn, #exportBtn, #themeBtn, #helpBtn, #menuBtn { display: none; }
   .project-name { flex: 1 1 auto; width: auto; min-width: 0; height: 38px; }
   .top-actions { flex: none; flex-wrap: nowrap; margin-left: 0; gap: 2px; }
   .top-actions > button, .top-actions .icon-btn { height: 40px; min-width: 40px; }

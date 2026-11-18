@@ -21,9 +21,33 @@ describe('раскладка: колонка инструментов, библ�
   before(async () => { app = await startApp({ width: 1440, height: 860 }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
+  it('во время загрузки виден экран ожидания, затем текущий проект получает единую панель видов', async () => {
+    const context = await app.page.context().browser().newContext();
+    try {
+      const page = await context.newPage();
+      let releaseScript;
+      const canLoad = new Promise((resolve) => { releaseScript = resolve; });
+      await page.route('**/app.js', async (route) => { await canLoad; await route.continue(); });
+      await page.goto(app.page.url(), { waitUntil: 'commit' });
+      await page.locator('#modePlanBtn').waitFor({ state: 'attached' });
+      assert.equal(await page.locator('#editorBoot').isVisible(), true);
+      assert.equal(await page.locator('.app').evaluate((app) => app.inert), true);
+      assert.equal(await page.locator('.topbar [role="tablist"]').count(), 0);
+      assert.equal(await page.locator('#workspaceViews [role="tab"]').count(), 4);
+      assert.equal(await page.locator('#workspaceViews').isVisible(), false);
+      releaseScript();
+      await openSample(page);
+      await page.locator('#editorBoot').waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('.app').evaluate((app) => app.inert), false);
+      await page.locator('#modeSiteBtn').click();
+      await page.waitForFunction(() => window.__kepler.state.modeName === 'site');
+    } finally { await context.close(); }
+  });
+
   it('виды — вкладками над холстом, инструменты — в колонке слева', async () => {
     const { page } = app;
-    for (const id of ['modePlanBtn', 'modeSiteBtn', 'view3dBtn']) {
+    assert.equal(await page.locator('#workspaceViewPicker').isVisible(), true);
+    for (const id of ['modePlanBtn', 'modeSiteBtn', 'landscapeBtn', 'view3dBtn']) {
       assert.equal(await page.$eval(`#${id}`, (n) => Boolean(n.closest('#workspaceViews [role=tablist]'))), true, `#${id} — в строке видов`);
     }
     assert.equal(await page.$$eval('.topbar .tb-btn, .topbar #wallToolBtn, .topbar #doorToolBtn', (ns) => ns.length), 0, 'в шапке нет инструментов');
@@ -222,6 +246,8 @@ describe('раскладка на телефоне', () => {
     assert.equal(await page.isVisible('#toolOptions'), false, '«Выбор» — строки параметров нет');
     await page.tap('#mobileBar [data-sheet="draw"]');
     await mobileSelectFamilyTool(page, 'openings', 'doorToolBtn');
+    assert.equal(await page.isVisible('#toolOptions'), false, 'при выборе двери место отведено каталогу');
+    await page.locator('#openingItems [data-preset]').first().tap();
     assert.equal(await page.isVisible('#presetW'), true, 'дверь — параметры');
     const opts = await box(page, '#toolOptions');
     assert.ok(opts.x >= 0 && opts.x + opts.width <= 390.5, 'в экране');

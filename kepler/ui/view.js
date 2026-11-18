@@ -71,6 +71,7 @@ export function requestDraw() {
   drawQueued = true;
   requestAnimationFrame(() => {
     drawQueued = false;
+    if (!state.project) return; // ResizeObserver может сработать до восстановления аккаунта и модели.
     renderer.draw(state);
     const firstDraw = document.getElementById('firstDrawActions');
     if (firstDraw) firstDraw.hidden = !state.project || state.modeName !== 'plan' || Boolean(
