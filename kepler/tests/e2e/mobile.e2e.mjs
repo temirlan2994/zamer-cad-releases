@@ -39,9 +39,9 @@ describe('телефон 390×844: мобильная раскладка', () =>
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('шапка компактная: название, ⟲ ⟳, «Сохранить», «⋯» — в экране, без прокрутки', async () => {
+  it('шапка компактная: название, аналитика, ⟲ ⟳, «⋯» — в экране, без прокрутки', async () => {
     const { page } = app;
-    for (const sel of ['#projectName', '#undoBtn', '#redoBtn', '#saveBtn', '#moreBtn']) {
+    for (const sel of ['#projectName', '#undoBtn', '#redoBtn', '#projectHomeProgram', '#moreBtn']) {
       assert.equal(await page.isVisible(sel), true, sel);
       assert.ok(inScreen(await box(page, sel)), `${sel} в экране`);
     }
@@ -55,14 +55,24 @@ describe('телефон 390×844: мобильная раскладка', () =>
   it('колонки инструментов нет: план во всю ширину, привязки сверху, «Вписать» — кнопкой на плане', async () => {
     const { page } = app;
     assert.equal(await page.isVisible('#toolStrip'), false, 'колонка скрыта');
-    const [canvas, snap, nav] = await Promise.all(['#canvas', '#mobileSnapRow', '#mobileBar'].map((s) => box(page, s)));
+    const [canvas, snap, nav] = await Promise.all(['#canvas', '#mobileSnapBtn', '#mobileBar'].map((s) => box(page, s)));
     assert.ok(canvas.x <= 0.5 && canvas.width >= W - 1, `план во всю ширину ${JSON.stringify(canvas)}`);
     assert.ok(snap.y + snap.height <= canvas.y + 1, 'привязки над планом');
     assert.ok(nav.y >= canvas.y + canvas.height - 1, 'навигация под планом');
-    assert.equal(await page.isVisible('#snapBar [data-snap="ortho"]'), true, 'привязки видны сразу');
-    const [levels, warn] = await Promise.all(['#levelDock', '#issuesBtn'].map((s) => box(page, s)));
-    assert.ok(levels.y < canvas.y + 20 && levels.x < 20, `этажи — вверху слева ${JSON.stringify(levels)}`);
-    assert.ok(warn.x >= levels.x + levels.width && Math.abs(warn.y - levels.y) < 2, '«⚠» — сразу за этажами');
+    assert.equal(await page.isVisible('#mobileSnapRow'), false);
+    await page.tap('#mobileSnapBtn');
+    const ortho = page.locator('#snapBar [data-snap="ortho"]');
+    const pressed = await ortho.getAttribute('aria-pressed');
+    await ortho.tap();
+    assert.notEqual(await ortho.getAttribute('aria-pressed'), pressed);
+    assert.deepEqual(await box(page, '#canvas'), canvas, 'привязки открылись поверх плана');
+    await ortho.tap();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isVisible('#mobileSnapRow'), false);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'mobileSnapBtn');
+    assert.equal(await page.isVisible('#levelDock'), false);
+    const warn = await box(page, '#issuesBtn');
+    assert.ok(warn.x < 20 && warn.y < canvas.y + 20, 'предупреждения вверху слева');
     assert.equal(await page.isVisible('#fitFab'), true);
     assert.ok(inScreen(await box(page, '#fitFab')));
     await page.evaluate(() => { window.__kepler.state.view.panX += 900; });
@@ -94,7 +104,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileDraw [data-draw="wallToolBtn"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'wall');
     assert.equal(await page.getAttribute('#mobileDraw [data-draw="wallToolBtn"]', 'aria-pressed'), 'true');
-    const [snap, opts, canvas] = await Promise.all(['#mobileSnapRow', '#toolOptions', '#canvas'].map((s) => box(page, s)));
+    const [snap, opts, canvas] = await Promise.all(['#mobileSnapBtn', '#toolOptions', '#canvas'].map((s) => box(page, s)));
     assert.ok(snap.y + snap.height <= opts.y + 1 && opts.y + opts.height <= canvas.y + 1, 'параметры стены — под привязками');
     assert.deepEqual(await offscreen(page), []);
     await page.tap('#mobileDraw [data-done]');
@@ -108,15 +118,17 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileBar [data-sheet="rooms"]');
     await settle(page);
     const cats = await page.$$eval('#mobileCat button', (ns) => ns.map((n) => n.textContent.trim()));
-    assert.deepEqual(cats, ['Помещение', 'Мебель', 'Лестница', 'Готово']);
+    assert.deepEqual(cats, ['Комнаты', 'Мебель', 'Лестницы', 'Готово']);
+    assert.equal(await page.isVisible('#mobileCat [data-cat="furniture"] .mb-label'), true);
     assert.equal(await page.getAttribute('#mobileBar [data-sheet="rooms"]', 'aria-pressed'), 'true');
     await page.tap('#mobileCat [data-cat="room"]');
     await settle(page);
     assert.equal(await has(page, 'sheet-library'), true, 'каталог выехал');
     assert.equal(await page.isVisible('#roomCards .room-card >> text=Гостиная'), true);
     assert.equal(await page.isVisible('#libTabRooms'), false, 'вкладки каталога не нужны — разделы во втором ряду');
-    const [lib, row] = await Promise.all([box(page, '.library'), box(page, '#mobileCat')]);
-    assert.ok(lib.y + lib.height <= row.y + 1, 'лист над вторым рядом');
+    assert.equal(await page.isVisible('#mobileCat'), false, 'при выборе карточки второй ряд убран');
+    const [lib, nav] = await Promise.all([box(page, '.library'), box(page, '#mobileBar')]);
+    assert.ok(Math.abs(lib.y + lib.height - nav.y) <= 1, 'каталог примыкает к нижней навигации');
     assert.deepEqual(await offscreen(page), []);
     await page.tap('#roomCards .room-card >> text=Гостиная');
     const tool = await page.evaluate(() => window.__kepler.state.tool);
@@ -126,6 +138,55 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileCat [data-done]');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null, '«Готово» — размещение отменено');
     assert.equal(await page.isVisible('#mobileCat'), false);
+  });
+
+  it('из окон открывается мебель, лист расширяется клавиатурой и жестом, свайп вниз возвращает инструменты', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="draw"]');
+    await mobileSelectFamilyTool(page, 'openings', 'windowToolBtn');
+    assert.equal(await page.isVisible('#openingsBar'), true);
+    assert.equal(await page.isVisible('#mobileDraw'), false);
+    await page.tap('#mobileBar [data-sheet="rooms"]');
+    await page.tap('#mobileCat [data-cat="furniture"]');
+    await settle(page);
+    assert.equal(await page.isVisible('#furnitureBar'), true);
+    assert.equal(await page.isVisible('#openingsBar'), false);
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
+    const grip = page.locator('.library .sheet-resize');
+    const rest = (await box(page, '.library')).height;
+    assert.ok(rest >= H * 0.45 && rest <= H * 0.52, `каталог занимает половину экрана: ${rest}`);
+    for (const width of [320, W]) {
+      await page.setViewportSize({ width, height: width === W ? H : 568 });
+      await settle(page);
+      const [grid, card] = await Promise.all([box(page, '#furnitureItems'), box(page, '#furnitureItems .furniture-chip')]);
+      assert.ok(card.y + card.height <= grid.y + grid.height + 1, `при ширине ${width} первая карточка видна целиком`);
+    }
+    await grip.press('Enter');
+    await settle(page);
+    assert.equal(await grip.getAttribute('aria-expanded'), 'true');
+    assert.ok((await box(page, '.library')).height >= (await box(page, '.workspace')).height - 10);
+    await grip.press('Space');
+    await settle(page);
+    assert.equal(await grip.getAttribute('aria-expanded'), 'false');
+
+    const cdp = await page.context().newCDPSession(page);
+    const swipe = async (dy) => {
+      const b = await grip.boundingBox();
+      const point = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...point, y: point.y + dy }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await settle(page);
+    };
+    await swipe(-100);
+    assert.equal(await grip.getAttribute('aria-expanded'), 'true');
+    await swipe(90);
+    assert.equal(await grip.getAttribute('aria-expanded'), 'false');
+    await swipe(90);
+    await cdp.detach();
+    assert.equal(await has(page, 'sheet-library'), false);
+    assert.equal(await page.isVisible('#mobileCat'), true);
+    await page.tap('#mobileBar [data-sheet="rooms"]');
   });
 
   it('«Дверь» — каталог проёмов; «Лестница» — выбор формы, касание плана ставит', async () => {
@@ -163,9 +224,9 @@ describe('телефон 390×844: мобильная раскладка', () =>
     assert.match(await page.textContent('#mobileCard .mc-info'), /м²/);
     assert.equal(await page.isVisible('#mobileCard [data-selection-action="delete"]'), true, 'действия — в карточке');
     assert.equal(await page.$eval('#selectionToolbar', (n) => Boolean(n.closest('#mobileCard'))), true);
-    const [card, canvas, levels] = await Promise.all([box(page, '#mobileCard'), box(page, '#canvas'), box(page, '#levelDock')]);
+    const [card, canvas] = await Promise.all([box(page, '#mobileCard'), box(page, '#canvas')]);
     assert.ok(Math.abs(card.y - canvas.y) < 2, `карточка — вверху плана ${JSON.stringify([card, canvas])}`);
-    assert.ok(levels.y >= card.y + card.height - 1, 'этажи — под карточкой');
+    assert.equal(await page.isVisible('#levelDock'), false);
     assert.deepEqual(await offscreen(page), []);
     const w0 = await page.evaluate((rid) => window.__kepler.state.project.rooms.find((r) => r.id === rid).w, id);
     await page.fill('#mobileCard input[data-field="roomW"]', String(w0 + 500));
@@ -179,6 +240,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await settle(page);
     assert.equal(await has(page, 'sheet-props'), true);
     assert.equal(await page.isVisible('#roomName'), true, 'поля помещения');
+    assert.equal(await page.textContent('#mobilePropsTitle'), 'Гостиная');
     assert.equal(await page.isVisible('#propsTabMain'), false, 'вкладок панели нет');
     assert.equal(await page.isVisible('#mobileCard'), false);
     await page.tap('#propsPanel .sheet-close');
@@ -188,16 +250,35 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.waitForSelector('#mobileCard', { state: 'hidden' });
   });
 
-  it('подсказки без клавиш: «Тапайте…», выход — «Готово»; инструмент из карточки — «Готово» на плане', async () => {
+  it('шапка свойств закреплена и различает план и параметры этажа', async () => {
+    const { page } = app;
+    await page.tap('#mobileBar [data-sheet="props"]');
+    await page.waitForFunction(() => document.querySelector('#mobilePropsTitle')?.textContent.startsWith('План · '));
+    const title = page.locator('#mobilePropsTitle');
+    await settle(page);
+    const before = await title.boundingBox();
+    await page.locator('#propsPanel').evaluate((panel) => { panel.scrollTop = panel.scrollHeight; });
+    const after = await title.boundingBox();
+    assert.ok(Math.abs(before.y - after.y) < 2);
+    await page.tap('#propsPanel .sheet-close');
+    await page.selectOption('#workspaceViewPicker', 'level-properties');
+    await page.waitForFunction(() => document.querySelector('#mobilePropsTitle').textContent.startsWith('Свойства этажа · '));
+    assert.ok((await title.textContent()).endsWith(await page.inputValue('#levelName')));
+    await page.tap('#propsPanel .sheet-close');
+  });
+
+  it('подсказка установки появляется после выбора проёма, «Готово» завершает инструмент', async () => {
     const { page } = app;
     await page.tap('#mobileBar [data-sheet="draw"]');
     await mobileSelectFamilyTool(page, 'openings', 'doorToolBtn');
     const touch = await page.getAttribute('#canvasHint', 'data-touch');
-    assert.match(touch, /^Тапайте по стенам/);
-    assert.match(touch, /«Готово» — выход/);
-    assert.doesNotMatch(touch, /Esc|Пробел|Клик/);
-    assert.match(await page.textContent('#canvasHint'), /Esc — выход/, 'исходный текст на месте — его сравнивает код');
-    assert.equal(await page.isVisible('#toolDone'), false, '«Готово» уже есть в ряду');
+    assert.equal(touch, 'Коснитесь стены для двери');
+    assert.equal(await page.isVisible('#canvasHint'), false);
+    assert.equal(await page.isVisible('#toolOptions'), false);
+    assert.equal(await page.isVisible('#toolDone'), false, 'пока открыт каталог, видны его собственные действия');
+    await page.tap('#openingItems [data-preset="door-800"]');
+    assert.equal(await page.isVisible('#canvasHint'), true);
+    assert.equal(await page.inputValue('#presetW'), '800');
     await page.tap('#mobileDraw [data-done]');
     const id = await page.evaluate(() => window.__kepler.state.project.rooms.find((r) => r.name === 'Гостиная').id);
     await page.evaluate((rid) => window.__kepler.selectRoom(rid), id);
@@ -266,9 +347,11 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await settle(page);
     assert.equal(await has(page, 'sheet-more'), true);
     const keys = await page.$$eval('#mobileMore [data-more]', (ns) => ns.map((n) => n.dataset.more));
-    assert.deepEqual(keys, ['projects', 'export', 'menu', 'theme', 'help', 'install']);
+    assert.deepEqual(keys, ['projects', 'download', 'export', 'menu', 'theme', 'help', 'install']);
     assert.deepEqual(await offscreen(page), []);
-    await page.tap('#mobileMore .sheet-close');
+    const download = page.waitForEvent('download');
+    await page.tap('#mobileMore [data-more="download"]');
+    assert.match((await download).suggestedFilename(), /\.kepler\.json$/u);
     await settle(page);
     assert.equal(await has(page, 'sheet-more'), false);
   });

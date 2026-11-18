@@ -131,7 +131,25 @@
   .topbar .project-name { min-width: 0; font-size: 15px; }
   .topbar .top-actions .more-btn { display: inline-flex; font-size: 20px; }
   .topbar .top-actions > button { min-width: 44px; height: 44px; }
-  .topbar .top-actions #saveBtn { padding-inline: 8px; }
+  .topbar .top-actions #saveBtn { display: none; }
+  #projectRoute { border: 0; }
+  #projectRoute .project-route-bar { display: none; }
+  body.project-route-open #projectRoute { z-index: 90; }
+  .topbar #projectHomeProgram {
+    display: inline-flex; justify-content: center; align-items: center;
+    width: auto; gap: 5px; padding: 0 6px; border-color: #47594e; border-radius: 9px;
+    background: #293a30; color: #f1f6f3; white-space: nowrap;
+  }
+  .topbar #projectHomeProgramStatus { padding: 2px 5px; background: #35483e; color: #ddf3cc; }
+  @media (max-width: 440px) {
+    .topbar #projectHomeProgram {
+      display: grid; grid-template-columns: 16px auto; justify-items: center; align-content: center;
+      column-gap: 3px; row-gap: 1px; padding-inline: 6px;
+    }
+    .topbar #projectHomeProgram > svg:first-child { width: 15px; height: 15px; }
+    .topbar #projectHomeProgramStatus { grid-row: 1; grid-column: 2; padding: 1px 4px; }
+    .topbar #projectHomeProgram strong { grid-column: 1 / -1; font-size: 12px; line-height: 1.2; }
+  }
   .topbar #saveBtn span { display: none; }
   .topbar .export-dropdown { width: auto; top: max(52px, env(safe-area-inset-top)); gap: 8px; padding: 8px; }
   .export-group button { min-height: 44px; }

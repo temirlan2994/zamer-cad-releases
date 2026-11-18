@@ -68,23 +68,35 @@ for (const theme of ['light', 'dark']) {
       assert.equal(await page.isVisible('#view3d'), false);
     });
 
-    it('плашка «Тени» в режиме «Солнце» не закрывает холст', async () => {
+    it('обычный ландшафт свободен, карта показывает компактную шкалу и раскрывает время по запросу', async () => {
       const { page } = app;
       await jsClick(page, '#landscapeBtn');
       await page.waitForFunction(() => document.body.classList.contains('mode-landscape'));
-      await page.tap('[data-landscape-climate]');
+      assert.equal(await page.isVisible('#lsSunBar'), false);
+      await page.tap('#projectHomeProgram');
+      await page.tap('[data-home-view="climate"]');
+      const settings = page.locator('[data-climate-location]');
+      if (!(await settings.evaluate((node) => node.open))) await settings.locator('summary').first().tap();
       await page.tap('[data-home-climate-action="landscape-map"]');
-      await page.waitForTimeout(400);
-      await frame(page);
+      await page.waitForSelector('#lsSunFold .ls-sun-legend i', { state: 'visible' });
       const sun = await box(page, '#lsSunBar');
-      const wrap = await box(page, '.canvas-wrap');
-      assert.ok(sun.height <= wrap.height * 0.4, `плашка ${Math.round(sun.height)} из ${Math.round(wrap.height)}`);
-      assert.ok(sun.width <= W * 0.65, `ширина плашки ${sun.width}`);
+      assert.ok(sun.height >= 44 && sun.height <= 48 && sun.width <= 210, `свёрнутая шкала ${sun.width}×${sun.height}`);
       assert.ok(inViewport(sun));
+      assert.equal(await page.isVisible('#lsSunControls'), false);
       await shot(page, `m-${theme}-sun`);
+      await page.tap('#lsSunFold');
+      assert.equal(await page.isVisible('#lsSunTime'), true);
+      assert.match(await page.textContent('#lsSunSummary'), /Участок, в среднем/);
+      await page.focus('#lsSunTime');
+      await page.keyboard.press('Escape');
+      assert.equal(await page.isVisible('#lsSunControls'), false);
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'lsSunFold');
+      await page.tap('#lsSunFold');
       await page.tap('[data-landscape-climate]');
+      assert.equal(await page.isVisible('#lsSunBar'), false);
       await page.selectOption('[data-climate-setting="landscapeMode"]', 'off');
       await page.tap('#projectRouteClose');
+      assert.equal(await page.isVisible('#lsSunBar'), false);
     });
 
     it('окно разреза: «Закрыть» в экране, чертёж не сжат', async () => {

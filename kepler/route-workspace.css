@@ -97,7 +97,6 @@
 .project-route-task-action, .route-passport-link { min-height: 36px; }
 .route-passport-link { margin-top: 12px; padding-inline: 12px; }
 .project-route-task-action + .project-route-task-action { margin-left: 5px; }
-#projectHomeProgram .route-mobile-current, #projectHomeProgram .route-mobile-expander { display: none; }
 @media (min-width: 1150px) and (max-width: 1439px) {
   #projectRoute .project-route-bar { gap: 7px; padding-inline: 8px; }
   .project-route-steps { gap: 0; }
@@ -105,9 +104,6 @@
   .project-route-step .route-symbol { width: 17px; height: 17px; }
 }
 @media (max-width: 640px) {
-  #projectHomeProgram .route-mobile-current { display: inline; margin-left: auto; font-weight: 550; }
-  #projectHomeProgram .route-mobile-expander { display: block; }
-  #projectHomeProgram[aria-expanded="true"] .route-mobile-expander { transform: rotate(180deg); }
   #projectHomeProgram { width: 100%; padding-inline: 10px; gap: 8px; }
   #projectRouteSteps, #routeCurrentSection { display: none; }
 

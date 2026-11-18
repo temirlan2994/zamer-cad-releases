@@ -35,10 +35,16 @@ export const refs = {
   libTabFurniture: el('libTabFurniture'),
 };
 
-export function toast(message, long = false) {
-  refs.toast.textContent = message;
-  refs.toast.classList.add('show');
+// Область role="status" доступна диктору и без всплывающей плашки.
+export function announce(message) {
   clearTimeout(refs.toast._timer);
+  refs.toast.classList.remove('show');
+  refs.toast.textContent = message;
+}
+
+export function toast(message, long = false) {
+  announce(message);
+  refs.toast.classList.add('show');
   refs.toast._timer = setTimeout(() => refs.toast.classList.remove('show'), long ? 5200 : 2600);
 }
 

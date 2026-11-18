@@ -171,6 +171,15 @@ export function openSofaMenu(item, spot) {
   menu.style.left = `${spot.x}px`;
   menu.style.top = `${spot.y + (spot.r || 0)}px`;
   menu.hidden = false;
+  if (state.phoneSofaEdit === item.id) {
+    // Меню центрировано на точке. У края оставляем его целиком между карточкой и нижним рядом.
+    const inset = menu.offsetWidth / 2 + 8;
+    const bottom = menu.parentElement.clientHeight - parseFloat(getComputedStyle(menu).getPropertyValue('--ribbon-h'));
+    const radius = spot.r || 0, height = menu.offsetHeight;
+    const top = spot.y + radius + height + 16 <= bottom ? spot.y + radius : spot.y - radius - height - 16;
+    menu.style.left = `clamp(${inset}px, ${spot.x}px, calc(100% - ${inset}px))`;
+    menu.style.top = `clamp(var(--card-h), ${top}px, calc(100% - var(--ribbon-h) - ${height + 16}px))`;
+  }
   state.sofaMenu = { itemId: item.id, at: spot.at };
   for (const btn of menu.querySelectorAll('[data-sofa-add]')) {
     btn.addEventListener('click', () => {

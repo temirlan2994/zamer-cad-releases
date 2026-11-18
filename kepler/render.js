@@ -2042,6 +2042,7 @@ function drawStairHandles(ctx, state, item, p2s, tokens) {
 // слой). Зоны клика — в state._sofaUI для pointerdown (ui/input.js).
 const SOFA_PLUS_R = 11; // радиус кнопки, px (на тач-экране — больше)
 function drawSofaPlus(ctx, state, item, p2s, tokens) {
+  if (state.phoneSofaEdit !== undefined && state.phoneSofaEdit !== item.id) return;
   const touch = Boolean(state.coarsePointer);
   const spots = [];
   // Сначала торцы, потом стыки (вставка в середину) — стыки помельче и

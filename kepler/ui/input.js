@@ -912,7 +912,7 @@ export function bindCanvasInput() {
       const tolPx = state.coarsePointer ? 6 : 3;
       const spot = state._sofaUI.spots.find((sp) => Math.hypot(sp.x - screen.x, sp.y - screen.y) <= sp.r + tolPx);
       const item = spot && state.project.items.find((i) => i.id === state.selection.id);
-      if (item) { openSofaMenu(item, spot); return; }
+      if (item) { tapOrNow(event, screen, () => openSofaMenu(item, spot)); return; }
     }
 
     // Элементы выделенной кухни-конструктора (ручка или сам элемент) —
