@@ -764,7 +764,6 @@ input {
 .line-command-form {
   display: grid;
   gap: 5px;
-  grid-template-columns: minmax(0, 1fr) 44px;
 }
 
 .line-length-form {
@@ -874,21 +873,9 @@ input {
   flex: 1 1 auto;
 }
 
-.app-shell.keyboard-open .line-chain-actions {
-  display: none;
-}
-
 .line-command-hint {
   color: var(--muted);
   font-size: 0.74rem;
-  line-height: 1.35;
-  margin: 2px 4px;
-}
-
-.line-command-error {
-  color: var(--line-error);
-  font-size: 0.8rem;
-  grid-column: 1 / -1;
   line-height: 1.35;
   margin: 2px 4px;
 }

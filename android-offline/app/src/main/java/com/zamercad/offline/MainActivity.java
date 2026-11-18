@@ -11,6 +11,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.MimeTypeMap;
 import android.webkit.ValueCallback;
@@ -162,6 +163,15 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void showUpdates() {
             runOnUiThread(() -> updater.showMenu());
+        }
+
+        @JavascriptInterface
+        public void dismissKeyboard() {
+            runOnUiThread(() -> {
+                if (webView == null || isDestroyed()) return;
+                InputMethodManager keyboard = getSystemService(InputMethodManager.class);
+                if (keyboard != null) keyboard.hideSoftInputFromWindow(webView.getWindowToken(), 0);
+            });
         }
 
         @JavascriptInterface

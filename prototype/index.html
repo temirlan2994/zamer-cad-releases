@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=228" />
+    <link rel="stylesheet" href="./styles.css?v=229" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -150,18 +150,6 @@
           <button id="wallFlip" type="button" aria-pressed="false" title="Развернуть сторону · Пробел">⇄ Сторона</button>
           <button id="wallFinish" type="button">Завершить</button>
         </div>
-        <section class="line-command-panel" id="lineOptions" hidden aria-label="Построение">
-          <form class="line-command-form" id="linePointForm">
-            <input id="linePointInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Точная точка" aria-describedby="linePointError" placeholder="X,Y · @dX,dY · @L&lt;угол" title="Координаты X,Y, смещение @dX,dY или @длина&lt;угол. Для текущего направления введите длину." />
-            <button class="line-command-primary line-command-submit" type="submit" aria-label="Поставить точную точку">✓</button>
-            <p class="line-command-error" id="linePointError" role="alert" hidden></p>
-          </form>
-          <div class="line-command-actions line-chain-actions" id="lineChainActions" hidden>
-            <button id="lineUndo" type="button" disabled>Убрать отрезок</button>
-            <button id="lineClose" type="button" disabled>Замкнуть</button>
-            <button id="lineFinish" type="button">Завершить</button>
-          </div>
-        </section>
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
           <p class="line-command-hint" id="lineEditHint" role="status" hidden></p>
           <label class="line-mode-control" id="lineBoundaryControl" hidden>
@@ -214,12 +202,12 @@
         <div class="draw-metrics" id="drawMetrics" hidden>
           <label>
             <span>L</span>
-            <input id="topLengthInput" inputmode="decimal" value="3240" aria-label="Длина" />
+            <input id="topLengthInput" inputmode="decimal" enterkeyhint="done" value="3240" aria-label="Длина" />
             <em>мм</em>
           </label>
           <label>
             <span>°</span>
-            <input id="topAngleInput" inputmode="decimal" value="90" aria-label="Угол" />
+            <input id="topAngleInput" inputmode="decimal" enterkeyhint="done" value="90" aria-label="Угол" />
           </label>
         </div>
         <div class="furniture-size-panel" id="furnitureSizePanel" hidden>
@@ -240,11 +228,11 @@
         </div>
         <div class="inline-editors" id="inlineEditors" hidden>
           <label class="inline-editor length-editor" id="lengthEditor">
-            <input id="lengthInput" inputmode="decimal" value="3240" aria-label="Длина линии" />
+            <input id="lengthInput" inputmode="decimal" enterkeyhint="done" value="3240" aria-label="Длина линии" />
             <span>мм</span>
           </label>
           <label class="inline-editor angle-editor" id="angleEditor">
-            <input id="angleInput" inputmode="decimal" value="90" aria-label="Угол линии" />
+            <input id="angleInput" inputmode="decimal" enterkeyhint="done" value="90" aria-label="Угол линии" />
             <span>°</span>
           </label>
         </div>
@@ -341,7 +329,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=228"></script>
+    <script type="module" src="./app.js?v=229"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
