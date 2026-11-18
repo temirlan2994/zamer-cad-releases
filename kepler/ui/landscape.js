@@ -35,6 +35,7 @@ import { saveFile } from './cloud.js';
 import { LS_STYLES, drawLandscapePreview, landscapeMeasure, shapeHandles } from './render-landscape.js';
 import { setLandscapeStyle, setSheetStylePref, sheetStylePref } from './landscape-style.js';
 import { el, escapeHtml, toast } from './dom.js';
+import { closeLibrarySheet } from './mobile.js';
 import { safeProjectFileName } from './project-name.js';
 import { gridStep } from './snap.js';
 import { chainsWithout, dragPrev, snapAt } from './draw-snap-ui.js';
@@ -1147,35 +1148,39 @@ function bindPlantTable(panel) {
 // ------------------------------------------------------------ Каталог слева
 
 export function bindLandscapeLibrary() {
-  el('lsSearch')?.addEventListener('input', () => renderLandscapeItems());
-}
-
-export function renderLandscapeLibrary() {
   const tabs = el('lsTabs');
-  if (!tabs || state.modeName !== 'landscape') return;
-  tabs.innerHTML = '';
+  const search = el('lsSearch');
+  const items = el('lsItems');
+  search.addEventListener('input', () => {
+    items.scrollTop = 0;
+    renderLandscapeItems();
+  });
   for (const cat of LANDSCAPE_CATEGORIES) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'lib-tab';
     btn.dataset.lsCat = cat.id;
     btn.textContent = cat.title;
-    btn.classList.toggle('active', cat.id === category);
     btn.addEventListener('click', () => {
       category = cat.id;
-      if (el('lsSearch')) el('lsSearch').value = '';
-      renderLandscapeLibrary();
+      search.value = '';
+      items.scrollTop = 0;
+      renderLandscapeItems();
     });
     tabs.appendChild(btn);
   }
-  renderLandscapeItems();
+}
+
+export function renderLandscapeLibrary() {
+  if (state.modeName === 'landscape') renderLandscapeItems();
 }
 
 function renderLandscapeItems() {
   const box = el('lsItems');
   if (!box) return;
   const q = (el('lsSearch')?.value || '').trim();
-  for (const button of el('lsTabs').children) {
+  const rail = el('lsTabs');
+  rail.hidden = Boolean(q);
+  for (const button of rail.children) {
     const active = !q && button.dataset.lsCat === category;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
@@ -1226,7 +1231,8 @@ function renderLandscapeItems() {
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
     chip.addEventListener('click', () => {
-      if (active) { cancelTool(); selectObject(state.selection); renderLandscapeLibrary(); } else startPlaceLandscape(def.kind);
+      if (active) { cancelTool(); selectObject(state.selection); renderLandscapeLibrary(); }
+      else { startPlaceLandscape(def.kind); closeLibrarySheet(); }
     });
     box.appendChild(chip);
   }

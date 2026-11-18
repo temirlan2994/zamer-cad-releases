@@ -6,7 +6,7 @@
 // компьютерная раскладка без мобильной навигации.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, mobileSelectFamilyTool } from './helpers.mjs';
+import { pickWorkspaceView, startApp, openSample, mobileSelectFamilyTool } from './helpers.mjs';
 
 const W = 390;
 const H = 844;
@@ -199,10 +199,19 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#mobileBar [data-sheet="rooms"]');
     await page.tap('#mobileCat [data-cat="stairs"]');
     await settle(page);
-    assert.equal(await has(page, 'sheet-stairs'), true);
+    assert.equal(await has(page, 'sheet-library'), true);
+    assert.equal(await page.isVisible('#stairsBar'), true);
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool), null, 'до выбора карточки инструмент выключен');
+    const stairCats = await box(page, '#stairCats');
+    const stairItems = await box(page, '#stairItems');
+    assert.ok(stairCats.x + stairCats.width <= stairItems.x, 'категории слева, лестницы справа');
     assert.deepEqual(await page.$$eval('#mobileCat [aria-pressed="true"]', (ns) => ns.map((n) => n.dataset.cat)), ['stairs']);
-    assert.ok(await page.$$eval('#mobileStairs [data-stair-preset]', (nodes) => nodes.length) >= 6, 'есть интерьерные и наружные пресеты');
-    await page.tap('#mobileStairs [data-stair="l"]');
+    assert.ok(await page.locator('#stairItems [data-stair-preset^="interior-"]').count() >= 3);
+    await page.tap('#stairCats [data-stair-environment="exterior"]');
+    assert.ok(await page.locator('#stairItems [data-stair-preset^="exterior-"]').count() >= 3);
+    await page.tap('#stairCats [data-stair-environment="shape"]');
+    await page.tap('#stairItems [data-stair="l"]');
+    assert.equal(await has(page, 'sheet-library'), false, 'выбор освобождает план');
     const t = await page.evaluate(() => window.__kepler.state.tool);
     assert.equal(t?.itemKind, 'stairs');
     assert.equal(t?.stairShape, 'l');
@@ -261,7 +270,7 @@ describe('телефон 390×844: мобильная раскладка', () =>
     const after = await title.boundingBox();
     assert.ok(Math.abs(before.y - after.y) < 2);
     await page.tap('#propsPanel .sheet-close');
-    await page.selectOption('#workspaceViewPicker', 'level-properties');
+    await pickWorkspaceView(page, 'plans', 'level-properties');
     await page.waitForFunction(() => document.querySelector('#mobilePropsTitle').textContent.startsWith('Свойства этажа · '));
     assert.ok((await title.textContent()).endsWith(await page.inputValue('#levelName')));
     await page.tap('#propsPanel .sheet-close');

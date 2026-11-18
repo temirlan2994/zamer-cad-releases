@@ -165,6 +165,12 @@ export function fitView() {
       { x: room.x - pad, y: room.y - pad, w: room.w + pad * 2, h: room.h + pad * 2 }));
   }
   const siteView = state.modeName === 'site' || state.modeName === 'landscape';
+  // Боковой каталог лежит поверх холста. Участок должен помещаться справа
+  // от него даже на узком планшете. У нижнего листа телефона такого отступа нет.
+  const landscapeCatalog = state.modeName === 'landscape' && window.matchMedia('(min-width: 641px)').matches;
+  const covered = landscapeCatalog ? document.querySelector('.library').offsetWidth : 0;
+  const box = fitBox(canvas.clientWidth - covered, canvas.clientHeight, fitMargins(!covered && state.project.rooms.length > 0));
+  box.left += covered;
   // Массы (core/masses.js) — основания в осях дома: эскиз тоже вписывается.
   if (state.modeName === 'plan') {
     for (const m of allMasses(state.project)) {
@@ -182,7 +188,7 @@ export function fitView() {
   }
   if (!pts.length) {
     state.view.scale = siteView ? 0.02 : 0.08;
-    state.view.panX = canvas.clientWidth / 2;
+    state.view.panX = covered + (canvas.clientWidth - covered) / 2;
     state.view.panY = canvas.clientHeight / 2;
     requestDraw();
     return;
@@ -195,7 +201,6 @@ export function fitView() {
   const maxX = Math.max(...proj.map((p) => p.x));
   const minY = Math.min(...proj.map((p) => p.y));
   const maxY = Math.max(...proj.map((p) => p.y));
-  const box = fitBox(canvas.clientWidth, canvas.clientHeight, fitMargins(state.project.rooms.length > 0));
   const scale = Math.min(0.6, Math.max(0.004,
     Math.min(box.width / Math.max(maxX - minX, 1), box.height / Math.max(maxY - minY, 1)) * 0.95));
   state.view.scale = scale;

@@ -27,7 +27,6 @@ export const refs = {
   modePlan: el('modePlanBtn'),
   modeSite: el('modeSiteBtn'),
   furnitureBar: el('furnitureBar'),
-  furnitureCats: el('furnitureCats'),
   furnitureItems: el('furnitureItems'),
   libraryTop: el('libraryTop'),
   libraryTabs: el('libraryTabs'),

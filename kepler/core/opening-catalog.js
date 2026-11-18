@@ -4,6 +4,7 @@
 // Чистый модуль без DOM.
 
 import { DOOR_TYPES, WINDOW_TYPES } from './walls.js';
+import { normalizeCatalogText } from './catalog.js';
 
 export const OPENING_CATEGORIES = {
   door: [
@@ -63,11 +64,12 @@ export function openingPresets(kind, cat = null) {
 
 // Поиск по названию, типу, размеру и ключевым словам («санузел», «1200», «в пол»).
 export function searchOpeningPresets(kind, query) {
-  const q = String(query || '').trim().toLowerCase();
+  const q = normalizeCatalogText(String(query || ''));
   if (!q) return openingPresets(kind);
   const words = q.split(/\s+/);
   return openingPresets(kind).filter((p) => {
-    const text = `${p.title} ${openingTypeTitle(kind, p.type)} ${p.width} ${p.height} ${p.keywords}`.toLowerCase();
+    const category = OPENING_CATEGORIES[kind].find((c) => c.id === p.cat).title;
+    const text = normalizeCatalogText(`${p.title} ${openingTypeTitle(kind, p.type)} ${category} ${p.width}×${p.height} мм ${p.keywords}`);
     return words.every((w) => text.includes(w));
   });
 }

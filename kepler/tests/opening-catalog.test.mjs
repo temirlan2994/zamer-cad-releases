@@ -33,6 +33,10 @@ test('поиск: по размеру, слову и типу; только св
   assert.ok(searchOpeningPresets('window', 'в пол').every((p) => p.type === 'panoramic'));
   assert.equal(searchOpeningPresets('window', 'входная').length, 0);
   assert.equal(searchOpeningPresets('door', '').length, openingPresets('door').length);
+  for (const size of ['800 × 2100 мм', '800x2100', '800 х 2100']) {
+    assert.deepEqual(searchOpeningPresets('door', 'Межкомнатные ' + size).map((p) => p.id), ['door-800']);
+  }
+  assert.deepEqual(searchOpeningPresets('window', 'широкие 2100 x 1500 мм').map((p) => p.id), ['win-2100x1500']);
 });
 
 test('пресет → параметры инструмента → новый проём; окно не выше этажа', () => {

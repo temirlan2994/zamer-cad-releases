@@ -28,7 +28,11 @@ describe('ландшафт', () => {
   it('«Ландшафт» доступен среди открытых видов и в каталоге видов', async () => {
     const chip = app.page.getByRole('tab', { name: 'Ландшафт', exact: true }).first();
     assert.ok(await chip.isVisible());
-    assert.equal(await app.page.locator('#workspaceViewPicker option[value="landscape"]').textContent(), 'Ландшафт');
+    await app.page.locator('#workspaceViewPicker').click();
+    const menu = app.page.getByRole('dialog', { name: 'Все виды проекта' });
+    await menu.getByRole('tab', { name: 'Модель и участок' }).click();
+    assert.ok(await menu.getByRole('button', { name: 'Ландшафт', exact: true }).isVisible());
+    await app.page.keyboard.press('Escape');
     // Список этажей не изменился (кнопка — вне #levelBar).
     const bar = await app.page.$$eval('#levelBar button', (els) => els.map((e) => e.textContent));
     assert.deepEqual(bar, ['1 этаж', '+']);
@@ -49,10 +53,19 @@ describe('ландшафт', () => {
     assert.ok(Math.abs(rot.view + (rot.north * Math.PI) / 180) < 1e-9);
     const tabs = await app.page.$$eval('#lsTabs button', (els) => els.map((e) => e.textContent));
     assert.deepEqual(tabs, ['Озеленение', 'Ландшафт и площадки']);
+    const rail = await app.page.locator('#lsTabs').boundingBox();
+    const grid = await app.page.locator('#lsItems').boundingBox();
+    assert.ok(rail.x + rail.width <= grid.x && Math.abs(rail.y - grid.y) <= 2, 'категории слева от карточек ландшафта');
+    const panel = await app.page.locator('.library').boundingBox();
+    const corners = await app.page.evaluate(() => window.__kepler.state.project.site.boundary);
+    for (const corner of corners) {
+      assert.ok((await worldToClient(app.page, corner.x, corner.y)).x > panel.x + panel.width, 'граница участка видна справа от каталога');
+    }
     assert.ok(await app.page.$('#lsItems [data-ls-kind="tree-pine"]'));
     await app.page.click('#lsTabs button[data-ls-cat="site"]');
     assert.ok(await app.page.$('#lsItems [data-ls-kind="parking-2"]'));
     await app.page.fill('#lsSearch', 'сосн');
+    assert.equal(await app.page.locator('#lsTabs').isVisible(), false);
     assert.ok(await app.page.$('#lsItems [data-ls-kind="tree-pine"]'), 'поиск по всему каталогу');
     await app.page.fill('#lsSearch', '');
     await app.page.click('#lsTabs button[data-ls-cat="green"]');

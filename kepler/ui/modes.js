@@ -61,9 +61,6 @@ export function setEditorMode(mode) {
     state.view.panY = pan.panY;
   }
   applyModeRotation(); // если поворот дома/север поменялся — докрутить вокруг центра
-  // «Участок» при первом входе вписывается целиком (граница, дороги, соседи),
-  // если пользователь ещё не двигал там вид.
-  if (isSiteView(mode)) fitViewOnce();
   cancelTool();
   state.selection = null;
   state.hover = null;
@@ -83,6 +80,8 @@ export function setEditorMode(mode) {
   renderProps();
   renderFurnitureBar();
   applyLibraryTab();
+  // Размер видимой части участка известен после раскрытия его каталога.
+  if (isSiteView(mode)) fitViewOnce();
   renderLandscapeLibrary();
   renderLevelBar();
   renderViewPanel(); // у режима свой угол вида

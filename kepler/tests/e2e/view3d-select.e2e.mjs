@@ -3,7 +3,7 @@
 // переключатель «Этажи» с кнопками этажей поверх 3D.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { with3dLayers, startApp, openSample } from './helpers.mjs';
+import { with3dLayers, pickWorkspaceView, startApp, openSample } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const sel = (page) => page.evaluate(() => window.__kepler.state.selection);
@@ -212,10 +212,10 @@ describe('3D: этажи', () => {
     await page.click('#modePlanBtn');
     assert.equal(await page.isHidden('#view3d'), true);
     assert.equal(await page.evaluate(() => window.__kepler.state.project.activeLevel), l1);
-    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    await pickWorkspaceView(page, 'facades', 'elev-N');
     assert.equal(await page.isVisible('#elevView'), true);
     assert.equal(await page.isHidden('#toolStrip'), true);
-    await page.selectOption('#workspaceViewPicker', `sheet:level:${l1}`);
+    await pickWorkspaceView(page, 'sheets', `sheet:level:${l1}`);
     assert.equal(await page.isHidden('#elevView'), true);
     assert.equal(await page.isVisible('#sheetView'), true);
     assert.equal(await page.isHidden('#toolStrip'), true);
@@ -243,7 +243,7 @@ describe('3D: этажи', () => {
     });
     await page.click('#modePlanBtn');
     const first = await camera();
-    await page.selectOption('#workspaceViewPicker', `plan:${l2}`);
+    await pickWorkspaceView(page, 'plans', `plan:${l2}`);
     const canvas = page.locator('#canvas');
     await canvas.hover();
     const initial = await camera();

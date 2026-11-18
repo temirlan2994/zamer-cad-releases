@@ -131,7 +131,8 @@ describe('ландшафт: рисование и помощники', () => {
     await page.evaluate((id) => window.__kepler.select({ type: 'landscape', ids: [id] }), path.id);
     await page.check('#lsLock');
     assert.equal((await objects(page)).find((o) => o.id === path.id).locked, true);
-    await page.click('#canvas', { position: { x: 5, y: 5 } }).catch(() => {});
+    const canvas = await page.locator('#canvas').boundingBox();
+    await page.click('#canvas', { position: { x: canvas.width * 0.75, y: canvas.height * 0.7 } });
     await page.evaluate((id) => window.__kepler.select({ type: 'landscape', ids: [id] }), path.id);
     await page.keyboard.press('Delete');
     assert.ok((await objects(page)).find((o) => o.id === path.id), 'не удалён');

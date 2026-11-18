@@ -15,11 +15,9 @@
 
 import { el } from './dom.js';
 import { applyLibraryTab } from './library.js';
-import { stairPresetCard } from './stair-library.js';
 import { state } from './state.js';
 import { availableModelTool, getPlanToolFamilies, renderToolstrip, toolContext } from './toolstrip.js';
-import { STAIR_SHAPES, STAIR_STYLE_PRESETS } from '../core/stairs.js';
-import { cancelTool, startPlaceFurniture } from './tools.js';
+import { cancelTool } from './tools.js';
 import { finishWallChain } from './wall-tool.js';
 import { bindMobileCard, syncMobileCard } from './mobile-card.js';
 import { bindTouchHints } from './touch-hints.js';
@@ -27,11 +25,10 @@ import { bindTouchHints } from './touch-hints.js';
 const LIB = 'sheet-library';
 const PROPS = 'sheet-props';
 const MORE = 'sheet-more';
-const STAIRS = 'sheet-stairs';
 const TALL = 'sheet-tall';
 const CAT = 'cat-open';
 const DRAW = 'draw-open';
-const SHEETS = [LIB, PROPS, MORE, STAIRS];
+const SHEETS = [LIB, PROPS, MORE];
 const has = (cls) => document.body.classList.contains(cls);
 const anySheet = () => SHEETS.some(has);
 
@@ -39,7 +36,7 @@ function libraryKindActive(kind) {
   if (!has(LIB)) return false;
   if (state.modeName !== 'plan') return kind === 'rooms';
   if (state.tool?.kind === 'place-opening') return false;
-  return (state.libraryTab === 'furniture') === (kind === 'furniture');
+  return state.libraryTab === kind;
 }
 
 // Мобильная кнопка «Листы» открывает листы и дерево видов для их оформления.
@@ -77,7 +74,6 @@ export function toggleSheet(kind) {
   let already;
   if (PANEL_TAB[kind]) already = has(PROPS) && (kind === 'sheets' ? viewsTab() : navTab() === PANEL_TAB[kind]);
   else if (kind === 'more') already = has(MORE);
-  else if (kind === 'stairs') already = has(STAIRS);
   else already = libraryKindActive(kind);
   const tall = has(TALL);
   closeAll();
@@ -88,13 +84,14 @@ export function toggleSheet(kind) {
       el('propsPanel').scrollTop = 0;
     } else if (kind === 'more') {
       document.body.classList.add(MORE);
-    } else if (kind === 'stairs') {
-      document.body.classList.add(STAIRS);
     } else {
       if (state.modeName === 'plan') {
         const t = state.tool;
-        if (kind === 'furniture' && t && (t.kind !== 'place-furniture' || t.itemKind === 'stairs') && !finishWallChain()) cancelTool();
-        state.libraryTab = kind === 'furniture' ? 'furniture' : 'rooms';
+        if (t && (kind === 'furniture' || kind === 'stairs')) {
+          const sameCatalog = t.kind === 'place-furniture' && (kind === 'stairs') === (t.itemKind === 'stairs');
+          if (!sameCatalog && !finishWallChain()) cancelTool();
+        }
+        state.libraryTab = kind;
         applyLibraryTab();
       }
       document.body.classList.add(LIB);
@@ -586,15 +583,7 @@ function bindMobileToolFlyout() {
 }
 
 function pickCatalog(id) {
-  const t = state.tool;
-  if (id === 'furniture') { toggleSheet('furniture'); renderToolstrip(); return; }
-  if (id === 'stairs') {
-    if (t?.kind === 'place-furniture' && t.itemKind === 'stairs' && !has(STAIRS)) { el('stairsToolBtn')?.click(); return; }
-    if (t && !(t.kind === 'place-furniture' && t.itemKind === 'stairs') && !finishWallChain()) cancelTool();
-    toggleSheet('stairs');
-    renderToolstrip();
-    return;
-  }
+  if (id === 'furniture' || id === 'stairs') { toggleSheet(id); return; }
   const src = CAT_ITEMS.find((c) => c.id === id)?.src;
   el(src)?.click();
   // Дверь / окно: каталог проёмов — нижним листом; касание плана его убирает.
@@ -606,7 +595,7 @@ function catActive(id) {
   if (id === 'room') return t?.kind === 'bound-room' || t?.kind === 'place-room' || (!t && libraryKindActive('rooms'));
   if (id === 'furniture') return libraryKindActive('furniture') || (t?.kind === 'place-furniture' && t.itemKind !== 'stairs');
   if (id === 'door' || id === 'window') return t?.kind === 'place-opening' && t.openKind === id;
-  if (id === 'stairs') return has(STAIRS) || (t?.kind === 'place-furniture' && t.itemKind === 'stairs');
+  if (id === 'stairs') return libraryKindActive('stairs') || (t?.kind === 'place-furniture' && t.itemKind === 'stairs');
   return false;
 }
 
@@ -620,67 +609,6 @@ function syncCatRow(plan) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', String(on));
   }
-}
-
-// Лист «Лестница»: готовый стиль или отдельная форма, затем касание плана.
-const STAIR_ICONS = {
-  straight: '<rect x="8" y="2.5" width="8" height="19" rx="1"/><path d="M8 6.5h8M8 10.5h8M8 14.5h8M8 18.5h8"/>',
-  l: '<path d="M4 21.5V12h8V2.5h8v19z"/><path d="M4 16.5h8M12 7h8M12 12h8M12 16.5h8"/>',
-  u: '<path d="M3 21.5V2.5h18v19h-7V9h-4v12.5z"/><path d="M3 15h7M3 9h7M14 15h7M14 9h7"/>',
-  u3: '<path d="M3 21.5V2.5h18v19h-6V8.5H9v13z"/><path d="M3 15h6M15 15h6M9 2.5v6M15 2.5v6"/>',
-};
-function buildStairsSheet() {
-  const box = el('mobileStairs');
-  if (!box || box.querySelector('.ms-grid')) return;
-  const presetsTitle = document.createElement('h3');
-  presetsTitle.className = 'mm-title';
-  presetsTitle.textContent = 'Готовые лестницы';
-  const presets = document.createElement('div');
-  presets.className = 'ms-presets';
-  for (const group of [
-    { id: 'interior', title: 'Для интерьера' },
-    { id: 'exterior', title: 'Для улицы' },
-  ]) {
-    const section = document.createElement('section');
-    const heading = document.createElement('h4');
-    heading.textContent = group.title;
-    const cards = document.createElement('div');
-    cards.className = 'mm-grid ms-style-grid';
-    for (const preset of STAIR_STYLE_PRESETS.filter((entry) => entry.environment === group.id)) {
-      cards.appendChild(stairPresetCard(preset));
-    }
-    section.append(heading, cards);
-    presets.appendChild(section);
-  }
-  const h = document.createElement('h3');
-  h.className = 'mm-title';
-  h.textContent = 'По форме';
-  const grid = document.createElement('div');
-  grid.className = 'mm-grid ms-grid';
-  grid.innerHTML = STAIR_SHAPES.map((sh) => `<button type="button" data-stair="${sh.id}">
-    <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">${STAIR_ICONS[sh.id] || ''}</svg>${sh.title}</button>`).join('');
-  box.append(presetsTitle, presets, h, grid);
-  presets.addEventListener('click', (e) => {
-    const button = e.target.closest('[data-stair-preset]');
-    if (!button) return;
-    e.stopPropagation();
-    if (state.tool?.kind === 'wall') finishWallChain();
-    const preset = STAIR_STYLE_PRESETS.find((entry) => entry.id === button.dataset.stairPreset);
-    if (!preset) return;
-    startPlaceFurniture('stairs', preset.title, { stairPreset: preset.id, stairShape: preset.shape });
-    closeAll();
-    renderToolstrip();
-  });
-  grid.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-stair]');
-    if (!b) return;
-    e.stopPropagation();
-    if (state.tool?.kind === 'wall') finishWallChain();
-    const sh = STAIR_SHAPES.find((x) => x.id === b.dataset.stair);
-    startPlaceFurniture('stairs', `Лестница: ${sh?.title || ''}`, { stairPreset: 'interior-wood', stairShape: b.dataset.stair });
-    closeAll();
-    renderToolstrip();
-  });
 }
 
 function syncGripButtons() {
@@ -808,8 +736,6 @@ export function bindMobile() {
   bindDrawRow();
   bindMobileToolFlyout();
   bindSheetHead();
-  buildStairsSheet();
-  attachGrip(el('mobileStairs'), () => closeSheets());
   placeMobileControls();
   bindMobileSnaps();
   bindMobileCard({

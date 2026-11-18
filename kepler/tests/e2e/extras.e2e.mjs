@@ -34,14 +34,14 @@ describe('шаблоны и удобства', () => {
     assert.equal(await app.page.isVisible('#helpScreen'), false);
   });
 
-  it('поиск мебели по всему каталогу; клик по категории сбрасывает', async () => {
+  it('поиск мебели по всему каталогу; смена раздела сбрасывает пустой результат', async () => {
     await app.page.click('#furnitureToolBtn');
     await app.page.fill('#furnSearch', 'ванн');
     const found = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
     assert.ok(found.length >= 1 && found.every((t) => /ванн/i.test(t)), found.join(', '));
     await app.page.fill('#furnSearch', 'нет-такой-мебели');
     assert.match(await app.page.textContent('#furnitureItems'), /Ничего не нашлось/);
-    await app.page.selectOption('#furnitureCats', 'seating');
+    await app.page.click('#objectSections [data-object-section="bath"]');
     assert.equal(await app.page.inputValue('#furnSearch'), '');
     assert.ok(await app.page.$$eval('#furnitureItems .furniture-chip', (ns) => ns.length) > 0);
     await app.page.$eval('#libTabRooms', (n) => n.click());

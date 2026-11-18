@@ -11,25 +11,16 @@ import { addLevel } from './levels.js';
 import { isPhone, toggleSheet } from './mobile.js';
 import { selectObject } from './tools.js';
 import { escapeHtml } from './dom.js';
-
-const paths = {
-  plan: 'M3 4h18v16H3zM11 4v8H3m8-3h10m-6 0v6',
-  model: 'm12 2 9 5v10l-9 5-9-5V7zM3 7l9 5 9-5m-9 5v10',
-  site: 'm3 5 6-2 6 3 6-2v15l-6 2-6-3-6 2zm6-2v15m6-12v15',
-  landscape: 'M7 21v-5m-4 0 4-7 4 7zm13 5v-8m-5 0 5-10 5 10z',
-  section: 'M3 18h18M5 15V7l7-4 7 4v8M5 11h14',
-  sheet: 'M5 2h10l4 4v16H5zM14 2v6h5M8 12h8m-8 4h5',
-};
-const icon = (kind) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[kind]}"/></svg>`;
+import { bindViewMenu, viewIcon } from './workspace-view-menu.js';
 
 function modelViews() {
   const project = state.project;
   return [
-    ['Планы', sortedLevels(project).map((l) => [`plan:${l.id}`, l.name, 'plan']).concat([[ROOF_PLAN_VIEW, 'План крыши', 'plan']])],
-    ['Модель и участок', [['3d', '3D', 'model'], ['site', 'Участок', 'site'], ['landscape', 'Ландшафт', 'landscape']]],
-    ['Разрезы', [...sectionViews(project).map((v) => [v.id, v.name, 'section']),
+    ['plans', sortedLevels(project).map((l) => [`plan:${l.id}`, l.name, 'plan']).concat([[ROOF_PLAN_VIEW, 'План крыши', 'roof']])],
+    ['model', [['3d', '3D', 'model'], ['site', 'Участок', 'site'], ['landscape', 'Ландшафт', 'landscape']]],
+    ['sections', [...sectionViews(project).map((v) => [v.id, v.name, 'section']),
       ...landscapeSections().map((s) => [`section:${s.id}`, `Разрез ${s.name}–${s.name}`, 'section'])]],
-    ['Фасады', facadeViews(project).map((v) => [v.id, v.name, 'section'])],
+    ['facades', facadeViews(project).map((v) => [v.id, v.name, 'facade'])],
   ];
 }
 
@@ -50,36 +41,19 @@ export function bindWorkspaceViews() {
     .map(([id, button]) => [id, document.getElementById(button)]));
   const tabs = nav.querySelector('.wv-tabs');
   const closeTab = nav.querySelector('.wv-close');
-  const picker = nav.querySelector('select');
   const extra = new Map();
   let firstPlan = null;
   let pending = false;
-  let catalogStamp = '';
   let projectId = state.pid;
   let recent = [];
 
-  function populate() {
-    if (!state.project) return;
-    const groups = [...modelViews(), ['Листы', sheets()]];
-    picker.replaceChildren(new Option('Открыть вид…', ''));
-    for (const [name, entries] of groups) {
-      if (!entries.length) continue;
-      const g = document.createElement('optgroup');
-      g.label = name;
-      g.append(...entries.map(([id, title]) => new Option(title, id)));
-      if (name === 'Планы' && isPhone()) {
-        const level = state.project.levels.find((item) => item.id === state.project.activeLevel);
-        g.append(new Option('＋ Добавить этаж', 'add-level'), new Option(`Свойства «${level.name}»`, 'level-properties'));
-      }
-      picker.append(g);
-    }
-    picker.value = state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId();
+  function menuData() {
+    const groups = [...modelViews(), ['sheets', sheets()]];
+    const level = state.project.levels.find((item) => item.id === state.project.activeLevel);
+    const actions = isPhone() ? [['add-level', 'Добавить этаж', 'plus'], ['level-properties', `Свойства «${level.name}»`, 'props']] : [];
+    return { groups, active: state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId(), actions };
   }
-  matchMedia('(max-width: 640px)').addEventListener('change', populate);
-  picker.addEventListener('focus', populate);
-  picker.addEventListener('pointerdown', populate);
-  picker.addEventListener('change', () => {
-    const target = picker.value;
+  const menu = bindViewMenu(nav, menuData, (target) => {
     if (target === 'add-level' || target === 'level-properties') {
       openView(`plan:${state.project.activeLevel}`);
       if (target === 'add-level') { addLevel(); return; }
@@ -131,7 +105,7 @@ export function bindWorkspaceViews() {
         btn.setAttribute('role', 'tab');
         btn.dataset.workspaceView = key;
         btn.dataset.title = name;
-        btn.innerHTML = icon(kind) + '<span>' + escapeHtml(name) + '</span>';
+        btn.innerHTML = viewIcon(kind) + '<span>' + escapeHtml(name) + '</span>';
         btn.title = name;
         btn.setAttribute('aria-label', name);
         btn.removeAttribute('aria-pressed');
@@ -153,9 +127,7 @@ export function bindWorkspaceViews() {
     if (current && (current.offsetLeft < tabs.scrollLeft || current.offsetLeft + current.offsetWidth > tabs.scrollLeft + tabs.clientWidth)) {
       tabs.scrollLeft = current.offsetLeft - tabs.clientWidth / 2 + current.offsetWidth / 2;
     }
-    const stamp = JSON.stringify([groups, state.project.activeLevel, state.project.sheets?.map((s) => [s.id, s.name, s.no]), state.project.sheetsAuto, state.project.levels.map((l) => Boolean(l.rooms.length)), Boolean(state.project.site?.boundary?.length)]);
-    if (stamp !== catalogStamp) { populate(); catalogStamp = stamp; }
-    picker.value = active;
+    menu.refresh();
   }
   function schedule() {
     if (!pending) { pending = true; requestAnimationFrame(render); }
@@ -191,6 +163,7 @@ export function bindWorkspaceViews() {
   document.addEventListener('kepler:view', schedule);
   document.addEventListener('kepler:project-change', schedule);
   document.addEventListener('kepler:project-replaced', () => {
+    menu.close();
     for (const btn of extra.values()) btn.remove();
     extra.clear();
     recent = [];

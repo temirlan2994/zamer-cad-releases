@@ -1,4 +1,5 @@
 #workspaceViews {
+  --view-red: color-mix(in srgb, var(--danger) 72%, var(--text));
   position: relative; z-index: 54; display: flex; align-items: center; flex: none;
   gap: 10px; min-width: 0; padding: 4px clamp(8px, 1.5vw, 24px);
   background: var(--surface); color: var(--text); border-bottom: 1px solid var(--border);
@@ -16,8 +17,53 @@
   background: var(--surface-2); color: var(--text); font-size: 13px; font-weight: 660;
   white-space: nowrap;
 }
-.wv-catalog select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-.wv-catalog:focus-within, .wv-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.wv-catalog { flex: none; }
+#workspaceViews .wv-chevron { width: 12px; height: 12px; }
+.wv-catalog svg:first-child { color: var(--view-red); }
+.wv-catalog:is(:hover,[aria-expanded="true"]) { border-color: var(--view-red); }
+.wv-catalog[aria-expanded="true"] .wv-chevron { transform: rotate(180deg); }
+.wv-catalog:focus-visible, .wv-menu button:focus-visible { outline: 2px solid var(--view-red); outline-offset: -2px; }
+.wv-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.wv-menu {
+  --menu-width: min(414px, calc(100vw - 16px));
+  position: fixed; margin: 0; inset: var(--wv-top) auto auto clamp(8px, var(--wv-left), calc(100vw - var(--menu-width) - 8px));
+  width: var(--menu-width); max-width: none; max-height: calc(100dvh - var(--wv-top) - 8px - env(safe-area-inset-bottom));
+  padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 15px;
+  background: var(--surface); color: var(--text); box-shadow: 0 14px 42px #0003;
+}
+.wv-menu[open] { display: flex; flex-direction: column; }
+.wv-menu::backdrop { background: rgb(15 19 23 / .13); }
+.wv-menu-head {
+  display: flex; flex: none; justify-content: space-between; align-items: center;
+  min-height: 44px; padding: 2px 5px 2px 15px; border-bottom: 1px solid var(--border);
+}
+.wv-menu-head strong { font-size: 15px; }
+.wv-dismiss { display: grid; place-items: center; width: 42px; height: 40px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--muted); }
+.wv-menu-body { display: grid; grid-template-columns: minmax(112px, 36%) minmax(0, 1fr); min-height: 0; max-height: min(380px, 55dvh); }
+.wv-groups, .wv-choices { min-height: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.wv-groups { background: color-mix(in srgb, var(--surface) 60%, var(--surface-2)); border-right: 1px solid var(--border); }
+.wv-menu-body button {
+  display: flex; align-items: center; text-align: left; gap: 8px; width: 100%; min-height: 40px;
+  padding: 7px 9px; border: 0; border-radius: 8px; color: var(--text); background: transparent;
+  font-size: 13px; font-weight: 580; line-height: 1.25;
+}
+.wv-menu-body button span { min-width: 0; overflow-wrap: anywhere; }
+.wv-menu-body button > svg { color: var(--muted); }
+.wv-menu button:hover { background: var(--surface-2); color: var(--text); }
+.wv-menu-body button:is([aria-selected="true"],[aria-current]) {
+  color: var(--view-red); background: color-mix(in srgb, var(--view-red) 10%, var(--surface)); font-weight: 700;
+}
+.wv-menu-body button:is([aria-selected="true"],[aria-current]) > svg { color: inherit; }
+.wv-choices button[aria-current] svg:last-child { margin-left: auto; }
+.wv-level-actions { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); }
+@media (max-width: 640px), (pointer: coarse) {
+  .wv-menu-body button, .wv-dismiss { min-height: 44px; }
+  .wv-dismiss { width: 44px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wv-menu[open] { animation: wv-menu-in .14s ease-out; }
+  @keyframes wv-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+}
 .wv-tabs { position: relative; display: flex; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
 .wv-tabs button {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;

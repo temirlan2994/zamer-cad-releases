@@ -6,7 +6,7 @@
 // свёрнутой секцией; телефон — строка инструментов и «⚠» на холсте.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, mobileSelectFamilyTool, startApp, openSample } from './helpers.mjs';
+import { clickToolbarTool, mobileSelectFamilyTool, pickWorkspaceView, startApp, openSample } from './helpers.mjs';
 
 const box = (page, sel) => page.locator(sel).boundingBox();
 const tool = (page) => page.evaluate(() => {
@@ -82,14 +82,54 @@ describe('раскладка: колонка инструментов, библ�
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
   });
 
+  it('меню видов показывает текущий план, управляется стрелками и закрывается с холста', async () => {
+    const { page } = app;
+    const picker = page.locator('#workspaceViewPicker');
+    const menu = page.getByRole('dialog', { name: 'Все виды проекта' });
+    const plans = menu.getByRole('tab', { name: 'Планы' });
+    const model = menu.getByRole('tab', { name: 'Модель и участок' });
+    const site = menu.locator('[data-view-key="site"]');
+    await page.locator('#modePlanBtn').click();
+    await picker.press('Enter');
+    assert.equal(await picker.getAttribute('aria-expanded'), 'true');
+    assert.equal(await plans.getAttribute('aria-selected'), 'true');
+    assert.equal(await menu.getByRole('button', { name: '1 этаж', exact: true }).getAttribute('aria-current'), 'true');
+
+    const planTool = await tool(page);
+    await plans.press('w');
+    assert.deepEqual(await tool(page), planTool, 'горячая клавиша не включает инструмент под меню');
+
+    await plans.press('ArrowDown');
+    assert.equal(await model.getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.viewKey), '3d');
+    await page.keyboard.press('ArrowDown');
+    assert.ok(await site.evaluate((button) => document.activeElement === button));
+    await page.keyboard.press('Enter');
+    await menu.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
+
+    await picker.press('Enter');
+    assert.equal(await model.getAttribute('aria-selected'), 'true');
+    assert.equal(await site.getAttribute('aria-current'), 'true');
+    await page.keyboard.press('Escape');
+    assert.equal(await picker.getAttribute('aria-expanded'), 'false');
+    assert.ok(await picker.evaluate((button) => document.activeElement === button));
+    await picker.click();
+    const canvas = await box(page, '#canvas');
+    await page.mouse.click(canvas.x + canvas.width - 90, canvas.y + canvas.height - 90);
+    await menu.waitFor({ state: 'hidden' });
+    await page.locator('#modePlanBtn').click();
+  });
+
   it('закрытая вкладка фасада возвращает предыдущий вид, фасад остаётся в каталоге', async () => {
     const { page } = app;
     await page.click('#modeSiteBtn');
-    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    await pickWorkspaceView(page, 'facades', 'elev-N');
     await page.locator('#workspaceViews .wv-close').click();
     await page.waitForFunction(() => document.activeElement?.id === 'modeSiteBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
     assert.equal(await page.locator('.wv-tabs [data-workspace-view="elev-N"]').count(), 0);
-    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    await pickWorkspaceView(page, 'facades', 'elev-N');
     const tab = page.locator('.wv-tabs [data-workspace-view="elev-N"]');
     await tab.focus();
     await page.keyboard.press('Delete');
@@ -161,6 +201,9 @@ describe('раскладка: колонка инструментов, библ�
     assert.equal(await active(page, '#furnitureToolBtn'), false);
     assert.equal(await page.isVisible('.library'), true, 'у лестницы открыт свой каталог');
     assert.equal(await page.isVisible('#stairsBar'), true);
+    const stairCats = await box(page, '#stairCats');
+    const stairItems = await box(page, '#stairItems');
+    assert.ok(stairCats.x + stairCats.width <= stairItems.x, 'категории слева от карточек лестниц');
     assert.ok(await page.$$eval('#stairItems [data-stair-preset]', (nodes) => nodes.length) >= 3, 'в каталоге есть готовые лестницы');
     await page.click('#stairCats [data-stair-environment="exterior"]');
     await page.click('#stairItems [data-stair-preset="exterior-concrete"]');

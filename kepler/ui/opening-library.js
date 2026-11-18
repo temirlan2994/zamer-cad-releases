@@ -13,11 +13,19 @@ import { state } from './state.js';
 
 const openCat = { door: OPENING_CATEGORIES.door[0].id, window: OPENING_CATEGORIES.window[0].id };
 let syncedKey = null;
+let selectedPresetId = null;
+const shortLabels = {
+  interior: 'Для комнат', double: 'Две створки', sliding: 'Сдвижные',
+  passage: 'Без двери', panoramic: 'В пол',
+};
 const levelHeight = () => activeLevel(state.project)?.height || 3000;
 const toolKind = () => (state.tool?.kind === 'place-opening' ? state.tool.openKind : null);
 
 export function bindOpeningLibrary() {
-  el('openSearch')?.addEventListener('input', () => renderOpeningItems());
+  el('openSearch').addEventListener('input', () => {
+    el('openingItems').scrollTop = 0;
+    renderOpeningItems();
+  });
 }
 
 // Выбрать пресет: тип и размеры инструмента; карточка подсвечена.
@@ -25,6 +33,8 @@ export function chooseOpeningPreset(preset) {
   const t = state.tool;
   if (t?.kind !== 'place-opening' || t.openKind !== preset.kind) return;
   Object.assign(t.preset, presetToOpening(preset, levelHeight()));
+  selectedPresetId = preset.id;
+  openCat[preset.kind] = preset.cat;
   renderToolOptions(true);
   renderOpeningLibrary();
   closeLibrarySheet(); // телефон: план свободен для касания
@@ -39,29 +49,35 @@ export function renderOpeningLibrary() {
   if (title) title.textContent = kind === 'door' ? 'Двери' : 'Окна';
   // Новые параметры инструмента (запуск, поле строки) — категория той
   // карточки, что им соответствует; клик по категории дальше не сбивается.
-  const key = `${kind}:${JSON.stringify(state.tool.preset)}`;
+  const height = levelHeight();
+  const key = `${kind}:${height}:${JSON.stringify(state.tool.preset)}`;
   if (!syncedKey?.startsWith(`${kind}:`) && el('openSearch')) el('openSearch').value = ''; // дверь ↔ окно — поиск заново
   if (key !== syncedKey) {
     syncedKey = key;
-    const current = openingPresets(kind).find((p) => presetMatches(p, state.tool.preset, levelHeight()));
+    // У входной и межкомнатной двери могут совпадать и размеры, и тип створки.
+    const matches = openingPresets(kind).filter((p) => presetMatches(p, state.tool.preset, height));
+    const current = matches.find((p) => p.id === selectedPresetId)
+      || matches.find((p) => p.cat === openCat[kind]) || matches[0];
+    selectedPresetId = current?.id ?? null;
     if (current && !el('openSearch')?.value) openCat[kind] = current.cat;
   }
-  cats.innerHTML = '';
-  for (const cat of OPENING_CATEGORIES[kind]) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.innerHTML = CATEGORY_ICONS[cat.id] || '';
-    const label = cat.id === 'panoramic' ? 'В пол' : cat.title;
-    btn.append(label);
-    btn.title = cat.title;
-    btn.dataset.cat = cat.id;
-    btn.setAttribute('aria-label', label === cat.title ? cat.title : `${label} — ${cat.title.toLowerCase()}`);
-    btn.addEventListener('click', () => {
-      openCat[kind] = cat.id;
-      if (el('openSearch')) el('openSearch').value = '';
-      renderOpeningItems();
-    });
-    cats.appendChild(btn);
+  if (cats.dataset.kind !== kind) {
+    cats.dataset.kind = kind;
+    cats.replaceChildren(...OPENING_CATEGORIES[kind].map(({ id, title }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = shortLabels[id] || title;
+      btn.title = title;
+      btn.dataset.cat = id;
+      btn.addEventListener('click', () => {
+        openCat[kind] = id;
+        el('openSearch').value = '';
+        el('openingItems').scrollTop = 0;
+        renderOpeningItems();
+      });
+      return btn;
+    }));
+    el('openingItems').scrollTop = 0;
   }
   renderOpeningItems();
 }
@@ -71,13 +87,15 @@ function renderOpeningItems() {
   const box = el('openingItems');
   if (!kind || !box) return;
   const query = (el('openSearch')?.value || '').trim();
-  for (const button of el('openingCats').children) {
+  const rail = el('openingCats');
+  rail.hidden = Boolean(query);
+  for (const button of rail.children) {
     const active = !query && button.dataset.cat === openCat[kind];
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   }
   const list = query ? searchOpeningPresets(kind, query) : openingPresets(kind, openCat[kind]);
-  const css = getComputedStyle(document.documentElement);
+  const css = getComputedStyle(box);
   const colors = {
     stroke: css.getPropertyValue('--muted').trim() || '#7f90a5',
     accent: css.getPropertyValue('--accent').trim() || '#1f75ff',
@@ -91,7 +109,7 @@ function renderOpeningItems() {
     chip.className = 'furniture-chip opening-chip';
     chip.dataset.preset = preset.id;
     chip.title = `${preset.title} · ${openingTypeTitle(kind, preset.type)} · ${preset.width}×${preset.height} мм${kind === 'window' ? ` · подоконник ${preset.sill}` : ''}`;
-    const active = presetMatches(preset, state.tool.preset, levelHeight());
+    const active = preset.id === selectedPresetId;
     chip.classList.toggle('active', active);
     chip.setAttribute('aria-pressed', String(active));
     const preview = document.createElement('canvas');
@@ -146,13 +164,13 @@ function drawDoorPlan(ctx, W, H, p, c) {
   ctx.fillRect(x1, yWall, W - 10 - x1, wallT);
   ctx.globalAlpha = 1;
   ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   const leaf = (hx, dir, len) => {
     // Створка — от петли перпендикулярно стене, дуга — до проёма.
     ctx.beginPath(); ctx.moveTo(hx, yWall); ctx.lineTo(hx, yWall - len); ctx.stroke();
     ctx.save();
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([5, 3]);
     ctx.beginPath();
     if (dir > 0) ctx.arc(hx, yWall, len, -Math.PI / 2, 0);
     else ctx.arc(hx, yWall, len, Math.PI, Math.PI * 1.5);
@@ -220,16 +238,3 @@ function drawWindowFront(ctx, W, H, p, c) {
     ctx.beginPath(); ctx.moveTo(x - 4, y + h + 2); ctx.lineTo(x + w + 4, y + h + 2); ctx.stroke();
   }
 }
-
-const svgIcon = (inner) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-
-const CATEGORY_ICONS = {
-  interior: svgIcon('<path d="M3 20h18"/><path d="M6 20V6"/><path d="M6 6a14 14 0 0 1 14 14" stroke-dasharray="2.5 2"/>'),
-  entrance: svgIcon('<rect x="6" y="3" width="12" height="17" rx="1"/><circle cx="15" cy="12" r="1"/><path d="M3 21h18"/>'),
-  double: svgIcon('<path d="M2 20h20"/><path d="M4 20V11M20 20V11"/><path d="M4 11a9 9 0 0 1 8 9M20 11a9 9 0 0 0-8 9" stroke-dasharray="2.5 2"/>'),
-  sliding: svgIcon('<rect x="3" y="7" width="10" height="13" rx="0.5"/><rect x="11" y="4" width="10" height="13" rx="0.5"/><path d="M14 21h6M18 19l2 2-2 2"/>'),
-  passage: svgIcon('<path d="M5 21V10a7 7 0 0 1 14 0v11"/><path d="M3 21h18"/>'),
-  standard: svgIcon('<rect x="5" y="4" width="14" height="13" rx="1"/><path d="M12 4v13M5 10.5h14"/><path d="M4 19h16"/>'),
-  wide: svgIcon('<rect x="2" y="6" width="20" height="10" rx="1"/><path d="M8.7 6v10M15.3 6v10"/><path d="M2 18.5h20"/>'),
-  panoramic: svgIcon('<rect x="4" y="2" width="16" height="18" rx="1"/><path d="M12 2v18"/><path d="M2 21h20"/>'),
-};

@@ -804,51 +804,6 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
 }
 .furniture-items::-webkit-scrollbar { width: 6px; }
 .furniture-items::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
-.stair-items { grid-template-columns: 1fr; }
-.stair-preset-card {
-  display: grid;
-  grid-template-columns: 68px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: 3px 9px;
-  align-items: center;
-  min-width: 0;
-  padding: 9px;
-  text-align: left;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  color: var(--text);
-}
-.stair-preset-card:hover { border-color: var(--accent); }
-.stair-preset-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.stair-preset-card strong { min-width: 0; font-size: 12.5px; line-height: 1.2; }
-.stair-preset-card small { min-width: 0; color: var(--muted); font-size: 10.5px; line-height: 1.25; }
-.stair-preset-preview {
-  grid-row: 1 / 3;
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  width: 68px;
-  height: 48px;
-  overflow: hidden;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--canvas) 75%, var(--surface));
-}
-.stair-preset-preview i {
-  display: block;
-  width: 13px;
-  height: calc(12px + var(--step, 0px));
-  margin-right: -1px;
-  box-sizing: border-box;
-  border: 1px solid color-mix(in srgb, var(--stair-material) 70%, #27313d);
-  background: var(--stair-material);
-}
-.stair-preset-preview i:nth-child(1) { --step: 0px; }
-.stair-preset-preview i:nth-child(2) { --step: 7px; }
-.stair-preset-preview i:nth-child(3) { --step: 14px; }
-.stair-preset-preview i:nth-child(4) { --step: 21px; }
-.stair-preset-preview b { position: absolute; right: 5px; top: 3px; color: var(--muted); font-size: 19px; line-height: 1; }
 .furniture-chip {
   display: flex;
   flex-direction: column;
@@ -873,7 +828,7 @@ body:not(.mode-site):not(.mode-landscape):not(.v3-open) .home-circulation-canvas
 .furniture-chip:active { cursor: grabbing; transform: translateY(0); }
 .furniture-chip.dragging { opacity: 0.45; }
 /* Карточка двери/окна: выбранный пресет инструмента */
-.opening-chip { cursor: pointer; }
+.opening-chip, .stair-chip { cursor: pointer; }
 .opening-chip.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--surface-2); }
 .furniture-chip canvas {
   width: 100%;
@@ -2026,8 +1981,6 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 
 /* --- Ландшафт: каталог слева (ui/landscape.js) --- */
 .library-landscape h2 { margin-bottom: 6px; }
-.ls-tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
-.ls-tabs .lib-tab { padding: 7px 4px 8px; font-size: 12px; }
 .ls-group {
   grid-column: 1 / -1;
   margin: 6px 0 0;
@@ -2405,14 +2358,14 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     left: var(--tools-w);
     top: var(--opts-h);
     bottom: 0;
-    width: min(264px, 42vw);
+    width: var(--library-w, min(264px, 42vw));
     padding: 0;
     box-shadow: 10px 0 24px rgba(24, 32, 43, 0.12);
   }
   body.lib-open .library { display: flex; }
   body.mode-site .library { display: none; }
-  body.lib-open .level-dock { left: calc(min(264px, 42vw) + 14px); }
-  body.lib-open .ls-section { left: min(264px, 42vw); } /* разрез участка — правее каталога, не под ним */
+  body.lib-open .level-dock { left: calc(var(--library-w, min(264px, 42vw)) + 14px); }
+  body.lib-open .ls-section { left: var(--library-w, min(264px, 42vw)); } /* разрез участка — правее каталога, не под ним */
   /* «⚠ Замечания» — третья вкладка; список — вместо содержимого панели */
   .props-tabs .issues-btn {
     position: static;
@@ -2805,13 +2758,6 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   }
-  .ms-grid { grid-template-columns: repeat(2, 1fr); }
-  .ms-grid button { height: 84px; font-size: 12px; }
-  .ms-presets { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
-  .ms-presets h4 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
-  .ms-style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ms-style-grid button { min-height: 86px; height: auto; padding: 8px 5px; line-height: 1.15; }
-  .ms-style-grid button small { color: var(--muted); font-size: 10px; font-weight: 500; }
 
   /* --- Карточка выбранного объекта: вверху плана, поверх него (план не сдвигается) --- */
   .mobile-card {
@@ -2904,7 +2850,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   body.sheet-tall .library, body.sheet-tall .props, body.sheet-tall .mobile-more { height: calc(100% - var(--ribbon-h) - 8px); }
   body.sheet-tall .library.furniture-dragging { height: 45%; }
   .library .furniture-chip { -webkit-touch-callout: none; user-select: none; }
-  body.sheet-library .library, body.sheet-props .props, body.sheet-more #mobileMore, body.sheet-stairs #mobileStairs { transition: transform 0.2s ease, height 0.2s ease, visibility 0s; }
+  body.sheet-library .library, body.sheet-props .props, body.sheet-more #mobileMore { transition: transform 0.2s ease, height 0.2s ease, visibility 0s; }
   .props { padding-top: 0; }
   .library { padding-top: 0; }
   .mobile-more {
@@ -2913,7 +2859,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
     box-shadow: 0 -12px 30px rgba(24, 32, 43, 0.18);
     transform: translateY(110%); visibility: hidden; pointer-events: none;
   }
-  body.sheet-more #mobileMore, body.sheet-stairs #mobileStairs { transform: none; visibility: visible; pointer-events: auto; }
+  body.sheet-more #mobileMore { transform: none; visibility: visible; pointer-events: auto; }
   .sheet-grip {
     position: sticky; top: 0; z-index: 3; flex: none; display: flex; align-items: center; justify-content: center;
     height: 32px; margin: 0 -14px; background: var(--surface); touch-action: none; cursor: grab;

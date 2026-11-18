@@ -19,6 +19,11 @@ export function gridStepForScale(scale) {
   return GRID_STEP;
 }
 
+// В поиске размер с карточки можно ввести с латинской x, русской х или знаком ×.
+export function normalizeCatalogText(text) {
+  return text.trim().toLocaleLowerCase('ru').replaceAll('ё', 'е').replace(/(\d)\s*[xх×]\s*(?=\d)/g, '$1×');
+}
+
 // Категории мебели для нижней панели (порядок = порядок вкладок).
 export const FURNITURE_CATEGORIES = [
   { id: 'seating', title: 'Диваны и кресла' },
