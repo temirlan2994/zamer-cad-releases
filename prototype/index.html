@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=229" />
+    <link rel="stylesheet" href="./styles.css?v=231" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -58,10 +58,6 @@
           <button class="project-action-card" id="createBlankProjectButton" type="button">
             <strong>Новый файл</strong>
             <span>Пустой замер</span>
-          </button>
-          <button class="project-action-card" id="createApartmentProjectButton" type="button">
-            <strong>Шаблон</strong>
-            <span>Комната 5200 × 3600</span>
           </button>
           <label class="project-action-card import-card">
             <strong>Импорт</strong>
@@ -136,27 +132,17 @@
         <nav class="tool-rail" aria-label="Инструменты">
           <button class="tool active" data-tool="select" aria-label="ESC — отменить команду и выбрать объект"><span>↖</span><small>ESC</small></button>
           <button class="tool tool-with-menu" data-tool="line" title="Линия. Повторное касание — фигуры" aria-description="Повторное касание открывает выбор фигуры"><span>╱</span><small>Линия</small></button>
-          <button class="tool" data-tool="wall"><span>▌</span><small>Стена</small></button>
           <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
           <button class="tool" data-tool="annotation"><span>T</span><small>Аннотации</small></button>
-          <button class="tool" data-tool="furniture"><span>🪑</span><small>Объект</small></button>
         </nav>
 
-        <div class="wall-options" id="wallOptions" hidden aria-label="Параметры стены">
-          <label>Толщина <span><input id="wallWidth" inputmode="decimal" value="180" aria-label="Толщина стены" /> мм</span></label>
-          <label>Привязка <select id="wallLocation" aria-label="Линия привязки стены"><option value="axis">Ось стены</option><option value="left">Левая грань</option><option value="right">Правая грань</option></select></label>
-          <label>Смещение <span><input id="wallOffset" inputmode="decimal" value="0" aria-label="Смещение стены" /> мм</span></label>
-          <label class="wall-chain"><input type="checkbox" id="wallChain" checked /> Цепочка</label>
-          <button id="wallFlip" type="button" aria-pressed="false" title="Развернуть сторону · Пробел">⇄ Сторона</button>
-          <button id="wallFinish" type="button">Завершить</button>
-        </div>
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
           <p class="line-command-hint" id="lineEditHint" role="status" hidden></p>
           <label class="line-mode-control" id="lineBoundaryControl" hidden>
             <span>Границы</span>
             <select id="lineBoundaryMode">
-              <option value="auto">Все видимые · грани стен</option>
-              <option value="axis">Все видимые · оси стен</option>
+              <option value="auto">Все видимые</option>
+              <option value="axis" hidden>Все видимые · оси стен</option>
               <option value="selected">Выбрать границы</option>
             </select>
           </label>
@@ -210,22 +196,6 @@
             <input id="topAngleInput" inputmode="decimal" enterkeyhint="done" value="90" aria-label="Угол" />
           </label>
         </div>
-        <div class="furniture-size-panel" id="furnitureSizePanel" hidden>
-          <label>
-            <span>Ш</span>
-            <input id="furnitureWidthInput" inputmode="decimal" aria-label="Ширина мебели" />
-            <small>мм</small>
-          </label>
-          <label>
-            <span>Г</span>
-            <input id="furnitureDepthInput" inputmode="decimal" aria-label="Глубина мебели" />
-            <small>мм</small>
-          </label>
-          <label>
-            <span>°</span>
-            <input id="furnitureRotationInput" inputmode="decimal" aria-label="Угол мебели" />
-          </label>
-        </div>
         <div class="inline-editors" id="inlineEditors" hidden>
           <label class="inline-editor length-editor" id="lengthEditor">
             <input id="lengthInput" inputmode="decimal" enterkeyhint="done" value="3240" aria-label="Длина линии" />
@@ -244,7 +214,6 @@
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" role="region" aria-label="Команды правки" hidden>
           <button data-select-tool="cycle"><span>▣</span><small>Рамка</small></button>
           <button data-action="move"><span>↕</span><small>Переместить</small></button>
-          <button data-action="resize"><span>↔</span><small>Размер</small></button>
           <button data-action="delete"><span>⌫</span><small>Удалить</small></button>
           <button class="line-edit-action" type="button" data-action="trim" hidden><span aria-hidden="true">✂</span><small>Обрезать</small></button>
           <button class="line-edit-action" type="button" data-action="extend" hidden><span aria-hidden="true">⇥</span><small>Удлинить</small></button>
@@ -265,35 +234,6 @@
           <button data-draw-tool="circle"><span>○</span><small>Круг</small></button>
           <button data-draw-tool="arc"><span>⌒</span><small>Дуга</small></button>
           <button data-draw-tool="rectangle"><span>▭</span><small>Прямоуг.</small></button>
-        </div>
-      </section>
-
-      <section class="furniture-sheet" id="furnitureSheet" hidden data-position="half" aria-label="Библиотека мебели">
-        <div class="sheet-handle" role="button" tabindex="0"></div>
-        <button class="furniture-peek-button" type="button" aria-label="Открыть библиотеку мебели">
-          <span></span>
-          <strong>↑</strong>
-        </button>
-        <div class="furniture-tabs" aria-label="Категории библиотеки">
-          <button class="furniture-tab active" data-tab="furniture" title="Мебель" aria-label="Мебель"><span>▥</span></button>
-          <button class="furniture-tab" data-tab="doors" title="Двери" aria-label="Двери"><span>◜</span></button>
-          <button class="furniture-tab" data-tab="windows" title="Окна" aria-label="Окна"><span>⊞</span></button>
-          <button class="furniture-tab" data-tab="kitchen" title="Кухня" aria-label="Кухня"><span>▣</span></button>
-          <button class="furniture-tab" data-tab="bath" title="Санузел" aria-label="Санузел"><span>◉</span></button>
-          <button class="furniture-tab" data-tab="decor" title="Декор" aria-label="Декор"><span>✦</span></button>
-        </div>
-        <div class="furniture-browser">
-          <nav class="furniture-cats" aria-label="Тип мебели">
-            <button class="active" data-category="sofas">Диваны</button>
-            <button data-category="beds">Кровати</button>
-            <button data-category="tables">Столы</button>
-            <button data-category="chairs">Стулья</button>
-            <button data-category="storage">Шкафы</button>
-            <button data-category="cabinets">Тумбы</button>
-          </nav>
-          <div class="furniture-grid" id="furnitureGrid" aria-live="polite">
-            <div class="library-empty">Загрузка библиотеки...</div>
-          </div>
         </div>
       </section>
 
@@ -329,7 +269,7 @@
       </section>
     </main>
 
-    <script type="module" src="./app.js?v=230"></script>
+    <script type="module" src="./app.js?v=231"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

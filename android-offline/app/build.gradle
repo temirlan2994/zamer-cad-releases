@@ -18,8 +18,8 @@ android {
         applicationId "com.zamercad.offline"
         minSdk 29
         targetSdk 35
-        versionCode 10
-        versionName "0.1.9"
+        versionCode 11
+        versionName "0.1.10"
         buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
     }
 
@@ -68,9 +68,8 @@ tasks.register("syncWebAssets", Sync) {
         include "styles.css"
         include "manifest.webmanifest"
         include "core/**"
-        include "assets/**"
         include "icons/**"
-        exclude "core/*.test.js", "core/geometry.js", "core/blocks.js", "core/dxf-writer.js"
+        exclude "core/*.test.js", "core/geometry.js", "core/blocks.js", "core/dxf-writer.js", "core/walls.js"
     }
     from("${rootDir}/../shared/cad") {
         include "geometry.js", "blocks.js", "dxf-writer.js"
