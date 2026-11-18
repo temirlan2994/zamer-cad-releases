@@ -3860,8 +3860,13 @@ function hitDimensionControl(screen) {
   return { type: picked.type, entity: picked.entity };
 }
 
+function isLinearDimension(entity) {
+  return entity.type === "line" && entity.layer === "dimensions" &&
+    entity.dimensionKind !== "angular" && entity.dimensionKind !== "leader";
+}
+
 function dimensionScreenGeometry(entity) {
-  if (entity.dimensionKind === "leader" || entity.dimensionKind === "angular") return null;
+  if (!isLinearDimension(entity)) return null;
   const geometry = dimensionWorldGeometry(entity);
   let a = worldToScreen(geometry.lineStart);
   let b = worldToScreen(geometry.lineEnd);
@@ -3987,7 +3992,7 @@ function snapDimensionLineToOtherDimension(entity, point, axis) {
   const threshold = 34 / state.view.scale;
   let best = null;
   for (const candidate of state.entities) {
-    if (candidate === entity || candidate.layer !== "dimensions" || !isLayerVisible(candidate.layer)) continue;
+    if (candidate === entity || !isLinearDimension(candidate) || !isLayerVisible(candidate.layer)) continue;
     const geometry = dimensionWorldGeometry(candidate);
     const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
     if (!candidateAxis) continue;
@@ -4023,7 +4028,7 @@ function dimensionOffsetWithAlignmentSnap(start, end, point) {
   let best = null;
 
   for (const candidate of state.entities) {
-    if (candidate.layer !== "dimensions" || !isLayerVisible(candidate.layer)) continue;
+    if (!isLinearDimension(candidate) || !isLayerVisible(candidate.layer)) continue;
     const geometry = dimensionWorldGeometry(candidate);
     const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
     if (!candidateAxis) continue;
@@ -6936,7 +6941,7 @@ function setTool(tool) {
   syncToolButtons();
   const copy = {
     select: "Выбор: тапните объект. Мебель двигается только когда она выбрана",
-    line: "Линия: укажите первую точку курсором или введите координаты",
+    line: "Линия: наведите курсор на начало и коснитесь холста",
     polyline: "Полилиния: каждый тап добавляет следующий сегмент",
     circle: "Круг: укажите центр, затем радиус",
     arc: "Дуга: старт, точка на дуге, конец",
@@ -9531,7 +9536,7 @@ function dimensionBasePointFromHandle(entity, handlePoint) {
 
 function normalizeWorldVector(dx, dy) {
   const length = Math.hypot(dx, dy);
-  if (length < 1) return null;
+  if (!Number.isFinite(length) || length < 1) return null;
   return { x: dx / length, y: dy / length };
 }
 
