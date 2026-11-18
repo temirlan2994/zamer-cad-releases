@@ -174,36 +174,43 @@ function nearestOnShape(shape, point) {
   return fromStart <= fromEnd ? circle.start : circle.end;
 }
 
-function boundedSnap(point, threshold, type) {
-  let best = null;
-  let distance = threshold;
+function boundedSnaps(point, threshold, type, limit) {
+  const hits = [];
+  const maxDistance = () => hits.length === limit ? hits.at(-1)?.distance ?? threshold : threshold;
   return {
     consider(candidate) {
       if (!validPoint(candidate)) return;
-      const next = Math.hypot(point.x - candidate.x, point.y - candidate.y);
-      if (next <= distance && (!best || next < distance)) {
-        best = { x: candidate.x, y: candidate.y, type };
-        distance = next;
-      }
+      const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+      if (distance > maxDistance() || hits.some(hit =>
+        Math.hypot(hit.x - candidate.x, hit.y - candidate.y) <= POINT_EPSILON)) return;
+      const position = hits.findIndex(hit => distance < hit.distance);
+      if (position === -1 && hits.length === limit) return;
+      hits.splice(position === -1 ? hits.length : position, 0, { x: candidate.x, y: candidate.y, distance });
+      if (hits.length > limit) hits.pop();
     },
-    get point() { return best; },
-    get distance() { return distance; },
+    get found() { return hits.length > 0; },
+    get points() { return hits.map(({ x, y }) => ({ x, y, type })); },
+    get distance() { return maxDistance(); },
   };
 }
 
-export function nearestBoundaryPoint(point, boundaries, threshold) {
-  if (!validPoint(point) || !(threshold >= 0)) return null;
-  const snap = boundedSnap(point, threshold, "nearest");
+export function nearbyBoundaryPoints(point, boundaries, threshold, limit = 8) {
+  if (!validPoint(point) || !(threshold >= 0)) return [];
+  const snap = boundedSnaps(point, threshold, "nearest", limit);
   for (const boundary of boundaries) {
     const shape = snapShape(boundary);
     if (shape) snap.consider(nearestOnShape(shape, point));
   }
-  return snap.point;
+  return snap.points;
 }
 
-export function nearestPerpendicular(point, start, boundaries, threshold) {
-  if (!validPoint(point) || !validPoint(start) || !(threshold >= 0)) return null;
-  const snap = boundedSnap(point, threshold, "perpendicular");
+export function nearestBoundaryPoint(point, boundaries, threshold) {
+  return nearbyBoundaryPoints(point, boundaries, threshold, 1)[0] ?? null;
+}
+
+export function nearbyPerpendiculars(point, start, boundaries, threshold, limit = 8) {
+  if (!validPoint(point) || !validPoint(start) || !(threshold >= 0)) return [];
+  const snap = boundedSnaps(point, threshold, "perpendicular", limit);
   for (const boundary of boundaries) {
     const shape = snapShape(boundary);
     if (!shape) continue;
@@ -228,7 +235,11 @@ export function nearestPerpendicular(point, start, boundaries, threshold) {
       }
     }
   }
-  return snap.point;
+  return snap.points;
+}
+
+export function nearestPerpendicular(point, start, boundaries, threshold) {
+  return nearbyPerpendiculars(point, start, boundaries, threshold, 1)[0] ?? null;
 }
 
 function intersectCircles(first, second, consider) {
@@ -274,10 +285,9 @@ function intersectShapes(first, second, consider) {
   }
 }
 
-// A boundary farther than our best crossing cannot improve it. Visit local
-// boundaries in distance order and retain only the best point, not all pairs.
-export function nearestIntersection(point, boundaries, threshold) {
-  if (!validPoint(point) || !(threshold >= 0)) return null;
+// A boundary farther than our last retained crossing cannot improve the selection.
+export function nearbyIntersections(point, boundaries, threshold, limit = 8) {
+  if (!validPoint(point) || !(threshold >= 0)) return [];
   const candidates = [];
   for (const boundary of boundaries) {
     const shape = snapShape(boundary);
@@ -286,21 +296,25 @@ export function nearestIntersection(point, boundaries, threshold) {
     const distance = Math.hypot(point.x - nearest.x, point.y - nearest.y);
     if (distance <= threshold + POINT_EPSILON) candidates.push({ shape, distance });
   }
-  if (candidates.length < 2) return null;
+  if (candidates.length < 2) return [];
   const direction = candidates[0].shape.frame;
   if (direction && candidates.every(({ shape: { frame } }) =>
-    frame && cross(direction.dx, direction.dy, frame.dx, frame.dy) === 0)) return null;
+    frame && cross(direction.dx, direction.dy, frame.dx, frame.dy) === 0)) return [];
   candidates.sort((a, b) => a.distance - b.distance);
-  const snap = boundedSnap(point, threshold, "intersection");
+  const snap = boundedSnaps(point, threshold, "intersection", limit);
   for (let i = 0; i < candidates.length - 1; i += 1) {
     if (candidates[i].distance > snap.distance + POINT_EPSILON) break;
     for (let j = i + 1; j < candidates.length; j += 1) {
       if (candidates[j].distance > snap.distance + POINT_EPSILON) break;
       intersectShapes(candidates[i].shape, candidates[j].shape, snap.consider);
-      if (snap.point && snap.distance <= POINT_EPSILON) return snap.point;
+      if (limit === 1 && snap.found && snap.distance <= POINT_EPSILON) return snap.points;
     }
   }
-  return snap.point;
+  return snap.points;
+}
+
+export function nearestIntersection(point, boundaries, threshold) {
+  return nearbyIntersections(point, boundaries, threshold, 1)[0] ?? null;
 }
 
 // Trim removes the interval containing the pick, bounded by the nearest

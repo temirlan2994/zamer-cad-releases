@@ -40,17 +40,13 @@ test("enumerates consecutive edges and adds the last-to-first edge only when clo
   assert.deepEqual(polylineBounds(closed), { minX: -2.5, minY: -70, maxX: 100, maxY: 8 });
 });
 
-test("exports native R12 POLYLINE objects with vertex coordinates and closure flags", () => {
+test("exports native LWPOLYLINE objects with vertex coordinates and closure flags", () => {
   const open = createPolyline("open", [{ x: 0.0001, y: 0 }, { x: 0.0002, y: -0.0001 }]);
   const closed = createPolyline("closed", points, { closed: true, layer: "walls" });
   const dxf = buildDxf([open, closed]);
-  assert.match(dxf, /\n9\n\$ACADVER\n1\nAC1009\n/);
-  assert.match(dxf, /\n0\nPOLYLINE\n8\nmeasure\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n/);
-  assert.match(dxf, /\n0\nPOLYLINE\n8\nwalls\n66\n1\n10\n0\n20\n0\n30\n0\n70\n1\n/);
-  assert.match(dxf, /\n0\nVERTEX\n8\nmeasure\n10\n0\.0002\n20\n0\.0001\n30\n0\n/);
-  assert.match(dxf, /\n0\nVERTEX\n8\nwalls\n10\n-2\.5\n20\n-8\n30\n0\n/);
-  assert.equal(dxf.match(/\n0\nVERTEX\n/g)?.length, 5);
-  assert.equal(dxf.match(/\n0\nSEQEND\n/g)?.length, 2);
-  assert.doesNotMatch(dxf, /\n0\n(?:LINE|LWPOLYLINE)\n/);
-  assert.match(buildRevitDxf([open]), /\n0\nPOLYLINE\n8\nZAMER_MEASURE\n/);
+  assert.match(dxf, /\n8\nmeasure\n100\nAcDbPolyline\n90\n2\n70\n0\n10\n0\.0001\n20\n0\n10\n0\.0002\n20\n0\.0001\n/);
+  assert.match(dxf, /\n8\nwalls\n100\nAcDbPolyline\n90\n3\n70\n1\n10\n-2\.5\n20\n-8\n10\n100\n20\n-8\n10\n100\n20\n70\n/);
+  assert.equal(dxf.match(/\n0\nLWPOLYLINE\n/g)?.length, 2);
+  assert.doesNotMatch(dxf, /\n0\n(?:LINE|POLYLINE|VERTEX|SEQEND)\n/);
+  assert.match(buildRevitDxf([closed]), /\n8\nZAMER_WALLS\n100\nAcDbPolyline\n90\n3\n70\n1\n/);
 });

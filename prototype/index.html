@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=231" />
+    <link rel="stylesheet" href="./styles.css?v=232" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -71,38 +71,42 @@
         </div>
 
         <div class="project-list-head">
-          <span>Последние файлы</span>
+          <span id="projectListHeading">Последние файлы</span>
+          <button id="projectTrashButton" type="button" aria-pressed="false" hidden>Корзина</button>
           <button id="refreshProjectsButton" type="button">Обновить</button>
         </div>
+        <p class="project-home-status" id="projectHomeStatus" role="status" hidden></p>
         <div class="project-list" id="projectList" aria-live="polite">
           <div class="project-empty">Загрузка проектов...</div>
         </div>
       </section>
 
       <header class="topbar">
-        <div class="project-title">
-          <strong>Замер квартиры</strong>
-          <span>ММ • 1:50</span>
+        <div class="topbar-project">
+          <button class="icon-button" id="backToProjectsButton" type="button" title="К проектам" aria-label="К проектам">←</button>
+          <div class="project-title">
+            <strong>Замер квартиры</strong>
+            <span>ММ • 1:50</span>
+          </div>
         </div>
-        <label class="annotation-scale-control" title="Annotation scale">
-          <span>A</span>
-          <select id="annotationScaleSelect" aria-label="Annotation scale">
+        <div class="topbar-actions" role="group" aria-label="Действия с чертежом">
+          <select class="annotation-scale-control" id="annotationScaleSelect" title="Масштаб подписей" aria-label="Масштаб подписей">
             <option value="0.85">1:50</option>
             <option value="1" selected>1:100</option>
             <option value="1.15">1:150</option>
             <option value="1.3">1:200</option>
           </select>
-        </label>
-        <button class="icon-button" id="undoButton" title="Отмена" aria-label="Отмена">↶</button>
-        <button class="icon-button" id="redoButton" title="Повтор" aria-label="Повтор">↷</button>
-        <button class="icon-button" id="layersButton" title="Слои" aria-label="Слои">▤</button>
-        <button class="icon-button" id="themeButton" title="Тема" aria-label="Тема">☾</button>
-        <button class="icon-button primary" id="exportButton" title="Экспорт" aria-label="Экспорт">⇩</button>
+          <button class="icon-button" id="undoButton" type="button" title="Отмена" aria-label="Отмена">↶</button>
+          <button class="icon-button" id="redoButton" type="button" title="Повтор" aria-label="Повтор">↷</button>
+          <button class="icon-button" id="layersButton" type="button" title="Слои" aria-label="Слои" aria-controls="layersSheet" aria-expanded="false">▤</button>
+          <button class="icon-button" id="themeButton" type="button" title="Тёмная тема" aria-label="Тёмная тема" aria-pressed="false">☾</button>
+          <button class="icon-button primary" id="exportButton" type="button" title="Экспорт" aria-label="Экспорт" aria-controls="exportSheet" aria-expanded="false">⇩</button>
+        </div>
       </header>
 
       <section class="snap-panel" aria-label="Привязки черчения">
         <div class="snap-row" aria-label="Привязки">
-          <button class="snap icon-snap active" data-snap="grid" title="Сетка" aria-label="Сетка">⊞</button>
+          <button class="snap icon-snap active grid-snap" type="button" data-snap="grid" title="Привязка к сетке" aria-label="Привязка к сетке" aria-pressed="true"><span aria-hidden="true">⊞</span><small id="gridStepReadout" aria-hidden="true">100 мм</small></button>
           <button class="snap icon-snap active" data-snap="end" title="Конец" aria-label="Конец"><span class="snap-symbol snap-end-symbol" aria-hidden="true"></span></button>
           <button class="snap icon-snap" data-snap="mid" title="Середина" aria-label="Середина"><span class="snap-symbol snap-mid-symbol" aria-hidden="true"></span></button>
           <button class="snap icon-snap active" data-snap="polar" title="Углы с шагом 5°" aria-label="Углы 5 градусов">∠</button>
@@ -131,9 +135,11 @@
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
           <button class="tool active" data-tool="select" aria-label="ESC — отменить команду и выбрать объект"><span>↖</span><small>ESC</small></button>
-          <button class="tool tool-with-menu" data-tool="line" title="Линия. Повторное касание — фигуры" aria-description="Повторное касание открывает выбор фигуры"><span>╱</span><small>Линия</small></button>
-          <button class="tool" data-tool="dimension"><span>↔</span><small>Размер</small></button>
-          <button class="tool" data-tool="annotation"><span>T</span><small>Аннотации</small></button>
+          <button class="tool" data-tool="line" aria-pressed="false"><span>╱</span><small>Линия</small></button>
+          <button class="tool tool-with-menu" id="figureToolButton" type="button" title="Фигуры" aria-controls="drawToolMenu" aria-expanded="false"><span>▭</span><small>Фигуры</small></button>
+          <button class="tool" data-tool="dimension" type="button" aria-controls="dimensionToolMenu" aria-expanded="false"><span>↔</span><small>Размеры</small></button>
+          <button class="tool" id="surveyTool" type="button" aria-haspopup="dialog"><span aria-hidden="true">⌖</span><small>Замер</small></button>
+          <button class="tool" data-tool="annotation" type="button" aria-controls="annotationToolMenu" aria-expanded="false"><span>T</span><small>Текст</small></button>
         </nav>
 
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
@@ -167,7 +173,7 @@
               <option value="percent">Длина (%)</option>
               <option value="dynamic">По точке</option>
             </select>
-            <input id="lineLengthInput" type="text" autocomplete="off" inputmode="decimal" enterkeyhint="done" aria-label="Новая длина линии" />
+            <input id="lineLengthInput" type="text" autocomplete="off" inputmode="decimal" enterkeyhint="done" aria-label="Новая длина линии" aria-describedby="lineEditHint" />
             <button class="line-command-primary line-command-submit" type="submit" aria-label="Применить изменение длины">✓</button>
           </form>
           <div class="line-command-actions">
@@ -176,15 +182,59 @@
             <button id="lineEditFinish" class="line-command-primary" type="button" hidden>Соединить</button>
           </div>
         </section>
-        <canvas id="cadCanvas" aria-label="Чертежный холст"></canvas>
+        <canvas id="cadCanvas" tabindex="0" aria-label="Чертёжный холст" aria-describedby="viewportKeyboardHelp"></canvas>
+        <p class="viewport-nonvisual" id="viewportKeyboardHelp">Стрелки перемещают вид. С Shift шаг меньше. Enter ставит точку или выбирает объект в центре.</p>
+        <details class="viewport-tools" id="viewportTools">
+          <summary aria-label="Вид чертежа">Вид</summary>
+          <div class="viewport-controls" role="group" aria-label="Навигация по чертежу">
+            <div class="viewport-zoom">
+              <button type="button" data-view-action="zoom-out" aria-label="Уменьшить масштаб">−</button>
+              <button type="button" data-view-action="zoom-in" aria-label="Увеличить масштаб">+</button>
+              <button type="button" data-view-action="fit">Вписать</button>
+            </div>
+            <div class="viewport-pan">
+              <button type="button" data-view-action="left" aria-label="Сместить вид влево">←</button>
+              <button type="button" data-view-action="up" aria-label="Сместить вид вверх">↑</button>
+              <button type="button" data-view-action="down" aria-label="Сместить вид вниз">↓</button>
+              <button type="button" data-view-action="right" aria-label="Сместить вид вправо">→</button>
+              <button type="button" data-view-action="place" aria-label="Выбрать объект в центре">✓</button>
+            </div>
+            <button type="button" data-view-action="objects" aria-haspopup="dialog">Объекты</button>
+          </div>
+        </details>
+        <span class="viewport-nonvisual" id="viewportActionStatus" role="status"></span>
         <div class="center-cursor" aria-hidden="true">
           <span class="cursor-line horizontal"></span>
           <span class="cursor-line vertical"></span>
           <span class="cursor-ring"></span>
         </div>
 
-        <div class="status-chip" id="statusChip">Выберите Линия и тяните отрезок</div>
-        <div class="save-indicator" id="saveIndicator" data-state="idle">Сохранение...</div>
+        <div class="status-chip" id="statusChip" role="status" aria-atomic="true">Выберите «Линия» и укажите начало отрезка</div>
+        <div class="line-point-assist" id="linePointAssist" role="group" aria-label="Точная точка линии" hidden>
+          <select id="lineDirection" aria-label="Направление заданной длины" hidden>
+            <option value="">По курсору</option>
+            <option value="x">X · Горизонталь</option>
+            <option value="y">Y · Вертикаль</option>
+          </select>
+          <button id="lineSkipSnap" type="button" title="Пропустить объектные привязки для следующей точки" aria-label="Пропустить объектные привязки для следующей точки" aria-pressed="false">Без OSNAP</button>
+        </div>
+        <div class="dimension-assist" id="dimensionAssist" role="group" aria-label="Привязка и ось размера" hidden>
+          <button id="dimensionNextSnap" type="button" hidden>Другая точка</button>
+          <label id="dimensionAxisControl" hidden>
+            <span>Ось</span>
+            <select id="dimensionAxis" aria-label="Ось линейного размера">
+              <option value="">Авто</option>
+              <option value="x">X · Горизонталь</option>
+              <option value="y">Y · Вертикаль</option>
+            </select>
+          </label>
+        </div>
+        <div class="dimension-assist dimension-links" id="dimensionLinks" role="group" aria-label="Опорные точки размера" hidden>
+          <button data-dimension-anchor="start" type="button"><span>Начало</span><small></small></button>
+          <button data-dimension-anchor="end" type="button"><span>Конец</span><small></small></button>
+          <button id="dimensionLinkCancel" type="button" hidden>Отмена привязки</button>
+        </div>
+        <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
         <div class="draw-metrics" id="drawMetrics" hidden>
           <label>
             <span>L</span>
@@ -197,12 +247,14 @@
           </label>
         </div>
         <div class="inline-editors" id="inlineEditors" hidden>
+          <span class="viewport-nonvisual" id="lineDirectionDescription"></span>
           <label class="inline-editor length-editor" id="lengthEditor">
-            <input id="lengthInput" inputmode="decimal" enterkeyhint="done" value="3240" aria-label="Длина линии" />
+            <span id="lineDirectionArrow" class="line-direction-arrow" aria-hidden="true" hidden>→</span>
+            <input id="lengthInput" inputmode="decimal" enterkeyhint="done" value="3240" aria-label="Длина линии" aria-describedby="statusChip lineDirectionDescription" />
             <span>мм</span>
           </label>
           <label class="inline-editor angle-editor" id="angleEditor">
-            <input id="angleInput" inputmode="decimal" enterkeyhint="done" value="90" aria-label="Угол линии" />
+            <input id="angleInput" inputmode="decimal" enterkeyhint="done" value="90" aria-label="Угол линии" aria-describedby="statusChip" />
             <span>°</span>
           </label>
         </div>
@@ -228,8 +280,7 @@
           <button data-action="offset"><span>∥</span><small>Смещение</small></button>
           <button data-select-tool="filter"><span>⛃</span><small>Фильтр</small></button>
         </div>
-        <div class="draw-tool-menu" id="drawToolMenu" hidden>
-          <button data-draw-tool="line"><span>╱</span><small>Линия</small></button>
+        <div class="draw-tool-menu" id="drawToolMenu" role="group" aria-label="Фигуры" hidden>
           <button data-draw-tool="polyline"><span>⌁</span><small>Полилиния</small></button>
           <button data-draw-tool="circle"><span>○</span><small>Круг</small></button>
           <button data-draw-tool="arc"><span>⌒</span><small>Дуга</small></button>
@@ -249,27 +300,49 @@
         <div class="layer-list" id="layerList"></div>
       </section>
 
-      <section class="bottom-sheet" id="exportSheet" hidden aria-label="Экспорт">
+      <section class="bottom-sheet" id="exportSheet" hidden role="dialog" aria-labelledby="exportSheetTitle">
         <div class="sheet-handle"></div>
         <div class="sheet-head">
           <div>
             <span class="panel-kicker">Экспорт</span>
-            <strong>CAD / PDF / BIM</strong>
+            <strong id="exportSheetTitle">Файлы чертежа</strong>
           </div>
           <button class="icon-button" id="closeExportButton" aria-label="Закрыть экспорт">×</button>
         </div>
+        <div class="export-options">
+          <label for="exportScope">Слои в PDF и DXF</label>
+          <select id="exportScope"><option value="visible">Видимые слои</option><option value="all">Все слои</option></select>
+          <label for="exportScale">Масштаб PDF</label>
+          <select id="exportScale">
+            <option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option>
+            <option value="100">1:100</option><option value="200">1:200</option>
+          </select>
+          <label class="export-photo-option" id="exportPhotoOption" hidden><input type="checkbox" id="exportPhotos"> Добавить фотографии в PDF</label>
+        </div>
+        <p id="exportSummary" class="export-summary"></p>
         <div class="export-grid">
-          <button class="export-card" data-export="pdf"><strong>PDF</strong><span>печать и клиент</span></button>
-          <button class="export-card ready" data-export="zamer"><strong>ZAMER</strong><span>резервная копия</span></button>
-          <button class="export-card ready" data-export="dxf"><strong>DXF</strong><span>AutoCAD, Archicad, Revit</span></button>
-          <button class="export-card ready" data-export="revit-dxf"><strong>Revit DXF</strong><span>мм, слои ZAMER, 2D CAD</span></button>
-          <button class="export-card" data-export="dwg"><strong>DWG</strong><span>через ODA/сервер</span></button>
-          <button class="export-card" data-export="ifc"><strong>IFC</strong><span>BIM позже</span></button>
+          <button type="button" class="export-card ready" data-export="pdf"><strong>PDF</strong><span>план A4 и ведомость</span></button>
+          <button type="button" class="export-card ready" data-export="zamer"><strong>ZAMER</strong><span>полная резервная копия</span></button>
+          <button type="button" class="export-card ready" data-export="dxf"><strong>DXF</strong><span>редактируемая геометрия</span></button>
+          <button type="button" class="export-card ready" data-export="revit-dxf"><strong>Revit DXF</strong><span>слои ZAMER · мм</span></button>
+          <button type="button" class="export-card ready" data-export="zip"><strong>Комплект ZIP</strong><span>PDF, DXF и копия .zamer</span></button>
+        </div>
+        <p id="exportResult" class="export-result" role="status" aria-live="polite"></p>
+        <div class="export-file-actions" id="exportFileActions" hidden>
+          <button type="button" id="openExportFile">Открыть файл</button>
+          <button type="button" id="shareExportFile">Поделиться</button>
         </div>
       </section>
+      <dialog class="survey-sheet" id="surveySheet" aria-labelledby="surveyHeading">
+        <header class="sheet-head">
+          <h2 id="surveyHeading" tabindex="-1">Замер</h2>
+          <button class="icon-button" data-survey-close type="button" aria-label="Закрыть замер">×</button>
+        </header>
+        <div class="survey-content"></div>
+      </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=231"></script>
+    <script type="module" src="./app.js?v=232"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

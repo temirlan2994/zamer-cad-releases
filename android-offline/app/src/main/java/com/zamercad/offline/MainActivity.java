@@ -1,14 +1,17 @@
 package com.zamercad.offline;
 
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
@@ -23,6 +26,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 import android.widget.FrameLayout;
+
+import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
@@ -40,17 +45,24 @@ public final class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 5041;
     private static final String APP_ORIGIN = "https://appassets.androidplatform.net";
     private static final String APP_PATH_PREFIX = "/assets/";
+    private static final String EXPORT_DIRECTORY = Environment.DIRECTORY_DOWNLOADS + "/Zamer CAD";
+    private static final int MAX_EXPORT_BYTES = 32 * 1024 * 1024;
 
     private final ExecutorService fileExecutor = Executors.newSingleThreadExecutor();
     private WebView webView;
     private FrameLayout viewport;
     private AppUpdater updater;
+    private SurveyLaser surveyLaser;
     private ValueCallback<Uri[]> filePathCallback;
+    private ExportedFile lastExport;
+
+    private record ExportedFile(String requestId, Uri uri, String fileName, String mimeType) {}
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         updater = new AppUpdater(this);
+        surveyLaser = new SurveyLaser(this, this::reportSurveyLaser);
         getWindow().setStatusBarColor(Color.rgb(248, 250, 253));
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
@@ -103,9 +115,21 @@ public final class MainActivity extends Activity {
                 filePathCallback = callback;
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
-                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "application/json", "application/octet-stream", "text/plain" });
-                startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                boolean acceptsImage = false;
+                for (String accept : params.getAcceptTypes()) {
+                    if (accept != null && accept.trim().startsWith("image/")) acceptsImage = true;
+                }
+                intent.setType(acceptsImage ? "image/*" : "*/*");
+                if (!acceptsImage) {
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] { "application/json", "application/octet-stream", "text/plain" });
+                }
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                } catch (RuntimeException error) {
+                    filePathCallback = null;
+                    callback.onReceiveValue(null);
+                    Toast.makeText(MainActivity.this, "Не удалось открыть выбор файла", Toast.LENGTH_LONG).show();
+                }
                 return true;
             }
         });
@@ -137,6 +161,12 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == SurveyLaser.PERMISSION_REQUEST) surveyLaser.onPermissionsResult();
+    }
+
+    @Override
     public void onBackPressed() {
         if (webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
@@ -151,6 +181,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (updater != null) updater.close();
+        if (surveyLaser != null) surveyLaser.close();
         if (webView != null) {
             webView.removeJavascriptInterface("ZamerAndroid");
             webView.destroy();
@@ -160,6 +191,16 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface
+        public void connectSurveyLaser() {
+            runOnUiThread(surveyLaser::connect);
+        }
+
+        @JavascriptInterface
+        public void disconnectSurveyLaser() {
+            runOnUiThread(surveyLaser::disconnect);
+        }
+
         @JavascriptInterface
         public void showUpdates() {
             runOnUiThread(() -> updater.showMenu());
@@ -190,38 +231,139 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void saveTextFile(String requestedName, String requestedMimeType, String content) {
+        public void exportFile(String requestId, String requestedName, String mimeType, String base64, boolean share) {
+            if (requestId == null || !requestId.matches("[a-zA-Z0-9-]{1,64}")) return;
             final String fileName = sanitizeFileName(requestedName);
-            final String mimeType = requestedMimeType == null || requestedMimeType.isBlank()
-                ? "application/octet-stream"
-                : requestedMimeType;
-            final String text = content == null ? "" : content;
-            fileExecutor.execute(() -> saveToDownloads(fileName, mimeType, text));
+            if (!isExportFormat(fileName, mimeType) || base64 == null || base64.isEmpty()
+                    || base64.length() > ((MAX_EXPORT_BYTES + 2) / 3) * 4) {
+                reportExport(requestId, false, fileName, false, "Неподдерживаемый формат или файл больше 32 МБ");
+                return;
+            }
+            fileExecutor.execute(() -> {
+                try {
+                    byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                    if (bytes.length == 0 || bytes.length > MAX_EXPORT_BYTES) throw new IOException("Invalid file size");
+                    Uri uri = saveToDownloads(fileName, mimeType, bytes);
+                    String savedName = savedDisplayName(uri, fileName);
+                    runOnUiThread(() -> finishExport(requestId, uri, savedName, mimeType, share));
+                } catch (IOException | RuntimeException error) {
+                    reportExport(requestId, false, fileName, false, "Не удалось записать файл в Загрузки");
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void showExport(String requestId, boolean share) {
+            runOnUiThread(() -> {
+                if (isDestroyed()) return;
+                if (lastExport == null || !lastExport.requestId().equals(requestId)) {
+                    Toast.makeText(MainActivity.this, "Откройте сохранённый файл в Загрузках", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    openExport(lastExport, share);
+                } catch (RuntimeException error) {
+                    Toast.makeText(MainActivity.this, "Файл сохранён. Для открытия используйте папку Загрузки", Toast.LENGTH_LONG).show();
+                }
+            });
         }
     }
 
-    private void saveToDownloads(String fileName, String mimeType, String content) {
+    private void reportSurveyLaser(String status, String name, Double value, String message) {
+        if (webView == null || isDestroyed()) return;
+        JSONObject detail = new JSONObject();
+        try {
+            detail.put("status", status);
+            if (name != null) detail.put("name", name);
+            if (value != null) detail.put("value", value);
+            if (message != null) detail.put("message", message);
+        } catch (org.json.JSONException error) {
+            return;
+        }
+        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zamer-laser',{detail:" + detail + "}));", null);
+    }
+
+    private Uri saveToDownloads(String fileName, String mimeType, byte[] content) throws IOException {
         Uri uri = null;
         try {
             ContentValues values = new ContentValues();
             values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
             values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Zamer CAD");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, EXPORT_DIRECTORY);
             values.put(MediaStore.MediaColumns.IS_PENDING, 1);
             uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
             if (uri == null) throw new IOException("Could not create download entry");
             try (OutputStream output = getContentResolver().openOutputStream(uri, "w")) {
                 if (output == null) throw new FileNotFoundException("Could not open download entry");
-                output.write(content.getBytes(StandardCharsets.UTF_8));
+                output.write(content);
             }
             ContentValues ready = new ContentValues();
             ready.put(MediaStore.MediaColumns.IS_PENDING, 0);
-            getContentResolver().update(uri, ready, null, null);
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Сохранено: Загрузки/Zamer CAD/" + fileName, Toast.LENGTH_LONG).show());
-        } catch (Exception error) {
-            if (uri != null) getContentResolver().delete(uri, null, null);
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Не удалось сохранить файл", Toast.LENGTH_LONG).show());
+            if (getContentResolver().update(uri, ready, null, null) != 1) throw new IOException("Could not publish download entry");
+            return uri;
+        } catch (IOException | RuntimeException error) {
+            if (uri != null) {
+                try { getContentResolver().delete(uri, null, null); }
+                catch (RuntimeException cleanupFailure) { error.addSuppressed(cleanupFailure); }
+            }
+            throw error;
         }
+    }
+
+    private static boolean isExportFormat(String name, String mimeType) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return ("application/pdf".equals(mimeType) && lower.endsWith(".pdf"))
+            || ("application/dxf".equals(mimeType) && lower.endsWith(".dxf"))
+            || ("application/zip".equals(mimeType) && lower.endsWith(".zip"))
+            || ("application/json".equals(mimeType) && lower.endsWith(".zamer"));
+    }
+
+    private String savedDisplayName(Uri uri, String fallback) {
+        try (Cursor rows = getContentResolver().query(uri, new String[] { MediaStore.MediaColumns.DISPLAY_NAME }, null, null, null)) {
+            if (rows != null && rows.moveToFirst() && !rows.isNull(0)) return rows.getString(0);
+        } catch (RuntimeException ignored) {
+            // The content was already written. Keep the requested name if the media index is unavailable.
+        }
+        return fallback;
+    }
+
+    private void finishExport(String requestId, Uri uri, String fileName, String mimeType, boolean share) {
+        if (isDestroyed()) return;
+        lastExport = new ExportedFile(requestId, uri, fileName, mimeType);
+        boolean chooserOpened = false;
+        String message = "";
+        if (share) {
+            try {
+                openExport(lastExport, true);
+                chooserOpened = true;
+            } catch (RuntimeException error) {
+                message = "Файл сохранён. Меню отправки открыть не удалось";
+            }
+        }
+        reportExport(requestId, true, fileName, chooserOpened, message);
+    }
+
+    private void openExport(ExportedFile file, boolean share) {
+        Intent action;
+        if (share) {
+            action = new Intent(Intent.ACTION_SEND);
+            action.setType(file.mimeType());
+            action.putExtra(Intent.EXTRA_STREAM, file.uri());
+        } else {
+            action = new Intent(Intent.ACTION_VIEW).setDataAndType(file.uri(), file.mimeType());
+        }
+        action.setClipData(ClipData.newUri(getContentResolver(), file.fileName(), file.uri()));
+        action.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(action, share ? "Поделиться файлом" : "Открыть файл"));
+    }
+
+    private void reportExport(String requestId, boolean ok, String fileName, boolean chooserOpened, String message) {
+        String callback = "window.zamerNativeExportResult?.(" + JSONObject.quote(requestId) + ", {ok:" + ok
+            + ",filename:" + JSONObject.quote(fileName) + ",chooserOpened:" + chooserOpened
+            + ",message:" + JSONObject.quote(message) + "})";
+        runOnUiThread(() -> {
+            if (webView != null && !isDestroyed()) webView.evaluateJavascript(callback, null);
+        });
     }
 
     private static String sanitizeFileName(String name) {
@@ -257,7 +399,7 @@ public final class MainActivity extends Activity {
             String path = uri.getPath();
             if (path == null || !path.startsWith(APP_PATH_PREFIX)) return errorResponse(403, "Forbidden");
             String relativePath = path.substring(APP_PATH_PREFIX.length());
-            if (relativePath.isBlank()) relativePath = "index.html";
+            if (relativePath.trim().isEmpty()) relativePath = "index.html";
             if (relativePath.contains("..") || relativePath.startsWith("/")) return errorResponse(403, "Forbidden");
             try {
                 String mimeType = mimeType(relativePath);

@@ -1,8 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, dxfLinearDimension, dxfString, roundDxf } from "./dxf.js";
+import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, dxfLinearDimension, dxfString, roundDxf, writeDxf } from "./dxf.js";
 
 const countRecords = (dxf, type) => (dxf.match(new RegExp(`\\n0\\n${type}\\n`, "g")) || []).length;
+
+function dimensionRecords(dxf) {
+  const lines = dxf.split("\n");
+  const dimensions = [];
+  let current;
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    const code = lines[index];
+    const value = lines[index + 1];
+    if (code === "0") {
+      current = value === "DIMENSION" ? { fields: new Map(), subclasses: [] } : null;
+      if (current) dimensions.push(current);
+    } else if (current && code === "100") {
+      current.subclasses.push(value);
+    } else if (current) {
+      current.fields.set(code, value);
+    }
+  }
+  return dimensions;
+}
 
 test("roundDxf rounds to 3 decimals and normalizes -0", () => {
   assert.equal(roundDxf(1.23456), "1.235");
@@ -30,12 +49,14 @@ test("dxfCircle flips center Y and uses absolute radius", () => {
   );
 });
 
-test("buildDxf wraps a valid section/EOF envelope", () => {
+test("buildDxf emits a 2007 drawing with millimeter units and model-space ownership", () => {
   const dxf = buildDxf([]);
   assert.ok(dxf.startsWith("0\nSECTION\n2\nHEADER"));
-  assert.ok(dxf.includes("\n9\n$ACADVER\n1\nAC1009\n"));
+  assert.ok(dxf.includes("\n9\n$ACADVER\n1\nAC1021\n"));
   assert.ok(dxf.includes("\n9\n$INSUNITS\n70\n4\n"));
-  assert.ok(dxf.includes("\n0\nLTYPE\n2\nCONTINUOUS\n"));
+  assert.ok(dxf.includes("\n100\nAcDbLinetypeTableRecord\n2\nContinuous\n"));
+  assert.ok(dxf.includes("\n100\nAcDbBlockTableRecord\n2\n*Model_Space\n"));
+  assert.ok(dxf.includes("\n100\nAcDbLayout\n1\nModel\n"));
   assert.ok(dxf.includes("\n2\nENTITIES\n"));
   assert.ok(dxf.endsWith("0\nENDSEC\n0\nEOF\n"));
 });
@@ -95,11 +116,16 @@ test("Zamer DXF preserves a sub-millimeter fillet arc radius and its angular spa
   assert.ok(Math.abs(parsedRadius - radius) < 1e-12);
 });
 
-test("buildDxf exports text annotations", () => {
-  const dxf = buildDxf([{ type: "text", x: 120, y: 340, text: "Спальня", height: 260, rotation: 15, layer: "dimensions" }]);
-  assert.equal(countRecords(dxf, "TEXT"), 1);
-  assert.ok(dxf.includes(`\n1\n${dxfString("Спальня")}\n`));
-  assert.ok(dxf.includes("\n40\n260\n"));
+test("modern text annotations preserve Cyrillic and remove DXF-breaking controls", () => {
+  const entity = { type: "text", x: 120, y: 340, text: "Спальня\r\n№1", height: 260, rotation: 15, layer: "dimensions" };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build([entity]);
+    assert.equal(countRecords(dxf, "TEXT"), 1);
+    assert.ok(dxf.includes("\n1\nСпальня №1\n"));
+    assert.ok(dxf.includes("\n40\n260\n"));
+  }
+  assert.match(writeDxf([entity]), /\n9\n\$ACADVER\n1\nAC1009\n/);
+  assert.ok(writeDxf([entity]).includes(`\n1\n${dxfString(entity.text)}\n`));
 });
 
 test("linear dimensions export as extension lines, arrows, dimension line and text", () => {
@@ -121,9 +147,56 @@ test("linear dimensions export as extension lines, arrows, dimension line and te
   assert.ok(!records.includes("NaN"));
 });
 
-test("angular dimensions are safely omitted until supported", () => {
+test("both profiles retain projected and aligned dimensions and their rendered values", () => {
+  const legacyProjected = {
+    type: "line", layer: "dimensions", x1: 0, y1: 0, x2: 3000, y2: 4000,
+    dimX1: 0, dimY1: -360, dimX2: 3000, dimY2: -360,
+  };
+  const aligned = { ...legacyProjected, measurementType: "aligned", offset: 360 };
+  const vertical = { ...legacyProjected, measurementType: "linear", measurementAxis: "y", offset: 360 };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build([legacyProjected, aligned, vertical]);
+    const dimensions = dimensionRecords(dxf);
+    assert.equal(dimensions.length, 3);
+    assert.equal(countRecords(dxf, "TEXT"), 3);
+    for (const [index, type, length, rotation] of [[0, "32", 3000, 0], [1, "33", 5000, -53.130102354], [2, "32", 4000, -90]]) {
+      const { fields, subclasses } = dimensions[index];
+      assert.equal(fields.get("70"), type);
+      assert.equal(Number(fields.get("42")), length);
+      assert.equal(fields.get("1"), "<> мм");
+      assert.ok(Math.abs(Number(fields.get("50")) - rotation) < 1e-8);
+      assert.ok(subclasses.includes("AcDbAlignedDimension"));
+      assert.equal(subclasses.includes("AcDbRotatedDimension"), type === "32");
+    }
+    for (const label of ["3000 мм", "5000 мм", "4000 мм"]) assert.ok(dxf.includes(`\n1\n${label}\n`));
+  }
+});
+
+test("both profiles export native three-point dimensions with visible angle geometry and degrees", () => {
+  const angle = {
+    type: "line", layer: "dimensions", dimensionKind: "angular",
+    vertex: { x: 0, y: 0 }, arm1: { x: 1000, y: 0 }, arm2: { x: 1000, y: 1000 },
+  };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build([angle]);
+    const dimensions = dimensionRecords(dxf);
+    assert.equal(dimensions.length, 1);
+    const [{ fields, subclasses }] = dimensions;
+    assert.equal(countRecords(dxf, "ARC"), 1);
+    assert.equal(countRecords(dxf, "TEXT"), 1);
+    assert.ok(dxf.includes("\n1\n45°\n"));
+    assert.equal(fields.get("70"), "37");
+    assert.ok(Math.abs(Number(fields.get("42")) - Math.PI / 4) < 1e-8);
+    assert.equal(fields.get("1"), "<>°");
+    assert.ok(subclasses.includes("AcDb3PointAngularDimension"));
+    assert.match(dxf, /\n100\nAcDbArc\n50\n315\n51\n0\n/);
+  }
+});
+
+test("incomplete angular dimensions are safely omitted", () => {
   const dxf = buildDxf([{ type: "line", layer: "dimensions", dimensionKind: "angular", vertex: { x: 0, y: 0 } }]);
   assert.equal(countRecords(dxf, "LINE"), 0);
+  assert.equal(countRecords(dxf, "DIMENSION"), 0);
   assert.ok(!dxf.includes("NaN"));
   assert.ok(!dxf.includes("undefined"));
 });
@@ -132,7 +205,7 @@ test("leader exports a line, arrow and visible text", () => {
   const dxf = buildDxf([{ type: "line", layer: "dimensions", dimensionKind: "leader", x1: 0, y1: 0, x2: 900, y2: 600, text: "Розетка" }]);
   assert.equal(countRecords(dxf, "LINE"), 3);
   assert.equal(countRecords(dxf, "TEXT"), 1);
-  assert.ok(dxf.includes(`\n1\n${dxfString("Розетка")}\n`));
+  assert.ok(dxf.includes("\n1\nРозетка\n"));
   assert.ok(!dxf.includes("NaN"));
 });
 

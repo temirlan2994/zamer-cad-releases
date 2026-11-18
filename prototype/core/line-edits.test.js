@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_LINE_COORDINATE, extendLine, isLinePoint, isValidLine, joinLines, lineCrossing,
-  mirrorLine, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine,
+  mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars,
+  nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine,
   scaleLine, splitLine, trimLine,
 } from "./line-edits.js";
 
@@ -167,6 +168,23 @@ test("ignores parallel boundaries in either direction and still finds crossings 
   assert.equal(nearestIntersection(point(50, 5), parallel, 10), null);
   assert.deepEqual(nearestIntersection(point(50), [...parallel, segment(50, -1, 50, 1)], 10),
     { x: 50, y: 0, type: "intersection" });
+  assert.deepEqual(nearestIntersection(point(50), [horizontal, horizontal, boundary(50)], 0),
+    { x: 50, y: 0, type: "intersection" });
+});
+
+test("collects distinct nearby crossing and perpendicular alternatives in distance order", () => {
+  const lines = [horizontal, boundary(35), boundary(42), boundary(43), boundary(42)];
+  const type = "intersection";
+  assert.deepEqual(nearbyIntersections(point(41), lines, 7, 2), [
+    { x: 42, y: 0, type }, { x: 43, y: 0, type },
+  ]);
+  assert.deepEqual(nearbyIntersections(point(41), lines, 1), [{ x: 42, y: 0, type }]);
+  assert.deepEqual(nearbyBoundaryPoints(point(39, 10), lines, 4), [
+    { x: 42, y: 10, type: "nearest" }, { x: 35, y: 10, type: "nearest" }, { x: 43, y: 10, type: "nearest" },
+  ]);
+  assert.deepEqual(nearbyPerpendiculars(point(41, 10), point(30, 10), lines, 3), [
+    { x: 42, y: 10, type: "perpendicular" }, { x: 43, y: 10, type: "perpendicular" },
+  ]);
 });
 
 test("snaps to radial perpendiculars and to the closest point of a trimmed arc", () => {

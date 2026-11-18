@@ -6,8 +6,10 @@ const crypto = require("crypto");
 const root = __dirname;
 // Development serves the same files that the Docker image embeds under core/.
 const sharedCad = path.resolve(root, "../shared/cad");
-const sharedCadFiles = new Set(["core/geometry.js", "core/blocks.js", "core/dxf-writer.js"]);
+const sharedCadFiles = new Set(["core/geometry.js", "core/blocks.js", "core/dimensions.js", "core/dxf-writer.js"]);
 const useSharedCadSources = fs.existsSync(sharedCad);
+const sharedZip = path.resolve(root, "../kepler/core/zip.js");
+const useSharedZip = fs.existsSync(sharedZip);
 const dataRoot = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : root;
 const port = process.env.PORT || 4187;
 const host = process.env.HOST || "127.0.0.1";
@@ -88,9 +90,9 @@ const server = http.createServer((request, response) => {
   }
 
   const modulePath = relative.split(path.sep).join("/");
-  const sourcePath = useSharedCadSources && sharedCadFiles.has(modulePath)
-    ? path.join(sharedCad, path.basename(filePath))
-    : filePath;
+  let sourcePath = filePath;
+  if (useSharedCadSources && sharedCadFiles.has(modulePath)) sourcePath = path.join(sharedCad, path.basename(filePath));
+  if (useSharedZip && modulePath === "core/zip.js") sourcePath = sharedZip;
 
   fs.readFile(sourcePath, (error, content) => {
     if (error) {
@@ -541,6 +543,8 @@ function projectSummary(project, fallback = {}) {
   return {
     id: fallback.id || safeId(project?.projectId, ""),
     name: String(project?.name || fallback.name || "Без названия").slice(0, 80),
+    site: String(project?.survey?.site || "").slice(0, 150),
+    visitDate: String(project?.survey?.visitDate || "").slice(0, 10),
     createdAt: project?.createdAt || fallback.createdAt || new Date().toISOString(),
     updatedAt: project?.savedAt || project?.updatedAt || fallback.updatedAt || new Date().toISOString(),
     revision: projectRevisionValue(project),
@@ -665,6 +669,8 @@ function defaultProjectPayload(client, body = {}) {
     furnitureTab: source.furnitureTab || "furniture",
     furnitureCategory: source.furnitureCategory || "sofas",
     furnitureSheetPosition: source.furnitureSheetPosition || "half",
+    survey: source.survey,
+    draft: source.draft,
     entities,
     thumbnail: source.thumbnail || null,
   };

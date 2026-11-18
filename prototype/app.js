@@ -2,17 +2,25 @@ import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDra
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
+import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./core/dimensions.js";
 import { constrainLinePoint, linePointWithConstraint, linePolarPoint, parseLineDecimal } from "./core/line-input.js";
-import { extendLine, isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine, splitLine, trimLine } from "./core/line-edits.js";
+import { extendLine, isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine, splitLine, trimLine } from "./core/line-edits.js";
 import { filletLines } from "./core/line-fillet.js";
 import { createPolyline, polylineBounds, polylineSegments, validPolylinePoints } from "./core/polyline.js";
+import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
+import { MAX_ZAMER_FILE_BYTES, validateZamerProject } from "./core/project-format.js";
+import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyNumber, surveyRoom } from "./core/survey.js";
+import { bindSurveyPanel } from "./core/survey-panel.js";
+import { createSurveyLaser } from "./core/survey-laser.js";
+import { buildZip } from "./core/zip.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
 function cadIcon(name) {
   const paths = {
     cursor: '<path d="m5 3 14 9-7 2-3 7Z"/>',
+    back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
     line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
     dimension: '<path d="M4 5v14m16-14v14M4 12h16m-12-3-4 3 4 3m8-6 4 3-4 3"/>',
     text: '<path d="M5 5h14M12 5v15m-4 0h8"/>',
@@ -72,6 +80,8 @@ function apkProjectMeta(project) {
   return {
     id: project.projectId,
     name: String(project.name || "Без названия").slice(0, 80),
+    site: project.survey?.site || "",
+    visitDate: project.survey?.visitDate || "",
     createdAt: project.createdAt,
     updatedAt: project.serverSavedAt || project.savedAt || project.updatedAt,
     revision: Math.max(1, Number(project.revision) || 1),
@@ -82,14 +92,7 @@ function apkProjectMeta(project) {
 
 function apkReadProjectIndex() {
   const indexed = apkReadJson(apkProjectIndexKey, []);
-  const projects = new Map(Array.isArray(indexed) ? indexed.map((project) => [project.id, project]) : []);
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (!key?.startsWith(apkProjectPrefix)) continue;
-    const project = apkReadJson(key, null);
-    if (project?.projectId) projects.set(project.projectId, apkProjectMeta(project));
-  }
-  return [...projects.values()].sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+  return Array.isArray(indexed) ? indexed.filter((project) => project?.id) : [];
 }
 
 function apkWriteProjectIndex(projects) {
@@ -98,9 +101,136 @@ function apkWriteProjectIndex(projects) {
 
 function apkStoreProject(project) {
   localStorage.setItem(apkProjectKey(project.projectId), JSON.stringify(project));
-  const projects = apkReadProjectIndex().filter((item) => item.id !== project.projectId);
-  projects.unshift(apkProjectMeta(project));
-  apkWriteProjectIndex(projects);
+  try {
+    const projects = apkReadProjectIndex().filter((item) => item.id !== project.projectId);
+    projects.unshift(apkProjectMeta(project));
+    apkWriteProjectIndex(projects);
+  } catch (error) {
+    // The index is a hint. Reads can recover the saved project from its own key.
+    console.warn("Project index update failed", error);
+  }
+  return project;
+}
+
+async function apkPersistProject(project) {
+  try {
+    return apkStoreProject(project);
+  } catch (error) {
+    if (!(await saveProjectToLocalStore(project, "device-storage", projectIdentity(project.projectId)))) throw error;
+    return project;
+  }
+}
+
+async function apkIndexedRecords(storeName, keysOnly = false) {
+  try {
+    const db = await openLocalProjectDb();
+    if (!db?.objectStoreNames.contains(storeName)) return [];
+    const transaction = db.transaction(storeName, "readonly");
+    const store = transaction.objectStore(storeName);
+    const [records] = await Promise.all([idbRequest(keysOnly ? store.getAllKeys() : store.getAll()), idbTransactionDone(transaction)]);
+    return records;
+  } catch (error) {
+    console.warn("Cannot read local snapshots", error);
+    return [];
+  }
+}
+
+function apkStorageKeys() {
+  try { return Object.keys(localStorage); } catch { return []; }
+}
+
+async function apkArchivedProjectIds() {
+  const ids = await apkIndexedRecords("trash", true);
+  const legacy = apkStorageKeys().filter((key) => key.startsWith(apkTrashPrefix)).map((key) => key.slice(apkTrashPrefix.length));
+  return new Set([...ids, ...legacy].map((key) => key.slice(0, key.lastIndexOf("."))));
+}
+
+async function apkReadTrash() {
+  const entries = new Map((await apkIndexedRecords("trash")).map((entry) => [entry.id, entry]));
+  for (const key of apkStorageKeys()) {
+    if (!key.startsWith(apkTrashPrefix)) continue;
+    const project = apkReadJson(key, null);
+    if (!project?.projectId) continue;
+    const id = key.slice(apkTrashPrefix.length);
+    if (!entries.has(id)) entries.set(id, { id, project, deletedAt: Number(id.split(".").at(-1)) || 0, legacy: true });
+  }
+  return [...entries.values()].sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+async function apkListProjects() {
+  const stored = new Map();
+  for (const project of await apkIndexedRecords("projects")) {
+    if (project.clientId === apkUser.id && project.projectId) stored.set(project.projectId, project);
+  }
+  for (const key of apkStorageKeys()) {
+    if (!key.startsWith(apkProjectPrefix) && !key.startsWith(`zamer.project.${apkUser.id}.`)) continue;
+    const project = apkReadJson(key, null);
+    if (project?.projectId) stored.set(project.projectId, newestProject(stored.get(project.projectId), project));
+  }
+  const archived = await apkArchivedProjectIds();
+  const indexed = new Map(apkReadProjectIndex().map((meta) => [meta.id, meta]));
+  for (const project of stored.values()) indexed.set(project.projectId, apkProjectMeta(project));
+  return [...indexed.values()].filter((meta) => !archived.has(meta.id))
+    .sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""));
+}
+
+async function apkArchiveProject(project, identity) {
+  const deletedAt = Date.now();
+  const id = `${project.projectId}.${deletedAt}`;
+  await persistence.localWriteChain.catch(() => {});
+  try {
+    const db = await openLocalProjectDb();
+    if (!db) throw new Error("IndexedDB is unavailable");
+    const transaction = db.transaction(["trash", "projects"], "readwrite");
+    transaction.objectStore("trash").put({ id, project, deletedAt });
+    transaction.objectStore("projects").delete(projectStorageId(identity));
+    await idbTransactionDone(transaction);
+  } catch (error) {
+    localStorage.setItem(`${apkTrashPrefix}${id}`, JSON.stringify(project));
+  }
+  try {
+    localStorage.removeItem(apkProjectKey(project.projectId));
+    localStorage.removeItem(localProjectFallbackKey(identity));
+    apkWriteProjectIndex(apkReadProjectIndex().filter((item) => item.id !== project.projectId));
+  } catch (error) {
+    console.warn("Project index update failed", error);
+  }
+}
+
+async function apkRestoreTrash(id) {
+  const entry = (await apkReadTrash()).find((item) => item.id === id);
+  if (!entry) return null;
+  const original = entry.project;
+  const oldId = apkSafeId(original.projectId);
+  const primary = apkReadJson(apkProjectKey(oldId), null);
+  if (entry.legacy) {
+    const occupied = primary || await loadProjectFromLocalStore(projectIdentity(oldId));
+    const project = await apkPersistProject(apkCreateProject({ id: occupied ? "" : oldId, name: original.name, project: original }));
+    localStorage.removeItem(`${apkTrashPrefix}${id}`);
+    return project;
+  }
+  const db = await openLocalProjectDb();
+  const transaction = db.transaction(["trash", "projects"], "readwrite");
+  const completed = idbTransactionDone(transaction);
+  completed.catch(() => {});
+  const trash = transaction.objectStore("trash");
+  const live = transaction.objectStore("projects");
+  const [stillArchived, existing] = await Promise.all([
+    idbRequest(trash.get(id)), idbRequest(live.get(projectStorageId(projectIdentity(oldId)))),
+  ]);
+  if (!stillArchived) {
+    await completed;
+    return null;
+  }
+  const project = apkCreateProject({ id: primary || existing ? "" : oldId, name: original.name, project: original });
+  live.put({ ...project, storageId: projectStorageId(projectIdentity(project.projectId)), localSavedAt: project.savedAt });
+  trash.delete(id);
+  await completed;
+  try {
+    apkStoreProject(project);
+  } catch (error) {
+    console.warn("The restored project is in IndexedDB", error);
+  }
   return project;
 }
 
@@ -127,6 +257,8 @@ function apkCreateProject(body = {}) {
     visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     selectionFilter: source.selectionFilter || "all",
+    survey: normalizeSurvey(source.survey),
+    draft: source.draft,
 
     entities: Array.isArray(source.entities) ? source.entities : [],
     thumbnail: source.thumbnail || null,
@@ -162,18 +294,41 @@ async function apkOfflineFetch(resource, options = {}) {
     }
 
     if (requestUrl.pathname === "/api/projects" && method === "GET") {
-      return apkJsonResponse(200, { ok: true, client: apkUser.id, projects: apkReadProjectIndex() });
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, projects: await apkListProjects() });
     }
     if (requestUrl.pathname === "/api/projects" && method === "POST") {
       const body = await apkRequestBody(resource, options, method);
-      const project = apkStoreProject(apkCreateProject(body));
+      const nextProject = apkCreateProject(body);
+      if (body.id) {
+        const identity = projectIdentity(nextProject.projectId);
+        if (apkReadJson(apkProjectKey(identity.projectId), null) || await loadProjectFromLocalStore(identity) ||
+            (await apkArchivedProjectIds()).has(identity.projectId)) {
+          return apkJsonResponse(409, { ok: false, error: "Такой проект уже существует" });
+        }
+      }
+      const project = await apkPersistProject(nextProject);
       return apkJsonResponse(200, { ok: true, client: apkUser.id, project, meta: apkProjectMeta(project) });
+    }
+    if (requestUrl.pathname === "/api/trash" && method === "GET") {
+      const entries = (await apkReadTrash()).map((entry) => ({ ...apkProjectMeta(entry.project), id: entry.id, deletedAt: entry.deletedAt }));
+      return apkJsonResponse(200, { ok: true, entries });
+    }
+    if (requestUrl.pathname === "/api/trash/restore" && method === "POST") {
+      const body = await apkRequestBody(resource, options, method);
+      const project = await apkRestoreTrash(body.id);
+      return project ? apkJsonResponse(200, { ok: true, project }) : apkJsonResponse(404, { ok: false, error: "Проект в корзине не найден" });
     }
 
     const match = requestUrl.pathname.match(/^\/api\/projects\/([^/]+)$/);
     const projectId = match ? apkSafeId(decodeURIComponent(match[1]), "") : "";
     if (!projectId) return apkJsonResponse(404, { ok: false, error: "Project not found" });
-    const current = apkReadJson(apkProjectKey(projectId), null);
+    if ((await apkArchivedProjectIds()).has(projectId)) {
+      return apkJsonResponse(410, { ok: false, error: "Проект в корзине", projectId });
+    }
+    const identity = projectIdentity(projectId);
+    const primary = apkReadJson(apkProjectKey(projectId), null);
+    const local = await loadProjectFromLocalStore(identity);
+    const current = chooseProjectSource(local, primary).project;
 
     if (method === "GET") {
       return current
@@ -181,18 +336,18 @@ async function apkOfflineFetch(resource, options = {}) {
         : apkJsonResponse(404, { ok: false, error: "Project not found", projectId });
     }
     if (method === "DELETE") {
-      if (current) {
-        localStorage.setItem(`${apkTrashPrefix}${projectId}.${Date.now()}`, JSON.stringify(current));
-        localStorage.removeItem(apkProjectKey(projectId));
-      }
-      apkWriteProjectIndex(apkReadProjectIndex().filter((project) => project.id !== projectId));
-      return apkJsonResponse(200, { ok: true, client: apkUser.id, projectId, recoverable: Boolean(current) });
+      if (!current) return apkJsonResponse(404, { ok: false, error: "Проект не найден" });
+      await apkArchiveProject(current, identity);
+      return apkJsonResponse(200, { ok: true, client: apkUser.id, projectId, recoverable: true });
     }
     if ((method === "PUT" || method === "POST") && current) {
       const body = await apkRequestBody(resource, options, method);
+      if (body.projectId != null && body.projectId !== projectId) {
+        return apkJsonResponse(409, { ok: false, error: "Идентификатор проекта не совпадает" });
+      }
       const now = new Date().toISOString();
-      const revision = Math.max(1, Number(current.revision) || 1) + 1;
-      const project = apkStoreProject({
+      const revision = Math.max(1, projectRevision(primary), projectRevision(local)) + 1;
+      const project = await apkPersistProject({
         ...body,
         clientId: apkUser.id,
         projectId,
@@ -220,7 +375,12 @@ if (nativeApkMode) {
 }
 
 const canvas = document.getElementById("cadCanvas");
-const ctx = canvas.getContext("2d");
+let ctx = canvas.getContext("2d");
+let printRendering = false;
+const viewportTools = document.getElementById("viewportTools");
+const viewportSummary = viewportTools.querySelector("summary");
+const viewportPlaceButton = viewportTools.querySelector('[data-view-action="place"]');
+const viewportActionStatus = document.getElementById("viewportActionStatus");
 const shell = document.querySelector(".app-shell");
 const centerCursor = document.querySelector(".center-cursor");
 const authScreen = document.getElementById("authScreen");
@@ -237,14 +397,19 @@ const projectSearchInput = document.getElementById("projectSearchInput");
 const createProjectButton = document.getElementById("createProjectButton");
 const createBlankProjectButton = document.getElementById("createBlankProjectButton");
 const projectImportInput = document.getElementById("projectImportInput");
+const projectTrashButton = document.getElementById("projectTrashButton");
+const projectListHeading = document.getElementById("projectListHeading");
+const projectHomeStatus = document.getElementById("projectHomeStatus");
 const installAppButton = document.getElementById("installAppButton");
 const refreshProjectsButton = document.getElementById("refreshProjectsButton");
 const accountBadge = document.getElementById("accountBadge");
 const logoutButton = document.getElementById("logoutButton");
-const projectTitle = document.querySelector(".project-title");
+const backToProjectsButton = document.getElementById("backToProjectsButton");
 const projectNameCaption = document.querySelector(".project-title strong");
 const projectScaleCaption = document.querySelector(".project-title span");
-const tools = [...document.querySelectorAll(".tool")];
+const tools = [...document.querySelectorAll(".tool[data-tool]")];
+const figureToolButton = document.getElementById("figureToolButton");
+const gridStepReadout = document.getElementById("gridStepReadout");
 const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const dimensionToolMenu = createDimensionToolMenu();
@@ -284,12 +449,26 @@ const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
 const themeButton = document.getElementById("themeButton");
 const annotationScaleSelect = document.getElementById("annotationScaleSelect");
 const statusChip = document.getElementById("statusChip");
+const dimensionAssist = document.getElementById("dimensionAssist");
+const linePointAssist = document.getElementById("linePointAssist");
+const lineDirection = document.getElementById("lineDirection");
+const lineDirectionArrow = document.getElementById("lineDirectionArrow");
+const lineDirectionDescription = document.getElementById("lineDirectionDescription");
+const lineSkipSnap = document.getElementById("lineSkipSnap");
+const lineDirections = ["вправо", "вправо вниз", "вниз", "влево вниз", "влево", "влево вверх", "вверх", "вправо вверх"];
+const dimensionNextSnap = document.getElementById("dimensionNextSnap");
+const dimensionAxisControl = document.getElementById("dimensionAxisControl");
+const dimensionAxis = document.getElementById("dimensionAxis");
+const dimensionLinks = document.getElementById("dimensionLinks");
+const dimensionLinkCancel = document.getElementById("dimensionLinkCancel");
+const dimensionLinkButtons = [...dimensionLinks.querySelectorAll("[data-dimension-anchor]")];
 const saveIndicator = document.getElementById("saveIndicator");
 const layersSheet = document.getElementById("layersSheet");
 const exportSheet = document.getElementById("exportSheet");
 const layerList = document.getElementById("layerList");
 const exportCards = [...document.querySelectorAll(".export-card")];
-const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, leaderTextInput].filter(Boolean);
+const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
+let lastNumericInput = null;
 const lineMetricKinds = new Map([[lengthInput, "length"], [angleInput, "angle"], [topLengthInput, "length"], [topAngleInput, "angle"]]);
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 const cp1251Chars =
@@ -313,10 +492,10 @@ const drawToolButtonVisuals = {
   rectangle: { icon: "▭", label: "Прямоуг." },
 };
 const dimensionToolButtonVisuals = {
-  aligned: { icon: "↔", label: "Размер" },
-  linear: { icon: "⟷", label: "Линейный" },
+  aligned: { icon: "↔", label: "По отрезку" },
+  linear: { icon: "⟷", label: "По оси" },
   angular: { icon: "∠", label: "Угол" },
-  baseline: { icon: "⊥", label: "База" },
+  baseline: { icon: "⊥", label: "От базы" },
 };
 const annotationToolButtonVisuals = {
   text: { icon: "T", label: "Текст" },
@@ -357,12 +536,14 @@ function createDimensionToolMenu() {
   const menu = document.createElement("div");
   menu.className = "draw-tool-menu dimension-tool-menu";
   menu.id = "dimensionToolMenu";
+  menu.setAttribute("role", "group");
+  menu.setAttribute("aria-label", "Виды размеров");
   menu.hidden = true;
   menu.innerHTML = `
-    <button data-dimension-tool="aligned"><span>&#8596;</span><small>Параллельный</small></button>
-    <button data-dimension-tool="linear"><span>&#10231;</span><small>Линейный</small></button>
-    <button data-dimension-tool="angular"><span>&#8736;</span><small>Угол</small></button>
-    <button data-dimension-tool="baseline"><span>&#8869;</span><small>База</small></button>
+    <button type="button" data-dimension-tool="aligned" aria-label="Размер по отрезку"><span aria-hidden="true">&#8596;</span><small>По отрезку</small></button>
+    <button type="button" data-dimension-tool="linear" aria-label="Размер по горизонтали или вертикали"><span aria-hidden="true">&#10231;</span><small>По оси</small></button>
+    <button type="button" data-dimension-tool="angular" aria-label="Угол между сторонами"><span aria-hidden="true">&#8736;</span><small>Угол</small></button>
+    <button type="button" data-dimension-tool="baseline" aria-label="Несколько размеров от общей точки"><span aria-hidden="true">&#8869;</span><small>От базы</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -389,7 +570,11 @@ const layerMeta = {
 };
 const selectionFilters = ["all", "lines", "dimensions"];
 
+let surveyPanel = null;
+let surveyPointPicker = null;
+
 const state = {
+  survey: normalizeSurvey(null),
   theme: "light",
   directManipulationIds: new Set(),
   tool: "select",
@@ -408,6 +593,7 @@ const state = {
   moveCommand: null,
   offsetCommand: null,
   lineEdit: null,
+  skipLineObjectSnap: false,
   pointer: null,
   activePointers: new Map(),
   pinch: null,
@@ -415,6 +601,8 @@ const state = {
   inlineEdit: null,
   circleRadiusEdit: null,
   dimensionSnapHint: null,
+  dimensionSnapChoice: null,
+  dimensionAttach: null,
   polarSnapGuide: null,
   dimensionPickCycle: null,
   lastTextTap: null,
@@ -536,17 +724,20 @@ const persistence = {
   projectName: "",
   projectCreatedAt: "",
   revision: 0,
-  endpoint: "",
   debounceMs: 250,
   localDebounceMs: 80,
   retryMs: 1600,
   localDbName: "zamer-cad-projects",
-  localDbVersion: 2,
+  localDbVersion: 3,
   localVersionLimit: 20,
   ready: false,
   dirty: false,
-  saving: false,
-  pending: false,
+  savePromise: null,
+  saveIdentity: null,
+  projectSession: 0,
+  openRequest: 0,
+  showingTrash: false,
+  trash: [],
   restoring: false,
   timer: null,
   localTimer: null,
@@ -556,7 +747,6 @@ const persistence = {
   lastHash: "",
   pendingSaveId: "",
   pendingSnapshot: "",
-  restoredSavedAt: 0,
   needsRemoteSync: false,
   projects: [],
 };
@@ -579,8 +769,8 @@ function authEndpoint(action) {
   return `/api/auth/${action}`;
 }
 
-function projectsEndpoint() {
-  return `/api/projects?client=${encodeURIComponent(persistence.clientId)}`;
+function projectsEndpoint(clientId = persistence.clientId) {
+  return `/api/projects?client=${encodeURIComponent(clientId)}`;
 }
 
 function projectEndpoint(projectId = persistence.projectId) {
@@ -607,28 +797,39 @@ function projectSavedTime(project) {
 function newestProject(a, b) {
   if (!a) return b || null;
   if (!b) return a;
-  return projectSavedTime(b) > projectSavedTime(a) ? b : a;
+  const timeDiff = projectSavedTime(b) - projectSavedTime(a);
+  return (timeDiff || projectRevision(b) - projectRevision(a)) > 0 ? b : a;
 }
 
-function localProjectFallbackKey() {
-  return `zamer.project.${persistence.clientId}.${persistence.projectId || "home"}`;
+function projectIdentity(projectId = persistence.projectId) {
+  return { clientId: persistence.clientId, projectId, endpoint: projectId ? projectEndpoint(projectId) : "", session: persistence.projectSession };
 }
 
-function projectStorageId() {
-  return `${persistence.clientId}:${persistence.projectId || "home"}`;
+function isActiveProject(identity) {
+  return persistence.projectSession === identity.session && persistence.projectId === identity.projectId && persistence.clientId === identity.clientId;
 }
 
-function writeEmergencyLocalBackup(project) {
+function localProjectFallbackKey(identity) {
+  return `zamer.project.${identity.clientId}.${identity.projectId}`;
+}
+
+function projectStorageId(identity) {
+  return `${identity.clientId}:${identity.projectId}`;
+}
+
+function writeEmergencyLocalBackup(project, identity = projectIdentity()) {
   try {
-    localStorage.setItem(localProjectFallbackKey(), JSON.stringify(project));
+    localStorage.setItem(localProjectFallbackKey(identity), JSON.stringify(project));
+    return true;
   } catch (error) {
     console.warn("Emergency local backup failed", error);
+    return false;
   }
 }
 
-function readEmergencyLocalBackup() {
+function readEmergencyLocalBackup(identity) {
   try {
-    const raw = localStorage.getItem(localProjectFallbackKey());
+    const raw = localStorage.getItem(localProjectFallbackKey(identity));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -653,25 +854,60 @@ function idbTransactionDone(transaction) {
 function openLocalProjectDb() {
   if (!("indexedDB" in window)) return Promise.resolve(null);
   if (persistence.dbPromise) return persistence.dbPromise;
-  persistence.dbPromise = new Promise((resolve, reject) => {
+  const opening = new Promise((resolve, reject) => {
     const request = indexedDB.open(persistence.localDbName, persistence.localDbVersion);
+    let blocked = false;
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (db.objectStoreNames.contains("projects")) db.deleteObjectStore("projects");
-      db.createObjectStore("projects", { keyPath: "storageId" });
+      if (!db.objectStoreNames.contains("projects")) {
+        db.createObjectStore("projects", { keyPath: "storageId" });
+      } else {
+        const oldStore = request.transaction.objectStore("projects");
+        if (oldStore.keyPath !== "storageId") {
+          const oldRecords = oldStore.getAll();
+          oldRecords.onsuccess = () => {
+            db.deleteObjectStore("projects");
+            const projects = db.createObjectStore("projects", { keyPath: "storageId" });
+            for (const project of oldRecords.result) {
+              const identity = { clientId: project.clientId, projectId: project.projectId || "legacy" };
+              projects.put({ ...project, ...identity, storageId: projectStorageId(identity) });
+            }
+          };
+        }
+      }
+      if (!db.objectStoreNames.contains("trash")) db.createObjectStore("trash", { keyPath: "id" });
       if (!db.objectStoreNames.contains("versions")) {
         const versions = db.createObjectStore("versions", { keyPath: "id", autoIncrement: true });
         versions.createIndex("projectId", "projectId", { unique: false });
         versions.createIndex("savedAt", "savedAt", { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (blocked) {
+        db.close();
+        return;
+      }
+      db.onversionchange = () => {
+        db.close();
+        persistence.dbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onblocked = () => {
+      blocked = true;
+      reject(new Error("IndexedDB upgrade blocked"));
+    };
     request.onerror = () => reject(request.error || new Error("Could not open IndexedDB"));
   });
-  return persistence.dbPromise;
+  persistence.dbPromise = opening;
+  opening.catch(() => {
+    if (persistence.dbPromise === opening) persistence.dbPromise = null;
+  });
+  return opening;
 }
 
-async function trimLocalProjectVersions(storageId = projectStorageId()) {
+async function trimLocalProjectVersions(storageId) {
   const db = await openLocalProjectDb();
   if (!db) return;
   await new Promise((resolve, reject) => {
@@ -693,30 +929,77 @@ async function trimLocalProjectVersions(storageId = projectStorageId()) {
   });
 }
 
-function saveProjectToLocalStore(project, reason = "change") {
-  if (!persistence.projectId) return Promise.resolve(false);
+async function saveLocalProjectVersion(db, storageId, savedAt, reason, project) {
+  const transaction = db.transaction("versions", "readwrite");
+  const store = transaction.objectStore("versions");
+  const last = store.index("projectId").openCursor(IDBKeyRange.only(storageId), "prev");
+  last.onsuccess = () => {
+    const cursor = last.result;
+    const previous = cursor?.value.project;
+    const sameSnapshot = previous && (project.clientSaveId
+      ? previous.clientSaveId === project.clientSaveId
+      : !previous.clientSaveId && projectRevision(previous) === projectRevision(project));
+    const version = { projectId: storageId, savedAt, reason, project };
+    if (sameSnapshot) cursor.update({ ...version, id: cursor.primaryKey });
+    else store.add(version);
+  };
+  await idbTransactionDone(transaction);
+  await trimLocalProjectVersions(storageId);
+}
+
+async function readLocalVersionHistory(identity) {
+  const db = await openLocalProjectDb();
+  if (!db) return [];
+  const transaction = db.transaction("versions", "readonly");
+  const index = transaction.objectStore("versions").index("projectId");
+  const versions = [];
+  const seen = new Set();
+  const request = index.openCursor(IDBKeyRange.only(projectStorageId(identity)), "prev");
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (!cursor) return;
+    const { id, project, savedAt } = cursor.value;
+    if (Array.isArray(project?.entities)) {
+      const saveKey = project.clientSaveId || `revision-${projectRevision(project)}`;
+      if (!seen.has(saveKey)) {
+        versions.push({ id, savedAt, entityCount: project.entities.length });
+        seen.add(saveKey);
+      }
+    }
+    if (versions.length < persistence.localVersionLimit) cursor.continue();
+  };
+  await idbTransactionDone(transaction);
+  return versions;
+}
+
+async function readLocalProjectVersion(identity, id) {
+  const db = await openLocalProjectDb();
+  if (!db) return null;
+  const transaction = db.transaction("versions", "readonly");
+  const [version] = await Promise.all([
+    idbRequest(transaction.objectStore("versions").get(Number(id))), idbTransactionDone(transaction),
+  ]);
+  return version?.projectId === projectStorageId(identity) ? version.project : null;
+}
+
+function saveProjectToLocalStore(project, reason = "change", identity = projectIdentity()) {
+  if (!identity.projectId) return Promise.resolve(false);
   const savedAt = project.savedAt || new Date().toISOString();
-  const storageId = projectStorageId();
-  const localProject = { ...project, storageId, clientId: persistence.clientId, projectId: persistence.projectId, savedAt, localSavedAt: savedAt };
-  writeEmergencyLocalBackup(localProject);
+  const storageId = projectStorageId(identity);
+  const localProject = { ...project, storageId, clientId: identity.clientId, projectId: identity.projectId, savedAt, localSavedAt: savedAt };
+  const emergencySaved = writeEmergencyLocalBackup(localProject, identity);
   const write = async () => {
     try {
       const db = await openLocalProjectDb();
-      if (!db) return false;
-      const transaction = db.transaction(["projects", "versions"], "readwrite");
+      if (!db) return emergencySaved;
+      const transaction = db.transaction("projects", "readwrite");
       transaction.objectStore("projects").put(localProject);
-      transaction.objectStore("versions").put({
-        projectId: storageId,
-        savedAt,
-        reason,
-        project: localProject,
-      });
       await idbTransactionDone(transaction);
-      await trimLocalProjectVersions(storageId);
+      saveLocalProjectVersion(db, storageId, savedAt, reason, localProject).catch((error) => console.warn("Project history write failed", error));
       return true;
     } catch (error) {
-      console.warn("IndexedDB save failed; emergency backup is still available", error);
-      return false;
+      console.warn("IndexedDB save failed", error);
+      return emergencySaved;
     }
   };
   const queued = persistence.localWriteChain.catch(() => {}).then(write);
@@ -724,16 +1007,16 @@ function saveProjectToLocalStore(project, reason = "change") {
   return queued;
 }
 
-async function loadProjectFromLocalStore() {
-  if (!persistence.projectId) return null;
-  const fallbackProject = readEmergencyLocalBackup();
+async function loadProjectFromLocalStore(identity = projectIdentity()) {
+  if (!identity.projectId) return null;
+  const fallbackProject = readEmergencyLocalBackup(identity);
   try {
     const db = await openLocalProjectDb();
     if (!db) return fallbackProject;
     const transaction = db.transaction("projects", "readonly");
-    const done = idbTransactionDone(transaction);
-    const indexedProject = await idbRequest(transaction.objectStore("projects").get(projectStorageId()));
-    await done;
+    const [indexedProject] = await Promise.all([
+      idbRequest(transaction.objectStore("projects").get(projectStorageId(identity))), idbTransactionDone(transaction),
+    ]);
     return newestProject(fallbackProject, indexedProject);
   } catch (error) {
     console.warn("Local project restore failed", error);
@@ -773,13 +1056,25 @@ function setProjectHomeVisible(visible) {
   if (!projectHome) return;
   projectHome.hidden = !visible;
   shell.classList.toggle("project-home-open", visible);
+  syncEditorAccessibility();
+  if (!visible && authScreen.hidden) backToProjectsButton?.focus({ preventScroll: true });
 }
 
 function setAuthScreenVisible(visible) {
   if (!authScreen) return;
   authScreen.hidden = !visible;
   shell.classList.toggle("auth-open", visible);
+  syncEditorAccessibility();
   if (visible) requestAnimationFrame(() => authLoginInput?.focus());
+}
+
+function syncEditorAccessibility() {
+  const authVisible = !authScreen.hidden;
+  const editorBlocked = authVisible || !projectHome.hidden;
+  projectHome.inert = authVisible;
+  for (const element of shell.querySelectorAll(":scope > .topbar, :scope > .snap-panel, :scope > .workspace, :scope > .bottom-sheet")) {
+    element.inert = editorBlocked;
+  }
 }
 
 function setAuthError(message = "") {
@@ -812,6 +1107,8 @@ function renderAuthUi() {
 }
 
 function resetProjectSession() {
+  persistence.projectSession += 1;
+  persistence.openRequest += 1;
   window.clearTimeout(persistence.timer);
   window.clearTimeout(persistence.localTimer);
   persistence.timer = null;
@@ -819,18 +1116,18 @@ function resetProjectSession() {
   persistence.projectId = "";
   persistence.projectName = "";
   persistence.projectCreatedAt = "";
-  persistence.endpoint = "";
   persistence.revision = 0;
   persistence.ready = false;
   persistence.dirty = false;
-  persistence.pending = false;
   persistence.needsRemoteSync = false;
   persistence.pendingSaveId = "";
   persistence.pendingSnapshot = "";
-  persistence.localWriteChain = Promise.resolve();
   persistence.projects = [];
+  persistence.showingTrash = false;
+  persistence.trash = [];
   setSelection([]);
   state.drawing = null;
+  state.skipLineObjectSnap = false;
   state.command = null;
   state.lineEdit = null;
   closeLineMetricInput();
@@ -863,6 +1160,19 @@ function startAuthMonitor() {
 }
 
 async function forceAuthLogout(message = "Войдите") {
+  const identity = projectIdentity();
+  while (persistence.ready && identity.projectId && isActiveProject(identity)) {
+    const snapshot = projectSnapshotKey();
+    if (!persistence.dirty && snapshot === persistence.lastHash) break;
+    const saveId = clientSaveIdForSnapshot(snapshot);
+    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot), "session-ended", identity);
+    if (!isActiveProject(identity)) return saved;
+    if (!saved) {
+      updateSaveIndicator("error", "Не удалось записать чертёж");
+      return false;
+    }
+    if (projectSnapshotKey() === snapshot) break;
+  }
   stopAuthMonitor();
   authState.mode = "login";
   setAuthenticatedUser(null);
@@ -871,12 +1181,15 @@ async function forceAuthLogout(message = "Войдите") {
   setAuthScreenVisible(true);
   updateSaveIndicator("idle", "Войдите");
   setAuthError(message);
+  return true;
 }
 
 async function checkActiveSession() {
   if (!authState.user || document.hidden) return;
+  const originalUser = authState.user;
   try {
     const payload = await fetchAuthJson("status");
+    if (authState.user !== originalUser) return;
     if (!payload.user) {
       await forceAuthLogout("Аккаунт открыт на другом устройстве. Войдите снова.");
       return;
@@ -981,7 +1294,7 @@ async function loginAsDeveloper() {
 }
 
 async function logoutAccount() {
-  if (persistence.ready && persistence.projectId) await saveProjectNow();
+  if (!(await saveProjectBeforeLeaving())) return;
   await fetchAuthJson("logout", { method: "POST" }).catch((error) => console.warn("Logout failed", error));
   stopAuthMonitor();
   authState.mode = "login";
@@ -1000,23 +1313,38 @@ function projectDateLabel(value) {
 
 function projectMetaLine(project) {
   const count = Number(project.entityCount) || 0;
-  return `${count} объектов · ${projectDateLabel(project.updatedAt)}`;
+  return [project.site && project.site !== project.name ? project.site : "", project.visitDate,
+    `${count} объектов`, projectDateLabel(project.updatedAt)].filter(Boolean).join(" · ");
 }
 
 function filteredProjects() {
   const query = (projectSearchInput?.value || "").trim().toLowerCase();
-  if (!query) return persistence.projects;
-  return persistence.projects.filter((project) => String(project.name || "").toLowerCase().includes(query));
+  const projects = persistence.showingTrash ? persistence.trash : persistence.projects;
+  if (!query) return projects;
+  const terms = query.split(/\s+/u);
+  return projects.filter((project) => {
+    const searchable = [project.name, project.site, project.visitDate].join(" ").toLowerCase();
+    return terms.every((term) => searchable.includes(term));
+  });
 }
 
 function renderProjectList() {
   if (!projectList) return;
+  const showingTrash = persistence.showingTrash;
+  if (projectListHeading) projectListHeading.textContent = showingTrash ? "Корзина" : "Последние файлы";
+  if (projectTrashButton) {
+    projectTrashButton.hidden = !nativeApkMode;
+    projectTrashButton.setAttribute("aria-pressed", String(showingTrash));
+    projectTrashButton.textContent = showingTrash ? "Все файлы" : "Корзина";
+  }
   const projects = filteredProjects();
   projectList.replaceChildren();
   if (!projects.length) {
     const empty = document.createElement("div");
     empty.className = "project-empty";
-    empty.textContent = persistence.projects.length ? "Поиск ничего не нашел" : "Файлов пока нет. Создайте новый замер или импортируйте .zamer.";
+    empty.textContent = showingTrash
+      ? (persistence.trash.length ? "Ничего не найдено" : "Корзина пуста")
+      : (persistence.projects.length ? "Поиск ничего не нашел" : "Файлов пока нет. Создайте новый замер или импортируйте .zamer.");
     projectList.append(empty);
     return;
   }
@@ -1045,15 +1373,16 @@ function renderProjectList() {
 
     const meta = document.createElement("div");
     meta.className = "project-card-meta";
-    meta.textContent = projectMetaLine(project);
+    meta.textContent = showingTrash ? `Удалён ${projectDateLabel(project.deletedAt)} · ${project.entityCount} объектов` : projectMetaLine(project);
 
     const actions = document.createElement("div");
     actions.className = "project-card-actions";
-    const buttons = [
+    const buttons = showingTrash ? [["restore", "Восстановить", "primary"]] : [
       ["open", "Открыть", "primary"],
       ["rename", "Имя", ""],
       ["duplicate", "Копия", ""],
       ["export", ".zamer", ""],
+      ...(nativeApkMode ? [["versions", "Версии", ""]] : []),
       ["delete", "Удалить", ""],
     ];
     for (const [action, label, className] of buttons) {
@@ -1073,10 +1402,25 @@ function renderProjectList() {
   }
 }
 
-function showProjectDialog({ title, message = "", value = "", placeholder = "", confirmText = "Готово", destructive = false, withInput = true }) {
+function showProjectMessage(message = "", error = false) {
+  if (!projectHomeStatus) return;
+  projectHomeStatus.hidden = !message;
+  projectHomeStatus.textContent = message;
+  projectHomeStatus.dataset.error = String(error);
+}
+
+async function projectRequestError(response, fallback) {
+  const payload = await response.json().catch(() => null);
+  return new Error(payload?.error || fallback);
+}
+
+let closeProjectDialog = null;
+
+function showProjectDialog({ title, message = "", value = "", placeholder = "", inputLabel = "Название проекта", confirmText = "Готово", destructive = false, withInput = true, choices = [] }) {
   return new Promise((resolve) => {
-    shell.querySelector(".project-dialog-backdrop")?.remove();
+    closeProjectDialog?.(null);
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const background = [...shell.children].map((element) => [element, element.inert]);
     const backdrop = document.createElement("div");
     backdrop.className = "project-dialog-backdrop";
 
@@ -1084,26 +1428,36 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
     dialog.className = "project-dialog";
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
-    dialog.setAttribute("aria-label", title);
+    dialog.setAttribute("aria-labelledby", "projectDialogTitle");
 
     const heading = document.createElement("strong");
+    heading.id = "projectDialogTitle";
     heading.textContent = title;
     dialog.append(heading);
 
     if (message) {
       const text = document.createElement("p");
+      text.id = "projectDialogDescription";
       text.textContent = message;
       dialog.append(text);
+      dialog.setAttribute("aria-describedby", text.id);
     }
 
     let input = null;
-    if (withInput) {
+    if (choices.length) {
+      input = document.createElement("select");
+      input.setAttribute("aria-label", inputLabel);
+      for (const choice of choices) input.add(new Option(choice.label, choice.value));
+      dialog.append(input);
+    } else if (withInput) {
       input = document.createElement("input");
       input.type = "text";
       input.value = value;
       input.placeholder = placeholder || value;
       input.maxLength = 80;
       input.autocomplete = "off";
+      input.setAttribute("aria-label", inputLabel);
+      input.required = true;
       dialog.append(input);
     }
 
@@ -1123,15 +1477,31 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
     backdrop.append(dialog);
 
     const finish = (result) => {
-      document.removeEventListener("keydown", onKeydown);
+      closeProjectDialog = null;
       backdrop.remove();
-      previousFocus?.focus?.();
+      for (const [element, inert] of background) element.inert = inert;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
       resolve(result);
     };
+    closeProjectDialog = finish;
 
-    function onKeydown(event) {
-      if (event.key === "Escape") finish(null);
-    }
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(null);
+      } else if (event.key === "Tab") {
+        const first = input || cancelButton;
+        const last = confirmButton;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
 
     backdrop.addEventListener("pointerdown", (event) => {
       if (event.target === backdrop) finish(null);
@@ -1139,7 +1509,7 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
     cancelButton.addEventListener("click", () => finish(null));
     dialog.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (!withInput) {
+      if (!input) {
         finish(true);
         return;
       }
@@ -1151,14 +1521,15 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
       finish(nextValue);
     });
 
-    document.addEventListener("keydown", onKeydown);
+    for (const [element] of background) element.inert = true;
     shell.append(backdrop);
     requestAnimationFrame(() => {
+      if (!dialog.isConnected) return;
       if (input) {
         input.focus();
-        input.select();
+        if (input instanceof HTMLInputElement) input.select();
       } else {
-        confirmButton.focus();
+        (destructive ? cancelButton : confirmButton).focus();
       }
     });
   });
@@ -1174,6 +1545,7 @@ function askCadText(value = "Текст") {
     message: "Введите надпись для чертежа.",
     value,
     placeholder: "Например: Спальня, высота 2700",
+    inputLabel: "Надпись на чертеже",
     confirmText: "Поставить",
   });
 }
@@ -1270,41 +1642,42 @@ function initAppInstallPrompt() {
 
 async function loadProjects() {
   if (!projectList) return;
+  const clientId = persistence.clientId;
+  const showingTrash = persistence.showingTrash;
   try {
-    const response = await fetch(projectsEndpoint(), { cache: "no-store" });
+    const response = await fetch(showingTrash ? "/api/trash" : projectsEndpoint(clientId), { cache: "no-store" });
+    if (persistence.clientId !== clientId) return;
     if (response.status === 401) {
-      setAuthenticatedUser(null);
-      resetProjectSession();
-      setProjectHomeVisible(false);
-      setAuthScreenVisible(true);
-      updateSaveIndicator("idle", "Войдите");
+      await forceAuthLogout();
       return;
     }
-    if (!response.ok) throw new Error(`Projects failed: ${response.status}`);
+    if (!response.ok) throw await projectRequestError(response, "Не удалось загрузить проекты");
     const payload = await response.json();
-    persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
+    if (persistence.clientId !== clientId) return;
+    if (showingTrash) persistence.trash = Array.isArray(payload.entries) ? payload.entries : [];
+    else persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
     renderProjectList();
   } catch (error) {
+    if (persistence.clientId !== clientId || persistence.showingTrash !== showingTrash) return;
     console.warn("Could not load projects", error);
     projectList.replaceChildren();
     const empty = document.createElement("div");
     empty.className = "project-empty";
-    empty.textContent = "Не удалось загрузить список проектов. Проверьте сервер.";
+    empty.textContent = nativeApkMode ? "Не удалось прочитать проекты на телефоне" : "Не удалось загрузить список проектов. Проверьте сервер.";
     projectList.append(empty);
   }
 }
 
 function setActiveProject(project, projectId = project?.projectId || project?.id) {
+  persistence.projectSession += 1;
   window.clearTimeout(persistence.timer);
   window.clearTimeout(persistence.localTimer);
   persistence.projectId = projectId || "";
   persistence.projectName = project?.name || "Без названия";
   persistence.projectCreatedAt = project?.createdAt || new Date().toISOString();
   persistence.revision = projectRevision(project);
-  persistence.endpoint = persistence.projectId ? projectEndpoint(persistence.projectId) : "";
   persistence.ready = false;
   persistence.dirty = false;
-  persistence.pending = false;
   persistence.needsRemoteSync = false;
   persistence.lastHash = "";
   persistence.pendingSaveId = "";
@@ -1312,26 +1685,24 @@ function setActiveProject(project, projectId = project?.projectId || project?.id
   updateProjectTitle();
 }
 
-async function openProject(projectId) {
-  if (!projectId) return;
-  if (persistence.ready && persistence.projectId) await saveProjectNow();
-  updateSaveIndicator("saving", "Открываю...");
-  const meta = persistence.projects.find((project) => project.id === projectId) || { id: projectId, projectId, name: "Без названия" };
-  setActiveProject(meta, projectId);
-
-  const localProject = await loadProjectFromLocalStore();
+async function readProjectVersions(identity) {
+  const localProject = await loadProjectFromLocalStore(identity);
   let serverProject = null;
   let serverError = null;
   let serverMissing = false;
+  let unauthorized = false;
   try {
-    const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
-    if (response.status === 401) {
-      await forceAuthLogout("Сессия завершена. Локальная копия чертежа сохранена на этом устройстве.");
-      return;
-    }
-    if (response.ok) {
+    const response = await fetch(identity.endpoint, { cache: "no-store" });
+    if (response.status === 401) unauthorized = true;
+    else if (response.status === 410) return { localProject: null, serverProject: null, serverError: await projectRequestError(response, "Проект в корзине"),
+      serverMissing: false, unauthorized: false, choice: chooseProjectSource(null, null) };
+    else if (response.ok) {
       const payload = await response.json();
       serverProject = payload.project || null;
+      if (serverProject?.projectId != null && serverProject.projectId !== identity.projectId) {
+        serverProject = null;
+        throw new Error("Сервер вернул другой проект");
+      }
     } else if (response.status === 404) {
       serverMissing = true;
     } else {
@@ -1340,12 +1711,33 @@ async function openProject(projectId) {
   } catch (error) {
     serverError = error;
   }
+  return { localProject, serverProject, serverError, serverMissing, unauthorized, choice: chooseProjectSource(localProject, serverProject) };
+}
 
-  const choice = chooseProjectSource(localProject, serverProject);
-  if (!choice.project || !restoreProject(choice.project)) {
-    updateSaveIndicator("error", "Не открыт", { autoDim: 2600 });
-    throw serverError || new Error("Project is unavailable both locally and on the server");
+async function latestProjectFor(projectId) {
+  const versions = await readProjectVersions(projectIdentity(projectId));
+  if (versions.unauthorized || !versions.choice.project) throw versions.serverError || new Error("Проект не найден");
+  return versions.choice.project;
+}
+
+async function openProject(projectId) {
+  if (!projectId) return;
+  const request = ++persistence.openRequest;
+  if (!(await saveProjectBeforeLeaving())) return;
+  if (request !== persistence.openRequest) return;
+  const identity = projectIdentity(projectId);
+  const { localProject, serverProject, serverError, serverMissing, unauthorized, choice } = await readProjectVersions(identity);
+  if (request !== persistence.openRequest || persistence.clientId !== identity.clientId || persistence.projectSession !== identity.session) return;
+  if (unauthorized) {
+    await forceAuthLogout("Сессия завершена. Войдите снова.");
+    return;
   }
+  if (!choice.project || !Array.isArray(choice.project.entities)) {
+    throw serverError || new Error(nativeApkMode ? "Не удалось открыть проект на телефоне" : "Проект недоступен");
+  }
+  setActiveProject(choice.project, projectId);
+  const active = projectIdentity();
+  if (!restoreProject(choice.project)) throw new Error("Не удалось открыть проект");
 
   persistence.revision = projectRevision(choice.project);
   persistence.ready = true;
@@ -1354,10 +1746,10 @@ async function openProject(projectId) {
   const shouldPush = choice.shouldPush || (serverMissing && Boolean(localProject));
   persistence.needsRemoteSync = shouldPush;
   setProjectHomeVisible(false);
-  localStorage.setItem("zamer.lastProjectId", persistence.projectId);
+  try { localStorage.setItem("zamer.lastProjectId", projectId); } catch { /* optional history */ }
 
   if (choice.source === "server") {
-    await saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open");
+    saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open", active);
     updateSaveIndicator("saved", nativeApkMode ? "На телефоне" : "С сервера", { autoDim: 2400 });
   } else if (shouldPush) {
     persistence.pendingSnapshot = persistence.lastHash;
@@ -1372,14 +1764,19 @@ async function openProject(projectId) {
 }
 
 async function createProject(options = {}) {
-  const response = await fetch(projectsEndpoint(), {
+  const clientId = persistence.clientId;
+  if (!(await saveProjectBeforeLeaving())) return;
+  if (persistence.clientId !== clientId) return;
+  const response = await fetch(projectsEndpoint(clientId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(options),
   });
-  if (!response.ok) throw new Error(`Create project failed: ${response.status}`);
+  if (!response.ok) throw await projectRequestError(response, "Не удалось создать проект");
   const payload = await response.json();
+  if (persistence.clientId !== clientId) return;
   await loadProjects();
+  if (persistence.clientId !== clientId) return;
   await openProject(payload.project.projectId);
 }
 
@@ -1387,83 +1784,144 @@ async function renameProject(projectId) {
   const current = persistence.projects.find((project) => project.id === projectId);
   const nextName = await askProjectName("Название проекта", current?.name || "Без названия");
   if (!nextName) return;
-  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
-  if (!response.ok) return;
-  const payload = await response.json();
-  const project = { ...payload.project, name: nextName.trim().slice(0, 80) };
-  const saveResponse = await fetch(projectEndpoint(projectId), {
+  const identity = projectIdentity(projectId);
+  const latest = await latestProjectFor(projectId);
+  const now = new Date().toISOString();
+  const project = { ...latest, name: nextName, savedAt: now, updatedAt: now, serverSavedAt: undefined, syncPending: true, clientSaveId: createClientSaveId() };
+  const saveResponse = await fetch(identity.endpoint, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(project),
   });
-  if (!saveResponse.ok) return;
-  if (persistence.projectId === projectId) {
+  if (!saveResponse.ok && (!nativeApkMode || !(await saveProjectToLocalStore(project, "rename", identity)))) {
+    throw await projectRequestError(saveResponse, "Не удалось переименовать проект");
+  }
+  if (saveResponse.ok) {
+    const payload = await saveResponse.json();
+    const revision = Number(payload.revision) || projectRevision(project);
+    await saveProjectToLocalStore({ ...project, revision, baseRevision: revision, savedAt: payload.savedAt || now,
+      serverSavedAt: payload.savedAt || now, syncPending: false }, "rename", identity);
+    if (isActiveProject(identity)) persistence.revision = revision;
+  }
+  if (isActiveProject(identity)) {
     persistence.projectName = project.name;
+    persistence.lastHash = projectSnapshotKey();
+    persistence.needsRemoteSync = !saveResponse.ok;
     updateProjectTitle();
   }
   await loadProjects();
 }
 
 async function duplicateProject(projectId) {
-  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
-  if (!response.ok) return;
-  const payload = await response.json();
-  const sourceName = payload.project?.name || "Без названия";
-  await createProject({ name: `${sourceName} копия`, project: payload.project });
+  const project = await latestProjectFor(projectId);
+  await createProject({ name: `${String(project.name || "Без названия").slice(0, 74)} копия`, project });
+}
+
+async function showProjectVersions(projectId) {
+  const identity = projectIdentity(projectId);
+  await persistence.localWriteChain.catch(() => {});
+  const versions = await readLocalVersionHistory(identity);
+  if (persistence.clientId !== identity.clientId) return;
+  if (!versions.length) {
+    showProjectMessage("Сохранённых версий пока нет");
+    return;
+  }
+  const name = persistence.projects.find((project) => project.id === projectId)?.name || "Чертёж";
+  const dateFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "medium" });
+  const choices = versions.map((version) => {
+    const time = Date.parse(version.savedAt);
+    const date = Number.isFinite(time) ? dateFormat.format(time) : "Без даты";
+    return { value: String(version.id), label: `${date} · ${version.entityCount} объектов` };
+  });
+  const selected = await showProjectDialog({
+    title: "История версий", message: name, inputLabel: "Сохранённая версия",
+    confirmText: "Восстановить копией", choices,
+  });
+  if (!selected || persistence.clientId !== identity.clientId) return;
+  const project = await readLocalProjectVersion(identity, selected);
+  if (!project) throw new Error("Версия чертежа больше недоступна");
+  validateZamerProject(project);
+  const suffix = " · копия версии";
+  await createProject({ name: `${name.slice(0, 80 - suffix.length)}${suffix}`, project });
 }
 
 async function deleteProject(projectId) {
   const current = persistence.projects.find((project) => project.id === projectId);
   if (!(await confirmProjectDelete(current?.name || projectId))) return;
-  const response = await fetch(projectEndpoint(projectId), { method: "DELETE" });
-  if (!response.ok) return;
+  if (persistence.projectId === projectId && !(await saveProjectBeforeLeaving())) return;
+  const identity = projectIdentity(projectId);
+  const response = await fetch(identity.endpoint, { method: "DELETE" });
+  if (!response.ok) throw await projectRequestError(response, "Не удалось удалить проект");
   if (persistence.projectId === projectId) {
+    persistence.projectSession += 1;
+    persistence.openRequest += 1;
+    window.clearTimeout(persistence.timer);
+    window.clearTimeout(persistence.localTimer);
     persistence.projectId = "";
     persistence.ready = false;
     setProjectHomeVisible(true);
   }
+  if (nativeApkMode) showProjectMessage("Проект в корзине");
+  await loadProjects();
+}
+
+async function restoreTrashedProject(trashId) {
+  const response = await fetch("/api/trash/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: trashId }),
+  });
+  if (!response.ok) throw await projectRequestError(response, "Не удалось восстановить проект");
+  showProjectMessage("Проект восстановлен и доступен в списке файлов");
   await loadProjects();
 }
 
 async function exportProjectBackup(projectId) {
-  const response = await fetch(projectEndpoint(projectId), { cache: "no-store" });
-  if (!response.ok) return;
-  const payload = await response.json();
-  const name = String(payload.project?.name || "zamer").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 48) || "zamer";
-  downloadFile(`${name}.zamer`, JSON.stringify(payload.project, null, 2), "application/json");
+  const project = await latestProjectFor(projectId);
+  const name = String(project.name || "zamer").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 48) || "zamer";
+  const result = await downloadFile(`${name}.zamer`, JSON.stringify(project, null, 2), "application/json");
+  showProjectMessage(result?.native ? "Копия в Загрузках" : "Копия отправлена в загрузки");
 }
 
 async function importProjectFile(file) {
   if (!file) return;
+  projectImportInput.value = "";
+  if (!file.size || file.size > MAX_ZAMER_FILE_BYTES) throw new Error("Выберите непустой .zamer размером до 32 МБ");
   const text = await file.text();
-  const project = JSON.parse(text);
+  let project;
+  try { project = JSON.parse(text.replace(/^\uFEFF/, "")); }
+  catch { throw new Error("Файл .zamer повреждён"); }
+  validateZamerProject(project);
   const fallbackName = project.name || file.name.replace(/\.zamer$/i, "") || "Импорт";
   const name = await askProjectName("Название импортируемого проекта", fallbackName);
-  projectImportInput.value = "";
   if (!name) return;
   await createProject({ name, project });
 }
 
 async function handleProjectAction(action, projectId) {
+  showProjectMessage();
   try {
     if (action === "open") await openProject(projectId);
     else if (action === "rename") await renameProject(projectId);
     else if (action === "duplicate") await duplicateProject(projectId);
+    else if (action === "versions" && nativeApkMode) await showProjectVersions(projectId);
     else if (action === "export") await exportProjectBackup(projectId);
     else if (action === "delete") await deleteProject(projectId);
+    else if (action === "restore" && nativeApkMode) await restoreTrashedProject(projectId);
   } catch (error) {
     console.warn("Project action failed", error);
-    updateSaveIndicator("error", "Ошибка проекта", { autoDim: 2600 });
+    showProjectMessage(error.message || "Ошибка проекта", true);
   }
 }
 
 async function showProjectHome() {
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   closeLineMetricInput();
-  if (persistence.ready && persistence.projectId) await saveProjectNow();
+  if (!(await saveProjectBeforeLeaving())) return;
   setProjectHomeVisible(true);
   updateSaveIndicator("idle", "Выберите файл");
   await loadProjects();
+  if (!projectHome.hidden) createProjectButton?.focus({ preventScroll: true });
 }
 
 async function initProjectHome() {
@@ -1497,6 +1955,8 @@ function serializableProjectState() {
     visibleLayers: [...state.visibleLayers],
     annotationScale: state.annotationScale,
     selectionFilter: state.selectionFilter,
+    survey: state.survey,
+    draft: acceptedSurveyDraft(),
 
     entities: JSON.parse(JSON.stringify(state.entities)),
   };
@@ -1515,10 +1975,10 @@ function clientSaveIdForSnapshot(snapshot) {
   return persistence.pendingSaveId;
 }
 
-function serializeProject(options = {}) {
+function serializeProject(options = {}, snapshot = projectSnapshotKey()) {
   const savedAt = new Date().toISOString();
   return {
-    ...serializableProjectState(),
+    ...JSON.parse(snapshot),
     revision: persistence.revision,
     baseRevision: persistence.revision,
     clientSaveId: options.clientSaveId || "",
@@ -1558,6 +2018,9 @@ function restoreProject(project) {
   persistence.restoring = true;
   try {
     state.entities = restoredEntities;
+    state.survey = normalizeSurvey(project.survey);
+    surveyPointPicker = null;
+    surveyPanel?.close();
     if (project.view && Number.isFinite(project.view.scale)) {
       state.view.scale = clampScale(project.view.scale);
       state.view.panX = Number.isFinite(project.view.panX) ? project.view.panX : state.view.panX;
@@ -1577,15 +2040,18 @@ function restoreProject(project) {
     if (project.theme === "light" || project.theme === "dark") {
       state.theme = project.theme;
       shell.dataset.theme = state.theme;
+      themeButton.setAttribute("aria-pressed", String(state.theme === "dark"));
       themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
       window.ZamerAndroid?.setTheme?.(state.theme);
     }
     state.selectionFilter = selectionFilters.includes(project.selectionFilter) ? project.selectionFilter : "all";
 
     state.drawing = null;
+    state.skipLineObjectSnap = false;
     state.moveCommand = null;
     state.offsetCommand = null;
     state.lineEdit = null;
+    state.dimensionAttach = null;
     closeLineMetricInput();
     state.pointer = null;
     state.pinch = null;
@@ -1598,13 +2064,13 @@ function restoreProject(project) {
     state.redo = [];
     state.selectedId = null;
     state.selectedIds = [];
+    restoreAcceptedSurveyDraft(project.draft);
 
     syncSnapButtons();
     syncToolButtons();
     renderLayerList();
     updateProjectTitle();
     draw();
-    persistence.restoredSavedAt = projectSavedTime(project);
     return true;
   } finally {
     persistence.restoring = false;
@@ -1617,42 +2083,49 @@ function markProjectDirty(reason = "change") {
   if (!persistence.dirty && snapshot === persistence.lastHash) return;
   persistence.dirty = true;
   persistence.lastReason = reason;
+  updateSaveIndicator("saving", "Сохраняю...");
   const saveId = clientSaveIdForSnapshot(snapshot);
+  const identity = projectIdentity();
   window.clearTimeout(persistence.localTimer);
   persistence.localTimer = window.setTimeout(() => {
-    if (!persistence.ready || !persistence.projectId) return;
-    saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }), `checkpoint-${reason}`).catch(() => {});
+    if (!persistence.ready || !isActiveProject(identity)) return;
+    const currentSnapshot = projectSnapshotKey();
+    const currentSaveId = currentSnapshot === snapshot ? saveId : clientSaveIdForSnapshot(currentSnapshot);
+    saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: currentSaveId }, currentSnapshot), `checkpoint-${reason}`, identity).catch(() => {});
   }, persistence.localDebounceMs);
   window.clearTimeout(persistence.timer);
   persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
 }
 
-async function recoverMissingRemoteProject(project) {
-  const response = await fetch(projectsEndpoint(), {
+async function recoverMissingRemoteProject(project, snapshot, identity) {
+  const response = await fetch(projectsEndpoint(identity.clientId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: persistence.projectId, name: persistence.projectName, project }),
+    body: JSON.stringify({ id: identity.projectId, name: project.name, project }),
   });
   if (!response.ok) return false;
   const payload = await response.json();
+  if (!isActiveProject(identity)) return true;
   persistence.revision = projectRevision(payload.project);
   persistence.pendingSaveId = "";
   persistence.pendingSnapshot = "";
   const confirmed = { ...payload.project, syncPending: false };
-  await saveProjectToLocalStore(confirmed, "server-recreated");
-  persistence.lastHash = projectSnapshotKey();
-  persistence.dirty = false;
+  await saveProjectToLocalStore(confirmed, "server-recreated", identity);
+  if (!isActiveProject(identity)) return true;
+  persistence.lastHash = snapshot;
+  persistence.dirty = projectSnapshotKey() !== snapshot;
   persistence.needsRemoteSync = false;
-  updateSaveIndicator("saved", "Восстановлено", { autoDim: 2600 });
+  if (!persistence.dirty) updateSaveIndicator("saved", "Восстановлено", { autoDim: 2600 });
   loadProjects().catch(() => {});
   return true;
 }
 
-async function switchToRecoveryProject(payload, snapshot) {
+async function switchToRecoveryProject(payload, snapshot, identity) {
   const recovery = payload?.recoveryProject;
-  if (!recovery?.projectId) return false;
+  if (!recovery?.projectId || !isActiveProject(identity)) return false;
   const changedDuringSave = projectSnapshotKey() !== snapshot;
   setActiveProject(recovery, recovery.projectId);
+  const recoveryIdentity = projectIdentity();
   persistence.ready = true;
   persistence.revision = projectRevision(recovery);
   const currentSnapshot = projectSnapshotKey();
@@ -1660,11 +2133,18 @@ async function switchToRecoveryProject(payload, snapshot) {
     persistence.dirty = true;
     persistence.needsRemoteSync = true;
     const saveId = clientSaveIdForSnapshot(currentSnapshot);
-    await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }), "conflict-latest");
+    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }, currentSnapshot), "conflict-latest", recoveryIdentity);
+    if (!isActiveProject(recoveryIdentity)) return saved;
+    persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
+    if (!saved) {
+      updateSaveIndicator("error", "Последние изменения не записаны");
+      return false;
+    }
   } else {
     persistence.lastHash = currentSnapshot;
-    await saveProjectToLocalStore({ ...recovery, syncPending: false }, "conflict-recovery");
+    await saveProjectToLocalStore({ ...recovery, syncPending: false }, "conflict-recovery", recoveryIdentity);
   }
+  if (!isActiveProject(recoveryIdentity)) return true;
   updateProjectTitle();
   updateSaveIndicator("saved", "Безопасная копия", { autoDim: 3600 });
   statusChip.textContent = "Найдена более новая версия. Этот чертеж сохранен отдельной копией";
@@ -1672,56 +2152,72 @@ async function switchToRecoveryProject(payload, snapshot) {
   return true;
 }
 
-async function saveProjectNow() {
-  if (!persistence.ready || persistence.restoring || !persistence.projectId) return;
-  if (persistence.saving) {
-    persistence.pending = true;
-    return;
-  }
+function saveProjectNow() {
+  if (!persistence.ready || persistence.restoring || !persistence.projectId) return Promise.resolve(true);
+  if (persistence.savePromise && isActiveProject(persistence.saveIdentity)) return persistence.savePromise;
+  const identity = projectIdentity();
   const snapshot = projectSnapshotKey();
-  if (!persistence.dirty && !persistence.needsRemoteSync && snapshot === persistence.lastHash) return;
-  persistence.saving = true;
-  let retryScheduled = false;
+  if (!persistence.dirty && !persistence.needsRemoteSync && snapshot === persistence.lastHash) return Promise.resolve(true);
   const saveId = clientSaveIdForSnapshot(snapshot);
-  const project = serializeProject({ syncPending: true, clientSaveId: saveId });
+  const project = serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot);
   window.clearTimeout(persistence.timer);
   window.clearTimeout(persistence.localTimer);
   updateSaveIndicator("saving", "Сохраняю...");
+  const running = saveProjectForSession(identity, snapshot, project).finally(() => {
+    if (persistence.savePromise === running) {
+      persistence.savePromise = null;
+      persistence.saveIdentity = null;
+    }
+    if (isActiveProject(identity) && persistence.dirty && !persistence.needsRemoteSync) markProjectDirty("pending");
+  });
+  persistence.savePromise = running;
+  persistence.saveIdentity = identity;
+  return running;
+}
+
+async function saveProjectBeforeLeaving() {
+  while (persistence.ready && persistence.projectId) {
+    if (!(await saveProjectNow())) return false;
+    if (!persistence.dirty) return true;
+  }
+  return true;
+}
+
+async function saveProjectForSession(identity, snapshot, project) {
+  let durable = false;
   try {
-    await saveProjectToLocalStore(project, persistence.lastReason || "change");
-    persistence.lastHash = snapshot;
-    persistence.dirty = projectSnapshotKey() !== snapshot;
-    const response = await fetch(persistence.endpoint, {
+    durable = await saveProjectToLocalStore(project, persistence.lastReason || "change", identity);
+    if (!isActiveProject(identity)) return durable;
+    const response = await fetch(identity.endpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(project),
     });
+    if (!isActiveProject(identity)) return durable || response.ok;
     if (response.status === 401) {
-      await forceAuthLogout("Аккаунт открыт на другом устройстве. Это устройство вышло из аккаунта.");
-      return;
+      if (durable) return forceAuthLogout("Аккаунт открыт на другом устройстве. Это устройство вышло из аккаунта.");
+      updateSaveIndicator("error", "Не удалось записать чертёж");
+      return false;
     }
     if (response.status === 409) {
       const payload = await response.json().catch(() => ({}));
-      if (await switchToRecoveryProject(payload, snapshot)) return;
+      if (await switchToRecoveryProject(payload, snapshot, identity)) return true;
       throw new Error("Project revision conflict");
     }
     if (response.status === 404) {
-      if (await recoverMissingRemoteProject(project)) return;
+      if (await recoverMissingRemoteProject(project, snapshot, identity)) return true;
       throw new Error("Project disappeared from the server");
     }
     if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+    durable = true;
     const payload = await response.json().catch(() => ({}));
+    if (!isActiveProject(identity)) return true;
     persistence.revision = Number.isFinite(Number(payload.revision)) ? Number(payload.revision) : persistence.revision + 1;
     persistence.pendingSaveId = "";
     persistence.pendingSnapshot = "";
     persistence.needsRemoteSync = false;
-    const changedDuringSave = projectSnapshotKey() !== snapshot;
-    persistence.dirty = changedDuringSave;
-    if (changedDuringSave) {
-      const latestSnapshot = projectSnapshotKey();
-      const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
-      await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }), "after-server-save");
-    } else {
+    persistence.lastHash = snapshot;
+    if (projectSnapshotKey() === snapshot) {
       await saveProjectToLocalStore({
         ...project,
         revision: persistence.revision,
@@ -1729,94 +2225,28 @@ async function saveProjectNow() {
         savedAt: payload.savedAt || project.savedAt,
         serverSavedAt: payload.savedAt || project.savedAt,
         syncPending: false,
-      }, "server-confirmed");
+      }, "server-confirmed", identity);
     }
-    updateSaveIndicator("saved", "Сохранено", { autoDim: 2400 });
+    if (!isActiveProject(identity)) return true;
+    persistence.dirty = projectSnapshotKey() !== snapshot;
+    if (!persistence.dirty) updateSaveIndicator("saved", "Сохранено", { autoDim: 2400 });
+    return true;
   } catch (error) {
     console.warn("Project autosave failed", error);
+    if (!isActiveProject(identity)) return durable;
     persistence.needsRemoteSync = true;
     const latestSnapshot = projectSnapshotKey();
-    persistence.dirty = latestSnapshot !== snapshot;
-    const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
-    await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }), "network-pending");
+    if (latestSnapshot !== snapshot || !durable) {
+      const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
+      durable = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }, latestSnapshot), "network-pending", identity);
+    }
+    if (!isActiveProject(identity)) return durable;
+    if (durable) persistence.lastHash = latestSnapshot;
+    persistence.dirty = !durable || projectSnapshotKey() !== latestSnapshot;
     persistence.timer = window.setTimeout(saveProjectNow, persistence.retryMs);
-    retryScheduled = true;
-    updateSaveIndicator("offline", "На телефоне", { autoDim: 3200 });
-  } finally {
-    persistence.saving = false;
-    if (!retryScheduled && (persistence.pending || persistence.dirty)) {
-      persistence.pending = false;
-      markProjectDirty("pending");
-    }
-  }
-}
-
-async function loadProjectFromServer() {
-  try {
-    const response = await fetch(persistence.endpoint, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-    const payload = await response.json();
-    if (payload?.project) {
-      restoreProject(payload.project);
-      statusChip.textContent = "Проект загружен с сервера";
-    }
-  } catch (error) {
-    console.warn("Project restore failed", error);
-  } finally {
-    persistence.ready = true;
-    persistence.lastHash = projectSnapshotKey();
-  }
-}
-
-async function loadProjectSafely() {
-  let restoredLocal = false;
-  let restoredLocalProject = null;
-  let shouldPushLocalToServer = false;
-  updateSaveIndicator("saving", "Восстановление...");
-
-  try {
-    restoredLocalProject = await loadProjectFromLocalStore();
-    if (restoredLocalProject && restoreProject(restoredLocalProject)) {
-      restoredLocal = true;
-      updateSaveIndicator("saved", "С телефона", { autoDim: 2600 });
-    }
-  } catch (error) {
-    console.warn("Local restore failed", error);
-  }
-
-  try {
-    const response = await fetch(persistence.endpoint, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-    const payload = await response.json();
-    if (payload?.project) {
-      const serverTime = projectSavedTime(payload.project);
-      const localTime = projectSavedTime(restoredLocalProject);
-      if (!restoredLocal || serverTime >= localTime) {
-        restoreProject(payload.project);
-        await saveProjectToLocalStore(payload.project, "server-restore");
-        statusChip.textContent = "Проект загружен с сервера";
-        updateSaveIndicator("saved", nativeApkMode ? "На телефоне" : "С сервера", { autoDim: 2600 });
-      } else {
-        shouldPushLocalToServer = true;
-        updateSaveIndicator("offline", "Локальная новее", { autoDim: 2600 });
-      }
-    } else if (restoredLocal) {
-      shouldPushLocalToServer = true;
-    } else {
-      updateSaveIndicator("idle", "Готово", { autoDim: 1800 });
-    }
-  } catch (error) {
-    console.warn("Project restore failed", error);
-    updateSaveIndicator(restoredLocal ? "offline" : "idle", restoredLocal ? "С телефона" : "Нет проекта", { autoDim: 2600 });
-  } finally {
-    persistence.ready = true;
-    persistence.lastHash = projectSnapshotKey();
-    if (shouldPushLocalToServer) {
-      persistence.dirty = true;
-      persistence.needsRemoteSync = true;
-      window.clearTimeout(persistence.timer);
-      persistence.timer = window.setTimeout(saveProjectNow, 120);
-    }
+    if (!durable) updateSaveIndicator("error", "Не удалось записать чертёж");
+    else if (!persistence.dirty) updateSaveIndicator("offline", "На телефоне", { autoDim: 3200 });
+    return durable;
   }
 }
 
@@ -1825,13 +2255,14 @@ function flushProjectBeforeUnload() {
   if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
   const snapshot = projectSnapshotKey();
   const saveId = clientSaveIdForSnapshot(snapshot);
-  const project = serializeProject({ syncPending: true, clientSaveId: saveId });
-  writeEmergencyLocalBackup(project);
-  saveProjectToLocalStore(project, "page-close").catch(() => {});
+  const project = serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot);
+  const identity = projectIdentity();
+  saveProjectToLocalStore(project, "page-close", identity).catch(() => {});
+  if (nativeApkMode) return;
   const body = JSON.stringify(project);
   const blob = new Blob([body], { type: "application/json" });
-  if (navigator.sendBeacon?.(persistence.endpoint, blob)) return;
-  fetch(persistence.endpoint, {
+  if (navigator.sendBeacon?.(identity.endpoint, blob)) return;
+  fetch(identity.endpoint, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body,
@@ -1849,7 +2280,19 @@ function resizeCanvas() {
 }
 
 function isKeyboardInputFocused() {
-  return keyboardInputs.includes(document.activeElement) || lineKeyboardInputs.includes(document.activeElement);
+  const active = document.activeElement;
+  return Boolean(numericConfirmInput()) || lineKeyboardInputs.includes(active) || active === leaderTextInput ||
+    Boolean(active?.matches("#surveySheet input, #surveySheet textarea, #surveySheet select, .viewport-objects-dialog input"));
+}
+
+function numericConfirmInput() {
+  const active = document.activeElement;
+  if (keyboardInputs.includes(active)) return active;
+  const assistedInput = state.numericEdit?.lineMetric && linePointAssist.contains(active);
+  if ((active === keyboardConfirmButton || assistedInput) && lastNumericInput && !lastNumericInput.closest("[hidden]")) {
+    return lastNumericInput;
+  }
+  return null;
 }
 
 function lockDocumentScroll() {
@@ -1882,7 +2325,7 @@ function updateViewportLock() {
   document.documentElement.style.setProperty("--confirm-keyboard-inset", `${confirmKeyboardInset}px`);
   shell.classList.toggle("keyboard-open", keyboardInset > 0);
   if (keyboardConfirmButton) {
-    keyboardConfirmButton.hidden = !keyboardInputs.includes(document.activeElement);
+    keyboardConfirmButton.hidden = !numericConfirmInput();
     positionKeyboardConfirmButton();
   }
   lockDocumentScroll();
@@ -1891,8 +2334,7 @@ function updateViewportLock() {
 
 function positionKeyboardConfirmButton() {
   if (!keyboardConfirmButton) return;
-  const input = document.activeElement;
-  if (!keyboardInputs.includes(input)) {
+  if (!numericConfirmInput()) {
     keyboardConfirmButton.classList.remove("near-input");
     keyboardConfirmButton.style.left = "";
     keyboardConfirmButton.style.top = "";
@@ -1938,28 +2380,42 @@ function rawCursorWorld() {
   return screenToWorld(centerScreen());
 }
 
+function lineAxisAngle(axis, start, end) {
+  if (axis === "x") return end.x < start.x ? 180 : 0;
+  if (axis === "y") return end.y > start.y ? 270 : 90;
+  return undefined;
+}
+
 function cursorSnapResolved() {
   const raw = screenToWorld(centerScreen());
+  if (state.dimensionAttach) {
+    const snap = dimensionAttachCandidate(raw);
+    return { point: snap ? { x: snap.x, y: snap.y } : raw, snap };
+  }
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
   if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
   const draft = state.drawing;
   const start = draft?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   const constraint = draft?.metricConstraint;
+  const objectSnaps = !state.skipLineObjectSnap || Boolean(surveyPointPicker);
   const firstVertex = state.tool === "polyline" && draft?.points.length >= 3 ? draft.points[0] : null;
-  if (firstVertex && !constraint && distanceWorld(raw, firstVertex) * state.view.scale <= screenUiPx(14)) {
+  if (firstVertex && !constraint && objectSnaps && state.snaps.has("end") && distanceWorld(raw, firstVertex) * state.view.scale <= screenUiPx(14)) {
     state.snapTracking.active = null;
     state.polarSnapGuide = null;
     return { point: firstVertex, snap: { ...firstVertex, type: "end", label: "Начальная вершина" } };
   }
   if (constraint) {
-    const direction = constraint.angle === undefined ? resolveLineLikeSnap(raw, start, { useGrid: false }).point : raw;
+    const axisAngle = state.tool === "line" && constraint.length !== undefined ? lineAxisAngle(draft.metricDirection, start, raw) : undefined;
+    const direction = axisAngle === undefined && constraint.angle === undefined
+      ? resolveLineLikeSnap(raw, start, { useGrid: false, objectSnaps }).point : raw;
     state.snapTracking.active = null;
     state.polarSnapGuide = null;
-    return { point: linePointWithConstraint(start, direction, constraint), snap: null };
+    const point = axisAngle === undefined ? linePointWithConstraint(start, direction, constraint) : linePolarPoint(start, constraint.length, axisAngle);
+    return { point, snap: null };
   }
-  if (start) return resolveLineLikeSnap(raw, start);
-  if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
-  return resolveSnapWorld(raw);
+  if (start) return resolveLineLikeSnap(raw, start, { objectSnaps });
+  if (objectSnaps && canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
+  return resolveSnapWorld(raw, { objectSnaps });
 }
 
 function colors() {
@@ -1993,7 +2449,7 @@ function annotationZoomScale() {
 }
 
 function annotationPx(value) {
-  return value * annotationScale() * annotationZoomScale();
+  return value * annotationScale() * (printRendering ? 0.75 : annotationZoomScale());
 }
 
 function annotationFont(weight, size) {
@@ -2069,6 +2525,7 @@ function renderFrame() {
     if (entity.type === "wall") continue;
     drawEntity(entity, c);
   }
+  drawSurveyMarks(c, rect);
 
 
   const selectedItems = selectedEntities();
@@ -2099,6 +2556,7 @@ function renderFrame() {
   }
   syncSelectionActions();
   syncLineControls();
+  syncDimensionLinks();
   drawLineEditMarks(c);
   drawSelectionDrag(c);
   drawDimensionSnapHint(c);
@@ -2108,6 +2566,7 @@ function renderFrame() {
 }
 
 function shouldGhostEntityForCommand(entity) {
+  if (printRendering) return false;
   if (state.lineEdit?.pending?.replacements.some(([target]) => target.id === entity.id)) return true;
   return Boolean(
     state.moveCommand?.base &&
@@ -2342,6 +2801,7 @@ function editableSelectionEntity() {
     !state.drawing &&
     !state.moveCommand &&
     !state.offsetCommand &&
+    !state.dimensionAttach &&
     !state.lineEdit &&
     state.tool === "select" &&
     isLayerVisible(primary.layer)
@@ -2387,7 +2847,7 @@ function selectedEntities() {
 }
 
 function canShowEntitySelection() {
-  return state.tool === "select";
+  return !printRendering && state.tool === "select";
 }
 
 function setSelection(ids, options = {}) {
@@ -2405,6 +2865,7 @@ function setSelection(ids, options = {}) {
     state.selectedIds = [...new Set(nextIds)];
   }
   state.selectedId = state.selectedIds.at(-1) || null;
+  if (state.dimensionAttach?.entityId !== state.selectedId) state.dimensionAttach = null;
   state.directManipulationIds = new Set([...state.directManipulationIds].filter(id => state.selectedIds.includes(id)));
   state.selectedEndpoint = null;
   syncSelectionActions();
@@ -2601,35 +3062,40 @@ function applyTapSelection(hitId) {
 }
 
 function drawGrid(rect, c) {
-  const minor = 500 * state.view.scale;
-  const major = 1000 * state.view.scale;
-  const startX = state.view.panX % minor;
-  const startY = state.view.panY % minor;
+  const active = state.snaps.has("grid");
+  const step = active ? adaptiveGridStep() : 500;
+  updateGridStepReadout();
+  const minor = step * state.view.scale;
+  const majorEvery = active ? 5 : 2;
+  const startX = ((state.view.panX % minor) + minor) % minor;
+  const startY = ((state.view.panY % minor) + minor) % minor;
+  const firstColumn = Math.round((startX - state.view.panX) / minor) % majorEvery;
+  const firstRow = Math.round((startY - state.view.panY) / minor) % majorEvery;
 
   ctx.lineWidth = 1;
-  for (let x = startX; x < rect.width; x += minor) {
-    ctx.strokeStyle = Math.abs((x - state.view.panX) % major) < 0.5 ? c.majorGrid : c.grid;
+  for (let x = startX, column = firstColumn; x < rect.width; x += minor, column += 1) {
+    ctx.strokeStyle = column % majorEvery === 0 ? c.majorGrid : c.grid;
     linePath(x, 0, x, rect.height);
   }
-  for (let y = startY; y < rect.height; y += minor) {
-    ctx.strokeStyle = Math.abs((y - state.view.panY) % major) < 0.5 ? c.majorGrid : c.grid;
+  for (let y = startY, row = firstRow; y < rect.height; y += minor, row += 1) {
+    ctx.strokeStyle = row % majorEvery === 0 ? c.majorGrid : c.grid;
     linePath(0, y, rect.width, y);
   }
 }
 
 function drawCanvasCenterCursor(rect, c) {
-  if (state.tool === "dimension" && state.drawing) return;
+  const navigating = canvas.matches(":focus-visible") || viewportTools.open;
+  if (!navigating && state.tool === "dimension" && state.drawing) return;
   const visible =
-    state.tool !== "select" ||
-    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint);
+    navigating || state.tool !== "select" ||
+    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.dimensionAttach);
   if (!visible) return;
   const center = { x: rect.width / 2, y: rect.height / 2 };
-  const red = state.theme === "dark" ? "rgba(224, 104, 104, 0.48)" : "rgba(194, 73, 73, 0.42)";
-  const ringFill = state.theme === "dark" ? "rgba(21, 27, 36, 0.55)" : "rgba(255, 255, 255, 0.56)";
+  const red = state.theme === "dark" ? "#ff9a9a" : "#a3282d";
   ctx.save();
   ctx.strokeStyle = red;
-  ctx.fillStyle = ringFill;
-  ctx.lineWidth = 1;
+  ctx.fillStyle = c.bg;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(center.x - 36, center.y);
   ctx.lineTo(center.x + 36, center.y);
@@ -2946,14 +3412,14 @@ function drawDimensionEntity(entity, c, options = {}) {
     drawLeaderEntity(entity, c, options);
     return;
   }
-  const start = { x: entity.x1, y: entity.y1 };
-  const end = { x: entity.x2, y: entity.y2 };
   const geometry = dimensionWorldGeometry(entity);
-  drawDimensionGeometry(start, end, c, {
+  if (!geometry) return;
+  drawDimensionGeometry(geometry.start, geometry.end, c, {
     ...options,
     lineStart: geometry.lineStart,
     lineEnd: geometry.lineEnd,
-    offset: entity.offset == null ? undefined : entity.offset * state.view.scale,
+    displayLength: geometry.measurement,
+    offset: geometry.offset * state.view.scale,
   });
 }
 
@@ -3054,12 +3520,13 @@ function screenRectDistance(point, rect) {
 }
 
 function drawDimensionGeometry(start, end, c, options = {}) {
+  const minimumLength = printRendering ? 1e-6 : 8;
   const p1 = worldToScreen(start);
   const p2 = worldToScreen(end);
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const length = Math.hypot(dx, dy);
-  if (length < 8) return;
+  if (length < minimumLength) return;
 
   const ux = dx / length;
   const uy = dy / length;
@@ -3086,7 +3553,7 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const lineDx = b.x - a.x;
   const lineDy = b.y - a.y;
   const lineLength = Math.hypot(lineDx, lineDy);
-  if (lineLength < 8) return;
+  if (lineLength < minimumLength) return;
   const lineUx = lineDx / lineLength;
   const lineUy = lineDy / lineLength;
   const lineNx = -lineUy;
@@ -3095,14 +3562,8 @@ function drawDimensionGeometry(start, end, c, options = {}) {
   const bLeg = normalizeScreenVector(b.x - legEndPoint.x, b.y - legEndPoint.y, nx * extensionSign, ny * extensionSign);
   const aExtension = { x: a.x + aLeg.x * extension, y: a.y + aLeg.y * extension };
   const bExtension = { x: b.x + bLeg.x * extension, y: b.y + bLeg.y * extension };
-  const metrics = segmentMetrics(start.x, start.y, end.x, end.y);
-  let displayLength = metrics.length;
-  if (Number.isFinite(options.displayLength)) {
-    displayLength = options.displayLength;
-  } else if (options.lineStart && options.lineEnd) {
-    displayLength = Math.round(distanceWorld(options.lineStart, options.lineEnd));
-  }
-  const displayText = decodeMojibakeText(`${displayLength} мм`);
+  const displayLength = Number.isFinite(options.displayLength) ? options.displayLength : distanceWorld(start, end);
+  const displayText = `${formatDimensionLength(displayLength)} мм`;
   const labelGap = annotationPx(15);
   const isVerticalDimension = Math.abs(lineDx) <= Math.max(2, lineLength * 0.08);
   const labelSide = lineNy > 0 ? -1 : 1;
@@ -3475,19 +3936,15 @@ function drawSelection(entity, c) {
 }
 
 function drawAngularDimensionEntity(entity, c, options = {}) {
-  const vertex = entity.vertex;
-  const p1World = entity.arm1;
-  const p2World = entity.arm2;
-  if (!vertex || !p1World || !p2World) return;
+  const geometry = angularDimensionGeometry(entity);
+  if (!geometry) return;
+  const { vertex, arm1: p1World, arm2: p2World, startAngle: a1, sweep: delta, measurement } = geometry;
   const v = worldToScreen(vertex);
   const p1 = worldToScreen(p1World);
   const p2 = worldToScreen(p2World);
-  const a1 = Math.atan2(p1.y - v.y, p1.x - v.x);
-  const a2 = Math.atan2(p2.y - v.y, p2.x - v.x);
-  const delta = signedAngleDelta(a1, a2);
   const radius = Math.max(annotationPx(28), Math.min(annotationPx(84), Math.min(pointDistance(v, p1), pointDistance(v, p2)) * 0.52));
   const mid = a1 + delta / 2;
-  const degrees = Math.round(Math.abs(radToDeg(delta)));
+  const degrees = Math.round(measurement);
   ctx.save();
   ctx.strokeStyle = c.dimension;
   ctx.fillStyle = c.dimension;
@@ -3621,6 +4078,7 @@ function isLinearDimension(entity) {
 function dimensionScreenGeometry(entity) {
   if (!isLinearDimension(entity)) return null;
   const geometry = dimensionWorldGeometry(entity);
+  if (!geometry) return null;
   let a = worldToScreen(geometry.lineStart);
   let b = worldToScreen(geometry.lineEnd);
   let legStartPoint = worldToScreen(geometry.start);
@@ -3660,39 +4118,16 @@ function dimensionScreenGeometry(entity) {
 }
 
 function dimensionWorldGeometry(entity) {
-  const start = { x: entity.x1, y: entity.y1 };
-  const end = { x: entity.x2, y: entity.y2 };
-  if (Number.isFinite(entity.dimX1) && Number.isFinite(entity.dimY1) && Number.isFinite(entity.dimX2) && Number.isFinite(entity.dimY2)) {
-    return {
-      start,
-      end,
-      lineStart: { x: entity.dimX1, y: entity.dimY1 },
-      lineEnd: { x: entity.dimX2, y: entity.dimY2 },
-      offset: dimensionOffsetFromPoint(start, end, { x: entity.dimX1, y: entity.dimY1 }),
-    };
-  }
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy) || 1;
-  const nx = -dy / length;
-  const ny = dx / length;
-  const offset = entity.offset ?? 360;
-  return {
-    start,
-    end,
-    lineStart: { x: start.x + nx * offset, y: start.y + ny * offset },
-    lineEnd: { x: end.x + nx * offset, y: end.y + ny * offset },
-    offset,
-  };
+  return dimensionGeometry(entity);
 }
 
 function dimensionDisplayLength(entity) {
-  const geometry = dimensionWorldGeometry(entity);
-  return Math.round(distanceWorld(geometry.lineStart, geometry.lineEnd));
+  return formatDimensionLength(dimensionWorldGeometry(entity));
 }
 
 function ensureDimensionLineGeometry(entity) {
   const geometry = dimensionWorldGeometry(entity);
+  if (!geometry) return null;
   entity.dimX1 = geometry.lineStart.x;
   entity.dimY1 = geometry.lineStart.y;
   entity.dimX2 = geometry.lineEnd.x;
@@ -3701,30 +4136,25 @@ function ensureDimensionLineGeometry(entity) {
   return geometry;
 }
 
-function setDimensionLineOffset(entity, offset) {
-  const start = { x: entity.x1, y: entity.y1 };
-  const end = { x: entity.x2, y: entity.y2 };
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const length = Math.hypot(dx, dy) || 1;
-  const nx = -dy / length;
-  const ny = dx / length;
-  entity.offset = offset;
-  entity.dimX1 = start.x + nx * offset;
-  entity.dimY1 = start.y + ny * offset;
-  entity.dimX2 = end.x + nx * offset;
-  entity.dimY2 = end.y + ny * offset;
+function adoptDimensionMeasurement(entity, geometry) {
+  if (entity.measurementType || geometry.mode === "legacy") return;
+  entity.measurementType = geometry.mode;
+  entity.measurementAxis = geometry.measurementAxis;
+  entity.offset = geometry.offset;
 }
 
 function moveDimensionLineOffset(entity, pointerPoint) {
-  const geometry = ensureDimensionLineGeometry(entity);
-  const axis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
-  if (!axis) return;
+  const geometry = dimensionWorldGeometry(entity);
+  if (!geometry) return;
+  adoptDimensionMeasurement(entity, geometry);
+  const axis = geometry.axis;
   const normal = { x: -axis.y, y: axis.x };
   const snapped = snapDimensionLineToOtherDimension(entity, pointerPoint, axis);
   const referencePoint = snapped || pointerPoint;
   const offset = (referencePoint.x - entity.x1) * normal.x + (referencePoint.y - entity.y1) * normal.y;
-  setDimensionLineAlongAxis(entity, axis, offset);
+  entity.offset = offset;
+  if (entity.measurementType) ensureDimensionLineGeometry(entity);
+  else setDimensionLineAlongAxis(entity, axis, offset);
   markProjectDirty("dimension-offset");
 }
 
@@ -3747,7 +4177,7 @@ function snapDimensionLineToOtherDimension(entity, point, axis) {
   for (const candidate of state.entities) {
     if (candidate === entity || !isLinearDimension(candidate) || !isLayerVisible(candidate.layer)) continue;
     const geometry = dimensionWorldGeometry(candidate);
-    const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
+    const candidateAxis = geometry?.axis;
     if (!candidateAxis) continue;
     const parallelScore = Math.abs(axis.x * candidateAxis.y - axis.y * candidateAxis.x);
     if (parallelScore > 0.12) continue;
@@ -3783,7 +4213,7 @@ function dimensionOffsetWithAlignmentSnap(start, end, point) {
   for (const candidate of state.entities) {
     if (!isLinearDimension(candidate) || !isLayerVisible(candidate.layer)) continue;
     const geometry = dimensionWorldGeometry(candidate);
-    const candidateAxis = normalizeWorldVector(geometry.lineEnd.x - geometry.lineStart.x, geometry.lineEnd.y - geometry.lineStart.y);
+    const candidateAxis = geometry?.axis;
     if (!candidateAxis) continue;
     const parallelScore = Math.abs(axis.x * candidateAxis.y - axis.y * candidateAxis.x);
     if (parallelScore > 0.12) continue;
@@ -3840,8 +4270,7 @@ function clampScreenY(y, height, canvasHeight) {
 function drawActiveSegment(c) {
   const { start } = state.drawing;
   const metricPreview = ["line", "polyline"].includes(state.tool) ? lineMetricPreview(start) : null;
-  let end = metricPreview ?? (state.drawing.lockedEnd ? state.drawing.end : cursorWorld());
-  end = dimensionAdjustedEnd(start, end);
+  const end = metricPreview ?? (state.drawing.lockedEnd ? state.drawing.end : cursorWorld());
   if (!metricPreview) state.drawing.end = end;
   if (state.tool === "circle") {
     drawActiveCircle(start, end, c);
@@ -3873,11 +4302,13 @@ function drawActiveSegment(c) {
       hideInlineEditors();
       return;
     }
-    const offset =
-      state.drawing.phase === "offset"
-        ? dimensionOffsetWithAlignmentSnap(start, end, rawCursorWorld()) * state.view.scale
-        : undefined;
-    drawDimensionGeometry(start, end, c, { active: false, offset });
+    const provisional = draftDimension(start, end);
+    const initialGeometry = dimensionGeometry(provisional);
+    if (!initialGeometry) return;
+    if (state.drawing.phase === "offset") {
+      provisional.offset = draftDimensionOffset(initialGeometry, rawCursorWorld());
+    }
+    drawDimensionEntity(provisional, c);
     drawHandle(p1.x, p1.y, c);
     drawHandle(p2.x, p2.y, c);
     hideInlineEditors();
@@ -4079,12 +4510,23 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
   }
   inlineEditors.hidden = false;
   state.inlineEdit = { start, end, metrics, angleInfo };
-  if (document.activeElement !== lengthInput) {
+  const input = numericConfirmInput();
+  const hasDirection = state.tool === "line" && distanceWorld(start, end) > linePointEpsilon;
+  lineDirectionArrow.hidden = !hasDirection;
+  let description = "";
+  if (hasDirection) {
+    const radians = angleBetweenPoints(start, end);
+    lineDirectionArrow.style.setProperty("--line-direction-angle", `${radians}rad`);
+    const direction = lineDirections[(Math.round(radians / (Math.PI / 4)) + 8) % 8];
+    description = `Направление ${direction}`;
+  }
+  if (lineDirectionDescription.textContent !== description) lineDirectionDescription.textContent = description;
+  if (input !== lengthInput) {
     lengthInput.value = metrics.length;
   }
   syncInlineEditorWidth(lengthInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
-  if (document.activeElement !== angleInput) {
+  if (input !== angleInput) {
     angleInput.value = angleInfo.degrees;
     syncInlineEditorWidth(angleInput);
   }
@@ -4094,7 +4536,7 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
 
 function positionAngleEditor(x, y, value) {
   if (angleEditor) angleEditor.hidden = false;
-  if (document.activeElement !== angleInput) {
+  if (numericConfirmInput() !== angleInput) {
     angleInput.value = value;
   }
   syncInlineEditorWidth(angleInput);
@@ -4307,12 +4749,19 @@ function updateLineMetricInput(input) {
   const value = parseLineDecimal(input.value);
   edit[kind] = kind === "length" && !(value > 0) ? null : value;
   input.removeAttribute("aria-invalid");
+  updateLineMetricPreview(edit);
+  draw();
+}
+
+function updateLineMetricPreview(edit) {
+  const draft = state.drawing;
   const originalLength = distanceWorld(edit.start, edit.end);
-  const length = edit.length ?? state.drawing?.metricConstraint?.length ?? originalLength;
-  const angle = edit.angle ?? state.drawing?.metricConstraint?.angle ??
+  const length = edit.length ?? draft?.metricConstraint?.length ?? originalLength;
+  const axis = !edit.endpoint && state.tool === "line" && (edit.length > 0 || draft?.metricConstraint?.length > 0)
+    ? lineAxisAngle(draft?.metricDirection, edit.start, rawCursorWorld()) : undefined;
+  const angle = edit.angle ?? draft?.metricConstraint?.angle ?? axis ??
     (originalLength > linePointEpsilon ? -radToDeg(angleBetweenPoints(edit.start, edit.end)) : undefined);
   edit.point = edit.length === null || edit.angle === null ? null : linePolarPoint(edit.start, length, angle);
-  draw();
 }
 
 function confirmLineMetricInput(input, edit) {
@@ -4328,7 +4777,7 @@ function confirmLineMetricInput(input, edit) {
   }
   const length = edit.length ?? state.drawing?.metricConstraint?.length;
   const angle = edit.angle ?? state.drawing?.metricConstraint?.angle;
-  const lengthOnly = length > linePointEpsilon && length <= 2 * Math.SQRT2 * MAX_LINE_COORDINATE && angle === undefined;
+  const lengthOnly = !point && length > linePointEpsilon && length <= 2 * Math.SQRT2 * MAX_LINE_COORDINATE && angle === undefined;
   const angleOnly = Number.isFinite(angle) && length === undefined;
   if (!edit.endpoint && distanceWorld(edit.start, edit.end) <= linePointEpsilon &&
       edit.length !== null && edit.angle !== null && (lengthOnly || angleOnly)) {
@@ -4411,8 +4860,9 @@ function finishSelectedEndpointNumericEdit() {
 }
 
 function confirmKeyboardInput() {
-  const input = document.activeElement;
-  if (!keyboardInputs.includes(input)) return;
+  const input = numericConfirmInput();
+  if (!input) return;
+  if (input !== document.activeElement) input.focus({ preventScroll: true });
   if (lineMetricKinds.has(input) && lineMetricContext()) {
     beginNumericInputEdit(input);
     confirmLineMetricInput(input, state.numericEdit.lineMetric);
@@ -4723,6 +5173,8 @@ function positionInlineEditor(editor, x, y, avoidEditor = null) {
 }
 
 function hideInlineEditors() {
+  lineDirectionArrow.hidden = true;
+  if (lineDirectionDescription.textContent) lineDirectionDescription.textContent = "";
   if (state.numericEdit?.lineMetric) closeLineMetricInput();
   if (inlineEditors) {
     inlineEditors.hidden = true;
@@ -4790,7 +5242,7 @@ function positionLeaderTextEditor(point) {
   const left = Math.max(12 + width / 2, Math.min(rect.width - width / 2 - 12, screen.x + 44));
   const top = Math.max(82, Math.min(rect.height - height / 2 - 18, screen.y - 8));
   leaderTextEditor.style.left = `${left}px`;
-  leaderTextEditor.style.top = `${top}px`;
+  leaderTextEditor.style.setProperty("--leader-editor-top", `${top}px`);
 }
 
 function showLeaderTextEditor(point) {
@@ -4804,6 +5256,10 @@ function showLeaderTextEditor(point) {
 }
 
 function hideLeaderTextEditor() {
+  if (leaderTextEditor?.contains(document.activeElement)) {
+    document.activeElement.blur();
+    window.ZamerAndroid?.dismissKeyboard?.();
+  }
   if (leaderTextEditor) leaderTextEditor.hidden = true;
   if (leaderTextInput) leaderTextInput.value = "";
 }
@@ -4829,6 +5285,7 @@ function editLeaderText(entity) {
     title: "Текст выноски",
     value: decodeMojibakeText(entity.text || "Текст"),
     placeholder: "Текст выноски",
+    inputLabel: "Текст выноски",
     confirmText: "Готово",
   }).then((text) => {
     if (!text) return;
@@ -4981,9 +5438,9 @@ function applySelectedEndpointInlineValue(kind, options = {}) {
   draw();
 }
 
-function drawBadge(text, x, y, c, secondary = false, fixedScreenSize = false) {
+function drawBadge(text, x, y, c, secondary = false, fixedScreenSize = false, showSnapName = false) {
   text = decodeMojibakeText(String(text));
-  if (/\u041f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c|\u0422\u043e\u0447\u043a\u0430|\u041a\u043e\u043d\u0435\u0446|\u0421\u0435\u0440\u0435\u0434\u0438\u043d\u0430|\u041f\u0430\u0440\u0430|\u0422\u043e\u0447|\u0421\u0435\u0440\u0435\u0434/.test(text)) return;
+  if (!showSnapName && /\u041f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c|\u0422\u043e\u0447\u043a\u0430|\u041a\u043e\u043d\u0435\u0446|\u0421\u0435\u0440\u0435\u0434\u0438\u043d\u0430|\u041f\u0430\u0440\u0430|\u0422\u043e\u0447|\u0421\u0435\u0440\u0435\u0434/.test(text)) return;
   const px = fixedScreenSize ? screenUiPx : annotationPx;
   ctx.save();
   ctx.font = fixedScreenSize ? screenUiFont(700, 12) : annotationFont(700, 12);
@@ -5078,7 +5535,7 @@ function trackingBasePoint() {
 }
 
 function updateSnapTrackingHover() {
-  if (!canCreateSnapTrackingPoint()) {
+  if (state.skipLineObjectSnap || !canCreateSnapTrackingPoint()) {
     clearSnapTrackingHover();
     state.snapTracking.active = null;
     return;
@@ -5380,13 +5837,29 @@ function resetSnapTracking() {
   state.snapTracking.points = [];
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
+  state.dimensionSnapChoice = null;
 }
 
 function drawCursorSnap(c) {
-  if (state.tool === "select" && !state.moveCommand && !state.selectedEndpoint) return;
-  if (state.tool === "dimension" && state.drawing?.phase === "offset") return;
-  const resolved = cursorSnapResolved();
-  if (!resolved.snap) return;
+  const dimensionStage = state.tool === "dimension" && !surveyPointPicker ? state.drawing?.phase : null;
+  const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
+  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach;
+  const resolved = selectOnly || dimensionStage === "offset" ? null : cursorSnapResolved();
+  const chooseSnap = state.tool === "dimension" && !surveyPointPicker && resolved?.snapCount > 1;
+  dimensionAxisControl.hidden = !chooseAxis;
+  dimensionNextSnap.hidden = !chooseSnap;
+  dimensionAssist.hidden = !chooseAxis && !chooseSnap;
+  if (chooseAxis) {
+    const { start, end, axisOverride } = state.drawing;
+    dimensionAxis.value = axisOverride ?? "";
+    dimensionAxis.options[1].disabled = Math.abs(start.x - end.x) <= linePointEpsilon;
+    dimensionAxis.options[2].disabled = Math.abs(start.y - end.y) <= linePointEpsilon;
+  }
+  if (chooseSnap) {
+    const label = `Другая точка, привязка ${resolved.snapIndex + 1} из ${resolved.snapCount}`;
+    if (dimensionNextSnap.getAttribute("aria-label") !== label) dimensionNextSnap.setAttribute("aria-label", label);
+  }
+  if (!resolved?.snap) return;
   const snap = resolved.snap;
   const p = worldToScreen(snap);
   ctx.save();
@@ -5422,6 +5895,11 @@ function drawCursorSnap(c) {
     ctx.stroke();
   }
   ctx.restore();
+  if (state.tool === "dimension" || state.dimensionAttach) {
+    const label = { intersection: "Пересечение", perpendicular: "Перпендикуляр", nearest: "Ближайшая" }[snap.type]
+      || (isMidSnap(snap) ? "Середина" : snap.label || "Конец");
+    drawBadge(label, p.x, p.y - 21, c, false, true, true);
+  }
 }
 
 function isMidSnap(snap) {
@@ -5758,6 +6236,20 @@ function adaptiveGridStep() {
   return 1000;
 }
 
+function updateGridStepReadout() {
+  if (!gridStepReadout) return;
+  const enabled = state.snaps.has("grid");
+  const step = adaptiveGridStep();
+  const value = enabled ? `${step} мм` : "Сетка";
+  if (gridStepReadout.textContent !== value) gridStepReadout.textContent = value;
+  const button = gridStepReadout.closest("button");
+  const label = enabled ? `Привязка к сетке, шаг ${step} мм` : "Привязка к сетке";
+  if (button.title !== label) {
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
+}
+
 function snapValueToGrid(value) {
   const step = adaptiveGridStep();
   return Math.round(value / step) * step;
@@ -5770,6 +6262,231 @@ function zoomAtScreen(screen, nextScale) {
   state.view.panX += screen.x - after.x;
   state.view.panY += screen.y - after.y;
   markProjectDirty("view");
+}
+
+function panViewport(dx, dy, fine = false) {
+  const step = fine ? 4 : 18;
+  state.view.panX -= dx * step;
+  state.view.panY -= dy * step;
+  markProjectDirty("view");
+  draw();
+}
+
+function zoomViewport(factor) {
+  zoomAtScreen(centerScreen(), state.view.scale * factor);
+  viewportActionStatus.textContent = `Масштаб вида: ${Math.round(state.view.scale / 0.085 * 100)}%`;
+  draw();
+}
+
+function boundsFromViewportPoints(points) {
+  return {
+    minX: Math.min(...points.map(({ x }) => x)),
+    minY: Math.min(...points.map(({ y }) => y)),
+    maxX: Math.max(...points.map(({ x }) => x)),
+    maxY: Math.max(...points.map(({ y }) => y)),
+  };
+}
+
+function viewportEntityBounds(entity) {
+  if (entity.type === "polyline") return polylineBounds(entity);
+  if (entity.type === "block") return boundsFromViewportPoints(blockCorners(entity));
+  if (entity.type === "arc") {
+    const arc = arcGeometry(entity.start, entity.through, entity.end);
+    if (!arc) return entityBounds(entity);
+    const points = [entity.start, entity.through, entity.end];
+    for (const angle of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+      if (angleOnArc(angle, arc.startAngle, arc.endAngle, arc.counterClockwise)) {
+        points.push({ x: arc.center.x + Math.cos(angle) * arc.radius, y: arc.center.y + Math.sin(angle) * arc.radius });
+      }
+    }
+    return boundsFromViewportPoints(points);
+  }
+  const bounds = entityBounds(entity);
+  if (entity.type === "wall") {
+    const radius = Math.abs(entity.width || 0) / 2;
+    return { minX: bounds.minX - radius, minY: bounds.minY - radius, maxX: bounds.maxX + radius, maxY: bounds.maxY + radius };
+  }
+  return bounds;
+}
+
+const viewportObjectNames = {
+  line: "Линия", wall: "Стена", polyline: "Полилиния", circle: "Круг",
+  rectangle: "Прямоугольник", arc: "Дуга", block: "Блок",
+};
+
+function viewportObjectLabel(entity) {
+  if (entity.type === "line" && entity.layer === "dimensions") {
+    if (entity.dimensionKind === "leader") return `Выноска · ${entity.text || "Текст"}`;
+    if (entity.dimensionKind === "angular") {
+      const angle = angularDimensionGeometry(entity)?.measurement;
+      return Number.isFinite(angle) ? `Угловой размер · ${Math.round(angle)}°` : "Угловой размер";
+    }
+    const length = dimensionDisplayLength(entity);
+    return length ? `Размер · ${length} мм` : "Размер";
+  }
+  if (entity.type === "text") return `Текст · ${entity.text || "Надпись"}`;
+  const name = viewportObjectNames[entity.type] || "Объект";
+  if (["line", "wall"].includes(entity.type) && isValidLine(entity)) {
+    return `${name} · ${formatDimensionLength(Math.hypot(entity.x2 - entity.x1, entity.y2 - entity.y1))} мм`;
+  }
+  return name;
+}
+
+function locateViewportObject(id, label) {
+  const entity = state.entities.find((item) => item.id === id && isLayerVisible(item.layer));
+  if (!entity) return false;
+  const bounds = viewportEntityBounds(entity);
+  if (!bounds || !Object.values(bounds).every(Number.isFinite)) return false;
+  setTool("select");
+  setSelection(id);
+  centerViewOnWorldPoint({ x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 });
+  viewportActionStatus.textContent = `На чертеже выбран объект «${label}»`;
+  canvas.focus({ preventScroll: true });
+  draw();
+  return true;
+}
+
+function openViewportObjects() {
+  const objects = state.entities.filter((entity) => isLayerVisible(entity.layer)).map((entity) => {
+    const label = viewportObjectLabel(entity);
+    const layer = layerMeta[entity.layer || "measure"]?.name || entity.layer;
+    return { id: entity.id, label, layer, searchText: `${label} ${layer}`.toLocaleLowerCase("ru-RU") };
+  });
+  const dialog = document.createElement("dialog");
+  dialog.className = "project-dialog viewport-objects-dialog";
+  dialog.setAttribute("aria-labelledby", "viewportObjectTitle");
+  dialog.innerHTML = `
+    <strong id="viewportObjectTitle">Объекты чертежа</strong>
+    <input type="search" aria-label="Поиск объекта" placeholder="Тип, размер или слой" autocomplete="off">
+    <p role="status"></p>
+    <ul aria-label="Видимые объекты"></ul>
+    <div class="viewport-object-pages" aria-label="Страницы списка" role="group">
+      <button type="button" data-page="previous">Назад</button>
+      <button type="button" data-page="next">Дальше</button>
+    </div>
+    <button class="viewport-object-close" type="button">Закрыть</button>
+  `;
+  const search = dialog.querySelector("input");
+  const status = dialog.querySelector("p");
+  const list = dialog.querySelector("ul");
+  const pages = dialog.querySelector(".viewport-object-pages");
+  const previous = pages.querySelector('[data-page="previous"]');
+  const next = pages.querySelector('[data-page="next"]');
+  const pageSize = 40;
+  let page = 0;
+  let matches = objects;
+  let selected = null;
+
+  function renderPage() {
+    const start = page * pageSize;
+    const end = Math.min(start + pageSize, matches.length);
+    list.replaceChildren();
+    for (const object of matches.slice(start, end)) {
+      const row = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      const label = document.createElement("strong");
+      label.textContent = object.label;
+      const layer = document.createElement("small");
+      layer.textContent = object.layer;
+      button.append(label, layer);
+      button.addEventListener("click", () => {
+        selected = object;
+        dialog.close();
+      });
+      row.append(button);
+      list.append(row);
+    }
+    status.textContent = matches.length ? `Показано ${start + 1}–${end} из ${matches.length}`
+      : objects.length ? "Объекты не найдены" : "На видимых слоях нет объектов";
+    pages.hidden = matches.length <= pageSize;
+    previous.disabled = page === 0;
+    next.disabled = end === matches.length;
+    list.scrollTop = 0;
+  }
+
+  search.addEventListener("input", () => {
+    const terms = search.value.trim().toLocaleLowerCase("ru-RU").split(/\s+/);
+    matches = objects.filter((object) => terms.every((term) => object.searchText.includes(term)));
+    page = 0;
+    renderPage();
+  });
+  previous.addEventListener("click", () => { page -= 1; renderPage(); list.querySelector("button")?.focus(); });
+  next.addEventListener("click", () => { page += 1; renderPage(); list.querySelector("button")?.focus(); });
+  dialog.querySelector(".viewport-object-close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dialog.close();
+    }
+  });
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (!selected || !locateViewportObject(selected.id, selected.label)) viewportSummary.focus({ preventScroll: true });
+  }, { once: true });
+  renderPage();
+  shell.append(dialog);
+  dialog.showModal();
+  dialog.querySelector(".viewport-object-close").focus({ preventScroll: true });
+}
+
+function fitViewport() {
+  const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const entity of state.entities) {
+    if (!isLayerVisible(entity.layer)) continue;
+    const extent = viewportEntityBounds(entity);
+    if (!extent || !Object.values(extent).every(Number.isFinite)) continue;
+    bounds.minX = Math.min(bounds.minX, extent.minX);
+    bounds.minY = Math.min(bounds.minY, extent.minY);
+    bounds.maxX = Math.max(bounds.maxX, extent.maxX);
+    bounds.maxY = Math.max(bounds.maxY, extent.maxY);
+  }
+  if (!Number.isFinite(bounds.minX)) {
+    viewportActionStatus.textContent = "Нет видимых объектов для вписывания";
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const bottomPanels = [shell.querySelector(".tool-rail"), selectionActions, lineUi.lineEditOptions].filter((panel) => panel && !panel.hidden);
+  const availableTop = Math.max(38, statusChip.offsetHeight, saveIndicator.offsetHeight) + 18;
+  const availableBottom = Math.min(rect.height, ...bottomPanels.map((panel) => panel.getBoundingClientRect().top - rect.top)) - 18;
+  const fitScale = Math.min(Math.max(1, rect.width - 44) / Math.max(1, bounds.maxX - bounds.minX),
+    Math.max(1, availableBottom - availableTop) / Math.max(1, bounds.maxY - bounds.minY));
+  const scale = clampScale(fitScale);
+  state.view.scale = scale;
+  state.view.panX = rect.width / 2 - (bounds.minX + bounds.maxX) / 2 * scale;
+  state.view.panY = (availableTop + availableBottom) / 2 - (bounds.minY + bounds.maxY) / 2 * scale;
+  viewportActionStatus.textContent = fitScale < scale
+    ? "Достигнут минимальный масштаб вида"
+    : "Видимые объекты вписаны в холст";
+  markProjectDirty("view");
+  draw();
+}
+
+function viewportIsSelecting() {
+  return state.tool === "select" && !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.selectedEndpoint && !state.dimensionAttach;
+}
+
+function placeAtViewportCenter() {
+  if (surveyPointPicker) {
+    commitSurveyPoint();
+  } else if (state.lineEdit) {
+    pickLineEditPoint(centerScreen());
+  } else if (viewportIsSelecting()) {
+    applyTapSelection(pickEntity(centerScreen()));
+    draw();
+  } else {
+    commitCursorPoint();
+  }
+}
+
+function syncViewportPlaceLabel() {
+  const label = viewportIsSelecting() ? "Выбрать объект в центре" : "Поставить точку в центре";
+  if (viewportPlaceButton.getAttribute("aria-label") !== label) {
+    viewportPlaceButton.setAttribute("aria-label", label);
+    viewportPlaceButton.title = label;
+  }
 }
 
 function beginPinchGesture() {
@@ -5800,8 +6517,6 @@ function updatePinchGesture() {
   state.view.panX = midpoint.x - state.pinch.worldAtMidpoint.x * nextScale;
   state.view.panY = midpoint.y - state.pinch.worldAtMidpoint.y * nextScale;
   markProjectDirty("pinch");
-  const percent = Math.round((state.view.scale / 0.085) * 100);
-  statusChip.textContent = `Масштаб ${percent}%`;
   draw();
 }
 
@@ -5810,6 +6525,9 @@ function endPinchGestureIfNeeded() {
     beginPinchGesture();
     return;
   }
+  if (state.pinch && !state.lineEdit) {
+    statusChip.textContent = `Масштаб ${Math.round(state.view.scale / 0.085 * 100)}%`;
+  }
   state.pinch = null;
 }
 
@@ -5817,17 +6535,17 @@ function snapWorld(point) {
   return resolveSnapWorld(point).point;
 }
 
-function resolveSnapWorld(point) {
+function resolveSnapWorld(point, { objectSnaps = true } = {}) {
   const trackingThreshold = objectSnapThreshold();
   let result = { ...point };
   let snap = null;
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  snap = nearestObjectSnap(point, { includeNearestSegment: state.tool === "line" || state.tool === "polyline" });
+  if (objectSnaps) snap = nearestObjectSnap(point, { includeNearestSegment: state.tool === "line" || state.tool === "polyline" });
   if (snap) {
     result = { x: snap.x, y: snap.y };
-  } else if (canUseSnapTracking()) {
+  } else if (objectSnaps && canUseSnapTracking()) {
     snap = nearestSnapTrackingPoint(point, trackingThreshold);
     if (snap) {
       result = { x: snap.x, y: snap.y };
@@ -5854,27 +6572,45 @@ function resolveSnapWorld(point) {
   return { point: result, snap };
 }
 
-function resolveDimensionPointSnap(point) {
-  const objectThreshold = 34 / state.view.scale;
-  const midpointThreshold = 22 / state.view.scale;
-  let result = { ...point };
-  let snap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), objectThreshold);
+function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {}) {
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
-
-  if (!snap && state.snaps.has("mid")) {
-    snap = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: true }), midpointThreshold);
+  const threshold = objectSnapThreshold();
+  const useIntersection = state.snaps.has("intersection");
+  const usePerpendicular = start && state.snaps.has("perpendicular");
+  const useNearest = state.snaps.has("nearest");
+  const boundaries = (useIntersection || usePerpendicular || useNearest) ? boundarySegments() : [];
+  const candidates = [];
+  if (useIntersection) candidates.push(...nearbyIntersections(point, boundaries, threshold));
+  if (usePerpendicular) candidates.push(...nearbyPerpendiculars(point, start, boundaries, threshold));
+  if (state.snaps.has("end")) {
+    for (const candidate of snapCandidates({ includeCorners: true })) {
+      if (distanceWorld(point, candidate) < threshold) candidates.push(candidate);
+    }
   }
-  if (snap) {
-    result = { x: snap.x, y: snap.y };
-  } else if (state.snaps.has("grid")) {
-    result.x = snapValueToGrid(result.x);
-    result.y = snapValueToGrid(result.y);
+  if (state.snaps.has("mid")) {
+    for (const candidate of snapCandidates({ includeMidpoints: true, includeCenters: true })) {
+      if (distanceWorld(point, candidate) < midpointSnapThreshold()) candidates.push(candidate);
+    }
   }
-  return { point: result, snap };
+  candidates.sort((first, second) => distanceWorld(point, first) - distanceWorld(point, second));
+  if (useNearest) candidates.push(...nearbyBoundaryPoints(point, boundaries, nearestSegmentSnapThreshold()));
+  const distinct = [];
+  for (const candidate of candidates) {
+    if (!distinct.some(snap => distanceWorld(snap, candidate) <= linePointEpsilon)) distinct.push(candidate);
+    if (distinct.length >= 12) break;
+  }
+  const choice = !surveyPointPicker && state.tool === "dimension" ? state.dimensionSnapChoice : null;
+  const useChoice = choice && distanceWorld(point, choice.origin) * state.view.scale < 2;
+  if (choice && !useChoice) state.dimensionSnapChoice = null;
+  const snapIndex = useChoice && choice.index < distinct.length ? choice.index : 0;
+  const snap = distinct[snapIndex];
+  if (snap) return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
+  if (!state.snaps.has("grid")) return { point, snap: null };
+  return { point: { x: snapValueToGrid(point.x), y: snapValueToGrid(point.y) }, snap: null };
 }
 
-function resolveLineLikeSnap(point, start, { useGrid = true } = {}) {
+function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true } = {}) {
   const directionThreshold = objectSnapThreshold();
   let result = { ...point };
   let snap = null;
@@ -5883,7 +6619,7 @@ function resolveLineLikeSnap(point, start, { useGrid = true } = {}) {
 
   const ortho = isLineSnapContext() && state.snaps.has("ortho");
   const grid = useGrid && state.snaps.has("grid");
-  snap = nearestObjectSnap(point, { includeNearestSegment: !ortho && trackingDrawingTools.has(state.tool), start });
+  if (objectSnaps) snap = nearestObjectSnap(point, { includeNearestSegment: !ortho && trackingDrawingTools.has(state.tool), start });
   if (ortho && !snap) {
     const constrained = constrainLinePoint(start, point);
     if (!constrained) return { point: result, snap: null };
@@ -5899,6 +6635,8 @@ function resolveLineLikeSnap(point, start, { useGrid = true } = {}) {
   }
   if (snap) {
     result = { x: snap.x, y: snap.y };
+  } else if (!objectSnaps) {
+    if (grid) result = { x: snapValueToGrid(point.x), y: snapValueToGrid(point.y) };
   } else {
     const tracking = canSnapToTrackingGuides() ? nearestSnapTrackingPoint(point, directionThreshold, start) : null;
     if (tracking) {
@@ -6088,13 +6826,111 @@ function dimensionRefFromSnap(snap) {
   return { entityId: snap.entityId, pointKey: snap.pointKey };
 }
 
+function dimensionAnchorLink(entity, endpoint) {
+  const start = endpoint === "start";
+  const ref = start ? entity.refStart : entity.refEnd;
+  if (ref) return dimensionLinkedPoint(ref) ? "linked" : "lost";
+  return (start ? entity.lostRefStart : entity.lostRefEnd) ? "lost" : "fixed";
+}
+
+function selectedLinearDimension() {
+  if (state.tool !== "select" || state.selectedIds.length !== 1 || state.moveCommand ||
+      state.offsetCommand || state.lineEdit || surveyPointPicker) return null;
+  const entity = selectedEntities()[0];
+  return entity && isLinearDimension(entity) && isLayerVisible(entity.layer) ? entity : null;
+}
+
+function syncDimensionLinks() {
+  const entity = selectedLinearDimension();
+  dimensionLinks.hidden = !entity;
+  if (!entity) return;
+  const picking = state.dimensionAttach?.entityId === entity.id;
+  dimensionLinkCancel.hidden = picking !== true;
+  const descriptions = { linked: "Связано", fixed: "Фиксировано", lost: "Связь потеряна" };
+  for (const button of dimensionLinkButtons) {
+    button.hidden = picking;
+    const endpoint = button.dataset.dimensionAnchor;
+    const link = dimensionAnchorLink(entity, endpoint);
+    button.dataset.link = link;
+    const label = button.querySelector("small");
+    if (label.textContent !== descriptions[link]) {
+      label.textContent = descriptions[link];
+      button.setAttribute("aria-label", `Привязать ${endpoint === "start" ? "начало" : "конец"}. ${descriptions[link]}`);
+    }
+  }
+}
+
+function dimensionAttachCandidate(point) {
+  const candidates = snapCandidates({ includeCorners: true, includeMidpoints: true, includeCenters: true });
+  return nearestSnapCandidate(point, candidates, objectSnapThreshold());
+}
+
+function startDimensionAttach(endpoint) {
+  const entity = selectedLinearDimension();
+  if (!entity) return;
+  state.dimensionAttach = { entityId: entity.id, endpoint };
+  statusChip.textContent = `Привязка ${endpoint === "start" ? "начала" : "конца"}. Наведите на опорную точку и коснитесь холста`;
+  canvas.focus({ preventScroll: true });
+  draw();
+}
+
+function cancelDimensionAttach() {
+  if (!state.dimensionAttach) return;
+  state.dimensionAttach = null;
+  statusChip.textContent = "Привязка размера отменена";
+  draw();
+}
+
+function commitDimensionAttach() {
+  const { entityId, endpoint } = state.dimensionAttach;
+  const entity = state.entities.find(item => item.id === entityId);
+  if (!entity) {
+    cancelDimensionAttach();
+    return;
+  }
+  const snap = dimensionAttachCandidate(rawCursorWorld());
+  const ref = dimensionRefFromSnap(snap);
+  if (!ref) {
+    statusChip.textContent = "Наведите на конец, угол, середину или центр объекта";
+    return;
+  }
+  const start = endpoint === "start";
+  const before = entityGeometry(entity);
+  const candidate = { ...entity, ...(start
+    ? { x1: snap.x, y1: snap.y, refStart: ref, lostRefStart: false }
+    : { x2: snap.x, y2: snap.y, refEnd: ref, lostRefEnd: false }) };
+  const geometry = dimensionGeometry(entity);
+  if (!geometry) return;
+  adoptDimensionMeasurement(candidate, geometry);
+  if (candidate.measurementType) ensureDimensionLineGeometry(candidate);
+  else setDimensionLineAlongAxis(candidate, geometry.axis, geometry.offset);
+  if ((dimensionGeometry(candidate)?.measurement ?? 0) <= linePointEpsilon) {
+    statusChip.textContent = "Выберите другую опору. Размер в выбранных точках равен нулю";
+    return;
+  }
+  const after = entityGeometry(candidate);
+  Object.assign(entity, after);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId, before, after });
+    state.redo.length = 0;
+    markProjectDirty("dimension-reattach");
+  }
+  state.dimensionAttach = null;
+  statusChip.textContent = `Опора привязана. Размер ${dimensionDisplayLength(entity)} мм`;
+  draw();
+}
+
 function updateLinkedDimensions() {
   for (const entity of state.entities) {
-    if (entity.layer !== "dimensions") continue;
+    if (!isLinearDimension(entity)) continue;
     const nextStart = dimensionLinkedPoint(entity.refStart);
     const nextEnd = dimensionLinkedPoint(entity.refEnd);
-    if (!nextStart && !nextEnd) continue;
+    const changedStart = nextStart && (entity.x1 !== nextStart.x || entity.y1 !== nextStart.y);
+    const changedEnd = nextEnd && (entity.x2 !== nextEnd.x || entity.y2 !== nextEnd.y);
+    if (!changedStart && !changedEnd) continue;
     const previous = dimensionWorldGeometry(entity);
+    if (!previous) continue;
+    adoptDimensionMeasurement(entity, previous);
     if (nextStart) {
       entity.x1 = nextStart.x;
       entity.y1 = nextStart.y;
@@ -6103,7 +6939,8 @@ function updateLinkedDimensions() {
       entity.x2 = nextEnd.x;
       entity.y2 = nextEnd.y;
     }
-    preserveDimensionLineOffset(entity, previous);
+    if (entity.measurementType) ensureDimensionLineGeometry(entity);
+    else setDimensionLineAlongAxis(entity, previous.axis, previous.offset);
   }
 }
 
@@ -6115,29 +6952,6 @@ function dimensionLinkedPoint(ref) {
     return { x: entity.x1 + (entity.x2 - entity.x1) * ref.t, y: entity.y1 + (entity.y2 - entity.y1) * ref.t };
   }
   return objectPointRefs(entity).find((point) => point.pointKey === ref.pointKey) || null;
-}
-
-function preserveDimensionLineOffset(entity, previous) {
-  const start = { x: entity.x1, y: entity.y1 };
-  const end = { x: entity.x2, y: entity.y2 };
-  const axis = normalizeWorldVector(previous.lineEnd.x - previous.lineStart.x, previous.lineEnd.y - previous.lineStart.y);
-  if (!axis) return;
-  const normal = { x: -axis.y, y: axis.x };
-  const offsetStart = (previous.lineStart.x - start.x) * normal.x + (previous.lineStart.y - start.y) * normal.y;
-  const offsetEnd = (previous.lineEnd.x - end.x) * normal.x + (previous.lineEnd.y - end.y) * normal.y;
-  const startAnchor = {
-    x: start.x + normal.x * offsetStart,
-    y: start.y + normal.y * offsetStart,
-  };
-  const endAnchor = {
-    x: end.x + normal.x * offsetEnd,
-    y: end.y + normal.y * offsetEnd,
-  };
-  entity.dimX1 = startAnchor.x;
-  entity.dimY1 = startAnchor.y;
-  entity.dimX2 = endAnchor.x;
-  entity.dimY2 = endAnchor.y;
-  entity.offset = dimensionOffsetFromPoint(start, end, startAnchor);
 }
 
 function objectPointRefs(entity) {
@@ -6244,7 +7058,7 @@ function syncToolButtonVisuals() {
   const annotationButton = tools.find((button) => button.dataset.tool === "annotation");
   const selectionButton = tools.find((button) => button.dataset.tool === "selection");
   setToolButtonVisual(selectButton, selectModeButtonVisuals[state.selectTool] || selectModeButtonVisuals.select);
-  setToolButtonVisual(lineButton, isGroupedDrawTool(state.tool) ? drawToolButtonVisuals[state.tool] : drawToolButtonVisuals.line);
+  setToolButtonVisual(lineButton, drawToolButtonVisuals.line);
   setToolButtonVisual(dimensionButton, dimensionToolButtonVisuals[state.dimensionTool] || dimensionToolButtonVisuals.aligned);
   setToolButtonVisual(annotationButton, state.tool === "dimension" && state.dimensionTool === "leader" ? annotationToolButtonVisuals.leader : annotationToolButtonVisuals.text);
   setToolButtonVisual(selectionButton, selectionToolButtonVisuals.select);
@@ -6280,16 +7094,22 @@ function syncToolButtons() {
           ? state.tool === "select"
           : buttonTool === "annotation"
             ? state.tool === "text" || (state.tool === "dimension" && state.dimensionTool === "leader")
-            : buttonTool === state.tool || (buttonTool === "line" && isGroupedDrawTool(state.tool));
+            : buttonTool === state.tool && (buttonTool !== "dimension" || state.dimensionTool !== "leader");
     button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
+  const figure = state.tool !== "line" && isGroupedDrawTool(state.tool) ? drawToolButtonVisuals[state.tool] : null;
+  figureToolButton?.classList.toggle("active", Boolean(figure));
+  figureToolButton?.setAttribute("aria-label", figure ? `Фигуры: ${figure.label}` : "Фигуры");
 }
 
 function setTool(tool) {
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   state.directManipulationIds.clear();
+  state.skipLineObjectSnap = false;
   state.tool = tool;
+  state.dimensionAttach = null;
   if (tool === "dimension" && !state.visibleLayers.has("dimensions")) {
     state.visibleLayers.add("dimensions");
     markProjectDirty("show-dimensions");
@@ -6337,10 +7157,6 @@ function setTool(tool) {
     statusChip.textContent = selectionStatusText();
   }
   if (tool === "dimension") {
-    state.snaps.add("end");
-    syncSnapButtons();
-  }
-  if (tool === "dimension") {
     statusChip.textContent = dimensionToolStatusText();
   }
   draw();
@@ -6352,14 +7168,23 @@ function syncSnapButtons() {
     button.classList.toggle("active", enabled);
     button.setAttribute("aria-pressed", String(enabled));
   });
+  updateGridStepReadout();
 }
 
 function syncDrawToolMenu() {
-  drawToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.drawTool === state.drawTool));
+  drawToolButtons.forEach((button) => {
+    const selected = button.dataset.drawTool === state.drawTool;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
 }
 
 function syncDimensionToolMenu() {
-  dimensionToolButtons.forEach((button) => button.classList.toggle("active", button.dataset.dimensionTool === state.dimensionTool));
+  dimensionToolButtons.forEach((button) => {
+    const selected = button.dataset.dimensionTool === state.dimensionTool;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
 }
 
 function syncAnnotationToolMenu() {
@@ -6404,10 +7229,12 @@ function showDrawToolMenu() {
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   drawToolMenu.hidden = false;
+  figureToolButton?.setAttribute("aria-expanded", "true");
 }
 
 function hideDrawToolMenu() {
   if (drawToolMenu) drawToolMenu.hidden = true;
+  figureToolButton?.setAttribute("aria-expanded", "false");
 }
 
 function showDimensionToolMenu() {
@@ -6418,10 +7245,12 @@ function showDimensionToolMenu() {
   hideSelectToolMenu();
   hideSelectModeMenu();
   dimensionToolMenu.hidden = false;
+  tools.find((button) => button.dataset.tool === "dimension")?.setAttribute("aria-expanded", "true");
 }
 
 function hideDimensionToolMenu() {
   if (dimensionToolMenu) dimensionToolMenu.hidden = true;
+  tools.find((button) => button.dataset.tool === "dimension")?.setAttribute("aria-expanded", "false");
 }
 
 function showAnnotationToolMenu() {
@@ -6432,10 +7261,12 @@ function showAnnotationToolMenu() {
   hideSelectToolMenu();
   hideSelectModeMenu();
   annotationToolMenu.hidden = false;
+  tools.find((button) => button.dataset.tool === "annotation")?.setAttribute("aria-expanded", "true");
 }
 
 function hideAnnotationToolMenu() {
   if (annotationToolMenu) annotationToolMenu.hidden = true;
+  tools.find((button) => button.dataset.tool === "annotation")?.setAttribute("aria-expanded", "false");
 }
 
 function showSelectToolMenu() {
@@ -6505,7 +7336,7 @@ function prepareSelectMenuStructure() {
 }
 
 function activateDrawToolMenu() {
-  if (isGroupedDrawTool(state.tool)) {
+  if (state.tool === "line") {
     if (drawToolMenu.hidden) showDrawToolMenu();
     else hideDrawToolMenu();
     draw();
@@ -6650,12 +7481,12 @@ function selectAnnotationTool(tool) {
 
 function dimensionToolStatusText() {
   const text = {
-    aligned: "Параллельный размер: 1 начало, 2 конец, 3 положение размерной линии",
-    linear: "Линейный размер: выберите две точки, размер будет по горизонтали/вертикали",
-    angular: "Угол: выберите две линии или две стороны угла",
-    baseline: "База: несколько размеров от общей базовой точки",
+    aligned: "Размер по отрезку. 1 из 3: укажите начало",
+    linear: "Размер по оси. 1 из 3: укажите первую точку",
+    angular: "Угол. Укажите вершину либо выберите первую линию",
+    baseline: "Размеры от базы. Укажите общую точку отсчёта",
   };
-  text.leader = "Выноска: 1 кончик стрелки, 2 место текста, затем введите текст";
+  text.leader = "Выноска. 1 из 3: укажите кончик стрелки";
   return text[state.dimensionTool] || text.aligned;
 }
 
@@ -6727,14 +7558,13 @@ function pushEntity(entity) {
 }
 
 function createEntityFromDrawing() {
-  const { start } = state.drawing;
-  const end = dimensionAdjustedEnd(start, state.drawing.end);
+  const { start, end } = state.drawing;
   const id = `${state.tool}-${Date.now()}`;
   if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
   if (state.tool === "arc") return arcEntity(id, state.drawing.start, arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end), state.drawing.arcEnd);
   if (state.tool === "dimension") {
-    const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
+    const entity = draftDimension(start, end, id);
     entity.offset = state.drawing.offset ?? 360;
     if (state.drawing.refStart) entity.refStart = state.drawing.refStart;
     if (state.drawing.refEnd) entity.refEnd = state.drawing.refEnd;
@@ -6762,14 +7592,23 @@ function leaderEntity(id, start, end, text) {
   };
 }
 
-function dimensionAdjustedEnd(start, end) {
-  if (state.tool !== "dimension" || state.dimensionTool !== "linear") return end;
-  return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
-    ? { x: end.x, y: start.y }
-    : { x: start.x, y: end.y };
+function draftDimension(start, end, id = "preview") {
+  const entity = line(id, start.x, start.y, end.x, end.y, "dimensions");
+  entity.measurementType = state.dimensionTool === "linear" ? "linear" : "aligned";
+  if (entity.measurementType === "linear") {
+    entity.measurementAxis = state.drawing.axisOverride ?? state.drawing.measurementAxis ??
+      (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y) ? "x" : "y");
+  }
+  return entity;
 }
 
-function continueDimensionAfterCreate(metrics) {
+function draftDimensionOffset({ start, axis, measurement }, point) {
+  const axisTip = { x: start.x + axis.x * measurement, y: start.y + axis.y * measurement };
+  const offset = dimensionOffsetWithAlignmentSnap(start, axisTip, point);
+  return Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
+}
+
+function continueDimensionAfterCreate(measurement) {
   const previous = state.drawing;
   if (state.dimensionTool === "baseline") {
     const baseStart = previous.baseStart || previous.start;
@@ -6783,7 +7622,7 @@ function continueDimensionAfterCreate(metrics) {
       baseStart,
       baseRefStart,
     };
-    statusChip.textContent = `База ${metrics.length} мм. Поставьте следующую точку`;
+    statusChip.textContent = `База ${formatDimensionLength(measurement)} мм. Поставьте следующую точку`;
     return;
   }
   state.drawing = null;
@@ -6802,6 +7641,15 @@ function syncLineControls() {
   const drawing = state.tool === "polyline" ? state.drawing : null;
   const size = drawing?.points.length ?? 0;
   const edit = state.lineEdit;
+  const placingLine = !surveyPointPicker && ["line", "polyline"].includes(state.tool);
+  const draft = state.tool === "line" ? state.drawing : null;
+  const input = numericConfirmInput();
+  const choosingDirection = draft && ([lengthInput, topLengthInput].includes(input) || draft.metricConstraint?.length !== undefined);
+  linePointAssist.hidden = !placingLine;
+  lineDirection.hidden = !choosingDirection;
+  if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
+  const bypassPressed = String(state.skipLineObjectSnap);
+  if (lineSkipSnap.getAttribute("aria-pressed") !== bypassPressed) lineSkipSnap.setAttribute("aria-pressed", bypassPressed);
   document.getElementById("undoButton").disabled = !state.undo.length && size < 2;
   document.getElementById("redoButton").disabled = !state.redo.length || Boolean(state.drawing || edit);
   lineUi.lineEditOptions.hidden = !edit;
@@ -6834,6 +7682,7 @@ function commitLinePoint(point) {
   }
   const draft = state.drawing;
   if (!draft) {
+    state.skipLineObjectSnap = false;
     setSelection(null);
     state.drawing = { points: [point], start: point, end: point, lockedEnd: false };
     hideDrawToolMenu();
@@ -6846,6 +7695,7 @@ function commitLinePoint(point) {
       draw();
       return false;
     }
+    state.skipLineObjectSnap = false;
     if (polyline) {
       if (draft.points.length >= 3 && distanceWorld(draft.points[0], point) <= linePointEpsilon) {
         return finishLineCommand(true);
@@ -6855,7 +7705,7 @@ function commitLinePoint(point) {
       draft.end = point;
       draft.lockedEnd = false;
       draft.metricConstraint = null;
-      statusChip.textContent = draft.points.length >= 3
+      statusChip.textContent = draft.points.length >= 3 && state.snaps.has("end")
         ? "Первая вершина замыкает контур · ESC — завершить"
         : "Следующая вершина · ESC — завершить";
     } else {
@@ -6864,6 +7714,7 @@ function commitLinePoint(point) {
       statusChip.textContent = `Отрезок ${Math.round(length)} мм. Укажите начало новой линии`;
     }
   }
+  if (polyline) markProjectDirty("polyline-vertex");
   resetSnapTracking();
   hideInlineEditors();
   draw();
@@ -6885,7 +7736,9 @@ function finishLineCommand(closed = false) {
     statusChip.textContent = "Укажите первую точку";
   }
   closeLineMetricInput();
+  state.skipLineObjectSnap = false;
   state.drawing = null;
+  if (state.tool === "polyline") markProjectDirty("polyline-finish");
   hideInlineEditors();
   resetSnapTracking();
   draw();
@@ -6899,6 +7752,7 @@ function undoLineSegment() {
   draft.end = draft.start = draft.points.at(-1);
   draft.lockedEnd = false;
   draft.metricConstraint = null;
+  markProjectDirty("polyline-vertex");
   resetSnapTracking();
   hideInlineEditors();
   statusChip.textContent = "Последняя вершина убрана";
@@ -7357,8 +8211,10 @@ function remapLineDimension(entity, replaced, results, association) {
     if (association === "follow" && pieces.some((piece) => piece.id === ref.entityId)) continue;
     const point = dimensionLinkedPoint(ref);
     const mapped = lineReferenceAt(point, association === "join" ? results : pieces);
+    const lostKey = key === "refStart" ? "lostRefStart" : "lostRefEnd";
     if (mapped) {
       edited[key] = mapped;
+      edited[lostKey] = false;
     } else {
       if (point) {
         if (key === "refStart") {
@@ -7370,6 +8226,7 @@ function remapLineDimension(entity, replaced, results, association) {
         }
       }
       delete edited[key];
+      edited[lostKey] = true;
     }
   }
   return edited;
@@ -7507,6 +8364,14 @@ function selectLineEndpoint(endpoint) {
 }
 
 function commitCursorPoint() {
+  if (surveyPointPicker) {
+    commitSurveyPoint();
+    return;
+  }
+  if (state.dimensionAttach) {
+    commitDimensionAttach();
+    return;
+  }
   const resolved = cursorSnapResolved();
   const world = resolved.point;
   if (state.selectedEndpoint) {
@@ -7532,6 +8397,10 @@ function commitCursorPoint() {
     return;
   }
   if (state.tool === "dimension") {
+    if (!isLinePoint(world)) {
+      statusChip.textContent = "Координаты точки вне диапазона";
+      return;
+    }
     if (state.dimensionTool === "leader") {
       if (!state.drawing) {
         resetSnapTracking();
@@ -7560,16 +8429,26 @@ function commitCursorPoint() {
         state.drawing = { start: world, end: world, lockedEnd: false, phase: "angular-arm1" };
         statusChip.textContent = "Угол: поставьте точку на первой стороне";
       } else if (state.drawing.phase === "angular-arm1") {
+        if (distanceWorld(state.drawing.start, world) <= linePointEpsilon) {
+          statusChip.textContent = "Угол: точка на первой стороне должна отличаться от вершины";
+          return;
+        }
         state.drawing.arm1 = world;
         state.drawing.end = world;
         state.drawing.phase = "angular-arm2";
+        resetSnapTracking();
         statusChip.textContent = "Угол: поставьте точку на второй стороне";
       } else if (state.drawing.phase === "angular-arm2") {
-        const entity = angularDimensionEntity(`dimension-${Date.now()}`, state.drawing.start, state.drawing.arm1, world);
+        const entity = angularDimensionEntity(newLineId("dimension"), state.drawing.start, state.drawing.arm1, world);
+        const geometry = angularDimensionGeometry(entity);
+        if (!geometry) {
+          statusChip.textContent = "Угол: точка на второй стороне должна отличаться от вершины";
+          return;
+        }
         pushEntity(entity);
         state.drawing = null;
         resetSnapTracking();
-        statusChip.textContent = "Угловой размер создан";
+        statusChip.textContent = `Угловой размер ${Math.round(geometry.measurement)}° создан`;
       }
       draw();
       return;
@@ -7579,27 +8458,27 @@ function commitCursorPoint() {
       state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap), baseStart: world, baseRefStart: dimensionRefFromSnap(resolved.snap) };
       statusChip.textContent = "Размер: начало поставлено. Поставьте вторую точку";
     } else if (state.drawing.phase === "end") {
-      const end = dimensionAdjustedEnd(state.drawing.start, state.drawing.lockedEnd ? state.drawing.end : world);
+      const end = state.drawing.lockedEnd ? state.drawing.end : world;
+      const geometry = dimensionGeometry(draftDimension(state.drawing.start, end));
+      if (!geometry || geometry.measurement <= linePointEpsilon) {
+        statusChip.textContent = "Размер: выберите другую вторую точку";
+        return;
+      }
       state.drawing.end = end;
+      state.drawing.measurementAxis = geometry.measurementAxis;
       state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
       state.drawing.lockedEnd = true;
       state.drawing.phase = "offset";
-      const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
-      if (metrics.length <= 0) {
-        state.drawing = null;
-        resetSnapTracking();
-        statusChip.textContent = "Размер: точки совпали, начните заново";
-      } else {
-        statusChip.textContent = "Размер: поставьте третью точку для положения размерной линии";
-      }
+      statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм. Укажите положение размерной линии`;
     } else if (state.drawing.phase === "offset") {
-      const offset = dimensionOffsetWithAlignmentSnap(state.drawing.start, state.drawing.end, rawCursorWorld());
-      state.drawing.offset = Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
-      const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, state.drawing.end.x, state.drawing.end.y);
+      const { start, end } = state.drawing;
+      const geometry = dimensionGeometry(draftDimension(start, end));
+      if (!geometry) return;
+      state.drawing.offset = draftDimensionOffset(geometry, rawCursorWorld());
       pushEntity(createEntityFromDrawing());
-      continueDimensionAfterCreate(metrics);
+      continueDimensionAfterCreate(geometry.measurement);
       resetSnapTracking();
-      if (!state.drawing) statusChip.textContent = `Размер ${metrics.length} мм завершен`;
+      if (!state.drawing) statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм создан`;
     }
     draw();
     return;
@@ -7820,6 +8699,14 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   state.gestureSuppressTap = false;
   const screen = getPointer(event);
+  if (surveyPointPicker) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "survey-point" };
+    return;
+  }
+  if (state.dimensionAttach) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "dimension-attach" };
+    return;
+  }
   if (state.lineEdit) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
     return;
@@ -7870,11 +8757,16 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   // A completed tap arms an object. Auto-selection after creation, undo or a
   // command does not allow the next accidental contact to change geometry.
+  let circleControl = null;
+  let dimensionControl = null;
   if (state.tool === "select" && !state.moveCommand && !state.offsetCommand && !["window", "lasso"].includes(state.selectTool)) {
-    const controlEntity = hitCircleControl(screen)?.entity || hitDimensionControl(screen)?.entity;
+    circleControl = hitCircleControl(screen);
+    if (!circleControl) dimensionControl = hitDimensionControl(screen);
+    const controlEntity = circleControl?.entity || dimensionControl?.entity;
     const hitId = controlEntity?.id || pickEntity(screen);
     const hitEntity = controlEntity || state.entities.find(entity => entity.id === hitId);
-    if (hitId && (!canDragEntityDirectly(hitEntity) || requiresActivation(hitId, state.selectedIds, state.directManipulationIds))) {
+    if (hitId && ((!controlEntity && !canDragEntityDirectly(hitEntity)) ||
+        requiresActivation(hitId, state.selectedIds, state.directManipulationIds))) {
       state.pointer = { id: event.pointerId, screen, startScreen: screen, world: screenToWorld(screen), moved: false, mode: "select-only", targetId: null, tapCandidateId: hitId, before: null };
       return;
     }
@@ -7913,7 +8805,6 @@ canvas.addEventListener("pointerdown", (event) => {
     startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event, screen);
     return;
   }
-  const circleControl = hitCircleControl(screen);
   if (circleControl) {
     const hitEntity = circleControl.entity;
     state.selectedId = hitEntity.id;
@@ -7939,7 +8830,6 @@ canvas.addEventListener("pointerdown", (event) => {
     draw();
     return;
   }
-  const dimensionControl = hitDimensionControl(screen);
   if (dimensionControl) {
     const hitEntity = dimensionControl.entity;
     state.selectedId = hitEntity.id;
@@ -8184,7 +9074,11 @@ function finishCanvasPointer(event, canceled = false) {
     }
     return;
   }
-  if (state.pointer?.mode === "select-only") {
+  if (state.pointer.mode === "survey-point") {
+    if (!state.pointer.moved) commitSurveyPoint();
+  } else if (state.pointer.mode === "dimension-attach") {
+    if (!state.pointer.moved && state.dimensionAttach) commitDimensionAttach();
+  } else if (state.pointer?.mode === "select-only") {
     if (!canceled && !state.pointer.moved) {
       const hitId = state.pointer.tapCandidateId;
       applyTapSelection(hitId);
@@ -8327,6 +9221,65 @@ canvas.addEventListener("wheel", (event) => {
   zoomAtScreen(screen, state.view.scale * zoom);
   draw();
 }, { passive: false });
+
+const viewportDirections = { left: [-1, 0], up: [0, -1], down: [0, 1], right: [1, 0] };
+const viewportArrowKeys = { ArrowLeft: "left", ArrowUp: "up", ArrowDown: "down", ArrowRight: "right" };
+
+viewportTools.addEventListener("toggle", () => {
+  if (viewportTools.open) syncViewportPlaceLabel();
+  draw();
+});
+
+viewportTools.addEventListener("click", (event) => {
+  if (event.target.closest("summary")) syncViewportPlaceLabel();
+  const action = event.target.closest("button[data-view-action]")?.dataset.viewAction;
+  if (!action) return;
+  if (Object.hasOwn(viewportDirections, action)) {
+    panViewport(...viewportDirections[action]);
+  } else if (action === "zoom-in" || action === "zoom-out") {
+    zoomViewport(action === "zoom-in" ? 1.25 : 0.8);
+  } else {
+    viewportTools.open = false;
+    if (action === "fit") {
+      if (event.detail === 0) viewportSummary.focus({ preventScroll: true });
+      fitViewport();
+    } else if (action === "place") {
+      if (event.detail === 0) canvas.focus({ preventScroll: true });
+      placeAtViewportCenter();
+    } else if (action === "objects") {
+      openViewportObjects();
+    }
+  }
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (viewportTools.open && !viewportTools.contains(event.target)) viewportTools.open = false;
+});
+
+viewportTools.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !viewportTools.open) return;
+  event.preventDefault();
+  event.stopPropagation();
+  viewportTools.open = false;
+  viewportSummary.focus({ preventScroll: true });
+});
+
+canvas.addEventListener("focus", draw);
+canvas.addEventListener("blur", draw);
+canvas.addEventListener("keydown", (event) => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+  const direction = viewportArrowKeys[event.key];
+  if (direction) {
+    panViewport(...viewportDirections[direction], event.shiftKey);
+  } else if (event.key === "Enter" && !event.repeat) {
+    viewportTools.open = false;
+    placeAtViewportCenter();
+  } else {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+});
 
 function moveEntityBy(entity, dx, dy) {
   if (!entity) return;
@@ -8530,7 +9483,8 @@ function moveDimensionEndpointOnAxis(entity, endpoint, point) {
 }
 
 function moveDimensionHandle(entity, endpoint, handlePoint) {
-  const geometry = ensureDimensionLineGeometry(entity);
+  const geometry = dimensionWorldGeometry(entity);
+  if (!geometry) return;
   const fixedLine = endpoint === "start" ? geometry.lineEnd : geometry.lineStart;
   const movingLine = endpoint === "start" ? geometry.lineStart : geometry.lineEnd;
   const axis = normalizeWorldVector(movingLine.x - fixedLine.x, movingLine.y - fixedLine.y);
@@ -8539,8 +9493,27 @@ function moveDimensionHandle(entity, endpoint, handlePoint) {
   const legAxis =
     normalizeWorldVector(movingLine.x - currentBase.x, movingLine.y - currentBase.y) ||
     normalizeWorldVector(-axis.y, axis.x);
-  const nextBase = snapDimensionHandleToParallel(entity, handlePoint, legAxis || axis) || handlePoint;
-  const nextRef = dimensionRefFromSnap(nearestSnapCandidate(nextBase, snapCandidates({ includeCorners: true, includeMidpoints: true, includeCenters: true }), 3));
+  const snapped = snapDimensionHandleToParallel(entity, handlePoint, legAxis || axis);
+  const delta = (handlePoint.x - movingLine.x) * axis.x + (handlePoint.y - movingLine.y) * axis.y;
+  const nextBase = snapped || (geometry.mode !== "legacy"
+    ? { x: currentBase.x + axis.x * delta, y: currentBase.y + axis.y * delta } : handlePoint);
+  const nextRef = dimensionRefFromSnap(nearestSnapCandidate(nextBase, snapCandidates({
+    includeCorners: state.snaps.has("end"), includeMidpoints: state.snaps.has("mid"),
+  }), 3));
+  const start = endpoint === "start";
+  const linkFields = start ? { refStart: nextRef, lostRefStart: false } : { refEnd: nextRef, lostRefEnd: false };
+  if (geometry.mode !== "legacy") {
+    const coordinates = endpoint === "start" ? { x1: nextBase.x, y1: nextBase.y } : { x2: nextBase.x, y2: nextBase.y };
+    const candidate = { ...entity, ...coordinates };
+    adoptDimensionMeasurement(candidate, geometry);
+    const next = dimensionGeometry(candidate);
+    if (!isLinePoint(nextBase) || !next || next.measurement <= linePointEpsilon) return;
+    adoptDimensionMeasurement(entity, geometry);
+    Object.assign(entity, coordinates, linkFields);
+    ensureDimensionLineGeometry(entity);
+    markProjectDirty("dimension-handle");
+    return;
+  }
   const projected = (nextBase.x - fixedLine.x) * axis.x + (nextBase.y - fixedLine.y) * axis.y;
   const minProjection = Math.abs(projected) < 50 ? (projected < 0 ? -50 : 50) : projected;
   const nextLine = {
@@ -8552,14 +9525,13 @@ function moveDimensionHandle(entity, endpoint, handlePoint) {
     entity.dimY1 = nextLine.y;
     entity.x1 = nextBase.x;
     entity.y1 = nextBase.y;
-    entity.refStart = nextRef;
   } else {
     entity.dimX2 = nextLine.x;
     entity.dimY2 = nextLine.y;
     entity.x2 = nextBase.x;
     entity.y2 = nextBase.y;
-    entity.refEnd = nextRef;
   }
+  Object.assign(entity, linkFields);
   entity.offset = dimensionOffsetFromPoint(
     { x: entity.x1, y: entity.y1 },
     { x: entity.x2, y: entity.y2 },
@@ -8647,8 +9619,12 @@ function entityGeometry(entity) {
       geometry.dimX2 = entity.dimX2;
       geometry.dimY2 = entity.dimY2;
     }
-    if (entity.refStart) geometry.refStart = entity.refStart;
-    if (entity.refEnd) geometry.refEnd = entity.refEnd;
+    geometry.measurementType = entity.measurementType ?? null;
+    geometry.measurementAxis = entity.measurementAxis ?? null;
+    geometry.refStart = entity.refStart ?? null;
+    geometry.refEnd = entity.refEnd ?? null;
+    geometry.lostRefStart = Boolean(entity.lostRefStart);
+    geometry.lostRefEnd = Boolean(entity.lostRefEnd);
   }
   return geometry;
 }
@@ -8827,10 +9803,30 @@ tools.forEach((button) => {
   });
 });
 
+figureToolButton?.addEventListener("click", () => {
+  if (drawToolMenu.hidden) {
+    showDrawToolMenu();
+    const firstOption = drawToolMenu.querySelector("button[aria-pressed='true']") || drawToolMenu.querySelector("button");
+    firstOption?.focus({ preventScroll: true });
+  } else {
+    hideDrawToolMenu();
+  }
+  draw();
+});
+
+drawToolMenu?.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  hideDrawToolMenu();
+  figureToolButton?.focus({ preventScroll: true });
+});
+
 drawToolMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-draw-tool]");
   if (!button) return;
   selectDrawTool(button.dataset.drawTool);
+  figureToolButton?.focus({ preventScroll: true });
 });
 
 dimensionToolMenu?.addEventListener("click", (event) => {
@@ -8869,6 +9865,8 @@ leaderTextEditor?.addEventListener("submit", (event) => {
   commitLeaderText();
 });
 
+leaderTextInput?.addEventListener("focus", updateViewportLock);
+leaderTextInput?.addEventListener("blur", () => window.setTimeout(updateViewportLock, 80));
 leaderTextInput?.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     event.preventDefault();
@@ -8877,6 +9875,50 @@ leaderTextInput?.addEventListener("keydown", (event) => {
     statusChip.textContent = dimensionToolStatusText();
     draw();
   }
+});
+
+function nextDimensionSnap() {
+  const origin = rawCursorWorld();
+  const { snapCount, snapIndex } = resolveDimensionPointSnap(origin);
+  if (snapCount > 1) {
+    state.dimensionSnapChoice = { origin, index: (snapIndex + 1) % snapCount };
+    draw();
+  }
+}
+
+function onDimensionButton(button, action) {
+  let press = null;
+  button.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    press = event.pointerId;
+    button.setPointerCapture(event.pointerId);
+  });
+  button.addEventListener("pointerup", (event) => {
+    if (press !== event.pointerId) return;
+    press = null;
+    if (button.contains(document.elementFromPoint(event.clientX, event.clientY))) action();
+  });
+  button.addEventListener("lostpointercapture", (event) => {
+    if (press === event.pointerId) press = null;
+  });
+  button.addEventListener("click", (event) => {
+    if (event.detail === 0) action();
+  });
+}
+
+onDimensionButton(dimensionNextSnap, nextDimensionSnap);
+onDimensionButton(dimensionLinkCancel, cancelDimensionAttach);
+for (const button of dimensionLinkButtons) {
+  onDimensionButton(button, () => startDimensionAttach(button.dataset.dimensionAnchor));
+}
+
+dimensionAxis.addEventListener("change", () => {
+  if (state.tool !== "dimension" || state.dimensionTool !== "linear" || state.drawing?.phase !== "offset") return;
+  const { start, end } = state.drawing;
+  state.drawing.axisOverride = dimensionAxis.value || null;
+  const geometry = dimensionGeometry(draftDimension(start, end));
+  if (geometry) statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм. Укажите положение размерной линии`;
+  draw();
 });
 
 snaps.forEach((button) => {
@@ -8889,6 +9931,7 @@ snaps.forEach((button) => {
       if (snap === "polar") state.snaps.delete("ortho");
       state.snaps.add(snap);
     }
+    state.dimensionSnapChoice = null;
     syncSnapButtons();
     markProjectDirty("snaps");
     const names = {
@@ -8926,32 +9969,71 @@ logoutButton?.addEventListener("click", () => {
 });
 projectSearchInput?.addEventListener("input", renderProjectList);
 refreshProjectsButton?.addEventListener("click", loadProjects);
+projectTrashButton?.addEventListener("click", () => {
+  persistence.showingTrash = !persistence.showingTrash;
+  if (projectSearchInput) projectSearchInput.value = "";
+  showProjectMessage();
+  renderProjectList();
+  loadProjects();
+});
 createProjectButton?.addEventListener("click", () => createBlankProjectButton?.click());
 createBlankProjectButton?.addEventListener("click", async () => {
   const name = await askProjectName("Название нового проекта", "Новый замер");
   if (!name) return;
   createProject({ name, template: "blank" }).catch((error) => {
     console.warn("Create blank project failed", error);
-    updateSaveIndicator("error", "Не создан", { autoDim: 2600 });
+    showProjectMessage(error.message || "Проект не создан", true);
   });
 });
 projectImportInput?.addEventListener("change", () => {
   importProjectFile(projectImportInput.files?.[0]).catch((error) => {
     console.warn("Import project failed", error);
-    updateSaveIndicator("error", "Импорт не удался", { autoDim: 2600 });
+    showProjectMessage(error.message || "Импорт не удался", true);
   });
 });
-projectList?.addEventListener("click", (event) => {
+projectList?.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-project-action]");
-  if (!button) return;
-  handleProjectAction(button.dataset.projectAction, button.dataset.projectId);
+  if (!button || button.getAttribute("aria-busy") === "true") return;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await handleProjectAction(button.dataset.projectAction, button.dataset.projectId);
+  } finally {
+    button.removeAttribute("aria-busy");
+  }
 });
 projectList?.addEventListener("dblclick", (event) => {
+  if (persistence.showingTrash || event.target.closest("button[data-project-action]")) return;
   const card = event.target.closest(".project-card[data-project-id]");
-  if (card) openProject(card.dataset.projectId).catch((error) => console.warn("Open project failed", error));
+  if (card) handleProjectAction("open", card.dataset.projectId);
 });
-projectTitle?.addEventListener("click", () => {
+backToProjectsButton?.addEventListener("click", () => {
   showProjectHome().catch((error) => console.warn("Project home failed", error));
+});
+
+lineDirection.addEventListener("change", () => {
+  if (state.tool !== "line" || !state.drawing) return;
+  state.drawing.metricDirection = lineDirection.value;
+  const edit = state.numericEdit?.lineMetric;
+  if (edit?.key === state.drawing.start) updateLineMetricPreview(edit);
+  draw();
+});
+
+bindPointAction(lineSkipSnap, () => {
+  if (!["line", "polyline"].includes(state.tool) || surveyPointPicker) return;
+  state.skipLineObjectSnap = !state.skipLineObjectSnap;
+  resetSnapTracking();
+  statusChip.textContent = state.skipLineObjectSnap
+    ? "Следующая точка без объектной привязки"
+    : "Объектные привязки восстановлены";
+  draw();
+});
+
+linePointAssist.addEventListener("focusout", (event) => {
+  if (!linePointAssist.contains(event.relatedTarget) && !lineMetricKinds.has(event.relatedTarget) &&
+      event.relatedTarget !== keyboardConfirmButton) {
+    clearLineMetricEdit();
+    draw();
+  }
 });
 
 for (const [input, kind] of lineMetricKinds) {
@@ -8978,7 +10060,8 @@ for (const [input, kind] of lineMetricKinds) {
   });
   input.addEventListener("blur", (event) => {
     if (lineMetricContext() || state.numericEdit?.lineMetric) {
-      if (!lineMetricKinds.has(event.relatedTarget)) {
+      if (!lineMetricKinds.has(event.relatedTarget) && event.relatedTarget !== keyboardConfirmButton &&
+          !linePointAssist.contains(event.relatedTarget)) {
         clearLineMetricEdit();
         draw();
       }
@@ -9056,6 +10139,11 @@ lineUi.lineEditRadius.addEventListener("keydown", (event) => {
   if (event.key === "Enter") lineUi.lineEditRadius.blur();
 });
 document.addEventListener("keydown", (event) => {
+  if (state.dimensionAttach && event.key === "Escape" && !event.target.closest("dialog")) {
+    event.preventDefault();
+    cancelDimensionAttach();
+    return;
+  }
   if (event.target.closest("input, textarea, select, [contenteditable], button, summary")) return;
   if (state.lineEdit && event.key === "Escape") {
     event.preventDefault();
@@ -9080,23 +10168,40 @@ selectionActions?.addEventListener("click", (event) => {
   applySelectionAction(button.dataset.action);
 });
 
-keyboardConfirmButton?.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  confirmKeyboardInput();
-});
+function bindPointAction(button, action) {
+  let press = null;
+  button.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    press = { pointerId: event.pointerId, bounds: button.getBoundingClientRect() };
+    button.setPointerCapture(event.pointerId);
+  });
+  button.addEventListener("pointerup", (event) => {
+    if (press?.pointerId !== event.pointerId) return;
+    const { bounds } = press;
+    press = null;
+    if (event.clientX >= bounds.left && event.clientX <= bounds.right &&
+        event.clientY >= bounds.top && event.clientY <= bounds.bottom) action();
+  });
+  button.addEventListener("lostpointercapture", (event) => {
+    if (press?.pointerId === event.pointerId) press = null;
+  });
+  button.addEventListener("click", (event) => {
+    if (event.detail === 0) action();
+  });
+}
 
-keyboardConfirmButton?.addEventListener("click", (event) => {
-  event.preventDefault();
-});
+bindPointAction(keyboardConfirmButton, confirmKeyboardInput);
 
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {
+    lastNumericInput = input;
     shell.classList.add("input-focused");
     beginNumericInputEdit(input);
     selectInlineValue(input);
     if (keyboardConfirmButton) keyboardConfirmButton.hidden = false;
     positionKeyboardConfirmButton();
+    if (state.tool === "line") draw();
     window.setTimeout(updateViewportLock, 40);
     window.setTimeout(updateViewportLock, 260);
   });
@@ -9110,6 +10215,7 @@ keyboardInputs.forEach((input) => {
 themeButton.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
   shell.dataset.theme = state.theme;
+  themeButton.setAttribute("aria-pressed", String(state.theme === "dark"));
   themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
       window.ZamerAndroid?.setTheme?.(state.theme);
   draw();
@@ -9200,69 +10306,240 @@ document.getElementById("redoButton").addEventListener("click", () => {
   }
 });
 
-document.getElementById("exportButton").addEventListener("click", () => {
-  showSheet(exportSheet);
-  statusChip.textContent = "Экспорт: выберите PDF, DXF, DWG или IFC";
+const exportScope = document.getElementById("exportScope");
+const exportScale = document.getElementById("exportScale");
+const exportPhotos = document.getElementById("exportPhotos");
+const exportPhotoOption = document.getElementById("exportPhotoOption");
+const exportSummary = document.getElementById("exportSummary");
+const exportResult = document.getElementById("exportResult");
+const exportFileActions = document.getElementById("exportFileActions");
+let exportInProgress = false;
+let lastNativeExportId = null;
+
+function exportDraftVertexCount() {
+  return state.tool === "polyline" ? state.drawing?.points?.length || 0 : 0;
+}
+
+function exportDetails() {
+  const details = typeof surveyExportDetails === "function" ? surveyExportDetails() : null;
+  return { records: [], entities: [], ...details };
+}
+
+function selectedExportGeometry(entities, details, visibleLayers) {
+  const all = entities.concat(details.entities || []);
+  return exportScope.value === "all" ? all : all.filter((entity) => visibleLayers.has(entity.layer || "measure"));
+}
+
+function lostExportAnchors(entity) {
+  if (!isLinearDimension(entity)) return [];
+  return [["start", "начало"], ["end", "конец"]].filter(([key]) => dimensionAnchorLink(entity, key) === "lost");
+}
+
+function dimensionExportWarning(entities) {
+  const lost = entities.filter((entity) => lostExportAnchors(entity).length).length;
+  return lost ? `Размеров с потерянной опорой: ${lost}. На плане останутся последние координаты.` : "";
+}
+
+function dimensionExportNotes(entities) {
+  return entities.flatMap((entity) => {
+    const lost = lostExportAnchors(entity);
+    if (!lost.length) return [];
+    const value = formatDimensionLength(dimensionGeometry(entity));
+    const positions = lost.map(([key, name]) => {
+      const point = key === "start" ? [entity.x1, entity.y1] : [entity.x2, entity.y2];
+      return `${name} X ${surveyNumber(point[0])}, Y ${surveyNumber(-point[1])} мм`;
+    });
+    return [{ label: `Размер ${value} мм`, detail: `Потеряна опора. Последние точки · ${positions.join(" · ")}` }];
+  });
+}
+
+function syncExportOptions() {
+  const details = exportDetails();
+  const entities = selectedExportGeometry(state.entities, details, state.visibleLayers);
+  const layers = new Set(entities.map((entity) => entity.layer || "measure"));
+  const vertexCount = exportDraftVertexCount();
+  const includesDraft = vertexCount >= 2 && (exportScope.value === "all" || state.visibleLayers.has("measure"));
+  if (includesDraft) layers.add("measure");
+  const skipped = state.entities.length + (details.entities?.length || 0) - entities.length;
+  const hiddenLayers = new Set([...state.entities, ...details.entities].map((entity) => entity.layer || "measure")
+    .filter((layer) => !state.visibleLayers.has(layer)));
+  if (vertexCount >= 2 && !state.visibleLayers.has("measure")) hiddenLayers.add("measure");
+  const layerNames = (ids) => [...ids].map((id) => layerMeta[id]?.name || id).join(", ");
+  const draftMessage = vertexCount >= 2 ? ` Полилиния из ${vertexCount} вершин будет завершена.` : "";
+  const dimensionWarning = dimensionExportWarning(entities);
+  const hiddenMessage = exportScope.value === "visible" && hiddenLayers.size ? ` Скрыто объектов: ${skipped + Number(vertexCount >= 2 && !includesDraft)}. Слои: ${layerNames(hiddenLayers)}.` : "";
+  exportSummary.textContent = `План: ${entities.length + Number(includesDraft)} объектов.`
+    + (layers.size ? ` Слои: ${layerNames(layers)}.` : "") + hiddenMessage + draftMessage + " В копии .zamer сохраняются все слои."
+    + (dimensionWarning ? ` ${dimensionWarning}` : "");
+  exportPhotoOption.hidden = !details.records?.some(({ photo }) => Boolean(photo));
+  if (exportPhotoOption.hidden) exportPhotos.checked = false;
+}
+
+function setExportResult(message, error = false) {
+  exportResult.textContent = message;
+  exportResult.dataset.error = String(error);
+}
+
+document.getElementById("exportButton").addEventListener("click", (event) => {
+  if (!exportInProgress) {
+    setExportResult("");
+    lastNativeExportId = null;
+    exportFileActions.hidden = true;
+  }
+  syncExportOptions();
+  showSheet(exportSheet, event.currentTarget);
+});
+exportScope.addEventListener("change", syncExportOptions);
+
+document.getElementById("openExportFile").addEventListener("click", () => {
+  if (lastNativeExportId) window.ZamerAndroid?.showExport?.(lastNativeExportId, false);
+});
+document.getElementById("shareExportFile").addEventListener("click", () => {
+  if (lastNativeExportId) window.ZamerAndroid?.showExport?.(lastNativeExportId, true);
 });
 
-document.getElementById("layersButton").addEventListener("click", () => {
+document.getElementById("layersButton").addEventListener("click", (event) => {
   renderLayerList();
-  showSheet(layersSheet);
+  showSheet(layersSheet, event.currentTarget);
   statusChip.textContent = "Слои: выключайте лишнее для скорости и чистоты";
 });
 
 document.getElementById("closeLayersButton").addEventListener("click", () => hideSheet(layersSheet));
 document.getElementById("closeExportButton").addEventListener("click", () => hideSheet(exportSheet));
 
-exportCards.forEach((button) => {
-  button.addEventListener("click", async () => {
-    const type = button.dataset.export;
-    if (type === "zamer") {
-      const project = serializeProject();
-      await saveProjectToLocalStore(project, "manual-export");
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      downloadFile(`zamer-backup-${stamp}.zamer`, JSON.stringify(project, null, 2), "application/json");
-      updateSaveIndicator("saved", "Копия скачана", { autoDim: 2600 });
-      statusChip.textContent = "Резервная копия .zamer скачана";
-      hideSheet(exportSheet);
-      return;
+function renderExportPlan(context, view, entities) {
+  const editorContext = ctx;
+  const editorView = state.view;
+  const editorTheme = state.theme;
+  const palette = { bg: "#ffffff", wall: "#203245", line: "#203245", dimension: "#183d72", accent: "#183d72", surface: "#ffffff" };
+  // Only the synchronous paint uses the print camera. Browser events and
+  // attachment decoding run after the editor context has been restored.
+  ctx = context;
+  state.view = view;
+  state.theme = "light";
+  printRendering = true;
+  try {
+    drawWalls(entities, palette);
+    for (const entity of entities) {
+      if (entity.type !== "wall") drawEntity(entity, palette);
     }
-    if (type === "dxf") {
-      const visibleEntitiesForExport = state.entities.filter((entity) => isLayerVisible(entity.layer));
-      const dxf = buildDxf(visibleEntitiesForExport);
-      downloadFile("zamer-plan.dxf", dxf, "application/dxf");
-      statusChip.textContent = "DXF экспортирован с включенными слоями";
-      hideSheet(exportSheet);
-      return;
+  } finally {
+    printRendering = false;
+    state.theme = editorTheme;
+    state.view = editorView;
+    ctx = editorContext;
+  }
+}
+
+async function exportCurrentProject(type) {
+  if (exportInProgress || !persistence.projectId) return;
+  exportInProgress = true;
+  const projectId = persistence.projectId;
+  lastNativeExportId = null;
+  exportFileActions.hidden = true;
+  for (const button of exportCards) button.disabled = true;
+  setExportResult("Подготавливаю файл…");
+  try {
+    if (exportDraftVertexCount() >= 2 && !finishLineCommand()) {
+      throw new Error("Завершите полилинию перед выгрузкой");
     }
-    if (type === "revit-dxf") {
-      const visibleEntitiesForExport = state.entities.filter((entity) => isLayerVisible(entity.layer));
-      const dxf = buildRevitDxf(visibleEntitiesForExport);
-      downloadFile("zamer-revit-mm.dxf", dxf, "application/dxf");
-      statusChip.textContent = "Revit DXF экспортирован: импортируйте как CAD, единицы - миллиметры";
-      hideSheet(exportSheet);
-      return;
-    }
-    const messages = {
-      pdf: "PDF будет печатать лист с масштабом, рамкой и таблицей помещений",
-      dwg: "DWG нужен через ODA SDK или серверную конвертацию из DXF",
-      ifc: "IFC появится после семантических стен, дверей, окон и помещений",
+    updateLinkedDimensions();
+    const saved = await saveProjectNow();
+    if (persistence.projectId !== projectId) return;
+    const project = serializeProject();
+    const details = exportDetails();
+    if (persistence.needsRemoteSync || persistence.dirty) details.revision = "локальная";
+    const name = String(details.site || project.name || "Замер").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60) || "Замер";
+    const room = String(details.room || "").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 35);
+    const planName = room ? `${name}-${room}` : name;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const entities = selectedExportGeometry(project.entities, details, new Set(project.visibleLayers));
+    details.records.push(...dimensionExportNotes(entities));
+    const pdf = () => buildPlotPdf(project, entities, details, {
+      scale: exportScale.value, photos: exportPhotos.checked,
+      layerLabel: exportScope.value === "all" ? "все слои" : "видимые слои",
+    }, renderExportPlan);
+    const dxf = (revit = false) => {
+      const includeReadings = exportScope.value === "all" || project.visibleLayers.includes("dimensions");
+      const drawing = includeReadings ? entities.concat(surveyDxfLegend(entities, details.records)) : entities;
+      if (!drawing.length) throw new Error("На выбранных слоях нет объектов для DXF. Попробуйте выбрать все слои.");
+      return revit ? buildRevitDxf(drawing) : buildDxf(drawing);
     };
-    statusChip.textContent = messages[type] || "Формат запланирован";
-  });
-});
+    const backup = () => JSON.stringify(project, null, 2);
+    let file;
+    if (type === "zamer") {
+      file = await downloadFile(`${name}-${stamp}.zamer`, backup(), "application/json");
+    } else if (type === "pdf") {
+      file = await downloadFile(`${planName}-${stamp}.pdf`, await pdf(), "application/pdf");
+    } else if (type === "zip") {
+      const cad = dxf();
+      const plot = await pdf();
+      const bundle = buildZip([
+        { name: `${planName}.pdf`, data: new Uint8Array(await plot.arrayBuffer()) },
+        { name: `${planName}.dxf`, data: cad },
+        { name: `${name}.zamer`, data: backup() },
+      ]);
+      file = await downloadFile(`${planName}-${stamp}.zip`, bundle, "application/zip");
+    } else {
+      const isRevit = type === "revit-dxf";
+      const suffix = isRevit ? "-revit-mm" : "";
+      file = await downloadFile(`${planName}-${stamp}${suffix}.dxf`, dxf(isRevit), "application/dxf");
+    }
+    if (persistence.projectId !== projectId) return;
+    lastNativeExportId = file.requestId || null;
+    exportFileActions.hidden = !lastNativeExportId;
+    const message = file.native ? `Загрузки / Zamer CAD / ${file.filename}` : `Файл подготовлен — ${file.filename}`;
+    setExportResult([
+      message, type === "revit-dxf" ? "Единицы импорта в Revit — миллиметры." : "",
+      type === "zamer" ? "" : dimensionExportWarning(entities),
+      saved ? "" : "Изменения в проекте пока не записаны. Текущий снимок сохранён в выгруженном файле.",
+    ].filter(Boolean).join(" "));
+    syncExportOptions();
+  } catch (error) {
+    if (persistence.projectId === projectId) setExportResult(error?.message || "Не удалось подготовить файл", true);
+  } finally {
+    exportInProgress = false;
+    for (const button of exportCards) button.disabled = false;
+  }
+}
 
-function showSheet(sheet) {
+for (const button of exportCards) {
+  button.addEventListener("click", () => exportCurrentProject(button.dataset.export));
+}
+
+const sheetOpeners = new WeakMap();
+
+function showSheet(sheet, opener = document.activeElement) {
   if (!sheet) return;
-  hideSheet(layersSheet);
-  hideSheet(exportSheet);
+  for (const candidate of [layersSheet, exportSheet]) {
+    if (candidate !== sheet) hideSheet(candidate, { restoreFocus: false });
+  }
+  if (sheet.hidden && opener instanceof HTMLElement) {
+    sheetOpeners.set(sheet, opener);
+    if (opener.hasAttribute("aria-controls")) opener.setAttribute("aria-expanded", "true");
+  }
   sheet.hidden = false;
+  sheet.querySelector("button:not([disabled])")?.focus({ preventScroll: true });
 }
 
-function hideSheet(sheet) {
-  if (!sheet) return;
+function hideSheet(sheet, { restoreFocus = true } = {}) {
+  if (!sheet || sheet.hidden) return;
   sheet.hidden = true;
+  const opener = sheetOpeners.get(sheet);
+  sheetOpeners.delete(sheet);
+  if (!opener?.isConnected) return;
+  if (opener.hasAttribute("aria-controls")) opener.setAttribute("aria-expanded", "false");
+  if (restoreFocus) opener.focus({ preventScroll: true });
 }
+
+shell.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const sheet = event.target.closest(".bottom-sheet:not([hidden])");
+  if (!sheet || ![layersSheet, exportSheet].includes(sheet)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  hideSheet(sheet);
+});
 
 function renderLayerList() {
   if (!layerList) return;
@@ -9289,12 +10566,225 @@ function renderLayerList() {
         if (selected && !isLayerVisible(selected.layer)) setSelection(null);
       }
       draw();
-      renderLayerList();
       markProjectDirty("layers");
       statusChip.textContent = `${meta.name}: ${input.checked ? "включен" : "скрыт"}`;
     });
     layerList.appendChild(item);
   }
+}
+
+function acceptedSurveyDraft() {
+  if (state.tool !== "polyline" || !state.drawing?.points?.length) return undefined;
+  return { tool: "polyline", points: state.drawing.points.map(({ x, y }) => ({ x, y })) };
+}
+
+function restoreAcceptedSurveyDraft(draft) {
+  state.tool = "select";
+  shell.dataset.tool = "select";
+  if (draft?.tool !== "polyline" || !Array.isArray(draft.points) || !draft.points.length ||
+      !draft.points.every(isLinePoint) || (draft.points.length > 1 && !validPolylinePoints(draft.points))) return;
+  const points = draft.points.map(({ x, y }) => ({ x, y }));
+  const start = points.at(-1);
+  state.tool = "polyline";
+  shell.dataset.tool = "polyline";
+  state.drawing = { points, start, end: start, lockedEnd: false };
+}
+
+function activeSurveyRoom() {
+  return state.survey.rooms.find((room) => room.id === state.survey.activeRoomId) || state.survey.rooms[0];
+}
+
+function switchSurveyRoom(roomId) {
+  const nextRoom = state.survey.rooms.find((room) => room.id === roomId);
+  const previousRoom = activeSurveyRoom();
+  if (!nextRoom || nextRoom === previousRoom) return;
+  previousRoom.drawing = { entities: state.entities, view: { ...state.view }, draft: acceptedSurveyDraft() };
+  const drawing = nextRoom.drawing;
+  state.drawing = null;
+  setTool("select");
+  setSelection(null);
+  state.entities = (drawing?.entities || []).map(cloneProjectEntity).filter(Boolean);
+  state.view = {
+    scale: Number.isFinite(drawing?.view?.scale) ? clampScale(drawing.view.scale) : 0.085,
+    panX: Number.isFinite(drawing?.view?.panX) ? drawing.view.panX : 92,
+    panY: Number.isFinite(drawing?.view?.panY) ? drawing.view.panY : 84,
+  };
+  state.undo = [];
+  state.redo = [];
+  restoreAcceptedSurveyDraft(drawing?.draft);
+  delete nextRoom.drawing;
+  state.survey.activeRoomId = nextRoom.id;
+  statusChip.textContent = `Помещение «${nextRoom.name}» открыто`;
+  renderLayerList();
+  syncToolButtons();
+  markProjectDirty("survey-room");
+  draw();
+}
+
+function setSurveyPointPicker(label, callback) {
+  surveyPointPicker = { label, callback };
+  statusChip.textContent = `${label}. Наведите курсор и коснитесь холста`;
+  canvas.focus({ preventScroll: true });
+  draw();
+}
+
+function commitSurveyPoint() {
+  const point = resolveDimensionPointSnap(rawCursorWorld(), { start: null }).point;
+  if (!isLinePoint(point)) {
+    statusChip.textContent = "Точка замера вне допустимой области";
+    draw();
+    return;
+  }
+  const picker = surveyPointPicker;
+  surveyPointPicker = null;
+  draw();
+  picker.callback({ x: point.x, y: point.y });
+}
+
+function drawSurveyMarks(c, rect) {
+  const room = activeSurveyRoom();
+  if (isLayerVisible("dimensions")) {
+    ctx.save();
+    ctx.strokeStyle = c.dimension;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    for (const record of room.records) {
+      if (!record.point || !record.end) continue;
+      const start = worldToScreen(record.point);
+      const end = worldToScreen(record.end);
+      linePath(start.x, start.y, end.x, end.y);
+    }
+    ctx.restore();
+    for (const marker of surveyMarkers(room.records)) {
+      const record = marker.firstRecord;
+      const point = worldToScreen(marker.point);
+      if (point.x < -30 || point.x > rect.width + 30 || point.y < -30 || point.y > rect.height + 30) continue;
+      ctx.save();
+      ctx.strokeStyle = c.dimension;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      const height = marker.count === 1 && record.kind === "point" && Number.isFinite(record.values.height)
+        ? ` · Z ${surveyNumber(record.values.height)} мм` : "";
+      drawBadge(marker.label + height, point.x, point.y - 15, c, true, true);
+    }
+  }
+  if (!surveyPointPicker) return;
+  const point = worldToScreen(resolveDimensionPointSnap(rawCursorWorld(), { start: null }).point);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  linePath(point.x - 15, point.y, point.x + 15, point.y);
+  linePath(point.x, point.y - 15, point.x, point.y + 15);
+  ctx.restore();
+}
+
+function surveyExportDetails() {
+  const { site, visitDate, operator, datum } = state.survey;
+  const room = activeSurveyRoom();
+  const records = room.records.map((record) => ({
+    label: `№${record.number} ${record.title}`,
+    detail: describeSurveyRecord(record, state.entities, datum).detail,
+    photo: record.photo || undefined,
+  }));
+  const entities = [];
+  for (const [index, marker] of surveyMarkers(room.records).entries()) {
+    const {x, y} = marker.point;
+    entities.push(textEntity(`survey-label-${index}`, x + 50, y - 70, marker.label, 155));
+    entities.push(circleEntity(`survey-anchor-${index}`, x, y, 25, "dimensions"));
+  }
+  return { site, room: room.name, visitDate, operator, datum, revision: persistence.revision, records, entities };
+}
+
+function surveyDxfLegend(entities, records) {
+  if (!records.length) return [];
+  const bounds = pdfPlotBounds(entities);
+  const x = (bounds?.maxX ?? 0) + 600;
+  const y = bounds?.minY ?? 0;
+  const labels = records.flatMap(({ label, detail }) => [label, ...(detail.match(/.{1,76}(?:\s|$)|\S+/gu) || [])]);
+  return [textEntity("survey-legend-title", x, y, "Ведомость замеров · мм", 220),
+    ...labels.map((label, index) => textEntity(`survey-legend-${index}`, x, y + 320 + index * 230, label.trim(), 155)),
+  ];
+}
+
+function initSurveyPanel() {
+  const dialog = document.getElementById("surveySheet");
+  surveyPanel = bindSurveyPanel(dialog, {
+    context: () => ({ survey: state.survey, room: activeSurveyRoom(), entities: state.entities, name: persistence.projectName }),
+    newId: () => newLineId("reading"),
+    selectedOutline: () => selectedEntities().find((entity) => entity.type === "polyline" && entity.closed)?.id || "",
+    selectRoom: switchSurveyRoom,
+    saveRoom: ({ name, preset }, edit) => {
+      if (edit) {
+        Object.assign(activeSurveyRoom(), { name, preset });
+        markProjectDirty("survey-room");
+      } else {
+        const room = surveyRoom(newLineId("room"), name, preset);
+        state.survey.rooms.push(room);
+        switchSurveyRoom(room.id);
+      }
+    },
+    savePassport: ({ site, visitDate, operator, datum, tolerance }) => {
+      Object.assign(state.survey, { site: site.trim().slice(0, 150), visitDate, operator: operator.trim().slice(0, 100),
+        datum: datum.trim().slice(0, 100) || "Чистый пол", tolerance: Number(tolerance) });
+      markProjectDirty("survey-passport");
+    },
+    saveRecord: (draft) => {
+      const record = normalizeSurveyRecord({ ...draft, recordedAt: draft.recordedAt || new Date().toISOString() });
+      const room = activeSurveyRoom();
+      const index = room.records.findIndex(({ id }) => id === record.id);
+      if (index === -1) {
+        record.number = room.nextRecordNumber++;
+        room.records.push(record);
+      }
+      else room.records[index] = record;
+      markProjectDirty("survey-record");
+      draw();
+    },
+    removeRecord: (id) => {
+      const room = activeSurveyRoom();
+      room.records = room.records.filter((record) => record.id !== id);
+      markProjectDirty("survey-record-delete");
+      draw();
+    },
+    pickPoint: setSurveyPointPicker,
+    locate: (record) => {
+      const outline = state.entities.find(({ id }) => id === record.outlineId);
+      const point = record.point || outline?.points?.[0];
+      if (point) {
+        centerViewOnWorldPoint(point);
+        statusChip.textContent = `Запись №${record.number} «${record.title}» в центре плана`;
+        canvas.focus({ preventScroll: true });
+      }
+      if (outline) setSelection(outline.id);
+      draw();
+    },
+    createLaser: createSurveyLaser,
+  });
+  document.getElementById("surveyTool").addEventListener("click", () => {
+    if (!persistence.projectId) return;
+    if (surveyPointPicker) {
+      const picker = surveyPointPicker;
+      surveyPointPicker = null;
+      picker.callback(null);
+      draw();
+      return;
+    }
+    hideSheet(layersSheet, { restoreFocus: false });
+    hideSheet(exportSheet, { restoreFocus: false });
+    surveyPanel.open();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!surveyPointPicker || event.key !== "Escape") return;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    const picker = surveyPointPicker;
+    surveyPointPicker = null;
+    picker.callback(null);
+    draw();
+  }, true);
 }
 
 window.addEventListener("resize", updateViewportLock);
@@ -9326,6 +10816,7 @@ setAnnotationScale(state.annotationScale, { save: false });
 prepareSelectMenuStructure();
 setTool("select");
 initAppInstallPrompt();
+initSurveyPanel();
 initAuthGate();
 lockPortraitOrientation();
 window.zamerDebug = {
@@ -9342,13 +10833,45 @@ window.zamerDebug = {
   saveNow: saveProjectNow,
 };
 
-function downloadFile(filename, content, mimeType) {
-  if (nativeApkMode && window.ZamerAndroid?.saveTextFile) {
-    window.ZamerAndroid.saveTextFile(filename, mimeType, String(content));
-    updateSaveIndicator("saved", "Файл в Загрузках", { autoDim: 2800 });
-    return;
+const nativeExportRequests = new Map();
+
+window.zamerNativeExportResult = (requestId, result) => {
+  const request = nativeExportRequests.get(requestId);
+  if (!request) return;
+  nativeExportRequests.delete(requestId);
+  clearTimeout(request.timeout);
+  if (result?.ok) request.resolve({ ...result, requestId, native: true });
+  else request.reject(new Error(result?.message || "Не удалось сохранить файл"));
+};
+
+function fileToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+    reader.onerror = () => reject(new Error("Не удалось прочитать подготовленный файл"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadFile(filename, content, mimeType, { share = false } = {}) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  if (nativeApkMode && window.ZamerAndroid?.exportFile) {
+    if (blob.size > 32 * 1024 * 1024) throw new Error("Файл больше 32 МБ. Выгрузите план и ведомость без фотографий или уменьшите вложения.");
+    const base64 = await fileToBase64(blob);
+    const requestId = globalThis.crypto?.randomUUID?.() || `export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        nativeExportRequests.delete(requestId);
+        reject(new Error("Android не подтвердил запись. Проверьте папку Загрузки."));
+      }, 60_000);
+      nativeExportRequests.set(requestId, { resolve, reject, timeout });
+      try {
+        window.ZamerAndroid.exportFile(requestId, filename, mimeType, base64, share);
+      } catch {
+        window.zamerNativeExportResult(requestId, { ok: false, message: "Не удалось открыть запись файлов Android" });
+      }
+    });
   }
-  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -9357,13 +10880,15 @@ function downloadFile(filename, content, mimeType) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 500);
+  return { filename, chooserOpened: false, native: false };
 }
 
 // Enhance existing controls without replacing their listeners or accessible labels.
-for (const [id, icon] of Object.entries({createProjectButton:'plus', undoButton:'undo', redoButton:'redo', layersButton:'layers', exportButton:'import', logoutButton:'exit'})) {
+for (const [id, icon] of Object.entries({createProjectButton:'plus', backToProjectsButton:'back', undoButton:'undo', redoButton:'redo', layersButton:'layers', exportButton:'import', logoutButton:'exit'})) {
   const button = document.getElementById(id);
   if (button) button.innerHTML = cadIcon(icon);
 }
+if (figureToolButton) figureToolButton.querySelector("span").innerHTML = cadIcon("rectangle");
 for (const [selector, icon] of [['#createBlankProjectButton','file'], ['.import-card','import']]) {
   document.querySelector(selector)?.insertAdjacentHTML('afterbegin', cadIcon(icon));
 }

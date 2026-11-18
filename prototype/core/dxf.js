@@ -1,9 +1,9 @@
-import { writeDxf } from "./dxf-writer.js";
+import { writeModernDxf } from "./dxf-modern.js";
 
 export * from "./dxf-writer.js";
 
 export function buildDxf(entities, options = {}) {
-  return writeDxf(entities, { profile: options.profile, preserveLinePrecision: true });
+  return writeModernDxf(entities, options.profile);
 }
 
 export function buildRevitDxf(entities) {
