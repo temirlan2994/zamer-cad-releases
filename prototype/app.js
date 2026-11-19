@@ -711,6 +711,7 @@ const state = {
 };
 
 const TAP_MOVE_TOLERANCE = 8;
+const LONG_PRESS_SELECT_MS = 430;
 
 function decodeMojibakeText(value) {
   if (typeof value !== "string" || !/[РС][\u0400-\u04ff]|Г[—°]|В[°·]/.test(value)) return value;
@@ -3084,12 +3085,12 @@ function idsFromSelectionLasso(points) {
     .map((entity) => entity.id);
 }
 
-function startSelectionDrag(type, event, screen) {
+function startSelectionDrag(type, pointerId, screen) {
   state.selectionDrag = type === "lasso"
     ? { type, points: [screen], start: screen, current: screen }
     : { type, start: screen, current: screen };
   state.pointer = {
-    id: event.pointerId,
+    id: pointerId,
     screen,
     startScreen: screen,
     world: screenToWorld(screen),
@@ -3100,6 +3101,23 @@ function startSelectionDrag(type, event, screen) {
   };
   statusChip.textContent = type === "lasso" ? "Лассо: обведите объекты" : "Выделение: тяните рамку";
   draw();
+}
+
+function scheduleSelectionLongPress(pointer) {
+  if (state.tool !== "select" || state.selectTool !== "select" || pointer.mode !== "pan" || pointer.tapCandidateId) return;
+  pointer.selectionHoldTimer = window.setTimeout(() => {
+    if (state.pointer !== pointer || pointer.moved || state.activePointers.size !== 1 || !state.activePointers.has(pointer.id)) return;
+    state.selectTool = "window";
+    hideSelectToolMenu();
+    startSelectionDrag("window", pointer.id, pointer.startScreen);
+  }, LONG_PRESS_SELECT_MS);
+}
+
+function clearSelectionDrag() {
+  if (!state.selectionDrag) return;
+  state.selectionDrag = null;
+  state.selectTool = "select";
+  syncToolButtons();
 }
 
 function updateSelectionDrag(screen) {
@@ -3116,8 +3134,7 @@ function finishSelectionDrag() {
   const drag = state.selectionDrag;
   if (!drag) return;
   const ids = drag.type === "lasso" ? idsFromSelectionLasso(drag.points) : idsFromSelectionWindow(drag.start, drag.current);
-  state.selectionDrag = null;
-  state.selectTool = "select";
+  clearSelectionDrag();
   setSelection(ids);
   const count = selectedEntities().length;
   statusChip.textContent = count ? `Выбрано: ${count}` : selectionStatusText();
@@ -6316,7 +6333,10 @@ function placeAtViewportCenter() {
 function beginPinchGesture() {
   const pair = activePointerPair();
   if (!pair) return;
+  window.clearTimeout(state.pointer?.selectionHoldTimer);
   finishPointerMoveUndo();
+  const interruptedSelection = Boolean(state.selectionDrag);
+  clearSelectionDrag();
   const [a, b] = pair;
   const midpoint = midpointScreen(a, b);
   state.pointer = null;
@@ -6327,6 +6347,7 @@ function beginPinchGesture() {
   };
   state.gestureSuppressTap = true;
   statusChip.textContent = "Масштаб двумя пальцами";
+  if (interruptedSelection) draw();
 }
 
 function updatePinchGesture() {
@@ -6837,6 +6858,7 @@ function syncToolButtons() {
 }
 
 function setTool(tool) {
+  window.clearTimeout(state.pointer?.selectionHoldTimer);
   state.cursorMenuReady = false;
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
@@ -8730,7 +8752,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   if (state.tool === "select" && (state.selectTool === "window" || state.selectTool === "lasso")) {
-    startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event, screen);
+    startSelectionDrag(state.selectTool === "lasso" ? "lasso" : "window", event.pointerId, screen);
     return;
   }
   if (dimensionControl) {
@@ -8829,6 +8851,7 @@ canvas.addEventListener("pointerdown", (event) => {
     before: pointerTargetId && hitEntity ? entityGeometry(hitEntity) : null,
     grabOffset,
   };
+  if (event.pointerType === "touch") scheduleSelectionLongPress(state.pointer);
   if (canMoveHit) {
     state.dimensionPickCycle = null;
     state.selectedId = hitId;
@@ -8852,6 +8875,7 @@ canvas.addEventListener("pointermove", (event) => {
   const screen = getPointer(event);
   const travel = Math.hypot(screen.x - state.pointer.startScreen.x, screen.y - state.pointer.startScreen.y);
   if (travel > TAP_MOVE_TOLERANCE) {
+    window.clearTimeout(state.pointer.selectionHoldTimer);
     state.pointer.moved = true;
   }
   if (state.pointer.mode === "select-only") {
@@ -8944,9 +8968,13 @@ canvas.addEventListener("pointermove", (event) => {
 
 canvas.addEventListener("pointerup", finishCanvasPointer);
 canvas.addEventListener("pointercancel", (event) => finishCanvasPointer(event, true));
+canvas.addEventListener("contextmenu", (event) => {
+  if (event.pointerType === "touch" || event.sourceCapabilities?.firesTouchEvents) event.preventDefault();
+});
 
 function finishCanvasPointer(event, canceled = false) {
   const wasPinching = Boolean(state.pinch) || state.activePointers.size > 1 || state.gestureSuppressTap;
+  if (state.pointer?.id === event.pointerId) window.clearTimeout(state.pointer.selectionHoldTimer);
   forgetPointer(event);
   releaseCanvasPointer(event);
   if (wasPinching) {
@@ -8958,6 +8986,7 @@ function finishCanvasPointer(event, canceled = false) {
   }
   if (canceled || !state.pointer || state.pointer.id !== event.pointerId) {
     if (state.activePointers.size === 0) {
+      clearSelectionDrag();
       state.gestureSuppressTap = false;
       state.pointer = null;
       state.dimensionSnapHint = null;
@@ -8984,8 +9013,7 @@ function finishCanvasPointer(event, canceled = false) {
       if (state.pointer.moved) {
         finishSelectionDrag();
       } else {
-        state.selectionDrag = null;
-        state.selectTool = "select";
+        clearSelectionDrag();
         applyTapSelection(pickEntity(state.pointer.startScreen));
         draw();
       }
