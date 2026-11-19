@@ -1298,7 +1298,7 @@ button.project-card-open:active { background: var(--surface-2); }
   background: color-mix(in srgb, var(--surface) 97%, transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
-  bottom: calc(64px + env(safe-area-inset-bottom));
+  top: var(--workspace-edit-panel-top);
   box-shadow: 0 10px 30px color-mix(in srgb, #000000 18%, transparent);
   display: grid;
   gap: 6px;
@@ -1413,12 +1413,16 @@ button.project-card-open:active { background: var(--surface-2); }
 
 .dimension-assist {
   align-items: center;
-  bottom: calc(76px + env(safe-area-inset-bottom));
+  top: var(--workspace-edit-panel-top);
   display: flex;
   left: 10px;
   max-width: calc(100% - 20px);
   position: absolute;
   z-index: 6;
+}
+
+.workspace:has(:is(#angleModes, #radialModes, #ordinateModes):not([hidden])) #dimensionAssist {
+  top: calc(var(--workspace-edit-panel-top) + 58px);
 }
 
 .dimension-assist label {
@@ -1699,14 +1703,12 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .select-tool-menu {
-  bottom: auto;
   gap: 2px;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   left: auto;
   padding: 4px;
-  top: var(--workspace-edit-panel-top);
   max-width: calc(100% - 16px);
   width: max-content;
 }
@@ -1725,12 +1727,11 @@ button.project-card-open:active { background: var(--surface-2); }
   height: 22px;
 }
 
-.app-shell:has(#snapMore[open]) .line-command-panel {
+.app-shell:has(#snapMore[open]) :is(.line-command-panel, .draw-tool-menu, .plan-annotation-actions, .dimension-assist) {
   visibility: hidden;
 }
 
 .select-mode-menu {
-  bottom: calc(74px + env(safe-area-inset-bottom));
   display: grid;
   gap: 4px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1754,7 +1755,6 @@ button.project-card-open:active { background: var(--surface-2); }
 
 .copy-controls {
   align-items: center;
-  bottom: calc(74px + env(safe-area-inset-bottom));
   display: flex;
   left: auto;
   padding: 4px;
@@ -2414,17 +2414,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tool[data-tool="annotation"] small { font-size: 0.6rem; }
 
 .plan-annotation-actions {
-  bottom: calc(77px + env(safe-area-inset-bottom));
-  left: 10px;
+  top: var(--workspace-edit-panel-top);
+  right: 10px;
   max-width: calc(100% - 20px);
   position: absolute;
   z-index: 11;
 }
 .plan-annotation-actions:not([hidden]) { display: flex; flex-wrap: wrap; gap: 5px; }
-.plan-annotation-actions:has(#planAnnotationEdit:not([hidden])) {
-  bottom: calc(138px + env(safe-area-inset-bottom));
-}
-.workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) .plan-annotation-actions { display: none; }
+.workspace:has(.draw-tool-menu:not(.select-tool-menu):not([hidden])) :is(.plan-annotation-actions, .dimension-assist) { display: none; }
 .plan-annotation-row:not([hidden]) { display: flex; gap: 5px; }
 .plan-annotation-actions button:not([hidden]) {
   align-items: center;

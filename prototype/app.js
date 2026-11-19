@@ -3604,7 +3604,7 @@ function drawPlanScene(entities, c, customLineLayers = state.customLineLayers) {
   if (!zones.length) return;
   const anchors = planAnnotationAnchors(zones);
   const viewport = !printRendering && zones.some((zone) => zone.type === "elevation") ? canvas.getBoundingClientRect() : null;
-  const overlays = viewport ? [...shell.querySelectorAll(".status-chip, #saveIndicator, .tool-rail, #planAnnotationActions, .draw-tool-menu, #lineEditOptions, #quickEditModes, #cornerMetrics")]
+  const overlays = viewport ? [...shell.querySelectorAll(".status-chip, #saveIndicator, .tool-rail, #planAnnotationActions, .draw-tool-menu, .line-command-panel, .dimension-assist, #quickEditModes, #cornerMetrics")]
     .filter((element) => !element.hidden && element.getClientRects().length)
     .map((element) => {
       const rect = element.getBoundingClientRect();
@@ -7188,7 +7188,8 @@ function fitViewport() {
   }
 
   const rect = canvas.getBoundingClientRect();
-  const topPanels = [selectToolMenu, lineUi.lineEditOptions].filter((panel) => !panel.hidden);
+  const topPanels = [...canvas.parentElement.querySelectorAll(".draw-tool-menu, .line-command-panel, .plan-annotation-actions, .dimension-assist, .corner-metrics")]
+    .filter(panel => panel.getClientRects().length);
   const availableTop = Math.max(38, ...topPanels.map((panel) => panel.getBoundingClientRect().bottom - rect.top)) + 18;
   const railTop = shell.querySelector(".tool-rail").getBoundingClientRect().top - rect.top;
   const availableBottom = Math.min(rect.height, railTop) - 18;
