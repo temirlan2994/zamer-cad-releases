@@ -610,7 +610,7 @@ const dimensionToolButtonVisuals = {
   aligned: { icon: "↔", label: "По отрезку" },
   linear: { icon: "⟷", label: "По оси" },
   angular: { icon: "∠", label: "Угол" },
-  baseline: { icon: "⊥", label: "От базы" },
+  chain: { icon: "↔↔", label: "Цепочка" },
 };
 const annotationToolButtonVisuals = {
   text: { icon: "T", label: "Аннотация" },
@@ -647,7 +647,7 @@ function createDimensionToolMenu() {
     <button type="button" data-dimension-tool="aligned" aria-label="Размер по отрезку"><span aria-hidden="true">&#8596;</span><small>По отрезку</small></button>
     <button type="button" data-dimension-tool="linear" aria-label="Размер по горизонтали или вертикали"><span aria-hidden="true">&#10231;</span><small>По оси</small></button>
     <button type="button" data-dimension-tool="angular" aria-label="Угол между сторонами"><span aria-hidden="true">&#8736;</span><small>Угол</small></button>
-    <button type="button" data-dimension-tool="baseline" aria-label="Несколько размеров от общей точки"><span aria-hidden="true">&#8869;</span><small>От базы</small></button>
+    <button type="button" data-dimension-tool="chain" aria-label="Множественный размер"><span aria-hidden="true">↔↔</span><small>Цепочка</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -4946,7 +4946,7 @@ function drawActiveSegment(c, viewport) {
     const provisional = draftDimension(start, end);
     const initialGeometry = dimensionGeometry(provisional);
     if (!initialGeometry) return;
-    if (state.drawing.phase === "offset") {
+    if (state.drawing.chainOffset != null || state.drawing.phase === "offset") {
       provisional.offset = draftDimensionOffset(initialGeometry, rawCursorWorld());
     }
     drawDimensionEntity(provisional, c);
@@ -7753,7 +7753,7 @@ function dimensionToolStatusText() {
     aligned: "Размер по отрезку. 1 из 3: укажите начало",
     linear: "Размер по оси. 1 из 3: укажите первую точку",
     angular: "Угол. Укажите вершину либо выберите первую линию",
-    baseline: "Размеры от базы. Укажите общую точку отсчёта",
+    chain: "Множественный размер · укажите первую точку",
   };
   return text[state.dimensionTool] || text.aligned;
 }
@@ -7811,7 +7811,7 @@ function pushEntity(entity, { select = true } = {}) {
 
 function createEntityFromDrawing() {
   const { start, end } = state.drawing;
-  const id = `${state.tool}-${Date.now()}`;
+  const id = newLineId(state.tool);
   if (state.tool === "circle") return circleEntity(id, start.x, start.y, distanceWorld(start, end));
   if (state.tool === "rectangle") return rectangleEntity(id, start.x, start.y, end.x, end.y);
   if (state.tool === "arc") return arcEntity(id, state.drawing.start, arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end), state.drawing.arcEnd);
@@ -7860,29 +7860,33 @@ function draftDimension(start, end, id = "preview") {
 }
 
 function draftDimensionOffset({ start, axis, measurement }, point) {
+  const { chainOffset, chainAxis } = state.drawing;
+  if (chainOffset != null) return (axis.x * chainAxis.x + axis.y * chainAxis.y < -1e-10 ? -1 : 1) * chainOffset;
   const axisTip = { x: start.x + axis.x * measurement, y: start.y + axis.y * measurement };
   const offset = dimensionOffsetWithAlignmentSnap(start, axisTip, point);
   return Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
 }
 
-function continueDimensionAfterCreate(measurement) {
-  const previous = state.drawing;
-  if (state.dimensionTool === "baseline") {
-    const baseStart = previous.baseStart || previous.start;
-    const baseRefStart = previous.baseRefStart || previous.refStart;
+function commitDimensionSegment(geometry) {
+  const draft = state.drawing;
+  draft.offset = draftDimensionOffset(geometry, rawCursorWorld());
+  pushEntity(createEntityFromDrawing());
+  if (state.dimensionTool === "chain") {
     state.drawing = {
-      start: baseStart,
-      end: baseStart,
+      start: draft.end,
+      end: draft.end,
       lockedEnd: false,
       phase: "end",
-      refStart: baseRefStart,
-      baseStart,
-      baseRefStart,
+      refStart: draft.refEnd,
+      chainOffset: draft.offset,
+      chainAxis: geometry.axis,
     };
-    statusChip.textContent = `База ${projectLength(measurement)}. Поставьте следующую точку`;
-    return;
+    statusChip.textContent = "Цепочка · укажите следующую точку или нажмите «Выбор»";
+  } else {
+    state.drawing = null;
+    statusChip.textContent = `Размер ${projectLength(geometry.measurement)} создан`;
   }
-  state.drawing = null;
+  resetSnapTracking();
 }
 
 function isDraftLine(entity) {
@@ -9030,7 +9034,7 @@ function commitCursorPoint() {
     }
     if (!state.drawing) {
       resetSnapTracking();
-      state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap), baseStart: world, baseRefStart: dimensionRefFromSnap(resolved.snap) };
+      state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap) };
       statusChip.textContent = "Размер: начало поставлено. Поставьте вторую точку";
     } else if (state.drawing.phase === "end") {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
@@ -9042,18 +9046,18 @@ function commitCursorPoint() {
       state.drawing.end = end;
       state.drawing.measurementAxis = geometry.measurementAxis;
       state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
-      state.drawing.lockedEnd = true;
-      state.drawing.phase = "offset";
-      statusChip.textContent = `Размер ${projectLength(geometry.measurement)}. Укажите положение размерной линии`;
+      if (state.drawing.chainOffset != null) {
+        commitDimensionSegment(geometry);
+      } else {
+        state.drawing.lockedEnd = true;
+        state.drawing.phase = "offset";
+        statusChip.textContent = `Размер ${projectLength(geometry.measurement)}. Укажите положение размерной линии`;
+      }
     } else if (state.drawing.phase === "offset") {
       const { start, end } = state.drawing;
       const geometry = dimensionGeometry(draftDimension(start, end));
       if (!geometry) return;
-      state.drawing.offset = draftDimensionOffset(geometry, rawCursorWorld());
-      pushEntity(createEntityFromDrawing());
-      continueDimensionAfterCreate(geometry.measurement);
-      resetSnapTracking();
-      if (!state.drawing) statusChip.textContent = `Размер ${projectLength(geometry.measurement)} создан`;
+      commitDimensionSegment(geometry);
     }
     draw();
     return;
@@ -10985,6 +10989,11 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.target.closest("input, textarea, select, [contenteditable], button, summary")) return;
   if (state.planZone && event.key === "Escape" && !event.target.closest("dialog")) {
+    event.preventDefault();
+    activatePlainSelect();
+    return;
+  }
+  if (state.tool === "dimension" && state.dimensionTool === "chain" && event.key === "Escape") {
     event.preventDefault();
     activatePlainSelect();
     return;
