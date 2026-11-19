@@ -2701,7 +2701,9 @@ function cursorSnapResolved() {
     return { point: first, snap: { ...first, type: "end", label: "Начальная вершина" } };
   }
   const draft = state.drawing;
-  if (state.tool === "polyline" && draft?.arcPhase === "through") return resolveSnapWorld(raw);
+  if (draft?.arcEnd && (state.tool === "arc" || draft.arcPhase === "through")) {
+    return resolveArcBendSnap(raw, draft);
+  }
   const start = draft?.start || planZoneSnapStart() || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   const constraint = draft?.metricConstraint;
   const firstVertex = state.tool === "polyline" && canClosePolyline(draft) ? draft.points[0] : null;
@@ -6341,7 +6343,8 @@ function drawCursorSnap(c) {
   if (!snap) return;
   if (type === "tracking") drawSnapTracking(c);
   if (type === "polar") drawPolarSnapGuide(c);
-  if (state.tool === "line" && (type === "tracking" || type === "polar")) return;
+  if ((state.tool === "line" || state.tool === "arc" || state.drawing?.arcPhase) &&
+      (type === "tracking" || type === "polar")) return;
   const point = worldToScreen(snap);
   ctx.save();
   ctx.translate(point.x - 12, point.y - 12);
@@ -6914,7 +6917,58 @@ function snappedPoint(point, type) {
   return { point, snap: { ...point, type } };
 }
 
-function resolveSnapWorld(point) {
+function resolveArcBendSnap(point, draft) {
+  if (!snapEnabled("polar")) return resolveSnapWorld(point);
+  const { start, arcEnd: end } = draft;
+  const chord = distanceWorld(start, end);
+  if (chord < 1) return resolveSnapWorld(point);
+  const mid = midpoint(start, end);
+  const ux = (end.x - start.x) / chord;
+  const uy = (end.y - start.y) / chord;
+  const nx = -uy;
+  const ny = ux;
+  const rawSagitta = (point.x - mid.x) * nx + (point.y - mid.y) * ny;
+  const segments = drawableSnapSegments();
+  const previous = draft.points?.at(-2);
+  if (previous && !draft.bulges.at(-1)) segments.push({ p1: previous, p2: start });
+
+  let connected = false;
+  let best = null;
+  let nearest = screenUiPx(12) / state.view.scale;
+  for (const { p1, p2, arc, entity } of segments) {
+    if (arc || entity?.dimensionKind) continue;
+    const length = distanceWorld(p1, p2);
+    if (length <= linePointEpsilon) continue;
+    const dx = (p2.x - p1.x) / length;
+    const dy = (p2.y - p1.y) / length;
+    const along = dx * ux + dy * uy;
+    const across = dx * nx + dy * ny;
+    if (Math.abs(across) <= 1e-8) continue;
+    for (const anchor of [start, end]) {
+      if (projectPointToSegmentWorld(anchor, p1, p2).distance > linePointEpsilon) continue;
+      connected = true;
+      // Pick the tangent direction toward the opposite end for a minor arc.
+      // For a perpendicular tangent, either side of the semicircle is possible.
+      const sign = Math.abs(along) <= 1e-8
+        ? (Math.sign(rawSagitta * across) || 1)
+        : Math.sign(along) * (anchor === start ? 1 : -1);
+      const sagitta = chord / 2 * across * sign / (1 + Math.abs(along));
+      const error = Math.abs(rawSagitta - sagitta);
+      if (error < nearest) {
+        nearest = error;
+        best = { point: { x: mid.x + nx * sagitta, y: mid.y + ny * sagitta }, anchor, angle: Math.atan2(dy, dx) };
+      }
+    }
+  }
+
+  const fallback = resolveSnapWorld(point, { polarStart: connected ? null : start });
+  if (!best || (fallback.snap && !["grid", "tracking", "polar"].includes(fallback.snap.type))) return fallback;
+  state.snapTracking.active = null;
+  state.polarSnapGuide = { point: best.anchor, angle: best.angle };
+  return snappedPoint(best.point, "polar");
+}
+
+function resolveSnapWorld(point, { polarStart = state.drawing?.start || state.moveCommand?.base } = {}) {
   const trackingThreshold = objectSnapThreshold();
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
@@ -6930,7 +6984,6 @@ function resolveSnapWorld(point) {
   const grid = snapEnabled("grid");
   const fallback = grid ? gridPoint(point) : point;
   if (snapEnabled("polar")) {
-    const polarStart = state.drawing?.start || state.moveCommand?.base;
     if (polarStart && state.drawing?.phase !== "offset") {
       const polar = snapPolar(fallback, polarStart);
       if (polar.snapped) {
