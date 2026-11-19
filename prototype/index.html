@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=262" />
+    <link rel="stylesheet" href="./styles.css?v=263" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -228,6 +228,10 @@
           </div>
         </section>
         <canvas id="cadCanvas" tabindex="0" aria-label="Чертёжный холст" aria-describedby="viewportKeyboardHelp"></canvas>
+        <div class="line-command-panel" id="angleModes" role="group" aria-label="Построение угла" hidden>
+          <button type="button" data-angle-mode="select" aria-pressed="false">Выбрать угол</button>
+          <button type="button" data-angle-mode="draw" aria-pressed="true">Рисовать угол</button>
+        </div>
         <section class="leader-tools line-command-panel" id="leaderTools" role="group" aria-label="Выноска" hidden>
           <div class="line-mode-control" role="group" aria-label="Линия выноски">
             <button type="button" data-leader-line="straight" aria-label="Прямая выноска, две точки" title="Прямая выноска · 2 точки" aria-pressed="true">
@@ -505,7 +509,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=262"></script>
+    <script type="module" src="./app.js?v=263"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

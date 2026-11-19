@@ -453,6 +453,7 @@ const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
+const angleModes = document.getElementById("angleModes");
 const copyToolMenu = document.getElementById("copyToolMenu");
 const copyControls = document.getElementById("copyControls");
 const copyCountControl = document.getElementById("copyCountControl");
@@ -707,6 +708,8 @@ const state = {
   planZone: null,
   drawTool: "line",
   dimensionTool: "aligned",
+  angleMode: "draw",
+  angleSide: null,
   annotationScale: 1,
   measurementSettings: normalizeMeasurementSettings(),
   selectTool: "select",
@@ -2879,6 +2882,8 @@ function renderFrame() {
   syncLeaderTools();
   syncLeaderInputPosition();
   syncLineControls();
+  angleModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "angular" || !dimensionToolMenu.hidden;
+  if (!angleModes.hidden && state.angleMode === "select") drawAngleFromSegmentsPreview(c);
   syncDimensionLinks();
   drawLineEditMarks(c);
   drawSelectionDrag(c);
@@ -5058,6 +5063,84 @@ function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, v
     field.style.left = `${x}px`;
     field.style.top = `${y}px`;
     placed = { x, y, halfWidth };
+  }
+}
+
+function angleSideAt(screen, first = null) {
+  const world = screenToWorld(screen);
+  let nearest = screenUiPx(18) / state.view.scale;
+  let side = null;
+  for (const { p1, p2, arc, entity } of drawableSnapSegments()) {
+    if (arc || entity.dimensionKind || distanceWorld(p1, p2) <= linePointEpsilon) continue;
+    if (first && first.entityId === entity.id &&
+        distanceWorld(first.p1, p1) <= linePointEpsilon && distanceWorld(first.p2, p2) <= linePointEpsilon) continue;
+    const pick = projectPointToSegmentWorld(world, p1, p2);
+    if (pick.distance < nearest) {
+      nearest = pick.distance;
+      side = { p1, p2, pick, entityId: entity.id };
+    }
+  }
+  return side;
+}
+
+function angleBetweenSides(first, second) {
+  const direction = ({ p1, p2 }) => {
+    const length = distanceWorld(p1, p2);
+    return { x: (p2.x - p1.x) / length, y: (p2.y - p1.y) / length };
+  };
+  const a = direction(first);
+  const b = direction(second);
+  const cross = a.x * b.y - a.y * b.x;
+  if (Math.abs(cross) <= 1e-8) return null;
+  const along = ((second.p1.x - first.p1.x) * b.y - (second.p1.y - first.p1.y) * b.x) / cross;
+  const vertex = { x: first.p1.x + a.x * along, y: first.p1.y + a.y * along };
+  if (!isLinePoint(vertex)) return null;
+  const arm = side => {
+    const { x, y } = side.pick;
+    if (distanceWorld(vertex, { x, y }) > linePointEpsilon) return { x, y };
+    return distanceWorld(vertex, side.p1) > distanceWorld(vertex, side.p2) ? side.p1 : side.p2;
+  };
+  return angularDimensionEntity("preview", vertex, arm(first), arm(second));
+}
+
+function commitAngleFromSegments(screen) {
+  const first = state.angleSide;
+  const side = angleSideAt(screen, first);
+  if (!side) {
+    statusChip.textContent = first ? "Выберите другую прямую сторону" : "Укажите прямую сторону угла";
+  } else if (!first) {
+    state.angleSide = side;
+    statusChip.textContent = "Угол · выберите вторую сторону";
+  } else {
+    const angle = angleBetweenSides(first, side);
+    const geometry = angle && angularDimensionGeometry(angle);
+    if (geometry) {
+      pushEntity({ ...angle, id: newLineId("dimension") });
+      state.angleSide = null;
+      statusChip.textContent = `Угол ${formatProjectAngle(geometry.measurement, state.measurementSettings)} создан · выберите первую сторону`;
+    } else {
+      statusChip.textContent = "Нужны две непараллельные стороны";
+    }
+  }
+  draw();
+}
+
+function drawAngleFromSegmentsPreview(c) {
+  const first = state.angleSide;
+  const current = angleSideAt(centerScreen(), first);
+  if (first && current) {
+    const angle = angleBetweenSides(first, current);
+    if (angle) drawAngularDimensionEntity(angle, c, { active: true });
+  }
+  for (const side of [first, current]) {
+    if (!side) continue;
+    const start = worldToScreen(side.p1);
+    const end = worldToScreen(side.p2);
+    ctx.save();
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    linePath(start.x, start.y, end.x, end.y);
+    ctx.restore();
   }
 }
 
@@ -7453,6 +7536,7 @@ function setTool(tool) {
   closeLeaderInput();
   state.directManipulationIds.clear();
   state.tool = tool;
+  state.angleSide = null;
   copyToolMenu.hidden = true;
   state.copyPicking = null;
   state.selectedFigureGrip = null;
@@ -7752,7 +7836,7 @@ function dimensionToolStatusText() {
   const text = {
     aligned: "Размер по отрезку. 1 из 3: укажите начало",
     linear: "Размер по оси. 1 из 3: укажите первую точку",
-    angular: "Угол. Укажите вершину либо выберите первую линию",
+    angular: state.angleMode === "select" ? "Угол · выберите первую сторону" : "Угол · укажите вершину",
     chain: "Множественный размер · укажите первую точку",
   };
   return text[state.dimensionTool] || text.aligned;
@@ -8951,7 +9035,7 @@ function selectLineEndpoint(endpoint) {
   return true;
 }
 
-function commitCursorPoint() {
+function commitCursorPoint(screen = centerScreen()) {
   if (state.leaderInput) return;
   if (surveyPointPicker) {
     commitSurveyPoint();
@@ -9003,6 +9087,10 @@ function commitCursorPoint() {
       return;
     }
     if (state.dimensionTool === "angular") {
+      if (state.angleMode === "select") {
+        commitAngleFromSegments(screen);
+        return;
+      }
       if (!state.drawing) {
         resetSnapTracking();
         state.drawing = { start: world, end: world, lockedEnd: false, phase: "angular-arm1" };
@@ -9780,7 +9868,7 @@ function finishCanvasPointer(event, canceled = false) {
       if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
       draw();
     } else {
-      commitCursorPoint();
+      commitCursorPoint(state.pointer.startScreen);
     }
   } else {
     finishPointerMoveUndo();
@@ -10612,6 +10700,20 @@ drawToolMenu?.addEventListener("click", (event) => {
   if (!button) return;
   selectDrawTool(button.dataset.drawTool);
   figureToolButton?.focus({ preventScroll: true });
+});
+
+angleModes.addEventListener("click", event => {
+  const mode = event.target.closest("[data-angle-mode]")?.dataset.angleMode;
+  if (!mode || mode === state.angleMode) return;
+  state.angleMode = mode;
+  state.angleSide = null;
+  state.drawing = null;
+  resetSnapTracking();
+  for (const button of angleModes.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.angleMode === mode));
+  }
+  statusChip.textContent = dimensionToolStatusText();
+  draw();
 });
 
 dimensionToolMenu?.addEventListener("click", (event) => {
