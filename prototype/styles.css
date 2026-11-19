@@ -1025,6 +1025,23 @@ button.project-card-open:active { background: var(--surface-2); }
   width: auto;
 }
 
+.line-command-heading {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  margin: 2px 4px;
+}
+
+#lineBoundaryControl button {
+  gap: 2px;
+  width: 56px;
+}
+
+#lineBoundaryControl small {
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
 .line-command-panel button:disabled {
   cursor: default;
   opacity: 0.48;

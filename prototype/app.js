@@ -501,7 +501,7 @@ for (const icon of document.querySelectorAll("[data-snap-symbol]")) {
   icon.innerHTML = `<svg class="cad-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${snapSymbolPaths[icon.dataset.snapSymbol]}"/></svg>`;
 }
 const lineUi = Object.fromEntries([
-  "lineBoundaryControl", "lineBreakControl", "lineEditApply", "linePolarStep",
+  "lineBoundaryControl", "lineBoundaryHeading", "lineBreakControl", "lineEditApply", "linePolarStep",
   "lineEditOptions", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
   "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorModes", "lineMirrorControl", "lineMirrorDelete",
 ].map((id) => [id, document.getElementById(id)]));
@@ -8281,7 +8281,11 @@ function syncLineControls() {
     button.disabled = !active && !quickTargets.some(entity => editableFigure(entity, mode));
     button.setAttribute("aria-pressed", String(active));
   }
-  lineUi.lineBoundaryControl.hidden = !hasBoundaries;
+  lineUi.lineBoundaryControl.hidden = lineUi.lineBoundaryHeading.hidden = !hasBoundaries;
+  if (hasBoundaries) {
+    const heading = edit.mode === "trim" ? "Обрезка" : "Удлинение";
+    if (lineUi.lineBoundaryHeading.textContent !== heading) lineUi.lineBoundaryHeading.textContent = heading;
+  }
   if (hasBoundaries) for (const button of boundaryModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.boundaryMode === edit.boundaryMode));
   }

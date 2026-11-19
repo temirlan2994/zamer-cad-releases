@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=270" />
+    <link rel="stylesheet" href="./styles.css?v=271" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -194,11 +194,12 @@
           <button type="button" data-action="offset" title="Смещение" aria-label="Смещение" hidden><span data-line-icon="offset"></span></button>
         </div>
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
+          <h2 class="line-command-heading" id="lineBoundaryHeading" hidden>Обрезка</h2>
           <div class="line-mode-control" id="lineBoundaryControl" role="group" aria-label="Границы" hidden>
-            <button type="button" data-boundary-mode="auto" title="Все видимые · автоматически" aria-label="Все видимые · автоматически" aria-pressed="true"><span data-line-icon="cutAll"></span></button>
-            <button type="button" data-boundary-mode="preview" title="Все видимые · с подтверждением" aria-label="Все видимые · с подтверждением" aria-pressed="false"><span data-line-icon="cutPreview"></span></button>
-            <button type="button" data-boundary-mode="selected" title="Выбрать границы" aria-label="Выбрать границы" aria-pressed="false"><span data-line-icon="cutSelected"></span></button>
-            <button type="button" data-boundary-mode="axis" title="Оси стен" aria-label="Оси стен" aria-pressed="false" hidden><span data-line-icon="cutAxis"></span></button>
+            <button type="button" data-boundary-mode="auto" title="Все видимые · автоматически" aria-label="Все видимые · автоматически" aria-pressed="true"><span data-line-icon="cutAll" aria-hidden="true"></span><small aria-hidden="true">Авто</small></button>
+            <button type="button" data-boundary-mode="preview" title="Все видимые · с подтверждением" aria-label="Все видимые · с подтверждением" aria-pressed="false"><span data-line-icon="cutPreview" aria-hidden="true"></span><small aria-hidden="true">Просмотр</small></button>
+            <button type="button" data-boundary-mode="selected" title="Выбрать границы" aria-label="Выбрать границы" aria-pressed="false"><span data-line-icon="cutSelected" aria-hidden="true"></span><small aria-hidden="true">Границы</small></button>
+            <button type="button" data-boundary-mode="axis" title="Оси стен" aria-label="Оси стен" aria-pressed="false" hidden><span data-line-icon="cutAxis" aria-hidden="true"></span><small aria-hidden="true">Оси стен</small></button>
           </div>
           <div class="line-mode-control" id="lineBreakControl" role="group" aria-label="Вид разрыва" hidden>
             <button type="button" data-break-mode="gap" title="Разрыв между двумя точками" aria-label="Разрыв между двумя точками" aria-pressed="true"><span data-line-icon="breakGap"></span></button>
@@ -517,7 +518,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=270"></script>
+    <script type="module" src="./app.js?v=271"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
