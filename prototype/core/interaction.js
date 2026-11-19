@@ -11,6 +11,6 @@ export function canDragEntityDirectly(entity) {
 }
 
 export function canStartGeometryDrag(mode, moved) {
-  const modes = new Set(["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]);
+  const modes = new Set(["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "leader-elbow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]);
   return !modes.has(mode) || moved;
 }

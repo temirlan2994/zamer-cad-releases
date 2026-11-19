@@ -33,7 +33,10 @@ export function validStoredEntity(entity) {
   if (!plainObject(entity) || typeof entity.id !== "string" || !entity.id.trim() ||
       (entity.layer != null && typeof entity.layer !== "string")) return false;
   switch (entity.type) {
-    case "line": return entity.layer === "dimensions" ? validDimension(entity) : isValidLine(entity);
+    case "line": {
+      if (entity.dimensionKind === "leader" && entity.leaderElbow != null && !isLinePoint(entity.leaderElbow)) return false;
+      return entity.layer === "dimensions" ? validDimension(entity) : isValidLine(entity);
+    }
     case "wall": return isValidLine(entity) && (entity.width == null || (Number.isFinite(entity.width) && entity.width > 0));
     case "polyline": return validPolylinePoints(entity.points, entity.closed, entity.bulges) && entity.points.every(isLinePoint);
     case "rectangle": return hasXY(entity, "x1", "y1") && hasXY(entity, "x2", "y2") && entity.x1 !== entity.x2 && entity.y1 !== entity.y2;

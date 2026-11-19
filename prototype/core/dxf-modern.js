@@ -1,4 +1,4 @@
-import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
+import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
@@ -78,7 +78,7 @@ function appendPlanLeader(out, entity, layer) {
   const { line, frame } = leaderAppearance(entity);
   const { width, height: labelHeight } = leaderFrameSize(height, annotationTextWidth(lines, height), lines.length, frame, DXF_LINE_SPACING);
   const rect = { x: x2 - width / 2, y: y2 - labelHeight / 2, width, height: labelHeight };
-  const path = leaderPlanPath(arrow, rect, line, 1.1 * height);
+  const path = leaderPlanPath(arrow, rect, line, 1.1 * height, leaderElbowPoint(entity));
   for (let i = 1; i < path.length; i += 1) appendLine(out, path[i - 1], path[i], layer);
   const direction = path.find((point) => Math.hypot(point.x - x1, point.y - y1) > POINT_EPSILON);
   if (direction) {

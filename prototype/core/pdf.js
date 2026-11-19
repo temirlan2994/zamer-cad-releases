@@ -1,4 +1,4 @@
-import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
@@ -99,9 +99,12 @@ function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measureme
   if (entity.type === "line" && entity.dimensionKind === "leader") {
     const height = leaderTextHeight(entity);
     const lines = annotationTextLines(entity.text);
-    const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, leaderAppearance(entity).frame);
+    const appearance = leaderAppearance(entity);
+    const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, appearance.frame);
+    const elbow = appearance.line === "bent" ? leaderElbowPoint(entity) : null;
     return boundsOf([
       { x: entity.x1, y: entity.y1 },
+      ...(elbow ? [elbow] : []),
       ...centeredTextCorners({ x: entity.x2, y: entity.y2 }, frame.width, frame.height),
     ]);
   }

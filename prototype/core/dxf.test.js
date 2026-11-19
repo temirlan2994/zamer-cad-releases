@@ -288,6 +288,21 @@ test("leader line shape and text frame export as independent switches", () => {
   }
 });
 
+test("the explicit leader bend is an exact shared point of two exported segments", () => {
+  const leader = { type: "line", dimensionKind: "leader", layer: "text", leaderLine: "bent", leaderFrame: true,
+    x1: 0, y1: 0, x2: 3000, y2: 1500, leaderElbow: { x: 600.1254, y: 2000.5 }, text: "Точка", textHeight: 100 };
+  const linePoints = ({ fields }) => ["10", "20", "11", "21"].map(key => Number(fields.get(key)[0]));
+  for (const build of [buildDxf, buildRevitDxf, writeDxf]) {
+    const lines = entityRecords(build([leader])).filter(({ type }) => type === "LINE").map(linePoints);
+    assert.equal(lines.length, 4);
+    assert.deepEqual(lines[0], [0, 0, 600.1254, -2000.5]);
+    assert.deepEqual(lines[1].slice(0, 2), [600.1254, -2000.5]);
+    const straight = entityRecords(build([{ ...leader, leaderLine: "straight" }])).filter(({ type }) => type === "LINE");
+    assert.equal(straight.length, 3);
+    assert.ok(straight.map(linePoints).flat().every(coordinate => coordinate !== 600.1254));
+  }
+});
+
 test("zones export closed editable XY contours and native labels on separate colored layers", () => {
   const points = [{ x: 125.0002, y: -300 }, { x: 4125.0002, y: -300 }, { x: 4125.0002, y: 1700 }, { x: 125.0002, y: 1700 }];
   const zone = { type: "area", id: "floor", layer: "areas", points: [...points, points[0]], label: "Зона кухни" };

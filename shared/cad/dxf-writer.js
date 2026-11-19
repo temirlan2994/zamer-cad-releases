@@ -217,14 +217,20 @@ export function dxfLeader(entity, layer, unicode = false) {
   const start = { x: Number(entity.x1), y: Number(entity.y1) };
   const end = { x: Number(entity.x2), y: Number(entity.y2) };
   if (!finitePoint(start) || !finitePoint(end)) return [];
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
+  const bent = entity.leaderLine === "bent" || (entity.leaderLine !== "straight" && entity.leaderStyle === "landing");
+  const elbow = entity.leaderElbow;
+  const hasElbow = bent && Number.isFinite(elbow?.x) && Number.isFinite(elbow?.y) &&
+    (start.x !== elbow.x || start.y !== elbow.y) && (end.x !== elbow.x || end.y !== elbow.y);
+  const firstEnd = hasElbow ? elbow : end;
+  const dx = firstEnd.x - start.x;
+  const dy = firstEnd.y - start.y;
   const length = Math.hypot(dx, dy);
   if (length < 0.0001) return [];
   const ux = dx / length;
   const uy = dy / length;
   return [
-    ...dxfLine(start.x, start.y, end.x, end.y, layer),
+    ...dxfLine(start.x, start.y, firstEnd.x, firstEnd.y, layer, 0, 0, hasElbow),
+    ...(hasElbow ? dxfLine(elbow.x, elbow.y, end.x, end.y, layer, 0, 0, true) : []),
     ...dxfArrow(start, ux, uy, Math.max(70, Math.min(150, length * 0.08)), layer),
     ...dxfText({ x: end.x, y: end.y, text: entity.text || "Текст", height: entity.height || 220, rotation: 0 }, layer, unicode),
   ];

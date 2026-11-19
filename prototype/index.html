@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=246" />
+    <link rel="stylesheet" href="./styles.css?v=247" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -215,6 +215,33 @@
           </div>
         </section>
         <canvas id="cadCanvas" tabindex="0" aria-label="Чертёжный холст" aria-describedby="viewportKeyboardHelp"></canvas>
+        <section class="leader-tools line-command-panel" id="leaderTools" role="group" aria-label="Выноска" hidden>
+          <div class="line-mode-control" role="group" aria-label="Линия выноски">
+            <button type="button" data-leader-line="straight" aria-label="Прямая выноска, две точки" title="Прямая выноска · 2 точки" aria-pressed="true">
+              <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 19 16-14M4 19l.5-5m-.5 5 5 .5"/><circle cx="20" cy="5" r="1.25"/></svg>
+            </button>
+            <button type="button" data-leader-line="bent" aria-label="Выноска с изгибом, три точки" title="Выноска с изгибом · 3 точки" aria-pressed="false">
+              <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 19 8-13h9M4 19l.5-5m-.5 5 5 .5"/><circle cx="12" cy="6" r="1.25"/><circle cx="21" cy="6" r="1.25"/></svg>
+            </button>
+          </div>
+          <button id="leaderFrameButton" type="button" aria-label="Рамка текста выноски" title="Рамка текста выноски" aria-pressed="false">
+            <svg class="cad-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8m-4 0v6"/></svg>
+          </button>
+          <label class="leader-height-control" title="Высота текста выноски, мм">
+            <span aria-hidden="true">↕</span>
+            <input id="leaderTextHeight" type="text" value="200" inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="Высота текста выноски, мм" />
+            <span aria-hidden="true">мм</span>
+          </label>
+          <button type="button" id="leaderToolsCancel" aria-label="Отменить выноску" title="Отменить выноску"><span data-line-icon="close"></span></button>
+        </section>
+        <form class="leader-inline-editor" id="leaderInlineEditor" aria-label="Текст выноски" novalidate hidden>
+          <textarea id="leaderInlineText" name="text" rows="2" maxlength="240" enterkeyhint="enter" aria-label="Текст выноски" aria-describedby="leaderInlineError" placeholder="Текст выноски"></textarea>
+          <div class="leader-inline-actions">
+            <button id="leaderInlineCancel" type="button" aria-label="Отменить ввод выноски" title="Отменить ввод выноски"><span data-line-icon="close"></span></button>
+            <button id="leaderInlineApply" type="submit" aria-label="Сохранить выноску" title="Сохранить выноску"><span data-line-icon="check"></span></button>
+          </div>
+          <p id="leaderInlineError" role="alert"></p>
+        </form>
         <div id="planAnnotationActions" class="plan-annotation-actions" hidden role="group" aria-label="Действия аннотации">
           <div id="planAnnotationModes" class="plan-annotation-row" role="group" aria-label="Форма контура">
             <button type="button" data-plan-mode="contour" aria-pressed="true" aria-label="Контур" title="Контур по точкам"></button>
@@ -465,7 +492,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=246"></script>
+    <script type="module" src="./app.js?v=247"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

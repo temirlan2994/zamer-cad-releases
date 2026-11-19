@@ -25,6 +25,16 @@ test("unknown versions and malformed, duplicate, or unsupported entities are rej
   }
 });
 
+test("legacy and explicit bent leaders round-trip through the Zamer project format", () => {
+  const leader = { ...segment, dimensionKind: "leader", layer: "text", leaderLine: "bent", text: "Точка" };
+  const bent = { ...leader, id: "bent", leaderElbow: { x: 90.125, y: 220 } };
+  const project = { entities: [leader, bent] };
+  assert.deepEqual(validateZamerProject(JSON.parse(JSON.stringify(project))), project);
+  for (const leaderElbow of [{ x: 90 }, { x: "90", y: 220 }, { x: Infinity, y: 220 }]) {
+    assert.throws(() => validateZamerProject({ entities: [{ ...bent, leaderElbow }] }), /повреждён объект/);
+  }
+});
+
 test("nested survey geometry and a polyline draft are checked before import", () => {
   const drawing = { entities: [{ id: "arc-1", type: "arc" }] };
   assert.throws(() => validateZamerProject({ entities: [], survey: { version: 1, rooms: [{ drawing }] } }), /Помещение 1/);

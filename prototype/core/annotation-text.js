@@ -43,8 +43,26 @@ export function leaderFrameSize(height, textWidth, count, frame, spacing = ANNOT
   };
 }
 
-export function leaderPlanPath(arrow, rect, line, landingLength) {
+export function leaderElbowPoint(entity) {
+  const point = entity.leaderElbow;
+  return Number.isFinite(point?.x) && Number.isFinite(point?.y) ? point : null;
+}
+
+function leaderLabelConnection(center, rect, dx, dy) {
+  if (!dx && !dy) return center;
+  const ratio = Math.min(dx ? Math.abs(rect.width / (2 * dx)) : Infinity, dy ? Math.abs(rect.height / (2 * dy)) : Infinity);
+  return { x: center.x + dx * ratio, y: center.y + dy * ratio };
+}
+
+export function leaderPlanPath(arrow, rect, line, landingLength, elbow = null) {
   const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  if (line === "bent" && Number.isFinite(elbow?.x) && Number.isFinite(elbow?.y)) {
+    const dx = elbow.x - center.x;
+    const dy = elbow.y - center.y;
+    return Math.abs(dx) <= rect.width / 2 && Math.abs(dy) <= rect.height / 2
+      ? [arrow, elbow, center]
+      : [arrow, elbow, leaderLabelConnection(center, rect, dx, dy)];
+  }
   const dx = arrow.x - center.x;
   const dy = arrow.y - center.y;
   if (!dx && !dy) return [arrow, center];
@@ -64,6 +82,5 @@ export function leaderPlanPath(arrow, rect, line, landingLength) {
     return [arrow, elbow, connector];
   }
 
-  const ratio = Math.min(dx ? Math.abs(rect.width / (2 * dx)) : Infinity, dy ? Math.abs(rect.height / (2 * dy)) : Infinity);
-  return [arrow, { x: center.x + dx * ratio, y: center.y + dy * ratio }];
+  return [arrow, leaderLabelConnection(center, rect, dx, dy)];
 }

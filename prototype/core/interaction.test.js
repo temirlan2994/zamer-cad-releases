@@ -22,7 +22,7 @@ test("new, automatically selected and previously deselected objects require a ta
   assert.equal(requiresActivation(null, [], new Set()), false);
 });
 test("every geometry gesture waits for deliberate travel; pan and commands remain available", () => {
-  for (const mode of ["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]) {
+  for (const mode of ["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "leader-elbow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]) {
     assert.equal(canStartGeometryDrag(mode, false), false, mode);
     assert.equal(canStartGeometryDrag(mode, true), true, mode);
   }

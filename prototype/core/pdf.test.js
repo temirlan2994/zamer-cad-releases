@@ -136,6 +136,17 @@ test("plot bounds include a multiline leader's full label even at the plan edge"
   close(bounds.maxY, 290);
 });
 
+test("plot bounds include an explicit bend outside the arrow and label extents", () => {
+  const note = { type: "line", layer: "text", dimensionKind: "leader", leaderLine: "bent", leaderFrame: true,
+    x1: -200, y1: -300, x2: 1000, y2: 0, leaderElbow: { x: -950, y: 1200 }, textHeight: 200, text: "Точка" };
+  const bent = pdfPlotBounds([note]);
+  close(bent.minX, -950);
+  close(bent.maxY, 1200);
+  const straight = pdfPlotBounds([{ ...note, leaderLine: "straight" }]);
+  close(straight.minX, -200);
+  close(straight.maxY, 170);
+});
+
 test("PDF object table uses byte offsets even with binary data and multiple pages", async () => {
   const jpeg = Uint8Array.of(255, 216, 0, 195, 222, 255, 217);
   const pages = [
