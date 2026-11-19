@@ -1693,17 +1693,21 @@ button.project-card-open:active { background: var(--surface-2); }
 .select-tool-menu {
   bottom: auto;
   gap: 2px;
-  grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   left: auto;
   padding: 4px;
   top: var(--workspace-edit-panel-top);
-  width: min(328px, calc(100% - 16px));
+  max-width: calc(100% - 16px);
+  width: max-content;
 }
 
 .select-tool-menu button {
   align-content: center;
   height: 44px;
-  min-width: 0;
+  flex: 0 0 44px;
+  width: 44px;
   padding: 0;
   touch-action: manipulation;
 }
