@@ -747,7 +747,7 @@ const state = {
   selectedId: null,
   selectedIds: [],
   selectedEndpoint: null,
-  selectedArcGrip: null,
+  selectedFigureGrip: null,
   copyPicking: null,
   endpointEditBefore: null,
   selectionDrag: null,
@@ -2386,7 +2386,7 @@ function restoreProject(project) {
     state.selectionDrag = null;
     state.copyPicking = null;
     copyToolMenu.hidden = true;
-    state.selectedArcGrip = null;
+    state.selectedFigureGrip = null;
     state.selectedEndpoint = null;
     state.endpointEditBefore = null;
     state.undo = [];
@@ -2713,8 +2713,8 @@ function cursorSnapResolved() {
     state.polarSnapGuide = null;
     return { point: first, snap: { ...first, type: "end", label: "Начальная вершина" } };
   }
-  if (state.selectedArcGrip) {
-    const origin = state.selectedArcGrip.point;
+  if (state.selectedFigureGrip) {
+    const origin = state.selectedFigureGrip.point;
     const resolved = resolveSnapWorld(raw);
     return distanceWorld(raw, origin) <= linePointEpsilon ? { point: origin, snap: null } : resolved;
   }
@@ -2891,7 +2891,7 @@ function shouldGhostEntityForCommand(entity) {
   if (printRendering) return false;
   if (state.lineEdit?.pending?.replacements.some(([target]) => target.id === entity.id)) return true;
   if (state.pointer?.mode === "figure-grip" && state.pointer.preview && state.pointer.grip.entityId === entity.id) return true;
-  if (state.selectedArcGrip?.entityId === entity.id) return true;
+  if (state.selectedFigureGrip?.entityId === entity.id) return true;
   return Boolean(
     state.moveCommand?.base &&
       (state.moveCommand.mode === "move" || state.moveCommand.mode === "rotate") &&
@@ -2900,7 +2900,7 @@ function shouldGhostEntityForCommand(entity) {
 }
 
 function syncCommandState() {
-  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedArcGrip);
+  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedFigureGrip);
   shell.dataset.command = state.offsetCommand ? "offset" : active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
@@ -3156,7 +3156,7 @@ function editableSelectionEntity() {
     !state.moveCommand &&
     !state.offsetCommand &&
     !state.selectedEndpoint &&
-    !state.selectedArcGrip &&
+    !state.selectedFigureGrip &&
     !state.circleRadiusEdit &&
     !state.dimensionAttach &&
     !state.lineEdit &&
@@ -3176,7 +3176,7 @@ function isDirectMoveAnnotation(entity) {
 
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
-  if (!selected.length || state.tool !== "select" || state.selectedArcGrip || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
+  if (!selected.length || state.tool !== "select" || state.selectedFigureGrip || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
   if (state.copyPicking) return false;
   if (action === "delete" || action === "move") return true;
   if (figureCutActions.has(action)) return selected.length === 1 && editableFigure(selected[0], action);
@@ -3227,7 +3227,7 @@ function setSelection(ids, options = {}) {
   if (state.dimensionAttach?.entityId !== state.selectedId) state.dimensionAttach = null;
   state.directManipulationIds = new Set([...state.directManipulationIds].filter(id => state.selectedIds.includes(id)));
   state.selectedEndpoint = null;
-  state.selectedArcGrip = null;
+  state.selectedFigureGrip = null;
   syncSelectionActions();
 }
 
@@ -3473,7 +3473,7 @@ function drawCanvasCenterCursor(rect) {
   const navigating = canvas.matches(":focus-visible");
   const visible =
     navigating || state.tool !== "select" || lineEditPlacesPoint() ||
-    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedArcGrip || state.dimensionAttach || surveyPointPicker);
+    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedFigureGrip || state.dimensionAttach || surveyPointPicker);
   if (!visible) return;
   const center = { x: rect.width / 2, y: rect.height / 2 };
   const red = state.theme === "dark" ? "#ff9a9a" : "#a3282d";
@@ -5779,13 +5779,6 @@ function hideInlineEditors() {
   state.circleRadiusEdit = null;
 }
 
-function showCircleRadiusEditor(entity) {
-  if (entity?.type !== "circle") return;
-  updateCircleMetricFields(Math.abs(entity.radius));
-  statusChip.textContent = "Введите радиус в нижнем углу";
-  draw();
-}
-
 function leaderToolActive() {
   return state.tool === "dimension" && state.dimensionTool === "leader";
 }
@@ -6334,7 +6327,7 @@ function resetSnapTracking() {
 function drawCursorSnap(c) {
   const dimensionStage = state.tool === "dimension" && !surveyPointPicker && !state.leaderInput ? state.drawing?.phase : null;
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
-  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedArcGrip && !state.dimensionAttach &&
+  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedFigureGrip && !state.dimensionAttach &&
     !surveyPointPicker && !lineEditPlacesPoint();
   const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
     : selectOnly || state.leaderInput || dimensionStage === "offset" ? null : cursorSnapResolved();
@@ -6389,7 +6382,7 @@ function nearestSegmentSnapThreshold() {
 }
 
 function isLineSnapContext() {
-  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) || Boolean(state.selectedArcGrip) ||
+  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) || Boolean(state.selectedFigureGrip) ||
     ["line-grip", "figure-grip"].includes(state.pointer?.mode) || ["offset", "mirror", "scale"].includes(state.lineEdit?.mode);
 }
 
@@ -6398,7 +6391,7 @@ function nearestDraftLineSnap(point, start) {
   const intersection = snapEnabled("intersection");
   if (!perpendicular && !intersection) return null;
   const threshold = objectSnapThreshold();
-  const excluded = state.selectedEndpoint?.entityId || state.selectedArcGrip?.entityId || state.pointer?.grip?.entityId;
+  const excluded = state.selectedEndpoint?.entityId || state.selectedFigureGrip?.entityId || state.pointer?.grip?.entityId;
   const boundaries = boundarySegments(excluded);
   const crossing = intersection ? nearestIntersection(point, boundaries, threshold) : null;
   const foot = perpendicular ? nearestPerpendicular(point, start, boundaries, threshold) : null;
@@ -6412,7 +6405,7 @@ function nearestObjectSnap(point, { includeNearestSegment = false, start = null 
   const midpointThreshold = midpointSnapThreshold();
   const nearestThreshold = nearestSegmentSnapThreshold();
   const lineContext = isLineSnapContext();
-  const excluded = lineContext ? state.selectedEndpoint?.entityId || state.selectedArcGrip?.entityId || state.pointer?.grip?.entityId : null;
+  const excluded = lineContext ? state.selectedEndpoint?.entityId || state.selectedFigureGrip?.entityId || state.pointer?.grip?.entityId : null;
   const explicit = nearestDraftLineSnap(point, start);
   if (explicit) return explicit;
   const candidates = snapCandidates({ includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"),
@@ -6864,7 +6857,7 @@ function fitViewport() {
 }
 
 function viewportIsSelecting() {
-  return state.tool === "select" && !state.leaderInput && !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.selectedEndpoint && !state.selectedArcGrip && !state.dimensionAttach;
+  return state.tool === "select" && !state.leaderInput && !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.selectedEndpoint && !state.selectedFigureGrip && !state.dimensionAttach;
 }
 
 function placeAtViewportCenter() {
@@ -7462,7 +7455,7 @@ function setTool(tool) {
   state.tool = tool;
   copyToolMenu.hidden = true;
   state.copyPicking = null;
-  state.selectedArcGrip = null;
+  state.selectedFigureGrip = null;
   state.planZone = isPlanAnnotationZone({ type: tool }) ? { mode: "contour", points: [], lastId: null } : null;
   state.dimensionAttach = null;
   const layer = annotationLayerForTool(tool);
@@ -8739,17 +8732,19 @@ function drawLineEditMarks(c) {
       drawFigureGrips(preview, c, pointer.grip);
     }
   }
-  const arcGrip = state.selectedArcGrip;
-  if (arcGrip) {
-    const entity = state.entities.find(item => item.id === arcGrip.entityId);
+  const grip = state.selectedFigureGrip;
+  if (grip) {
+    const entity = state.entities.find(item => item.id === grip.entityId);
     if (entity) {
-      const geometry = reshapeFigure(entity, arcGrip, cursorWorld());
-      const preview = { ...entity, ...geometry, id: "arc-grip-preview" };
+      const point = cursorWorld();
+      const geometry = reshapeFigure(entity, grip, point);
+      const preview = { ...entity, ...geometry, id: "figure-grip-preview" };
       ctx.save();
       ctx.setLineDash([7, 4]);
-      drawArcEntity(preview, { ...c, line: c.accent });
+      drawEntity(preview, { ...c, line: c.accent });
       ctx.restore();
-      drawFigureGrips(preview, c, arcGrip);
+      if (grip.key === "radius" && geometry) drawEndpointHandle(worldToScreen(point), true, c);
+      else drawFigureGrips(preview, c, grip);
     }
   }
   const edit = state.lineEdit;
@@ -8844,15 +8839,11 @@ function finishFigureGrip(pointer) {
   const entity = state.entities.find(item => item.id === pointer.grip.entityId);
   if (!entity) return;
   if (!pointer.moved) {
-    if (entity.type === "arc") {
-      state.selectedArcGrip = pointer.grip;
-      hideSelectToolMenu();
-      centerViewOnWorldPoint(pointer.grip.point);
-      resetSnapTracking();
-      statusChip.textContent = "Дуга · наведите крестик на новое место точки и тапните";
-    } else if (pointer.grip.key === "radius") showCircleRadiusEditor(entity);
-    else statusChip.textContent = pointer.grip.key === "bend" || pointer.grip.key === "through"
-      ? "Перетащите ручку изгиба" : "Перетащите ручку фигуры";
+    state.selectedFigureGrip = pointer.grip;
+    hideSelectToolMenu();
+    centerViewOnWorldPoint(pointer.grip.point);
+    resetSnapTracking();
+    statusChip.textContent = "Наведите крестик на новое место точки и тапните";
     return;
   }
   if (!pointer.preview) return;
@@ -8868,18 +8859,18 @@ function finishFigureGrip(pointer) {
   resetSnapTracking();
 }
 
-function commitArcGripPoint(point) {
-  const grip = state.selectedArcGrip;
+function commitFigureGripPoint(point) {
+  const grip = state.selectedFigureGrip;
   const entity = state.entities.find(item => item.id === grip.entityId);
   const preview = entity && reshapeFigure(entity, grip, point);
   if (!preview) {
-    statusChip.textContent = "Дуга · укажите другую точку";
+    statusChip.textContent = "Укажите другую точку для фигуры";
     draw();
     return;
   }
-  state.selectedArcGrip = null;
+  state.selectedFigureGrip = null;
   finishFigureGrip({ grip, preview, moved: true });
-  statusChip.textContent = "Точка дуги установлена";
+  statusChip.textContent = "Точка установлена";
   draw();
 }
 
@@ -8972,8 +8963,8 @@ function commitCursorPoint() {
   }
   const resolved = cursorSnapResolved();
   const world = resolved.point;
-  if (state.selectedArcGrip) {
-    commitArcGripPoint(world);
+  if (state.selectedFigureGrip) {
+    commitFigureGripPoint(world);
     return;
   }
   if (state.selectedEndpoint) {
@@ -9326,7 +9317,7 @@ canvas.addEventListener("pointerdown", (event) => {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
     return;
   }
-  if (state.selectedArcGrip) {
+  if (state.selectedFigureGrip) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "endpoint-place" };
     return;
   }
@@ -9758,7 +9749,7 @@ function finishCanvasPointer(event, canceled = false) {
     }
   } else if (state.pointer?.mode === "endpoint-place") {
     if (!canceled && !state.pointer.moved) {
-      if (state.selectedArcGrip) commitArcGripPoint(cursorWorld());
+      if (state.selectedFigureGrip) commitFigureGripPoint(cursorWorld());
       else commitSelectedEndpointCursorPoint(state.pointer.before);
     } else {
       draw();
@@ -10984,11 +10975,11 @@ document.addEventListener("keydown", (event) => {
     draw();
     return;
   }
-  if (state.selectedArcGrip && event.key === "Escape" && !event.target.closest("dialog")) {
+  if (state.selectedFigureGrip && event.key === "Escape" && !event.target.closest("dialog")) {
     event.preventDefault();
-    state.selectedArcGrip = null;
+    state.selectedFigureGrip = null;
     resetSnapTracking();
-    statusChip.textContent = "Правка точки дуги отменена";
+    statusChip.textContent = "Правка точки отменена";
     draw();
     return;
   }
@@ -11217,6 +11208,7 @@ keyboardInputs.forEach((input) => {
     if (input === lengthInput && !state.drawing) {
       const circle = selectedCircleForMetrics();
       if (circle && state.circleRadiusEdit?.entityId !== circle.id) {
+        state.selectedFigureGrip = null;
         state.circleRadiusEdit = { entityId: circle.id, before: entityGeometry(circle) };
       }
     }
