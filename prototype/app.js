@@ -2483,13 +2483,14 @@ function lineAxisAngle(axis, start, end) {
 }
 
 function cursorSnapResolved() {
-  const raw = screenToWorld(centerScreen());
+  const raw = rawCursorWorld();
   if (state.dimensionAttach) {
     const snap = dimensionAttachCandidate(raw);
     return { point: snap ? { x: snap.x, y: snap.y } : raw, snap };
   }
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
   if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
+  if (lineEditPlacesPoint()) return resolveLineEditPoint(state.lineEdit, raw);
   if (state.planZone?.mode === "existing") return { point: raw, snap: null };
   if (state.planZone?.mode === "contour" && planContourClosesAtCursor(state.planZone.points)) {
     const first = state.planZone.points[0];
@@ -3227,7 +3228,7 @@ function drawGrid(rect, c) {
 function drawCanvasCenterCursor(rect) {
   const navigating = canvas.matches(":focus-visible");
   const visible =
-    navigating || state.tool !== "select" ||
+    navigating || state.tool !== "select" || lineEditPlacesPoint() ||
     Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.dimensionAttach || surveyPointPicker);
   if (!visible) return;
   const center = { x: rect.width / 2, y: rect.height / 2 };
@@ -5980,7 +5981,8 @@ function resetSnapTracking() {
 function drawCursorSnap(c) {
   const dimensionStage = state.tool === "dimension" && !surveyPointPicker ? state.drawing?.phase : null;
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
-  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach && !surveyPointPicker;
+  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach &&
+    !surveyPointPicker && !lineEditPlacesPoint();
   const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
     : selectOnly || dimensionStage === "offset" ? null : cursorSnapResolved();
   const chooseSnap = state.tool === "dimension" && !surveyPointPicker && resolved?.snapCount > 1;
@@ -6514,7 +6516,8 @@ function placeAtViewportCenter() {
   if (surveyPointPicker) {
     commitSurveyPoint();
   } else if (state.lineEdit) {
-    pickLineEditPoint(centerScreen());
+    if (state.lineEdit.pending) applyLineEditPreview();
+    else pickLineEditPoint(centerScreen());
   } else if (viewportIsSelecting()) {
     applyTapSelection(pickEntity(centerScreen()));
     draw();
@@ -7804,12 +7807,12 @@ function startLineEdit(mode, entity, { quick = false } = {}) {
   lineUi.lineEditRadiusControl.querySelector("span").textContent = `Радиус, ${projectUnit(state.measurementSettings).label}`;
   const prompts = {
     ...boundaryEditPrompts,
-    break: "Укажите первую точку на выбранном объекте",
+    break: "Наведите крестик на первую точку разрыва",
     join: "Соединить: выберите линии на той же прямой",
     lengthen: "Длина: введите значение и выберите конец на линии",
     fillet: "Скругление: коснитесь сохраняемой стороны первой линии",
     offset: "Смещение: введите расстояние или выберите «Через точку»",
-    mirror: "Зеркало: укажите первую точку оси отражения",
+    mirror: "Наведите крестик на первую точку оси отражения",
     scale: "Масштаб: введите коэффициент и укажите базовую точку",
   };
   setLineEditHint(prompts[mode]);
@@ -7893,8 +7896,8 @@ function submitLineLength() {
   edit.lengthMode = mode;
   input.removeAttribute("aria-invalid");
   const next = {
-    distance: "Коснитесь нужной стороны исходной линии",
-    factor: "Укажите базовую точку масштабирования",
+    distance: "Наведите крестик на нужную сторону линии",
+    factor: "Наведите крестик на базу масштабирования",
   };
   setLineEditHint(next[mode] || "Коснитесь линии ближе к концу, который нужно изменить");
   input.blur();
@@ -7912,6 +7915,19 @@ function finishLineJoin() {
     return;
   }
   previewLineEdit([[source, [coordinates]], ...others.map((entity) => [entity, []])], "Линии соединены", [], "join");
+}
+
+function lineEditPlacesPoint(edit = state.lineEdit) {
+  return Boolean(edit && (["break", "offset", "mirror", "scale"].includes(edit.mode) ||
+    (edit.mode === "lengthen" && edit.lengthMode === "dynamic" && edit.firstPick)));
+}
+
+function resolveLineEditPoint(edit, raw) {
+  if (edit.mode === "mirror" && edit.firstPick) return resolveLineLikeSnap(raw, edit.firstPick);
+  if (edit.mode === "mirror" || edit.mode === "scale" || (edit.mode === "offset" && edit.lengthMode === "through")) {
+    return resolveSnapWorld(raw);
+  }
+  return { point: raw, snap: null };
 }
 
 function pickLineEditPoint(screen) {
@@ -7936,7 +7952,7 @@ function pickLineEditPoint(screen) {
     draw();
     return;
   }
-  const point = screenToWorld(screen);
+  const point = lineEditPlacesPoint(edit) ? cursorWorld() : screenToWorld(screen);
   if (["offset", "mirror", "scale"].includes(edit.mode)) {
     placeLineTransform(edit, source, point);
     return;
@@ -8007,7 +8023,7 @@ function pickLineEditPoint(screen) {
     if (!projected) return setLineEditHint("Укажите точку на объекте");
     if (!edit.firstPick) {
       edit.firstPick = projected;
-      setLineEditHint("Укажите вторую точку зазора");
+      setLineEditHint("Наведите крестик на вторую точку зазора");
       draw();
       return;
     }
@@ -8027,7 +8043,7 @@ function pickLineEditPoint(screen) {
     if (edit.lengthMode === "dynamic") {
       edit.firstPick = point;
       edit.dynamicLineId = hit.id;
-      setLineEditHint("Укажите точку для новой длины вдоль линии");
+      setLineEditHint("Наведите крестик на новое положение конца");
       draw();
       return;
     }
@@ -8079,11 +8095,10 @@ function applyQuickEdit(mode, screen) {
   }
 }
 
-function placeLineTransform(edit, source, raw) {
+function placeLineTransform(edit, source, point) {
   if (edit.mode === "offset") {
     const through = edit.lengthMode === "through";
     if (!through && edit.amount === null) return setLineEditHint("Укажите расстояние и нажмите галочку");
-    const point = through ? resolveSnapWorld(raw).point : raw;
     const coordinates = parallelLine(source, point, through ? null : edit.amount);
     if (!coordinates) return setLineEditHint("Укажите точку вне оси исходной линии");
     previewLineEdit([], "Смещение создано", [{ ...source, ...coordinates, id: newLineId() }]);
@@ -8091,19 +8106,18 @@ function placeLineTransform(edit, source, raw) {
   }
   if (edit.mode === "scale") {
     if (edit.amount === null) return setLineEditHint("Укажите коэффициент и нажмите галочку");
-    const coordinates = scaleLine(source, resolveSnapWorld(raw).point, edit.amount);
+    const coordinates = scaleLine(source, point, edit.amount);
     if (!coordinates) return setLineEditHint("Масштабирование невозможно с этим коэффициентом");
     previewLineEdit([[source, [coordinates]]], "Масштаб линии изменён");
     return;
   }
   if (!edit.firstPick) {
-    edit.firstPick = resolveSnapWorld(raw).point;
-    setLineEditHint("Укажите вторую точку оси отражения");
+    edit.firstPick = point;
+    setLineEditHint("Наведите крестик на вторую точку оси отражения");
     draw();
     return;
   }
-  const second = resolveLineLikeSnap(raw, edit.firstPick).point;
-  const coordinates = mirrorLine(source, edit.firstPick, second);
+  const coordinates = mirrorLine(source, edit.firstPick, point);
   if (!coordinates) return setLineEditHint("Точки оси отражения должны различаться");
   if (lineUi.lineMirrorDelete.checked) {
     previewLineEdit([[source, [coordinates]]], "Линия отражена");
@@ -8478,13 +8492,13 @@ function selectLineEndpoint(endpoint) {
   return true;
 }
 
-function commitCursorPoint(screen = centerScreen()) {
+function commitCursorPoint() {
   if (surveyPointPicker) {
     commitSurveyPoint();
     return;
   }
   if (state.planZone) {
-    commitPlanAnnotationPoint(screen);
+    commitPlanAnnotationPoint();
     return;
   }
   if (state.dimensionAttach) {
@@ -9318,7 +9332,7 @@ function finishCanvasPointer(event, canceled = false) {
       if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
       draw();
     } else {
-      commitCursorPoint(state.pointer.startScreen);
+      commitCursorPoint();
     }
   } else {
     finishPointerMoveUndo();
@@ -10417,7 +10431,7 @@ lineUi.lineBreakControl.addEventListener("click", (event) => {
   edit.breakMode = mode;
   edit.pending = null;
   edit.firstPick = null;
-  setLineEditHint(mode === "point" ? "Укажите точку деления" : "Укажите первую точку зазора");
+  setLineEditHint(mode === "point" ? "Наведите крестик на точку деления" : "Наведите крестик на первую точку зазора");
   draw();
 });
 for (const input of [lineUi.lineEditRadius, lineUi.lineMirrorDelete, lineUi.lineLengthInput]) {
@@ -10456,7 +10470,7 @@ lineUi.lineLengthModes.addEventListener("click", (event) => {
   state.lineEdit.pending = null;
   state.lineEdit.lengthMode = mode;
   syncLineQuantityFields();
-  if (mode === "through") setLineEditHint("Коснитесь точки, через которую пройдёт параллельная линия");
+  if (mode === "through") setLineEditHint("Наведите крестик на точку для параллели");
   else if (mode === "dynamic") setLineEditHint("Коснитесь линии ближе к нужному концу");
   else setLineEditHint("Введите значение и нажмите галочку");
   draw();
@@ -11428,8 +11442,7 @@ document.getElementById("planAnnotationSign").addEventListener("click", () => {
   input.focus();
 });
 
-function choosePlanContour(screen) {
-  const world = screenToWorld(screen);
+function choosePlanContour(world) {
   const ranked = [];
   const visible = state.entities.filter((entity) => isLayerVisible(entity.layer));
   for (const entity of visible) {
@@ -11500,13 +11513,13 @@ async function finishPlanAnnotation(points = state.planZone?.points) {
   draw();
 }
 
-function commitPlanAnnotationPoint(screen) {
+function commitPlanAnnotationPoint() {
   const zone = state.planZone;
   hideAnnotationToolMenu();
   if (zone.mode === "existing") {
-    const points = choosePlanContour(screen);
+    const points = choosePlanContour(rawCursorWorld());
     if (points) void finishPlanAnnotation(points);
-    else statusChip.textContent = "Замкнутая область здесь не найдена";
+    else statusChip.textContent = "Под крестиком нет замкнутой области";
     return;
   }
   if (zone.mode === "contour" && planContourClosesAtCursor(zone.points)) {
@@ -11534,7 +11547,7 @@ function commitPlanAnnotationPoint(screen) {
 }
 
 function planAnnotationModeHint(mode) {
-  if (mode === "existing") return "Коснитесь контура или внутри замкнутой области";
+  if (mode === "existing") return "Наведите крестик внутрь замкнутой области";
   if (mode === "rectangle") return "Укажите первый угол";
   return "Укажите первую точку контура";
 }
