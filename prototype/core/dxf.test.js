@@ -294,10 +294,28 @@ test("zones export closed editable XY contours and native labels on separate col
       assert.deepEqual(contour.fields.get("20"), ["300", "300", "-1700", "-1700"]);
       assert.equal(Number(contour.fields.get("38")?.[0] ?? 0), 0);
     }
-    assert.deepEqual(area.slice(1).map(({ fields }) => fields.get("1")[0]), ["Зона кухни", "Площадь 8 м²"]);
-    assert.deepEqual(elevation[1].fields.get("1"), ["Ригель · Z -150 мм"]);
+    assert.deepEqual(area.slice(1).map(({ fields }) => fields.get("1")[0]), ["8 м²", "Зона кухни"]);
+    assert.deepEqual(elevation[1].fields.get("1"), ["Z -150 мм"]);
     assert.equal(Number(elevation[1].fields.get("30")[0]), 0);
     for (const { fields } of elevation) assert.equal(Number(fields.get("420")[0]), 0x9a5b17);
+    const custom = entityRecords(build([{ ...beam, label: "Под балкой" }])).filter(({ type }) => type === "TEXT");
+    assert.deepEqual(custom.map(({ fields }) => fields.get("1")[0]), ["Z -150 мм", "Под балкой"]);
+  }
+});
+
+test("CAD annotation scale changes automatic label height and preserves entered text height", () => {
+  const fixture = [{ type: "line", layer: "dimensions", x1: 0, y1: 0, x2: 2400, y2: 0, offset: 320 },
+    { type: "elevation", id: "ceiling", height: 2700, zoneStyle: "ceiling",
+      points: [{ x: 0, y: 0 }, { x: 6500, y: 0 }, { x: 6500, y: 4800 }, { x: 0, y: 4800 }] },
+    { type: "text", layer: "text", x: 100, y: 100, text: "Замер", height: 200 }];
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const small = build(fixture, { annotationScale: 0.85 });
+    const large = build(fixture, { annotationScale: 1.3 });
+    for (const label of ["2400 мм", "Z +2700 мм"]) {
+      assert.match(small, new RegExp(`\\n40\\n120\\n1\\n${label.replace("+", "\\+")}\\n`));
+      assert.match(large, new RegExp(`\\n40\\n183\\.529\\n1\\n${label.replace("+", "\\+")}\\n`));
+    }
+    for (const dxf of [small, large]) assert.match(dxf, /\n40\n200\n1\nЗамер\n/);
   }
 });
 

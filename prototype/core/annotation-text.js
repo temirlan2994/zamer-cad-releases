@@ -1,4 +1,18 @@
 export const ANNOTATION_LINE_SPACING = 1.2;
+const REFERENCE_VIEW_SCALE = 0.085;
+
+export function annotationScaleFactor(value) {
+  return Math.min(1.8, Math.max(0.65, Number(value) || 1));
+}
+
+export function annotationWorldSize(referencePixels, scaleFactor) {
+  return referencePixels * annotationScaleFactor(scaleFactor) / REFERENCE_VIEW_SCALE;
+}
+
+export function auxiliaryAnnotationSize(referencePixels, viewScale) {
+  const zoom = Math.min(1.25, Math.max(0.72, Math.sqrt(viewScale / REFERENCE_VIEW_SCALE)));
+  return referencePixels * zoom;
+}
 
 export function annotationTextLines(text) {
   return String(text || "Текст").split(/\r\n|\r|\n/u);
@@ -7,6 +21,18 @@ export function annotationTextLines(text) {
 export function annotationTextWidth(lines, height) {
   const longest = lines.reduce((width, line) => Math.max(width, [...line].length), 0);
   return Math.max(height * 0.8, longest * height * 0.64);
+}
+
+export function leaderTextHeight(entity) {
+  return Math.abs(entity.textHeight || entity.height || 200);
+}
+
+export function leaderFrameSize(height, textWidth, count, style, spacing = ANNOTATION_LINE_SPACING) {
+  const horizontalPadding = height * (style === "boxed" ? 2 / 3 : 0.25);
+  return {
+    width: Math.max(height * 1.6, textWidth + horizontalPadding * 2),
+    height: height * (1.7 + (count - 1) * spacing),
+  };
 }
 
 export function leaderPlanPath(arrow, rect, style, landingLength) {

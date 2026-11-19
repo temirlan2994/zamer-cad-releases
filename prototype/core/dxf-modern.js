@@ -1,9 +1,10 @@
-import { annotationTextLines, annotationTextWidth, leaderPlanPath } from "./annotation-text.js";
+import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
 import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./dimensions.js";
+import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
 import { pointInPolygon } from "./geometry.js";
 import {
-  formatPlanArea, formatPlanElevation, planAnnotationAnchors, planAnnotationGeometry,
+  planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines,
   PLAN_ANNOTATION_LAYERS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES,
 } from "./plan-annotations.js";
 
@@ -72,11 +73,11 @@ function appendPlanLeader(out, entity, layer) {
   const arrow = { x: x1, y: y1 };
   const center = { x: x2, y: y2 };
   const lines = annotationTextLines(entity.text);
-  const height = Math.abs(entity.textHeight || entity.height || 200);
-  const width = annotationTextWidth(lines, height) + height * 1.25;
-  const labelHeight = ((lines.length - 1) * DXF_LINE_SPACING + 1.9) * height;
-  const rect = { x: x2 - width / 2, y: y2 - labelHeight / 2, width, height: labelHeight };
+  const height = leaderTextHeight(entity);
   const style = entity.leaderStyle || "boxed";
+  const frame = leaderFrameSize(height, annotationTextWidth(lines, height), lines.length, style, DXF_LINE_SPACING);
+  const { width, height: labelHeight } = frame;
+  const rect = { x: x2 - width / 2, y: y2 - labelHeight / 2, width, height: labelHeight };
   const path = leaderPlanPath(arrow, rect, style, 1.1 * height);
   for (let i = 1; i < path.length; i += 1) appendLine(out, path[i - 1], path[i], layer);
   const direction = path.find((point) => Math.hypot(point.x - x1, point.y - y1) > POINT_EPSILON);
@@ -128,16 +129,13 @@ function placeZoneLabel(geometry, anchor, width, height, occupied) {
   return position;
 }
 
-function planZoneRecords({ entity, geometry, layer, anchor }, occupied) {
+function planZoneRecords({ entity, geometry, layer, anchor }, occupied, scaleFactor) {
   const styleKey = Object.hasOwn(PLAN_ELEVATION_STYLES, entity.zoneStyle) ? entity.zoneStyle : "ceiling";
   const style = entity.type === "elevation" ? PLAN_ELEVATION_STYLES[styleKey] : null;
-  const label = style ? `${style.label} · Z ${formatPlanElevation(entity.height)}` : `Площадь ${formatPlanArea(geometry.areaM2)}`;
-  const custom = typeof entity.label === "string" ? entity.label.trim() : "";
-  const lines = custom ? [...annotationTextLines(custom), label] : [label];
-  const { minX, maxX, minY, maxY } = geometry.bounds;
-  const labelWidth = annotationTextWidth(lines, 1) * 1.2;
-  const labelHeight = (lines.length - 1) * DXF_LINE_SPACING + 1.5;
-  const height = Math.min(210, (maxX - minX) * 0.75 / labelWidth, (maxY - minY) * 0.75 / labelHeight);
+  const lines = planZoneLabelLines(entity, geometry);
+  const labelWidth = annotationTextWidth(lines, 1) * 1.2 + 1.2;
+  const labelHeight = (lines.length - 1) * DXF_LINE_SPACING + 1.7;
+  const height = planZoneLabelHeight(lines, geometry.bounds, scaleFactor);
   const records = [];
   appendDxfPolyline(records, { points: geometry.points, closed: true }, layer, true);
   if (height >= 0.001) {
@@ -147,32 +145,23 @@ function planZoneRecords({ entity, geometry, layer, anchor }, occupied) {
   return { records, trueColor: style ? Number.parseInt(style.color.slice(1), 16) : null };
 }
 
-function linearDimension(entity, layer) {
+function linearDimension(entity, layer, scaleFactor) {
   const geometry = dimensionGeometry(entity);
-  if (!geometry || geometry.measurement <= POINT_EPSILON) return null;
-  const { start, end, lineStart, lineEnd, measurement, mode, offset } = geometry;
+  const art = linearDimensionArtwork(geometry, scaleFactor);
+  if (!art || geometry.measurement <= POINT_EPSILON) return null;
+  const { start, end, lineStart, lineEnd, measurement, mode } = geometry;
   const dx = lineEnd.x - lineStart.x;
   const dy = lineEnd.y - lineStart.y;
-  const length = Math.hypot(dx, dy);
-  if (!Number.isFinite(length) || length <= POINT_EPSILON) return null;
-  const ux = dx / length;
-  const uy = dy / length;
+  const { ux, uy, label, arrowSize, textHeight, rotation } = art;
   const text = `${formatDimensionLength(geometry)} мм`;
-  const arrowSize = Math.min(180, length * 0.07);
-  const textHeight = Math.min(260, Math.max(120, length * 0.045));
-  const midpoint = offsetPoint(lineStart, dx / 2, dy / 2);
-  const reverse = Math.abs(dx) >= Math.abs(dy) ? dx < 0 : dy < 0;
-  const side = (offset < 0 ? -1 : 1) * (reverse ? -1 : 1);
-  const label = offsetPoint(midpoint, -uy * side * textHeight, ux * side * textHeight);
   const degrees = Math.atan2(dy, dx) * 180 / Math.PI;
-  const rotation = degrees > 90 ? degrees - 180 : degrees <= -90 ? degrees + 180 : degrees;
   const graphics = [];
-  appendLine(graphics, start, lineStart, layer);
-  appendLine(graphics, end, lineEnd, layer);
-  appendLine(graphics, lineStart, lineEnd, layer);
-  appendArrow(graphics, lineStart, ux, uy, arrowSize, layer);
-  appendArrow(graphics, lineEnd, -ux, -uy, arrowSize, layer);
-  appendCenteredText(graphics, label, text, textHeight, rotation, layer);
+  appendLine(graphics, art.start, art.extensionStart, layer);
+  appendLine(graphics, art.end, art.extensionEnd, layer);
+  appendLine(graphics, art.lineStart, art.lineEnd, layer);
+  appendArrow(graphics, art.lineStart, ux, uy, arrowSize, layer);
+  appendArrow(graphics, art.lineEnd, -ux, -uy, arrowSize, layer);
+  appendCenteredText(graphics, label, text, textHeight, rotation * 180 / Math.PI, layer);
   const nativeMeasurement = Math.abs((end.x - start.x) * ux + (end.y - start.y) * uy);
   const aligned = mode === "aligned";
   const textOverride = Math.abs(nativeMeasurement - measurement) <= POINT_EPSILON ? "<> мм" : text;
@@ -185,18 +174,12 @@ function linearDimension(entity, layer) {
   };
 }
 
-function angularDimension(entity, layer) {
+function angularDimension(entity, layer, scaleFactor) {
   const geometry = angularDimensionGeometry(entity);
-  if (!geometry) return null;
+  const artwork = angularDimensionArtwork(geometry, scaleFactor);
+  if (!artwork) return null;
   const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
-  const radius = Math.min(1000, Math.min(Math.hypot(arm1.x - vertex.x, arm1.y - vertex.y),
-    Math.hypot(arm2.x - vertex.x, arm2.y - vertex.y)) * 0.52);
-  if (!Number.isFinite(radius) || radius <= POINT_EPSILON) return null;
-  const textHeight = Math.min(260, Math.max(120, radius * 0.25));
-  const middleAngle = startAngle + sweep / 2;
-  const atMiddle = (distance) => offsetPoint(vertex, Math.cos(middleAngle) * distance, Math.sin(middleAngle) * distance);
-  const base = atMiddle(radius);
-  const label = atMiddle(radius + textHeight);
+  const { radius, textHeight, base, label } = artwork;
   const text = `${Math.round(measurement)}°`;
   const graphics = [];
   appendLine(graphics, vertex, arm1, layer);
@@ -279,7 +262,7 @@ function appendLayouts(out, nextHandle, modelSpace, paperSpace) {
   out.push(0, "ENDSEC");
 }
 
-export function writeModernDxf(entities, profile) {
+export function writeModernDxf(entities, { profile, annotationScale } = {}) {
   const model = [];
   const dimensions = [];
   const annotations = [];
@@ -294,14 +277,14 @@ export function writeModernDxf(entities, profile) {
   const anchors = planAnnotationAnchors(entities.filter(Boolean));
   for (const entity of entities) {
     if (entity?.type === "line" && entity.dimensionKind === "angular") {
-      const dimension = angularDimension(entity, dimensionLayer);
+      const dimension = angularDimension(entity, dimensionLayer, annotationScale);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "line" && entity.dimensionKind === "leader") {
       const records = [];
       appendPlanLeader(records, entity, textLayer);
       annotations.push({ records });
     } else if (entity?.type === "line" && entity.layer === "dimensions") {
-      const dimension = linearDimension(entity, dimensionLayer);
+      const dimension = linearDimension(entity, dimensionLayer, annotationScale);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "text") {
       const records = [];
@@ -336,7 +319,8 @@ export function writeModernDxf(entities, profile) {
     [styleHandle, 2, STYLE, 70, 0, 40, 0, 41, 1, 50, 0, 71, 0, 42, 120, 3, "arial.ttf", 4, ""],
   ]);
   appendTable(out, nextHandle, "DIMSTYLE", "AcDbDimStyleTableRecord", [
-    [nextHandle(), 2, STYLE, 70, 0, 40, 1, 41, 80, 140, 120, 179, 0, 271, 0, 275, 0, 277, 2, 340, styleHandle],
+    [nextHandle(), 2, STYLE, 70, 0, 40, 1, 41, annotationWorldSize(9, annotationScale),
+      140, annotationWorldSize(12, annotationScale), 179, 0, 271, 0, 275, 0, 277, 2, 340, styleHandle],
   ]);
   appendTable(out, nextHandle, "BLOCK_RECORD", "AcDbBlockTableRecord", blocks.map(({ handle, name, layout }) =>
     [handle, 2, name, 340, layout ?? 0, 70, 0, 280, 1, 281, 0]));
@@ -349,7 +333,7 @@ export function writeModernDxf(entities, profile) {
   const occupied = [];
   // Small zones have fewer places for a readable label, so reserve their space first.
   const zoneRecords = new Map([...zones].sort((a, b) => a.geometry.areaMm2 - b.geometry.areaMm2)
-    .map((zone) => [zone, planZoneRecords(zone, occupied)]));
+    .map((zone) => [zone, planZoneRecords(zone, occupied, annotationScale)]));
   for (const zone of zones) {
     const annotation = zoneRecords.get(zone);
     appendPrimitiveEntities(out, annotation.records, modelSpace.handle, nextHandle, annotation.trueColor);

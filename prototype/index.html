@@ -2,9 +2,9 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=233" />
+    <link rel="stylesheet" href="./styles.css?v=234" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -88,6 +88,10 @@
             <strong>Замер квартиры</strong>
             <span>ММ • 1:50</span>
           </div>
+          <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Быстрая правка">
+            <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false"><span aria-hidden="true">✂</span></button>
+            <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false"><span aria-hidden="true">⇥</span></button>
+          </div>
         </div>
         <div class="topbar-actions" role="group" aria-label="Действия с чертежом">
           <select class="annotation-scale-control" id="annotationScaleSelect" title="Масштаб подписей" aria-label="Масштаб подписей">
@@ -160,19 +164,14 @@
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
-          <button class="tool active" data-tool="select" aria-label="ESC — отменить команду и выбрать объект"><span>↖</span><small>ESC</small></button>
+          <button class="tool active" data-tool="select" aria-label="Курсор. Удерживайте для режимов выбора" title="Долгое нажатие открывает режимы выбора" aria-expanded="false" aria-controls="selectModeMenu"><span>↖</span><small>ESC</small></button>
           <button class="tool" data-tool="line" aria-pressed="false"><span>╱</span><small>Линия</small></button>
           <button class="tool tool-with-menu" id="figureToolButton" type="button" title="Фигуры" aria-controls="drawToolMenu" aria-expanded="false"><span>▭</span><small>Фигуры</small></button>
-          <button class="tool" id="quickTrimTool" type="button" aria-controls="lineEditOptions" aria-pressed="false"><span aria-hidden="true">✂</span><small>Обрезать</small></button>
           <button class="tool" data-tool="dimension" type="button" aria-controls="dimensionToolMenu" aria-expanded="false"><span>↔</span><small>Размеры</small></button>
           <button class="tool" data-tool="annotation" type="button" aria-controls="annotationToolMenu" aria-expanded="false"><span>T</span><small>Аннотация</small></button>
         </nav>
 
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
-          <div class="line-command-actions quick-edit-modes" id="quickEditModes" role="group" aria-label="Быстрая правка" hidden>
-            <button type="button" data-quick-edit="trim" aria-pressed="true">Обрезать</button>
-            <button type="button" data-quick-edit="extend" aria-pressed="false">Удлинить</button>
-          </div>
           <p class="line-command-hint" id="lineEditHint" role="status" hidden></p>
           <label class="line-mode-control" id="lineBoundaryControl" hidden>
             <span>Границы</span>
@@ -218,25 +217,7 @@
           <button id="planAnnotationClose" type="button" hidden>Замкнуть контур</button>
           <button id="planAnnotationEdit" type="button" hidden>Изменить аннотацию</button>
         </div>
-        <p class="viewport-nonvisual" id="viewportKeyboardHelp">Стрелки перемещают вид. С Shift шаг меньше. Enter ставит точку или выбирает объект в центре.</p>
-        <details class="viewport-tools" id="viewportTools">
-          <summary aria-label="Вид чертежа">Вид</summary>
-          <div class="viewport-controls" role="group" aria-label="Навигация по чертежу">
-            <div class="viewport-zoom">
-              <button type="button" data-view-action="zoom-out" aria-label="Уменьшить масштаб">−</button>
-              <button type="button" data-view-action="zoom-in" aria-label="Увеличить масштаб">+</button>
-              <button type="button" data-view-action="fit">Вписать</button>
-            </div>
-            <div class="viewport-pan">
-              <button type="button" data-view-action="left" aria-label="Сместить вид влево">←</button>
-              <button type="button" data-view-action="up" aria-label="Сместить вид вверх">↑</button>
-              <button type="button" data-view-action="down" aria-label="Сместить вид вниз">↓</button>
-              <button type="button" data-view-action="right" aria-label="Сместить вид вправо">→</button>
-              <button type="button" data-view-action="place" aria-label="Выбрать объект в центре">✓</button>
-            </div>
-            <button type="button" data-view-action="objects" aria-haspopup="dialog">Объекты</button>
-          </div>
-        </details>
+        <p class="viewport-nonvisual" id="viewportKeyboardHelp">Стрелки перемещают чертёж, плюс и минус меняют масштаб, Home вписывает. Enter ставит точку или выбирает объект в центре.</p>
         <span class="viewport-nonvisual" id="viewportActionStatus" role="status"></span>
         <div class="center-cursor" aria-hidden="true">
           <span class="cursor-line horizontal"></span>
@@ -244,15 +225,6 @@
         </div>
 
         <div class="status-chip" id="statusChip" role="status" aria-atomic="true">Выберите «Линия» и укажите начало отрезка</div>
-        <div class="line-point-assist" id="linePointAssist" role="group" aria-label="Точные параметры" hidden>
-          <button id="polylineArcMode" type="button" aria-label="Дуга полилинии" aria-pressed="false" hidden>Дуга</button>
-          <button id="openExactMetrics" type="button" aria-label="Ввести точную длину и угол">Точно</button>
-          <select id="lineDirection" aria-label="Направление заданной длины" hidden>
-            <option value="">По курсору</option>
-            <option value="x">X · Горизонталь</option>
-            <option value="y">Y · Вертикаль</option>
-          </select>
-        </div>
         <div class="dimension-assist" id="dimensionAssist" role="group" aria-label="Привязка и ось размера" hidden>
           <button id="dimensionNextSnap" type="button" hidden>Другая точка</button>
           <label id="dimensionAxisControl" hidden>
@@ -270,34 +242,45 @@
           <button id="dimensionLinkCancel" type="button" hidden>Отмена привязки</button>
         </div>
         <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
-        <div class="draw-metrics" id="drawMetrics" hidden>
-          <label>
-            <span>L</span>
-            <span class="metric-readout" id="topLengthReadout">0</span>
-            <input id="topLengthInput" inputmode="decimal" enterkeyhint="done" aria-label="Длина" hidden />
-            <em>мм</em>
-          </label>
-          <label>
-            <span>°</span>
-            <span class="metric-readout" id="topAngleReadout">0</span>
-            <input id="topAngleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол" hidden />
-          </label>
+        <div class="corner-metrics" id="cornerMetrics" role="group" aria-label="Точные параметры" hidden>
+          <div class="line-point-assist" id="linePointAssist" hidden>
+            <button id="polylineArcMode" type="button" aria-label="Дуга полилинии" aria-pressed="false" hidden>Дуга</button>
+            <select id="lineDirection" aria-label="Направление заданной длины" hidden>
+              <option value="">По курсору</option>
+              <option value="x">X · Горизонталь</option>
+              <option value="y">Y · Вертикаль</option>
+            </select>
+          </div>
+          <div class="corner-metric-row">
+            <div class="metric-fields" id="drawMetrics" hidden>
+              <label class="metric-field">
+                <span class="metric-field-name" id="topLengthName">Длина</span>
+                <input id="topLengthInput" inputmode="decimal" enterkeyhint="done" aria-label="Длина" />
+                <span class="metric-readout" id="topLengthReadout" aria-hidden="true">0</span><span class="metric-unit">мм</span>
+              </label>
+              <label class="metric-field">
+                <span class="metric-field-name" id="topAngleName">Угол</span>
+                <input id="topAngleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол" />
+                <span class="metric-readout" id="topAngleReadout" aria-hidden="true">0</span><span class="metric-unit" id="topAngleUnit">°</span>
+              </label>
+            </div>
+            <div class="metric-fields" id="inlineEditors" hidden>
+              <span class="viewport-nonvisual" id="lineDirectionDescription"></span>
+              <label class="metric-field" id="lengthEditor">
+                <span class="metric-field-name" id="lengthMetricName">Длина</span>
+                <input id="lengthInput" inputmode="decimal" enterkeyhint="done" aria-label="Длина линии" aria-describedby="statusChip lineDirectionDescription" />
+                <span class="metric-readout" id="lengthReadout" aria-hidden="true">0</span><span class="metric-unit">мм</span>
+              </label>
+              <label class="metric-field" id="angleEditor">
+                <span class="metric-field-name">Угол</span>
+                <input id="angleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол линии" aria-describedby="statusChip" />
+                <span class="metric-readout" id="angleReadout" aria-hidden="true">0</span><span class="metric-unit">°</span>
+              </label>
+              <span id="lineDirectionArrow" class="line-direction-arrow" aria-hidden="true" hidden>→</span>
+            </div>
+            <button class="keyboard-confirm" id="keyboardConfirmButton" type="button" title="Подтвердить ввод" aria-label="Подтвердить ввод" hidden>✓</button>
+          </div>
         </div>
-        <div class="inline-editors" id="inlineEditors" hidden>
-          <span class="viewport-nonvisual" id="lineDirectionDescription"></span>
-          <label class="inline-editor length-editor" id="lengthEditor">
-            <span id="lineDirectionArrow" class="line-direction-arrow" aria-hidden="true" hidden>→</span>
-            <span class="metric-readout" id="lengthReadout">0</span>
-            <input id="lengthInput" inputmode="decimal" enterkeyhint="done" aria-label="Длина линии" aria-describedby="statusChip lineDirectionDescription" hidden />
-            <span>мм</span>
-          </label>
-          <label class="inline-editor angle-editor" id="angleEditor">
-            <span class="metric-readout" id="angleReadout">0</span>
-            <input id="angleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол линии" aria-describedby="statusChip" hidden />
-            <span>°</span>
-          </label>
-        </div>
-        <button class="keyboard-confirm" id="keyboardConfirmButton" type="button" title="Подтвердить ввод" aria-label="Подтвердить ввод" hidden>✓</button>
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" role="region" aria-label="Команды правки" hidden>
           <button data-select-tool="cycle"><span>▣</span><small>Рамка</small></button>
           <button data-action="move"><span>↕</span><small>Переместить</small></button>
@@ -377,32 +360,37 @@
       </dialog>
       <dialog class="survey-sheet plan-annotation-editor" id="planAnnotationEditor" aria-labelledby="planAnnotationHeading">
         <header class="sheet-head">
-          <h2 id="planAnnotationHeading"></h2>
+          <h2 id="planAnnotationHeading" tabindex="-1"></h2>
           <button id="planAnnotationCancel" class="icon-button" type="button" aria-label="Закрыть аннотацию">×</button>
         </header>
-        <div class="survey-content">
-          <form class="survey-form">
+        <form class="survey-form" novalidate>
+          <div class="survey-content plan-annotation-content">
             <label id="planAnnotationTextField" class="survey-field"><span>Текст</span><textarea name="text" rows="3" maxlength="240"></textarea></label>
+            <label id="planAnnotationBatchLabelField" class="survey-field" hidden><span>Названия на плане</span>
+              <select name="batchLabelMode"><option value="">Оставить текущие</option><option value="set">Задать одно название</option><option value="clear">Очистить названия</option></select>
+            </label>
             <label id="planAnnotationLabelField" class="survey-field" hidden><span>Название на плане</span><input name="label" maxlength="80" placeholder="Необязательно" /></label>
             <div id="planAnnotationHeightField" class="plan-annotation-height" hidden>
               <label class="survey-field"><span>Высота Z, мм</span><input name="height" inputmode="decimal" autocomplete="off" placeholder="2800" /></label>
               <button type="button" id="planAnnotationSign" aria-label="Изменить знак высоты">−/+</button>
             </div>
-            <label id="planAnnotationZoneField" class="survey-field" hidden><span>Обозначение и цвет</span><select name="zoneStyle"></select></label>
+            <label id="planAnnotationZoneField" class="survey-field" hidden><span>Обозначение и цвет</span><select name="zoneStyle"><option value="">Без изменений</option></select></label>
             <label id="planAnnotationLeaderField" class="survey-field" hidden><span>Вид выноски</span>
-              <select name="leaderStyle"><option value="landing">С полкой</option><option value="plain">Прямая</option><option value="boxed">В рамке</option></select>
+              <select name="leaderStyle"><option value="">Без изменений</option><option value="landing">С полкой</option><option value="plain">Прямая</option><option value="boxed">В рамке</option></select>
             </label>
             <label id="planAnnotationSizeField" class="survey-field" hidden><span>Высота текста на чертеже, мм</span>
               <input name="textHeight" type="number" min="1" max="100000" step="any" inputmode="decimal" />
             </label>
             <p class="survey-feedback" id="planAnnotationError" role="alert"></p>
+          </div>
+          <footer class="plan-annotation-footer">
             <button class="survey-primary" type="submit">Поставить</button>
-          </form>
-        </div>
+          </footer>
+        </form>
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=233"></script>
+    <script type="module" src="./app.js?v=234"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

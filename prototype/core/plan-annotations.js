@@ -1,4 +1,5 @@
 import { pointInPolygon, pointToSegmentDistance, segmentsIntersect } from "./geometry.js";
+import { annotationTextLines, annotationTextWidth, annotationWorldSize } from "./annotation-text.js";
 import { isLinePoint } from "./line-edits.js";
 import { polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
 
@@ -280,4 +281,18 @@ export function formatPlanArea(areaM2) {
 
 export function formatPlanElevation(height) {
   return Number.isFinite(height) ? `${elevationFormatter.format(height)} мм` : "—";
+}
+
+export function planZoneLabelLines(entity, geometry) {
+  const value = entity.type === "area" ? formatPlanArea(geometry.areaM2) : `Z ${formatPlanElevation(entity.height)}`;
+  const label = typeof entity.label === "string" ? entity.label.trim() : "";
+  return label ? [value, ...annotationTextLines(label)] : [value];
+}
+
+export function planZoneLabelHeight(lines, bounds, scaleFactor) {
+  const { minX, maxX, minY, maxY } = bounds;
+  const width = annotationTextWidth(lines, 1) * 1.2 + 1.2;
+  const height = (lines.length - 1) * 1.4 + 1.7;
+  return Math.min(annotationWorldSize(12, scaleFactor), (maxX - minX) * 0.75 / width,
+    (maxY - minY) * 0.75 / height);
 }

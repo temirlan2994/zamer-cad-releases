@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { editableFigure, extendFigure, figureReferenceAt, figureReferencePoint, splitFigure, trimFigure } from "./figure-edits.js";
+import { editableFigure, extendFigure, figureGripPoints, figureReferenceAt, figureReferencePoint, reshapeFigure, splitFigure, trimFigure } from "./figure-edits.js";
 import { arcGeometry } from "./geometry.js";
 import { polylineSegments } from "./polyline.js";
 
@@ -123,4 +123,31 @@ test("trim opens a two-vertex D path and keeps both surviving curved portions jo
   near(first.arc.center, point(0, 0));
   assert.equal(chord.arc, null);
   near(last.arc.center, point(0, 0));
+});
+
+test("figure grips change the intended geometry while rejecting a degenerate drag", () => {
+  const circle = { type: "circle", cx: 0, cy: 0, radius: 100 };
+  assert.deepEqual(reshapeFigure(circle, figureGripPoints(circle)[0], point(0, 175)), { radius: 175 });
+  assert.equal(reshapeFigure(circle, { key: "radius" }, point(0, 0)), null);
+
+  const rectangle = { type: "rectangle", ...edge(0, 0, 100, 100) };
+  assert.deepEqual(reshapeFigure(rectangle, figureGripPoints(rectangle)[1], point(150, -20)), { x2: 150, y1: -20 });
+  assert.equal(reshapeFigure(rectangle, figureGripPoints(rectangle)[1], point(150, 100)), null);
+
+  const arc = { type: "arc", start: point(-100, 0), through: point(0, -100), end: point(100, 0) };
+  const [start, through, end] = figureGripPoints(arc);
+  assert.deepEqual(reshapeFigure(arc, start, point(-120, 0)), { start: point(-120, 0) });
+  assert.deepEqual(reshapeFigure(arc, through, point(0, -60)), { through: point(0, -60) });
+  assert.deepEqual(reshapeFigure(arc, end, point(120, 0)), { end: point(120, 0) });
+  assert.equal(reshapeFigure(arc, through, point(0, 0)), null);
+});
+
+test("moving a polyline bend preserves both endpoints and moving a vertex preserves original bulges", () => {
+  const entity = { ...polyline([point(-100, 0), point(100, 0)], true), bulges: [1, 0] };
+  const [vertex, , bend] = figureGripPoints(entity);
+  assert.equal(bend.key, "bend");
+  assert.deepEqual(reshapeFigure(entity, bend, point(13, -45)), { bulges: [0.45, 0] });
+  assert.equal(reshapeFigure(entity, bend, point(0, 0)), null);
+  assert.deepEqual(reshapeFigure(entity, vertex, point(-120, 0)), { points: [point(-120, 0), point(100, 0)] });
+  assert.deepEqual(entity.bulges, [1, 0]);
 });

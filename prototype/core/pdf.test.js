@@ -66,13 +66,20 @@ test("plot bounds preserve exact extrema of arc segments of a native polyline", 
   close(closed.maxY, 1000);
 });
 
-test("plot bounds use actual dimension line anchors and measured endpoints", () => {
-  const bounds = pdfPlotBounds([{
+test("plot bounds include scaled dimension artwork and ignore replaced legacy anchors", () => {
+  const dimension = {
     type: "line", layer: "dimensions", measurementType: "linear", measurementAxis: "x", offset: 345,
     x1: 0, y1: 0, x2: 300, y2: -42,
     dimX1: -10000, dimY1: -10000, dimX2: 10000, dimY2: 10000,
-  }]);
-  assert.deepEqual(bounds, { minX: 0, minY: -42, maxX: 300, maxY: 345 });
+  };
+  const bounds = pdfPlotBounds([dimension]);
+  close(bounds.minX, -138.70588235294116);
+  close(bounds.minY, -42);
+  close(bounds.maxX, 438.70588235294116);
+  close(bounds.maxY, 345 + 12 / 0.085);
+  const enlarged = pdfPlotBounds([dimension], undefined, 1.3);
+  close(enlarged.maxY, 345 + 12 * 1.3 / 0.085);
+  assert.ok(enlarged.maxX > bounds.maxX);
 });
 
 test("plot bounds cover isolated area and elevation zones without their associated drafting geometry", () => {
@@ -101,8 +108,8 @@ test("plot bounds include a multiline leader's full label even at the plan edge"
   const bounds = pdfPlotBounds([note]);
   close(bounds.minX, -200);
   close(bounds.minY, -300);
-  close(bounds.maxX, 1448);
-  close(bounds.maxY, 220);
+  close(bounds.maxX, 1581.3333333333333);
+  close(bounds.maxY, 290);
 });
 
 test("PDF object table uses byte offsets even with binary data and multiple pages", async () => {

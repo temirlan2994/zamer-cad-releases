@@ -1,8 +1,9 @@
-import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth } from "./annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
-import { dimensionGeometry } from "./dimensions.js";
-import { planAnnotationGeometry } from "./plan-annotations.js";
+import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./dimensions.js";
+import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
+import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
 
 const PT_PER_MM = 72 / 25.4;
@@ -38,35 +39,71 @@ function arcBounds(entity) {
   const { center, radius, startAngle, endAngle, counterClockwise } = arc;
   const sign = counterClockwise ? 1 : -1;
   const sweep = normalizeAnglePositive((endAngle - startAngle) * sign);
-  const points = [entity.start, entity.through, entity.end];
-  for (const angle of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
-    if (normalizeAnglePositive((angle - startAngle) * sign) > sweep + 1e-9) continue;
-    points.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
-  }
-  return boundsOf(points);
+  return boundsOf([entity.start, entity.through, entity.end, ...arcExtrema(center, radius, startAngle, sweep * sign)]);
 }
 
-function entityPlotBounds(entity, textWidth) {
+function arcExtrema(center, radius, startAngle, sweep) {
+  if (Math.abs(sweep) <= Number.EPSILON) return [];
+  return [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
+    .filter((angle) => normalizeAnglePositive((angle - startAngle) * Math.sign(sweep)) <= Math.abs(sweep) + 1e-9)
+    .map((angle) => ({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }));
+}
+
+function textCorners(origin, left, top, right, bottom, rotation = 0) {
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return [[left, top], [right, top], [right, bottom], [left, bottom]].map(([x, y]) => ({
+    x: origin.x + x * cos - y * sin, y: origin.y + x * sin + y * cos,
+  }));
+}
+
+function centeredTextCorners(origin, width, height, rotation) {
+  return textCorners(origin, -width / 2, -height / 2, width / 2, height / 2, rotation);
+}
+
+function dimensionPlotBounds(entity, textWidth, scaleFactor) {
+  if (entity.dimensionKind === "angular") {
+    const geometry = angularDimensionGeometry(entity);
+    const art = angularDimensionArtwork(geometry, scaleFactor);
+    if (!art) return null;
+    const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
+    const text = `${Math.round(measurement)}°`;
+    const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.25;
+    return boundsOf([vertex, arm1, arm2, ...arcExtrema(vertex, art.radius, startAngle, sweep),
+      ...centeredTextCorners(art.label, width, art.textHeight * 1.25)]);
+  }
+  const geometry = dimensionGeometry(entity);
+  const art = linearDimensionArtwork(geometry, scaleFactor);
+  if (!art) return null;
+  const width = textWidth([`${formatDimensionLength(geometry)} мм`], art.textHeight, 700) + art.textHeight * 0.25;
+  return boundsOf([art.start, art.end, art.lineStart, art.lineEnd, art.extensionStart, art.extensionEnd,
+    ...centeredTextCorners(art.label, width, art.textHeight * 1.25, art.rotation)]);
+}
+
+function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors) {
   if (entity.type === "polyline") return polylineBounds(entity);
-  if (entity.type === "area" || entity.type === "elevation") return planAnnotationGeometry(entity)?.bounds ?? null;
+  if (entity.type === "area" || entity.type === "elevation") {
+    const geometry = planAnnotationGeometry(entity);
+    if (!geometry) return null;
+    const { minX, minY, maxX, maxY } = geometry.bounds;
+    const lines = planZoneLabelLines(entity, geometry);
+    const size = planZoneLabelHeight(lines, geometry.bounds, scaleFactor);
+    const width = textWidth(lines, size, 700) + size * 1.2;
+    const height = size * (1.7 + (lines.length - 1) * ANNOTATION_LINE_SPACING);
+    const label = zoneAnchors.get(entity.id) || geometry.anchor;
+    return boundsOf([{ x: minX, y: minY }, { x: maxX, y: maxY }, ...centeredTextCorners(label, width, height)]);
+  }
   if (entity.type === "arc") return arcBounds(entity);
   if (entity.type === "line" && entity.dimensionKind === "leader") {
-    const height = Math.abs(entity.textHeight || entity.height || 200);
+    const height = leaderTextHeight(entity);
     const lines = annotationTextLines(entity.text);
-    const halfWidth = textWidth(lines, height, 600) / 2;
-    const halfHeight = (1 + (lines.length - 1) * ANNOTATION_LINE_SPACING) * height / 2;
+    const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, entity.leaderStyle || "boxed");
     return boundsOf([
       { x: entity.x1, y: entity.y1 },
-      { x: entity.x2 - halfWidth, y: entity.y2 - halfHeight },
-      { x: entity.x2 + halfWidth, y: entity.y2 + halfHeight },
+      ...centeredTextCorners({ x: entity.x2, y: entity.y2 }, frame.width, frame.height),
     ]);
   }
-  if (entity.type === "line" && entity.layer === "dimensions" &&
-      entity.dimensionKind !== "angular" && entity.dimensionKind !== "leader") {
-    const geometry = dimensionGeometry(entity);
-    if (!geometry) return null;
-    return boundsOf([geometry.start, geometry.end, geometry.lineStart, geometry.lineEnd]);
-  }
+  if (entity.type === "line" && entity.layer === "dimensions") return dimensionPlotBounds(entity, textWidth, scaleFactor);
   if (entity.type === "block") {
     const { width, height } = entitySize(entity);
     const block = { ...entity, rotation: entity.rotation || 0 };
@@ -84,11 +121,7 @@ function entityPlotBounds(entity, textWidth) {
     const minY = -height;
     const maxY = ((lines.length - 1) * ANNOTATION_LINE_SPACING + 0.22) * height;
     const rotation = (entity.rotation || 0) * Math.PI / 180;
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    return boundsOf([[0, minY], [width, minY], [width, maxY], [0, maxY]].map(([x, y]) => ({
-      x: entity.x + x * cos - y * sin, y: entity.y + x * sin + y * cos,
-    })));
+    return boundsOf(textCorners(entity, 0, minY, width, maxY, rotation));
   }
   const bounds = entityBounds(entity);
   if (entity.type !== "wall") return bounds;
@@ -99,10 +132,11 @@ function entityPlotBounds(entity, textWidth) {
   };
 }
 
-export function pdfPlotBounds(entities, textWidth = annotationTextWidth) {
+export function pdfPlotBounds(entities, textWidth = annotationTextWidth, scaleFactor) {
   let combined = null;
+  const zoneAnchors = planAnnotationAnchors(entities);
   for (const entity of entities) {
-    const bounds = entityPlotBounds(entity, textWidth);
+    const bounds = entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors);
     if (!bounds || !Object.values(bounds).every(Number.isFinite)) continue;
     combined = combined ? {
       minX: Math.min(combined.minX, bounds.minX),
@@ -348,7 +382,7 @@ export async function buildPlotPdf(project, entities, details, options, renderPl
     if (!probe) return annotationTextWidth(lines, height);
     probe.font = `${weight} ${height}px Inter, Arial, sans-serif`;
     return lines.reduce((width, line) => Math.max(width, probe.measureText(line).width), height * 0.8);
-  });
+  }, project.annotationScale);
   const { page, area, view, ratio, fitted } = pdfPlotLayout(bounds, options.scale);
   const title = project.name || "Замер";
   const room = [details.site, details.room, details.visitDate].filter(Boolean).join(" · ");
@@ -372,7 +406,7 @@ export async function buildPlotPdf(project, entities, details, options, renderPl
     ctx.beginPath();
     ctx.rect(area.x, area.y, area.width, area.height);
     ctx.clip();
-    renderPlot(ctx, view, entities);
+    renderPlot(ctx, view, entities, project.annotationScale);
     ctx.restore();
     drawScaleBar(ctx, MARGIN, page.height - 54, view.scale);
     ctx.textAlign = "right";

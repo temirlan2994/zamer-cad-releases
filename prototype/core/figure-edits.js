@@ -1,6 +1,6 @@
 import { arcGeometry, distanceWorld, normalizeAnglePositive } from "./geometry.js";
 import { boundaryCrossingPoints, extendLine, isLinePoint, isValidLine, nearestBoundaryPoint, splitLine, trimLine } from "./line-edits.js";
-import { POLYLINE_ARC_GEOMETRY, polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
+import { POLYLINE_ARC_GEOMETRY, polylineArcFromBend, polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
 
 const EPSILON = 1e-6;
 const FULL_TURN = 2 * Math.PI;
@@ -20,6 +20,49 @@ export function validFigurePiece(piece) {
   }
   if (piece.type === "rectangle") return isValidLine(piece) && piece.x1 !== piece.x2 && piece.y1 !== piece.y2;
   return (!piece.type || piece.type === "line") && isValidLine(piece);
+}
+
+export function figureGripPoints(entity) {
+  if (entity.type === "circle") return [{ key: "radius", point: { x: entity.cx + Math.abs(entity.radius), y: entity.cy } }];
+  if (entity.type === "rectangle") return rectanglePath(entity).points.map((point, index) => ({ key: "corner", index, point }));
+  if (entity.type === "arc") return ["start", "through", "end"].map(key => ({ key, point: entity[key] }));
+  if (entity.type !== "polyline") return [];
+  const grips = entity.points.map((point, index) => ({ key: "vertex", index, point }));
+  for (const { index, arc } of polylineSegments(entity)) {
+    if (arc) grips.push({ key: "bend", index, point: arc.through });
+  }
+  return grips;
+}
+
+export function reshapeFigure(entity, grip, point) {
+  if (!isLinePoint(point)) return null;
+  const { key, index } = grip;
+  let geometry;
+  if (entity.type === "circle" && key === "radius") {
+    const radius = distanceWorld(point, { x: entity.cx, y: entity.cy });
+    return radius > EPSILON &&
+      isLinePoint({ x: entity.cx - radius, y: entity.cy - radius }) &&
+      isLinePoint({ x: entity.cx + radius, y: entity.cy + radius }) ? { radius } : null;
+  }
+  if (entity.type === "rectangle" && key === "corner" && index >= 0 && index < 4) {
+    const x = index === 0 || index === 3 ? "x1" : "x2";
+    const y = index === 0 || index === 1 ? "y1" : "y2";
+    geometry = { [x]: point.x, [y]: point.y };
+  } else if (entity.type === "arc" && ["start", "through", "end"].includes(key)) {
+    geometry = { [key]: point };
+  } else if (entity.type === "polyline" && key === "vertex" && entity.points[index]) {
+    const points = entity.points.map((old, current) => current === index ? point : old);
+    geometry = { points };
+  } else if (entity.type === "polyline" && key === "bend") {
+    const edge = polylineSegments(entity)[index];
+    if (!edge?.arc) return null;
+    const changed = polylineArcFromBend(edge.p1, edge.p2, point);
+    if (!changed || !isLinePoint(changed.arc.through)) return null;
+    const bulges = entity.bulges.slice();
+    bulges[index] = changed.bulge;
+    geometry = { bulges };
+  }
+  return geometry && validFigurePiece({ ...entity, ...geometry }) ? geometry : null;
 }
 
 function segment(a, b) {

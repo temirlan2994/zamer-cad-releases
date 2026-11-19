@@ -38,6 +38,16 @@ export function polylineArc(start, end, bulge) {
   };
 }
 
+export function polylineArcFromBend(start, end, point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const x = start.x + dx / 2;
+  const y = start.y + dy / 2;
+  const bulge = 2 * ((point.x - x) * dy - (point.y - y) * dx) / (dx * dx + dy * dy);
+  const arc = polylineArc(start, end, bulge);
+  return arc ? { arc, bulge } : null;
+}
+
 export function polylineArcPoint(arc, fraction) {
   if (fraction <= 0) return arc.start;
   if (fraction >= 1) return arc.end;
