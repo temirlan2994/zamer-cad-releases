@@ -1,6 +1,6 @@
 import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
-import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
+import { additionalDimensionArtwork, additionalDimensionKinds, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
 import { pointInPolygon } from "./geometry.js";
 import {
@@ -233,6 +233,17 @@ function angularDimension(entity, layer, scaleFactor, measurementSettings) {
   };
 }
 
+function appendAdditionalDimension(records, entity, layer, scaleFactor, measurementSettings) {
+  const art = additionalDimensionArtwork(entity, scaleFactor);
+  if (!art) return;
+  for (const path of art.paths) {
+    for (let index = 1; index < path.length; index += 1) appendLine(records, path[index - 1], path[index], layer);
+  }
+  if (art.arc) records.push(...dxfArc(art.arc, layer, true));
+  for (const { point, ux, uy } of art.arrows) appendArrow(records, point, ux, uy, art.arrowSize, layer);
+  appendCenteredText(records, art.label, art.prefix + formatProjectLength(art.measurement, measurementSettings), art.textHeight, 0, layer);
+}
+
 function radialDimension(entity, layer, scaleFactor, measurementSettings) {
   const art = radialDimensionArtwork(entity, scaleFactor);
   if (!art) return null;
@@ -337,6 +348,10 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
     if (entity?.type === "line" && entity.dimensionKind === "angular") {
       const dimension = angularDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
+    } else if (entity?.type === "line" && additionalDimensionKinds.includes(entity.dimensionKind)) {
+      const records = [];
+      appendAdditionalDimension(records, entity, dimensionLayer, annotationScale, display);
+      annotations.push({ records });
     } else if (entity?.type === "line" && (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter")) {
       const dimension = radialDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);

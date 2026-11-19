@@ -1,3 +1,4 @@
+import { additionalDimensionKinds, additionalDimensionArtwork } from "./dimension-artwork.js";
 import { arcGeometry } from "./geometry.js";
 import { isLinePoint, isValidLine, MAX_LINE_COORDINATE } from "./line-edits.js";
 import { validPolylinePoints } from "./polyline.js";
@@ -19,6 +20,18 @@ function hasOptionalNumbers(entity, fields) {
 }
 
 function validDimension(entity) {
+  if (additionalDimensionKinds.includes(entity.dimensionKind)) {
+    if (!hasXY(entity, "x1", "y1") || !hasXY(entity, "x2", "y2")) return false;
+    const points = {
+      "arc-length": [entity.arcStart, entity.arcThrough, entity.arcEnd],
+      "jogged-radius": [entity.jogCenter, entity.jogRim],
+      rotated: [entity.measureEnd],
+      ordinate: [],
+    };
+    return points[entity.dimensionKind].every(isLinePoint) &&
+      (entity.dimensionKind !== "ordinate" || ["x", "y"].includes(entity.ordinateAxis)) &&
+      Boolean(additionalDimensionArtwork(entity, 1));
+  }
   if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
     return hasXY(entity, "x1", "y1") && hasXY(entity, "x2", "y2") &&
       Number.isFinite(entity.circleRadius) && entity.circleRadius > 0 && entity.circleRadius <= MAX_LINE_COORDINATE;

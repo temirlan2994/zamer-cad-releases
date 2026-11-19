@@ -1,4 +1,5 @@
 import { annotationWorldSize } from "./annotation-text.js";
+import { arcGeometry, normalizeAnglePositive } from "./geometry.js";
 
 function toward(from, to, distance, fallback) {
   const dx = to.x - from.x;
@@ -82,4 +83,88 @@ export function radialDimensionArtwork(entity, scaleFactor) {
     textHeight: annotationWorldSize(13, scaleFactor),
     arrowSize: Math.min(radius * 0.27, annotationWorldSize(8, scaleFactor)),
   };
+}
+
+export const additionalDimensionKinds = ["arc-length", "ordinate", "jogged-radius", "rotated"];
+
+export function additionalDimensionArtwork(entity, scaleFactor) {
+  const start = { x: entity.x1, y: entity.y1 };
+  const label = { x: entity.x2, y: entity.y2 };
+  const textHeight = annotationWorldSize(13, scaleFactor);
+  const arrowSize = annotationWorldSize(8, scaleFactor);
+  if (![start.x, start.y, label.x, label.y].every(Number.isFinite)) return null;
+  const text = { textHeight, label, arrowSize, arrows: [] };
+  if (entity.dimensionKind === "ordinate") {
+    const xAxis = entity.ordinateAxis === "x";
+    const corner = xAxis ? { x: start.x, y: label.y } : { x: label.x, y: start.y };
+    return { ...text, prefix: xAxis ? "X " : "Y ", measurement: xAxis ? start.x : -start.y,
+      paths: [[start, corner, label]] };
+  }
+  if (entity.dimensionKind === "jogged-radius") {
+    const { jogCenter, jogRim, circleRadius } = entity;
+    if (!jogCenter || !jogRim || !Number.isFinite(circleRadius) || circleRadius <= 0) return null;
+    const dx = jogCenter.x - jogRim.x;
+    const dy = jogCenter.y - jogRim.y;
+    const length = Math.hypot(dx, dy);
+    if (length <= 1e-6) return null;
+    const ux = dx / length;
+    const uy = dy / length;
+    const span = Math.min(length * 0.23, textHeight * 1.5);
+    const point = (along, normal = 0) => ({
+      x: jogRim.x + along * ux - normal * uy, y: jogRim.y + along * uy + normal * ux,
+    });
+    return { ...text, prefix: "R ", measurement: circleRadius,
+      paths: [[jogRim, point(length / 2 - span), point(length / 2 - span / 2, span / 2),
+        point(length / 2 + span / 2, -span / 2), point(length / 2 + span), jogCenter, label]],
+      arrows: [{ point: jogRim, ux, uy }], arrowSize: Math.min(arrowSize, length * 0.22) };
+  }
+  if (entity.dimensionKind === "rotated") {
+    const feature = entity.measureEnd;
+    if (!feature || !Number.isFinite(entity.measureAngle)) return null;
+    const ux = Math.cos(entity.measureAngle);
+    const uy = Math.sin(entity.measureAngle);
+    const delta = (feature.x - start.x) * ux + (feature.y - start.y) * uy;
+    if (Math.abs(delta) <= 1e-6) return null;
+    const offset = (label.x - start.x) * -uy + (label.y - start.y) * ux;
+    const a = { x: start.x - uy * offset, y: start.y + ux * offset };
+    const b = { x: a.x + ux * delta, y: a.y + uy * delta };
+    const sign = Math.sign(delta);
+    return { ...text, label: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - textHeight * .8 },
+      prefix: "", measurement: Math.abs(delta), paths: [[start, a], [a, b], [feature, b]],
+      arrowSize: Math.min(arrowSize, Math.abs(delta) * .24),
+      arrows: [{ point: a, ux: ux * sign, uy: uy * sign }, { point: b, ux: -ux * sign, uy: -uy * sign }] };
+  }
+  if (entity.dimensionKind !== "arc-length" || !entity.arcStart || !entity.arcThrough || !entity.arcEnd) return null;
+  const arc = arcGeometry(entity.arcStart, entity.arcThrough, entity.arcEnd);
+  if (!arc) return null;
+  const sweep = arc.counterClockwise
+    ? normalizeAnglePositive(arc.endAngle - arc.startAngle)
+    : -normalizeAnglePositive(arc.startAngle - arc.endAngle);
+  const radius = Math.max(arc.radius * 0.08, Math.hypot(label.x - arc.center.x, label.y - arc.center.y));
+  const point = (angle, r = radius) => ({
+    x: arc.center.x + Math.cos(angle) * r, y: arc.center.y + Math.sin(angle) * r,
+  });
+  const a = point(arc.startAngle);
+  const b = point(arc.endAngle);
+  const sign = Math.sign(sweep);
+  return { ...text, label: point(arc.startAngle + sweep / 2, radius + textHeight * .8),
+    prefix: "⌒ ", measurement: arc.radius * Math.abs(sweep),
+    paths: [[entity.arcStart, a], [entity.arcEnd, b]],
+    arc: { ...arc, radius, sweep },
+    arrowSize: Math.min(arrowSize, radius * Math.abs(sweep) * .24),
+    arrows: [
+      { point: a, ux: -Math.sin(arc.startAngle) * sign, uy: Math.cos(arc.startAngle) * sign },
+      { point: b, ux: Math.sin(arc.endAngle) * sign, uy: -Math.cos(arc.endAngle) * sign },
+    ] };
+}
+
+export function additionalDimensionPaths(art) {
+  if (!art.arc) return art.paths;
+  const { center, radius, startAngle, sweep } = art.arc;
+  const steps = Math.ceil(Math.abs(sweep) / (Math.PI / 24));
+  const curve = Array.from({ length: steps + 1 }, (_, index) => {
+    const angle = startAngle + sweep * index / steps;
+    return { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+  });
+  return [...art.paths, curve];
 }

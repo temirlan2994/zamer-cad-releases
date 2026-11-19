@@ -2,7 +2,7 @@ import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, lead
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
-import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
+import { additionalDimensionArtwork, additionalDimensionKinds, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
 import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
@@ -72,6 +72,14 @@ function dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings
     const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.25;
     return boundsOf([vertex, art.firstLegEnd, art.secondLegEnd, ...arcExtrema(vertex, art.radius, startAngle, sweep),
       ...centeredTextCorners(art.label, width, art.textHeight * 1.25)]);
+  }
+  if (additionalDimensionKinds.includes(entity.dimensionKind)) {
+    const art = additionalDimensionArtwork(entity, scaleFactor);
+    if (!art) return null;
+    const text = art.prefix + formatProjectLength(art.measurement, measurementSettings);
+    const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.5;
+    const extrema = art.arc ? arcExtrema(art.arc.center, art.arc.radius, art.arc.startAngle, art.arc.sweep) : [];
+    return boundsOf([...art.paths.flat(), ...extrema, ...centeredTextCorners(art.label, width, art.textHeight * 1.28)]);
   }
   if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
     const art = radialDimensionArtwork(entity, scaleFactor);
