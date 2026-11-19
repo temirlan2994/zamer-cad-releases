@@ -1,5 +1,5 @@
 import { pointInPolygon, pointToSegmentDistance, segmentsIntersect } from "./geometry.js";
-import { annotationTextLines, annotationTextWidth, annotationWorldSize } from "./annotation-text.js";
+import { annotationTextLines, annotationWorldSize } from "./annotation-text.js";
 import { isLinePoint } from "./line-edits.js";
 import { polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
 import { formatProjectArea, formatProjectElevation } from "./project-settings.js";
@@ -345,10 +345,6 @@ export function planZoneLabelRing(geometry, anchor) {
   return geometry.rings.find(({ points }) => pointInPolygon(anchor, points)) || geometry.rings.find(({ bounds }) => bounds === geometry.anchorBounds);
 }
 
-export function planZoneLabelHeight(lines, bounds, scaleFactor) {
-  const { minX, maxX, minY, maxY } = bounds;
-  const width = annotationTextWidth(lines, 1) * 1.2 + 1.2;
-  const height = (lines.length - 1) * 1.4 + 1.7;
-  return Math.min(annotationWorldSize(12, scaleFactor), (maxX - minX) * 0.75 / width,
-    (maxY - minY) * 0.75 / height);
+export function planZoneLabelHeight(scaleFactor) {
+  return annotationWorldSize(12, scaleFactor);
 }

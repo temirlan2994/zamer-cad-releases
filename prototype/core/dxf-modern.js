@@ -173,7 +173,7 @@ function planZoneRecords({ entity, geometry, layer, anchor = geometry.anchor }, 
   const labelWidth = annotationTextWidth(lines, 1) * 1.2 + 1.2;
   const labelHeight = (lines.length - 1) * DXF_LINE_SPACING + 1.7;
   const ring = planZoneLabelRing(geometry, anchor);
-  const height = planZoneLabelHeight(lines, ring.bounds, scaleFactor);
+  const height = planZoneLabelHeight(scaleFactor);
   const records = [];
   for (const points of geometry.contours) appendDxfPolyline(records, { points, closed: true }, layer, true);
   if (height >= 0.001) {

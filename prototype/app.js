@@ -3684,7 +3684,7 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
     const anchor = worldToScreen(worldAnchor);
     const ring = planZoneLabelRing(geometry, worldAnchor);
     const lines = planZoneLabelLines(entity, geometry, state.measurementSettings);
-    const size = planZoneLabelHeight(lines, ring.bounds, state.annotationScale) * state.view.scale;
+    const size = planZoneLabelHeight(state.annotationScale) * state.view.scale;
     ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;

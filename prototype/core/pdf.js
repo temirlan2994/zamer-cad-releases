@@ -3,7 +3,7 @@ import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint 
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { additionalDimensionArtwork, additionalDimensionKinds, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
-import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing } from "./plan-annotations.js";
+import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
 import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
 
@@ -103,9 +103,8 @@ function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measureme
     if (!geometry) return null;
     const { minX, minY, maxX, maxY } = geometry.bounds;
     const label = zoneAnchors.get(entity.id) || geometry.anchor;
-    const ring = planZoneLabelRing(geometry, label);
     const lines = planZoneLabelLines(entity, geometry, measurementSettings);
-    const size = planZoneLabelHeight(lines, ring.bounds, scaleFactor);
+    const size = planZoneLabelHeight(scaleFactor);
     const width = textWidth(lines, size, 700) + size * 1.2;
     const height = size * (1.7 + (lines.length - 1) * ANNOTATION_LINE_SPACING);
     return boundsOf([{ x: minX, y: minY }, { x: maxX, y: maxY }, ...centeredTextCorners(label, width, height)]);
