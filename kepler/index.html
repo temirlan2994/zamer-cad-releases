@@ -302,7 +302,16 @@
           <div class="view3d" id="view3d" hidden>
             <canvas id="canvas3d" aria-label="3D-вид дома"></canvas>
             <div class="view3d-bar">
-              <label class="v3-floor" title="Рабочий этаж"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m2 7 8-4 8 4-8 4-8-4Zm0 4 8 4 8-4M2 15l8 4 8-4"/></svg><span>Рабочий этаж</span><select id="v3WorkingLevel" aria-label="Рабочий этаж в 3D"></select></label>
+              <div class="v3-projection" role="group" aria-label="Проекция 3D-вида">
+                <button type="button" data-v3-projection="perspective" aria-pressed="false">Перспектива</button>
+                <button type="button" data-v3-projection="orthographic" aria-pressed="true">Параллельно</button>
+              </div>
+              <details class="v3-views"><summary>Ракурс</summary><div class="v3-views-panel">
+                <button type="button" data-v3-preset="iso">Изометрия</button>
+                <button type="button" data-v3-preset="top">Сверху</button>
+                <button type="button" data-v3-preset="front">Спереди</button>
+                <button type="button" data-v3-preset="right">Справа</button>
+              </div></details>
               <details class="v3-layers"><summary>Слои</summary><div class="v3-layers-panel">
               <label class="check-row"><input type="checkbox" id="v3Roof"><span>Крыша</span></label>
               <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
@@ -310,7 +319,7 @@
               <label class="check-row"><input type="checkbox" id="v3Furniture" checked><span>Мебель</span></label>
               <label class="check-row" id="v3MassesWrap" title="Массы — концептуальные боксы формы дома (инструмент «Масса», M)" hidden><input type="checkbox" id="v3Masses" checked><span>Массы</span></label>
               <label class="check-row" id="v3MassSnapWrap" title="Магнит масс: блоки липнут к граням соседних масс, отметкам этажей и земле · Alt или Shift при перетаскивании — без магнита" hidden><input type="checkbox" id="v3MassSnap" checked><span>Магнит масс</span></label>
-              <label class="check-row v3-levels"><span>Видимость этажей</span><select id="v3Levels" aria-label="Этажи в 3D"><option value="all">Все</option><option value="upto">До рабочего</option><option value="only">Только рабочий</option></select></label>
+              <label class="check-row v3-levels"><span>Этажи модели</span><select id="v3Levels" aria-label="Этажи в 3D"><option value="all">Все этажи</option><option value="upto">До текущего плана</option><option value="only">Текущий план</option></select></label>
               <label class="check-row" id="v3ReliefWrap" title="Вертикальный масштаб рельефа" hidden><span>Рельеф ×<b id="v3ReliefVal">1</b></span><input type="range" id="v3Relief" min="1" max="5" step="1" value="1"></label>
               </div></details>
               <button id="v3Fit" type="button" title="Вписать модель" aria-label="Вписать модель"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5"/><rect x="7" y="7" width="6" height="6" rx="1"/></svg><span>Вписать</span></button>

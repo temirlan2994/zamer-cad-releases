@@ -15,7 +15,8 @@ import {
   pasteSelection, reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
 import {
-  addLandscapeDraftExact, handleLandscapeKey, landscapeDraftPrev, rotateLandscapeGhost,
+  addLandscapeDraftExact, deleteLandscapeSelection, duplicateLandscapeSelection, handleLandscapeKey, landscapeDraftPrev,
+  rotateLandscape90, rotateLandscapeGhost,
 } from './landscape.js';
 import { addDraftPoint, finishDraft } from './site-actions.js';
 import { closeSection, isSectionOpen } from './landscape-section.js';
@@ -66,10 +67,10 @@ function handle3dKey(event) {
   const tag = event.target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
   const mod = event.ctrlKey || event.metaKey;
-  if (!mod && !event.altKey && event.code === 'Space' && state.tool?.kind === 'place-opening') {
+  if (!mod && !event.altKey && event.code === 'Space' && ['place-opening', 'place-furniture'].includes(state.tool?.kind)) {
     event.preventDefault();
     rotatePlacementPreview();
-    document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
+    if (state.tool?.kind === 'place-opening') document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
     return true;
   }
   // Инструмент «Масса»: цифры и Enter — точный размер (ui/mass3d.js); M — вкл/выкл.
@@ -78,13 +79,21 @@ function handle3dKey(event) {
   if (!mod && !event.altKey && !event.shiftKey && event.code === 'KeyK' && state.modeName === 'plan') { toggleRoofTool(); return true; }
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
     event.preventDefault();
-    if (state.selection) deleteSelection();
+    if (state.selection?.type === 'landscape') deleteLandscapeSelection();
+    else if (state.selection) deleteSelection();
     return true;
   }
   if (mod && event.code === 'KeyC') { event.preventDefault(); if (state.selection) copySelection(); return true; }
   if (mod && event.code === 'KeyV') { event.preventDefault(); pasteSelection(); return true; }
-  if (mod && event.code === 'KeyD') { event.preventDefault(); if (state.selection) duplicateSelection(); return true; }
-  if (!mod && !event.altKey && event.code === 'KeyR' && (state.selection?.type === 'item' || state.selection?.type === 'mass')) { rotateSelection90(); return true; }
+  if (mod && event.code === 'KeyD') {
+    event.preventDefault();
+    if (state.selection?.type === 'landscape') duplicateLandscapeSelection(); else if (state.selection) duplicateSelection();
+    return true;
+  }
+  if (!mod && !event.altKey && event.code === 'KeyR' && ['item', 'mass', 'landscape'].includes(state.selection?.type)) {
+    if (state.selection?.type === 'landscape') rotateLandscape90(); else rotateSelection90();
+    return true;
+  }
   return false;
 }
 

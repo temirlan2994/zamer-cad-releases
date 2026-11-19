@@ -140,7 +140,7 @@ export function renderProps() {
   // Открыт фасад — его настройки (масштаб, отметки).
   if (!sel && isElevationOpen()) { renderElevationProps(panel); return; }
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
-  if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) {
+  if ((state.modeName === 'landscape' && !sel) || sel?.type === 'landscape') {
     if (sel || landscapeToolActive()) renderLandscapeProps(panel);
     else withViewSection(panel, renderLandscapeProps);
     return;

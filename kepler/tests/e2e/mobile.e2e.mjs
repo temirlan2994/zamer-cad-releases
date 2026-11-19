@@ -370,6 +370,12 @@ describe('телефон 390×844: мобильная раскладка', () =>
     await page.tap('#view3dBtn');
     await page.waitForSelector('#view3d', { state: 'visible' });
     assert.equal(await page.getAttribute('#view3dBtn', 'aria-selected'), 'true');
+    assert.equal(await page.isVisible('#mobileBar [data-sheet="rooms"]'), true, 'в 3D доступен каталог объектов');
+    assert.equal(await page.textContent('#mobileBar [data-sheet="rooms"] .mb-label'), 'Объекты');
+    await page.tap('#mobileBar [data-sheet="rooms"]');
+    await page.waitForSelector('#furnitureItems .furniture-chip', { state: 'visible' });
+    assert.equal(await has(page, 'sheet-library'), true);
+    await page.tap('#mobileBar [data-sheet="rooms"]');
     await page.tap('#view3dBtn');
     assert.equal(await page.isVisible('#view3d'), true);
     await page.tap('#modePlanBtn');

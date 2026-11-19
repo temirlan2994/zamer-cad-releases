@@ -1,5 +1,5 @@
-// 3D-просмотр дома поверх плана: WebGL с буфером глубины (запасной путь —
-// грани по глубине на canvas 2D), перспектива, простое освещение. Мышь: тянуть — вращать, колесо — масштаб,
+// Самостоятельный 3D-вид всей модели: WebGL с буфером глубины (запасной путь —
+// грани по глубине на canvas 2D), перспектива/параллельная проекция и простое освещение. Мышь: тянуть — вращать, колесо — масштаб,
 // правой/средней или с Shift — сдвиг. Пальцы: один — вращать, два —
 // масштаб и сдвиг. Esc или «✕» — закрыть.
 //
@@ -25,9 +25,9 @@ import {
   boxFaces, buildHouseMesh, buildLevelWalls, massFaces, massVoidFaces, shownLevelIds, terrainHeightFn,
 } from '../core/mesh3d.js';
 import { massGroundFaces } from '../core/mass-ground.js';
-import { LEVEL_KEYS, sortedLevels } from '../core/model.js';
+import { activeLevel, LEVEL_KEYS } from '../core/model.js';
 import {
-  axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, screenRay,
+  axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, rayPlaneZ, screenRay,
 } from '../core/pick3d.js';
 import {
   GRIP_LABEL, applyGrip, applyGripValue, findWallRecord, gripFor, gripValue,
@@ -36,9 +36,8 @@ import { el, toast } from './dom.js';
 import { closeElevation } from './elevation-view.js';
 import { switchLevel } from './levels.js';
 import { closeSection, openSectionId } from './landscape-section.js';
-import { setEditorMode } from './modes.js';
 import { closeSheet } from './sheet-view.js';
-import { reconcileOpenings } from './plan-actions.js';
+import { addFurnitureAt, reconcileOpenings } from './plan-actions.js';
 import { state } from './state.js';
 import {
   afterChange, pushHistory, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot,
@@ -66,7 +65,10 @@ import {
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
 // дом, и ближняя плоскость начинает срезать стены.
-const cam = { yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000, target: { x: 0, y: 0, z: 1500 } };
+const cam = {
+  yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000,
+  projection: 'orthographic', target: { x: 0, y: 0, z: 1500 },
+};
 const opts = { roof: false, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
 const LEVEL_MODES = new Set(['all', 'upto', 'only']);
@@ -77,13 +79,16 @@ function loadLayers() {
     if (raw && typeof raw.furniture === 'boolean') opts.furniture = raw.furniture;
     if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
     if (raw && typeof raw.masses === 'boolean') opts.masses = raw.masses;
+    if (raw && ['perspective', 'orthographic'].includes(raw.projection)) cam.projection = raw.projection;
   } catch { /* нет хранилища — по умолчанию */ }
 }
 
 function saveLayers() {
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
-    localStorage.setItem(LAYERS_KEY, JSON.stringify({ ...prev, furniture: opts.furniture, levels: opts.levels, masses: opts.masses }));
+    localStorage.setItem(LAYERS_KEY, JSON.stringify({
+      ...prev, furniture: opts.furniture, levels: opts.levels, masses: opts.masses, projection: cam.projection,
+    }));
   } catch { /* нет хранилища */ }
 }
 let faces = [];
@@ -109,6 +114,10 @@ function hexRgb(hex) {
 }
 
 const camera = (width, height) => cameraBasis(cam, width, height);
+const worldPerPixel = (width, height) => {
+  const c = camera(width, height);
+  return (cam.projection === 'perspective' ? cam.eyeDist : cam.dist) / c.focal;
+};
 
 // ---------------------------------------------------------------- выбор стен
 
@@ -157,6 +166,9 @@ function mixHex(a, b, t) {
 
 function faceColor(face) {
   if (face.kind === 'overlay') return face.color;
+  if (face.landscapeId && state.selection?.type === 'landscape' && state.selection.ids?.includes(face.landscapeId)) {
+    return mixHex(face.color, '#66d39a', 0.58);
+  }
   if (face.roofId && state.selection?.type === 'roof' && state.selection.id === face.roofId) return mixHex(face.color, SEL_FILL, 0.5);
   if (face.kind === 'mass') {
     const sel = state.selection?.type === 'mass' && state.selection.id === face.massId;
@@ -402,6 +414,17 @@ function orthographic(left, right, bottom, top, near, far) {
   ];
 }
 
+function perspectiveFromFocal(focal, width, height, near, far) {
+  const sx = (2 * focal) / Math.max(1, width);
+  const sy = (2 * focal) / Math.max(1, height);
+  return [
+    sx, 0, 0, 0,
+    0, sy, 0, 0,
+    0, 0, (far + near) / (near - far), -1,
+    0, 0, (2 * far * near) / (near - far), 0,
+  ];
+}
+
 function lookAt(eye, target) {
   const z = norm(sub(eye, target));
   const x = norm(cross({ x: 0, y: 0, z: 1 }, z));
@@ -430,13 +453,14 @@ function renderGl(canvas) {
     canvas.height = Math.round(height * dpr);
   }
   const c = camera(width, height);
-  // Аксонометрия без перспективных искажений — стандартный рабочий 3D-вид,
-  // близкий к Revit. cam.dist здесь управляет масштабом, а не перспективой.
   const worldPerPx = cam.dist / c.focal;
   const halfW = (width * worldPerPx) / 2;
   const halfH = (height * worldPerPx) / 2;
   const far = Math.max(2e6, cam.eyeDist * 4);
-  const mvp = mul(orthographic(-halfW, halfW, -halfH, halfH, 10, far), lookAt(c.eye, cam.target));
+  const projection = cam.projection === 'perspective'
+    ? perspectiveFromFocal(c.focal, width, height, 50, far)
+    : orthographic(-halfW, halfW, -halfH, halfH, 10, far);
+  const mvp = mul(projection, lookAt(c.eye, cam.target));
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0.9, 0.93, 0.96, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -524,20 +548,18 @@ function render2d(canvas) {
     const pts = [];
     let depth = 0;
     let behind = false;
-    const scale = c.focal / cam.dist;
     for (const p of P) {
       const d = sub(p, c.eye);
       const zc = dot(d, c.f);
       if (zc < near) { behind = true; break; }
-      pts.push({ x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale });
+      pts.push(projectPoint(cam, width, height, W(p)));
       depth += zc;
     }
     if (behind) continue;
     const light = face.flat ? 1 : 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
     const [r, g, b] = hexRgb(faceColor(face));
     const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
-      const d = sub(W(raw), c.eye);
-      return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
+      return projectPoint(cam, width, height, raw);
     })) : null;
     const er = face.edgeRgba;
     list.push({
@@ -591,7 +613,7 @@ function frameHouse() {
   cam.target = { x: (min('x') + max('x')) / 2, y: (min('y') + max('y')) / 2, z: max('z') / 3 };
   const span = Math.hypot(max('x') - min('x'), max('y') - min('y'), max('z') - min('z'));
   cam.dist = Math.min(400000, Math.max(8000, span * 1.1));
-  cam.eyeDist = Math.max(25000, span * 3);
+  cam.eyeDist = Math.max(15000, span * 1.8);
 }
 
 // Ползунок рельефа виден, только когда есть отметки высот.
@@ -611,6 +633,7 @@ const HINT_MASS_TOUCH = HINT_MASS;
 const HINT_ROOF = 'Крыша: точки — вынос (по плоскости плиты), синяя стрелка — высота · двойной клик — число · Shift — без привязки · Delete';
 const HINT_ROOF_TOOL = 'Крыша: клик по помещению — накрыть · Shift+клик — добавить к выбранной · клик по крыше — выбрать · Esc — выйти';
 const HINT_OPENING = 'Проём: тяните боковые ручки — ширина, верх/низ — высота и подоконник · привязка к этажам ниже · Shift — свободно';
+const HINT_FURNITURE_TOOL = 'Нажмите на пол, чтобы поставить объект · Пробел — повернуть · Esc — закончить';
 let touchUsed = false;
 
 function setHint(text) {
@@ -619,13 +642,14 @@ function setHint(text) {
   if (text === undefined) {
     if (!wallsEditable()) text = HINT_SITE;
     else if (openingToolOn()) text = openingToolHint();
+    else if (state.tool?.kind === 'place-furniture') text = HINT_FURNITURE_TOOL;
     else if (massToolOn()) text = massToolHint();
     else if (roofToolOn()) text = HINT_ROOF_TOOL;
     else if (state.selection?.type === 'roof') text = HINT_ROOF;
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (state.selection?.type === 'opening') text = HINT_OPENING;
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
-    else if (selectedObject()) text = HINT_OBJ;
+    else if (selectedObject() || state.selection?.type === 'landscape') text = HINT_OBJ;
     else text = HINT_IDLE;
   }
   hint.textContent = text;
@@ -659,6 +683,11 @@ export function escape3d() {
     setHint();
     uploadOverlay();
     requestRender();
+    return true;
+  }
+  if (state.tool?.kind === 'place-furniture') {
+    cancelTool();
+    setHint();
     return true;
   }
   if (roofDragging()) { cancelRoofDrag(); return true; }
@@ -702,13 +731,12 @@ function syncLayerControls() {
   if (ms) ms.checked = opts.masses;
 }
 
-function syncWorkingFloor() {
-  const select = el('v3WorkingLevel');
-  const levels = sortedLevels(state.project);
-  const unchanged = select.options.length === levels.length && levels.every((level, index) =>
-    select.options[index].value === level.id && select.options[index].text === level.name);
-  if (!unchanged) select.replaceChildren(...levels.map((level) => new Option(level.name, level.id)));
-  select.value = state.project.activeLevel;
+function syncCameraControls() {
+  for (const button of document.querySelectorAll('[data-v3-projection]')) {
+    const activeProjection = button.dataset.v3Projection === cam.projection;
+    button.classList.toggle('active', activeProjection);
+    button.setAttribute('aria-pressed', String(activeProjection));
+  }
 }
 
 // Флажок «Массы» виден, когда массы есть или идёт инструмент «Масса».
@@ -745,7 +773,7 @@ function rebuildRoofs() {
 
 export function refresh3d() {
   if (!active || edit || massDragging() || roofDragging()) return;
-  syncWorkingFloor();
+  syncCameraControls();
   syncReliefControl();
   syncMassControl();
   rebuildScene();
@@ -755,19 +783,13 @@ export function refresh3d() {
 }
 
 let cameraProject = null;
-let workingLevel = null;
-let returnLevel = null;
-let returnMode = 'plan';
 export function open3d() {
   if (active) return;
   closeSheet();
   if (openSectionId()) closeSection();
   closeElevation();
-  returnLevel = state.project.activeLevel;
-  returnMode = state.modeName;
-  if (state.tool && !massToolOn() && !roofToolOn() && !openingToolOn()) cancelTool();
-  if (returnMode !== 'plan') setEditorMode('plan');
-  if (cameraProject === state.project && workingLevel && !state.tool && !state.selection) switchLevel(workingLevel, { planView: false });
+  const supportedTool = massToolOn() || roofToolOn() || openingToolOn() || state.tool?.kind === 'place-furniture';
+  if (state.tool && !supportedTool) cancelTool();
   active = true;
   el('view3d').hidden = false;
   document.body.classList.add('v3-open');
@@ -777,7 +799,7 @@ export function open3d() {
   resetOpeningTool();
   if (massToolOn()) opts.masses = true;
   syncLayerControls();
-  syncWorkingFloor();
+  syncCameraControls();
   syncMassControl();
   rebuildScene();
   hover = null;
@@ -800,17 +822,16 @@ export function close3d() {
   resetMassTool();
   resetRoofTool();
   resetOpeningTool();
+  if (state.tool?.kind === 'place-furniture') cancelTool();
   hideNumber();
   active = false;
   hover = null;
   massVoidHoverId = null;
   el('view3d').hidden = true;
   el('view3d').querySelector('.v3-layers').open = false;
+  el('view3d').querySelector('.v3-views').open = false;
   document.body.classList.remove('v3-open');
   el('view3dBtn')?.classList.remove('active');
-  workingLevel = state.project.activeLevel;
-  if (returnLevel) switchLevel(returnLevel, { planView: false });
-  if (returnMode !== 'plan') setEditorMode(returnMode);
   document.dispatchEvent(new CustomEvent('kepler:view'));
 }
 
@@ -819,7 +840,7 @@ export const is3dOpen = () => active;
 // Снимок камеры для 3D-вида на листе (viewport.cam, core/views.js): углы,
 // масштаб окна и крыша. Окно 3D ни разу не открывали — камера по умолчанию.
 export function camera3dSnapshot() {
-  return { yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, roof: Boolean(opts.roof) };
+  return { yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, projection: cam.projection, roof: Boolean(opts.roof) };
 }
 
 // ---------------------------------------------------------------- луч и ручки
@@ -848,6 +869,22 @@ function pickAt(e) {
 function rayAt(e) {
   const c = canvasPoint(e);
   return screenRay(cam, c.w, c.h, c.x, c.y);
+}
+
+function furniturePoint(e) {
+  const hit = pickAt(e);
+  if (hit?.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId, { planView: false });
+  const level = activeLevel(state.project);
+  return rayPlaneZ(rayAt(e), Number(level?.elevation) || 0);
+}
+
+function placeFurniture3d(e, kind = state.tool?.itemKind, options = state.tool || {}) {
+  const point = furniturePoint(e);
+  if (!kind || !point) return false;
+  addFurnitureAt(kind, point.x, point.y, options.rotation || 0, options);
+  refresh3d();
+  setHint('Объект добавлен · выберите следующий в каталоге или нажмите Esc');
+  return true;
 }
 
 // Массы полупрозрачны и не мешают выбору дома: грань выбранной массы —
@@ -924,7 +961,7 @@ function updateHover(e) {
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
 // выбор). Объект другого этажа делает его активным.
-const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'mass', 'roof']);
+const SELECTABLE = new Set(['wall', 'room', 'item', 'opening', 'multi', 'railing', 'mass', 'roof', 'landscape']);
 
 function clickSelect(hit) {
   if (!wallsEditable()) return;
@@ -934,9 +971,10 @@ function clickSelect(hit) {
     if (!hit) {
       if (SELECTABLE.has(state.selection?.type)) selectObject(null);
     } else {
-      if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId);
+      if (hit.levelId && hit.levelId !== state.project.activeLevel) switchLevel(hit.levelId, { planView: false });
       if (hit.type === 'mass') selectObject({ type: 'mass', id: hit.id });
       else if (hit.type === 'roof') selectObject({ type: 'roof', id: hit.id });
+      else if (hit.type === 'landscape') selectObject({ type: 'landscape', ids: [hit.id] });
       else if (hit.type === 'wall') selectObject({ type: 'wall', key: hit.key, from: hit.kind === 'manual' ? undefined : hit.from });
       else if (hit.type === 'railing') selectObject({ type: 'railing', roomId: hit.roomId, id: hit.id });
       else selectObject({ type: hit.type, id: hit.id });
@@ -1094,7 +1132,11 @@ function onDown(e) {
     if (massDragging()) cancelMassDrag();
     if (roofDragging()) cancelRoofDrag();
     const [a, b] = [...pointers.values()];
-    gesture = { kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1, camDist: cam.dist, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    gesture = {
+      kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      camZoom: cam.projection === 'perspective' ? cam.eyeDist : cam.dist,
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    };
     return;
   }
   const openingHandle = wallsEditable() && e.button === 0 && pointers.size === 1 ? openingHandleAt(e) : null;
@@ -1119,6 +1161,10 @@ function onDown(e) {
     gesture = { kind: pan ? 'pan' : 'orbit', x: e.clientX, y: e.clientY,
       ...(massTool ? { x0: e.clientX, y0: e.clientY, click: true, massTool } : {}),
       ...(openingTool ? { x0: e.clientX, y0: e.clientY, click: true, openingTool } : {}) };
+    return;
+  }
+  if (state.tool?.kind === 'place-furniture' && placeFurniture3d(e)) {
+    gesture = { kind: 'place' };
     return;
   }
   if (openingTool) {
@@ -1161,7 +1207,7 @@ function onDown(e) {
 function panBy(dx, dy) {
   const canvas = el('canvas3d');
   const c = camera(canvas.clientWidth, canvas.clientHeight);
-  const k = cam.dist / c.focal;
+  const k = worldPerPixel(canvas.clientWidth, canvas.clientHeight);
   cam.target = {
     x: cam.target.x - (c.r.x * dx - c.u.x * dy) * k,
     y: cam.target.y - (c.r.y * dx - c.u.y * dy) * k,
@@ -1189,7 +1235,8 @@ function onMove(e) {
     const [a, b] = [...pointers.values()];
     if (!b) return;
     const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-    cam.dist = Math.min(400000, Math.max(3000, (gesture.camDist * gesture.dist0) / d));
+    const zoom = Math.min(400000, Math.max(3000, (gesture.camZoom * gesture.dist0) / d));
+    if (cam.projection === 'perspective') cam.eyeDist = zoom; else cam.dist = zoom;
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     panBy(mid.x - gesture.mid.x, mid.y - gesture.mid.y);
     gesture.mid = mid;
@@ -1318,18 +1365,45 @@ function onDblClick(e) {
 export function bind3d() {
   const canvas = el('canvas3d');
   const layers = el('view3d').querySelector('.v3-layers');
+  const views = el('view3d').querySelector('.v3-views');
   document.addEventListener('pointerdown', (event) => {
     if (layers.open && !layers.contains(event.target)) layers.open = false;
+    if (views.open && !views.contains(event.target)) views.open = false;
   });
-  layers.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || !layers.open) return;
-    event.preventDefault();
-    event.stopPropagation();
-    layers.open = false;
-    layers.querySelector('summary').focus();
-  });
+  for (const details of [layers, views]) {
+    details.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !details.open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      details.open = false;
+      details.querySelector('summary').focus();
+    });
+  }
   el('v3Close')?.addEventListener('click', close3d);
-  el('v3WorkingLevel')?.addEventListener('change', (event) => switchLevel(event.target.value));
+  document.querySelectorAll('[data-v3-projection]').forEach((button) => button.addEventListener('click', () => {
+    const next = button.dataset.v3Projection;
+    if (!['perspective', 'orthographic'].includes(next) || next === cam.projection) return;
+    cam.projection = next;
+    saveLayers();
+    syncCameraControls();
+    sets = null;
+    uploadOverlay();
+    requestRender();
+  }));
+  const presets = {
+    iso: { yaw: -2.2, pitch: 0.62 },
+    top: { yaw: -Math.PI / 2, pitch: 1.5 },
+    front: { yaw: -Math.PI / 2, pitch: 0.16 },
+    right: { yaw: Math.PI, pitch: 0.16 },
+  };
+  document.querySelectorAll('[data-v3-preset]').forEach((button) => button.addEventListener('click', () => {
+    const preset = presets[button.dataset.v3Preset];
+    if (!preset) return;
+    Object.assign(cam, preset);
+    el('view3d')?.querySelector('.v3-views')?.removeAttribute('open');
+    uploadOverlay();
+    requestRender();
+  }));
   el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
@@ -1340,7 +1414,7 @@ export function bind3d() {
   initOpening3d({
     pick: (e) => pickAt(e),
     axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
-    worldPerPx: () => cam.dist / camera(canvas.clientWidth || 1, canvas.clientHeight || 1).focal,
+    worldPerPx: () => worldPerPixel(canvas.clientWidth || 1, canvas.clientHeight || 1),
     redraw: (geom = false) => {
       if (geom) refresh3d(); else uploadOverlay();
       requestRender();
@@ -1351,7 +1425,7 @@ export function bind3d() {
   initMass3d({
     ray: rayAt,
     axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
-    worldPerPx: () => cam.dist / camera(canvas.clientWidth || 1, canvas.clientHeight || 1).focal,
+    worldPerPx: () => worldPerPixel(canvas.clientWidth || 1, canvas.clientHeight || 1),
     floorHit: (e) => {
       const hit = pickAt(e);
       if (hit?.type !== 'room') return null;
@@ -1380,7 +1454,7 @@ export function bind3d() {
   initRoof3d({
     ray: rayAt,
     axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
-    worldPerPx: () => cam.dist / camera(canvas.clientWidth || 1, canvas.clientHeight || 1).focal,
+    worldPerPx: () => worldPerPixel(canvas.clientWidth || 1, canvas.clientHeight || 1),
     pick: (e) => pickAt(e),
     switchLevel: (id) => { if (id && id !== state.project.activeLevel) switchLevel(id); },
     redraw: (geom = false) => {
@@ -1439,6 +1513,17 @@ export function bind3d() {
   });
   num?.addEventListener('blur', () => { if (numTarget) { hideNumber(); setHint(); } });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('dragover', (e) => {
+    if (!(e.dataTransfer?.types || []).includes('application/x-kepler-furn')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  canvas.addEventListener('drop', (e) => {
+    const kind = e.dataTransfer?.getData('application/x-kepler-furn');
+    if (!kind) return;
+    e.preventDefault();
+    placeFurniture3d(e, kind, {});
+  });
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerup', onUp);
@@ -1464,7 +1549,8 @@ export function bind3d() {
   canvas.addEventListener('dblclick', onDblClick);
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    cam.dist = Math.min(400000, Math.max(3000, cam.dist * Math.exp(e.deltaY * 0.0012)));
+    const key = cam.projection === 'perspective' ? 'eyeDist' : 'dist';
+    cam[key] = Math.min(400000, Math.max(3000, cam[key] * Math.exp(e.deltaY * 0.0012)));
     if (state.selection?.type === 'mass' || state.selection?.type === 'opening' || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
     updateHover(e); // камера изменилась — заново проверяем cutter под курсором
     requestRender();

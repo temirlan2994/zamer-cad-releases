@@ -22,6 +22,15 @@ describe('3D', () => {
     }
   });
 
+  it('перспектива и параллельная проекция переключаются без смены вида', async () => {
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+    await app.page.getByRole('button', { name: 'Перспектива' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'perspective');
+    assert.equal(await app.page.isVisible('#view3d'), true);
+    await app.page.getByRole('button', { name: 'Параллельно' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+  });
+
   it('мышь вращает, колесо приближает', async () => {
     const before = await d3(app.page);
     const box = await (await app.page.$('#canvas3d')).boundingBox();
@@ -33,8 +42,8 @@ describe('3D', () => {
     const after = await d3(app.page);
     assert.ok(Math.abs(after.cam.yaw - before.cam.yaw) > 0.5);
     assert.ok(after.cam.pitch > before.cam.pitch);
-    assert.ok(after.cam.dist < before.cam.dist);
-    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'приближение не двигает камеру внутрь модели');
+    assert.ok(after.cam.dist < before.cam.dist, 'в параллельной проекции колесо меняет масштаб');
+    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'физическое положение камеры не меняется');
   });
 
   it('крыша добавляет грани; Esc закрывает 3D', async () => {

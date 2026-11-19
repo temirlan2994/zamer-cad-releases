@@ -162,8 +162,9 @@ const ROOM_TOOLS = new Set(['bound-room', 'place-room']);
 // «Ландшафт» (каталог участка). Иначе холст свободен.
 // Телефон: та же панель — нижний лист по кнопкам #mobileBar (ui/mobile.js).
 export function libraryWanted() {
-  if (state.modeName === 'landscape') return true;
-  if (state.modeName !== 'plan') return false;
+  const model = document.body.classList.contains('v3-open');
+  if (state.modeName === 'landscape' && !model) return true;
+  if (state.modeName !== 'plan' && !model) return false;
   const t = state.tool;
   if (!t) return state.libraryPinned;
   if (ROOM_TOOLS.has(t.kind) || t.kind === 'place-opening') return true;
@@ -175,14 +176,15 @@ export function libraryWanted() {
 // инструмент закрывает библиотеку, размещение задаёт вкладку.
 export function syncLibraryOpen() {
   const t = state.tool;
+  const model = document.body.classList.contains('v3-open');
   if (t && !ROOM_TOOLS.has(t.kind) && t.kind !== 'place-furniture') state.libraryPinned = false;
-  if (state.modeName !== 'plan') state.libraryPinned = false;
+  if (state.modeName !== 'plan' && !model) state.libraryPinned = false;
   if (t && ROOM_TOOLS.has(t.kind)) state.libraryTab = 'rooms';
   else if (t?.kind === 'place-furniture') state.libraryTab = t.itemKind === 'stairs' ? 'stairs' : 'furniture';
   document.body.classList.toggle('lib-open', libraryWanted());
-  const plan = state.modeName === 'plan';
-  const landscape = state.modeName === 'landscape';
-  refs.libraryTabs.hidden = !plan;
+  const plan = state.modeName === 'plan' || model;
+  const landscape = state.modeName === 'landscape' && !model;
+  refs.libraryTabs.hidden = !plan || model;
   const bar = el('landscapeBar');
   if (bar) bar.hidden = !landscape;
   const openings = el('openingsBar');
@@ -337,9 +339,9 @@ export function refreshLibraryTheme() {
 }
 
 export function renderFurnitureBar() {
-  // Содержимое строится только в режиме «План»; видимость задаёт вкладка
-  // (applyLibraryTab).
-  if (state.modeName !== 'plan') return;
+  // В самостоятельном 3D используется тот же каталог и те же объекты,
+  // что на плане. Видимость задаёт вкладка (applyLibraryTab).
+  if (state.modeName !== 'plan' && !document.body.classList.contains('v3-open')) return;
 
   renderFurnitureItems();
 }

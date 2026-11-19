@@ -77,19 +77,22 @@
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 22%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-weight: 700;
 }
-.v3-floor { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
-.v3-floor svg, #v3Fit svg { display: none; width: 18px; height: 18px; }
-.v3-floor select { font: inherit; border-radius: 8px; min-height: 30px; max-width: 14ch; }
+#v3Fit svg { display: none; width: 18px; height: 18px; }
 .view3d .view3d-bar { overflow: visible; padding: 5px 7px 5px 12px; border-radius: 12px; gap: 8px; }
-.v3-layers { position: relative; }
-.v3-layers summary { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; padding: 0 7px; border-radius: 7px; font-weight: 600; }
-.v3-layers summary::after { content: '⌄'; color: var(--muted); }
-.v3-layers summary:hover, .v3-layers[open] summary { background: var(--surface-2); }
-.v3-layers-panel {
+.v3-projection { display: flex; padding: 2px; border-radius: 9px; background: var(--surface-2); }
+.view3d-bar .v3-projection button { height: 28px; padding: 0 9px; border: 0; background: transparent; color: var(--muted); }
+.view3d-bar .v3-projection button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(24, 32, 43, 0.16); }
+.v3-layers, .v3-views { position: relative; }
+.v3-layers summary, .v3-views summary { display: flex; align-items: center; gap: 6px; min-height: 30px; cursor: pointer; padding: 0 7px; border-radius: 7px; font-weight: 600; }
+.v3-layers summary::after, .v3-views summary::after { content: '⌄'; color: var(--muted); }
+.v3-layers summary:hover, .v3-layers[open] summary, .v3-views summary:hover, .v3-views[open] summary { background: var(--surface-2); }
+.v3-layers-panel, .v3-views-panel {
   position: absolute; z-index: 1; top: calc(100% + 10px); left: 50%; transform: translateX(-50%);
   display: grid; min-width: 205px; max-height: 52vh; overflow-y: auto; gap: 4px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 9px 12px;
 }
+.v3-views-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 220px; }
+.view3d-bar .v3-views-panel button { height: 36px; border-radius: 8px; }
 .v3-layers-panel .check-row { min-height: 32px; font-size: 13px; }
 .v3-layers-panel .v3-levels { display: grid; justify-items: start; gap: 5px; }
 .v3-layers-panel .v3-levels select { margin: 0; width: 100%; }
@@ -99,17 +102,19 @@ body.v3-open .level-dock { display: none; }
   .wv-tabs button, .wv-catalog { min-height: 40px; padding: 0 8px; }
   .wv-tabs button { gap: 4px; }
   body.v3-open .view3d-bar { top: 8px; left: 6px; right: 6px; gap: 6px; flex-wrap: wrap; }
-  .v3-floor select { min-height: 40px; max-width: 12ch; }
-  .v3-layers summary { min-height: 40px; }
+  .view3d-bar .v3-projection button, .v3-layers summary, .v3-views summary { min-height: 40px; }
   body.v3-open .view3d-bar :is(#v3Fit, #v3Close) { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; }
   #v3Fit svg { display: block; }
   #v3Fit span { display: none; }
   .v3-layers-panel { left: auto; right: -50px; transform: none; }
+  .v3-views-panel { left: 0; transform: none; }
 }
-@media (max-width: 400px) { .v3-floor span { display: none; } .v3-floor svg { display: block; } }
+@media (max-width: 400px) {
+  .view3d-bar .v3-projection button { padding-inline: 8px; font-size: 11.5px; }
+}
 @media (prefers-reduced-motion: reduce) { .wv-tabs button { transition: none; } }
 
 body[data-tool-context="drawing"] :is(#toolOptions, #levelDock, #fitFab, .library, .zoom-controls, .statusbar, #mobileSnapRow, #mobileCard),
-body[data-tool-context="model"] :is(.library, .zoom-controls, .statusbar, #mobileSnapRow) { display: none; }
+body[data-tool-context="model"] :is(.zoom-controls, .statusbar, #mobileSnapRow) { display: none; }
 body[data-tool-context="drawing"] .workspace { --tools-w: 0px; --opts-h: 0px; }
 body[data-tool-context="drawing"] .ls-section { left: 0; }

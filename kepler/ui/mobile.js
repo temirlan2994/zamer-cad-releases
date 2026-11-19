@@ -58,6 +58,7 @@ function closeAll() {
 // Кнопка нижней панели: открыть нужный лист или ряд, повторно — закрыть.
 // kind: 'draw' | 'rooms' | 'furniture' | 'stairs' | 'props' | 'views' | 'sheets' | 'more'.
 export function toggleSheet(kind) {
+  if (kind === 'rooms' && toolContext() === 'model') { toggleSheet('furniture'); return; }
   // «Рисовать» — второй ряд инструментов; «Каталог» в «Плане» — второй ряд
   // каталога. Открыт один из двух.
   if (kind === 'draw' || (kind === 'rooms' && state.modeName === 'plan')) {
@@ -85,7 +86,7 @@ export function toggleSheet(kind) {
     } else if (kind === 'more') {
       document.body.classList.add(MORE);
     } else {
-      if (state.modeName === 'plan') {
+      if (state.modeName === 'plan' || toolContext() === 'model') {
         const t = state.tool;
         if (t && (kind === 'furniture' || kind === 'stairs')) {
           const sameCatalog = t.kind === 'place-furniture' && (kind === 'stairs') === (t.itemKind === 'stairs');
@@ -135,14 +136,14 @@ export function syncMobileBar() {
   const btn = (kind) => bar.querySelector(`[data-sheet="${kind}"]`);
   const context = toolContext();
   const drawing = context === 'drawing';
-  const catalog = !drawing && context !== 'model' && context !== 'site';
+  const catalog = !drawing && context !== 'site';
   if (!catalog) document.body.classList.remove(CAT);
   if (drawing) document.body.classList.remove(DRAW);
   btn('draw').hidden = drawing;
   const lib = btn('rooms');
   if (lib) {
     const label = lib.querySelector('.mb-label') || lib;
-    const text = state.modeName === 'landscape' ? 'Ландшафт' : 'Каталог';
+    const text = context === 'model' ? 'Объекты' : state.modeName === 'landscape' ? 'Ландшафт' : 'Каталог';
     if (label.textContent !== text) label.textContent = text;
     // «Участок»: инструменты — в «Рисовать», каталога нет.
     lib.hidden = !catalog;

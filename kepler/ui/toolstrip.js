@@ -399,7 +399,10 @@ const toggle = (id, on) => {
 
 // Состояние кнопок: режим, активный инструмент, выделение. Вызывается при
 // смене инструмента (ui/library.js renderLibrary) и панели свойств.
-const MODEL_TOOLS = new Set(['openingsGroupBtn', 'doorToolBtn', 'windowToolBtn', 'massGroupBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn']);
+const MODEL_TOOLS = new Set([
+  'selectToolBtn', 'openingsGroupBtn', 'doorToolBtn', 'windowToolBtn',
+  'furnitureToolBtn', 'stairsToolBtn', 'massGroupBtn', 'massToolBtn', 'massVoidToolBtn', 'roofToolBtn',
+]);
 
 export function toolContext() {
   if (state.sheetOpen || state.elevationOpen || isSectionOpen()) return 'drawing';
@@ -431,10 +434,11 @@ export function renderToolstrip() {
   const strip = el('toolStrip');
   if (!strip || !state.project) return;
   const mode = state.modeName;
+  const context = toolContext();
   const t = state.tool;
   syncContextTools();
-  el('planTools').hidden = mode !== 'plan';
-  if (mode !== 'plan') closePlanToolFamilies();
+  el('planTools').hidden = mode !== 'plan' && context !== 'model';
+  if (mode !== 'plan' && context !== 'model') closePlanToolFamilies();
   refs.siteTools.hidden = mode !== 'site';
   const ls = el('landscapeTools');
   if (ls) ls.hidden = mode !== 'landscape';
@@ -452,7 +456,7 @@ export function renderToolstrip() {
   toggle('boundRoomBtn', t?.kind === 'bound-room' || t?.kind === 'place-room' || (pinned && state.libraryTab === 'rooms'));
   toggle('doorToolBtn', t?.kind === 'place-opening' && t.openKind === 'door');
   toggle('windowToolBtn', t?.kind === 'place-opening' && t.openKind === 'window');
-  const furnOpen = mode === 'plan' && ((t?.kind === 'place-furniture' && !stairs)
+  const furnOpen = (mode === 'plan' || context === 'model') && ((t?.kind === 'place-furniture' && !stairs)
     || (phone ? document.body.classList.contains('sheet-library') && state.libraryTab === 'furniture' : pinned && state.libraryTab === 'furniture'));
   toggle('furnitureToolBtn', furnOpen);
   toggle('stairsToolBtn', stairs);
