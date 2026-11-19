@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=237" />
+    <link rel="stylesheet" href="./styles.css?v=238" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -106,37 +106,32 @@
         <details class="snap-more" id="snapMore">
           <summary>Привязки</summary>
           <div class="snap-more-panel">
-            <p id="snapStepKeyboardHint" class="viewport-nonvisual">Для настройки шага удерживайте кнопку или нажмите стрелку вниз.</p>
-            <button class="snap snap-step-mode active" type="button" data-snap="grid" data-snap-settings="gridSnapSettings" aria-pressed="true" aria-expanded="false" aria-controls="gridSnapSettings" aria-describedby="snapStepKeyboardHint" aria-keyshortcuts="ArrowDown Shift+F10">
-              <span data-snap-symbol="grid" aria-hidden="true"></span>Сетка
-              <small aria-hidden="true"><b id="gridStepReadout">100 мм</b> Удержать</small>
-            </button>
-            <label class="snap-more-step" id="gridSnapSettings" hidden>
-              <span>Шаг сетки</span>
-              <select id="gridStepSelect" aria-label="Шаг сетки">
-                <option value="5">5 мм</option>
-                <option value="10">10 мм</option>
-                <option value="50">50 мм</option>
-                <option value="100" selected>100 мм</option>
-                <option value="500">500 мм</option>
-                <option value="1000">1000 мм</option>
-              </select>
-            </label>
-            <button class="snap snap-step-mode active" type="button" data-snap="polar" data-snap-settings="linePolarSettings" aria-pressed="true" aria-expanded="false" aria-controls="linePolarSettings" aria-describedby="snapStepKeyboardHint" aria-keyshortcuts="ArrowDown Shift+F10">
-              <span data-snap-symbol="polar" aria-hidden="true"></span>Полярное отслеживание
-              <small aria-hidden="true"><b id="polarStepReadout">5°</b> Удержать</small>
-            </button>
-            <label class="snap-more-step" id="linePolarSettings" hidden>
-              <span>Шаг угла</span>
-              <select id="linePolarStep" aria-label="Шаг угла">
-                <option value="5">5°</option>
-                <option value="10">10°</option>
-                <option value="15">15°</option>
-                <option value="30">30°</option>
-                <option value="45">45°</option>
-                <option value="90">90°</option>
-              </select>
-            </label>
+            <div class="snap-step-row">
+              <button class="snap active" type="button" data-snap="grid" aria-pressed="true"><span data-snap-symbol="grid" aria-hidden="true"></span>Сетка</button>
+              <div class="snap-step-select">
+                <select id="gridStepSelect" aria-label="Шаг сетки">
+                  <option value="5">5 мм</option>
+                  <option value="10">10 мм</option>
+                  <option value="50">50 мм</option>
+                  <option value="100" selected>100 мм</option>
+                  <option value="500">500 мм</option>
+                  <option value="1000">1000 мм</option>
+                </select>
+              </div>
+            </div>
+            <div class="snap-step-row">
+              <button class="snap active" type="button" data-snap="polar" aria-pressed="true"><span data-snap-symbol="polar" aria-hidden="true"></span>Полярное отслеживание</button>
+              <div class="snap-step-select">
+                <select id="linePolarStep" aria-label="Шаг угла">
+                  <option value="5">5°</option>
+                  <option value="10">10°</option>
+                  <option value="15">15°</option>
+                  <option value="30">30°</option>
+                  <option value="45">45°</option>
+                  <option value="90">90°</option>
+                </select>
+              </div>
+            </div>
             <button class="snap" type="button" data-snap="end" aria-pressed="true"><span data-snap-symbol="end" aria-hidden="true"></span>Конец</button>
             <button class="snap" type="button" data-snap="mid" aria-pressed="false"><span data-snap-symbol="mid" aria-hidden="true"></span>Середина</button>
             <button class="snap" type="button" data-snap="center" aria-pressed="false"><span data-snap-symbol="center" aria-hidden="true"></span>Центр</button>
@@ -257,6 +252,16 @@
           <button id="dimensionLinkCancel" type="button" hidden>Отмена привязки</button>
         </div>
         <div class="save-indicator" id="saveIndicator" role="status" aria-atomic="true" data-state="idle">Сохранение...</div>
+        <div class="draft-metric-labels metric-fields" id="draftMetricLabels" data-metric-context="line-draft" role="group" aria-label="Размеры линии на чертеже" hidden>
+          <label class="metric-field" id="draftLengthEditor" hidden>
+            <input id="draftLengthInput" inputmode="decimal" enterkeyhint="done" aria-label="Длина линии на чертеже" />
+            <span class="metric-readout" id="draftLengthReadout" aria-hidden="true"></span><span class="metric-unit" aria-hidden="true">мм</span>
+          </label>
+          <label class="metric-field" id="draftAngleEditor" hidden>
+            <input id="draftAngleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол линии на чертеже" />
+            <span class="metric-readout" id="draftAngleReadout" aria-hidden="true"></span><span class="metric-unit" aria-hidden="true">°</span>
+          </label>
+        </div>
         <div class="corner-metrics" id="cornerMetrics" role="group" aria-label="Точные параметры" hidden>
           <div class="line-point-assist" id="linePointAssist" hidden>
             <button id="polylineArcMode" type="button" aria-label="Дуга полилинии" aria-pressed="false" hidden>Дуга</button>
@@ -448,7 +453,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=237"></script>
+    <script type="module" src="./app.js?v=238"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

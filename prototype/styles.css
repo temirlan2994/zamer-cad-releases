@@ -724,17 +724,13 @@ input {
   display: none;
 }
 
-.snap-more-panel button,
-.snap-more-step {
+.snap-more-panel button {
   align-items: center;
+  color: var(--text);
   display: flex;
   gap: 7px;
   min-height: 44px;
   text-align: left;
-}
-
-.snap-more-panel button {
-  color: var(--text);
 }
 
 .snap-more-panel button > [data-snap-symbol] {
@@ -743,55 +739,53 @@ input {
   text-align: center;
 }
 
-.snap-step-mode,
-.snap-more-step,
+.snap-step-row,
 .snap-legend {
   grid-column: 1 / -1;
 }
 
-.snap-more-panel .snap-step-mode {
-  touch-action: pan-y;
-  user-select: none;
-  -webkit-touch-callout: none;
+.snap-step-row {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: minmax(0, 1fr) 5.5rem;
 }
 
-.snap-step-mode small {
-  align-items: flex-end;
-  color: var(--muted);
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  font-size: .65rem;
-  gap: 2px;
-  line-height: 1.05;
-  margin-inline-start: auto;
+.snap-step-select {
+  position: relative;
 }
 
-.snap-step-mode small b {
-  color: var(--text);
-  font-size: .74rem;
+.snap-step-select::after {
+  border-bottom: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  content: "";
+  height: 6px;
+  inset-inline-end: 11px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-75%) rotate(45deg);
+  width: 6px;
 }
 
-.snap-more-step {
-  color: var(--muted);
-  font-size: 0.78rem;
-  justify-content: space-between;
-  padding-left: 8px;
-}
-
-.snap-more-step[hidden] {
-  display: none;
-}
-
-.snap-more-step select {
+.snap-step-select select {
+  appearance: none;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   color: var(--text);
+  cursor: pointer;
   font: inherit;
+  font-size: .75rem;
+  font-weight: 700;
+  height: 100%;
   min-height: 44px;
-  min-width: 62px;
-  padding: 0 7px;
+  padding-inline: 9px 24px;
+  width: 100%;
+}
+
+.snap-step-select select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .workspace {
@@ -1273,7 +1267,8 @@ input {
   color: var(--error-text);
 }
 
-.workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) .corner-metrics,
+.workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) :is(.corner-metrics, .draft-metric-labels),
+.app-shell:has(#snapMore[open]) :is(.line-draft-metrics, .draft-metric-labels),
 .corner-metrics[hidden],
 .metric-fields[hidden],
 .metric-field[hidden] {
@@ -1299,6 +1294,25 @@ input {
 .workspace:has(#selectToolMenu:not([hidden]) .line-edit-action:not([hidden])) .corner-metrics,
 .corner-metrics:has(#inlineEditors[data-metric-context="selected-circle"]:not([hidden])) {
   bottom: calc(max(190px, var(--keyboard-inset, 0px) + 8px) + env(safe-area-inset-bottom));
+}
+
+.corner-metrics.line-draft-metrics {
+  bottom: auto;
+  justify-items: end;
+  left: auto;
+  right: 10px;
+  top: 38px;
+}
+
+.line-draft-metrics .line-point-assist {
+  grid-row: 2;
+}
+
+.draft-metric-labels {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 10;
 }
 
 .corner-metric-row,
@@ -1389,6 +1403,11 @@ input {
   min-width: 48px;
   padding: 0 6px;
   position: relative;
+}
+
+.draft-metric-labels[data-metric-context="line-draft"] .metric-field:not([hidden]) {
+  position: absolute;
+  transform: translate(-50%, -50%);
 }
 
 .metric-fields[data-metric-context="line-draft"] .metric-field::before {
@@ -1655,7 +1674,7 @@ input {
   width: 20px;
 }
 
-.snap-panel .snap:is(:disabled, .snap-muted) {
+.snap-panel .snap:disabled {
   border-color: var(--border);
   color: var(--muted);
   cursor: default;

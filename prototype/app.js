@@ -423,11 +423,9 @@ const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickDeleteTool = document.getElementById("quickDeleteTool");
-const gridStepReadout = document.getElementById("gridStepReadout");
 const gridStepSelect = document.getElementById("gridStepSelect");
 const gridVisibleReadout = document.getElementById("gridVisibleReadout");
 const allSnapsButton = document.getElementById("allSnapsButton");
-const polarStepReadout = document.getElementById("polarStepReadout");
 const snapMore = document.getElementById("snapMore");
 const snapMoreSummary = snapMore.querySelector("summary");
 const drawToolMenu = document.getElementById("drawToolMenu");
@@ -440,7 +438,6 @@ const selectToolMenu = document.getElementById("selectToolMenu");
 const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll("[data-snap]")];
-const snapStepButtons = snaps.filter((button) => button.dataset.snapSettings);
 const GRID_STEPS = [5, 10, 50, 100, 500, 1000];
 const POLAR_STEPS = [5, 10, 15, 30, 45, 90];
 const snapSymbolPaths = {
@@ -478,6 +475,12 @@ const linePointEpsilon = 1e-6;
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
+const draftMetricLabels = document.getElementById("draftMetricLabels");
+const draftLengthInput = document.getElementById("draftLengthInput");
+const draftAngleInput = document.getElementById("draftAngleInput");
+const draftLengthReadout = document.getElementById("draftLengthReadout");
+const draftAngleReadout = document.getElementById("draftAngleReadout");
+const pressedMetricFields = new Set();
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
@@ -515,9 +518,10 @@ const layersSheet = document.getElementById("layersSheet");
 const exportSheet = document.getElementById("exportSheet");
 const layerList = document.getElementById("layerList");
 const exportCards = [...document.querySelectorAll(".export-card")];
-const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
+const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, draftLengthInput, draftAngleInput].filter(Boolean);
 let lastNumericInput = null;
-const lineMetricKinds = new Map([[lengthInput, "length"], [angleInput, "angle"], [topLengthInput, "length"], [topAngleInput, "angle"]]);
+const lineMetricKinds = new Map([[lengthInput, "length"], [angleInput, "angle"], [topLengthInput, "length"], [topAngleInput, "angle"],
+  [draftLengthInput, "length"], [draftAngleInput, "angle"]]);
 const modifiedMetricInputs = new WeakSet();
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 let androidKeyboardViewport = null;
@@ -2112,7 +2116,6 @@ function restoreProject(project) {
     state.snapsMuted = false;
     state.gridStep = GRID_STEPS.includes(project.gridStep) ? project.gridStep : 100;
     state.polarStep = POLAR_STEPS.includes(project.polarStep) ? project.polarStep : 5;
-    if (lineUi.linePolarStep) lineUi.linePolarStep.value = String(state.polarStep);
     const availableLayers = new Set(projectDefaultLayers(project));
     state.visibleLayers = new Set((Array.isArray(project.visibleLayers) ? project.visibleLayers : [...availableLayers])
       .filter((id) => availableLayers.has(id)));
@@ -2388,6 +2391,8 @@ function lockDocumentScroll() {
   document.body.scrollTop = 0;
 }
 
+let draftingKeyboardInset = 0;
+
 function updateViewportLock() {
   const visualViewport = window.visualViewport;
   const viewportHeight = Math.round(visualViewport?.height || window.innerHeight || stableViewportHeight);
@@ -2399,6 +2404,7 @@ function updateViewportLock() {
     ? Math.max(0, stableViewportHeight - androidKeyboardViewport.availableHeight) : 0;
   const detectedInset = Math.max(rawInset, heightLoss, nativeInset);
   const keyboardInset = inputFocused && detectedInset > 80 ? Math.min(detectedInset, Math.max(0, stableViewportHeight - 240)) : 0;
+  draftingKeyboardInset = keyboardInset;
 
   if (!inputFocused) {
     // System-bar insets and split-screen can shrink the viewport after startup.
@@ -4648,9 +4654,12 @@ function drawActiveSegment(c, viewport) {
     return;
   }
 
-  drawEditableSegment(start, end, c, { lineWidth: 2.2, showHandles: state.tool !== "line" });
-  if (state.tool === "line") drawDraftLengthDimension(p1, p2, distanceWorld(start, end), c, viewport);
+  const angleAnchor = drawEditableSegment(start, end, c, { lineWidth: 2.2, showHandles: state.tool !== "line" });
   updateInlineEditors(start, end, metrics, angleInfo);
+  if (state.tool === "line" && !surveyPointPicker) {
+    const lengthAnchor = drawDraftLengthDimension(p1, p2, c, viewport);
+    updateDraftMetricLabels(lengthAnchor, angleAnchor, distanceWorld(start, end), angleInfo, viewport);
+  }
 }
 
 function drawEditableSegment(start, end, c, options = {}) {
@@ -4669,25 +4678,19 @@ function drawEditableSegment(start, end, c, options = {}) {
     drawHandle(p2.x, p2.y, c);
   }
   ctx.restore();
-  drawAngleArc(p1, p2, angleInfo, c);
+  return drawAngleArc(p1, p2, angleInfo, c);
 }
 
-function drawDraftLengthDimension(start, end, length, c, viewport) {
+function drawDraftLengthDimension(start, end, c, viewport) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const span = Math.hypot(dx, dy);
-  if (span < 14) return;
+  if (span < 14) return null;
 
   const normal = { x: -dy / span, y: dx / span };
   const offset = Math.min(32, Math.max(22, auxiliaryPx(26)));
   const center = midpoint(start, end);
-  const text = projectLength(length);
-
-  ctx.save();
-  ctx.font = "700 11px Inter, Segoe UI, sans-serif";
-  const labelWidth = ctx.measureText(text).width + 10;
-  const labelFits = ({ x, y }) => x >= labelWidth / 2 + 4 && x <= viewport.width - labelWidth / 2 - 4 &&
-    y >= 16 && y <= viewport.height - 70;
+  const labelFits = ({ x, y }) => x >= 32 && x <= viewport.width - 32 && y >= 36 && y <= viewport.height - 92;
   const shift = (point, distance) => ({ x: point.x + normal.x * distance, y: point.y + normal.y * distance });
   let side = normal.y > 0 || (normal.y === 0 && normal.x > 0) ? -1 : 1;
   if (!labelFits(shift(center, side * offset)) && labelFits(shift(center, -side * offset))) side *= -1;
@@ -4696,6 +4699,7 @@ function drawDraftLengthDimension(start, end, length, c, viewport) {
   const insetStart = shift(start, side * 4);
   const insetEnd = shift(end, side * 4);
 
+  ctx.save();
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = 1;
   ctx.lineCap = "round";
@@ -4706,17 +4710,53 @@ function drawDraftLengthDimension(start, end, length, c, viewport) {
   ctx.globalAlpha = 0.9;
   linePath(from.x, from.y, to.x, to.y);
 
-  const label = midpoint(from, to);
-  if (labelFits(label)) {
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = c.surface;
-    roundedRect(label.x - labelWidth / 2, label.y - 8, labelWidth, 16, 4, true);
-    ctx.fillStyle = c.accent;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, label.x, label.y);
-  }
   ctx.restore();
+  return midpoint(from, to);
+}
+
+function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, viewport) {
+  draftMetricLabels.hidden = false;
+  updateMetricField(draftLengthInput, draftLengthReadout, length);
+  updateMetricField(draftAngleInput, draftAngleReadout, angleInfo.degrees, { angle: true, wrap: angleInfo.cadAngle });
+  const activeInput = numericConfirmInput();
+  const entries = [[draftLengthInput, lengthAnchor], [draftAngleInput, angleAnchor]];
+  if (activeInput === draftAngleInput || pressedMetricFields.has(draftAngleInput.parentElement)) entries.reverse();
+  let placed = null;
+  for (const [input, anchor] of entries) {
+    const field = input.parentElement;
+    const pinned = input === activeInput || pressedMetricFields.has(field);
+    const previous = field.style.left && !field.hidden ? { x: parseFloat(field.style.left), y: parseFloat(field.style.top) } : null;
+    const point = (pinned && previous) || anchor;
+    field.hidden = !point;
+    if (!point) continue;
+
+    const halfWidth = (field.offsetWidth || 48) / 2;
+    const maxY = Math.max(20, viewport.height - Math.max(70, draftingKeyboardInset + 6) - 20);
+    const minY = Math.min(43, maxY);
+    const minX = halfWidth + 4;
+    const maxX = Math.max(minX, viewport.width - halfWidth - 4);
+    let x = Math.max(minX, Math.min(maxX, point.x));
+    let y = Math.max(minY, Math.min(maxY, point.y));
+
+    // The controls under the save status occupy the upper-right corner.
+    if (y < 96 && x + halfWidth > viewport.width - 156) {
+      if (maxY >= 98) y = 98;
+      else x = Math.max(minX, viewport.width - 160 - halfWidth);
+    }
+    if (placed && Math.abs(x - placed.x) < halfWidth + placed.halfWidth + 4 && Math.abs(y - placed.y) < 40) {
+      if (placed.y + 42 <= maxY) y = placed.y + 42;
+      else if (placed.y - 42 >= minY && (placed.y - 42 >= 96 || x + halfWidth <= viewport.width - 156)) y = placed.y - 42;
+      else if (placed.x - placed.halfWidth - halfWidth - 4 >= minX) x = placed.x - placed.halfWidth - halfWidth - 4;
+      else if (placed.x + placed.halfWidth + halfWidth + 4 <= maxX) x = placed.x + placed.halfWidth + halfWidth + 4;
+      else if (!pinned) {
+        field.hidden = true;
+        continue;
+      }
+    }
+    field.style.left = `${x}px`;
+    field.style.top = `${y}px`;
+    placed = { x, y, halfWidth };
+  }
 }
 
 function drawActiveAngularDimension(c) {
@@ -4812,7 +4852,7 @@ function drawAngleArc(origin, target, angleInfo, c) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const screenLength = Math.hypot(dx, dy);
-  if (screenLength < 34) return;
+  if (screenLength < (state.tool === "line" ? 14 : 34)) return null;
 
   const ux = dx / screenLength;
   const uy = dy / screenLength;
@@ -4847,6 +4887,8 @@ function drawAngleArc(origin, target, angleInfo, c) {
   ctx.setLineDash([]);
 
   ctx.restore();
+  const labelRad = startRad + angleInfo.deltaRad / 2;
+  return { x: arcOrigin.x + Math.cos(labelRad) * (radius + 15), y: arcOrigin.y + Math.sin(labelRad) * (radius + 15) };
 }
 
 function projectLength(mm) {
@@ -4865,8 +4907,7 @@ function updateMetricField(input, readout, value, { angle = false, wrap = false 
   const unitText = angle ? "°" : projectUnit(settings).label;
   if (unit && unit.textContent !== unitText) unit.textContent = unitText;
   if (numericConfirmInput() === input) return;
-  const editingLine = input === lengthInput || input === angleInput;
-  const buffer = editingLine ? state.numericEdit?.lineMetric?.texts?.[lineMetricKinds.get(input)] : undefined;
+  const buffer = state.numericEdit?.lineMetric?.texts?.[lineMetricKinds.get(input)];
   input.value = buffer ?? metricEntryValue(angle ? value : toProjectLength(value, settings));
   syncInlineEditorWidth(input);
 }
@@ -5443,6 +5484,7 @@ function hideInlineEditors() {
   else closeMetricEntry();
   lineDirectionDescription.textContent = "";
   inlineEditors.hidden = true;
+  draftMetricLabels.hidden = true;
   drawMetrics.hidden = true;
   state.inlineEdit = null;
   state.circleRadiusEdit = null;
@@ -6225,16 +6267,6 @@ function snapEnabled(mode) {
 function visibleGridStep() {
   const multiplier = [1, 2, 5, 10, 20, 50, 100, 200, 500].find((factor) => state.gridStep * factor * state.view.scale >= 6);
   return state.gridStep * (multiplier ?? 500);
-}
-
-function updateGridStepReadout() {
-  const value = `${state.gridStep} мм`;
-  if (gridStepReadout.textContent !== value) gridStepReadout.textContent = value;
-  if (gridStepSelect.value !== String(state.gridStep)) gridStepSelect.value = String(state.gridStep);
-  const button = gridStepReadout.closest("button");
-  const label = `Привязка к сетке, шаг ${value}`;
-  button.setAttribute("aria-label", label);
-  button.title = label;
 }
 
 function snapValueToGrid(value) {
@@ -7063,15 +7095,17 @@ function syncSnapButtons() {
   snaps.forEach((button) => {
     const mode = button.dataset.snap;
     button.classList.toggle("active", state.snaps.has(mode));
-    button.classList.toggle("snap-muted", state.snapsMuted);
-    button.disabled = state.snapsMuted && !button.dataset.snapSettings;
+    button.disabled = state.snapsMuted;
     button.setAttribute("aria-pressed", String(snapEnabled(mode)));
   });
+  const gridButton = snaps.find((button) => button.dataset.snap === "grid");
+  gridButton.title = `Привязка к сетке, шаг ${state.gridStep} мм`;
+  gridButton.setAttribute("aria-label", gridButton.title);
   const polarButton = snaps.find((button) => button.dataset.snap === "polar");
   polarButton.title = `Полярное отслеживание, шаг ${state.polarStep}°`;
   polarButton.setAttribute("aria-label", polarButton.title);
-  polarStepReadout.textContent = `${state.polarStep}°`;
-  updateGridStepReadout();
+  if (gridStepSelect.value !== String(state.gridStep)) gridStepSelect.value = String(state.gridStep);
+  if (lineUi.linePolarStep.value !== String(state.polarStep)) lineUi.linePolarStep.value = String(state.polarStep);
 }
 
 function syncDrawToolMenu() {
@@ -7507,11 +7541,12 @@ function syncLineControls() {
   const edit = state.lineEdit;
   const draft = state.tool === "line" ? state.drawing : null;
   const input = numericConfirmInput();
-  const choosingDirection = !surveyPointPicker && draft && ([lengthInput, topLengthInput].includes(input) || draft.metricConstraint?.length !== undefined);
+  const choosingDirection = !surveyPointPicker && draft && (lineMetricKinds.get(input) === "length" || draft.metricConstraint?.length !== undefined);
   polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(input);
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
   linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
   cornerMetrics.hidden = inlineEditors.hidden && drawMetrics.hidden && linePointAssist.hidden;
+  cornerMetrics.classList.toggle("line-draft-metrics", Boolean(draft));
   lineDirection.hidden = !choosingDirection;
   if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
   document.getElementById("undoButton").disabled = !state.undo.length && size < 2 && !drawing?.arcEnd && !state.planZone?.points.length;
@@ -10153,85 +10188,20 @@ gridStepSelect.addEventListener("change", () => {
   draw();
 });
 
-function showSnapStepSettings(selected, focus = false) {
-  for (const button of snapStepButtons) {
-    const field = document.getElementById(button.dataset.snapSettings);
-    const expanded = button === selected;
-    field.hidden = !expanded;
-    button.setAttribute("aria-expanded", String(expanded));
-    if (expanded && focus) field.querySelector("select").focus({ preventScroll: true });
-  }
-}
-
-function bindSnapStepSettings(button) {
-  let press = null;
-  let suppressClick = false;
-  const stopPress = () => {
-    if (press) clearTimeout(press.timer);
-    press = null;
-  };
-  button.addEventListener("pointerdown", (event) => {
-    if (!event.isPrimary || event.button !== 0) return;
-    stopPress();
-    suppressClick = false;
-    press = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    button.setPointerCapture(event.pointerId);
-    press.timer = setTimeout(() => {
-      suppressClick = true;
-      showSnapStepSettings(button);
-    }, 450);
-  });
-  button.addEventListener("pointermove", (event) => {
-    if (press?.id === event.pointerId && Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_MOVE_TOLERANCE) stopPress();
-  });
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
-    button.addEventListener(type, (event) => {
-      if (press?.id === event.pointerId) stopPress();
-    });
-  }
-  button.addEventListener("click", (event) => {
-    if (!suppressClick || event.detail === 0) return;
-    suppressClick = false;
-    event.preventDefault();
-  });
-  button.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    stopPress();
-    suppressClick = true;
-    showSnapStepSettings(button);
-  });
-  button.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowDown" && event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    showSnapStepSettings(button, true);
-  });
-}
-
-for (const button of snapStepButtons) bindSnapStepSettings(button);
-snapMore.addEventListener("toggle", () => {
-  if (!snapMore.open) showSnapStepSettings(null);
-});
 snapMore.addEventListener("keydown", (event) => {
   if (!snapMore.open || event.key !== "Escape") return;
   event.preventDefault();
   event.stopPropagation();
-  const openSetting = snapStepButtons.find((button) => button.getAttribute("aria-expanded") === "true");
-  if (openSetting) {
-    showSnapStepSettings(null);
-    openSetting.focus({ preventScroll: true });
-  } else {
-    snapMore.open = false;
-    snapMoreSummary.focus({ preventScroll: true });
-  }
+  snapMore.open = false;
+  snapMoreSummary.focus({ preventScroll: true });
 });
 document.addEventListener("pointerdown", (event) => {
   if (snapMore.open && !snapMore.contains(event.target)) snapMore.open = false;
 });
 
 snaps.forEach((button) => {
-  button.addEventListener("click", (event) => {
-    if (event.defaultPrevented || state.snapsMuted) return;
+  button.addEventListener("click", () => {
+    if (state.snapsMuted) return;
     const snap = button.dataset.snap;
     if (state.snaps.has(snap)) {
       state.snaps.delete(snap);
@@ -10534,6 +10504,7 @@ function bindMetricField(input) {
       panY: state.view.panY,
       bounds: field.getBoundingClientRect(),
     };
+    pressedMetricFields.add(field);
     field.setPointerCapture(event.pointerId);
   });
   field.addEventListener("pointermove", (event) => {
@@ -10554,14 +10525,19 @@ function bindMetricField(input) {
     if (press?.pointerId !== event.pointerId) return;
     const { bounds, start } = press;
     press = null;
+    pressedMetricFields.delete(field);
     if (!suppressClick && pointDistance(start, getPointer(event)) <= TAP_MOVE_TOLERANCE &&
         event.clientX >= bounds.left && event.clientX <= bounds.right &&
         event.clientY >= bounds.top && event.clientY <= bounds.bottom) {
       input.focus({ preventScroll: true });
     } else suppressClick = true;
+    draw();
   });
   field.addEventListener("lostpointercapture", (event) => {
-    if (press?.pointerId === event.pointerId) press = null;
+    if (press?.pointerId !== event.pointerId) return;
+    press = null;
+    pressedMetricFields.delete(field);
+    draw();
   });
   field.addEventListener("click", (event) => {
     if (suppressClick && event.detail > 0) event.preventDefault();
