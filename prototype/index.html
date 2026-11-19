@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=271" />
+    <link rel="stylesheet" href="./styles.css?v=272" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -210,12 +210,13 @@
             <input id="lineEditRadius" type="number" min="0" step="any" value="0" inputmode="decimal" enterkeyhint="done" />
           </label>
           <div class="line-mode-control" id="lineMirrorModes" role="group" aria-label="Ось отражения" hidden>
-            <button type="button" data-mirror-axis="vertical">Вертикаль</button>
-            <button type="button" data-mirror-axis="horizontal">Горизонталь</button>
-            <button type="button" data-mirror-axis="line" aria-pressed="false">По линии</button>
+            <button type="button" data-mirror-axis="vertical" title="Отразить по вертикали" aria-label="Отразить по вертикали"><span data-line-icon="mirror" aria-hidden="true"></span><small aria-hidden="true">Верт.</small></button>
+            <button type="button" data-mirror-axis="horizontal" title="Отразить по горизонтали" aria-label="Отразить по горизонтали"><span data-line-icon="mirrorHorizontal" aria-hidden="true"></span><small aria-hidden="true">Гориз.</small></button>
+            <button type="button" data-mirror-axis="line" title="Отразить по начерченной линии" aria-label="Отразить по начерченной линии" aria-pressed="false"><span data-line-icon="mirrorLineAxis" aria-hidden="true"></span><small aria-hidden="true">По линии</small></button>
           </div>
-          <label class="line-copy-option" id="lineMirrorControl" hidden>
-            <input id="lineMirrorDelete" type="checkbox" /> Заменить оригинал
+          <label id="lineMirrorControl" title="Заменить оригинал" hidden>
+            <input id="lineMirrorDelete" type="checkbox" aria-label="Заменить оригинал" />
+            <span data-line-icon="replaceOriginal" aria-hidden="true"></span><small aria-hidden="true">Заменить</small>
           </label>
           <form class="line-command-form line-length-form" id="lineEditForm" hidden>
             <div class="line-mode-control" id="lineLengthModes" role="group" aria-label="Способ задания значения"></div>
@@ -518,7 +519,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=271"></script>
+    <script type="module" src="./app.js?v=272"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

@@ -967,22 +967,6 @@ button.project-card-open:active { background: var(--surface-2); }
   padding-left: 4px;
 }
 
-.line-copy-option {
-  align-items: center;
-  display: flex;
-  font-size: 0.85rem;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 8px;
-}
-
-.line-command-panel .line-copy-option input {
-  accent-color: var(--accent);
-  height: 22px;
-  min-height: 0;
-  width: 22px;
-}
-
 .line-command-panel input,
 .line-command-panel button {
   background: var(--surface-2);
@@ -1017,12 +1001,59 @@ button.project-card-open:active { background: var(--surface-2); }
   width: 44px;
 }
 
-#lineMirrorModes button,
 #angleModes button,
 #radialModes button {
   font-size: 0.72rem;
   padding-inline: 6px;
   width: auto;
+}
+
+#lineMirrorModes button,
+#lineMirrorControl {
+  gap: 2px;
+  width: 54px;
+}
+
+#lineMirrorControl {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  display: grid;
+  justify-items: center;
+  min-height: 44px;
+  padding: 0;
+  place-content: center;
+  position: relative;
+}
+
+#lineMirrorControl[hidden] { display: none; }
+
+#lineMirrorControl input {
+  cursor: pointer;
+  height: 100%;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+#lineMirrorControl:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  border-color: var(--accent);
+  color: var(--readable-accent);
+}
+
+#lineMirrorControl:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+#lineMirrorModes small,
+#lineMirrorControl small {
+  font-size: 0.6rem;
+  line-height: 1;
 }
 
 .line-command-heading {
