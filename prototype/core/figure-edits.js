@@ -18,6 +18,7 @@ export function validFigurePiece(piece) {
     if (![piece.start, piece.through, piece.end].every(isLinePoint)) return false;
     return isLinePoint(arcGeometry(piece.start, piece.through, piece.end)?.center);
   }
+  if (piece.type === "circle") return Number.isFinite(piece.radius) && piece.radius > 0 && isLinePoint({ x: piece.cx, y: piece.cy });
   if (piece.type === "rectangle") return isValidLine(piece) && piece.x1 !== piece.x2 && piece.y1 !== piece.y2;
   return (!piece.type || piece.type === "line") && isValidLine(piece);
 }

@@ -454,6 +454,7 @@ const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]"
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
 const quickRotateTool = document.getElementById("quickRotateTool");
+const quickMirrorTool = document.getElementById("quickMirrorTool");
 const quickDeleteTool = document.getElementById("quickDeleteTool");
 const gridStepSelect = document.getElementById("gridStepSelect");
 const gridVisibleReadout = document.getElementById("gridVisibleReadout");
@@ -492,7 +493,7 @@ for (const icon of document.querySelectorAll("[data-snap-symbol]")) {
 const lineUi = Object.fromEntries([
   "lineBoundaryControl", "lineBreakControl", "lineEditApply", "linePolarStep",
   "lineEditOptions", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
-  "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorControl", "lineMirrorDelete",
+  "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorModes", "lineMirrorControl", "lineMirrorDelete",
 ].map((id) => [id, document.getElementById(id)]));
 const leaderUi = {
   tools: document.getElementById("leaderTools"),
@@ -3158,11 +3159,11 @@ function canApplySelectionAction(action) {
   if (lineEditActions.has(action)) return selected.length === 1 && isDraftLine(selected[0]);
   if (selected.length !== 1) return false;
   const entity = selected[0];
+  if (action === "mirror") return editableFigure(entity, action) || ["wall", "block"].includes(entity.type);
   if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "copy" || action === "rotate";
   if (entity.type === "polyline") return action === "copy" || action === "rotate";
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "mirror") return entity.type !== "text" && entity.type !== "circle" && (entity.type === "block" || linearEditableEntity(entity));
   if (action === "offset") return isDraftLine(entity) || entity.type === "wall";
   return false;
 }
@@ -5674,7 +5675,7 @@ function applySelectionAction(action) {
   }
 
   if (!actionEntity) return;
-  if ((isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) ||
+  if (action === "mirror" || (isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) ||
       (figureCutActions.has(action) && editableFigure(actionEntity, action))) {
     startLineEdit(action, actionEntity);
     return;
@@ -5691,17 +5692,7 @@ function applySelectionAction(action) {
     startMoveLikeCommand(actionEntity, "rotate");
     return;
   }
-  if (action === "mirror" && actionEntity.type === "block") {
-    const before = entityGeometry(actionEntity);
-    mirrorBlockEntity(actionEntity);
-    const after = entityGeometry(actionEntity);
-    state.undo.push({ type: "move", entityId: actionEntity.id, before, after });
-    state.redo.length = 0;
-    markProjectDirty("mirror-block");
-    statusChip.textContent = "Объект отзеркален";
-    draw();
-    return;
-  }
+
 
   const entity = state.entities.find((item) => item.id === state.selectedId);
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
@@ -5737,9 +5728,6 @@ function applySelectionAction(action) {
     return;
     rotateLinearEntity90(entity);
     statusChip.textContent = "Поворот 90°";
-  } else if (action === "mirror") {
-    mirrorLinearEntity(entity);
-    statusChip.textContent = "Отзеркалено";
   }
   const after = entityGeometry(entity);
   if (geometryChanged(before, after)) {
@@ -7899,7 +7887,11 @@ function syncLineControls() {
   lineUi.lineEditOptions.hidden = !edit;
   lineUi.lineEditForm.hidden = !lineQuantityModes[edit?.mode];
   lineUi.lineEditRadiusControl.hidden = edit?.mode !== "fillet";
-  lineUi.lineMirrorControl.hidden = edit?.mode !== "mirror";
+  const mirroring = edit?.mode === "mirror";
+  lineUi.lineMirrorModes.hidden = lineUi.lineMirrorControl.hidden = !mirroring;
+  lineUi.lineMirrorModes.querySelector('[data-mirror-axis="line"]').setAttribute("aria-pressed", String(Boolean(mirroring && edit.pickMirrorAxis)));
+  quickMirrorTool.disabled = !mirroring && !canApplySelectionAction("mirror");
+  quickMirrorTool.setAttribute("aria-expanded", String(mirroring));
   const hasBoundaries = boundaryEditModes.has(edit?.mode);
   quickMoveTool.disabled = !canApplySelectionAction("move");
   quickCopyTool.disabled = !canApplySelectionAction("copy");
@@ -8092,7 +8084,7 @@ function undoLineSegment() {
 
 function lineEditEntity(id, mode) {
   return state.entities.find((entity) => entity.id === id && isLayerVisible(entity.layer) &&
-    (figureCutActions.has(mode) ? editableFigure(entity, mode) : isDraftLine(entity)));
+    (mode === "mirror" ? editableFigure(entity, mode) || ["wall", "block"].includes(entity.type) : figureCutActions.has(mode) ? editableFigure(entity, mode) : isDraftLine(entity)));
 }
 
 function pickDraftLine(screen, includeFigures = false, candidates = null, mode) {
@@ -8163,7 +8155,7 @@ function startLineEdit(mode, entity, { quick = false } = {}) {
     lengthen: "Длина: введите значение и выберите конец на линии",
     fillet: "Скругление: коснитесь сохраняемой стороны первой линии",
     offset: "Смещение: введите расстояние или выберите «Через точку»",
-    mirror: "Наведите крестик на первую точку оси отражения",
+    mirror: "Выберите ось отражения",
     scale: "Масштаб: введите коэффициент и укажите базовую точку",
   };
   setLineEditHint(prompts[mode]);
@@ -8269,13 +8261,12 @@ function finishLineJoin() {
 }
 
 function lineEditPlacesPoint(edit = state.lineEdit) {
-  return Boolean(edit && (["break", "offset", "mirror", "scale"].includes(edit.mode) ||
+  return Boolean(edit && (["break", "offset", "scale"].includes(edit.mode) || (edit.mode === "mirror" && edit.pickMirrorAxis) ||
     (edit.mode === "lengthen" && edit.lengthMode === "dynamic" && edit.firstPick)));
 }
 
 function resolveLineEditPoint(edit, raw) {
-  if (edit.mode === "mirror" && edit.firstPick) return resolveLineLikeSnap(raw, edit.firstPick);
-  if (edit.mode === "mirror" || edit.mode === "scale" || (edit.mode === "offset" && edit.lengthMode === "through")) {
+  if (edit.mode === "scale" || (edit.mode === "offset" && edit.lengthMode === "through")) {
     return resolveSnapWorld(raw);
   }
   return { point: raw, snap: null };
@@ -8304,7 +8295,15 @@ function pickLineEditPoint(screen) {
     return;
   }
   const point = lineEditPlacesPoint(edit) ? cursorWorld() : screenToWorld(screen);
-  if (["offset", "mirror", "scale"].includes(edit.mode)) {
+  if (edit.mode === "mirror") {
+    if (!edit.pickMirrorAxis) return;
+    const candidates = state.entities.filter(entity => entity !== source);
+    const axis = pickDraftLine(screen, false, candidates) ?? pickDraftLine(centerScreen(), false, candidates);
+    if (!axis) return setLineEditHint("Укажите нарисованную прямую линию");
+    previewMirror(source, { x: axis.x1, y: axis.y1 }, { x: axis.x2, y: axis.y2 });
+    return;
+  }
+  if (["offset", "scale"].includes(edit.mode)) {
     placeLineTransform(edit, source, point);
     return;
   }
@@ -8462,18 +8461,38 @@ function placeLineTransform(edit, source, point) {
     previewLineEdit([[source, [coordinates]]], "Масштаб линии изменён");
     return;
   }
-  if (!edit.firstPick) {
-    edit.firstPick = point;
-    setLineEditHint("Наведите крестик на вторую точку оси отражения");
-    draw();
-    return;
-  }
-  const coordinates = mirrorLine(source, edit.firstPick, point);
-  if (!coordinates) return setLineEditHint("Точки оси отражения должны различаться");
-  if (lineUi.lineMirrorDelete.checked) {
-    previewLineEdit([[source, [coordinates]]], "Линия отражена");
+}
+
+function previewMirror(source, start, end) {
+  state.lineEdit.mirrorAxis = { start, end };
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const axis = normalizeWorldVector(dx, dy);
+  if (!axis) return setLineEditHint("Выберите линию ненулевой длины");
+  const reflect = point => {
+    const offset = 2 * ((point.x - start.x) * -axis.y + (point.y - start.y) * axis.x);
+    return { x: point.x + axis.y * offset, y: point.y - axis.x * offset };
+  };
+  let geometry;
+  if (source.type === "arc") {
+    geometry = { type: "arc", ...mapArcPoints(source, reflect) };
+  } else if (source.type === "polyline" || (source.type === "rectangle" && dx && dy)) {
+    geometry = { type: "polyline", points: (source.points || rectangleCorners(source)).map(reflect),
+      closed: source.closed ?? true, bulges: source.bulges?.map(bulge => -bulge) };
+  } else if (source.type === "circle") {
+    const center = reflect({ x: source.cx, y: source.cy });
+    geometry = { type: "circle", cx: center.x, cy: center.y, radius: source.radius };
+  } else if (source.type === "block") {
+    geometry = { type: "block", ...reflect(source), flipX: !source.flipX,
+      rotation: normalizeDegrees(radToDeg(2 * Math.atan2(dy, dx) + Math.PI) - (source.rotation || 0)) };
   } else {
-    previewLineEdit([], "Отражённая копия создана", [{ ...source, ...coordinates, id: newLineId() }]);
+    geometry = mirrorLine(source, start, end);
+  }
+  if (!geometry) return setLineEditHint("Отражение невозможно");
+  if (lineUi.lineMirrorDelete.checked) {
+    previewLineEdit([[source, [geometry]]], "Объект отражён");
+  } else {
+    previewLineEdit([], "Отражённая копия создана", [replaceFigureGeometry(source, geometry, newLineId(geometry.type || source.type))]);
   }
 }
 
@@ -8503,7 +8522,9 @@ function previewLineEdit(replacements, message, added = [], association = "follo
     draw();
     return;
   }
-  if (changes.some(([, pieces]) => pieces.some((piece) => !validFigurePiece(piece))) || added.some(entity => !validFigurePiece(entity))) {
+  const valid = piece => edit.mode === "mirror" && piece.type === "block" ? isLinePoint(piece)
+    : validFigurePiece(piece.type === "wall" && edit.mode === "mirror" ? { ...piece, type: "line" } : piece);
+  if (changes.some(([, pieces]) => pieces.some(piece => !valid(piece))) || added.some(entity => !valid(entity))) {
     setLineEditHint("Результат выходит за диапазон координат");
     draw();
     return;
@@ -10005,31 +10026,6 @@ function rotateEntityAround(entity, base, radians) {
   rotateLinearEntityAround(entity, base, radians);
 }
 
-function mirrorLinearEntity(entity) {
-  if (entity.type === "text") {
-    entity.rotation = normalizeDegrees(180 - (entity.rotation || 0));
-    markProjectDirty("mirror");
-    return;
-  }
-  if (entity.type === "circle") {
-    return;
-  }
-  if (entity.type === "arc") {
-    const arc = arcGeometry(entity.start, entity.through, entity.end);
-    if (!arc) return;
-    const geometry = mapArcPoints(entity, point => ({ x: 2 * arc.center.x - point.x, y: point.y }));
-    if (validFigurePiece({ ...entity, ...geometry })) applyEntityGeometry(entity, geometry);
-    return;
-  }
-  const cx = (entity.x1 + entity.x2) / 2;
-  entity.x1 = cx - (entity.x1 - cx);
-  entity.x2 = cx - (entity.x2 - cx);
-}
-
-function mirrorBlockEntity(entity) {
-  entity.flipX = !entity.flipX;
-}
-
 function offsetLinearEntity(entity, distance = 300, sidePoint = null) {
   const dx = entity.x2 - entity.x1;
   const dy = entity.y2 - entity.y1;
@@ -10820,7 +10816,13 @@ lineUi.lineBreakControl.addEventListener("click", (event) => {
   setLineEditHint(mode === "point" ? "Наведите крестик на точку деления" : "Наведите крестик на первую точку зазора");
   draw();
 });
-for (const input of [lineUi.lineEditRadius, lineUi.lineMirrorDelete, lineUi.lineLengthInput]) {
+lineUi.lineMirrorDelete.addEventListener("change", () => {
+  const edit = state.lineEdit;
+  if (edit?.mode !== "mirror" || !edit.mirrorAxis) return;
+  const source = lineEditEntity(edit.sourceId, edit.mode);
+  if (source) previewMirror(source, edit.mirrorAxis.start, edit.mirrorAxis.end);
+});
+for (const input of [lineUi.lineEditRadius, lineUi.lineLengthInput]) {
   input.addEventListener("input", () => {
     if (state.lineEdit?.pending) {
       state.lineEdit.pending = null;
@@ -10946,6 +10948,30 @@ keyboardConfirmButton.addEventListener("blur", (event) => {
   }
 });
 bindPointAction(polylineArcMode, togglePolylineArcMode);
+bindPointAction(quickMirrorTool, () => {
+  if (state.lineEdit?.mode === "mirror") endLineEdit("Отражение отменено");
+  else applySelectionAction("mirror");
+});
+lineUi.lineMirrorModes.addEventListener("click", event => {
+  const axis = event.target.closest("[data-mirror-axis]")?.dataset.mirrorAxis;
+  const edit = state.lineEdit;
+  if (edit?.mode !== "mirror" || !axis) return;
+  const source = lineEditEntity(edit.sourceId, edit.mode);
+  if (!source) return endLineEdit("Объект недоступен");
+  edit.pending = null;
+  edit.mirrorAxis = null;
+  edit.pickMirrorAxis = axis === "line";
+  if (edit.pickMirrorAxis) {
+    setLineEditHint("Наведите крестик на линию оси и тапните");
+    draw();
+    return;
+  }
+  const bounds = viewportEntityBounds(source);
+  if (!bounds) return;
+  const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+  const end = axis === "vertical" ? { x: center.x, y: center.y + (center.y > 0 ? -1 : 1) } : { x: center.x + (center.x > 0 ? -1 : 1), y: center.y };
+  previewMirror(source, center, end);
+});
 bindPointAction(quickMoveTool, () => applySelectionAction("move"));
 bindPointAction(quickCopyTool, () => applySelectionAction("copy"));
 bindPointAction(quickRotateTool, () => applySelectionAction("rotate"));
