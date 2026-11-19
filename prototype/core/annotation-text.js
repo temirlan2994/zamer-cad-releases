@@ -59,10 +59,16 @@ export function leaderPlanPath(arrow, rect, line, landingLength, elbow = null) {
   const dx = arrow.x - center.x;
   const dy = arrow.y - center.y;
   if (line === "bent") {
-    const side = (Number.isFinite(elbow?.x) ? elbow.x - center.x : dx) <= 0 ? -1 : 1;
-    const edgeX = center.x + side * rect.width / 2;
-    const bend = { x: Number.isFinite(elbow?.x) ? elbow.x : edgeX + side * landingLength, y: center.y };
-    const connector = { x: Math.abs(bend.x - center.x) < rect.width / 2 ? center.x : edgeX, y: center.y };
+    const offset = Number.isFinite(elbow?.x) ? elbow.x - center.x : 0;
+    const side = Math.sign(dx) || Math.sign(offset) || -1;
+    const halfWidth = rect.width / 2;
+    const distance = Math.abs(offset);
+    const edgeX = center.x + side * halfWidth;
+    const bendX = distance > halfWidth
+      ? (Math.sign(offset) === side ? elbow.x : 2 * center.x - elbow.x)
+      : edgeX + side * landingLength;
+    const bend = { x: bendX, y: center.y };
+    const connector = { x: edgeX, y: center.y };
     return [arrow, bend, connector];
   }
   return [arrow, leaderLabelConnection(center, rect, dx, dy)];

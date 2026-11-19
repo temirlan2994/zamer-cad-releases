@@ -5200,7 +5200,7 @@ function drawActiveSegment(c, viewport) {
       drawLeaderEntity(preview, c, { active: true, showText: Boolean(text) });
       drawHandle(p1.x, p1.y, c);
       if (state.drawing.elbow) {
-        const elbow = worldToScreen(state.drawing.elbow);
+        const { elbow } = leaderScreenGeometry(preview);
         drawHandle(elbow.x, elbow.y, c);
       }
       const labelScreen = worldToScreen(label);

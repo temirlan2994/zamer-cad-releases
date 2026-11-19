@@ -371,6 +371,18 @@ test("the explicit leader bend exports a horizontal landing in all DXF profiles"
   }
 });
 
+test("a bent leader connects on the arrow side after the arrow crosses the label", () => {
+  const leader = { type: "line", dimensionKind: "leader", layer: "text", leaderLine: "bent", leaderFrame: true,
+    x1: 3900, y1: 500, x2: 2000, y2: 1500, leaderElbow: { x: 1400, y: 1500 }, text: "Точка", textHeight: 100 };
+  for (const build of [buildDxf, buildRevitDxf, writeDxf]) {
+    const [first, shelf] = entityRecords(build([leader])).filter(({ type }) => type === "LINE");
+    assert.equal(Number(first.fields.get("11")[0]), 2600);
+    assert.equal(Number(shelf.fields.get("10")[0]), 2600);
+    assert.ok(Number(shelf.fields.get("11")[0]) >= 2000);
+    assert.equal(Number(shelf.fields.get("20")[0]), Number(shelf.fields.get("21")[0]));
+  }
+});
+
 test("zones export closed editable XY contours and native labels on separate colored layers", () => {
   const points = [{ x: 125.0002, y: -300 }, { x: 4125.0002, y: -300 }, { x: 4125.0002, y: 1700 }, { x: 125.0002, y: 1700 }];
   const zone = { type: "area", id: "floor", layer: "areas", points: [...points, points[0]], label: "Зона кухни" };
