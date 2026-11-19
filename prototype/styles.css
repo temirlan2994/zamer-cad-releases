@@ -566,8 +566,10 @@ input {
 .topbar-actions {
   display: grid;
   gap: 4px;
-  grid-template-columns: minmax(48px, 1.4fr) repeat(5, minmax(44px, 1fr));
+  grid-template-columns: repeat(3, minmax(44px, 1fr));
 }
+
+.project-top-actions { display: flex; gap: 4px; }
 
 .topbar .icon-button,
 .sheet-head .icon-button {
@@ -650,13 +652,6 @@ input {
   z-index: 11;
 }
 
-.snap-panel .snap-row {
-  flex: 1 1 auto;
-  gap: 4px;
-  justify-content: flex-start;
-  min-width: 0;
-}
-
 .snap-more {
   flex: 0 0 auto;
 }
@@ -715,13 +710,14 @@ input {
   box-shadow: 0 6px 20px color-mix(in srgb, #000 16%, transparent);
   display: grid;
   gap: 5px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  left: 5px;
   max-height: min(68dvh, 460px);
   overflow-y: auto;
-  min-width: 184px;
   padding: 6px;
   position: absolute;
-  right: 10px;
   top: calc(100% + 4px);
+  width: min(330px, calc(100vw - 10px));
 }
 
 .snap-more:not([open]) .snap-more-panel {
@@ -741,10 +737,39 @@ input {
   color: var(--text);
 }
 
-.snap-more-panel button span {
+.snap-more-panel button > [data-snap-symbol] {
   flex: 0 0 22px;
   font-size: 1rem;
   text-align: center;
+}
+
+.snap-step-mode,
+.snap-more-step,
+.snap-legend {
+  grid-column: 1 / -1;
+}
+
+.snap-more-panel .snap-step-mode {
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.snap-step-mode small {
+  align-items: flex-end;
+  color: var(--muted);
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  font-size: .65rem;
+  gap: 2px;
+  line-height: 1.05;
+  margin-inline-start: auto;
+}
+
+.snap-step-mode small b {
+  color: var(--text);
+  font-size: .74rem;
 }
 
 .snap-more-step {
@@ -752,6 +777,10 @@ input {
   font-size: 0.78rem;
   justify-content: space-between;
   padding-left: 8px;
+}
+
+.snap-more-step[hidden] {
+  display: none;
 }
 
 .snap-more-step select {
@@ -902,12 +931,24 @@ input {
 
 .quick-edit-modes {
   display: flex;
-  gap: 4px;
+  flex: none;
+  gap: 3px;
+  margin-inline-start: auto;
 }
 
 .quick-edit-modes .icon-button {
+  height: 44px;
   width: 44px;
   touch-action: manipulation;
+}
+
+.quick-edit-modes .icon-button:disabled { opacity: .42; }
+.project-decimals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+
+@media (max-width: 359px) {
+  .project-top-actions { gap: 3px; }
+  .topbar-project { gap: 4px; }
+  .snap-panel .snap-more summary { font-size: .68rem; padding-inline: 4px; }
 }
 
 .quick-edit-modes button[aria-pressed="true"] {
@@ -1530,17 +1571,6 @@ input {
   color: var(--accent);
 }
 
-.snap-row {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.snap-row::-webkit-scrollbar {
-  display: none;
-}
-
 .snap {
   background: var(--surface-2);
   border-radius: 8px;
@@ -1571,43 +1601,11 @@ input {
   width: 20px;
 }
 
-.snap-panel .snap:disabled {
+.snap-panel .snap:is(:disabled, .snap-muted) {
   border-color: var(--border);
   color: var(--muted);
   cursor: default;
   opacity: .55;
-}
-
-.grid-step-select {
-  align-items: center;
-  align-self: center;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  display: inline-flex;
-  flex: 0 0 30px;
-  height: 44px;
-  justify-content: center;
-  position: relative;
-}
-
-.grid-step-select:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.grid-step-select select {
-  cursor: pointer;
-  height: 100%;
-  inset: 0;
-  opacity: 0;
-  position: absolute;
-  width: 100%;
-}
-
-.grid-step-select span {
-  pointer-events: none;
 }
 
 .snap-legend ul {
@@ -1640,20 +1638,6 @@ input {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
   border-color: var(--accent);
   color: var(--readable-accent);
-}
-
-.snap.grid-snap {
-  display: grid;
-  gap: 1px;
-  grid-template-rows: 20px 13px;
-  justify-items: center;
-  min-width: 47px;
-}
-
-.grid-snap small {
-  font-size: 0.59rem;
-  line-height: 1;
-  white-space: nowrap;
 }
 
 .bottom-sheet {
@@ -1908,7 +1892,6 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
   .project-action-card { padding: 12px 8px; }
   .project-card { grid-template-columns: 48px minmax(0, 1fr); padding: 12px; gap: 10px; }
   .project-card-preview { width: 48px; height: 60px; }
-  .snap-panel .snap-row { gap: 4px; }
 }
 
 #cadCanvas:focus-visible {
@@ -2051,6 +2034,7 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
 .plan-annotation-actions {
   bottom: calc(77px + env(safe-area-inset-bottom));
   left: 10px;
+  max-width: calc(100% - 20px);
   position: absolute;
   z-index: 11;
 }
@@ -2058,6 +2042,8 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
   bottom: calc(138px + env(safe-area-inset-bottom));
 }
 .workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) .plan-annotation-actions { display: none; }
+.plan-annotation-row:not([hidden]) { display: flex; flex-wrap: wrap; gap: 5px; }
+.plan-annotation-row:not([hidden]) + .plan-annotation-row:not([hidden]) { margin-top: 5px; }
 .plan-annotation-actions button {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2065,7 +2051,7 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
   color: var(--text);
   font-weight: 650;
   min-height: 44px;
-  padding: 6px 12px;
+  padding: 6px 9px;
   touch-action: manipulation;
 }
 .plan-annotation-actions button[aria-pressed="true"] {
@@ -2076,15 +2062,27 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
 .plan-annotation-height { align-items: end; display: grid; gap: 8px; grid-template-columns: 1fr auto; }
 .plan-annotation-editor {
   bottom: var(--annotation-modal-bottom, var(--keyboard-inset, 0px));
+  max-height: calc(var(--annotation-modal-height, 100vh) - 8px);
   max-height: min(88dvh, calc(var(--annotation-modal-height, 100dvh) - 8px));
   overflow: hidden;
   position: fixed;
 }
-.plan-annotation-editor .survey-form { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.plan-annotation-content { align-content: start; gap: 9px; min-height: 0; }
+.plan-annotation-editor .survey-form { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+.plan-annotation-content { flex: 1 1 auto; align-content: start; gap: 9px; min-height: 0; }
 .plan-annotation-content textarea { max-height: 96px; resize: vertical; }
-.plan-annotation-content .survey-feedback:empty { display: none; }
-.plan-annotation-footer { flex: none; }
+.leader-options { display: grid; gap: 6px; }
+.leader-options[hidden], .leader-options button[hidden] { display: none; }
+.leader-choice { align-items: center; display: flex; gap: 5px; }
+.leader-choice > span { font-size: .8rem; font-weight: 650; min-width: 50px; }
+.leader-choice button { align-items: center; display: inline-flex; justify-content: center; }
+.leader-choice button[aria-pressed="true"] { background: var(--readable-accent); border-color: var(--readable-accent); color: var(--on-accent); }
+.leader-choice svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.leader-choice .leader-unchanged { font-size: .78rem; }
+.plan-annotation-editor[data-keyboard="true"] { padding-block: 6px 8px; }
+.plan-annotation-editor[data-keyboard="true"] .sheet-head { margin-bottom: 3px; }
+.plan-annotation-editor[data-keyboard="true"] .plan-annotation-content textarea { max-height: 72px; }
+.plan-annotation-footer { display: grid; flex: none; gap: 5px; }
+.plan-annotation-footer .survey-feedback { font-size: .78rem; margin: 0; }
 .plan-annotation-footer .survey-primary {
   background: #0c57bc;
   border: 1px solid #0c57bc;

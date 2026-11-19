@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=234" />
+    <link rel="stylesheet" href="./styles.css?v=235" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -88,60 +88,62 @@
             <strong>Замер квартиры</strong>
             <span>ММ • 1:50</span>
           </div>
-          <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Быстрая правка">
-            <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false"><span aria-hidden="true">✂</span></button>
-            <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false"><span aria-hidden="true">⇥</span></button>
+          <div class="project-top-actions" role="group" aria-label="Проект">
+            <button class="icon-button" id="themeButton" type="button" title="Тёмная тема" aria-label="Тёмная тема" aria-pressed="false">☾</button>
+            <button class="icon-button" id="projectSettingsButton" type="button" title="Настройки проекта" aria-label="Настройки проекта" aria-haspopup="dialog">⚙</button>
+            <button class="icon-button primary" id="exportButton" type="button" title="Экспорт" aria-label="Экспорт" aria-controls="exportSheet" aria-expanded="false">⇩</button>
           </div>
         </div>
-        <div class="topbar-actions" role="group" aria-label="Действия с чертежом">
-          <select class="annotation-scale-control" id="annotationScaleSelect" title="Масштаб подписей" aria-label="Масштаб подписей">
-            <option value="0.85">1:50</option>
-            <option value="1" selected>1:100</option>
-            <option value="1.15">1:150</option>
-            <option value="1.3">1:200</option>
-          </select>
+        <div class="topbar-actions" role="group" aria-label="История и слои">
           <button class="icon-button" id="undoButton" type="button" title="Отмена" aria-label="Отмена">↶</button>
           <button class="icon-button" id="redoButton" type="button" title="Повтор" aria-label="Повтор">↷</button>
           <button class="icon-button" id="layersButton" type="button" title="Слои" aria-label="Слои" aria-controls="layersSheet" aria-expanded="false">▤</button>
-          <button class="icon-button" id="themeButton" type="button" title="Тёмная тема" aria-label="Тёмная тема" aria-pressed="false">☾</button>
-          <button class="icon-button primary" id="exportButton" type="button" title="Экспорт" aria-label="Экспорт" aria-controls="exportSheet" aria-expanded="false">⇩</button>
         </div>
       </header>
 
       <section class="snap-panel" aria-label="Привязки черчения">
-        <div class="snap-row" aria-label="Привязки">
-          <button class="snap icon-snap active" id="allSnapsButton" type="button" title="Все привязки" aria-label="Все привязки" aria-pressed="true"><span data-snap-symbol="all" aria-hidden="true"></span></button>
-          <button class="snap icon-snap active grid-snap" type="button" data-snap="grid" title="Привязка к сетке" aria-label="Привязка к сетке" aria-pressed="true"><span data-snap-symbol="grid" aria-hidden="true"></span><small id="gridStepReadout" aria-hidden="true">100 мм</small></button>
-          <label class="grid-step-select"><select id="gridStepSelect" aria-label="Шаг сетки" title="Шаг сетки">
-            <option value="5">5 мм</option>
-            <option value="10">10 мм</option>
-            <option value="50">50 мм</option>
-            <option value="100" selected>100 мм</option>
-            <option value="500">500 мм</option>
-            <option value="1000">1000 мм</option>
-          </select><span aria-hidden="true">⌄</span></label>
-          <button class="snap icon-snap active" type="button" data-snap="end" title="Конец" aria-label="Конец"><span data-snap-symbol="end" aria-hidden="true"></span></button>
-          <button class="snap icon-snap" type="button" data-snap="mid" title="Середина" aria-label="Середина"><span data-snap-symbol="mid" aria-hidden="true"></span></button>
-          <button class="snap icon-snap active" type="button" data-snap="polar" title="Полярное отслеживание" aria-label="Полярное отслеживание"><span data-snap-symbol="polar" aria-hidden="true"></span></button>
-          <button class="snap icon-snap" type="button" data-snap="ortho" title="Орто" aria-label="Орто" aria-pressed="false"><span data-snap-symbol="ortho" aria-hidden="true"></span></button>
-        </div>
+        <button class="snap icon-snap active" id="allSnapsButton" type="button" title="Все привязки" aria-label="Все привязки" aria-pressed="true"><span data-snap-symbol="all" aria-hidden="true"></span></button>
         <details class="snap-more" id="snapMore">
-          <summary aria-label="Ещё привязки">Ещё</summary>
+          <summary>Привязки</summary>
           <div class="snap-more-panel">
-            <button class="snap" type="button" data-snap="center" aria-pressed="false"><span data-snap-symbol="center" aria-hidden="true"></span>Центр</button>
-            <button class="snap" type="button" data-snap="intersection" aria-pressed="false"><span data-snap-symbol="intersection" aria-hidden="true"></span>Пересечение</button>
-            <button class="snap" type="button" data-snap="perpendicular" aria-pressed="false"><span data-snap-symbol="perpendicular" aria-hidden="true"></span>Перпендикуляр</button>
-            <button class="snap" type="button" data-snap="nearest" aria-pressed="false"><span data-snap-symbol="nearest" aria-hidden="true"></span>Ближайшая точка</button>
-            <label class="snap-more-step" id="linePolarSettings">
+            <p id="snapStepKeyboardHint" class="viewport-nonvisual">Для настройки шага удерживайте кнопку или нажмите стрелку вниз.</p>
+            <button class="snap snap-step-mode active" type="button" data-snap="grid" data-snap-settings="gridSnapSettings" aria-pressed="true" aria-expanded="false" aria-controls="gridSnapSettings" aria-describedby="snapStepKeyboardHint" aria-keyshortcuts="ArrowDown Shift+F10">
+              <span data-snap-symbol="grid" aria-hidden="true"></span>Сетка
+              <small aria-hidden="true"><b id="gridStepReadout">100 мм</b> Удержать</small>
+            </button>
+            <label class="snap-more-step" id="gridSnapSettings" hidden>
+              <span>Шаг сетки</span>
+              <select id="gridStepSelect" aria-label="Шаг сетки">
+                <option value="5">5 мм</option>
+                <option value="10">10 мм</option>
+                <option value="50">50 мм</option>
+                <option value="100" selected>100 мм</option>
+                <option value="500">500 мм</option>
+                <option value="1000">1000 мм</option>
+              </select>
+            </label>
+            <button class="snap snap-step-mode active" type="button" data-snap="polar" data-snap-settings="linePolarSettings" aria-pressed="true" aria-expanded="false" aria-controls="linePolarSettings" aria-describedby="snapStepKeyboardHint" aria-keyshortcuts="ArrowDown Shift+F10">
+              <span data-snap-symbol="polar" aria-hidden="true"></span>Полярное отслеживание
+              <small aria-hidden="true"><b id="polarStepReadout">5°</b> Удержать</small>
+            </button>
+            <label class="snap-more-step" id="linePolarSettings" hidden>
               <span>Шаг угла</span>
-              <select id="linePolarStep">
+              <select id="linePolarStep" aria-label="Шаг угла">
                 <option value="5">5°</option>
+                <option value="10">10°</option>
                 <option value="15">15°</option>
                 <option value="30">30°</option>
                 <option value="45">45°</option>
                 <option value="90">90°</option>
               </select>
             </label>
+            <button class="snap" type="button" data-snap="end" aria-pressed="true"><span data-snap-symbol="end" aria-hidden="true"></span>Конец</button>
+            <button class="snap" type="button" data-snap="mid" aria-pressed="false"><span data-snap-symbol="mid" aria-hidden="true"></span>Середина</button>
+            <button class="snap" type="button" data-snap="center" aria-pressed="false"><span data-snap-symbol="center" aria-hidden="true"></span>Центр</button>
+            <button class="snap" type="button" data-snap="ortho" aria-pressed="false"><span data-snap-symbol="ortho" aria-hidden="true"></span>Орто</button>
+            <button class="snap" type="button" data-snap="intersection" aria-pressed="false"><span data-snap-symbol="intersection" aria-hidden="true"></span>Пересечение</button>
+            <button class="snap" type="button" data-snap="perpendicular" aria-pressed="false"><span data-snap-symbol="perpendicular" aria-hidden="true"></span>Перпендикуляр</button>
+            <button class="snap" type="button" data-snap="nearest" aria-pressed="false"><span data-snap-symbol="nearest" aria-hidden="true"></span>Ближайшая точка</button>
             <details class="snap-legend">
               <summary>Обозначения привязок</summary>
               <ul>
@@ -160,11 +162,17 @@
             </details>
           </div>
         </details>
+        <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Правка чертежа">
+          <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span></button>
+          <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span></button>
+          <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false" disabled><span aria-hidden="true">✂</span></button>
+          <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false" disabled><span aria-hidden="true">⇥</span></button>
+        </div>
       </section>
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
-          <button class="tool active" data-tool="select" aria-label="Курсор. Удерживайте для режимов выбора" title="Долгое нажатие открывает режимы выбора" aria-expanded="false" aria-controls="selectModeMenu"><span>↖</span><small>ESC</small></button>
+          <button class="tool active" data-tool="select" aria-label="Курсор. Повторное нажатие открывает режимы выбора" title="Повторное нажатие открывает режимы выбора" aria-expanded="false" aria-controls="selectModeMenu"><span>↖</span><small>ESC</small></button>
           <button class="tool" data-tool="line" aria-pressed="false"><span>╱</span><small>Линия</small></button>
           <button class="tool tool-with-menu" id="figureToolButton" type="button" title="Фигуры" aria-controls="drawToolMenu" aria-expanded="false"><span>▭</span><small>Фигуры</small></button>
           <button class="tool" data-tool="dimension" type="button" aria-controls="dimensionToolMenu" aria-expanded="false"><span>↔</span><small>Размеры</small></button>
@@ -213,9 +221,16 @@
         </section>
         <canvas id="cadCanvas" tabindex="0" aria-label="Чертёжный холст" aria-describedby="viewportKeyboardHelp"></canvas>
         <div id="planAnnotationActions" class="plan-annotation-actions" hidden role="group" aria-label="Действия аннотации">
-          <button id="planAnnotationExisting" type="button" aria-pressed="false">Готовый контур</button>
-          <button id="planAnnotationClose" type="button" hidden>Замкнуть контур</button>
-          <button id="planAnnotationEdit" type="button" hidden>Изменить аннотацию</button>
+          <div id="planAnnotationModes" class="plan-annotation-row" role="group" aria-label="Форма контура">
+            <button type="button" data-plan-mode="contour" aria-pressed="true">Контур</button>
+            <button type="button" data-plan-mode="rectangle" aria-pressed="false">Прямоугольник</button>
+            <button id="planAnnotationExisting" type="button" data-plan-mode="existing" aria-pressed="false">Из плана</button>
+          </div>
+          <div id="planAnnotationCommands" class="plan-annotation-row" hidden>
+            <button id="planAnnotationClose" type="button" hidden>Замкнуть контур</button>
+            <button id="planAnnotationAddContour" type="button" hidden>+ Контур</button>
+            <button id="planAnnotationEdit" type="button" hidden>Изменить аннотацию</button>
+          </div>
         </div>
         <p class="viewport-nonvisual" id="viewportKeyboardHelp">Стрелки перемещают чертёж, плюс и минус меняют масштаб, Home вписывает. Enter ставит точку или выбирает объект в центре.</p>
         <span class="viewport-nonvisual" id="viewportActionStatus" role="status"></span>
@@ -333,7 +348,7 @@
           <label for="exportScale">Масштаб PDF</label>
           <select id="exportScale">
             <option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option>
-            <option value="100">1:100</option><option value="200">1:200</option>
+            <option value="100">1:100</option><option value="150">1:150</option><option value="200">1:200</option>
           </select>
           <label class="export-photo-option" id="exportPhotoOption" hidden><input type="checkbox" id="exportPhotos"> Добавить фотографии в PDF</label>
         </div>
@@ -351,6 +366,31 @@
           <button type="button" id="shareExportFile">Поделиться</button>
         </div>
       </section>
+      <dialog class="survey-sheet project-settings" id="projectSettingsSheet" aria-labelledby="projectSettingsTitle">
+        <header class="sheet-head">
+          <h2 id="projectSettingsTitle">Настройки проекта</h2>
+          <button class="icon-button" id="closeProjectSettings" type="button" aria-label="Закрыть настройки">×</button>
+        </header>
+        <div class="survey-content">
+          <form class="survey-form">
+            <label class="survey-field" for="annotationScaleSelect"><span>Масштаб подписей</span>
+              <select id="annotationScaleSelect"><option value="0.85">1:50</option><option value="1" selected>1:100</option><option value="1.15">1:150</option><option value="1.3">1:200</option></select>
+            </label>
+            <label class="survey-field" for="projectPrintScale"><span>Масштаб PDF по умолчанию</span>
+              <select id="projectPrintScale"><option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option><option value="100">1:100</option><option value="150">1:150</option><option value="200">1:200</option></select>
+            </label>
+            <label class="survey-field" for="projectLengthUnit"><span>Единицы длины и высоты</span>
+              <select id="projectLengthUnit"><option value="mm">Миллиметры</option><option value="cm">Сантиметры</option><option value="m">Метры</option></select>
+            </label>
+            <div class="project-decimals">
+              <label class="survey-field" for="projectLengthPrecision"><span>Знаков у длины</span><select id="projectLengthPrecision"></select></label>
+              <label class="survey-field" for="projectAnglePrecision"><span>Знаков у угла</span><select id="projectAnglePrecision"></select></label>
+              <label class="survey-field" for="projectAreaPrecision"><span>Знаков у м²</span><select id="projectAreaPrecision"></select></label>
+            </div>
+            <button type="submit" class="survey-primary">Применить</button>
+          </form>
+        </div>
+      </dialog>
       <dialog class="survey-sheet" id="surveySheet" aria-labelledby="surveyHeading">
         <header class="sheet-head">
           <h2 id="surveyHeading" tabindex="-1">Замер</h2>
@@ -360,37 +400,56 @@
       </dialog>
       <dialog class="survey-sheet plan-annotation-editor" id="planAnnotationEditor" aria-labelledby="planAnnotationHeading">
         <header class="sheet-head">
-          <h2 id="planAnnotationHeading" tabindex="-1"></h2>
+          <h2 id="planAnnotationHeading" tabindex="-1" autofocus></h2>
           <button id="planAnnotationCancel" class="icon-button" type="button" aria-label="Закрыть аннотацию">×</button>
         </header>
         <form class="survey-form" novalidate>
           <div class="survey-content plan-annotation-content">
-            <label id="planAnnotationTextField" class="survey-field"><span>Текст</span><textarea name="text" rows="3" maxlength="240"></textarea></label>
+            <label id="planAnnotationTextField" class="survey-field"><span>Текст</span><textarea name="text" rows="3" maxlength="240" enterkeyhint="enter"></textarea></label>
             <label id="planAnnotationBatchLabelField" class="survey-field" hidden><span>Названия на плане</span>
               <select name="batchLabelMode"><option value="">Оставить текущие</option><option value="set">Задать одно название</option><option value="clear">Очистить названия</option></select>
             </label>
             <label id="planAnnotationLabelField" class="survey-field" hidden><span>Название на плане</span><input name="label" maxlength="80" placeholder="Необязательно" /></label>
             <div id="planAnnotationHeightField" class="plan-annotation-height" hidden>
-              <label class="survey-field"><span>Высота Z, мм</span><input name="height" inputmode="decimal" autocomplete="off" placeholder="2800" /></label>
+              <label class="survey-field"><span id="planAnnotationHeightName">Высота Z, мм</span><input name="height" inputmode="decimal" autocomplete="off" placeholder="2800" /></label>
               <button type="button" id="planAnnotationSign" aria-label="Изменить знак высоты">−/+</button>
             </div>
             <label id="planAnnotationZoneField" class="survey-field" hidden><span>Обозначение и цвет</span><select name="zoneStyle"><option value="">Без изменений</option></select></label>
-            <label id="planAnnotationLeaderField" class="survey-field" hidden><span>Вид выноски</span>
-              <select name="leaderStyle"><option value="">Без изменений</option><option value="landing">С полкой</option><option value="plain">Прямая</option><option value="boxed">В рамке</option></select>
-            </label>
+            <div id="planAnnotationLeaderField" class="leader-options" hidden>
+              <div class="leader-choice" role="group" aria-label="Линия выноски">
+                <span aria-hidden="true">Линия</span>
+                <button type="button" data-leader-option="leaderLine" data-leader-value="straight" aria-label="Прямая выноска" title="Прямая" aria-pressed="false">
+                  <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true"><path d="M3 15l17-11M3 15l1-5m-1 5 5 1"/></svg>
+                </button>
+                <button type="button" data-leader-option="leaderLine" data-leader-value="bent" aria-label="Выноска с изгибом" title="С изгибом" aria-pressed="false">
+                  <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true"><path d="M3 15l9-10h9M3 15l1-5m-1 5 5 1"/></svg>
+                </button>
+                <button type="button" class="leader-unchanged" data-leader-option="leaderLine" data-leader-value="" aria-label="Линия без изменений" aria-pressed="false" hidden>Как было</button>
+              </div>
+              <div class="leader-choice" role="group" aria-label="Рамка текста выноски">
+                <span aria-hidden="true">Рамка</span>
+                <button type="button" data-leader-option="leaderFrame" data-leader-value="false" aria-label="Без рамки" title="Без рамки" aria-pressed="false">
+                  <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true"><path d="M7 5h10M12 5v8"/></svg>
+                </button>
+                <button type="button" data-leader-option="leaderFrame" data-leader-value="true" aria-label="В рамке" title="В рамке" aria-pressed="false">
+                  <svg viewBox="0 0 24 18" width="24" height="18" aria-hidden="true"><rect x="3" y="2" width="18" height="14" rx="2"/><path d="M8 6h8M12 6v6"/></svg>
+                </button>
+                <button type="button" class="leader-unchanged" data-leader-option="leaderFrame" data-leader-value="" aria-label="Рамка без изменений" aria-pressed="false" hidden>Как было</button>
+              </div>
+            </div>
             <label id="planAnnotationSizeField" class="survey-field" hidden><span>Высота текста на чертеже, мм</span>
               <input name="textHeight" type="number" min="1" max="100000" step="any" inputmode="decimal" />
             </label>
-            <p class="survey-feedback" id="planAnnotationError" role="alert"></p>
           </div>
           <footer class="plan-annotation-footer">
+            <p class="survey-feedback" id="planAnnotationError" role="alert"></p>
             <button class="survey-primary" type="submit">Поставить</button>
           </footer>
         </form>
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=234"></script>
+    <script type="module" src="./app.js?v=235"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

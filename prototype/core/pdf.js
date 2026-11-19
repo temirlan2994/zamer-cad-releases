@@ -1,10 +1,11 @@
-import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
-import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./dimensions.js";
+import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
-import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines } from "./plan-annotations.js";
+import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
+import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
 
 const PT_PER_MM = 72 / 25.4;
 const A4 = { width: 210 * PT_PER_MM, height: 297 * PT_PER_MM };
@@ -61,13 +62,13 @@ function centeredTextCorners(origin, width, height, rotation) {
   return textCorners(origin, -width / 2, -height / 2, width / 2, height / 2, rotation);
 }
 
-function dimensionPlotBounds(entity, textWidth, scaleFactor) {
+function dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings) {
   if (entity.dimensionKind === "angular") {
     const geometry = angularDimensionGeometry(entity);
     const art = angularDimensionArtwork(geometry, scaleFactor);
     if (!art) return null;
     const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
-    const text = `${Math.round(measurement)}°`;
+    const text = formatProjectAngle(measurement, measurementSettings);
     const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.25;
     return boundsOf([vertex, arm1, arm2, ...arcExtrema(vertex, art.radius, startAngle, sweep),
       ...centeredTextCorners(art.label, width, art.textHeight * 1.25)]);
@@ -75,35 +76,36 @@ function dimensionPlotBounds(entity, textWidth, scaleFactor) {
   const geometry = dimensionGeometry(entity);
   const art = linearDimensionArtwork(geometry, scaleFactor);
   if (!art) return null;
-  const width = textWidth([`${formatDimensionLength(geometry)} мм`], art.textHeight, 700) + art.textHeight * 0.25;
+  const width = textWidth([formatProjectLength(geometry.measurement, measurementSettings)], art.textHeight, 700) + art.textHeight * 0.25;
   return boundsOf([art.start, art.end, art.lineStart, art.lineEnd, art.extensionStart, art.extensionEnd,
     ...centeredTextCorners(art.label, width, art.textHeight * 1.25, art.rotation)]);
 }
 
-function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors) {
+function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measurementSettings) {
   if (entity.type === "polyline") return polylineBounds(entity);
   if (entity.type === "area" || entity.type === "elevation") {
     const geometry = planAnnotationGeometry(entity);
     if (!geometry) return null;
     const { minX, minY, maxX, maxY } = geometry.bounds;
-    const lines = planZoneLabelLines(entity, geometry);
-    const size = planZoneLabelHeight(lines, geometry.bounds, scaleFactor);
+    const label = zoneAnchors.get(entity.id) || geometry.anchor;
+    const ring = planZoneLabelRing(geometry, label);
+    const lines = planZoneLabelLines(entity, geometry, measurementSettings);
+    const size = planZoneLabelHeight(lines, ring.bounds, scaleFactor);
     const width = textWidth(lines, size, 700) + size * 1.2;
     const height = size * (1.7 + (lines.length - 1) * ANNOTATION_LINE_SPACING);
-    const label = zoneAnchors.get(entity.id) || geometry.anchor;
     return boundsOf([{ x: minX, y: minY }, { x: maxX, y: maxY }, ...centeredTextCorners(label, width, height)]);
   }
   if (entity.type === "arc") return arcBounds(entity);
   if (entity.type === "line" && entity.dimensionKind === "leader") {
     const height = leaderTextHeight(entity);
     const lines = annotationTextLines(entity.text);
-    const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, entity.leaderStyle || "boxed");
+    const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, leaderAppearance(entity).frame);
     return boundsOf([
       { x: entity.x1, y: entity.y1 },
       ...centeredTextCorners({ x: entity.x2, y: entity.y2 }, frame.width, frame.height),
     ]);
   }
-  if (entity.type === "line" && entity.layer === "dimensions") return dimensionPlotBounds(entity, textWidth, scaleFactor);
+  if (entity.type === "line" && entity.layer === "dimensions") return dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings);
   if (entity.type === "block") {
     const { width, height } = entitySize(entity);
     const block = { ...entity, rotation: entity.rotation || 0 };
@@ -132,11 +134,11 @@ function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors) {
   };
 }
 
-export function pdfPlotBounds(entities, textWidth = annotationTextWidth, scaleFactor) {
+export function pdfPlotBounds(entities, textWidth = annotationTextWidth, scaleFactor, measurementSettings) {
   let combined = null;
   const zoneAnchors = planAnnotationAnchors(entities);
   for (const entity of entities) {
-    const bounds = entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors);
+    const bounds = entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measurementSettings);
     if (!bounds || !Object.values(bounds).every(Number.isFinite)) continue;
     combined = combined ? {
       minX: Math.min(combined.minX, bounds.minX),
@@ -215,7 +217,7 @@ function pageHeader(ctx, page, title, subtitle = "") {
   ctx.fillText(subtitle, MARGIN, 63, page.width - MARGIN * 2);
 }
 
-function pageFooter(ctx, page, index, total, revision, generatedAt) {
+function pageFooter(ctx, page, index, total, revision, generatedAt, unit) {
   ctx.strokeStyle = border;
   ctx.lineWidth = 0.55;
   ctx.beginPath();
@@ -224,13 +226,13 @@ function pageFooter(ctx, page, index, total, revision, generatedAt) {
   ctx.stroke();
   ctx.fillStyle = muted;
   ctx.font = `9px ${fontFamily}`;
-  ctx.fillText(`Замер CAD · редакция ${revision} · ${generatedAt} · мм`, MARGIN, page.height - 29, (page.width - MARGIN * 2) * .75);
+  ctx.fillText(`Замер CAD · редакция ${revision} · ${generatedAt} · ${unit}`, MARGIN, page.height - 29, (page.width - MARGIN * 2) * .75);
   ctx.textAlign = "right";
   ctx.fillText(`Лист ${index} из ${total}`, page.width - MARGIN, page.height - 29);
   ctx.textAlign = "left";
 }
 
-function drawScaleBar(ctx, x, y, scale) {
+function drawScaleBar(ctx, x, y, scale, measurementSettings) {
   const { lengthMm, lengthPt } = pdfScaleBar(scale);
   ctx.fillStyle = ink;
   ctx.fillRect(x, y, lengthPt / 2, 4);
@@ -240,7 +242,7 @@ function drawScaleBar(ctx, x, y, scale) {
   ctx.font = `9px ${fontFamily}`;
   ctx.textBaseline = "bottom";
   ctx.fillText("0", x, y - 2);
-  ctx.fillText(`${mm.format(lengthMm)} мм`, x + lengthPt + 4, y - 2);
+  ctx.fillText(formatProjectLength(lengthMm, { ...measurementSettings, precision: 4 }), x + lengthPt + 4, y - 2);
   ctx.textBaseline = "alphabetic";
 }
 
@@ -377,13 +379,15 @@ export function pdfFromJpegPages(pages) {
 }
 
 export async function buildPlotPdf(project, entities, details, options, renderPlot) {
+  const measurementSettings = normalizeMeasurementSettings(project.measurementSettings);
+  const unit = projectUnit(measurementSettings).label;
   const probe = document.createElement("canvas").getContext("2d");
   const bounds = pdfPlotBounds(entities, (lines, height, weight) => {
     if (!probe) return annotationTextWidth(lines, height);
     probe.font = `${weight} ${height}px Inter, Arial, sans-serif`;
     return lines.reduce((width, line) => Math.max(width, probe.measureText(line).width), height * 0.8);
-  }, project.annotationScale);
-  const { page, area, view, ratio, fitted } = pdfPlotLayout(bounds, options.scale);
+  }, project.annotationScale, measurementSettings);
+  const { page, area, view, ratio, fitted } = pdfPlotLayout(bounds, options.scale || measurementSettings.printScale);
   const title = project.name || "Замер";
   const room = [details.site, details.room, details.visitDate].filter(Boolean).join(" · ");
   const revision = details.revision ?? project.revision ?? "—";
@@ -406,9 +410,9 @@ export async function buildPlotPdf(project, entities, details, options, renderPl
     ctx.beginPath();
     ctx.rect(area.x, area.y, area.width, area.height);
     ctx.clip();
-    renderPlot(ctx, view, entities, project.annotationScale);
+    renderPlot(ctx, view, entities, project.annotationScale, measurementSettings);
     ctx.restore();
-    drawScaleBar(ctx, MARGIN, page.height - 54, view.scale);
+    drawScaleBar(ctx, MARGIN, page.height - 54, view.scale, measurementSettings);
     ctx.textAlign = "right";
     ctx.fillText("Для масштаба листа печатайте при 100 %", page.width - MARGIN, page.height - 52);
     ctx.textAlign = "left";
@@ -417,18 +421,18 @@ export async function buildPlotPdf(project, entities, details, options, renderPl
     ctx.fillText("На листе нет геометрии", page.width / 2, area.y + area.height / 2);
     ctx.textAlign = "left";
   }
-  pageFooter(ctx, page, 1, total, revision, generatedAt);
+  pageFooter(ctx, page, 1, total, revision, generatedAt, unit);
   const pages = [await capturePage(image.canvas, page)];
   for (const lines of readings) {
     const sheet = newPage(A4);
     drawTablePage(sheet.ctx, A4, title, lines);
-    pageFooter(sheet.ctx, A4, pages.length + 1, total, revision, generatedAt);
+    pageFooter(sheet.ctx, A4, pages.length + 1, total, revision, generatedAt, unit);
     pages.push(await capturePage(sheet.canvas, A4));
   }
   for (let index = 0; index < photos.length; index += 2) {
     const sheet = newPage(A4);
     await drawPhotoPage(sheet.ctx, A4, title, photos.slice(index, index + 2));
-    pageFooter(sheet.ctx, A4, pages.length + 1, total, revision, generatedAt);
+    pageFooter(sheet.ctx, A4, pages.length + 1, total, revision, generatedAt, unit);
     pages.push(await capturePage(sheet.canvas, A4));
   }
   return pdfFromJpegPages(pages);

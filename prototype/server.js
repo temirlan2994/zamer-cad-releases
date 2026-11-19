@@ -638,15 +638,10 @@ function defaultProjectPayload(client, body = {}) {
   const id = safeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const name = String(body.name || "Новый замер").slice(0, 80);
   const source = body.project && typeof body.project === "object" ? body.project : {};
-  const template = body.template || "blank";
-  const entities = template === "apartment" && !Array.isArray(source.entities)
-    ? [
-        { id: "wall-1", type: "wall", layer: "walls", x1: 0, y1: 0, x2: 5200, y2: 0, width: 180 },
-        { id: "wall-2", type: "wall", layer: "walls", x1: 5200, y1: 0, x2: 5200, y2: 3600, width: 180 },
-        { id: "wall-3", type: "wall", layer: "walls", x1: 5200, y1: 3600, x2: 0, y2: 3600, width: 180 },
-        { id: "wall-4", type: "wall", layer: "walls", x1: 0, y1: 3600, x2: 0, y2: 0, width: 180 },
-      ]
-    : Array.isArray(source.entities) ? source.entities : [];
+  const entities = Array.isArray(source.entities) ? source.entities : [];
+  const rooms = Array.isArray(source.survey?.rooms) ? source.survey.rooms : [];
+  const legacyLayers = ["walls", "furniture"].filter((layer) => entities.some((entity) => entity?.layer === layer) ||
+    rooms.some((room) => Array.isArray(room?.drawing?.entities) && room.drawing.entities.some((entity) => entity?.layer === layer)));
   return {
     version: 2,
     clientId: client,
@@ -663,10 +658,11 @@ function defaultProjectPayload(client, body = {}) {
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
     gridStep: [5, 10, 50, 100, 500, 1000].includes(source.gridStep) ? source.gridStep : 100,
-    polarStep: [5, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
+    polarStep: [5, 10, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["measure", "dimensions", "text", "areas", "elevations", ...legacyLayers],
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
+    measurementSettings: source.measurementSettings,
     selectionFilter: source.selectionFilter || "all",
     furnitureTab: source.furnitureTab || "furniture",
     furnitureCategory: source.furnitureCategory || "sofas",

@@ -27,15 +27,23 @@ export function leaderTextHeight(entity) {
   return Math.abs(entity.textHeight || entity.height || 200);
 }
 
-export function leaderFrameSize(height, textWidth, count, style, spacing = ANNOTATION_LINE_SPACING) {
-  const horizontalPadding = height * (style === "boxed" ? 2 / 3 : 0.25);
+export function leaderAppearance(entity = {}) {
+  const legacy = entity.leaderStyle || "boxed";
+  const line = entity.leaderLine === "straight" || entity.leaderLine === "bent"
+    ? entity.leaderLine : legacy === "landing" ? "bent" : "straight";
+  const frame = typeof entity.leaderFrame === "boolean" ? entity.leaderFrame : legacy === "boxed";
+  return { line, frame };
+}
+
+export function leaderFrameSize(height, textWidth, count, frame, spacing = ANNOTATION_LINE_SPACING) {
+  const horizontalPadding = height * (frame ? 2 / 3 : 0.25);
   return {
     width: Math.max(height * 1.6, textWidth + horizontalPadding * 2),
     height: height * (1.7 + (count - 1) * spacing),
   };
 }
 
-export function leaderPlanPath(arrow, rect, style, landingLength) {
+export function leaderPlanPath(arrow, rect, line, landingLength) {
   const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   const dx = arrow.x - center.x;
   const dy = arrow.y - center.y;
@@ -43,9 +51,16 @@ export function leaderPlanPath(arrow, rect, style, landingLength) {
   const side = dx < 0 ? -1 : 1;
   const horizontalGap = Math.abs(dx) - rect.width / 2;
 
-  if (style === "landing" && horizontalGap > 0) {
+  if (line === "bent" && horizontalGap > 0) {
     const connector = { x: center.x + side * rect.width / 2, y: center.y };
     const elbow = { x: connector.x + side * Math.min(landingLength, horizontalGap), y: center.y };
+    return [arrow, elbow, connector];
+  }
+  const verticalGap = Math.abs(dy) - rect.height / 2;
+  if (line === "bent" && verticalGap > 0) {
+    const side = dy < 0 ? -1 : 1;
+    const connector = { x: center.x, y: center.y + side * rect.height / 2 };
+    const elbow = { x: center.x, y: connector.y + side * Math.min(landingLength, verticalGap) };
     return [arrow, elbow, connector];
   }
 

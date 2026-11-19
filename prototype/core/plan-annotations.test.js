@@ -22,6 +22,24 @@ test("area stores an independent closed polygon in millimeters and derives its a
   assert.equal(annotated.points[0].x, -1000);
 });
 
+test("one annotation reports the sum of disconnected contours and picks an interior label ring", () => {
+  const first = rectangle(0, 0, 1000, 1000);
+  const second = rectangle(3000, 0, 5000, 2000);
+  const annotation = createPlanAnnotation("combined", "area", first, { contours: [first, second] });
+  assert.notEqual(annotation.points, first);
+  assert.equal(annotation.points, annotation.contours[0]);
+  const geometry = planAnnotationGeometry(annotation);
+  assert.equal(geometry.areaM2, 5);
+  assert.deepEqual(geometry.bounds, { minX: 0, minY: 0, maxX: 5000, maxY: 2000 });
+  assert.deepEqual(geometry.anchor, { x: 4000, y: 1000 });
+  assert.deepEqual(geometry.anchorBounds, geometry.rings[1].bounds);
+  assert.deepEqual(normalizePlanAnnotation(JSON.parse(JSON.stringify(annotation))), annotation);
+  for (const changed of [rectangle(500, 500, 2000, 2000), rectangle(1000, 0, 2000, 1000), rectangle(200, 200, 300, 300), first]) {
+    assert.equal(createPlanAnnotation("overlap", "area", first, { contours: [first, changed] }), null);
+  }
+  assert.equal(normalizePlanAnnotation({ ...annotation, points: second }), null);
+});
+
 test("concave contours keep the label strictly inside when the centroid falls in the notch", () => {
   const points = [[0, 0], [6000, 0], [6000, 6000], [4500, 6000], [4500, 1500], [1500, 1500], [1500, 6000], [0, 6000]]
     .map(([x, y]) => ({ x, y }));

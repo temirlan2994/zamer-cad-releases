@@ -2,6 +2,7 @@ import { pointInPolygon, pointToSegmentDistance, segmentsIntersect } from "./geo
 import { annotationTextLines, annotationTextWidth, annotationWorldSize } from "./annotation-text.js";
 import { isLinePoint } from "./line-edits.js";
 import { polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
+import { formatProjectArea, formatProjectElevation } from "./project-settings.js";
 
 export const PLAN_ANNOTATION_LAYERS = Object.freeze({ area: "areas", elevation: "elevations" });
 export const PLAN_AREA_COLOR = "#176f87";
@@ -13,6 +14,7 @@ export const PLAN_ELEVATION_STYLES = Object.freeze({
 
 // Import and editing both check simple rings in quadratic time.
 export const MAX_PLAN_ANNOTATION_POINTS = 1024;
+export const MAX_PLAN_CONTOURS = 32;
 const POLYLINE_CHORD_ERROR_MM = 0.25;
 const areaFormatter = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2, useGrouping: false });
 const elevationFormatter = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3, useGrouping: false, signDisplay: "exceptZero" });
@@ -145,8 +147,9 @@ function interiorAnchor(geometry, obstacles = []) {
 
 export function planAnnotationGeometry(entity) {
   if (!Object.hasOwn(PLAN_ANNOTATION_LAYERS, entity?.type) || !Array.isArray(entity.points)) return null;
-  const source = entity.points;
-  if (!geometryByPoints.has(source)) geometryByPoints.set(source, calculatePlanGeometry(source));
+  const source = planGeometrySource(entity.points, entity.contours);
+  if (!source) return null;
+  if (!geometryByPoints.has(source)) geometryByPoints.set(source, calculatePlanAnnotation(entity.points, entity.contours));
   return geometryByPoints.get(source);
 }
 
@@ -159,11 +162,58 @@ function calculatePlanGeometry(source) {
   return { points, areaMm2, areaM2, anchor, bounds };
 }
 
+function planGeometrySource(points, contours) {
+  if (contours === undefined) return points;
+  if (!Array.isArray(contours) || contours.length < 2 || contours.length > MAX_PLAN_CONTOURS || !Array.isArray(contours[0])) return null;
+  const first = contours[0];
+  if (first !== points && (first.length !== points.length || first.some((point, index) =>
+    point?.x !== points[index]?.x || point?.y !== points[index]?.y))) return null;
+  return contours;
+}
+
+function ringsOverlap(first, second) {
+  const a = first.bounds;
+  const b = second.bounds;
+  if (a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY) return false;
+  if (pointInPolygon(first.points[0], second.points) || pointInPolygon(second.points[0], first.points)) return true;
+  return first.points.some((point, index) => second.points.some((other, next) =>
+    segmentsIntersect(point, first.points[(index + 1) % first.points.length], other, second.points[(next + 1) % second.points.length])));
+}
+
+function geometryWithRings(rings) {
+  const areaMm2 = rings.reduce((sum, ring) => sum + ring.areaMm2, 0);
+  const bounds = {
+    minX: Math.min(...rings.map((ring) => ring.bounds.minX)), minY: Math.min(...rings.map((ring) => ring.bounds.minY)),
+    maxX: Math.max(...rings.map((ring) => ring.bounds.maxX)), maxY: Math.max(...rings.map((ring) => ring.bounds.maxY)),
+  };
+  let best = rings[0];
+  let clearance = boundaryDistance(best.anchor, best.points);
+  for (const ring of rings.slice(1)) {
+    const distance = boundaryDistance(ring.anchor, ring.points);
+    if (distance <= clearance) continue;
+    best = ring;
+    clearance = distance;
+  }
+  return { points: rings[0].points, contours: rings.map((ring) => ring.points), rings, areaMm2, areaM2: areaMm2 / 1e6,
+    anchor: best.anchor, anchorBounds: best.bounds, bounds };
+}
+
+function calculatePlanAnnotation(points, contours) {
+  if (!Array.isArray(points) || !planGeometrySource(points, contours)) return null;
+  const rings = [];
+  for (const contour of contours ?? [points]) {
+    const ring = calculatePlanGeometry(contour);
+    if (!ring || rings.some((previous) => ringsOverlap(ring, previous))) return null;
+    rings.push(ring);
+  }
+  return geometryWithRings(rings);
+}
+
 export function planAnnotationAnchors(entities) {
   const zones = entities.filter((entity) => Object.hasOwn(PLAN_ANNOTATION_LAYERS, entity?.type));
-  if (lastLabelLayout && zones.length === lastLabelLayout.zones.length && zones.every(({ id, type, points }, index) => {
+  if (lastLabelLayout && zones.length === lastLabelLayout.zones.length && zones.every(({ id, type, points, contours }, index) => {
     const previous = lastLabelLayout.zones[index];
-    return id === previous.id && type === previous.type && points === previous.points;
+    return id === previous.id && type === previous.type && points === previous.points && contours === previous.contours;
   })) return lastLabelLayout.anchors;
 
   const shapes = [];
@@ -171,42 +221,42 @@ export function planAnnotationAnchors(entities) {
     const geometry = planAnnotationGeometry(entity);
     if (geometry) shapes.push({ entity, geometry });
   }
-  const elevations = shapes.filter(({ entity }) => entity.type === "elevation");
+  const elevations = shapes.filter(({ entity }) => entity.type === "elevation")
+    .flatMap(({ entity, geometry }) => geometry.rings.map((ring) => ({ entity, ring })));
   const anchors = new Map();
   for (const { entity, geometry } of shapes) {
     let anchor = geometry.anchor;
     if (entity.type === "elevation") {
-      const { bounds } = geometry;
-      const candidates = elevations.map((entry) => entry.geometry).filter((other) =>
-        other.areaMm2 < geometry.areaMm2 &&
+      const labelRing = geometry.rings.find((ring) => ring.anchor === anchor);
+      const { bounds } = labelRing;
+      const candidates = elevations.filter((entry) => entry.entity !== entity).map((entry) => entry.ring).filter((other) =>
+        other.areaMm2 < labelRing.areaMm2 &&
         other.bounds.minX >= bounds.minX && other.bounds.maxX <= bounds.maxX &&
         other.bounds.minY >= bounds.minY && other.bounds.maxY <= bounds.maxY);
       if (candidates.some((other) => pointInPolygon(anchor, other.points))) {
         const nested = candidates.filter((other) => other.points.every((point) =>
-          pointInPolygon(point, geometry.points) || boundaryDistance(point, geometry.points) <= 1e-6));
-        if (nested.length) anchor = interiorAnchor({ ...geometry, centroid: anchor }, nested) ?? anchor;
+          pointInPolygon(point, labelRing.points) || boundaryDistance(point, labelRing.points) <= 1e-6));
+        if (nested.length) anchor = interiorAnchor({ ...labelRing, centroid: anchor }, nested) ?? anchor;
       }
     }
     anchors.set(entity.id, anchor);
   }
-  lastLabelLayout = { zones: zones.map(({ id, type, points }) => ({ id, type, points })), anchors };
+  lastLabelLayout = { zones: zones.map(({ id, type, points, contours }) => ({ id, type, points, contours })), anchors };
   return anchors;
-}
-
-function copyValidatedPoints(geometry) {
-  const points = geometry.points.map(({ x, y }) => ({ x, y }));
-  geometryByPoints.set(points, { ...geometry, points });
-  return points;
 }
 
 export function createPlanAnnotation(id, type, points, options) {
   if (typeof id !== "string" || !id.trim() || !Object.hasOwn(PLAN_ANNOTATION_LAYERS, type)) return null;
-  const { height, label, zoneStyle } = options ?? {};
+  const { height, label, zoneStyle, contours } = options ?? {};
   if (label != null && typeof label !== "string") return null;
   if (type === "elevation" && (!Number.isFinite(height) || (zoneStyle != null && !Object.hasOwn(PLAN_ELEVATION_STYLES, zoneStyle)))) return null;
-  const geometry = calculatePlanGeometry(points);
+  const geometry = calculatePlanAnnotation(points, contours);
   if (!geometry) return null;
-  const entity = { id, type, layer: PLAN_ANNOTATION_LAYERS[type], points: copyValidatedPoints(geometry) };
+  const rings = geometry.rings.map((ring) => ({ ...ring, points: ring.points.map(({ x, y }) => ({ x, y })) }));
+  const result = geometryWithRings(rings);
+  const entity = { id, type, layer: PLAN_ANNOTATION_LAYERS[type], points: result.points };
+  if (rings.length > 1) entity.contours = result.contours;
+  geometryByPoints.set(entity.contours ?? entity.points, result);
   if (label?.trim()) entity.label = label.trim();
   if (type === "elevation") {
     entity.height = height === 0 ? 0 : height;
@@ -283,10 +333,16 @@ export function formatPlanElevation(height) {
   return Number.isFinite(height) ? `${elevationFormatter.format(height)} мм` : "—";
 }
 
-export function planZoneLabelLines(entity, geometry) {
-  const value = entity.type === "area" ? formatPlanArea(geometry.areaM2) : `Z ${formatPlanElevation(entity.height)}`;
+export function planZoneLabelLines(entity, geometry, measurementSettings) {
+  const value = entity.type === "area"
+    ? formatProjectArea(geometry.areaM2, measurementSettings)
+    : `Z ${formatProjectElevation(entity.height, measurementSettings)}`;
   const label = typeof entity.label === "string" ? entity.label.trim() : "";
   return label ? [value, ...annotationTextLines(label)] : [value];
+}
+
+export function planZoneLabelRing(geometry, anchor) {
+  return geometry.rings.find(({ points }) => pointInPolygon(anchor, points)) || geometry.rings.find(({ bounds }) => bounds === geometry.anchorBounds);
 }
 
 export function planZoneLabelHeight(lines, bounds, scaleFactor) {

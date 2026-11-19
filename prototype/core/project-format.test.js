@@ -64,3 +64,11 @@ test("project and room backups preserve independent plan area and Z annotations"
   assert.throws(() => validateZamerProject({ entities: [{ ...area, layer: "elevations" }] }), /повреждён объект/);
   assert.throws(() => validateZamerProject({ entities: [{ ...area, points: [points[0], points[2], points[1], points[3]] }] }), /повреждён объект/);
 });
+
+test("multi-contour zones preserve the same data in a backup and reject intersecting parts", () => {
+  const points = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 2000 }, { x: 0, y: 2000 }];
+  const second = points.map(({ x, y }) => ({ x: x + 4000, y }));
+  const zone = createPlanAnnotation("zone", "elevation", points, { contours: [points, second], height: 2800 });
+  assert.deepEqual(validateZamerProject(JSON.parse(JSON.stringify({ entities: [zone] }))), { entities: [zone] });
+  assert.throws(() => validateZamerProject({ entities: [{ ...zone, contours: [points, points] }] }), /повреждён объект/);
+});

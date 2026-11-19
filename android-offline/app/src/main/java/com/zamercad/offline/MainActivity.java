@@ -7,7 +7,9 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
@@ -55,8 +57,21 @@ public final class MainActivity extends Activity {
     private SurveyLaser surveyLaser;
     private ValueCallback<Uri[]> filePathCallback;
     private ExportedFile lastExport;
+    private int viewportInsetLeft;
+    private int viewportInsetTop;
+    private int viewportInsetRight;
+    private int viewportInsetBottom;
+    private int imeInsetBottom;
+    private boolean typedImeVisible;
+    private volatile KeyboardViewport keyboardViewport = new KeyboardViewport(false, 0);
 
     private record ExportedFile(String requestId, Uri uri, String fileName, String mimeType) {}
+
+    private record KeyboardViewport(boolean visible, int availableHeight) {
+        String json() {
+            return "{\"visible\":" + visible + ",\"availableHeight\":" + availableHeight + "}";
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,19 +91,24 @@ public final class MainActivity extends Activity {
         viewport.setBackgroundColor(Color.rgb(248, 250, 253));
         viewport.addView(webView, new FrameLayout.LayoutParams(-1, -1));
         viewport.setOnApplyWindowInsetsListener((view, insets) -> {
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
+            if (Build.VERSION.SDK_INT >= 30) {
                 Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                viewportInsetLeft = bars.left;
+                viewportInsetTop = bars.top;
+                viewportInsetRight = bars.right;
+                viewportInsetBottom = bars.bottom;
+                imeInsetBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
+                typedImeVisible = insets.isVisible(WindowInsets.Type.ime()) && imeInsetBottom > 0;
             } else {
-                view.setPadding(
-                    insets.getSystemWindowInsetLeft(),
-                    insets.getSystemWindowInsetTop(),
-                    insets.getSystemWindowInsetRight(),
-                    insets.getSystemWindowInsetBottom()
-                );
+                viewportInsetLeft = insets.getSystemWindowInsetLeft();
+                viewportInsetTop = insets.getSystemWindowInsetTop();
+                viewportInsetRight = insets.getSystemWindowInsetRight();
+                viewportInsetBottom = Math.min(insets.getStableInsetBottom(), insets.getSystemWindowInsetBottom());
             }
+            updateKeyboardViewport();
             return insets.consumeSystemWindowInsets().consumeDisplayCutout();
         });
+        viewport.getViewTreeObserver().addOnGlobalLayoutListener(this::updateKeyboardViewport);
         setContentView(viewport);
         viewport.requestApplyInsets();
 
@@ -142,6 +162,40 @@ public final class MainActivity extends Activity {
         updater.checkAtStartup();
     }
 
+    private void updateKeyboardViewport() {
+        if (webView == null || isDestroyed()) return;
+        int[] viewportLocation = new int[2];
+        viewport.getLocationOnScreen(viewportLocation);
+        int contentTop = viewportLocation[1] + viewportInsetTop;
+        int contentBottom = viewportLocation[1] + viewport.getHeight() - viewportInsetBottom;
+        float density = webView.getResources().getDisplayMetrics().density;
+        Rect visibleFrame = new Rect();
+        viewport.getWindowVisibleDisplayFrame(visibleFrame);
+        boolean visible = typedImeVisible;
+        int keyboardTop = contentBottom;
+        if (Build.VERSION.SDK_INT >= 30 && typedImeVisible) {
+            keyboardTop = getWindowManager().getCurrentWindowMetrics().getBounds().bottom - imeInsetBottom;
+        }
+        // With adjustResize the parent may already end above the IME. Only pad
+        // the portion still covering the WebView, including edge-to-edge mode.
+        if (visibleFrame.bottom > contentTop && (visible || contentBottom - visibleFrame.bottom > 80 * density)) {
+            visible = true;
+            keyboardTop = Math.min(keyboardTop, visibleFrame.bottom);
+        }
+        int contentHeight = Math.max(0, contentBottom - contentTop);
+        int imeOverlap = visible ? Math.min(contentHeight, Math.max(0, contentBottom - keyboardTop)) : 0;
+        int paddedBottom = viewportInsetBottom + imeOverlap;
+        if (viewport.getPaddingLeft() != viewportInsetLeft || viewport.getPaddingTop() != viewportInsetTop ||
+            viewport.getPaddingRight() != viewportInsetRight || viewport.getPaddingBottom() != paddedBottom) {
+            viewport.setPadding(viewportInsetLeft, viewportInsetTop, viewportInsetRight, paddedBottom);
+        }
+        int availableHeight = Math.round((contentHeight - imeOverlap) / density);
+        KeyboardViewport next = new KeyboardViewport(visible, availableHeight);
+        if (next.equals(keyboardViewport)) return;
+        keyboardViewport = next;
+        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('zamer-ime-insets',{detail:" + next.json() + "}));", null);
+    }
+
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         webView.saveState(outState);
@@ -191,6 +245,11 @@ public final class MainActivity extends Activity {
     }
 
     private final class AndroidBridge {
+        @JavascriptInterface
+        public String keyboardViewport() {
+            return keyboardViewport.json();
+        }
+
         @JavascriptInterface
         public void connectSurveyLaser() {
             runOnUiThread(surveyLaser::connect);

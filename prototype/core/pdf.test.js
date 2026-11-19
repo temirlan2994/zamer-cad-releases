@@ -92,6 +92,19 @@ test("plot bounds cover isolated area and elevation zones without their associat
   assert.equal(pdfPlotBounds([{ ...area, points: area.points.slice(1) }]), null);
 });
 
+test("PDF fit includes all disconnected contours and measures labels in project units", () => {
+  const first = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1000 }, { x: 0, y: 1000 }];
+  const second = [{ x: 4500, y: 300 }, { x: 5734, y: 300 }, { x: 5734, y: 1300 }, { x: 4500, y: 1300 }];
+  const roof = { type: "elevation", id: "roof", layer: "elevations", zoneStyle: "beam", height: -2450,
+    points: first, contours: [first, second] };
+  const area = { ...roof, type: "area", id: "area", layer: "areas" };
+  const labels = [];
+  const bounds = pdfPlotBounds([roof, area], (lines) => { labels.push(...lines); return 100; }, 1,
+    { unit: "m", precision: 3, areaPrecision: 3 });
+  assert.deepEqual(bounds, { minX: 0, minY: 0, maxX: 5734, maxY: 1300 });
+  assert.deepEqual(labels, ["Z -2,45 м", "3,234 м²"]);
+});
+
 test("plot bounds account for rotation and vertical extension of multiple text lines", () => {
   const text = { type: "text", layer: "text", x: 4000, y: 1500, height: 200,
     rotation: 90, text: "А\n\nСтрока" };

@@ -1,12 +1,13 @@
-import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
-import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./dimensions.js";
+import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
+import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
 import { pointInPolygon } from "./geometry.js";
 import {
-  planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines,
+  planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing,
   PLAN_ANNOTATION_LAYERS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES,
 } from "./plan-annotations.js";
+import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
 
 const POINT_EPSILON = 1e-6;
 const STYLE = "STANDARD";
@@ -74,11 +75,10 @@ function appendPlanLeader(out, entity, layer) {
   const center = { x: x2, y: y2 };
   const lines = annotationTextLines(entity.text);
   const height = leaderTextHeight(entity);
-  const style = entity.leaderStyle || "boxed";
-  const frame = leaderFrameSize(height, annotationTextWidth(lines, height), lines.length, style, DXF_LINE_SPACING);
-  const { width, height: labelHeight } = frame;
+  const { line, frame } = leaderAppearance(entity);
+  const { width, height: labelHeight } = leaderFrameSize(height, annotationTextWidth(lines, height), lines.length, frame, DXF_LINE_SPACING);
   const rect = { x: x2 - width / 2, y: y2 - labelHeight / 2, width, height: labelHeight };
-  const path = leaderPlanPath(arrow, rect, style, 1.1 * height);
+  const path = leaderPlanPath(arrow, rect, line, 1.1 * height);
   for (let i = 1; i < path.length; i += 1) appendLine(out, path[i - 1], path[i], layer);
   const direction = path.find((point) => Math.hypot(point.x - x1, point.y - y1) > POINT_EPSILON);
   if (direction) {
@@ -86,7 +86,7 @@ function appendPlanLeader(out, entity, layer) {
     const size = Math.min(height * 0.66, length * 0.28);
     appendArrow(out, arrow, (direction.x - x1) / length, (direction.y - y1) / length, size, layer);
   }
-  if (style === "boxed") {
+  if (frame) {
     const corner = { x: rect.x, y: rect.y };
     appendDxfPolyline(out, { closed: true, points: [corner, offsetPoint(corner, width, 0),
       offsetPoint(corner, width, labelHeight), offsetPoint(corner, 0, labelHeight)] }, layer, true);
@@ -129,23 +129,24 @@ function placeZoneLabel(geometry, anchor, width, height, occupied) {
   return position;
 }
 
-function planZoneRecords({ entity, geometry, layer, anchor }, occupied, scaleFactor) {
+function planZoneRecords({ entity, geometry, layer, anchor = geometry.anchor }, occupied, scaleFactor, measurementSettings) {
   const styleKey = Object.hasOwn(PLAN_ELEVATION_STYLES, entity.zoneStyle) ? entity.zoneStyle : "ceiling";
   const style = entity.type === "elevation" ? PLAN_ELEVATION_STYLES[styleKey] : null;
-  const lines = planZoneLabelLines(entity, geometry);
+  const lines = planZoneLabelLines(entity, geometry, measurementSettings);
   const labelWidth = annotationTextWidth(lines, 1) * 1.2 + 1.2;
   const labelHeight = (lines.length - 1) * DXF_LINE_SPACING + 1.7;
-  const height = planZoneLabelHeight(lines, geometry.bounds, scaleFactor);
+  const ring = planZoneLabelRing(geometry, anchor);
+  const height = planZoneLabelHeight(lines, ring.bounds, scaleFactor);
   const records = [];
-  appendDxfPolyline(records, { points: geometry.points, closed: true }, layer, true);
+  for (const points of geometry.contours) appendDxfPolyline(records, { points, closed: true }, layer, true);
   if (height >= 0.001) {
-    const center = placeZoneLabel(geometry, anchor || geometry.anchor, labelWidth * height, labelHeight * height, occupied);
+    const center = placeZoneLabel(ring, anchor, labelWidth * height, labelHeight * height, occupied);
     appendCenteredTextLines(records, center, lines, height, layer);
   }
   return { records, trueColor: style ? Number.parseInt(style.color.slice(1), 16) : null };
 }
 
-function linearDimension(entity, layer, scaleFactor) {
+function linearDimension(entity, layer, scaleFactor, measurementSettings) {
   const geometry = dimensionGeometry(entity);
   const art = linearDimensionArtwork(geometry, scaleFactor);
   if (!art || geometry.measurement <= POINT_EPSILON) return null;
@@ -153,7 +154,7 @@ function linearDimension(entity, layer, scaleFactor) {
   const dx = lineEnd.x - lineStart.x;
   const dy = lineEnd.y - lineStart.y;
   const { ux, uy, label, arrowSize, textHeight, rotation } = art;
-  const text = `${formatDimensionLength(geometry)} мм`;
+  const text = formatProjectLength(measurement, measurementSettings);
   const degrees = Math.atan2(dy, dx) * 180 / Math.PI;
   const graphics = [];
   appendLine(graphics, art.start, art.extensionStart, layer);
@@ -164,7 +165,7 @@ function linearDimension(entity, layer, scaleFactor) {
   appendCenteredText(graphics, label, text, textHeight, rotation * 180 / Math.PI, layer);
   const nativeMeasurement = Math.abs((end.x - start.x) * ux + (end.y - start.y) * uy);
   const aligned = mode === "aligned";
-  const textOverride = Math.abs(nativeMeasurement - measurement) <= POINT_EPSILON ? "<> мм" : text;
+  const textOverride = Math.abs(nativeMeasurement - measurement) <= POINT_EPSILON ? `<> ${projectUnit(measurementSettings).label}` : text;
   return {
     layer, label, graphics, textOverride, measurement, type: aligned ? 1 : 0, base: lineEnd,
     fields: [
@@ -174,13 +175,13 @@ function linearDimension(entity, layer, scaleFactor) {
   };
 }
 
-function angularDimension(entity, layer, scaleFactor) {
+function angularDimension(entity, layer, scaleFactor, measurementSettings) {
   const geometry = angularDimensionGeometry(entity);
   const artwork = angularDimensionArtwork(geometry, scaleFactor);
   if (!artwork) return null;
   const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
   const { radius, textHeight, base, label } = artwork;
-  const text = `${Math.round(measurement)}°`;
+  const text = formatProjectAngle(measurement, measurementSettings);
   const graphics = [];
   appendLine(graphics, vertex, arm1, layer);
   appendLine(graphics, vertex, arm2, layer);
@@ -262,7 +263,8 @@ function appendLayouts(out, nextHandle, modelSpace, paperSpace) {
   out.push(0, "ENDSEC");
 }
 
-export function writeModernDxf(entities, { profile, annotationScale } = {}) {
+export function writeModernDxf(entities, { profile, annotationScale, measurementSettings } = {}) {
+  const display = normalizeMeasurementSettings(measurementSettings);
   const model = [];
   const dimensions = [];
   const annotations = [];
@@ -277,14 +279,14 @@ export function writeModernDxf(entities, { profile, annotationScale } = {}) {
   const anchors = planAnnotationAnchors(entities.filter(Boolean));
   for (const entity of entities) {
     if (entity?.type === "line" && entity.dimensionKind === "angular") {
-      const dimension = angularDimension(entity, dimensionLayer, annotationScale);
+      const dimension = angularDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "line" && entity.dimensionKind === "leader") {
       const records = [];
       appendPlanLeader(records, entity, textLayer);
       annotations.push({ records });
     } else if (entity?.type === "line" && entity.layer === "dimensions") {
-      const dimension = linearDimension(entity, dimensionLayer, annotationScale);
+      const dimension = linearDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "text") {
       const records = [];
@@ -295,9 +297,20 @@ export function writeModernDxf(entities, { profile, annotationScale } = {}) {
       const geometry = planAnnotationGeometry(entity);
       if (geometry) zones.push({ entity, geometry, layer, anchor: anchors.get(entity.id) });
     } else if (entity) {
-      model.push(entity);
+      model.push(entity.type === "block" && entity.rotation == null ? { ...entity, rotation: 0 } : entity);
     }
   }
+
+  const records = [];
+  appendDxfEntityRecords(records, model, options);
+  const emittedLayers = new Set();
+  for (const primitives of [records, ...annotations.map((annotation) => annotation.records)]) {
+    for (let index = 0; index < primitives.length; index += 2) {
+      if (primitives[index] === "8") emittedLayers.add(primitives[index + 1]);
+    }
+  }
+  const drawingLayers = layers.filter(({ key, name }) =>
+    (key !== "walls" && key !== "furniture") || emittedLayers.has(name));
 
   let handleIndex = 1;
   const nextHandle = () => (handleIndex++).toString(16).toUpperCase();
@@ -313,27 +326,26 @@ export function writeModernDxf(entities, { profile, annotationScale } = {}) {
   const out = [0, "SECTION", 2, "TABLES"];
   appendTable(out, nextHandle, "LTYPE", "AcDbLinetypeTableRecord", ["ByBlock", "ByLayer", "Continuous"].map((name) =>
     [nextHandle(), 2, name, 70, 0, 3, "", 72, 65, 73, 0, 40, 0]));
-  appendTable(out, nextHandle, "LAYER", "AcDbLayerTableRecord", [{ name: "0", color: 7 }, ...layers].map(({ name, color, trueColor }) =>
+  appendTable(out, nextHandle, "LAYER", "AcDbLayerTableRecord", [{ name: "0", color: 7 }, ...drawingLayers].map(({ name, color, trueColor }) =>
     [nextHandle(), 2, name, 70, 0, 62, color, 6, "Continuous", ...(trueColor === undefined ? [] : [420, trueColor])]));
   appendTable(out, nextHandle, "STYLE", "AcDbTextStyleTableRecord", [
     [styleHandle, 2, STYLE, 70, 0, 40, 0, 41, 1, 50, 0, 71, 0, 42, 120, 3, "arial.ttf", 4, ""],
   ]);
   appendTable(out, nextHandle, "DIMSTYLE", "AcDbDimStyleTableRecord", [
     [nextHandle(), 2, STYLE, 70, 0, 40, 1, 41, annotationWorldSize(9, annotationScale),
-      140, annotationWorldSize(12, annotationScale), 179, 0, 271, 0, 275, 0, 277, 2, 340, styleHandle],
+      78, 8, 79, 2, 140, annotationWorldSize(12, annotationScale), 144, 1 / projectUnit(display).factor,
+      179, display.anglePrecision, 271, display.precision, 275, 0, 277, 2, 278, 44, 340, styleHandle],
   ]);
   appendTable(out, nextHandle, "BLOCK_RECORD", "AcDbBlockTableRecord", blocks.map(({ handle, name, layout }) =>
     [handle, 2, name, 340, layout ?? 0, 70, 0, 280, 1, 281, 0]));
   out.push(0, "ENDSEC", 0, "SECTION", 2, "BLOCKS");
   for (const block of blocks) appendBlock(out, nextHandle, block);
   out.push(0, "ENDSEC", 0, "SECTION", 2, "ENTITIES");
-  const records = [];
-  appendDxfEntityRecords(records, model, options);
   appendPrimitiveEntities(out, records, modelSpace.handle, nextHandle);
   const occupied = [];
   // Small zones have fewer places for a readable label, so reserve their space first.
   const zoneRecords = new Map([...zones].sort((a, b) => a.geometry.areaMm2 - b.geometry.areaMm2)
-    .map((zone) => [zone, planZoneRecords(zone, occupied, annotationScale)]));
+    .map((zone) => [zone, planZoneRecords(zone, occupied, annotationScale, display)]));
   for (const zone of zones) {
     const annotation = zoneRecords.get(zone);
     appendPrimitiveEntities(out, annotation.records, modelSpace.handle, nextHandle, annotation.trueColor);

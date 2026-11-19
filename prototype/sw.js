@@ -2,13 +2,13 @@
 // Strategy: network-first (always fresh when online, updates the cache),
 // falling back to cache when offline. Saves (/api/*) always go to the network.
 // Bump CACHE when you want to force-clear old cached files.
-const CACHE = "zamer-v234";
+const CACHE = "zamer-v235";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./app.js?v=234",
-  "./styles.css?v=234",
+  "./app.js?v=235",
+  "./styles.css?v=235",
   "./core/geometry.js?v=225",
   "./core/geometry.js",
   "./core/interaction.js?v=225",
@@ -23,12 +23,15 @@ const ASSETS = [
   "./core/dimensions.js",
   "./core/dimension-artwork.js",
   "./core/plan-annotations.js",
+  "./core/plan-region.js",
+  "./core/plan-region.js",
   "./core/annotation-text.js",
   "./core/survey.js",
   "./core/survey-panel.js",
   "./core/survey-laser.js",
   "./core/pdf.js",
   "./core/project-format.js",
+  "./core/project-settings.js",
   "./core/zip.js",
   "./core/dxf-writer.js",
   "./core/sync.js",

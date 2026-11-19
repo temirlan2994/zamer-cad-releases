@@ -2,7 +2,7 @@ import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDra
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
-import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./core/dimensions.js";
+import { angularDimensionGeometry, dimensionGeometry } from "./core/dimensions.js";
 import { angularDimensionArtwork, linearDimensionArtwork } from "./core/dimension-artwork.js";
 import { constrainLinePoint, linePointWithConstraint, linePolarPoint, parseLineDecimal } from "./core/line-input.js";
 import { isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine } from "./core/line-edits.js";
@@ -12,12 +12,15 @@ import { createPolyline, polylineArcFromBend, polylineBounds, polylineSegments, 
 import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
 import { MAX_ZAMER_FILE_BYTES, validateZamerProject } from "./core/project-format.js";
-import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyNumber, surveyRoom } from "./core/survey.js";
+import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
 import { createSurveyLaser } from "./core/survey-laser.js";
 import { buildZip } from "./core/zip.js";
-import { createPlanAnnotation, formatPlanArea, formatPlanElevation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
-import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./core/annotation-text.js";
+import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatProjectLength,
+  fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
+import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
+import { planRegionAtPoint } from "./core/plan-region.js";
+import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./core/annotation-text.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
@@ -260,10 +263,11 @@ function apkCreateProject(body = {}) {
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
     gridStep: GRID_STEPS.includes(source.gridStep) ? source.gridStep : 100,
-    polarStep: [5, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : [...defaultPlanLayers],
+    polarStep: POLAR_STEPS.includes(source.polarStep) ? source.polarStep : 5,
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : projectDefaultLayers(source),
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
+    measurementSettings: normalizeMeasurementSettings(source.measurementSettings),
     selectionFilter: source.selectionFilter || "all",
     survey: normalizeSurvey(source.survey),
     draft: source.draft,
@@ -417,10 +421,15 @@ const cursorToolButton = tools.find((button) => button.dataset.tool === "select"
 const figureToolButton = document.getElementById("figureToolButton");
 const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
+const quickMoveTool = document.getElementById("quickMoveTool");
+const quickDeleteTool = document.getElementById("quickDeleteTool");
 const gridStepReadout = document.getElementById("gridStepReadout");
 const gridStepSelect = document.getElementById("gridStepSelect");
 const gridVisibleReadout = document.getElementById("gridVisibleReadout");
 const allSnapsButton = document.getElementById("allSnapsButton");
+const polarStepReadout = document.getElementById("polarStepReadout");
+const snapMore = document.getElementById("snapMore");
+const snapMoreSummary = snapMore.querySelector("summary");
 const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const dimensionToolMenu = createDimensionToolMenu();
@@ -431,7 +440,9 @@ const selectToolMenu = document.getElementById("selectToolMenu");
 const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
 const snaps = [...document.querySelectorAll("[data-snap]")];
+const snapStepButtons = snaps.filter((button) => button.dataset.snapSettings);
 const GRID_STEPS = [5, 10, 50, 100, 500, 1000];
+const POLAR_STEPS = [5, 10, 15, 30, 45, 90];
 const snapSymbolPaths = {
   all: "M5 12h14M12 5v14M4 4h5M4 4v5M20 4h-5M20 4v5M4 20h5M4 20v-5M20 20h-5M20 20v-5",
   grid: "M6 6h12v12H6zM6 12h12M12 6v12",
@@ -476,6 +487,8 @@ const angleEditor = document.getElementById("angleEditor");
 const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
 const themeButton = document.getElementById("themeButton");
 const annotationScaleSelect = document.getElementById("annotationScaleSelect");
+const projectSettingsButton = document.getElementById("projectSettingsButton");
+const projectSettingsSheet = document.getElementById("projectSettingsSheet");
 const statusChip = document.getElementById("statusChip");
 const dimensionAssist = document.getElementById("dimensionAssist");
 const cornerMetrics = document.getElementById("cornerMetrics");
@@ -484,7 +497,6 @@ const polylineArcMode = document.getElementById("polylineArcMode");
 const lengthMetricName = document.getElementById("lengthMetricName");
 const topLengthName = document.getElementById("topLengthName");
 const topAngleName = document.getElementById("topAngleName");
-const topAngleUnit = document.getElementById("topAngleUnit");
 const lengthReadout = document.getElementById("lengthReadout");
 const angleReadout = document.getElementById("angleReadout");
 const topLengthReadout = document.getElementById("topLengthReadout");
@@ -509,6 +521,10 @@ let lastNumericInput = null;
 const lineMetricKinds = new Map([[lengthInput, "length"], [angleInput, "angle"], [topLengthInput, "length"], [topAngleInput, "angle"]]);
 const modifiedMetricInputs = new WeakSet();
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
+let androidKeyboardViewport = null;
+try {
+  androidKeyboardViewport = JSON.parse(window.ZamerAndroid?.keyboardViewport?.() || "null");
+} catch { /* Browser and older APKs use the WebView viewport. */ }
 const cp1251Chars =
   "\u0402\u0403\u201A\u0453\u201E\u2026\u2020\u2021\u20AC\u2030\u0409\u2039\u040A\u040C\u040B\u040F" +
   "\u0452\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u0098\u2122\u0459\u203A\u045A\u045C\u045B\u045F" +
@@ -521,7 +537,7 @@ const trackingHoverDelayMs = 1000;
 const trackingMaxPoints = 3;
 const trackingAngles = [0, Math.PI / 4, Math.PI / 2, (Math.PI * 3) / 4];
 const groupedDrawTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
-const trackingDrawingTools = new Set(["line", "polyline", "circle", "arc", "rectangle"]);
+const trackingDrawingTools = new Set(["line", "polyline", "circle", "arc", "rectangle", "area", "elevation"]);
 const drawToolButtonVisuals = {
   line: { icon: "╱", label: "Линия" },
   polyline: { icon: "⌁", label: "Полилиния" },
@@ -619,7 +635,15 @@ const layerMeta = {
   furniture: { name: "Мебель", color: "#1db4a8", description: "блоки мебели, двери, окна" },
   measure: { name: "Черновые", color: "#9b6bff", description: "линии замера и наброски" },
 };
-const defaultPlanLayers = Object.keys(layerMeta);
+const defaultPlanLayers = ["measure", "dimensions", "text", "areas", "elevations"];
+
+function projectDefaultLayers(project) {
+  const rooms = Array.isArray(project.survey?.rooms) ? project.survey.rooms : [];
+  const hasLayer = (entities, layer) => Array.isArray(entities) && entities.some((entity) => entity?.layer === layer);
+  const legacy = ["walls", "furniture"].filter((layer) => hasLayer(project.entities, layer) ||
+    rooms.some((room) => hasLayer(room?.drawing?.entities, layer)));
+  return [...defaultPlanLayers, ...legacy];
+}
 const selectionFilters = ["all", "lines", "dimensions"];
 
 let surveyPanel = null;
@@ -635,6 +659,8 @@ const state = {
   drawTool: "line",
   dimensionTool: "aligned",
   annotationScale: 1,
+  measurementSettings: normalizeMeasurementSettings(),
+  cursorMenuReady: false,
   selectTool: "select",
   selectionFilter: "all",
 
@@ -644,6 +670,7 @@ const state = {
     panY: 84,
   },
   drawing: null,
+  leaderPlacement: null,
   moveCommand: null,
   offsetCommand: null,
   lineEdit: null,
@@ -684,7 +711,6 @@ const state = {
 };
 
 const TAP_MOVE_TOLERANCE = 8;
-const LONG_PRESS_SELECT_MS = 430;
 
 function decodeMojibakeText(value) {
   if (typeof value !== "string" || !/[РС][\u0400-\u04ff]|Г[—°]|В[°·]/.test(value)) return value;
@@ -1102,7 +1128,7 @@ function updateProjectTitle() {
   if (projectNameCaption) projectNameCaption.textContent = persistence.projectName || "Проекты";
   if (projectScaleCaption) {
     const label = annotationScaleSelect?.selectedOptions?.[0]?.textContent || "1:100";
-    projectScaleCaption.textContent = persistence.projectId ? `MM - ${label}` : "Выберите файл";
+    projectScaleCaption.textContent = persistence.projectId ? `${projectUnit(state.measurementSettings).label} · ${label}` : "Выберите файл";
   }
 }
 
@@ -1181,6 +1207,7 @@ function resetProjectSession() {
   persistence.trash = [];
   setSelection([]);
   state.drawing = null;
+  state.leaderPlacement = null;
   state.snapsMuted = false;
   state.command = null;
   state.lineEdit = null;
@@ -1999,6 +2026,7 @@ function serializableProjectState() {
     visibleLayers: [...state.visibleLayers],
     annotationLayers: 1,
     annotationScale: state.annotationScale,
+    measurementSettings: { ...state.measurementSettings },
     selectionFilter: state.selectionFilter,
     survey: state.survey,
     draft: acceptedSurveyDraft(),
@@ -2049,7 +2077,9 @@ function cloneProjectEntity(entity) {
     if (isPlanAnnotationZone(copy)) return normalizePlanAnnotation(copy);
     if (copy?.dimensionKind === "leader" || copy?.type === "text") {
       if (copy.layer === "dimensions" || !copy.layer) copy.layer = "text";
-      if (copy.dimensionKind === "leader" && !copy.leaderStyle) copy.leaderStyle = "boxed";
+      if (copy.dimensionKind === "leader" && !copy.leaderStyle && !Object.hasOwn(copy, "leaderLine") && !Object.hasOwn(copy, "leaderFrame")) {
+        copy.leaderStyle = "boxed";
+      }
     }
     return isValidProjectEntity(copy) ? copy : null;
   } catch {
@@ -2081,17 +2111,19 @@ function restoreProject(project) {
     state.snaps = new Set(Array.isArray(project.snaps) ? project.snaps.filter(Boolean) : ["grid", "end", "polar"]);
     state.snapsMuted = false;
     state.gridStep = GRID_STEPS.includes(project.gridStep) ? project.gridStep : 100;
-    state.polarStep = [5, 15, 30, 45, 90].includes(project.polarStep) ? project.polarStep : 5;
+    state.polarStep = POLAR_STEPS.includes(project.polarStep) ? project.polarStep : 5;
     if (lineUi.linePolarStep) lineUi.linePolarStep.value = String(state.polarStep);
-    state.visibleLayers = new Set((Array.isArray(project.visibleLayers) ? project.visibleLayers : defaultPlanLayers).filter((id) => layerMeta[id]));
+    const availableLayers = new Set(projectDefaultLayers(project));
+    state.visibleLayers = new Set((Array.isArray(project.visibleLayers) ? project.visibleLayers : [...availableLayers])
+      .filter((id) => availableLayers.has(id)));
     if (project.annotationLayers !== 1) {
       state.visibleLayers.add("areas");
       state.visibleLayers.add("elevations");
       if (state.visibleLayers.has("dimensions")) state.visibleLayers.add("text");
     }
-    if (Number.isFinite(project.annotationScale)) {
-      setAnnotationScale(project.annotationScale, { save: false });
-    }
+    state.measurementSettings = normalizeMeasurementSettings(project.measurementSettings);
+    setAnnotationScale(project.annotationScale, { save: false });
+    exportScale.value = state.measurementSettings.printScale;
     if (project.theme === "light" || project.theme === "dark") {
       state.theme = project.theme;
       shell.dataset.theme = state.theme;
@@ -2102,6 +2134,7 @@ function restoreProject(project) {
     state.selectionFilter = selectionFilters.includes(project.selectionFilter) ? project.selectionFilter : "all";
 
     state.drawing = null;
+    state.leaderPlacement = null;
     state.moveCommand = null;
     state.offsetCommand = null;
     state.lineEdit = null;
@@ -2362,7 +2395,9 @@ function updateViewportLock() {
   const inputFocused = isKeyboardInputFocused();
   const rawInset = visualViewport ? Math.max(0, layoutHeight - visualViewport.height - visualViewport.offsetTop) : 0;
   const heightLoss = Math.max(0, stableViewportHeight - viewportHeight);
-  const detectedInset = Math.max(rawInset, heightLoss);
+  const nativeInset = androidKeyboardViewport?.visible && androidKeyboardViewport.availableHeight > 0
+    ? Math.max(0, stableViewportHeight - androidKeyboardViewport.availableHeight) : 0;
+  const detectedInset = Math.max(rawInset, heightLoss, nativeInset);
   const keyboardInset = inputFocused && detectedInset > 80 ? Math.min(detectedInset, Math.max(0, stableViewportHeight - 240)) : 0;
 
   if (!inputFocused) {
@@ -2432,9 +2467,16 @@ function cursorSnapResolved() {
   }
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
   if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
+  if (state.planZone?.mode === "existing") return { point: raw, snap: null };
+  if (state.planZone?.mode === "contour" && planContourClosesAtCursor(state.planZone.points)) {
+    const first = state.planZone.points[0];
+    state.snapTracking.active = null;
+    state.polarSnapGuide = null;
+    return { point: first, snap: { ...first, type: "end", label: "Начальная вершина" } };
+  }
   const draft = state.drawing;
   if (state.tool === "polyline" && draft?.arcPhase === "through") return resolveSnapWorld(raw);
-  const start = draft?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
+  const start = draft?.start || planZoneSnapStart() || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   const constraint = draft?.metricConstraint;
   const firstVertex = state.tool === "polyline" && canClosePolyline(draft) ? draft.points[0] : null;
   if (firstVertex && !constraint && snapEnabled("end") && distanceWorld(raw, firstVertex) * state.view.scale <= screenUiPx(14)) {
@@ -2496,13 +2538,11 @@ function screenUiPx(value) {
 function setAnnotationScale(value, options = {}) {
   const next = annotationScaleFactor(value);
   state.annotationScale = next;
-  let label = "1:100";
   if (annotationScaleSelect) {
     const option = [...annotationScaleSelect.options].find((item) => Math.abs(Number(item.value) - next) < 0.001);
-    annotationScaleSelect.value = option ? option.value : String(next);
-    label = option?.textContent || annotationScaleSelect.selectedOptions[0]?.textContent || label;
+    annotationScaleSelect.value = option?.value || "1";
   }
-  if (projectScaleCaption) projectScaleCaption.textContent = `MM - ${label}`;
+  updateProjectTitle();
   draw();
   if (options.save !== false) markProjectDirty("annotation-scale");
 }
@@ -2601,7 +2641,7 @@ function shouldGhostEntityForCommand(entity) {
   return Boolean(
     state.moveCommand?.base &&
       (state.moveCommand.mode === "move" || state.moveCommand.mode === "rotate") &&
-      entity.id === state.moveCommand.entityId
+      state.moveCommand.entityIds.has(entity.id)
   );
 }
 
@@ -2639,12 +2679,12 @@ function drawMoveCommand(c) {
   const displayAngle = rotatingWithReference
     ? radToDeg(signedAngleDelta(angleBetweenPoints(start, command.reference), heading))
     : normalizeDegrees(radToDeg(heading));
-  const entity = state.entities.find((item) => item.id === command.entityId);
-  if (entity) {
+  for (const entity of state.entities) {
+    if (!command.entityIds.has(entity.id) || !isLayerVisible(entity.layer)) continue;
     if (command.mode === "rotate") {
       drawRotatePreview(entity, command, end, c);
     } else {
-      drawMovePreview(entity, end.x - start.x, end.y - start.y, c);
+      drawMovePreview(entity, end.x - start.x, end.y - start.y, c, command.entityIds);
     }
   }
 
@@ -2699,6 +2739,11 @@ function translatePolyline(points, dx, dy) {
   return points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
 }
 
+function mapPlanZoneGeometry(entity, transform) {
+  const contours = (entity.contours ?? [entity.points]).map((ring) => ring.map(transform));
+  return contours.every((ring) => ring.every(isLinePoint)) ? { points: contours[0], contours: entity.contours ? contours : undefined } : null;
+}
+
 function mapArcPoints(entity, transform) {
   return {
     start: transform(entity.start),
@@ -2717,14 +2762,20 @@ function rotatedRectangleGeometry(entity, base, radians) {
   return { type: "polyline", points, closed: true };
 }
 
-function drawMovePreview(entity, dx, dy, c) {
+function drawMovePreview(entity, dx, dy, c, movingIds) {
   if (!dx && !dy) return;
   if (isPlanAnnotationZone(entity)) {
-    drawPlanAnnotationZone({ ...entity, id: "move-preview", points: translatePolyline(entity.points, dx, dy) }, c);
+    const geometry = translatedEntityGeometry(entity, dx, dy);
+    if (geometry) drawPlanAnnotationZone({ ...entity, ...geometry, id: "move-preview" }, c);
     return;
   }
   if (entity.dimensionKind === "leader") {
     drawLeaderEntity(cloneLinearEntity(entity, dx, dy), c, { active: true });
+    return;
+  }
+  if (entity.layer === "dimensions") {
+    const geometry = translatedEntityGeometry(entity, dx, dy, movingIds);
+    if (geometry) drawDimensionEntity({ ...entity, ...geometry }, c, { active: true });
     return;
   }
   if (entity.type === "polyline") {
@@ -2768,8 +2819,8 @@ function drawRotatePreview(entity, command, end, c) {
   const endAngle = angleBetweenPoints(command.base, end);
   const delta = signedAngleDelta(startAngle, endAngle);
   if (isPlanAnnotationZone(entity)) {
-    const points = entity.points.map((point) => rotatePointAround(point, command.base, delta));
-    drawPlanAnnotationZone({ ...entity, id: "rotate-preview", points }, c);
+    const geometry = mapPlanZoneGeometry(entity, (point) => rotatePointAround(point, command.base, delta));
+    if (geometry) drawPlanAnnotationZone({ ...entity, ...geometry, id: "rotate-preview" }, c);
     return;
   }
   if (entity.dimensionKind === "leader") {
@@ -2863,12 +2914,11 @@ function isDirectMoveAnnotation(entity) {
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
   if (!selected.length || state.tool !== "select" || state.drawing || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
-  if (action === "delete") return true;
+  if (action === "delete" || action === "move") return true;
   if (figureCutActions.has(action)) return selected.length === 1 && editableFigure(selected[0], action);
   if (lineEditActions.has(action)) return selected.length === 1 && isDraftLine(selected[0]);
   if (selected.length !== 1) return false;
   const entity = selected[0];
-  if (action === "move") return true;
   if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "copy" || action === "rotate";
   if (entity.type === "polyline") return action === "copy" || action === "rotate";
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
@@ -2928,7 +2978,7 @@ function selectableEntities() {
 }
 
 function selectionEntityPoints(entity) {
-  if (isPlanAnnotationZone(entity)) return entity.points;
+  if (isPlanAnnotationZone(entity)) return entity.contours?.flat() ?? entity.points;
   if (!entity) return [];
   if (entity.type === "polyline") return tessellatePolyline(entity) || entity.points;
   if (entity.type === "block") return blockCorners(entity);
@@ -2952,9 +3002,12 @@ function selectionEntityPoints(entity) {
 }
 
 function selectionEntitySegments(entity) {
+  if (isPlanAnnotationZone(entity)) {
+    return (entity.contours ?? [entity.points]).flatMap((ring) => ring.map((point, index) => [point, ring[(index + 1) % ring.length]]));
+  }
   const points = selectionEntityPoints(entity);
-  if (entity?.type === "polyline" || isPlanAnnotationZone(entity)) {
-    const count = entity.closed || isPlanAnnotationZone(entity) ? points.length : points.length - 1;
+  if (entity?.type === "polyline") {
+    const count = entity.closed ? points.length : points.length - 1;
     return Array.from({ length: count }, (_, index) => [points[index], points[(index + 1) % points.length]]);
   }
   if (entity?.type === "circle") {
@@ -3250,11 +3303,13 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
   const color = planZoneColor(entity);
   ctx.save();
   if (!options.label) {
-    const points = geometry.points.map(worldToScreen);
     ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
-    ctx.closePath();
+    for (const ring of geometry.contours) {
+      const points = ring.map(worldToScreen);
+      ctx.moveTo(points[0].x, points[0].y);
+      for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
+      ctx.closePath();
+    }
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.09;
     ctx.fill();
@@ -3266,18 +3321,20 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
     ctx.setLineDash([]);
   }
   if (!options.outline) {
-    const anchor = worldToScreen(options.anchor || geometry.anchor);
-    const lines = planZoneLabelLines(entity, geometry);
-    const size = planZoneLabelHeight(lines, geometry.bounds, state.annotationScale) * state.view.scale;
+    const worldAnchor = options.anchor || geometry.anchor;
+    const anchor = worldToScreen(worldAnchor);
+    const ring = planZoneLabelRing(geometry, worldAnchor);
+    const lines = planZoneLabelLines(entity, geometry, state.measurementSettings);
+    const size = planZoneLabelHeight(lines, ring.bounds, state.annotationScale) * state.view.scale;
     ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;
     const height = size * 1.7 + lineHeight * (lines.length - 1);
-    const point = options.overlays ? planLabelPosition(anchor, width, height, geometry, entity, options.overlays, options.viewport) : anchor;
+    const point = options.overlays ? planLabelPosition(anchor, width, height, ring, entity, options.overlays, options.viewport) : anchor;
     const rect = { x: point.x - width / 2, y: point.y - height / 2, width, height };
     options.overlays?.push(rect);
     if (!printRendering && options.label) zoneLabelRects.set(entity.id, rect);
-    if (!pointInPolygon(screenToWorld(point), geometry.points)) {
+    if (!pointInPolygon(screenToWorld(point), ring.points)) {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       linePath(anchor.x, anchor.y, point.x, point.y);
@@ -3295,8 +3352,23 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
 }
 
 function drawPlanAnnotationDraft(c) {
-  const points = state.planZone?.points;
-  if (!points?.length) return;
+  const zone = state.planZone;
+  if (!zone?.points.length) return;
+  const points = zone.points;
+  if (zone.mode === "rectangle") {
+    const [start] = points;
+    const end = cursorWorld();
+    const a = worldToScreen(start);
+    const b = worldToScreen(end);
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = c.accent;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    ctx.restore();
+    drawEndpointHandle(a, false, c);
+    return;
+  }
   const screen = points.map(worldToScreen);
   const closes = planContourClosesAtCursor(points);
   const current = closes ? screen[0] : worldToScreen(cursorWorld());
@@ -3623,7 +3695,7 @@ function drawDimensionEntity(entity, c, options = {}) {
 
 function drawLeaderEntity(entity, c, options = {}) {
   const geometry = leaderScreenGeometry(entity);
-  const { arrow, path, rect, lines, font, size, spacing } = geometry;
+  const { arrow, path, rect, lines, font, size, spacing, frame } = geometry;
   const direction = path.find((point) => pointDistance(point, arrow) > 0.5);
   const dx = (direction?.x ?? arrow.x) - arrow.x;
   const dy = (direction?.y ?? arrow.y) - arrow.y;
@@ -3641,7 +3713,7 @@ function drawLeaderEntity(entity, c, options = {}) {
     ctx.setLineDash([]);
     drawDimensionArrow(arrow, dx / length, dy / length, Math.min(size * 0.66, length * 0.28), { dimension: color });
   }
-  if (entity.leaderStyle === "boxed") {
+  if (frame) {
     ctx.fillStyle = c.surface;
     roundedRect(rect.x, rect.y, rect.width, rect.height, size * 0.3);
   }
@@ -3665,16 +3737,16 @@ function leaderScreenGeometry(entity) {
   ctx.font = font;
   const textWidth = Math.max(...lines.map((line) => ctx.measureText(line).width));
   ctx.restore();
-  const style = entity.leaderStyle || "boxed";
-  const { width, height } = leaderFrameSize(size, textWidth, lines.length, style);
+  const { line, frame } = leaderAppearance(entity);
+  const { width, height } = leaderFrameSize(size, textWidth, lines.length, frame);
   const rect = {
     x: center.x - width / 2,
     y: center.y - height / 2,
     width,
     height,
   };
-  const path = leaderPlanPath(arrow, rect, style, size * 1.1);
-  return { arrow, center, path, connector: path.at(-1), rect, lines, font, size, spacing };
+  const path = leaderPlanPath(arrow, rect, line, size * 1.1);
+  return { arrow, center, path, connector: path.at(-1), rect, lines, font, size, spacing, frame };
 }
 
 function screenRectDistance(point, rect) {
@@ -3718,7 +3790,7 @@ function drawDimensionGeometry(geometry, c, options = {}) {
   linePath(a.x, a.y, b.x, b.y);
   drawDimensionArrow(a, ux, uy, arrowSize, c);
   drawDimensionArrow(b, -ux, -uy, arrowSize, c);
-  drawDimensionLabel(`${formatDimensionLength(geometry)} мм`, label, textHeight, rotation, c);
+  drawDimensionLabel(`${projectLength(geometry.measurement)}`, label, textHeight, rotation, c);
   ctx.restore();
 }
 
@@ -3988,7 +4060,7 @@ function colorMixSurface(surface) {
 
 function drawSelection(entity, c) {
   if (isPlanAnnotationZone(entity)) {
-    for (const point of entity.points) drawEndpointHandle(worldToScreen(point), false, c);
+    for (const point of selectionEntityPoints(entity)) drawEndpointHandle(worldToScreen(point), false, c);
     return;
   }
   if (entity.type === "text") return;
@@ -4064,7 +4136,7 @@ function drawSelection(entity, c) {
     const m = midpoint(p1, p2);
     if (isDraftLine(entity) && distanceWorld(p1, p2) > 38) drawEndpointHandle(m, false, c);
     const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
-    drawBadge(`${metrics.length} мм`, m.x, m.y - auxiliaryPx(24), c);
+    drawBadge(`${projectLength(metrics.length)}`, m.x, m.y - auxiliaryPx(24), c);
   }
 }
 
@@ -4113,7 +4185,7 @@ function drawAngularDimensionEntity(entity, c, options = {}) {
   ctx.beginPath();
   ctx.arc(v.x, v.y, radius, a1, a1 + delta, delta < 0);
   ctx.stroke();
-  drawDimensionLabel(`${Math.round(measurement)}°`, artwork.label, artwork.textHeight, 0, c);
+  drawDimensionLabel(`${formatProjectAngle(measurement, state.measurementSettings)}`, artwork.label, artwork.textHeight, 0, c);
   ctx.restore();
 }
 
@@ -4152,11 +4224,14 @@ function drawSelectionDrag(c) {
 function drawDimensionSelection(entity, c) {
   if (entity.dimensionKind === "leader") {
     const geometry = leaderScreenGeometry(entity);
-    const { arrow, connector, rect, size } = geometry;
+    const { arrow, path, rect, size } = geometry;
     ctx.save();
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 2;
-    linePath(arrow.x, arrow.y, connector.x, connector.y);
+    ctx.beginPath();
+    ctx.moveTo(arrow.x, arrow.y);
+    for (const point of path.slice(1)) ctx.lineTo(point.x, point.y);
+    ctx.stroke();
     ctx.setLineDash([6, 5]);
     strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, size * 0.3);
     ctx.setLineDash([]);
@@ -4258,7 +4333,7 @@ function dimensionWorldGeometry(entity) {
 }
 
 function dimensionDisplayLength(entity) {
-  return formatDimensionLength(dimensionWorldGeometry(entity));
+  return projectLength(dimensionWorldGeometry(entity)?.measurement);
 }
 
 function ensureDimensionLineGeometry(entity) {
@@ -4434,7 +4509,8 @@ function drawActiveSegment(c) {
       return;
     }
     if (state.dimensionTool === "leader") {
-      drawLeaderEntity(leaderEntity("preview", start, end, state.drawing.text || "Текст"), c, { active: true });
+      const values = state.leaderPlacement || {};
+      drawLeaderEntity(leaderEntity("preview", start, end, values.text, values), c, { active: true });
       drawHandle(p1.x, p1.y, c);
       drawHandle(p2.x, p2.y, c);
       hideInlineEditors();
@@ -4453,7 +4529,7 @@ function drawActiveSegment(c) {
     return;
   }
 
-  drawEditableSegment(start, end, c, { lineWidth: 2.2 });
+  drawEditableSegment(start, end, c, { lineWidth: 2.2, showHandles: state.tool !== "line" });
   updateInlineEditors(start, end, metrics, angleInfo);
 }
 
@@ -4468,8 +4544,10 @@ function drawEditableSegment(start, end, c, options = {}) {
   if (options.dashed) ctx.setLineDash([8, 6]);
   linePath(p1.x, p1.y, p2.x, p2.y);
   ctx.setLineDash([]);
-  drawHandle(p1.x, p1.y, c);
-  drawHandle(p2.x, p2.y, c);
+  if (options.showHandles !== false) {
+    drawHandle(p1.x, p1.y, c);
+    drawHandle(p2.x, p2.y, c);
+  }
   ctx.restore();
   drawAngleArc(p1, p2, angleInfo, c);
 }
@@ -4604,12 +4682,25 @@ function drawAngleArc(origin, target, angleInfo, c) {
   ctx.restore();
 }
 
-function updateMetricField(input, readout, value, rounded = Math.round(value)) {
-  if (readout.textContent !== String(rounded)) readout.textContent = rounded;
+function projectLength(mm) {
+  return formatProjectLength(mm, state.measurementSettings);
+}
+
+function readProjectLength(input) {
+  return fromProjectLength(parseLineDecimal(input.value), state.measurementSettings);
+}
+
+function updateMetricField(input, readout, value, { angle = false, wrap = false } = {}) {
+  const settings = state.measurementSettings;
+  const text = angle ? formatProjectAngle(value, settings, { suffix: false, wrap }) : formatProjectLength(value, settings, { suffix: false });
+  if (readout.textContent !== text) readout.textContent = text;
+  const unit = input.parentElement.querySelector(".metric-unit");
+  const unitText = angle ? "°" : projectUnit(settings).label;
+  if (unit && unit.textContent !== unitText) unit.textContent = unitText;
   if (numericConfirmInput() === input) return;
   const editingLine = input === lengthInput || input === angleInput;
   const buffer = editingLine ? state.numericEdit?.lineMetric?.texts?.[lineMetricKinds.get(input)] : undefined;
-  input.value = buffer ?? metricEntryValue(value);
+  input.value = buffer ?? metricEntryValue(angle ? value : toProjectLength(value, settings));
   syncInlineEditorWidth(input);
 }
 
@@ -4634,7 +4725,7 @@ function updateInlineEditors(start, end, metrics, angleInfo) {
   }
   if (lineDirectionDescription.textContent !== description) lineDirectionDescription.textContent = description;
   updateMetricField(lengthInput, lengthReadout, distanceWorld(start, end));
-  updateMetricField(angleInput, angleReadout, angleInfo.degrees, wholeMetricAngle(angleInfo.degrees, angleInfo.cadAngle));
+  updateMetricField(angleInput, angleReadout, angleInfo.degrees, { angle: true, wrap: angleInfo.cadAngle });
 }
 
 function updateTopMetricInputs(length, angle, { cadAngle = false } = {}) {
@@ -4644,13 +4735,12 @@ function updateTopMetricInputs(length, angle, { cadAngle = false } = {}) {
   const rotating = state.moveCommand?.mode === "rotate";
   topLengthName.textContent = state.offsetCommand ? "Смещение" : "Длина";
   topAngleName.textContent = rectangle ? "Ширина" : "Угол";
-  topAngleUnit.textContent = rectangle ? "мм" : "°";
   topLengthInput.parentElement.hidden = rotating;
   topAngleInput.parentElement.hidden = Boolean(state.offsetCommand);
   topLengthInput.setAttribute("aria-label", rectangle ? "Длина прямоугольника" : topLengthName.textContent);
   topAngleInput.setAttribute("aria-label", rectangle ? "Ширина прямоугольника" : "Угол");
   updateMetricField(topLengthInput, topLengthReadout, length);
-  updateMetricField(topAngleInput, topAngleReadout, angle, wholeMetricAngle(angle, cadAngle));
+  updateMetricField(topAngleInput, topAngleReadout, angle, { angle: !rectangle, wrap: cadAngle });
 }
 
 function updateSelectedEndpointEditors(previewMoving = null) {
@@ -4798,7 +4888,7 @@ function updateLineMetricInput(input) {
   const kind = lineMetricKinds.get(input);
   if (!edit || !kind) return;
   edit.texts[kind] = input.value;
-  const value = parseLineDecimal(input.value);
+  const value = kind === "length" ? readProjectLength(input) : parseLineDecimal(input.value);
   edit[kind] = kind === "length" && !(value > 0) ? null : value;
   input.removeAttribute("aria-invalid");
   updateLineMetricPreview(edit);
@@ -4975,8 +5065,8 @@ function applyTopMetricValue(kind, options = {}) {
 function applyRectangleMetricValue() {
   const drawing = state.drawing;
   if (!drawing) return;
-  const typedLength = Number(topLengthInput.value.replace(",", "."));
-  const typedWidth = Number(topAngleInput.value.replace(",", "."));
+  const typedLength = readProjectLength(topLengthInput);
+  const typedWidth = readProjectLength(topAngleInput);
   const current = drawing.end || cursorWorld();
   const signX = current.x >= drawing.start.x ? 1 : -1;
   const signY = current.y >= drawing.start.y ? 1 : -1;
@@ -4993,7 +5083,7 @@ function applyRectangleMetricValue() {
 function applyOffsetCommandInlineValue() {
   const command = state.offsetCommand;
   if (!command) return;
-  const typedLength = Number(topLengthInput.value.replace(",", "."));
+  const typedLength = readProjectLength(topLengthInput);
   if (!Number.isFinite(typedLength) || typedLength <= 0) return;
   command.distance = typedLength;
   draw();
@@ -5019,7 +5109,7 @@ function applyMoveCommandInlineValue(kind) {
   const end = command.end || command.base;
   const currentLength = Math.max(1, Math.hypot(end.x - command.base.x, end.y - command.base.y));
   const currentRad = Math.atan2(end.y - command.base.y, end.x - command.base.x);
-  const typedLength = Number(topLengthInput.value.replace(",", "."));
+  const typedLength = readProjectLength(topLengthInput);
   const typedAngle = Number(topAngleInput.value.replace(",", "."));
   const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
   const nextRad = kind === "angle" && Number.isFinite(typedAngle) ? (typedAngle * Math.PI) / 180 : currentRad;
@@ -5031,13 +5121,17 @@ function applyMoveCommandInlineValue(kind) {
   draw();
 }
 
-function startMoveLikeCommand(entity, mode) {
+function startMoveLikeCommand(source, mode) {
+  const entities = Array.isArray(source) ? source : [source];
+  const entity = entities[0];
+  if (!entity) return;
   hideSelectModeMenu();
   hideSelectToolMenu();
   resetSnapTracking();
   state.offsetCommand = null;
   state.moveCommand = {
     entityId: entity.id,
+    entityIds: new Set(entities.map(item => item.id)),
     mode,
     base: null,
     end: null,
@@ -5048,7 +5142,7 @@ function startMoveLikeCommand(entity, mode) {
   state.endpointEditBefore = null;
   hideInlineEditors();
   syncCommandState();
-  const label = mode === "copy" ? "Копия" : mode === "rotate" ? "Поворот" : "Переместить";
+  const label = mode === "copy" ? "Копия" : mode === "rotate" ? "Поворот" : entities.length > 1 ? "Перемещение группы" : "Переместить";
   statusChip.textContent = `${label}: наведите курсор на базовую точку и тапните`;
   draw();
 }
@@ -5076,18 +5170,18 @@ function applySelectionAction(action) {
   if (!canApplySelectionAction(action)) return;
 
   if (action === "delete") {
-    const deleted = selected
-      .map((item) => ({ entity: item, index: state.entities.findIndex((candidate) => candidate.id === item.id) }))
-      .filter((item) => item.index >= 0)
-      .sort((a, b) => b.index - a.index);
+    const ids = new Set(selected.map(entity => entity.id));
+    const deleted = [];
+    state.entities = state.entities.filter((entity, index) => {
+      if (!ids.has(entity.id)) return true;
+      deleted.push({ entity, index });
+      return false;
+    });
     if (!deleted.length) return;
-    for (const item of deleted) state.entities.splice(item.index, 1);
-    state.undo.push({ type: "delete-many", items: deleted.map((item) => ({ entity: item.entity, index: item.index })).reverse() });
+    state.undo.push({ type: "delete-many", items: deleted });
     state.redo.length = 0;
     markProjectDirty("delete");
-    state.selectedId = null;
-    state.selectedIds = [];
-    state.selectedEndpoint = null;
+    setSelection(null);
     state.endpointEditBefore = null;
     statusChip.textContent = deleted.length > 1 ? `Удалено: ${deleted.length}` : "Объект удален";
     hideInlineEditors();
@@ -5096,14 +5190,15 @@ function applySelectionAction(action) {
     return;
   }
 
+  if (action === "move") {
+    startMoveLikeCommand(selected, "move");
+    return;
+  }
+
   if (!actionEntity) return;
   if ((isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) ||
       (figureCutActions.has(action) && editableFigure(actionEntity, action))) {
     startLineEdit(action, actionEntity);
-    return;
-  }
-  if (action === "move") {
-    startMoveLikeCommand(actionEntity, "move");
     return;
   }
   if (action === "copy") {
@@ -5132,11 +5227,6 @@ function applySelectionAction(action) {
 
   const entity = state.entities.find((item) => item.id === state.selectedId);
   if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
-
-  if (action === "move") {
-    startMoveLikeCommand(entity, "move");
-    return;
-  }
 
   if (action === "copy") {
     startMoveLikeCommand(entity, "copy");
@@ -5201,16 +5291,34 @@ function showCircleRadiusEditor(entity) {
   draw();
 }
 
-async function createLeaderFromDraft(draft) {
-  const values = await openPlanAnnotationEditor("leader");
-  if (state.drawing !== draft) return;
-  if (values) {
-    const entity = leaderEntity(newLineId("leader"), draft.start, draft.end, values.text, values);
-    pushEntity(entity);
+async function prepareLeaderPlacement(start = null) {
+  if (planAnnotationEditor.open) return;
+  const pending = {};
+  state.leaderPlacement = pending;
+  const values = await openPlanAnnotationEditor("leader", {}, 1, { prepareLeader: true });
+  if (state.leaderPlacement !== pending || state.tool !== "dimension" || state.dimensionTool !== "leader") return;
+  state.leaderPlacement = values;
+  if (!values && !start) {
+    setTool("select");
+    return;
   }
+  if (values && start) {
+    state.drawing = { start, end: start, lockedEnd: false, phase: "leader-end" };
+    statusChip.textContent = "Выноска. 2 из 2: укажите место текста";
+  } else {
+    statusChip.textContent = dimensionToolStatusText();
+  }
+  canvas.focus({ preventScroll: true });
+  draw();
+}
+
+function commitLeaderDraft(draft) {
+  const values = state.leaderPlacement;
+  pushEntity(leaderEntity(newLineId("leader"), draft.start, draft.end, values.text, values));
   state.drawing = null;
+  state.leaderPlacement = null;
   resetSnapTracking();
-  statusChip.textContent = values ? "Выноска поставлена. Укажите следующую стрелку" : dimensionToolStatusText();
+  statusChip.textContent = "Выноска поставлена. Укажите стрелку следующей выноски";
   draw();
 }
 
@@ -5254,7 +5362,7 @@ function applyInlineValue(kind, options = {}) {
   const end = state.drawing.end;
   const currentLength = Math.max(1, Math.hypot(end.x - start.x, end.y - start.y));
   const currentRad = Math.atan2(end.y - start.y, end.x - start.x);
-  const typedLength = Number(lengthInput.value.replace(",", "."));
+  const typedLength = readProjectLength(lengthInput);
   const typedAngle = Number(angleInput.value.replace(",", "."));
 
   let nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
@@ -5290,7 +5398,7 @@ function applySelectedEndpointInlineValue(kind, options = {}) {
   const { entity, fixed, moving } = geometry;
   const currentLength = Math.max(1, Math.hypot(moving.x - fixed.x, moving.y - fixed.y));
   const currentRad = Math.atan2(moving.y - fixed.y, moving.x - fixed.x);
-  const typedLength = Number(lengthInput.value.replace(",", "."));
+  const typedLength = readProjectLength(lengthInput);
   const typedAngle = Number(angleInput.value.replace(",", "."));
   const nextLength = Number.isFinite(typedLength) && typedLength > 0 ? typedLength : currentLength;
   let nextRad = currentRad;
@@ -5382,7 +5490,7 @@ function canSnapToTrackingGuides() {
 }
 
 function canUsePrePointTracking() {
-  if (state.drawing || state.moveCommand || state.offsetCommand || state.pinch) return false;
+  if (state.drawing || state.moveCommand || state.offsetCommand || state.pinch || planZoneSnapStart() || state.planZone?.mode === "existing") return false;
   if (state.pointer && state.pointer.mode !== "pan") return false;
   return trackingDrawingTools.has(state.tool);
 }
@@ -5400,6 +5508,8 @@ function canSnapToPrePointTrackingGuides() {
 function trackingBasePoint() {
   if (state.drawing?.phase === "offset") return null;
   if (state.drawing?.start) return state.drawing.start;
+  const zoneStart = planZoneSnapStart();
+  if (zoneStart) return zoneStart;
   if (state.moveCommand?.base) return state.moveCommand.base;
   return selectedEndpointGeometry()?.fixed || null;
 }
@@ -5671,7 +5781,10 @@ function drawCursorSnap(c) {
   const type = snap ? (Object.hasOwn(snapMarkerPaths, rawType) ? rawType : "end") : "";
   if (canvas.dataset.activeSnap !== type) canvas.dataset.activeSnap = type;
   if (!snap) return;
-  if (type === "tracking") drawSnapTracking(c);
+  if (type === "tracking") {
+    drawSnapTracking(c);
+    if (state.tool === "line") return;
+  }
   if (type === "polar") drawPolarSnapGuide(c);
   const point = worldToScreen(snap);
   ctx.save();
@@ -5700,7 +5813,7 @@ function nearestSegmentSnapThreshold() {
 }
 
 function isLineSnapContext() {
-  return state.tool === "line" || state.tool === "polyline" || isDraftLine(selectedEndpointGeometry()?.entity) ||
+  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) ||
     ["line-grip", "figure-grip"].includes(state.pointer?.mode) || ["offset", "mirror", "scale"].includes(state.lineEdit?.mode);
 }
 
@@ -5765,7 +5878,7 @@ function applyCircleRadiusInlineValue(options = {}) {
   const edit = state.circleRadiusEdit;
   const entity = edit ? state.entities.find((item) => item.id === edit.entityId) : null;
   if (!entity || entity.type !== "circle") return;
-  const typedRadius = Number(lengthInput.value.replace(",", "."));
+  const typedRadius = readProjectLength(lengthInput);
   if (!Number.isFinite(typedRadius) || typedRadius <= 0) return;
   const before = edit.before || entityGeometry(entity);
   entity.radius = typedRadius;
@@ -5831,11 +5944,6 @@ function activeAngleInfo(start, end) {
     degrees: Math.abs(radToDeg(deltaRad)),
     hasReference: true,
   };
-}
-
-function wholeMetricAngle(degrees, cadAngle = false) {
-  const whole = Math.round(degrees);
-  return cadAngle ? whole % 360 : whole;
 }
 
 function metricEntryValue(number) {
@@ -6036,8 +6144,8 @@ const viewportObjectNames = {
 };
 
 function viewportObjectLabel(entity) {
-  if (entity.type === "area") return `${entity.label || "Площадь"} · ${formatPlanArea(planAnnotationGeometry(entity)?.areaM2)}`;
-  if (entity.type === "elevation") return `${entity.label || PLAN_ELEVATION_STYLES[entity.zoneStyle]?.label || "Высота"} · Z ${formatPlanElevation(entity.height)}`;
+  if (entity.type === "area") return `${entity.label || "Площадь"} · ${formatProjectArea(planAnnotationGeometry(entity)?.areaM2, state.measurementSettings)}`;
+  if (entity.type === "elevation") return `${entity.label || PLAN_ELEVATION_STYLES[entity.zoneStyle]?.label || "Высота"} · Z ${formatProjectElevation(entity.height, state.measurementSettings)}`;
   if (entity.dimensionKind === "leader") return `Выноска · ${entity.text || "Текст"}`;
   if (entity.type === "line" && entity.layer === "dimensions") {
     if (entity.dimensionKind === "leader") return `Выноска · ${entity.text || "Текст"}`;
@@ -6046,12 +6154,12 @@ function viewportObjectLabel(entity) {
       return Number.isFinite(angle) ? `Угловой размер · ${Math.round(angle)}°` : "Угловой размер";
     }
     const length = dimensionDisplayLength(entity);
-    return length ? `Размер · ${length} мм` : "Размер";
+    return length ? `Размер · ${length}` : "Размер";
   }
   if (entity.type === "text") return `Текст · ${entity.text || "Надпись"}`;
   const name = viewportObjectNames[entity.type] || "Объект";
   if (["line", "wall"].includes(entity.type) && isValidLine(entity)) {
-    return `${name} · ${formatDimensionLength(Math.hypot(entity.x2 - entity.x1, entity.y2 - entity.y1))} мм`;
+    return `${name} · ${projectLength(Math.hypot(entity.x2 - entity.x1, entity.y2 - entity.y1))}`;
   }
   return name;
 }
@@ -6531,7 +6639,7 @@ function commitDimensionAttach() {
     markProjectDirty("dimension-reattach");
   }
   state.dimensionAttach = null;
-  statusChip.textContent = `Опора привязана. Размер ${dimensionDisplayLength(entity)} мм`;
+  statusChip.textContent = `Опора привязана. Размер ${dimensionDisplayLength(entity)}`;
   draw();
 }
 
@@ -6729,11 +6837,13 @@ function syncToolButtons() {
 }
 
 function setTool(tool) {
+  state.cursorMenuReady = false;
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   state.directManipulationIds.clear();
   state.tool = tool;
-  state.planZone = isPlanAnnotationZone({ type: tool }) ? { points: [], pickContour: false } : null;
+  state.leaderPlacement = null;
+  state.planZone = isPlanAnnotationZone({ type: tool }) ? { mode: "contour", points: [], lastId: null } : null;
   state.dimensionAttach = null;
   const layer = annotationLayerForTool(tool);
   if (layer && !state.visibleLayers.has(layer)) {
@@ -6785,12 +6895,14 @@ function syncSnapButtons() {
   snaps.forEach((button) => {
     const mode = button.dataset.snap;
     button.classList.toggle("active", state.snaps.has(mode));
-    button.disabled = state.snapsMuted;
+    button.classList.toggle("snap-muted", state.snapsMuted);
+    button.disabled = state.snapsMuted && !button.dataset.snapSettings;
     button.setAttribute("aria-pressed", String(snapEnabled(mode)));
   });
   const polarButton = snaps.find((button) => button.dataset.snap === "polar");
   polarButton.title = `Полярное отслеживание, шаг ${state.polarStep}°`;
   polarButton.setAttribute("aria-label", polarButton.title);
+  polarStepReadout.textContent = `${state.polarStep}°`;
   updateGridStepReadout();
 }
 
@@ -7057,7 +7169,7 @@ function selectAnnotationTool(tool) {
   if (tool === "leader") {
     state.dimensionTool = "leader";
     setTool("dimension");
-    statusChip.textContent = dimensionToolStatusText();
+    void prepareLeaderPlacement();
     return;
   }
   setTool(tool);
@@ -7071,7 +7183,7 @@ function dimensionToolStatusText() {
     angular: "Угол. Укажите вершину либо выберите первую линию",
     baseline: "Размеры от базы. Укажите общую точку отсчёта",
   };
-  text.leader = "Выноска. 1 из 3: укажите кончик стрелки";
+  text.leader = "Выноска. 1 из 2: укажите кончик стрелки";
   return text[state.dimensionTool] || text.aligned;
 }
 
@@ -7158,14 +7270,16 @@ function angularDimensionEntity(id, vertex, arm1, arm2) {
   return { id, type: "line", layer: "dimensions", dimensionKind: "angular", vertex, arm1, arm2 };
 }
 
-function leaderEntity(id, start, end, text, { leaderStyle = "landing", textHeight = 200 } = {}) {
+function leaderEntity(id, start, end, text, options = {}) {
+  const { line: leaderLine, frame: leaderFrame } = leaderAppearance({ leaderStyle: "landing", ...options });
   return {
     id,
     type: "line",
     layer: "text",
     dimensionKind: "leader",
-    leaderStyle,
-    textHeight,
+    leaderLine,
+    leaderFrame,
+    textHeight: options.textHeight ?? 200,
     x1: start.x,
     y1: start.y,
     x2: end.x,
@@ -7204,7 +7318,7 @@ function continueDimensionAfterCreate(measurement) {
       baseStart,
       baseRefStart,
     };
-    statusChip.textContent = `База ${formatDimensionLength(measurement)} мм. Поставьте следующую точку`;
+    statusChip.textContent = `База ${projectLength(measurement)}. Поставьте следующую точку`;
     return;
   }
   state.drawing = null;
@@ -7239,9 +7353,15 @@ function syncLineControls() {
   lineUi.lineEditRadiusControl.hidden = edit?.mode !== "fillet";
   lineUi.lineMirrorControl.hidden = edit?.mode !== "mirror";
   const hasBoundaries = edit && ["trim", "extend"].includes(edit.mode);
+  quickMoveTool.disabled = !canApplySelectionAction("move");
+  quickDeleteTool.disabled = !canApplySelectionAction("delete");
+  const quickTargets = quickMoveTool.disabled ? [] : selectedEntities().filter(entity => isLayerVisible(entity.layer));
   const chooseBoundaries = hasBoundaries && !edit.quick && lineUi.lineBoundaryMode.value === "selected" && !edit.boundaryReady;
   for (const button of quickEditButtons) {
-    button.setAttribute("aria-pressed", String(Boolean(edit?.quick && button.dataset.quickEdit === edit.mode)));
+    const mode = button.dataset.quickEdit;
+    const active = Boolean(edit?.quick && mode === edit.mode);
+    button.disabled = !active && !quickTargets.some(entity => editableFigure(entity, mode));
+    button.setAttribute("aria-pressed", String(active));
   }
   lineUi.lineBoundaryControl.hidden = !hasBoundaries || edit.quick;
   lineUi.lineBreakControl.hidden = edit?.mode !== "break";
@@ -7297,7 +7417,7 @@ function commitLinePoint(point) {
     } else {
       state.drawing = null;
       pushEntity(line(newLineId(), start.x, start.y, point.x, point.y), { select: false });
-      statusChip.textContent = `Отрезок ${Math.round(length)} мм. Укажите начало новой линии`;
+      statusChip.textContent = `Отрезок ${projectLength(length)}. Укажите начало новой линии`;
     }
   }
   if (polyline) markProjectDirty("polyline-vertex");
@@ -7419,11 +7539,11 @@ function lineEditEntity(id, mode) {
     (figureCutActions.has(mode) ? editableFigure(entity, mode) : isDraftLine(entity)));
 }
 
-function pickDraftLine(screen, includeFigures = false) {
+function pickDraftLine(screen, includeFigures = false, candidates = null, mode) {
   let best = null;
   let distance = 18;
-  for (const entity of state.entities) {
-    if (!(includeFigures ? editableFigure(entity) : isDraftLine(entity)) || !isLayerVisible(entity.layer)) continue;
+  for (const entity of candidates ?? state.entities) {
+    if (!(includeFigures ? editableFigure(entity, mode) : isDraftLine(entity)) || !isLayerVisible(entity.layer)) continue;
     const next = distanceToEntityScreen(screen, entity);
     if (next <= distance) {
       best = entity;
@@ -7435,12 +7555,13 @@ function pickDraftLine(screen, includeFigures = false) {
 
 function startQuickEdit(mode) {
   if (surveyPointPicker || (state.tool === "polyline" && state.drawing && !finishLineCommand())) return;
+  const selection = state.tool === "select" ? selectedEntities().filter(entity => isLayerVisible(entity.layer)).map(entity => entity.id) : [];
   hideDrawToolMenu();
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   hideSelectModeMenu();
   setTool("select");
-  setSelection(null);
+  setSelection(selection);
   startLineEdit(mode, null, { quick: true });
   canvas.focus({ preventScroll: true });
 }
@@ -7468,10 +7589,11 @@ function startLineEdit(mode, entity, { quick = false } = {}) {
   lineUi.lineLengthInput.removeAttribute("aria-invalid");
   const modes = lineQuantityModes[mode];
   if (modes) {
-    lineUi.lineLengthMode.replaceChildren(...modes.map(([value, label]) => new Option(label, value)));
+    lineUi.lineLengthMode.replaceChildren(...modes.map(([value, label]) => new Option(label.replace("мм", projectUnit(state.measurementSettings).label), value)));
     syncLineQuantityFields();
   }
   lineUi.lineMirrorDelete.checked = false;
+  lineUi.lineEditRadiusControl.querySelector("span").textContent = `Радиус, ${projectUnit(state.measurementSettings).label}`;
   const prompts = {
     trim: "Коснитесь участка, который нужно убрать",
     extend: "Коснитесь объекта ближе к концу, который нужно удлинить",
@@ -7543,7 +7665,7 @@ function syncLineQuantityFields() {
   input.hidden = pointOnly;
   form.querySelector("button[type=submit]").hidden = pointOnly;
   input.inputMode = mode === "delta" ? "text" : "decimal";
-  input.placeholder = scale ? "Например, 1.5" : mode === "distance" ? "Расстояние, мм" : "Значение";
+  input.placeholder = scale ? "Например, 1.5" : mode === "distance" ? `Расстояние, ${projectUnit(state.measurementSettings).label}` : "Значение";
   input.setAttribute("aria-label", scale ? "Коэффициент масштаба" : mode === "distance" ? "Расстояние смещения" : "Новая длина линии");
 }
 
@@ -7553,7 +7675,8 @@ function submitLineLength() {
   const input = lineUi.lineLengthInput;
   const mode = lineUi.lineLengthMode.value;
   const value = input.value.trim();
-  const amount = /^[-+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(value) ? Number(value.replace(",", ".")) : NaN;
+  const number = parseLineDecimal(value);
+  const amount = mode === "factor" || mode === "percent" ? number : fromProjectLength(number, state.measurementSettings);
   if (!Number.isFinite(amount) || Math.abs(amount) > MAX_LINE_COORDINATE || (mode !== "delta" && amount <= 0)) {
     input.setAttribute("aria-invalid", "true");
     setLineEditHint("Введите допустимое числовое значение");
@@ -7653,7 +7776,7 @@ function pickLineEditPoint(screen) {
     }
     if (!hit || hit === source) return setLineEditHint("Выберите вторую линию");
     const radiusInput = lineUi.lineEditRadius;
-    const radius = radiusInput.valueAsNumber;
+    const radius = fromProjectLength(radiusInput.valueAsNumber, state.measurementSettings);
     const result = filletLines(source, hit, edit.firstPick, point, radius);
     if (!result) {
       setLineEditHint("Скругление невозможно. Проверьте радиус и стороны линий");
@@ -7731,7 +7854,8 @@ function cutFigureAt(entity, mode, point, boundaryIds = null) {
 
 function applyQuickEdit(mode, screen) {
   const edit = state.lineEdit;
-  const entity = pickDraftLine(screen, true);
+  const selected = selectedEntities().filter(entity => isLayerVisible(entity.layer));
+  const entity = pickDraftLine(screen, true, selected, mode) || pickDraftLine(screen, true);
   const result = cutFigureAt(entity, mode, screenToWorld(screen));
   if (result.error || result.pieces.some(piece => !validFigurePiece(piece))) {
     const error = result.error || "Результат выходит за диапазон координат";
@@ -7740,10 +7864,10 @@ function applyQuickEdit(mode, screen) {
     draw();
     return;
   }
-  commitLineEdit([[entity, result.pieces]], result.message, [], result.association);
+  const replaced = commitLineEdit([[entity, result.pieces]], result.message, [], result.association);
   if (edit?.quick) {
     state.lineEdit = edit;
-    setSelection(null);
+    setSelection(selected.flatMap(item => item.id === entity.id ? replaced : [item.id]));
     draw();
   }
 }
@@ -7885,6 +8009,7 @@ function commitLineEdit(replacements, message, added, association) {
   setSelection(selection.length === 1 ? selection[0] : null);
   markProjectDirty("line-edit");
   draw();
+  return selection;
 }
 
 
@@ -8010,7 +8135,7 @@ function previewFigureGrip(pointer, screen) {
   const point = snap ? { x: snap.x, y: snap.y } : snapEnabled("grid") ? gridPoint(raw) : raw;
   pointer.preview = reshapeFigure(entity, pointer.grip, point);
   if (!pointer.preview) statusChip.textContent = "Выберите другую точку для фигуры";
-  else if (entity.type === "circle") statusChip.textContent = `Радиус ${formatDimensionLength(pointer.preview.radius)} мм`;
+  else if (entity.type === "circle") statusChip.textContent = `Радиус ${projectLength(pointer.preview.radius)}`;
   else statusChip.textContent = "Правка фигуры";
 }
 
@@ -8152,10 +8277,14 @@ function commitCursorPoint(screen = centerScreen()) {
       return;
     }
     if (state.dimensionTool === "leader") {
+      if (!state.leaderPlacement?.text) {
+        void prepareLeaderPlacement(world);
+        return;
+      }
       if (!state.drawing) {
         resetSnapTracking();
         state.drawing = { start: world, end: world, lockedEnd: false, phase: "leader-end" };
-        statusChip.textContent = "Выноска: поставьте место текста";
+        statusChip.textContent = "Выноска. 2 из 2: укажите место текста";
       } else if (state.drawing.phase === "leader-end") {
         const end = state.drawing.lockedEnd ? state.drawing.end : world;
         const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
@@ -8165,10 +8294,7 @@ function commitCursorPoint(screen = centerScreen()) {
           return;
         }
         state.drawing.end = end;
-        state.drawing.lockedEnd = true;
-        state.drawing.phase = "leader-text";
-        void createLeaderFromDraft(state.drawing);
-        statusChip.textContent = "Выноска: введите текст";
+        commitLeaderDraft(state.drawing);
       }
       draw();
       return;
@@ -8198,7 +8324,7 @@ function commitCursorPoint(screen = centerScreen()) {
         pushEntity(entity);
         state.drawing = null;
         resetSnapTracking();
-        statusChip.textContent = `Угловой размер ${Math.round(geometry.measurement)}° создан`;
+        statusChip.textContent = `Угловой размер ${formatProjectAngle(geometry.measurement, state.measurementSettings)} создан`;
       }
       draw();
       return;
@@ -8219,7 +8345,7 @@ function commitCursorPoint(screen = centerScreen()) {
       state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
       state.drawing.lockedEnd = true;
       state.drawing.phase = "offset";
-      statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм. Укажите положение размерной линии`;
+      statusChip.textContent = `Размер ${projectLength(geometry.measurement)}. Укажите положение размерной линии`;
     } else if (state.drawing.phase === "offset") {
       const { start, end } = state.drawing;
       const geometry = dimensionGeometry(draftDimension(start, end));
@@ -8228,7 +8354,7 @@ function commitCursorPoint(screen = centerScreen()) {
       pushEntity(createEntityFromDrawing());
       continueDimensionAfterCreate(geometry.measurement);
       resetSnapTracking();
-      if (!state.drawing) statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм создан`;
+      if (!state.drawing) statusChip.textContent = `Размер ${projectLength(geometry.measurement)} создан`;
     }
     draw();
     return;
@@ -8381,29 +8507,62 @@ function commitMoveCommandPoint(world) {
     draw();
     return;
   }
-  if (moveEntityBy(entity, dx, dy) === false) {
+  const moved = moveCommandChanges(command, dx, dy);
+  if (!moved) {
     statusChip.textContent = "Координаты после перемещения вне диапазона";
     draw();
     return;
   }
-  const after = entityGeometry(entity);
-  if (geometryChanged(command.before, after)) {
-    state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+  if (moved.length) {
+    const action = { type: "move-selection", edits: moved, selection: [...command.entityIds] };
+    applyMoveSelection(action, "after");
+    state.undo.push(action);
     state.redo.length = 0;
-    markProjectDirty("move-command");
   }
   state.moveCommand = null;
   resetSnapTracking();
   syncCommandState();
   hideInlineEditors();
-  statusChip.textContent = "Элемент перемещен";
+  statusChip.textContent = !moved.length ? "Положение не изменилось" :
+    command.entityIds.size > 1 ? `Перемещено объектов: ${command.entityIds.size}` : "Элемент перемещен";
+  draw();
+}
+
+function moveCommandChanges(command, dx, dy) {
+  const entities = state.entities.filter(entity => command.entityIds.has(entity.id) && isLayerVisible(entity.layer));
+  if (entities.length !== command.entityIds.size) return null;
+  const edits = [];
+  if (Math.hypot(dx, dy) <= linePointEpsilon) return edits;
+  for (const entity of entities) {
+    const after = translatedEntityGeometry(entity, dx, dy, command.entityIds);
+    if (!after) return null;
+    const snapshot = entityGeometry(entity);
+    const before = Object.fromEntries(Object.keys(after).map(key => [key, entity[key] === undefined ? undefined : snapshot[key]]));
+    if (geometryChanged(before, after)) edits.push({ entityId: entity.id, before, after });
+  }
+  return edits;
+}
+
+function applyMoveSelection(action, snapshot) {
+  const byId = new Map(state.entities.map(entity => [entity.id, entity]));
+  for (const edit of action.edits) {
+    const entity = byId.get(edit.entityId);
+    if (!entity) continue;
+    for (const [key, value] of Object.entries(edit[snapshot])) {
+      if (value === undefined) delete entity[key];
+      else entity[key] = value;
+    }
+  }
+  updateLinkedDimensions();
+  setSelection(action.selection);
+  markProjectDirty("move-selection");
   draw();
 }
 
 function applyExactInput() {
   const base = state.drawing?.start || selectedEndPoint();
   if (!base) return;
-  const length = Number(lengthInput.value.replace(",", "."));
+  const length = readProjectLength(lengthInput);
   const angle = Number(angleInput.value.replace(",", "."));
   if (!Number.isFinite(length) || !Number.isFinite(angle)) return;
   const radians = (angle * Math.PI) / 180;
@@ -8442,6 +8601,7 @@ function selectedEndPoint() {
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
+  if (!selectModeMenu.hidden) hideSelectModeMenu();
   if (numericConfirmInput()) {
     if (lineMetricContext()) closeLineMetricInput();
     else closeMetricEntry();
@@ -8762,7 +8922,7 @@ canvas.addEventListener("pointermove", (event) => {
     const entity = state.entities.find((item) => item.id === state.pointer.targetId);
     if (entity) {
       moveDimensionLineOffset(entity, screenToWorld(screen));
-      statusChip.textContent = `Вынос размера ${Math.round(Math.abs(entity.offset))} мм`;
+      statusChip.textContent = `Вынос размера ${projectLength(Math.abs(entity.offset))}`;
     }
   } else if ((state.pointer.mode === "dimension-start" || state.pointer.mode === "dimension-end") && state.pointer.targetId) {
     const entity = state.entities.find((item) => item.id === state.pointer.targetId);
@@ -8770,7 +8930,7 @@ canvas.addEventListener("pointermove", (event) => {
       const endpoint = state.pointer.mode === "dimension-start" ? "start" : "end";
       moveDimensionHandle(entity, endpoint, screenToWorld(screen));
       const metrics = segmentMetrics(entity.x1, entity.y1, entity.x2, entity.y2);
-      statusChip.textContent = `Размер ${dimensionDisplayLength(entity)} мм`;
+      statusChip.textContent = `Размер ${dimensionDisplayLength(entity)}`;
     }
   } else {
     state.dimensionSnapHint = null;
@@ -8958,55 +9118,75 @@ canvas.addEventListener("keydown", (event) => {
   event.stopPropagation();
 });
 
-function moveEntityBy(entity, dx, dy) {
-  if (!entity) return;
+function translatedDimensionGeometry(entity, dx, dy, movingIds) {
+  const original = dimensionWorldGeometry(entity);
+  if (!original) return null;
+  const shift = ({ x, y }) => ({ x: x + dx, y: y + dy });
+  const follows = ref => movingIds?.has(ref?.entityId) || !dimensionLinkedPoint(ref);
+  const moveStart = follows(entity.refStart);
+  const moveEnd = follows(entity.refEnd);
+  const start = moveStart ? shift(original.start) : original.start;
+  const end = moveEnd ? shift(original.end) : original.end;
+  if (![start, end].every(isLinePoint)) return null;
+  const a = shift(original.lineStart);
+  const b = shift(original.lineEnd);
+  const candidate = { ...entity, x1: start.x, y1: start.y, x2: end.x, y2: end.y };
+  if (moveStart && moveEnd) {
+    Object.assign(candidate, { dimX1: a.x, dimY1: a.y, dimX2: b.x, dimY2: b.y });
+  } else {
+    adoptDimensionMeasurement(candidate, original);
+    const axis = dimensionWorldGeometry(candidate)?.axis;
+    if (!axis) return null;
+    const target = midpoint(a, b);
+    const offset = -(target.x - start.x) * axis.y + (target.y - start.y) * axis.x;
+    candidate.offset = offset;
+    if (candidate.measurementType) ensureDimensionLineGeometry(candidate);
+    else setDimensionLineAlongAxis(candidate, axis, offset);
+  }
+  const translated = dimensionWorldGeometry(candidate);
+  return translated && [translated.lineStart, translated.lineEnd].every(isLinePoint)
+    ? entityGeometry(candidate) : null;
+}
+
+function translatedEntityGeometry(entity, dx, dy, movingIds) {
+  if (!entity || !Number.isFinite(dx) || !Number.isFinite(dy)) return null;
   if (isPlanAnnotationZone(entity)) {
-    const points = translatePolyline(entity.points, dx, dy);
-    if (!points.every(isLinePoint)) return false;
-    applyEntityGeometry(entity, { points });
-    return;
+    return mapPlanZoneGeometry(entity, ({ x, y }) => ({ x: x + dx, y: y + dy }));
   }
   if (entity.type === "polyline") {
     const points = translatePolyline(entity.points, dx, dy);
-    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed, entity.bulges)) return false;
-    applyEntityGeometry(entity, { points });
-    return;
+    return validFigurePiece({ ...entity, points }) ? { points } : null;
   }
-  if (isDraftLine(entity)) {
-    const geometry = { x1: entity.x1 + dx, y1: entity.y1 + dy, x2: entity.x2 + dx, y2: entity.y2 + dy };
-    if (!isValidLine(geometry)) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
+  if (isLinearDimension(entity)) return translatedDimensionGeometry(entity, dx, dy, movingIds);
+  if (entity.dimensionKind === "angular") {
+    const geometry = Object.fromEntries(["vertex", "arm1", "arm2"].map(key => [
+      key, { x: entity[key]?.x + dx, y: entity[key]?.y + dy },
+    ]));
+    return Object.values(geometry).every(isLinePoint) ? geometry : null;
   }
   if (entity.type === "arc" || entity.type === "rectangle") {
     const geometry = translatedFigureGeometry(entity, dx, dy);
-    if (!validFigurePiece({ ...entity, ...geometry })) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
+    return validFigurePiece({ ...entity, ...geometry }) ? geometry : null;
   }
-  if (entity.type === "block") {
-    entity.x += dx;
-    entity.y += dy;
-    markProjectDirty("move");
-    return;
-  }
-  if (entity.type === "text") {
-    entity.x += dx;
-    entity.y += dy;
-    markProjectDirty("move");
-    return;
+  if (entity.type === "block" || entity.type === "text") {
+    const point = { x: entity.x + dx, y: entity.y + dy };
+    return isLinePoint(point) ? point : null;
   }
   if (entity.type === "circle") {
-    entity.cx += dx;
-    entity.cy += dy;
-    markProjectDirty("move");
-    return;
+    const cx = entity.cx + dx;
+    const cy = entity.cy + dy;
+    const radius = Math.abs(entity.radius);
+    return radius > 0 && isLinePoint({ x: cx - radius, y: cy - radius }) &&
+      isLinePoint({ x: cx + radius, y: cy + radius }) ? { cx, cy } : null;
   }
-  entity.x1 += dx;
-  entity.y1 += dy;
-  entity.x2 += dx;
-  entity.y2 += dy;
-  markProjectDirty("move");
+  const geometry = translatedFigureGeometry(entity, dx, dy);
+  return isValidLine(geometry) ? geometry : null;
+}
+
+function moveEntityBy(entity, dx, dy) {
+  const geometry = translatedEntityGeometry(entity, dx, dy);
+  if (!geometry) return false;
+  applyEntityGeometry(entity, geometry);
 }
 
 function cloneLinearEntity(entity, dx = 260, dy = 260) {
@@ -9028,8 +9208,8 @@ function cloneLinearEntity(entity, dx = 260, dy = 260) {
 
 function cloneEntityForCommand(entity, dx = 260, dy = 260) {
   if (isPlanAnnotationZone(entity)) {
-    const points = translatePolyline(entity.points, dx, dy);
-    return createPlanAnnotation(newLineId(entity.type), entity.type, points, entity);
+    const geometry = translatedEntityGeometry(entity, dx, dy);
+    return geometry ? createPlanAnnotation(newLineId(entity.type), entity.type, geometry.points, { ...entity, ...geometry }) : null;
   }
   if (entity.type === "polyline") {
     const points = translatePolyline(entity.points, dx, dy);
@@ -9075,9 +9255,9 @@ function rotateLinearEntityAround(entity, base, radians) {
 
 function rotateEntityAround(entity, base, radians) {
   if (isPlanAnnotationZone(entity)) {
-    const points = entity.points.map((point) => rotatePointAround(point, base, radians));
-    if (!points.every(isLinePoint)) return false;
-    applyEntityGeometry(entity, { points });
+    const geometry = mapPlanZoneGeometry(entity, (point) => rotatePointAround(point, base, radians));
+    if (!geometry) return false;
+    applyEntityGeometry(entity, geometry);
     return;
   }
   if (entity.type === "polyline") {
@@ -9315,7 +9495,7 @@ function normalizeWorldVector(dx, dy) {
 function entityGeometry(entity) {
   if (!entity) return null;
   if (isPlanAnnotationZone(entity)) {
-    return { points: entity.points.map((point) => ({ ...point })), label: entity.label || "",
+    return { ...mapPlanZoneGeometry(entity, (point) => ({ ...point })), label: entity.label || "",
       ...(entity.type === "elevation" ? { height: entity.height, zoneStyle: entity.zoneStyle } : {}) };
   }
   if (entity.type === "polyline") return {
@@ -9323,6 +9503,9 @@ function entityGeometry(entity) {
     ...(entity.bulges ? { bulges: [...entity.bulges] } : {}),
   };
   if (entity.type === "arc") return mapArcPoints(entity, point => ({ ...point }));
+  if (entity.dimensionKind === "angular") {
+    return { vertex: { ...entity.vertex }, arm1: { ...entity.arm1 }, arm2: { ...entity.arm2 } };
+  }
   if (entity.type === "block") {
     return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0, flipX: Boolean(entity.flipX) };
   }
@@ -9333,8 +9516,9 @@ function entityGeometry(entity) {
     return { cx: entity.cx, cy: entity.cy, radius: entity.radius };
   }
   if (entity.dimensionKind === "leader") {
+    const { line: leaderLine, frame: leaderFrame } = leaderAppearance(entity);
     return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, text: entity.text || "Текст",
-      textHeight: leaderTextHeight(entity), leaderStyle: entity.leaderStyle || "boxed" };
+      textHeight: leaderTextHeight(entity), leaderLine, leaderFrame };
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (entity.layer === "dimensions") {
@@ -9367,6 +9551,10 @@ function geometryChanged(before, after) {
   return Object.keys(after).some((key) => {
     const next = after[key];
     const previous = before[key];
+    if (key === "contours" && Array.isArray(next)) {
+      return !Array.isArray(previous) || next.length !== previous.length || next.some((ring, index) =>
+        ring.length !== previous[index].length || ring.some((point, vertex) => distanceWorld(point, previous[index][vertex]) > linePointEpsilon));
+    }
     if (Array.isArray(next)) {
       return !Array.isArray(previous) || next.length !== previous.length ||
         next.some((value, index) => key === "bulges"
@@ -9395,9 +9583,10 @@ function pickEntity(screen) {
     }
     if (isPlanAnnotationZone(entity)) {
       const geometry = planAnnotationGeometry(entity);
-      if (geometry && geometry.areaMm2 < smallestArea && pointInPolygon(world, geometry.points)) {
+      const ring = geometry?.rings.find((entry) => pointInPolygon(world, entry.points));
+      if (ring && ring.areaMm2 < smallestArea) {
         innerZone = entity.id;
-        smallestArea = geometry.areaMm2;
+        smallestArea = ring.areaMm2;
       }
     }
     const distance = distanceToEntityScreen(screen, entity, anchors.get(entity.id));
@@ -9486,10 +9675,15 @@ function distanceToEntityScreen(screen, entity, zoneAnchor) {
   if (isPlanAnnotationZone(entity)) {
     const geometry = planAnnotationGeometry(entity);
     if (!geometry) return Infinity;
-    const points = geometry.points.map(worldToScreen);
     const label = zoneLabelRects.get(entity.id);
-    return Math.min(label ? screenRectDistance(screen, label) : pointDistance(screen, worldToScreen(zoneAnchor || geometry.anchor)),
-      ...points.map((point, index) => pointToSegmentDistance(screen, point, points[(index + 1) % points.length])));
+    let closest = label ? screenRectDistance(screen, label) : pointDistance(screen, worldToScreen(zoneAnchor || geometry.anchor));
+    for (const ring of geometry.contours) {
+      const points = ring.map(worldToScreen);
+      for (const [index, point] of points.entries()) {
+        closest = Math.min(closest, pointToSegmentDistance(screen, point, points[(index + 1) % points.length]));
+      }
+    }
+    return closest;
   }
   if (entity.dimensionKind === "leader") {
     const geometry = leaderScreenGeometry(entity);
@@ -9569,42 +9763,22 @@ tools.filter((button) => button !== cursorToolButton).forEach((button) => {
   });
 });
 
-let cursorPress = null;
-let cursorWasHeld = false;
-
-function clearCursorPress() {
-  if (cursorPress) window.clearTimeout(cursorPress.timer);
-  cursorPress = null;
-}
-
 function openCursorOptions() {
   if (state.tool !== "select" || state.lineEdit || state.moveCommand || state.offsetCommand || state.dimensionAttach) activatePlainSelect();
   showSelectModeMenu();
   selectModeMenu.querySelector("button")?.focus({ preventScroll: true });
 }
 
-cursorToolButton.addEventListener("pointerdown", (event) => {
-  if (!event.isPrimary || event.button !== 0) return;
-  clearCursorPress();
-  cursorWasHeld = false;
-  cursorPress = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: window.setTimeout(() => {
-    cursorWasHeld = true;
+cursorToolButton.addEventListener("click", () => {
+  const idleSelection = state.tool === "select" && state.selectTool === "select" &&
+    !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.dimensionAttach;
+  if (idleSelection && state.cursorMenuReady && selectModeMenu.hidden) {
     openCursorOptions();
-  }, LONG_PRESS_SELECT_MS) };
-});
-cursorToolButton.addEventListener("pointermove", (event) => {
-  if (cursorPress?.pointerId === event.pointerId && Math.hypot(event.clientX - cursorPress.x, event.clientY - cursorPress.y) > TAP_MOVE_TOLERANCE) {
-    clearCursorPress();
-  }
-});
-for (const type of ["pointerup", "pointercancel", "pointerleave"]) cursorToolButton.addEventListener(type, clearCursorPress);
-cursorToolButton.addEventListener("contextmenu", (event) => event.preventDefault());
-cursorToolButton.addEventListener("click", (event) => {
-  if (cursorWasHeld && event.detail > 0) {
-    cursorWasHeld = false;
+    state.cursorMenuReady = false;
     return;
   }
   activatePlainSelect();
+  state.cursorMenuReady = true;
 });
 cursorToolButton.addEventListener("keydown", (event) => {
   if (event.key !== "ArrowDown" && !(event.shiftKey && event.key === "F10")) return;
@@ -9718,7 +9892,7 @@ dimensionAxis.addEventListener("change", () => {
   const { start, end } = state.drawing;
   state.drawing.axisOverride = dimensionAxis.value || null;
   const geometry = dimensionGeometry(draftDimension(start, end));
-  if (geometry) statusChip.textContent = `Размер ${formatDimensionLength(geometry)} мм. Укажите положение размерной линии`;
+  if (geometry) statusChip.textContent = `Размер ${projectLength(geometry.measurement)}. Укажите положение размерной линии`;
   draw();
 });
 
@@ -9742,8 +9916,85 @@ gridStepSelect.addEventListener("change", () => {
   draw();
 });
 
+function showSnapStepSettings(selected, focus = false) {
+  for (const button of snapStepButtons) {
+    const field = document.getElementById(button.dataset.snapSettings);
+    const expanded = button === selected;
+    field.hidden = !expanded;
+    button.setAttribute("aria-expanded", String(expanded));
+    if (expanded && focus) field.querySelector("select").focus({ preventScroll: true });
+  }
+}
+
+function bindSnapStepSettings(button) {
+  let press = null;
+  let suppressClick = false;
+  const stopPress = () => {
+    if (press) clearTimeout(press.timer);
+    press = null;
+  };
+  button.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    stopPress();
+    suppressClick = false;
+    press = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    button.setPointerCapture(event.pointerId);
+    press.timer = setTimeout(() => {
+      suppressClick = true;
+      showSnapStepSettings(button);
+    }, 450);
+  });
+  button.addEventListener("pointermove", (event) => {
+    if (press?.id === event.pointerId && Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_MOVE_TOLERANCE) stopPress();
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    button.addEventListener(type, (event) => {
+      if (press?.id === event.pointerId) stopPress();
+    });
+  }
+  button.addEventListener("click", (event) => {
+    if (!suppressClick || event.detail === 0) return;
+    suppressClick = false;
+    event.preventDefault();
+  });
+  button.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    stopPress();
+    suppressClick = true;
+    showSnapStepSettings(button);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    showSnapStepSettings(button, true);
+  });
+}
+
+for (const button of snapStepButtons) bindSnapStepSettings(button);
+snapMore.addEventListener("toggle", () => {
+  if (!snapMore.open) showSnapStepSettings(null);
+});
+snapMore.addEventListener("keydown", (event) => {
+  if (!snapMore.open || event.key !== "Escape") return;
+  event.preventDefault();
+  event.stopPropagation();
+  const openSetting = snapStepButtons.find((button) => button.getAttribute("aria-expanded") === "true");
+  if (openSetting) {
+    showSnapStepSettings(null);
+    openSetting.focus({ preventScroll: true });
+  } else {
+    snapMore.open = false;
+    snapMoreSummary.focus({ preventScroll: true });
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (snapMore.open && !snapMore.contains(event.target)) snapMore.open = false;
+});
+
 snaps.forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", (event) => {
+    if (event.defaultPrevented || state.snapsMuted) return;
     const snap = button.dataset.snap;
     if (state.snaps.has(snap)) {
       state.snaps.delete(snap);
@@ -9924,7 +10175,7 @@ for (const input of [lineUi.lineEditRadius, lineUi.lineMirrorDelete, lineUi.line
 }
 lineUi.linePolarStep.addEventListener("change", () => {
   const step = Number(lineUi.linePolarStep.value);
-  if (![5, 15, 30, 45, 90].includes(step)) return;
+  if (!POLAR_STEPS.includes(step)) return;
   state.polarStep = step;
   resetSnapTracking();
   syncSnapButtons();
@@ -10021,6 +10272,8 @@ keyboardConfirmButton.addEventListener("blur", (event) => {
   }
 });
 bindPointAction(polylineArcMode, togglePolylineArcMode);
+bindPointAction(quickMoveTool, () => applySelectionAction("move"));
+bindPointAction(quickDeleteTool, () => applySelectionAction("delete"));
 for (const button of quickEditButtons) {
   bindPointAction(button, () => {
     const mode = button.dataset.quickEdit;
@@ -10118,10 +10371,45 @@ themeButton.addEventListener("click", () => {
   markProjectDirty("theme");
 });
 
-annotationScaleSelect?.addEventListener("change", () => {
-  setAnnotationScale(annotationScaleSelect.value);
-  statusChip.textContent = `Масштаб аннотаций ${annotationScaleSelect.selectedOptions[0]?.textContent || "1:100"}`;
+const projectSettingsForm = projectSettingsSheet.querySelector("form");
+const projectLengthUnit = projectSettingsSheet.querySelector("#projectLengthUnit");
+const projectPrintScale = projectSettingsSheet.querySelector("#projectPrintScale");
+const projectPrecisionFields = {
+  precision: projectSettingsSheet.querySelector("#projectLengthPrecision"),
+  anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
+  areaPrecision: projectSettingsSheet.querySelector("#projectAreaPrecision"),
+};
+for (const [name, field] of Object.entries(projectPrecisionFields)) {
+  const maximum = name === "anglePrecision" ? 3 : 4;
+  for (let digits = 0; digits <= maximum; digits++) field.add(new Option(String(digits), String(digits)));
+}
+
+projectSettingsButton.addEventListener("click", () => {
+  if (!persistence.projectId || projectSettingsSheet.open) return;
+  hideSheet(layersSheet, { restoreFocus: false });
+  hideSheet(exportSheet, { restoreFocus: false });
+  const settings = state.measurementSettings;
+  annotationScaleSelect.value = String(state.annotationScale);
+  projectLengthUnit.value = settings.unit;
+  projectPrintScale.value = settings.printScale;
+  for (const [name, field] of Object.entries(projectPrecisionFields)) field.value = String(settings[name]);
+  projectSettingsSheet.showModal();
 });
+projectSettingsSheet.querySelector("#closeProjectSettings").addEventListener("click", () => projectSettingsSheet.close());
+projectSettingsForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  state.measurementSettings = normalizeMeasurementSettings({
+    unit: projectLengthUnit.value,
+    printScale: projectPrintScale.value,
+    ...Object.fromEntries(Object.entries(projectPrecisionFields).map(([name, field]) => [name, field.value])),
+  });
+  exportScale.value = state.measurementSettings.printScale;
+  setAnnotationScale(annotationScaleSelect.value, { save: false });
+  markProjectDirty("measurement-settings");
+  projectSettingsSheet.close();
+  statusChip.textContent = "Настройки проекта применены";
+});
+
 
 document.getElementById("undoButton").addEventListener("click", () => {
   if (undoLineSegment()) return;
@@ -10149,6 +10437,9 @@ document.getElementById("undoButton").addEventListener("click", () => {
     state.redo.push(action);
     setSelection(action.entityId);
     draw();
+  } else if (action.type === "move-selection") {
+    state.redo.push(action);
+    applyMoveSelection(action, "before");
   } else if (action.type === "annotation-batch") {
     state.redo.push(action);
     applyAnnotationBatch(action.edits, "before");
@@ -10163,6 +10454,7 @@ document.getElementById("undoButton").addEventListener("click", () => {
       state.entities.splice(item.index, 0, item.entity);
     }
     state.redo.push(action);
+    updateLinkedDimensions();
     setSelection(action.items.map((item) => item.entity.id));
     markProjectDirty("undo-delete-many");
     draw();
@@ -10194,6 +10486,9 @@ document.getElementById("redoButton").addEventListener("click", () => {
     state.undo.push(action);
     setSelection(action.entityId);
     draw();
+  } else if (action.type === "move-selection") {
+    state.undo.push(action);
+    applyMoveSelection(action, "after");
   } else if (action.type === "annotation-batch") {
     state.undo.push(action);
     applyAnnotationBatch(action.edits, "after");
@@ -10207,6 +10502,7 @@ document.getElementById("redoButton").addEventListener("click", () => {
     const ids = new Set(action.items.map((item) => item.entity.id));
     state.entities = state.entities.filter((entity) => !ids.has(entity.id));
     state.undo.push(action);
+    updateLinkedDimensions();
     setSelection(null);
     markProjectDirty("redo-delete-many");
     draw();
@@ -10251,12 +10547,12 @@ function dimensionExportNotes(entities) {
   return entities.flatMap((entity) => {
     const lost = lostExportAnchors(entity);
     if (!lost.length) return [];
-    const value = formatDimensionLength(dimensionGeometry(entity));
+    const value = projectLength(dimensionGeometry(entity)?.measurement);
     const positions = lost.map(([key, name]) => {
       const point = key === "start" ? [entity.x1, entity.y1] : [entity.x2, entity.y2];
-      return `${name} X ${surveyNumber(point[0])}, Y ${surveyNumber(-point[1])} мм`;
+      return `${name} X ${projectLength(point[0])}, Y ${projectLength(-point[1])}`;
     });
-    return [{ label: `Размер ${value} мм`, detail: `Потеряна опора. Последние точки · ${positions.join(" · ")}` }];
+    return [{ label: `Размер ${value}`, detail: `Потеряна опора. Последние точки · ${positions.join(" · ")}` }];
   });
 }
 
@@ -10314,11 +10610,12 @@ document.getElementById("layersButton").addEventListener("click", (event) => {
 document.getElementById("closeLayersButton").addEventListener("click", () => hideSheet(layersSheet));
 document.getElementById("closeExportButton").addEventListener("click", () => hideSheet(exportSheet));
 
-function renderExportPlan(context, view, entities, scaleFactor) {
+function renderExportPlan(context, view, entities, scaleFactor, measurementSettings) {
   const editorContext = ctx;
   const editorView = state.view;
   const editorTheme = state.theme;
   const editorAnnotationScale = state.annotationScale;
+  const editorMeasurementSettings = state.measurementSettings;
   const palette = { bg: "#ffffff", wall: "#203245", line: "#203245", dimension: "#183d72", accent: "#183d72", surface: "#ffffff" };
   // Only the synchronous paint uses the print camera. Browser events and
   // attachment decoding run after the editor context has been restored.
@@ -10326,12 +10623,14 @@ function renderExportPlan(context, view, entities, scaleFactor) {
   state.view = view;
   state.theme = "light";
   state.annotationScale = annotationScaleFactor(scaleFactor);
+  state.measurementSettings = measurementSettings;
   printRendering = true;
   try {
     drawPlanScene(entities, palette);
   } finally {
     printRendering = false;
     state.annotationScale = editorAnnotationScale;
+    state.measurementSettings = editorMeasurementSettings;
     state.theme = editorTheme;
     state.view = editorView;
     ctx = editorContext;
@@ -10370,7 +10669,7 @@ async function exportCurrentProject(type) {
       const includeReadings = exportScope.value === "all" || project.visibleLayers.includes("dimensions");
       const drawing = includeReadings ? entities.concat(surveyDxfLegend(entities, details.records)) : entities;
       if (!drawing.length) throw new Error("На выбранных слоях нет объектов для DXF. Попробуйте выбрать все слои.");
-      const options = { annotationScale: project.annotationScale };
+      const options = { annotationScale: project.annotationScale, measurementSettings: project.measurementSettings };
       return revit ? buildRevitDxf(drawing, options) : buildDxf(drawing, options);
     };
     const backup = () => JSON.stringify(project, null, 2);
@@ -10519,12 +10818,20 @@ function planZoneName(type = state.tool) {
 }
 
 function planContourClosesAtCursor(points) {
-  return points.length >= 3 && snapEnabled("end") && distanceWorld(rawCursorWorld(), points[0]) * state.view.scale <= 14;
+  return points.length >= 3 && snapEnabled("end") && distanceWorld(rawCursorWorld(), points[0]) * state.view.scale <= screenUiPx(14);
+}
+
+function planZoneSnapStart() {
+  const zone = state.planZone;
+  return zone?.mode === "contour" ? zone.points.at(-1) : null;
 }
 
 const planAnnotationActions = document.getElementById("planAnnotationActions");
-const planAnnotationExisting = document.getElementById("planAnnotationExisting");
+const planAnnotationModes = document.getElementById("planAnnotationModes");
+const planAnnotationModesButtons = [...planAnnotationModes.querySelectorAll("button")];
+const planAnnotationCommands = document.getElementById("planAnnotationCommands");
 const planAnnotationClose = document.getElementById("planAnnotationClose");
+const planAnnotationAddContour = document.getElementById("planAnnotationAddContour");
 const planAnnotationEdit = document.getElementById("planAnnotationEdit");
 const planAnnotationEditor = document.getElementById("planAnnotationEditor");
 const planAnnotationForm = planAnnotationEditor.querySelector("form");
@@ -10532,15 +10839,24 @@ const planAnnotationFields = planAnnotationForm.elements;
 const planAnnotationError = document.getElementById("planAnnotationError");
 const planAnnotationContent = planAnnotationEditor.querySelector(".plan-annotation-content");
 const planAnnotationLabelField = document.getElementById("planAnnotationLabelField");
+const planAnnotationHeightName = document.getElementById("planAnnotationHeightName");
+const leaderOptionButtons = [...planAnnotationForm.querySelectorAll("[data-leader-option]")];
+const leaderOptions = { leaderLine: null, leaderFrame: null };
 const annotationPreferenceKey = "zamer.annotation.preferences.v1";
 const annotationKinds = ["text", "leader", "area", "elevation"];
 const leaderStyles = ["landing", "plain", "boxed"];
 const initialAnnotationPreferences = apkReadJson(annotationPreferenceKey, {});
+const preferredLeaderAppearance = leaderAppearance({
+  leaderStyle: leaderStyles.includes(initialAnnotationPreferences?.leaderStyle) ? initialAnnotationPreferences.leaderStyle : "landing",
+  leaderLine: initialAnnotationPreferences?.leaderLine,
+  leaderFrame: initialAnnotationPreferences?.leaderFrame,
+});
 const annotationPreferences = {
   lastKind: annotationKinds.includes(initialAnnotationPreferences?.lastKind) ? initialAnnotationPreferences.lastKind : "text",
   textHeight: validAnnotationTextHeight(initialAnnotationPreferences?.textHeight) ? initialAnnotationPreferences.textHeight : 260,
   leaderHeight: validAnnotationTextHeight(initialAnnotationPreferences?.leaderHeight) ? initialAnnotationPreferences.leaderHeight : 200,
-  leaderStyle: leaderStyles.includes(initialAnnotationPreferences?.leaderStyle) ? initialAnnotationPreferences.leaderStyle : "landing",
+  leaderLine: preferredLeaderAppearance.line,
+  leaderFrame: preferredLeaderAppearance.frame,
   zoneStyle: Object.hasOwn(PLAN_ELEVATION_STYLES, initialAnnotationPreferences?.zoneStyle) ? initialAnnotationPreferences.zoneStyle : "ceiling",
 };
 
@@ -10562,7 +10878,8 @@ function rememberAnnotationSettings(kinds, values) {
   if (kinds.includes("text") && validAnnotationTextHeight(values.textHeight)) annotationPreferences.textHeight = values.textHeight;
   if (kinds.includes("leader")) {
     if (validAnnotationTextHeight(values.textHeight)) annotationPreferences.leaderHeight = values.textHeight;
-    if (leaderStyles.includes(values.leaderStyle)) annotationPreferences.leaderStyle = values.leaderStyle;
+    if (values.leaderLine === "straight" || values.leaderLine === "bent") annotationPreferences.leaderLine = values.leaderLine;
+    if (typeof values.leaderFrame === "boolean") annotationPreferences.leaderFrame = values.leaderFrame;
   }
   if (kinds.includes("elevation") && Object.hasOwn(PLAN_ELEVATION_STYLES, values.zoneStyle)) annotationPreferences.zoneStyle = values.zoneStyle;
   saveAnnotationSettings();
@@ -10591,11 +10908,18 @@ function syncPlanAnnotationActions() {
   const zone = state.planZone;
   const editing = editablePlanAnnotations();
   const count = zone?.points.length || 0;
+  const appendable = zone ? !zone.appendToId && !count && state.entities.some((entity) => entity.id === zone.lastId) : editing?.entities.length === 1 && isPlanAnnotationZone(editing.entities[0]);
   planAnnotationActions.hidden = !zone && !editing;
-  planAnnotationExisting.hidden = !zone || count > 0;
-  planAnnotationExisting.setAttribute("aria-pressed", String(Boolean(zone?.pickContour)));
-  planAnnotationClose.hidden = count < 3;
+  planAnnotationModes.hidden = !zone;
+  for (const button of planAnnotationModesButtons) {
+    const active = button.dataset.planMode === zone?.mode;
+    button.setAttribute("aria-pressed", String(active));
+    button.disabled = count > 0 && !active;
+  }
+  planAnnotationClose.hidden = zone?.mode !== "contour" || count < 3;
+  planAnnotationAddContour.hidden = !appendable;
   planAnnotationEdit.hidden = !editing;
+  planAnnotationCommands.hidden = planAnnotationClose.hidden && planAnnotationAddContour.hidden && planAnnotationEdit.hidden;
   if (editing) {
     const label = editing.entities.length > 1 ? "Изменить выбранные" : "Изменить аннотацию";
     if (planAnnotationEdit.textContent !== label) planAnnotationEdit.textContent = label;
@@ -10608,8 +10932,16 @@ function syncPlanAnnotationViewport() {
   const top = viewport?.offsetTop || 0;
   const layoutHeight = window.innerHeight;
   let bottom = viewport ? viewport.height + top : layoutHeight;
+  if (androidKeyboardViewport?.visible && androidKeyboardViewport.availableHeight > 0) {
+    bottom = Math.min(bottom, androidKeyboardViewport.availableHeight);
+  }
   const keyboard = navigator.virtualKeyboard?.boundingRect;
   if (keyboard?.height > 0 && keyboard.top > top) bottom = Math.min(bottom, keyboard.top);
+  bottom = Math.max(top, Math.min(bottom, layoutHeight));
+  const input = document.activeElement;
+  const editing = planAnnotationContent.contains(input) && input.matches("textarea, input");
+  planAnnotationEditor.dataset.keyboard = String(Boolean(androidKeyboardViewport?.visible || keyboard?.height > 0 ||
+    (editing && (layoutHeight - bottom > 64 || stableViewportHeight - layoutHeight > 64))));
   planAnnotationEditor.style.setProperty("--annotation-modal-bottom", `${Math.max(0, layoutHeight - bottom)}px`);
   planAnnotationEditor.style.setProperty("--annotation-modal-height", `${Math.max(0, bottom - top)}px`);
   const active = document.activeElement;
@@ -10626,7 +10958,21 @@ function setAnnotationOption(select, value, batch) {
   select.value = batch ? "" : value;
 }
 
-function openPlanAnnotationEditor(kind, values = {}, count = 1) {
+function leaderOptionValue(button) {
+  const value = button.dataset.leaderValue;
+  if (!value) return null;
+  return button.dataset.leaderOption === "leaderFrame" ? value === "true" : value;
+}
+
+function syncLeaderOptions(batch) {
+  for (const button of leaderOptionButtons) {
+    const value = leaderOptionValue(button);
+    button.hidden = value === null && !batch;
+    button.setAttribute("aria-pressed", String(leaderOptions[button.dataset.leaderOption] === value));
+  }
+}
+
+function openPlanAnnotationEditor(kind, values = {}, count = 1, { prepareLeader = false } = {}) {
   if (planAnnotationEditor.open) return Promise.resolve(null);
   const batch = count > 1;
   const zone = kind === "area" || kind === "elevation";
@@ -10637,7 +10983,7 @@ function openPlanAnnotationEditor(kind, values = {}, count = 1) {
   planAnnotationForm.dataset.kind = kind;
   planAnnotationForm.dataset.batch = String(batch);
   planAnnotationEditor.querySelector("h2").textContent = batch ? `Правка аннотаций (${count})` : heading;
-  planAnnotationForm.querySelector('[type="submit"]').textContent = batch ? "Применить" : values.id ? "Сохранить" : "Поставить";
+  planAnnotationForm.querySelector('[type="submit"]').textContent = batch ? "Применить" : values.id ? "Сохранить" : prepareLeader ? "К чертежу" : "Поставить";
   document.getElementById("planAnnotationTextField").hidden = !text || batch;
   document.getElementById("planAnnotationBatchLabelField").hidden = !batch || kind !== "area";
   planAnnotationLabelField.hidden = !zone || batch;
@@ -10647,18 +10993,28 @@ function openPlanAnnotationEditor(kind, values = {}, count = 1) {
   document.getElementById("planAnnotationLeaderField").hidden = !leader;
   planAnnotationFields.text.value = batch ? "" : decodeMojibakeText(values.text || "");
   planAnnotationFields.label.value = batch ? "" : values.label || "";
-  planAnnotationFields.height.placeholder = batch ? "Без изменений" : "2800";
-  planAnnotationFields.height.value = !batch && kind === "elevation" && Number.isFinite(values.height) ? String(values.height).replace(".", ",") : "";
+  const settings = state.measurementSettings;
+  const lengthLabel = projectUnit(settings).label;
+  planAnnotationHeightName.textContent = `Высота Z, ${lengthLabel}`;
+  planAnnotationFields.height.placeholder = batch ? "Без изменений" : String(toProjectLength(2800, settings)).replace(".", ",");
+  planAnnotationFields.height.value = !batch && kind === "elevation" && Number.isFinite(values.height)
+    ? String(toProjectLength(values.height, settings)).replace(".", ",") : "";
   planAnnotationFields.textHeight.placeholder = batch ? "Без изменений" : "";
   const defaultHeight = leader ? (values.id ? 200 : annotationPreferences.leaderHeight) : (values.id ? 260 : annotationPreferences.textHeight);
   const existingHeight = leader && values.id ? leaderTextHeight(values) : values.height;
   planAnnotationFields.textHeight.value = batch ? "" : validAnnotationTextHeight(existingHeight) ? existingHeight : defaultHeight;
   setAnnotationOption(planAnnotationFields.zoneStyle, values.zoneStyle || annotationPreferences.zoneStyle, batch);
-  setAnnotationOption(planAnnotationFields.leaderStyle, values.leaderStyle || (values.id ? "boxed" : annotationPreferences.leaderStyle), batch);
+  if (leader) {
+    const appearance = leaderAppearance(values.id ? values : annotationPreferences);
+    leaderOptions.leaderLine = batch ? null : appearance.line;
+    leaderOptions.leaderFrame = batch ? null : appearance.frame;
+    syncLeaderOptions(batch);
+  }
   planAnnotationError.textContent = "";
   planAnnotationEditor.returnValue = "";
   planAnnotationEditor.showModal();
-  const first = batch ? planAnnotationEditor.querySelector("h2") : text ? planAnnotationFields.text : kind === "elevation" ? planAnnotationFields.height : planAnnotationFields.label;
+  const first = batch || prepareLeader ? planAnnotationEditor.querySelector("h2") :
+    text ? planAnnotationFields.text : kind === "elevation" ? planAnnotationFields.height : planAnnotationFields.label;
   first.focus({ preventScroll: true });
   updateViewportLock();
   return new Promise((resolve) => {
@@ -10691,7 +11047,10 @@ planAnnotationForm.addEventListener("submit", (event) => {
       data.textHeight = Number(planAnnotationFields.textHeight.value);
       if (!validAnnotationTextHeight(data.textHeight)) return annotationFormError("Укажите размер текста от 1 до 100 000 мм", planAnnotationFields.textHeight);
     }
-    if (kind === "leader" && planAnnotationFields.leaderStyle.value) data.leaderStyle = planAnnotationFields.leaderStyle.value;
+    if (kind === "leader") {
+      if (leaderOptions.leaderLine !== null) data.leaderLine = leaderOptions.leaderLine;
+      if (leaderOptions.leaderFrame !== null) data.leaderFrame = leaderOptions.leaderFrame;
+    }
   } else {
     if (!batch) data.label = planAnnotationFields.label.value.trim();
     else if (kind === "area") {
@@ -10703,9 +11062,11 @@ planAnnotationForm.addEventListener("submit", (event) => {
     }
     if (kind === "elevation") {
       if (!batch || planAnnotationFields.height.value.trim()) {
-        data.height = parseLineDecimal(planAnnotationFields.height.value);
+        const value = parseLineDecimal(planAnnotationFields.height.value);
+        const settings = state.measurementSettings;
+        data.height = value === null ? null : fromProjectLength(value, settings);
         if (!Number.isFinite(data.height) || Math.abs(data.height) > MAX_LINE_COORDINATE) {
-          return annotationFormError("Введите высоту в миллиметрах, например 2800 или −150", planAnnotationFields.height);
+          return annotationFormError(`Введите высоту в ${projectUnit(settings).label}`, planAnnotationFields.height);
         }
       }
       if (planAnnotationFields.zoneStyle.value) data.zoneStyle = planAnnotationFields.zoneStyle.value;
@@ -10716,6 +11077,12 @@ planAnnotationForm.addEventListener("submit", (event) => {
 });
 
 document.getElementById("planAnnotationCancel").addEventListener("click", () => planAnnotationEditor.close());
+for (const button of leaderOptionButtons) {
+  button.addEventListener("click", () => {
+    leaderOptions[button.dataset.leaderOption] = leaderOptionValue(button);
+    syncLeaderOptions(planAnnotationForm.dataset.batch === "true");
+  });
+}
 planAnnotationFields.batchLabelMode.addEventListener("change", () => {
   planAnnotationLabelField.hidden = planAnnotationFields.batchLabelMode.value !== "set";
   planAnnotationError.textContent = "";
@@ -10732,21 +11099,24 @@ document.getElementById("planAnnotationSign").addEventListener("click", () => {
 function choosePlanContour(screen) {
   const world = screenToWorld(screen);
   const ranked = [];
-  for (const entity of state.entities) {
-    if (!isLayerVisible(entity.layer)) continue;
+  const visible = state.entities.filter((entity) => isLayerVisible(entity.layer));
+  for (const entity of visible) {
     const zoneGeometry = isPlanAnnotationZone(entity) ? planAnnotationGeometry(entity) : null;
-    const points = zoneGeometry?.points || planAnnotationPointsFromEntity(entity);
-    if (!points) continue;
-    const distance = Math.min(...points.map((point, index) =>
-      pointToSegmentDistance(world, point, points[(index + 1) % points.length])));
-    const edge = distance * state.view.scale <= 15;
-    if (!edge && !pointInPolygon(world, points)) continue;
-    const candidate = zoneGeometry || planAnnotationGeometry({ type: "area", points });
-    const area = candidate?.areaMm2;
-    if (Number.isFinite(area)) ranked.push({ points, area, edge, distance });
+    const closed = zoneGeometry?.rings || [planAnnotationGeometry({ type: "area", points: planAnnotationPointsFromEntity(entity) })];
+    for (const ring of closed) {
+      if (!ring) continue;
+      const { points, areaMm2 } = ring;
+      const distance = Math.min(...points.map((point, index) => pointToSegmentDistance(world, point, points[(index + 1) % points.length])));
+      const edge = distance * state.view.scale <= screenUiPx(12);
+      if (edge || pointInPolygon(world, points)) ranked.push({ points, area: areaMm2, edge, distance });
+    }
   }
   ranked.sort((a, b) => Number(b.edge) - Number(a.edge) || (a.edge && b.edge ? a.distance - b.distance : a.area - b.area));
-  return ranked[0]?.points;
+  const best = ranked[0];
+  if (best?.edge) return best.points;
+  const face = planRegionAtPoint(world, visible);
+  const region = planAnnotationGeometry({ type: "area", points: face });
+  return region && region.areaMm2 < (best?.area ?? Infinity) ? region.points : best?.points;
 }
 
 async function finishPlanAnnotation(points = state.planZone?.points) {
@@ -10756,7 +11126,30 @@ async function finishPlanAnnotation(points = state.planZone?.points) {
   const id = newLineId(type);
   const valid = createPlanAnnotation(id, type, points, { height: 0 });
   if (!valid) {
-    statusChip.textContent = "Нужен замкнутый контур из трёх или более точек без самопересечения";
+    statusChip.textContent = zone.mode === "rectangle" ? "Укажите противоположный угол прямоугольника" : "Нужен контур без пересечений";
+    draw();
+    return;
+  }
+  if (zone.appendToId) {
+    const target = state.entities.find((entity) => entity.id === zone.appendToId && entity.type === type);
+    const previous = planAnnotationGeometry(target);
+    if (!previous) {
+      state.planZone = { mode: zone.mode, points: [], lastId: null };
+      statusChip.textContent = "Аннотация больше недоступна";
+      draw();
+      return;
+    }
+    const combined = createPlanAnnotation(target.id, type, target.points, { ...target, contours: [...previous.contours, valid.points] });
+    if (!combined) {
+      statusChip.textContent = "Контуры одной аннотации должны быть раздельными";
+      draw();
+      return;
+    }
+    state.planZone = { mode: zone.mode, points: [], lastId: target.id, zoneStyle: target.zoneStyle };
+    applyPlanAnnotationEdit(target, combined);
+    const geometry = planAnnotationGeometry(target);
+    statusChip.textContent = type === "area" ? `Общая площадь ${formatProjectArea(geometry.areaM2, state.measurementSettings)}` : `Контур добавлен · Z ${formatProjectElevation(target.height, state.measurementSettings)}`;
+    canvas.focus({ preventScroll: true });
     draw();
     return;
   }
@@ -10769,8 +11162,8 @@ async function finishPlanAnnotation(points = state.planZone?.points) {
     return;
   }
   pushEntity(entity);
-  state.planZone = { points: [], pickContour: false, zoneStyle: values.zoneStyle };
-  statusChip.textContent = type === "area" ? `Площадь ${formatPlanArea(planAnnotationGeometry(entity).areaM2)} на плане` : `Высота ${formatPlanElevation(entity.height)} на плане. Можно добавить ещё зону`;
+  state.planZone = { mode: zone.mode, points: [], lastId: entity.id, zoneStyle: values.zoneStyle };
+  statusChip.textContent = type === "area" ? `Площадь ${formatProjectArea(planAnnotationGeometry(entity).areaM2, state.measurementSettings)} на плане` : `Высота ${formatProjectElevation(entity.height, state.measurementSettings)} на плане. Можно добавить ещё зону`;
   canvas.focus({ preventScroll: true });
   draw();
 }
@@ -10778,17 +11171,22 @@ async function finishPlanAnnotation(points = state.planZone?.points) {
 function commitPlanAnnotationPoint(screen) {
   const zone = state.planZone;
   hideAnnotationToolMenu();
-  if (zone.pickContour) {
+  if (zone.mode === "existing") {
     const points = choosePlanContour(screen);
     if (points) void finishPlanAnnotation(points);
-    else statusChip.textContent = "Коснитесь готового замкнутого контура или его внутренней области";
+    else statusChip.textContent = "Замкнутая область здесь не найдена";
     return;
   }
-  if (planContourClosesAtCursor(zone.points)) {
+  if (zone.mode === "contour" && planContourClosesAtCursor(zone.points)) {
     void finishPlanAnnotation();
     return;
   }
   const point = cursorWorld();
+  if (zone.mode === "rectangle" && zone.points.length) {
+    const [corner] = zone.points;
+    void finishPlanAnnotation(rectangleCorners({ x1: corner.x, y1: corner.y, x2: point.x, y2: point.y }));
+    return;
+  }
   if (!isLinePoint(point) || zone.points.some((vertex) => distanceWorld(vertex, point) <= linePointEpsilon)) {
     statusChip.textContent = "Наводите курсор на новую точку контура";
     return;
@@ -10798,17 +11196,39 @@ function commitPlanAnnotationPoint(screen) {
     return;
   }
   zone.points.push(point);
-  statusChip.textContent = zone.points.length >= 3 ? "Добавьте точку или нажмите «Замкнуть контур»" : `Точек: ${zone.points.length}. Укажите следующую`;
+  statusChip.textContent = zone.mode === "rectangle" ? "Укажите противоположный угол" :
+    zone.points.length >= 3 ? "Следующая точка или «Замкнуть контур»" : "Укажите следующую точку";
   draw();
 }
 
-bindPointAction(planAnnotationExisting, () => {
-  if (!state.planZone || state.planZone.points.length) return;
-  state.planZone.pickContour = !state.planZone.pickContour;
-  statusChip.textContent = state.planZone.pickContour ? "Коснитесь готового замкнутого контура" : "Укажите первую точку контура";
+function planAnnotationModeHint(mode) {
+  if (mode === "existing") return "Коснитесь контура или внутри замкнутой области";
+  if (mode === "rectangle") return "Укажите первый угол";
+  return "Укажите первую точку контура";
+}
+
+for (const button of planAnnotationModesButtons) {
+  bindPointAction(button, () => {
+    const zone = state.planZone;
+    if (!zone || zone.points.length) return;
+    zone.mode = button.dataset.planMode;
+    resetSnapTracking();
+    statusChip.textContent = planAnnotationModeHint(zone.mode);
+    draw();
+  });
+}
+bindPointAction(planAnnotationClose, () => void finishPlanAnnotation());
+bindPointAction(planAnnotationAddContour, () => {
+  const zone = state.planZone;
+  const selected = editablePlanAnnotations()?.entities;
+  const target = zone ? state.entities.find((entity) => entity.id === zone.lastId) : selected?.length === 1 ? selected[0] : null;
+  if (!isPlanAnnotationZone(target)) return;
+  if (!zone) setTool(target.type);
+  state.planZone.appendToId = target.id;
+  state.planZone.lastId = target.id;
+  statusChip.textContent = `Новый контур · ${planAnnotationModeHint(state.planZone.mode)}`;
   draw();
 });
-bindPointAction(planAnnotationClose, () => void finishPlanAnnotation());
 bindPointAction(planAnnotationEdit, () => {
   const editable = editablePlanAnnotations();
   if (!editable) return;
@@ -10833,7 +11253,8 @@ function annotationBatchPatch(entity, values) {
   if (kind === "text" && Object.hasOwn(values, "textHeight")) patch.height = values.textHeight;
   if (kind === "leader") {
     if (Object.hasOwn(values, "textHeight")) patch.textHeight = values.textHeight;
-    if (Object.hasOwn(values, "leaderStyle")) patch.leaderStyle = values.leaderStyle;
+    if (Object.hasOwn(values, "leaderLine")) patch.leaderLine = values.leaderLine;
+    if (Object.hasOwn(values, "leaderFrame")) patch.leaderFrame = values.leaderFrame;
   }
   return patch;
 }
@@ -10881,7 +11302,7 @@ function applyAnnotationBatch(edits, snapshot) {
 async function editPlanZone(entity) {
   const values = await openPlanAnnotationEditor(entity.type, entity);
   if (!values || !state.entities.includes(entity)) return;
-  const updated = createPlanAnnotation(entity.id, entity.type, entity.points, values);
+  const updated = createPlanAnnotation(entity.id, entity.type, entity.points, { ...entity, ...values });
   if (updated) applyPlanAnnotationEdit(entity, { ...updated, label: updated.label || "" });
 }
 
@@ -10971,7 +11392,7 @@ function drawSurveyMarks(c, rect) {
       ctx.stroke();
       ctx.restore();
       const height = marker.count === 1 && record.kind === "point" && Number.isFinite(record.values.height)
-        ? ` · Z ${surveyNumber(record.values.height)} мм` : "";
+        ? ` · Z ${formatProjectElevation(record.values.height, state.measurementSettings)}` : "";
       drawBadge(marker.label + height, point.x, point.y - 15, c, true, true);
     }
   }
@@ -11096,6 +11517,10 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("scroll", lockDocumentScroll, { passive: true });
 window.visualViewport?.addEventListener("resize", updateViewportLock);
 window.visualViewport?.addEventListener("scroll", updateViewportLock);
+window.addEventListener("zamer-ime-insets", (event) => {
+  androidKeyboardViewport = event.detail;
+  updateViewportLock();
+});
 window.addEventListener("beforeunload", flushProjectBeforeUnload);
 window.addEventListener("pagehide", flushProjectBeforeUnload);
 document.addEventListener("visibilitychange", () => {
@@ -11117,8 +11542,8 @@ initSurveyPanel();
 initAuthGate();
 lockPortraitOrientation();
 window.zamerDebug = {
-  exportDxf: () => buildDxf(state.entities, { annotationScale: state.annotationScale }),
-  exportRevitDxf: () => buildRevitDxf(state.entities, { annotationScale: state.annotationScale }),
+  exportDxf: () => buildDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings }),
+  exportRevitDxf: () => buildRevitDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings }),
   entityCount: () => state.entities.length,
   tool: () => state.tool,
   drawing: () => Boolean(state.drawing),

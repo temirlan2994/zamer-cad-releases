@@ -273,6 +273,21 @@ test("the three leader styles and multiline labels export on the text layer", ()
   }
 });
 
+test("leader line shape and text frame export as independent switches", () => {
+  const leader = { type: "line", dimensionKind: "leader", layer: "text", leaderStyle: "landing",
+    x1: 0, y1: 0, x2: 3000, y2: 1500, text: "Точка", textHeight: 100 };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    for (const [leaderLine, expectedSegments] of [["straight", 3], ["bent", 4]]) {
+      for (const leaderFrame of [false, true]) {
+        const records = entityRecords(build([{ ...leader, leaderLine, leaderFrame }]));
+        assert.equal(records.filter(({ type }) => type === "LINE").length, expectedSegments);
+        assert.equal(records.filter(({ type }) => type === "LWPOLYLINE").length, Number(leaderFrame));
+        assert.equal(records.find(({ type }) => type === "TEXT").fields.get("1")[0], "Точка");
+      }
+    }
+  }
+});
+
 test("zones export closed editable XY contours and native labels on separate colored layers", () => {
   const points = [{ x: 125.0002, y: -300 }, { x: 4125.0002, y: -300 }, { x: 4125.0002, y: 1700 }, { x: 125.0002, y: 1700 }];
   const zone = { type: "area", id: "floor", layer: "areas", points: [...points, points[0]], label: "Зона кухни" };
@@ -300,6 +315,44 @@ test("zones export closed editable XY contours and native labels on separate col
     for (const { fields } of elevation) assert.equal(Number(fields.get("420")[0]), 0x9a5b17);
     const custom = entityRecords(build([{ ...beam, label: "Под балкой" }])).filter(({ type }) => type === "TEXT");
     assert.deepEqual(custom.map(({ fields }) => fields.get("1")[0]), ["Z -150 мм", "Под балкой"]);
+  }
+});
+
+test("combined area and Z export all independent outlines, one label each, and project precision", () => {
+  const first = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1000 }, { x: 0, y: 1000 }];
+  const second = [{ x: 4500, y: 300 }, { x: 5734, y: 300 }, { x: 5734, y: 1300 }, { x: 4500, y: 1300 }];
+  const zone = { type: "area", id: "combined", points: first, contours: [first, second] };
+  const elevation = { ...zone, type: "elevation", id: "combined-z", height: -2450, zoneStyle: "drop" };
+  const measurementSettings = { unit: "m", precision: 3, areaPrecision: 3 };
+  for (const [build, areaLayer, zLayer] of [[buildDxf, "areas", "elevations"], [buildRevitDxf, "ZAMER_AREA", "ZAMER_Z"]]) {
+    const entities = entityRecords(build([zone, elevation], { measurementSettings }));
+    for (const [layer, label] of [[areaLayer, "3,234 м²"], [zLayer, "Z -2,45 м"]]) {
+      const records = entities.filter(({ fields }) => fields.get("8")[0] === layer);
+      assert.deepEqual(records.map(({ type }) => type), ["LWPOLYLINE", "LWPOLYLINE", "TEXT"]);
+      assert.deepEqual(records.slice(0, 2).map(({ fields }) => fields.get("70")[0]), ["1", "1"]);
+      assert.deepEqual(records[1].fields.get("10"), ["4500", "5734", "5734", "4500"]);
+      assert.deepEqual(records[2].fields.get("1"), [label]);
+    }
+  }
+});
+
+test("native dimension geometry stays in mm, using project length and angle precision for labels", () => {
+  const radians = 32.46 * Math.PI / 180;
+  const entities = [
+    { type: "line", layer: "dimensions", x1: 0, y1: 0, x2: 1234, y2: 0, offset: 200 },
+    { type: "line", layer: "dimensions", dimensionKind: "angular", vertex: { x: 0, y: 0 },
+      arm1: { x: 1000, y: 0 }, arm2: { x: 1000 * Math.cos(radians), y: 1000 * Math.sin(radians) } },
+  ];
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build(entities, { measurementSettings: { unit: "m", precision: 3, anglePrecision: 1 } });
+    const dimensions = dimensionRecords(dxf);
+    assert.equal(dimensions[0].fields.get("42"), "1234");
+    assert.equal(dimensions[0].fields.get("1"), "<> м");
+    assert.equal(dimensions[1].fields.get("1"), "<>°");
+    assert.match(dxf, /\n1\n1,234 м\n/);
+    assert.match(dxf, /\n1\n32,5°\n/);
+    assert.match(dxf, /\n\$INSUNITS\n70\n4\n/);
+    assert.match(dxf, /\n144\n0\.001\n179\n1\n271\n3\n/);
   }
 });
 
@@ -344,4 +397,22 @@ test("buildRevitDxf uses Revit-friendly millimeter layers", () => {
   assert.ok(dxf.includes("\n2\nZAMER_DIMENSIONS\n"));
   assert.ok(dxf.includes("\n8\nZAMER_WALLS\n"));
   assert.ok(dxf.includes("\n8\nZAMER_DIMENSIONS\n"));
+});
+
+test("modern DXF includes walls and furniture layers only for emitted legacy geometry", () => {
+  const wall = { type: "wall", x1: 0, y1: 0, x2: 1000, y2: 0, width: 180 };
+  const furniture = { type: "block", kind: "table", x: 200, y: 400, width: 1000, height: 600 };
+  const note = { type: "text", x: 100, y: 100, layer: "furniture", text: "Архив" };
+  for (const [build, wallLayer, furnitureLayer] of [[buildDxf, "walls", "furniture"], [buildRevitDxf, "ZAMER_WALLS", "ZAMER_FURNITURE"]]) {
+    const empty = build([{ ...wall, x1: NaN, x2: NaN }]);
+    for (const layer of [wallLayer, furnitureLayer]) assert.ok(!empty.includes(`\n2\n${layer}\n`));
+    const both = build([wall, furniture]);
+    for (const layer of [wallLayer, furnitureLayer]) {
+      assert.ok(both.includes(`\n2\n${layer}\n`));
+      assert.ok(both.includes(`\n8\n${layer}\n`));
+    }
+    assert.ok(build([note]).includes(`\n2\n${furnitureLayer}\n`));
+  }
+  const legacy = writeDxf([]);
+  assert.ok(legacy.includes("\n2\nwalls\n") && legacy.includes("\n2\nfurniture\n"));
 });
