@@ -3160,7 +3160,7 @@ function canApplySelectionAction(action) {
   if (entity.type === "polyline") return action === "copy" || action === "rotate";
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "mirror") return entity.type !== "circle" && (entity.type === "block" || linearEditableEntity(entity));
+  if (action === "mirror") return entity.type !== "text" && entity.type !== "circle" && (entity.type === "block" || linearEditableEntity(entity));
   if (action === "offset") return isDraftLine(entity) || entity.type === "wall";
   return false;
 }
