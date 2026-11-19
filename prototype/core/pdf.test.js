@@ -141,7 +141,7 @@ test("plot bounds include an explicit bend outside the arrow and label extents",
     x1: -200, y1: -300, x2: 1000, y2: 0, leaderElbow: { x: -950, y: 1200 }, textHeight: 200, text: "Точка" };
   const bent = pdfPlotBounds([note]);
   close(bent.minX, -950);
-  close(bent.maxY, 1200);
+  close(bent.maxY, 170);
   const straight = pdfPlotBounds([{ ...note, leaderLine: "straight" }]);
   close(straight.minX, -200);
   close(straight.maxY, 170);

@@ -1,4 +1,4 @@
-import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderTextHeight } from "./annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
@@ -101,12 +101,10 @@ function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measureme
     const lines = annotationTextLines(entity.text);
     const appearance = leaderAppearance(entity);
     const frame = leaderFrameSize(height, textWidth(lines, height, 600), lines.length, appearance.frame);
-    const elbow = appearance.line === "bent" ? leaderElbowPoint(entity) : null;
-    return boundsOf([
-      { x: entity.x1, y: entity.y1 },
-      ...(elbow ? [elbow] : []),
-      ...centeredTextCorners({ x: entity.x2, y: entity.y2 }, frame.width, frame.height),
-    ]);
+    const center = { x: entity.x2, y: entity.y2 };
+    const rect = { x: center.x - frame.width / 2, y: center.y - frame.height / 2, ...frame };
+    const path = leaderPlanPath({ x: entity.x1, y: entity.y1 }, rect, appearance.line, height * 1.1, leaderElbowPoint(entity));
+    return boundsOf([...path, ...centeredTextCorners(center, frame.width, frame.height)]);
   }
   if (entity.type === "line" && entity.layer === "dimensions") return dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings);
   if (entity.type === "block") {

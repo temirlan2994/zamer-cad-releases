@@ -218,7 +218,7 @@ export function dxfLeader(entity, layer, unicode = false) {
   const end = { x: Number(entity.x2), y: Number(entity.y2) };
   if (!finitePoint(start) || !finitePoint(end)) return [];
   const bent = entity.leaderLine === "bent" || (entity.leaderLine !== "straight" && entity.leaderStyle === "landing");
-  const elbow = entity.leaderElbow;
+  const elbow = Number.isFinite(entity.leaderElbow?.x) ? { x: entity.leaderElbow.x, y: end.y } : null;
   const hasElbow = bent && Number.isFinite(elbow?.x) && Number.isFinite(elbow?.y) &&
     (start.x !== elbow.x || start.y !== elbow.y) && (end.x !== elbow.x || end.y !== elbow.y);
   const firstEnd = hasElbow ? elbow : end;

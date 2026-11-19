@@ -56,31 +56,14 @@ function leaderLabelConnection(center, rect, dx, dy) {
 
 export function leaderPlanPath(arrow, rect, line, landingLength, elbow = null) {
   const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  if (line === "bent" && Number.isFinite(elbow?.x) && Number.isFinite(elbow?.y)) {
-    const dx = elbow.x - center.x;
-    const dy = elbow.y - center.y;
-    return Math.abs(dx) <= rect.width / 2 && Math.abs(dy) <= rect.height / 2
-      ? [arrow, elbow, center]
-      : [arrow, elbow, leaderLabelConnection(center, rect, dx, dy)];
-  }
   const dx = arrow.x - center.x;
   const dy = arrow.y - center.y;
-  if (!dx && !dy) return [arrow, center];
-  const side = dx < 0 ? -1 : 1;
-  const horizontalGap = Math.abs(dx) - rect.width / 2;
-
-  if (line === "bent" && horizontalGap > 0) {
-    const connector = { x: center.x + side * rect.width / 2, y: center.y };
-    const elbow = { x: connector.x + side * Math.min(landingLength, horizontalGap), y: center.y };
-    return [arrow, elbow, connector];
+  if (line === "bent") {
+    const side = (Number.isFinite(elbow?.x) ? elbow.x - center.x : dx) <= 0 ? -1 : 1;
+    const edgeX = center.x + side * rect.width / 2;
+    const bend = { x: Number.isFinite(elbow?.x) ? elbow.x : edgeX + side * landingLength, y: center.y };
+    const connector = { x: Math.abs(bend.x - center.x) < rect.width / 2 ? center.x : edgeX, y: center.y };
+    return [arrow, bend, connector];
   }
-  const verticalGap = Math.abs(dy) - rect.height / 2;
-  if (line === "bent" && verticalGap > 0) {
-    const side = dy < 0 ? -1 : 1;
-    const connector = { x: center.x, y: center.y + side * rect.height / 2 };
-    const elbow = { x: center.x, y: connector.y + side * Math.min(landingLength, verticalGap) };
-    return [arrow, elbow, connector];
-  }
-
   return [arrow, leaderLabelConnection(center, rect, dx, dy)];
 }

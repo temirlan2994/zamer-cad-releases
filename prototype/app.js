@@ -4007,6 +4007,10 @@ function drawLeaderEntity(entity, c, options = {}) {
 }
 
 function leaderScreenGeometry(entity) {
+  if (!printRendering && state.pointer?.targetId === entity.id &&
+      (state.pointer.mode === "leader-elbow" || state.pointer.mode === "leader-arrow")) {
+    entity = state.pointer.preview ?? entity;
+  }
   const arrow = worldToScreen({ x: entity.x1, y: entity.y1 });
   const center = worldToScreen({ x: entity.x2, y: entity.y2 });
   const lines = annotationTextLines(decodeMojibakeText(entity.text));
@@ -4025,12 +4029,9 @@ function leaderScreenGeometry(entity) {
     width,
     height,
   };
-  const preview = !printRendering && state.pointer?.mode === "leader-elbow" && state.pointer.targetId === entity.id
-    ? state.pointer.preview : null;
-  const elbowPoint = line === "bent" ? preview || leaderElbowPoint(entity) : null;
-  const elbow = elbowPoint ? worldToScreen(elbowPoint) : null;
-  const path = leaderPlanPath(arrow, rect, line, size * 1.1, elbow);
-  return { arrow, center, elbow, path, rect, lines, font, size, spacing, frame };
+  const point = leaderElbowPoint(entity);
+  const path = leaderPlanPath(arrow, rect, line, size * 1.1, point ? worldToScreen(point) : null);
+  return { arrow, center, elbow: line === "bent" ? path[1] : null, path, rect, lines, font, size, spacing, frame };
 }
 
 function leaderSelectionGeometry(entity) {
@@ -4591,7 +4592,7 @@ function hitDimensionControl(screen) {
       const lineDistance = distanceToLeaderPath(screen, geometry.path);
       if (arrowDistance <= 22) hits.push({ type: "leader-arrow", entity, score: arrowDistance, order: i });
       if (elbowDistance <= 20) hits.push({ type: "leader-elbow", entity, score: elbowDistance, order: i });
-      if (boxDistance <= 18) hits.push({ type: "leader-box", entity, score: boxDistance + 4, order: i });
+      if (boxDistance <= 18) hits.push({ type: "leader-box", entity, score: boxDistance === 0 ? 0.5 : boxDistance + 4, order: i });
       if (lineDistance <= 14) hits.push({ type: "leader-box", entity, score: lineDistance + 18, order: i });
       continue;
     }
@@ -4613,7 +4614,7 @@ function hitDimensionControl(screen) {
     return null;
   }
   hits.sort((a, b) => a.score - b.score || b.order - a.order);
-  if (hits[0].type === "leader-elbow") {
+  if (hits[0].type.startsWith("leader-")) {
     state.dimensionPickCycle = null;
     return { type: hits[0].type, entity: hits[0].entity };
   }
@@ -4895,14 +4896,18 @@ function drawActiveSegment(c, viewport) {
     if (state.dimensionTool === "leader") {
       const values = leaderToolOptions();
       const text = state.leaderInput ? leaderUi.text.value.trim() : "";
-      const preview = leaderEntity("preview", start, end, text, { ...values, leaderElbow: state.drawing.elbow });
+      const label = leaderLabelPoint(state.drawing, end);
+      const preview = leaderEntity("preview", start, label, text, {
+        ...values, leaderLine: state.drawing.elbow ? values.leaderLine : "straight", leaderElbow: state.drawing.elbow,
+      });
       drawLeaderEntity(preview, c, { active: true, showText: Boolean(text) });
       drawHandle(p1.x, p1.y, c);
       if (state.drawing.elbow) {
         const elbow = worldToScreen(state.drawing.elbow);
         drawHandle(elbow.x, elbow.y, c);
       }
-      drawHandle(p2.x, p2.y, c);
+      const labelScreen = worldToScreen(label);
+      drawHandle(labelScreen.x, labelScreen.y, c);
       hideInlineEditors();
       return;
     }
@@ -5782,8 +5787,13 @@ function leaderPlacementHint() {
   return `Выноска · 1 из ${count} · кончик стрелки`;
 }
 
+function leaderLabelPoint(draft, point) {
+  return draft.elbow ? { x: point.x, y: draft.elbow.y } : point;
+}
+
 function commitLeaderPoint(point) {
   const draft = state.drawing;
+  if (draft?.elbow) point = leaderLabelPoint(draft, point);
   if (!draft) {
     const phase = leaderToolOptions().leaderLine === "bent" ? "leader-elbow" : "leader-end";
     state.drawing = { start: point, end: point, lockedEnd: false, phase };
@@ -9300,6 +9310,7 @@ canvas.addEventListener("pointerdown", (event) => {
     }
     if (dimensionControl.type === "leader-arrow" || dimensionControl.type === "leader-elbow") {
       const elbow = dimensionControl.type === "leader-elbow";
+      const grip = leaderScreenGeometry(hitEntity).elbow;
       state.pointer = {
         id: event.pointerId,
         screen,
@@ -9310,6 +9321,7 @@ canvas.addEventListener("pointerdown", (event) => {
         targetId: hitEntity.id,
         before: entityGeometry(hitEntity),
       };
+      state.pointer.elbow = grip ? screenToWorld(grip) : null;
       statusChip.textContent = elbow ? "Выноска: тяните точку изгиба" : "Выноска: тяните только стрелку";
       draw();
       return;
@@ -9456,20 +9468,19 @@ canvas.addEventListener("pointermove", (event) => {
       const currentWorld = screenToWorld(screen);
       const dx = currentWorld.x - state.pointer.world.x;
       const dy = currentWorld.y - state.pointer.world.y;
+      const { before, elbow } = state.pointer;
       if (state.pointer.mode === "leader-elbow") {
-        const original = state.pointer.before.leaderElbow;
-        const point = { x: original.x + dx, y: original.y + dy };
-        state.pointer.preview = validLeaderElbow(entity, point) ? point : null;
-        statusChip.textContent = state.pointer.preview ? "Выноска: положение изгиба" : "Укажите другую точку изгиба";
+        const y2 = before.y2 + dy;
+        const leaderElbow = { x: elbow.x + dx, y: y2 };
+        const candidate = { ...entity, x2: before.x2 + dx, y2, leaderElbow };
+        state.pointer.preview = isValidLine(candidate) && validLeaderElbow(candidate, leaderElbow) ? candidate : null;
+        statusChip.textContent = "Выноска: перемещение полки и текста";
       } else if (state.pointer.mode === "leader-arrow") {
-        const x1 = state.pointer.before.x1 + dx;
-        const y1 = state.pointer.before.y1 + dy;
-        const geometry = { ...entity, x1, y1 };
-        if (isValidLine(geometry) && (!geometry.leaderElbow || validLeaderElbow(geometry, geometry.leaderElbow))) {
-          entity.x1 = x1;
-          entity.y1 = y1;
-          markProjectDirty("leader-move");
-        }
+        const x1 = before.x1 + dx;
+        const y1 = before.y1 + dy;
+        const leaderElbow = before.leaderElbow ?? (elbow ? { x: elbow.x, y: before.y2 } : undefined);
+        const candidate = { ...entity, x1, y1, leaderElbow };
+        state.pointer.preview = isValidLine(candidate) && (!leaderElbow || validLeaderElbow(candidate, leaderElbow)) ? candidate : null;
         statusChip.textContent = "Выноска: положение стрелки";
       } else {
         moveEntityBy(entity, dx, dy);
@@ -9598,18 +9609,11 @@ function finishCanvasPointer(event, canceled = false) {
     }
   } else if (state.pointer?.mode === "leader-move") {
     finishPointerMoveUndo();
-  } else if (state.pointer?.mode === "leader-elbow") {
+  } else if (state.pointer?.mode === "leader-elbow" || state.pointer?.mode === "leader-arrow") {
     const entity = state.entities.find(item => item.id === state.pointer.targetId);
     if (state.pointer.moved && state.pointer.preview && entity?.dimensionKind === "leader") {
-      entity.leaderElbow = state.pointer.preview;
+      applyEntityGeometry(entity, entityGeometry(state.pointer.preview));
       finishPointerMoveUndo();
-    }
-  } else if (state.pointer?.mode === "leader-arrow") {
-    if (!canceled && state.pointer.moved) {
-      finishPointerMoveUndo();
-    } else {
-      statusChip.textContent = "Выноска: тяните синюю точку, чтобы переместить стрелку";
-      draw();
     }
   } else if (state.pointer && !state.pointer.moved && !state.leaderInput) {
     if (state.pointer.mode === "line-endpoint") {
@@ -10150,7 +10154,7 @@ function entityGeometry(entity) {
     const { line: leaderLine, frame: leaderFrame } = leaderAppearance(entity);
     const elbow = leaderElbowPoint(entity);
     return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, text: entity.text || "Текст",
-      ...(elbow ? { leaderElbow: { ...elbow } } : {}), textHeight: leaderTextHeight(entity), leaderLine, leaderFrame };
+      leaderElbow: elbow ? { ...elbow } : null, textHeight: leaderTextHeight(entity), leaderLine, leaderFrame };
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (entity.layer === "dimensions") {
@@ -10174,6 +10178,7 @@ function entityGeometry(entity) {
 function applyEntityGeometry(entity, geometry) {
   if (!entity || !geometry) return;
   Object.assign(entity, geometry);
+  if (entity.dimensionKind === "leader" && entity.leaderElbow === null) delete entity.leaderElbow;
   updateLinkedDimensions();
   markProjectDirty("geometry");
 }
