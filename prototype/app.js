@@ -858,8 +858,7 @@ const persistence = {
   dbPromise: null,
   localWriteChain: Promise.resolve(),
   lastHash: "",
-  pendingSaveId: "",
-  pendingSnapshot: "",
+  pendingSave: null,
   needsRemoteSync: false,
   projects: [],
 };
@@ -1233,8 +1232,7 @@ function resetProjectSession() {
   persistence.ready = false;
   persistence.dirty = false;
   persistence.needsRemoteSync = false;
-  persistence.pendingSaveId = "";
-  persistence.pendingSnapshot = "";
+  persistence.pendingSave = null;
   persistence.projects = [];
   persistence.showingTrash = false;
   persistence.trash = [];
@@ -1278,8 +1276,7 @@ async function forceAuthLogout(message = "Войдите") {
   while (persistence.ready && identity.projectId && isActiveProject(identity)) {
     const snapshot = projectSnapshotKey();
     if (!persistence.dirty && snapshot === persistence.lastHash) break;
-    const saveId = clientSaveIdForSnapshot(snapshot);
-    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot), "session-ended", identity);
+    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true }, snapshot), "session-ended", identity);
     if (!isActiveProject(identity)) return saved;
     if (!saved) {
       updateSaveIndicator("error", "Не удалось записать чертёж");
@@ -1783,8 +1780,7 @@ function setActiveProject(project, projectId = project?.projectId || project?.id
   persistence.dirty = false;
   persistence.needsRemoteSync = false;
   persistence.lastHash = "";
-  persistence.pendingSaveId = "";
-  persistence.pendingSnapshot = "";
+  persistence.pendingSave = null;
   updateProjectTitle();
 }
 
@@ -1852,11 +1848,17 @@ async function openProject(projectId) {
   try { localStorage.setItem("zamer.lastProjectId", projectId); } catch { /* optional history */ }
 
   if (choice.source === "server") {
-    saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open", active);
+    if (!localProject || projectRevision(localProject) !== persistence.revision ||
+        projectSavedTime(localProject) !== projectSavedTime(choice.project)) {
+      saveProjectToLocalStore({ ...choice.project, syncPending: false }, "server-open", active);
+    }
     updateSaveIndicator("saved", nativeApkMode ? "На телефоне" : "С сервера", { autoDim: 2400 });
   } else if (shouldPush) {
-    persistence.pendingSnapshot = persistence.lastHash;
-    persistence.pendingSaveId = choice.project.clientSaveId || createClientSaveId();
+    persistence.pendingSave = {
+      snapshot: persistence.lastHash,
+      id: choice.project.clientSaveId || createClientSaveId(),
+      view: { ...(choice.project.view || state.view) },
+    };
     persistence.dirty = true;
     updateSaveIndicator("offline", serverProject ? "Локальная новее" : "На телефоне", { autoDim: 2600 });
     persistence.timer = window.setTimeout(saveProjectNow, 120);
@@ -2040,7 +2042,7 @@ async function initProjectHome() {
   }
 }
 
-function serializableProjectState() {
+function serializableProjectContent() {
   return {
     version: 2,
     clientId: persistence.clientId,
@@ -2048,11 +2050,6 @@ function serializableProjectState() {
     name: persistence.projectName || "Без названия",
     createdAt: persistence.projectCreatedAt || new Date().toISOString(),
     theme: state.theme,
-    view: {
-      scale: state.view.scale,
-      panX: state.view.panX,
-      panY: state.view.panY,
-    },
     snaps: [...state.snaps],
     gridStep: state.gridStep,
     polarStep: state.polarStep,
@@ -2073,29 +2070,27 @@ function createClientSaveId() {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 72);
 }
 
-function clientSaveIdForSnapshot(snapshot) {
-  if (!persistence.pendingSaveId || persistence.pendingSnapshot !== snapshot) {
-    persistence.pendingSaveId = createClientSaveId();
-    persistence.pendingSnapshot = snapshot;
+function serializeProject({ syncPending = false } = {}, snapshot = projectSnapshotKey()) {
+  if (syncPending && persistence.pendingSave?.snapshot !== snapshot) {
+    // Reuse the same view on retries, even while the editor view continues moving.
+    persistence.pendingSave = { snapshot, id: createClientSaveId(), view: { ...state.view } };
   }
-  return persistence.pendingSaveId;
-}
-
-function serializeProject(options = {}, snapshot = projectSnapshotKey()) {
+  const pending = syncPending ? persistence.pendingSave : null;
   const savedAt = new Date().toISOString();
   return {
     ...JSON.parse(snapshot),
+    view: pending?.view ?? { ...state.view },
     revision: persistence.revision,
     baseRevision: persistence.revision,
-    clientSaveId: options.clientSaveId || "",
-    syncPending: Boolean(options.syncPending),
+    clientSaveId: pending?.id ?? "",
+    syncPending,
     updatedAt: savedAt,
     savedAt,
   };
 }
 
 function projectSnapshotKey() {
-  return JSON.stringify(serializableProjectState());
+  return JSON.stringify(serializableProjectContent());
 }
 
 function isValidProjectEntity(entity) {
@@ -2126,7 +2121,6 @@ function restoreProject(project) {
   if (project.name) persistence.projectName = project.name;
   if (project.createdAt) persistence.projectCreatedAt = project.createdAt;
   persistence.revision = projectRevision(project);
-  if (project.syncPending && project.clientSaveId) persistence.pendingSaveId = project.clientSaveId;
   const restoredEntities = project.entities.map(cloneProjectEntity).filter(Boolean);
   persistence.restoring = true;
   try {
@@ -2203,14 +2197,11 @@ function markProjectDirty(reason = "change") {
   persistence.dirty = true;
   persistence.lastReason = reason;
   updateSaveIndicator("saving", "Сохраняю...");
-  const saveId = clientSaveIdForSnapshot(snapshot);
   const identity = projectIdentity();
   window.clearTimeout(persistence.localTimer);
   persistence.localTimer = window.setTimeout(() => {
     if (!persistence.ready || !isActiveProject(identity)) return;
-    const currentSnapshot = projectSnapshotKey();
-    const currentSaveId = currentSnapshot === snapshot ? saveId : clientSaveIdForSnapshot(currentSnapshot);
-    saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: currentSaveId }, currentSnapshot), `checkpoint-${reason}`, identity).catch(() => {});
+    saveProjectToLocalStore(serializeProject({ syncPending: true }), `checkpoint-${reason}`, identity).catch(() => {});
   }, persistence.localDebounceMs);
   window.clearTimeout(persistence.timer);
   persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
@@ -2226,8 +2217,7 @@ async function recoverMissingRemoteProject(project, snapshot, identity) {
   const payload = await response.json();
   if (!isActiveProject(identity)) return true;
   persistence.revision = projectRevision(payload.project);
-  persistence.pendingSaveId = "";
-  persistence.pendingSnapshot = "";
+  if (persistence.pendingSave?.id === project.clientSaveId) persistence.pendingSave = null;
   const confirmed = { ...payload.project, syncPending: false };
   await saveProjectToLocalStore(confirmed, "server-recreated", identity);
   if (!isActiveProject(identity)) return true;
@@ -2251,8 +2241,7 @@ async function switchToRecoveryProject(payload, snapshot, identity) {
   if (changedDuringSave) {
     persistence.dirty = true;
     persistence.needsRemoteSync = true;
-    const saveId = clientSaveIdForSnapshot(currentSnapshot);
-    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: saveId }, currentSnapshot), "conflict-latest", recoveryIdentity);
+    const saved = await saveProjectToLocalStore(serializeProject({ syncPending: true }, currentSnapshot), "conflict-latest", recoveryIdentity);
     if (!isActiveProject(recoveryIdentity)) return saved;
     persistence.timer = window.setTimeout(saveProjectNow, persistence.debounceMs);
     if (!saved) {
@@ -2277,8 +2266,7 @@ function saveProjectNow() {
   const identity = projectIdentity();
   const snapshot = projectSnapshotKey();
   if (!persistence.dirty && !persistence.needsRemoteSync && snapshot === persistence.lastHash) return Promise.resolve(true);
-  const saveId = clientSaveIdForSnapshot(snapshot);
-  const project = serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot);
+  const project = serializeProject({ syncPending: true }, snapshot);
   window.clearTimeout(persistence.timer);
   window.clearTimeout(persistence.localTimer);
   updateSaveIndicator("saving", "Сохраняю...");
@@ -2332,8 +2320,7 @@ async function saveProjectForSession(identity, snapshot, project) {
     const payload = await response.json().catch(() => ({}));
     if (!isActiveProject(identity)) return true;
     persistence.revision = Number.isFinite(Number(payload.revision)) ? Number(payload.revision) : persistence.revision + 1;
-    persistence.pendingSaveId = "";
-    persistence.pendingSnapshot = "";
+    if (persistence.pendingSave?.id === project.clientSaveId) persistence.pendingSave = null;
     persistence.needsRemoteSync = false;
     persistence.lastHash = snapshot;
     if (projectSnapshotKey() === snapshot) {
@@ -2356,8 +2343,7 @@ async function saveProjectForSession(identity, snapshot, project) {
     persistence.needsRemoteSync = true;
     const latestSnapshot = projectSnapshotKey();
     if (latestSnapshot !== snapshot || !durable) {
-      const latestSaveId = clientSaveIdForSnapshot(latestSnapshot);
-      durable = await saveProjectToLocalStore(serializeProject({ syncPending: true, clientSaveId: latestSaveId }, latestSnapshot), "network-pending", identity);
+      durable = await saveProjectToLocalStore(serializeProject({ syncPending: true }, latestSnapshot), "network-pending", identity);
     }
     if (!isActiveProject(identity)) return durable;
     if (durable) persistence.lastHash = latestSnapshot;
@@ -2371,10 +2357,9 @@ async function saveProjectForSession(identity, snapshot, project) {
 
 function flushProjectBeforeUnload() {
   if (!persistence.ready || persistence.restoring || !persistence.projectId) return;
-  if (!persistence.dirty && projectSnapshotKey() === persistence.lastHash) return;
   const snapshot = projectSnapshotKey();
-  const saveId = clientSaveIdForSnapshot(snapshot);
-  const project = serializeProject({ syncPending: true, clientSaveId: saveId }, snapshot);
+  if (!persistence.dirty && snapshot === persistence.lastHash) return;
+  const project = serializeProject({ syncPending: true }, snapshot);
   const identity = projectIdentity();
   saveProjectToLocalStore(project, "page-close", identity).catch(() => {});
   if (nativeApkMode) return;
@@ -2477,7 +2462,6 @@ function centerViewOnWorldPoint(point) {
   const center = centerScreen();
   state.view.panX = center.x - point.x * state.view.scale;
   state.view.panY = center.y - point.y * state.view.scale;
-  markProjectDirty("view-center");
 }
 
 function cursorWorld() {
@@ -6311,14 +6295,12 @@ function zoomAtScreen(screen, nextScale) {
   const after = worldToScreen(before);
   state.view.panX += screen.x - after.x;
   state.view.panY += screen.y - after.y;
-  markProjectDirty("view");
 }
 
 function panViewport(dx, dy, fine = false) {
   const step = fine ? 4 : 18;
   state.view.panX -= dx * step;
   state.view.panY -= dy * step;
-  markProjectDirty("view");
   draw();
 }
 
@@ -6517,7 +6499,6 @@ function fitViewport() {
   viewportActionStatus.textContent = fitScale < scale
     ? "Достигнут минимальный масштаб вида"
     : "Видимые объекты вписаны в холст";
-  markProjectDirty("view");
   draw();
 }
 
@@ -6569,7 +6550,6 @@ function updatePinchGesture() {
   state.view.scale = nextScale;
   state.view.panX = midpoint.x - state.pinch.worldAtMidpoint.x * nextScale;
   state.view.panY = midpoint.y - state.pinch.worldAtMidpoint.y * nextScale;
-  markProjectDirty("pinch");
   draw();
 }
 
@@ -9216,7 +9196,6 @@ canvas.addEventListener("pointermove", (event) => {
     state.dimensionSnapHint = null;
     state.view.panX += screen.x - state.pointer.screen.x;
     state.view.panY += screen.y - state.pointer.screen.y;
-    markProjectDirty("pan");
   }
   state.pointer.screen = screen;
   draw();
@@ -10564,7 +10543,6 @@ function bindMetricField(input) {
     }
     state.view.panX = press.panX + point.x - press.start.x;
     state.view.panY = press.panY + point.y - press.start.y;
-    markProjectDirty("pan");
     draw();
   });
   field.addEventListener("pointerup", (event) => {
