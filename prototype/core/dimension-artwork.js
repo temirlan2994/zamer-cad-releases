@@ -61,3 +61,25 @@ export function angularDimensionArtwork(geometry, scaleFactor, arcRadius) {
     textHeight: annotationWorldSize(12, scaleFactor),
   };
 }
+
+export function radialDimensionArtwork(entity, scaleFactor) {
+  const { x1, y1, x2, y2, circleRadius: radius, dimensionKind } = entity;
+  if (![x1, y1, x2, y2, radius].every(Number.isFinite) || radius <= 0) return null;
+  const diameter = dimensionKind === "diameter";
+  const center = { x: x1, y: y1 };
+  const label = { x: x2, y: y2 };
+  const distance = Math.hypot(x2 - x1, y2 - y1);
+  const ux = distance ? (x2 - x1) / distance : 1;
+  const uy = distance ? (y2 - y1) / distance : 0;
+  const rim = { x: x1 + ux * radius, y: y1 + uy * radius };
+  const opposite = { x: x1 - ux * radius, y: y1 - uy * radius };
+  const inside = distance <= radius;
+  return {
+    label, rim, opposite, inside, diameter, ux, uy,
+    start: diameter ? opposite : center,
+    end: inside ? rim : label,
+    measurement: diameter ? radius * 2 : radius,
+    textHeight: annotationWorldSize(13, scaleFactor),
+    arrowSize: Math.min(radius * 0.27, annotationWorldSize(8, scaleFactor)),
+  };
+}

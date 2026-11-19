@@ -2,7 +2,7 @@ import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, lead
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
-import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
+import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { planAnnotationAnchors, planAnnotationGeometry, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
 import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
@@ -72,6 +72,13 @@ function dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings
     const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.25;
     return boundsOf([vertex, art.firstLegEnd, art.secondLegEnd, ...arcExtrema(vertex, art.radius, startAngle, sweep),
       ...centeredTextCorners(art.label, width, art.textHeight * 1.25)]);
+  }
+  if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
+    const art = radialDimensionArtwork(entity, scaleFactor);
+    if (!art) return null;
+    const text = `${art.diameter ? "⌀" : "R"} ${formatProjectLength(art.measurement, measurementSettings)}`;
+    const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.5;
+    return boundsOf([art.start, art.end, ...centeredTextCorners(art.label, width, art.textHeight * 1.28)]);
   }
   const geometry = dimensionGeometry(entity);
   const art = linearDimensionArtwork(geometry, scaleFactor);

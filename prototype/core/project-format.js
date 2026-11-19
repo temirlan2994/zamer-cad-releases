@@ -19,6 +19,10 @@ function hasOptionalNumbers(entity, fields) {
 }
 
 function validDimension(entity) {
+  if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
+    return hasXY(entity, "x1", "y1") && hasXY(entity, "x2", "y2") &&
+      Number.isFinite(entity.circleRadius) && entity.circleRadius > 0 && entity.circleRadius <= MAX_LINE_COORDINATE;
+  }
   if (entity.dimensionKind === "angular") {
     const { vertex, arm1, arm2, arcRadius } = entity;
     return [vertex, arm1, arm2].every(isLinePoint) &&

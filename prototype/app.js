@@ -3,7 +3,7 @@ import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transfo
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./core/dimensions.js";
-import { angularDimensionArtwork, linearDimensionArtwork } from "./core/dimension-artwork.js";
+import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./core/dimension-artwork.js";
 import { constrainLinePoint, linePointWithConstraint, linePolarPoint, parseLineDecimal } from "./core/line-input.js";
 import { isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine } from "./core/line-edits.js";
 import { editableFigure, extendFigure, figureGripPoints, figureReferenceAt, figureReferencePoint, projectFigurePoint, reshapeFigure, splitFigure, trimFigure, validFigurePiece } from "./core/figure-edits.js";
@@ -453,6 +453,7 @@ const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
+const radialModes = document.getElementById("radialModes");
 const angleModes = document.getElementById("angleModes");
 const copyToolMenu = document.getElementById("copyToolMenu");
 const copyControls = document.getElementById("copyControls");
@@ -611,6 +612,7 @@ const dimensionToolButtonVisuals = {
   aligned: { icon: "↔", label: "По отрезку" },
   linear: { icon: "⟷", label: "По оси" },
   angular: { icon: "∠", label: "Угол" },
+  radial: { icon: "⌀", label: "Круг" },
   chain: { icon: "↔↔", label: "Цепочка" },
 };
 const annotationToolButtonVisuals = {
@@ -648,6 +650,7 @@ function createDimensionToolMenu() {
     <button type="button" data-dimension-tool="aligned" aria-label="Размер по отрезку"><span aria-hidden="true">&#8596;</span><small>По отрезку</small></button>
     <button type="button" data-dimension-tool="linear" aria-label="Размер по горизонтали или вертикали"><span aria-hidden="true">&#10231;</span><small>По оси</small></button>
     <button type="button" data-dimension-tool="angular" aria-label="Угол между сторонами"><span aria-hidden="true">&#8736;</span><small>Угол</small></button>
+    <button type="button" data-dimension-tool="radial" aria-label="Размер круга"><span aria-hidden="true">⌀</span><small>Круг</small></button>
     <button type="button" data-dimension-tool="chain" aria-label="Множественный размер"><span aria-hidden="true">↔↔</span><small>Цепочка</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
@@ -708,6 +711,8 @@ const state = {
   planZone: null,
   drawTool: "line",
   dimensionTool: "aligned",
+  radialMode: "diameter",
+  radialSourceId: null,
   angleMode: "draw",
   angleSide: null,
   annotationScale: 1,
@@ -2707,6 +2712,7 @@ function cursorSnapResolved() {
     return { point: snap ? { x: snap.x, y: snap.y } : raw, snap };
   }
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
+  if (state.tool === "dimension" && state.dimensionTool === "radial") return { point: raw, snap: null };
   if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
   if (lineEditPlacesPoint()) return resolveLineEditPoint(state.lineEdit, raw);
   if (state.planZone?.mode === "existing") return { point: raw, snap: null };
@@ -2884,6 +2890,11 @@ function renderFrame() {
   syncLineControls();
   angleModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "angular" || !dimensionToolMenu.hidden;
   if (!angleModes.hidden && state.angleMode === "select") drawAngleFromSegmentsPreview(c);
+  radialModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "radial" || !dimensionToolMenu.hidden;
+  if (!radialModes.hidden) {
+    const preview = radialDimensionAtCursor();
+    if (preview) drawRadialDimension(preview, c, true);
+  }
   syncDimensionLinks();
   drawLineEditMarks(c);
   drawSelectionDrag(c);
@@ -3176,7 +3187,7 @@ function linearEditableEntity(entity) {
 }
 
 function isDirectMoveAnnotation(entity) {
-  return entity?.type === "text" || entity?.dimensionKind === "leader";
+  return entity?.type === "text" || entity?.dimensionKind === "leader" || Boolean(entity && isRadialDimension(entity));
 }
 
 function canApplySelectionAction(action) {
@@ -3272,6 +3283,10 @@ function angularSelectionGeometry(entity) {
 function selectionEntityPoints(entity) {
   if (isPlanAnnotationZone(entity)) return entity.contours?.flat() ?? entity.points;
   if (!entity) return [];
+  if (isRadialDimension(entity)) {
+    const art = radialDimensionArtwork(entity, state.annotationScale);
+    return art ? [art.start, art.end, art.label] : [];
+  }
   if (entity.dimensionKind === "angular") return angularSelectionGeometry(entity).points;
   if (entity.dimensionKind === "leader") return leaderSelectionGeometry(entity).points;
   if (entity.type === "polyline") return tessellatePolyline(entity) || entity.points;
@@ -3298,6 +3313,10 @@ function selectionEntityPoints(entity) {
 function selectionEntitySegments(entity) {
   if (isPlanAnnotationZone(entity)) {
     return (entity.contours ?? [entity.points]).flatMap((ring) => ring.map((point, index) => [point, ring[(index + 1) % ring.length]]));
+  }
+  if (entity && isRadialDimension(entity)) {
+    const art = radialDimensionArtwork(entity, state.annotationScale);
+    return art ? [[art.start, art.end]] : [];
   }
   if (entity?.dimensionKind === "angular") return angularSelectionGeometry(entity).segments;
   if (entity?.dimensionKind === "leader") return leaderSelectionGeometry(entity).segments;
@@ -3506,7 +3525,7 @@ function visibleEntities(rect) {
       return entity.x >= min.x - margin && entity.x <= max.x + margin && entity.y >= min.y - margin && entity.y <= max.y + margin;
     }
     const bounds = entity.dimensionKind === "angular" ? angularDimensionBounds(entity)
-      : entity.dimensionKind === "leader" ? viewportEntityBounds(entity)
+      : entity.dimensionKind === "leader" || isRadialDimension(entity) ? viewportEntityBounds(entity)
       : isPlanAnnotationZone(entity) ? planAnnotationGeometry(entity)?.bounds
         : entity.type === "polyline" ? polylineBounds(entity) : entityBounds(entity);
     if (!bounds) return false;
@@ -3991,7 +4010,88 @@ function drawEndpointHandle(point, active, c) {
   ctx.restore();
 }
 
+function isRadialDimension(entity) {
+  return entity.dimensionKind === "radius" || entity.dimensionKind === "diameter";
+}
+
+function radialDimensionAtCursor() {
+  const circle = state.entities.find(entity =>
+    entity.id === state.radialSourceId && entity.type === "circle" && isLayerVisible(entity.layer));
+  if (!circle) return null;
+  const label = rawCursorWorld();
+  return { id: "preview", type: "line", layer: "dimensions", dimensionKind: state.radialMode,
+    x1: circle.cx, y1: circle.cy, x2: label.x, y2: label.y, circleRadius: Math.abs(circle.radius) };
+}
+
+function commitRadialDimension(screen) {
+  if (state.radialSourceId) {
+    const entity = radialDimensionAtCursor();
+    if (entity && isLinePoint({ x: entity.x2, y: entity.y2 })) {
+      pushEntity({ ...entity, id: newLineId("dimension") });
+      state.radialSourceId = null;
+      statusChip.textContent = "Размер круга поставлен · выберите окружность";
+      draw();
+      return;
+    }
+    if (entity) {
+      statusChip.textContent = "Точка размера вне области чертежа";
+      return;
+    }
+    state.radialSourceId = null;
+  }
+  for (const target of [screen, centerScreen()]) {
+    const world = screenToWorld(target);
+    let nearest = screenUiPx(20) / state.view.scale;
+    for (const circle of state.entities) {
+      if (circle.type !== "circle" || !isLayerVisible(circle.layer)) continue;
+      const distance = Math.abs(Math.hypot(world.x - circle.cx, world.y - circle.cy) - Math.abs(circle.radius));
+      if (distance < nearest) {
+        nearest = distance;
+        state.radialSourceId = circle.id;
+      }
+    }
+    if (state.radialSourceId) break;
+  }
+  statusChip.textContent = state.radialSourceId
+    ? "Наведите крестик внутрь или наружу и тапните"
+    : "Укажите край окружности";
+  draw();
+}
+
+function drawRadialDimension(entity, c, preview = false) {
+  const art = radialDimensionArtwork(entity, state.annotationScale);
+  if (!art) return;
+  const selected = canShowEntitySelection() && state.selectedId === entity.id;
+  const color = preview || selected ? c.accent : c.dimension;
+  const start = worldToScreen(art.start);
+  const end = worldToScreen(art.end);
+  const label = worldToScreen(art.label);
+  const arrowSize = art.arrowSize * state.view.scale;
+  const textSize = art.textHeight * state.view.scale;
+  const text = `${art.diameter ? "⌀" : "R"} ${projectLength(art.measurement)}`;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  linePath(start.x, start.y, end.x, end.y);
+  const sign = art.inside ? -1 : 1;
+  drawDimensionArrow(worldToScreen(art.rim), art.ux * sign, art.uy * sign, arrowSize, { dimension: color });
+  if (art.diameter) drawDimensionArrow(worldToScreen(art.opposite), art.ux, art.uy, arrowSize, { dimension: color });
+  ctx.font = `700 ${textSize}px Inter, Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = c.bg;
+  const width = ctx.measureText(text).width + 6;
+  ctx.fillRect(label.x - width / 2, label.y - textSize * 0.64, width, textSize * 1.28);
+  ctx.fillStyle = color;
+  ctx.fillText(text, label.x, label.y);
+  ctx.restore();
+}
+
 function drawDimensionEntity(entity, c, options = {}) {
+  if (isRadialDimension(entity)) {
+    drawRadialDimension(entity, c);
+    return;
+  }
   if (entity.dimensionKind === "angular") {
     drawAngularDimensionEntity(entity, c, options);
     return;
@@ -4728,7 +4828,7 @@ function angularDimensionBounds(entity) {
 
 function isLinearDimension(entity) {
   return entity.type === "line" && entity.layer === "dimensions" &&
-    entity.dimensionKind !== "angular" && entity.dimensionKind !== "leader";
+    entity.dimensionKind !== "angular" && entity.dimensionKind !== "leader" && !isRadialDimension(entity);
 }
 
 function dimensionScreenGeometry(entity) {
@@ -6756,6 +6856,10 @@ function boundsFromViewportPoints(points) {
 }
 
 function viewportEntityBounds(entity) {
+  if (isRadialDimension(entity)) {
+    const art = radialDimensionArtwork(entity, state.annotationScale);
+    return art ? boundsFromViewportPoints([art.start, art.end, art.label]) : null;
+  }
   if (entity.dimensionKind === "angular") return angularDimensionBounds(entity);
   if (entity.dimensionKind === "leader") return boundsFromViewportPoints(leaderSelectionGeometry(entity).points);
   if (isPlanAnnotationZone(entity)) return planAnnotationGeometry(entity)?.bounds;
@@ -7537,6 +7641,7 @@ function setTool(tool) {
   state.directManipulationIds.clear();
   state.tool = tool;
   state.angleSide = null;
+  state.radialSourceId = null;
   copyToolMenu.hidden = true;
   state.copyPicking = null;
   state.selectedFigureGrip = null;
@@ -7838,6 +7943,7 @@ function dimensionToolStatusText() {
     linear: "Размер по оси. 1 из 3: укажите первую точку",
     angular: state.angleMode === "select" ? "Угол · выберите первую сторону" : "Угол · укажите вершину",
     chain: "Множественный размер · укажите первую точку",
+    radial: "Размер круга · выберите окружность",
   };
   return text[state.dimensionTool] || text.aligned;
 }
@@ -9082,6 +9188,10 @@ function commitCursorPoint(screen = centerScreen()) {
       statusChip.textContent = "Координаты точки вне диапазона";
       return;
     }
+    if (state.dimensionTool === "radial") {
+      commitRadialDimension(screen);
+      return;
+    }
     if (state.dimensionTool === "leader") {
       commitLeaderPoint(world);
       return;
@@ -10023,6 +10133,11 @@ function translatedEntityGeometry(entity, dx, dy, movingIds) {
     const points = translatePolyline(entity.points, dx, dy);
     return validFigurePiece({ ...entity, points }) ? { points } : null;
   }
+  if (isRadialDimension(entity)) {
+    const start = { x: entity.x1 + dx, y: entity.y1 + dy };
+    const end = { x: entity.x2 + dx, y: entity.y2 + dy };
+    return [start, end].every(isLinePoint) ? { x1: start.x, y1: start.y, x2: end.x, y2: end.y } : null;
+  }
   if (isLinearDimension(entity)) return translatedDimensionGeometry(entity, dx, dy, movingIds);
   if (entity.dimensionKind === "angular") {
     const geometry = Object.fromEntries(["vertex", "arm1", "arm2"].map(key => [
@@ -10400,6 +10515,7 @@ function entityGeometry(entity) {
       leaderElbow: elbow ? { ...elbow } : null, textHeight: leaderTextHeight(entity), leaderLine, leaderFrame };
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+  if (isRadialDimension(entity)) return geometry;
   if (entity.layer === "dimensions") {
     geometry.offset = entity.offset ?? 360;
     if (Number.isFinite(entity.dimX1)) {
@@ -10593,6 +10709,12 @@ function distanceToEntityScreen(screen, entity, zoneAnchor) {
     const clampedY = Math.max(-height, Math.min(bottom, localY));
     return Math.hypot(localX - clampedX, localY - clampedY);
   }
+  if (isRadialDimension(entity)) {
+    const art = radialDimensionArtwork(entity, state.annotationScale);
+    if (!art) return Infinity;
+    return Math.min(pointDistance(screen, worldToScreen(art.label)),
+      pointToSegmentDistance(screen, worldToScreen(art.start), worldToScreen(art.end)));
+  }
   if (entity.layer === "dimensions") {
     if (entity.dimensionKind === "angular") {
       const geometry = angularDimensionScreenGeometry(entity);
@@ -10702,6 +10824,15 @@ drawToolMenu?.addEventListener("click", (event) => {
   figureToolButton?.focus({ preventScroll: true });
 });
 
+radialModes.addEventListener("click", event => {
+  const mode = event.target.closest("[data-radial-mode]")?.dataset.radialMode;
+  if (!mode) return;
+  state.radialMode = mode;
+  for (const button of radialModes.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.radialMode === mode));
+  }
+  draw();
+});
 angleModes.addEventListener("click", event => {
   const mode = event.target.closest("[data-angle-mode]")?.dataset.angleMode;
   if (!mode || mode === state.angleMode) return;
@@ -11095,7 +11226,7 @@ document.addEventListener("keydown", (event) => {
     activatePlainSelect();
     return;
   }
-  if (state.tool === "dimension" && state.dimensionTool === "chain" && event.key === "Escape") {
+  if (state.tool === "dimension" && ["chain", "radial"].includes(state.dimensionTool) && event.key === "Escape") {
     event.preventDefault();
     activatePlainSelect();
     return;

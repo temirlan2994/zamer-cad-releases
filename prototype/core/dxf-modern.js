@@ -1,6 +1,6 @@
 import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
-import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
+import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
 import { pointInPolygon } from "./geometry.js";
 import {
@@ -233,6 +233,24 @@ function angularDimension(entity, layer, scaleFactor, measurementSettings) {
   };
 }
 
+function radialDimension(entity, layer, scaleFactor, measurementSettings) {
+  const art = radialDimensionArtwork(entity, scaleFactor);
+  if (!art) return null;
+  const graphics = [];
+  appendLine(graphics, art.start, art.end, layer);
+  const sign = art.inside ? -1 : 1;
+  appendArrow(graphics, art.rim, art.ux * sign, art.uy * sign, art.arrowSize, layer);
+  if (art.diameter) appendArrow(graphics, art.opposite, art.ux, art.uy, art.arrowSize, layer);
+  const text = `${art.diameter ? "⌀" : "R"} ${formatProjectLength(art.measurement, measurementSettings)}`;
+  appendCenteredText(graphics, art.label, text, art.textHeight, 0, layer);
+  return {
+    layer, label: art.label, graphics, textOverride: text, measurement: art.measurement,
+    type: (art.diameter ? 3 : 4) | 128, base: art.start,
+    fields: [100, art.diameter ? "AcDbDiametricDimension" : "AcDbRadialDimension",
+      ...pointFields(15, art.rim), 40, 0],
+  };
+}
+
 function appendEntityStart(out, kind, handle, owner, layer) {
   out.push(0, kind, 5, handle, 330, owner, 100, "AcDbEntity", 8, layer);
 }
@@ -318,6 +336,9 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
   for (const entity of entities) {
     if (entity?.type === "line" && entity.dimensionKind === "angular") {
       const dimension = angularDimension(entity, dimensionLayer, annotationScale, display);
+      if (dimension) dimensions.push(dimension);
+    } else if (entity?.type === "line" && (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter")) {
+      const dimension = radialDimension(entity, dimensionLayer, annotationScale, display);
       if (dimension) dimensions.push(dimension);
     } else if (entity?.type === "line" && entity.dimensionKind === "leader") {
       const records = [];

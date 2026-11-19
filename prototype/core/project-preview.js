@@ -1,6 +1,6 @@
 import { annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath } from "./annotation-text.js";
 import { blockSegments } from "./blocks.js";
-import { angularDimensionArtwork, linearDimensionArtwork } from "./dimension-artwork.js";
+import { angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { arcGeometry, normalizeAnglePositive, offsetWall } from "./geometry.js";
 import { isLinePoint, MAX_LINE_COORDINATE } from "./line-edits.js";
@@ -114,6 +114,10 @@ function dimensionTraces(entity, annotationScale) {
     const curves = [arcCurve(vertex, art.radius, startAngle, sweep, art.base)];
     return [trace([art.firstLegEnd, vertex, art.secondLegEnd], "annotation"),
       trace([art.firstArcEnd, art.secondArcEnd], "annotation", { curves }), shortLabel(art.label, art.textHeight * 1.5)];
+  }
+  if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
+    const art = radialDimensionArtwork(entity, annotationScale);
+    return art ? [trace([art.start, art.end], "annotation"), shortLabel(art.label, art.textHeight * 2)] : [];
   }
   const art = linearDimensionArtwork(dimensionGeometry(entity), annotationScale);
   return art ? [trace([art.start, art.extensionStart], "annotation"), trace([art.end, art.extensionEnd], "annotation"),

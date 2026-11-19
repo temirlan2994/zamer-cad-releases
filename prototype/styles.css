@@ -1018,7 +1018,8 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 #lineMirrorModes button,
-#angleModes button {
+#angleModes button,
+#radialModes button {
   font-size: 0.72rem;
   padding-inline: 6px;
   width: auto;
@@ -2484,4 +2485,4 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .plan-annotation-editor[data-keyboard="true"] .plan-annotation-content textarea { max-height: 72px; }
 .plan-annotation-editor .survey-feedback { flex: none; font-size: .78rem; margin: 0; }
 
-#angleModes[hidden] { display: none; }
+#angleModes[hidden], #radialModes[hidden] { display: none; }
