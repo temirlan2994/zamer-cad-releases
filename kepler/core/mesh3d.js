@@ -20,6 +20,7 @@ import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js
 import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
+import { COFFEE_TABLE_DUO } from './furniture-design.js';
 import { roomRects } from './room-shape.js';
 import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
@@ -697,6 +698,20 @@ function localRect(p, x0, y0, x1, y1) {
   return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => ({ x: p.x + x * c - y * s, y: p.y + x * s + y * c }));
 }
 
+// Эллипс в локальных осях предмета. В 3D он становится аккуратной
+// многогранной столешницей и остаётся лёгким для canvas/WebGL-совместимой сетки.
+function localEllipse(p, cx, cy, rx, ry, steps = 24) {
+  const r = ((p.rotation || 0) * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  return Array.from({ length: steps }, (_, i) => {
+    const a = (Math.PI * 2 * i) / steps;
+    const x = cx + Math.cos(a) * rx;
+    const y = cy + Math.sin(a) * ry;
+    return { x: p.x + x * c - y * s, y: p.y + x * s + y * c };
+  });
+}
+
 // Контур коробки мебели: повёрнутый прямоугольник или эллипс (круглый стол, ковёр).
 function furnitureOutline(p) {
   const round = /round/.test(p.kind || '');
@@ -719,6 +734,40 @@ export function furnitureVolumes(items, top = Infinity) {
   const add = (p, item, spec) => {
     const lo = Math.min(top - 1, Math.max(0, spec.z0 || 0));
     const hi = Math.min(top, lo + Math.max(1, spec.h));
+    if (spec.model === 'upholstered-bed') {
+      const d = spec.design;
+      const sx = p.w / d.w;
+      const sy = p.h / d.h;
+      const head = Math.max(120, (d.h - d.mattressH) * 0.6) * sy;
+      const mattressW = d.mattressW * sx;
+      const mattressH = d.mattressH * sy;
+      const mattressY = -p.h / 2 + head;
+      box(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, p.h / 2), lo, Math.min(top, lo + d.baseH), item, spec.color);
+      box(localRect(p, -mattressW / 2, mattressY, mattressW / 2, mattressY + mattressH),
+        Math.min(top, lo + d.mattressZ), Math.min(top, lo + d.mattressZ + d.mattressT), item, '#d7d0c6');
+      box(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, -p.h / 2 + head), lo, Math.min(top, lo + d.headboardH), item, '#9d8f80');
+      const pillowGap = Math.max(30, mattressW * 0.025);
+      const pillowW = d.mattressW > 1000 ? (mattressW - pillowGap * 3) / 2 : mattressW - pillowGap * 2;
+      const pillowY = mattressY + 80 * sy;
+      const pillowH = Math.min(420 * sy, mattressH * 0.22);
+      const pillowZ = Math.min(top, lo + d.mattressZ + d.mattressT);
+      const pillowTop = Math.min(top, pillowZ + 100);
+      if (d.mattressW > 1000) {
+        box(localRect(p, -mattressW / 2 + pillowGap, pillowY, -mattressW / 2 + pillowGap + pillowW, pillowY + pillowH), pillowZ, pillowTop, item, '#eee9e1');
+        box(localRect(p, mattressW / 2 - pillowGap - pillowW, pillowY, mattressW / 2 - pillowGap, pillowY + pillowH), pillowZ, pillowTop, item, '#eee9e1');
+      } else {
+        box(localRect(p, -pillowW / 2, pillowY, pillowW / 2, pillowY + pillowH), pillowZ, pillowTop, item, '#eee9e1');
+      }
+      return;
+    }
+    if (spec.model === 'coffee-duo') {
+      for (const part of Object.values(COFFEE_TABLE_DUO)) {
+        const poly = localEllipse(p, part.cx * p.w, part.cy * p.h, part.rx * p.w, part.ry * p.h);
+        const z1 = Math.min(top, lo + part.z);
+        box(poly, Math.max(lo, z1 - 70), z1, item, part === COFFEE_TABLE_DUO.large ? '#8f7358' : '#b7a38e');
+      }
+      return;
+    }
     const back = spec.back === 'part' ? Number(p.back) || 0 : Number(spec.back) || 0;
     if (!(spec.seat && back > 0 && back < p.h && !/round/.test(p.kind || ''))) {
       box(furnitureOutline(p), lo, hi, item, spec.color);

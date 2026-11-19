@@ -676,7 +676,13 @@ export function renderToolOptions(force = false) {
           <option value="${k}" ${t.wallType === k ? 'selected' : ''}>${{ partition: 'Перегородка', bearing: 'Несущая', exterior: 'Наружная' }[k]} (${wallClassThickness(set, k)})</option>`).join('')}
         </select></label>
       <label class="prop-field"><span>Толщина, мм</span>
-        <input id="toWallT" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(t.thickness)}"></label>`;
+        <input id="toWallT" type="number" inputmode="numeric" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(t.thickness)}"></label>
+      <label class="prop-field"><span>Ось</span>
+        <select id="toWallJustify">
+          <option value="center" ${t.justify === 'center' ? 'selected' : ''}>По центру</option>
+          <option value="left" ${t.justify === 'left' ? 'selected' : ''}>Левая грань</option>
+          <option value="right" ${t.justify === 'right' ? 'selected' : ''}>Правая грань</option>
+        </select></label>`;
   } else if (t?.kind === 'place-room') {
     html = `<strong class="to-title">Помещение</strong><span class="to-value">${escapeHtml(roomType(t.type)?.title || t.type)}</span>`;
   } else if (t?.kind === 'bound-room' || roomLib) {
@@ -714,10 +720,18 @@ export function renderToolOptions(force = false) {
       renderToolOptions(true);
       requestDraw();
     });
-    body.querySelector('#toWallT').addEventListener('change', (e) => {
+    const changeThickness = (e) => {
       const v = Math.round(Number(e.target.value));
       if (Number.isFinite(v) && v > 0) t.thickness = Math.min(WALL_T_MAX, Math.max(WALL_T_MIN, v));
+      requestDraw();
+    };
+    body.querySelector('#toWallT').addEventListener('input', changeThickness);
+    body.querySelector('#toWallT').addEventListener('change', (e) => {
+      changeThickness(e);
       e.target.value = String(Math.round(t.thickness));
+    });
+    body.querySelector('#toWallJustify').addEventListener('change', (e) => {
+      t.justify = e.target.value;
       requestDraw();
     });
   }

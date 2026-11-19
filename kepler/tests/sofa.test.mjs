@@ -29,7 +29,7 @@ const touching = (a, b) => {
 };
 
 test('диваны каталога — конструкторы, размер совпадает с каталогом', () => {
-  for (const [kind, w, h] of [['sofa', 2200, 950], ['sofa-2', 1600, 900], ['sofa-corner', 2600, 1600], ['sofa-u', 3000, 2400]]) {
+  for (const [kind, w, h] of [['sofa', 2800, 1050], ['sofa-2', 2200, 1000], ['sofa-corner', 3400, 2400], ['sofa-u', 4000, 3000]]) {
     const it = withDefaultComp(createItem(kind, 0, 0, 10, 10));
     assert.equal(it.comp.type, 'sofa', kind);
     assert.deepEqual([it.w, it.h], [w, h], kind);
@@ -43,7 +43,7 @@ test('прямой диван: подлокотник + 2 сиденья + по�
   const it = sofaWith(['arm', 'seat', 'seat', 'arm']);
   const p = compositeParts(it);
   assert.deepEqual(p.map((q) => q.kind), ['sofa:arm', 'sofa:seat', 'sofa:seat', 'sofa:arm']);
-  assert.deepEqual(p.map((q) => q.x), [-1000, -450, 450, 1000]);
+  assert.deepEqual(p.map((q) => q.x), [-1110, -500, 500, 1110]);
   assert.ok(p.every((q) => q.y === 0 && q.h === 950 && q.rotation === 0));
   assert.deepEqual(p.map((q) => q.back), [0, SOFA_BACK, SOFA_BACK, 0], 'подлокотник не заходит на спинку');
   for (let i = 1; i < p.length; i += 1) assert.ok(touching(p[i - 1], p[i]), `стык ${i}`);
@@ -71,7 +71,7 @@ test('П-образный из 7 модулей: два угла, части н�
   const parts = compositeParts(it);
   assert.equal(parts.length, 7);
   assert.equal(partsOverlap(parts), false);
-  assert.deepEqual([it.w, it.h], [950 + 1200 + 950, 950 + 900 + 200]);
+  assert.deepEqual([it.w, it.h], [950 + 1200 + 950, 950 + 1000 + 220]);
   const ends = sofaEnds(it);
   assert.deepEqual(ends.map((e) => [e.end, e.nx, e.ny]), [['start', 0, 1], ['end', 0, 1]]);
   near(ends[0].y, it.h / 2, 'начало — на нижней кромке');
@@ -85,13 +85,13 @@ test('кольцо из углов и встречные шезлонги не �
   assert.equal(editSofa(ring, { op: 'add', end: 'end', type: 'seat' }), null);
   const u = sofaWith(['chaise', 'corner', ['seat', 400], 'corner', 'chaise'], { dir: 3 });
   assert.equal(partsOverlap(compositeParts(u)), true);
-  const ok = sofaWith(['chaise', 'corner', ['seat', 1600], 'corner']);
+  const ok = sofaWith(['chaise', 'corner', ['seat', 1800], 'corner']);
   assert.equal(editSofa(ok, { op: 'add', end: 'end', type: 'chaise' }) !== null, true);
 });
 
 test('шезлонг глубже сиденья: остаток боковой кромки рисует он сам', () => {
   const [, ch] = compositeParts(sofaWith(['seat', 'chaise']));
-  assert.equal(ch.h, 950 + 700);
+  assert.equal(ch.h, 950 + 850);
   assert.equal(ch.startFrom, 950);
 });
 
@@ -101,7 +101,7 @@ test('добавление в конец: диван не прыгает, габ
   const next = editSofa(it, { op: 'add', end: 'end', type: 'seat' });
   Object.assign(it, next);
   assert.equal(it.comp.modules.length, 5);
-  assert.equal(it.w, 2200 + 900);
+  assert.equal(it.w, 2440 + 1000);
   const after = partsInHouse(it);
   for (let i = 0; i < 4; i += 1) {
     near(after[i].x, before[i].x, `x модуля ${i}`);
@@ -134,9 +134,9 @@ test('удаление и замена модуля, отказ удалить �
   near(after[0].x, before[1].x, 'сиденье на месте'); near(after[0].y, before[1].y, 'сиденье на месте');
   assert.equal(after[0].rotation, before[1].rotation);
   Object.assign(it, editSofa(it, { op: 'set', index: 0, w: 1200 }));
-  assert.deepEqual([it.w, it.h], [950, 1400], 'цепочка идёт вниз, как шла после угла');
+  assert.deepEqual([it.w, it.h], [950, 1420], 'цепочка идёт вниз, как шла после угла');
   Object.assign(it, editSofa(it, { op: 'set', index: 1, type: 'ottoman' }));
-  assert.equal(it.comp.modules[1].w, 900, 'смена типа — ширина по умолчанию нового типа');
+  assert.equal(it.comp.modules[1].w, 1000, 'смена типа — ширина по умолчанию нового типа');
   Object.assign(it, editSofa(it, { op: 'remove', index: 1 }));
   assert.equal(editSofa(it, { op: 'remove', index: 0 }), null);
   assert.equal(editSofa(it, { op: 'add', end: 'end', type: 'bed' }), null);
@@ -159,7 +159,7 @@ test('повороты 0/90/180/270: габарит и проходы — по �
 
 test('проверка comp дивана: мусор, пределы, сохранение и открытие', () => {
   const c = normalizeComp({ type: 'sofa', depth: '5000', dir: -1, modules: [{ type: 'seat', w: 50 }, { type: 'x' }, null, { type: 'corner', w: 3 }] }, 'sofa');
-  assert.deepEqual(c, { type: 'sofa', depth: 1400, dir: 3, modules: [{ type: 'seat', w: 400 }, { type: 'corner' }] });
+  assert.deepEqual(c, { type: 'sofa', depth: 1400, dir: 3, modules: [{ type: 'seat', w: 500 }, { type: 'corner' }] });
   assert.equal(normalizeComp({ type: 'sofa', modules: [] }, 'sofa').modules.length, 4, 'пустой — по умолчанию');
   assert.equal(normalizeComp({ type: 'sofa' }, 'sofa-bed'), null);
   const p = createProject();
@@ -169,7 +169,7 @@ test('проверка comp дивана: мусор, пределы, сохра
   p.items.push(old, it);
   const back = deserializeProject(serializeProject(p));
   assert.equal(back.items[0].comp, undefined, 'старый диван без comp остаётся обычным');
-  assert.equal(back.items[1].w, 900 + 950);
+  assert.equal(back.items[1].w, 1000 + 950);
   assert.deepEqual(back.items[1].comp, it.comp);
 });
 
@@ -183,7 +183,7 @@ test('выгрузка: JSON — comp и модули, DXF — только мо
   const f = (exp.levels?.[0] || exp).furniture.find((x) => x.id === it.id);
   assert.equal(f.comp.type, 'sofa');
   assert.equal(f.parts.length, 3);
-  assert.deepEqual(f.size, { w: 1300, h: 950 });
+  assert.deepEqual(f.size, { w: 1440, h: 950 });
 });
 
 // Сумма длин перекрытий коллинеарных отрезков (0 — повторов нет).
@@ -221,7 +221,7 @@ test('линии модулей: каждый отрезок кромки оди
   const edgeX = ch.x + ch.w;
   const onEdge = sofaLines(parts).segs.filter((q) => q[0] === edgeX && q[2] === edgeX);
   const len = onEdge.reduce((n, q) => n + Math.abs(q[3] - q[1]), 0);
-  near(len, ch.h + 900 - 700, 'кромка x = конец шезлонга: шезлонг 1650 + сиденье 900 − общие 700');
+  near(len, ch.h + 1000 - 850, 'кромка x = конец шезлонга: шезлонг 1800 + сиденье 1000 − общие 850');
 });
 
 test('вставка в середину: стыки как места «+», якорь — модуль перед вставкой', () => {
@@ -275,6 +275,6 @@ test('автоподбор ставит диван конструктором т
   const room = createRoom('living', 0, 0, 5000, 4000);
   const sofaItem = defaultItemsFor(room).find((i) => i.kind === 'sofa');
   assert.equal(sofaItem.comp?.type, 'sofa');
-  assert.deepEqual([sofaItem.w, sofaItem.h], [2200, 950]);
+  assert.deepEqual([sofaItem.w, sofaItem.h], [2800, 1050]);
   assert.equal(defaultItemsFor(room).find((i) => i.kind === 'dining-table')?.comp, undefined);
 });

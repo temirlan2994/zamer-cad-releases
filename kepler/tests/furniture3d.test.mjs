@@ -25,12 +25,12 @@ function house() {
   return p;
 }
 
-test('предмет — коробка по центру и габариту, высота по виду, на полу', () => {
+test('мягкая кровать — основание, матрас, изголовье и подушки в одном габарите', () => {
   const p = house();
   const bed = createItem('bed-double', 2000, 1500, 1600, 2000);
   p.items.push(bed);
   const faces = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture');
-  assert.equal(faces.length, 5, 'верх и 4 стороны');
+  assert.equal(faces.length, 25, 'пять отдельных объёмов по пять видимых граней');
   assert.ok(faces.every((f) => f.itemId === bed.id && f.level === p.activeLevel));
   assert.deepEqual(span(xs(faces)), [1200, 2800]);
   assert.deepEqual(span(ys(faces)), [500, 2500]);
@@ -38,7 +38,7 @@ test('предмет — коробка по центру и габариту, �
   assert.ok(z0 > 2 && z0 < 10, `низ над полом: ${z0}`);
   assert.ok(near(z1 - z0, furniture3d('bed-double').h), `высота ${z1 - z0}`);
   assert.equal(furniture3d('wardrobe').h, 2100);
-  assert.equal(furniture3d('toilet').h, 400);
+  assert.equal(furniture3d('toilet').h, 420);
   assert.equal(furniture3d('hood').z0, 1700, 'вытяжка висит');
   assert.equal(furniture3d('unknown-kind').h, 800, 'неизвестный вид — по умолчанию');
 });
@@ -51,6 +51,16 @@ test('стул: сиденье 450 и спинка у задней кромки 
   const [seat, back] = tops.sort((a, b) => a.pts[0].z - b.pts[0].z);
   assert.ok(near(seat.pts[0].z - 3, 450) && near(back.pts[0].z - 3, 900), `${seat.pts[0].z} / ${back.pts[0].z}`);
   assert.deepEqual(span(ys([back])), [775, 835], 'спинка 60 мм у верхней кромки');
+});
+
+test('журнальная композиция в 3D — две отдельные столешницы разной высоты', () => {
+  const p = house();
+  p.items.push(createItem('coffee-table', 2000, 1500, 1250, 850));
+  const tops = buildHouseMesh(p, { furniture: true })
+    .filter((face) => face.kind === 'furniture' && face.normal.z === 1);
+  assert.equal(tops.length, 2);
+  assert.equal(new Set(tops.map((face) => face.pts[0].z)).size, 2);
+  assert.ok(tops.every((face) => face.pts.length === 24), 'круглые столешницы без грубой квадратной коробки');
 });
 
 test('поворот 90°: ширина ложится вдоль Y', () => {

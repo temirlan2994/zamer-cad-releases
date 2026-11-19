@@ -370,6 +370,7 @@ export function normalizeWall(w) {
     top: { level: str(top.level), offset: num(top.offset) ?? 0, height: pos(top.height) },
     hidden: Boolean(w.hidden),
     roomBounding: w.roomBounding !== false,
+    ...(str(w.ownerRoomId) ? { ownerRoomId: str(w.ownerRoomId) } : {}),
   });
 }
 

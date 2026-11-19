@@ -27,7 +27,9 @@ export function groupCargo(project, roomIds = [], itemIds = [], carry = null) {
   const pickedItems = new Set(itemIds);
   const items = (project.items || []).filter((item) => pickedItems.has(item.id)
     || (carry ? carry.has(item.id) : rooms.some((room) => roomContainsPoint(room, item.x, item.y))));
-  return { rooms, items };
+  const ids = new Set(rooms.map((room) => room.id));
+  const walls = (project.walls || []).filter((wall) => ids.has(wall.ownerRoomId));
+  return { rooms, items, walls };
 }
 
 function validateGroup(project, roomIds) {
@@ -48,13 +50,14 @@ function remember(project, cargo) {
   return {
     rooms: cargo.rooms.map((room) => [room, clone(room)]),
     items: cargo.items.map((item) => [item, clone(item)]),
+    walls: cargo.walls.map((wall) => [wall, clone(wall)]),
     openings: (project.openings || []).filter((o) => roomIds.has(o.roomId)).map((o) => [o, clone(o)]),
     overrides: clone(project.wallOverrides || {}),
   };
 }
 
 function rollback(project, saved) {
-  for (const list of [saved.rooms, saved.items, saved.openings]) {
+  for (const list of [saved.rooms, saved.items, saved.walls, saved.openings]) {
     for (const [target, copy] of list) {
       for (const key of Object.keys(target)) delete target[key];
       Object.assign(target, copy);
@@ -74,6 +77,10 @@ export function moveRoomGroup(project, roomIds, itemIds, dx, dy, { carry = null 
   const saved = remember(project, cargo);
   for (const room of cargo.rooms) { room.x += dx; room.y += dy; }
   for (const item of cargo.items) { item.x += dx; item.y += dy; }
+  for (const wall of cargo.walls) {
+    wall.axis.a.x += dx; wall.axis.a.y += dy;
+    wall.axis.b.x += dx; wall.axis.b.y += dy;
+  }
   const verdict = validateGroup(project, roomIds);
   if (!verdict.ok) { rollback(project, saved); return { ...verdict, rooms: [], items: [] }; }
   return { ...verdict, rooms: cargo.rooms.map((r) => r.id), items: cargo.items.map((i) => i.id) };
@@ -175,6 +182,10 @@ function turnCargo(project, cargo, cx, cy) {
     const p = turnPoint(item, cx, cy);
     item.x = p.x; item.y = p.y;
     item.rotation = ((item.rotation || 0) + 90) % 360;
+  }
+  for (const wall of cargo.walls) {
+    wall.axis.a = turnPoint(wall.axis.a, cx, cy);
+    wall.axis.b = turnPoint(wall.axis.b, cx, cy);
   }
   for (const opening of openings) {
     const anchor = anchors.get(opening.id);

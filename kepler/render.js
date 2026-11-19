@@ -76,6 +76,7 @@ import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
 import { drawHomeFlowsOverlay } from './ui/render-home-flows.js';
 import { drawHomeEngineeringOverlay } from './ui/render-home-engineering.js';
 import { drawHomeCirculationOverlay } from './ui/render-home-circulation.js';
+import { bedDesign, COFFEE_TABLE_DUO } from './core/furniture-design.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -2140,19 +2141,19 @@ function drawSofaGlyph(ctx, x, y, w, h, arm, back, cushions, r) {
 // Приведение новых видов к базовым глифам (внешний вид сверху).
 const GLYPH_ALIAS = {
   'sofa-2': 'sofa', loveseat: 'sofa',
-  'armchair-lounge': 'armchair', 'bed-king': 'bed-double', 'bed-bunk': 'bed-single',
-  crib: 'bed-single', 'dining-table-6': 'dining-table', 'side-table': 'coffee-table',
+  'armchair-lounge': 'armchair', 'bed-bunk': 'bed-single',
+  crib: 'bed-single', 'dining-table-6': 'dining-table',
   'desk-corner': 'desk', 'console-table': 'tv-stand', 'chair-soft': 'chair',
   'office-chair': 'armchair', stool: 'nightstand', 'bar-stool': 'nightstand',
   'wardrobe-sliding': 'wardrobe', 'wardrobe-corner': 'wardrobe', sideboard: 'dresser',
   'kitchen-island': 'table', 'cooktop-hood': 'stove', 'bar-counter': 'tv-stand',
-  'bath-corner': 'bath', bidet: 'toilet', 'vanity-unit': 'washbasin',
+  'bath-corner': 'bath', bidet: 'toilet', 'toilet-smart': 'toilet', 'vanity-unit': 'washbasin',
   'fridge-side': 'fridge', dryer: 'washer', dishwasher: 'washer', boiler: 'fridge',
-  'coffee-table-2': 'pouf', 'car-suv': 'car', 'garden-lounger': 'bench',
+  'coffee-table-2': 'coffee-table', 'car-suv': 'car', 'garden-lounger': 'bench',
   treadmill: 'workbench', sofa: 'sofa',
   // Дополнительный каталог → базовые обозначения.
   daybed: 'bench', recliner: 'armchair', 'bean-bag': 'pouf', 'sofa-bed': 'sofa',
-  'bed-queen': 'bed-double', 'desk-l': 'desk', 'bar-table': 'table-round',
+  'desk-l': 'desk', 'bar-table': 'table-round',
   'folding-chair': 'chair', 'gaming-chair': 'armchair', 'shelf-open': 'bookcase',
   'display-cabinet': 'wardrobe', chest: 'dresser', oven: 'stove', 'kitchen-corner': 'kitchen-row', 'kitchen-u': 'kitchen-row',
   pantry: 'fridge', 'washbasin-double': 'sink', jacuzzi: 'bath', urinal: 'toilet',
@@ -2184,19 +2185,30 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
 
   switch (kind) {
     case 'bed-double':
+    case 'bed-king':
+    case 'bed-queen':
     case 'bed-single': {
-      const twin = kind === 'bed-single';
-      rrFill(x, y, w, h, body); // рама
-      const inset = Math.min(90, w * 0.06);
-      // Одеяло: отступ сверху под подушки, линия отворота.
-      const duvetTop = y + Math.min(620, h * 0.32);
-      rrStroke(x + inset, duvetTop, w - inset * 2, (y + h) - duvetTop - inset, body * 0.6);
-      line(x + inset, duvetTop + 220, x + w - inset, duvetTop + 220); // отворот
-      // Подушки.
-      const pw = twin ? w - inset * 2 : (w - inset * 3) / 2;
-      const ph = Math.min(360, (duvetTop - y) - inset);
-      rrStroke(x + inset, y + inset, pw, ph, ph * 0.3);
-      if (!twin) rrStroke(x + inset * 2 + pw, y + inset, pw, ph, ph * 0.3);
+      const d = bedDesign(kindRaw) || bedDesign(kind) || { w, h, mattressW: w * 0.82, mattressH: h * 0.86 };
+      const sx = w / d.w;
+      const sy = h / d.h;
+      const mattressW = d.mattressW * sx;
+      const mattressH = d.mattressH * sy;
+      const head = Math.max(120, (d.h - d.mattressH) * 0.6) * sy;
+      const mx = -mattressW / 2;
+      const my = y + head;
+      rrFill(x, y, w, h, body * 1.3); // мягкая рама
+      // Широкое мягкое изголовье читается отдельно от матраса.
+      rrFill(x, y, w, head, Math.min(body * 1.5, head * 0.35));
+      rrStroke(mx, my, mattressW, mattressH, body * 0.55);
+      const twin = d.mattressW <= 1000;
+      const gap = Math.max(35, mattressW * 0.025);
+      const pw = twin ? mattressW - gap * 2 : (mattressW - gap * 3) / 2;
+      const ph = Math.min(400 * sy, mattressH * 0.2);
+      rrStroke(mx + gap, my + gap, pw, ph, ph * 0.3);
+      if (!twin) rrStroke(mx + gap * 2 + pw, my + gap, pw, ph, ph * 0.3);
+      const duvetTop = my + ph + gap * 2;
+      rrStroke(mx + gap, duvetTop, mattressW - gap * 2, my + mattressH - duvetTop - gap, body * 0.5);
+      line(mx + gap, duvetTop + Math.min(220, mattressH * 0.12), mx + mattressW - gap, duvetTop + Math.min(220, mattressH * 0.12));
       break;
     }
     case 'nightstand': rrFill(x, y, w, h, body); rrStroke(x + w * 0.2, y + h * 0.2, w * 0.6, h * 0.6, body * 0.5); break;
@@ -2283,7 +2295,25 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
       break;
     }
     case 'table-round': { ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ellipse(0, 0, w * 0.32, h * 0.32); break; }
-    case 'coffee-table': rrFill(x, y, w, h, body); rrStroke(x + w * 0.14, y + h * 0.18, w * 0.72, h * 0.64, body * 0.5); break;
+    case 'coffee-table': {
+      const disks = [COFFEE_TABLE_DUO.large, COFFEE_TABLE_DUO.small];
+      for (const [i, disk] of disks.entries()) {
+        ctx.save();
+        if (i === 1) ctx.fillStyle = 'rgba(255,255,255,0.18)';
+        ctx.beginPath();
+        ctx.ellipse(disk.cx * w, disk.cy * h, disk.rx * w, disk.ry * h, 0, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case 'side-table': {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ellipse(0, 0, w * 0.32, h * 0.32);
+      break;
+    }
     case 'desk': { rrFill(x, y, w, h, body); rrStroke(x + w * 0.62, y + h * 0.15, w * 0.33, h * 0.7, body * 0.4); break; } // столешница + тумба
     case 'wardrobe':
     case 'wardrobe-rack': {
@@ -2330,6 +2360,17 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
       const tankH = Math.min(200, h * 0.26);
       rrFill(x + w * 0.1, y, w * 0.8, tankH, body * 0.4); // бачок
       ctx.beginPath(); ctx.ellipse(0, y + tankH + (h - tankH) / 2, w * 0.4, (h - tankH) / 2 - 20, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); // чаша
+      break;
+    }
+    case 'toilet-wall': {
+      const frameH = Math.min(180, h * 0.25);
+      // Инсталляция показана отдельной задней рамой, чаша — подвесной эллипс.
+      rrFill(x, y, w, frameH, body * 0.25);
+      line(x + w * 0.2, y + frameH * 0.5, x + w * 0.8, y + frameH * 0.5);
+      ctx.beginPath();
+      ctx.ellipse(0, y + frameH + (h - frameH) * 0.47, w * 0.38, (h - frameH) * 0.43, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ellipse(0, y + frameH + (h - frameH) * 0.43, w * 0.25, (h - frameH) * 0.28);
       break;
     }
     case 'bidet': { ctx.beginPath(); ctx.ellipse(0, 0, w * 0.4, h * 0.44, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break; }

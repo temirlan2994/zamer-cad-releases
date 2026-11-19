@@ -10,6 +10,7 @@ import {
   captureRoomGroup, groupCargo, moveRoomGroup, planGroupCopy, rotateRoomGroup,
 } from '../core/room-group.js';
 import { windowsOnSharedWalls } from '../core/opening-spacing.js';
+import { addManualWall } from '../core/wall-manual.js';
 
 function twoRooms() {
   const project = createProject();
@@ -43,12 +44,15 @@ test('груз группы: вложенные помещения и мебел
 
 test('сдвиг группы: комнаты, мебель и проёмы едут вместе, общая стена сохраняется', () => {
   const { project, a, b, win, sofa, lonely } = twoRooms();
+  const inner = addManualWall(project, { x: 500, y: 1000 }, { x: 3500, y: 1000 });
   const shared = sharedCount(project);
   const res = moveRoomGroup(project, [a.id, b.id], [], 500, -250);
   assert.equal(res.ok, true);
   assert.deepEqual([a.x, a.y, b.x, b.y], [500, -250, 4600, -250]);
   assert.deepEqual([sofa.x, sofa.y], [1500, 750]);
   assert.deepEqual([lonely.x, lonely.y], [20000, 20000]);
+  assert.deepEqual(inner.axis.a, { x: 1000, y: 750 });
+  assert.deepEqual(inner.axis.b, { x: 4000, y: 750 });
   assert.equal(win.offset, 1000); // проём хранится относительно комнаты
   assert.equal(sharedCount(project), shared);
 });

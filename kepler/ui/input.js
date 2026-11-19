@@ -287,6 +287,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
+  const movedWalls = new Map(cargo.walls.map((wall) => [wall.id, structuredClone(wall.axis)]));
   drag = {
     kind: 'multi',
     plan,
@@ -297,6 +298,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
     itemIds: [...sel.itemIds],
     roomStarts: movedRooms,
     itemStarts: movedItems,
+    wallStarts: movedWalls,
     wasSelected, // клик без сдвига по уже выбранной группе мебели — смена режима ручек
   };
 }
@@ -1123,10 +1125,15 @@ export function bindCanvasInput() {
       const carried = state.project.items
         .filter((i) => carriers.some((r) => roomContainsPoint(r, i.x, i.y)))
         .map((i) => ({ id: i.id, x: i.x, y: i.y }));
+      const carrierIds = new Set(carriers.map((candidate) => candidate.id));
+      const carriedWalls = (state.project.walls || [])
+        .filter((wall) => carrierIds.has(wall.ownerRoomId))
+        .map((wall) => ({ id: wall.id, axis: structuredClone(wall.axis) }));
       drag = {
         kind: 'room', id: room.id, plan, start: { x: room.x, y: room.y },
         childStarts: children.map((c) => ({ id: c.id, x: c.x, y: c.y })),
         carried,
+        carriedWalls,
         startParent: room.parentId, before: snapshot(), moved: false, valid: true,
         layoutItemIdsByRoom: captureLayoutItemIds(),
       };
@@ -1299,6 +1306,12 @@ export function bindCanvasInput() {
         const item = state.project.items.find((i) => i.id === entry.id);
         if (item) { item.x = entry.x + dx; item.y = entry.y + dy; }
       }
+      for (const entry of drag.carriedWalls) {
+        const wall = state.project.walls.find((candidate) => candidate.id === entry.id);
+        if (!wall) continue;
+        wall.axis.a = { x: entry.axis.a.x + dx, y: entry.axis.a.y + dy };
+        wall.axis.b = { x: entry.axis.b.x + dx, y: entry.axis.b.y + dy };
+      }
       state.guides = snapped.guides;
       liveEat(drag, { touched: [room.id] });
       const verdict = validateRoomPlacement(state.project, room, room.id);
@@ -1335,6 +1348,12 @@ export function bindCanvasInput() {
       for (const [id, start] of drag.itemStarts) {
         const item = state.project.items.find((i) => i.id === id);
         if (item) { item.x = start.x + dx; item.y = start.y + dy; }
+      }
+      for (const [id, axis] of drag.wallStarts) {
+        const wall = state.project.walls.find((candidate) => candidate.id === id);
+        if (!wall) continue;
+        wall.axis.a = { x: axis.a.x + dx, y: axis.a.y + dy };
+        wall.axis.b = { x: axis.b.x + dx, y: axis.b.y + dy };
       }
       liveEat(drag, { touched: drag.roomIds });
       let valid = true;

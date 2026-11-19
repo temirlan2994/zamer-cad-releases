@@ -127,7 +127,7 @@ const dining = {
 // ---------------------------------------------------------------------------
 // Диван-конструктор, comp = {
 //   type: 'sofa',
-//   depth: 950,   // мм, глубина сиденья — общая для всех модулей
+//   depth: 1050,  // мм, полная глубина современной мягкой мебели
 //   dir: 0,       // направление первого модуля: 0 →, 1 ↓, 2 ←, 3 ↑ (×90° по часовой)
 //   modules: [{ type: 'arm' | 'seat' | 'ottoman' | 'chaise' | 'corner', w }],
 // }
@@ -142,28 +142,28 @@ const dining = {
 // растягивается), части заполняют его целиком.
 
 export const SOFA_KINDS = ['sofa', 'sofa-2', 'sofa-corner', 'sofa-u'];
-export const SOFA_BACK = 220; // мм, толщина спинки
-export const SOFA_CHAISE_EXTRA = 700; // мм, на сколько шезлонг длиннее сиденья
+export const SOFA_BACK = 240; // мм, толщина мягкой спинки
+export const SOFA_CHAISE_EXTRA = 850; // мм, на сколько шезлонг длиннее сиденья
 const SOFA_MAX_MODULES = 24;
 
 // Типы модулей: подпись, ширина по умолчанию и пределы (угловой — depth×depth).
 export const SOFA_MODULES = Object.freeze({
-  seat: { title: 'Сиденье', short: 'Сиденье', w: 900, min: 400, max: 1600, back: true },
+  seat: { title: 'Сиденье', short: 'Сиденье', w: 1000, min: 500, max: 1800, back: true },
   corner: { title: 'Угловой', short: 'Угол', back: true },
-  arm: { title: 'Подлокотник', short: 'Подлок.', w: 200, min: 100, max: 400, back: false },
-  ottoman: { title: 'Пуф (без спинки)', short: 'Пуф', w: 900, min: 400, max: 1600, back: false },
-  chaise: { title: 'Шезлонг', short: 'Шезлонг', w: 900, min: 600, max: 1600, back: true },
+  arm: { title: 'Подлокотник', short: 'Подлок.', w: 220, min: 120, max: 450, back: false },
+  ottoman: { title: 'Пуф (без спинки)', short: 'Пуф', w: 1000, min: 500, max: 1800, back: false },
+  chaise: { title: 'Шезлонг', short: 'Шезлонг', w: 1000, min: 650, max: 1800, back: true },
 });
 
 const SOFA_DEFAULTS = {
-  sofa: { depth: 950, dir: 0, mods: [['arm'], ['seat', 900], ['seat', 900], ['arm']] },
-  'sofa-2': { depth: 900, dir: 0, mods: [['arm'], ['seat', 600], ['seat', 600], ['arm']] },
+  sofa: { depth: 1050, dir: 0, mods: [['arm'], ['seat', 1180], ['seat', 1180], ['arm']] },
+  'sofa-2': { depth: 1000, dir: 0, mods: [['arm'], ['seat', 880], ['seat', 880], ['arm']] },
   // Г: спинка сверху и слева, подлокотники справа и снизу (как прежний глиф).
-  'sofa-corner': { depth: 900, dir: 3, mods: [['arm'], ['seat', 500], ['corner'], ['seat', 750], ['seat', 750], ['arm']] },
+  'sofa-corner': { depth: 1050, dir: 3, mods: [['arm'], ['seat', 1130], ['corner'], ['seat', 1065], ['seat', 1065], ['arm']] },
   'sofa-u': {
-    depth: 900,
+    depth: 1050,
     dir: 3,
-    mods: [['arm'], ['seat', 650], ['seat', 650], ['corner'], ['seat', 600], ['seat', 600], ['corner'], ['seat', 650], ['seat', 650], ['arm']],
+    mods: [['arm'], ['seat', 865], ['seat', 865], ['corner'], ['seat', 950], ['seat', 950], ['corner'], ['seat', 865], ['seat', 865], ['arm']],
   },
 };
 

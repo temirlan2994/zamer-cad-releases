@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createOpening, createProject, createRoom, deserializeProject, serializeProject } from '../core/model.js';
+import { moveRoomBy } from '../core/rooms.js';
 import {
   addManualWall, dragManualWallEnd, moveManualWall, orthoPoint, removeManualWall, setManualWallJustify,
   setManualWallKind, setManualWallThickness, setWallHeight, wallAxisVerdict,
@@ -55,6 +56,20 @@ test('проект с ручной стеной идёт на v2, стена —
   // Комнатные стены не вычитаются ручной: верхняя наружная стена цела.
   const top = walls.filter((x) => x.kind === 'own' && x.orient === 'h' && x.edge === 0);
   assert.ok(top.length);
+});
+
+test('стена, начерченная внутри помещения, становится его частью и едет вместе с ним', () => {
+  const p = createProject('владелец стены');
+  const room = createRoom('living', 1000, 2000, 5000, 4000);
+  p.rooms.push(room);
+  const wall = addManualWall(p, { x: 2000, y: 3000 }, { x: 5000, y: 3000 });
+  assert.equal(wall.ownerRoomId, room.id);
+  moveRoomBy(p, room.id, 700, -300);
+  assert.deepEqual(wall.axis, {
+    kind: 'line', a: { x: 2700, y: 2700 }, b: { x: 5700, y: 2700 },
+  });
+  const copy = deserializeProject(serializeProject(p));
+  assert.equal(copy.walls[0].ownerRoomId, room.id, 'связь переживает сохранение');
 });
 
 test('привязка по грани: тело по одну сторону оси, смена привязки не двигает тело', () => {

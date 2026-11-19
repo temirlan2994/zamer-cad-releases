@@ -8,6 +8,7 @@
 
 import { DEFAULT_PARTITION } from './catalog.js';
 import { makeId } from './model.js';
+import { roomContainsPoint, roomShapeArea } from './room-shape.js';
 import { WALL_T_MAX, WALL_T_MIN, manualWallGeometry, wallClassThickness } from './walls.js';
 
 export const MANUAL_WALL_MIN = 100; // мм — короче стену не строим
@@ -127,7 +128,7 @@ export function wallCenterTargets(walls) {
 }
 
 export function createWall(a, b, {
-  thickness = DEFAULT_PARTITION, wallType = 'partition', justify = 'center', height = null,
+  thickness = DEFAULT_PARTITION, wallType = 'partition', justify = 'center', height = null, ownerRoomId = null,
 } = {}) {
   return {
     id: makeId('wall'),
@@ -140,7 +141,17 @@ export function createWall(a, b, {
     top: { level: null, offset: 0, height: Number(height) > 0 ? Number(height) : null },
     hidden: false,
     roomBounding: true,
+    ...(ownerRoomId ? { ownerRoomId } : {}),
   };
+}
+
+// Помещение-владелец внутренней стены. При вложенных помещениях выбирается
+// самое маленькое: стена санузла должна ехать с санузлом, а не со спальней.
+export function manualWallOwner(project, a, b) {
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  return (project.rooms || [])
+    .filter((room) => roomContainsPoint(room, mid.x, mid.y))
+    .sort((left, right) => roomShapeArea(left) - roomShapeArea(right))[0]?.id || null;
 }
 
 export function manualWallById(project, id) {
@@ -161,7 +172,8 @@ export function wallAxisVerdict(a, b) {
 // Добавляет стену на активный этаж. → стена или null (ось негодна).
 export function addManualWall(project, a, b, opts = {}) {
   if (!wallAxisVerdict(a, b).ok) return null;
-  const wall = createWall(a, b, opts);
+  const ownerRoomId = opts.ownerRoomId === undefined ? manualWallOwner(project, a, b) : opts.ownerRoomId;
+  const wall = createWall(a, b, { ...opts, ownerRoomId });
   if (!Array.isArray(project.walls)) project.walls = [];
   project.walls.push(wall);
   return wall;

@@ -22,7 +22,11 @@ const categorySections = { kitchen: 'kitchen', appliance: 'kitchen', bath: 'bath
 const subcategories = {
   bathing: { section: 'bath', title: 'Ванны и душ', kinds: ['bath', 'bath-corner', 'shower', 'jacuzzi'] },
   basins: { section: 'bath', title: 'Раковины', kinds: ['washbasin', 'washbasin-double', 'vanity-unit'] },
-  toilets: { section: 'bath', title: 'Унитазы и биде', kinds: ['toilet', 'bidet', 'urinal'] },
+  toilets: {
+    section: 'bath',
+    title: 'Унитазы и биде',
+    kinds: ['toilet', 'toilet-wall', 'toilet-smart', 'bidet', 'urinal'],
+  },
   bathExtras: { section: 'bath', title: 'Аксессуары', kinds: ['towel-rail'] },
   lighting: { section: 'decor', title: 'Свет', kinds: ['floor-lamp', 'chandelier'] },
   textiles: { section: 'decor', title: 'Текстиль', kinds: ['rug', 'rug-round', 'curtain'] },
