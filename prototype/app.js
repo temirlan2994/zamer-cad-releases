@@ -2892,7 +2892,9 @@ function renderFrame() {
     }
   } else {
     const circle = selectedCircleForMetrics();
+    const rectangle = selectedRectangleForMetrics();
     if (circle) updateCircleMetricFields(Math.abs(circle.radius));
+    else if (rectangle) updateTopMetricInputs(Math.abs(rectangle.x2 - rectangle.x1), Math.abs(rectangle.y2 - rectangle.y1), { rectangle: true });
     else hideInlineEditors();
   }
   syncSelectionActions();
@@ -3975,7 +3977,7 @@ function drawRectangleEntity(entity, c) {
   corners.forEach((corner, index) => { const pt = worldToScreen(corner); if (index === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); });
   ctx.closePath();
   ctx.stroke();
-  if (selected && !state.lineEdit) {
+  if (selected && !state.lineEdit && !selectedRectangleForMetrics()) {
     const center = worldToScreen({ x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2 });
     drawBadge(`${Math.round(Math.abs(entity.x2 - entity.x1))} × ${Math.round(Math.abs(entity.y2 - entity.y1))}`, center.x, center.y - 18, c);
   }
@@ -5580,10 +5582,9 @@ function updateInlineEditors(start, end, metrics, angleInfo) {
   updateMetricField(angleInput, angleReadout, angleInfo.degrees, { angle: true, wrap: angleInfo.cadAngle });
 }
 
-function updateTopMetricInputs(length, angle, { cadAngle = false } = {}) {
+function updateTopMetricInputs(length, angle, { cadAngle = false, rectangle = state.tool === "rectangle" && state.drawing } = {}) {
   drawMetrics.hidden = false;
   inlineEditors.hidden = true;
-  const rectangle = state.tool === "rectangle" && state.drawing;
   const rotating = state.moveCommand?.mode === "rotate";
   topLengthName.textContent = state.offsetCommand ? "Смещение" : "Длина";
   topAngleName.textContent = rectangle ? "Ширина" : "Угол";
@@ -5602,6 +5603,12 @@ function updateSelectedEndpointEditors(previewMoving = null) {
   const end = previewMoving || moving;
   updateInlineEditors(fixed, end, segmentMetrics(fixed.x, fixed.y, end.x, end.y), activeAngleInfo(fixed, end));
   angleEditor.hidden = !isDraftLine(geometry.entity);
+}
+
+function selectedRectangleForMetrics() {
+  if (!viewportIsSelecting() || state.selectedIds.length !== 1 || state.copyPicking || surveyPointPicker) return null;
+  const entity = state.entities.find(item => item.id === state.selectedId);
+  return entity?.type === "rectangle" && isLayerVisible(entity.layer) ? entity : null;
 }
 
 function selectedCircleForMetrics() {
@@ -5700,7 +5707,7 @@ function selectInlineValue(input) {
 function editableEntityForNumericInput() {
   if (state.circleRadiusEdit) return state.entities.find((item) => item.id === state.circleRadiusEdit.entityId) || null;
   if (state.selectedEndpoint) return selectedEndpointGeometry()?.entity || null;
-  return null;
+  return selectedRectangleForMetrics();
 }
 
 function lineMetricContext() {
@@ -5869,7 +5876,7 @@ function confirmKeyboardInput() {
   );
   if (modifiedMetricInputs.has(input)) {
     const apply = input === topLengthInput || input === topAngleInput ? applyTopMetricValue : applyInlineValue;
-    apply(lineMetricKinds.get(input), { recordUndo: false });
+    if (apply(lineMetricKinds.get(input), { recordUndo: false }) === false) return;
   }
   const shouldFinishDrawing = Boolean(
       state.drawing?.lockedEnd &&
@@ -5892,6 +5899,8 @@ function confirmKeyboardInput() {
 
 function applyTopMetricValue(kind, options = {}) {
   if (!topLengthInput || !topAngleInput) return;
+  const rectangle = selectedRectangleForMetrics();
+  if (rectangle) return applySelectedRectangleSize(rectangle, kind);
   lengthInput.value = topLengthInput.value;
   angleInput.value = topAngleInput.value;
   syncInlineEditorWidth(lengthInput);
@@ -5911,6 +5920,26 @@ function applyTopMetricValue(kind, options = {}) {
     return;
   }
   applyInlineValue(kind, options);
+}
+
+function applySelectedRectangleSize(entity, kind) {
+  const width = kind === "angle";
+  const input = width ? topAngleInput : topLengthInput;
+  const length = readProjectLength(input);
+  const start = width ? entity.y1 : entity.x1;
+  const end = width ? entity.y2 : entity.x2;
+  const next = start + Math.sign(end - start) * length;
+  const geometry = width ? { y2: next } : { x2: next };
+  if (!(length > linePointEpsilon) || !validFigurePiece({ ...entity, ...geometry })) {
+    input.setAttribute("aria-invalid", "true");
+    statusChip.textContent = "Введите положительный размер в пределах чертежа";
+    return false;
+  }
+  input.removeAttribute("aria-invalid");
+  if (geometryChanged(entity, geometry)) applyEntityGeometry(entity, geometry);
+  statusChip.textContent = "Размер прямоугольника применён";
+  draw();
+  return true;
 }
 
 function applyRectangleMetricValue() {
@@ -11283,7 +11312,10 @@ for (const [input, kind] of lineMetricKinds) {
     } else if (event.key === "Escape") {
       event.preventDefault();
       if (lineMetricContext()) cancelLineMetricInput();
-      else closeMetricEntry();
+      else {
+        if (selectedRectangleForMetrics()) modifiedMetricInputs.delete(input);
+        closeMetricEntry();
+      }
       canvas.focus({ preventScroll: true });
       draw();
     }
@@ -11293,7 +11325,10 @@ for (const [input, kind] of lineMetricKinds) {
     if (lineMetricContext()) updateLineMetricInput(input);
     else {
       modifiedMetricInputs.add(input);
-      apply(kind, { recordUndo: false });
+      input.removeAttribute("aria-invalid");
+      if (!(selectedRectangleForMetrics() && (input === topLengthInput || input === topAngleInput))) {
+        apply(kind, { recordUndo: false });
+      }
     }
   });
   input.addEventListener("blur", (event) => {
