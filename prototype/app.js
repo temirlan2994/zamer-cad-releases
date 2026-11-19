@@ -3288,7 +3288,7 @@ function drawPlanScene(entities, c) {
   }
   if (!zones.length) return;
   const anchors = planAnnotationAnchors(zones);
-  const viewport = printRendering ? null : canvas.getBoundingClientRect();
+  const viewport = !printRendering && zones.some((zone) => zone.type === "elevation") ? canvas.getBoundingClientRect() : null;
   const overlays = viewport ? [...shell.querySelectorAll(".status-chip, #saveIndicator, .tool-rail, #planAnnotationActions, .draw-tool-menu, #lineEditOptions, #quickEditModes, #cornerMetrics")]
     .filter((element) => !element.hidden && element.getClientRects().length)
     .map((element) => {
@@ -3301,7 +3301,7 @@ function drawPlanScene(entities, c) {
   }
 }
 
-function planLabelPosition(point, width, height, geometry, zone, overlays, viewport) {
+function planLabelPosition(point, width, height, geometry, overlays, viewport) {
   const rectAt = ({ x, y }) => ({ x: x - width / 2, y: y - height / 2, width, height });
   const { minX, minY, maxX, maxY } = geometry.bounds;
   const min = worldToScreen({ x: minX, y: minY });
@@ -3313,7 +3313,7 @@ function planLabelPosition(point, width, height, geometry, zone, overlays, viewp
     return !overlays.some((other) => box.x < other.x + other.width + 4 && box.x + width + 4 > other.x &&
       box.y < other.y + other.height + 4 && box.y + height + 4 > other.y);
   };
-  if (fits(point) || zone.type === "area" && !viewport) return point;
+  if (fits(point)) return point;
   if (viewport && (max.x < 0 || max.y < 0 || min.x > viewport.width || min.y > viewport.height)) return point;
   const candidates = [];
   for (let y = 1; y <= 7; y++) {
@@ -3374,11 +3374,12 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;
     const height = size * 1.7 + lineHeight * (lines.length - 1);
-    const point = options.overlays ? planLabelPosition(anchor, width, height, ring, entity, options.overlays, options.viewport) : anchor;
+    const point = entity.type === "elevation" && options.overlays
+      ? planLabelPosition(anchor, width, height, ring, options.overlays, options.viewport) : anchor;
     const rect = { x: point.x - width / 2, y: point.y - height / 2, width, height };
     options.overlays?.push(rect);
     if (!printRendering && options.label) zoneLabelRects.set(entity.id, rect);
-    if (!pointInPolygon(screenToWorld(point), ring.points)) {
+    if (point !== anchor && !pointInPolygon(screenToWorld(point), ring.points)) {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       linePath(anchor.x, anchor.y, point.x, point.y);
