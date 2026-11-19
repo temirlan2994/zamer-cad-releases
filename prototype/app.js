@@ -8361,17 +8361,17 @@ function pickLineEditPoint(screen) {
     return;
   }
   if (edit.mode === "break") {
+    const projected = projectFigurePoint(source, point);
+    if (!projected) return setLineEditHint("Укажите точку на объекте");
     if (edit.breakMode === "point") {
       if (source.closed || ["circle", "rectangle"].includes(source.type)) {
         return setLineEditHint("Для замкнутого контура выберите разрыв между двумя точками");
       }
-      const pieces = splitFigure(source, point);
+      const pieces = splitFigure(source, projected);
       if (!pieces) return setLineEditHint("Укажите точку внутри объекта");
       previewLineEdit([[source, pieces]], "Объект разделён", [], "preserve");
       return;
     }
-    const projected = projectFigurePoint(source, point);
-    if (!projected) return setLineEditHint("Укажите точку на объекте");
     if (!edit.firstPick) {
       edit.firstPick = projected;
       setLineEditHint("Наведите крестик на вторую точку зазора");
@@ -8689,9 +8689,24 @@ function drawLineEditMarks(c) {
     for (const entity of edit.pending.added) drawEntity(entity, { ...c, line: c.accent });
     ctx.restore();
   }
-  if (!edit?.firstPick) return;
-  const p = worldToScreen(edit.firstPick);
-  drawEndpointHandle(p, true, c);
+  if (edit?.firstPick) drawEndpointHandle(worldToScreen(edit.firstPick), true, c);
+
+  if (edit?.mode !== "break" || edit.pending) return;
+  const source = lineEditEntity(edit.sourceId, edit.mode);
+  if (!source) return;
+  const point = projectFigurePoint(source, rawCursorWorld());
+  if (!point || (edit.firstPick && distanceWorld(edit.firstPick, point) <= linePointEpsilon)) return;
+  if (edit.breakMode === "point" && !splitFigure(source, point)) return;
+  const screen = worldToScreen(point);
+  ctx.save();
+  ctx.fillStyle = c.accent;
+  ctx.strokeStyle = c.bg;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function previewFigureGrip(pointer, screen) {
