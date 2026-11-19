@@ -789,6 +789,7 @@ input {
 }
 
 .workspace {
+  --workspace-edit-panel-top: 40px;
   background: var(--canvas);
   min-height: 0;
   overflow: hidden;
@@ -800,14 +801,16 @@ input {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  bottom: max(calc(74px + env(safe-area-inset-bottom)), calc(var(--keyboard-inset, 0px) + 8px));
   box-shadow: 0 6px 20px color-mix(in srgb, #000 12%, transparent);
   display: grid;
   gap: 5px;
   left: 8px;
+  max-height: max(0px, calc(100% - var(--workspace-edit-panel-top) - max(62px, var(--keyboard-inset, 0px) + 8px)));
+  overflow-y: auto;
   padding: 6px;
   position: absolute;
   right: 8px;
+  top: var(--workspace-edit-panel-top);
   z-index: 9;
 }
 
@@ -1201,10 +1204,6 @@ input {
   gap: 6px;
 }
 
-.workspace:has(#selectToolMenu:not([hidden])) .dimension-links {
-  bottom: calc(147px + env(safe-area-inset-bottom));
-}
-
 .dimension-links [data-dimension-anchor] {
   align-content: center;
   display: grid;
@@ -1285,15 +1284,6 @@ input {
   pointer-events: none;
   position: absolute;
   z-index: 12;
-}
-
-.workspace:has(#selectToolMenu:not([hidden])) .corner-metrics {
-  bottom: calc(max(132px, var(--keyboard-inset, 0px) + 8px) + env(safe-area-inset-bottom));
-}
-
-.workspace:has(#selectToolMenu:not([hidden]) .line-edit-action:not([hidden])) .corner-metrics,
-.corner-metrics:has(#inlineEditors[data-metric-context="selected-circle"]:not([hidden])) {
-  bottom: calc(max(190px, var(--keyboard-inset, 0px) + 8px) + env(safe-area-inset-bottom));
 }
 
 .corner-metrics.line-draft-metrics {
@@ -1457,40 +1447,30 @@ input {
 }
 
 .select-tool-menu {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-color: var(--muted) var(--surface-2);
-  scrollbar-width: thin;
-}
-
-.select-tool-menu::-webkit-scrollbar {
-  height: 4px;
-}
-
-.select-tool-menu::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  border-radius: 99px;
+  bottom: auto;
+  gap: 4px;
+  grid-template-columns: repeat(auto-fit, minmax(45px, 1fr));
+  padding: 5px;
+  top: var(--workspace-edit-panel-top);
 }
 
 .select-tool-menu button {
-  flex: 0 0 76px;
-  min-width: 76px;
-}
-
-.select-tool-menu:has(.line-edit-action:not([hidden])) {
-  bottom: calc(74px + env(safe-area-inset-bottom));
-  display: grid;
-  grid-auto-columns: 70px;
-  grid-auto-flow: column;
-  grid-template-columns: none;
-  grid-template-rows: repeat(2, 44px);
-}
-
-.select-tool-menu:has(.line-edit-action:not([hidden])) button {
-  height: 44px;
+  align-content: center;
+  gap: 3px;
+  grid-template-rows: 16px 21px;
+  height: 46px;
   min-width: 0;
+  padding: 2px 1px;
+  touch-action: manipulation;
+}
+
+.select-tool-menu small {
+  font-size: 0.61rem;
+  line-height: 1.05;
+}
+
+.app-shell:has(#snapMore[open]) .line-command-panel {
+  visibility: hidden;
 }
 
 .select-mode-menu {

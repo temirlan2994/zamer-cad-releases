@@ -436,7 +436,7 @@ const annotationToolMenu = createAnnotationToolMenu();
 const annotationToolButtons = [...annotationToolMenu.querySelectorAll("[data-annotation-tool]")];
 const selectToolMenu = document.getElementById("selectToolMenu");
 const selectModeMenu = createSelectModeMenu();
-const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
+const selectionCommandButtons = [...selectToolMenu.querySelectorAll("[data-action]")];
 const snaps = [...document.querySelectorAll("[data-snap]")];
 const GRID_STEPS = [5, 10, 50, 100, 500, 1000];
 const POLAR_STEPS = [5, 10, 15, 30, 45, 90];
@@ -484,7 +484,6 @@ const pressedMetricFields = new Set();
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
-const selectionActions = selectToolMenu;
 const lengthEditor = document.getElementById("lengthEditor");
 const angleEditor = document.getElementById("angleEditor");
 const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
@@ -2888,12 +2887,10 @@ function drawRotatePreview(entity, command, end, c) {
 }
 
 function syncSelectionActions() {
-  if (!selectionActions) return;
-  const editable = editableSelectionEntity();
-  const show = Boolean(editable);
-  if (show) syncSelectToolMenu();
-  selectionActions.hidden = !show;
-  selectionActions.classList.toggle("line-selection-menu", show && isDraftLine(editable));
+  const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu].some((menu) => !menu.hidden);
+  const framing = state.selectionDrag || ["window", "lasso"].includes(state.selectTool);
+  const show = editableSelectionEntity() && !framing && !anotherMenuOpen && !snapMore.open && syncSelectToolMenu();
+  selectToolMenu.hidden = !show;
   syncToolButtons();
 }
 
@@ -6460,6 +6457,7 @@ function openViewportObjects() {
 }
 
 function fitViewport() {
+  syncSelectionActions();
   const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   for (const entity of state.entities) {
     if (!isLayerVisible(entity.layer)) continue;
@@ -6476,9 +6474,10 @@ function fitViewport() {
   }
 
   const rect = canvas.getBoundingClientRect();
-  const bottomPanels = [shell.querySelector(".tool-rail"), selectionActions, lineUi.lineEditOptions].filter((panel) => panel && !panel.hidden);
-  const availableTop = Math.max(38, statusChip.offsetHeight, saveIndicator.offsetHeight) + 18;
-  const availableBottom = Math.min(rect.height, ...bottomPanels.map((panel) => panel.getBoundingClientRect().top - rect.top)) - 18;
+  const topPanels = [selectToolMenu, lineUi.lineEditOptions].filter((panel) => !panel.hidden);
+  const availableTop = Math.max(38, ...topPanels.map((panel) => panel.getBoundingClientRect().bottom - rect.top)) + 18;
+  const railTop = shell.querySelector(".tool-rail").getBoundingClientRect().top - rect.top;
+  const availableBottom = Math.min(rect.height, railTop) - 18;
   const fitScale = Math.min(Math.max(1, rect.width - 44) / Math.max(1, bounds.maxX - bounds.minX),
     Math.max(1, availableBottom - availableTop) / Math.max(1, bounds.maxY - bounds.minY));
   const scale = clampScale(fitScale);
@@ -7135,29 +7134,13 @@ function syncAnnotationToolMenu() {
 }
 
 function syncSelectToolMenu() {
-  selectToolMenu?.querySelectorAll("[data-select-tool]").forEach((button) => {
-    button.hidden = true;
-  });
-  const moveButton = selectToolMenu?.querySelector('button[data-action="move"]');
-  if (moveButton) {
-    const icon = moveButton.querySelector("span");
-    const label = moveButton.querySelector("small");
-    if (icon) icon.textContent = "↕";
-    if (label) label.textContent = "Переместить";
-    moveButton.title = "Точное перемещение по двум точкам";
+  let hasCommands = false;
+  for (const button of selectionCommandButtons) {
+    const available = canApplySelectionAction(button.dataset.action);
+    button.disabled = button.hidden = !available;
+    if (available) hasCommands = true;
   }
-  const copyButton = selectToolMenu?.querySelector('button[data-action="copy"]');
-  if (copyButton) {
-    const icon = copyButton.querySelector("span");
-    const label = copyButton.querySelector("small");
-    if (icon) icon.textContent = "⧉";
-    if (label) label.textContent = "Копия";
-    copyButton.title = "Точная копия по двум точкам";
-  }
-  selectToolMenu?.querySelectorAll("button[data-action]").forEach((button) => {
-    button.disabled = !canApplySelectionAction(button.dataset.action);
-    button.hidden = button.disabled;
-  });
+  return hasCommands;
 }
 
 function showDrawToolMenu() {
@@ -7210,15 +7193,12 @@ function hideAnnotationToolMenu() {
 }
 
 function showSelectToolMenu() {
-  if (!selectToolMenu || state.tool !== "select" || !selectedEntities().length || state.drawing || state.selectedEndpoint ||
-      state.circleRadiusEdit || state.lineEdit || state.moveCommand || state.offsetCommand || state.dimensionAttach || state.selectionDrag) return;
-  syncSelectToolMenu();
+  if (!editableSelectionEntity() || state.selectionDrag) return;
   hideDrawToolMenu();
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   hideSelectModeMenu();
-  selectToolMenu.hidden = false;
-  syncToolButtons();
+  syncSelectionActions();
 }
 
 function hideSelectToolMenu() {
@@ -7255,15 +7235,6 @@ function syncSelectModeMenu() {
   });
 }
 
-function prepareSelectMenuStructure() {
-  const selectionRailButton = tools.find((button) => button.dataset.tool === "selection");
-  if (selectionRailButton) selectionRailButton.hidden = false;
-  if (!selectToolMenu) return;
-  selectToolMenu.querySelectorAll("[data-select-tool]").forEach((button) => {
-    button.hidden = true;
-  });
-}
-
 function toggleLineTool() {
   if (state.tool === "line") {
     activatePlainSelect();
@@ -7287,7 +7258,10 @@ function activateDimensionToolMenu() {
 
 function activateAnnotationToolMenu() {
   if (annotationToolMenu.hidden) showAnnotationToolMenu();
-  else hideAnnotationToolMenu();
+  else {
+    hideAnnotationToolMenu();
+    syncSelectionActions();
+  }
 }
 
 function activatePlainSelect() {
@@ -10075,6 +10049,7 @@ drawToolMenu?.addEventListener("keydown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   hideDrawToolMenu();
+  syncSelectionActions();
   figureToolButton?.focus({ preventScroll: true });
 });
 
@@ -10116,13 +10091,8 @@ selectModeMenu?.addEventListener("keydown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   hideSelectModeMenu();
+  syncSelectionActions();
   cursorToolButton.focus({ preventScroll: true });
-});
-
-selectToolMenu?.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-select-tool]");
-  if (!button) return;
-  selectSelectionTool(button.dataset.selectTool);
 });
 
 function nextDimensionSnap() {
@@ -10189,6 +10159,7 @@ gridStepSelect.addEventListener("change", () => {
   draw();
 });
 
+snapMore.addEventListener("toggle", syncSelectionActions);
 snapMore.addEventListener("keydown", (event) => {
   if (!snapMore.open || event.key !== "Escape") return;
   event.preventDefault();
@@ -10443,7 +10414,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-selectionActions?.addEventListener("click", (event) => {
+selectToolMenu.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
   applySelectionAction(button.dataset.action);
@@ -11749,7 +11720,6 @@ new MutationObserver((mutations) => {
 }).observe(document.body, { childList: true, characterData: true, subtree: true });
 updateViewportLock();
 setAnnotationScale(state.annotationScale, { save: false });
-prepareSelectMenuStructure();
 setTool("select");
 initAppInstallPrompt();
 initSurveyPanel();
