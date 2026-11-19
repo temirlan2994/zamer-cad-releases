@@ -2109,11 +2109,6 @@ button:focus-visible, .project-action-card:focus-within { outline: 2px solid var
   max-width: 430px;
 }
 .annotation-tool-menu button { min-height: 48px; }
-.annotation-tool-menu .annotation-survey-option {
-  color: var(--muted);
-  grid-column: 1 / -1;
-  min-height: 44px;
-}
 .tool[data-tool="annotation"] small { font-size: 0.6rem; }
 
 .plan-annotation-actions {

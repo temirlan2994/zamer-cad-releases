@@ -653,7 +653,6 @@ function createAnnotationToolMenu() {
     <button type="button" data-annotation-tool="leader"><span aria-hidden="true">${cadIcon("edit")}</span><small>Выноска</small></button>
     <button type="button" data-annotation-tool="area"><span aria-hidden="true">${cadIcon("area")}</span><small>Площадь</small></button>
     <button type="button" data-annotation-tool="elevation"><span aria-hidden="true">${cadIcon("elevation")}</span><small>Высота Z</small></button>
-    <button type="button" id="surveyTool" class="annotation-survey-option" aria-haspopup="dialog">Журнал замеров</button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -11816,20 +11815,6 @@ function initSurveyPanel() {
       draw();
     },
     createLaser: createSurveyLaser,
-  });
-  document.getElementById("surveyTool").addEventListener("click", () => {
-    if (!persistence.projectId) return;
-    hideAnnotationToolMenu();
-    if (surveyPointPicker) {
-      const picker = surveyPointPicker;
-      surveyPointPicker = null;
-      picker.callback(null);
-      draw();
-      return;
-    }
-    hideSheet(layersSheet, { restoreFocus: false });
-    hideSheet(exportSheet, { restoreFocus: false });
-    surveyPanel.open();
   });
   document.addEventListener("keydown", (event) => {
     if (!surveyPointPicker || event.key !== "Escape") return;
