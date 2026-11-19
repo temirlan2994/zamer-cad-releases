@@ -48,6 +48,24 @@ test("plot bounds retain a circular arc extremum beyond its three defining point
   close(bounds.minY, point(10).y);
 });
 
+test("plot bounds preserve exact extrema of arc segments of a native polyline", () => {
+  const polyline = { type: "polyline", layer: "measure", closed: false,
+    points: [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1500 }], bulges: [1, 0] };
+  const bounds = pdfPlotBounds([polyline]);
+  close(bounds.minX, 0);
+  close(bounds.maxX, 2000);
+  close(bounds.minY, -1000);
+  close(bounds.maxY, 1500);
+
+  const ring = { ...polyline, closed: true, points: [{ x: 0, y: 0 }, { x: 1000, y: 0 },
+    { x: 1000, y: 1000 }, { x: 0, y: 1000 }], bulges: [0, 0, 0, 1] };
+  const closed = pdfPlotBounds([ring]);
+  close(closed.minX, -500);
+  close(closed.maxX, 1000);
+  close(closed.minY, 0);
+  close(closed.maxY, 1000);
+});
+
 test("plot bounds use actual dimension line anchors and measured endpoints", () => {
   const bounds = pdfPlotBounds([{
     type: "line", layer: "dimensions", measurementType: "linear", measurementAxis: "x", offset: 345,
@@ -55,6 +73,36 @@ test("plot bounds use actual dimension line anchors and measured endpoints", () 
     dimX1: -10000, dimY1: -10000, dimX2: 10000, dimY2: 10000,
   }]);
   assert.deepEqual(bounds, { minX: 0, minY: -42, maxX: 300, maxY: 345 });
+});
+
+test("plot bounds cover isolated area and elevation zones without their associated drafting geometry", () => {
+  const area = { type: "area", layer: "areas", points: [{ x: -1200, y: -300 }, { x: 800, y: -300 }, { x: -1200, y: 1200 }] };
+  const roof = { type: "elevation", layer: "elevations", zoneStyle: "beam", height: -450,
+    points: [{ x: 1200, y: 100 }, { x: 4600, y: 400 }, { x: 3000, y: 3100 }] };
+  const bounds = pdfPlotBounds([area, roof]);
+  assert.deepEqual(bounds, { minX: -1200, minY: -300, maxX: 4600, maxY: 3100 });
+  assert.ok(pdfPlotLayout(bounds, "50").view.scale > 0);
+  assert.equal(pdfPlotBounds([{ ...area, points: area.points.slice(1) }]), null);
+});
+
+test("plot bounds account for rotation and vertical extension of multiple text lines", () => {
+  const text = { type: "text", layer: "text", x: 4000, y: 1500, height: 200,
+    rotation: 90, text: "А\n\nСтрока" };
+  const bounds = pdfPlotBounds([text]);
+  close(bounds.maxX, 4200);
+  close(bounds.minX, 3476);
+  close(bounds.minY, 1500);
+  close(bounds.maxY, 2268);
+});
+
+test("plot bounds include a multiline leader's full label even at the plan edge", () => {
+  const note = { type: "line", layer: "text", dimensionKind: "leader", leaderStyle: "boxed",
+    x1: -200, y1: -300, x2: 1000, y2: 0, textHeight: 200, text: "Справа\nРозетка" };
+  const bounds = pdfPlotBounds([note]);
+  close(bounds.minX, -200);
+  close(bounds.minY, -300);
+  close(bounds.maxX, 1448);
+  close(bounds.maxY, 220);
 });
 
 test("PDF object table uses byte offsets even with binary data and multiple pages", async () => {

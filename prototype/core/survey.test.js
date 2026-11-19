@@ -7,6 +7,14 @@ const contour = (coordinates, closed = true) => ({ type: "polyline", closed, poi
 
 const foremanPlan = contour([[0, 0], [5300, 0], [5300, 2800], [4100, 2800], [4100, 3900], [0, 3900]]);
 
+test("two vertices and a semicircle produce the exact area and perimeter of a closed D", () => {
+  const d = { ...contour([[0, 0], [1000, 0]]), bulges: [1, 0] };
+  const result = measureSurveyContour(d);
+  assert.ok(Math.abs(result.areaM2 - Math.PI / 8) < 1e-12);
+  assert.ok(Math.abs(result.perimeterM - (1 + Math.PI / 2)) < 1e-12);
+  assert.ok(measureSurveyContour(contour([[0, 0], [1000, 0]])).error);
+});
+
 test("uses exact area and outer perimeter, and subtracts interior holes", () => {
   assert.deepEqual(measureSurveyContour(foremanPlan), { areaM2: 19.35, excludedM2: 0, perimeterM: 18.4, boundaryM: 18.4 });
   const hole = contour([[100, 100], [500, 100], [500, 500], [100, 500]]);
@@ -18,6 +26,20 @@ test("validates an open or self-intersecting perimeter and holes that touch its 
   assert.ok(measureSurveyContour(contour([[0, 0], [100, 100], [100, 0], [0, 100]])).error);
   assert.ok(measureSurveyContour(contour([[0, 0], [100, 0], [100, 100]], false)).error);
   assert.ok(measureSurveyContour(foremanPlan, [contour([[0, 0], [100, 0], [100, 100]])]).error);
+});
+
+test("survey contour measures signed semicircles exactly and allows a hole within the curved boundary", () => {
+  const box = contour([[0, 0], [2000, 0], [2000, 2000], [0, 2000]]);
+  const outsideBow = { ...box, bulges: [1, 0, 0, 0] };
+  const insideBow = { ...box, bulges: [-1, 0, 0, 0] };
+  const hole = contour([[900, -700], [1100, -700], [1100, -450], [900, -450]]);
+  const result = measureSurveyContour(outsideBow, [hole]);
+  assert.ok(Math.abs(result.areaM2 - (4 + Math.PI / 2 - 0.05)) < 1e-10);
+  assert.equal(result.excludedM2, 0.05);
+  assert.ok(Math.abs(result.perimeterM - (6 + Math.PI)) < 1e-10);
+  assert.ok(Math.abs(result.boundaryM - (6 + Math.PI + 0.9)) < 1e-10);
+  assert.ok(Math.abs(measureSurveyContour(insideBow).areaM2 - (4 - Math.PI / 2)) < 1e-10);
+  assert.ok(measureSurveyContour(insideBow, [hole]).error);
 });
 
 test("keeps measured and drawn diagonals separate and computes the threshold", () => {

@@ -4,6 +4,31 @@ import { buildDxf, buildRevitDxf, dxfLine, dxfCircle, dxfLinearDimension, dxfStr
 
 const countRecords = (dxf, type) => (dxf.match(new RegExp(`\\n0\\n${type}\\n`, "g")) || []).length;
 
+function entityRecords(dxf) {
+  const lines = dxf.split("\n");
+  const entities = [];
+  let current;
+  let section;
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    const [code, value] = [lines[index], lines[index + 1]];
+    if (code === "0" && value === "SECTION") {
+      section = lines[index + 3];
+      continue;
+    }
+    if (code === "0" && value === "ENDSEC") section = null;
+    if (section !== "ENTITIES") continue;
+    if (code === "0") {
+      current = { type: value, fields: new Map() };
+      entities.push(current);
+    } else if (current) {
+      const values = current.fields.get(code) ?? [];
+      values.push(value);
+      current.fields.set(code, values);
+    }
+  }
+  return entities;
+}
+
 function dimensionRecords(dxf) {
   const lines = dxf.split("\n");
   const dimensions = [];
@@ -116,13 +141,35 @@ test("Zamer DXF preserves a sub-millimeter fillet arc radius and its angular spa
   assert.ok(Math.abs(parsedRadius - radius) < 1e-12);
 });
 
-test("modern text annotations preserve Cyrillic and remove DXF-breaking controls", () => {
-  const entity = { type: "text", x: 120, y: 340, text: "Спальня\r\n№1", height: 260, rotation: 15, layer: "dimensions" };
+test("native polyline bulges follow their outgoing edge and reflect the DXF Y axis", () => {
+  const points = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1500 }];
+  const open = { type: "polyline", layer: "measure", points, closed: false, bulges: [1, 0] };
+  const closed = { ...open, closed: true, bulges: [0, -0.1250000001, 1.5] };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const dxf = build([open, closed]);
+    const [first, second] = entityRecords(dxf);
+    assert.equal(first.type, "LWPOLYLINE");
+    assert.equal(second.type, "LWPOLYLINE");
+    assert.deepEqual(first.fields.get("42"), ["-1"]);
+    assert.deepEqual(second.fields.get("42"), ["0.1250000001", "-1.5"]);
+    assert.match(dxf, /\n10\n0\n20\n0\n42\n-1\n10\n2000\n20\n0\n10\n2000\n20\n-1500\n/);
+    assert.match(dxf, /\n10\n2000\n20\n0\n42\n0\.1250000001\n10\n2000\n20\n-1500\n42\n-1\.5\n/);
+  }
+  assert.equal(writeDxf([open, closed]), writeDxf([{ ...open, bulges: undefined }, { ...closed, bulges: undefined }]));
+});
+
+test("modern rotated text keeps Cyrillic, line breaks and its text layer", () => {
+  const entity = { type: "text", x: 120, y: 340, text: "Спальня\r\n№1", height: 260, rotation: 90, layer: "text" };
   for (const build of [buildDxf, buildRevitDxf]) {
     const dxf = build([entity]);
-    assert.equal(countRecords(dxf, "TEXT"), 1);
-    assert.ok(dxf.includes("\n1\nСпальня №1\n"));
-    assert.ok(dxf.includes("\n40\n260\n"));
+    const texts = entityRecords(dxf).filter(({ type }) => type === "TEXT");
+    const field = (code) => texts.map(({ fields }) => fields.get(code)?.[0]);
+    assert.deepEqual(field("1"), ["Спальня", "№1"]);
+    assert.deepEqual(field("8"), Array(2).fill(build === buildDxf ? "text" : "ZAMER_TEXT"));
+    assert.deepEqual(field("10"), ["120", "-244"]);
+    assert.deepEqual(field("20"), ["-340", "-340"]);
+    assert.deepEqual(field("40"), ["260", "260"]);
+    assert.deepEqual(field("50"), ["270", "270"]);
   }
   assert.match(writeDxf([entity]), /\n9\n\$ACADVER\n1\nAC1009\n/);
   assert.ok(writeDxf([entity]).includes(`\n1\n${dxfString(entity.text)}\n`));
@@ -207,6 +254,61 @@ test("leader exports a line, arrow and visible text", () => {
   assert.equal(countRecords(dxf, "TEXT"), 1);
   assert.ok(dxf.includes("\n1\nРозетка\n"));
   assert.ok(!dxf.includes("NaN"));
+});
+
+test("the three leader styles and multiline labels export on the text layer", () => {
+  const lines = ["Вывод воды", "Холодная"].join("\n");
+  const leader = { type: "line", dimensionKind: "leader", x1: 0, y1: 0, x2: 3000, y2: 1500, text: lines, textHeight: 100 };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const layer = build === buildDxf ? "text" : "ZAMER_TEXT";
+    for (const [leaderStyle, expectedSegments, expectedFrames] of [["landing", 4, 0], ["plain", 3, 0], ["boxed", 3, 1]]) {
+      const records = entityRecords(build([{ ...leader, layer: "dimensions", leaderStyle }]));
+      assert.ok(records.every(({ fields }) => fields.get("8")[0] === layer));
+      assert.equal(records.filter(({ type }) => type === "LINE").length, expectedSegments);
+      assert.equal(records.filter(({ type }) => type === "LWPOLYLINE").length, expectedFrames);
+      const texts = records.filter(({ type }) => type === "TEXT");
+      assert.deepEqual(texts.map(({ fields }) => fields.get("1")[0]), lines.split("\n"));
+      assert.ok(texts.every(({ fields }) => fields.get("40")[0] === "100"));
+    }
+  }
+});
+
+test("zones export closed editable XY contours and native labels on separate colored layers", () => {
+  const points = [{ x: 125.0002, y: -300 }, { x: 4125.0002, y: -300 }, { x: 4125.0002, y: 1700 }, { x: 125.0002, y: 1700 }];
+  const zone = { type: "area", id: "floor", layer: "areas", points: [...points, points[0]], label: "Зона кухни" };
+  const beam = { ...zone, type: "elevation", id: "beam", layer: "elevations", height: -150, zoneStyle: "beam", label: "" };
+  const crossing = { ...zone, id: "broken", points: [points[0], points[2], points[1], points[3]] };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const areaLayer = build === buildDxf ? "areas" : "ZAMER_AREA";
+    const zLayer = build === buildDxf ? "elevations" : "ZAMER_Z";
+    const records = entityRecords(build([zone, beam, crossing]));
+    const area = records.filter(({ fields }) => fields.get("8")[0] === areaLayer);
+    const elevation = records.filter(({ fields }) => fields.get("8")[0] === zLayer);
+    assert.equal(area.length, 3);
+    assert.equal(elevation.length, 2);
+    for (const [contour] of [area, elevation]) {
+      assert.equal(contour.type, "LWPOLYLINE");
+      assert.deepEqual(contour.fields.get("70"), ["1"]);
+      assert.deepEqual(contour.fields.get("90"), ["4"]);
+      assert.deepEqual(contour.fields.get("10"), ["125.0002", "4125.0002", "4125.0002", "125.0002"]);
+      assert.deepEqual(contour.fields.get("20"), ["300", "300", "-1700", "-1700"]);
+      assert.equal(Number(contour.fields.get("38")?.[0] ?? 0), 0);
+    }
+    assert.deepEqual(area.slice(1).map(({ fields }) => fields.get("1")[0]), ["Зона кухни", "Площадь 8 м²"]);
+    assert.deepEqual(elevation[1].fields.get("1"), ["Ригель · Z -150 мм"]);
+    assert.equal(Number(elevation[1].fields.get("30")[0]), 0);
+    for (const { fields } of elevation) assert.equal(Number(fields.get("420")[0]), 0x9a5b17);
+  }
+});
+
+test("CAD labels for overlapping area and elevation outlines use distinct positions", () => {
+  const points = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 }, { x: 0, y: 4000 }];
+  const records = entityRecords(buildDxf([{ type: "area", id: "floor", points },
+    { type: "elevation", id: "ceiling", points, height: 2700, zoneStyle: "ceiling" }]));
+  const label = (layer) => records.find(({ type, fields }) => type === "TEXT" && fields.get("8")[0] === layer).fields;
+  const area = label("areas");
+  const ceiling = label("elevations");
+  assert.ok(Math.abs(Number(area.get("21")[0]) - Number(ceiling.get("21")[0])) >= 300);
 });
 
 test("buildDxf skips a degenerate (collinear) arc instead of emitting garbage", () => {

@@ -4,9 +4,10 @@ import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildDxf, buildRevitDxf } from "./core/dxf.js";
 import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./core/dimensions.js";
 import { constrainLinePoint, linePointWithConstraint, linePolarPoint, parseLineDecimal } from "./core/line-input.js";
-import { extendLine, isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine, splitLine, trimLine } from "./core/line-edits.js";
+import { isLinePoint, isValidLine, joinLines, MAX_LINE_COORDINATE, mirrorLine, nearbyBoundaryPoints, nearbyIntersections, nearbyPerpendiculars, nearestBoundaryPoint, nearestIntersection, nearestPerpendicular, parallelLine, scaleLine } from "./core/line-edits.js";
+import { editableFigure, extendFigure, figureReferenceAt, figureReferencePoint, projectFigurePoint, splitFigure, trimFigure, validFigurePiece } from "./core/figure-edits.js";
 import { filletLines } from "./core/line-fillet.js";
-import { createPolyline, polylineBounds, polylineSegments, validPolylinePoints } from "./core/polyline.js";
+import { createPolyline, polylineArc, polylineBounds, polylineSegments, validPolylinePoints } from "./core/polyline.js";
 import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
 import { MAX_ZAMER_FILE_BYTES, validateZamerProject } from "./core/project-format.js";
@@ -14,6 +15,8 @@ import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMar
 import { bindSurveyPanel } from "./core/survey-panel.js";
 import { createSurveyLaser } from "./core/survey-laser.js";
 import { buildZip } from "./core/zip.js";
+import { createPlanAnnotation, formatPlanArea, formatPlanElevation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderPlanPath } from "./core/annotation-text.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
@@ -24,6 +27,8 @@ function cadIcon(name) {
     line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
     dimension: '<path d="M4 5v14m16-14v14M4 12h16m-12-3-4 3 4 3m8-6 4 3-4 3"/>',
     text: '<path d="M5 5h14M12 5v15m-4 0h8"/>',
+    area: '<path d="M3 5h18v14H3zm6 4h6m-6 6h6"/>',
+    elevation: '<path d="M4 5h12L5 18h12m2-9 2-2 2 2m-2-2v12"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
     file: '<path d="M14 3H6v18h12V7zM14 3v5h4M9 14h6m-3-3v6"/>',
@@ -253,8 +258,10 @@ function apkCreateProject(body = {}) {
     theme: source.theme === "dark" ? "dark" : "light",
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
+    gridStep: GRID_STEPS.includes(source.gridStep) ? source.gridStep : 100,
     polarStep: [5, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : [...defaultPlanLayers],
+    annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     selectionFilter: source.selectionFilter || "all",
     survey: normalizeSurvey(source.survey),
@@ -409,7 +416,13 @@ const projectNameCaption = document.querySelector(".project-title strong");
 const projectScaleCaption = document.querySelector(".project-title span");
 const tools = [...document.querySelectorAll(".tool[data-tool]")];
 const figureToolButton = document.getElementById("figureToolButton");
+const quickTrimTool = document.getElementById("quickTrimTool");
+const quickEditModes = document.getElementById("quickEditModes");
+const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const gridStepReadout = document.getElementById("gridStepReadout");
+const gridStepSelect = document.getElementById("gridStepSelect");
+const gridVisibleReadout = document.getElementById("gridVisibleReadout");
+const allSnapsButton = document.getElementById("allSnapsButton");
 const drawToolMenu = document.getElementById("drawToolMenu");
 const drawToolButtons = [...document.querySelectorAll("[data-draw-tool]")];
 const dimensionToolMenu = createDimensionToolMenu();
@@ -419,7 +432,25 @@ const annotationToolButtons = [...annotationToolMenu.querySelectorAll("[data-ann
 const selectToolMenu = document.getElementById("selectToolMenu");
 const selectModeMenu = createSelectModeMenu();
 const selectToolButtons = [...document.querySelectorAll("[data-select-tool]")];
-const snaps = [...document.querySelectorAll(".snap")];
+const snaps = [...document.querySelectorAll("[data-snap]")];
+const GRID_STEPS = [5, 10, 50, 100, 500, 1000];
+const snapSymbolPaths = {
+  all: "M5 12h14M12 5v14M4 4h5M4 4v5M20 4h-5M20 4v5M4 20h5M4 20v-5M20 20h-5M20 20v-5",
+  grid: "M6 6h12v12H6zM6 12h12M12 6v12",
+  end: "M6 6h12v12H6z",
+  mid: "M12 5l8 14H4z",
+  center: "M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
+  intersection: "M6 6l12 12M18 6L6 18",
+  perpendicular: "M5 18h14M12 18V5",
+  nearest: "M6 6h12L6 18h12z",
+  polar: "M5 18h14M5 18 16 7M10 18a5 5 0 0 0-1.5-3.5",
+  ortho: "M6 5v13h13M6 12h6v6",
+  tracking: "M12 4l8 8-8 8-8-8z",
+};
+const snapMarkerPaths = Object.fromEntries(Object.entries(snapSymbolPaths).map(([mode, path]) => [mode, new Path2D(path)]));
+for (const icon of document.querySelectorAll("[data-snap-symbol]")) {
+  icon.innerHTML = `<svg class="cad-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${snapSymbolPaths[icon.dataset.snapSymbol]}"/></svg>`;
+}
 const lineUi = Object.fromEntries([
   "lineBoundaryMode", "lineBoundaryControl", "lineBreakMode", "lineBreakControl", "lineEditApply", "linePolarStep",
   "lineEditOptions", "lineEditHint", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
@@ -428,6 +459,7 @@ const lineUi = Object.fromEntries([
 const lineKeyboardInputs = [lineUi.lineLengthInput, lineUi.lineEditRadius];
 const lineEditActions = new Set(["trim", "extend", "break", "join", "lengthen", "fillet", "scale"]);
 const lineOnlyEditActions = new Set([...lineEditActions, "offset", "mirror"]);
+const figureCutActions = new Set(["trim", "extend", "break"]);
 const lineQuantityModes = {
   lengthen: [["total", "Длина (мм)"], ["delta", "Прирост (мм)"], ["percent", "Длина (%)"], ["dynamic", "По точке"]],
   offset: [["distance", "Расстояние (мм)"], ["through", "Через точку"]],
@@ -437,8 +469,6 @@ const linePointEpsilon = 1e-6;
 const lengthInput = document.getElementById("lengthInput");
 const angleInput = document.getElementById("angleInput");
 const inlineEditors = document.getElementById("inlineEditors");
-const leaderTextEditor = document.getElementById("leaderTextEditor");
-const leaderTextInput = document.getElementById("leaderTextInput");
 const drawMetrics = document.getElementById("drawMetrics");
 const topLengthInput = document.getElementById("topLengthInput");
 const topAngleInput = document.getElementById("topAngleInput");
@@ -451,10 +481,15 @@ const annotationScaleSelect = document.getElementById("annotationScaleSelect");
 const statusChip = document.getElementById("statusChip");
 const dimensionAssist = document.getElementById("dimensionAssist");
 const linePointAssist = document.getElementById("linePointAssist");
+const polylineArcMode = document.getElementById("polylineArcMode");
+const openExactMetrics = document.getElementById("openExactMetrics");
+const lengthReadout = document.getElementById("lengthReadout");
+const angleReadout = document.getElementById("angleReadout");
+const topLengthReadout = document.getElementById("topLengthReadout");
+const topAngleReadout = document.getElementById("topAngleReadout");
 const lineDirection = document.getElementById("lineDirection");
 const lineDirectionArrow = document.getElementById("lineDirectionArrow");
 const lineDirectionDescription = document.getElementById("lineDirectionDescription");
-const lineSkipSnap = document.getElementById("lineSkipSnap");
 const lineDirections = ["вправо", "вправо вниз", "вниз", "влево вниз", "влево", "влево вверх", "вверх", "вправо вверх"];
 const dimensionNextSnap = document.getElementById("dimensionNextSnap");
 const dimensionAxisControl = document.getElementById("dimensionAxisControl");
@@ -470,6 +505,7 @@ const exportCards = [...document.querySelectorAll(".export-card")];
 const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput].filter(Boolean);
 let lastNumericInput = null;
 const lineMetricKinds = new Map([[lengthInput, "length"], [angleInput, "angle"], [topLengthInput, "length"], [topAngleInput, "angle"]]);
+const modifiedMetricInputs = new WeakSet();
 let stableViewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || 844);
 const cp1251Chars =
   "\u0402\u0403\u201A\u0453\u201E\u2026\u2020\u2021\u20AC\u2030\u0409\u2039\u040A\u040C\u040B\u040F" +
@@ -498,8 +534,10 @@ const dimensionToolButtonVisuals = {
   baseline: { icon: "⊥", label: "От базы" },
 };
 const annotationToolButtonVisuals = {
-  text: { icon: "T", label: "Текст" },
+  text: { icon: "T", label: "Аннотация" },
   leader: { icon: "↗", label: "Выноска" },
+  area: { label: "Площадь" },
+  elevation: { label: "Высота Z" },
 };
 const selectModeButtonVisuals = {
   select: { icon: "↖", label: "ESC" },
@@ -553,10 +591,15 @@ function createAnnotationToolMenu() {
   const menu = document.createElement("div");
   menu.className = "draw-tool-menu annotation-tool-menu";
   menu.id = "annotationToolMenu";
+  menu.setAttribute("role", "group");
+  menu.setAttribute("aria-label", "Инструменты аннотации");
   menu.hidden = true;
   menu.innerHTML = `
-    <button data-annotation-tool="text"><span>T</span><small>Текст</small></button>
-    <button data-annotation-tool="leader"><span>&#8599;</span><small>Выноска</small></button>
+    <button type="button" data-annotation-tool="text"><span aria-hidden="true">${cadIcon("text")}</span><small>Текст</small></button>
+    <button type="button" data-annotation-tool="leader"><span aria-hidden="true">${cadIcon("edit")}</span><small>Выноска</small></button>
+    <button type="button" data-annotation-tool="area"><span aria-hidden="true">${cadIcon("area")}</span><small>Площадь</small></button>
+    <button type="button" data-annotation-tool="elevation"><span aria-hidden="true">${cadIcon("elevation")}</span><small>Высота Z</small></button>
+    <button type="button" id="surveyTool" class="annotation-survey-option" aria-haspopup="dialog">Журнал замеров</button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -564,20 +607,26 @@ function createAnnotationToolMenu() {
 
 const layerMeta = {
   walls: { name: "Стены", color: "#26313d", description: "основные стены и перегородки" },
-  dimensions: { name: "Размеры", color: "#1f75ff", description: "подписи, выноски, площади" },
+  dimensions: { name: "Размеры", color: "#1f75ff", description: "линейные и угловые размеры" },
+  text: { name: "Текст и выноски", color: "#754997", description: "надписи и указатели" },
+  areas: { name: "Площади", color: PLAN_AREA_COLOR, description: "границы и значения в м²" },
+  elevations: { name: "Высоты Z", color: "#167d5c", description: "потолок, ригели и перепады" },
   furniture: { name: "Мебель", color: "#1db4a8", description: "блоки мебели, двери, окна" },
   measure: { name: "Черновые", color: "#9b6bff", description: "линии замера и наброски" },
 };
+const defaultPlanLayers = Object.keys(layerMeta);
 const selectionFilters = ["all", "lines", "dimensions"];
 
 let surveyPanel = null;
 let surveyPointPicker = null;
+const zoneLabelRects = new Map();
 
 const state = {
   survey: normalizeSurvey(null),
   theme: "light",
   directManipulationIds: new Set(),
   tool: "select",
+  planZone: null,
   drawTool: "line",
   dimensionTool: "aligned",
   annotationScale: 1,
@@ -593,19 +642,18 @@ const state = {
   moveCommand: null,
   offsetCommand: null,
   lineEdit: null,
-  skipLineObjectSnap: false,
   pointer: null,
   activePointers: new Map(),
   pinch: null,
   gestureSuppressTap: false,
   inlineEdit: null,
+  metricEntry: null,
   circleRadiusEdit: null,
   dimensionSnapHint: null,
   dimensionSnapChoice: null,
   dimensionAttach: null,
   polarSnapGuide: null,
   dimensionPickCycle: null,
-  lastTextTap: null,
   snapTracking: {
     points: [],
     hoverKey: null,
@@ -624,8 +672,10 @@ const state = {
   undo: [],
   redo: [],
   snaps: new Set(["grid", "end", "polar"]),
+  snapsMuted: false,
+  gridStep: 100,
   polarStep: 5,
-  visibleLayers: new Set(["walls", "dimensions", "furniture", "measure"]),
+  visibleLayers: new Set(defaultPlanLayers),
   entities: [],
 };
 
@@ -1127,7 +1177,7 @@ function resetProjectSession() {
   persistence.trash = [];
   setSelection([]);
   state.drawing = null;
-  state.skipLineObjectSnap = false;
+  state.snapsMuted = false;
   state.command = null;
   state.lineEdit = null;
   closeLineMetricInput();
@@ -1539,17 +1589,6 @@ function askProjectName(title, value, placeholder = "") {
   return showProjectDialog({ title, value, placeholder });
 }
 
-function askCadText(value = "Текст") {
-  return showProjectDialog({
-    title: "Текст",
-    message: "Введите надпись для чертежа.",
-    value,
-    placeholder: "Например: Спальня, высота 2700",
-    inputLabel: "Надпись на чертеже",
-    confirmText: "Поставить",
-  });
-}
-
 function confirmProjectDelete(name) {
   return showProjectDialog({
     title: "Удалить проект",
@@ -1951,8 +1990,10 @@ function serializableProjectState() {
       panY: state.view.panY,
     },
     snaps: [...state.snaps],
+    gridStep: state.gridStep,
     polarStep: state.polarStep,
     visibleLayers: [...state.visibleLayers],
+    annotationLayers: 1,
     annotationScale: state.annotationScale,
     selectionFilter: state.selectionFilter,
     survey: state.survey,
@@ -1995,12 +2036,17 @@ function projectSnapshotKey() {
 function isValidProjectEntity(entity) {
   return Boolean(entity && typeof entity === "object" && typeof entity.id === "string" &&
     typeof entity.type === "string" &&
-    (entity.type !== "polyline" || validPolylinePoints(entity.points, entity.closed)));
+    (entity.type !== "polyline" || validPolylinePoints(entity.points, entity.closed, entity.bulges)));
 }
 
 function cloneProjectEntity(entity) {
   try {
     const copy = JSON.parse(JSON.stringify(entity));
+    if (isPlanAnnotationZone(copy)) return normalizePlanAnnotation(copy);
+    if (copy?.dimensionKind === "leader" || copy?.type === "text") {
+      if (copy.layer === "dimensions" || !copy.layer) copy.layer = "text";
+      if (copy.dimensionKind === "leader" && !copy.leaderStyle) copy.leaderStyle = "boxed";
+    }
     return isValidProjectEntity(copy) ? copy : null;
   } catch {
     return null;
@@ -2019,20 +2065,25 @@ function restoreProject(project) {
   try {
     state.entities = restoredEntities;
     state.survey = normalizeSurvey(project.survey);
+    state.planZone = null;
     surveyPointPicker = null;
     surveyPanel?.close();
+    if (planAnnotationEditor.open) planAnnotationEditor.close();
     if (project.view && Number.isFinite(project.view.scale)) {
       state.view.scale = clampScale(project.view.scale);
       state.view.panX = Number.isFinite(project.view.panX) ? project.view.panX : state.view.panX;
       state.view.panY = Number.isFinite(project.view.panY) ? project.view.panY : state.view.panY;
     }
-    if (Array.isArray(project.snaps)) {
-      state.snaps = new Set(project.snaps.filter(Boolean));
-    }
+    state.snaps = new Set(Array.isArray(project.snaps) ? project.snaps.filter(Boolean) : ["grid", "end", "polar"]);
+    state.snapsMuted = false;
+    state.gridStep = GRID_STEPS.includes(project.gridStep) ? project.gridStep : 100;
     state.polarStep = [5, 15, 30, 45, 90].includes(project.polarStep) ? project.polarStep : 5;
     if (lineUi.linePolarStep) lineUi.linePolarStep.value = String(state.polarStep);
-    if (Array.isArray(project.visibleLayers)) {
-      state.visibleLayers = new Set(project.visibleLayers.filter((id) => layerMeta[id]));
+    state.visibleLayers = new Set((Array.isArray(project.visibleLayers) ? project.visibleLayers : defaultPlanLayers).filter((id) => layerMeta[id]));
+    if (project.annotationLayers !== 1) {
+      state.visibleLayers.add("areas");
+      state.visibleLayers.add("elevations");
+      if (state.visibleLayers.has("dimensions")) state.visibleLayers.add("text");
     }
     if (Number.isFinite(project.annotationScale)) {
       setAnnotationScale(project.annotationScale, { save: false });
@@ -2047,7 +2098,6 @@ function restoreProject(project) {
     state.selectionFilter = selectionFilters.includes(project.selectionFilter) ? project.selectionFilter : "all";
 
     state.drawing = null;
-    state.skipLineObjectSnap = false;
     state.moveCommand = null;
     state.offsetCommand = null;
     state.lineEdit = null;
@@ -2281,8 +2331,8 @@ function resizeCanvas() {
 
 function isKeyboardInputFocused() {
   const active = document.activeElement;
-  return Boolean(numericConfirmInput()) || lineKeyboardInputs.includes(active) || active === leaderTextInput ||
-    Boolean(active?.matches("#surveySheet input, #surveySheet textarea, #surveySheet select, .viewport-objects-dialog input"));
+  return Boolean(numericConfirmInput()) || lineKeyboardInputs.includes(active) ||
+    Boolean(active?.matches(".survey-sheet :is(input, textarea, select), .viewport-objects-dialog input"));
 }
 
 function numericConfirmInput() {
@@ -2395,11 +2445,11 @@ function cursorSnapResolved() {
   if (state.tool === "dimension" && state.drawing?.phase === "offset") return { point: raw, snap: null };
   if (state.tool === "dimension") return resolveDimensionPointSnap(raw);
   const draft = state.drawing;
+  if (state.tool === "polyline" && draft?.arcPhase === "through") return resolveSnapWorld(raw);
   const start = draft?.start || state.moveCommand?.base || selectedEndpointGeometry()?.fixed || null;
   const constraint = draft?.metricConstraint;
-  const objectSnaps = !state.skipLineObjectSnap || Boolean(surveyPointPicker);
-  const firstVertex = state.tool === "polyline" && draft?.points.length >= 3 ? draft.points[0] : null;
-  if (firstVertex && !constraint && objectSnaps && state.snaps.has("end") && distanceWorld(raw, firstVertex) * state.view.scale <= screenUiPx(14)) {
+  const firstVertex = state.tool === "polyline" && canClosePolyline(draft) ? draft.points[0] : null;
+  if (firstVertex && !constraint && snapEnabled("end") && distanceWorld(raw, firstVertex) * state.view.scale <= screenUiPx(14)) {
     state.snapTracking.active = null;
     state.polarSnapGuide = null;
     return { point: firstVertex, snap: { ...firstVertex, type: "end", label: "Начальная вершина" } };
@@ -2407,15 +2457,15 @@ function cursorSnapResolved() {
   if (constraint) {
     const axisAngle = state.tool === "line" && constraint.length !== undefined ? lineAxisAngle(draft.metricDirection, start, raw) : undefined;
     const direction = axisAngle === undefined && constraint.angle === undefined
-      ? resolveLineLikeSnap(raw, start, { useGrid: false, objectSnaps }).point : raw;
+      ? resolveLineLikeSnap(raw, start, { useGrid: false }).point : raw;
     state.snapTracking.active = null;
     state.polarSnapGuide = null;
     const point = axisAngle === undefined ? linePointWithConstraint(start, direction, constraint) : linePolarPoint(start, constraint.length, axisAngle);
     return { point, snap: null };
   }
-  if (start) return resolveLineLikeSnap(raw, start, { objectSnaps });
-  if (objectSnaps && canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
-  return resolveSnapWorld(raw, { objectSnaps });
+  if (start) return resolveLineLikeSnap(raw, start);
+  if (canSnapToPrePointTrackingGuides()) return resolvePrePointTrackingSnap(raw);
+  return resolveSnapWorld(raw);
 }
 
 function colors() {
@@ -2517,27 +2567,25 @@ function renderFrame() {
   ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, rect.width, rect.height);
   drawGrid(rect, c);
-  drawCanvasCenterCursor(rect, c);
+  drawCanvasCenterCursor(rect);
 
   const visible = visibleEntities(rect);
-  drawWalls(visible, c);
-  for (const entity of visible) {
-    if (entity.type === "wall") continue;
-    drawEntity(entity, c);
-  }
+  drawPlanScene(visible, c);
   drawSurveyMarks(c, rect);
+  drawPlanAnnotationDraft(c);
 
 
   const selectedItems = selectedEntities();
   if (!state.drawing && !state.moveCommand && !state.offsetCommand) {
     for (const entity of selectedItems) {
-      drawSelection(entity, c);
+      if (!shouldGhostEntityForCommand(entity)) drawSelection(entity, c);
     }
   }
 
   if (state.drawing) {
     if (state.tool === "polyline") drawPolyline(state.drawing, c, true);
-    drawActiveSegment(c);
+    if (state.tool === "polyline" && state.drawing.arcPhase) drawPolylineArcDraft(state.drawing, c);
+    else drawActiveSegment(c);
   } else if (state.moveCommand) {
     drawMoveCommand(c);
   } else if (state.offsetCommand) {
@@ -2551,16 +2599,16 @@ function renderFrame() {
     } else {
       hideInlineEditors();
     }
-  } else {
+  } else if (!state.circleRadiusEdit || state.metricEntry !== "inline") {
     hideInlineEditors();
   }
   syncSelectionActions();
+  syncPlanAnnotationActions();
   syncLineControls();
   syncDimensionLinks();
   drawLineEditMarks(c);
   drawSelectionDrag(c);
   drawDimensionSnapHint(c);
-  if (state.tool !== "dimension") drawSnapTracking(c);
   drawCursorSnap(c);
   normalizeDynamicText();
 }
@@ -2608,7 +2656,7 @@ function drawMoveCommand(c) {
   const angleInfo = activeAngleInfo(start, end);
   const displayAngle =
     command.mode === "rotate" && command.reference
-      ? Math.round(Math.abs((signedAngleDelta(angleBetweenPoints(start, command.reference), angleBetweenPoints(start, end)) * 180) / Math.PI))
+      ? Math.abs(radToDeg(signedAngleDelta(angleBetweenPoints(start, command.reference), angleBetweenPoints(start, end))))
       : angleInfo.degrees;
   const m = midpoint(p1, p2);
   const entity = state.entities.find((item) => item.id === command.entityId);
@@ -2633,7 +2681,7 @@ function drawMoveCommand(c) {
   drawCommandAngleArc(p1, p2, c, command.mode === "rotate" ? command.reference : null, angleInfo);
   ctx.restore();
 
-  updateTopMetricInputs(command.mode === "rotate" ? 0 : metrics.length, displayAngle);
+  updateTopMetricInputs(command.mode === "rotate" ? 0 : metrics.length, displayAngle, { cadAngle: angleInfo.cadAngle });
 }
 
 function drawCommandAngleArc(origin, target, c, reference = null, angleInfo = null) {
@@ -2702,15 +2750,41 @@ function drawOffsetCommand(c) {
   drawBadge(`${Math.round(command.distance)} мм`, previewMid.x, previewMid.y - 22, c);
   ctx.restore();
 
-  updateTopMetricInputs(Math.round(command.distance), 0);
+  updateTopMetricInputs(command.distance, 0);
 }
 
 function translatePolyline(points, dx, dy) {
   return points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
 }
 
+function mapArcPoints(entity, transform) {
+  return {
+    start: transform(entity.start),
+    through: transform(entity.through),
+    end: transform(entity.end),
+  };
+}
+
+function translatedFigureGeometry(entity, dx, dy) {
+  if (entity.type === "arc") return mapArcPoints(entity, point => ({ x: point.x + dx, y: point.y + dy }));
+  return { x1: entity.x1 + dx, y1: entity.y1 + dy, x2: entity.x2 + dx, y2: entity.y2 + dy };
+}
+
+function rotatedRectangleGeometry(entity, base, radians) {
+  const points = rectangleCorners(entity).map(point => rotatePointAround(point, base, radians));
+  return { type: "polyline", points, closed: true };
+}
+
 function drawMovePreview(entity, dx, dy, c) {
   if (!dx && !dy) return;
+  if (isPlanAnnotationZone(entity)) {
+    drawPlanAnnotationZone({ ...entity, id: "move-preview", points: translatePolyline(entity.points, dx, dy) }, c);
+    return;
+  }
+  if (entity.dimensionKind === "leader") {
+    drawLeaderEntity(cloneLinearEntity(entity, dx, dy), c, { active: true });
+    return;
+  }
   if (entity.type === "polyline") {
     drawPolyline({ ...entity, points: translatePolyline(entity.points, dx, dy) }, c, true, true);
     return;
@@ -2725,6 +2799,11 @@ function drawMovePreview(entity, dx, dy, c) {
   }
   if (entity.type === "circle") {
     drawCircleEntity({ ...entity, cx: entity.cx + dx, cy: entity.cy + dy }, c);
+    return;
+  }
+  if (entity.type === "arc" || entity.type === "rectangle") {
+    const preview = { ...entity, ...translatedFigureGeometry(entity, dx, dy), id: "move-preview" };
+    drawEntity(preview, { ...c, line: c.accent });
     return;
   }
   const p1 = worldToScreen({ x: entity.x1 + dx, y: entity.y1 + dy });
@@ -2746,6 +2825,17 @@ function drawRotatePreview(entity, command, end, c) {
   const startAngle = angleBetweenPoints(command.base, command.reference);
   const endAngle = angleBetweenPoints(command.base, end);
   const delta = signedAngleDelta(startAngle, endAngle);
+  if (isPlanAnnotationZone(entity)) {
+    const points = entity.points.map((point) => rotatePointAround(point, command.base, delta));
+    drawPlanAnnotationZone({ ...entity, id: "rotate-preview", points }, c);
+    return;
+  }
+  if (entity.dimensionKind === "leader") {
+    const preview = { ...entity };
+    rotateLinearEntityAround(preview, command.base, delta);
+    drawLeaderEntity(preview, c, { active: true });
+    return;
+  }
   if (entity.type === "polyline") {
     const points = entity.points.map((point) => rotatePointAround(point, command.base, delta));
     drawPolyline({ ...entity, points }, c, true, true);
@@ -2766,6 +2856,15 @@ function drawRotatePreview(entity, command, end, c) {
   if (entity.type === "circle") {
     const position = rotatePointAround({ x: entity.cx, y: entity.cy }, command.base, delta);
     drawCircleEntity({ ...entity, cx: position.x, cy: position.y }, c);
+    return;
+  }
+  if (entity.type === "arc") {
+    const geometry = mapArcPoints(entity, point => rotatePointAround(point, command.base, delta));
+    drawArcEntity({ ...entity, ...geometry, id: "rotate-preview" }, { ...c, line: c.accent });
+    return;
+  }
+  if (entity.type === "rectangle") {
+    drawPolyline(rotatedRectangleGeometry(entity, command.base, delta), c, true, true);
     return;
   }
   const p1World = rotatePointAround({ x: entity.x1, y: entity.y1 }, command.base, delta);
@@ -2801,6 +2900,8 @@ function editableSelectionEntity() {
     !state.drawing &&
     !state.moveCommand &&
     !state.offsetCommand &&
+    !state.selectedEndpoint &&
+    !state.circleRadiusEdit &&
     !state.dimensionAttach &&
     !state.lineEdit &&
     state.tool === "select" &&
@@ -2821,15 +2922,17 @@ function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
   if (!selected.length || state.tool !== "select" || state.drawing || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
   if (action === "delete") return true;
-  if (lineEditActions.has(action)) return state.tool === "select" && selected.length === 1 && isDraftLine(selected[0]);
+  if (figureCutActions.has(action)) return selected.length === 1 && editableFigure(selected[0], action);
+  if (lineEditActions.has(action)) return selected.length === 1 && isDraftLine(selected[0]);
   if (selected.length !== 1) return false;
   const entity = selected[0];
   if (action === "move") return true;
+  if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "copy" || action === "rotate";
   if (entity.type === "polyline") return action === "copy" || action === "rotate";
   if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "mirror") return entity.type === "block" || linearEditableEntity(entity);
-  if (action === "offset") return !["text", "circle"].includes(entity.type) && linearEditableEntity(entity);
+  if (action === "mirror") return entity.type !== "circle" && (entity.type === "block" || linearEditableEntity(entity));
+  if (action === "offset") return isDraftLine(entity) || entity.type === "wall";
   return false;
 }
 
@@ -2873,7 +2976,7 @@ function setSelection(ids, options = {}) {
 
 function entityMatchesSelectionFilter(entity) {
   if (!entity || !isLayerVisible(entity.layer)) return false;
-  if (state.selectionFilter === "lines") return ["line", "polyline"].includes(entity.type) && entity.layer !== "dimensions";
+  if (state.selectionFilter === "lines") return ["line", "polyline"].includes(entity.type) && !entity.dimensionKind && entity.layer !== "dimensions";
   if (state.selectionFilter === "dimensions") return entity.layer === "dimensions";
   return true;
 }
@@ -2883,8 +2986,9 @@ function selectableEntities() {
 }
 
 function selectionEntityPoints(entity) {
+  if (isPlanAnnotationZone(entity)) return entity.points;
   if (!entity) return [];
-  if (entity.type === "polyline") return entity.points;
+  if (entity.type === "polyline") return tessellatePolyline(entity) || entity.points;
   if (entity.type === "block") return blockCorners(entity);
   if (entity.type === "text") return [{ x: entity.x, y: entity.y }];
   if (entity.type === "circle") {
@@ -2907,7 +3011,10 @@ function selectionEntityPoints(entity) {
 
 function selectionEntitySegments(entity) {
   const points = selectionEntityPoints(entity);
-  if (entity?.type === "polyline") return polylineSegments(entity).map(({ p1, p2 }) => [p1, p2]);
+  if (entity?.type === "polyline" || isPlanAnnotationZone(entity)) {
+    const count = entity.closed || isPlanAnnotationZone(entity) ? points.length : points.length - 1;
+    return Array.from({ length: count }, (_, index) => [points[index], points[(index + 1) % points.length]]);
+  }
   if (entity?.type === "circle") {
     const center = { x: entity.cx, y: entity.cy };
     const radius = Math.abs(entity.radius || 0);
@@ -3062,11 +3169,12 @@ function applyTapSelection(hitId) {
 }
 
 function drawGrid(rect, c) {
-  const active = state.snaps.has("grid");
-  const step = active ? adaptiveGridStep() : 500;
-  updateGridStepReadout();
+  const step = visibleGridStep();
+  const text = snapEnabled("grid") ? `Шаг привязки ${state.gridStep} мм. Линии сетки через ${step} мм.` : "Сетка выключена";
+  if (gridVisibleReadout && gridVisibleReadout.textContent !== text) gridVisibleReadout.textContent = text;
+  if (!snapEnabled("grid")) return;
   const minor = step * state.view.scale;
-  const majorEvery = active ? 5 : 2;
+  const majorEvery = 5;
   const startX = ((state.view.panX % minor) + minor) % minor;
   const startY = ((state.view.panY % minor) + minor) % minor;
   const firstColumn = Math.round((startX - state.view.panX) / minor) % majorEvery;
@@ -3083,29 +3191,22 @@ function drawGrid(rect, c) {
   }
 }
 
-function drawCanvasCenterCursor(rect, c) {
+function drawCanvasCenterCursor(rect) {
   const navigating = canvas.matches(":focus-visible") || viewportTools.open;
-  if (!navigating && state.tool === "dimension" && state.drawing) return;
   const visible =
     navigating || state.tool !== "select" ||
-    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.dimensionAttach);
+    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.dimensionAttach || surveyPointPicker);
   if (!visible) return;
   const center = { x: rect.width / 2, y: rect.height / 2 };
   const red = state.theme === "dark" ? "#ff9a9a" : "#a3282d";
   ctx.save();
   ctx.strokeStyle = red;
-  ctx.fillStyle = c.bg;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(center.x - 36, center.y);
   ctx.lineTo(center.x + 36, center.y);
   ctx.moveTo(center.x, center.y - 36);
   ctx.lineTo(center.x, center.y + 36);
-  ctx.stroke();
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, 7, 0, Math.PI * 2);
-  ctx.fill();
   ctx.stroke();
   ctx.restore();
 }
@@ -3121,7 +3222,8 @@ function visibleEntities(rect) {
     if (entity.type === "block") {
       return entity.x >= min.x - margin && entity.x <= max.x + margin && entity.y >= min.y - margin && entity.y <= max.y + margin;
     }
-    const bounds = entity.type === "polyline" ? polylineBounds(entity) : entityBounds(entity);
+    const bounds = isPlanAnnotationZone(entity) ? planAnnotationGeometry(entity)?.bounds
+      : entity.type === "polyline" ? polylineBounds(entity) : entityBounds(entity);
     if (!bounds) return false;
     const entityMinX = bounds.minX;
     const entityMaxX = bounds.maxX;
@@ -3136,7 +3238,9 @@ function isLayerVisible(layer) {
 }
 
 function drawEntity(entity, c) {
-  if (entity.type === "wall") {
+  if (isPlanAnnotationZone(entity)) {
+    drawPlanAnnotationZone(entity, c);
+  } else if (entity.type === "wall") {
     drawWall(entity, c);
   } else if (entity.type === "line") {
     drawLineEntity(entity, c);
@@ -3153,6 +3257,138 @@ function drawEntity(entity, c) {
   } else if (entity.type === "text") {
     drawTextEntity(entity, c);
   }
+}
+
+function drawPlanScene(entities, c) {
+  const zones = entities.filter(isPlanAnnotationZone);
+  if (!printRendering) zoneLabelRects.clear();
+  for (const zone of zones) drawPlanAnnotationZone(zone, c, { outline: true });
+  drawWalls(entities, c);
+  for (const entity of entities) {
+    if (entity.type !== "wall" && !isPlanAnnotationZone(entity)) drawEntity(entity, c);
+  }
+  if (!zones.length) return;
+  const anchors = planAnnotationAnchors(zones);
+  const viewport = printRendering ? null : canvas.getBoundingClientRect();
+  const overlays = viewport ? [...shell.querySelectorAll(".status-chip, #saveIndicator, .viewport-tools, .tool-rail, #planAnnotationActions, .draw-tool-menu, #lineEditOptions")]
+    .filter((element) => !element.hidden && element.getClientRects().length)
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.left - viewport.left, y: rect.top - viewport.top, width: rect.width, height: rect.height };
+    }) : [];
+  for (const zone of zones.sort((a, b) => Number(b.type === "area") - Number(a.type === "area") ||
+      planAnnotationGeometry(a).areaMm2 - planAnnotationGeometry(b).areaMm2)) {
+    drawPlanAnnotationZone(zone, c, { label: true, anchor: anchors.get(zone.id), overlays, viewport });
+  }
+}
+
+function planLabelPosition(point, width, height, geometry, zone, overlays, viewport) {
+  const rectAt = ({ x, y }) => ({ x: x - width / 2, y: y - height / 2, width, height });
+  const fits = (center) => {
+    const box = rectAt(center);
+    if (viewport && (box.x < 4 || box.y < 4 || box.x + width > viewport.width - 4 || box.y + height > viewport.height - 4)) return false;
+    return !overlays.some((other) => box.x < other.x + other.width + 4 && box.x + width + 4 > other.x &&
+      box.y < other.y + other.height + 4 && box.y + height + 4 > other.y);
+  };
+  if (fits(point) || zone.type === "area" && !viewport) return point;
+  const bounds = geometry.bounds;
+  const min = worldToScreen({ x: bounds.minX, y: bounds.minY });
+  const max = worldToScreen({ x: bounds.maxX, y: bounds.maxY });
+  if (viewport && (max.x < 0 || max.y < 0 || min.x > viewport.width || min.y > viewport.height)) return point;
+  const candidates = [];
+  for (let y = 1; y <= 7; y++) {
+    for (let x = 1; x <= 7; x++) {
+      candidates.push({ x: min.x + (max.x - min.x) * x / 8, y: min.y + (max.y - min.y) * y / 8 });
+    }
+  }
+  candidates.sort((a, b) => pointDistance(point, a) - pointDistance(point, b));
+  const interior = candidates.find((center) => fits(center) && pointInPolygon(screenToWorld(center), geometry.points));
+  if (interior) return interior;
+  for (let step = 1; step <= 3; step++) {
+    for (const [dx, dy] of [[0, -1], [0, 1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const center = { x: point.x + dx * step * (width + 8), y: point.y + dy * step * (height + 8) };
+      if (fits(center)) return center;
+    }
+  }
+  return point;
+}
+
+function planZoneColor(entity) {
+  if (entity.type === "area") return state.theme === "dark" ? "#95c6ff" : layerMeta.areas.color;
+  const style = PLAN_ELEVATION_STYLES[entity.zoneStyle] || PLAN_ELEVATION_STYLES.ceiling;
+  if (state.theme !== "dark") return style.color;
+  return { ceiling: "#6fe1b2", beam: "#ffc78a", drop: "#d2b7ff" }[entity.zoneStyle] || "#6fe1b2";
+}
+
+function drawPlanAnnotationZone(entity, c, options = {}) {
+  const geometry = planAnnotationGeometry(entity);
+  if (!geometry) return;
+  const color = planZoneColor(entity);
+  ctx.save();
+  if (!options.label) {
+    const points = geometry.points.map(worldToScreen);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.09;
+    ctx.fill();
+    ctx.globalAlpha = shouldGhostEntityForCommand(entity) ? 0.28 : 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = annotationPx(1.25);
+    if (entity.type === "area") ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (!options.outline) {
+    const anchor = worldToScreen(options.anchor || geometry.anchor);
+    const value = entity.type === "area" ? formatPlanArea(geometry.areaM2) : `Z ${formatPlanElevation(entity.height)}`;
+    const label = entity.label || (entity.type === "elevation" ? PLAN_ELEVATION_STYLES[entity.zoneStyle]?.label : "");
+    const lines = [value, label].filter(Boolean);
+    ctx.font = annotationFont(700, 12);
+    const width = Math.min(Math.max(...lines.map((text) => ctx.measureText(text).width)) + annotationPx(14), annotationPx(220));
+    const lineHeight = annotationPx(15);
+    const height = lineHeight * lines.length + annotationPx(6);
+    const point = options.overlays ? planLabelPosition(anchor, width, height, geometry, entity, options.overlays, options.viewport) : anchor;
+    const rect = { x: point.x - width / 2, y: point.y - height / 2, width, height };
+    options.overlays?.push(rect);
+    if (!printRendering && options.label) zoneLabelRects.set(entity.id, rect);
+    if (!pointInPolygon(screenToWorld(point), geometry.points)) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      linePath(anchor.x, anchor.y, point.x, point.y);
+    }
+    ctx.fillStyle = c.surface;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = annotationPx(0.8);
+    roundedRect(rect.x, rect.y, width, height, annotationPx(4));
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    lines.forEach((text, index) => ctx.fillText(text, point.x, point.y + (index - (lines.length - 1) / 2) * lineHeight, width - annotationPx(12)));
+  }
+  ctx.restore();
+}
+
+function drawPlanAnnotationDraft(c) {
+  const points = state.planZone?.points;
+  if (!points?.length) return;
+  const screen = points.map(worldToScreen);
+  const closes = planContourClosesAtCursor(points);
+  const current = closes ? screen[0] : worldToScreen(cursorWorld());
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(screen[0].x, screen[0].y);
+  for (const point of screen.slice(1)) ctx.lineTo(point.x, point.y);
+  ctx.stroke();
+  ctx.setLineDash([5, 4]);
+  linePath(screen.at(-1).x, screen.at(-1).y, current.x, current.y);
+  ctx.setLineDash([]);
+  drawEndpointHandle(screen[0], closes, c);
+  ctx.restore();
 }
 
 function drawWalls(visible, c) {
@@ -3285,17 +3521,62 @@ function drawPolyline(entity, c, active = false, dashed = false) {
   if (dashed) ctx.setLineDash([8, 6]);
   if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.beginPath();
-  for (const [index, point] of entity.points.entries()) {
-    const p = worldToScreen(point);
-    if (index === 0) ctx.moveTo(p.x, p.y);
-    else ctx.lineTo(p.x, p.y);
+  const first = worldToScreen(entity.points[0]);
+  ctx.moveTo(first.x, first.y);
+  for (const segment of polylineSegments(entity)) {
+    if (segment.arc) appendPolylineArcPath(segment.arc);
+    else {
+      const point = worldToScreen(segment.p2);
+      ctx.lineTo(point.x, point.y);
+    }
   }
   if (entity.closed) ctx.closePath();
   ctx.stroke();
   ctx.restore();
 }
 
+function appendPolylineArcPath(arc) {
+  const center = worldToScreen(arc.center);
+  ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, arc.sweep < 0);
+}
+
+function polylineArcFromCursor(start, end, cursor) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const middle = midpoint(start, end);
+  const bulge = 2 * ((cursor.x - middle.x) * dy - (cursor.y - middle.y) * dx) / (dx * dx + dy * dy);
+  const arc = polylineArc(start, end, bulge);
+  return arc && isLinePoint(arc.through) ? { arc, bulge } : null;
+}
+
+function drawPolylineArcDraft(draft, c) {
+  const cursor = cursorWorld();
+  const end = draft.arcEnd || cursor;
+  const start = worldToScreen(draft.start);
+  const destination = worldToScreen(end);
+  const preview = draft.arcEnd && polylineArcFromCursor(draft.start, end, cursor);
+  ctx.save();
+  ctx.strokeStyle = c.accent;
+  ctx.lineWidth = 2;
+  if (preview) {
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    appendPolylineArcPath(preview.arc);
+    ctx.stroke();
+  } else {
+    ctx.setLineDash([5, 5]);
+    linePath(start.x, start.y, destination.x, destination.y);
+    ctx.setLineDash([]);
+  }
+  if (draft.arcEnd) drawEndpointHandle(destination, false, c);
+  ctx.restore();
+}
+
 function drawLineEntity(entity, c) {
+  if (entity.dimensionKind === "leader") {
+    drawLeaderEntity(entity, c);
+    return;
+  }
   if (entity.layer === "dimensions") {
     drawDimensionEntity(entity, c);
     return;
@@ -3322,12 +3603,13 @@ function drawCircleEntity(entity, c) {
   const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   const radius = Math.abs(entity.radius) * state.view.scale;
   ctx.save();
+  if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
   ctx.stroke();
-  if (selected) {
+  if (selected && !state.lineEdit) {
     drawHandle(center.x, center.y, c);
     drawHandle(center.x + radius, center.y, c);
     drawBadge(`R ${Math.round(Math.abs(entity.radius))} мм`, center.x, center.y - radius - 18, c);
@@ -3339,13 +3621,14 @@ function drawRectangleEntity(entity, c) {
   const corners = rectangleCorners(entity);
   const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
+  if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   ctx.beginPath();
   corners.forEach((corner, index) => { const pt = worldToScreen(corner); if (index === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); });
   ctx.closePath();
   ctx.stroke();
-  if (selected) {
+  if (selected && !state.lineEdit) {
     corners.forEach((corner) => { const pt = worldToScreen(corner); drawHandle(pt.x, pt.y, c); });
     const center = worldToScreen({ x: (entity.x1 + entity.x2) / 2, y: (entity.y1 + entity.y2) / 2 });
     drawBadge(`${Math.round(Math.abs(entity.x2 - entity.x1))} × ${Math.round(Math.abs(entity.y2 - entity.y1))}`, center.x, center.y - 18, c);
@@ -3359,36 +3642,44 @@ function drawArcEntity(entity, c) {
   const center = worldToScreen(arc.center);
   const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
   ctx.save();
+  if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? 2 : 1.4;
   ctx.beginPath();
   ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, !arc.counterClockwise);
   ctx.stroke();
-  if (selected) [entity.start, entity.through, entity.end].forEach((point) => { const pt = worldToScreen(point); drawHandle(pt.x, pt.y, c); });
+  if (selected && !state.lineEdit) [entity.start, entity.through, entity.end].forEach((point) => { const pt = worldToScreen(point); drawHandle(pt.x, pt.y, c); });
   ctx.restore();
 }
 
 function drawTextEntity(entity, c) {
   const p = worldToScreen({ x: entity.x, y: entity.y });
-  const height = Math.max(10, Math.abs(entity.height || 260) * state.view.scale);
+  const height = Math.max(printRendering ? 0.01 : 10, Math.abs(entity.height || 260) * state.view.scale);
   const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const lines = annotationTextLines(decodeMojibakeText(entity.text));
+  const spacing = height * ANNOTATION_LINE_SPACING;
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate(((entity.rotation || 0) * Math.PI) / 180);
   ctx.font = `${height}px Inter, Arial, sans-serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = selected ? c.accent : c.dimension;
-  ctx.fillText(entity.text || "Текст", 0, 0);
+  ctx.fillStyle = selected ? c.accent : annotationTextColor(entity, c);
+  lines.forEach((line, index) => ctx.fillText(line, 0, index * spacing));
   if (selected) {
-    const width = Math.max(height * 0.8, ctx.measureText(entity.text || "Текст").width);
+    const width = Math.max(height * 0.8, ...lines.map((line) => ctx.measureText(line).width));
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 1.4;
     ctx.setLineDash([6, 4]);
-    ctx.strokeRect(-4, -height - 4, width + 8, height + 8);
+    ctx.strokeRect(-4, -height - 4, width + 8, height + (lines.length - 1) * spacing + 8);
     ctx.setLineDash([]);
   }
   ctx.restore();
+}
+
+function annotationTextColor(entity, c) {
+  if (entity.layer !== "text") return c.dimension;
+  return state.theme === "dark" ? "#ddbcff" : layerMeta.text.color;
 }
 
 function drawEndpointHandle(point, active, c) {
@@ -3425,79 +3716,59 @@ function drawDimensionEntity(entity, c, options = {}) {
 
 function drawLeaderEntity(entity, c, options = {}) {
   const geometry = leaderScreenGeometry(entity);
-  const { arrow, connector, rect, text, font } = geometry;
-  const dx = connector.x - arrow.x;
-  const dy = connector.y - arrow.y;
+  const { arrow, path, rect, lines, font, spacing } = geometry;
+  const direction = path.find((point) => pointDistance(point, arrow) > 0.5);
+  const dx = (direction?.x ?? arrow.x) - arrow.x;
+  const dy = (direction?.y ?? arrow.y) - arrow.y;
   const length = Math.hypot(dx, dy);
-  if (length < 4) return;
-  const ux = dx / length;
-  const uy = dy / length;
-
+  const color = annotationTextColor(entity, c);
   ctx.save();
-  ctx.strokeStyle = c.dimension;
-  ctx.fillStyle = c.dimension;
+  ctx.strokeStyle = color;
   ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.45);
-  ctx.setLineDash(options.active ? [7, 5] : []);
-  linePath(arrow.x, arrow.y, connector.x, connector.y);
-  ctx.setLineDash([]);
-  drawDimensionArrow(arrow, ux, uy, annotationPx(8), c);
-
-  ctx.fillStyle = colorMixSurface(c.surface);
-  ctx.strokeStyle = c.dimension;
-  ctx.lineWidth = annotationPx(options.active ? 1.8 : 1.25);
-  roundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
-
+  if (length > 0.5) {
+    ctx.setLineDash(options.active ? [7, 5] : []);
+    ctx.beginPath();
+    ctx.moveTo(arrow.x, arrow.y);
+    for (const point of path.slice(1)) ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    drawDimensionArrow(arrow, dx / length, dy / length, annotationPx(8), { dimension: color });
+  }
+  if (entity.leaderStyle === "boxed") {
+    ctx.fillStyle = c.surface;
+    roundedRect(rect.x, rect.y, rect.width, rect.height, annotationPx(5));
+  }
   ctx.font = font;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillStyle = c.dimension;
-  ctx.fillText(text, rect.x + rect.width / 2, rect.y + rect.height / 2 + annotationPx(0.6));
+  ctx.fillStyle = color;
+  lines.forEach((line, index) => ctx.fillText(line, rect.x + rect.width / 2,
+    rect.y + rect.height / 2 + (index - (lines.length - 1) / 2) * spacing));
   ctx.restore();
 }
 
 function leaderScreenGeometry(entity) {
   const arrow = worldToScreen({ x: entity.x1, y: entity.y1 });
   const center = worldToScreen({ x: entity.x2, y: entity.y2 });
-  const text = decodeMojibakeText(entity.text || "Текст");
-  const font = annotationFont(700, 12);
+  const lines = annotationTextLines(decodeMojibakeText(entity.text));
+  const size = Math.max(printRendering ? 0.01 : annotationPx(11), Math.abs(entity.textHeight || entity.height || 200) * state.view.scale);
+  const font = `600 ${size}px Inter, Arial, sans-serif`;
+  const spacing = size * ANNOTATION_LINE_SPACING;
   ctx.save();
   ctx.font = font;
-  const textWidth = ctx.measureText(text).width;
+  const textWidth = Math.max(...lines.map((line) => ctx.measureText(line).width));
   ctx.restore();
-  const padX = annotationPx(10);
-  const width = Math.max(annotationPx(46), textWidth + padX * 2);
-  const height = annotationPx(25);
+  const padX = annotationPx(entity.leaderStyle === "boxed" ? 8 : 3);
+  const width = Math.max(annotationPx(20), textWidth + padX * 2);
+  const height = size + (lines.length - 1) * spacing + annotationPx(8);
   const rect = {
     x: center.x - width / 2,
     y: center.y - height / 2,
     width,
     height,
   };
-  return {
-    arrow,
-    center,
-    connector: pointOnRectTowardTarget(rect, arrow),
-    rect,
-    text,
-    font,
-  };
-}
-
-function pointOnRectTowardTarget(rect, target) {
-  const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  const dx = target.x - center.x;
-  const dy = target.y - center.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 0.001) return center;
-  const halfW = rect.width / 2;
-  const halfH = rect.height / 2;
-  const tx = Math.abs(dx) > 0.001 ? halfW / Math.abs(dx) : Infinity;
-  const ty = Math.abs(dy) > 0.001 ? halfH / Math.abs(dy) : Infinity;
-  const t = Math.min(tx, ty);
-  return {
-    x: center.x + dx * t,
-    y: center.y + dy * t,
-  };
+  const path = leaderPlanPath(arrow, rect, entity.leaderStyle || "boxed", Math.max(annotationPx(16), size * 2));
+  return { arrow, center, path, connector: path.at(-1), rect, lines, font, spacing };
 }
 
 function screenRectDistance(point, rect) {
@@ -3856,6 +4127,11 @@ function colorMixSurface(surface) {
 }
 
 function drawSelection(entity, c) {
+  if (isPlanAnnotationZone(entity)) {
+    for (const point of entity.points) drawEndpointHandle(worldToScreen(point), false, c);
+    return;
+  }
+  if (entity.type === "text") return;
   if (entity.type === "polyline") {
     drawPolyline(entity, c, true);
     for (const point of entity.points) drawEndpointHandle(worldToScreen(point), false, c);
@@ -3912,7 +4188,7 @@ function drawSelection(entity, c) {
     ctx.restore();
     return;
   }
-  if (entity.layer === "dimensions") {
+  if (entity.layer === "dimensions" || entity.dimensionKind === "leader") {
     drawDimensionSelection(entity, c);
     return;
   }
@@ -4022,18 +4298,18 @@ function drawDimensionSelection(entity, c) {
 
 function hitDimensionControl(screen) {
   if (state.tool !== "select") return null;
-  const selectedDimensionIds = new Set(selectedEntities().filter((entity) => entity.layer === "dimensions").map((entity) => entity.id));
+  const selectedDimensionIds = new Set(selectedEntities().filter((entity) => entity.layer === "dimensions" || entity.dimensionKind === "leader").map((entity) => entity.id));
   if (!selectedDimensionIds.size) return null;
   const hits = [];
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
-    if (entity.layer !== "dimensions" || !isLayerVisible(entity.layer)) continue;
+    if (!isLayerVisible(entity.layer)) continue;
     if (!selectedDimensionIds.has(entity.id)) continue;
     if (entity.dimensionKind === "leader") {
       const geometry = leaderScreenGeometry(entity);
       const arrowDistance = pointDistance(screen, geometry.arrow);
       const boxDistance = screenRectDistance(screen, geometry.rect);
-      const lineDistance = pointToSegmentDistance(screen, geometry.arrow, geometry.connector);
+      const lineDistance = distanceToLeaderPath(screen, geometry.path);
       if (arrowDistance <= 22) hits.push({ type: "leader-arrow", entity, score: arrowDistance, order: i });
       if (boxDistance <= 18) hits.push({ type: "leader-box", entity, score: boxDistance + 4, order: i });
       if (lineDistance <= 14) hits.push({ type: "leader-box", entity, score: lineDistance + 18, order: i });
@@ -4068,6 +4344,10 @@ function hitDimensionControl(screen) {
   state.dimensionPickCycle = { screen, index };
   const picked = uniqueHits[index];
   return { type: picked.type, entity: picked.entity };
+}
+
+function distanceToLeaderPath(screen, path) {
+  return Math.min(...path.slice(1).map((point, index) => pointToSegmentDistance(screen, path[index], point)));
 }
 
 function isLinearDimension(entity) {
@@ -4172,6 +4452,7 @@ function setDimensionLineAlongAxis(entity, axis, offset) {
 
 function snapDimensionLineToOtherDimension(entity, point, axis) {
   state.dimensionSnapHint = null;
+  if (state.snapsMuted) return null;
   const threshold = 34 / state.view.scale;
   let best = null;
   for (const candidate of state.entities) {
@@ -4207,6 +4488,7 @@ function dimensionOffsetWithAlignmentSnap(start, end, point) {
   const axis = { x: dx / length, y: dy / length };
   const normal = { x: -axis.y, y: axis.x };
   const rawOffset = dimensionOffsetFromPoint(start, end, point);
+  if (state.snapsMuted) return rawOffset;
   const threshold = 28 / state.view.scale;
   let best = null;
 
@@ -4334,9 +4616,9 @@ function drawEditableSegment(start, end, c, options = {}) {
   drawHandle(p2.x, p2.y, c);
   ctx.restore();
   const angleLabelPoint = drawAngleArc(p1, p2, angleInfo, c, { label: false });
-  if (angleLabelPoint) {
-    positionAngleEditor(angleLabelPoint.x, angleLabelPoint.y, angleInfo.degrees);
-  }
+  const label = angleLabelPoint || (state.metricEntry === "inline" && { x: p1.x, y: p1.y + 40 });
+  if (label) positionAngleEditor(label.x, label.y, angleInfo);
+  else angleEditor.hidden = true;
 }
 
 function drawActiveAngularDimension(c) {
@@ -4388,18 +4670,20 @@ function drawActiveCircle(centerWorld, edgeWorld, c) {
   drawHandle(edge.x, edge.y, c);
   ctx.restore();
   inlineEditors.hidden = false;
+  lengthEditor.hidden = false;
   state.inlineEdit = { start: centerWorld, end: edgeWorld, metrics: { length: Math.round(radius), angle: 0 } };
-  if (document.activeElement !== lengthInput) lengthInput.value = Math.round(radius);
+  lengthReadout.textContent = Math.round(radius);
+  if (numericConfirmInput() !== lengthInput) lengthInput.value = metricEntryValue(radius);
   syncInlineEditorWidth(lengthInput);
   positionInlineEditor(lengthEditor, mid.x, mid.y - 18);
   if (angleEditor) angleEditor.hidden = true;
-  updateTopMetricInputs(Math.round(radius), 0);
+  drawMetrics.hidden = true;
 }
 function drawActiveRectangle(start, end, c) {
   drawRectangleEntity(rectangleEntity("preview", start.x, start.y, end.x, end.y), { ...c, line: c.accent });
   const center = worldToScreen({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 });
   drawBadge(`${Math.round(Math.abs(end.x - start.x))} × ${Math.round(Math.abs(end.y - start.y))}`, center.x, center.y - 18, c);
-  updateTopMetricInputs(Math.round(Math.abs(end.x - start.x)), Math.round(Math.abs(end.y - start.y)));
+  updateTopMetricInputs(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
 }
 
 function drawActiveArc(c) {
@@ -4480,7 +4764,7 @@ function drawAngleArc(origin, target, angleInfo, c, options = {}) {
   ctx.setLineDash([]);
 
   if (options.label !== false) {
-    drawBadge(`${angleInfo.degrees}°`, label.x, label.y, c, true);
+    drawBadge(`${wholeMetricAngle(angleInfo.degrees, angleInfo.cadAngle)}°`, label.x, label.y, c, true);
   }
   ctx.restore();
   return label;
@@ -4509,6 +4793,7 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
     return;
   }
   inlineEditors.hidden = false;
+  lengthEditor.hidden = false;
   state.inlineEdit = { start, end, metrics, angleInfo };
   const input = numericConfirmInput();
   const hasDirection = state.tool === "line" && distanceWorld(start, end) > linePointEpsilon;
@@ -4521,23 +4806,22 @@ function updateInlineEditors({ start, end, p1, p2, midpoint: m, metrics, angleIn
     description = `Направление ${direction}`;
   }
   if (lineDirectionDescription.textContent !== description) lineDirectionDescription.textContent = description;
-  if (input !== lengthInput) {
-    lengthInput.value = metrics.length;
-  }
+  lengthReadout.textContent = metrics.length;
+  if (input !== lengthInput) lengthInput.value = metricEntryValue(distanceWorld(start, end));
   syncInlineEditorWidth(lengthInput);
   positionInlineEditor(lengthEditor, m.x, m.y - 28);
   if (input !== angleInput) {
-    angleInput.value = angleInfo.degrees;
+    angleInput.value = metricEntryValue(angleInfo.degrees);
     syncInlineEditorWidth(angleInput);
   }
-  updateTopMetricInputs(metrics.length, state.tool === "dimension" ? metrics.angle : angleInfo.degrees);
   if (drawMetrics) drawMetrics.hidden = true;
 }
 
-function positionAngleEditor(x, y, value) {
+function positionAngleEditor(x, y, angleInfo) {
   if (angleEditor) angleEditor.hidden = false;
+  angleReadout.textContent = wholeMetricAngle(angleInfo.degrees, angleInfo.cadAngle);
   if (numericConfirmInput() !== angleInput) {
-    angleInput.value = value;
+    angleInput.value = metricEntryValue(angleInfo.degrees);
   }
   syncInlineEditorWidth(angleInput);
   const adjusted = avoidEditorOverlapPoint(angleEditor, x, y, lengthEditor);
@@ -4569,15 +4853,18 @@ function avoidEditorOverlapPoint(editor, x, y, avoidEditor) {
   return { x, y };
 }
 
-function updateTopMetricInputs(length, angle) {
+function updateTopMetricInputs(length, angle, { cadAngle = false } = {}) {
   if (!drawMetrics || !topLengthInput || !topAngleInput) return;
   drawMetrics.hidden = false;
   updateTopMetricLabels();
-  if (document.activeElement !== topLengthInput) {
-    topLengthInput.value = length;
+  topLengthReadout.textContent = Math.round(length);
+  topAngleReadout.textContent = wholeMetricAngle(angle, cadAngle);
+  const input = numericConfirmInput();
+  if (input !== topLengthInput) {
+    topLengthInput.value = metricEntryValue(length);
   }
-  if (document.activeElement !== topAngleInput) {
-    topAngleInput.value = angle;
+  if (input !== topAngleInput) {
+    topAngleInput.value = metricEntryValue(angle);
   }
   syncInlineEditorWidth(topLengthInput);
   syncInlineEditorWidth(topAngleInput);
@@ -4586,9 +4873,9 @@ function updateTopMetricInputs(length, angle) {
 function updateTopMetricLabels() {
   if (!drawMetrics || !topLengthInput || !topAngleInput) return;
   const labels = drawMetrics.querySelectorAll("label");
-  const firstText = labels[0]?.querySelector("span");
+  const firstText = labels[0]?.querySelector("span:not(.metric-readout)");
   const firstUnit = labels[0]?.querySelector("em");
-  const secondText = labels[1]?.querySelector("span");
+  const secondText = labels[1]?.querySelector("span:not(.metric-readout)");
   let secondUnit = labels[1]?.querySelector("em");
   if (!secondUnit && labels[1]) {
     secondUnit = document.createElement("em");
@@ -4617,14 +4904,16 @@ function updateSelectedEndpointEditors(previewMoving = null) {
   const p2 = worldToScreen(displayMoving);
   const m = midpoint(p1, p2);
   inlineEditors.hidden = false;
+  lengthEditor.hidden = false;
   state.inlineEdit = { start: fixed, end: displayMoving, metrics, angleInfo };
-  if (document.activeElement !== lengthInput) {
-    lengthInput.value = metrics.length;
+  lengthReadout.textContent = metrics.length;
+  const input = numericConfirmInput();
+  if (input !== lengthInput) {
+    lengthInput.value = metricEntryValue(distanceWorld(fixed, displayMoving));
   }
-  if (document.activeElement !== angleInput) {
-    angleInput.value = angleInfo.degrees;
+  if (input !== angleInput) {
+    angleInput.value = metricEntryValue(angleInfo.degrees);
   }
-  updateTopMetricInputs(metrics.length, angleInfo.degrees);
   if (drawMetrics) drawMetrics.hidden = true;
   syncInlineEditorWidth(lengthInput);
   syncInlineEditorWidth(angleInput);
@@ -4717,7 +5006,7 @@ function lineMetricContext() {
   const endpoint = selectedEndpointGeometry();
   if (isDraftLine(endpoint?.entity)) return { key: state.selectedEndpoint, start: endpoint.fixed, end: endpoint.moving, endpoint: true };
   const draft = state.drawing;
-  if (draft && ["line", "polyline"].includes(state.tool)) return { key: draft.start, start: draft.start, end: draft.end, endpoint: false };
+  if (draft && !draft.arcPhase && ["line", "polyline"].includes(state.tool)) return { key: draft.start, start: draft.start, end: draft.end, endpoint: false };
   return null;
 }
 
@@ -4731,13 +5020,43 @@ function clearLineMetricEdit() {
   for (const input of lineMetricKinds.keys()) input?.removeAttribute("aria-invalid");
 }
 
-function closeLineMetricInput() {
-  const input = document.activeElement;
-  if (lineMetricKinds.has(input) && (state.numericEdit?.lineMetric || lineMetricContext())) {
-    input.blur();
+function metricEntryMode() {
+  if (state.moveCommand?.base || state.offsetCommand || (state.tool === "rectangle" && state.drawing)) return "top";
+  if (state.selectedEndpoint || (state.drawing && !state.drawing.arcPhase && ["line", "polyline", "circle"].includes(state.tool))) return "inline";
+  return null;
+}
+
+function setMetricEntry(mode) {
+  state.metricEntry = mode;
+  const inline = mode === "inline";
+  const top = mode === "top";
+  lengthInput.hidden = angleInput.hidden = !inline;
+  lengthReadout.hidden = angleReadout.hidden = inline;
+  topLengthInput.hidden = topAngleInput.hidden = !top;
+  topLengthReadout.hidden = topAngleReadout.hidden = top;
+}
+
+function openMetricEntry() {
+  const mode = metricEntryMode();
+  if (!mode) return;
+  setMetricEntry(mode);
+  const input = mode === "inline" ? lengthInput : state.moveCommand?.mode === "rotate" ? topAngleInput : topLengthInput;
+  input.focus({ preventScroll: true });
+  draw();
+}
+
+function closeMetricEntry() {
+  const input = numericConfirmInput();
+  if (input) {
+    document.activeElement.blur();
     window.ZamerAndroid?.dismissKeyboard?.();
-    updateViewportLock();
   }
+  setMetricEntry(null);
+  if (input) updateViewportLock();
+}
+
+function closeLineMetricInput() {
+  if (state.metricEntry === "inline" || (numericConfirmInput() && (state.numericEdit?.lineMetric || lineMetricContext()))) closeMetricEntry();
   clearLineMetricEdit();
 }
 
@@ -4874,14 +5193,9 @@ function confirmKeyboardInput() {
   const shouldFinishCircleRadius = Boolean(
     state.circleRadiusEdit && [lengthInput, topLengthInput].includes(input)
   );
-  if (input === lengthInput) {
-    applyInlineValue("length", { recordUndo: false });
-  } else if (input === angleInput) {
-    applyInlineValue("angle", { recordUndo: false });
-  } else if (input === topLengthInput) {
-    applyTopMetricValue("length", { recordUndo: false });
-  } else if (input === topAngleInput) {
-    applyTopMetricValue("angle", { recordUndo: false });
+  if (modifiedMetricInputs.has(input)) {
+    const apply = input === topLengthInput || input === topAngleInput ? applyTopMetricValue : applyInlineValue;
+    apply(lineMetricKinds.get(input), { recordUndo: false });
   }
   const shouldFinishDrawing = Boolean(
       state.drawing?.lockedEnd &&
@@ -4896,8 +5210,7 @@ function confirmKeyboardInput() {
     statusChip.textContent = "Радиус круга применен";
     draw();
   }
-  input.blur();
-  if (keyboardConfirmButton) keyboardConfirmButton.hidden = true;
+  closeMetricEntry();
   if (shouldFinishDrawing && !shouldFinishEndpoint) {
     window.setTimeout(() => commitCursorPoint(), 0);
   }
@@ -4999,9 +5312,6 @@ function startMoveLikeCommand(entity, mode) {
   state.selectedEndpoint = null;
   state.endpointEditBefore = null;
   hideInlineEditors();
-  state.snaps.add("end");
-  if (!state.snaps.has("ortho")) state.snaps.add("polar");
-  syncSnapButtons();
   syncCommandState();
   updateTopMetricInputs(0, 0);
   const label = mode === "copy" ? "Копия" : mode === "rotate" ? "Поворот" : "Переместить";
@@ -5018,8 +5328,6 @@ function startOffsetCommand(entity) {
   state.selectedEndpoint = null;
   state.endpointEditBefore = null;
   hideInlineEditors();
-  state.snaps.add("end");
-  syncSnapButtons();
   syncCommandState();
   updateTopMetricInputs(300, 0);
   statusChip.textContent = "Смещение: введите расстояние сверху и тапните с нужной стороны";
@@ -5053,7 +5361,8 @@ function applySelectionAction(action) {
   }
 
   if (!actionEntity) return;
-  if (isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) {
+  if ((isDraftLine(actionEntity) && lineOnlyEditActions.has(action)) ||
+      (figureCutActions.has(action) && editableFigure(actionEntity, action))) {
     startLineEdit(action, actionEntity);
     return;
   }
@@ -5140,8 +5449,15 @@ function applySelectionAction(action) {
 
 function positionInlineEditor(editor, x, y, avoidEditor = null) {
   if (!editor) return;
-  if (editor.contains(document.activeElement) && editor.style.left && editor.style.top) return;
   const rect = canvas.getBoundingClientRect();
+  if (state.metricEntry === "inline" && shell.classList.contains("keyboard-open")) {
+    const visibleHeight = rect.height - (parseFloat(css("--keyboard-inset")) || 0);
+    const fraction = editor === lengthEditor ? 0.32 : 0.68;
+    editor.style.left = `${rect.width * fraction}px`;
+    editor.style.top = `${Math.max(32, Math.min(112, visibleHeight - 82))}px`;
+    return;
+  }
+  if (editor.contains(document.activeElement) && editor.style.left && editor.style.top) return;
   const editorWidth = editor.offsetWidth || 84;
   const editorHeight = editor.offsetHeight || 28;
   let safeX = Math.max(editorWidth / 2 + 8, Math.min(rect.width - editorWidth / 2 - 8, x));
@@ -5176,6 +5492,7 @@ function hideInlineEditors() {
   lineDirectionArrow.hidden = true;
   if (lineDirectionDescription.textContent) lineDirectionDescription.textContent = "";
   if (state.numericEdit?.lineMetric) closeLineMetricInput();
+  if (state.metricEntry) closeMetricEntry();
   if (inlineEditors) {
     inlineEditors.hidden = true;
   }
@@ -5220,141 +5537,57 @@ function showCircleRadiusEditor(entity) {
   const geometry = circleRadiusScreenGeometry(entity);
   if (!geometry) return;
   inlineEditors.hidden = false;
+  setMetricEntry("inline");
   state.circleRadiusEdit = { entityId: entity.id, before: entityGeometry(entity) };
   state.inlineEdit = null;
   lengthEditor.hidden = false;
   if (angleEditor) angleEditor.hidden = true;
-  lengthInput.value = Math.round(Math.abs(entity.radius || 0));
+  lengthInput.value = metricEntryValue(Math.abs(entity.radius || 0));
   syncInlineEditorWidth(lengthInput);
   positionInlineEditor(lengthEditor, geometry.label.x, geometry.label.y);
   lengthInput.focus({ preventScroll: true });
   selectInlineValue(lengthInput);
-  updateTopMetricInputs(Math.round(Math.abs(entity.radius || 0)), 0);
+  drawMetrics.hidden = true;
   statusChip.textContent = "Круг: введите радиус";
 }
 
-function positionLeaderTextEditor(point) {
-  if (!leaderTextEditor) return;
-  const screen = worldToScreen(point);
-  const rect = canvas.getBoundingClientRect();
-  const width = leaderTextEditor.offsetWidth || 300;
-  const height = leaderTextEditor.offsetHeight || 54;
-  const left = Math.max(12 + width / 2, Math.min(rect.width - width / 2 - 12, screen.x + 44));
-  const top = Math.max(82, Math.min(rect.height - height / 2 - 18, screen.y - 8));
-  leaderTextEditor.style.left = `${left}px`;
-  leaderTextEditor.style.setProperty("--leader-editor-top", `${top}px`);
-}
-
-function showLeaderTextEditor(point) {
-  if (!leaderTextEditor || !leaderTextInput) return;
-  leaderTextEditor.hidden = false;
-  leaderTextInput.value = "";
-  requestAnimationFrame(() => {
-    positionLeaderTextEditor(point);
-    leaderTextInput.focus({ preventScroll: true });
-  });
-}
-
-function hideLeaderTextEditor() {
-  if (leaderTextEditor?.contains(document.activeElement)) {
-    document.activeElement.blur();
-    window.ZamerAndroid?.dismissKeyboard?.();
-  }
-  if (leaderTextEditor) leaderTextEditor.hidden = true;
-  if (leaderTextInput) leaderTextInput.value = "";
-}
-
-function commitLeaderText() {
-  if (state.tool !== "dimension" || state.dimensionTool !== "leader" || state.drawing?.phase !== "leader-text") {
-    hideLeaderTextEditor();
-    return;
-  }
-  const text = (leaderTextInput?.value || "").trim() || "Текст";
-  pushEntity(leaderEntity(`leader-${Date.now()}`, state.drawing.start, state.drawing.end, text));
-  state.drawing = null;
-  hideLeaderTextEditor();
-  resetSnapTracking();
-  statusChip.textContent = "Выноска создана";
-  drawNow();
-}
-
-function editLeaderText(entity) {
-  if (!entity || entity.dimensionKind !== "leader") return;
-  const before = entityGeometry(entity);
-  showProjectDialog({
-    title: "Текст выноски",
-    value: decodeMojibakeText(entity.text || "Текст"),
-    placeholder: "Текст выноски",
-    inputLabel: "Текст выноски",
-    confirmText: "Готово",
-  }).then((text) => {
-    if (!text) return;
-    entity.text = text;
-    const after = entityGeometry(entity);
-    if (geometryChanged(before, after)) {
-      state.undo.push({ type: "move", entityId: entity.id, before, after });
-      state.redo.length = 0;
-      markProjectDirty("leader-text");
-    }
-    setSelection(entity.id);
-    statusChip.textContent = "Текст выноски изменен";
-    draw();
-  });
-}
-
-function editTextEntity(entity) {
-  if (!entity || entity.type !== "text") return;
-  const before = entityGeometry(entity);
-  askCadText(decodeMojibakeText(entity.text || "Текст")).then((text) => {
-    if (!text) return;
-    entity.text = text;
-    const after = entityGeometry(entity);
-    if (geometryChanged(before, after)) {
-      state.undo.push({ type: "move", entityId: entity.id, before, after });
-      state.redo.length = 0;
-      markProjectDirty("text-edit");
-    }
-    setSelection(entity.id);
-    state.lastTextTap = null;
-    statusChip.textContent = "Текст изменен";
-    draw();
-  });
-}
-
-function shouldEditTextFromTap(entity, screen) {
-  if (!entity || entity.type !== "text") {
-    state.lastTextTap = null;
-    return false;
-  }
-  const now = Date.now();
-  const previous = state.lastTextTap;
-  const isDoubleTap =
-    previous?.id === entity.id &&
-    now - previous.time <= 420 &&
-    pointDistance(screen, previous.screen) <= 24;
-  state.lastTextTap = { id: entity.id, time: now, screen };
-  return isDoubleTap;
-}
-
-function createTextAtPoint(point) {
-  const anchor = { x: point.x, y: point.y };
-  statusChip.textContent = "Текст: введите надпись";
-  askCadText().then((text) => {
-    if (!text) {
-      statusChip.textContent = "Текст отменен";
-      draw();
-      return;
-    }
-    const entity = textEntity(`text-${Date.now()}`, anchor.x, anchor.y, text);
+async function createLeaderFromDraft(draft) {
+  const values = await openPlanAnnotationEditor("leader");
+  if (state.drawing !== draft) return;
+  if (values) {
+    const entity = leaderEntity(newLineId("leader"), draft.start, draft.end, values.text, values);
     pushEntity(entity);
-    state.drawing = null;
-    resetSnapTracking();
-    state.selectTool = "select";
-    setTool("select");
-    showSelectToolMenuAfterLayout();
-    statusChip.textContent = "Текст поставлен";
-    draw();
-  });
+  }
+  state.drawing = null;
+  resetSnapTracking();
+  statusChip.textContent = values ? "Выноска поставлена. Укажите следующую стрелку" : dimensionToolStatusText();
+  draw();
+}
+
+async function editLeaderText(entity) {
+  if (entity?.dimensionKind !== "leader") return;
+  const values = await openPlanAnnotationEditor("leader", entity);
+  if (values && state.entities.includes(entity)) applyPlanAnnotationEdit(entity, values);
+}
+
+async function editTextEntity(entity) {
+  if (entity?.type !== "text") return;
+  const values = await openPlanAnnotationEditor("text", entity);
+  if (values && state.entities.includes(entity)) applyPlanAnnotationEdit(entity, { text: values.text, height: values.textHeight });
+}
+
+async function createTextAtPoint(point) {
+  const projectId = persistence.projectId;
+  statusChip.textContent = "Текст: введите надпись";
+  const values = await openPlanAnnotationEditor("text");
+  if (persistence.projectId !== projectId || state.tool !== "text") return;
+  if (values) {
+    const entity = textEntity(newLineId("text"), point.x, point.y, values.text, values.textHeight);
+    entity.layer = "text";
+    pushEntity(entity);
+  }
+  statusChip.textContent = values ? "Текст поставлен. Можно добавить ещё надпись" : "Текст: укажите место надписи";
+  draw();
 }
 
 function applyInlineValue(kind, options = {}) {
@@ -5472,34 +5705,21 @@ function drawHandle(x, y, c) {
 
 function drawDimensionSnapHint(c) {
   const hint = state.dimensionSnapHint;
-  if (!hint) return;
-  const point = worldToScreen(hint.point);
+  if (state.snapsMuted || hint?.type !== "line" || !hint.segment) return;
+  const a = worldToScreen(hint.segment.p1);
+  const b = worldToScreen(hint.segment.p2);
   ctx.save();
   ctx.strokeStyle = c.accent;
-  ctx.fillStyle = c.accent;
   ctx.lineWidth = 1.5;
   ctx.globalAlpha = 0.85;
-  if (hint.type === "line" && hint.segment) {
-    const a = worldToScreen(hint.segment.p1);
-    const b = worldToScreen(hint.segment.p2);
-    ctx.setLineDash([9, 6]);
-    linePath(a.x, a.y, b.x, b.y);
-    ctx.setLineDash([]);
-  } else {
-  }
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = c.bg;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.setLineDash([9, 6]);
+  linePath(a.x, a.y, b.x, b.y);
   ctx.restore();
 }
 
 function canUseSnapTracking() {
-  return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && state.snaps.has("polar") && state.snaps.has("end") && canCaptureSnapTrackingNow();
+  return (Boolean(trackingBasePoint()) || canUsePrePointTracking()) && snapEnabled("polar") &&
+    ["end", "mid", "center", "intersection"].some(snapEnabled) && canCaptureSnapTrackingNow();
 }
 
 function canCreateSnapTrackingPoint() {
@@ -5508,7 +5728,7 @@ function canCreateSnapTrackingPoint() {
 }
 
 function canSnapToTrackingGuides() {
-  return Boolean(trackingBasePoint()) && state.snaps.has("polar") && !state.pinch;
+  return Boolean(trackingBasePoint()) && snapEnabled("polar") && state.snapTracking.points.length > 0 && !state.pinch;
 }
 
 function canUsePrePointTracking() {
@@ -5524,7 +5744,7 @@ function canCaptureSnapTrackingNow() {
 }
 
 function canSnapToPrePointTrackingGuides() {
-  return canUsePrePointTracking() && state.snaps.has("polar") && state.snapTracking.points.length > 0;
+  return canUsePrePointTracking() && snapEnabled("polar") && state.snapTracking.points.length > 0;
 }
 
 function trackingBasePoint() {
@@ -5535,7 +5755,7 @@ function trackingBasePoint() {
 }
 
 function updateSnapTrackingHover() {
-  if (state.skipLineObjectSnap || !canCreateSnapTrackingPoint()) {
+  if (!canCreateSnapTrackingPoint()) {
     clearSnapTrackingHover();
     state.snapTracking.active = null;
     return;
@@ -5724,76 +5944,31 @@ function trackingGuideIntersection(a, b) {
 }
 
 function drawSnapTracking(c) {
-  const base = trackingBasePoint();
-  if ((!canUseSnapTracking() && !canSnapToTrackingGuides()) || (!base && state.snapTracking.points.length === 0)) {
-    drawSnapTrackingHover(c);
-    return;
-  }
-  if (base) resolveLineLikeSnap(screenToWorld(centerScreen()), base);
-  else if (canSnapToPrePointTrackingGuides()) resolvePrePointTrackingSnap(screenToWorld(centerScreen()));
+  const guides = activeTrackingGuides();
+  if (!guides.length) return;
   const rect = canvas.getBoundingClientRect();
   ctx.save();
   ctx.strokeStyle = c.accent;
-  ctx.fillStyle = c.accent;
-
-  const activeGuides = activeTrackingGuides();
-  if (activeGuides.length) {
-    ctx.globalAlpha = 0.78;
-    ctx.lineWidth = 1.6;
-    ctx.setLineDash([10, 6]);
-    for (const guide of activeGuides) {
-      drawTrackingGuideLine(guide, rect);
-    }
-    ctx.setLineDash([]);
-  }
-
-  ctx.globalAlpha = 0.95;
-  if (base) drawTrackingAnchor({ ...base, key: "__base__" }, c);
-  for (const point of state.snapTracking.points) {
-    drawTrackingAnchor(point, c);
-  }
-  if (state.snapTracking.active?.trackingType === "intersection") {
-    const p = worldToScreen(state.snapTracking.active);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(p.x - 9, p.y);
-    ctx.lineTo(p.x + 9, p.y);
-    ctx.moveTo(p.x, p.y - 9);
-    ctx.lineTo(p.x, p.y + 9);
-    ctx.stroke();
-  }
-  ctx.restore();
-  drawSnapTrackingHover(c);
-}
-
-function drawSnapTrackingHover(c) {
-  if (!state.snapTracking.hoverPoint || state.snapTracking.hoverTimer == null) return;
-  const p = worldToScreen(state.snapTracking.hoverPoint);
-  ctx.save();
-  ctx.globalAlpha = 0.72;
-  drawTrackingSnapMarker(p, c);
+  ctx.globalAlpha = 0.65;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([10, 6]);
+  for (const guide of guides) drawTrackingGuideLine(guide, rect);
   ctx.restore();
 }
 function drawPolarSnapGuide(c) {
   const guide = state.polarSnapGuide;
-  if (!guide || !state.snaps.has("polar")) return;
+  if (!guide || !snapEnabled("polar")) return;
   const rect = canvas.getBoundingClientRect();
   const start = worldToScreen(guide.point);
   const length = Math.max(rect.width, rect.height) * 1.45;
   const dx = Math.cos(guide.angle) * length;
   const dy = Math.sin(guide.angle) * length;
-  const labelX = start.x + Math.cos(guide.angle) * Math.min(120, length * 0.28);
-  const labelY = start.y + Math.sin(guide.angle) * Math.min(120, length * 0.28);
-  const degrees = normalizeDegrees(isLineSnapContext() ? -guide.degrees : guide.degrees);
   ctx.save();
   ctx.strokeStyle = c.accent;
-  ctx.fillStyle = c.accent;
-  ctx.lineWidth = 1.6;
-  ctx.globalAlpha = 0.82;
+  ctx.lineWidth = 1.4;
+  ctx.globalAlpha = 0.65;
   ctx.setLineDash([12, 7]);
   linePath(start.x - dx, start.y - dy, start.x + dx, start.y + dy);
-  ctx.setLineDash([]);
-  drawBadge(`${degrees}° ось`, labelX, labelY - 18, c, true);
   ctx.restore();
 }
 
@@ -5813,25 +5988,6 @@ function drawTrackingGuideLine(guide, rect) {
   linePath(p.x - dx, p.y - dy, p.x + dx, p.y + dy);
 }
 
-function drawTrackingAnchor(point, c) {
-  const p = worldToScreen(point);
-  ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.fillStyle = colorMixSurface(c.surface);
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(p.x - 12, p.y);
-  ctx.lineTo(p.x + 12, p.y);
-  ctx.moveTo(p.x, p.y - 12);
-  ctx.lineTo(p.x, p.y + 12);
-  ctx.stroke();
-  ctx.restore();
-}
-
 function resetSnapTracking() {
   clearSnapTrackingHover();
   state.snapTracking.points = [];
@@ -5843,8 +5999,9 @@ function resetSnapTracking() {
 function drawCursorSnap(c) {
   const dimensionStage = state.tool === "dimension" && !surveyPointPicker ? state.drawing?.phase : null;
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
-  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach;
-  const resolved = selectOnly || dimensionStage === "offset" ? null : cursorSnapResolved();
+  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach && !surveyPointPicker;
+  const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
+    : selectOnly || dimensionStage === "offset" ? null : cursorSnapResolved();
   const chooseSnap = state.tool === "dimension" && !surveyPointPicker && resolved?.snapCount > 1;
   dimensionAxisControl.hidden = !chooseAxis;
   dimensionNextSnap.hidden = !chooseSnap;
@@ -5859,104 +6016,26 @@ function drawCursorSnap(c) {
     const label = `Другая точка, привязка ${resolved.snapIndex + 1} из ${resolved.snapCount}`;
     if (dimensionNextSnap.getAttribute("aria-label") !== label) dimensionNextSnap.setAttribute("aria-label", label);
   }
-  if (!resolved?.snap) return;
-  const snap = resolved.snap;
-  const p = worldToScreen(snap);
+  const hint = state.dimensionSnapHint;
+  const snap = !state.snapsMuted && (resolved?.snap || (hint && { ...hint.point, type: "tracking" }));
+  const rawType = snap?.type || snap?.snapRole;
+  const type = snap ? (Object.hasOwn(snapMarkerPaths, rawType) ? rawType : "end") : "";
+  if (canvas.dataset.activeSnap !== type) canvas.dataset.activeSnap = type;
+  if (!snap) return;
+  if (type === "tracking") drawSnapTracking(c);
+  if (type === "polar") drawPolarSnapGuide(c);
+  const point = worldToScreen(snap);
   ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.fillStyle = colorMixSurface(c.surface);
-  ctx.lineWidth = 2;
-  ctx.setLineDash([]);
-  if (snap?.type === "tracking") {
-    drawTrackingSnapMarker(p, c);
-  } else if (isMidSnap(snap)) {
-    drawMidSnapMarker(p, c);
-  } else if (snap?.type === "nearest") {
-    drawNearestSnapMarker(p, c);
-  } else if (snap?.type === "intersection" || snap?.type === "perpendicular") {
-    const size = 7;
-    if (snap.type === "intersection") {
-      linePath(p.x - size, p.y - size, p.x + size, p.y + size);
-      linePath(p.x - size, p.y + size, p.x + size, p.y - size);
-    } else {
-      linePath(p.x - size, p.y + size, p.x + size, p.y + size);
-      linePath(p.x, p.y - size, p.x, p.y + size);
-    }
-  } else {
-    ctx.beginPath();
-    ctx.rect(p.x - 6, p.y - 6, 12, 12);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(p.x - 14, p.y);
-    ctx.lineTo(p.x + 14, p.y);
-    ctx.moveTo(p.x, p.y - 14);
-    ctx.lineTo(p.x, p.y + 14);
-    ctx.stroke();
-  }
-  ctx.restore();
-  if (state.tool === "dimension" || state.dimensionAttach) {
-    const label = { intersection: "Пересечение", perpendicular: "Перпендикуляр", nearest: "Ближайшая" }[snap.type]
-      || (isMidSnap(snap) ? "Середина" : snap.label || "Конец");
-    drawBadge(label, p.x, p.y - 21, c, false, true, true);
-  }
-}
-
-function isMidSnap(snap) {
-  return snap?.snapRole === "mid" || String(snap?.pointKey || "").startsWith("mid") || snap?.label === "Середина";
-}
-
-function drawMidSnapMarker(point, c) {
-  ctx.save();
-  ctx.fillStyle = colorMixSurface(c.surface);
+  ctx.translate(point.x - 12, point.y - 12);
+  ctx.strokeStyle = c.bg;
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke(snapMarkerPaths[type]);
   ctx.strokeStyle = c.accent;
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(point.x, point.y - 8);
-  ctx.lineTo(point.x + 8, point.y + 6);
-  ctx.lineTo(point.x - 8, point.y + 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  ctx.stroke(snapMarkerPaths[type]);
   ctx.restore();
-}
-
-function drawNearestSnapMarker(point, c) {
-  ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(point.x - 7, point.y - 7);
-  ctx.lineTo(point.x + 7, point.y + 7);
-  ctx.moveTo(point.x + 7, point.y - 7);
-  ctx.lineTo(point.x - 7, point.y + 7);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawTrackingSnapMarker(point, c) {
-  ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 1.6;
-  ctx.globalAlpha = 0.82;
-  ctx.setLineDash([3, 4]);
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.beginPath();
-  ctx.moveTo(point.x - 11, point.y);
-  ctx.lineTo(point.x + 11, point.y);
-  ctx.moveTo(point.x, point.y - 11);
-  ctx.lineTo(point.x, point.y + 11);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function cursorObjectSnapMarker() {
-  const raw = screenToWorld(centerScreen());
-  return nearestObjectSnap(raw, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
 }
 
 function objectSnapThreshold() {
@@ -5977,8 +6056,8 @@ function isLineSnapContext() {
 }
 
 function nearestDraftLineSnap(point, start) {
-  const perpendicular = start && state.snaps.has("perpendicular");
-  const intersection = state.snaps.has("intersection");
+  const perpendicular = start && snapEnabled("perpendicular");
+  const intersection = snapEnabled("intersection");
   if (!perpendicular && !intersection) return null;
   const threshold = objectSnapThreshold();
   const excluded = state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId;
@@ -5990,25 +6069,19 @@ function nearestDraftLineSnap(point, start) {
 }
 
 function nearestObjectSnap(point, { includeNearestSegment = false, start = null } = {}) {
+  if (state.snapsMuted) return null;
   const objectThreshold = objectSnapThreshold();
   const midpointThreshold = midpointSnapThreshold();
   const nearestThreshold = nearestSegmentSnapThreshold();
   const lineContext = isLineSnapContext();
   const excluded = lineContext ? state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId : null;
-  if (lineContext) {
-    const explicit = nearestDraftLineSnap(point, start);
-    if (explicit) return explicit;
-  }
-  const useObjectSnap = state.tool === "dimension" || state.snaps.has("end");
-  if (useObjectSnap) {
-    const corner = nearestSnapCandidate(point, snapCandidates({ includeCorners: true, excludeId: excluded }), objectThreshold);
-    if (corner) return corner;
-  }
-  if (state.snaps.has("mid")) {
-    const mid = nearestSnapCandidate(point, snapCandidates({ includeMidpoints: true, includeCenters: !lineContext, excludeId: excluded }), midpointThreshold);
-    if (mid) return mid;
-  }
-  if (includeNearestSegment && (lineContext ? state.snaps.has("nearest") : useObjectSnap)) {
+  const explicit = nearestDraftLineSnap(point, start);
+  if (explicit) return explicit;
+  const candidates = snapCandidates({ includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"),
+    includeCenters: snapEnabled("center"), excludeId: excluded });
+  const candidate = nearestSnapCandidate(point, candidates.filter((item) => item.snapRole !== "mid" || distanceWorld(point, item) < midpointThreshold), objectThreshold);
+  if (candidate) return candidate;
+  if (includeNearestSegment && snapEnabled("nearest")) {
     return lineContext
       ? nearestBoundaryPoint(point, boundarySegments(excluded), nearestThreshold)
       : nearestPointOnDrawableSegment(point, nearestThreshold, excluded);
@@ -6088,7 +6161,7 @@ function rectangleCorners(entity) {
 function activeAngleInfo(start, end) {
   const currentRad = angleBetweenPoints(start, end);
   if (isLineSnapContext()) {
-    const degrees = (Math.round(normalizeDegrees(-radToDeg(currentRad)) * 1000) / 1000) % 360;
+    const degrees = normalizeDegrees(-radToDeg(currentRad));
     return { referenceRad: 0, deltaRad: currentRad, degrees, hasReference: false, cadAngle: true };
   }
   const reference = nearestAngleReference(start, currentRad);
@@ -6098,7 +6171,7 @@ function activeAngleInfo(start, end) {
     return {
       referenceRad,
       deltaRad,
-      degrees: displayAngleDegrees(deltaRad),
+      degrees: Math.abs(radToDeg(deltaRad)),
       hasReference: false,
     };
   }
@@ -6106,16 +6179,18 @@ function activeAngleInfo(start, end) {
   return {
     referenceRad: reference.angleRad,
     deltaRad,
-    degrees: displayAngleDegrees(deltaRad),
+    degrees: Math.abs(radToDeg(deltaRad)),
     hasReference: true,
   };
 }
 
-function displayAngleDegrees(deltaRad) {
-  const raw = Math.abs(radToDeg(deltaRad));
-  const rounded = Math.round(raw);
-  const five = Math.round(raw / 5) * 5;
-  return Math.abs(raw - five) <= 1.25 ? five : rounded;
+function wholeMetricAngle(degrees, cadAngle = false) {
+  const whole = Math.round(degrees);
+  return cadAngle ? whole % 360 : whole;
+}
+
+function metricEntryValue(number) {
+  return Number(number.toFixed(6));
 }
 
 function nearestCardinalReferenceRad(angleRad) {
@@ -6221,38 +6296,34 @@ function pointDistance(a, b) {
 }
 
 function clampScale(scale) {
-  return Math.min(0.7, Math.max(0.005, scale));
+  return Math.min(1.4, Math.max(0.005, scale));
 }
 
-function adaptiveGridStep() {
-  const scale = state.view.scale;
-  if (scale >= 0.45) return 10;
-  if (scale >= 0.3) return 20;
-  if (scale >= 0.18) return 25;
-  if (scale >= 0.11) return 50;
-  if (scale >= 0.06) return 100;
-  if (scale >= 0.02) return 250;
-  if (scale >= 0.01) return 500;
-  return 1000;
+function snapEnabled(mode) {
+  return !state.snapsMuted && state.snaps.has(mode);
+}
+
+function visibleGridStep() {
+  const multiplier = [1, 2, 5, 10, 20, 50, 100, 200, 500].find((factor) => state.gridStep * factor * state.view.scale >= 6);
+  return state.gridStep * (multiplier ?? 500);
 }
 
 function updateGridStepReadout() {
-  if (!gridStepReadout) return;
-  const enabled = state.snaps.has("grid");
-  const step = adaptiveGridStep();
-  const value = enabled ? `${step} мм` : "Сетка";
+  const value = `${state.gridStep} мм`;
   if (gridStepReadout.textContent !== value) gridStepReadout.textContent = value;
+  if (gridStepSelect.value !== String(state.gridStep)) gridStepSelect.value = String(state.gridStep);
   const button = gridStepReadout.closest("button");
-  const label = enabled ? `Привязка к сетке, шаг ${step} мм` : "Привязка к сетке";
-  if (button.title !== label) {
-    button.title = label;
-    button.setAttribute("aria-label", label);
-  }
+  const label = `Привязка к сетке, шаг ${value}`;
+  button.setAttribute("aria-label", label);
+  button.title = label;
 }
 
 function snapValueToGrid(value) {
-  const step = adaptiveGridStep();
-  return Math.round(value / step) * step;
+  return Math.round(value / state.gridStep) * state.gridStep;
+}
+
+function gridPoint(point) {
+  return { x: snapValueToGrid(point.x), y: snapValueToGrid(point.y) };
 }
 
 function zoomAtScreen(screen, nextScale) {
@@ -6288,6 +6359,7 @@ function boundsFromViewportPoints(points) {
 }
 
 function viewportEntityBounds(entity) {
+  if (isPlanAnnotationZone(entity)) return planAnnotationGeometry(entity)?.bounds;
   if (entity.type === "polyline") return polylineBounds(entity);
   if (entity.type === "block") return boundsFromViewportPoints(blockCorners(entity));
   if (entity.type === "arc") {
@@ -6315,6 +6387,9 @@ const viewportObjectNames = {
 };
 
 function viewportObjectLabel(entity) {
+  if (entity.type === "area") return `${entity.label || "Площадь"} · ${formatPlanArea(planAnnotationGeometry(entity)?.areaM2)}`;
+  if (entity.type === "elevation") return `${entity.label || PLAN_ELEVATION_STYLES[entity.zoneStyle]?.label || "Высота"} · Z ${formatPlanElevation(entity.height)}`;
+  if (entity.dimensionKind === "leader") return `Выноска · ${entity.text || "Текст"}`;
   if (entity.type === "line" && entity.layer === "dimensions") {
     if (entity.dimensionKind === "leader") return `Выноска · ${entity.text || "Текст"}`;
     if (entity.dimensionKind === "angular") {
@@ -6535,61 +6610,60 @@ function snapWorld(point) {
   return resolveSnapWorld(point).point;
 }
 
-function resolveSnapWorld(point, { objectSnaps = true } = {}) {
+function snappedPoint(point, type) {
+  return { point, snap: { ...point, type } };
+}
+
+function resolveSnapWorld(point) {
   const trackingThreshold = objectSnapThreshold();
-  let result = { ...point };
-  let snap = null;
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
-
-  if (objectSnaps) snap = nearestObjectSnap(point, { includeNearestSegment: state.tool === "line" || state.tool === "polyline" });
-  if (snap) {
-    result = { x: snap.x, y: snap.y };
-  } else if (objectSnaps && canUseSnapTracking()) {
-    snap = nearestSnapTrackingPoint(point, trackingThreshold);
+  const objectSnap = nearestObjectSnap(point, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
+  if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  if (canUseSnapTracking()) {
+    const snap = nearestSnapTrackingPoint(point, trackingThreshold);
     if (snap) {
-      result = { x: snap.x, y: snap.y };
       state.snapTracking.active = snap;
+      return { point: { x: snap.x, y: snap.y }, snap };
     }
-  } else if (state.snaps.has("grid")) {
-    result.x = snapValueToGrid(result.x);
-    result.y = snapValueToGrid(result.y);
   }
-  if (!snap && state.snaps.has("polar")) {
+  const grid = snapEnabled("grid");
+  const fallback = grid ? gridPoint(point) : point;
+  if (snapEnabled("polar")) {
     const polarStart = state.drawing?.start || state.moveCommand?.base;
     if (polarStart && state.drawing?.phase !== "offset") {
-      const polar = snapPolar(result, polarStart);
-      result = polar.point;
+      const polar = snapPolar(fallback, polarStart);
       if (polar.snapped) {
         state.polarSnapGuide = {
           point: polarStart,
           angle: polar.angle,
           degrees: polar.degrees,
         };
+        return snappedPoint(polar.point, "polar");
       }
     }
   }
-  return { point: result, snap };
+  return grid ? snappedPoint(fallback, "grid") : { point, snap: null };
 }
 
 function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {}) {
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
   const threshold = objectSnapThreshold();
-  const useIntersection = state.snaps.has("intersection");
-  const usePerpendicular = start && state.snaps.has("perpendicular");
-  const useNearest = state.snaps.has("nearest");
+  const useIntersection = snapEnabled("intersection");
+  const usePerpendicular = start && snapEnabled("perpendicular");
+  const useNearest = snapEnabled("nearest");
   const boundaries = (useIntersection || usePerpendicular || useNearest) ? boundarySegments() : [];
   const candidates = [];
   if (useIntersection) candidates.push(...nearbyIntersections(point, boundaries, threshold));
   if (usePerpendicular) candidates.push(...nearbyPerpendiculars(point, start, boundaries, threshold));
-  if (state.snaps.has("end")) {
+  if (snapEnabled("end")) {
     for (const candidate of snapCandidates({ includeCorners: true })) {
       if (distanceWorld(point, candidate) < threshold) candidates.push(candidate);
     }
   }
-  if (state.snaps.has("mid")) {
-    for (const candidate of snapCandidates({ includeMidpoints: true, includeCenters: true })) {
+  if (snapEnabled("mid") || snapEnabled("center")) {
+    for (const candidate of snapCandidates({ includeMidpoints: snapEnabled("mid"), includeCenters: snapEnabled("center") })) {
       if (distanceWorld(point, candidate) < midpointSnapThreshold()) candidates.push(candidate);
     }
   }
@@ -6606,20 +6680,20 @@ function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {})
   const snapIndex = useChoice && choice.index < distinct.length ? choice.index : 0;
   const snap = distinct[snapIndex];
   if (snap) return { point: { x: snap.x, y: snap.y }, snap, snapCount: distinct.length, snapIndex };
-  if (!state.snaps.has("grid")) return { point, snap: null };
-  return { point: { x: snapValueToGrid(point.x), y: snapValueToGrid(point.y) }, snap: null };
+  if (!snapEnabled("grid")) return { point, snap: null };
+  return snappedPoint(gridPoint(point), "grid");
 }
 
-function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true } = {}) {
+function resolveLineLikeSnap(point, start, { useGrid = true } = {}) {
   const directionThreshold = objectSnapThreshold();
   let result = { ...point };
   let snap = null;
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  const ortho = isLineSnapContext() && state.snaps.has("ortho");
-  const grid = useGrid && state.snaps.has("grid");
-  if (objectSnaps) snap = nearestObjectSnap(point, { includeNearestSegment: !ortho && trackingDrawingTools.has(state.tool), start });
+  const ortho = isLineSnapContext() && snapEnabled("ortho");
+  const grid = useGrid && snapEnabled("grid");
+  snap = nearestObjectSnap(point, { includeNearestSegment: !ortho && trackingDrawingTools.has(state.tool), start });
   if (ortho && !snap) {
     const constrained = constrainLinePoint(start, point);
     if (!constrained) return { point: result, snap: null };
@@ -6631,12 +6705,10 @@ function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true 
         if ((rounded - start[axis]) * delta > 0) constrained[axis] = rounded;
       }
     }
-    return { point: constrained, snap: null };
+    return snappedPoint(constrained, "ortho");
   }
   if (snap) {
     result = { x: snap.x, y: snap.y };
-  } else if (!objectSnaps) {
-    if (grid) result = { x: snapValueToGrid(point.x), y: snapValueToGrid(point.y) };
   } else {
     const tracking = canSnapToTrackingGuides() ? nearestSnapTrackingPoint(point, directionThreshold, start) : null;
     if (tracking) {
@@ -6672,9 +6744,6 @@ function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true 
           if (nearest) {
             result = { x: nearest.x, y: nearest.y };
             snap = nearest;
-          } else if (grid) {
-            result.x = snapValueToGrid(result.x);
-            result.y = snapValueToGrid(result.y);
           }
         }
       } else {
@@ -6682,16 +6751,13 @@ function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true 
         if (nearest) {
           result = { x: nearest.x, y: nearest.y };
           snap = nearest;
-        } else if (grid) {
-          result.x = snapValueToGrid(result.x);
-          result.y = snapValueToGrid(result.y);
         }
       }
     }
   }
 
-  if (!snap && state.snaps.has("polar")) {
-    const polar = snapPolar(result, start);
+  if (!snap && snapEnabled("polar")) {
+    const polar = snapPolar(grid ? gridPoint(result) : result, start);
     result = polar.point;
     if (polar.snapped) {
       state.polarSnapGuide = {
@@ -6699,8 +6765,10 @@ function resolveLineLikeSnap(point, start, { useGrid = true, objectSnaps = true 
         angle: polar.angle,
         degrees: polar.degrees,
       };
+      return snappedPoint(polar.point, "polar");
     }
   }
+  if (!snap && grid) return snappedPoint(gridPoint(point), "grid");
   return { point: result, snap };
 }
 
@@ -6729,7 +6797,7 @@ function nearestMidpoint(point, threshold) {
 }
 
 function snapLineDirection(point, start, threshold) {
-  if (!state.snaps.has("polar")) return null;
+  if (!snapEnabled("polar")) return null;
   const currentAngle = angleBetweenPoints(start, point);
   const currentLength = Math.max(1, distanceWorld(start, point));
   let best = null;
@@ -6751,6 +6819,7 @@ function snapLineDirection(point, start, threshold) {
     }
   };
   for (const segment of drawableSnapSegments()) {
+    if (segment.arc) continue;
     const baseAngle = segmentAngle(segment.p1, segment.p2);
     addCandidate(baseAngle, "Параллельно", segment);
     addCandidate(baseAngle + Math.PI / 2, "Перпендикуляр", segment);
@@ -6771,9 +6840,11 @@ function nearestPointOnDrawableSegment(point, threshold, excludeId = null) {
   let best = null;
   for (const segment of drawableSnapSegments()) {
     if (segment.entity.id === excludeId) continue;
-    const hit = projectPointToSegmentWorld(point, segment.p1, segment.p2);
-    if (hit.distance > threshold) continue;
-    const score = hit.distance;
+    const hit = segment.arc ? nearestBoundaryPoint(point, [segment.arc], threshold)
+      : projectPointToSegmentWorld(point, segment.p1, segment.p2);
+    if (!hit) continue;
+    const score = hit.distance ?? distanceWorld(hit, point);
+    if (score > threshold) continue;
     if (!best || score < best.score) {
       best = { x: hit.x, y: hit.y, score, label: "Ближайшая", type: "nearest", segment };
     }
@@ -6796,6 +6867,7 @@ function nearestSnapCandidate(point, candidates, threshold) {
 }
 
 function snapCandidates({ includeCorners = false, includeMidpoints = false, includeCenters = false, excludeId = null } = {}) {
+  if (!includeCorners && !includeMidpoints && !includeCenters) return [];
   const candidates = [];
   for (const entity of state.entities) {
     if (entity.id === excludeId || !isLayerVisible(entity.layer) || entity.layer === "dimensions") continue;
@@ -6861,6 +6933,7 @@ function syncDimensionLinks() {
 }
 
 function dimensionAttachCandidate(point) {
+  if (state.snapsMuted) return null;
   const candidates = snapCandidates({ includeCorners: true, includeMidpoints: true, includeCenters: true });
   return nearestSnapCandidate(point, candidates, objectSnapThreshold());
 }
@@ -6891,7 +6964,7 @@ function commitDimensionAttach() {
   const snap = dimensionAttachCandidate(rawCursorWorld());
   const ref = dimensionRefFromSnap(snap);
   if (!ref) {
-    statusChip.textContent = "Наведите на конец, угол, середину или центр объекта";
+    statusChip.textContent = state.snapsMuted ? "Включите привязки для выбора опоры" : "Наведите на конец, угол, середину или центр объекта";
     return;
   }
   const start = endpoint === "start";
@@ -6951,15 +7024,21 @@ function dimensionLinkedPoint(ref) {
   if (ref.pointKey === "fraction" && isDraftLine(entity) && Number.isFinite(ref.t) && ref.t >= 0 && ref.t <= 1) {
     return { x: entity.x1 + (entity.x2 - entity.x1) * ref.t, y: entity.y1 + (entity.y2 - entity.y1) * ref.t };
   }
+  if (ref.pointKey === "edge-fraction" || ref.pointKey === "arc-fraction") return figureReferencePoint(entity, ref);
+  if (ref.pointKey === "rectangle-center" && entity.type === "polyline" && entity.closed && entity.points.length === 4) {
+    return midpoint(entity.points[0], entity.points[2]);
+  }
   return objectPointRefs(entity).find((point) => point.pointKey === ref.pointKey) || null;
 }
 
 function objectPointRefs(entity) {
   if (entity.type === "polyline") {
-    return [
-      ...entity.points.map((point, index) => ({ ...point, pointKey: `vertex-${index}`, snapRole: "end" })),
-      ...polylineSegments(entity).map(({ p1, p2 }, index) => ({ ...midpoint(p1, p2), pointKey: `mid-${index}`, snapRole: "mid" })),
-    ];
+    const refs = entity.points.map((point, index) => ({ ...point, pointKey: `vertex-${index}`, snapRole: "end" }));
+    for (const [index, { p1, p2, arc }] of polylineSegments(entity).entries()) {
+      refs.push({ ...(arc?.through ?? midpoint(p1, p2)), pointKey: `mid-${index}`, snapRole: "mid" });
+      if (arc) refs.push({ ...arc.center, pointKey: `arc-center-${index}`, snapRole: "center" });
+    }
+    return refs;
   }
   if (entity.type === "block") {
     return [
@@ -7061,6 +7140,10 @@ function syncToolButtonVisuals() {
   setToolButtonVisual(lineButton, drawToolButtonVisuals.line);
   setToolButtonVisual(dimensionButton, dimensionToolButtonVisuals[state.dimensionTool] || dimensionToolButtonVisuals.aligned);
   setToolButtonVisual(annotationButton, state.tool === "dimension" && state.dimensionTool === "leader" ? annotationToolButtonVisuals.leader : annotationToolButtonVisuals.text);
+  if (isPlanAnnotationZone({ type: state.tool }) && annotationButton) {
+    annotationButton.querySelector("span").innerHTML = cadIcon(state.tool);
+    annotationButton.querySelector("small").textContent = annotationToolButtonVisuals[state.tool].label;
+  }
   setToolButtonVisual(selectionButton, selectionToolButtonVisuals.select);
 }
 
@@ -7093,7 +7176,7 @@ function syncToolButtons() {
         : buttonTool === "select"
           ? state.tool === "select"
           : buttonTool === "annotation"
-            ? state.tool === "text" || (state.tool === "dimension" && state.dimensionTool === "leader")
+            ? state.tool === "text" || Boolean(state.planZone) || (state.tool === "dimension" && state.dimensionTool === "leader")
             : buttonTool === state.tool && (buttonTool !== "dimension" || state.dimensionTool !== "leader");
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
@@ -7107,14 +7190,14 @@ function setTool(tool) {
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   state.directManipulationIds.clear();
-  state.skipLineObjectSnap = false;
   state.tool = tool;
+  state.planZone = isPlanAnnotationZone({ type: tool }) ? { points: [], pickContour: false } : null;
   state.dimensionAttach = null;
-  if (tool === "dimension" && !state.visibleLayers.has("dimensions")) {
-    state.visibleLayers.add("dimensions");
-    markProjectDirty("show-dimensions");
+  const layer = annotationLayerForTool(tool);
+  if (layer && !state.visibleLayers.has(layer)) {
+    state.visibleLayers.add(layer);
+    markProjectDirty("show-layer");
   }
-  hideLeaderTextEditor();
   if (tool !== "select") {
     state.selectTool = "select";
   }
@@ -7124,7 +7207,7 @@ function setTool(tool) {
   state.lineEdit = null;
   state.selectionDrag = null;
   syncCommandState();
-  if (["line", "polyline", "circle", "arc", "rectangle", "dimension", "text"].includes(tool)) {
+  if (["line", "polyline", "circle", "arc", "rectangle", "dimension", "text", "area", "elevation"].includes(tool)) {
     state.selectedId = null;
     state.selectedIds = [];
     state.selectedEndpoint = null;
@@ -7148,6 +7231,8 @@ function setTool(tool) {
     rectangle: "Прямоугольник: укажите два противоположных угла",
     dimension: "Размер: подведите курсор к отрезку",
     text: "Текст: подведите курсор к месту вставки и тапните холст",
+    area: "Площадь: поставьте первую точку или выберите готовый контур",
+    elevation: "Высота Z: поставьте первую точку зоны или выберите готовый контур",
   };
   statusChip.textContent = copy[tool];
   if (tool === "select") {
@@ -7163,11 +7248,18 @@ function setTool(tool) {
 }
 
 function syncSnapButtons() {
+  allSnapsButton.classList.toggle("active", !state.snapsMuted);
+  allSnapsButton.setAttribute("aria-pressed", String(!state.snapsMuted));
+  allSnapsButton.title = state.snapsMuted ? "Включить все выбранные привязки" : "Приостановить все привязки";
   snaps.forEach((button) => {
-    const enabled = state.snaps.has(button.dataset.snap);
-    button.classList.toggle("active", enabled);
-    button.setAttribute("aria-pressed", String(enabled));
+    const mode = button.dataset.snap;
+    button.classList.toggle("active", state.snaps.has(mode));
+    button.disabled = state.snapsMuted;
+    button.setAttribute("aria-pressed", String(snapEnabled(mode)));
   });
+  const polarButton = snaps.find((button) => button.dataset.snap === "polar");
+  polarButton.title = `Полярное отслеживание, шаг ${state.polarStep}°`;
+  polarButton.setAttribute("aria-label", polarButton.title);
   updateGridStepReadout();
 }
 
@@ -7190,8 +7282,9 @@ function syncDimensionToolMenu() {
 function syncAnnotationToolMenu() {
   annotationToolButtons.forEach((button) => {
     const tool = button.dataset.annotationTool;
-    const active = tool === "text" ? state.tool === "text" : state.tool === "dimension" && state.dimensionTool === "leader";
+    const active = tool === "leader" ? state.tool === "dimension" && state.dimensionTool === "leader" : state.tool === tool;
     button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
 }
 
@@ -7270,7 +7363,7 @@ function hideAnnotationToolMenu() {
 }
 
 function showSelectToolMenu() {
-  if (!selectToolMenu) return;
+  if (!selectToolMenu || state.selectedEndpoint || state.circleRadiusEdit) return;
   syncSelectToolMenu();
   hideDrawToolMenu();
   hideDimensionToolMenu();
@@ -7358,11 +7451,8 @@ function activateDimensionToolMenu() {
 }
 
 function activateAnnotationToolMenu() {
-  if (state.tool !== "text" && !(state.tool === "dimension" && state.dimensionTool === "leader")) {
-    setTool("text");
-  }
-  showAnnotationToolMenu();
-  statusChip.textContent = state.tool === "text" ? "Текст: подведите курсор к месту вставки и тапните холст" : dimensionToolStatusText();
+  if (annotationToolMenu.hidden) showAnnotationToolMenu();
+  else hideAnnotationToolMenu();
 }
 
 function activatePlainSelect() {
@@ -7412,7 +7502,7 @@ function activateSelectionTool() {
 }
 
 function toggleMainSelectTool() {
-  if (state.lineEdit || state.selectedEndpoint || state.moveCommand || state.offsetCommand) {
+  if (state.planZone || state.lineEdit || state.selectedEndpoint || state.moveCommand || state.offsetCommand) {
     activatePlainSelect();
     return;
   }
@@ -7454,7 +7544,6 @@ function selectDimensionTool(tool) {
   state.dimensionTool = tool;
   state.drawing = null;
   state.dimensionSnapHint = null;
-  hideLeaderTextEditor();
   resetSnapTracking();
   syncDimensionToolMenu();
   hideDimensionToolMenu();
@@ -7463,11 +7552,8 @@ function selectDimensionTool(tool) {
 }
 
 function selectAnnotationTool(tool) {
-  state.drawing = null;
   state.dimensionSnapHint = null;
-  hideLeaderTextEditor();
   resetSnapTracking();
-  syncAnnotationToolMenu();
   hideAnnotationToolMenu();
   if (tool === "leader") {
     state.dimensionTool = "leader";
@@ -7475,8 +7561,8 @@ function selectAnnotationTool(tool) {
     statusChip.textContent = dimensionToolStatusText();
     return;
   }
-  setTool("text");
-  statusChip.textContent = "Текст: подведите курсор к месту вставки и тапните холст";
+  setTool(tool);
+  syncAnnotationToolMenu();
 }
 
 function dimensionToolStatusText() {
@@ -7578,12 +7664,14 @@ function angularDimensionEntity(id, vertex, arm1, arm2) {
   return { id, type: "line", layer: "dimensions", dimensionKind: "angular", vertex, arm1, arm2 };
 }
 
-function leaderEntity(id, start, end, text) {
+function leaderEntity(id, start, end, text, { leaderStyle = "landing", textHeight = 200 } = {}) {
   return {
     id,
     type: "line",
-    layer: "dimensions",
+    layer: "text",
     dimensionKind: "leader",
+    leaderStyle,
+    textHeight,
     x1: start.x,
     y1: start.y,
     x2: end.x,
@@ -7641,25 +7729,37 @@ function syncLineControls() {
   const drawing = state.tool === "polyline" ? state.drawing : null;
   const size = drawing?.points.length ?? 0;
   const edit = state.lineEdit;
-  const placingLine = !surveyPointPicker && ["line", "polyline"].includes(state.tool);
   const draft = state.tool === "line" ? state.drawing : null;
   const input = numericConfirmInput();
-  const choosingDirection = draft && ([lengthInput, topLengthInput].includes(input) || draft.metricConstraint?.length !== undefined);
-  linePointAssist.hidden = !placingLine;
+  const choosingDirection = !surveyPointPicker && draft && ([lengthInput, topLengthInput].includes(input) || draft.metricConstraint?.length !== undefined);
+  const exactAvailable = !surveyPointPicker && !state.metricEntry && metricEntryMode();
+  polylineArcMode.hidden = !drawing || Boolean(surveyPointPicker) || Boolean(state.metricEntry);
+  polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
+  linePointAssist.hidden = !exactAvailable && !choosingDirection && polylineArcMode.hidden;
+  openExactMetrics.hidden = !exactAvailable;
+  const description = state.tool === "rectangle" ? "Ввести точные размеры прямоугольника" :
+    state.tool === "circle" ? "Ввести точный радиус" :
+    state.moveCommand || state.offsetCommand ? "Ввести точные параметры" : "Ввести точную длину и угол";
+  if (openExactMetrics.getAttribute("aria-label") !== description) openExactMetrics.setAttribute("aria-label", description);
   lineDirection.hidden = !choosingDirection;
   if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
-  const bypassPressed = String(state.skipLineObjectSnap);
-  if (lineSkipSnap.getAttribute("aria-pressed") !== bypassPressed) lineSkipSnap.setAttribute("aria-pressed", bypassPressed);
-  document.getElementById("undoButton").disabled = !state.undo.length && size < 2;
+  document.getElementById("undoButton").disabled = !state.undo.length && size < 2 && !drawing?.arcEnd && !state.planZone?.points.length;
   document.getElementById("redoButton").disabled = !state.redo.length || Boolean(state.drawing || edit);
   lineUi.lineEditOptions.hidden = !edit;
   lineUi.lineEditForm.hidden = !lineQuantityModes[edit?.mode];
   lineUi.lineEditRadiusControl.hidden = edit?.mode !== "fillet";
   lineUi.lineMirrorControl.hidden = edit?.mode !== "mirror";
   const hasBoundaries = edit && ["trim", "extend"].includes(edit.mode);
-  const chooseBoundaries = hasBoundaries && lineUi.lineBoundaryMode.value === "selected" && !edit.boundaryReady;
-  lineUi.lineBoundaryControl.hidden = !hasBoundaries;
+  const chooseBoundaries = hasBoundaries && !edit.quick && lineUi.lineBoundaryMode.value === "selected" && !edit.boundaryReady;
+  quickEditModes.hidden = !edit?.quick;
+  quickTrimTool.classList.toggle("active", Boolean(edit?.quick));
+  quickTrimTool.setAttribute("aria-pressed", String(Boolean(edit?.quick)));
+  for (const button of quickEditButtons) {
+    button.setAttribute("aria-pressed", String(Boolean(edit?.quick && button.dataset.quickEdit === edit.mode)));
+  }
+  lineUi.lineBoundaryControl.hidden = !hasBoundaries || edit.quick;
   lineUi.lineBreakControl.hidden = edit?.mode !== "break";
+  lineUi.lineEditCancel.hidden = Boolean(edit?.quick);
   lineUi.lineEditFinish.hidden = !edit || !["trim", "extend", "offset"].includes(edit.mode);
   lineUi.lineEditApply.hidden = !edit?.pending && !chooseBoundaries;
   lineUi.lineEditApply.disabled = Boolean(chooseBoundaries && !edit.boundaryIds.length);
@@ -7682,12 +7782,13 @@ function commitLinePoint(point) {
   }
   const draft = state.drawing;
   if (!draft) {
-    state.skipLineObjectSnap = false;
     setSelection(null);
     state.drawing = { points: [point], start: point, end: point, lockedEnd: false };
+    if (polyline) state.drawing.bulges = [];
     hideDrawToolMenu();
     statusChip.textContent = `${drawingToolName(state.tool)}. Укажите следующую точку`;
   } else {
+    if (polyline && draft.arcPhase) return commitPolylineArcPoint(draft, point);
     const start = draft.start;
     const length = distanceWorld(start, point);
     if (!isValidLine({ x1: start.x, y1: start.y, x2: point.x, y2: point.y })) {
@@ -7695,17 +7796,12 @@ function commitLinePoint(point) {
       draw();
       return false;
     }
-    state.skipLineObjectSnap = false;
     if (polyline) {
-      if (draft.points.length >= 3 && distanceWorld(draft.points[0], point) <= linePointEpsilon) {
+      if (canClosePolyline(draft) && distanceWorld(draft.points[0], point) <= linePointEpsilon) {
         return finishLineCommand(true);
       }
-      draft.points.push(point);
-      draft.start = point;
-      draft.end = point;
-      draft.lockedEnd = false;
-      draft.metricConstraint = null;
-      statusChip.textContent = draft.points.length >= 3 && state.snaps.has("end")
+      acceptPolylineVertex(draft, point, 0);
+      statusChip.textContent = canClosePolyline(draft) && snapEnabled("end")
         ? "Первая вершина замыкает контур · ESC — завершить"
         : "Следующая вершина · ESC — завершить";
     } else {
@@ -7721,13 +7817,74 @@ function commitLinePoint(point) {
   return true;
 }
 
-function finishLineCommand(closed = false) {
+function canClosePolyline(draft) {
+  const size = draft?.points.length || 0;
+  return size >= 3 || (size === 2 && Boolean(draft.arcPhase || draft.bulges[0]));
+}
+
+function acceptPolylineVertex(draft, point, bulge) {
+  draft.points.push(point);
+  draft.bulges.push(bulge);
+  draft.start = draft.end = point;
+  draft.lockedEnd = false;
+  draft.metricConstraint = null;
+}
+
+function commitPolylineArcPoint(draft, point) {
+  if (draft.arcPhase === "end") {
+    if (distanceWorld(draft.start, point) <= linePointEpsilon) {
+      statusChip.textContent = "Укажите другой конец дуги";
+      return false;
+    }
+    draft.arcEnd = point;
+    draft.arcPhase = "through";
+    statusChip.textContent = "Дуга полилинии: укажите изгиб";
+    resetSnapTracking();
+    draw();
+    return true;
+  }
+  const end = draft.arcEnd;
+  const result = polylineArcFromCursor(draft.start, end, point);
+  if (!result) {
+    statusChip.textContent = "Укажите изгиб в стороне от прямой между концами";
+    return false;
+  }
+  if (canClosePolyline(draft) && distanceWorld(draft.points[0], end) <= linePointEpsilon) {
+    return finishLineCommand(true, result.bulge);
+  }
+  acceptPolylineVertex(draft, end, result.bulge);
+  draft.arcEnd = null;
+  draft.arcPhase = "end";
+  markProjectDirty("polyline-vertex");
+  resetSnapTracking();
+  statusChip.textContent = "Дуга добавлена. Укажите конец следующей или переключитесь на отрезок";
+  draw();
+  return true;
+}
+
+function togglePolylineArcMode() {
+  const draft = state.tool === "polyline" ? state.drawing : null;
+  if (!draft) return;
+  closeLineMetricInput();
+  draft.arcPhase = draft.arcPhase ? null : "end";
+  draft.arcEnd = null;
+  draft.end = draft.start;
+  draft.lockedEnd = false;
+  draft.metricConstraint = null;
+  resetSnapTracking();
+  hideInlineEditors();
+  statusChip.textContent = draft.arcPhase ? "Дуга полилинии: укажите её конец" : "Полилиния: укажите следующую вершину отрезка";
+  draw();
+}
+
+function finishLineCommand(closed = false, closingBulge = 0) {
   const draft = state.drawing;
   if (!draft || !["line", "polyline"].includes(state.tool)) return false;
   if (state.tool === "polyline" && draft.points.length >= 2) {
-    const entity = createPolyline(newLineId("polyline"), draft.points, { closed });
+    const bulges = closed ? [...draft.bulges, closingBulge] : draft.bulges;
+    const entity = createPolyline(newLineId("polyline"), draft.points, { closed, bulges });
     if (!entity) {
-      statusChip.textContent = "Для замыкания нужны три разные вершины";
+      statusChip.textContent = "Замыкающий сегмент должен образовать отдельную границу контура";
       return false;
     }
     pushEntity(entity);
@@ -7736,7 +7893,6 @@ function finishLineCommand(closed = false) {
     statusChip.textContent = "Укажите первую точку";
   }
   closeLineMetricInput();
-  state.skipLineObjectSnap = false;
   state.drawing = null;
   if (state.tool === "polyline") markProjectDirty("polyline-finish");
   hideInlineEditors();
@@ -7747,8 +7903,16 @@ function finishLineCommand(closed = false) {
 
 function undoLineSegment() {
   const draft = state.tool === "polyline" ? state.drawing : null;
+  if (draft?.arcEnd) {
+    draft.arcEnd = null;
+    draft.arcPhase = "end";
+    statusChip.textContent = "Конец дуги снят. Укажите новый";
+    draw();
+    return true;
+  }
   if (!draft || draft.points.length < 2) return false;
   draft.points.pop();
+  draft.bulges.pop();
   draft.end = draft.start = draft.points.at(-1);
   draft.lockedEnd = false;
   draft.metricConstraint = null;
@@ -7760,15 +7924,16 @@ function undoLineSegment() {
   return true;
 }
 
-function lineEditEntity(id) {
-  return state.entities.find((entity) => entity.id === id && isDraftLine(entity) && isLayerVisible(entity.layer));
+function lineEditEntity(id, mode) {
+  return state.entities.find((entity) => entity.id === id && isLayerVisible(entity.layer) &&
+    (figureCutActions.has(mode) ? editableFigure(entity, mode) : isDraftLine(entity)));
 }
 
-function pickDraftLine(screen) {
+function pickDraftLine(screen, includeFigures = false) {
   let best = null;
   let distance = 18;
   for (const entity of state.entities) {
-    if (!isDraftLine(entity) || !isLayerVisible(entity.layer)) continue;
+    if (!(includeFigures ? editableFigure(entity) : isDraftLine(entity)) || !isLayerVisible(entity.layer)) continue;
     const next = distanceToEntityScreen(screen, entity);
     if (next <= distance) {
       best = entity;
@@ -7778,9 +7943,21 @@ function pickDraftLine(screen) {
   return best;
 }
 
-function startLineEdit(mode, entity) {
+function startQuickEdit(mode) {
+  if (surveyPointPicker || (state.tool === "polyline" && state.drawing && !finishLineCommand())) return;
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideAnnotationToolMenu();
+  hideSelectModeMenu();
+  setTool("select");
+  setSelection(null);
+  startLineEdit(mode, null, { quick: true });
+  canvas.focus({ preventScroll: true });
+}
+
+function startLineEdit(mode, entity, { quick = false } = {}) {
   state.lineEdit = {
-    mode, sourceId: entity.id, joinIds: [], firstPick: null, amount: null,
+    mode, quick, sourceId: entity?.id, joinIds: [], firstPick: null, amount: null,
     boundaryIds: [], boundaryReady: false, pending: null, applied: false,
   };
   lineUi.lineBoundaryMode.value = "auto";
@@ -7805,9 +7982,9 @@ function startLineEdit(mode, entity) {
   }
   lineUi.lineMirrorDelete.checked = false;
   const prompts = {
-    trim: "Обрезать: коснитесь части линии, которую нужно убрать",
-    extend: "Удлинить: коснитесь линии ближе к нужному концу",
-    break: "Разрыв: укажите первую точку. Касание проецируется на выбранную линию",
+    trim: "Коснитесь участка, который нужно убрать",
+    extend: "Коснитесь объекта ближе к концу, который нужно удлинить",
+    break: "Укажите первую точку на выбранном объекте",
     join: "Соединить: выберите линии на той же прямой",
     lengthen: "Длина: введите значение и выберите конец на линии",
     fillet: "Скругление: коснитесь сохраняемой стороны первой линии",
@@ -7830,8 +8007,12 @@ function endLineEdit(text) {
 function boundarySegments(excludedId, ids = null) {
   const segments = [];
   const wallAxes = state.lineEdit && lineUi.lineBoundaryMode.value === "axis";
-  for (const { p1, p2, entity } of drawableSnapSegments()) {
+  for (const { p1, p2, entity, arc } of drawableSnapSegments()) {
     if (entity.id === excludedId || (ids && !ids.includes(entity.id))) continue;
+    if (arc) {
+      segments.push(arc);
+      continue;
+    }
     const segment = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
     if (entity.type === "wall" && !wallAxes && Number.isFinite(entity.width) && entity.width > 0) {
       const { a, b } = offsetWall(entity, entity.width / 2);
@@ -7915,7 +8096,8 @@ function finishLineJoin() {
 function pickLineEditPoint(screen) {
   const edit = state.lineEdit;
   if (!edit) return;
-  const source = lineEditEntity(edit.sourceId);
+  if (edit.quick) return applyQuickEdit(edit.mode, screen);
+  const source = lineEditEntity(edit.sourceId, edit.mode);
   const repeat = ["trim", "extend"].includes(edit.mode);
   if (edit.pending) {
     edit.pending = null;
@@ -7954,7 +8136,7 @@ function pickLineEditPoint(screen) {
     previewLineEdit([[target, [result]]], "Длина изменена");
     return;
   }
-  const hit = pickDraftLine(screen);
+  const hit = pickDraftLine(screen, repeat);
   if (edit.mode === "join") {
     if (!hit || hit === source || !joinLines(source, [hit])) {
       setLineEditHint("Выберите линию на той же прямой");
@@ -7992,27 +8174,27 @@ function pickLineEditPoint(screen) {
   }
   if (edit.mode === "break") {
     if (lineUi.lineBreakMode.value === "point") {
-      const pieces = splitLine(source, point);
-      if (!pieces) return setLineEditHint("Укажите точку внутри линии");
-      previewLineEdit([[source, pieces]], "Линия разделена", [], "preserve");
+      if (source.closed || ["circle", "rectangle"].includes(source.type)) {
+        return setLineEditHint("Для замкнутого контура выберите разрыв между двумя точками");
+      }
+      const pieces = splitFigure(source, point);
+      if (!pieces) return setLineEditHint("Укажите точку внутри объекта");
+      previewLineEdit([[source, pieces]], "Объект разделён", [], "preserve");
       return;
     }
+    const projected = projectFigurePoint(source, point);
+    if (!projected) return setLineEditHint("Укажите точку на объекте");
     if (!edit.firstPick) {
-      const a = { x: source.x1, y: source.y1 };
-      const b = { x: source.x2, y: source.y2 };
-      edit.firstPick = projectPointToSegmentWorld(point, a, b);
+      edit.firstPick = projected;
       setLineEditHint("Укажите вторую точку зазора");
       draw();
       return;
     }
-    const a = { x: source.x1, y: source.y1 };
-    const b = { x: source.x2, y: source.y2 };
-    const projected = projectPointToSegmentWorld(point, a, b);
     if (distanceWorld(edit.firstPick, projected) <= linePointEpsilon) {
       return setLineEditHint("Для зазора укажите две разные точки");
     }
-    const pieces = splitLine(source, edit.firstPick, projected);
-    if (!pieces) return setLineEditHint("Укажите точку внутри линии");
+    const pieces = splitFigure(source, edit.firstPick, projected);
+    if (!pieces) return setLineEditHint("Укажите две разные точки на объекте");
     previewLineEdit([[source, pieces]], "Разрыв выполнен", [], "preserve");
     return;
   }
@@ -8037,15 +8219,42 @@ function pickLineEditPoint(screen) {
   if (!edit.applied && hit !== source) return setLineEditHint("Для первой правки коснитесь выделенной линии");
   if (edit.boundaryIds.includes(hit.id)) return setLineEditHint("Выберите линию, которую нужно изменить");
   setSelection(hit.id);
-  const boundaries = boundarySegments(hit.id, lineUi.lineBoundaryMode.value === "selected" ? edit.boundaryIds : null);
-  if (edit.mode === "trim") {
-    const pieces = trimLine(hit, boundaries, point);
-    if (!pieces) return setLineEditHint("Нет пересечения для обрезки в этой точке");
-    previewLineEdit([[hit, pieces]], "Линия обрезана", [], "preserve");
-  } else {
-    const coordinates = extendLine(hit, boundaries, point);
-    if (!coordinates) return setLineEditHint("В направлении выбранного конца нет границы");
-    previewLineEdit([[hit, [coordinates]]], "Линия удлинена");
+  const result = cutFigureAt(hit, edit.mode, point, lineUi.lineBoundaryMode.value === "selected" ? edit.boundaryIds : null);
+  if (result.error) return setLineEditHint(result.error);
+  previewLineEdit([[hit, result.pieces]], result.message, [], result.association);
+}
+
+function cutFigureAt(entity, mode, point, boundaryIds = null) {
+  if (!entity) return { error: "Коснитесь объекта на чертеже" };
+  if (!editableFigure(entity, mode)) return { error: "У замкнутого контура нет конца для удлинения" };
+  const boundaries = boundarySegments(entity.id, boundaryIds);
+  if (mode === "trim") {
+    const pieces = trimFigure(entity, boundaries, point);
+    return pieces ? { pieces, message: "Обрезка выполнена", association: "preserve" } :
+      { error: "Нет пересечения для обрезки в этой точке" };
+  }
+  const piece = extendFigure(entity, boundaries, point);
+  return piece ? { pieces: [piece], message: "Удлинение выполнено", association: "follow" } :
+    { error: "В направлении выбранного конца нет границы" };
+}
+
+function applyQuickEdit(mode, screen) {
+  const edit = state.lineEdit;
+  const entity = pickDraftLine(screen, true);
+  const result = cutFigureAt(entity, mode, screenToWorld(screen));
+  if (result.error || result.pieces.some(piece => !validFigurePiece(piece))) {
+    const error = result.error || "Результат выходит за диапазон координат";
+    if (edit?.quick) setLineEditHint(error);
+    else statusChip.textContent = error;
+    draw();
+    return;
+  }
+  commitLineEdit([[entity, result.pieces]], result.message, [], result.association);
+  if (edit?.quick) {
+    state.lineEdit = edit;
+    setSelection(null);
+    setLineEditHint(mode === "trim" ? "Коснитесь следующего участка" : "Коснитесь следующего конца");
+    draw();
   }
 }
 
@@ -8108,9 +8317,7 @@ function previewLineEdit(replacements, message, added = [], association = "follo
     draw();
     return;
   }
-  if (changes.some(([, pieces]) => pieces.some((piece) => !isValidLine(piece))) ||
-      added.some((entity) => entity.type === "line" ? !isValidLine(entity) :
-        ![entity.start, entity.through, entity.end].every(isLinePoint))) {
+  if (changes.some(([, pieces]) => pieces.some((piece) => !validFigurePiece(piece))) || added.some(entity => !validFigurePiece(entity))) {
     setLineEditHint("Результат выходит за диапазон координат");
     draw();
     return;
@@ -8145,11 +8352,18 @@ function applyLineEditPreview() {
   }
 }
 
-// Each line operation, including splits and fillets, is one undoable edit.
+function replaceFigureGeometry(entity, geometry, id) {
+  const sameType = !geometry.type || geometry.type === entity.type;
+  const piece = { ...(sameType ? entity : { layer: entity.layer }), ...geometry, id };
+  if (geometry.type === "polyline" && !geometry.bulges) delete piece.bulges;
+  return piece;
+}
+
+// Each geometry operation is one undoable edit.
 function commitLineEdit(replacements, message, added, association) {
   const replaced = new Map(replacements.map(([entity, pieces]) => [
     entity.id,
-    pieces.map((coordinates, index) => ({ ...entity, ...coordinates, id: index === 0 ? entity.id : newLineId() })),
+    pieces.map((geometry, index) => replaceFigureGeometry(entity, geometry, index === 0 ? entity.id : newLineId(geometry.type || entity.type))),
   ]));
   const results = [...replaced.values()].flat();
   const selection = [...results, ...added].map(({ id }) => id);
@@ -8184,11 +8398,25 @@ function commitLineEdit(replacements, message, added, association) {
 }
 
 
-function lineReferenceAt(point, pieces) {
+function lineReferenceAt(point, pieces, previousRef) {
   if (!point) return null;
+  const fromArcCenter = typeof previousRef?.pointKey === "string" && previousRef.pointKey.startsWith("arc-center-");
+  if (fromArcCenter) {
+    for (const piece of pieces) {
+      const center = objectPointRefs(piece).find((candidate) => candidate.snapRole === "center" &&
+        (piece.type === "arc" || candidate.pointKey.startsWith("arc-center-")) && distanceWorld(point, candidate) <= linePointEpsilon);
+      if (center) return { entityId: piece.id, pointKey: center.pointKey };
+    }
+    return null;
+  }
   for (const piece of pieces) {
     const exact = objectPointRefs(piece).find((p) => distanceWorld(point, p) <= linePointEpsilon);
     if (exact) return { entityId: piece.id, pointKey: exact.pointKey };
+    if (piece.type !== "line") {
+      const reference = figureReferenceAt(piece, point);
+      if (reference) return { entityId: piece.id, ...reference };
+      continue;
+    }
     const start = { x: piece.x1, y: piece.y1 };
     const end = { x: piece.x2, y: piece.y2 };
     const projected = projectPointToSegmentWorld(point, start, end);
@@ -8210,7 +8438,10 @@ function remapLineDimension(entity, replaced, results, association) {
     if (edited === entity) edited = { ...entity };
     if (association === "follow" && pieces.some((piece) => piece.id === ref.entityId)) continue;
     const point = dimensionLinkedPoint(ref);
-    const mapped = lineReferenceAt(point, association === "join" ? results : pieces);
+    const rectanglePoint = association === "rotate-rectangle" && typeof ref.pointKey === "string"
+      ? ref.pointKey.replace(/^corner-/, "vertex-").replace(/^center$/, "rectangle-center") : null;
+    const mapped = rectanglePoint ? { ...ref, pointKey: rectanglePoint }
+      : lineReferenceAt(point, association === "join" ? results : pieces, ref);
     const lostKey = key === "refStart" ? "lostRefStart" : "lostRefEnd";
     if (mapped) {
       edited[key] = mapped;
@@ -8259,10 +8490,10 @@ function drawLineEditMarks(c) {
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 2.4;
     ctx.setLineDash([7, 4]);
-    for (const piece of edit.pending.replacements.flatMap(([, pieces]) => pieces)) {
-      const a = worldToScreen({ x: piece.x1, y: piece.y1 });
-      const b = worldToScreen({ x: piece.x2, y: piece.y2 });
-      linePath(a.x, a.y, b.x, b.y);
+    for (const [source, pieces] of edit.pending.replacements) {
+      for (const geometry of pieces) {
+        drawEntity(replaceFigureGeometry(source, geometry, "line-edit-preview"), { ...c, line: c.accent });
+      }
     }
     for (const entity of edit.pending.added) drawEntity(entity, { ...c, line: c.accent });
     ctx.restore();
@@ -8284,7 +8515,7 @@ function previewLineGrip(pointer, screen) {
     };
     const point = resolveLineLikeSnap(raw, origin).point;
     const points = entity.points.map((old, i) => i === index ? point : old);
-    pointer.preview = isLinePoint(point) && validPolylinePoints(points, entity.closed) ? { points } : null;
+    pointer.preview = isLinePoint(point) && validPolylinePoints(points, entity.closed, entity.bulges) ? { points } : null;
     return;
   }
   const start = { x: entity.x1, y: entity.y1 };
@@ -8296,7 +8527,7 @@ function previewLineGrip(pointer, screen) {
     y: origin.y + (screen.y - pointer.startScreen.y) / state.view.scale,
   };
   if (grip === "middle") {
-    const target = isLineSnapContext() && state.snaps.has("ortho")
+    const target = isLineSnapContext() && snapEnabled("ortho")
       ? resolveLineLikeSnap(candidate, origin).point
       : resolveSnapWorld(candidate).point;
     const dx = target.x - origin.x;
@@ -8363,9 +8594,13 @@ function selectLineEndpoint(endpoint) {
   return true;
 }
 
-function commitCursorPoint() {
+function commitCursorPoint(screen = centerScreen()) {
   if (surveyPointPicker) {
     commitSurveyPoint();
+    return;
+  }
+  if (state.planZone) {
+    commitPlanAnnotationPoint(screen);
     return;
   }
   if (state.dimensionAttach) {
@@ -8417,8 +8652,8 @@ function commitCursorPoint() {
         state.drawing.end = end;
         state.drawing.lockedEnd = true;
         state.drawing.phase = "leader-text";
-        showLeaderTextEditor(end);
-        statusChip.textContent = "Выноска: введите текст и нажмите галочку";
+        void createLeaderFromDraft(state.drawing);
+        statusChip.textContent = "Выноска: введите текст";
       }
       draw();
       return;
@@ -8584,16 +8819,27 @@ function commitMoveCommandPoint(world) {
   if (command.mode === "rotate") {
     const startAngle = angleBetweenPoints(command.base, command.reference);
     const endAngle = angleBetweenPoints(command.base, end);
-    if (rotateEntityAround(entity, command.base, signedAngleDelta(startAngle, endAngle)) === false) {
-      statusChip.textContent = "Координаты после поворота вне диапазона";
-      draw();
-      return;
-    }
-    const after = entityGeometry(entity);
-    if (geometryChanged(command.before, after)) {
-      state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
-      state.redo.length = 0;
-      markProjectDirty("rotate");
+    const delta = signedAngleDelta(startAngle, endAngle);
+    if (entity.type === "rectangle") {
+      const geometry = rotatedRectangleGeometry(entity, command.base, delta);
+      if (!validFigurePiece(geometry)) {
+        statusChip.textContent = "Координаты после поворота вне диапазона";
+        draw();
+        return;
+      }
+      if (Math.abs(delta) > 1e-12) commitLineEdit([[entity, [geometry]]], "Поворот применён", [], "rotate-rectangle");
+    } else {
+      if (rotateEntityAround(entity, command.base, delta) === false) {
+        statusChip.textContent = "Координаты после поворота вне диапазона";
+        draw();
+        return;
+      }
+      const after = entityGeometry(entity);
+      if (geometryChanged(command.before, after)) {
+        state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
+        state.redo.length = 0;
+        markProjectDirty("rotate");
+      }
     }
     state.moveCommand = null;
     resetSnapTracking();
@@ -8686,7 +8932,8 @@ function selectedEndPoint() {
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  if (lineMetricContext() && lineMetricKinds.has(document.activeElement)) closeLineMetricInput();
+  if (lineMetricContext() && state.metricEntry) closeLineMetricInput();
+  else if (state.metricEntry && state.drawing) closeMetricEntry();
   try {
     canvas.setPointerCapture(event.pointerId);
   } catch {
@@ -8709,6 +8956,11 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   if (state.lineEdit) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
+    return;
+  }
+  if (event.ctrlKey && !event.shiftKey && !event.altKey && event.pointerType === "mouse" && event.button === 0 &&
+      state.tool === "select" && state.selectTool === "select" && !state.selectedEndpoint && !state.moveCommand && !state.offsetCommand) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "quick-trim-once" };
     return;
   }
   if (state.tool === "select" && !state.moveCommand && !state.offsetCommand && !["window", "lasso"].includes(state.selectTool)) {
@@ -8844,9 +9096,8 @@ canvas.addEventListener("pointerdown", (event) => {
         mode: "leader-move",
         targetId: hitEntity.id,
         before: entityGeometry(hitEntity),
-        editLeaderTextOnTap: true,
       };
-      statusChip.textContent = "Выноска выбрана: тяните для перемещения или тапните текст для правки";
+      statusChip.textContent = "Потяните надпись или нажмите «Изменить аннотацию»";
       draw();
       return;
     }
@@ -8982,7 +9233,7 @@ canvas.addEventListener("pointermove", (event) => {
     if (entity) {
       const dx = currentWorld.x - state.pointer.world.x;
       const dy = currentWorld.y - state.pointer.world.y;
-      if (entity.type === "block" && state.snaps.has("grid")) {
+      if (entity.type === "block" && snapEnabled("grid")) {
         const grabOffset = state.pointer.grabOffset || { x: 0, y: 0 };
         const nextX = snapValueToGrid(currentWorld.x - grabOffset.x);
         const nextY = snapValueToGrid(currentWorld.y - grabOffset.y);
@@ -9109,6 +9360,8 @@ function finishCanvasPointer(event, canceled = false) {
     finishLineGrip(state.pointer);
   } else if (state.pointer.mode === "line-edit") {
     if (!state.pointer.moved) pickLineEditPoint(state.pointer.startScreen);
+  } else if (state.pointer.mode === "quick-trim-once") {
+    if (!state.pointer.moved) applyQuickEdit("trim", state.pointer.startScreen);
   } else if (state.pointer?.mode === "offset-command") {
     if (!canceled && !state.pointer.moved) {
       commitOffsetCommandPoint(rawCursorWorld());
@@ -9124,12 +9377,7 @@ function finishCanvasPointer(event, canceled = false) {
       forceMoveCursorVisible();
     }
   } else if (state.pointer?.mode === "leader-move") {
-    const entity = state.entities.find((item) => item.id === state.pointer.targetId);
-    if (!canceled && !state.pointer.moved && state.pointer.editLeaderTextOnTap) {
-      if (entity?.dimensionKind === "leader") editLeaderText(entity);
-    } else {
-      finishPointerMoveUndo();
-    }
+    finishPointerMoveUndo();
   } else if (state.pointer?.mode === "leader-arrow") {
     if (!canceled && state.pointer.moved) {
       finishPointerMoveUndo();
@@ -9158,17 +9406,13 @@ function finishCanvasPointer(event, canceled = false) {
       draw();
     } else if (state.tool === "select") {
       const hitId = state.pointer.tapCandidateId || state.pointer.targetId || pickEntity(state.pointer.startScreen);
-      const hitEntity = hitId ? state.entities.find((entity) => entity.id === hitId) : null;
       state.selectedId = hitId;
       state.selectedEndpoint = null;
       applyTapSelection(hitId);
       if (hitId && state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
-      if (shouldEditTextFromTap(hitEntity, state.pointer.startScreen)) {
-        editTextEntity(hitEntity);
-      }
       draw();
     } else {
-      commitCursorPoint();
+      commitCursorPoint(state.pointer.startScreen);
     }
   } else {
     finishPointerMoveUndo();
@@ -9189,7 +9433,7 @@ function finishCanvasPointer(event, canceled = false) {
 }
 
 function finishPointerMoveUndo() {
-  const trackedModes = new Set(["move", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]);
+  const trackedModes = new Set(["move", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end", "leader-move", "leader-arrow"]);
   if (!trackedModes.has(state.pointer?.mode) || !state.pointer.targetId) return;
   const entity = state.entities.find((item) => item.id === state.pointer.targetId);
   if (entity && state.pointer.before) {
@@ -9283,15 +9527,27 @@ canvas.addEventListener("keydown", (event) => {
 
 function moveEntityBy(entity, dx, dy) {
   if (!entity) return;
+  if (isPlanAnnotationZone(entity)) {
+    const points = translatePolyline(entity.points, dx, dy);
+    if (!points.every(isLinePoint)) return false;
+    applyEntityGeometry(entity, { points });
+    return;
+  }
   if (entity.type === "polyline") {
     const points = translatePolyline(entity.points, dx, dy);
-    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed)) return false;
+    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed, entity.bulges)) return false;
     applyEntityGeometry(entity, { points });
     return;
   }
   if (isDraftLine(entity)) {
     const geometry = { x1: entity.x1 + dx, y1: entity.y1 + dy, x2: entity.x2 + dx, y2: entity.y2 + dy };
     if (!isValidLine(geometry)) return false;
+    applyEntityGeometry(entity, geometry);
+    return;
+  }
+  if (entity.type === "arc" || entity.type === "rectangle") {
+    const geometry = translatedFigureGeometry(entity, dx, dy);
+    if (!validFigurePiece({ ...entity, ...geometry })) return false;
     applyEntityGeometry(entity, geometry);
     return;
   }
@@ -9323,8 +9579,9 @@ function moveEntityBy(entity, dx, dy) {
 function cloneLinearEntity(entity, dx = 260, dy = 260) {
   const id = `${entity.type || "line"}-${Date.now()}`;
   if (entity.type === "text") {
-    return textEntity(id, entity.x + dx, entity.y + dy, entity.text, entity.height, entity.rotation || 0);
+    return { ...entity, id, x: entity.x + dx, y: entity.y + dy };
   }
+  if (entity.dimensionKind === "leader") return { ...entity, id, x1: entity.x1 + dx, y1: entity.y1 + dy, x2: entity.x2 + dx, y2: entity.y2 + dy };
   if (entity.type === "circle") {
     return circleEntity(id, entity.cx + dx, entity.cy + dy, entity.radius, entity.layer || "measure");
   }
@@ -9337,6 +9594,10 @@ function cloneLinearEntity(entity, dx = 260, dy = 260) {
 }
 
 function cloneEntityForCommand(entity, dx = 260, dy = 260) {
+  if (isPlanAnnotationZone(entity)) {
+    const points = translatePolyline(entity.points, dx, dy);
+    return createPlanAnnotation(newLineId(entity.type), entity.type, points, entity);
+  }
   if (entity.type === "polyline") {
     const points = translatePolyline(entity.points, dx, dy);
     return points.every(isLinePoint) ? createPolyline(newLineId("polyline"), points, entity) : null;
@@ -9344,6 +9605,10 @@ function cloneEntityForCommand(entity, dx = 260, dy = 260) {
   if (isDraftLine(entity)) {
     const copy = line(newLineId(), entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer);
     return isValidLine(copy) ? copy : null;
+  }
+  if (entity.type === "arc" || entity.type === "rectangle") {
+    const copy = { ...entity, ...translatedFigureGeometry(entity, dx, dy), id: newLineId(entity.type) };
+    return validFigurePiece(copy) ? copy : null;
   }
   if (entity.type === "block") {
     const size = entitySize(entity);
@@ -9376,9 +9641,15 @@ function rotateLinearEntityAround(entity, base, radians) {
 }
 
 function rotateEntityAround(entity, base, radians) {
+  if (isPlanAnnotationZone(entity)) {
+    const points = entity.points.map((point) => rotatePointAround(point, base, radians));
+    if (!points.every(isLinePoint)) return false;
+    applyEntityGeometry(entity, { points });
+    return;
+  }
   if (entity.type === "polyline") {
     const points = entity.points.map((point) => rotatePointAround(point, base, radians));
-    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed)) return false;
+    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed, entity.bulges)) return false;
     applyEntityGeometry(entity, { points });
     return;
   }
@@ -9387,6 +9658,12 @@ function rotateEntityAround(entity, base, radians) {
     const end = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, radians);
     const geometry = { x1: start.x, y1: start.y, x2: end.x, y2: end.y };
     if (!isValidLine(geometry)) return false;
+    applyEntityGeometry(entity, geometry);
+    return;
+  }
+  if (entity.type === "arc") {
+    const geometry = mapArcPoints(entity, point => rotatePointAround(point, base, radians));
+    if (!validFigurePiece({ ...entity, ...geometry })) return false;
     applyEntityGeometry(entity, geometry);
     return;
   }
@@ -9420,6 +9697,13 @@ function mirrorLinearEntity(entity) {
     return;
   }
   if (entity.type === "circle") {
+    return;
+  }
+  if (entity.type === "arc") {
+    const arc = arcGeometry(entity.start, entity.through, entity.end);
+    if (!arc) return;
+    const geometry = mapArcPoints(entity, point => ({ x: 2 * arc.center.x - point.x, y: point.y }));
+    if (validFigurePiece({ ...entity, ...geometry })) applyEntityGeometry(entity, geometry);
     return;
   }
   const cx = (entity.x1 + entity.x2) / 2;
@@ -9498,7 +9782,7 @@ function moveDimensionHandle(entity, endpoint, handlePoint) {
   const nextBase = snapped || (geometry.mode !== "legacy"
     ? { x: currentBase.x + axis.x * delta, y: currentBase.y + axis.y * delta } : handlePoint);
   const nextRef = dimensionRefFromSnap(nearestSnapCandidate(nextBase, snapCandidates({
-    includeCorners: state.snaps.has("end"), includeMidpoints: state.snaps.has("mid"),
+    includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"), includeCenters: snapEnabled("center"),
   }), 3));
   const start = endpoint === "start";
   const linkFields = start ? { refStart: nextRef, lostRefStart: false } : { refEnd: nextRef, lostRefEnd: false };
@@ -9542,7 +9826,7 @@ function moveDimensionHandle(entity, endpoint, handlePoint) {
 
 function snapDimensionHandleToParallel(entity, point, axis) {
   state.dimensionSnapHint = null;
-  if (!state.snaps.has("end")) return null;
+  if (!snapEnabled("end")) return null;
   const threshold = 34 / state.view.scale;
   let best = null;
   const pointSnap = nearestSnapCandidate(point, snapCandidates({ includeCorners: true }), threshold * 0.85);
@@ -9597,7 +9881,12 @@ function normalizeWorldVector(dx, dy) {
 
 function entityGeometry(entity) {
   if (!entity) return null;
+  if (isPlanAnnotationZone(entity)) {
+    return { points: entity.points.map((point) => ({ ...point })), label: entity.label || "",
+      ...(entity.type === "elevation" ? { height: entity.height, zoneStyle: entity.zoneStyle } : {}) };
+  }
   if (entity.type === "polyline") return { points: entity.points.map((point) => ({ ...point })) };
+  if (entity.type === "arc") return mapArcPoints(entity, point => ({ ...point }));
   if (entity.type === "block") {
     return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0, flipX: Boolean(entity.flipX) };
   }
@@ -9608,7 +9897,8 @@ function entityGeometry(entity) {
     return { cx: entity.cx, cy: entity.cy, radius: entity.radius };
   }
   if (entity.dimensionKind === "leader") {
-    return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, text: entity.text || "Текст" };
+    return { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, text: entity.text || "Текст",
+      textHeight: entity.textHeight || 200, leaderStyle: entity.leaderStyle || "boxed" };
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (entity.layer === "dimensions") {
@@ -9645,6 +9935,7 @@ function geometryChanged(before, after) {
       return !Array.isArray(previous) || next.length !== previous.length ||
         next.some((point, index) => distanceWorld(point, previous[index]) > linePointEpsilon);
     }
+    if (isLinePoint(next) && isLinePoint(previous)) return distanceWorld(next, previous) > linePointEpsilon;
     if (typeof next !== "number" || typeof previous !== "number") return next !== previous;
     return Math.abs(next - previous) > linePointEpsilon;
   });
@@ -9653,6 +9944,10 @@ function geometryChanged(before, after) {
 function pickEntity(screen) {
   let best = null;
   let bestDistance = 18;
+  let innerZone = null;
+  let smallestArea = Infinity;
+  const world = screenToWorld(screen);
+  const anchors = planAnnotationAnchors(state.entities.filter((entity) => isPlanAnnotationZone(entity) && isLayerVisible(entity.layer)));
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
     if (!entityMatchesSelectionFilter(entity)) continue;
@@ -9660,13 +9955,20 @@ function pickEntity(screen) {
       if (pointInsideBlock(screen, entity)) return entity.id;
       continue;
     }
-    const distance = distanceToEntityScreen(screen, entity);
+    if (isPlanAnnotationZone(entity)) {
+      const geometry = planAnnotationGeometry(entity);
+      if (geometry && geometry.areaMm2 < smallestArea && pointInPolygon(world, geometry.points)) {
+        innerZone = entity.id;
+        smallestArea = geometry.areaMm2;
+      }
+    }
+    const distance = distanceToEntityScreen(screen, entity, anchors.get(entity.id));
     if (distance < bestDistance) {
       best = entity.id;
       bestDistance = distance;
     }
   }
-  return best;
+  return best || innerZone;
 }
 
 function pickLineEndpoint(screen) {
@@ -9674,7 +9976,7 @@ function pickLineEndpoint(screen) {
   let bestDistance = 18;
   for (let i = state.entities.length - 1; i >= 0; i -= 1) {
     const entity = state.entities[i];
-    if ((entity.type !== "line" && entity.type !== "wall") || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
+    if ((entity.type !== "line" && entity.type !== "wall") || entity.dimensionKind || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) continue;
     const endpoints = [
       { point: "start", screen: worldToScreen({ x: entity.x1, y: entity.y1 }) },
       { point: "end", screen: worldToScreen({ x: entity.x2, y: entity.y2 }) },
@@ -9692,7 +9994,7 @@ function pickLineEndpoint(screen) {
 
 function pickSelectedLineEndpoint(screen) {
   const entity = state.entities.find((item) => item.id === state.selectedId);
-  if (!entity || !["line", "wall", "polyline"].includes(entity.type) || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
+  if (!entity || !["line", "wall", "polyline"].includes(entity.type) || entity.dimensionKind || entity.layer === "dimensions" || !isLayerVisible(entity.layer)) return null;
   if (entity.type === "polyline") {
     const vertices = entity.points.map((point, index) => ({ ...worldToScreen(point), index }));
     const nearest = nearestSnapCandidate(screen, vertices, 20);
@@ -9730,11 +10032,25 @@ function pointInsideBlock(screen, entity) {
   return Math.abs(localX) <= size.width / 2 + hitPadding && Math.abs(localY) <= size.height / 2 + hitPadding;
 }
 
-function distanceToEntityScreen(screen, entity) {
+function distanceToEntityScreen(screen, entity, zoneAnchor) {
+  if (isPlanAnnotationZone(entity)) {
+    const geometry = planAnnotationGeometry(entity);
+    if (!geometry) return Infinity;
+    const points = geometry.points.map(worldToScreen);
+    const label = zoneLabelRects.get(entity.id);
+    return Math.min(label ? screenRectDistance(screen, label) : pointDistance(screen, worldToScreen(zoneAnchor || geometry.anchor)),
+      ...points.map((point, index) => pointToSegmentDistance(screen, point, points[(index + 1) % points.length])));
+  }
+  if (entity.dimensionKind === "leader") {
+    const geometry = leaderScreenGeometry(entity);
+    return Math.min(screenRectDistance(screen, geometry.rect), distanceToLeaderPath(screen, geometry.path));
+  }
   if (entity.type === "text") {
     const origin = worldToScreen({ x: entity.x, y: entity.y });
     const height = Math.max(10, Math.abs(entity.height || 260) * state.view.scale);
-    const width = Math.max(height * 0.8, String(entity.text || "Текст").length * height * 0.58);
+    const lines = annotationTextLines(entity.text);
+    const width = annotationTextWidth(lines, height);
+    const bottom = (lines.length - 1) * height * ANNOTATION_LINE_SPACING;
     const radians = -((entity.rotation || 0) * Math.PI) / 180;
     const cos = Math.cos(radians);
     const sin = Math.sin(radians);
@@ -9742,17 +10058,12 @@ function distanceToEntityScreen(screen, entity) {
     const dy = screen.y - origin.y;
     const localX = dx * cos - dy * sin;
     const localY = dx * sin + dy * cos;
-    if (localX >= -8 && localX <= width + 8 && localY >= -height - 8 && localY <= 8) return 0;
+    if (localX >= -8 && localX <= width + 8 && localY >= -height - 8 && localY <= bottom + 8) return 0;
     const clampedX = Math.max(0, Math.min(width, localX));
-    const clampedY = Math.max(-height, Math.min(0, localY));
+    const clampedY = Math.max(-height, Math.min(bottom, localY));
     return Math.hypot(localX - clampedX, localY - clampedY);
   }
   if (entity.layer === "dimensions") {
-    if (entity.dimensionKind === "leader") {
-      const p1 = worldToScreen({ x: entity.x1, y: entity.y1 });
-      const p2 = worldToScreen({ x: entity.x2, y: entity.y2 });
-      return pointToSegmentDistance(screen, p1, p2);
-    }
     const dimensionGeometry = dimensionScreenGeometry(entity);
     const p1 = dimensionGeometry?.a || worldToScreen({ x: entity.x1, y: entity.y1 });
     const p2 = dimensionGeometry?.b || worldToScreen({ x: entity.x2, y: entity.y2 });
@@ -9760,14 +10071,23 @@ function distanceToEntityScreen(screen, entity) {
   }
   if (entity.type === "polyline") {
     let distance = Infinity;
-    for (const { p1, p2 } of polylineSegments(entity)) {
-      distance = Math.min(distance, pointToSegmentDistance(screen, worldToScreen(p1), worldToScreen(p2)));
+    const world = screenToWorld(screen);
+    for (const { p1, p2, arc } of polylineSegments(entity)) {
+      if (arc) {
+        const foot = projectFigurePoint(arc, world);
+        if (foot) distance = Math.min(distance, pointDistance(screen, worldToScreen(foot)));
+      } else {
+        distance = Math.min(distance, pointToSegmentDistance(screen, worldToScreen(p1), worldToScreen(p2)));
+      }
     }
     return distance;
   }
   if (entity.type === "circle") { const center = worldToScreen({ x: entity.cx, y: entity.cy }); return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - Math.abs(entity.radius) * state.view.scale); }
   if (entity.type === "rectangle") { const corners = rectangleCorners(entity).map(worldToScreen); return Math.min(pointToSegmentDistance(screen, corners[0], corners[1]), pointToSegmentDistance(screen, corners[1], corners[2]), pointToSegmentDistance(screen, corners[2], corners[3]), pointToSegmentDistance(screen, corners[3], corners[0])); }
-  if (entity.type === "arc") { const arc = arcGeometry(entity.start, entity.through, entity.end); if (!arc) return Infinity; const center = worldToScreen(arc.center); const radius = arc.radius * state.view.scale; const angle = Math.atan2(screen.y - center.y, screen.x - center.x); if (!angleOnArc(angle, arc.startAngle, arc.endAngle, arc.counterClockwise)) return Infinity; return Math.abs(Math.hypot(screen.x - center.x, screen.y - center.y) - radius); }
+  if (entity.type === "arc") {
+    const point = projectFigurePoint(entity, screenToWorld(screen));
+    return point ? pointDistance(screen, worldToScreen(point)) : Infinity;
+  }
   const p1 = worldToScreen({ x: entity.x1, y: entity.y1 }); const p2 = worldToScreen({ x: entity.x2, y: entity.y2 }); return pointToSegmentDistance(screen, p1, p2);
 }
 function angleOnArc(angle, startAngle, endAngle, counterClockwise) { const span = counterClockwise ? normalizeAnglePositive(endAngle - startAngle) : normalizeAnglePositive(startAngle - endAngle); const delta = counterClockwise ? normalizeAnglePositive(angle - startAngle) : normalizeAnglePositive(startAngle - angle); return delta <= span + 0.05; }
@@ -9860,23 +10180,6 @@ selectToolMenu?.addEventListener("click", (event) => {
   selectSelectionTool(button.dataset.selectTool);
 });
 
-leaderTextEditor?.addEventListener("submit", (event) => {
-  event.preventDefault();
-  commitLeaderText();
-});
-
-leaderTextInput?.addEventListener("focus", updateViewportLock);
-leaderTextInput?.addEventListener("blur", () => window.setTimeout(updateViewportLock, 80));
-leaderTextInput?.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    event.preventDefault();
-    state.drawing = null;
-    hideLeaderTextEditor();
-    statusChip.textContent = dimensionToolStatusText();
-    draw();
-  }
-});
-
 function nextDimensionSnap() {
   const origin = rawCursorWorld();
   const { snapCount, snapIndex } = resolveDimensionPointSnap(origin);
@@ -9921,6 +10224,26 @@ dimensionAxis.addEventListener("change", () => {
   draw();
 });
 
+allSnapsButton.addEventListener("click", () => {
+  state.snapsMuted = !state.snapsMuted;
+  resetSnapTracking();
+  state.dimensionSnapHint = null;
+  syncSnapButtons();
+  statusChip.textContent = state.snapsMuted ? "Все привязки приостановлены" : "Выбранные привязки включены";
+  draw();
+});
+
+gridStepSelect.addEventListener("change", () => {
+  const step = Number(gridStepSelect.value);
+  if (!GRID_STEPS.includes(step)) return;
+  state.gridStep = step;
+  resetSnapTracking();
+  syncSnapButtons();
+  markProjectDirty("grid-step");
+  statusChip.textContent = `Шаг сетки ${step} мм`;
+  draw();
+});
+
 snaps.forEach((button) => {
   button.addEventListener("click", () => {
     const snap = button.dataset.snap;
@@ -9931,13 +10254,15 @@ snaps.forEach((button) => {
       if (snap === "polar") state.snaps.delete("ortho");
       state.snaps.add(snap);
     }
-    state.dimensionSnapChoice = null;
+    resetSnapTracking();
+    state.dimensionSnapHint = null;
     syncSnapButtons();
     markProjectDirty("snaps");
     const names = {
       grid: "Сетка",
       end: "Конец",
       mid: "Середина",
+      center: "Центр",
       polar: `Полярное отслеживание ${state.polarStep}°`,
       ortho: "Орто",
       intersection: "Пересечение",
@@ -10010,6 +10335,8 @@ backToProjectsButton?.addEventListener("click", () => {
   showProjectHome().catch((error) => console.warn("Project home failed", error));
 });
 
+bindPointAction(openExactMetrics, openMetricEntry);
+
 lineDirection.addEventListener("change", () => {
   if (state.tool !== "line" || !state.drawing) return;
   state.drawing.metricDirection = lineDirection.value;
@@ -10018,20 +10345,11 @@ lineDirection.addEventListener("change", () => {
   draw();
 });
 
-bindPointAction(lineSkipSnap, () => {
-  if (!["line", "polyline"].includes(state.tool) || surveyPointPicker) return;
-  state.skipLineObjectSnap = !state.skipLineObjectSnap;
-  resetSnapTracking();
-  statusChip.textContent = state.skipLineObjectSnap
-    ? "Следующая точка без объектной привязки"
-    : "Объектные привязки восстановлены";
-  draw();
-});
-
 linePointAssist.addEventListener("focusout", (event) => {
   if (!linePointAssist.contains(event.relatedTarget) && !lineMetricKinds.has(event.relatedTarget) &&
       event.relatedTarget !== keyboardConfirmButton) {
     clearLineMetricEdit();
+    setMetricEntry(null);
     draw();
   }
 });
@@ -10041,21 +10359,24 @@ for (const [input, kind] of lineMetricKinds) {
   const apply = input === topLengthInput || input === topAngleInput ? applyTopMetricValue : applyInlineValue;
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
-    if (lineMetricContext()) {
-      if (event.key === "Enter" || event.key === "Escape") {
-        event.preventDefault();
-        if (event.key === "Enter") confirmKeyboardInput();
-        else cancelLineMetricInput();
-      }
-    } else if (event.key === "Enter") {
-      apply(kind, { recordUndo: false });
-      input.blur();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmKeyboardInput();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      if (lineMetricContext()) cancelLineMetricInput();
+      else closeMetricEntry();
+      canvas.focus({ preventScroll: true });
+      draw();
     }
   });
   input.addEventListener("input", () => {
     syncInlineEditorWidth(input);
     if (lineMetricContext()) updateLineMetricInput(input);
-    else apply(kind, { recordUndo: false });
+    else {
+      modifiedMetricInputs.add(input);
+      apply(kind, { recordUndo: false });
+    }
     positionKeyboardConfirmButton();
   });
   input.addEventListener("blur", (event) => {
@@ -10067,7 +10388,7 @@ for (const [input, kind] of lineMetricKinds) {
       }
       return;
     }
-    apply(kind, { recordUndo: false });
+    if (modifiedMetricInputs.delete(input)) apply(kind, { recordUndo: false });
     commitNumericInputEdit();
   });
 }
@@ -10111,6 +10432,7 @@ lineUi.linePolarStep.addEventListener("change", () => {
   if (![5, 15, 30, 45, 90].includes(step)) return;
   state.polarStep = step;
   resetSnapTracking();
+  syncSnapButtons();
   markProjectDirty("polar-step");
   draw();
 });
@@ -10145,6 +10467,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.target.closest("input, textarea, select, [contenteditable], button, summary")) return;
+  if (state.planZone && event.key === "Escape" && !event.target.closest("dialog")) {
+    event.preventDefault();
+    activatePlainSelect();
+    return;
+  }
   if (state.lineEdit && event.key === "Escape") {
     event.preventDefault();
     lineUi.lineEditCancel.click();
@@ -10192,6 +10519,16 @@ function bindPointAction(button, action) {
 }
 
 bindPointAction(keyboardConfirmButton, confirmKeyboardInput);
+bindPointAction(polylineArcMode, togglePolylineArcMode);
+bindPointAction(quickTrimTool, () => {
+  if (state.lineEdit?.quick) endLineEdit("Быстрая правка завершена");
+  else startQuickEdit("trim");
+});
+for (const button of quickEditButtons) {
+  bindPointAction(button, () => {
+    if (state.lineEdit?.quick && state.lineEdit.mode !== button.dataset.quickEdit) startQuickEdit(button.dataset.quickEdit);
+  });
+}
 
 keyboardInputs.forEach((input) => {
   input.addEventListener("focus", () => {
@@ -10206,8 +10543,13 @@ keyboardInputs.forEach((input) => {
     window.setTimeout(updateViewportLock, 260);
   });
   input.addEventListener("pointerup", () => selectInlineValue(input));
-  input.addEventListener("blur", () => {
+  input.addEventListener("blur", (event) => {
     shell.classList.remove("input-focused");
+    if (!keyboardInputs.includes(event.relatedTarget) && event.relatedTarget !== keyboardConfirmButton &&
+        !linePointAssist.contains(event.relatedTarget)) {
+      setMetricEntry(null);
+      draw();
+    }
     window.setTimeout(updateViewportLock, 80);
   });
 });
@@ -10229,6 +10571,12 @@ annotationScaleSelect?.addEventListener("change", () => {
 
 document.getElementById("undoButton").addEventListener("click", () => {
   if (undoLineSegment()) return;
+  if (state.planZone?.points.length) {
+    state.planZone.points.pop();
+    statusChip.textContent = "Точка снята. Укажите следующую точку контура";
+    draw();
+    return;
+  }
   const action = state.undo.pop();
   if (!action) return;
   if (state.lineEdit) endLineEdit("Правка отменена");
@@ -10419,10 +10767,7 @@ function renderExportPlan(context, view, entities) {
   state.theme = "light";
   printRendering = true;
   try {
-    drawWalls(entities, palette);
-    for (const entity of entities) {
-      if (entity.type !== "wall") drawEntity(entity, palette);
-    }
+    drawPlanScene(entities, palette);
   } finally {
     printRendering = false;
     state.theme = editorTheme;
@@ -10575,23 +10920,258 @@ function renderLayerList() {
 
 function acceptedSurveyDraft() {
   if (state.tool !== "polyline" || !state.drawing?.points?.length) return undefined;
-  return { tool: "polyline", points: state.drawing.points.map(({ x, y }) => ({ x, y })) };
+  const { points, bulges } = state.drawing;
+  return { tool: "polyline", points: points.map(({ x, y }) => ({ x, y })), ...(bulges.some(Boolean) ? { bulges: [...bulges] } : {}) };
 }
 
 function restoreAcceptedSurveyDraft(draft) {
   state.tool = "select";
   shell.dataset.tool = "select";
   if (draft?.tool !== "polyline" || !Array.isArray(draft.points) || !draft.points.length ||
-      !draft.points.every(isLinePoint) || (draft.points.length > 1 && !validPolylinePoints(draft.points))) return;
+      !draft.points.every(isLinePoint) || (draft.points.length > 1 && !validPolylinePoints(draft.points, false, draft.bulges))) return;
   const points = draft.points.map(({ x, y }) => ({ x, y }));
   const start = points.at(-1);
   state.tool = "polyline";
   shell.dataset.tool = "polyline";
-  state.drawing = { points, start, end: start, lockedEnd: false };
+  state.drawing = { points, bulges: draft.bulges ? [...draft.bulges] : Array(points.length - 1).fill(0), start, end: start, lockedEnd: false };
 }
 
 function activeSurveyRoom() {
   return state.survey.rooms.find((room) => room.id === state.survey.activeRoomId) || state.survey.rooms[0];
+}
+
+function isPlanAnnotationZone(entity) {
+  return entity?.type === "area" || entity?.type === "elevation";
+}
+
+function annotationLayerForTool(tool) {
+  if (tool === "area") return "areas";
+  if (tool === "elevation") return "elevations";
+  if (tool === "text" || (tool === "dimension" && state.dimensionTool === "leader")) return "text";
+  return tool === "dimension" ? "dimensions" : null;
+}
+
+function planZoneName(type = state.tool) {
+  return type === "area" ? "Площадь" : "Высота Z";
+}
+
+function planContourClosesAtCursor(points) {
+  return points.length >= 3 && snapEnabled("end") && distanceWorld(rawCursorWorld(), points[0]) * state.view.scale <= 14;
+}
+
+const planAnnotationActions = document.getElementById("planAnnotationActions");
+const planAnnotationExisting = document.getElementById("planAnnotationExisting");
+const planAnnotationClose = document.getElementById("planAnnotationClose");
+const planAnnotationEdit = document.getElementById("planAnnotationEdit");
+const planAnnotationEditor = document.getElementById("planAnnotationEditor");
+const planAnnotationForm = planAnnotationEditor.querySelector("form");
+const planAnnotationFields = planAnnotationForm.elements;
+const planAnnotationError = document.getElementById("planAnnotationError");
+
+for (const [value, style] of Object.entries(PLAN_ELEVATION_STYLES)) {
+  planAnnotationFields.zoneStyle.add(new Option(style.label, value));
+}
+
+function editablePlanAnnotation() {
+  if (state.tool !== "select" || state.selectedIds.length !== 1 || state.moveCommand || state.lineEdit) return null;
+  const entity = selectedEntities()[0];
+  return isPlanAnnotationZone(entity) || isDirectMoveAnnotation(entity) ? entity : null;
+}
+
+function syncPlanAnnotationActions() {
+  const zone = state.planZone;
+  const editing = Boolean(editablePlanAnnotation());
+  const count = zone?.points.length || 0;
+  planAnnotationActions.hidden = !zone && !editing;
+  planAnnotationExisting.hidden = !zone || count > 0;
+  planAnnotationExisting.setAttribute("aria-pressed", String(Boolean(zone?.pickContour)));
+  planAnnotationClose.hidden = count < 3;
+  planAnnotationEdit.hidden = !editing;
+}
+
+function openPlanAnnotationEditor(kind, values = {}) {
+  if (planAnnotationEditor.open) return Promise.resolve(null);
+  const zone = kind === "area" || kind === "elevation";
+  const text = !zone;
+  const leader = kind === "leader";
+  const heading = text ? (leader ? "Выноска" : "Текст") : planZoneName(kind);
+  planAnnotationForm.reset();
+  planAnnotationEditor.querySelector("h2").textContent = heading;
+  planAnnotationForm.querySelector('[type="submit"]').textContent = values.id ? "Сохранить" : "Поставить";
+  document.getElementById("planAnnotationTextField").hidden = !text;
+  document.getElementById("planAnnotationLabelField").hidden = !zone;
+  document.getElementById("planAnnotationHeightField").hidden = kind !== "elevation";
+  document.getElementById("planAnnotationZoneField").hidden = kind !== "elevation";
+  document.getElementById("planAnnotationSizeField").hidden = !text;
+  document.getElementById("planAnnotationLeaderField").hidden = !leader;
+  planAnnotationFields.text.value = decodeMojibakeText(values.text || "");
+  planAnnotationFields.label.value = values.label || "";
+  planAnnotationFields.height.value = kind === "elevation" && Number.isFinite(values.height) ? String(values.height).replace(".", ",") : "";
+  planAnnotationFields.textHeight.value = leader ? values.textHeight || 200 : values.height || 260;
+  planAnnotationFields.zoneStyle.value = values.zoneStyle || "ceiling";
+  planAnnotationFields.leaderStyle.value = values.leaderStyle || "landing";
+  planAnnotationError.textContent = "";
+  planAnnotationEditor.returnValue = "";
+  planAnnotationEditor.showModal();
+  const first = text ? planAnnotationFields.text : kind === "elevation" ? planAnnotationFields.height : planAnnotationFields.label;
+  first.focus({ preventScroll: true });
+  updateViewportLock();
+  return new Promise((resolve) => {
+    planAnnotationEditor.addEventListener("close", () => {
+      const raw = planAnnotationEditor.returnValue;
+      updateViewportLock();
+      resolve(raw ? JSON.parse(raw) : null);
+    }, { once: true });
+  });
+}
+
+planAnnotationForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (planAnnotationEditor.returnValue) return;
+  const data = {};
+  if (!document.getElementById("planAnnotationTextField").hidden) {
+    data.text = planAnnotationFields.text.value.trim();
+    if (!data.text) {
+      planAnnotationError.textContent = "Введите текст";
+      planAnnotationFields.text.focus();
+      return;
+    }
+    data.textHeight = Number(planAnnotationFields.textHeight.value);
+    if (!Number.isFinite(data.textHeight) || data.textHeight < 1 || data.textHeight > 100000) {
+      planAnnotationError.textContent = "Укажите размер текста от 1 до 100 000 мм";
+      planAnnotationFields.textHeight.focus();
+      return;
+    }
+    data.leaderStyle = planAnnotationFields.leaderStyle.value;
+  } else {
+    data.label = planAnnotationFields.label.value.trim();
+    if (!document.getElementById("planAnnotationHeightField").hidden) {
+      data.height = parseLineDecimal(planAnnotationFields.height.value);
+      if (!Number.isFinite(data.height) || Math.abs(data.height) > MAX_LINE_COORDINATE) {
+        planAnnotationError.textContent = "Введите высоту в миллиметрах, например 2800 или −150";
+        planAnnotationFields.height.focus();
+        return;
+      }
+      data.zoneStyle = planAnnotationFields.zoneStyle.value;
+    }
+  }
+  planAnnotationEditor.close(JSON.stringify(data));
+});
+
+document.getElementById("planAnnotationCancel").addEventListener("click", () => planAnnotationEditor.close());
+planAnnotationForm.addEventListener("focusin", updateViewportLock);
+planAnnotationForm.addEventListener("focusout", () => window.setTimeout(updateViewportLock, 80));
+document.getElementById("planAnnotationSign").addEventListener("click", () => {
+  const input = planAnnotationFields.height;
+  input.value = input.value.startsWith("-") ? input.value.slice(1) : `-${input.value.replace(/^\+/, "")}`;
+  input.focus();
+});
+
+function choosePlanContour(screen) {
+  const world = screenToWorld(screen);
+  const ranked = [];
+  for (const entity of state.entities) {
+    if (!isLayerVisible(entity.layer)) continue;
+    const zoneGeometry = isPlanAnnotationZone(entity) ? planAnnotationGeometry(entity) : null;
+    const points = zoneGeometry?.points || planAnnotationPointsFromEntity(entity);
+    if (!points) continue;
+    const distance = Math.min(...points.map((point, index) =>
+      pointToSegmentDistance(world, point, points[(index + 1) % points.length])));
+    const edge = distance * state.view.scale <= 15;
+    if (!edge && !pointInPolygon(world, points)) continue;
+    const candidate = zoneGeometry || planAnnotationGeometry({ type: "area", points });
+    const area = candidate?.areaMm2;
+    if (Number.isFinite(area)) ranked.push({ points, area, edge, distance });
+  }
+  ranked.sort((a, b) => Number(b.edge) - Number(a.edge) || (a.edge && b.edge ? a.distance - b.distance : a.area - b.area));
+  return ranked[0]?.points;
+}
+
+async function finishPlanAnnotation(points = state.planZone?.points) {
+  const zone = state.planZone;
+  if (!zone || planAnnotationEditor.open) return;
+  const type = state.tool;
+  const id = newLineId(type);
+  const valid = createPlanAnnotation(id, type, points, { height: 0 });
+  if (!valid) {
+    statusChip.textContent = "Нужен замкнутый контур из трёх или более точек без самопересечения";
+    draw();
+    return;
+  }
+  const projectId = persistence.projectId;
+  const values = type === "elevation" ? await openPlanAnnotationEditor("elevation", { zoneStyle: zone.zoneStyle }) : {};
+  if (!values || state.planZone !== zone || persistence.projectId !== projectId) return;
+  const entity = createPlanAnnotation(id, type, valid.points, values);
+  if (!entity) {
+    statusChip.textContent = "Не удалось поставить аннотацию. Проверьте введённую высоту";
+    return;
+  }
+  pushEntity(entity);
+  state.planZone = { points: [], pickContour: false, zoneStyle: values.zoneStyle };
+  statusChip.textContent = type === "area" ? `Площадь ${formatPlanArea(planAnnotationGeometry(entity).areaM2)} на плане` : `Высота ${formatPlanElevation(entity.height)} на плане. Можно добавить ещё зону`;
+  canvas.focus({ preventScroll: true });
+  draw();
+}
+
+function commitPlanAnnotationPoint(screen) {
+  const zone = state.planZone;
+  hideAnnotationToolMenu();
+  if (zone.pickContour) {
+    const points = choosePlanContour(screen);
+    if (points) void finishPlanAnnotation(points);
+    else statusChip.textContent = "Коснитесь готового замкнутого контура или его внутренней области";
+    return;
+  }
+  if (planContourClosesAtCursor(zone.points)) {
+    void finishPlanAnnotation();
+    return;
+  }
+  const point = cursorWorld();
+  if (!isLinePoint(point) || zone.points.some((vertex) => distanceWorld(vertex, point) <= linePointEpsilon)) {
+    statusChip.textContent = "Наводите курсор на новую точку контура";
+    return;
+  }
+  if (zone.points.length >= MAX_PLAN_ANNOTATION_POINTS) {
+    statusChip.textContent = "Достигнут предел вершин. Замкните контур";
+    return;
+  }
+  zone.points.push(point);
+  statusChip.textContent = zone.points.length >= 3 ? "Добавьте точку или нажмите «Замкнуть контур»" : `Точек: ${zone.points.length}. Укажите следующую`;
+  draw();
+}
+
+bindPointAction(planAnnotationExisting, () => {
+  if (!state.planZone || state.planZone.points.length) return;
+  state.planZone.pickContour = !state.planZone.pickContour;
+  statusChip.textContent = state.planZone.pickContour ? "Коснитесь готового замкнутого контура" : "Укажите первую точку контура";
+  draw();
+});
+bindPointAction(planAnnotationClose, () => void finishPlanAnnotation());
+bindPointAction(planAnnotationEdit, () => {
+  const entity = editablePlanAnnotation();
+  if (isPlanAnnotationZone(entity)) void editPlanZone(entity);
+  else if (entity?.dimensionKind === "leader") void editLeaderText(entity);
+  else if (entity?.type === "text") void editTextEntity(entity);
+});
+
+async function editPlanZone(entity) {
+  const values = await openPlanAnnotationEditor(entity.type, entity);
+  if (!values || !state.entities.includes(entity)) return;
+  const updated = createPlanAnnotation(entity.id, entity.type, entity.points, values);
+  if (updated) applyPlanAnnotationEdit(entity, { ...updated, label: updated.label || "" });
+}
+
+function applyPlanAnnotationEdit(entity, patch) {
+  const before = entityGeometry(entity);
+  Object.assign(entity, patch);
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    markProjectDirty("annotation-edit");
+  }
+  statusChip.textContent = "Аннотация изменена";
+  draw();
 }
 
 function switchSurveyRoom(roomId) {
@@ -10671,14 +11251,6 @@ function drawSurveyMarks(c, rect) {
       drawBadge(marker.label + height, point.x, point.y - 15, c, true, true);
     }
   }
-  if (!surveyPointPicker) return;
-  const point = worldToScreen(resolveDimensionPointSnap(rawCursorWorld(), { start: null }).point);
-  ctx.save();
-  ctx.strokeStyle = c.accent;
-  ctx.lineWidth = 2;
-  linePath(point.x - 15, point.y, point.x + 15, point.y);
-  linePath(point.x, point.y - 15, point.x, point.y + 15);
-  ctx.restore();
 }
 
 function surveyExportDetails() {
@@ -10765,6 +11337,7 @@ function initSurveyPanel() {
   });
   document.getElementById("surveyTool").addEventListener("click", () => {
     if (!persistence.projectId) return;
+    hideAnnotationToolMenu();
     if (surveyPointPicker) {
       const picker = surveyPointPicker;
       surveyPointPicker = null;

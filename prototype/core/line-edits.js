@@ -1,4 +1,5 @@
 import { arcGeometry, normalizeAnglePositive } from "./geometry.js";
+import { POLYLINE_ARC_GEOMETRY } from "./polyline.js";
 
 const POINT_EPSILON = 0.000001;
 const PARALLEL_EPSILON = 1e-12;
@@ -108,10 +109,11 @@ function circleGeometry(boundary) {
   if (boundary?.type !== "arc") return null;
   const { start, through, end } = boundary;
   if (![start, through, end].every(validPoint)) return null;
-  const arc = arcGeometry(start, through, end);
+  const analytic = boundary[POLYLINE_ARC_GEOMETRY];
+  const arc = analytic ? boundary : arcGeometry(start, through, end);
   if (!arc || !validPoint(arc.center) || !Number.isFinite(arc.radius) || arc.radius <= POINT_EPSILON) return null;
   const direction = arc.counterClockwise ? 1 : -1;
-  const span = normalizeAnglePositive((arc.endAngle - arc.startAngle) * direction);
+  const span = analytic ? Math.abs(arc.sweep) : normalizeAnglePositive((arc.endAngle - arc.startAngle) * direction);
   return { center: arc.center, radius: arc.radius, start, end, startAngle: arc.startAngle, span, direction };
 }
 
@@ -283,6 +285,17 @@ function intersectShapes(first, second, consider) {
     const candidate = segmentPoint(boundary, frame, distance);
     if (onCircleSpan(circle, candidate)) consider(candidate);
   }
+}
+
+export function boundaryCrossingPoints(target, boundaries) {
+  const first = snapShape(target);
+  const points = [];
+  if (!first) return points;
+  for (const edge of boundaries) {
+    const second = snapShape(edge);
+    if (second) intersectShapes(first, second, point => points.push(point));
+  }
+  return points;
 }
 
 // A boundary farther than our last retained crossing cannot improve the selection.

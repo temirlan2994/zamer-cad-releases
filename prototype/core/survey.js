@@ -1,5 +1,7 @@
 import { distanceWorld, pointInPolygon, segmentsIntersect } from "./geometry.js";
 import { parseLineDecimal } from "./line-input.js";
+import { planAnnotationPointsFromEntity } from "./plan-annotations.js";
+import { polylineSegments } from "./polyline.js";
 
 export const surveyPresets = {
   general: { label: "Общий", types: ["point", "opening", "control", "niche", "contour"] },
@@ -136,8 +138,41 @@ function ringEdges(points) {
   return points.map((point, index) => [point, points[(index + 1) % points.length]]);
 }
 
+function circularSegmentArea(arc, chord) {
+  const angle = arc.sweep;
+  if (Math.abs(angle) < 1e-3) {
+    // The chord form avoids cancellation of angle − sin(angle) for shallow bows.
+    return chord ** 2 * angle / 12 * (1 + angle ** 2 / 30);
+  }
+  return arc.radius ** 2 * (angle - Math.sin(angle)) / 2;
+}
+
+function curvedRingMetrics(entity, segments) {
+  const points = planAnnotationPointsFromEntity(entity);
+  if (!points) return null;
+  const [origin] = entity.points;
+  let signedArea = 0;
+  let perimeter = 0;
+  for (const { p1, p2, arc } of segments) {
+    const chord = distanceWorld(p1, p2);
+    signedArea += ((p1.x - origin.x) * (p2.y - origin.y) - (p1.y - origin.y) * (p2.x - origin.x)) / 2;
+    if (arc) signedArea += circularSegmentArea(arc, chord);
+    perimeter += arc ? arc.radius * Math.abs(arc.sweep) : chord;
+  }
+  const area = Math.abs(signedArea);
+  // Sampled edges are used for topology, while the measurements use the original arcs.
+  return Number.isFinite(area) && area > 1e-6 && Number.isFinite(perimeter)
+    ? { points, edges: ringEdges(points), area, perimeter }
+    : null;
+}
+
 function ringMetrics(entity) {
-  if (entity?.type !== "polyline" || entity.closed !== true || !Array.isArray(entity.points) || entity.points.length < 3) return null;
+  if (entity?.type !== "polyline" || entity.closed !== true || !Array.isArray(entity.points) || entity.points.length < 2) return null;
+  if (entity.bulges !== undefined) {
+    const segments = polylineSegments(entity);
+    if (!segments.length) return null;
+    if (segments.some(({ arc }) => arc)) return curvedRingMetrics(entity, segments);
+  }
   const points = entity.points;
   if (!points.every((point) => position(point))) return null;
   const edges = ringEdges(points);

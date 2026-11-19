@@ -1,6 +1,7 @@
 import { arcGeometry } from "./geometry.js";
 import { isLinePoint, isValidLine } from "./line-edits.js";
 import { validPolylinePoints } from "./polyline.js";
+import { normalizePlanAnnotation } from "./plan-annotations.js";
 
 export const MAX_ZAMER_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -33,9 +34,11 @@ export function validStoredEntity(entity) {
   switch (entity.type) {
     case "line": return entity.layer === "dimensions" ? validDimension(entity) : isValidLine(entity);
     case "wall": return isValidLine(entity) && (entity.width == null || (Number.isFinite(entity.width) && entity.width > 0));
-    case "polyline": return validPolylinePoints(entity.points, entity.closed) && entity.points.every(isLinePoint);
+    case "polyline": return validPolylinePoints(entity.points, entity.closed, entity.bulges) && entity.points.every(isLinePoint);
     case "rectangle": return hasXY(entity, "x1", "y1") && hasXY(entity, "x2", "y2") && entity.x1 !== entity.x2 && entity.y1 !== entity.y2;
     case "circle": return hasXY(entity, "cx", "cy") && Number.isFinite(entity.radius) && entity.radius > 0;
+    case "area":
+    case "elevation": return Boolean(normalizePlanAnnotation(entity));
     case "arc": {
       const { start, through, end } = entity;
       if (![start, through, end].every(isLinePoint)) return false;
@@ -49,6 +52,15 @@ export function validStoredEntity(entity) {
   }
 }
 
+function validPolylineDraft(draft) {
+  if (!plainObject(draft) || draft.tool !== "polyline" || !Array.isArray(draft.points) ||
+      !draft.points.length || !draft.points.every(isLinePoint)) return false;
+  if (draft.points.length === 1) {
+    return isLinePoint(draft.points[0]) && (draft.bulges === undefined || (Array.isArray(draft.bulges) && draft.bulges.length === 0));
+  }
+  return validPolylinePoints(draft.points, false, draft.bulges);
+}
+
 function validateDrawing(drawing, label) {
   if (!plainObject(drawing) || !Array.isArray(drawing.entities)) throw new Error(`${label}: отсутствует список объектов`);
   const ids = new Set();
@@ -59,8 +71,7 @@ function validateDrawing(drawing, label) {
   if (drawing.view != null && (!plainObject(drawing.view) ||
       !hasOptionalNumbers(drawing.view, ["scale", "panX", "panY"]))) throw new Error(`${label}: повреждены параметры вида`);
   const draft = drawing.draft;
-  if (draft != null && (!plainObject(draft) || draft.tool !== "polyline" || !Array.isArray(draft.points) ||
-      !draft.points.length || !draft.points.every(isLinePoint) || (draft.points.length > 1 && !validPolylinePoints(draft.points)))) {
+  if (draft != null && !validPolylineDraft(draft)) {
     throw new Error(`${label}: повреждён черновик полилинии`);
   }
 }

@@ -1,6 +1,8 @@
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { dimensionGeometry } from "./dimensions.js";
+import { planAnnotationGeometry } from "./plan-annotations.js";
 import { polylineBounds } from "./polyline.js";
 
 const PT_PER_MM = 72 / 25.4;
@@ -44,9 +46,21 @@ function arcBounds(entity) {
   return boundsOf(points);
 }
 
-function entityPlotBounds(entity) {
+function entityPlotBounds(entity, textWidth) {
   if (entity.type === "polyline") return polylineBounds(entity);
+  if (entity.type === "area" || entity.type === "elevation") return planAnnotationGeometry(entity)?.bounds ?? null;
   if (entity.type === "arc") return arcBounds(entity);
+  if (entity.type === "line" && entity.dimensionKind === "leader") {
+    const height = Math.abs(entity.textHeight || entity.height || 200);
+    const lines = annotationTextLines(entity.text);
+    const halfWidth = textWidth(lines, height, 600) / 2;
+    const halfHeight = (1 + (lines.length - 1) * ANNOTATION_LINE_SPACING) * height / 2;
+    return boundsOf([
+      { x: entity.x1, y: entity.y1 },
+      { x: entity.x2 - halfWidth, y: entity.y2 - halfHeight },
+      { x: entity.x2 + halfWidth, y: entity.y2 + halfHeight },
+    ]);
+  }
   if (entity.type === "line" && entity.layer === "dimensions" &&
       entity.dimensionKind !== "angular" && entity.dimensionKind !== "leader") {
     const geometry = dimensionGeometry(entity);
@@ -64,15 +78,17 @@ function entityPlotBounds(entity) {
     ]);
   }
   if (entity.type === "text") {
-    const { minX, minY, maxX, maxY } = entityBounds(entity);
+    const height = Math.abs(entity.height || 260);
+    const lines = annotationTextLines(entity.text);
+    const width = textWidth(lines, height, 400);
+    const minY = -height;
+    const maxY = ((lines.length - 1) * ANNOTATION_LINE_SPACING + 0.22) * height;
     const rotation = (entity.rotation || 0) * Math.PI / 180;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    return boundsOf([[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]].map(([x, y]) => {
-      const dx = x - entity.x;
-      const dy = y - entity.y;
-      return { x: entity.x + dx * cos - dy * sin, y: entity.y + dx * sin + dy * cos };
-    }));
+    return boundsOf([[0, minY], [width, minY], [width, maxY], [0, maxY]].map(([x, y]) => ({
+      x: entity.x + x * cos - y * sin, y: entity.y + x * sin + y * cos,
+    })));
   }
   const bounds = entityBounds(entity);
   if (entity.type !== "wall") return bounds;
@@ -83,10 +99,10 @@ function entityPlotBounds(entity) {
   };
 }
 
-export function pdfPlotBounds(entities) {
+export function pdfPlotBounds(entities, textWidth = annotationTextWidth) {
   let combined = null;
   for (const entity of entities) {
-    const bounds = entityPlotBounds(entity);
+    const bounds = entityPlotBounds(entity, textWidth);
     if (!bounds || !Object.values(bounds).every(Number.isFinite)) continue;
     combined = combined ? {
       minX: Math.min(combined.minX, bounds.minX),
@@ -327,7 +343,12 @@ export function pdfFromJpegPages(pages) {
 }
 
 export async function buildPlotPdf(project, entities, details, options, renderPlot) {
-  const bounds = pdfPlotBounds(entities);
+  const probe = document.createElement("canvas").getContext("2d");
+  const bounds = pdfPlotBounds(entities, (lines, height, weight) => {
+    if (!probe) return annotationTextWidth(lines, height);
+    probe.font = `${weight} ${height}px Inter, Arial, sans-serif`;
+    return lines.reduce((width, line) => Math.max(width, probe.measureText(line).width), height * 0.8);
+  });
   const { page, area, view, ratio, fitted } = pdfPlotLayout(bounds, options.scale);
   const title = project.name || "Замер";
   const room = [details.site, details.room, details.visitDate].filter(Boolean).join(" · ");

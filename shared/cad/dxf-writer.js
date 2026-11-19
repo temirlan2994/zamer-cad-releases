@@ -77,15 +77,21 @@ function exactDxfCoordinate(value) {
   return String(Number(value));
 }
 
-function appendDxfPolyline(out, { points, closed }, layer, lightweight = false) {
-  if (!Array.isArray(points) || points.length < (closed ? 3 : 2)) return;
+export function appendDxfPolyline(out, { points, closed, bulges }, layer, lightweight = false) {
+  if (!Array.isArray(points) || points.length < 2) return;
+  if (closed && points.length === 2 && (!lightweight || !Array.isArray(bulges) ||
+      bulges.length !== 2 || !bulges.every(Number.isFinite) || bulges[0] === -bulges[1])) return;
   for (const point of points) {
     if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
   }
   if (lightweight) {
     out.push("0", "LWPOLYLINE", "8", layer, "90", String(points.length), "70", closed ? "1" : "0");
-    for (const { x, y } of points) {
+    const edgeCount = closed ? points.length : points.length - 1;
+    for (const [index, { x, y }] of points.entries()) {
       out.push("10", exactDxfCoordinate(x), "20", exactDxfCoordinate(-y));
+      const bulge = index < edgeCount && Array.isArray(bulges) ? bulges[index] : 0;
+      // Reflecting Y reverses the arc's orientation.
+      if (Number.isFinite(bulge) && bulge !== 0) out.push("42", exactDxfCoordinate(-bulge));
     }
     return;
   }
