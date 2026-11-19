@@ -453,6 +453,13 @@ const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
+const copyToolMenu = document.getElementById("copyToolMenu");
+const copyControls = document.getElementById("copyControls");
+const copyCountControl = document.getElementById("copyCountControl");
+const copyCount = document.getElementById("copyCount");
+const copyConfirm = document.getElementById("copyConfirm");
+const copyClose = document.getElementById("copyClose");
+const maxCopiesPerPlacement = 1000;
 const quickRotateTool = document.getElementById("quickRotateTool");
 const quickMirrorTool = document.getElementById("quickMirrorTool");
 const quickDeleteTool = document.getElementById("quickDeleteTool");
@@ -741,6 +748,7 @@ const state = {
   selectedIds: [],
   selectedEndpoint: null,
   selectedArcGrip: null,
+  copyPicking: null,
   endpointEditBefore: null,
   selectionDrag: null,
   openEditMenuAfterPointer: false,
@@ -2376,6 +2384,8 @@ function restoreProject(project) {
     state.inlineEdit = null;
     state.numericEdit = null;
     state.selectionDrag = null;
+    state.copyPicking = null;
+    copyToolMenu.hidden = true;
     state.selectedArcGrip = null;
     state.selectedEndpoint = null;
     state.endpointEditBefore = null;
@@ -2923,12 +2933,16 @@ function drawMoveCommand(c) {
   const displayAngle = rotatingWithReference
     ? radToDeg(signedAngleDelta(angleBetweenPoints(start, command.reference), heading))
     : normalizeDegrees(radToDeg(heading));
-  for (const entity of state.entities) {
-    if (!command.entityIds.has(entity.id) || !isLayerVisible(entity.layer)) continue;
+  const sources = state.entities.filter(entity => command.entityIds.has(entity.id) && isLayerVisible(entity.layer));
+  const movingIds = command.mode === "copy" ? copyMovingIds(sources) : command.entityIds;
+  const steps = command.copyMode === "array" ? copyArrayCount(sources.length) : 1;
+  for (const entity of sources) {
     if (command.mode === "rotate") {
       drawRotatePreview(entity, command, end, c);
     } else {
-      drawMovePreview(entity, end.x - start.x, end.y - start.y, c, command.entityIds);
+      for (let index = 1; index <= steps; index += 1) {
+        drawMovePreview(entity, (end.x - start.x) * index, (end.y - start.y) * index, c, movingIds);
+      }
     }
   }
 
@@ -3126,7 +3140,7 @@ function drawRotatePreview(entity, command, end, c) {
 }
 
 function syncSelectionActions() {
-  const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu].some((menu) => !menu.hidden);
+  const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu, copyToolMenu].some((menu) => !menu.hidden);
   const framing = state.selectionDrag || ["window", "lasso"].includes(state.selectTool);
   const show = editableSelectionEntity() && !framing && !anotherMenuOpen && !snapMore.open && syncSelectToolMenu();
   selectToolMenu.hidden = !show;
@@ -3163,15 +3177,16 @@ function isDirectMoveAnnotation(entity) {
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
   if (!selected.length || state.tool !== "select" || state.selectedArcGrip || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
+  if (state.copyPicking) return false;
   if (action === "delete" || action === "move") return true;
   if (figureCutActions.has(action)) return selected.length === 1 && editableFigure(selected[0], action);
   if (lineEditActions.has(action)) return selected.length === 1 && isDraftLine(selected[0]);
   if (selected.length !== 1) return false;
   const entity = selected[0];
+  if (action === "copy") return true;
   if (action === "mirror") return editableFigure(entity, action) || ["wall", "block"].includes(entity.type);
-  if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "copy" || action === "rotate";
-  if (entity.type === "polyline") return action === "copy" || action === "rotate";
-  if (action === "copy") return entity.type === "block" || linearEditableEntity(entity);
+  if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "rotate";
+  if (entity.type === "polyline") return action === "rotate";
   if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
   if (action === "offset") return isDraftLine(entity) || entity.type === "wall";
   return false;
@@ -3412,12 +3427,16 @@ function finishSelectionDrag() {
 }
 
 function applyTapSelection(hitId) {
-  if (state.selectTool === "multi") {
+  if (state.selectTool === "multi" && state.copyPicking !== "single") {
     setSelection(hitId, { toggle: true });
   } else {
     setSelection(hitId);
   }
   const count = selectedEntities().length;
+  if (state.copyPicking) {
+    statusChip.textContent = count ? `Выбрано для копирования: ${count} · нажмите ✓` : "Выберите объекты для копирования";
+    return;
+  }
   statusChip.textContent = count > 1 ? `Выбрано: ${count}` : count ? "Элемент выбран" : selectionStatusText();
   if (count) {
     if (state.pointer) state.openEditMenuAfterPointer = true;
@@ -7441,6 +7460,8 @@ function setTool(tool) {
   closeLeaderInput();
   state.directManipulationIds.clear();
   state.tool = tool;
+  copyToolMenu.hidden = true;
+  state.copyPicking = null;
   state.selectedArcGrip = null;
   state.planZone = isPlanAnnotationZone({ type: tool }) ? { mode: "contour", points: [], lastId: null } : null;
   state.dimensionAttach = null;
@@ -7905,7 +7926,18 @@ function syncLineControls() {
   quickMirrorTool.setAttribute("aria-expanded", String(mirroring));
   const hasBoundaries = boundaryEditModes.has(edit?.mode);
   quickMoveTool.disabled = !canApplySelectionAction("move");
-  quickCopyTool.disabled = !canApplySelectionAction("copy");
+  const copying = state.moveCommand?.mode === "copy";
+  if (!viewportIsSelecting() || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
+  quickCopyTool.disabled = !copying && !viewportIsSelecting();
+  quickCopyTool.setAttribute("aria-expanded", String(!copyToolMenu.hidden || Boolean(state.copyPicking) || copying));
+  copyControls.hidden = !state.copyPicking && !(copying && ["repeat", "array"].includes(state.moveCommand.copyMode));
+  copyCountControl.hidden = !copying || state.moveCommand.copyMode !== "array";
+  const repeating = copying && state.moveCommand.copyMode === "repeat";
+  copyConfirm.hidden = !state.copyPicking && !repeating;
+  copyConfirm.disabled = !repeating && !selectedEntities().length;
+  copyConfirm.setAttribute("aria-label", repeating ? "Завершить копирование" : "Подтвердить выбор");
+  copyConfirm.title = copyConfirm.getAttribute("aria-label");
+  copyClose.hidden = repeating;
   quickRotateTool.disabled = !canApplySelectionAction("rotate");
   quickDeleteTool.disabled = !canApplySelectionAction("delete");
   const quickTargets = quickMoveTool.disabled ? [] : selectedEntities().filter(entity => isLayerVisible(entity.layer));
@@ -9104,7 +9136,8 @@ function commitMoveCommandPoint(world) {
     command.end = world;
     command.lockedEnd = false;
     syncCommandState();
-    statusChip.textContent = command.mode === "rotate" ? "Поворот · укажите исходное направление" : "Укажите вторую точку";
+    statusChip.textContent = command.mode === "rotate" ? "Поворот · укажите исходное направление"
+      : command.copyMode === "array" ? "Тираж · укажите шаг до первой копии" : "Укажите вторую точку";
     draw();
     forceMoveCursorVisible();
     return;
@@ -9162,25 +9195,7 @@ function commitMoveCommandPoint(world) {
     return;
   }
   if (command.mode === "copy") {
-    const copy = cloneEntityForCommand(entity, dx, dy);
-    if (!copy) {
-      statusChip.textContent = "Координаты копии вне диапазона";
-      draw();
-      return;
-    }
-    state.entities.push(copy);
-    state.undo.push({ type: "add", entity: copy });
-    state.redo.length = 0;
-    markProjectDirty("copy");
-    state.selectedId = copy.id;
-    state.selectedIds = [copy.id];
-    state.selectedEndpoint = null;
-    state.moveCommand = null;
-    resetSnapTracking();
-    syncCommandState();
-    hideInlineEditors();
-    statusChip.textContent = "Копия создана";
-    draw();
+    commitCopyPlacement(command, dx, dy);
     return;
   }
   const moved = moveCommandChanges(command, dx, dy);
@@ -9973,35 +9988,63 @@ function cloneLinearEntity(entity, dx = 260, dy = 260) {
   return line(id, entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer || "measure");
 }
 
-function cloneEntityForCommand(entity, dx = 260, dy = 260) {
-  if (isPlanAnnotationZone(entity)) {
-    const geometry = translatedEntityGeometry(entity, dx, dy);
-    return geometry ? createPlanAnnotation(newLineId(entity.type), entity.type, geometry.points, { ...entity, ...geometry }) : null;
+function copyArrayCount(sourceCount) {
+  const count = copyCount.valueAsNumber;
+  return Number.isInteger(count) && count >= 2 && count <= 50 && count * sourceCount <= maxCopiesPerPlacement ? count : 0;
+}
+
+function copyMovingIds(sources) {
+  return new Set(sources.flatMap(entity => [entity.id, entity.refStart?.entityId, entity.refEnd?.entityId]));
+}
+
+function commitCopyPlacement(command, dx, dy) {
+  if (Math.hypot(dx, dy) <= linePointEpsilon) {
+    statusChip.textContent = "Укажите точку со смещением от базы";
+    return;
   }
-  if (entity.dimensionKind === "leader") {
-    const geometry = translatedEntityGeometry(entity, dx, dy);
-    return geometry ? { ...entity, ...geometry, id: newLineId("leader") } : null;
+  const sources = state.entities.filter(entity => command.entityIds.has(entity.id) && isLayerVisible(entity.layer));
+  const count = command.copyMode === "array" ? copyArrayCount(sources.length) : 1;
+  if (!count || !sources.length || sources.length * count > maxCopiesPerPlacement) {
+    statusChip.textContent = "Укажите от 2 до 50 копий для тиража и не более 1000 объектов за раз";
+    return;
   }
-  if (entity.type === "polyline") {
-    const points = translatePolyline(entity.points, dx, dy);
-    return points.every(isLinePoint) ? createPolyline(newLineId("polyline"), points, entity) : null;
+  const movingIds = copyMovingIds(sources);
+  const copies = [];
+  for (let step = 1; step <= count; step += 1) {
+    const copiedIds = new Map(sources.map(entity => [entity.id, newLineId(entity.type)]));
+    for (const entity of sources) {
+      const geometry = translatedEntityGeometry(entity, dx * step, dy * step, movingIds);
+      const original = cloneProjectEntity(entity);
+      if (!geometry || !original) {
+        statusChip.textContent = "Координаты копии вне диапазона";
+        return;
+      }
+      const copy = { ...original, ...geometry, id: copiedIds.get(entity.id) };
+      for (const [key, lostKey] of [["refStart", "lostRefStart"], ["refEnd", "lostRefEnd"]]) {
+        const ref = copy[key];
+        if (!ref) continue;
+        if (copiedIds.has(ref.entityId)) copy[key] = { ...ref, entityId: copiedIds.get(ref.entityId) };
+        else delete copy[key];
+        delete copy[lostKey];
+      }
+      copies.push(copy);
+    }
   }
-  if (isDraftLine(entity)) {
-    const copy = line(newLineId(), entity.x1 + dx, entity.y1 + dy, entity.x2 + dx, entity.y2 + dy, entity.layer);
-    return isValidLine(copy) ? copy : null;
+  const after = copies.map((entity, index) => ({ entity, index: state.entities.length + index }));
+  state.entities.push(...copies);
+  state.undo.push({ type: "line-edit", before: [], after });
+  state.redo.length = 0;
+  markProjectDirty("copy");
+  if (command.copyMode === "repeat") {
+    command.lockedEnd = false;
+    resetSnapTracking();
+    statusChip.textContent = "Копия размещена · укажите следующую точку или нажмите ✓";
+  } else {
+    closeCopyTools();
+    setSelection(copies.map(entity => entity.id));
+    statusChip.textContent = `Создано объектов: ${copies.length}`;
   }
-  if (entity.type === "arc" || entity.type === "rectangle") {
-    const copy = { ...entity, ...translatedFigureGeometry(entity, dx, dy), id: newLineId(entity.type) };
-    return validFigurePiece(copy) ? copy : null;
-  }
-  if (entity.type === "block") {
-    const size = entitySize(entity);
-    const copy = block(`${entity.kind}-${Date.now()}`, entity.kind, entity.x + dx, entity.y + dy, entity.rotation || 0, size);
-    copy.scale = entity.scale || 1;
-    copy.flipX = Boolean(entity.flipX);
-    return copy;
-  }
-  return cloneLinearEntity(entity, dx, dy);
+  draw();
 }
 
 function rotateLinearEntity90(entity) {
@@ -10933,6 +10976,14 @@ document.addEventListener("keydown", (event) => {
     cancelDimensionAttach();
     return;
   }
+  if (event.key === "Escape" && !event.target.closest("dialog") &&
+      (!copyToolMenu.hidden || state.copyPicking || state.moveCommand?.mode === "copy")) {
+    event.preventDefault();
+    closeCopyTools();
+    statusChip.textContent = selectionStatusText();
+    draw();
+    return;
+  }
   if (state.selectedArcGrip && event.key === "Escape" && !event.target.closest("dialog")) {
     event.preventDefault();
     state.selectedArcGrip = null;
@@ -11035,7 +11086,66 @@ lineUi.lineMirrorModes.addEventListener("click", event => {
   previewMirror(source, center, end);
 });
 bindPointAction(quickMoveTool, () => applySelectionAction("move"));
-bindPointAction(quickCopyTool, () => applySelectionAction("copy"));
+function closeCopyTools() {
+  if (state.copyPicking) state.selectTool = "select";
+  state.copyPicking = null;
+  copyToolMenu.hidden = true;
+  if (state.moveCommand?.mode === "copy") {
+    state.moveCommand = null;
+    resetSnapTracking();
+    hideInlineEditors();
+    syncCommandState();
+  }
+}
+
+function startCopyPlacement(mode) {
+  const selected = selectedEntities().filter(entity => isLayerVisible(entity.layer));
+  if (!selected.length) return;
+  closeCopyTools();
+  startMoveLikeCommand(mode === "single" ? selected.slice(-1) : selected, "copy");
+  state.moveCommand.copyMode = mode;
+}
+
+bindPointAction(quickCopyTool, () => {
+  if (!copyToolMenu.hidden || state.copyPicking || state.moveCommand?.mode === "copy") {
+    closeCopyTools();
+  } else {
+    hideDrawToolMenu();
+    hideDimensionToolMenu();
+    hideAnnotationToolMenu();
+    hideSelectModeMenu();
+    hideSelectToolMenu();
+    copyToolMenu.hidden = false;
+  }
+  draw();
+});
+copyToolMenu.addEventListener("click", event => {
+  const mode = event.target.closest("[data-copy-mode]")?.dataset.copyMode;
+  if (!mode) return;
+  copyToolMenu.hidden = true;
+  if (mode === "group" || !selectedEntities().length) {
+    state.copyPicking = mode;
+    state.selectTool = "multi";
+    statusChip.textContent = "Выберите объекты для копирования и нажмите ✓";
+    draw();
+  } else {
+    startCopyPlacement(mode);
+  }
+});
+bindPointAction(copyClose, () => {
+  closeCopyTools();
+  statusChip.textContent = selectionStatusText();
+  draw();
+});
+bindPointAction(copyConfirm, () => {
+  if (state.copyPicking) startCopyPlacement(state.copyPicking);
+  else {
+    closeCopyTools();
+    statusChip.textContent = "Копирование завершено";
+    draw();
+  }
+});
+copyCount.addEventListener("input", draw);
 bindPointAction(quickRotateTool, () => applySelectionAction("rotate"));
 bindPointAction(quickDeleteTool, () => applySelectionAction("delete"));
 for (const button of quickEditButtons) {

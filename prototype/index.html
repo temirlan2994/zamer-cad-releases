@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=259" />
+    <link rel="stylesheet" href="./styles.css?v=260" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -155,7 +155,7 @@
         <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Правка чертежа">
           <button class="icon-button" id="frameToolButton" type="button" title="Рамка" aria-label="Рамка" aria-pressed="false" aria-expanded="false" aria-controls="selectModeMenu"><span data-line-icon="frame"></span><small class="top-tool-label" aria-hidden="true">Рамка</small></button>
           <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span><small class="top-tool-label" aria-hidden="true">Сдвиг</small></button>
-          <button class="icon-button" id="quickCopyTool" type="button" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span><small class="top-tool-label" aria-hidden="true">Копия</small></button>
+          <button class="icon-button" id="quickCopyTool" type="button" aria-controls="copyToolMenu" aria-expanded="false" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span><small class="top-tool-label" aria-hidden="true">Копия</small></button>
           <button class="icon-button" id="quickRotateTool" type="button" title="Повернуть" aria-label="Повернуть выбранное" disabled><span aria-hidden="true">↻</span><small class="top-tool-label" aria-hidden="true">Поворот</small></button>
           <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span><small class="top-tool-label" aria-hidden="true">Удалить</small></button>
           <button class="icon-button" id="quickMirrorTool" type="button" title="Отразить" aria-label="Отразить выбранное" aria-expanded="false" aria-controls="lineMirrorModes" disabled><span data-line-icon="mirror"></span><small class="top-tool-label" aria-hidden="true">Зеркало</small></button>
@@ -172,6 +172,18 @@
           <button class="tool" data-tool="dimension" type="button" aria-controls="dimensionToolMenu" aria-expanded="false"><span>↔</span><small>Размеры</small></button>
           <button class="tool" data-tool="annotation" type="button" aria-controls="annotationToolMenu" aria-expanded="false"><span>T</span><small>Аннотация</small></button>
         </nav>
+
+        <div class="draw-tool-menu select-mode-menu copy-tool-menu" id="copyToolMenu" role="group" aria-label="Режимы копирования" hidden>
+          <button type="button" data-copy-mode="single"><span data-line-icon="copy" aria-hidden="true"></span><small>Одна</small></button>
+          <button type="button" data-copy-mode="group"><span aria-hidden="true">▦</span><small>Группа</small></button>
+          <button type="button" data-copy-mode="repeat"><span aria-hidden="true">⧉</span><small>Несколько</small></button>
+          <button type="button" data-copy-mode="array"><span aria-hidden="true">⋯</span><small>Тираж</small></button>
+        </div>
+        <div class="draw-tool-menu copy-controls" id="copyControls" role="group" aria-label="Копирование" hidden>
+          <label id="copyCountControl">Копий <input id="copyCount" type="number" inputmode="numeric" min="2" max="50" value="3" aria-label="Количество копий в тираже" /></label>
+          <button type="button" id="copyConfirm" title="Подтвердить выбор" aria-label="Подтвердить выбор"><span data-line-icon="check"></span></button>
+          <button type="button" id="copyClose" title="Закрыть копирование" aria-label="Закрыть копирование"><span data-line-icon="close"></span></button>
+        </div>
 
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" role="region" aria-label="Команды выбранного объекта" hidden>
           <button type="button" data-action="break" title="Разрыв" aria-label="Разрыв" hidden><span data-line-icon="breakGap"></span></button>
@@ -493,7 +505,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=259"></script>
+    <script type="module" src="./app.js?v=260"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

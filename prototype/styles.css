@@ -1746,6 +1746,41 @@ button.project-card-open:active { background: var(--surface-2); }
   padding-inline: 2px;
 }
 
+.copy-tool-menu {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.copy-controls {
+  align-items: center;
+  bottom: calc(74px + env(safe-area-inset-bottom));
+  display: flex;
+  left: auto;
+  padding: 4px;
+}
+
+.copy-controls button {
+  height: 44px;
+  width: 44px;
+}
+
+.copy-controls label {
+  font-size: .78rem;
+  padding-inline: 4px;
+}
+
+.copy-controls label[hidden] { display: none; }
+
+.copy-controls input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  height: 36px;
+  text-align: center;
+  width: 48px;
+}
+
 .center-cursor {
   display: none;
   height: 72px;
