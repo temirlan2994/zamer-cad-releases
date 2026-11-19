@@ -47,10 +47,11 @@ test('стул: сиденье 450 и спинка у задней кромки 
   const p = house();
   p.items.push(createItem('chair', 1000, 1000, 450, 450));
   const tops = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture' && f.normal.z === 1);
-  assert.equal(tops.length, 2);
-  const [seat, back] = tops.sort((a, b) => a.pts[0].z - b.pts[0].z);
+  assert.equal(tops.length, 3, 'цоколь, мягкое сиденье и спинка — отдельные объёмы');
+  const [, seat, back] = tops.sort((a, b) => a.pts[0].z - b.pts[0].z);
   assert.ok(near(seat.pts[0].z - 3, 450) && near(back.pts[0].z - 3, 900), `${seat.pts[0].z} / ${back.pts[0].z}`);
-  assert.deepEqual(span(ys([back])), [775, 835], 'спинка 60 мм у верхней кромки');
+  const [y0, y1] = span(ys([back]));
+  assert.ok(y0 >= 775 && y1 <= 835, `спинка у верхней кромки: ${y0}…${y1}`);
 });
 
 test('журнальная композиция в 3D — две отдельные столешницы разной высоты', () => {
@@ -92,12 +93,14 @@ test('составная мебель: стол со стульями, дива�
   p.items.push(table, sofa, kitchen);
   const faces = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture');
   const count = (id) => faces.filter((f) => f.itemId === id && f.normal.z === 1).length;
-  // Стул и сиденье дивана — две коробки: сиденье и спинка.
+  // Детальная модель делит стул/диван на цоколь, подушку, спинку и боковины.
   const seated = (parts) => parts.filter((q) => q.kind === 'chair' || ['sofa:seat', 'sofa:chaise'].includes(q.kind)).length;
   const corners = (parts) => parts.filter((q) => q.kind === 'sofa:corner').length;
-  assert.equal(count(table.id), 1 + compositeParts(table).length + seated(compositeParts(table)), 'столешница + стулья');
+  const arms = (parts) => parts.filter((q) => q.kind === 'sofa:arm').length;
+  const tableParts = compositeParts(table);
+  assert.equal(count(table.id), 5 + 3 * seated(tableParts), 'столешница с четырьмя ножками + детальные стулья');
   const sp = compositeParts(sofa);
-  assert.equal(count(sofa.id), sp.length + seated(sp) + 2 * corners(sp), 'диван — только модули');
+  assert.equal(count(sofa.id), sp.length + 2 * seated(sp) + 3 * corners(sp) + arms(sp), 'диван — детальные модули без общей коробки');
   assert.equal(count(kitchen.id), compositeParts(kitchen).length, 'кухня — только части');
   // Верхние шкафы кухни висят: низ выше 1000 мм.
   const upper = compositeParts(kitchen).filter((q) => q.layer === 'upper').length;

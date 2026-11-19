@@ -167,7 +167,7 @@ function changedLayoutRooms(beforeText) {
   const openingKey = (opening) => JSON.stringify([
     opening.kind, opening.roomId || null, opening.host || null, opening.side ?? null,
     opening.offset ?? null, opening.width ?? null, opening.height ?? null, opening.sill ?? null,
-    opening.type || null, opening.swingIn ?? null, opening.hingeStart ?? null, opening.orphan === true,
+    opening.heightMode || null, opening.type || null, opening.swingIn ?? null, opening.hingeStart ?? null, opening.orphan === true,
   ]);
   const manualRects = (walls) => walls
     .filter((wall) => wall.kind === 'manual' || wall.source === 'manual')

@@ -18,6 +18,7 @@ import { FURNITURE, isOpenRoom, isRoundItem, isStructural, roomCategory, roomTyp
 import { KITCHEN_PARTS, SOFA_MODULES, isFixedSizeComp, partsInHouse } from './composite.js';
 import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
@@ -287,7 +288,7 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
       const r = placed.rect;
       const horiz = placed.wall.orient === 'h';
       const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
-      const height = Math.min(level.height - bottom - 50, o.height ?? (o.kind === 'door' ? 2100 : 1500));
+      const height = Math.min(level.height - bottom - 50, openingHeight(o, level));
       const cx = r.x + r.w / 2;
       const cy = -(r.y + r.h / 2);
       // Проём чуть толще стены — режет насквозь.

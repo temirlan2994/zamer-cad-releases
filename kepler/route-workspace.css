@@ -131,3 +131,98 @@
   .project-route button { transition: background-color .13s ease-out, border-color .13s ease-out; }
   @keyframes route-reveal { from { opacity: 0; translate: 0 5px; } to { opacity: 1; translate: 0; } }
 }
+
+/* Аналитика работает как компактная палитра: на холсте остаются только
+   понятные значки состояний, а каждый раздел открывается отдельно. */
+#projectRoute {
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 76;
+  display: flex; justify-content: center; width: auto; max-width: none;
+  border: 0; background: transparent; pointer-events: none;
+}
+#projectRoute .project-route-bar {
+  display: flex; width: max-content; max-width: calc(100vw - 24px); min-height: 0;
+  gap: 4px; padding: 5px; overflow: visible; border: 1px solid var(--border);
+  border-radius: 15px; background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 10px 32px rgb(15 26 35 / .18); backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+#projectHomeProgram {
+  position: relative; width: 42px; min-width: 42px; min-height: 42px; padding: 0;
+  border: 0; border-radius: 10px; background: transparent; color: var(--muted);
+}
+#projectHomeProgram > strong { display: none; }
+#projectHomeProgramStatus {
+  position: absolute; right: -2px; bottom: -2px; min-width: 20px; padding: 1px 4px;
+  border: 2px solid var(--surface); font-size: 9px; line-height: 14px;
+}
+#projectRoute .project-route-steps {
+  position: relative; top: auto; display: flex; flex: none; align-self: center;
+  grid-column: auto; grid-row: auto; gap: 2px; max-height: none; margin: 0; padding: 0;
+  overflow-x: auto; overflow-y: visible; border: 0; border-radius: 0;
+  background: transparent; scrollbar-width: none;
+}
+#projectRoute .project-route-steps::-webkit-scrollbar { display: none; }
+#projectRoute .project-route-step {
+  position: relative; display: grid; place-items: center; flex: none; width: 42px; min-width: 42px;
+  height: 42px; min-height: 42px; padding: 0; border-radius: 10px; color: var(--muted);
+}
+#projectRoute .project-route-step > span { display: none; }
+#projectRoute .project-route-step .route-symbol { width: 20px; height: 20px; }
+#projectRoute .project-route-step .route-status {
+  position: absolute; right: 1px; bottom: 1px; width: 17px; height: 17px;
+  border: 2px solid var(--surface); font-size: 10px;
+}
+#projectRoute .project-route-step:is(:hover,:focus-visible),
+#projectRoute .project-route-step.active { color: var(--text); background: var(--surface-2); }
+.project-route-hover {
+  position: fixed; z-index: 84; width: min(330px, calc(100vw - 16px)); padding: 9px;
+  border: 1px solid var(--border); border-radius: 13px; background: var(--surface);
+  box-shadow: 0 14px 38px rgb(15 26 35 / .22); color: var(--text); pointer-events: auto;
+}
+.project-route-hover > strong { display: block; padding: 2px 5px 8px; font-size: 13px; }
+.project-route-hover > div { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px; }
+.project-route-hover button {
+  display: flex; align-items: center; gap: 7px; min-height: 36px; min-width: 0; padding: 5px 7px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left;
+  font-size: 12px; font-weight: 620;
+}
+.project-route-hover button:hover { background: var(--surface-2); }
+.project-route-hover button i {
+  display: grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 50%;
+  background: var(--surface-2); color: var(--muted); font-style: normal; font-weight: 800;
+}
+.project-route-hover button[data-status="done"] i,
+.project-route-hover button[data-status="checked"] i { background: var(--ok-bg); color: var(--ok-text); }
+.project-route-hover button[data-status="error"] i,
+.project-route-hover button[data-status="blocked"] i { background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--danger); }
+.project-route-hover button[data-status="warning"] i,
+.project-route-hover button[data-status="attention"] i { background: var(--warn-bg); color: var(--warn-text); }
+#projectRoute .project-route-panel {
+  position: fixed; left: 50%; right: auto; top: auto; bottom: 78px; z-index: 83;
+  width: min(480px, calc(100vw - 24px)); max-height: min(70dvh, 700px);
+  transform: translateX(-50%); border: 1px solid var(--border); border-radius: 15px;
+  pointer-events: auto;
+}
+#projectRoute .project-route-panel-head { padding: 10px 12px; cursor: grab; touch-action: none; user-select: none; }
+#projectRoute .project-route-panel-head:active { cursor: grabbing; }
+#projectRoute .project-route-panel-head h2 { font-size: 18px; }
+#projectRoute .project-route-panel-kicker { font-size: 9px; }
+#projectRoute .project-route-body,
+#projectRoute .project-route-body:has(.home-system-nav) { display: block; padding: 12px; }
+#projectRoute .home-system-panel { min-width: 0; }
+#projectRoute .project-route-scrim { display: none !important; }
+
+@media (max-width: 640px) {
+  #projectRoute { left: 6px; right: 6px; bottom: calc(62px + env(safe-area-inset-bottom, 0px)); max-width: none; }
+  #projectRoute .project-route-bar { display: flex !important; max-width: calc(100vw - 12px); padding: 4px; }
+  #projectHomeProgram, #projectRoute .project-route-step { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+  #projectRoute .project-route-panel {
+    left: 8px; right: auto; bottom: calc(118px + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 16px); max-height: min(60dvh, 570px); transform: none;
+    border-width: 1px; border-radius: 15px;
+  }
+  .project-route-hover > div { grid-template-columns: minmax(0,1fr); }
+  body:is(.draw-open, .cat-open, .sheet-props, .sheet-library, .sheet-more) #projectRoute:not(:has(.project-route-panel:not([hidden]))) {
+    visibility: hidden; opacity: 0; pointer-events: none;
+  }
+}

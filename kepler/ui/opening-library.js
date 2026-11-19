@@ -16,7 +16,8 @@ let syncedKey = null;
 let selectedPresetId = null;
 const shortLabels = {
   interior: 'Для комнат', double: 'Две створки', sliding: 'Сдвижные',
-  passage: 'Без двери', panoramic: 'В пол',
+  passage: 'Без двери', opening: 'Открываются', fixed: 'Глухие',
+  wide: 'Широкие', panoramic: 'В пол', special: 'Фрамуги',
 };
 const levelHeight = () => activeLevel(state.project)?.height || 3000;
 const toolKind = () => (state.tool?.kind === 'place-opening' ? state.tool.openKind : null);
@@ -33,6 +34,10 @@ export function chooseOpeningPreset(preset) {
   const t = state.tool;
   if (t?.kind !== 'place-opening' || t.openKind !== preset.kind) return;
   Object.assign(t.preset, presetToOpening(preset, levelHeight()));
+  if (preset.kind === 'window') Object.assign(t.preset, {
+    heightMode: preset.heightMode === 'level' ? 'level' : 'custom',
+    frameMaterial: 'aluminum', frameColor: 'anthracite',
+  });
   selectedPresetId = preset.id;
   openCat[preset.kind] = preset.cat;
   renderToolOptions(true);
@@ -219,7 +224,8 @@ function drawWindowFront(ctx, W, H, p, c) {
   ctx.strokeStyle = c.wall;
   ctx.lineWidth = 1.8;
   ctx.strokeRect(x, y, w, h);
-  const sashes = Math.max(1, Math.round(p.width / (p.type === 'panoramic' ? 1000 : 750)));
+  const panoramic = ['panoramic', 'lift-slide', 'french'].includes(p.type);
+  const sashes = Math.max(1, Math.round(p.width / (panoramic ? 1200 : 800)));
   ctx.lineWidth = 1.2;
   ctx.beginPath();
   for (let i = 1; i < sashes; i += 1) { const sx = x + (w * i) / sashes; ctx.moveTo(sx, y); ctx.lineTo(sx, y + h); }

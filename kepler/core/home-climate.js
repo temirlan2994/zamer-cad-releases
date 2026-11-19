@@ -304,13 +304,14 @@ export function homeClimateOverviewKey(project = {}) {
       name: level.name,
       elevation: level.elevation,
       height: level.height,
+      tallWindowHeight: level.tallWindowHeight,
       rooms: array(level.rooms).map((room) => [
         room.id, room.name, room.type, room.x, room.y, room.w, room.h,
         room.parentId || '', room.outline || null, room.notch || null,
       ]),
       openings: array(level.openings).filter((opening) => opening.kind === 'window').map((opening) => [
         opening.id, opening.roomId, opening.side, opening.offset, opening.width,
-        opening.height, opening.sill, opening.host || null, opening.orphan || false,
+        opening.height, opening.heightMode || '', opening.sill, opening.host || null, opening.orphan || false,
       ]),
       items: array(level.items).map((item) => [item.id, item.kind, item.x, item.y]),
       walls: array(level.walls),

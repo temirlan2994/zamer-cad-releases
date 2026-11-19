@@ -126,7 +126,9 @@ describe('раскладка: колонка инструментов, библ�
     const { page } = app;
     await page.click('#modeSiteBtn');
     await pickWorkspaceView(page, 'facades', 'elev-N');
-    await page.locator('#workspaceViews .wv-close').click();
+    const facade = page.locator('.wv-tabs [data-workspace-view="elev-N"]');
+    await facade.hover();
+    await facade.locator('.wv-tab-x').click();
     await page.waitForFunction(() => document.activeElement?.id === 'modeSiteBtn' && document.activeElement.getAttribute('aria-selected') === 'true');
     assert.equal(await page.locator('.wv-tabs [data-workspace-view="elev-N"]').count(), 0);
     await pickWorkspaceView(page, 'facades', 'elev-N');

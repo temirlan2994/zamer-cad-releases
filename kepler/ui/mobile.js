@@ -226,11 +226,13 @@ function placeMobileControls() {
   const program = el('projectHomeProgram');
   if (isPhone()) {
     el('mobileSnapRow').append(bar);
-    el('undoBtn').before(program);
   } else {
     el('scaleInfo').before(bar);
-    el('projectRouteSteps').before(program);
   }
+  // Аналитика — единая нижняя палитра и на телефоне, и на компьютере.
+  // Не переносим её кнопку в шапку: иначе один и тот же маршрут выглядит
+  // как две разные функции в разных компоновках.
+  el('projectRouteSteps').before(program);
 }
 
 function bindMobileSnaps() {

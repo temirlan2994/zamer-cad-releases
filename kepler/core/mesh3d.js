@@ -12,7 +12,8 @@
 
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './catalog.js';
 import { toLocal, toWorld } from './building.js';
-import { levelProject, sortedLevels } from './model.js';
+import { levelProject, roomCeiling, sortedLevels } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import { neighborRectCorners } from './site.js';
 import { landscapeFaces } from './mesh3d-landscape.js';
 import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
@@ -35,6 +36,7 @@ import {
 export const WALL_COLOR = '#ece8e1';
 export const GLASS_COLOR = '#8fb8dc';
 export const DOOR_COLOR = '#b98a5a';
+export const WINDOW_FRAME_COLOR = '#353a3f';
 const STAIR_COLOR = '#c9c2b7';
 
 const v = (x, y, z) => ({ x, y, z });
@@ -121,6 +123,51 @@ function paneFace(band, orient, a0, a1, z0, z1, color, alpha, kind) {
   }
   const x = band.x + band.w / 2;
   return { pts: [v(x, a0, z0), v(x, a1, z0), v(x, a1, z1), v(x, a0, z1)], normal: v(1, 0, 0), color, alpha, kind, twoSided: true };
+}
+
+// Стеклопакет и реальная алюминиевая рама: наружный профиль + импосты.
+// Профиль лежит внутри проёма, поэтому не перекрывает стену и корректно
+// выглядит и снаружи, и из помещения.
+function windowAssemblyFaces(band, orient, a0, a1, z0, z1, opening, ref) {
+  const faces = [];
+  const width = a1 - a0;
+  const height = z1 - z0;
+  if (width < 1 || height < 1) return faces;
+  const frame = Math.max(35, Math.min(70, width / 7, height / 7));
+  const cross = orient === 'h' ? band.h : band.w;
+  const depth = Math.max(30, Math.min(80, cross * 0.55));
+  const mid = orient === 'h' ? band.y + band.h / 2 : band.x + band.w / 2;
+  const cross0 = mid - depth / 2;
+  const cross1 = mid + depth / 2;
+  const color = opening?.frameColor === 'black' ? '#17191c'
+    : opening?.frameColor === 'bronze' ? '#5a4a3c' : WINDOW_FRAME_COLOR;
+  const addBox = (lo, hi, bottom, top) => {
+    const list = orient === 'h'
+      ? boxFaces(lo, cross0, hi, cross1, bottom, top, color, 'window-frame')
+      : boxFaces(cross0, lo, cross1, hi, bottom, top, color, 'window-frame');
+    faces.push(...list.map((face) => ({ ...face, openingId: opening.id, ref })));
+  };
+  faces.push({
+    ...paneFace(band, orient, a0, a1, z0, z1, GLASS_COLOR, 0.38, 'glass'),
+    openingId: opening.id, ref,
+  });
+  addBox(a0, a1, z0, z0 + frame);
+  addBox(a0, a1, z1 - frame, z1);
+  addBox(a0, a0 + frame, z0 + frame, z1 - frame);
+  addBox(a1 - frame, a1, z0 + frame, z1 - frame);
+  const type = opening.type || 'standard';
+  let sashes = 1;
+  if (type === 'lift-slide' || type === 'sliding') sashes = Math.max(2, Math.round(width / 1600));
+  else if (!['awning', 'clerestory'].includes(type)) sashes = Math.max(1, Math.round(width / (type === 'panoramic' ? 1200 : 800)));
+  for (let i = 1; i < sashes; i += 1) {
+    const x = a0 + (width * i) / sashes;
+    addBox(x - frame / 2, x + frame / 2, z0 + frame, z1 - frame);
+  }
+  if (type === 'awning' || type === 'clerestory') {
+    const z = z0 + height * 0.55;
+    addBox(a0 + frame, a1 - frame, z - frame / 2, z + frame / 2);
+  }
+  return faces;
 }
 
 function wallRuns(walls, cuts) {
@@ -264,6 +311,16 @@ export function wallZRange(lp, rec, levelHeight) {
     const own = levels.find((l) => l.id === lp.activeLevel);
     z1 = (Number(topLevel.elevation) || 0) - (Number(own?.elevation) || 0) + (Number(top.offset) || 0);
   } else if (Number(top?.height) > 0) z1 = z0 + Number(top.height);
+  else if (rec?.rooms?.length) {
+    const level = levels.find((l) => l.id === lp.activeLevel);
+    const heights = rec.rooms
+      .map((id) => lp.rooms?.find((room) => room.id === id))
+      .filter(Boolean)
+      // Связанная комната оставляет стену на полной конструктивной высоте
+      // этажа; индивидуальная чистая высота реально опускает её верх.
+      .map((room) => room.ceiling ? roomCeiling(room, level) : levelHeight);
+    if (heights.length) z1 = Math.max(...heights);
+  }
   return { z0, z1: Math.max(z0 + 1, z1) };
 }
 
@@ -289,7 +346,8 @@ export function levelWallSolids(lp, walls, height) {
     const ri = byWall.get(placed.wall) ?? recs.findIndex((q) => q.wall.key === placed.wall.key);
     const wallTop = ri >= 0 ? recs[ri].z1 : height;
     const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
-    const top = Math.min(wallTop - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
+    const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
+    const top = Math.min(wallTop - 50, bottom + openingHeight(o, level));
     if (top <= bottom || r.w < 0.5 || r.h < 0.5) continue;
     voids.push({ r, bottom, top, kind: o.kind, wall: placed.wall, rec: ri, id: o.id });
   }
@@ -348,7 +406,9 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
     const orient = q.wall.orient;
     const a0 = orient === 'h' ? q.r.x : q.r.y;
     const a1 = a0 + (orient === 'h' ? q.r.w : q.r.h);
-    faces.push({ ...paneFace(q.wall.band, orient, a0, a1, z0 + q.bottom, z0 + q.top, GLASS_COLOR, 0.45, 'glass'), ref: wallRef(q.wall, levelId, 'glass'), openingId: q.id });
+    const opening = lp.openings.find((o) => o.id === q.id);
+    if (opening) faces.push(...windowAssemblyFaces(q.wall.band, orient, a0, a1,
+      z0 + q.bottom, z0 + q.top, opening, wallRef(q.wall, levelId, 'glass')));
   }
   const allRects = [...recs.flatMap((q) => q.rects), ...voids.map((q) => q.r)];
   const ax = gridAxis(allRects.flatMap((r) => [r.x, r.x + r.w]));
@@ -528,7 +588,8 @@ function levelWalls(lp, z0, height, levelId) {
     const r = placed.rect;
     const along = placed.wall.orient === 'h' ? [r.x, r.x + r.w] : [r.y, r.y + r.h];
     const bottom = o.kind === 'door' ? 0 : Math.max(0, o.sill ?? 900);
-    const top = Math.min(height - 50, bottom + (o.height ?? (o.kind === 'door' ? 2100 : 1500)));
+    const level = (lp.levels || []).find((l) => l.id === lp.activeLevel);
+    const top = Math.min(height - 50, bottom + openingHeight(o, level));
     if (!cuts.has(placed.wall)) cuts.set(placed.wall, []);
     cuts.get(placed.wall).push({ a0: along[0], a1: along[1], bottom, top, kind: o.kind, id: o.id });
   }
@@ -545,10 +606,10 @@ function levelWalls(lp, z0, height, levelId) {
       if (h.bottom > 0) addPiece(a0, a1, z0, z0 + h.bottom);
       if (h.top < height) addPiece(a0, a1, z0 + h.top, z0 + height);
       if (h.kind === 'window') {
-        const pane = paneFace(b, orient, a0, a1, z0 + h.bottom, z0 + h.top, GLASS_COLOR, 0.45, 'glass');
-        if (run.members?.[0]) pane.ref = wallRef(run.members[0], levelId, 'glass');
-        pane.openingId = h.id;
-        faces.push(pane);
+        const opening = lp.openings.find((o) => o.id === h.id);
+        const ref = run.members?.[0] ? wallRef(run.members[0], levelId, 'glass') : null;
+        if (opening) faces.push(...windowAssemblyFaces(b, orient, a0, a1,
+          z0 + h.bottom, z0 + h.top, opening, ref));
       }
       cursor = Math.max(cursor, a1);
     }
@@ -739,7 +800,7 @@ const FURNITURE_LIFT = 3; // мм над гранью пола (пол — +1/+2
 // столешница и стулья, диван и кухня — только модули. Верх не выше top.
 // { poly, z0, z1, color, itemId } в осях дома — для 3D и теней на плане
 // (core/plan-shadows.js).
-export function furnitureVolumes(items, top = Infinity) {
+export function furnitureVolumes(items, top = Infinity, detailed = false) {
   const out = [];
   const box = (poly, lo, hi, item, color) => out.push({ poly, z0: lo, z1: hi, color, itemId: item.id });
   const add = (p, item, spec) => {
@@ -780,6 +841,91 @@ export function furnitureVolumes(items, top = Infinity) {
       }
       return;
     }
+    if (detailed && spec.model === 'premium-seat') {
+      const back = spec.back === 'part' ? Number(p.back) || 0 : Number(spec.back) || 0;
+      const pad = Math.max(25, Math.min(70, p.w * 0.035, p.h * 0.04));
+      const baseTop = Math.min(hi, lo + 180);
+      const seatTop = Math.min(hi, lo + (Number(spec.seat) || 450));
+      // Утопленный цоколь и отдельная мягкая подушка убирают вид «куба».
+      box(localRect(p, -p.w / 2 + pad, -p.h / 2 + pad, p.w / 2 - pad, p.h / 2 - pad),
+        lo, baseTop, item, '#686762');
+      const seatBack = -p.h / 2 + Math.max(back, pad);
+      box(localRect(p, -p.w / 2 + pad, seatBack + pad * 0.35, p.w / 2 - pad, p.h / 2 - pad),
+        baseTop, seatTop, item, spec.color);
+      if (back > 0) {
+        box(localRect(p, -p.w / 2 + pad * 0.4, -p.h / 2 + pad * 0.25,
+          p.w / 2 - pad * 0.4, -p.h / 2 + back),
+        Math.max(baseTop, lo + 300), hi, item, '#817d77');
+      }
+      if (spec.corner && back > 0) {
+        box(localRect(p, p.w / 2 - back, -p.h / 2 + back,
+          p.w / 2 - pad * 0.25, p.h / 2 - pad * 0.4),
+        Math.max(baseTop, lo + 300), hi, item, '#817d77');
+      }
+      // У самостоятельного дивана/кресла есть мягкие боковины; у модульного
+      // дивана подлокотники приходят отдельными частями sofa:arm.
+      if (!String(p.kind).startsWith('sofa:') && p.w > 700) {
+        const arm = Math.max(90, Math.min(180, p.w * 0.09));
+        const armTop = Math.min(hi, lo + Math.max(620, spec.seat || 450));
+        box(localRect(p, -p.w / 2 + pad * 0.2, -p.h / 2 + pad, -p.w / 2 + arm, p.h / 2 - pad),
+          baseTop, armTop, item, '#7d7973');
+        box(localRect(p, p.w / 2 - arm, -p.h / 2 + pad, p.w / 2 - pad * 0.2, p.h / 2 - pad),
+          baseTop, armTop, item, '#7d7973');
+      }
+      return;
+    }
+    if (detailed && spec.model === 'sofa-arm') {
+      const pad = Math.max(18, Math.min(45, p.w * 0.12));
+      box(localRect(p, -p.w / 2 + pad, -p.h / 2 + 35, p.w / 2 - pad, p.h / 2 - 35),
+        lo, Math.min(hi, lo + 170), item, '#66645f');
+      box(localRect(p, -p.w / 2, -p.h / 2 + 20, p.w / 2, p.h / 2 - 20),
+        Math.min(hi, lo + 120), hi, item, spec.color);
+      return;
+    }
+    if (detailed && spec.model === 'table') {
+      const slab = Math.max(45, Math.min(90, spec.h * 0.12));
+      const leg = Math.max(45, Math.min(90, Math.min(p.w, p.h) * 0.12));
+      const inset = Math.max(60, Math.min(180, Math.min(p.w, p.h) * 0.16));
+      box(furnitureOutline(p), Math.max(lo, hi - slab), hi, item, spec.color);
+      for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const cx = x * (p.w / 2 - inset); const cy = y * (p.h / 2 - inset);
+        box(localRect(p, cx - leg / 2, cy - leg / 2, cx + leg / 2, cy + leg / 2),
+          lo, Math.max(lo + 1, hi - slab), item, '#665444');
+      }
+      return;
+    }
+    if (detailed && spec.model === 'cabinet') {
+      const plinth = Math.min(120, spec.h * 0.16);
+      const inset = Math.max(20, Math.min(60, Math.min(p.w, p.h) * 0.08));
+      box(localRect(p, -p.w / 2 + inset, -p.h / 2 + inset, p.w / 2 - inset, p.h / 2 - inset),
+        lo, Math.min(hi, lo + plinth), item, '#71675c');
+      box(localRect(p, -p.w / 2, -p.h / 2, p.w / 2, p.h / 2),
+        Math.min(hi, lo + plinth), hi, item, spec.color);
+      // Тонкие фасады читаются в перспективе как двери/ящики, а не монолит.
+      const front = Math.max(12, Math.min(30, p.h * 0.08));
+      const doors = p.w > 1100 ? 3 : p.w > 650 ? 2 : 1;
+      for (let i = 0; i < doors; i += 1) {
+        const x0 = -p.w / 2 + (p.w * i) / doors + 8;
+        const x1 = -p.w / 2 + (p.w * (i + 1)) / doors - 8;
+        box(localRect(p, x0, p.h / 2 - front, x1, p.h / 2),
+          Math.min(hi, lo + plinth + 15), Math.max(lo + plinth + 16, hi - 15), item, '#bdab94');
+      }
+      return;
+    }
+    if (detailed && spec.model === 'toilet') {
+      const bowl = localEllipse(p, 0, p.h * 0.08, p.w * 0.38, p.h * 0.37, 20);
+      box(localEllipse(p, 0, p.h * 0.16, p.w * 0.24, p.h * 0.25, 18), lo, Math.min(hi, lo + 230), item, '#d7dde0');
+      box(bowl, Math.min(hi, lo + 230), hi, item, '#eef2f4');
+      box(localRect(p, -p.w * 0.38, -p.h / 2, p.w * 0.38, -p.h * 0.2), lo, Math.min(hi, lo + 650), item, '#e3e8eb');
+      return;
+    }
+    if (detailed && spec.model === 'vanity') {
+      box(localRect(p, -p.w / 2 + 30, -p.h / 2 + 30, p.w / 2 - 30, p.h / 2 - 30),
+        lo, Math.max(lo + 1, hi - 90), item, '#b8a996');
+      box(furnitureOutline(p), Math.max(lo, hi - 90), hi, item, '#eef1f2');
+      box(localEllipse(p, 0, 0, p.w * 0.3, p.h * 0.28, 18), hi - 70, Math.min(top, hi + 5), item, '#cbd9de');
+      return;
+    }
     const back = spec.back === 'part' ? Number(p.back) || 0 : Number(spec.back) || 0;
     if (!(spec.seat && back > 0 && back < p.h && !/round/.test(p.kind || ''))) {
       box(furnitureOutline(p), lo, hi, item, spec.color);
@@ -805,7 +951,7 @@ export function furnitureVolumes(items, top = Infinity) {
 export function furnitureFaces(lp, z0, levelHeight, levelId) {
   const faces = [];
   const top = Math.max(1, levelHeight - 10);
-  for (const b of furnitureVolumes(lp.items, top)) {
+  for (const b of furnitureVolumes(lp.items, top, true)) {
     for (const f of prismFaces(b.poly, z0 + FURNITURE_LIFT + b.z0, z0 + FURNITURE_LIFT + b.z1, b.color, 'furniture')) {
       faces.push({ ...f, itemId: b.itemId, level: levelId });
     }

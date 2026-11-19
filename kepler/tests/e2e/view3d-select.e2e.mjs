@@ -64,6 +64,9 @@ describe('3D: мебель и выбор объектов', () => {
     const { page } = app;
     await page.mouse.move(hits.item.x, hits.item.y);
     assert.equal(await page.$eval('#canvas3d', (c) => c.style.cursor), 'pointer');
+    const state3d = await d3(page);
+    assert.equal(state3d.hovered?.type, 'item');
+    assert.ok(state3d.highlightedAll > 0, 'объект подсвечен ещё до клика');
   });
 
   it('в перспективе объекты остаются выбираемыми', async () => {

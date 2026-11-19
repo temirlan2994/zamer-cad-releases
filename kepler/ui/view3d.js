@@ -129,10 +129,12 @@ const SEL_COLOR = '#a9c8ef'; // выбранная стена
 const SEL_FILL = '#8db4e8'; // выбранные пол, предмет, лестница
 const SEL_OPENING = '#5b94dd'; // коробка выбранного проёма (полупрозрачная)
 const GRIP_COLOR = '#5b94dd'; // грань-ручка под мышью / в жесте
+const HOVER_OBJECT = '#62b9ff'; // объект, который будет выбран кликом
 const CLICK_SLOP = 5; // px — дальше это вращение, а не клик
 const HOLD_MS = 450; // удержание пальцем — перетаскивание ручки
 let sets = null; // коробки стен и проёмов, грани для луча (кеш до пересборки)
 let hover = null; // { key, level, face, normal, kind } — ручка выбранной стены под мышью
+let objectHover = null; // ближайший выбираемый объект под курсором
 let massVoidHoverId = null; // невидимый cutter подсвечивается только под курсором
 let edit = null; // жест правки стены
 
@@ -188,9 +190,22 @@ function faceColor(face) {
   const rsel = state.selection;
   if (rsel?.type === 'railing' && face.railing && face.railing.id === rsel.id && face.railing.roomId === rsel.roomId &&
     face.level === state.project?.activeLevel) return SEL_FILL;
+  if (objectHover) {
+    const hot = (objectHover.type === 'room' && face.kind === 'floor' && face.roomId === objectHover.id)
+      || (objectHover.type === 'item' && face.itemId === objectHover.id)
+      || (objectHover.type === 'opening' && face.openingId === objectHover.id)
+      || (objectHover.type === 'landscape' && face.landscapeId === objectHover.id)
+      || (objectHover.type === 'roof' && face.roofId === objectHover.id)
+      || (objectHover.type === 'mass' && face.massId === objectHover.id)
+      || (objectHover.type === 'railing' && face.railing?.id === objectHover.id && face.railing?.roomId === objectHover.roomId);
+    if (hot) return mixHex(face.color, HOVER_OBJECT, 0.62);
+  }
   if (face.kind !== 'wall' || !face.ref) return face.color;
   const sel = selectedRef();
-  if (!refMatches(face.ref, sel)) return face.color;
+  if (!refMatches(face.ref, sel)) {
+    return objectHover?.type === 'wall' && refMatches(face.ref, { key: objectHover.key, level: objectHover.levelId })
+      ? mixHex(face.color, HOVER_OBJECT, 0.56) : face.color;
+  }
   if (hover && refMatches(face.ref, hover) && face.ref.face === hover.face && sameNormal(face.normal, hover.normal)) return GRIP_COLOR;
   return SEL_COLOR;
 }
@@ -970,12 +985,17 @@ function updateHover(e) {
   massVoidHoverId = nextVoid;
   const grip = gripAt(hit, e);
   const next = grip ? { key: hit.key, level: hit.levelId, face: hit.face, normal: hit.normal, kind: grip.kind } : null;
+  const nextObject = hit && SELECTABLE.has(hit.type) ? hit : null;
+  const objectSame = (!nextObject && !objectHover) || (nextObject && objectHover
+    && nextObject.type === objectHover.type && nextObject.id === objectHover.id
+    && nextObject.key === objectHover.key && nextObject.roomId === objectHover.roomId);
+  objectHover = nextObject;
   el('canvas3d').style.cursor = grip ? GRIP_CURSOR[grip.kind] : (hit ? 'pointer' : '');
   const same = (!next && !hover) || (next && hover && next.key === hover.key && next.face === hover.face && sameNormal(next.normal, hover.normal));
   hover = next;
-  if (!same) uploadGeometry();
+  if (!same || !objectSame) uploadGeometry();
   else if (voidChanged) uploadOverlay();
-  if (!same || voidChanged) requestRender();
+  if (!same || !objectSame || voidChanged) requestRender();
 }
 
 // Выбор кликом/тапом: стена, помещение, проём, предмет (пусто — снять
@@ -1002,6 +1022,7 @@ function clickSelect(hit) {
     state.touchDeferSelect = defer;
   }
   hover = null;
+  objectHover = null;
   massVoidHoverId = null;
   clearMassHover();
   refreshHighlight();
@@ -1598,9 +1619,10 @@ export function bind3d() {
       if (hadVoid) { uploadOverlay(); requestRender(); }
       return;
     }
-    if (!hover && !hadMass && !hadObject && !hadVoid) return;
-    const hadGeometryHover = Boolean(hover) || hadMass;
+    if (!hover && !objectHover && !hadMass && !hadObject && !hadVoid) return;
+    const hadGeometryHover = Boolean(hover) || Boolean(objectHover) || hadMass;
     hover = null;
+    objectHover = null;
     canvas.style.cursor = '';
     if (hadGeometryHover) uploadGeometry();
     else uploadOverlay();
@@ -1636,6 +1658,7 @@ export function debug3d() {
   return {
     active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
     selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
+    hovered: objectHover ? { type: objectHover.type, id: objectHover.id ?? null, key: objectHover.key ?? null } : null,
     highlighted: faces.filter((f) => f.kind === 'wall' && faceColor(f) !== f.color).length,
     highlightedAll: faces.filter((f) => faceColor(f) !== f.color).length + selectionOverlay().length,
     furniture: faces.filter((f) => f.kind === 'furniture').length,

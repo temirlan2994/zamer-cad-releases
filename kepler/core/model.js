@@ -41,6 +41,7 @@ export function makeId(prefix) {
 
 export const DEFAULT_LEVEL_HEIGHT = 3000; // от пола до пола следующего этажа, мм
 export const DEFAULT_SLAB = 300; // перекрытие: чистая высота = высота этажа − плита
+export const DEFAULT_TALL_WINDOW_HEIGHT = 2400; // единая высота витражей этажа
 
 // Чистая высота помещения (от пола до потолка): своя или по этажу.
 export function roomCeiling(room, level) {
@@ -51,7 +52,10 @@ export function roomCeiling(room, level) {
 export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides', 'walls'];
 
 export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {
-  return { id, name, elevation, height, rooms: [], openings: [], items: [], wallOverrides: {}, walls: [] };
+  return {
+    id, name, elevation, height, tallWindowHeight: DEFAULT_TALL_WINDOW_HEIGHT,
+    rooms: [], openings: [], items: [], wallOverrides: {}, walls: [],
+  };
 }
 
 // Есть ли в проекте ручные стены (на любом этаже, в т. ч. в вариантах).
@@ -155,6 +159,9 @@ export function createOpening(kind, roomId, side, offset, width) {
     offset,
     width,
     height: kind === 'door' ? 2100 : 1500, // высота проёма, мм
+    // Обычные окна сохраняют размер пресета. Высокие/панорамные пресеты
+    // переключают режим на 'level' и следуют единой высоте окон этажа.
+    heightMode: kind === 'window' ? 'custom' : undefined,
     sill: kind === 'door' ? 0 : 900, // высота от пола до низа проёма, мм
     swingIn: true, // дверь открывается внутрь комнаты roomId
     hingeStart: true, // петли со стороны начала стены
@@ -387,6 +394,10 @@ function normalizeHostOpening(o) {
   for (const key of ['height', 'sill']) {
     if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
   }
+  if ('heightMode' in out) {
+    if (out.kind === 'window') out.heightMode = out.heightMode === 'level' ? 'level' : 'custom';
+    else delete out.heightMode;
+  }
   return out;
 }
 
@@ -403,6 +414,10 @@ export function normalizeOpening(o) {
   const out = { ...o, id: str(o.id) || makeId(o.kind), side, offset, width };
   for (const key of ['height', 'sill']) {
     if (key in out) { const n = num(out[key]); if (n == null || n < 0) delete out[key]; else out[key] = n; }
+  }
+  if ('heightMode' in out) {
+    if (out.kind === 'window') out.heightMode = out.heightMode === 'level' ? 'level' : 'custom';
+    else delete out.heightMode;
   }
   return out;
 }
@@ -480,6 +495,8 @@ export function normalizeProject(data) {
     name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
     elevation: Number(l.elevation) || 0,
     height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
+    tallWindowHeight: Number(l.tallWindowHeight) >= 300
+      ? Number(l.tallWindowHeight) : DEFAULT_TALL_WINDOW_HEIGHT,
   }));
   if (!data.levels.length) data.levels = [createLevel('1 этаж', 0, DEFAULT_LEVEL_HEIGHT, 'L1')];
   if (!data.levels.some((l) => l.id === data.activeLevel)) data.activeLevel = data.levels[0].id;

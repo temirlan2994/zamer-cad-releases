@@ -15,6 +15,7 @@
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
 import { buildDxf } from './zamer/dxf.js';
+import { openingHeight } from './opening-preset.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
@@ -103,7 +104,7 @@ function buildLevelExport(project, level) {
         : null,
       wallKey: placed ? placed.wall.key : null,
       type: opening.type || (opening.kind === 'door' ? 'single' : 'standard'),
-      height: opening.height ?? (opening.kind === 'door' ? 2100 : 1500),
+      height: openingHeight(opening, project.levels?.find((level) => level.id === project.activeLevel)),
       sill: opening.kind === 'door' ? 0 : opening.sill ?? 900,
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,

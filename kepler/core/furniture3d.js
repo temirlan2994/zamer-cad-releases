@@ -83,7 +83,11 @@ const KITCHEN_APPLIANCES = new Set(['fridge', 'dishwasher', 'oven-column', 'hood
 export function furniture3d(kind, layer) {
   if (typeof kind === 'string' && kind.startsWith('sofa:')) {
     const m = kind.slice(5);
-    const spec = { h: SOFA_PART_3D[m] || 850, z0: 0, color: m === 'arm' ? SOFA_ARM_COLOR : SOFA_COLOR };
+    const spec = {
+      h: SOFA_PART_3D[m] || 850, z0: 0,
+      color: m === 'arm' ? SOFA_ARM_COLOR : SOFA_COLOR,
+      model: m === 'arm' ? 'sofa-arm' : 'premium-seat',
+    };
     // Спинка — толщина из раскладки дивана (part.back), у угла — с двух сторон.
     if (m === 'seat' || m === 'chaise' || m === 'corner') Object.assign(spec, { seat: SEAT_H, back: 'part', corner: m === 'corner' });
     return spec;
@@ -103,5 +107,23 @@ export function furniture3d(kind, layer) {
   if (kind === 'coffee-table' || kind === 'coffee-table-2') {
     return { h: own?.h ?? cat.h, z0: 0, color: cat.color, model: 'coffee-duo' };
   }
-  return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, ...SEATED[kind] };
+  const seated = SEATED[kind];
+  if (seated) return {
+    h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color,
+    model: 'premium-seat', ...seated,
+  };
+  const category = FURNITURE[kind]?.cat;
+  if (['tables', 'office'].includes(category) && !['printer', 'filing-cabinet', 'safe'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'table' };
+  }
+  if (['storage', 'hall'].includes(category) && !['mirror', 'umbrella-stand'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'cabinet' };
+  }
+  if (['toilet', 'toilet-wall', 'toilet-smart', 'bidet'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'toilet' };
+  }
+  if (['washbasin', 'washbasin-double', 'vanity-unit'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'vanity' };
+  }
+  return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color };
 }

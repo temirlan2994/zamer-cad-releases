@@ -2,11 +2,33 @@
 // инструменте): тип, ширина, высота, подоконник. Чистый модуль без DOM.
 
 import { DOOR_WIDTH, WINDOW_WIDTH } from './catalog.js';
+import { DEFAULT_TALL_WINDOW_HEIGHT } from './model.js';
+
+export const HIGH_WINDOW_TYPES = new Set(['panoramic', 'lift-slide', 'sliding-tall', 'french']);
+
+export function levelTallWindowHeight(level) {
+  return Number(level?.tallWindowHeight) >= 300
+    ? Number(level.tallWindowHeight) : DEFAULT_TALL_WINDOW_HEIGHT;
+}
+
+// Фактическая высота проёма. Связанный витраж хранит лишь режим, поэтому
+// изменение параметра этажа сразу обновляет 2D, 3D, расчёты и экспорт.
+export function openingHeight(opening, level) {
+  if (opening?.kind === 'window' && opening.heightMode === 'level') {
+    const sill = Math.max(0, Number(opening.sill) || 0);
+    const max = Math.max(300, (Number(level?.height) || 3000) - 100 - sill);
+    return Math.max(300, Math.min(levelTallWindowHeight(level), max));
+  }
+  return Math.max(0, Number(opening?.height) || (opening?.kind === 'door' ? 2100 : 1500));
+}
 
 export function defaultOpeningPreset(kind) {
   return kind === 'door'
     ? { type: 'single', width: DOOR_WIDTH, height: 2100, sill: 0 }
-    : { type: 'standard', width: WINDOW_WIDTH, height: 1500, sill: 900 };
+    : {
+      type: 'tilt-turn', width: WINDOW_WIDTH, height: 1500, sill: 900,
+      heightMode: 'custom', frameMaterial: 'aluminum', frameColor: 'anthracite',
+    };
 }
 
 // Параметры из заготовки накладываются на новый проём (до подгонки по стене).
@@ -15,6 +37,11 @@ export function applyOpeningPreset(opening, preset) {
   opening.type = preset.type;
   opening.width = preset.width;
   opening.height = preset.height;
+  if (opening.kind === 'window') {
+    opening.heightMode = preset.heightMode === 'level' || HIGH_WINDOW_TYPES.has(preset.type) ? 'level' : 'custom';
+    opening.frameMaterial = preset.frameMaterial || 'aluminum';
+    opening.frameColor = preset.frameColor || 'anthracite';
+  }
   opening.sill = opening.kind === 'door' ? 0 : preset.sill;
   return opening;
 }
@@ -25,8 +52,15 @@ export function presetWithType(kind, preset, type, levelHeight = 3000) {
   const next = { ...preset, type };
   if (kind === 'window') {
     const top = levelHeight - 400;
-    if (type === 'panoramic') { next.sill = 100; next.height = Math.min(2400, top - 100); }
-    else { next.sill = 900; next.height = Math.min(1500, top - 900); }
+    if (HIGH_WINDOW_TYPES.has(type)) {
+      next.sill = type === 'french' ? 50 : 100;
+      next.height = Math.min(DEFAULT_TALL_WINDOW_HEIGHT, top - next.sill);
+      next.heightMode = 'level';
+    } else {
+      next.sill = type === 'clerestory' ? 1700 : 900;
+      next.height = type === 'clerestory' ? 600 : Math.min(1500, top - 900);
+      next.heightMode = 'custom';
+    }
   } else if (type === 'double' && next.width < 1200) {
     next.width = 1200;
   }

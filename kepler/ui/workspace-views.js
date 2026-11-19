@@ -46,6 +46,9 @@ export function bindWorkspaceViews() {
   let pending = false;
   let projectId = state.pid;
   let recent = [];
+  let order = [];
+  const closed = new Set();
+  let draggedKey = null;
 
   function menuData() {
     const groups = [...modelViews(), ['sheets', sheets()]];
@@ -65,7 +68,11 @@ export function bindWorkspaceViews() {
         section.querySelector('summary').focus({ preventScroll: true });
         section.scrollIntoView({ block: 'start' });
       }
-    } else if (target) activate(target);
+    } else if (target) {
+      closed.delete(target);
+      if (!order.includes(target)) order.push(target);
+      activate(target);
+    }
   });
 
   function render() {
@@ -76,6 +83,8 @@ export function bindWorkspaceViews() {
       for (const btn of extra.values()) btn.remove();
       extra.clear();
       recent = [];
+      order = [];
+      closed.clear();
       firstPlan = null;
       projectId = state.pid;
     }
@@ -86,6 +95,9 @@ export function bindWorkspaceViews() {
     }
     if (!records.has(firstPlan)) firstPlan = `plan:${sortedLevels(state.project)[0].id}`;
     const buttons = new Map([[firstPlan, plan], ...defaults]);
+    if (!order.length) order = [...buttons.keys()].filter((key) => records.has(key));
+    closed.delete(active);
+    if (!order.includes(active)) order.push(active);
     if (records.has(active) && !buttons.has(active) && !extra.has(active)) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -105,24 +117,30 @@ export function bindWorkspaceViews() {
         btn.setAttribute('role', 'tab');
         btn.dataset.workspaceView = key;
         btn.dataset.title = name;
-        btn.innerHTML = viewIcon(kind) + '<span>' + escapeHtml(name) + '</span>';
+        btn.innerHTML = viewIcon(kind) + '<span>' + escapeHtml(name) + '</span><i class="wv-tab-x" aria-hidden="true">×</i>';
         btn.title = name;
         btn.setAttribute('aria-label', name);
+        btn.draggable = true;
         btn.removeAttribute('aria-pressed');
       }
-      if (btn.parentElement !== tabs) tabs.append(btn);
+      if (closed.has(key) && key !== active) {
+        btn.remove();
+        continue;
+      }
+      if (!order.includes(key)) order.push(key);
       btn.classList.toggle('active', key === active);
       btn.setAttribute('aria-selected', String(key === active));
       btn.tabIndex = key === active ? 0 : -1;
     }
+    order = order.filter((key) => records.has(key) && buttons.has(key));
+    for (const key of order) {
+      const btn = buttons.get(key);
+      if (btn && !closed.has(key)) tabs.append(btn);
+    }
     const current = buttons.get(active);
     recent = recent.filter((id) => id !== active && buttons.has(id));
     if (current) recent.push(active);
-    closeTab.hidden = !extra.has(active);
-    if (!closeTab.hidden) {
-      closeTab.title = `Закрыть вкладку «${current.dataset.title}»`;
-      closeTab.setAttribute('aria-label', closeTab.title);
-    }
+    closeTab.hidden = true;
     nav.hidden = false;
     if (current && (current.offsetLeft < tabs.scrollLeft || current.offsetLeft + current.offsetWidth > tabs.scrollLeft + tabs.clientWidth)) {
       tabs.scrollLeft = current.offsetLeft - tabs.clientWidth / 2 + current.offsetWidth / 2;
@@ -132,33 +150,75 @@ export function bindWorkspaceViews() {
   function schedule() {
     if (!pending) { pending = true; requestAnimationFrame(render); }
   }
-  function closeCurrentTab() {
-    const current = recent.at(-1);
-    if (!extra.has(current)) return;
-    extra.get(current).remove();
-    extra.delete(current);
-    recent.pop();
-    activate(recent.at(-1) || firstPlan);
+  function closeView(key = recent.at(-1)) {
+    if (!key) return;
+    const visible = order.filter((id) => !closed.has(id));
+    if (visible.length <= 1) return;
+    const wasActive = key === (state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId());
+    closed.add(key);
+    recent = recent.filter((id) => id !== key);
+    if (wasActive) {
+      const index = order.indexOf(key);
+      const fallback = recent.at(-1) || [...order.slice(0, index).reverse(), ...order.slice(index + 1)]
+        .find((id) => !closed.has(id));
+      if (fallback) activate(fallback);
+    }
     schedule();
     requestAnimationFrame(() => tabs.querySelector('[aria-selected="true"]')?.focus({ preventScroll: true }));
   }
-  closeTab.addEventListener('click', closeCurrentTab);
+  closeTab.addEventListener('click', () => closeView());
+  tabs.addEventListener('click', (event) => {
+    const close = event.target.closest('.wv-tab-x');
+    if (!close) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeView(close.closest('[data-workspace-view]')?.dataset.workspaceView);
+  }, true);
+  tabs.addEventListener('dragstart', (event) => {
+    const tab = event.target.closest('[data-workspace-view]');
+    if (!tab) return;
+    draggedKey = tab.dataset.workspaceView;
+    tab.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', draggedKey);
+  });
+  tabs.addEventListener('dragover', (event) => {
+    if (!draggedKey) return;
+    const over = event.target.closest('[data-workspace-view]');
+    if (!over || over.dataset.workspaceView === draggedKey) return;
+    event.preventDefault();
+    const from = order.indexOf(draggedKey);
+    let to = order.indexOf(over.dataset.workspaceView);
+    if (from < 0 || to < 0) return;
+    order.splice(from, 1);
+    if (from < to) to -= 1;
+    if (event.clientX > over.getBoundingClientRect().left + over.offsetWidth / 2) to += 1;
+    order.splice(to, 0, draggedKey);
+    const dragged = tabs.querySelector(`[data-workspace-view="${CSS.escape(draggedKey)}"]`);
+    if (dragged) tabs.insertBefore(dragged, event.clientX > over.getBoundingClientRect().left + over.offsetWidth / 2 ? over.nextSibling : over);
+  });
+  tabs.addEventListener('dragend', (event) => {
+    event.target.closest('[data-workspace-view]')?.classList.remove('dragging');
+    draggedKey = null;
+  });
   tabs.addEventListener('keydown', (event) => {
     const btns = [...tabs.children];
     const i = btns.indexOf(event.target);
     if (i < 0) return;
-    if (event.key === 'Delete' && !closeTab.hidden) {
+    if (event.key === 'Delete') {
       event.preventDefault();
       event.stopPropagation();
-      closeCurrentTab();
+      closeView(event.target.dataset.workspaceView);
       return;
     }
     const next = { ArrowLeft: (i + btns.length - 1) % btns.length, ArrowRight: (i + 1) % btns.length, Home: 0, End: btns.length - 1 }[event.key];
     if (next == null) return;
     event.preventDefault();
     event.stopPropagation();
-    btns[next].focus();
-    btns[next].click();
+    const target = btns[next];
+    target.click();
+    target.focus({ preventScroll: true });
+    requestAnimationFrame(() => target.isConnected && target.focus({ preventScroll: true }));
   });
   document.addEventListener('kepler:view', schedule);
   document.addEventListener('kepler:project-change', schedule);
@@ -167,6 +227,8 @@ export function bindWorkspaceViews() {
     for (const btn of extra.values()) btn.remove();
     extra.clear();
     recent = [];
+    order = [];
+    closed.clear();
     firstPlan = null;
     schedule();
   });

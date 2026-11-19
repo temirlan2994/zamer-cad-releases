@@ -70,8 +70,18 @@
   height: 34px; padding: 0 12px; min-width: max-content; border: 1px solid transparent;
   border-radius: 9px; font-size: 13px; font-weight: 580; color: var(--muted); background: transparent;
   transition: background .14s ease, color .14s ease;
+  cursor: grab;
 }
+.wv-tabs button:active { cursor: grabbing; }
 .wv-tabs button span { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wv-tab-x {
+  display: grid; place-items: center; width: 0; height: 22px; margin-left: -7px;
+  overflow: hidden; border-radius: 6px; color: var(--muted); font-size: 17px;
+  font-style: normal; line-height: 1; opacity: 0; transition: width .14s ease, margin .14s ease, opacity .12s ease;
+}
+.wv-tabs button:is(:hover,:focus-visible) .wv-tab-x { width: 22px; margin-left: 0; opacity: 1; }
+.wv-tabs button .wv-tab-x:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.wv-tabs button.dragging { opacity: .45; }
 .wv-tabs button:hover { color: var(--text); background: var(--surface-2); }
 .wv-tabs button.active, .wv-tabs #view3dBtn.active {
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 22%, transparent);

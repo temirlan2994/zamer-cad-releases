@@ -4,6 +4,7 @@
 // одноразовая привязка при создании.
 
 import { levelProject } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import { deriveWalls, openingRect } from './walls.js';
 
 const wallAcross = (wall) => (wall.orient === 'h'
@@ -37,7 +38,7 @@ export function lowerOpeningTargets(project, activeLevelId, activeWall) {
       const half = opening.width / 2;
       const rawSill = Number(opening.sill);
       const sill = opening.kind === 'door' ? 0 : Number.isFinite(rawSill) ? rawSill : 900;
-      const height = Number(opening.height) || (opening.kind === 'door' ? 2100 : 1500);
+      const height = openingHeight(opening, level);
       out.push({
         id: opening.id, kind: opening.kind, center: placed.absCenter,
         from: placed.absCenter - half, to: placed.absCenter + half,

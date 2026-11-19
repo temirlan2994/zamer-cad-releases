@@ -170,6 +170,10 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
   const polys = [];
   for (const f of faces) {
     if (!f.pts || f.pts.length < 3) continue;
+    // Объёмные алюминиевые профили нужны в 3D, но на ортогональном фасаде
+    // их четыре узкие грани закрывали контрольные точки стеклопакета. Само
+    // окно здесь остаётся одним фасадным элементом с чистым контуром.
+    if (f.kind === 'window-frame') continue;
     const n = f.normal || { x: 0, y: 0, z: 0 };
     if (Math.abs(n.z) > 0.5) continue; // горизонтальная — на фасаде линия
     const facing = n.x * view.x + n.y * view.y;

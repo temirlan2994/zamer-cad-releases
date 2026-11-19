@@ -529,6 +529,45 @@ export function createRenderer(canvas) {
         walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark,
         display: vd, project: state.project, force: thumbnail,
       });
+      if (planShadows) {
+        // Мягкая тень не должна съедать конструктивный контур. Повторяем
+        // только наружную линию, а выбранную/под курсором стену — и заливку.
+        const outline = cachedWallOutline(walls);
+        if (outline.length) {
+          ctx.save();
+          ctx.strokeStyle = houseTokens.wallBearing;
+          ctx.globalAlpha = lsDark ? 0.9 : 0.76;
+          ctx.lineWidth = px(1.15);
+          ctx.lineJoin = 'miter';
+          ctx.beginPath();
+          for (const cycle of outline) {
+            cycle.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+            ctx.closePath();
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.strokeStyle = houseTokens.wallBearing;
+        ctx.globalAlpha = lsDark ? 0.9 : 0.76;
+        ctx.lineWidth = px(1.15);
+        ctx.lineJoin = 'miter';
+        for (const wall of walls) for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+          if (poly.length < 3) continue;
+          ctx.beginPath();
+          poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.closePath();
+          ctx.stroke();
+        }
+        ctx.restore();
+        for (const wall of walls) {
+          const selected = state.selection?.type === 'wall' && state.selection.key === wall.key
+            && (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
+          const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key
+            && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
+          if (selected || hovered) paintWall(wall);
+        }
+      }
 
       // Карта прямого солнца или предварительной освещённости — аналитическая подложка:
       // поверх пола/теней, но под проёмами, мебелью и подписями.
@@ -1730,17 +1769,22 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
       ctx.stroke();
     }
   } else {
-    // Окно рисуем строго в пределах полотна стены (clip по band), чтобы рамка
+    // Алюминиевую раму рисуем строго в пределах полотна стены (clip по band),
     // не выступала за грани стены ни внутрь, ни наружу — окно вровень со стеной.
     const band = wall.band;
     ctx.save();
     ctx.beginPath();
     ctx.rect(band.x, band.y, band.w, band.h);
     ctx.clip();
+    ctx.save();
+    ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : '#3b4148';
+    ctx.lineWidth = px(selected || hovered ? 1.8 : 2.2);
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.restore();
     ctx.beginPath();
-    // Обычное окно — одна линия стекла, панорамное — две.
-    const glassAt = opening.type === 'panoramic' ? [1 / 3, 2 / 3] : [1 / 2];
+    // Стеклопакет: у высоких и раздвижных систем профиль глубже.
+    const deep = ['panoramic', 'lift-slide', 'french'].includes(opening.type);
+    const glassAt = deep ? [0.32, 0.68] : [0.5];
     for (const k of glassAt) {
       if (rect.w >= rect.h) {
         ctx.moveTo(rect.x, rect.y + rect.h * k);
