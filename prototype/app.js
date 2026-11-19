@@ -11441,6 +11441,8 @@ function setLayerVisibility(id, visible) {
   }
   syncLayerControls();
   markProjectDirty("layers");
+  const name = drawingLayerInfo(id).name;
+  statusChip.textContent = `Слой «${name}» ${visible ? "виден" : "скрыт"}`;
   draw();
 }
 
