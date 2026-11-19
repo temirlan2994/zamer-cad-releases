@@ -20,7 +20,7 @@ import { createSurveyLaser } from "./core/survey-laser.js";
 import { buildZip } from "./core/zip.js";
 import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatProjectLength,
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
-import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, planZoneLabelRing, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
+import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
 import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./core/annotation-text.js";
 
@@ -3605,50 +3605,10 @@ function drawPlanScene(entities, c, customLineLayers = state.customLineLayers) {
   }
   if (!zones.length) return;
   const anchors = planAnnotationAnchors(zones);
-  const viewport = !printRendering && zones.some((zone) => zone.type === "elevation") ? canvas.getBoundingClientRect() : null;
-  const overlays = viewport ? [...shell.querySelectorAll(".status-chip, #saveIndicator, .tool-rail, #planAnnotationActions, .draw-tool-menu, .line-command-panel, .dimension-assist, #quickEditModes, #cornerMetrics")]
-    .filter((element) => !element.hidden && element.getClientRects().length)
-    .map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { x: rect.left - viewport.left, y: rect.top - viewport.top, width: rect.width, height: rect.height };
-    }) : [];
   for (const zone of zones.sort((a, b) => Number(b.type === "area") - Number(a.type === "area") ||
       planAnnotationGeometry(a).areaMm2 - planAnnotationGeometry(b).areaMm2)) {
-    drawPlanAnnotationZone(zone, c, { label: true, anchor: anchors.get(zone.id), overlays, viewport });
+    drawPlanAnnotationZone(zone, c, { label: true, anchor: anchors.get(zone.id) });
   }
-}
-
-function planLabelPosition(point, width, height, geometry, overlays, viewport) {
-  const rectAt = ({ x, y }) => ({ x: x - width / 2, y: y - height / 2, width, height });
-  const { minX, minY, maxX, maxY } = geometry.bounds;
-  const min = worldToScreen({ x: minX, y: minY });
-  const max = worldToScreen({ x: maxX, y: maxY });
-  const fits = (center) => {
-    const box = rectAt(center);
-    if (viewport && (box.x < 4 || box.y < 4 || box.x + width > viewport.width - 4 || box.y + height > viewport.height - 4)) return false;
-    if (!viewport && (box.x < min.x || box.y < min.y || box.x + width > max.x || box.y + height > max.y)) return false;
-    return !overlays.some((other) => box.x < other.x + other.width + 4 && box.x + width + 4 > other.x &&
-      box.y < other.y + other.height + 4 && box.y + height + 4 > other.y);
-  };
-  if (fits(point)) return point;
-  if (viewport && (max.x < 0 || max.y < 0 || min.x > viewport.width || min.y > viewport.height)) return point;
-  const candidates = [];
-  for (let y = 1; y <= 7; y++) {
-    for (let x = 1; x <= 7; x++) {
-      candidates.push({ x: min.x + (max.x - min.x) * x / 8, y: min.y + (max.y - min.y) * y / 8 });
-    }
-  }
-  candidates.sort((a, b) => pointDistance(point, a) - pointDistance(point, b));
-  const interior = candidates.find((center) => fits(center) && pointInPolygon(screenToWorld(center), geometry.points));
-  if (interior) return interior;
-  if (!viewport) return point;
-  for (let step = 1; step <= 3; step++) {
-    for (const [dx, dy] of [[0, -1], [0, 1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      const center = { x: point.x + dx * step * (width + 8), y: point.y + dy * step * (height + 8) };
-      if (fits(center)) return center;
-    }
-  }
-  return point;
 }
 
 function planZoneColor(entity) {
@@ -3682,25 +3642,15 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
     ctx.setLineDash([]);
   }
   if (!options.outline) {
-    const worldAnchor = options.anchor || geometry.anchor;
-    const anchor = worldToScreen(worldAnchor);
-    const ring = planZoneLabelRing(geometry, worldAnchor);
+    const anchor = worldToScreen(options.anchor || geometry.anchor);
     const lines = planZoneLabelLines(entity, geometry, state.measurementSettings);
     const size = planZoneLabelHeight(state.annotationScale) * state.view.scale;
     ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;
     const height = size * 1.7 + lineHeight * (lines.length - 1);
-    const point = entity.type === "elevation" && options.overlays
-      ? planLabelPosition(anchor, width, height, ring, options.overlays, options.viewport) : anchor;
-    const rect = { x: point.x - width / 2, y: point.y - height / 2, width, height };
-    options.overlays?.push(rect);
+    const rect = { x: anchor.x - width / 2, y: anchor.y - height / 2, width, height };
     if (!printRendering && options.label) zoneLabelRects.set(entity.id, rect);
-    if (point !== anchor && !pointInPolygon(screenToWorld(point), ring.points)) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      linePath(anchor.x, anchor.y, point.x, point.y);
-    }
     ctx.fillStyle = c.surface;
     ctx.strokeStyle = color;
     ctx.lineWidth = size * 0.065;
@@ -3708,7 +3658,7 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    lines.forEach((text, index) => ctx.fillText(text, point.x, point.y + (index - (lines.length - 1) / 2) * lineHeight));
+    lines.forEach((text, index) => ctx.fillText(text, anchor.x, anchor.y + (index - (lines.length - 1) / 2) * lineHeight));
   }
   ctx.restore();
 }
