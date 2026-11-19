@@ -1515,7 +1515,7 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .workspace:has(:is(#drawToolMenu, #dimensionToolMenu, #annotationToolMenu, #selectModeMenu):not([hidden])) :is(.corner-metrics, .draft-metric-labels),
-.app-shell:has(#snapMore[open]) :is(.line-draft-metrics, .draft-metric-labels),
+.app-shell:has(#snapMore[open]) :is(.corner-metrics, .draft-metric-labels),
 .corner-metrics[hidden],
 .metric-fields[hidden],
 .metric-field[hidden] {
@@ -1523,27 +1523,23 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .corner-metrics {
-  bottom: calc(max(72px, var(--keyboard-inset, 0px) + 8px) + env(safe-area-inset-bottom));
   display: grid;
   gap: 4px;
-  justify-items: start;
-  left: 8px;
+  justify-items: end;
   max-width: calc(100% - 16px);
   pointer-events: none;
   position: absolute;
+  right: 10px;
+  top: 38px;
   z-index: 12;
 }
 
-.corner-metrics.line-draft-metrics {
-  bottom: auto;
-  justify-items: end;
-  left: auto;
-  right: 10px;
-  top: 38px;
+.corner-metrics .line-point-assist {
+  grid-row: 2;
 }
 
-.line-draft-metrics .line-point-assist {
-  grid-row: 2;
+.workspace:has(.corner-metrics:not([hidden])) .select-tool-menu {
+  top: calc(38px + 44px + 4px);
 }
 
 .draft-metric-labels {
@@ -1686,7 +1682,7 @@ button.project-card-open:active { background: var(--surface-2); }
   width: max(2ch, var(--value-width, 4ch));
 }
 
-.metric-fields[data-metric-context="line-draft"] + .keyboard-confirm:not([hidden]) {
+.corner-metric-row > .keyboard-confirm:not([hidden]) {
   border-radius: 7px;
   box-shadow: none;
   font-size: 1rem;

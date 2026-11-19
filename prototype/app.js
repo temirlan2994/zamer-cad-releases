@@ -7839,7 +7839,6 @@ function syncLineControls() {
   polylineArcMode.setAttribute("aria-pressed", String(Boolean(drawing?.arcPhase)));
   linePointAssist.hidden = !choosingDirection && polylineArcMode.hidden;
   cornerMetrics.hidden = inlineEditors.hidden && drawMetrics.hidden && linePointAssist.hidden;
-  cornerMetrics.classList.toggle("line-draft-metrics", Boolean(draft));
   lineDirection.hidden = !choosingDirection;
   if (choosingDirection && lineDirection.value !== (draft.metricDirection || "")) lineDirection.value = draft.metricDirection || "";
   document.getElementById("undoButton").disabled = !state.undo.length && size < 2 && !drawing?.arcEnd && !state.planZone?.points.length;
