@@ -11573,6 +11573,7 @@ bindPointAction(planAnnotationEdit, () => {
 });
 
 function editPlanAnnotation(entity) {
+  state.dimensionPickCycle = null;
   if (isPlanAnnotationZone(entity)) return editPlanZone(entity);
   if (entity.dimensionKind === "leader") return editLeaderText(entity);
   return editTextEntity(entity);
