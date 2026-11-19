@@ -48,6 +48,22 @@ function dimensionRecords(dxf) {
   return dimensions;
 }
 
+function layerRecords(dxf) {
+  const lines = dxf.split("\n");
+  const layers = [];
+  let current;
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    const [code, value] = [lines[index], lines[index + 1]];
+    if (code === "0") {
+      current = value === "LAYER" ? new Map() : null;
+      if (current) layers.push(current);
+    } else if (current) {
+      current.set(code, value);
+    }
+  }
+  return new Map(layers.map(fields => [fields.get("2"), fields]));
+}
+
 test("roundDxf rounds to 3 decimals and normalizes -0", () => {
   assert.equal(roundDxf(1.23456), "1.235");
   assert.equal(roundDxf(-0), "0");
@@ -89,6 +105,57 @@ test("buildDxf emits a 2007 drawing with millimeter units and model-space owners
 test("buildDxf emits one LINE per line entity", () => {
   const dxf = buildDxf([{ type: "line", x1: 0, y1: 0, x2: 1000, y2: 0, layer: "measure" }]);
   assert.equal(countRecords(dxf, "LINE"), 1);
+});
+
+test("custom line layers retain Unicode names, colors and membership in both DXF profiles", () => {
+  const lineLayer = { id: "line-layer-1", name: "Газ и вода", color: "#a46522" };
+  const curveLayer = { id: "line-layer-2", name: "план / разрез", color: "#3210F0" };
+  const hiddenLayer = { id: "line-layer-3", name: "Скрытый слой", color: "#000000" };
+  const options = { customLineLayers: [lineLayer, curveLayer, hiddenLayer] };
+  const entities = [
+    { type: "line", layer: lineLayer.id, x1: 0, y1: 0, x2: 100, y2: 100 },
+    { type: "polyline", layer: curveLayer.id, points: [{ x: 0, y: 20 }, { x: 50, y: 40 }], bulges: [1] },
+    { type: "arc", layer: curveLayer.id, start: { x: 50, y: 40 }, through: { x: 70, y: 60 }, end: { x: 90, y: 40 } },
+    { type: "line", layer: hiddenLayer.id, x1: 50, y1: 90, x2: 50, y2: 125 },
+  ];
+  for (const [build, prefix] of [[buildDxf, ""], [buildRevitDxf, "ZAMER_"]]) {
+    const exportedName = name => `${prefix}${name}`;
+    const dxf = build(entities, options);
+    const layers = layerRecords(dxf);
+    assert.equal(Number(layers.get(exportedName("Газ и вода")).get("420")), 0xa46522);
+    assert.equal(Number(layers.get(exportedName("план _ разрез")).get("420")), 0x3210f0);
+    assert.equal(layers.get(exportedName("Скрытый слой")).get("420"), "0");
+    assert.deepEqual(entityRecords(dxf).map(({ type, fields }) => [type, fields.get("8")[0]]), [
+      ["LINE", exportedName("Газ и вода")], ["LWPOLYLINE", exportedName("план _ разрез")],
+      ["ARC", exportedName("план _ разрез")], ["LINE", exportedName("Скрытый слой")],
+    ]);
+    const filtered = build(entities.slice(0, -1), options);
+    assert.ok(!layerRecords(filtered).has(exportedName("Скрытый слой")));
+    assert.equal(countRecords(filtered, "LINE"), 1);
+  }
+});
+
+test("custom layer names stay distinct after sanitation, case folding, and visibility filtering", () => {
+  const longName = `${"Ё".repeat(248)}📐${"Ж".repeat(30)}`;
+  const customLineLayers = ["measure", "Ёлка / 01", "е\u0308ЛКА ? 01", "0", "DEFPOINTS", "первая\n0\rстрока", longName, longName]
+    .map((name, index) => ({ id: `line-layer-${index}`, name, color: "broken" }));
+  const entities = customLineLayers.map(({ id }, index) => ({ type: "line", layer: id, x1: 0, y1: index, x2: 100, y2: index }));
+  for (const [build, prefix] of [[buildDxf, ""], [buildRevitDxf, "ZAMER_"]]) {
+    const dxf = build(entities, { customLineLayers });
+    const layers = layerRecords(dxf);
+    const names = entityRecords(dxf).map(({ fields }) => fields.get("8")[0]);
+    assert.deepEqual(names.slice(0, 6), [
+      `${prefix}measure (2)`, `${prefix}Ёлка _ 01`, `${prefix}ёЛКА _ 01 (2)`, prefix ? `${prefix}0` : "0 (2)",
+      prefix ? `${prefix}DEFPOINTS` : "DEFPOINTS (2)", `${prefix}первая_0_строка`,
+    ]);
+    assert.equal(new Set(names.map(name => name.toUpperCase())).size, entities.length);
+    assert.ok(names.every(name => name.length <= 255 && layers.has(name) && !layers.get(name).has("420")));
+    assert.ok(names.at(-1).endsWith(" (2)"));
+    assert.ok(!names.at(-1).includes("\uFFFD"));
+    const visibleOnly = build([entities[2]], { customLineLayers });
+    assert.equal(entityRecords(visibleOnly)[0].fields.get("8")[0], names[2]);
+    assert.ok(!layerRecords(visibleOnly).has(names[1]));
+  }
 });
 
 test("both Zamer DXF profiles preserve tiny line geometry and do not emit Infinity or corrupt endpoints", () => {

@@ -264,7 +264,9 @@ export function buildProjectPreview(project, { width = 160, height = 96 } = {}) 
   if (!Array.isArray(project?.entities) || ![width, height].every(value => Number.isFinite(value) && value >= 16 && value <= 1024)) return null;
   const layers = Array.isArray(project.visibleLayers) ? new Set(project.visibleLayers) : null;
   const entities = visiblePreviewEntities(project.entities, layers);
-  if (project.draft?.tool === "polyline" && (!layers || layers.has("measure"))) entities.push({ ...project.draft, type: "polyline" });
+  if (project.draft?.tool === "polyline" && (!layers || layers.has(project.draft.layer || "measure"))) {
+    entities.push({ ...project.draft, type: "polyline" });
+  }
   const annotationScale = Number.isFinite(project.annotationScale) ? project.annotationScale : 1;
   const vertexBudget = Math.max(16, Math.min(MAX_VERTICES, Math.floor(8000 / (entities.length || 1))));
   const paths = entities.flatMap(entity => entityTraces(entity, annotationScale, vertexBudget)).filter(({ points, curves, fill }) =>

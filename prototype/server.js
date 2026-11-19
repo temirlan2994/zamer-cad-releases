@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { DEFAULT_LINE_LAYER, normalizeLineLayerSettings } = require("./core/line-layers.js");
 
 const root = __dirname;
 // Development serves the same files that the Docker image embeds under core/.
@@ -638,6 +639,7 @@ function defaultProjectPayload(client, body = {}) {
   const id = safeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const name = String(body.name || "Новый замер").slice(0, 80);
   const source = body.project && typeof body.project === "object" ? body.project : {};
+  const lineLayers = normalizeLineLayerSettings(source);
   const entities = Array.isArray(source.entities) ? source.entities : [];
   const rooms = Array.isArray(source.survey?.rooms) ? source.survey.rooms : [];
   const legacyLayers = ["walls", "furniture"].filter((layer) => entities.some((entity) => entity?.layer === layer) ||
@@ -659,7 +661,9 @@ function defaultProjectPayload(client, body = {}) {
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
     gridStep: [5, 10, 50, 100, 500, 1000].includes(source.gridStep) ? source.gridStep : 100,
     polarStep: [5, 10, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["measure", "dimensions", "text", "areas", "elevations", ...legacyLayers],
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers :
+      [DEFAULT_LINE_LAYER, "dimensions", "text", "areas", "elevations", ...legacyLayers, ...lineLayers.customLineLayers.map(({ id }) => id)],
+    ...lineLayers,
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     measurementSettings: source.measurementSettings,

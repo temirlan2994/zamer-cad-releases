@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=249" />
+    <link rel="stylesheet" href="./styles.css?v=250" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -331,15 +331,15 @@
         </div>
       </section>
 
-      <section class="bottom-sheet" id="layersSheet" hidden aria-label="Слои">
+      <section class="bottom-sheet" id="layersSheet" hidden aria-labelledby="layersSheetTitle">
         <div class="sheet-handle"></div>
         <div class="sheet-head">
-          <div>
-            <span class="panel-kicker">Слои</span>
-            <strong>Управление чертежом</strong>
-          </div>
-          <button class="icon-button" id="closeLayersButton" aria-label="Закрыть слои">×</button>
+          <h2 id="layersSheetTitle">Слои</h2>
+          <button class="icon-button" id="closeLayersButton" type="button" aria-label="Закрыть слои">×</button>
         </div>
+        <button class="add-line-layer" id="addLineLayerButton" type="button" aria-label="Новый слой. Добавить слой для линий">
+          <span data-line-icon="plus" aria-hidden="true">+</span> Новый слой
+        </button>
         <div class="layer-list" id="layerList"></div>
       </section>
 
@@ -488,7 +488,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=249"></script>
+    <script type="module" src="./app.js?v=250"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

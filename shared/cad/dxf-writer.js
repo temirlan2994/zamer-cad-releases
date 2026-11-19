@@ -241,11 +241,12 @@ function dxfLayerName(layer, layerMap) {
 }
 
 // options.extraLayers — дополнительные слои [{ key, name, color }]
-// (например, генплан: участок, красная линия, зона застройки).
+// для генплана и современного экспорта.
 export function dxfLayers(options = {}) {
-  const { includeSiteGeometry = false } = options;
+  const { includeSiteGeometry = false, modern = false } = options;
   const baseLayers = options.profile === "revit" ? REVIT_LAYER_DEFS : DEFAULT_LAYER_DEFS;
-  return includeSiteGeometry ? [...baseLayers, ...(options.extraLayers || [])] : baseLayers.filter((layer) => layer.key !== "axes");
+  const layers = includeSiteGeometry ? baseLayers : baseLayers.filter((layer) => layer.key !== "axes");
+  return includeSiteGeometry || modern ? [...layers, ...(options.extraLayers || [])] : layers;
 }
 
 export function writeDxf(entities, options = {}) {

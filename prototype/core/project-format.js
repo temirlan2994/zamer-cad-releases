@@ -2,6 +2,7 @@ import { arcGeometry } from "./geometry.js";
 import { isLinePoint, isValidLine, MAX_LINE_COORDINATE } from "./line-edits.js";
 import { validPolylinePoints } from "./polyline.js";
 import { normalizePlanAnnotation } from "./plan-annotations.js";
+import { CUSTOM_LINE_LAYER_PREFIX, DEFAULT_LINE_LAYER, normalizeLineLayerSettings } from "./line-layers.js";
 
 export const MAX_ZAMER_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -65,17 +66,21 @@ function validPolylineDraft(draft) {
   return validPolylinePoints(draft.points, false, draft.bulges);
 }
 
-function validateDrawing(drawing, label) {
+function validateDrawing(drawing, label, customLayerIds) {
   if (!plainObject(drawing) || !Array.isArray(drawing.entities)) throw new Error(`${label}: отсутствует список объектов`);
   const ids = new Set();
   for (const [index, entity] of drawing.entities.entries()) {
     if (!validStoredEntity(entity) || ids.has(entity.id)) throw new Error(`${label}: повреждён объект ${index + 1}`);
+    if (entity.layer?.startsWith(CUSTOM_LINE_LAYER_PREFIX) && !customLayerIds.has(entity.layer)) {
+      throw new Error(`${label}: неизвестный слой у объекта ${index + 1}`);
+    }
     ids.add(entity.id);
   }
   if (drawing.view != null && (!plainObject(drawing.view) ||
       !hasOptionalNumbers(drawing.view, ["scale", "panX", "panY"]))) throw new Error(`${label}: повреждены параметры вида`);
   const draft = drawing.draft;
-  if (draft != null && !validPolylineDraft(draft)) {
+  if (draft != null && (!validPolylineDraft(draft) || (draft.layer !== undefined &&
+      draft.layer !== DEFAULT_LINE_LAYER && !customLayerIds.has(draft.layer)))) {
     throw new Error(`${label}: повреждён черновик полилинии`);
   }
 }
@@ -85,7 +90,14 @@ export function validateZamerProject(project) {
     throw new Error("Неизвестная версия файла .zamer");
   }
   if (project.name != null && typeof project.name !== "string") throw new Error("Повреждено название проекта");
-  validateDrawing(project, "Чертёж");
+  const { customLineLayers, activeLineLayer } = normalizeLineLayerSettings(project);
+  if (project.customLineLayers !== undefined && (!Array.isArray(project.customLineLayers) ||
+      project.customLineLayers.length !== customLineLayers.length)) throw new Error("Повреждены слои линий");
+  if (project.activeLineLayer !== undefined && project.activeLineLayer !== activeLineLayer) {
+    throw new Error("Неизвестный активный слой линий");
+  }
+  const customLayerIds = new Set(customLineLayers.map(({ id }) => id));
+  validateDrawing(project, "Чертёж", customLayerIds);
   const survey = project.survey;
   if (survey != null) {
     if (!plainObject(survey) || survey.version !== 1 || (survey.rooms != null && !Array.isArray(survey.rooms))) {
@@ -93,7 +105,7 @@ export function validateZamerProject(project) {
     }
     for (const [index, room] of (survey.rooms || []).entries()) {
       if (!plainObject(room)) throw new Error(`Повреждено помещение ${index + 1}`);
-      if (room.drawing != null) validateDrawing(room.drawing, `Помещение ${index + 1}`);
+      if (room.drawing != null) validateDrawing(room.drawing, `Помещение ${index + 1}`, customLayerIds);
     }
   }
   return project;

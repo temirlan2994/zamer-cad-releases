@@ -10,6 +10,7 @@ import {
 import { formatProjectAngle, formatProjectLength, normalizeMeasurementSettings, projectUnit } from "./project-settings.js";
 
 const POINT_EPSILON = 1e-6;
+const MAX_LAYER_NAME = 255;
 const STYLE = "STANDARD";
 const DXF_LINE_SPACING = 1.4; // DXF uses cap height. Extra space keeps descenders clear of the next line.
 const ANNOTATION_LAYERS = [
@@ -24,6 +25,42 @@ const SUBCLASSES = {
   POINT: "AcDbPoint",
   TEXT: "AcDbText",
 };
+
+function limitLayerName(value, length) {
+  return value.slice(0, length).replace(/[\uD800-\uDBFF]$/u, "").trimEnd();
+}
+
+function customDxfLayers(definitions, builtInLayers, profile) {
+  if (!Array.isArray(definitions)) return [];
+  const usedKeys = new Set(["0", "axes", ...builtInLayers.map(({ key }) => key)]);
+  const usedNames = new Set(["0", "DEFPOINTS", "BYLAYER", "BYBLOCK", ...builtInLayers.map(({ name }) => name.toUpperCase())]);
+  const nextNumber = new Map();
+  const prefix = profile === "revit" ? "ZAMER_" : "";
+  const layers = [];
+  for (const definition of definitions) {
+    const { id, name, color } = definition ?? {};
+    if (typeof id !== "string" || !id.trim() || usedKeys.has(id)) continue;
+    const sanitized = typeof name === "string"
+      ? name.normalize("NFC").replace(/[<>/\\":;?*|=`\p{Cc}\p{Cs}\u2028\u2029]+/gu, "_").trim() : "";
+    const base = limitLayerName(`${prefix}${sanitized || "Слой"}`, MAX_LAYER_NAME);
+    const key = base.toUpperCase();
+    let number = nextNumber.get(key) ?? 1;
+    let unique = base;
+    if (number > 1 || usedNames.has(key)) {
+      number = Math.max(number, 2);
+      do {
+        const suffix = ` (${number++})`;
+        unique = `${limitLayerName(base, MAX_LAYER_NAME - suffix.length)}${suffix}`;
+      } while (usedNames.has(unique.toUpperCase()));
+    }
+    nextNumber.set(key, number);
+    usedKeys.add(id);
+    usedNames.add(unique.toUpperCase());
+    const hex = typeof color === "string" && /^#[\da-f]{6}$/iu.test(color) ? color.slice(1) : null;
+    layers.push({ key: id, name: unique, color: 7, trueColor: hex ? Number.parseInt(hex, 16) : undefined });
+  }
+  return layers;
+}
 
 function pointFields(code, point) {
   return [code, point.x, code + 10, -point.y, code + 20, 0];
@@ -263,17 +300,18 @@ function appendLayouts(out, nextHandle, modelSpace, paperSpace) {
   out.push(0, "ENDSEC");
 }
 
-export function writeModernDxf(entities, { profile, annotationScale, measurementSettings } = {}) {
+export function writeModernDxf(entities, { profile, annotationScale, measurementSettings, customLineLayers } = {}) {
   const display = normalizeMeasurementSettings(measurementSettings);
   const model = [];
   const dimensions = [];
   const annotations = [];
   const zones = [];
   const options = { profile, preserveLinePrecision: true, modern: true };
-  const layers = dxfLayers(options).concat(ANNOTATION_LAYERS.map((layer) => ({
+  const builtInLayers = dxfLayers(options).concat(ANNOTATION_LAYERS.map((layer) => ({
     ...layer, name: profile === "revit" ? layer.revit : layer.key,
   })));
-  const layerNames = new Map(layers.map(({ key, name }) => [key, name]));
+  const customLayers = customDxfLayers(customLineLayers, builtInLayers, profile);
+  const layerNames = new Map([...builtInLayers, ...customLayers].map(({ key, name }) => [key, name]));
   const dimensionLayer = layerNames.get("dimensions");
   const textLayer = layerNames.get("text");
   const anchors = planAnnotationAnchors(entities.filter(Boolean));
@@ -302,15 +340,16 @@ export function writeModernDxf(entities, { profile, annotationScale, measurement
   }
 
   const records = [];
-  appendDxfEntityRecords(records, model, options);
+  appendDxfEntityRecords(records, model, { ...options, extraLayers: customLayers });
   const emittedLayers = new Set();
   for (const primitives of [records, ...annotations.map((annotation) => annotation.records)]) {
     for (let index = 0; index < primitives.length; index += 2) {
       if (primitives[index] === "8") emittedLayers.add(primitives[index + 1]);
     }
   }
-  const drawingLayers = layers.filter(({ key, name }) =>
-    (key !== "walls" && key !== "furniture") || emittedLayers.has(name));
+  const drawingLayers = builtInLayers.filter(({ key, name }) =>
+    (key !== "walls" && key !== "furniture") || emittedLayers.has(name))
+    .concat(customLayers.filter(({ name }) => emittedLayers.has(name)));
 
   let handleIndex = 1;
   const nextHandle = () => (handleIndex++).toString(16).toUpperCase();

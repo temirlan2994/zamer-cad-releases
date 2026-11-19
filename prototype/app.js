@@ -12,6 +12,7 @@ import { createPolyline, polylineArcFromBend, polylineBounds, polylineSegments, 
 import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
 import { MAX_ZAMER_FILE_BYTES, validateZamerProject } from "./core/project-format.js";
+import { DEFAULT_LINE_LAYER, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerName, normalizeLineLayerSettings } from "./core/line-layers.js";
 import { buildProjectPreview } from "./core/project-preview.js";
 import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
@@ -274,6 +275,7 @@ function apkCreateProject(body = {}) {
   const now = new Date().toISOString();
   const source = body.project && typeof body.project === "object" ? body.project : {};
   const projectId = apkSafeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const lineLayers = normalizeLineLayerSettings(source);
   return {
     version: 2,
     clientId: apkUser.id,
@@ -291,7 +293,8 @@ function apkCreateProject(body = {}) {
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
     gridStep: GRID_STEPS.includes(source.gridStep) ? source.gridStep : 100,
     polarStep: POLAR_STEPS.includes(source.polarStep) ? source.polarStep : 5,
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : projectDefaultLayers(source),
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : projectDefaultLayers(source, lineLayers.customLineLayers),
+    ...lineLayers,
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     measurementSettings: normalizeMeasurementSettings(source.measurementSettings),
@@ -561,6 +564,7 @@ const dimensionLinkCancel = document.getElementById("dimensionLinkCancel");
 const dimensionLinkButtons = [...dimensionLinks.querySelectorAll("[data-dimension-anchor]")];
 const saveIndicator = document.getElementById("saveIndicator");
 const layersSheet = document.getElementById("layersSheet");
+const addLineLayerButton = document.getElementById("addLineLayerButton");
 const exportSheet = document.getElementById("exportSheet");
 const layerList = document.getElementById("layerList");
 const exportCards = [...document.querySelectorAll(".export-card")];
@@ -659,22 +663,27 @@ function createAnnotationToolMenu() {
 }
 
 const layerMeta = {
-  walls: { name: "Стены", color: "#26313d", description: "основные стены и перегородки" },
-  dimensions: { name: "Размеры", color: "#1f75ff", description: "линейные и угловые размеры" },
-  text: { name: "Текст и выноски", color: "#754997", description: "надписи и указатели" },
-  areas: { name: "Площади", color: PLAN_AREA_COLOR, description: "границы и значения в м²" },
-  elevations: { name: "Высоты Z", color: "#167d5c", description: "потолок, ригели и перепады" },
-  furniture: { name: "Мебель", color: "#1db4a8", description: "блоки мебели, двери, окна" },
-  measure: { name: "Черновые", color: "#9b6bff", description: "линии замера и наброски" },
+  walls: { name: "Стены", color: "#26313d" },
+  dimensions: { name: "Размеры", color: "#1f75ff" },
+  text: { name: "Текст и выноски", color: "#754997" },
+  areas: { name: "Площади", color: PLAN_AREA_COLOR },
+  elevations: { name: "Высоты Z", color: "#167d5c" },
+  furniture: { name: "Мебель", color: "#1db4a8" },
+  [DEFAULT_LINE_LAYER]: { name: "Черновые", color: "#9b6bff" },
 };
-const defaultPlanLayers = ["measure", "dimensions", "text", "areas", "elevations"];
+const defaultPlanLayers = [DEFAULT_LINE_LAYER, "dimensions", "text", "areas", "elevations"];
+const lineLayerColors = ["#d05554", "#00857b", "#b37002", "#526fd0", "#b04d86", "#5c862e", "#af5a2d", "#3e8098"];
 
-function projectDefaultLayers(project) {
+function projectDefaultLayers(project, customLineLayers) {
   const rooms = Array.isArray(project.survey?.rooms) ? project.survey.rooms : [];
   const hasLayer = (entities, layer) => Array.isArray(entities) && entities.some((entity) => entity?.layer === layer);
   const legacy = ["walls", "furniture"].filter((layer) => hasLayer(project.entities, layer) ||
     rooms.some((room) => hasLayer(room?.drawing?.entities, layer)));
-  return [...defaultPlanLayers, ...legacy];
+  return [...defaultPlanLayers, ...legacy, ...customLineLayers.map(({ id }) => id)];
+}
+
+function drawingLayerInfo(id = DEFAULT_LINE_LAYER) {
+  return Object.hasOwn(layerMeta, id) ? layerMeta[id] : state.customLineLayers.find((layer) => layer.id === id);
 }
 const selectionFilters = ["all", "lines", "dimensions"];
 
@@ -740,6 +749,8 @@ const state = {
   gridStep: 100,
   polarStep: 5,
   visibleLayers: new Set(defaultPlanLayers),
+  customLineLayers: [],
+  activeLineLayer: DEFAULT_LINE_LAYER,
   entities: [],
 };
 
@@ -1697,7 +1708,7 @@ async function projectRequestError(response, fallback) {
 
 let closeProjectDialog = null;
 
-function showProjectDialog({ title, message = "", value = "", placeholder = "", inputLabel = "Название проекта", confirmText = "Готово", destructive = false, withInput = true, choices = [] }) {
+function showProjectDialog({ title, message = "", value = "", placeholder = "", inputLabel = "Название проекта", confirmText = "Готово", destructive = false, withInput = true, choices = [], maxLength = 80, validateValue }) {
   return new Promise((resolve) => {
     closeProjectDialog?.(null);
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1735,10 +1746,11 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
       input.type = "text";
       input.value = value;
       input.placeholder = placeholder || value;
-      input.maxLength = 80;
+      input.maxLength = maxLength;
       input.autocomplete = "off";
       input.setAttribute("aria-label", inputLabel);
       input.required = true;
+      if (validateValue) input.addEventListener("input", () => input.setCustomValidity(""));
       dialog.append(input);
     }
 
@@ -1795,9 +1807,15 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
         finish(true);
         return;
       }
-      const nextValue = input.value.trim().slice(0, 80);
+      const nextValue = input.value.trim().slice(0, maxLength);
       if (!nextValue) {
         input.focus();
+        return;
+      }
+      const error = validateValue?.(nextValue);
+      if (error) {
+        input.setCustomValidity(error);
+        input.reportValidity();
         return;
       }
       finish(nextValue);
@@ -2235,6 +2253,7 @@ function serializableProjectContent() {
     gridStep: state.gridStep,
     polarStep: state.polarStep,
     visibleLayers: [...state.visibleLayers],
+    ...(state.customLineLayers.length ? { customLineLayers: state.customLineLayers, activeLineLayer: state.activeLineLayer } : {}),
     annotationLayers: 1,
     annotationScale: state.annotationScale,
     measurementSettings: { ...state.measurementSettings },
@@ -2321,7 +2340,8 @@ function restoreProject(project) {
     state.snapsMuted = false;
     state.gridStep = GRID_STEPS.includes(project.gridStep) ? project.gridStep : 100;
     state.polarStep = POLAR_STEPS.includes(project.polarStep) ? project.polarStep : 5;
-    const availableLayers = new Set(projectDefaultLayers(project));
+    Object.assign(state, normalizeLineLayerSettings(project));
+    const availableLayers = new Set(projectDefaultLayers(project, state.customLineLayers));
     state.visibleLayers = new Set((Array.isArray(project.visibleLayers) ? project.visibleLayers : [...availableLayers])
       .filter((id) => availableLayers.has(id)));
     if (project.annotationLayers !== 1) {
@@ -3487,13 +3507,14 @@ function drawEntity(entity, c) {
   }
 }
 
-function drawPlanScene(entities, c) {
+function drawPlanScene(entities, c, customLineLayers = state.customLineLayers) {
   const zones = entities.filter(isPlanAnnotationZone);
   if (!printRendering) zoneLabelRects.clear();
   for (const zone of zones) drawPlanAnnotationZone(zone, c, { outline: true });
   drawWalls(entities, c);
+  const layerPalettes = new Map(customLineLayers.map(({ id, color }) => [id, { ...c, line: color }]));
   for (const entity of entities) {
-    if (entity.type !== "wall" && !isPlanAnnotationZone(entity)) drawEntity(entity, c);
+    if (entity.type !== "wall" && !isPlanAnnotationZone(entity)) drawEntity(entity, layerPalettes.get(entity.layer) || c);
   }
   if (!zones.length) return;
   const anchors = planAnnotationAnchors(zones);
@@ -6696,7 +6717,7 @@ function locateViewportObject(id, label) {
 function openViewportObjects() {
   const objects = state.entities.filter((entity) => isLayerVisible(entity.layer)).map((entity) => {
     const label = viewportObjectLabel(entity);
-    const layer = layerMeta[entity.layer || "measure"]?.name || entity.layer;
+    const layer = drawingLayerInfo(entity.layer || DEFAULT_LINE_LAYER)?.name || entity.layer;
     return { id: entity.id, label, layer, searchText: `${label} ${layer}`.toLocaleLowerCase("ru-RU") };
   });
   const dialog = document.createElement("dialog");
@@ -7864,7 +7885,10 @@ function commitLinePoint(point) {
   if (!draft) {
     setSelection(null);
     state.drawing = { points: [point], start: point, end: point, lockedEnd: false };
-    if (polyline) state.drawing.bulges = [];
+    if (polyline) {
+      state.drawing.layer = revealActiveLineLayer();
+      state.drawing.bulges = [];
+    }
     hideDrawToolMenu();
     statusChip.textContent = `${drawingToolName(state.tool)}. Укажите следующую точку`;
   } else {
@@ -7886,7 +7910,7 @@ function commitLinePoint(point) {
         : "Следующая вершина · ESC — завершить";
     } else {
       state.drawing = null;
-      pushEntity(line(newLineId(), start.x, start.y, point.x, point.y), { select: false });
+      pushEntity(line(newLineId(), start.x, start.y, point.x, point.y, revealActiveLineLayer()), { select: false });
       statusChip.textContent = `Отрезок ${projectLength(length)}. Укажите начало новой линии`;
     }
   }
@@ -7962,7 +7986,7 @@ function finishLineCommand(closed = false, closingBulge = 0) {
   if (!draft || !["line", "polyline"].includes(state.tool)) return false;
   if (state.tool === "polyline" && draft.points.length >= 2) {
     const bulges = closed ? [...draft.bulges, closingBulge] : draft.bulges;
-    const entity = createPolyline(newLineId("polyline"), draft.points, { closed, bulges });
+    const entity = createPolyline(newLineId("polyline"), draft.points, { closed, bulges, layer: draft.layer });
     if (!entity) {
       statusChip.textContent = "Замыкающий сегмент должен образовать отдельную границу контура";
       return false;
@@ -9093,7 +9117,7 @@ function applyExactInput() {
     state.drawing = { start: end, end, lockedEnd: false };
   } else {
     const id = `line-${Date.now()}`;
-    pushEntity(line(id, base.x, base.y, end.x, end.y));
+    pushEntity(line(id, base.x, base.y, end.x, end.y, revealActiveLineLayer()));
   }
   draw();
 }
@@ -11147,13 +11171,14 @@ function syncExportOptions() {
   const entities = selectedExportGeometry(state.entities, details, state.visibleLayers);
   const layers = new Set(entities.map((entity) => entity.layer || "measure"));
   const vertexCount = exportDraftVertexCount();
-  const includesDraft = vertexCount >= 2 && (exportScope.value === "all" || state.visibleLayers.has("measure"));
-  if (includesDraft) layers.add("measure");
+  const draftLayer = state.drawing?.layer || DEFAULT_LINE_LAYER;
+  const includesDraft = vertexCount >= 2 && (exportScope.value === "all" || state.visibleLayers.has(draftLayer));
+  if (includesDraft) layers.add(draftLayer);
   const skipped = state.entities.length + (details.entities?.length || 0) - entities.length;
   const hiddenLayers = new Set([...state.entities, ...details.entities].map((entity) => entity.layer || "measure")
     .filter((layer) => !state.visibleLayers.has(layer)));
-  if (vertexCount >= 2 && !state.visibleLayers.has("measure")) hiddenLayers.add("measure");
-  const layerNames = (ids) => [...ids].map((id) => layerMeta[id]?.name || id).join(", ");
+  if (vertexCount >= 2 && !state.visibleLayers.has(draftLayer)) hiddenLayers.add(draftLayer);
+  const layerNames = (ids) => [...ids].map((id) => drawingLayerInfo(id)?.name || id).join(", ");
   const draftMessage = vertexCount >= 2 ? ` Полилиния из ${vertexCount} вершин будет завершена.` : "";
   const dimensionWarning = dimensionExportWarning(entities);
   const hiddenMessage = exportScope.value === "visible" && hiddenLayers.size ? ` Скрыто объектов: ${skipped + Number(vertexCount >= 2 && !includesDraft)}. Слои: ${layerNames(hiddenLayers)}.` : "";
@@ -11190,13 +11215,13 @@ document.getElementById("shareExportFile").addEventListener("click", () => {
 document.getElementById("layersButton").addEventListener("click", (event) => {
   renderLayerList();
   showSheet(layersSheet, event.currentTarget);
-  statusChip.textContent = "Слои: выключайте лишнее для скорости и чистоты";
 });
 
 document.getElementById("closeLayersButton").addEventListener("click", () => hideSheet(layersSheet));
+addLineLayerButton.addEventListener("click", () => void addLineLayer());
 document.getElementById("closeExportButton").addEventListener("click", () => hideSheet(exportSheet));
 
-function renderExportPlan(context, view, entities, scaleFactor, measurementSettings) {
+function renderExportPlan(context, view, entities, scaleFactor, measurementSettings, customLineLayers) {
   const editorContext = ctx;
   const editorView = state.view;
   const editorTheme = state.theme;
@@ -11212,7 +11237,7 @@ function renderExportPlan(context, view, entities, scaleFactor, measurementSetti
   state.measurementSettings = measurementSettings;
   printRendering = true;
   try {
-    drawPlanScene(entities, palette);
+    drawPlanScene(entities, palette, customLineLayers);
   } finally {
     printRendering = false;
     state.annotationScale = editorAnnotationScale;
@@ -11250,12 +11275,13 @@ async function exportCurrentProject(type) {
     const pdf = () => buildPlotPdf(project, entities, details, {
       scale: exportScale.value, photos: exportPhotos.checked,
       layerLabel: exportScope.value === "all" ? "все слои" : "видимые слои",
-    }, renderExportPlan);
+    }, (...args) => renderExportPlan(...args, project.customLineLayers ?? []));
     const dxf = (revit = false) => {
       const includeReadings = exportScope.value === "all" || project.visibleLayers.includes("dimensions");
       const drawing = includeReadings ? entities.concat(surveyDxfLegend(entities, details.records)) : entities;
       if (!drawing.length) throw new Error("На выбранных слоях нет объектов для DXF. Попробуйте выбрать все слои.");
-      const options = { annotationScale: project.annotationScale, measurementSettings: project.measurementSettings };
+      const options = { annotationScale: project.annotationScale, measurementSettings: project.measurementSettings,
+        customLineLayers: project.customLineLayers };
       return revit ? buildRevitDxf(drawing, options) : buildDxf(drawing, options);
     };
     const backup = () => JSON.stringify(project, null, 2);
@@ -11336,40 +11362,120 @@ shell.addEventListener("keydown", (event) => {
 
 function renderLayerList() {
   if (!layerList) return;
-  layerList.replaceChildren();
-  for (const [id, meta] of Object.entries(layerMeta)) {
-    const count = state.entities.filter((entity) => (entity.layer || "measure") === id).length;
-    if (!count && (id === "walls" || id === "furniture")) continue;
-    const item = document.createElement("label");
+  const rows = document.createDocumentFragment();
+  const layers = [...Object.entries(layerMeta), ...state.customLineLayers.map((layer) => [layer.id, layer])];
+  for (const [id, { name, color }] of layers) {
+    if ((id === "walls" || id === "furniture") && !state.entities.some((entity) => entity.layer === id)) continue;
+    const item = document.createElement("div");
     item.className = "layer-item";
-    item.innerHTML = `
-      <i class="layer-color" style="background:${meta.color}"></i>
-      <span><strong>${meta.name}</strong><span>${meta.description} · ${count} объектов</span></span>
-      <input class="layer-switch" type="checkbox" ${state.visibleLayers.has(id) ? "checked" : ""} />
-    `;
-    const input = item.querySelector("input");
-    input.addEventListener("change", () => {
-      if (input.checked) {
-        state.visibleLayers.add(id);
-      } else {
-        state.visibleLayers.delete(id);
-      }
-      if (state.selectedId) {
-        const selected = state.entities.find((entity) => entity.id === state.selectedId);
-        if (selected && !isLayerVisible(selected.layer)) setSelection(null);
-      }
-      draw();
-      markProjectDirty("layers");
-      statusChip.textContent = `${meta.name}: ${input.checked ? "включен" : "скрыт"}`;
-    });
-    layerList.appendChild(item);
+    item.dataset.layer = id;
+    const selectable = id === DEFAULT_LINE_LAYER || !Object.hasOwn(layerMeta, id);
+    const title = document.createElement(selectable ? "button" : "span");
+    title.className = "layer-name";
+    if (selectable) {
+      title.type = "button";
+      title.dataset.lineLayer = id;
+      title.addEventListener("click", () => activateLineLayer(id));
+    }
+    const swatch = document.createElement("i");
+    swatch.className = "layer-color";
+    swatch.style.backgroundColor = color;
+    swatch.setAttribute("aria-hidden", "true");
+    const caption = document.createElement("span");
+    caption.textContent = name;
+    title.append(swatch, caption);
+
+    const visibility = document.createElement("label");
+    visibility.className = "layer-visibility";
+    const input = document.createElement("input");
+    input.className = "layer-toggle";
+    input.type = "checkbox";
+    input.setAttribute("aria-label", `Видимость слоя ${name}`);
+    input.addEventListener("change", () => setLayerVisibility(id, input.checked));
+    visibility.append(input);
+    item.append(title, visibility);
+    rows.append(item);
   }
+  layerList.replaceChildren(rows);
+  addLineLayerButton.disabled = state.customLineLayers.length >= MAX_CUSTOM_LINE_LAYERS;
+  syncLayerControls();
+}
+
+function syncLayerControls() {
+  for (const row of layerList.children) {
+    const id = row.dataset.layer;
+    row.querySelector("input").checked = state.visibleLayers.has(id);
+    row.querySelector("button[data-line-layer]")?.setAttribute("aria-pressed", String(state.activeLineLayer === id));
+  }
+}
+
+function revealActiveLineLayer() {
+  const id = state.activeLineLayer;
+  state.visibleLayers.add(id);
+  return id;
+}
+
+function activateLineLayer(id) {
+  state.activeLineLayer = id;
+  revealActiveLineLayer();
+  syncLayerControls();
+  markProjectDirty("active-line-layer");
+  statusChip.textContent = `Слой «${drawingLayerInfo(id).name}» выбран для линий`;
+  draw();
+}
+
+function setLayerVisibility(id, visible) {
+  if (visible) state.visibleLayers.add(id);
+  else {
+    state.visibleLayers.delete(id);
+    if (state.activeLineLayer === id) {
+      const lineLayers = [DEFAULT_LINE_LAYER, ...state.customLineLayers.map((layer) => layer.id)];
+      state.activeLineLayer = lineLayers.find((layer) => state.visibleLayers.has(layer)) || DEFAULT_LINE_LAYER;
+    }
+    const selected = selectedEntities();
+    if (selected.some((entity) => !isLayerVisible(entity.layer))) {
+      setSelection(selected.filter((entity) => isLayerVisible(entity.layer)).map((entity) => entity.id));
+    }
+    resetSnapTracking();
+    state.dimensionSnapHint = null;
+  }
+  syncLayerControls();
+  markProjectDirty("layers");
+  draw();
+}
+
+async function addLineLayer() {
+  if (!persistence.ready || state.customLineLayers.length >= MAX_CUSTOM_LINE_LAYERS) return;
+  const identity = projectIdentity();
+  const name = await showProjectDialog({
+    title: "Новый слой",
+    inputLabel: "Название слоя",
+    placeholder: "Название слоя",
+    confirmText: "Создать",
+    maxLength: MAX_LINE_LAYER_NAME_LENGTH,
+    validateValue: (value) => {
+      if (!normalizeLineLayerName(value)) return "Введите допустимое название слоя";
+      const ids = projectDefaultLayers(state, state.customLineLayers);
+      if (ids.some((id) => drawingLayerInfo(id).name.toLocaleLowerCase("ru") === value.toLocaleLowerCase("ru"))) {
+        return "Слой с таким названием уже есть";
+      }
+      return null;
+    },
+  });
+  if (!name || !isActiveProject(identity)) return;
+  const id = newLineId("line-layer");
+  const color = lineLayerColors[state.customLineLayers.length % lineLayerColors.length];
+  state.customLineLayers.push({ id, name, color });
+  activateLineLayer(id);
+  renderLayerList();
+  layerList.lastElementChild?.querySelector("button")?.focus();
 }
 
 function acceptedSurveyDraft() {
   if (state.tool !== "polyline" || !state.drawing?.points?.length) return undefined;
-  const { points, bulges } = state.drawing;
-  return { tool: "polyline", points: points.map(({ x, y }) => ({ x, y })), ...(bulges.some(Boolean) ? { bulges: [...bulges] } : {}) };
+  const { points, bulges, layer } = state.drawing;
+  return { tool: "polyline", points: points.map(({ x, y }) => ({ x, y })),
+    ...(bulges.some(Boolean) ? { bulges: [...bulges] } : {}), ...(layer && layer !== DEFAULT_LINE_LAYER ? { layer } : {}) };
 }
 
 function restoreAcceptedSurveyDraft(draft) {
@@ -11381,7 +11487,8 @@ function restoreAcceptedSurveyDraft(draft) {
   const start = points.at(-1);
   state.tool = "polyline";
   shell.dataset.tool = "polyline";
-  state.drawing = { points, bulges: draft.bulges ? [...draft.bulges] : Array(points.length - 1).fill(0), start, end: start, lockedEnd: false };
+  state.drawing = { points, bulges: draft.bulges ? [...draft.bulges] : Array(points.length - 1).fill(0), start, end: start,
+    lockedEnd: false, layer: normalizeActiveLineLayer(draft.layer, state.customLineLayers) };
 }
 
 function activeSurveyRoom() {
@@ -12285,8 +12392,10 @@ initSurveyPanel();
 initAuthGate();
 lockPortraitOrientation();
 window.zamerDebug = {
-  exportDxf: () => buildDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings }),
-  exportRevitDxf: () => buildRevitDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings }),
+  exportDxf: () => buildDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings,
+    customLineLayers: state.customLineLayers }),
+  exportRevitDxf: () => buildRevitDxf(state.entities, { annotationScale: state.annotationScale, measurementSettings: state.measurementSettings,
+    customLineLayers: state.customLineLayers }),
   entityCount: () => state.entities.length,
   tool: () => state.tool,
   drawing: () => Boolean(state.drawing),
