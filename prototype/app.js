@@ -460,8 +460,6 @@ const dimensionToolButtons = [...dimensionToolMenu.querySelectorAll("[data-dimen
 const annotationToolMenu = createAnnotationToolMenu();
 const annotationToolButtons = [...annotationToolMenu.querySelectorAll("[data-annotation-tool]")];
 const selectToolMenu = document.getElementById("selectToolMenu");
-const selectionCommandsButton = document.getElementById("selectionCommandsButton");
-let requestedSelectionCommands = null;
 const selectModeMenu = createSelectModeMenu();
 const selectionCommandButtons = [...selectToolMenu.querySelectorAll("[data-action]")];
 const snaps = [...document.querySelectorAll("[data-snap]")];
@@ -695,7 +693,6 @@ const state = {
   dimensionTool: "aligned",
   annotationScale: 1,
   measurementSettings: normalizeMeasurementSettings(),
-  cursorMenuReady: false,
   selectTool: "select",
   selectionFilter: "all",
 
@@ -2922,13 +2919,8 @@ function drawRotatePreview(entity, command, end, c) {
 function syncSelectionActions() {
   const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu].some((menu) => !menu.hidden);
   const framing = state.selectionDrag || ["window", "lasso"].includes(state.selectTool);
-  const entity = editableSelectionEntity();
-  if (requestedSelectionCommands !== entity?.id) requestedSelectionCommands = null;
-  const available = Boolean(entity) && !framing && syncSelectToolMenu();
-  const show = available && requestedSelectionCommands === entity.id && !anotherMenuOpen && !snapMore.open;
+  const show = editableSelectionEntity() && !framing && !anotherMenuOpen && !snapMore.open && syncSelectToolMenu();
   selectToolMenu.hidden = !show;
-  selectionCommandsButton.disabled = !available;
-  selectionCommandsButton.setAttribute("aria-expanded", String(show));
   syncToolButtons();
 }
 
@@ -3212,7 +3204,7 @@ function applyTapSelection(hitId) {
     setSelection(hitId);
   }
   const count = selectedEntities().length;
-  statusChip.textContent = count > 1 ? `Выбрано: ${count}` : hitId ? "Элемент выбран" : selectionStatusText();
+  statusChip.textContent = count > 1 ? `Выбрано: ${count}` : count ? "Элемент выбран" : selectionStatusText();
   if (count) {
     if (state.pointer) state.openEditMenuAfterPointer = true;
     else showSelectToolMenu();
@@ -7075,7 +7067,6 @@ function syncToolButtons() {
 
 function setTool(tool) {
   window.clearTimeout(state.pointer?.selectionHoldTimer);
-  state.cursorMenuReady = false;
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   state.directManipulationIds.clear();
@@ -7265,11 +7256,16 @@ function syncSelectModeMenu() {
     const mode = button.dataset.selectMode;
     if (mode === "filter") {
       const label = button.querySelector("small");
-      if (label) label.textContent = state.selectionFilter === "all" ? "Фильтр" : selectionFilterLabel();
-      button.classList.toggle("active", state.selectionFilter !== "all");
+      const filtered = state.selectionFilter !== "all";
+      if (label) label.textContent = filtered ? selectionFilterLabel() : "Фильтр";
+      button.setAttribute("aria-label", `Фильтр: ${selectionFilterLabel()}`);
+      button.setAttribute("aria-pressed", String(filtered));
+      button.classList.toggle("active", filtered);
       return;
     }
-    button.classList.toggle("active", state.selectTool === mode);
+    const active = state.selectTool === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
 }
 
@@ -8893,6 +8889,10 @@ canvas.addEventListener("pointerdown", (event) => {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
     return;
   }
+  if (state.selectTool === "multi" && viewportIsSelecting()) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "select-only", tapCandidateId: pickEntity(screen) };
+    return;
+  }
   if (event.ctrlKey && !event.shiftKey && !event.altKey && event.pointerType === "mouse" && event.button === 0 &&
       state.tool === "select" && state.selectTool === "select" && !state.selectedEndpoint && !state.moveCommand && !state.offsetCommand) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "quick-trim-once" };
@@ -9259,11 +9259,13 @@ function finishCanvasPointer(event, canceled = false) {
       const hitId = state.pointer.tapCandidateId;
       applyTapSelection(hitId);
       if (state.selectedIds.includes(hitId)) state.directManipulationIds.add(hitId);
-      const entity = state.entities.find(item => item.id === hitId);
-      if (entity?.dimensionKind === "angular") statusChip.textContent = "Угол выбран. Тяните дугу или точку измерения";
-      else statusChip.textContent = canDragEntityDirectly(entity)
-        ? "Объект активирован. Теперь его можно перетащить"
-        : "Объект выбран. Для перемещения нажмите «Переместить»";
+      if (state.selectTool !== "multi") {
+        const entity = state.entities.find(item => item.id === hitId);
+        if (entity?.dimensionKind === "angular") statusChip.textContent = "Угол выбран. Тяните дугу или точку измерения";
+        else statusChip.textContent = canDragEntityDirectly(entity)
+          ? "Объект активирован. Теперь его можно перетащить"
+          : "Объект выбран. Для перемещения нажмите «Переместить»";
+      }
     }
   } else if (state.pointer?.mode === "selection-window" || state.pointer?.mode === "selection-lasso") {
     if (!canceled) {
@@ -10058,21 +10060,18 @@ tools.filter((button) => button !== cursorToolButton).forEach((button) => {
 });
 
 function openCursorOptions() {
-  if (state.tool !== "select" || state.lineEdit || state.moveCommand || state.offsetCommand || state.dimensionAttach) activatePlainSelect();
+  if (!viewportIsSelecting() || state.selectTool !== "select" || state.circleRadiusEdit) activatePlainSelect();
+  snapMore.open = false;
   showSelectModeMenu();
   selectModeMenu.querySelector("button")?.focus({ preventScroll: true });
 }
 
 cursorToolButton.addEventListener("click", () => {
-  const idleSelection = state.tool === "select" && state.selectTool === "select" &&
-    !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.dimensionAttach;
-  if (idleSelection && state.cursorMenuReady && selectModeMenu.hidden) {
-    openCursorOptions();
-    state.cursorMenuReady = false;
-    return;
+  if (selectModeMenu.hidden) openCursorOptions();
+  else {
+    hideSelectModeMenu();
+    syncSelectionActions();
   }
-  activatePlainSelect();
-  state.cursorMenuReady = true;
 });
 cursorToolButton.addEventListener("keydown", (event) => {
   if (event.key !== "ArrowDown" && !(event.shiftKey && event.key === "F10")) return;
@@ -10206,7 +10205,10 @@ gridStepSelect.addEventListener("change", () => {
   draw();
 });
 
-snapMore.addEventListener("toggle", syncSelectionActions);
+snapMore.addEventListener("toggle", () => {
+  if (snapMore.open) hideSelectModeMenu();
+  syncSelectionActions();
+});
 snapMore.addEventListener("keydown", (event) => {
   if (!snapMore.open || event.key !== "Escape") return;
   event.preventDefault();
@@ -10483,23 +10485,10 @@ selectToolMenu.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   event.preventDefault();
   event.stopPropagation();
-  requestedSelectionCommands = null;
-  syncSelectionActions();
-  selectionCommandsButton.focus({ preventScroll: true });
-});
-selectionCommandsButton.addEventListener("click", (event) => {
-  const entity = editableSelectionEntity();
-  if (!entity || selectionCommandsButton.disabled) return;
-  if (!selectToolMenu.hidden) requestedSelectionCommands = null;
-  else {
-    hideDrawToolMenu();
-    hideDimensionToolMenu();
-    hideAnnotationToolMenu();
-    hideSelectModeMenu();
-    requestedSelectionCommands = entity.id;
-  }
-  syncSelectionActions();
-  if (event.detail === 0 && !selectToolMenu.hidden) selectionCommandButtons.find((button) => !button.hidden)?.focus({ preventScroll: true });
+  setSelection(null);
+  statusChip.textContent = selectionStatusText();
+  cursorToolButton.focus({ preventScroll: true });
+  draw();
 });
 
 function bindPointAction(button, action) {

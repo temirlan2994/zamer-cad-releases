@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=241" />
+    <link rel="stylesheet" href="./styles.css?v=242" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -158,19 +158,18 @@
 
       <section class="snap-panel" aria-label="Быстрая правка">
         <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Правка чертежа">
+          <button class="icon-button tool active" id="cursorToolButton" data-tool="select" type="button" title="Выбор" aria-label="Выбор" aria-pressed="true" aria-expanded="false" aria-controls="selectModeMenu"><span aria-hidden="true">↖</span></button>
           <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span></button>
           <button class="icon-button" id="quickCopyTool" type="button" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span></button>
           <button class="icon-button" id="quickRotateTool" type="button" title="Повернуть" aria-label="Повернуть выбранное" disabled><span aria-hidden="true">↻</span></button>
           <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span></button>
           <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false" disabled><span aria-hidden="true">✂</span></button>
           <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false" disabled><span aria-hidden="true">⇥</span></button>
-          <button class="icon-button" id="selectionCommandsButton" type="button" title="Другие команды" aria-label="Другие команды выбранного объекта" aria-controls="selectToolMenu" aria-expanded="false" disabled><span aria-hidden="true">…</span></button>
         </div>
       </section>
 
       <section class="workspace">
         <nav class="tool-rail" aria-label="Инструменты">
-          <button class="tool active" data-tool="select" aria-label="Курсор. Повторное нажатие открывает режимы выбора" title="Повторное нажатие открывает режимы выбора" aria-expanded="false" aria-controls="selectModeMenu"><span>↖</span><small>ESC</small></button>
           <button class="tool" data-tool="line" aria-pressed="false"><span>╱</span><small>Линия</small></button>
           <button class="tool tool-with-menu" id="figureToolButton" type="button" title="Фигуры" aria-controls="drawToolMenu" aria-expanded="false"><span>▭</span><small>Фигуры</small></button>
           <button class="tool" data-tool="dimension" type="button" aria-controls="dimensionToolMenu" aria-expanded="false"><span>↔</span><small>Размеры</small></button>
@@ -466,7 +465,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=241"></script>
+    <script type="module" src="./app.js?v=242"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
