@@ -12,6 +12,7 @@ import { createPolyline, polylineArcFromBend, polylineBounds, polylineSegments, 
 import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
 import { MAX_ZAMER_FILE_BYTES, validateZamerProject } from "./core/project-format.js";
+import { buildProjectPreview } from "./core/project-preview.js";
 import { describeSurveyRecord, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
 import { createSurveyLaser } from "./core/survey-laser.js";
@@ -39,6 +40,8 @@ function cadIcon(name) {
     plan: '<path d="M3 3h18v18H3zM3 11h9V3m0 8v5m0 5v-2m3-8h6"/>',
     import: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>',
     export: '<path d="M12 16V3m-4 4 4-4 4 4M4 16v5h16v-5"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    history: '<path d="M3 12a9 9 0 1 1 2 5.7M3 7v5h5m4-5v5l3 2"/>',
     undo: '<path d="m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14"/>',
     redo: '<path d="m16 4 5 5-5 5m5-5H11a7 7 0 0 0 0 14"/>',
     layers: '<path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 17l10 5 10-5"/>',
@@ -426,14 +429,13 @@ const authError = document.getElementById("authError");
 const projectHome = document.getElementById("projectHome");
 const projectList = document.getElementById("projectList");
 const projectSearchInput = document.getElementById("projectSearchInput");
-const createProjectButton = document.getElementById("createProjectButton");
 const createBlankProjectButton = document.getElementById("createBlankProjectButton");
+const projectImportButton = document.getElementById("projectImportButton");
 const projectImportInput = document.getElementById("projectImportInput");
 const projectTrashButton = document.getElementById("projectTrashButton");
 const projectListHeading = document.getElementById("projectListHeading");
 const projectHomeStatus = document.getElementById("projectHomeStatus");
 const installAppButton = document.getElementById("installAppButton");
-const refreshProjectsButton = document.getElementById("refreshProjectsButton");
 const accountBadge = document.getElementById("accountBadge");
 const logoutButton = document.getElementById("logoutButton");
 const backToProjectsButton = document.getElementById("backToProjectsButton");
@@ -1181,6 +1183,7 @@ function updateProjectTitle() {
 
 function setProjectHomeVisible(visible) {
   if (!projectHome) return;
+  if (!visible) closeProjectActions();
   if (visible && state.leaderInput) {
     state.drawing = null;
     closeLeaderInput();
@@ -1193,6 +1196,7 @@ function setProjectHomeVisible(visible) {
 
 function setAuthScreenVisible(visible) {
   if (!authScreen) return;
+  if (visible) closeProjectActions();
   authScreen.hidden = !visible;
   shell.classList.toggle("auth-open", visible);
   syncEditorAccessibility();
@@ -1231,8 +1235,8 @@ function renderAuthUi() {
   if (authDevButton) authDevButton.disabled = authState.busy;
   if (authModeButton) authModeButton.disabled = authState.busy;
   if (accountBadge) {
-    accountBadge.hidden = !authState.user;
-    accountBadge.textContent = nativeApkMode ? "Офлайн · сохранение на телефоне" : (authState.user ? `Аккаунт: ${authState.user.login}` : "");
+    accountBadge.hidden = nativeApkMode || !authState.user;
+    accountBadge.textContent = authState.user?.login || "";
   }
   if (logoutButton) logoutButton.hidden = nativeApkMode || !authState.user;
 }
@@ -1255,6 +1259,7 @@ function resetProjectSession() {
   persistence.projects = [];
   persistence.showingTrash = false;
   persistence.trash = [];
+  projectPreviewCache.clear();
   setSelection([]);
   state.drawing = null;
   closeLeaderInput();
@@ -1436,15 +1441,27 @@ async function logoutAccount() {
 }
 
 function projectDateLabel(value) {
-  const date = new Date(value || Date.now());
-  if (Number.isNaN(date.getTime())) return "без даты";
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function projectMetaLine(project) {
+const projectObjectPlural = new Intl.PluralRules("ru-RU");
+const projectPreviewCache = new Map();
+const projectPreviewSources = new WeakMap();
+const projectPreviewObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver((entries, observer) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    observer.unobserve(entry.target);
+    void renderProjectPreview(entry.target);
+  }
+}, { root: projectList, rootMargin: "96px" }) : null;
+
+function projectMetaLine(project, showingTrash) {
   const count = Number(project.entityCount) || 0;
-  return [project.site && project.site !== project.name ? project.site : "", project.visitDate,
-    `${count} объектов`, projectDateLabel(project.updatedAt)].filter(Boolean).join(" · ");
+  const unit = { one: "объект", few: "объекта", many: "объектов" }[projectObjectPlural.select(count)] || "объекта";
+  const date = projectDateLabel(showingTrash ? project.deletedAt : project.updatedAt);
+  return [showingTrash && date ? `Удалён ${date}` : date, `${count} ${unit}`].filter(Boolean).join(" · ");
 }
 
 function filteredProjects() {
@@ -1458,79 +1475,227 @@ function filteredProjects() {
   });
 }
 
+async function projectPreviewDocument(identity, archived) {
+  if (archived) {
+    try {
+      const db = await openLocalProjectDb();
+      if (db?.objectStoreNames.contains("trash")) {
+        const store = db.transaction("trash", "readonly").objectStore("trash");
+        const entry = await idbRequest(store.get(identity.projectId));
+        if (entry?.project) return entry.project;
+      }
+    } catch (error) {
+      console.warn("Cannot read archived preview", error);
+    }
+    return apkReadJson(`${apkTrashPrefix}${identity.projectId}`, null);
+  }
+  if (nativeApkMode) {
+    const primary = apkReadJson(apkProjectKey(identity.projectId), null);
+    const local = await loadProjectFromLocalStore(identity);
+    return chooseProjectSource(local, primary).project;
+  }
+  const versions = await readProjectVersions(identity);
+  return versions.unauthorized ? null : versions.choice.project;
+}
+
+async function renderProjectPreview(element) {
+  const source = projectPreviewSources.get(element);
+  if (!source || !element.isConnected || source.identity.clientId !== persistence.clientId) return;
+  const { project, archived, identity } = source;
+  const key = JSON.stringify([identity.clientId, archived, project.id, project.revision, project.updatedAt, project.entityCount]);
+  let pending = projectPreviewCache.get(key);
+  if (!pending) {
+    pending = projectPreviewDocument(identity, archived)
+      .then((saved) => saved && { sketch: buildProjectPreview(saved) })
+      .catch((error) => {
+        console.warn("Cannot render project preview", error);
+        return null;
+      });
+    projectPreviewCache.set(key, pending);
+    if (projectPreviewCache.size > 80) projectPreviewCache.delete(projectPreviewCache.keys().next().value);
+  }
+  const result = await pending;
+  if (!result && projectPreviewCache.get(key) === pending) projectPreviewCache.delete(key);
+  if (!element.isConnected || persistence.clientId !== identity.clientId) return;
+  element.dataset.previewState = result?.sketch ? "ready" : result ? "empty" : "unavailable";
+  if (!result?.sketch) return;
+  const { viewBox, paths } = result.sketch;
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  svg.setAttribute("viewBox", viewBox);
+  svg.setAttribute("class", "project-preview-sketch");
+  svg.setAttribute("aria-hidden", "true");
+  for (const path of paths) {
+    const stroke = document.createElementNS(namespace, "path");
+    stroke.setAttribute("class", `project-preview-${path.tone}${path.fill ? " project-preview-fill" : ""}`);
+    stroke.setAttribute("d", path.d);
+    svg.append(stroke);
+  }
+  element.replaceChildren(svg);
+}
+
+function projectCardButton(projectId, selector = ".project-card-open") {
+  const card = [...projectList.querySelectorAll(".project-card")].find((item) => item.dataset.projectId === projectId);
+  return card?.querySelector(selector);
+}
+
 function renderProjectList() {
   if (!projectList) return;
   const showingTrash = persistence.showingTrash;
-  if (projectListHeading) projectListHeading.textContent = showingTrash ? "Корзина" : "Последние файлы";
+  if (projectListHeading) projectListHeading.textContent = showingTrash ? "Корзина" : "Недавние";
   if (projectTrashButton) {
     projectTrashButton.hidden = !nativeApkMode;
     projectTrashButton.setAttribute("aria-pressed", String(showingTrash));
-    projectTrashButton.textContent = showingTrash ? "Все файлы" : "Корзина";
+    const label = showingTrash ? "Вернуться к проектам" : "Корзина";
+    projectTrashButton.title = label;
+    projectTrashButton.setAttribute("aria-label", label);
+    projectTrashButton.innerHTML = cadIcon(showingTrash ? "back" : "delete");
   }
+  const focused = document.activeElement;
+  const focusedCardId = projectList.contains(focused) ? focused.closest(".project-card")?.dataset.projectId : null;
+  const focusSelector = focused?.matches(".project-card-menu") ? ".project-card-menu" : ".project-card-open";
+  projectPreviewObserver?.disconnect();
   const projects = filteredProjects();
-  projectList.replaceChildren();
   if (!projects.length) {
     const empty = document.createElement("div");
     empty.className = "project-empty";
     empty.textContent = showingTrash
       ? (persistence.trash.length ? "Ничего не найдено" : "Корзина пуста")
-      : (persistence.projects.length ? "Поиск ничего не нашел" : "Файлов пока нет. Создайте новый замер или импортируйте .zamer.");
-    projectList.append(empty);
+      : (persistence.projects.length ? "Ничего не найдено" : "Здесь появятся ваши чертежи");
+    projectList.replaceChildren(empty);
     return;
   }
+  const cards = document.createDocumentFragment();
+  const previews = [];
   for (const project of projects) {
     const card = document.createElement("article");
     card.className = "project-card";
     card.dataset.projectId = project.id;
 
-    const preview = document.createElement("div");
+    const name = project.name || "Без названия";
+    const open = document.createElement(showingTrash ? "div" : "button");
+    open.className = "project-card-open";
+    if (!showingTrash) {
+      open.type = "button";
+      open.dataset.projectAction = "open";
+      open.dataset.projectId = project.id;
+      open.setAttribute("aria-label", `Открыть «${name}»`);
+    }
+
+    const preview = document.createElement("span");
     preview.className = "project-card-preview";
-    preview.innerHTML = cadIcon("plan");
+    preview.dataset.previewState = "loading";
+    preview.setAttribute("aria-hidden", "true");
+    const placeholder = document.createElement("span");
+    placeholder.className = "project-preview-placeholder";
+    placeholder.innerHTML = cadIcon("plan");
+    preview.append(placeholder);
+    projectPreviewSources.set(preview, { project, archived: showingTrash, identity: projectIdentity(project.id) });
+    previews.push(preview);
 
-    const main = document.createElement("div");
+    const main = document.createElement("span");
     main.className = "project-card-main";
-
-    const title = document.createElement("div");
+    const title = document.createElement("strong");
     title.className = "project-card-title";
-    const name = document.createElement("strong");
-    name.textContent = project.name || "Без названия";
-    title.append(name);
-    if (project.legacy) {
-      const badge = document.createElement("em");
-      badge.textContent = "старый";
-      title.append(badge);
-    }
-
-    const meta = document.createElement("div");
+    title.textContent = name;
+    const meta = document.createElement("span");
     meta.className = "project-card-meta";
-    meta.textContent = showingTrash ? `Удалён ${projectDateLabel(project.deletedAt)} · ${project.entityCount} объектов` : projectMetaLine(project);
+    meta.textContent = projectMetaLine(project, showingTrash);
+    main.append(title, meta);
+    open.append(preview, main);
 
-    const actions = document.createElement("div");
-    actions.className = "project-card-actions";
-    const buttons = showingTrash ? [["restore", "Восстановить", "primary"]] : [
-      ["open", "Открыть", "primary"],
-      ["rename", "Имя", ""],
-      ["duplicate", "Копия", ""],
-      ["export", ".zamer", ""],
-      ...(nativeApkMode ? [["versions", "Версии", ""]] : []),
-      ["delete", "Удалить", ""],
-    ];
-    for (const [action, label, className] of buttons) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.projectAction = action;
-      button.dataset.projectId = project.id;
-      button.textContent = label;
-      if (className) button.className = className;
-      if (project.legacy && action === "delete") button.disabled = true;
-      actions.append(button);
-    }
-
-    main.append(title, meta, actions);
-    card.append(preview, main);
-    projectList.append(card);
+    const menu = document.createElement("button");
+    menu.type = "button";
+    menu.className = "project-card-menu";
+    menu.setAttribute("aria-label", `Действия проекта «${name}»`);
+    menu.setAttribute("aria-haspopup", "dialog");
+    menu.setAttribute("aria-controls", "projectActionsDialog");
+    menu.setAttribute("aria-expanded", String(projectActionsOpener?.closest(".project-card")?.dataset.projectId === project.id));
+    menu.title = "Действия проекта";
+    menu.innerHTML = cadIcon("more");
+    card.append(open, menu);
+    cards.append(card);
+  }
+  projectList.replaceChildren(cards);
+  if (focusedCardId) projectCardButton(focusedCardId, focusSelector)?.focus({ preventScroll: true });
+  for (const preview of previews) {
+    if (projectPreviewObserver) projectPreviewObserver.observe(preview);
+    else void renderProjectPreview(preview);
   }
 }
+
+const projectActionsDialog = document.createElement("dialog");
+projectActionsDialog.id = "projectActionsDialog";
+projectActionsDialog.className = "project-action-menu";
+projectActionsDialog.setAttribute("aria-labelledby", "projectActionsTitle");
+projectActionsDialog.innerHTML = `
+  <header class="project-action-menu-head">
+    <h2 id="projectActionsTitle"></h2>
+    <button class="icon-button" type="button" aria-label="Закрыть действия">${cadIcon("close")}</button>
+  </header>
+  <div class="project-action-menu-items"></div>`;
+shell.append(projectActionsDialog);
+let projectActionsOpener = null;
+
+function showProjectActions(opener) {
+  if (projectActionsDialog.open) return;
+  const projectId = opener.closest(".project-card")?.dataset.projectId;
+  const project = (persistence.showingTrash ? persistence.trash : persistence.projects).find((entry) => entry.id === projectId);
+  if (!project) return;
+  projectActionsDialog.querySelector("h2").textContent = project.name || "Без названия";
+  const actions = projectActionsDialog.querySelector(".project-action-menu-items");
+  const items = persistence.showingTrash ? [["restore", "Восстановить", "undo"]] : [
+    ["rename", "Переименовать", "edit"],
+    ["duplicate", "Создать копию", "copy"],
+    ["export", "Скачать .zamer", "import"],
+    ...(nativeApkMode ? [["versions", "История версий", "history"]] : []),
+    ...(!project.legacy ? [["delete", nativeApkMode ? "В корзину" : "Удалить", "delete"]] : []),
+  ];
+  actions.replaceChildren(...items.map(([action, label, icon]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = action === "delete" ? "project-menu-item danger" : "project-menu-item";
+    button.dataset.projectAction = action;
+    button.dataset.projectId = projectId;
+    const image = document.createElement("span");
+    image.innerHTML = cadIcon(icon);
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.append(image, text);
+    return button;
+  }));
+  projectActionsOpener = opener;
+  opener.setAttribute("aria-expanded", "true");
+  projectActionsDialog.showModal();
+  actions.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function closeProjectActions() {
+  if (!projectActionsDialog.open) return;
+  const previous = projectActionsOpener;
+  const projectId = previous?.closest(".project-card")?.dataset.projectId;
+  projectActionsOpener = null;
+  projectActionsDialog.close();
+  const opener = previous?.isConnected ? previous : projectCardButton(projectId, ".project-card-menu");
+  opener?.setAttribute("aria-expanded", "false");
+  if (!projectHome.hidden) opener?.focus({ preventScroll: true });
+}
+
+projectActionsDialog.querySelector(".project-action-menu-head button").addEventListener("click", closeProjectActions);
+projectActionsDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeProjectActions();
+});
+projectActionsDialog.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-project-action]");
+  if (button) {
+    closeProjectActions();
+    void handleProjectAction(button.dataset.projectAction, button.dataset.projectId);
+  } else if (event.target === projectActionsDialog) {
+    const rect = projectActionsDialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeProjectActions();
+  }
+});
 
 function showProjectMessage(message = "", error = false) {
   if (!projectHomeStatus) return;
@@ -1611,6 +1776,7 @@ function showProjectDialog({ title, message = "", value = "", placeholder = "", 
       backdrop.remove();
       for (const [element, inert] of background) element.inert = inert;
       if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      updateViewportLock();
       resolve(result);
     };
     closeProjectDialog = finish;
@@ -1691,10 +1857,9 @@ function updateInstallButton() {
   }
   installAppButton.hidden = false;
   installAppButton.classList.toggle("ready", !!installState.promptEvent);
-  const title = installAppButton.querySelector("strong");
-  const text = installAppButton.querySelector("span");
-  if (title) title.textContent = installState.promptEvent ? "Установить" : "На экран";
-  if (text) text.textContent = installState.promptEvent ? "Приложение" : "Подсказка";
+  const label = installState.promptEvent ? "Установить приложение" : "Как установить приложение";
+  installAppButton.title = label;
+  installAppButton.setAttribute("aria-label", label);
 }
 
 function standaloneInstallHelpText() {
@@ -1759,31 +1924,42 @@ function initAppInstallPrompt() {
   });
 }
 
+let projectListRequest = 0;
+
 async function loadProjects() {
   if (!projectList) return;
+  const request = ++projectListRequest;
   const clientId = persistence.clientId;
   const showingTrash = persistence.showingTrash;
+  const isCurrent = () => projectListRequest === request && persistence.clientId === clientId && persistence.showingTrash === showingTrash;
   try {
     const response = await fetch(showingTrash ? "/api/trash" : projectsEndpoint(clientId), { cache: "no-store" });
-    if (persistence.clientId !== clientId) return;
+    if (!isCurrent()) return;
     if (response.status === 401) {
       await forceAuthLogout();
       return;
     }
     if (!response.ok) throw await projectRequestError(response, "Не удалось загрузить проекты");
     const payload = await response.json();
-    if (persistence.clientId !== clientId) return;
+    if (!isCurrent()) return;
     if (showingTrash) persistence.trash = Array.isArray(payload.entries) ? payload.entries : [];
     else persistence.projects = Array.isArray(payload.projects) ? payload.projects : [];
     renderProjectList();
   } catch (error) {
-    if (persistence.clientId !== clientId || persistence.showingTrash !== showingTrash) return;
+    if (!isCurrent()) return;
     console.warn("Could not load projects", error);
-    projectList.replaceChildren();
+    projectPreviewObserver?.disconnect();
     const empty = document.createElement("div");
     empty.className = "project-empty";
-    empty.textContent = nativeApkMode ? "Не удалось прочитать проекты на телефоне" : "Не удалось загрузить список проектов. Проверьте сервер.";
-    projectList.append(empty);
+    const message = document.createElement("span");
+    message.textContent = nativeApkMode ? "Не удалось прочитать проекты на телефоне" : "Не удалось загрузить проекты";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "project-create";
+    retry.textContent = "Повторить";
+    retry.addEventListener("click", loadProjects);
+    empty.append(message, retry);
+    projectList.replaceChildren(empty);
   }
 }
 
@@ -2045,7 +2221,7 @@ async function showProjectHome() {
   setProjectHomeVisible(true);
   updateSaveIndicator("idle", "Выберите файл");
   await loadProjects();
-  if (!projectHome.hidden) createProjectButton?.focus({ preventScroll: true });
+  if (!projectHome.hidden) (projectCardButton(persistence.projectId) || createBlankProjectButton)?.focus({ preventScroll: true });
 }
 
 async function initProjectHome() {
@@ -2408,7 +2584,8 @@ function isKeyboardInputFocused() {
   const active = document.activeElement;
   return Boolean(numericConfirmInput()) || lineKeyboardInputs.includes(active) ||
     active === leaderUi.text || active === leaderUi.height ||
-    Boolean(active?.matches(".survey-sheet :is(input, textarea, select), .viewport-objects-dialog input"));
+    active === projectSearchInput ||
+    Boolean(active?.matches(".survey-sheet :is(input, textarea, select), .viewport-objects-dialog input, .project-dialog input"));
 }
 
 function numericConfirmInput() {
@@ -10473,7 +10650,7 @@ logoutButton?.addEventListener("click", () => {
   });
 });
 projectSearchInput?.addEventListener("input", renderProjectList);
-refreshProjectsButton?.addEventListener("click", loadProjects);
+projectSearchInput?.addEventListener("blur", () => window.setTimeout(updateViewportLock, 0));
 projectTrashButton?.addEventListener("click", () => {
   persistence.showingTrash = !persistence.showingTrash;
   if (projectSearchInput) projectSearchInput.value = "";
@@ -10481,7 +10658,6 @@ projectTrashButton?.addEventListener("click", () => {
   renderProjectList();
   loadProjects();
 });
-createProjectButton?.addEventListener("click", () => createBlankProjectButton?.click());
 createBlankProjectButton?.addEventListener("click", async () => {
   const name = await askProjectName("Название нового проекта", "Новый замер");
   if (!name) return;
@@ -10490,6 +10666,7 @@ createBlankProjectButton?.addEventListener("click", async () => {
     showProjectMessage(error.message || "Проект не создан", true);
   });
 });
+projectImportButton?.addEventListener("click", () => projectImportInput?.click());
 projectImportInput?.addEventListener("change", () => {
   importProjectFile(projectImportInput.files?.[0]).catch((error) => {
     console.warn("Import project failed", error);
@@ -10497,6 +10674,11 @@ projectImportInput?.addEventListener("change", () => {
   });
 });
 projectList?.addEventListener("click", async (event) => {
+  const menu = event.target.closest("button.project-card-menu");
+  if (menu) {
+    showProjectActions(menu);
+    return;
+  }
   const button = event.target.closest("button[data-project-action]");
   if (!button || button.getAttribute("aria-busy") === "true") return;
   button.setAttribute("aria-busy", "true");
@@ -10505,11 +10687,6 @@ projectList?.addEventListener("click", async (event) => {
   } finally {
     button.removeAttribute("aria-busy");
   }
-});
-projectList?.addEventListener("dblclick", (event) => {
-  if (persistence.showingTrash || event.target.closest("button[data-project-action]")) return;
-  const card = event.target.closest(".project-card[data-project-id]");
-  if (card) handleProjectAction("open", card.dataset.projectId);
 });
 backToProjectsButton?.addEventListener("click", () => {
   showProjectHome().catch((error) => console.warn("Project home failed", error));
@@ -12232,7 +12409,7 @@ async function downloadFile(filename, content, mimeType, { share = false } = {})
 
 // Enhance existing controls without replacing their listeners or accessible labels.
 for (const [id, icon] of Object.entries({
-  createProjectButton: "plus", backToProjectsButton: "back", undoButton: "undo", redoButton: "redo",
+  backToProjectsButton: "back", undoButton: "undo", redoButton: "redo",
   layersButton: "layers", exportButton: "import", logoutButton: "exit",
   quickMoveTool: "move", quickCopyTool: "copy", quickRotateTool: "rotate", quickDeleteTool: "delete",
   quickTrimTool: "trim", quickExtendTool: "extend",
@@ -12241,10 +12418,6 @@ for (const [id, icon] of Object.entries({
   if (button) button.innerHTML = cadIcon(icon);
 }
 if (figureToolButton) figureToolButton.querySelector("span").innerHTML = cadIcon("rectangle");
-for (const [selector, icon] of [['#createBlankProjectButton','file'], ['.import-card','import']]) {
-  document.querySelector(selector)?.insertAdjacentHTML('afterbegin', cadIcon(icon));
-}
-document.querySelector('.project-search > span').innerHTML = cadIcon('search');
 for (const button of document.querySelectorAll('.tool[data-tool]')) {
   const span = button.querySelector('span');
   if (span && !span.querySelector('svg')) span.innerHTML = glyphIcon(span.textContent);
