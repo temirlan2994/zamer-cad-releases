@@ -28,6 +28,7 @@ import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, an
 function cadIcon(name) {
   const paths = {
     cursor: '<path d="m5 3 14 9-7 2-3 7Z"/>',
+    frame: '<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
     back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
     line: '<path d="m5 19 14-14"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/>',
     dimension: '<path d="M4 5v14m16-14v14M4 12h16m-12-3-4 3 4 3m8-6 4 3-4 3"/>',
@@ -443,6 +444,7 @@ const projectNameCaption = document.querySelector(".project-title strong");
 const projectScaleCaption = document.querySelector(".project-title span");
 const tools = [...document.querySelectorAll(".tool[data-tool]")];
 const cursorToolButton = tools.find((button) => button.dataset.tool === "select");
+const frameToolButton = document.getElementById("frameToolButton");
 const figureToolButton = document.getElementById("figureToolButton");
 const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
@@ -604,21 +606,6 @@ const annotationToolButtonVisuals = {
   area: { label: "Площадь" },
   elevation: { label: "Высота Z" },
 };
-const selectModeButtonVisuals = {
-  select: { icon: "↖", label: "ESC" },
-  window: { icon: "▣", label: "Рамка" },
-  lasso: { icon: "⌁", label: "Лассо" },
-  multi: { icon: "+", label: "Мульти" },
-  filter: { icon: "⛃", label: "Фильтр" },
-};
-const selectionToolButtonVisuals = {
-  select: { icon: "✎", label: "Правка" },
-  window: { icon: "▣", label: "Рамка" },
-  lasso: { icon: "⌁", label: "Лассо" },
-  multi: { icon: "+", label: "Мульти" },
-};
-const selectionToolCycle = ["window", "lasso", "multi"];
-
 function createSelectModeMenu() {
   const menu = document.createElement("div");
   menu.className = "draw-tool-menu select-mode-menu";
@@ -627,7 +614,6 @@ function createSelectModeMenu() {
   menu.setAttribute("aria-label", "Режимы выбора");
   menu.hidden = true;
   menu.innerHTML = `
-    <button data-select-mode="window"><span>▣</span><small>Рамка</small></button>
     <button data-select-mode="lasso"><span>⌁</span><small>Лассо</small></button>
     <button data-select-mode="multi"><span>+</span><small>Мульти</small></button>
     <button data-select-mode="filter"><span>⛃</span><small>Фильтр</small></button>
@@ -7315,12 +7301,9 @@ function setToolButtonVisual(button, visual) {
 }
 
 function syncToolButtonVisuals() {
-  const selectButton = tools.find((button) => button.dataset.tool === "select");
   const lineButton = tools.find((button) => button.dataset.tool === "line");
   const dimensionButton = tools.find((button) => button.dataset.tool === "dimension");
   const annotationButton = tools.find((button) => button.dataset.tool === "annotation");
-  const selectionButton = tools.find((button) => button.dataset.tool === "selection");
-  setToolButtonVisual(selectButton, selectModeButtonVisuals[state.selectTool] || selectModeButtonVisuals.select);
   setToolButtonVisual(lineButton, drawToolButtonVisuals.line);
   setToolButtonVisual(dimensionButton, dimensionToolButtonVisuals[state.dimensionTool] || dimensionToolButtonVisuals.aligned);
   setToolButtonVisual(annotationButton, state.tool === "dimension" && state.dimensionTool === "leader" ? annotationToolButtonVisuals.leader : annotationToolButtonVisuals.text);
@@ -7328,7 +7311,6 @@ function syncToolButtonVisuals() {
     annotationButton.querySelector("span").innerHTML = cadIcon(state.tool);
     annotationButton.querySelector("small").textContent = annotationToolButtonVisuals[state.tool].label;
   }
-  setToolButtonVisual(selectionButton, selectionToolButtonVisuals.select);
 }
 
 function drawableSnapSegments() {
@@ -7351,17 +7333,16 @@ function drawableSnapSegments() {
 
 function syncToolButtons() {
   syncToolButtonVisuals();
-  const editModeActive = state.tool === "select" && (Boolean(editableSelectionEntity()) || !selectToolMenu.hidden);
+  const selecting = viewportIsSelecting();
+  frameToolButton.setAttribute("aria-pressed", String(selecting && state.selectTool === "window"));
   tools.forEach((button) => {
     const buttonTool = button.dataset.tool;
     const active =
-      buttonTool === "selection"
-        ? editModeActive
-        : buttonTool === "select"
-          ? state.tool === "select"
-          : buttonTool === "annotation"
-            ? state.tool === "text" || Boolean(state.planZone) || (state.tool === "dimension" && state.dimensionTool === "leader")
-            : buttonTool === state.tool && (buttonTool !== "dimension" || state.dimensionTool !== "leader");
+      buttonTool === "select"
+        ? selecting && state.selectTool === "select"
+        : buttonTool === "annotation"
+          ? state.tool === "text" || Boolean(state.planZone) || (state.tool === "dimension" && state.dimensionTool === "leader")
+          : buttonTool === state.tool && (buttonTool !== "dimension" || state.dimensionTool !== "leader");
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
@@ -7542,19 +7523,19 @@ function hideSelectToolMenu() {
 }
 
 function showSelectModeMenu() {
-  if (!selectModeMenu || state.tool !== "select" || state.lineEdit || state.moveCommand || state.offsetCommand || state.dimensionAttach) return;
+  if (!viewportIsSelecting()) return;
   syncSelectModeMenu();
   hideDrawToolMenu();
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   hideSelectToolMenu();
   selectModeMenu.hidden = false;
-  cursorToolButton.setAttribute("aria-expanded", "true");
+  frameToolButton.setAttribute("aria-expanded", "true");
 }
 
 function hideSelectModeMenu() {
   if (selectModeMenu) selectModeMenu.hidden = true;
-  cursorToolButton.setAttribute("aria-expanded", "false");
+  frameToolButton.setAttribute("aria-expanded", "false");
 }
 
 function syncSelectModeMenu() {
@@ -7629,30 +7610,6 @@ function activatePlainSelect() {
   statusChip.textContent = selectionStatusText();
 }
 
-function activateSelectionTool() {
-  if (state.tool === "polyline" && state.drawing) finishLineCommand();
-  if (!selectionToolCycle.includes(state.selectTool)) {
-    state.selectTool = selectionToolCycle[0];
-  }
-  state.drawing = null;
-  state.moveCommand = null;
-  state.offsetCommand = null;
-  state.selectionDrag = null;
-  state.pointer = null;
-  state.selectedEndpoint = null;
-  state.dimensionSnapHint = null;
-  resetSnapTracking();
-  hideInlineEditors();
-  hideDrawToolMenu();
-  hideDimensionToolMenu();
-  hideAnnotationToolMenu();
-  hideSelectToolMenu();
-  hideSelectModeMenu();
-  setTool("select");
-  syncSelectionActions();
-  statusChip.textContent = selectionStatusText();
-}
-
 function selectDrawTool(tool) {
   state.drawTool = tool;
   syncDrawToolMenu();
@@ -7705,29 +7662,18 @@ function dimensionToolStatusText() {
 }
 
 function selectSelectionTool(tool) {
-  if (tool === "select") {
-    activatePlainSelect();
-    return;
-  }
-  if (tool === "cycle") {
-    const currentIndex = selectionToolCycle.indexOf(state.selectTool);
-    state.selectTool = currentIndex >= 0 ? selectionToolCycle[(currentIndex + 1) % selectionToolCycle.length] : selectionToolCycle[0];
-  } else if (tool === "filter") {
+  if (tool === "filter") {
     state.selectionFilter = nextSelectionFilter();
     markProjectDirty("selection-filter");
     syncSelectModeMenu();
     statusChip.textContent = `Фильтр · ${selectionFilterLabel()}`;
     return;
-  } else {
-    state.selectTool = tool;
   }
-  syncSelectToolMenu();
-  setTool("select");
+  state.selectTool = tool;
   hideSelectModeMenu();
+  setTool("select");
   canvas.focus({ preventScroll: true });
-  syncToolButtons();
   syncSelectionActions();
-  statusChip.textContent = selectionStatusText();
 }
 
 function nextSelectionFilter() {
@@ -10426,10 +10372,6 @@ tools.filter((button) => button !== cursorToolButton).forEach((button) => {
       activateAnnotationToolMenu();
       return;
     }
-    if (tool === "selection") {
-      activateSelectionTool();
-      return;
-    }
     hideDrawToolMenu();
     hideDimensionToolMenu();
     hideAnnotationToolMenu();
@@ -10438,24 +10380,27 @@ tools.filter((button) => button !== cursorToolButton).forEach((button) => {
   });
 });
 
-function openCursorOptions() {
-  if (!viewportIsSelecting() || state.selectTool !== "select" || state.circleRadiusEdit) activatePlainSelect();
+cursorToolButton.addEventListener("click", activatePlainSelect);
+
+function openFrameOptions(focusMenu) {
+  if (!viewportIsSelecting() || state.circleRadiusEdit) activatePlainSelect();
   snapMore.open = false;
+  selectSelectionTool("window");
   showSelectModeMenu();
-  selectModeMenu.querySelector("button")?.focus({ preventScroll: true });
+  if (focusMenu) selectModeMenu.querySelector("button")?.focus({ preventScroll: true });
 }
 
-cursorToolButton.addEventListener("click", () => {
-  if (selectModeMenu.hidden) openCursorOptions();
+frameToolButton.addEventListener("click", (event) => {
+  if (selectModeMenu.hidden) openFrameOptions(event.detail === 0);
   else {
-    hideSelectModeMenu();
-    syncSelectionActions();
+    selectSelectionTool("select");
+    frameToolButton.focus({ preventScroll: true });
   }
 });
-cursorToolButton.addEventListener("keydown", (event) => {
+frameToolButton.addEventListener("keydown", (event) => {
   if (event.key !== "ArrowDown" && !(event.shiftKey && event.key === "F10")) return;
   event.preventDefault();
-  openCursorOptions();
+  openFrameOptions(true);
 });
 
 figureToolButton?.addEventListener("click", () => {
@@ -10501,12 +10446,9 @@ selectModeMenu?.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-select-mode], button[data-select-command]");
   if (!button) return;
   if (button.dataset.selectCommand) {
-    hideSelectModeMenu();
+    selectSelectionTool("select");
     if (button.dataset.selectCommand === "objects") openViewportObjects();
-    else {
-      fitViewport();
-      canvas.focus({ preventScroll: true });
-    }
+    else fitViewport();
   } else {
     selectSelectionTool(button.dataset.selectMode);
   }
@@ -10515,9 +10457,8 @@ selectModeMenu?.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   event.preventDefault();
   event.stopPropagation();
-  hideSelectModeMenu();
-  syncSelectionActions();
-  cursorToolButton.focus({ preventScroll: true });
+  selectSelectionTool("select");
+  frameToolButton.focus({ preventScroll: true });
 });
 
 function nextDimensionSnap() {

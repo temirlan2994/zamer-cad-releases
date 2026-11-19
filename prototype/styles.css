@@ -1711,7 +1711,7 @@ button.project-card-open:active { background: var(--surface-2); }
   bottom: calc(74px + env(safe-area-inset-bottom));
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   left: 8px;
   margin-inline: auto;
   max-width: 430px;
