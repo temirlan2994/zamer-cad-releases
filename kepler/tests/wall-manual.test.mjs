@@ -9,7 +9,7 @@ import {
   setManualWallKind, setManualWallThickness, setWallHeight, wallAxisVerdict,
 } from '../core/wall-manual.js';
 import {
-  clampOpeningOffset, deriveWalls, doorLink, doorSymbol, openingRect, wallsEngine,
+  clampOpeningOffset, deriveWalls, doorLink, doorSymbol, openingRect, wallContains, wallsEngine,
 } from '../core/walls.js';
 import { fitOpeningOffset, resolveOpeningConflicts } from '../core/opening-spacing.js';
 import { moveWallBy } from '../core/wall-edit.js';
@@ -35,10 +35,10 @@ function twoRoomsWithPartition() {
   return { p, w };
 }
 
-test('ось: только ортогональная и не короче 100 мм', () => {
+test('ось: свободный угол, орто по запросу и длина не короче 100 мм', () => {
   assert.deepEqual(orthoPoint({ x: 0, y: 0 }, { x: 1000, y: 300 }), { x: 1000, y: 0 });
   assert.deepEqual(orthoPoint({ x: 0, y: 0 }, { x: 100, y: -900 }), { x: 0, y: -900 });
-  assert.equal(wallAxisVerdict({ x: 0, y: 0 }, { x: 1000, y: 10 }).ok, false);
+  assert.equal(wallAxisVerdict({ x: 0, y: 0 }, { x: 1000, y: 10 }).ok, true);
   assert.equal(wallAxisVerdict({ x: 0, y: 0 }, { x: 50, y: 0 }).ok, false);
   assert.equal(wallAxisVerdict({ x: 0, y: 0 }, { x: 0, y: 500 }).ok, true);
 });
@@ -56,6 +56,18 @@ test('проект с ручной стеной идёт на v2, стена —
   // Комнатные стены не вычитаются ручной: верхняя наружная стена цела.
   const top = walls.filter((x) => x.kind === 'own' && x.orient === 'h' && x.edge === 0);
   assert.ok(top.length);
+});
+
+test('косая стена получает точный полигон на плане и тело в 3D', () => {
+  const p = createProject('косая');
+  const w = addManualWall(p, { x: 0, y: 0 }, { x: 3000, y: 2000 }, { thickness: 200 });
+  const rec = deriveWalls(p).find((entry) => entry.wallId === w.id);
+  assert.equal(rec.orient, 'a');
+  assert.equal(rec.poly.length, 4);
+  assert.equal(wallContains(rec, { x: 1500, y: 1000 }), true);
+  assert.equal(wallContains(rec, { x: 1500, y: 1600 }), false, 'не используется прямоугольный band');
+  const mesh = buildHouseMesh(p, { site: false, roof: false });
+  assert.ok(mesh.some((face) => face.ref?.key === rec.key), 'полигон выдавлен в 3D');
 });
 
 test('стена, начерченная внутри помещения, становится его частью и едет вместе с ним', () => {
@@ -98,9 +110,9 @@ test('сдвиг, перенос торца, толщина, класс, выс�
   assert.equal(h.axis.a.y, 0);
 
   assert.equal(dragManualWallEnd(p, h.id, 'b', { x: 5000, y: 777 }).ok, true);
-  assert.deepEqual(h.axis.b, { x: 5000, y: 0 }, 'торец только вдоль оси');
+  assert.deepEqual(h.axis.b, { x: 5000, y: 777 }, 'торец следует за свободным курсором');
   assert.equal(dragManualWallEnd(p, h.id, 'b', { x: 50, y: 0 }).ok, false, 'короче минимума');
-  assert.equal(dragManualWallEnd(p, h.id, 'b', { x: -2000, y: 0 }).ok, false, 'разворот');
+  assert.equal(dragManualWallEnd(p, h.id, 'b', { x: -2000, y: 0 }).ok, true, 'свободный разворот допустим');
 
   assert.equal(setManualWallThickness(p, h.id, 9999).thickness, 600);
   setManualWallThickness(p, h.id, 100);

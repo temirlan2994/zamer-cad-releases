@@ -30,7 +30,7 @@ import {
   afterChange, mutate, pushHistory, redo, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot, undo,
 } from './store.js';
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
-import { finishWallChain, startWallTool } from './wall-tool.js';
+import { finishWallChain, startWallTool, wallToolClick } from './wall-tool.js';
 import { handlePlanSectionKey, startPlanSectionTool } from './plan-section.js';
 import { close3d, escape3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
@@ -178,9 +178,11 @@ export function bindKeyboard() {
       rehoverSnap({ shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
     }
     // Динамический ввод: число (+ Tab — угол) и Enter — следующая точка.
-    const dynPrev = state.draft?.points?.length ? state.draft.points[state.draft.points.length - 1] : landscapeDraftPrev();
+    const dynPrev = state.tool?.kind === 'wall' ? state.tool.start
+      : (state.draft?.points?.length ? state.draft.points[state.draft.points.length - 1] : landscapeDraftPrev());
     if (handleDynamicKey(event, dynPrev, (p) => {
-      if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
+      if (state.tool?.kind === 'wall') wallToolClick(p, null, { exact: true });
+      else if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
     })) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
       event.preventDefault();

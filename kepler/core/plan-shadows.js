@@ -14,6 +14,7 @@
 // тень прижата к стене, а не «парит» рядом.
 
 import { wallRects } from './walls.js';
+import { rectsCycles } from './ortho-grid.js';
 import { furnitureVolumes, structuralOutline } from './mesh3d.js';
 import { isStructural } from './catalog.js';
 
@@ -41,18 +42,32 @@ export function shadowScale(k = 0.3, lengthK = 1) {
   return Math.max(k ?? 0.3, 0.25) * 1.6 * lengthK;
 }
 
-const rectPoly = (r) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }];
-
 // Кто отбрасывает тень: видимые стены и свободные стены/колонны — на высоту
 // этажа, мебель — объёмами, как в 3D (core/mesh3d.js furnitureVolumes).
 // { poly, z0, z1, kind: 'wall' | 'item' }.
 export function shadowCasters(walls, items = [], { wallHeight = 3000 } = {}) {
   const out = [];
+  const wallRectsAll = [];
+  const wallPolys = [];
   for (const w of walls || []) {
     if (w.hidden) continue;
-    const polys = w.polys?.length ? w.polys : w.poly ? [w.poly] : wallRects(w).map(rectPoly);
-    for (const poly of polys) if (poly?.length >= 3) out.push({ poly, z0: 0, z1: wallHeight, kind: 'wall' });
+    const rects = wallRects(w);
+    if (rects.length) wallRectsAll.push(...rects);
+    else if (w.polys?.length) wallPolys.push(...w.polys);
+    else if (w.poly) wallPolys.push(w.poly);
   }
+  // Стены образуют один силуэт. Если считать каждый кусок отдельно, скрытые
+  // торцы в L/T-стыках отбрасывают ложные вертикальные полосы. Контуры
+  // объединения сохраняют и внутренние дворы: их отрицательный обход даёт
+  // правильную нормаль тени внутрь помещения.
+  for (const cycle of rectsCycles(wallRectsAll)) {
+    if (cycle.pts.length >= 3) out.push({
+      poly: cycle.pts, z0: 0, z1: wallHeight, kind: 'wall', wallUnion: true, unionKind: 'rect', hole: cycle.area < 0,
+    });
+  }
+  for (const poly of wallPolys) if (poly?.length >= 3) out.push({
+    poly, z0: 0, z1: wallHeight, kind: 'wall', wallUnion: true, unionKind: 'poly', hole: false,
+  });
   for (const it of items || []) {
     if (isStructural(it.kind) && it.w > 0 && it.h > 0) out.push({ poly: structuralOutline(it), z0: 0, z1: wallHeight, kind: 'item' });
   }

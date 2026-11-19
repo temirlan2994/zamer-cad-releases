@@ -63,6 +63,17 @@ test('кто отбрасывает тень: видимые стены на в�
   assert.ok(back.z0 > 0 && back.z1 > seat.z1, `спинка выше сиденья: ${JSON.stringify([seat.z1, back.z0, back.z1])}`);
 });
 
+test('соприкасающиеся куски стен дают единый силуэт без внутренних торцов', () => {
+  const walls = [
+    { rects: [{ x: 0, y: 0, w: 1000, h: 200 }] },
+    { rects: [{ x: 1000, y: 0, w: 200, h: 1200 }] },
+  ];
+  const casters = shadowCasters(walls).filter((x) => x.kind === 'wall');
+  assert.equal(casters.length, 1, 'L-стык объединён в один контур');
+  const strips = shadowStrips(casters[0].poly, { x: 1, y: 0 }, 300);
+  assert.ok(strips.every((strip) => strip.from.x !== 1000), 'скрытый торец первого куска не отбрасывает полосу');
+});
+
 test('тень объёма: длина по высоте; поднятый объём — тень начинается со сдвига', () => {
   const s = 0.4;
   const dir = { x: 1, y: 0 };

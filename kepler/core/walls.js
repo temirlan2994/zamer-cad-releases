@@ -201,6 +201,9 @@ export function deriveWalls(project) {
 
 // Куски тела стены: у v2 — непересекающиеся rects, у v1 — полоса band.
 export function wallRects(wall) {
+  // Для косой стены band — лишь ограничивающий прямоугольник, не её тело.
+  // Геометрические потребители должны брать точный poly/polys.
+  if (wall?.orient === 'a' && (wall.poly?.length || wall.polys?.length)) return [];
   return wall.rects || (wall.band ? [wall.band] : []);
 }
 
@@ -209,6 +212,9 @@ export function wallRects(wall) {
 export function wallContains(wall, p, pad = 0) {
   for (const r of wallRects(wall)) {
     if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) return true;
+  }
+  for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+    if (pointInWallPoly(p, poly) || (pad > 0 && polyEdgeDistance(p, poly) <= pad)) return true;
   }
   return false;
 }
@@ -220,6 +226,31 @@ export function wallDistance(wall, p) {
     const cx = Math.min(Math.max(p.x, r.x), r.x + r.w);
     const cy = Math.min(Math.max(p.y, r.y), r.y + r.h);
     best = Math.min(best, Math.hypot(p.x - cx, p.y - cy));
+  }
+  for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+    if (pointInWallPoly(p, poly)) return 0;
+    best = Math.min(best, polyEdgeDistance(p, poly));
+  }
+  return best;
+}
+
+function pointInWallPoly(p, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const a = poly[j]; const b = poly[i];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function polyEdgeDistance(p, poly) {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i += 1) {
+    const a = poly[i]; const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(p.x - a.x - dx * t, p.y - a.y - dy * t));
   }
   return best;
 }
@@ -786,6 +817,10 @@ export function openingRect(project, opening, walls) {
     const placed = resolveOpeningWall(project, opening, walls);
     if (!placed) return null;
     const { wall, absCenter } = placed;
+    // Проём в стене свободного угла требует ориентированного четырёхугольника
+    // и отдельного выреза в 3D. Пока такого выреза нет, не подменяем его
+    // неверным вертикальным прямоугольником.
+    if (wall.orient === 'a') return null;
     const half = opening.width / 2;
     const rect = wall.orient === 'h'
       ? { x: absCenter - half, y: wall.band.y, w: opening.width, h: wall.band.h }

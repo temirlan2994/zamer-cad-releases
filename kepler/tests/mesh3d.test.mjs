@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, createRoom, createOpening, createLevel } from '../core/model.js';
-import { buildHouseMesh, boxFaces } from '../core/mesh3d.js';
+import { buildHouseMesh, boxFaces, furnitureVolumes } from '../core/mesh3d.js';
 
 const zRange = (f) => [Math.min(...f.pts.map((p) => p.z)), Math.max(...f.pts.map((p) => p.z))];
 
@@ -19,6 +19,13 @@ test('коробка: верх и четыре стороны, нормали н
   assert.equal(f.length, 5);
   assert.deepEqual(f.map((x) => [x.normal.x, x.normal.y, x.normal.z]), [[0, 0, 1], [0, -1, 0], [0, 1, 0], [-1, 0, 0], [1, 0, 0]]);
   assert.deepEqual(boxFaces(0, 0, 0, 10, 0, 10), [], 'вырожденная — пусто');
+});
+
+test('отметка мебели поднимает весь 3D-объём над полом', () => {
+  const item = { id: 'S', kind: 'sofa', x: 0, y: 0, w: 2200, h: 1000, rotation: 0, elev3d: 450 };
+  const volumes = furnitureVolumes([item]);
+  assert.ok(volumes.length > 1);
+  assert.equal(Math.min(...volumes.map((volume) => volume.z0)), 450);
 });
 
 test('окно режет стену: подоконник, перемычка и стекло', () => {

@@ -173,7 +173,7 @@ function paint(g, { casters, dir, s, ppm, x0, y0, W, H, tones, contact }) {
     const shadow = contact ? { base: c.poly, len: contactLength(c, s) } : castShadow(c, dir, s);
     if (!(shadow.len > 0)) continue;
     const near = gray(v);
-    if (!lifted) { // основание — тенью: она начинается прямо от стены
+    if (!lifted && c.kind !== 'wall') { // тело стены маскируется ниже; его единый контур не нужно заливать как комнату
       g.fillStyle = near;
       g.beginPath();
       trace(g, c.poly);
@@ -224,8 +224,15 @@ function build({ casters, dir, s, want, dark, key, level }, previousLayer) {
   g.globalCompositeOperation = 'source-over';
   g.fillStyle = '#fff';
   g.beginPath();
-  for (const c of casters) if (c.kind === 'wall') trace(g, c.poly);
-  g.fill();
+  for (const c of casters) if (c.kind === 'wall' && c.unionKind !== 'poly') trace(g, c.poly);
+  // Контуры объединённых стен включают внутренние дворы. evenodd вырезает
+  // их из маски и не превращает пол комнаты в белое «слепое» пятно.
+  g.fill('evenodd');
+  // Косые стены могут пересекать ортогональный контур. Их добавляем к маске
+  // отдельно, иначе evenodd вырезал бы отверстие в месте нахлёста.
+  for (const c of casters) if (c.kind === 'wall' && c.unionKind === 'poly') {
+    g.beginPath(); trace(g, c.poly); g.fill();
+  }
   toAlphaMask(layer);
   return { canvas: layer, x: x0, y: y0, w: W / ppm, h: H / ppm, ppm, want, key, level, builtAt: performance.now() };
 }

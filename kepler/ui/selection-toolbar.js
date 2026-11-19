@@ -81,11 +81,12 @@ function contentForSelection(sel) {
     if (!wall) return null;
     if (wall.kind === 'manual') {
       const divides = wallsInsideRooms(state.project).find((q) => q.wallId === wall.wallId && q.divides);
+      const openingDisabled = wall.orient === 'a' ? 'disabled title="Проёмы в косой стене пока недоступны"' : '';
       return {
         label: 'Стена (ручная)',
         html: `${button('hide-wall', wall.hidden ? '▣' : '◫', wall.hidden ? 'Показать стену' : 'Скрыть стену')}
-          ${button('add-door', '◱', 'Дверь')}
-          ${button('add-window', '▦', 'Окно')}
+          ${button('add-door', '◱', 'Дверь', '', openingDisabled)}
+          ${button('add-window', '▦', 'Окно', '', openingDisabled)}
           ${divides ? button('split-room', '⊟', 'Разделить на два', '', `data-room="${divides.roomId}"`) : ''}
           ${gridPinButton(wall)}
           ${button('delete', '⌫', 'Удалить', 'Del', 'class="danger"')}`,

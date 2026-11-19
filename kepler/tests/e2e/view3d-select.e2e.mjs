@@ -90,6 +90,37 @@ describe('3D: мебель и выбор объектов', () => {
     assert.match(await page.textContent('#propsBody'), new RegExp(title));
     assert.ok((await d3(page)).highlightedAll > 0, 'предмет подсвечен');
     assert.match(await page.textContent('#v3Hint'), /Delete/);
+    assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y', 'z'], 'мебель получает полноценный XYZ-гизмо');
+  });
+
+  it('стрелка X гизмо двигает мебель только по X, Undo возвращает', async () => {
+    const { page } = app;
+    await page.mouse.click(hits.item.x, hits.item.y);
+    const gizmo = (await d3(page)).objectGizmo;
+    const start = await page.evaluate((id) => {
+      const item = window.__kepler.state.project.items.find((entry) => entry.id === id);
+      return { x: item.x, y: item.y, z: item.elev3d || 0 };
+    }, hits.item.id);
+    const p = {
+      x: gizmo.origin.x + (gizmo.tips.x.x - gizmo.origin.x) * 0.72,
+      y: gizmo.origin.y + (gizmo.tips.x.y - gizmo.origin.y) * 0.72,
+    };
+    const q = {
+      x: p.x + (gizmo.tips.x.x - gizmo.origin.x) * 0.45,
+      y: p.y + (gizmo.tips.x.y - gizmo.origin.y) * 0.45,
+    };
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.down();
+    await page.mouse.move(q.x, q.y, { steps: 4 });
+    await page.mouse.up();
+    const moved = await page.evaluate((id) => {
+      const item = window.__kepler.state.project.items.find((entry) => entry.id === id);
+      return { x: item.x, y: item.y, z: item.elev3d || 0 };
+    }, hits.item.id);
+    assert.notEqual(moved.x, start.x);
+    assert.equal(moved.y, start.y);
+    assert.equal(moved.z, start.z);
+    await page.keyboard.press('Control+z');
   });
 
   it('клик по полу — помещение, по двери — проём', async () => {
@@ -128,6 +159,7 @@ describe('3D: мебель и выбор объектов', () => {
     assert.deepEqual(await sel(page), { type: 'landscape', ids: [hits.landscape.id] });
     assert.match(await page.textContent('#propsBody'), /Туя|Ландшафт/i);
     assert.ok((await d3(page)).highlightedAll > 0, 'дерево подсвечено');
+    assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y'], 'дерево можно двигать только по земле, без Z');
     const n = await count();
     await page.keyboard.press('Delete');
     assert.equal(await count(), n - 1);

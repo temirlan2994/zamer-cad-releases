@@ -510,9 +510,11 @@ function renderManualWallProps(panel, wall) {
   const length = Math.round(wall.to - wall.from);
   const height = own.top?.height ?? '';
   const levelH = Math.round(wall.z1 - wall.z0);
+  const wallDirection = wall.orient === 'h' ? 'горизонтальная' : wall.orient === 'v' ? 'вертикальная' : 'свободный угол';
+  const shiftDirection = wall.orient === 'h' ? '+ вниз' : wall.orient === 'v' ? '+ вправо' : '+ по нормали';
   panel.innerHTML = `
     <h2>Стена</h2>
-    <p class="subtitle">Ручная стена · ${wall.orient === 'h' ? 'горизонтальная' : 'вертикальная'}</p>
+    <p class="subtitle">Ручная стена · ${wallDirection}</p>
     <div class="prop-block">
       <div class="prop-row"><span>Длина по оси</span><strong>${length} мм</strong></div>
       <label class="prop-field"><span>Толщина, мм (${WALL_T_MIN}–${WALL_T_MAX})</span>
@@ -529,7 +531,7 @@ function renderManualWallProps(panel, wall) {
           <option value="left" ${own.justify === 'left' ? 'selected' : ''}>По левой грани</option>
           <option value="right" ${own.justify === 'right' ? 'selected' : ''}>По правой грани</option>
         </select></label>
-      <label class="prop-field"><span>Сдвинуть ось на, мм (${wall.orient === 'h' ? '+ вниз' : '+ вправо'})</span>
+      <label class="prop-field"><span>Сдвинуть ось на, мм (${shiftDirection})</span>
         <input id="wallShift" type="number" step="10" value="0"></label>
       <label class="prop-field"><span>Высота, мм (пусто — по этажу, ${levelH})</span>
         <input id="wallH" type="number" step="50" min="100" value="${height}"></label>

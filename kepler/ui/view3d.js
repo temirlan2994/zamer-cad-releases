@@ -61,6 +61,10 @@ import {
   openingOverlay, openingResizeDragging, openingToolClick, openingToolHint, openingToolMove, openingToolOn,
   rehoverOpeningTool, resetOpeningTool, startOpeningResize,
 } from './opening3d.js';
+import {
+  cancelObjectGizmoDrag, clearObjectGizmoHover, debugObjectGizmo3d, finishObjectGizmoDrag, initObjectGizmo3d,
+  moveObjectGizmoDrag, objectGizmoDragging, objectGizmoHover, objectGizmoOverlay, objectGizmoPartAt, startObjectGizmoDrag,
+} from './object-gizmo3d.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
 // камеры. Их нельзя связывать: при сильном приближении камера иначе входит в
@@ -221,7 +225,7 @@ function render() {
   if (!active || !canvas) return;
   if (!use2d && !gl) initGl(canvas);
   else if (gl && geomDirty) uploadGeometry();
-  else if (gl && (state.selection?.type === 'mass' || state.selection?.type === 'roof' || state.selection?.type === 'opening' || openingToolOn())) uploadOverlay(); // гизмо, призраки и точки — к камере
+  else if (gl && (['mass', 'roof', 'opening', 'item', 'landscape'].includes(state.selection?.type) || openingToolOn())) uploadOverlay(); // гизмо, призраки и точки — к камере
   if (gl) renderGl(canvas); else render2d(canvas);
   updateMassDims();
 }
@@ -324,7 +328,9 @@ function massVoidOverlay() {
 }
 
 // Наложения поверх сетки: cutters, выбранный проём, призраки и ручки.
-const overlays = () => massVoidOverlay().concat(selectionOverlay(), massOverlay(), roofOverlay(), openingOverlay());
+const overlays = () => massVoidOverlay().concat(
+  selectionOverlay(), massOverlay(), roofOverlay(), openingOverlay(), objectGizmoOverlay(),
+);
 
 // Выбранный проём — полупрозрачная коробка акцентного цвета в его пустоте.
 function selectionOverlay() {
@@ -625,6 +631,7 @@ function syncReliefControl() {
 
 const HINT_IDLE = 'Тяните, чтобы вращать · Нажмите на объект, чтобы выбрать';
 const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копировать/вставить/дублировать · R — повернуть мебель · Esc — снять выбор';
+const HINT_GIZMO = 'Гизмо: стрелка X/Y/Z — одна ось · жёлтый квадрат — по земле · Shift — без шага · Delete — удалить';
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Редактирование приостановлено';
@@ -649,7 +656,8 @@ function setHint(text) {
     else if (state.selection?.type === 'mass') text = touchUsed ? HINT_MASS_TOUCH : HINT_MASS;
     else if (state.selection?.type === 'opening') text = HINT_OPENING;
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
-    else if (selectedObject() || state.selection?.type === 'landscape') text = HINT_OBJ;
+    else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = HINT_GIZMO;
+    else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
   }
   hint.textContent = text;
@@ -664,7 +672,7 @@ function refreshHighlight() {
 
 // Выбор сменился (план, «Свойства», клавиши) — открытый 3D перекрашивается.
 export function refresh3dSelection() {
-  if (!active || edit || massDragging() || roofDragging() || openingResizeDragging()) return;
+  if (!active || edit || massDragging() || roofDragging() || openingResizeDragging() || objectGizmoDragging()) return;
   refreshHighlight();
 }
 
@@ -691,6 +699,7 @@ export function escape3d() {
     return true;
   }
   if (roofDragging()) { cancelRoofDrag(); return true; }
+  if (objectGizmoDragging()) { cancelObjectGizmoDrag(); return true; }
   if (roofToolOn()) {
     cancelTool();
     resetRoofTool();
@@ -772,7 +781,7 @@ function rebuildRoofs() {
 }
 
 export function refresh3d() {
-  if (!active || edit || massDragging() || roofDragging()) return;
+  if (!active || edit || massDragging() || roofDragging() || objectGizmoDragging()) return;
   syncCameraControls();
   syncReliefControl();
   syncMassControl();
@@ -819,6 +828,7 @@ export function close3d() {
   if (edit) cancelEdit();
   if (massDragging()) cancelMassDrag();
   if (roofDragging()) cancelRoofDrag();
+  if (objectGizmoDragging()) cancelObjectGizmoDrag();
   resetMassTool();
   resetRoofTool();
   resetOpeningTool();
@@ -945,6 +955,15 @@ function updateHover(e) {
       return;
     }
   } else if (clearMassHover()) { uploadGeometry(); requestRender(); }
+  if (['item', 'landscape'].includes(state.selection?.type) && wallsEditable()) {
+    const r = objectGizmoHover(e);
+    if (r.changed) { uploadOverlay(); requestRender(); }
+    if (r.cursor) {
+      if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); requestRender(); }
+      el('canvas3d').style.cursor = r.cursor;
+      return;
+    }
+  } else if (clearObjectGizmoHover()) { uploadOverlay(); requestRender(); }
   const hit = pickWithMass(e);
   const nextVoid = hit?.type === 'mass' && massIsVoid(hit.id) ? hit.id : null;
   const voidChanged = nextVoid !== massVoidHoverId;
@@ -1131,6 +1150,7 @@ function onDown(e) {
     if (openingResizeDragging()) cancelOpeningResize();
     if (massDragging()) cancelMassDrag();
     if (roofDragging()) cancelRoofDrag();
+    if (gesture?.kind === 'object-gizmo') cancelObjectGizmoDrag();
     const [a, b] = [...pointers.values()];
     gesture = {
       kind: 'pinch', dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
@@ -1189,6 +1209,15 @@ function onDown(e) {
     setHint();
     return;
   }
+  // Обычные объекты используют единый 3D-гизмо: мебель — XYZ, деревья и
+  // прочие наземные объекты — только XY, высотные объекты участка — XYZ.
+  const objectPart = wallsEditable() ? objectGizmoPartAt(e) : null;
+  if (objectPart && startObjectGizmoDrag(e, objectPart)) {
+    gesture = { kind: 'object-gizmo' };
+    el('canvas3d').style.cursor = 'grabbing';
+    setHint();
+    return;
+  }
   const hit = pickWithMass(e);
   const grip = gripAt(hit, e);
   // Мышь: нажатие на грань выбранной стены — сразу ручка.
@@ -1230,6 +1259,7 @@ function onMove(e) {
   if (gesture.kind === 'opening-resize') { moveOpeningResize(e); return; }
   if (gesture.kind === 'mass') { moveMassDrag(e); return; }
   if (gesture.kind === 'roof') { moveRoofDrag(e); return; }
+  if (gesture.kind === 'object-gizmo') { moveObjectGizmoDrag(e); return; }
   if (gesture.kind === 'pinch') {
     if (massVoidHoverId !== null) { massVoidHoverId = null; uploadOverlay(); }
     const [a, b] = [...pointers.values()];
@@ -1293,6 +1323,14 @@ function onUp(e) {
     }
     return;
   }
+  if (g?.kind === 'object-gizmo') {
+    if (!pointers.size) {
+      gesture = null;
+      finishObjectGizmoDrag();
+      refreshHighlight();
+    }
+    return;
+  }
   if (g?.hold) clearTimeout(g.hold);
   if (g?.click && !pointers.size) {
     gesture = null;
@@ -1347,6 +1385,12 @@ function onCancel(e) {
     pointers.delete(e.pointerId);
     gesture = null;
     cancelRoofDrag();
+    return;
+  }
+  if (gesture?.kind === 'object-gizmo') {
+    pointers.delete(e.pointerId);
+    gesture = null;
+    cancelObjectGizmoDrag();
     return;
   }
   if (gesture?.hold) clearTimeout(gesture.hold);
@@ -1450,6 +1494,21 @@ export function bind3d() {
     },
     ground: () => (opts.site ? terrainHeightFn(state.project, opts.terrainScale) : null),
   });
+  initObjectGizmo3d({
+    faces: () => faces,
+    ray: rayAt,
+    rayPlaneZ,
+    axisDelta: (axis, dx, dy) => axisDelta(cam, canvas.clientWidth || 1, canvas.clientHeight || 1, axis, dx, dy),
+    worldPerPx: () => worldPerPixel(canvas.clientWidth || 1, canvas.clientHeight || 1),
+    project: (p) => debug3dScreen(p),
+    basis: () => {
+      const c = camera(canvas.clientWidth || 1, canvas.clientHeight || 1);
+      return { r: W(c.r), u: W(c.u), f: W(c.f) };
+    },
+    rebuild: () => { rebuildScene(); uploadGeometry(); requestRender(); },
+    redraw: () => { uploadOverlay(); requestRender(); },
+    hint: (text) => setHint(text),
+  });
   bindMassNum();
   initRoof3d({
     ray: rayAt,
@@ -1530,6 +1589,7 @@ export function bind3d() {
   canvas.addEventListener('pointercancel', onCancel);
   canvas.addEventListener('pointerleave', () => {
     const hadMass = !gesture && clearMassHover();
+    const hadObject = !gesture && clearObjectGizmoHover();
     const hadVoid = massVoidHoverId !== null;
     massVoidHoverId = null;
     if (massToolOn() && !gesture) setMassLabel(null);
@@ -1538,7 +1598,7 @@ export function bind3d() {
       if (hadVoid) { uploadOverlay(); requestRender(); }
       return;
     }
-    if (!hover && !hadMass && !hadVoid) return;
+    if (!hover && !hadMass && !hadObject && !hadVoid) return;
     const hadGeometryHover = Boolean(hover) || hadMass;
     hover = null;
     canvas.style.cursor = '';
@@ -1551,7 +1611,7 @@ export function bind3d() {
     e.preventDefault();
     const key = cam.projection === 'perspective' ? 'eyeDist' : 'dist';
     cam[key] = Math.min(400000, Math.max(3000, cam[key] * Math.exp(e.deltaY * 0.0012)));
-    if (state.selection?.type === 'mass' || state.selection?.type === 'opening' || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
+    if (['mass', 'opening', 'item', 'landscape'].includes(state.selection?.type) || massToolOn() || openingToolOn()) uploadOverlay(); // ручки и призраки — в пикселях экрана
     updateHover(e); // камера изменилась — заново проверяем cutter под курсором
     requestRender();
   }, { passive: false });
@@ -1594,7 +1654,8 @@ export function debug3d() {
     roofColors: [...new Set(faces.filter((f) => f.roofId && f.kind === 'roof').map((f) => f.color))],
     roofTop: Math.max(-Infinity, ...faces.filter((f) => f.roofId && f.kind === 'roof').flatMap((f) => f.pts.map((p) => p.z))),
     roof3d: debugRoof3d(),
-    mass: debugMass3d(), openingTool: debugOpening3d(), label: el('v3Label')?.hidden === false ? el('v3Label').textContent : null,
+    mass: debugMass3d(), objectGizmo: debugObjectGizmo3d(), openingTool: debugOpening3d(),
+    label: el('v3Label')?.hidden === false ? el('v3Label').textContent : null,
   };
 }
 

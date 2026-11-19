@@ -330,6 +330,17 @@ function wallRef(wall, levelId, face) {
 // на свою стену (клетка помнит запись-владельца).
 function levelWallsV2(lp, walls, z0, height, levelId) {
   const faces = [];
+  // Косые ручные стены живут полигональными телами и не входят в
+  // ортогональную сетку ниже. Выдавливаем их точный плановый контур.
+  for (const wall of walls) {
+    if (wall.hidden || wall.orient !== 'a' || !wall.poly?.length) continue;
+    const z = wallZRange(lp, wall, height);
+    const list = polySlabFaces(wall.poly, z0 + z.z0, z0 + z.z1, WALL_COLOR, 'wall');
+    for (const face of list) faces.push({
+      ...face, noEdges: true,
+      ref: wallRef(wall, levelId, face.normal.z > 0.5 ? 'top' : face.normal.z < -0.5 ? 'bottom' : 'side'),
+    });
+  }
   const { recs, voids } = levelWallSolids(lp, walls, height);
   if (!recs.length || height < 0.5) return faces;
   for (const q of voids) {
@@ -732,7 +743,8 @@ export function furnitureVolumes(items, top = Infinity) {
   const out = [];
   const box = (poly, lo, hi, item, color) => out.push({ poly, z0: lo, z1: hi, color, itemId: item.id });
   const add = (p, item, spec) => {
-    const lo = Math.min(top - 1, Math.max(0, spec.z0 || 0));
+    const lift = Number(item.elev3d) || 0;
+    const lo = Math.min(top - 1, Math.max(0, (spec.z0 || 0) + lift));
     const hi = Math.min(top, lo + Math.max(1, spec.h));
     if (spec.model === 'upholstered-bed') {
       const d = spec.design;

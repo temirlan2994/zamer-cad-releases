@@ -45,14 +45,14 @@ describe('ручные стены', () => {
     assert.match(s.sel?.key || '', /^m\|/, 'последняя стена выбрана');
   });
 
-  it('ось — только ортогонально: косой клик прижимается к горизонтали', async () => {
+  it('ось свободная: косой клик сохраняет угол', async () => {
     const { page } = app;
     await page.keyboard.press('w');
     await clickWorld(page, 0, -1500);
     await clickWorld(page, 3000, -1100);
     await page.keyboard.press('Escape');
     const last = (await walls(page)).at(-1);
-    assert.equal(last.a.y, last.b.y);
+    assert.deepEqual([last.a, last.b], [{ x: 0, y: -1500 }, { x: 3000, y: -1100 }]);
     assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
     // Отмена — косая стена уходит.
     await page.keyboard.press('Control+z');

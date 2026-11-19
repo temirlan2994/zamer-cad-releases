@@ -162,10 +162,10 @@ function wallLength(w) {
   return Math.hypot(w.axis.b.x - w.axis.a.x, w.axis.b.y - w.axis.a.y);
 }
 
-// Проверка оси: ортогональна и не короче MANUAL_WALL_MIN.
+// Проверка оси: свободный угол, но не короче MANUAL_WALL_MIN.
 export function wallAxisVerdict(a, b) {
-  if (!manualWallGeometry({ axis: { a, b }, thickness: 100 })) return { ok: false, reason: 'Стена — только по горизонтали или вертикали' };
   if (Math.hypot(b.x - a.x, b.y - a.y) < MANUAL_WALL_MIN) return { ok: false, reason: `Стена короче ${MANUAL_WALL_MIN} мм` };
+  if (!manualWallGeometry({ axis: { a, b }, thickness: 100 })) return { ok: false, reason: 'Не удалось построить ось стены' };
   return { ok: true };
 }
 
@@ -186,8 +186,12 @@ function keepHostOpenings(project, wall, before) {
   if (!g0 || !g1) return;
   for (const o of project.openings || []) {
     if (o.host?.wallId !== wall.id) continue;
-    const abs = g0.axisStart + g0.dir * Number(o.host.t);
-    o.host = { ...o.host, t: (abs - g1.axisStart) * g1.dir };
+    const oldPoint = {
+      x: g0.a.x + g0.tangent.x * Number(o.host.t),
+      y: g0.a.y + g0.tangent.y * Number(o.host.t),
+    };
+    const t = (oldPoint.x - g1.a.x) * g1.tangent.x + (oldPoint.y - g1.a.y) * g1.tangent.y;
+    o.host = { ...o.host, t };
   }
 }
 
@@ -198,6 +202,13 @@ export function moveManualWall(project, id, delta) {
   const g = wall && manualWallGeometry(wall);
   if (!g || !Number.isFinite(delta)) return { ok: false, reason: 'Эту стену нельзя переместить' };
   if (Math.abs(delta) < 1e-9) return { ok: true, moved: [] };
+  if (g.orient === 'a') {
+    const n = Math.abs(g.normal.x) > 1e-6 ? (g.normal.x < 0 ? { x: -g.normal.x, y: -g.normal.y } : g.normal)
+      : (g.normal.y < 0 ? { x: -g.normal.x, y: -g.normal.y } : g.normal);
+    wall.axis.a = { x: wall.axis.a.x + n.x * delta, y: wall.axis.a.y + n.y * delta };
+    wall.axis.b = { x: wall.axis.b.x + n.x * delta, y: wall.axis.b.y + n.y * delta };
+    return { ok: true, moved: [] };
+  }
   const key = g.orient === 'h' ? 'y' : 'x';
   const along = g.orient === 'h' ? 'x' : 'y';
   const carried = [];
@@ -221,22 +232,18 @@ export function moveManualWall(project, id, delta) {
   return { ok: true, moved: carried };
 }
 
-// Перенос торца end ('a' | 'b') в точку p: стена остаётся ортогональной
-// (меняется только координата вдоль оси), не короче MANUAL_WALL_MIN и не
-// разворачивается. Проёмы остаются на месте в мире.
+// Перенос торца end ('a' | 'b') в свободную точку. Проёмы остаются на месте
+// в мире и перепроецируются на новую ось.
 export function dragManualWallEnd(project, id, end, p) {
   const wall = manualWallById(project, id);
   const g = wall && manualWallGeometry(wall);
   if (!g || (end !== 'a' && end !== 'b')) return { ok: false, reason: 'Торец не найден' };
-  const along = g.orient === 'h' ? 'x' : 'y';
   const before = structuredClone(wall);
   const fixed = wall.axis[end === 'a' ? 'b' : 'a'];
-  const value = p[along];
-  const sign = Math.sign(end === 'b' ? value - fixed[along] : fixed[along] - value);
-  if (sign !== g.dir || Math.abs(value - fixed[along]) < MANUAL_WALL_MIN) {
+  if (Math.hypot(p.x - fixed.x, p.y - fixed.y) < MANUAL_WALL_MIN) {
     return { ok: false, reason: `Стена короче ${MANUAL_WALL_MIN} мм` };
   }
-  wall.axis[end] = { ...wall.axis[end], [along]: value };
+  wall.axis[end] = { x: p.x, y: p.y };
   keepHostOpenings(project, wall, before);
   return { ok: true };
 }
@@ -269,9 +276,14 @@ export function setManualWallJustify(project, id, justify, { keepBody = true } =
   const g1 = manualWallGeometry(wall);
   if (keepBody && g0 && g1) {
     const shift = g0.lo - g1.lo;
-    const key = g0.orient === 'h' ? 'y' : 'x';
-    wall.axis.a = { ...wall.axis.a, [key]: wall.axis.a[key] + shift };
-    wall.axis.b = { ...wall.axis.b, [key]: wall.axis.b[key] + shift };
+    if (g0.orient === 'a') {
+      wall.axis.a = { x: wall.axis.a.x + g0.normal.x * shift, y: wall.axis.a.y + g0.normal.y * shift };
+      wall.axis.b = { x: wall.axis.b.x + g0.normal.x * shift, y: wall.axis.b.y + g0.normal.y * shift };
+    } else {
+      const key = g0.orient === 'h' ? 'y' : 'x';
+      wall.axis.a = { ...wall.axis.a, [key]: wall.axis.a[key] + shift };
+      wall.axis.b = { ...wall.axis.b, [key]: wall.axis.b[key] + shift };
+    }
   }
   return { ok: true };
 }

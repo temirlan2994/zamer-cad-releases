@@ -126,6 +126,20 @@ function pointInRing(p, ring) {
   return inside;
 }
 
+function fillWallBody(ctx, wall, expand = 0) {
+  const rects = wallRects(wall);
+  if (rects.length) {
+    for (const r of rects) ctx.fillRect(r.x - expand, r.y - expand, r.w + 2 * expand, r.h + 2 * expand);
+    return;
+  }
+  for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+    if (poly.length < 3) continue;
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath(); ctx.fill();
+  }
+}
+
 // Сквозь проём верхнего этажа виден реальный план источника снизу. Это
 // только графическая подложка: нижние объекты не попадают в hit-test.
 function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
@@ -167,7 +181,7 @@ function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
         ctx.beginPath();
         wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.closePath(); ctx.fill();
-      } else for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+      } else fillWallBody(ctx, wall);
     }
     ctx.globalAlpha = print ? 0.48 : 0.58;
     for (const op of lp.openings) drawOpening(ctx, lowerState, op, lowerWalls, tokens, px);
@@ -406,7 +420,7 @@ export function createRenderer(canvas) {
             ctx.closePath();
             ctx.fill();
           } else {
-            for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+            fillWallBody(ctx, wall);
           }
         }
         ctx.restore();
@@ -453,7 +467,7 @@ export function createRenderer(canvas) {
         // Куски соседних стен чуть перекрываем (0,5 px экрана), иначе на стыках
         // сглаживание даёт светлые швы — стена выглядит собранной из кирпичиков.
         const e = wall.hidden ? 0 : px(0.5);
-        for (const r of wallRects(wall)) ctx.fillRect(r.x - e, r.y - e, r.w + 2 * e, r.h + 2 * e);
+        fillWallBody(ctx, wall, e);
         ctx.globalAlpha = 1;
       };
       const roomLayer = (room) => {
@@ -3047,20 +3061,22 @@ function drawWallToolPreview(ctx, tool, tokens, px) {
   ctx.strokeStyle = tokens.accent2;
   ctx.lineWidth = px(1);
   ctx.setLineDash([px(4), px(4)]);
-  if (tool.snapX != null) { ctx.beginPath(); ctx.moveTo(tool.snapX, c.y - 1e5); ctx.lineTo(tool.snapX, c.y + 1e5); ctx.stroke(); }
-  if (tool.snapY != null) { ctx.beginPath(); ctx.moveTo(c.x - 1e5, tool.snapY); ctx.lineTo(c.x + 1e5, tool.snapY); ctx.stroke(); }
   ctx.setLineDash([]);
   if (tool.start) {
     const a = tool.start;
     const t = tool.thickness || 100;
-    const horiz = Math.abs(c.y - a.y) < 0.5;
-    const x0 = Math.min(a.x, c.x); const y0 = Math.min(a.y, c.y);
-    const rect = horiz
-      ? { x: x0, y: a.y - t / 2, w: Math.abs(c.x - a.x), h: t }
-      : { x: a.x - t / 2, y: y0, w: t, h: Math.abs(c.y - a.y) };
+    const dx = c.x - a.x; const dy = c.y - a.y;
+    const len0 = Math.hypot(dx, dy) || 1;
+    const n = { x: (dy / len0) * (t / 2), y: (-dx / len0) * (t / 2) };
+    const poly = [
+      { x: a.x - n.x, y: a.y - n.y }, { x: c.x - n.x, y: c.y - n.y },
+      { x: c.x + n.x, y: c.y + n.y }, { x: a.x + n.x, y: a.y + n.y },
+    ];
     ctx.globalAlpha = 0.5;
     ctx.fillStyle = tool.valid === false ? tokens.danger : tokens.accent;
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath(); ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = tool.valid === false ? tokens.danger : tokens.accent;
     ctx.lineWidth = px(1.5);
