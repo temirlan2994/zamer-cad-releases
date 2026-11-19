@@ -177,14 +177,14 @@ function linearDimension(entity, layer, scaleFactor, measurementSettings) {
 
 function angularDimension(entity, layer, scaleFactor, measurementSettings) {
   const geometry = angularDimensionGeometry(entity);
-  const artwork = angularDimensionArtwork(geometry, scaleFactor);
+  const artwork = angularDimensionArtwork(geometry, scaleFactor, entity.arcRadius);
   if (!artwork) return null;
   const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
   const { radius, textHeight, base, label } = artwork;
   const text = formatProjectAngle(measurement, measurementSettings);
   const graphics = [];
-  appendLine(graphics, vertex, arm1, layer);
-  appendLine(graphics, vertex, arm2, layer);
+  appendLine(graphics, vertex, artwork.firstLegEnd, layer);
+  appendLine(graphics, vertex, artwork.secondLegEnd, layer);
   if (Math.abs(sweep) > Number.EPSILON) {
     graphics.push(...dxfArc({ center: vertex, radius, startAngle, endAngle: startAngle + sweep, counterClockwise: sweep > 0 }, layer, true));
   }

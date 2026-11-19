@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { angularDimensionGeometry, dimensionGeometry, formatDimensionLength } from "./dimensions.js";
+import { angularDimensionArtwork } from "./dimension-artwork.js";
 
 const points = { x1: 600, y1: 1500, x2: 1800, y2: 2400 };
 
@@ -66,4 +67,23 @@ test("angular dimensions reject missing or coincident rays and use the shorter s
   const geometry = angularDimensionGeometry({ vertex, arm1, arm2 });
   assert.equal(geometry.measurement, 90);
   assert.equal(geometry.sweep, -Math.PI / 2);
+});
+
+test("an adjusted angular dimension arc extends its rays without changing the measurement", () => {
+  const vertex = { x: 0, y: 0 };
+  const arm1 = { x: 100, y: 0 };
+  const arm2 = { x: 0, y: -200 };
+  const geometry = angularDimensionGeometry({ vertex, arm1, arm2 });
+  const automatic = angularDimensionArtwork(geometry, 1);
+  const adjusted = angularDimensionArtwork(geometry, 1, 350);
+  assert.equal(automatic.radius, 52);
+  assert.deepEqual(automatic.firstLegEnd, arm1);
+  assert.deepEqual(automatic.secondLegEnd, arm2);
+  assert.equal(adjusted.radius, 350);
+  assert.deepEqual(adjusted.firstLegEnd, { x: 350, y: 0 });
+  assert.ok(Math.abs(adjusted.secondLegEnd.x) < 1e-12);
+  assert.equal(adjusted.secondLegEnd.y, -350);
+  assert.equal(geometry.measurement, 90);
+  assert.deepEqual(geometry.arm1, arm1);
+  assert.deepEqual(geometry.arm2, arm2);
 });

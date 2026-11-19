@@ -1377,10 +1377,64 @@ input {
   border-color: var(--error-text);
 }
 
-.line-direction-arrow {
-  color: var(--readable-accent);
-  font-size: 1.05rem;
-  transform: rotate(var(--line-direction-angle, 0deg));
+.metric-fields[data-metric-context="line-draft"] .metric-field:not([hidden]) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  column-gap: 2px;
+  grid-template-columns: minmax(2ch, auto) auto;
+  isolation: isolate;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 48px;
+  padding: 0 6px;
+  position: relative;
+}
+
+.metric-fields[data-metric-context="line-draft"] .metric-field::before {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  content: "";
+  inset: 6px 0;
+  position: absolute;
+  z-index: -1;
+}
+
+.metric-fields[data-metric-context="line-draft"] .metric-field:focus-within::before {
+  border-color: var(--accent);
+}
+
+.metric-fields[data-metric-context="line-draft"] .metric-field:has(input[aria-invalid="true"])::before {
+  border-color: var(--error-text);
+}
+
+.metric-fields[data-metric-context="line-draft"] .metric-field-name {
+  display: none;
+}
+
+.metric-fields[data-metric-context="line-draft"] :is(input, .metric-readout) {
+  font-size: 0.78rem;
+  grid-area: 1 / 1;
+}
+
+.metric-fields[data-metric-context="line-draft"] input:not(:focus) {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.metric-fields[data-metric-context="line-draft"] input:focus {
+  width: max(2ch, var(--value-width, 4ch));
+}
+
+.metric-fields[data-metric-context="line-draft"] + .keyboard-confirm:not([hidden]) {
+  border-radius: 7px;
+  box-shadow: none;
+  font-size: 1rem;
+  height: 36px;
+  width: 38px;
 }
 
 .select-tool-menu {

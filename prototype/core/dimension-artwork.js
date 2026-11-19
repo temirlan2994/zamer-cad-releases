@@ -39,14 +39,25 @@ export function linearDimensionArtwork(geometry, scaleFactor) {
   };
 }
 
-export function angularDimensionArtwork(geometry, scaleFactor) {
+export function angularDimensionArtwork(geometry, scaleFactor, arcRadius) {
   if (!geometry) return null;
   const { vertex, arm1, arm2, startAngle, sweep } = geometry;
-  const radius = Math.min(annotationWorldSize(84, scaleFactor), Math.min(Math.hypot(arm1.x - vertex.x, arm1.y - vertex.y),
-    Math.hypot(arm2.x - vertex.x, arm2.y - vertex.y)) * 0.52);
+  const firstLength = Math.hypot(arm1.x - vertex.x, arm1.y - vertex.y);
+  const secondLength = Math.hypot(arm2.x - vertex.x, arm2.y - vertex.y);
+  const radius = Number.isFinite(arcRadius) && arcRadius > 1e-6
+    ? arcRadius : Math.min(annotationWorldSize(84, scaleFactor), Math.min(firstLength, secondLength) * 0.52);
   if (!Number.isFinite(radius) || radius <= 1e-6) return null;
+  const endAngle = startAngle + sweep;
   const middle = startAngle + sweep / 2;
-  const atMiddle = (distance) => ({ x: vertex.x + Math.cos(middle) * distance, y: vertex.y + Math.sin(middle) * distance });
-  return { radius, base: atMiddle(radius), label: atMiddle(radius + annotationWorldSize(18, scaleFactor)),
-    textHeight: annotationWorldSize(12, scaleFactor) };
+  const pointAt = (angle, distance) => ({ x: vertex.x + Math.cos(angle) * distance, y: vertex.y + Math.sin(angle) * distance });
+  const firstArcEnd = pointAt(startAngle, radius);
+  const secondArcEnd = pointAt(endAngle, radius);
+  return {
+    radius, firstArcEnd, secondArcEnd,
+    firstLegEnd: firstLength >= radius ? arm1 : firstArcEnd,
+    secondLegEnd: secondLength >= radius ? arm2 : secondArcEnd,
+    base: pointAt(middle, radius),
+    label: pointAt(middle, radius + annotationWorldSize(18, scaleFactor)),
+    textHeight: annotationWorldSize(12, scaleFactor),
+  };
 }

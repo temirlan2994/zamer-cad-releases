@@ -1,5 +1,5 @@
 import { arcGeometry } from "./geometry.js";
-import { isLinePoint, isValidLine } from "./line-edits.js";
+import { isLinePoint, isValidLine, MAX_LINE_COORDINATE } from "./line-edits.js";
 import { validPolylinePoints } from "./polyline.js";
 import { normalizePlanAnnotation } from "./plan-annotations.js";
 
@@ -19,8 +19,9 @@ function hasOptionalNumbers(entity, fields) {
 
 function validDimension(entity) {
   if (entity.dimensionKind === "angular") {
-    const { vertex, arm1, arm2 } = entity;
+    const { vertex, arm1, arm2, arcRadius } = entity;
     return [vertex, arm1, arm2].every(isLinePoint) &&
+      (arcRadius == null || (Number.isFinite(arcRadius) && arcRadius > 1e-6 && arcRadius <= MAX_LINE_COORDINATE)) &&
       Math.hypot(arm1.x - vertex.x, arm1.y - vertex.y) > 0 &&
       Math.hypot(arm2.x - vertex.x, arm2.y - vertex.y) > 0;
   }

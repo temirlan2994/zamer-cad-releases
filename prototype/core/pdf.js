@@ -65,12 +65,12 @@ function centeredTextCorners(origin, width, height, rotation) {
 function dimensionPlotBounds(entity, textWidth, scaleFactor, measurementSettings) {
   if (entity.dimensionKind === "angular") {
     const geometry = angularDimensionGeometry(entity);
-    const art = angularDimensionArtwork(geometry, scaleFactor);
+    const art = angularDimensionArtwork(geometry, scaleFactor, entity.arcRadius);
     if (!art) return null;
-    const { vertex, arm1, arm2, startAngle, sweep, measurement } = geometry;
+    const { vertex, startAngle, sweep, measurement } = geometry;
     const text = formatProjectAngle(measurement, measurementSettings);
     const width = textWidth([text], art.textHeight, 700) + art.textHeight * 0.25;
-    return boundsOf([vertex, arm1, arm2, ...arcExtrema(vertex, art.radius, startAngle, sweep),
+    return boundsOf([vertex, art.firstLegEnd, art.secondLegEnd, ...arcExtrema(vertex, art.radius, startAngle, sweep),
       ...centeredTextCorners(art.label, width, art.textHeight * 1.25)]);
   }
   const geometry = dimensionGeometry(entity);

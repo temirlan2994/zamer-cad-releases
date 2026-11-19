@@ -82,6 +82,17 @@ test("plot bounds include scaled dimension artwork and ignore replaced legacy an
   assert.ok(enlarged.maxX > bounds.maxX);
 });
 
+test("enlarged angular dimensions include both non-cardinal arc ends in the plot", () => {
+  const point = (degrees) => ({ x: 400 * Math.cos(degrees * Math.PI / 180), y: 400 * Math.sin(degrees * Math.PI / 180) });
+  const dimension = { type: "line", layer: "dimensions", dimensionKind: "angular", vertex: { x: 0, y: 0 },
+    arm1: point(10), arm2: point(80), arcRadius: 3000 };
+  const bounds = pdfPlotBounds([dimension]);
+  close(bounds.minX, 0);
+  close(bounds.minY, 0);
+  close(bounds.maxX, 3000 * Math.cos(Math.PI / 18));
+  close(bounds.maxY, 3000 * Math.sin(4 * Math.PI / 9));
+});
+
 test("plot bounds cover isolated area and elevation zones without their associated drafting geometry", () => {
   const area = { type: "area", layer: "areas", points: [{ x: -1200, y: -300 }, { x: 800, y: -300 }, { x: -1200, y: 1200 }] };
   const roof = { type: "elevation", layer: "elevations", zoneStyle: "beam", height: -450,

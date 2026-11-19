@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=236" />
+    <link rel="stylesheet" href="./styles.css?v=237" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -291,7 +291,6 @@
                 <input id="angleInput" inputmode="decimal" enterkeyhint="done" aria-label="Угол линии" aria-describedby="statusChip" />
                 <span class="metric-readout" id="angleReadout" aria-hidden="true">0</span><span class="metric-unit">°</span>
               </label>
-              <span id="lineDirectionArrow" class="line-direction-arrow" aria-hidden="true" hidden>→</span>
             </div>
             <button class="keyboard-confirm" id="keyboardConfirmButton" type="button" title="Подтвердить ввод" aria-label="Подтвердить ввод" hidden>✓</button>
           </div>
@@ -449,7 +448,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=236"></script>
+    <script type="module" src="./app.js?v=237"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
