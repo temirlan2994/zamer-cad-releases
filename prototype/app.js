@@ -707,6 +707,8 @@ const state = {
   offsetCommand: null,
   lineEdit: null,
   pointer: null,
+  pointerStartedAt: 0,
+  lastAnnotationTap: null,
   activePointers: new Map(),
   pinch: null,
   gestureSuppressTap: false,
@@ -744,6 +746,8 @@ const state = {
 
 const TAP_MOVE_TOLERANCE = 8;
 const LONG_PRESS_SELECT_MS = 430;
+const DOUBLE_TAP_MS = 380;
+const DOUBLE_TAP_DISTANCE = 20;
 
 function decodeMojibakeText(value) {
   if (typeof value !== "string" || !/[РС][\u0400-\u04ff]|Г[—°]|В[°·]/.test(value)) return value;
@@ -2167,6 +2171,7 @@ function restoreProject(project) {
     state.dimensionAttach = null;
     closeLineMetricInput();
     state.pointer = null;
+    state.lastAnnotationTap = null;
     state.pinch = null;
     state.inlineEdit = null;
     state.numericEdit = null;
@@ -7047,6 +7052,7 @@ function syncToolButtons() {
 
 function setTool(tool) {
   window.clearTimeout(state.pointer?.selectionHoldTimer);
+  state.lastAnnotationTap = null;
   if (lineMetricContext()) closeLineMetricInput();
   if (state.tool === "polyline" && state.drawing) finishLineCommand();
   state.directManipulationIds.clear();
@@ -8856,6 +8862,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   state.gestureSuppressTap = false;
+  state.pointerStartedAt = event.timeStamp;
   const screen = getPointer(event);
   if (surveyPointPicker) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "survey-point" };
@@ -9213,6 +9220,7 @@ function finishCanvasPointer(event, canceled = false) {
   forgetPointer(event);
   releaseCanvasPointer(event);
   if (wasPinching) {
+    state.lastAnnotationTap = null;
     endPinchGestureIfNeeded();
     if (state.activePointers.size === 0) {
       state.gestureSuppressTap = false;
@@ -9220,6 +9228,7 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   if (canceled || !state.pointer || state.pointer.id !== event.pointerId) {
+    state.lastAnnotationTap = null;
     if (state.activePointers.size === 0) {
       clearSelectionDrag();
       state.gestureSuppressTap = false;
@@ -9229,6 +9238,7 @@ function finishCanvasPointer(event, canceled = false) {
     }
     return;
   }
+  const annotation = annotationForDoubleTap(event, state.pointer);
   if (state.pointer.mode === "survey-point") {
     if (!state.pointer.moved) commitSurveyPoint();
   } else if (state.pointer.mode === "dimension-attach") {
@@ -9327,6 +9337,26 @@ function finishCanvasPointer(event, canceled = false) {
   }
   forceMoveCursorVisible();
   drawNow();
+  if (annotation) void editPlanAnnotation(annotation);
+}
+
+function annotationForDoubleTap(event, pointer) {
+  const previous = state.lastAnnotationTap;
+  state.lastAnnotationTap = null;
+  if (event.button !== 0 || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey ||
+      pointer.moved || !viewportIsSelecting() || state.selectTool !== "select" ||
+      event.timeStamp - state.pointerStartedAt >= LONG_PRESS_SELECT_MS || planAnnotationEditor.open) return null;
+  const screen = getPointer(event);
+  if (pointDistance(pointer.startScreen, screen) > TAP_MOVE_TOLERANCE) return null;
+  const id = pointer.tapCandidateId ?? pointer.targetId;
+  const entity = id ? state.entities.find((item) => item.id === id) : null;
+  if (!annotationEditKind(entity) || !entityMatchesSelectionFilter(entity)) return null;
+  if (previous?.entity === entity && previous.pointerType === event.pointerType &&
+      event.timeStamp - previous.time <= DOUBLE_TAP_MS && pointDistance(previous.screen, screen) <= DOUBLE_TAP_DISTANCE) {
+    return entity;
+  }
+  state.lastAnnotationTap = { entity, pointerType: event.pointerType, time: event.timeStamp, screen };
+  return null;
 }
 
 function finishPointerMoveUndo() {
@@ -9357,6 +9387,7 @@ function releaseCanvasPointer(event) {
 
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
+  state.lastAnnotationTap = null;
   const screen = getPointer(event);
   const zoom = event.deltaY < 0 ? 1.08 : 0.92;
   zoomAtScreen(screen, state.view.scale * zoom);
@@ -9382,6 +9413,7 @@ canvas.addEventListener("keydown", (event) => {
   } else {
     return;
   }
+  state.lastAnnotationTap = null;
   event.preventDefault();
   event.stopPropagation();
 });
@@ -9836,6 +9868,12 @@ function geometryChanged(before, after) {
 }
 
 function pickEntity(screen) {
+  // Zone labels are painted over the drawing, in the order they enter this map.
+  for (const [id, rect] of [...zoneLabelRects].reverse()) {
+    if (screenRectDistance(screen, rect) === 0 && entityMatchesSelectionFilter(state.entities.find((entity) => entity.id === id))) {
+      return id;
+    }
+  }
   let best = null;
   let bestDistance = 18;
   let innerZone = null;
@@ -10197,6 +10235,7 @@ snapMore.addEventListener("keydown", (event) => {
 });
 document.addEventListener("pointerdown", (event) => {
   if (snapMore.open && !snapMore.contains(event.target)) snapMore.open = false;
+  if (event.target !== canvas) state.lastAnnotationTap = null;
 });
 
 snaps.forEach((button) => {
@@ -11530,11 +11569,14 @@ bindPointAction(planAnnotationEdit, () => {
     void editPlanAnnotationBatch(editable);
     return;
   }
-  const [entity] = editable.entities;
-  if (isPlanAnnotationZone(entity)) void editPlanZone(entity);
-  else if (entity?.dimensionKind === "leader") void editLeaderText(entity);
-  else if (entity?.type === "text") void editTextEntity(entity);
+  void editPlanAnnotation(editable.entities[0]);
 });
+
+function editPlanAnnotation(entity) {
+  if (isPlanAnnotationZone(entity)) return editPlanZone(entity);
+  if (entity.dimensionKind === "leader") return editLeaderText(entity);
+  return editTextEntity(entity);
+}
 
 function annotationBatchPatch(entity, values) {
   const patch = {};
