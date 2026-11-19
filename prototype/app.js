@@ -740,6 +740,7 @@ const state = {
   selectedId: null,
   selectedIds: [],
   selectedEndpoint: null,
+  selectedArcGrip: null,
   endpointEditBefore: null,
   selectionDrag: null,
   openEditMenuAfterPointer: false,
@@ -2375,6 +2376,7 @@ function restoreProject(project) {
     state.inlineEdit = null;
     state.numericEdit = null;
     state.selectionDrag = null;
+    state.selectedArcGrip = null;
     state.selectedEndpoint = null;
     state.endpointEditBefore = null;
     state.undo = [];
@@ -2701,6 +2703,11 @@ function cursorSnapResolved() {
     state.polarSnapGuide = null;
     return { point: first, snap: { ...first, type: "end", label: "Начальная вершина" } };
   }
+  if (state.selectedArcGrip) {
+    const origin = state.selectedArcGrip.point;
+    const resolved = resolveSnapWorld(raw);
+    return distanceWorld(raw, origin) <= linePointEpsilon ? { point: origin, snap: null } : resolved;
+  }
   const draft = state.drawing;
   if (draft?.arcEnd && (state.tool === "arc" || draft.arcPhase === "through")) {
     return resolveArcBendSnap(raw, draft);
@@ -2874,6 +2881,7 @@ function shouldGhostEntityForCommand(entity) {
   if (printRendering) return false;
   if (state.lineEdit?.pending?.replacements.some(([target]) => target.id === entity.id)) return true;
   if (state.pointer?.mode === "figure-grip" && state.pointer.preview && state.pointer.grip.entityId === entity.id) return true;
+  if (state.selectedArcGrip?.entityId === entity.id) return true;
   return Boolean(
     state.moveCommand?.base &&
       (state.moveCommand.mode === "move" || state.moveCommand.mode === "rotate") &&
@@ -2882,7 +2890,7 @@ function shouldGhostEntityForCommand(entity) {
 }
 
 function syncCommandState() {
-  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint);
+  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedArcGrip);
   shell.dataset.command = state.offsetCommand ? "offset" : active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
@@ -3134,6 +3142,7 @@ function editableSelectionEntity() {
     !state.moveCommand &&
     !state.offsetCommand &&
     !state.selectedEndpoint &&
+    !state.selectedArcGrip &&
     !state.circleRadiusEdit &&
     !state.dimensionAttach &&
     !state.lineEdit &&
@@ -3153,7 +3162,7 @@ function isDirectMoveAnnotation(entity) {
 
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
-  if (!selected.length || state.tool !== "select" || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
+  if (!selected.length || state.tool !== "select" || state.selectedArcGrip || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
   if (action === "delete" || action === "move") return true;
   if (figureCutActions.has(action)) return selected.length === 1 && editableFigure(selected[0], action);
   if (lineEditActions.has(action)) return selected.length === 1 && isDraftLine(selected[0]);
@@ -3203,6 +3212,7 @@ function setSelection(ids, options = {}) {
   if (state.dimensionAttach?.entityId !== state.selectedId) state.dimensionAttach = null;
   state.directManipulationIds = new Set([...state.directManipulationIds].filter(id => state.selectedIds.includes(id)));
   state.selectedEndpoint = null;
+  state.selectedArcGrip = null;
   syncSelectionActions();
 }
 
@@ -3444,7 +3454,7 @@ function drawCanvasCenterCursor(rect) {
   const navigating = canvas.matches(":focus-visible");
   const visible =
     navigating || state.tool !== "select" || lineEditPlacesPoint() ||
-    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.dimensionAttach || surveyPointPicker);
+    Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedArcGrip || state.dimensionAttach || surveyPointPicker);
   if (!visible) return;
   const center = { x: rect.width / 2, y: rect.height / 2 };
   const red = state.theme === "dark" ? "#ff9a9a" : "#a3282d";
@@ -6305,7 +6315,7 @@ function resetSnapTracking() {
 function drawCursorSnap(c) {
   const dimensionStage = state.tool === "dimension" && !surveyPointPicker && !state.leaderInput ? state.drawing?.phase : null;
   const chooseAxis = state.dimensionTool === "linear" && dimensionStage === "offset";
-  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.dimensionAttach &&
+  const selectOnly = state.tool === "select" && !state.moveCommand && !state.selectedEndpoint && !state.selectedArcGrip && !state.dimensionAttach &&
     !surveyPointPicker && !lineEditPlacesPoint();
   const resolved = surveyPointPicker ? resolveDimensionPointSnap(rawCursorWorld(), { start: null })
     : selectOnly || state.leaderInput || dimensionStage === "offset" ? null : cursorSnapResolved();
@@ -6360,7 +6370,7 @@ function nearestSegmentSnapThreshold() {
 }
 
 function isLineSnapContext() {
-  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) ||
+  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) || Boolean(state.selectedArcGrip) ||
     ["line-grip", "figure-grip"].includes(state.pointer?.mode) || ["offset", "mirror", "scale"].includes(state.lineEdit?.mode);
 }
 
@@ -6369,7 +6379,7 @@ function nearestDraftLineSnap(point, start) {
   const intersection = snapEnabled("intersection");
   if (!perpendicular && !intersection) return null;
   const threshold = objectSnapThreshold();
-  const excluded = state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId;
+  const excluded = state.selectedEndpoint?.entityId || state.selectedArcGrip?.entityId || state.pointer?.grip?.entityId;
   const boundaries = boundarySegments(excluded);
   const crossing = intersection ? nearestIntersection(point, boundaries, threshold) : null;
   const foot = perpendicular ? nearestPerpendicular(point, start, boundaries, threshold) : null;
@@ -6383,7 +6393,7 @@ function nearestObjectSnap(point, { includeNearestSegment = false, start = null 
   const midpointThreshold = midpointSnapThreshold();
   const nearestThreshold = nearestSegmentSnapThreshold();
   const lineContext = isLineSnapContext();
-  const excluded = lineContext ? state.selectedEndpoint?.entityId || state.pointer?.grip?.entityId : null;
+  const excluded = lineContext ? state.selectedEndpoint?.entityId || state.selectedArcGrip?.entityId || state.pointer?.grip?.entityId : null;
   const explicit = nearestDraftLineSnap(point, start);
   if (explicit) return explicit;
   const candidates = snapCandidates({ includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"),
@@ -6835,7 +6845,7 @@ function fitViewport() {
 }
 
 function viewportIsSelecting() {
-  return state.tool === "select" && !state.leaderInput && !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.selectedEndpoint && !state.dimensionAttach;
+  return state.tool === "select" && !state.leaderInput && !state.lineEdit && !state.moveCommand && !state.offsetCommand && !state.selectedEndpoint && !state.selectedArcGrip && !state.dimensionAttach;
 }
 
 function placeAtViewportCenter() {
@@ -7431,6 +7441,7 @@ function setTool(tool) {
   closeLeaderInput();
   state.directManipulationIds.clear();
   state.tool = tool;
+  state.selectedArcGrip = null;
   state.planZone = isPlanAnnotationZone({ type: tool }) ? { mode: "contour", points: [], lastId: null } : null;
   state.dimensionAttach = null;
   const layer = annotationLayerForTool(tool);
@@ -8696,6 +8707,19 @@ function drawLineEditMarks(c) {
       drawFigureGrips(preview, c, pointer.grip);
     }
   }
+  const arcGrip = state.selectedArcGrip;
+  if (arcGrip) {
+    const entity = state.entities.find(item => item.id === arcGrip.entityId);
+    if (entity) {
+      const geometry = reshapeFigure(entity, arcGrip, cursorWorld());
+      const preview = { ...entity, ...geometry, id: "arc-grip-preview" };
+      ctx.save();
+      ctx.setLineDash([7, 4]);
+      drawArcEntity(preview, { ...c, line: c.accent });
+      ctx.restore();
+      drawFigureGrips(preview, c, arcGrip);
+    }
+  }
   const edit = state.lineEdit;
   if (edit?.pending) {
     ctx.save();
@@ -8788,7 +8812,13 @@ function finishFigureGrip(pointer) {
   const entity = state.entities.find(item => item.id === pointer.grip.entityId);
   if (!entity) return;
   if (!pointer.moved) {
-    if (pointer.grip.key === "radius") showCircleRadiusEditor(entity);
+    if (entity.type === "arc") {
+      state.selectedArcGrip = pointer.grip;
+      hideSelectToolMenu();
+      centerViewOnWorldPoint(pointer.grip.point);
+      resetSnapTracking();
+      statusChip.textContent = "Дуга · наведите крестик на новое место точки и тапните";
+    } else if (pointer.grip.key === "radius") showCircleRadiusEditor(entity);
     else statusChip.textContent = pointer.grip.key === "bend" || pointer.grip.key === "through"
       ? "Перетащите ручку изгиба" : "Перетащите ручку фигуры";
     return;
@@ -8804,6 +8834,21 @@ function finishFigureGrip(pointer) {
   }
   pointer.preview = null;
   resetSnapTracking();
+}
+
+function commitArcGripPoint(point) {
+  const grip = state.selectedArcGrip;
+  const entity = state.entities.find(item => item.id === grip.entityId);
+  const preview = entity && reshapeFigure(entity, grip, point);
+  if (!preview) {
+    statusChip.textContent = "Дуга · укажите другую точку";
+    draw();
+    return;
+  }
+  state.selectedArcGrip = null;
+  finishFigureGrip({ grip, preview, moved: true });
+  statusChip.textContent = "Точка дуги установлена";
+  draw();
 }
 
 function previewLineGrip(pointer, screen) {
@@ -8895,6 +8940,10 @@ function commitCursorPoint() {
   }
   const resolved = cursorSnapResolved();
   const world = resolved.point;
+  if (state.selectedArcGrip) {
+    commitArcGripPoint(world);
+    return;
+  }
   if (state.selectedEndpoint) {
     commitSelectedEndpointCursorPoint();
     return;
@@ -9260,6 +9309,10 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   if (state.lineEdit) {
     state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-edit" };
+    return;
+  }
+  if (state.selectedArcGrip) {
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "endpoint-place" };
     return;
   }
   if (state.selectTool === "multi" && viewportIsSelecting()) {
@@ -9690,7 +9743,8 @@ function finishCanvasPointer(event, canceled = false) {
     }
   } else if (state.pointer?.mode === "endpoint-place") {
     if (!canceled && !state.pointer.moved) {
-      commitSelectedEndpointCursorPoint(state.pointer.before);
+      if (state.selectedArcGrip) commitArcGripPoint(cursorWorld());
+      else commitSelectedEndpointCursorPoint(state.pointer.before);
     } else {
       draw();
       forceMoveCursorVisible();
@@ -10877,6 +10931,14 @@ document.addEventListener("keydown", (event) => {
   if (state.dimensionAttach && event.key === "Escape" && !event.target.closest("dialog")) {
     event.preventDefault();
     cancelDimensionAttach();
+    return;
+  }
+  if (state.selectedArcGrip && event.key === "Escape" && !event.target.closest("dialog")) {
+    event.preventDefault();
+    state.selectedArcGrip = null;
+    resetSnapTracking();
+    statusChip.textContent = "Правка точки дуги отменена";
+    draw();
     return;
   }
   if (event.target.closest("input, textarea, select, [contenteditable], button, summary")) return;
