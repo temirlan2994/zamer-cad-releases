@@ -1071,6 +1071,20 @@ button.project-card-open:active { background: var(--surface-2); }
   width: 100%;
 }
 
+.topbar .icon-button,
+.topbar-actions #allSnapsButton,
+.quick-edit-modes .icon-button {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.top-tool-label {
+  font-size: 8px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .quick-edit-modes .icon-button:disabled { opacity: .42; }
 .project-decimals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=250" />
+    <link rel="stylesheet" href="./styles.css?v=251" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -78,22 +78,22 @@
 
       <header class="topbar">
         <div class="topbar-project">
-          <button class="icon-button" id="backToProjectsButton" type="button" title="К проектам" aria-label="К проектам">←</button>
+          <button class="icon-button" id="backToProjectsButton" type="button" title="К проектам" aria-label="К проектам"><span aria-hidden="true">←</span><small class="top-tool-label" aria-hidden="true">Назад</small></button>
           <div class="project-title">
             <strong>Замер квартиры</strong>
             <span>ММ • 1:50</span>
           </div>
           <div class="project-top-actions" role="group" aria-label="Проект">
-            <button class="icon-button" id="themeButton" type="button" title="Тёмная тема" aria-label="Тёмная тема" aria-pressed="false">☾</button>
-            <button class="icon-button" id="projectSettingsButton" type="button" title="Настройки проекта" aria-label="Настройки проекта" aria-haspopup="dialog">⚙</button>
-            <button class="icon-button primary" id="exportButton" type="button" title="Экспорт" aria-label="Экспорт" aria-controls="exportSheet" aria-expanded="false">⇩</button>
+            <button class="icon-button" id="themeButton" type="button" title="Тёмная тема" aria-label="Тёмная тема" aria-pressed="false"><span aria-hidden="true">☾</span><small class="top-tool-label" aria-hidden="true">Тема</small></button>
+            <button class="icon-button" id="projectSettingsButton" type="button" title="Настройки проекта" aria-label="Настройки проекта" aria-haspopup="dialog"><span aria-hidden="true">⚙</span><small class="top-tool-label" aria-hidden="true">Настр.</small></button>
+            <button class="icon-button primary" id="exportButton" type="button" title="Экспорт" aria-label="Экспорт" aria-controls="exportSheet" aria-expanded="false"><span aria-hidden="true">⇩</span><small class="top-tool-label" aria-hidden="true">Экспорт</small></button>
           </div>
         </div>
         <div class="topbar-actions" role="group" aria-label="История, слои и привязки">
-          <button class="icon-button" id="undoButton" type="button" title="Отмена" aria-label="Отмена">↶</button>
-          <button class="icon-button" id="redoButton" type="button" title="Повтор" aria-label="Повтор">↷</button>
-          <button class="icon-button" id="layersButton" type="button" title="Слои" aria-label="Слои" aria-controls="layersSheet" aria-expanded="false">▤</button>
-          <button class="snap icon-snap active" id="allSnapsButton" type="button" title="Все привязки" aria-label="Все привязки" aria-pressed="true"><span data-snap-symbol="all" aria-hidden="true"></span></button>
+          <button class="icon-button" id="undoButton" type="button" title="Отмена" aria-label="Отмена"><span aria-hidden="true">↶</span><small class="top-tool-label" aria-hidden="true">Отмена</small></button>
+          <button class="icon-button" id="redoButton" type="button" title="Повтор" aria-label="Повтор"><span aria-hidden="true">↷</span><small class="top-tool-label" aria-hidden="true">Повтор</small></button>
+          <button class="icon-button" id="layersButton" type="button" title="Слои" aria-label="Слои" aria-controls="layersSheet" aria-expanded="false"><span aria-hidden="true">▤</span><small class="top-tool-label" aria-hidden="true">Слои</small></button>
+          <button class="snap icon-snap active" id="allSnapsButton" type="button" title="Все привязки" aria-label="Все привязки" aria-pressed="true"><span data-snap-symbol="all" aria-hidden="true"></span><small class="top-tool-label" aria-hidden="true">Вкл/выкл</small></button>
           <details class="snap-more" id="snapMore">
             <summary>Привязки</summary>
             <div class="snap-more-panel">
@@ -153,13 +153,13 @@
 
       <section class="snap-panel" aria-label="Быстрая правка">
         <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Правка чертежа">
-          <button class="icon-button" id="frameToolButton" type="button" title="Рамка" aria-label="Рамка" aria-pressed="false" aria-expanded="false" aria-controls="selectModeMenu"><span data-line-icon="frame"></span></button>
-          <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span></button>
-          <button class="icon-button" id="quickCopyTool" type="button" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span></button>
-          <button class="icon-button" id="quickRotateTool" type="button" title="Повернуть" aria-label="Повернуть выбранное" disabled><span aria-hidden="true">↻</span></button>
-          <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span></button>
-          <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false" disabled><span aria-hidden="true">✂</span></button>
-          <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false" disabled><span aria-hidden="true">⇥</span></button>
+          <button class="icon-button" id="frameToolButton" type="button" title="Рамка" aria-label="Рамка" aria-pressed="false" aria-expanded="false" aria-controls="selectModeMenu"><span data-line-icon="frame"></span><small class="top-tool-label" aria-hidden="true">Рамка</small></button>
+          <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span><small class="top-tool-label" aria-hidden="true">Сдвиг</small></button>
+          <button class="icon-button" id="quickCopyTool" type="button" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span><small class="top-tool-label" aria-hidden="true">Копия</small></button>
+          <button class="icon-button" id="quickRotateTool" type="button" title="Повернуть" aria-label="Повернуть выбранное" disabled><span aria-hidden="true">↻</span><small class="top-tool-label" aria-hidden="true">Поворот</small></button>
+          <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span><small class="top-tool-label" aria-hidden="true">Удалить</small></button>
+          <button class="icon-button" id="quickTrimTool" type="button" data-quick-edit="trim" title="Быстрая обрезка" aria-label="Быстрая обрезка" aria-pressed="false" disabled><span aria-hidden="true">✂</span><small class="top-tool-label" aria-hidden="true">Обрезка</small></button>
+          <button class="icon-button" id="quickExtendTool" type="button" data-quick-edit="extend" title="Быстрое удлинение" aria-label="Быстрое удлинение" aria-pressed="false" disabled><span aria-hidden="true">⇥</span><small class="top-tool-label" aria-hidden="true">Удлин.</small></button>
         </div>
       </section>
 
@@ -488,7 +488,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=250"></script>
+    <script type="module" src="./app.js?v=251"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

@@ -2356,7 +2356,7 @@ function restoreProject(project) {
       state.theme = project.theme;
       shell.dataset.theme = state.theme;
       themeButton.setAttribute("aria-pressed", String(state.theme === "dark"));
-      themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
+      themeButton.firstElementChild.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
       window.ZamerAndroid?.setTheme?.(state.theme);
     }
     state.selectionFilter = selectionFilters.includes(project.selectionFilter) ? project.selectionFilter : "all";
@@ -10975,7 +10975,7 @@ themeButton.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
   shell.dataset.theme = state.theme;
   themeButton.setAttribute("aria-pressed", String(state.theme === "dark"));
-  themeButton.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
+  themeButton.firstElementChild.innerHTML = cadIcon(state.theme === "light" ? "moon" : "sun");
       window.ZamerAndroid?.setTheme?.(state.theme);
   draw();
   markProjectDirty("theme");
@@ -12467,7 +12467,7 @@ for (const [id, icon] of Object.entries({
   quickTrimTool: "trim", quickExtendTool: "extend",
 })) {
   const button = document.getElementById(id);
-  if (button) button.innerHTML = cadIcon(icon);
+  if (button) (button.querySelector("span[aria-hidden]") ?? button).innerHTML = cadIcon(icon);
 }
 if (figureToolButton) figureToolButton.querySelector("span").innerHTML = cadIcon("rectangle");
 for (const button of document.querySelectorAll('.tool[data-tool]')) {
