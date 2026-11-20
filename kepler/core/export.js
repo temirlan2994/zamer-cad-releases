@@ -36,6 +36,7 @@ import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js
 import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
+import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -182,6 +183,9 @@ function buildLevelExport(project, level) {
 }
 
 export function buildStructuredExport(project) {
+  const envelope = envelopeOf(project);
+  const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
+  const zeroAboveGround = resolvedZeroAboveGround(project, terrainHouse);
   return {
     schema: 'kepler-export/2',
     units: 'mm',
@@ -196,6 +200,19 @@ export function buildStructuredExport(project) {
     },
     name: project.name,
     generated_at: new Date().toISOString(),
+    vertical_datum: {
+      model_zero: '±0.000',
+      zero_above_reference_ground: zeroAboveGround,
+      source: project.envelope?.zeroAboveGround != null ? 'relative_ground'
+        : (Number.isFinite(project.site?.terrain?.floorZ) ? 'absolute_survey' : 'unset'),
+      reference_ground_z: project.envelope?.groundReferenceZ ?? terrainHouse?.groundReferenceZ ?? null,
+      absolute_floor_z: terrainHouse?.floorZ ?? null,
+    },
+    envelope: {
+      roof_mode: envelope.roofMode,
+      auto_roof_thickness: envelope.roofThickness,
+      foundation: { enabled: envelope.foundation.enabled, depth: envelope.foundation.depth },
+    },
     // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site, project),
@@ -225,7 +242,7 @@ function buildTerrainExport(project) {
     points: terrain.points.map((p) => ({ id: p.id, x: p.x, y: p.y, z: p.z })),
     contour_step: terrain.contourStep,
     floor_z: house ? house.floorZ : terrain.floorZ,
-    floor_z_auto: terrain.floorZ == null,
+    floor_z_auto: terrain.floorZ == null && project.envelope?.zeroAboveGround == null,
     min_z: summary.minZ,
     max_z: summary.maxZ,
     mean_slope_percent: Number((summary.meanSlope * 100).toFixed(2)),

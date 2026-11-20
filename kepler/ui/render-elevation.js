@@ -11,12 +11,12 @@ import { fmtMark } from '../core/elevation.js';
 const LIGHT = {
   bg: '#fbfcfe', line: '#2b313a', text: '#18202b', muted: '#687486', ground: '#4a5a3a', dim: '#5a6576',
   cut: '#374845', hatch: '#728681', cutLine: '#192525', glass: '#347089', datum: '#d8e0de', soil: '#e6e4dc',
-  fill: { wall: '#e9e6e1', window: '#bcd8ef', door: '#c9a07a', slab: '#cdc8bf', roof: '#a9b1bb', stair: '#d6d0c6', plinth: '#b5ab9e', other: '#dedbd6' },
+  fill: { wall: '#e9e6e1', window: '#bcd8ef', door: '#c9a07a', slab: '#cdc8bf', roof: '#a9b1bb', stair: '#d6d0c6', plinth: '#b5ab9e', foundation: '#9d9890', other: '#dedbd6' },
 };
 const DARK = {
   bg: '#0d1118', line: '#cfd8e3', text: '#eef4fb', muted: '#8c9aac', ground: '#9fb68a', dim: '#9aa8ba',
   cut: '#abbab5', hatch: '#82948c', cutLine: '#f2f6fb', glass: '#93bfce', datum: '#344247', soil: '#303631',
-  fill: { wall: '#3a4049', window: '#2e5274', door: '#6f5038', slab: '#4b4842', roof: '#5a6474', stair: '#4a4640', plinth: '#55504a', other: '#41444a' },
+  fill: { wall: '#3a4049', window: '#2e5274', door: '#6f5038', slab: '#4b4842', roof: '#5a6474', stair: '#4a4640', plinth: '#55504a', foundation: '#4a4742', other: '#41444a' },
 };
 
 // Цвета по фону холста (CSS --canvas): тёмный фон — тёмная палитра.

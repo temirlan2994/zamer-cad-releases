@@ -13,6 +13,7 @@
 // уклон, отметки под домом.
 
 import { toWorld } from './building.js';
+import { resolvedZeroAboveGround } from './envelope.js';
 import { convexHull, nearestPointOnPolyline } from './site.js';
 
 export const DEFAULT_CONTOUR_STEP = 500;
@@ -424,8 +425,11 @@ function contourLevel(model, level) {
 export function houseTerrain(project, model = terrainModel(project.site?.terrain)) {
   if (!model?.tris?.length) return null;
   // Нижний этаж (без импорта model.js — нет цикла site → terrain → model).
-  const ground = Array.isArray(project.levels) && project.levels.length
-    ? [...project.levels].sort((a, b) => a.elevation - b.elevation)[0] : project;
+  const ordered = Array.isArray(project.levels) && project.levels.length
+    ? [...project.levels].sort((a, b) => a.elevation - b.elevation) : [project];
+  // Пустой технический/подвальный уровень не должен лишать дом опорной
+  // отметки: берём самый нижний этаж с реальным пятном помещений.
+  const ground = ordered.find((level) => (level.rooms || []).some((room) => !room.parentId)) || ordered[0];
   const rooms = (ground.rooms || []).filter((r) => !r.parentId);
   if (!rooms.length) return null;
   const t = project.settings?.exterior ?? 0;
@@ -456,13 +460,41 @@ export function houseTerrain(project, model = terrainModel(project.site?.terrain
   const min = Math.min(...zs);
   const max = Math.max(...zs);
   const avg = corners.reduce((s, c) => s + c.z, 0) / corners.length;
-  const floorAuto = Math.round(avg / 10) * 10;
-  const floorZ = Number.isFinite(project.site?.terrain?.floorZ) ? project.site.terrain.floorZ : floorAuto;
+  const sampledGroundReferenceZ = Math.round(avg / 10) * 10;
+  const storedGroundReferenceZ = project.envelope?.groundReferenceZ;
+  const groundReferenceZ = project.envelope?.zeroAboveGround != null
+    && typeof storedGroundReferenceZ === 'number' && Number.isFinite(storedGroundReferenceZ)
+    ? storedGroundReferenceZ
+    : sampledGroundReferenceZ;
+  // Новая относительная отметка оболочки задаёт ±0.000 над средней землёй
+  // под домом. Абсолютная floorZ остаётся совместимой со старыми проектами.
+  const zero = resolvedZeroAboveGround(project, { avg, groundReferenceZ });
+  const floorAuto = groundReferenceZ + (zero ?? 0);
+  const floorZ = project.envelope?.zeroAboveGround != null
+    ? floorAuto
+    : (Number.isFinite(project.site?.terrain?.floorZ) ? project.site.terrain.floorZ : floorAuto);
   return {
-    corners, center, min, max, drop: max - min, avg, floorAuto, floorZ, outside,
+    corners, center, min, max, drop: max - min, avg, groundReferenceZ, sampledGroundReferenceZ,
+    zeroAboveGround: floorZ - groundReferenceZ, floorAuto, floorZ, outside,
     warn: max - min > HOUSE_DROP_WARN,
     localBox: { minX, minY, maxX, maxY },
   };
+}
+
+// Один раз фиксирует опорную абсолютную землю для относительного ±0.000.
+// Вызывается внутри пользовательской транзакции: последующие правки пятна
+// дома или рельефа не переносят уже посаженный дом по высоте.
+export function captureGroundReference(project, model = terrainModel(project.site?.terrain)) {
+  if (project.envelope?.zeroAboveGround == null) return null;
+  if (typeof project.envelope.groundReferenceZ === 'number' && Number.isFinite(project.envelope.groundReferenceZ)) {
+    return project.envelope.groundReferenceZ;
+  }
+  if (!model?.tris?.length) return null;
+  const house = houseTerrain(project, model);
+  const average = model.pts.reduce((sum, point) => sum + point.z, 0) / model.pts.length;
+  const reference = house?.sampledGroundReferenceZ ?? Math.round(average / 10) * 10;
+  project.envelope.groundReferenceZ = reference;
+  return reference;
 }
 
 // Сводка для панели: число точек, мин/макс, средний уклон.

@@ -55,7 +55,6 @@ import {
   resetRoofTool, roofDblClick, roofDragging, roofHoverAt, roofNumOpen, roofOverlay, roofPartAt, roofToolClick,
   roofToolMove, roofToolOn, startRoofDrag,
 } from './roof3d.js';
-import { roofFaces, shownRoofs } from '../core/mesh3d.js';
 import {
   cancelOpeningResize, debugOpening3d, finishOpeningResize, initOpening3d, moveOpeningResize, openingHandleAt,
   openingOverlay, openingResizeDragging, openingToolClick, openingToolHint, openingToolMove, openingToolOn,
@@ -73,7 +72,7 @@ const cam = {
   yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000,
   projection: 'orthographic', target: { x: 0, y: 0, z: 1500 },
 };
-const opts = { roof: false, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
+const opts = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
 const LEVEL_MODES = new Set(['all', 'upto', 'only']);
 
@@ -81,6 +80,7 @@ function loadLayers() {
   try {
     const raw = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null');
     if (raw && typeof raw.furniture === 'boolean') opts.furniture = raw.furniture;
+    if (raw && typeof raw.roof === 'boolean') opts.roof = raw.roof;
     if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
     if (raw && typeof raw.masses === 'boolean') opts.masses = raw.masses;
     if (raw && ['perspective', 'orthographic'].includes(raw.projection)) cam.projection = raw.projection;
@@ -91,7 +91,7 @@ function saveLayers() {
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
     localStorage.setItem(LAYERS_KEY, JSON.stringify({
-      ...prev, furniture: opts.furniture, levels: opts.levels, masses: opts.masses, projection: cam.projection,
+      ...prev, roof: opts.roof, furniture: opts.furniture, levels: opts.levels, masses: opts.masses, projection: cam.projection,
     }));
   } catch { /* нет хранилища */ }
 }
@@ -747,6 +747,8 @@ export function escape3d() {
 }
 
 function syncLayerControls() {
+  const roof = el('v3Roof');
+  if (roof) roof.checked = opts.roof;
   const furn = el('v3Furniture');
   if (furn) furn.checked = opts.furniture;
   const lv = el('v3Levels');
@@ -789,10 +791,10 @@ function rebuildScene() {
   sets = null;
 }
 
-// Пересобрать только грани крыш-плит (жест правки крыши).
+// Ручная крыша вырезает связанную автокровлю, поэтому во время жеста они
+// пересобираются вместе. Иначе до отпускания мыши оставались дубль или дыра.
 function rebuildRoofs() {
-  faces = faces.filter((f) => !f.roofId).concat(roofFaces(state.project, shownRoofs(state.project, opts.levels)));
-  sets = null;
+  rebuildScene();
 }
 
 export function refresh3d() {
@@ -1469,7 +1471,7 @@ export function bind3d() {
     uploadOverlay();
     requestRender();
   }));
-  el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; refresh3d(); });
+  el('v3Roof')?.addEventListener('change', (e) => { opts.roof = e.target.checked; saveLayers(); refresh3d(); });
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
   loadLayers();

@@ -31,7 +31,7 @@ function normalizedStatus(value) {
   if (['conflict', 'blocked', 'error', 'fail', 'invalid'].includes(status)) return 'conflict';
   if (['attention', 'warning', 'warn', 'partial', 'candidate', 'automatic'].includes(status)) return 'attention';
   if (['observed', 'fact', 'verified', 'checked', 'ready', 'ok', 'pass', 'done',
-    'available', 'explicit', 'not-required'].includes(status)) return 'observed';
+    'available', 'explicit', 'linked', 'not-required'].includes(status)) return 'observed';
   return 'unknown';
 }
 
@@ -154,6 +154,17 @@ function roofRows(report, project) {
   const section = reportSection(report, ['roofs', 'roof'], ['roofs', 'roof']);
   const rows = Array.isArray(section) ? section
     : array(section?.records || section?.items || section?.rows || section?.roofs);
+  if (!rows.length && section?.autoLinked) {
+    return array(project?.levels).filter((level) => array(level?.rooms).length).map((level) => ({
+      id: `auto-roof:${level.id}`,
+      name: 'Автокровля',
+      level: level.name || level.id,
+      vertices: 0,
+      thickness: section.autoThicknessMm,
+      status: 'observed',
+      note: 'Связана с верхним контуром этажей',
+    }));
+  }
   const source = rows.length ? rows : array(project?.roofs);
   return source.map((roof, index) => ({
     id: String(roof?.id || `roof-${index + 1}`),
@@ -169,7 +180,7 @@ function roofRows(report, project) {
 function roofsHtml(report, project) {
   const rows = roofRows(report, project);
   if (!rows.length) {
-    return '<p class="home-envelope-empty">Явная кровля не задана. Автоматическая крышка 3D не считается выбранным решением кровли.</p>';
+    return '<p class="home-envelope-empty">Кровля не задана. Включите автоматическую оболочку или создайте ручную крышу.</p>';
   }
   return `<ul class="home-envelope-roofs">${rows.map((roof) => `<li data-status="${escapeHtml(roof.status)}" data-home-envelope-roof="${escapeHtml(roof.id)}">
     <div><strong>${escapeHtml(roof.name)}</strong><span>${escapeHtml(STATUS_LABELS[roof.status])}</span></div>

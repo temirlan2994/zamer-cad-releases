@@ -236,7 +236,9 @@ export function pickWall(boxes, ray) {
 // перила — по граням перил (railing: { roomId, id }), крыши-плиты — по
 // граням плиты, края и парапета (roofId; core/roofs.js),
 // проёмы — по коробке пустоты, ландшафт — по граням конкретного объекта.
-// Перекрытия и кровля только заслоняют. Земля и участок не выбираются.
+// Перекрытия и ручная кровля только заслоняют. Связанная автокровля
+// пропускает выбор: готовый дом виден сразу, но интерьер остаётся доступен.
+// Земля и участок не выбираются.
 // Побеждает ближайшее к камере попадание.
 
 const OCCLUDERS = new Set(['slab', 'roof']);
@@ -250,6 +252,7 @@ export function pickFaces(faces) {
     if (f.kind === 'floor' && f.roomId) pick = { type: 'room', id: f.roomId, levelId: f.level };
     else if (f.itemId && (f.kind === 'furniture' || f.kind === 'stairs' || f.kind === 'wall')) pick = { type: 'item', id: f.itemId, levelId: f.level };
     else if (f.kind === 'railing' && f.railing) pick = { type: 'railing', roomId: f.railing.roomId, id: f.railing.id, levelId: f.level };
+    else if (f.autoRoofId) continue;
     else if (f.roofId && (f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia')) pick = { type: 'roof', id: f.roofId, levelId: f.level };
     else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId };
     else if (!OCCLUDERS.has(f.kind)) continue;

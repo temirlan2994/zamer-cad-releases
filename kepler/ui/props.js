@@ -63,6 +63,7 @@ import {
 import {
   bindSolarAnalysisPanel, focusSolarRoom, solarAnalysisHtml,
 } from './solar-analysis.js';
+import { bindEnvelopeSettings, envelopeSettingsHtml } from './envelope-settings.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -225,7 +226,7 @@ function renderProjectProps(panel) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Отметка пола, м</span>
+        <label class="prop-field"><span>Отметка от ±0.000, м</span>
           <input id="levelElev" type="number" step="0.05" value="${(level.elevation / 1000).toFixed(2)}"></label>
         <label class="prop-field"><span>Высота этажа, м</span>
           <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
@@ -241,6 +242,7 @@ function renderProjectProps(panel) {
     </div>`;
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
+    ${envelopeSettingsHtml()}
     ${viewSettingsHtml()}
     ${phone ? `<details class="vs-sec" id="levelSection" data-level="${escapeHtml(level.id)}"${keepLevelOpen ? ' open' : ''}>
       <summary id="levelSummary">Параметры этажа</summary>${levelFields}
@@ -272,6 +274,7 @@ function renderProjectProps(panel) {
   if (focusLevelSummary) panel.querySelector('#levelSummary')?.focus({ preventScroll: true });
   panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
   bindViewSettings(panel, renderProps);
+  bindEnvelopeSettings(panel);
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
@@ -336,6 +339,8 @@ function renderRoomProps(panel, room) {
   // нормы и ТЭП — по видимой форме (комната моста = результат carve).
   const nominal = nominalShape(room);
   const eaten = Boolean(room.eatBase?.base);
+  const datumPending = state.project.envelope?.zeroAboveGround == null
+    && !Number.isFinite(state.project.site?.terrain?.floorZ);
 
   const furnitureRows = (def?.furniture || []).map((entry) => {
     const fd = furnitureDef(entry.kind);
@@ -374,6 +379,7 @@ function renderRoomProps(panel, room) {
     : '';
 
   panel.innerHTML = `
+    ${datumPending ? envelopeSettingsHtml() : ''}
     <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${escapeHtml(parent.name)}»</span>` : ''}</h2>
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
@@ -401,6 +407,7 @@ function renderRoomProps(panel, room) {
     ${rejectedHtml}
     ${shaft ? '' : autoLayoutHtml(room)}`;
 
+  if (datumPending) bindEnvelopeSettings(panel);
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });

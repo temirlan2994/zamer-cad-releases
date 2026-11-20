@@ -46,10 +46,14 @@ describe('3D', () => {
     assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'физическое положение камеры не меняется');
   });
 
-  it('крыша добавляет грани; Esc закрывает 3D', async () => {
-    const without = (await d3(app.page)).faces;
+  it('крыша видна сразу, но её можно скрыть; Esc закрывает 3D', async () => {
+    const withRoof = (await d3(app.page)).faces;
+    assert.equal(await app.page.isChecked('#v3Roof'), true);
+    await with3dLayers(app.page, () => app.page.uncheck('#v3Roof'));
+    const withoutRoof = (await d3(app.page)).faces;
+    assert.ok(withoutRoof < withRoof);
     await with3dLayers(app.page, () => app.page.check('#v3Roof'));
-    assert.ok((await d3(app.page)).faces > without);
+    assert.equal((await d3(app.page)).faces, withRoof);
     await app.page.keyboard.press('Escape');
     assert.equal(await app.page.isVisible('#view3d'), false);
     assert.equal((await d3(app.page)).active, false);

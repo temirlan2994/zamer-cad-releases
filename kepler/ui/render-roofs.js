@@ -10,6 +10,7 @@
 import { DEFAULT_EXTERIOR, isOpenRoom, isShaft } from '../core/catalog.js';
 import { materialColor, overhangLabel, rectsOutline, roofIsSlanted, roofRects, roofSlabOutline } from '../core/roofs.js';
 import { roomPolygon, roomRects } from '../core/room-shape.js';
+import { linkedRoofFaces } from '../core/mesh3d.js';
 import {
   ghostRoofFor, isRoofPlan, planRoofHandles, planRoofPref, rememberRoofHandles, roofOutlineEdges, roofs, selectedRoof,
 } from './plan-roofs.js';
@@ -146,11 +147,45 @@ function drawHandles(ctx, hs, accent, hotId) {
 export function drawRoofPlan(ctx, { p2s, tokens }) {
   rememberRoofHandles([]);
   state._roofPlanDrawn = 0;
+  state._autoRoofPlanDrawn = 0;
   if (!isRoofPlan()) return 0;
   const accent = tokens.accent || '#2f6fd6';
   const ink = tokens.ink || tokens.text || '#3d4148';
   drawUnderlay(ctx, p2s, tokens);
   ctx.save();
+  // Производная кровля не хранится в project.roofs: показываем её слабым
+  // штрихом под ручными крышами, чтобы «План крыши» отражал готовый дом.
+  const auto = linkedRoofFaces(state.project)
+    .filter((face) => face.kind === 'roof' && face.normal.z > 0.5);
+  if (auto.length) {
+    ctx.fillStyle = '#9aa3ad';
+    ctx.strokeStyle = ink;
+    ctx.globalAlpha = 0.12;
+    ctx.setLineDash([7, 5]);
+    for (const face of auto) {
+      ctx.beginPath();
+      polyPath(ctx, face.pts, p2s);
+      ctx.fill();
+      ctx.globalAlpha = 0.42;
+      ctx.stroke();
+      ctx.globalAlpha = 0.12;
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    const groups = new Map();
+    for (const face of auto) {
+      if (!groups.has(face.autoRoofId)) groups.set(face.autoRoofId, []);
+      groups.get(face.autoRoofId).push(...face.pts);
+    }
+    for (const [id, points] of groups) {
+      const xs = points.map((point) => point.x); const ys = points.map((point) => point.y);
+      const center = p2s((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
+      const levelId = id.slice('auto-roof:'.length);
+      const title = state.project.levels.find((level) => level.id === levelId)?.name || 'этаж';
+      labelAt(ctx, `Авто · ${title}`, { x: center.x, y: center.y - 8 }, tokens, ink, true);
+    }
+    state._autoRoofPlanDrawn = groups.size;
+  }
   const sel = selectedRoof();
   const hoverId = state.hover?.type === 'roof' ? state.hover.id : null;
   for (const r of roofs()) {

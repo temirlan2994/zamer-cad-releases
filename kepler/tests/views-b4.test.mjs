@@ -115,6 +115,8 @@ test('камера 3D: нормализация, проекция по угла�
   assert.equal(normalizeCam(null), null);
   assert.equal(normalizeCam({ yaw: 'x', pitch: 1 }), null);
   assert.deepEqual(normalizeCam({ yaw: -2.2, pitch: 9, dist: 25000.4, roof: true, extra: 1 }), { yaw: -2.2, pitch: 1.55, dist: 25000, roof: true });
+  assert.equal(normalizeCam({ yaw: 0, pitch: 0 }).roof, true, 'готовый 3D-вид по умолчанию с крышей');
+  assert.equal(normalizeCam({ yaw: 0, pitch: 0, roof: false }).roof, false, 'интерьерный вид сохраняет скрытую крышу');
   // Вид сверху-спереди с юга (yaw = −π/2: глаз на −Y правой системы, т. е.
   // на +y осей дома — внизу плана): x вправо, верх стены (z) — вверх листа.
   const cam = normalizeCam({ yaw: -Math.PI / 2, pitch: 0.3 });

@@ -16,6 +16,7 @@ import { findNearMissGaps } from '../core/gaps.js';
 import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
 import { massVoidTargetGeometryKey, pruneOrphanMassVoids } from '../core/mesh3d.js';
+import { captureGroundReference } from '../core/terrain.js';
 import { toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
@@ -264,6 +265,7 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   if (state.editLocked) return false;
   const before = snapshot();
   fn();
+  if (state.project) captureGroundReference(state.project);
   // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
   if (state.project) syncStairLevels(state.project, setStairRise);
   // Съедание — производное номинальных форм: после любой правки считается

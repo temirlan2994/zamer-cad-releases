@@ -42,7 +42,7 @@ test('поперёк через окно: стены слева и справа,
   assert.ok(floor.length && floor.every((c) => c.z1 === 0 && c.z0 === -200));
   assert.ok(near(Math.min(...floor.map((c) => c.u0)), -5250) && near(Math.max(...floor.map((c) => c.u1)), -750));
   assert.ok(s.cutEdges.length >= 8, 'контур сечения');
-  assert.deepEqual(s.levels.map((l) => l.label), ['+0.000']);
+  assert.deepEqual(s.levels.map((l) => l.label), ['±0.000']);
   assert.ok(s.ground.length >= 2);
   // Вид за плоскостью: внутренняя грань западной стены видна.
   assert.ok(s.polys.some((q) => q.kind === 'wall'));
@@ -84,7 +84,7 @@ test('два этажа: перекрытие между этажами, отм�
   const slab = of(s, 'slab');
   assert.ok(slab.length, 'перекрытие разрезано');
   assert.ok(slab.every((c) => c.z1 === 2999 && c.z0 === 2800));
-  assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '+0.000'], [3000, '+3.000']]);
+  assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '±0.000'], [3000, '+3.000']]);
   assert.ok(of(s, 'wall').some((c) => c.z0 === 3000 && c.z1 === 5800), 'стены второго этажа');
   assert.ok(of(s, 'roof').every((c) => c.z0 === 5800));
 });

@@ -23,6 +23,7 @@ import { normalizeSlabOpenings } from './slab-openings.js';
 import {
   layoutBriefIsEmpty, normalizeCatalogItemMetadata, normalizeLayoutBrief,
 } from './layout-brief.js';
+import { createEnvelope, envelopeHasUserInput, normalizeEnvelope } from './envelope.js';
 
 export { SCHEMA };
 
@@ -128,6 +129,7 @@ export function createProject(name = 'Новый дом') {
     levels: [level], // этажи: rooms, openings, items, wallOverrides (ключ стены → { thickness, kind })
     activeLevel: level.id,
     building: createBuilding(), // оси дома относительно съёмки (core/building.js)
+    envelope: createEnvelope(), // ±0.000, фундамент и связанная автокровля
     site: createSite(),
     variants: [], // варианты планировки из старых файлов: хранятся как есть, интерфейса нет
   });
@@ -230,6 +232,7 @@ export function hasContent(project) {
   if (Array.isArray(project.massVoids) && project.massVoids.length) return true;
   if (Array.isArray(project.roofs) && project.roofs.length) return true;
   if (Array.isArray(project.grids) && project.grids.length) return true;
+  if (envelopeHasUserInput(project.envelope)) return true;
   // Задание и программа дома — самостоятельная работа пользователя: проект
   // должен автосохраняться ещё до появления первого помещения на плане.
   if (!layoutBriefIsEmpty(project.layoutBrief)) return true;
@@ -515,6 +518,8 @@ export function normalizeProject(data) {
     partition: DEFAULT_PARTITION, exterior: DEFAULT_EXTERIOR, bearing: DEFAULT_BEARING,
     dimOuter: true, units: 'mm', ...(isObj(data.settings) ? data.settings : {}),
   };
+  // Оболочка необязательна в старых файлах; после открытия всегда полная.
+  data.envelope = normalizeEnvelope(data.envelope);
   // Движок стен (core/walls.js → wallsEngine): только 'v1' | 'v2'.
   if (data.settings.wallsEngine !== 'v1' && data.settings.wallsEngine !== 'v2') delete data.settings.wallsEngine;
   // Углы вида по режимам (core/view-angles.js): необязательно, без смены схемы.

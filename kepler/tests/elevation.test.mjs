@@ -98,7 +98,7 @@ test('два этажа: перекрытие между ними и отмет�
   const slab = s.polys.filter((q) => q.kind === 'slab');
   assert.ok(slab.length, 'перекрытие видно');
   assert.ok(slab.every((q) => zr(q)[0] >= 2799 && zr(q)[1] <= 3000));
-  assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '+0.000'], [3000, '+3.000']]);
+  assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '±0.000'], [3000, '+3.000']]);
   assert.equal(s.bounds.z1, 5800);
   assert.equal(fmtMark(-450), '−0.450');
 });

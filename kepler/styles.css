@@ -1411,6 +1411,50 @@ body.v3-open .level-dock { z-index: 46; }
 .prop-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .prop-row strong.bad { color: var(--danger); }
 
+.envelope-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 10px 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn-text);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+}
+.envelope-card[data-status="ready"] { border-left-color: var(--ok-text); }
+.envelope-card[data-status="conflict"] { border-left-color: var(--danger); }
+.envelope-card > header { display: flex; align-items: center; gap: 8px; }
+.envelope-card > header > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+.envelope-card > header strong { font-size: 13px; }
+.envelope-card > header small { color: var(--muted); font-size: 10.5px; }
+.envelope-card > header b {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+.envelope-card[data-status="pending"] > header b { background: var(--warn-bg); color: var(--warn-text); }
+.envelope-card[data-status="conflict"] > header b { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.envelope-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  font-size: 18px;
+}
+.envelope-zero input[aria-invalid="true"] { border-color: color-mix(in srgb, var(--warn-text) 72%, var(--border)); }
+.envelope-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.envelope-toggles .check-row { min-width: 0; padding: 5px 2px; font-size: 11.5px; }
+.envelope-flow { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+.envelope-flow.envelope-conflict { color: var(--danger); }
+
 .checklist { gap: 2px; }
 .check-row {
   display: flex;

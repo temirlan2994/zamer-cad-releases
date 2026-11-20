@@ -36,7 +36,7 @@ import { deriveWalls } from './walls.js';
 // Наружные нормали сторон дома в осях дома (ось Y вниз): 0 — верх плана.
 const SIDES = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
 const DIR_STEP = { N: 0, E: 1, S: 2, W: 3 };
-export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', parapet: 'roof', fascia: 'roof', stair: 'stair', plinth: 'plinth' };
+export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', parapet: 'roof', fascia: 'roof', stair: 'stair', plinth: 'plinth', foundation: 'foundation' };
 // Цвет материала крыши-плиты (core/roofs.js) на фасаде — tint полигона.
 export const roofTint = (f) => (f.roofId ? f.color : undefined);
 const EPS = 1e-6;
@@ -155,7 +155,9 @@ export function paintOrder(polys) {
   return visible;
 }
 
-export const fmtMark =(mm) => `${mm < -0.5 ? '−' : '+'}${(Math.abs(mm) / 1000).toFixed(3)}`;
+export const fmtMark = (mm) => (Math.abs(mm) < 0.5
+  ? '±0.000'
+  : `${mm < 0 ? '−' : '+'}${(Math.abs(mm) / 1000).toFixed(3)}`);
 
 // Фасад dir ('N' | 'S' | 'E' | 'W'):
 // { dir, side, polys: [{ pts: [{u, z}], depth, kind, edges: [[a, b]] }] —
@@ -169,6 +171,8 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
   for (const level of levels) faces.push(...doorFaces(project, level));
   const polys = [];
   for (const f of faces) {
+    // На фасаде подземная часть скрыта землёй; она остаётся в 3D и разрезе.
+    if (f.kind === 'foundation') continue;
     if (!f.pts || f.pts.length < 3) continue;
     // Объёмные алюминиевые профили нужны в 3D, но на ортогональном фасаде
     // их четыре узкие грани закрывали контрольные точки стеклопакета. Само
@@ -215,11 +219,19 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
     }
     const under = ground.filter((g) => g.u >= bounds.u0 && g.u <= bounds.u1);
     const low = Math.min(...under.map((g) => g.z));
-    if (low < -20) {
+    const plinthBottoms = visible.filter((poly) => poly.kind === 'plinth').map((poly) => poly.z0);
+    const visibleBase = plinthBottoms.length ? Math.min(...plinthBottoms) : 0;
+    const foundationOn = project.envelope?.foundation?.enabled !== false;
+    if (foundationOn && low < visibleBase - 20) {
       const z0 = low - 50;
-      const pts = [{ u: bounds.u0, z: z0 }, { u: bounds.u1, z: z0 }, { u: bounds.u1, z: 0 }, { u: bounds.u0, z: 0 }];
-      const plinth = { pts, depth: Infinity, kind: 'plinth', u0: bounds.u0, u1: bounds.u1, z0, z1: 0, edges: pts.map((p, i) => [p, pts[(i + 1) % 4]]) };
-      visible.unshift(plinth);
+      const z1 = visibleBase;
+      const pts = [{ u: bounds.u0, z: z0 }, { u: bounds.u1, z: z0 }, { u: bounds.u1, z: z1 }, { u: bounds.u0, z: z1 }];
+      const base = {
+        pts, depth: Infinity, kind: plinthBottoms.length ? 'foundation' : 'plinth',
+        u0: bounds.u0, u1: bounds.u1, z0, z1,
+        edges: pts.map((p, i) => [p, pts[(i + 1) % 4]]),
+      };
+      visible.unshift(base);
       bounds.z0 = Math.min(bounds.z0, z0);
     }
     bounds.z0 = Math.min(bounds.z0, ...ground.map((g) => g.z));

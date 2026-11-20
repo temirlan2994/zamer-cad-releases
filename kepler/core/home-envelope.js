@@ -20,6 +20,7 @@ import {
 } from './slab-openings.js';
 import { tepReport } from './tep.js';
 import { DIR_NAMES, ELEV_DIRS, sectionViews } from './views.js';
+import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 
 const array = (value) => (Array.isArray(value) ? value : []);
 const finite = (value) => value !== null && value !== undefined && value !== ''
@@ -102,7 +103,9 @@ function indicators(project, levels) {
   };
 }
 
-function roofRecords(project, unknowns, conflicts, facts) {
+function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
+  const envelope = envelopeOf(project);
+  const autoLinked = hasBuilding && envelope.roofMode === 'linked';
   const records = roofsOf(project).map((roof, index) => {
     const level = roofLevel(project, roof);
     const outlineValid = validOutline(array(roof?.outline));
@@ -143,23 +146,41 @@ function roofRecords(project, unknowns, conflicts, facts) {
       'roof:explicit', 'roof', 'Явные крыши',
       `В модели есть явных крыш: ${valid.length}. Их суммарная геометрическая площадь ${rounded(valid.reduce((sum, roof) => sum + (roof.areaM2 || 0), 0), 2)} м².`,
     ));
-    unknowns.push(entry(
-      'roof:coverage', 'roof', 'Полнота кровли не проверена',
-      'Рендер дополняет не закрытые явными крышами части автоматической плоской плитой; наличие объектов крыши не доказывает, что вся оболочка решена.',
+    if (autoLinked) {
+      facts.push(entry(
+        'roof:coverage-linked', 'roof', 'Контур кровли связан с этажами',
+        'Не закрытые ручными крышами части автоматически перекрываются по фактическому верхнему контуру этажей.',
+      ));
+    } else {
+      unknowns.push(entry(
+        'roof:coverage', 'roof', 'Полнота кровли не проверена',
+        'Автоматическая оболочка выключена; проверьте, что ручные крыши закрывают весь дом.',
+      ));
+    }
+  } else if (autoLinked) {
+    facts.push(entry(
+      'roof:linked', 'roof', 'Автоматическая кровля',
+      'Плоская кровля следует за верхним контуром этажей и перестраивается вместе с помещениями.',
     ));
   }
   return {
     status: records.some((record) => record.status === 'invalid') ? 'conflict'
-      : valid.length ? 'explicit' : 'unspecified',
+      : valid.length ? 'explicit' : (autoLinked ? 'linked' : 'unspecified'),
+    autoLinked,
+    autoThicknessMm: envelope.roofThickness,
     explicitCount: valid.length,
     invalidCount: records.length - valid.length,
     totalAreaM2: rounded(valid.reduce((sum, roof) => sum + (roof.areaM2 || 0), 0)),
-    renderingFallback: 'automatic-flat-cap-for-uncovered-parts',
+    renderingFallback: autoLinked ? 'linked-flat-roof-for-uncovered-parts' : 'none',
     records,
   };
 }
 
 function facadeRecords(project, hasBuilding, explicitRoofCount, conflicts, facts, { inspectGeometry = true } = {}) {
+  const linked = envelopeOf(project).roofMode === 'linked';
+  const representation = explicitRoofCount
+    ? (linked ? 'explicit-plus-linked-automatic' : 'explicit')
+    : (linked ? 'linked-automatic' : 'unspecified');
   if (!inspectGeometry) {
     return {
       status: hasBuilding ? 'registered' : 'unknown',
@@ -174,8 +195,7 @@ function facadeRecords(project, hasBuilding, explicitRoofCount, conflicts, facts
         heightMm: null,
         polygonCount: null,
         visibleKinds: {},
-        roofRepresentation: explicitRoofCount
-          ? 'explicit-plus-automatic-gap-fill' : 'automatic-placeholder',
+        roofRepresentation: representation,
       })),
     };
   }
@@ -197,8 +217,7 @@ function facadeRecords(project, hasBuilding, explicitRoofCount, conflicts, facts
         heightMm: rounded(facade?.height, 1),
         polygonCount: visible.length,
         visibleKinds: kinds,
-        roofRepresentation: explicitRoofCount
-          ? 'explicit-plus-automatic-gap-fill' : 'automatic-placeholder',
+        roofRepresentation: representation,
       };
     } catch (error) {
       conflicts.push(entry(
@@ -210,8 +229,7 @@ function facadeRecords(project, hasBuilding, explicitRoofCount, conflicts, facts
         id: `elev-${dir}`, dir, title: `Фасад ${DIR_NAMES[dir] || dir}`,
         status: 'error', widthMm: null, heightMm: null, polygonCount: 0,
         visibleKinds: {},
-        roofRepresentation: explicitRoofCount
-          ? 'explicit-plus-automatic-gap-fill' : 'automatic-placeholder',
+        roofRepresentation: representation,
       };
     }
   });
@@ -462,6 +480,21 @@ export function analyzeHomeEnvelope(project = {}, options = {}) {
       'envelope:levels', 'levels', 'Этажи и площади',
       `Этажей с замкнутым пятном: ${levelData.filter((level) => level.occupied).length}; помещений в модели: ${levelData.reduce((sum, level) => sum + level.roomCount, 0)}.`,
     ));
+    const zero = resolvedZeroAboveGround(project);
+    if (zero == null && !Number.isFinite(project.site?.terrain?.floorZ)) {
+      unknowns.push(entry(
+        'envelope:datum', 'levels', 'Не задан ±0.000',
+        'Укажите положение чистого пола относительно земли, чтобы построить цоколь и фундамент.',
+      ));
+    } else {
+      const envelope = envelopeOf(project);
+      facts.push(entry(
+        'envelope:datum', 'levels', 'Посадка дома задана',
+        `${zero == null
+          ? `Абсолютный ±0.000 по съёмке: ${(project.site.terrain.floorZ / 1000).toFixed(2)} м`
+          : `±0.000 относительно опорной земли: ${(zero / 1000).toFixed(2)} м`}; заглубление основания: ${(envelope.foundation.depth / 1000).toFixed(2)} м.`,
+      ));
+    }
   } else {
     unknowns.push(entry(
       'envelope:empty', 'levels', 'Объём дома ещё не задан',
@@ -469,11 +502,11 @@ export function analyzeHomeEnvelope(project = {}, options = {}) {
     ));
   }
 
-  const roofs = roofRecords(project, unknowns, conflicts, facts);
-  if (hasBuilding && roofs.explicitCount === 0) {
+  const roofs = roofRecords(project, hasBuilding, unknowns, conflicts, facts);
+  if (hasBuilding && roofs.status === 'unspecified') {
     unknowns.push(entry(
       'roof:unspecified', 'roof', 'Форма кровли не задана',
-      'В 3D и фасадах показывается автоматическая плоская плита-заглушка. Она не является выбранным решением кровли.',
+      'Автоматическая оболочка выключена, а ручная крыша ещё не создана.',
     ));
   }
   const inspectViewGeometry = options.inspectViewGeometry !== false;

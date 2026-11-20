@@ -28,6 +28,7 @@ import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
+import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 import {
   FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
@@ -1329,10 +1330,84 @@ export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
 
 // Автокровля этажа (флажок «Крыша»): плоская плита над частью этажа, не
 // закрытой этажом выше и явными крышами (core/roofs.js) этого этажа.
-function autoRoofFaces(lp, above, z, own = []) {
+function autoRoofFaces(lp, above, z, own = [], thickness = ROOF_T) {
   const t = lp.settings?.exterior || 250;
   const grid = regionGrid([levelFootprint(lp, t)], [...(above ? levelFootprint(above, t) : []), ...own]);
-  return slabFaces(grid, z, z + ROOF_T, ROOF_COLOR, 'roof').map((f) => (f.normal.z > 0.5 ? { ...f, cutZ0: z } : f));
+  const id = `auto-roof:${lp.activeLevel}`;
+  return slabFaces(grid, z, z + thickness, ROOF_COLOR, 'roof', { bottom: true }).map((f) => ({
+    ...f, kind: f.normal.z < -0.5 ? 'roof-soffit' : f.kind,
+    autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+    ...(f.normal.z > 0.5 ? { cutZ0: z } : {}),
+  }));
+}
+
+// Только производная кровля без сборки стен, полов, мебели и участка.
+// Используется 3D и планом кровли, чтобы оба вида показывали один результат.
+export function linkedRoofFaces(project) {
+  const envelope = envelopeOf(project);
+  if (envelope.roofMode !== 'linked') return [];
+  const levels = sortedLevels(project);
+  const lps = levels.map((level) => levelProject(project, level.id));
+  return levels.flatMap((level, index) => {
+    const above = lps.slice(index + 1)
+      .find((candidate) => levelFootprint(candidate, candidate.settings?.exterior || 250).length);
+    return autoRoofFaces(
+      lps[index], above, level.elevation + level.height,
+      explicitRoofRects(project, level.id), envelope.roofThickness,
+    );
+  });
+}
+
+const FOUNDATION_COLOR = '#8d8982';
+const PLINTH_COLOR = '#aaa297';
+
+// Концептуальное основание по объединённому пятну нижнего занятого этажа.
+// Геометрия производная: комнаты двигаются — основание обновляется без
+// записей в истории. zeroAboveGround задаёт землю относительно ±0.000.
+export function foundationFaces(project) {
+  const envelope = envelopeOf(project);
+  if (!envelope.foundation.enabled) return [];
+  const levels = sortedLevels(project);
+  let level = null;
+  let lp = null;
+  let footprint = [];
+  for (const candidate of levels) {
+    const candidateProject = levelProject(project, candidate.id);
+    const candidateFootprint = levelFootprint(candidateProject, project.settings?.exterior || 250);
+    if (!candidateFootprint.length) continue;
+    level = candidate;
+    lp = candidateProject;
+    footprint = candidateFootprint;
+    break;
+  }
+  if (!level || !lp) return [];
+  const house = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
+  const zero = resolvedZeroAboveGround(project, house);
+  if (zero == null) return [];
+  const top = Number(level.elevation) || 0;
+  const referenceGrade = -zero;
+  const hz = terrainHeightFn(project);
+  const samples = footprint.flatMap((rect) => [
+    [rect.x0, rect.y0], [rect.x1, rect.y0], [rect.x1, rect.y1], [rect.x0, rect.y1],
+    [(rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2],
+  ]);
+  const sampledGround = hz ? Math.min(...samples.map(([x, y]) => hz(x, y))) : referenceGrade;
+  const grade = Math.min(referenceGrade, sampledGround);
+  const base = Math.min(top, grade) - envelope.foundation.depth;
+  const grid = regionGrid([footprint]);
+  const tag = (list, kind, z0) => list.map((face) => ({
+    ...face, kind, level: level.id, foundationSource: 'linked',
+    ...(face.normal.z > 0.5 ? { cutZ0: z0 } : {}),
+  }));
+  const faces = [];
+  const buriedTop = Math.min(top, referenceGrade);
+  if (buriedTop - base > 0.5) {
+    faces.push(...tag(slabFaces(grid, base, buriedTop, FOUNDATION_COLOR, 'foundation', { bottom: true }), 'foundation', base));
+  }
+  if (top - referenceGrade > 0.5) {
+    faces.push(...tag(slabFaces(grid, referenceGrade, top, PLINTH_COLOR, 'plinth', { bottom: true }), 'plinth', referenceGrade));
+  }
+  return faces;
 }
 
 // Крыши-плиты (core/roofs.js): плита с выносом (kind 'roof'), край (фасция,
@@ -1558,19 +1633,31 @@ const hex = (rgb) => `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, '
 // scale — вертикальное усиление рельефа (дом не масштабируется).
 export function terrainHeightFn(project, scale = 1) {
   const model = terrainModel(project.site?.terrain);
-  if (!model?.tris?.length) return null;
+  if (!model?.tris?.length) {
+    const zero = resolvedZeroAboveGround(project);
+    if (zero == null) return null;
+    const flat = () => -zero;
+    flat.minRel = -zero;
+    flat.maxRel = -zero;
+    flat.flat = true;
+    return flat;
+  }
   const house = houseTerrain(project, model);
   const avg = model.pts.reduce((t, p) => t + p.z, 0) / model.pts.length;
   const floorZ = house ? house.floorZ
     : (Number.isFinite(project.site.terrain.floorZ) ? project.site.terrain.floorZ : avg);
   const b = project.building;
+  const relativeDatum = project.envelope?.zeroAboveGround != null;
+  const zero = relativeDatum ? resolvedZeroAboveGround(project, house) : null;
+  const reference = house?.groundReferenceZ ?? avg;
+  const rel = (z) => (relativeDatum ? (z - reference) * scale - zero : (z - floorZ) * scale);
   const fn = (x, y) => {
     const w = toWorld(b, { x, y });
     const z = interpolateZ(model, w.x, w.y, { clamp: true });
-    return ((z ?? floorZ) - floorZ) * scale;
+    return rel(z ?? floorZ);
   };
-  fn.minRel = (model.minZ - floorZ) * scale;
-  fn.maxRel = (model.maxZ - floorZ) * scale;
+  fn.minRel = rel(model.minZ);
+  fn.maxRel = rel(model.maxZ);
   return fn;
 }
 
@@ -1645,15 +1732,18 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
   const pts = [...(site?.boundary || []).map(local)];
   for (const level of project.levels) for (const r of level.rooms) pts.push(v(r.x, r.y, 0), v(r.x + r.w, r.y + r.h, 0));
   for (const n of site?.neighbors || []) pts.push(...neighborRectCorners(n).map(local));
-  if (hz) for (const p of site.terrain.points) pts.push(local(p));
+  if (site?.terrain?.points?.length) for (const p of site.terrain.points) pts.push(local(p));
   if (!pts.length) return faces;
   const pad = 15000;
   const minX = Math.min(...pts.map((p) => p.x)) - pad;
   const maxX = Math.max(...pts.map((p) => p.x)) + pad;
   const minY = Math.min(...pts.map((p) => p.y)) - pad;
   const maxY = Math.max(...pts.map((p) => p.y)) + pad;
-  if (hz) faces.push(...terrainGround(minX, minY, maxX, maxY, hz));
-  else faces.push({ pts: [v(minX, minY, -5), v(maxX, minY, -5), v(maxX, maxY, -5), v(minX, maxY, -5)], normal: v(0, 0, 1), color: '#cfd8c4', kind: 'ground' });
+  if (hz && !hz.flat) faces.push(...terrainGround(minX, minY, maxX, maxY, hz));
+  else {
+    const groundZ = hz ? hz(0, 0) : 0;
+    faces.push({ pts: [v(minX, minY, groundZ - 5), v(maxX, minY, groundZ - 5), v(maxX, maxY, groundZ - 5), v(minX, maxY, groundZ - 5)], normal: v(0, 0, 1), color: '#cfd8c4', kind: 'ground' });
+  }
   if (site?.boundary?.length >= 3) {
     // Граница — тонкая полоса чуть над землёй (иначе мерцает при отдалении).
     // На рельефе ребро режется на куски ≤ 2 м, чтобы полоса шла по земле.
@@ -1664,7 +1754,7 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
       const len = Math.hypot(c0.x - a0.x, c0.y - a0.y) || 1;
       const nx = (-(c0.y - a0.y) / len) * 120;
       const ny = ((c0.x - a0.x) / len) * 120;
-      const parts = hz ? Math.max(1, Math.ceil(len / 2000)) : 1;
+      const parts = hz && !hz.flat ? Math.max(1, Math.ceil(len / 2000)) : 1;
       for (let k = 0; k < parts; k += 1) {
         const a = { x: a0.x + ((c0.x - a0.x) * k) / parts, y: a0.y + ((c0.y - a0.y) * k) / parts };
         const c = { x: a0.x + ((c0.x - a0.x) * (k + 1)) / parts, y: a0.y + ((c0.y - a0.y) * (k + 1)) / parts };
@@ -1691,7 +1781,8 @@ function siteFaces(project, { terrainScale = 1 } = {}) {
       faces.push({ pts: [v(a.x, a.y, z0), v(d.x, d.y, z0), v(d.x, d.y, zTop), v(a.x, a.y, zTop)], normal: v(0, 0, 0), color: '#b8bec6', kind: 'neighbor', twoSided: true });
     }
   }
-  if (hz) faces.push(...plinthFaces(project, hz));
+  const hasDatum = project.envelope?.zeroAboveGround != null || Number.isFinite(site?.terrain?.floorZ);
+  if (hz && !hasDatum) faces.push(...plinthFaces(project, hz));
   return faces;
 }
 
@@ -1774,6 +1865,7 @@ export function buildHouseMesh(project, {
 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
+  const envelope = envelopeOf(project);
   const shown = new Set(shownLevelIds(project, levelMode));
   const lps = levels.map((level) => levelProject(project, level.id));
   levels.forEach((level, k) => {
@@ -1790,8 +1882,10 @@ export function buildHouseMesh(project, {
   for (let k = 1; k < levels.length; k += 1) {
     if (shown.has(levels[k].id)) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
   }
-  if (roof && shown.size === levels.length) {
-    levels.forEach((level, k) => faces.push(...autoRoofFaces(lps[k], lps[k + 1], level.elevation + level.height, explicitRoofRects(project, level.id))));
+  const foundation = foundationFaces(project);
+  if (foundation.some((face) => shown.has(face.level))) faces.push(...foundation.filter((face) => shown.has(face.level)));
+  if (roof && envelope.roofMode === 'linked' && shown.size === levels.length) {
+    faces.push(...linkedRoofFaces(project));
   }
   // Крыши-плиты (core/roofs.js) — над показанными этажами; как и автокровля,
   // не закрывают показанный верхний этаж: только когда показан и этаж выше.

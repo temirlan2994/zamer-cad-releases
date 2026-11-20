@@ -176,7 +176,7 @@ function clipPoly(pts, f) {
 
 // Сечение: { cuts: [{ kind, u0, u1, z0, z1, pts }], edges, openings }.
 function cutSolids(project, fr, faces, levels) {
-  const groups = { wall: [], slab: [], roof: [], floor: [], stair: [] };
+  const groups = { wall: [], slab: [], roof: [], floor: [], stair: [], foundation: [] };
   const openings = [];
   levels.forEach((level, li) => {
     const lp = levelProject(project, level.id);
@@ -226,11 +226,13 @@ function cutSolids(project, fr, faces, levels) {
   // низ тела — cutZ0 верхней грани.
   for (const f of faces) {
     const roofish = f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia';
-    if ((f.kind !== 'slab' && !roofish) || !(f.normal?.z > 0.5)) continue;
+    const foundationish = f.kind === 'foundation' || f.kind === 'plinth';
+    if ((f.kind !== 'slab' && !roofish && !foundationish) || !(f.normal?.z > 0.5)) continue;
     if (f.alpha != null && f.alpha < 1) continue; // стекло ограждения — не тело
     const z1 = f.pts[0].z;
     const z0 = Number.isFinite(f.cutZ0) ? f.cutZ0 : (f.kind === 'slab' ? z1 - SLAB_T + 1 : z1 - ROOF_T);
-    for (const [u0, u1] of uIntervals(fr, f.pts)) groups[roofish ? 'roof' : 'slab'].push({ u0, u1, z0, z1 });
+    const group = foundationish ? 'foundation' : (roofish ? 'roof' : 'slab');
+    for (const [u0, u1] of uIntervals(fr, f.pts)) groups[group].push({ u0, u1, z0, z1 });
   }
   // Марши: верх ступени × от пола своего этажа (монолит) или до низа плиты
   // проступи/площадки (cutZ0 — открытая и консольная); тетивы и перила — нет.

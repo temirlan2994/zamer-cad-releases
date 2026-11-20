@@ -23,6 +23,8 @@ import { roomPolygon } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
 import { rectsCycles } from './ortho-grid.js';
+import { foundationFaces } from './mesh3d.js';
+import { houseTerrain } from './terrain.js';
 
 // Удвоенная ориентированная площадь кольца.
 function ringArea(pts) {
@@ -182,7 +184,10 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     return `(${sign * d},${sign * m},${sign * sec},${sign * micro})`;
   };
   const loc = project.site?.location;
-  const site = add(`IFCSITE(${guid('site')},${owner},${stepString('Участок')},$,$,${sitePlacement},$,$,.ELEMENT.,${loc ? dms(loc.lat) : '$'},${loc ? dms(loc.lon) : '$'},$,$,$)`);
+  const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
+  const siteRefElevation = terrainHouse?.floorZ
+    ?? (Number.isFinite(project.site?.terrain?.floorZ) ? project.site.terrain.floorZ : project.envelope?.zeroAboveGround);
+  const site = add(`IFCSITE(${guid('site')},${owner},${stepString('Участок')},$,$,${sitePlacement},$,$,.ELEMENT.,${loc ? dms(loc.lat) : '$'},${loc ? dms(loc.lon) : '$'},${Number.isFinite(siteRefElevation) ? real(siteRefElevation) : '$'},$,$)`);
   // Здание: начало координат дома и его поворот (по часовой на плане → против в IFC).
   const b = project.building || { rotation: 0, origin: { x: 0, y: 0 } };
   const th = ((b.rotation || 0) * Math.PI) / 180;
@@ -231,7 +236,9 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
   };
 
   const storeys = [];
-  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, furniture: 0, furnitureParts: 0 };
+  const counts = { walls: 0, doors: 0, windows: 0, spaces: 0, columns: 0, foundations: 0, furniture: 0, furnitureParts: 0 };
+  const foundationTops = foundationFaces(project)
+    .filter((face) => (face.kind === 'foundation' || face.kind === 'plinth') && face.normal?.z > 0.5 && Number.isFinite(face.cutZ0));
   const schedule = roomSchedule(project);
   for (const level of sortedLevels(project)) {
     const lp = levelProject(project, level.id);
@@ -240,6 +247,19 @@ export function buildIfc(project, { timestamp = new Date() } = {}) {
     storeys.push(storey);
     const contained = [];
     const spaces = [];
+
+    // Производное концептуальное основание экспортируется одним IfcFooting
+    // на нижнем этаже. Тела фундамента и цоколя остаются отдельными solids.
+    const levelFoundation = foundationTops.filter((face) => face.level === level.id);
+    if (levelFoundation.length) {
+      const solids = levelFoundation.map((face) => {
+        const top = face.pts[0].z;
+        return solid(polyProfile(face.pts), face.cutZ0 - level.elevation, top - face.cutZ0);
+      });
+      const footing = add(`IFCFOOTING(${guid(`foundation-${level.id}`)},${owner},${stepString('Фундамент и цоколь (концепция)')},$,$,${placement},${shape(solids)},$,.NOTDEFINED.)`);
+      contained.push(footing);
+      counts.foundations += 1;
+    }
 
     // Стены: каждая полоса плана — прямоугольник, выдавленный на высоту этажа.
     const walls = deriveWalls(lp);

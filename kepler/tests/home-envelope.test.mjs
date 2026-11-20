@@ -50,7 +50,7 @@ test('пустой проект остаётся неизвестным и не 
   assert.equal('ready' in result, false);
 });
 
-test('ТЭП, этаж и четыре фасада — факты; автокровля не становится выбранной', () => {
+test('ТЭП, этаж, четыре фасада и связанная автокровля — факты модели', () => {
   const { project } = oneStorey();
   const before = JSON.stringify(project);
   const result = analyzeHomeEnvelope(project);
@@ -67,10 +67,11 @@ test('ТЭП, этаж и четыре фасада — факты; автокр
   assert.equal(result.indicators.volumeMethod, 'sum-level-footprint-x-level-height');
   assert.equal(result.facades.availableCount, 4);
   assert.ok(result.facades.records.every((facade) => facade.status === 'available'));
-  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'automatic-placeholder'));
-  assert.equal(result.roofs.status, 'unspecified');
-  assert.ok(result.unknowns.some((item) => item.id === 'roof:unspecified'));
-  assert.match(result.unknowns.find((item) => item.id === 'roof:unspecified').text, /заглуш/i);
+  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'linked-automatic'));
+  assert.equal(result.roofs.status, 'linked');
+  assert.equal(result.roofs.autoLinked, true);
+  assert.ok(result.facts.some((item) => item.id === 'roof:linked'));
+  assert.equal(result.unknowns.some((item) => item.id === 'roof:unspecified'), false);
   assert.ok(result.limitations.some((text) => /объём кровли/i.test(text)));
   assert.ok(result.limitations.some((text) => /несущая способность/i.test(text)));
   assert.ok(result.limitations.some((text) => /теплотехнические/i.test(text)));
@@ -98,9 +99,8 @@ test('явная крыша и сохранённый разрез возвра�
   assert.equal(result.sections.availableCount, 1);
   assert.ok(result.sections.records[0].cutCount > 0);
   assert.ok(result.sections.records[0].widthMm > 0);
-  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'explicit-plus-automatic-gap-fill'));
-  assert.ok(result.unknowns.some((item) => item.id === 'roof:coverage'),
-    'объект крыши не выдаётся за доказанное полное покрытие');
+  assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'explicit-plus-linked-automatic'));
+  assert.ok(result.facts.some((item) => item.id === 'roof:coverage-linked'));
 });
 
 test('лёгкий режим регистрирует виды, но строит их только после открытия', () => {
