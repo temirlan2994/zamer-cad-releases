@@ -70,15 +70,19 @@ export function radialDimensionArtwork(entity, scaleFactor) {
   const center = { x: x1, y: y1 };
   const label = { x: x2, y: y2 };
   const distance = Math.hypot(x2 - x1, y2 - y1);
-  const ux = distance ? (x2 - x1) / distance : 1;
-  const uy = distance ? (y2 - y1) / distance : 0;
+  const direction = entity.radialRim ?? label;
+  const directionLength = Math.hypot(direction.x - x1, direction.y - y1);
+  const ux = directionLength ? (direction.x - x1) / directionLength : 1;
+  const uy = directionLength ? (direction.y - y1) / directionLength : 0;
   const rim = { x: x1 + ux * radius, y: y1 + uy * radius };
   const opposite = { x: x1 - ux * radius, y: y1 - uy * radius };
   const inside = distance <= radius;
+  const landing = Boolean(entity.radialRim) &&
+    (Math.abs((label.x - x1) * uy - (label.y - y1) * ux) > 1e-6 || (label.x - x1) * ux + (label.y - y1) * uy < 0);
   return {
-    label, rim, opposite, inside, diameter, ux, uy,
+    label, rim, opposite, inside, diameter, ux, uy, landing,
     start: diameter ? opposite : center,
-    end: inside ? rim : label,
+    end: inside || landing ? rim : label,
     measurement: diameter ? radius * 2 : radius,
     textHeight: annotationWorldSize(13, scaleFactor),
     arrowSize: Math.min(radius * 0.27, annotationWorldSize(8, scaleFactor)),

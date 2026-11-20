@@ -458,6 +458,7 @@ const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
 const ordinateModes = document.getElementById("ordinateModes");
 const radialModes = document.getElementById("radialModes");
+const chainControls = document.getElementById("chainControls");
 const angleModes = document.getElementById("angleModes");
 const copyToolMenu = document.getElementById("copyToolMenu");
 const copyControls = document.getElementById("copyControls");
@@ -726,7 +727,7 @@ const state = {
   additionalDimensionDraft: null,
   ordinateAxis: "x",
   radialMode: "diameter",
-  radialSourceId: null,
+  radialSource: null,
   angleMode: "draw",
   angleSide: null,
   annotationScale: 1,
@@ -2739,7 +2740,8 @@ function cursorSnapResolved() {
   }
   if (state.selectedFigureGrip) {
     const origin = state.selectedFigureGrip.point;
-    const resolved = resolveSnapWorld(raw);
+    const rectangle = rectangleGripReference(raw);
+    const resolved = rectangle ? resolveLineLikeSnap(raw, rectangle.start, { useOrtho: false }) : resolveSnapWorld(raw);
     return distanceWorld(raw, origin) <= linePointEpsilon ? { point: origin, snap: null } : resolved;
   }
   const draft = state.drawing;
@@ -2763,7 +2765,7 @@ function cursorSnapResolved() {
     const point = axisAngle === undefined ? linePointWithConstraint(start, direction, constraint) : linePolarPoint(start, constraint.length, axisAngle);
     return { point, snap: null };
   }
-  if (start) return resolveLineLikeSnap(raw, start);
+  if (start) return resolveLineLikeSnap(raw, start, { useOrtho: state.tool !== "rectangle" });
   return resolveSnapWorld(raw);
 }
 
@@ -2876,9 +2878,11 @@ function renderFrame() {
     }
   }
 
+  const gripReference = rectangleGripReference();
+  if (!state.drawing && !gripReference) draftMetricLabels.hidden = true;
   if (state.drawing) {
     if (state.tool === "polyline") drawPolyline(state.drawing, c, true);
-    if (state.tool === "polyline" && state.drawing.arcPhase) drawPolylineArcDraft(state.drawing, c);
+    if (state.tool === "polyline" && state.drawing.arcPhase) drawPolylineArcDraft(state.drawing, c, rect);
     else drawActiveSegment(c, rect);
   } else if (state.moveCommand) {
     drawMoveCommand(c);
@@ -2893,6 +2897,9 @@ function renderFrame() {
     } else {
       hideInlineEditors();
     }
+  } else if (gripReference) {
+    gripReference.end = figureMetricPreview(state.selectedFigureGrip) ?? cursorWorld();
+    drawFigureDraftMetrics(gripReference, c, rect);
   } else {
     const circle = selectedCircleForMetrics();
     const rectangle = selectedRectangleForMetrics();
@@ -2908,6 +2915,7 @@ function renderFrame() {
   angleModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "angular" || !dimensionToolMenu.hidden;
   if (!angleModes.hidden && state.angleMode === "select") drawAngleFromSegmentsPreview(c);
   radialModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "radial" || !dimensionToolMenu.hidden;
+  chainControls.hidden = state.tool !== "dimension" || state.dimensionTool !== "chain" || !dimensionToolMenu.hidden;
   ordinateModes.hidden = state.tool !== "dimension" || state.dimensionTool !== "ordinate" || !dimensionToolMenu.hidden;
   if (state.tool === "dimension" && state.additionalDimensionDraft) {
     const preview = additionalDimensionAtCursor();
@@ -3350,7 +3358,7 @@ function selectionEntitySegments(entity) {
   }
   if (entity && isRadialDimension(entity)) {
     const art = radialDimensionArtwork(entity, state.annotationScale);
-    return art ? [[art.start, art.end]] : [];
+    return art ? [[art.start, art.end], ...(art.landing ? [[art.rim, art.label]] : [])] : [];
   }
   if (entity?.dimensionKind === "angular") return angularSelectionGeometry(entity).segments;
   if (entity?.dimensionKind === "leader") return leaderSelectionGeometry(entity).segments;
@@ -3855,9 +3863,8 @@ function polylineArcFromCursor(start, end, cursor) {
   return result && isLinePoint(result.arc.through) ? result : null;
 }
 
-function drawPolylineArcDraft(draft, c) {
-  hideInlineEditors();
-  const cursor = cursorWorld();
+function drawPolylineArcDraft(draft, c, viewport) {
+  const cursor = figureMetricPreview(draft) ?? cursorWorld();
   const end = draft.arcEnd || cursor;
   const start = worldToScreen(draft.start);
   const destination = worldToScreen(end);
@@ -3877,6 +3884,7 @@ function drawPolylineArcDraft(draft, c) {
   }
   if (draft.arcEnd) drawEndpointHandle(destination, false, c);
   ctx.restore();
+  drawFigureDraftMetrics(draftFigureReference(cursor), c, viewport);
 }
 
 function drawLineEntity(entity, c) {
@@ -3994,11 +4002,12 @@ function drawEndpointHandle(point, active, c) {
   ctx.restore();
 }
 
-function pickDimensionCurve(screen, allowCircle) {
+function pickDimensionCurve(screen, allowCircle, allowInterior = false) {
   for (const target of [screen, centerScreen()]) {
     const world = screenToWorld(target);
     let nearest = screenUiPx(20) / state.view.scale;
     let result = null;
+    let interior = null;
     const consider = (entity, arc, point) => {
       if (!point) return;
       const distance = distanceWorld(world, point);
@@ -4009,14 +4018,20 @@ function pickDimensionCurve(screen, allowCircle) {
     for (const entity of state.entities) {
       if (!isLayerVisible(entity.layer)) continue;
       if (entity.type === "arc" || (allowCircle && entity.type === "circle")) {
-        consider(entity, entity.type === "arc" ? entity : null, projectFigurePoint(entity, world));
+        const point = projectFigurePoint(entity, world);
+        consider(entity, entity.type === "arc" ? entity : null, point);
+        if (point && allowInterior && entity.type === "circle" &&
+            Math.hypot(world.x - entity.cx, world.y - entity.cy) < Math.abs(entity.radius) &&
+            (!interior || Math.abs(entity.radius) < Math.abs(interior.entity.radius))) {
+          interior = { entity, arc: null, point };
+        }
       } else if (entity.type === "polyline") {
         for (const { arc } of polylineSegments(entity)) {
           if (arc) consider(entity, arc, projectFigurePoint(arc, world));
         }
       }
     }
-    if (result) return result;
+    if (result || interior) return result || interior;
   }
   return null;
 }
@@ -4135,46 +4150,40 @@ function isRadialDimension(entity) {
 }
 
 function radialDimensionAtCursor() {
-  const circle = state.entities.find(entity =>
-    entity.id === state.radialSourceId && entity.type === "circle" && isLayerVisible(entity.layer));
-  if (!circle) return null;
+  const source = state.radialSource;
+  if (!source || !state.entities.includes(source.entity) || !isLayerVisible(source.entity.layer)) return null;
+  const { entity, arc, point } = source;
+  const geometry = arc ? arcGeometry(arc.start, arc.through, arc.end)
+    : { center: { x: entity.cx, y: entity.cy }, radius: Math.abs(entity.radius) };
+  if (!geometry) return null;
+  const { center, radius } = geometry;
   const label = rawCursorWorld();
+  const rim = arc && (distanceWorld(center, label) <= linePointEpsilon ? point : projectFigurePoint(arc, label));
   return { id: "preview", type: "line", layer: "dimensions", dimensionKind: state.radialMode,
-    x1: circle.cx, y1: circle.cy, x2: label.x, y2: label.y, circleRadius: Math.abs(circle.radius) };
+    x1: center.x, y1: center.y, x2: label.x, y2: label.y, circleRadius: radius,
+    ...(rim ? { radialRim: { x: rim.x, y: rim.y } } : {}) };
 }
 
 function commitRadialDimension(screen) {
-  if (state.radialSourceId) {
+  if (state.radialSource) {
     const entity = radialDimensionAtCursor();
-    if (entity && isLinePoint({ x: entity.x2, y: entity.y2 })) {
+    if (entity && [{ x: entity.x1, y: entity.y1 }, { x: entity.x2, y: entity.y2 }].every(isLinePoint) &&
+        entity.circleRadius > linePointEpsilon && entity.circleRadius <= MAX_LINE_COORDINATE) {
       pushEntity({ ...entity, id: newLineId("dimension") });
-      state.radialSourceId = null;
-      statusChip.textContent = "Размер круга поставлен · выберите окружность";
+      state.radialSource = null;
+      statusChip.textContent = "Размер поставлен · выберите круг или дугу";
       draw();
       return;
     }
     if (entity) {
-      statusChip.textContent = "Точка размера вне области чертежа";
+      statusChip.textContent = "Размер вне области чертежа";
       return;
     }
-    state.radialSourceId = null;
   }
-  for (const target of [screen, centerScreen()]) {
-    const world = screenToWorld(target);
-    let nearest = screenUiPx(20) / state.view.scale;
-    for (const circle of state.entities) {
-      if (circle.type !== "circle" || !isLayerVisible(circle.layer)) continue;
-      const distance = Math.abs(Math.hypot(world.x - circle.cx, world.y - circle.cy) - Math.abs(circle.radius));
-      if (distance < nearest) {
-        nearest = distance;
-        state.radialSourceId = circle.id;
-      }
-    }
-    if (state.radialSourceId) break;
-  }
-  statusChip.textContent = state.radialSourceId
-    ? "Наведите крестик внутрь или наружу и тапните"
-    : "Укажите край окружности";
+  state.radialSource = pickDimensionCurve(screen, true, true);
+  statusChip.textContent = state.radialSource
+    ? "Наведите крестик на место размера и тапните"
+    : "Выберите круг или дугу";
   draw();
 }
 
@@ -4191,6 +4200,11 @@ function drawRadialDimension(entity, c, preview = false) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   linePath(start.x, start.y, end.x, end.y);
+  if (art.landing) {
+    const from = worldToScreen(art.rim);
+    const to = worldToScreen(art.label);
+    linePath(from.x, from.y, to.x, to.y);
+  }
   const sign = art.inside ? -1 : 1;
   drawDimensionArrow(worldToScreen(art.rim), art.ux * sign, art.uy * sign, arrowSize, { dimension: color });
   if (art.diameter) drawDimensionArrow(worldToScreen(art.opposite), art.ux, art.uy, arrowSize, { dimension: color });
@@ -5119,20 +5133,14 @@ function clampScreenY(y, height, canvasHeight) {
 
 function drawActiveSegment(c, viewport) {
   const { start } = state.drawing;
-  const metricPreview = ["line", "polyline"].includes(state.tool) ? lineMetricPreview(start) : null;
+  const metricPreview = figureMetricPreview(state.drawing) ?? lineMetricPreview(start);
   const end = metricPreview ?? (state.drawing.lockedEnd ? state.drawing.end : cursorWorld());
   if (!metricPreview) state.drawing.end = end;
-  if (state.tool === "circle") {
-    drawActiveCircle(start, end, c);
-    return;
-  }
-  if (state.tool === "rectangle") {
-    drawActiveRectangle(start, end, c);
-    return;
-  }
-  if (state.tool === "arc") {
-    hideInlineEditors();
-    drawActiveArc(c);
+  if (state.tool === "circle" || state.tool === "rectangle" || state.tool === "arc") {
+    if (state.tool === "circle") drawActiveCircle(start, end, c);
+    else if (state.tool === "rectangle") drawActiveRectangle(start, end, c);
+    else drawActiveArc(c, end);
+    drawFigureDraftMetrics(draftFigureReference(end), c, viewport);
     return;
   }
   const p1 = worldToScreen(start);
@@ -5166,7 +5174,7 @@ function drawActiveSegment(c, viewport) {
     const provisional = draftDimension(start, end);
     const initialGeometry = dimensionGeometry(provisional);
     if (!initialGeometry) return;
-    if (state.drawing.chainOffset != null || state.drawing.phase === "offset") {
+    if (state.dimensionTool === "chain" || state.drawing.phase === "offset") {
       provisional.offset = draftDimensionOffset(initialGeometry, rawCursorWorld());
     }
     drawDimensionEntity(provisional, c);
@@ -5178,7 +5186,7 @@ function drawActiveSegment(c, viewport) {
 
   const angleAnchor = drawEditableSegment(start, end, c, { lineWidth: 2.2, showHandles: state.tool !== "line" });
   updateInlineEditors(start, end, metrics, angleInfo);
-  if (state.tool === "line" && !surveyPointPicker) {
+  if (["line", "polyline"].includes(state.tool) && !surveyPointPicker) {
     const lengthAnchor = drawDraftLengthDimension(p1, p2, c, viewport);
     updateDraftMetricLabels(lengthAnchor, angleAnchor, distanceWorld(start, end), angleInfo, viewport);
   }
@@ -5236,10 +5244,174 @@ function drawDraftLengthDimension(start, end, c, viewport) {
   return midpoint(from, to);
 }
 
-function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, viewport) {
+function rectangleGripReference(end) {
+  const grip = state.selectedFigureGrip;
+  if (grip?.key !== "corner") return null;
+  const entity = state.entities.find(item => item.id === grip.entityId && item.type === "rectangle");
+  if (!entity) return null;
+  return { key: grip, start: rectangleCorners(entity)[(grip.index + 2) % 4], end, type: "rectangle" };
+}
+
+function draftFigureReference(end) {
+  const draft = state.drawing;
+  if (!draft) return null;
+  if (state.tool === "rectangle" || state.tool === "circle") {
+    return { key: draft, start: draft.start, end, type: state.tool };
+  }
+  if (state.tool === "arc" || draft.arcPhase) {
+    return { key: draft, start: draft.start, end, type: draft.arcEnd ? "bend" : "chord", arcEnd: draft.arcEnd };
+  }
+  return null;
+}
+
+function figureMetrics(ref) {
+  const { start, end, type, arcEnd } = ref;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (type === "rectangle") return { names: ["Длина", "Ширина"], values: [Math.abs(dx), Math.abs(dy)], angle: false };
+  if (type === "bend") {
+    const through = arcThroughFromMidBulge(start, arcEnd, end);
+    const arc = arcGeometry(start, through, arcEnd);
+    const sweep = arc && normalizeAnglePositive((arc.endAngle - arc.startAngle) * (arc.counterClockwise ? 1 : -1));
+    return { names: ["Радиус", "Угол дуги"], values: [arc?.radius ?? NaN, sweep ? radToDeg(sweep) : 0], angle: true, through };
+  }
+  return { names: [type === "circle" ? "Радиус" : "Хорда", "Угол"],
+    values: [Math.hypot(dx, dy), normalizeDegrees(-radToDeg(Math.atan2(dy, dx)))], angle: true };
+}
+
+function drawFigureDraftMetrics(ref, c, viewport) {
+  if (!ref || surveyPointPicker) return;
+  const { start, end, type } = ref;
+  const { names, values, angle, through } = figureMetrics(ref);
+  const from = worldToScreen(start);
+  const to = worldToScreen(end);
+  let first;
+  let second;
+  if (type === "rectangle") {
+    const corner = { x: from.x, y: to.y };
+    first = drawDraftLengthDimension(corner, to, c, viewport) || { x: to.x - 38, y: to.y - 36 };
+    second = drawDraftLengthDimension({ x: to.x, y: from.y }, to, c, viewport) || { x: to.x + 38, y: to.y - 36 };
+  } else if (type === "bend") {
+    const bend = worldToScreen(through);
+    first = { x: bend.x - 44, y: bend.y - 38 };
+    second = { x: bend.x + 44, y: bend.y - 38 };
+  } else {
+    first = drawDraftLengthDimension(from, to, c, viewport) || { x: to.x - 40, y: to.y - 36 };
+    second = drawAngleArc(from, to, activeAngleInfo(start, end), c) || { x: to.x + 40, y: to.y - 36 };
+  }
+  if (type !== "circle") {
+    updateTopMetricInputs(values[0], values[1], { rectangle: !angle, names, cadAngle: type === "chord" });
+  }
+  updateDraftMetricLabels(first, second, values[0], { degrees: values[1], angle, cadAngle: type === "circle" || type === "chord" }, viewport, names);
+}
+
+function figureMetricContext(input) {
+  if (![topLengthInput, topAngleInput, draftLengthInput, draftAngleInput, lengthInput].includes(input) || input.closest("[hidden]")) return null;
+  const ref = rectangleGripReference() || draftFigureReference();
+  if (!ref || (input === lengthInput && ref.type !== "circle")) return null;
+  const edit = state.numericEdit?.figureMetric;
+  if (edit?.key === ref.key) return edit;
+  ref.end = ref.key === state.drawing && state.drawing.lockedEnd ? state.drawing.end : cursorWorld();
+  return ref;
+}
+
+function exactFigurePoint(edit, kind, value) {
+  const { start, end, type, arcEnd } = edit;
+  if (!Number.isFinite(value) || (kind === "length" && value <= linePointEpsilon)) return null;
+  const { values, through } = figureMetrics(edit);
+  if (type === "rectangle") {
+    if (value <= linePointEpsilon) return null;
+    const length = edit.values.length ?? values[0];
+    const width = edit.values.angle ?? values[1];
+    return length > linePointEpsilon && width > linePointEpsilon ? {
+      x: start.x + (Math.sign(end.x - start.x) || 1) * length,
+      y: start.y + (Math.sign(end.y - start.y) || 1) * width,
+    } : null;
+  }
+  if (type === "bend") {
+    const mid = midpoint(start, arcEnd);
+    const half = distanceWorld(start, arcEnd) / 2;
+    const nx = -(arcEnd.y - start.y) / (2 * half);
+    const ny = (arcEnd.x - start.x) / (2 * half);
+    const sagitta = (through.x - mid.x) * nx + (through.y - mid.y) * ny;
+    if (kind === "length" && value < half - linePointEpsilon) return null;
+    if (kind === "angle" && !(value > 0 && value < 360)) return null;
+    const root = kind === "length" ? Math.sqrt(Math.max(0, (value - half) * (value + half))) : 0;
+    const height = kind === "angle" ? half * Math.tan(value * Math.PI / 720)
+      : Math.abs(sagitta) > half ? value + root : half * half / (value + root);
+    const signed = height * (Math.sign(sagitta) || 1);
+    return { x: mid.x + nx * signed, y: mid.y + ny * signed };
+  }
+  const length = edit.values.length ?? values[0];
+  const angle = edit.values.angle ?? values[1];
+  return length > linePointEpsilon ? linePolarPoint(start, length, angle) : null;
+}
+
+function updateFigureMetricInput(input) {
+  const edit = state.numericEdit.figureMetric;
+  const kind = lineMetricKinds.get(input);
+  edit.texts[kind] = input.value;
+  const asLength = kind === "length" || edit.type === "rectangle";
+  const value = asLength ? readProjectLength(input) : parseLineDecimal(input.value);
+  if (edit.type === "bend") {
+    const other = kind === "length" ? "angle" : "length";
+    delete edit.texts[other];
+    delete edit.values[other];
+  }
+  edit.values[kind] = value;
+  edit.point = exactFigurePoint(edit, kind, value);
+  input.removeAttribute("aria-invalid");
+  draw();
+}
+
+function figureMetricPreview(key) {
+  const edit = state.numericEdit?.figureMetric;
+  return edit?.key === key && isLinePoint(edit.point) ? edit.point : null;
+}
+
+function confirmFigureMetricInput(input, edit) {
+  if (!Object.keys(edit.texts).length) {
+    cancelFigureMetricInput();
+    return;
+  }
+  const point = figureMetricPreview(edit.key);
+  const draft = state.drawing;
+  const grip = state.selectedFigureGrip;
+  const target = grip && state.entities.find(entity => entity.id === grip.entityId);
+  if (!point || (grip && (!target || !reshapeFigure(target, grip, point))) ||
+      (draft?.arcPhase === "through" && !polylineArcFromCursor(draft.start, draft.arcEnd, point))) {
+    input.setAttribute("aria-invalid", "true");
+    statusChip.textContent = edit.type === "bend" ? "Проверьте радиус или угол дуги" : "Введите допустимый размер и укажите направление";
+    return;
+  }
+  cancelFigureMetricInput();
+  if (edit.key === state.selectedFigureGrip) {
+    commitFigureGripPoint(point);
+  } else if (draft === edit.key) {
+    draft.lockedEnd = false;
+    commitCursorPoint(centerScreen(), point);
+  }
+}
+
+function cancelFigureMetricInput() {
+  if (state.numericEdit?.figureMetric) state.numericEdit = null;
+  for (const input of lineMetricKinds.keys()) input.removeAttribute("aria-invalid");
+  closeMetricEntry();
+  draw();
+}
+
+function updateDraftMetricLabels(lengthAnchor, angleAnchor, length, angleInfo, viewport, fields = null) {
   draftMetricLabels.hidden = false;
+  draftLengthInput.setAttribute("aria-label", fields?.[0] ?? "Длина линии на чертеже");
+  draftAngleInput.setAttribute("aria-label", fields?.[1] ?? "Угол линии на чертеже");
+  const names = draftMetricLabels.querySelectorAll(".metric-field-name");
+  names.forEach((name, index) => {
+    name.hidden = !fields;
+    if (fields) name.textContent = fields[index];
+  });
+  draftMetricLabels.dataset.metricContext = fields ? "figure-draft" : "line-draft";
   updateMetricField(draftLengthInput, draftLengthReadout, length);
-  updateMetricField(draftAngleInput, draftAngleReadout, angleInfo.degrees, { angle: true, wrap: angleInfo.cadAngle });
+  updateMetricField(draftAngleInput, draftAngleReadout, angleInfo.degrees, { angle: angleInfo.angle !== false, wrap: angleInfo.cadAngle });
   const activeInput = numericConfirmInput();
   const entries = [[draftLengthInput, lengthAnchor], [draftAngleInput, angleAnchor]];
   if (activeInput === draftAngleInput || pressedMetricFields.has(draftAngleInput.parentElement)) entries.reverse();
@@ -5411,12 +5583,10 @@ function drawActiveCircle(centerWorld, edgeWorld, c) {
 }
 function drawActiveRectangle(start, end, c) {
   drawRectangleEntity(rectangleEntity("preview", start.x, start.y, end.x, end.y), { ...c, line: c.accent });
-  updateTopMetricInputs(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
 }
 
-function drawActiveArc(c) {
+function drawActiveArc(c, current) {
   const drawing = state.drawing;
-  const current = drawing.lockedEnd ? drawing.end : cursorWorld();
   const pStart = worldToScreen(drawing.start);
   const pCurrent = worldToScreen(current);
   ctx.save();
@@ -5426,7 +5596,6 @@ function drawActiveArc(c) {
   ctx.setLineDash([8, 6]);
   if (!drawing.arcEnd) {
     linePath(pStart.x, pStart.y, pCurrent.x, pCurrent.y);
-    drawBadge("\u041a\u043e\u043d\u0435\u0446 \u0434\u0443\u0433\u0438", pCurrent.x, pCurrent.y - 22, c);
   } else {
     ctx.setLineDash([]);
     const through = arcThroughFromMidBulge(drawing.start, drawing.arcEnd, current);
@@ -5507,14 +5676,15 @@ function updateMetricField(input, readout, value, { angle = false, wrap = false 
   const unitText = angle ? "°" : projectUnit(settings).label;
   if (unit && unit.textContent !== unitText) unit.textContent = unitText;
   if (numericConfirmInput() === input) return;
-  const buffer = state.numericEdit?.lineMetric?.texts?.[lineMetricKinds.get(input)];
+  const edit = state.numericEdit;
+  const buffer = (edit?.lineMetric ?? edit?.figureMetric)?.texts?.[lineMetricKinds.get(input)];
   input.value = buffer ?? metricEntryValue(angle ? value : toProjectLength(value, settings));
   syncInlineEditorWidth(input);
 }
 
 function updateInlineEditors(start, end, metrics, angleInfo) {
   inlineEditors.hidden = false;
-  const lineDraft = state.tool === "line";
+  const lineDraft = state.tool === "line" || state.tool === "polyline";
   if (lineDraft && inlineEditors.dataset.metricContext !== "line-draft") inlineEditors.dataset.metricContext = "line-draft";
   else if (!lineDraft) delete inlineEditors.dataset.metricContext;
   drawMetrics.hidden = true;
@@ -5535,16 +5705,16 @@ function updateInlineEditors(start, end, metrics, angleInfo) {
   updateMetricField(angleInput, angleReadout, angleInfo.degrees, { angle: true, wrap: angleInfo.cadAngle });
 }
 
-function updateTopMetricInputs(length, angle, { cadAngle = false, rectangle = state.tool === "rectangle" && state.drawing } = {}) {
+function updateTopMetricInputs(length, angle, { cadAngle = false, rectangle = state.tool === "rectangle" && state.drawing, names } = {}) {
   drawMetrics.hidden = false;
   inlineEditors.hidden = true;
   const rotating = state.moveCommand?.mode === "rotate";
-  topLengthName.textContent = state.offsetCommand ? "Смещение" : "Длина";
-  topAngleName.textContent = rectangle ? "Ширина" : "Угол";
+  topLengthName.textContent = names?.[0] ?? (state.offsetCommand ? "Смещение" : "Длина");
+  topAngleName.textContent = names?.[1] ?? (rectangle ? "Ширина" : "Угол");
   topLengthInput.parentElement.hidden = rotating;
   topAngleInput.parentElement.hidden = Boolean(state.offsetCommand);
   topLengthInput.setAttribute("aria-label", rectangle ? "Длина прямоугольника" : topLengthName.textContent);
-  topAngleInput.setAttribute("aria-label", rectangle ? "Ширина прямоугольника" : "Угол");
+  topAngleInput.setAttribute("aria-label", rectangle ? "Ширина прямоугольника" : topAngleName.textContent);
   updateMetricField(topLengthInput, topLengthReadout, length);
   updateMetricField(topAngleInput, topAngleReadout, angle, { angle: !rectangle, wrap: cadAngle });
 }
@@ -5769,6 +5939,13 @@ function cancelLineMetricInput() {
 }
 
 function beginNumericInputEdit(input) {
+  const figure = figureMetricContext(input);
+  if (figure) {
+    if (state.numericEdit?.figureMetric === figure) return;
+    commitNumericInputEdit();
+    state.numericEdit = { figureMetric: { ...figure, point: null, texts: {}, values: {} } };
+    return;
+  }
   const lineContext = lineMetricKinds.has(input) && lineMetricContext();
   if (lineContext) {
     if (state.numericEdit?.lineMetric?.key === lineContext.key) return;
@@ -5790,7 +5967,7 @@ function beginNumericInputEdit(input) {
 
 function commitNumericInputEdit() {
   const edit = state.numericEdit;
-  if (!edit || edit.lineMetric) return;
+  if (!edit || edit.lineMetric || edit.figureMetric) return;
   const entity = state.entities.find((item) => item.id === edit.entityId);
   const after = entityGeometry(entity);
   if (geometryChanged(edit.before, after)) {
@@ -5816,6 +5993,10 @@ function confirmKeyboardInput() {
   const input = numericConfirmInput();
   if (!input) return;
   if (input !== document.activeElement) input.focus({ preventScroll: true });
+  if (state.numericEdit?.figureMetric) {
+    confirmFigureMetricInput(input, state.numericEdit.figureMetric);
+    return;
+  }
   if (lineMetricKinds.has(input) && lineMetricContext()) {
     beginNumericInputEdit(input);
     confirmLineMetricInput(input, state.numericEdit.lineMetric);
@@ -6095,6 +6276,7 @@ function applySelectionAction(action) {
 
 function hideInlineEditors() {
   if (state.numericEdit?.lineMetric) closeLineMetricInput();
+  else if (state.numericEdit?.figureMetric) cancelFigureMetricInput();
   else closeMetricEntry();
   lineDirectionDescription.textContent = "";
   inlineEditors.hidden = true;
@@ -6405,7 +6587,7 @@ function trackingBasePoint() {
   const zoneStart = planZoneSnapStart();
   if (zoneStart) return zoneStart;
   if (state.moveCommand?.base) return state.moveCommand.base;
-  return selectedEndpointGeometry()?.fixed || null;
+  return selectedEndpointGeometry()?.fixed || rectangleGripReference()?.start || null;
 }
 
 function updateSnapTrackingHover() {
@@ -6678,7 +6860,7 @@ function drawCursorSnap(c) {
   if (!snap) return;
   if (type === "tracking") drawSnapTracking(c);
   if (type === "polar") drawPolarSnapGuide(c);
-  if ((state.tool === "line" || state.tool === "arc" || state.drawing?.arcPhase) &&
+  if (isLineSnapContext() &&
       (type === "tracking" || type === "polar")) return;
   const point = worldToScreen(snap);
   ctx.save();
@@ -6707,7 +6889,7 @@ function nearestSegmentSnapThreshold() {
 }
 
 function isLineSnapContext() {
-  return state.tool === "line" || state.tool === "polyline" || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) || Boolean(state.selectedFigureGrip) ||
+  return trackingDrawingTools.has(state.tool) || state.planZone?.mode === "contour" || isDraftLine(selectedEndpointGeometry()?.entity) || Boolean(state.selectedFigureGrip) ||
     ["line-grip", "figure-grip"].includes(state.pointer?.mode) || ["offset", "mirror", "scale"].includes(state.lineEdit?.mode);
 }
 
@@ -7259,7 +7441,6 @@ function snappedPoint(point, type) {
 }
 
 function resolveArcBendSnap(point, draft) {
-  if (!snapEnabled("polar")) return resolveSnapWorld(point);
   const { start, arcEnd: end } = draft;
   const chord = distanceWorld(start, end);
   if (chord < 1) return resolveSnapWorld(point);
@@ -7269,8 +7450,9 @@ function resolveArcBendSnap(point, draft) {
   const nx = -uy;
   const ny = ux;
   const rawSagitta = (point.x - mid.x) * nx + (point.y - mid.y) * ny;
-  const segments = drawableSnapSegments();
-  const previous = draft.points?.at(-2);
+  const polarEnabled = snapEnabled("polar");
+  const segments = polarEnabled ? drawableSnapSegments() : [];
+  const previous = polarEnabled ? draft.points?.at(-2) : null;
   if (previous && !draft.bulges.at(-1)) segments.push({ p1: previous, p2: start });
 
   let connected = false;
@@ -7302,8 +7484,20 @@ function resolveArcBendSnap(point, draft) {
     }
   }
 
-  const fallback = resolveSnapWorld(point, { polarStart: connected ? null : start });
-  if (!best || (fallback.snap && !["grid", "tracking", "polar"].includes(fallback.snap.type))) return fallback;
+  const fallback = connected ? resolveSnapWorld(point, { polarStart: null })
+    : resolveLineLikeSnap(point, mid, { useOrtho: false });
+  const anchor = fallback.snap && !["grid", "tracking", "polar"].includes(fallback.snap.type);
+  if (anchor) {
+    const arc = arcGeometry(start, fallback.point, end);
+    if (arc) {
+      const sign = arc.counterClockwise ? 1 : -1;
+      const sweep = normalizeAnglePositive((arc.endAngle - arc.startAngle) * sign);
+      const sagitta = -sign * chord * Math.tan(sweep / 4) / 2;
+      const through = { x: mid.x + nx * sagitta, y: mid.y + ny * sagitta };
+      if (isLinePoint(through)) return { ...fallback, point: through };
+    }
+  }
+  if (!best || anchor) return fallback;
   state.snapTracking.active = null;
   state.polarSnapGuide = { point: best.anchor, angle: best.angle };
   return snappedPoint(best.point, "polar");
@@ -7313,7 +7507,10 @@ function resolveSnapWorld(point, { polarStart = state.drawing?.start || state.mo
   const trackingThreshold = objectSnapThreshold();
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
-  const objectSnap = nearestObjectSnap(point, { includeNearestSegment: trackingDrawingTools.has(state.tool) });
+  const objectSnap = nearestObjectSnap(point, {
+    includeNearestSegment: isLineSnapContext(),
+    start: state.drawing?.arcEnd && midpoint(state.drawing.start, state.drawing.arcEnd),
+  });
   if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
   if (canSnapToPrePointTrackingGuides() || canUseSnapTracking()) {
     const snap = nearestSnapTrackingPoint(point, trackingThreshold);
@@ -7378,11 +7575,11 @@ function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {})
   return snappedPoint(gridPoint(point), "grid");
 }
 
-function resolveLineLikeSnap(point, start, { useGrid = true } = {}) {
+function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } = {}) {
   state.snapTracking.active = null;
   state.polarSnapGuide = null;
 
-  const ortho = isLineSnapContext() && snapEnabled("ortho");
+  const ortho = useOrtho && isLineSnapContext() && snapEnabled("ortho");
   const grid = useGrid && snapEnabled("grid");
   const objectSnap = nearestObjectSnap(point, { includeNearestSegment: !ortho, start });
   if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
@@ -7785,7 +7982,7 @@ function setTool(tool) {
   state.directManipulationIds.clear();
   state.tool = tool;
   state.angleSide = null;
-  state.radialSourceId = null;
+  state.radialSource = null;
   state.additionalDimensionDraft = null;
   copyToolMenu.hidden = true;
   state.copyPicking = null;
@@ -8088,7 +8285,7 @@ function dimensionToolStatusText() {
     linear: "Размер по оси. 1 из 3: укажите первую точку",
     angular: state.angleMode === "select" ? "Угол · выберите первую сторону" : "Угол · укажите вершину",
     chain: "Множественный размер · укажите первую точку",
-    radial: "Размер круга · выберите окружность",
+    radial: "Размер круга · выберите круг или дугу",
     "arc-length": "Длина дуги · выберите дугу",
     ordinate: "Координатный размер · укажите точку",
     "jogged-radius": "Радиус с изломом · выберите дугу или окружность",
@@ -8201,6 +8398,10 @@ function draftDimension(start, end, id = "preview") {
 function draftDimensionOffset({ start, axis, measurement }, point) {
   const { chainOffset, chainAxis } = state.drawing;
   if (chainOffset != null) return (axis.x * chainAxis.x + axis.y * chainAxis.y < -1e-10 ? -1 : 1) * chainOffset;
+  if (state.dimensionTool === "chain") {
+    const side = (Math.abs(axis.x) > 1e-8 ? axis.x : -axis.y) >= 0 ? -1 : 1;
+    return side * Math.min(annotationWorldSize(24, state.annotationScale), 24 / state.view.scale, measurement * 0.35);
+  }
   const axisTip = { x: start.x + axis.x * measurement, y: start.y + axis.y * measurement };
   const offset = dimensionOffsetWithAlignmentSnap(start, axisTip, point);
   return Math.abs(offset) < 60 ? (offset < 0 ? -260 : 260) : offset;
@@ -8220,7 +8421,7 @@ function commitDimensionSegment(geometry) {
       chainOffset: draft.offset,
       chainAxis: geometry.axis,
     };
-    statusChip.textContent = "Цепочка · укажите следующую точку или нажмите «Выбор»";
+    statusChip.textContent = "Цепочка · следующая точка или «Готово»";
   } else {
     state.drawing = null;
     statusChip.textContent = `Размер ${projectLength(geometry.measurement)} создан`;
@@ -8525,6 +8726,8 @@ function startLineEdit(mode, entity, { quick = false } = {}) {
       button.title = label;
       button.setAttribute("aria-label", label);
       button.innerHTML = cadIcon(icon);
+      const labels = { total: "Длина", delta: "Прирост", percent: "%", dynamic: "По точке", distance: "Отступ", through: "Через точку", factor: "Коэф." };
+      labelContextIcon(button, labels[value]);
       return button;
     }));
     syncLineQuantityFields();
@@ -9083,7 +9286,7 @@ function drawLineEditMarks(c) {
   if (grip) {
     const entity = state.entities.find(item => item.id === grip.entityId);
     if (entity) {
-      const point = cursorWorld();
+      const point = figureMetricPreview(grip) ?? cursorWorld();
       const geometry = reshapeFigure(entity, grip, point);
       const preview = { ...entity, ...geometry, id: "figure-grip-preview" };
       ctx.save();
@@ -9136,8 +9339,9 @@ function previewFigureGrip(pointer, screen) {
     x: origin.x + (screen.x - pointer.startScreen.x) / state.view.scale,
     y: origin.y + (screen.y - pointer.startScreen.y) / state.view.scale,
   };
-  const snap = nearestObjectSnap(raw, { includeNearestSegment: true });
-  const point = snap ? { x: snap.x, y: snap.y } : snapEnabled("grid") ? gridPoint(raw) : raw;
+  const corner = entity.type === "rectangle" && pointer.grip.key === "corner"
+    ? rectangleCorners(entity)[(pointer.grip.index + 2) % 4] : null;
+  const point = corner ? resolveLineLikeSnap(raw, corner, { useOrtho: false }).point : resolveSnapWorld(raw).point;
   pointer.preview = reshapeFigure(entity, pointer.grip, point);
   if (!pointer.preview) statusChip.textContent = "Выберите другую точку для фигуры";
   else if (entity.type === "circle") statusChip.textContent = `Радиус ${projectLength(pointer.preview.radius)}`;
@@ -9294,7 +9498,7 @@ function selectLineEndpoint(endpoint) {
   return true;
 }
 
-function commitCursorPoint(screen = centerScreen()) {
+function commitCursorPoint(screen = centerScreen(), exactPoint = null) {
   if (state.leaderInput) return;
   if (surveyPointPicker) {
     commitSurveyPoint();
@@ -9309,7 +9513,7 @@ function commitCursorPoint(screen = centerScreen()) {
     return;
   }
   const resolved = cursorSnapResolved();
-  const world = resolved.point;
+  const world = exactPoint ?? resolved.point;
   if (state.selectedFigureGrip) {
     commitFigureGripPoint(world);
     return;
@@ -9390,7 +9594,7 @@ function commitCursorPoint(screen = centerScreen()) {
     if (!state.drawing) {
       resetSnapTracking();
       state.drawing = { start: world, end: world, lockedEnd: false, phase: "end", refStart: dimensionRefFromSnap(resolved.snap) };
-      statusChip.textContent = "Размер: начало поставлено. Поставьте вторую точку";
+      statusChip.textContent = state.dimensionTool === "chain" ? "Цепочка · укажите вторую точку" : "Размер: начало поставлено. Поставьте вторую точку";
     } else if (state.drawing.phase === "end") {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
       const geometry = dimensionGeometry(draftDimension(state.drawing.start, end));
@@ -9401,7 +9605,7 @@ function commitCursorPoint(screen = centerScreen()) {
       state.drawing.end = end;
       state.drawing.measurementAxis = geometry.measurementAxis;
       state.drawing.refEnd = dimensionRefFromSnap(resolved.snap);
-      if (state.drawing.chainOffset != null) {
+      if (state.dimensionTool === "chain") {
         commitDimensionSegment(geometry);
       } else {
         state.drawing.lockedEnd = true;
@@ -9433,7 +9637,19 @@ function commitCursorPoint(screen = centerScreen()) {
     } else {
       const end = state.drawing.lockedEnd ? state.drawing.end : world;
       const finishedTool = state.tool;
-      if (finishedTool === "arc" && !state.drawing.arcEnd) { state.drawing.arcEnd = end; state.drawing.end = end; state.drawing.lockedEnd = false; statusChip.textContent = "Дуга: укажите изгиб"; draw(); return; }
+      if (finishedTool === "arc" && !state.drawing.arcEnd) {
+        if (distanceWorld(state.drawing.start, end) <= linePointEpsilon) {
+          statusChip.textContent = "Укажите другой конец дуги";
+          return;
+        }
+        state.drawing.arcEnd = end;
+        state.drawing.end = end;
+        state.drawing.lockedEnd = false;
+        resetSnapTracking();
+        statusChip.textContent = "Дуга: укажите изгиб";
+        draw();
+        return;
+      }
       state.drawing.end = end;
       const metrics = segmentMetrics(state.drawing.start.x, state.drawing.start.y, end.x, end.y);
       const arcThrough = finishedTool === "arc" && state.drawing.arcEnd ? arcThroughFromMidBulge(state.drawing.start, state.drawing.arcEnd, end) : null;
@@ -9644,7 +9860,8 @@ canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   if (!selectModeMenu.hidden) hideSelectModeMenu();
   if (numericConfirmInput()) {
-    if (lineMetricContext()) closeLineMetricInput();
+    if (state.numericEdit?.figureMetric) cancelFigureMetricInput();
+    else if (lineMetricContext()) closeLineMetricInput();
     else closeMetricEntry();
   }
   try {
@@ -10301,7 +10518,9 @@ function translatedEntityGeometry(entity, dx, dy, movingIds) {
   if (isRadialDimension(entity)) {
     const start = { x: entity.x1 + dx, y: entity.y1 + dy };
     const end = { x: entity.x2 + dx, y: entity.y2 + dy };
-    return [start, end].every(isLinePoint) ? { x1: start.x, y1: start.y, x2: end.x, y2: end.y } : null;
+    const rim = entity.radialRim && { x: entity.radialRim.x + dx, y: entity.radialRim.y + dy };
+    return [start, end, ...(rim ? [rim] : [])].every(isLinePoint)
+      ? { x1: start.x, y1: start.y, x2: end.x, y2: end.y, ...(rim ? { radialRim: rim } : {}) } : null;
   }
   if (isLinearDimension(entity)) return translatedDimensionGeometry(entity, dx, dy, movingIds);
   if (entity.dimensionKind === "angular") {
@@ -10686,7 +10905,7 @@ function entityGeometry(entity) {
   }
   const geometry = { x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
   if (additionalDimensionKinds.includes(entity.dimensionKind)) return { ...geometry, ...additionalDimensionPoints(entity) };
-  if (isRadialDimension(entity)) return geometry;
+  if (isRadialDimension(entity)) return { ...geometry, ...(entity.radialRim ? { radialRim: { ...entity.radialRim } } : {}) };
   if (entity.layer === "dimensions") {
     geometry.offset = entity.offset ?? 360;
     if (Number.isFinite(entity.dimX1)) {
@@ -10895,7 +11114,8 @@ function distanceToEntityScreen(screen, entity, zoneAnchor) {
     const art = radialDimensionArtwork(entity, state.annotationScale);
     if (!art) return Infinity;
     return Math.min(pointDistance(screen, worldToScreen(art.label)),
-      pointToSegmentDistance(screen, worldToScreen(art.start), worldToScreen(art.end)));
+      pointToSegmentDistance(screen, worldToScreen(art.start), worldToScreen(art.end)),
+      art.landing ? pointToSegmentDistance(screen, worldToScreen(art.rim), worldToScreen(art.label)) : Infinity);
   }
   if (entity.layer === "dimensions") {
     if (entity.dimensionKind === "angular") {
@@ -11005,6 +11225,8 @@ drawToolMenu?.addEventListener("click", (event) => {
   selectDrawTool(button.dataset.drawTool);
   figureToolButton?.focus({ preventScroll: true });
 });
+
+bindPointAction(document.getElementById("finishDimensionChain"), activatePlainSelect);
 
 ordinateModes.addEventListener("click", event => {
   const axis = event.target.closest("[data-ordinate-axis]")?.dataset.ordinateAxis;
@@ -11268,7 +11490,8 @@ for (const [input, kind] of lineMetricKinds) {
       confirmKeyboardInput();
     } else if (event.key === "Escape") {
       event.preventDefault();
-      if (lineMetricContext()) cancelLineMetricInput();
+      if (state.numericEdit?.figureMetric) cancelFigureMetricInput();
+      else if (lineMetricContext()) cancelLineMetricInput();
       else {
         if (selectedRectangleForMetrics()) modifiedMetricInputs.delete(input);
         closeMetricEntry();
@@ -11279,7 +11502,8 @@ for (const [input, kind] of lineMetricKinds) {
   });
   input.addEventListener("input", () => {
     syncInlineEditorWidth(input);
-    if (lineMetricContext()) updateLineMetricInput(input);
+    if (state.numericEdit?.figureMetric) updateFigureMetricInput(input);
+    else if (lineMetricContext()) updateLineMetricInput(input);
     else {
       modifiedMetricInputs.add(input);
       input.removeAttribute("aria-invalid");
@@ -11289,6 +11513,14 @@ for (const [input, kind] of lineMetricKinds) {
     }
   });
   input.addEventListener("blur", (event) => {
+    if (state.numericEdit?.figureMetric) {
+      if (event.relatedTarget !== keyboardConfirmButton && !lineMetricKinds.has(event.relatedTarget)) {
+        state.numericEdit = null;
+        input.removeAttribute("aria-invalid");
+        draw();
+      }
+      return;
+    }
     if (lineMetricContext() || state.numericEdit?.lineMetric) {
       if (!lineMetricKinds.has(event.relatedTarget) && event.relatedTarget !== keyboardConfirmButton &&
           !linePointAssist.contains(event.relatedTarget)) {
@@ -11611,7 +11843,8 @@ function bindMetricField(input) {
     if (!suppressClick && pointDistance(press.start, point) <= TAP_MOVE_TOLERANCE) return;
     if (!suppressClick) {
       suppressClick = true;
-      if (lineMetricContext()) closeLineMetricInput();
+      if (state.numericEdit?.figureMetric) cancelFigureMetricInput();
+      else if (lineMetricContext()) closeLineMetricInput();
       else closeMetricEntry();
     }
     state.view.panX = press.panX + point.x - press.start.x;
@@ -11821,6 +12054,20 @@ document.getElementById("redoButton").addEventListener("click", () => {
 });
 
 const exportScope = document.getElementById("exportScope");
+const exportFormats = document.getElementById("exportFormats");
+const exportPdfSettings = document.getElementById("exportPdfSettings");
+const exportSheetTitle = document.getElementById("exportSheetTitle");
+const confirmPdfExport = document.getElementById("confirmPdfExport");
+let pdfExportType = null;
+
+function showExportStage(type = null) {
+  pdfExportType = type;
+  exportFormats.hidden = Boolean(type);
+  exportPdfSettings.hidden = !type;
+  exportSheetTitle.textContent = type === "zip" ? "Настройки PDF в комплекте" : type ? "Настройки PDF" : "Файлы чертежа";
+  confirmPdfExport.textContent = type === "zip" ? "Сохранить ZIP" : "Сохранить PDF";
+  if (type) exportScale.focus({ preventScroll: true });
+}
 const exportScale = document.getElementById("exportScale");
 const exportPhotos = document.getElementById("exportPhotos");
 const exportPhotoOption = document.getElementById("exportPhotoOption");
@@ -11900,6 +12147,7 @@ document.getElementById("exportButton").addEventListener("click", (event) => {
     setExportResult("");
     lastNativeExportId = null;
     exportFileActions.hidden = true;
+    showExportStage();
   }
   syncExportOptions();
   showSheet(exportSheet, event.currentTarget);
@@ -11955,7 +12203,7 @@ async function exportCurrentProject(type) {
   const projectId = persistence.projectId;
   lastNativeExportId = null;
   exportFileActions.hidden = true;
-  for (const button of exportCards) button.disabled = true;
+  for (const button of [...exportCards, confirmPdfExport]) button.disabled = true;
   setExportResult("Подготавливаю файл…");
   try {
     if (exportDraftVertexCount() >= 2 && !finishLineCommand()) {
@@ -12019,13 +12267,29 @@ async function exportCurrentProject(type) {
     if (persistence.projectId === projectId) setExportResult(error?.message || "Не удалось подготовить файл", true);
   } finally {
     exportInProgress = false;
-    for (const button of exportCards) button.disabled = false;
+    for (const button of [...exportCards, confirmPdfExport]) button.disabled = false;
   }
 }
 
 for (const button of exportCards) {
-  button.addEventListener("click", () => exportCurrentProject(button.dataset.export));
+  button.addEventListener("click", () => {
+    const { export: type } = button.dataset;
+    if (type === "pdf" || type === "zip") {
+      setExportResult("");
+      exportFileActions.hidden = true;
+      showExportStage(type);
+    } else void exportCurrentProject(type);
+  });
 }
+
+confirmPdfExport.addEventListener("click", () => {
+  if (pdfExportType) void exportCurrentProject(pdfExportType);
+});
+document.getElementById("backExportFormats").addEventListener("click", () => {
+  const card = exportCards.find(button => button.dataset.export === pdfExportType);
+  showExportStage();
+  card?.focus({ preventScroll: true });
+});
 
 const sheetOpeners = new WeakMap();
 
@@ -12229,11 +12493,32 @@ const planAnnotationCommands = document.getElementById("planAnnotationCommands")
 const planAnnotationClose = document.getElementById("planAnnotationClose");
 const planAnnotationAddContour = document.getElementById("planAnnotationAddContour");
 const planAnnotationEdit = document.getElementById("planAnnotationEdit");
-const planAnnotationModeIcons = { contour: "polyline", rectangle: "rectangle", existing: "plan" };
-for (const button of planAnnotationModesButtons) button.innerHTML = cadIcon(planAnnotationModeIcons[button.dataset.planMode]);
-planAnnotationClose.innerHTML = cadIcon("closeContour");
-planAnnotationAddContour.innerHTML = cadIcon("addContour");
-planAnnotationEdit.innerHTML = cadIcon("edit");
+function labelContextIcon(button, label) {
+  const caption = document.createElement("small");
+  caption.className = "context-icon-label";
+  caption.setAttribute("aria-hidden", "true");
+  caption.textContent = label;
+  button.append(caption);
+}
+
+const planAnnotationModesAppearance = {
+  contour: ["polyline", "Контур"],
+  rectangle: ["rectangle", "Прямоуг."],
+  existing: ["plan", "Из плана"],
+};
+for (const button of planAnnotationModesButtons) {
+  const [icon, label] = planAnnotationModesAppearance[button.dataset.planMode];
+  button.innerHTML = cadIcon(icon);
+  labelContextIcon(button, label);
+}
+for (const [button, icon, label] of [
+  [planAnnotationClose, "closeContour", "Замкнуть"],
+  [planAnnotationAddContour, "addContour", "+ Контур"],
+  [planAnnotationEdit, "edit", "Правка"],
+]) {
+  button.innerHTML = cadIcon(icon);
+  labelContextIcon(button, label);
+}
 const planAnnotationEditor = document.getElementById("planAnnotationEditor");
 const planAnnotationForm = planAnnotationEditor.querySelector("form");
 const planAnnotationSubmit = document.getElementById("planAnnotationSubmit");

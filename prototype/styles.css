@@ -1056,6 +1056,31 @@ button.project-card-open:active { background: var(--surface-2); }
   line-height: 1;
 }
 
+.context-icon-label {
+  font-size: 0.6rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:is(.line-command-panel, .select-tool-menu, .plan-annotation-actions) button:has(.context-icon-label) {
+  align-content: center;
+  gap: 2px;
+}
+
+.plan-annotation-actions button:has(.context-icon-label) {
+  flex-direction: column;
+  width: 49px;
+}
+
+#lineLengthModes button:has(.context-icon-label) {
+  width: 56px;
+}
+
+.workspace:has(#chainControls:not([hidden])) #dimensionAssist {
+  top: calc(var(--workspace-edit-panel-top) + 58px);
+}
+
 .line-command-heading {
   flex-basis: 100%;
   font-size: 0.78rem;
@@ -1699,9 +1724,14 @@ button.project-card-open:active { background: var(--surface-2); }
   position: relative;
 }
 
-.draft-metric-labels[data-metric-context="line-draft"] .metric-field:not([hidden]) {
+.draft-metric-labels .metric-field:not([hidden]) {
   position: absolute;
   transform: translate(-50%, -50%);
+}
+
+.draft-metric-labels[data-metric-context="figure-draft"] .metric-field {
+  min-height: 40px;
+  padding: 2px 5px;
 }
 
 .metric-fields[data-metric-context="line-draft"] .metric-field::before {
@@ -2265,6 +2295,11 @@ button.layer-name {
   overscroll-behavior: contain;
 }
 
+.export-stage {
+  display: grid;
+  gap: 10px;
+}
+
 .export-options {
   align-items: center;
   display: grid;
@@ -2483,6 +2518,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   padding: 0;
   touch-action: manipulation;
   width: 44px;
+}
+.plan-annotation-actions button:not([hidden]):has(.context-icon-label) {
+  width: 49px;
 }
 .plan-annotation-actions button:not([hidden])[aria-pressed="true"] {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));

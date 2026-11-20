@@ -383,6 +383,21 @@ test("a bent leader connects on the arrow side after the arrow crosses the label
   }
 });
 
+test("radius placed outside the available arc span exports a connector to the actual rim", () => {
+  const radial = { id: "arc-radius", type: "line", layer: "dimensions", dimensionKind: "radius",
+    x1: 0, y1: 0, x2: 800, y2: 1600, circleRadius: 1000, radialRim: { x: 1000, y: 0 } };
+  for (const build of [buildDxf, buildRevitDxf]) {
+    const exported = build([radial]);
+    assert.match(exported, /AcDbRadialDimension/);
+    const lines = exported.split("\n");
+    const connector = lines.some((item, index) => item === "10" && lines[index + 1] === "1000" &&
+      lines[index + 2] === "20" && Number(lines[index + 3]) === 0 &&
+      lines[index + 6] === "11" && lines[index + 7] === "800" &&
+      lines[index + 8] === "21" && lines[index + 9] === "-1600");
+    assert.ok(connector);
+  }
+});
+
 test("zones export closed editable XY contours and native labels on separate colored layers", () => {
   const points = [{ x: 125.0002, y: -300 }, { x: 4125.0002, y: -300 }, { x: 4125.0002, y: 1700 }, { x: 125.0002, y: 1700 }];
   const zone = { type: "area", id: "floor", layer: "areas", points: [...points, points[0]], label: "Зона кухни" };

@@ -249,6 +249,7 @@ function radialDimension(entity, layer, scaleFactor, measurementSettings) {
   if (!art) return null;
   const graphics = [];
   appendLine(graphics, art.start, art.end, layer);
+  if (art.landing) appendLine(graphics, art.rim, art.label, layer);
   const sign = art.inside ? -1 : 1;
   appendArrow(graphics, art.rim, art.ux * sign, art.uy * sign, art.arrowSize, layer);
   if (art.diameter) appendArrow(graphics, art.opposite, art.ux, art.uy, art.arrowSize, layer);

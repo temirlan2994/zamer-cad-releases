@@ -122,7 +122,7 @@ function dimensionTraces(entity, annotationScale) {
   }
   if (entity.dimensionKind === "radius" || entity.dimensionKind === "diameter") {
     const art = radialDimensionArtwork(entity, annotationScale);
-    return art ? [trace([art.start, art.end], "annotation"), shortLabel(art.label, art.textHeight * 2)] : [];
+    return art ? [trace([art.start, art.end, ...(art.landing ? [art.label] : [])], "annotation"), shortLabel(art.label, art.textHeight * 2)] : [];
   }
   const art = linearDimensionArtwork(dimensionGeometry(entity), annotationScale);
   return art ? [trace([art.start, art.extensionStart], "annotation"), trace([art.end, art.extensionEnd], "annotation"),
