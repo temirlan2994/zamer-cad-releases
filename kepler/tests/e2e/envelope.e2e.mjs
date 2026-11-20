@@ -47,8 +47,8 @@ describe('автоматическая оболочка дома', () => {
         autoRoofs: new Set(faces.filter((face) => face.autoRoofId).map((face) => face.autoRoofId)).size,
       };
     });
-    assert.deepEqual(geometry.foundation, [-1800, -1000]);
-    assert.deepEqual(geometry.plinth, [-1000, 0]);
+    assert.deepEqual(geometry.foundation, [-1800, -1500]);
+    assert.deepEqual(geometry.plinth, [-1500, 0]);
     assert.deepEqual(geometry.ground, [-1005, -1005]);
     assert.equal(geometry.autoRoofs, 1);
 

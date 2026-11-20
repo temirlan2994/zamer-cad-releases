@@ -88,7 +88,7 @@ test('одноэтажный дом: одна кровля без швов по 
   p.rooms.push(createRoom('living', 0, 0, 5000, 4000), createRoom('kitchen', 5000, 0, 3000, 4000));
   const faces = buildHouseMesh(p, { roof: true });
   const roof = faces.filter((f) => f.kind === 'roof');
-  assert.equal(faces.filter((f) => f.kind === 'slab').length, 0, 'перекрытий нет');
+  assert.equal(faces.filter((f) => f.slabRole === 'interfloor').length, 0, 'межэтажных перекрытий нет');
   const tops = roof.filter((f) => f.normal.z === 1);
   assert.equal(tops.length, 1, 'смежные комнаты — одна плита');
   assert.equal(topArea(roof), 8500 * 4500);
@@ -97,6 +97,38 @@ test('одноэтажный дом: одна кровля без швов по 
   // Рёбра — только по контуру: ни одно не лежит на шве x = 5000.
   const edges = roof.flatMap((f) => f.edges || []);
   assert.ok(edges.length && edges.every(([a, b]) => !(a.x === 5000 && b.x === 5000)));
+});
+
+test('связанная нижняя плита видна в 3D, меняет толщину и отключается вместе с плитами', () => {
+  const p = createProject();
+  p.rooms.push(createRoom('living', 0, 0, 5000, 4000));
+  p.envelope.slabs.groundThickness = 420;
+  let ground = buildHouseMesh(p).filter((face) => face.slabRole === 'ground');
+  assert.ok(ground.length, 'тело нижней плиты построено');
+  assert.equal(Math.min(...ground.flatMap((face) => face.pts.map((point) => point.z))), -420);
+  assert.equal(Math.max(...ground.flatMap((face) => face.pts.map((point) => point.z))), -1);
+  assert.ok(ground.every((face) => face.level === p.levels[0].id));
+
+  p.envelope.slabs.enabled = false;
+  ground = buildHouseMesh(p).filter((face) => face.slabRole === 'ground');
+  assert.equal(ground.length, 0);
+
+  const withEmptyLower = createProject();
+  const occupied = createLevel('2 этаж', 3000, 2800, 'L2');
+  occupied.rooms.push(createRoom('living', 0, 0, 5000, 4000));
+  withEmptyLower.levels.push(occupied);
+  const emptyLowerMesh = buildHouseMesh(withEmptyLower);
+  ground = emptyLowerMesh.filter((face) => face.slabRole === 'ground');
+  assert.ok(ground.length && ground.every((face) => face.level === occupied.id), 'плита следует за нижним занятым этажом');
+  assert.equal(emptyLowerMesh.filter((face) => face.slabRole === 'interfloor').length, 0, 'та же плита не дублируется как межэтажная');
+});
+
+test('лестничное помещение не вырезает нижнюю плиту дома', () => {
+  const p = createProject();
+  p.rooms.push(createRoom('stairs-room', 0, 0, 4000, 4000));
+  const ground = buildHouseMesh(p).filter((face) => face.slabRole === 'ground' && face.normal.z > 0.5);
+  assert.ok(ground.length, 'плита под первым этажом остаётся целой');
+  assert.equal(topArea(ground), 4540 * 4540);
 });
 
 test('Г-образная комната: кровля без внутренних швов, внутренний угол на месте', () => {
@@ -127,16 +159,16 @@ test('два этажа с неполным верхним: кровля над 
   assert.equal(buildHouseMesh(p).filter((f) => f.kind === 'roof').length, 0);
 });
 
-test('перекрытие между этажами: под верхним этажом, толщина 200, лестница вырезана', () => {
+test('перекрытие между этажами: под верхним этажом, толщина 300, лестница вырезана', () => {
   const p = twoStorey();
-  let slab = buildHouseMesh(p).filter((f) => f.kind === 'slab');
+  let slab = buildHouseMesh(p).filter((f) => f.slabRole === 'interfloor');
   assert.ok(slab.length);
-  assert.ok(slab.every((f) => zRange(f)[0] >= 2800 && zRange(f)[1] <= 3000));
-  assert.ok(slab.some((f) => zRange(f)[0] === 2800) && slab.some((f) => zRange(f)[1] === 2999));
-  assert.equal(topArea(slab), 5540 * 6540, 'пятно 2 этажа ∩ 1 этажа, со стеной и выступом 20');
+  assert.ok(slab.every((f) => zRange(f)[0] >= 2700 && zRange(f)[1] <= 3000));
+  assert.ok(slab.some((f) => zRange(f)[0] === 2700) && slab.some((f) => zRange(f)[1] === 2999));
+  assert.equal(topArea(slab), 5540 * 6540, 'пятно верхнего этажа со стеной и выступом 20');
   // Лестница на 2 этаже — проём в перекрытии.
   p.rooms.push(createRoom('stairs-room', 1000, 1000, 2000, 3000));
-  slab = buildHouseMesh(p).filter((f) => f.kind === 'slab');
+  slab = buildHouseMesh(p).filter((f) => f.slabRole === 'interfloor');
   assert.equal(topArea(slab), 5540 * 6540 - 2000 * 3000);
   assert.equal(sides(slab).length, 8, 'внешний контур и проём');
 });

@@ -125,7 +125,7 @@ test('void режет пол, межэтажную плиту и стены по
   const faces = buildHouseMesh(p);
   const floors2 = faces.filter((f) => f.kind === 'floor' && f.level === 'L2');
   assert.ok(!floors2.some((f) => horizontalCovers(f, 3000, 3000, 3001)), 'пол второго этажа вырезан');
-  const slabs = faces.filter((f) => f.kind === 'slab');
+  const slabs = faces.filter((f) => f.slabRole === 'interfloor');
   assert.ok(!slabs.some((f) => horizontalCovers(f, 3000, 3000, 2999)), 'верх плиты вырезан');
   assert.ok(slabs.some((f) => Math.abs(f.normal.x) + Math.abs(f.normal.y) > 0.5 && span(f, 'z')[0] < 3000), 'у плиты есть внутренний торец');
   const wallFaces = faces.filter((f) => f.kind === 'wall');
@@ -140,7 +140,7 @@ test('void, не доходящий до поверхности, делает н
   l2.rooms.push(createRoom('hall', 0, 0, 6000, 6000));
   p.levels.push(l2);
   p.massVoids = [createMassVoid({ x: 3000, y: 3000, w: 1200, d: 1200, z0: 2820, h: 80 })];
-  const slabs = buildHouseMesh(p).filter((f) => f.kind === 'slab');
+  const slabs = buildHouseMesh(p).filter((f) => f.slabRole === 'interfloor');
   assert.ok(slabs.some((f) => horizontalCovers(f, 3000, 3000, 2999)), 'верх плиты остаётся');
   assert.ok(slabs.some((f) => f.normal.z < -0.5 && Math.abs(f.pts[0].z - 2920) < 1), 'внутри плиты есть потолок ниши');
 });

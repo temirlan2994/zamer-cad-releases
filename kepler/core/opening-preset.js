@@ -34,6 +34,10 @@ export function defaultOpeningPreset(kind) {
 // Параметры из заготовки накладываются на новый проём (до подгонки по стене).
 export function applyOpeningPreset(opening, preset) {
   if (!preset) return opening;
+  if (preset.presetId) opening.presetId = preset.presetId;
+  else delete opening.presetId;
+  if (opening.kind === 'door' && preset.entryRole) opening.entryRole = preset.entryRole;
+  else if (opening.kind === 'door') delete opening.entryRole;
   opening.type = preset.type;
   opening.width = preset.width;
   opening.height = preset.height;

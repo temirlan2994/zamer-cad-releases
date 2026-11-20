@@ -67,6 +67,16 @@ test('высота стены = высоте этажа, ширина — по �
   assert.ok(s.polys.every((q) => q.edges.length), 'у граней есть контур');
 });
 
+test('связанный скат 1° остаётся видимой поверхностью фасада', () => {
+  const p = house();
+  p.envelope.roof = { type: 'shed', pitchDeg: 1, direction: 's', overhang: 0, drainage: 'off' };
+  const south = buildElevation(p, 'S');
+  const top = south.polys.find((poly) => poly.kind === 'roof' && poly.roofSurface === 'top');
+  assert.ok(top, 'малый скат не отброшен как горизонтальная грань');
+  assert.equal(top.roofType, 'shed');
+  assert.ok(Math.max(...top.pts.map((point) => point.z)) - Math.min(...top.pts.map((point) => point.z)) > 10);
+});
+
 test('поворот дома и север: сторона «Север» согласована', () => {
   // Дом повёрнут на 90° по часовой: на север смотрит левая сторона плана (3).
   assert.equal(facadeSide(house({ rotation: 90 }), 'N').side, 3);
@@ -97,7 +107,7 @@ test('два этажа: перекрытие между ними и отмет�
   const s = buildElevation(p, 'S', { roof: false });
   const slab = s.polys.filter((q) => q.kind === 'slab');
   assert.ok(slab.length, 'перекрытие видно');
-  assert.ok(slab.every((q) => zr(q)[0] >= 2799 && zr(q)[1] <= 3000));
+  assert.ok(slab.every((q) => zr(q)[0] >= 2699 && zr(q)[1] <= 3000));
   assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '±0.000'], [3000, '+3.000']]);
   assert.equal(s.bounds.z1, 5800);
   assert.equal(fmtMark(-450), '−0.450');

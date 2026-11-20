@@ -26,6 +26,13 @@ const FACADE_VIEWS = Object.freeze([
   Object.freeze({ id: 'elev-E', name: 'Фасад Восток' }),
 ]);
 
+const AUTO_ROOF_LABELS = Object.freeze({
+  flat: 'Плоская',
+  shed: 'Односкатная',
+  gable: 'Двускатная',
+  hip: 'Вальмовая',
+});
+
 function normalizedStatus(value) {
   const status = String(value || 'unknown').toLocaleLowerCase('ru-RU');
   if (['conflict', 'blocked', 'error', 'fail', 'invalid'].includes(status)) return 'conflict';
@@ -155,14 +162,17 @@ function roofRows(report, project) {
   const rows = Array.isArray(section) ? section
     : array(section?.records || section?.items || section?.rows || section?.roofs);
   if (!rows.length && section?.autoLinked) {
+    const type = AUTO_ROOF_LABELS[section.autoType] || 'Связанная';
+    const pitch = section.autoType === 'flat' || !finite(section.autoPitchDeg)
+      ? '' : ` · ${number(section.autoPitchDeg, 0)}°`;
     return array(project?.levels).filter((level) => array(level?.rooms).length).map((level) => ({
       id: `auto-roof:${level.id}`,
-      name: 'Автокровля',
+      name: `${type} автокровля`,
       level: level.name || level.id,
       vertices: 0,
       thickness: section.autoThicknessMm,
       status: 'observed',
-      note: 'Связана с верхним контуром этажей',
+      note: `Связана с верхним контуром${pitch}`,
     }));
   }
   const source = rows.length ? rows : array(project?.roofs);
@@ -323,7 +333,7 @@ export function homeEnvelopeHtml(project, options = {}) {
         ${levelsHtml(report, project)}
       </section>
       <section class="home-envelope-card" data-home-envelope-section="roofs" data-status="${roofs.length ? 'observed' : 'unknown'}" aria-labelledby="homeEnvelopeRoofsTitle">
-        <header><div><h2 id="homeEnvelopeRoofsTitle">Явные кровли</h2><p>${roofs.length ? `${roofs.length} в модели` : 'Не заданы'}</p></div><span>${roofs.length ? 'По модели' : 'Не задано'}</span></header>
+        <header><div><h2 id="homeEnvelopeRoofsTitle">Кровли</h2><p>${roofs.length ? `${roofs.length} в модели` : 'Не заданы'}</p></div><span>${roofs.length ? 'По модели' : 'Не задано'}</span></header>
         ${roofsHtml(report, project)}
         <button type="button" data-home-envelope-action="open-roof-plan">Открыть план крыши</button>
       </section>

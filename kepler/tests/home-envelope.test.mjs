@@ -70,12 +70,29 @@ test('ТЭП, этаж, четыре фасада и связанная авто
   assert.ok(result.facades.records.every((facade) => facade.roofRepresentation === 'linked-automatic'));
   assert.equal(result.roofs.status, 'linked');
   assert.equal(result.roofs.autoLinked, true);
+  assert.equal(result.roofs.autoType, 'flat');
+  assert.equal(result.roofs.autoDrainage, 'auto');
   assert.ok(result.facts.some((item) => item.id === 'roof:linked'));
   assert.equal(result.unknowns.some((item) => item.id === 'roof:unspecified'), false);
   assert.ok(result.limitations.some((text) => /объём кровли/i.test(text)));
   assert.ok(result.limitations.some((text) => /несущая способность/i.test(text)));
   assert.ok(result.limitations.some((text) => /теплотехнические/i.test(text)));
   assert.equal(JSON.stringify(project), before, 'анализатор не мутирует проект');
+});
+
+test('сводка сохраняет тип и уклон связанной крыши', () => {
+  const { project } = oneStorey();
+  project.envelope.roof = {
+    type: 'hip', pitchDeg: 24, direction: 'e', overhang: 700, drainage: 'external',
+  };
+
+  const result = analyzeHomeEnvelope(project, { inspectViewGeometry: false });
+  assert.equal(result.roofs.autoType, 'hip');
+  assert.equal(result.roofs.autoPitchDeg, 24);
+  assert.equal(result.roofs.autoDirection, 'e');
+  assert.equal(result.roofs.autoOverhangMm, 700);
+  assert.equal(result.roofs.autoDrainage, 'external');
+  assert.match(result.facts.find((item) => item.id === 'roof:linked').text, /вальмовая/i);
 });
 
 test('явная крыша и сохранённый разрез возвращаются с измеримыми фактами', () => {

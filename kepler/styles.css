@@ -1454,6 +1454,81 @@ body.v3-open .level-dock { z-index: 46; }
 .envelope-toggles .check-row { min-width: 0; padding: 5px 2px; font-size: 11.5px; }
 .envelope-flow { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
 .envelope-flow.envelope-conflict { color: var(--danger); }
+.envelope-status {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(52px, 1fr));
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.envelope-status::-webkit-scrollbar { display: none; }
+.envelope-status button {
+  position: relative;
+  display: grid;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 5px 2px 4px;
+  place-items: center;
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.envelope-status button:hover,
+.envelope-status button[aria-expanded="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--text); }
+.envelope-status button > span { font-size: 16px; line-height: 1; }
+.envelope-status button > b { max-width: 100%; overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; }
+.envelope-status button > i {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 700 9px/1 sans-serif;
+}
+.envelope-status button[data-status="ready"] > i { background: var(--ok-bg); color: var(--ok-text); }
+.envelope-status button[data-status="attention"] > i,
+.envelope-status button[data-status="pending"] > i { background: var(--warn-bg); color: var(--warn-text); }
+.envelope-status button[data-status="conflict"] > i { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
+.envelope-system {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  animation: envelope-open 140ms ease-out;
+}
+.envelope-system[hidden] { display: none; }
+.envelope-system > header { display: flex; align-items: center; justify-content: space-between; }
+.envelope-system > header strong { font-size: 12px; }
+.envelope-system > header button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 18px; }
+.envelope-system > header button:hover { background: var(--surface-2); color: var(--text); }
+.envelope-choice,
+.envelope-roof-types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.envelope-choice button,
+.envelope-roof-types button { min-height: 38px; padding: 5px 3px; border-radius: 8px; font-size: 9px; }
+.envelope-choice button.active,
+.envelope-roof-types button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.envelope-roof-types button { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.envelope-roof-types button span { font-size: 17px; line-height: 1; }
+.earthworks-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 0; }
+.earthworks-summary > div { padding: 7px; border-radius: 8px; background: var(--surface-2); }
+.earthworks-summary dt { color: var(--muted); font-size: 9px; }
+.earthworks-summary dd { margin: 2px 0 0; color: var(--text); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+@keyframes envelope-open { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 700px) {
+  .envelope-status { grid-template-columns: repeat(7, 58px); }
+  .envelope-status button { min-height: 56px; }
+}
 
 .checklist { gap: 2px; }
 .check-row {

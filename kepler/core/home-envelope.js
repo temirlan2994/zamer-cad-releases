@@ -22,6 +22,13 @@ import { tepReport } from './tep.js';
 import { DIR_NAMES, ELEV_DIRS, sectionViews } from './views.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 
+const AUTO_ROOF_NAMES = Object.freeze({
+  flat: 'плоская',
+  shed: 'односкатная',
+  gable: 'двускатная',
+  hip: 'вальмовая',
+});
+
 const array = (value) => (Array.isArray(value) ? value : []);
 const finite = (value) => value !== null && value !== undefined && value !== ''
   && Number.isFinite(Number(value));
@@ -106,6 +113,7 @@ function indicators(project, levels) {
 function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
   const envelope = envelopeOf(project);
   const autoLinked = hasBuilding && envelope.roofMode === 'linked';
+  const autoType = envelope.roof.type;
   const records = roofsOf(project).map((roof, index) => {
     const level = roofLevel(project, roof);
     const outlineValid = validOutline(array(roof?.outline));
@@ -160,7 +168,7 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
   } else if (autoLinked) {
     facts.push(entry(
       'roof:linked', 'roof', 'Автоматическая кровля',
-      'Плоская кровля следует за верхним контуром этажей и перестраивается вместе с помещениями.',
+      `Связанная ${AUTO_ROOF_NAMES[autoType] || 'автоматическая'} кровля следует за верхним контуром этажей и перестраивается вместе с помещениями.`,
     ));
   }
   return {
@@ -168,6 +176,11 @@ function roofRecords(project, hasBuilding, unknowns, conflicts, facts) {
       : valid.length ? 'explicit' : (autoLinked ? 'linked' : 'unspecified'),
     autoLinked,
     autoThicknessMm: envelope.roofThickness,
+    autoType,
+    autoPitchDeg: envelope.roof.pitchDeg,
+    autoDirection: envelope.roof.direction,
+    autoOverhangMm: envelope.roof.overhang,
+    autoDrainage: envelope.roof.drainage,
     explicitCount: valid.length,
     invalidCount: records.length - valid.length,
     totalAreaM2: rounded(valid.reduce((sum, roof) => sum + (roof.areaM2 || 0), 0)),

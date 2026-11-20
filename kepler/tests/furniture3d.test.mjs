@@ -126,11 +126,11 @@ test('этажи: мебель на отметке своего этажа; фи
   assert.deepEqual([...new Set(upto.filter((f) => f.kind === 'floor').map((f) => f.level))], [p.levels[0].id]);
   assert.equal(upto.filter((f) => f.kind === 'furniture').length, 0, 'мебель 2 этажа скрыта');
   assert.equal(upto.filter((f) => f.kind === 'roof').length, 0, 'кровля скрыта вместе с верхним этажом');
-  assert.equal(upto.filter((f) => f.kind === 'slab').length, 0, 'перекрытие под 2 этажом скрыто');
+  assert.equal(upto.filter((f) => f.slabRole === 'interfloor').length, 0, 'перекрытие под 2 этажом скрыто');
   p.activeLevel = 'L2';
   const only = buildHouseMesh(p, { furniture: true, levels: 'only' });
   assert.deepEqual([...new Set(only.filter((f) => f.kind === 'floor').map((f) => f.level))], ['L2']);
-  assert.ok(only.some((f) => f.kind === 'slab'), 'основание этажа — перекрытие');
+  assert.ok(only.some((f) => f.slabRole === 'interfloor'), 'основание этажа — перекрытие');
   assert.ok(only.every((f) => !f.ref || f.ref.level === 'L2'), 'стены только активного');
 });
 

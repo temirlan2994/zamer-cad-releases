@@ -315,7 +315,7 @@ function initGl(canvas) {
   uploadGeometry();
 }
 
-const EDGE_KINDS = new Set(['wall', 'roof', 'neighbor', 'plinth', 'furniture', 'stairs']);
+const EDGE_KINDS = new Set(['wall', 'roof', 'roof-drain', 'neighbor', 'plinth', 'foundation', 'entrance', 'furniture', 'stairs']);
 
 // Полая масса обычно полностью невидима. Её невидимый pick-box остаётся
 // активным, а заливка и каркас появляются только под курсором либо после

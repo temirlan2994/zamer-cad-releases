@@ -11,7 +11,7 @@
 //   ref? — у стен и их стёкол: { type: 'wall', key, wallId, level, face } }
 
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './catalog.js';
-import { toLocal, toWorld } from './building.js';
+import { northInBuilding, toLocal, toWorld } from './building.js';
 import { levelProject, roomCeiling, sortedLevels } from './model.js';
 import { openingHeight } from './opening-preset.js';
 import { neighborRectCorners } from './site.js';
@@ -22,13 +22,16 @@ import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { COFFEE_TABLE_DUO } from './furniture-design.js';
-import { roomRects } from './room-shape.js';
+import { roomContainsPoint, roomRects } from './room-shape.js';
 import { stairAppearance, stairBuild, stairLayout } from './stairs.js';
 import { slabOpeningCutRects, slabOpenings } from './slab-openings.js';
 import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
+import { slopedRoofFaces } from './linked-roof.js';
+import { deriveFoundation } from './foundation-system.js';
+import { deriveEntrances } from './entrance.js';
 import {
   FASCIA_T, edgeSide, expandRects, explicitRoofRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
@@ -1224,7 +1227,7 @@ function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
 const ROOF_COLOR = '#9aa3ad';
 const SLAB_COLOR = '#b9b4ab';
 export const ROOF_T = 250;
-export const SLAB_T = 200;
+export const SLAB_T = 300;
 const SLAB_OUTSET = 20; // торец перекрытия чуть выступает из стены (без мерцания)
 
 // Пятно этажа: прямоугольники комнат (с частями Г/outline) с наружной стеной.
@@ -1238,13 +1241,37 @@ function levelFootprint(lp, offset) {
 // перекрытии верхнего (над лестницами — авто, ручные; core/slab-openings.js).
 function slabCuts(lower, upper) {
   const cuts = [];
+  const linkedOpenings = slabOpenings(upper, upper.activeLevel);
+  // Новая лестница создаёт точный связанный проём. Полный legacy-вырез
+  // отключаем только у того лестничного помещения, внутри которого находится
+  // именно этот проём. Иначе одна новая лестница ошибочно отменяла бы вырезы
+  // всех остальных старых stairs-room на этаже.
+  const hasLinkedOpening = (room) => linkedOpenings.some((opening) => (
+    opening.stairId
+    && roomContainsPoint(room, opening.x + opening.w / 2, opening.y + opening.h / 2)
+  ));
   for (const lp of [lower, upper]) {
-    for (const r of lp.rooms.filter((room) => isShaft(room) || room.type === 'stairs-room')) {
+    for (const r of lp.rooms.filter((room) => isShaft(room)
+      || (room.type === 'stairs-room' && !hasLinkedOpening(room)))) {
       for (const p of roomRects(r)) cuts.push({ x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h });
     }
   }
-  for (const o of slabOpenings(upper, upper.activeLevel)) {
+  for (const o of linkedOpenings) {
     for (const r of slabOpeningCutRects(o)) cuts.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+  }
+  return cuts;
+}
+
+// Нижняя плита не является межэтажным перекрытием: лестница, ведущая вверх,
+// не должна вырезать в ней всё лестничное помещение. Оставляем только шахты
+// и явно принадлежащие этому уровню проёмы (например, технический приямок).
+function groundSlabCuts(lp) {
+  const cuts = lp.rooms.filter(isShaft).flatMap((room) => roomRects(room)
+    .map((rect) => ({ x0: rect.x, y0: rect.y, x1: rect.x + rect.w, y1: rect.y + rect.h })));
+  for (const opening of slabOpenings(lp, lp.activeLevel)) {
+    for (const rect of slabOpeningCutRects(opening)) cuts.push({
+      x0: rect.x, y0: rect.y, x1: rect.x + rect.w, y1: rect.y + rect.h,
+    });
   }
   return cuts;
 }
@@ -1328,17 +1355,71 @@ export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
   return faces;
 }
 
-// Автокровля этажа (флажок «Крыша»): плоская плита над частью этажа, не
-// закрытой этажом выше и явными крышами (core/roofs.js) этого этажа.
-function autoRoofFaces(lp, above, z, own = [], thickness = ROOF_T) {
+// Автокровля этажа: верхняя свободная часть получает выбранный скат, а
+// открытые части под следующим этажом остаются плоскими террасами — так скат
+// не входит в стены верхнего объёма. Контур следует за планом автоматически.
+function autoRoofFaces(lp, above, z, own = [], envelope, topmost = true, localDirection = 'auto', groundAt = null) {
   const t = lp.settings?.exterior || 250;
-  const grid = regionGrid([levelFootprint(lp, t)], [...(above ? levelFootprint(above, t) : []), ...own]);
+  const roof = envelope.roof;
+  const overhang = topmost ? roof.overhang : 0;
+  const footprint = overhang ? expandRects(levelFootprint(lp, t), overhang) : levelFootprint(lp, t);
+  const grid = regionGrid([footprint], [...(above ? levelFootprint(above, t) : []), ...own]);
   const id = `auto-roof:${lp.activeLevel}`;
-  return slabFaces(grid, z, z + thickness, ROOF_COLOR, 'roof', { bottom: true }).map((f) => ({
-    ...f, kind: f.normal.z < -0.5 ? 'roof-soffit' : f.kind,
-    autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
-    ...(f.normal.z > 0.5 ? { cutZ0: z } : {}),
-  }));
+  const type = topmost ? roof.type : 'flat';
+  let faces;
+  if (type === 'flat') {
+    faces = slabFaces(grid, z, z + envelope.roofThickness, ROOF_COLOR, 'roof', { bottom: true }).map((face) => ({
+      ...face,
+      kind: face.normal.z < -0.5 ? 'roof-soffit' : face.kind,
+      roofSurface: face.normal.z > 0.5 ? 'top' : (face.normal.z < -0.5 ? 'bottom' : 'edge'),
+      roofThickness: envelope.roofThickness,
+      roofType: 'flat', pitchDeg: 0, roofDirection: 'auto',
+      autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+      ...(face.normal.z > 0.5 ? { cutZ0: z } : {}),
+    }));
+    faces.drainageEdges = gridEdges(grid).map((edge) => ({
+      a: { ...edge.a, z: z + envelope.roofThickness }, b: { ...edge.b, z: z + envelope.roofThickness },
+      normal: edge.n, kind: 'roof-drain', autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+    }));
+  } else {
+    faces = slopedRoofFaces(grid, {
+      type, pitchDeg: roof.pitchDeg, direction: localDirection,
+      thickness: envelope.roofThickness, z, color: ROOF_COLOR,
+      kind: 'roof', soffitKind: 'roof-soffit',
+      drainage: topmost && roof.drainage !== 'off' && roof.drainage !== 'internal',
+      autoRoofId: id, roofSource: 'linked', level: lp.activeLevel,
+    });
+  }
+  // Наружный водоотвод — настоящая производная геометрия, а не отметка в
+  // данных крыши. Изменение уклона сразу переносит желоба и стояки.
+  if (topmost && (roof.drainage === 'auto' || roof.drainage === 'external')) {
+    const gutters = [];
+    const down = new Map();
+    for (const edge of faces.drainageEdges || []) {
+      const z0 = Math.min(edge.a.z, edge.b.z) - 90;
+      const z1 = Math.max(edge.a.z, edge.b.z) - 10;
+      const horizontal = Math.abs(edge.a.x - edge.b.x) >= Math.abs(edge.a.y - edge.b.y);
+      const box = horizontal
+        ? boxFaces(Math.min(edge.a.x, edge.b.x), edge.a.y - 45, Math.max(edge.a.x, edge.b.x), edge.a.y + 45, z0, z1, '#55626a', 'roof-drain')
+        : boxFaces(edge.a.x - 45, Math.min(edge.a.y, edge.b.y), edge.a.x + 45, Math.max(edge.a.y, edge.b.y), z0, z1, '#55626a', 'roof-drain');
+      gutters.push(...box.map((face) => ({ ...face, autoRoofId: id, roofSource: 'linked', level: lp.activeLevel, roofDrain: 'gutter' })));
+      for (const point of [edge.a, edge.b]) {
+        const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
+        if (!down.has(key) || down.get(key).z < point.z) down.set(key, point);
+      }
+    }
+    for (const point of down.values()) {
+      const sampledGround = Number(groundAt?.(point.x, point.y));
+      const bottom = Number.isFinite(sampledGround) ? sampledGround : Math.min(0, z);
+      const top = point.z - 40;
+      if (top - bottom <= 0.5) continue;
+      gutters.push(...boxFaces(point.x - 45, point.y - 45, point.x + 45, point.y + 45,
+        bottom, top, '#55626a', 'roof-drain')
+        .map((face) => ({ ...face, autoRoofId: id, roofSource: 'linked', level: lp.activeLevel, roofDrain: 'downpipe' })));
+    }
+    faces.push(...gutters);
+  }
+  return faces;
 }
 
 // Только производная кровля без сборки стен, полов, мебели и участка.
@@ -1348,12 +1429,23 @@ export function linkedRoofFaces(project) {
   if (envelope.roofMode !== 'linked') return [];
   const levels = sortedLevels(project);
   const lps = levels.map((level) => levelProject(project, level.id));
+  // Стояк заканчивается у реальной поверхности земли в локальных осях дома.
+  // Без топосъёмки terrainHeightFn использует заданную отметку ±0.000.
+  const groundAt = terrainHeightFn(project) || (() => {
+    const zero = resolvedZeroAboveGround(project);
+    return zero == null ? 0 : -zero;
+  });
+  const direction = envelope.roof.direction === 'auto' ? 'auto' : (() => {
+    const offset = { n: 0, e: 90, s: 180, w: 270 }[envelope.roof.direction] || 0;
+    const local = (northInBuilding(project.site?.north, project.building) + offset + 360) % 360;
+    return ['n', 'e', 's', 'w'][Math.round(local / 90) % 4];
+  })();
   return levels.flatMap((level, index) => {
     const above = lps.slice(index + 1)
       .find((candidate) => levelFootprint(candidate, candidate.settings?.exterior || 250).length);
     return autoRoofFaces(
       lps[index], above, level.elevation + level.height,
-      explicitRoofRects(project, level.id), envelope.roofThickness,
+      explicitRoofRects(project, level.id), envelope, !above, direction, groundAt,
     );
   });
 }
@@ -1365,47 +1457,111 @@ const PLINTH_COLOR = '#aaa297';
 // Геометрия производная: комнаты двигаются — основание обновляется без
 // записей в истории. zeroAboveGround задаёт землю относительно ±0.000.
 export function foundationFaces(project) {
-  const envelope = envelopeOf(project);
-  if (!envelope.foundation.enabled) return [];
-  const levels = sortedLevels(project);
-  let level = null;
-  let lp = null;
-  let footprint = [];
-  for (const candidate of levels) {
-    const candidateProject = levelProject(project, candidate.id);
-    const candidateFootprint = levelFootprint(candidateProject, project.settings?.exterior || 250);
-    if (!candidateFootprint.length) continue;
-    level = candidate;
-    lp = candidateProject;
-    footprint = candidateFootprint;
-    break;
-  }
-  if (!level || !lp) return [];
-  const house = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
-  const zero = resolvedZeroAboveGround(project, house);
-  if (zero == null) return [];
-  const top = Number(level.elevation) || 0;
-  const referenceGrade = -zero;
-  const hz = terrainHeightFn(project);
-  const samples = footprint.flatMap((rect) => [
-    [rect.x0, rect.y0], [rect.x1, rect.y0], [rect.x1, rect.y1], [rect.x0, rect.y1],
-    [(rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2],
-  ]);
-  const sampledGround = hz ? Math.min(...samples.map(([x, y]) => hz(x, y))) : referenceGrade;
-  const grade = Math.min(referenceGrade, sampledGround);
-  const base = Math.min(top, grade) - envelope.foundation.depth;
-  const grid = regionGrid([footprint]);
-  const tag = (list, kind, z0) => list.map((face) => ({
-    ...face, kind, level: level.id, foundationSource: 'linked',
-    ...(face.normal.z > 0.5 ? { cutZ0: z0 } : {}),
-  }));
+  const system = deriveFoundation(project);
+  if (!system.enabled || !system.levelId) return [];
   const faces = [];
-  const buriedTop = Math.min(top, referenceGrade);
-  if (buriedTop - base > 0.5) {
-    faces.push(...tag(slabFaces(grid, base, buriedTop, FOUNDATION_COLOR, 'foundation', { bottom: true }), 'foundation', base));
+  for (const component of system.components) {
+    const kind = component.renderKind === 'plinth' ? 'plinth' : 'foundation';
+    const color = kind === 'plinth' ? PLINTH_COLOR
+      : component.kind === 'pile' ? '#777570'
+        : component.kind === 'basement-wall' ? '#817d76' : FOUNDATION_COLOR;
+    const source = component.shape === 'grid'
+      ? slabFaces(component.grid, component.z0, component.z1, color, kind, { bottom: true })
+      : polySlabFaces(component.points, component.z0, component.z1, color, kind, { bottom: true });
+    faces.push(...source.map((face) => ({
+      ...face,
+      kind,
+      level: system.levelId,
+      foundationSource: 'linked',
+      foundationType: system.type,
+      foundationComponentId: component.id,
+      foundationComponentKind: component.kind,
+      ...(face.normal.z > 0.5 ? { cutZ0: component.z0 } : {}),
+    })));
   }
-  if (top - referenceGrade > 0.5) {
-    faces.push(...tag(slabFaces(grid, referenceGrade, top, PLINTH_COLOR, 'plinth', { bottom: true }), 'plinth', referenceGrade));
+  return faces;
+}
+
+const ENTRANCE_COLOR = '#b7aea1';
+
+function entranceRect(center, direction, width, depth, offset = 0) {
+  const side = { x: -direction.y, y: direction.x };
+  const start = { x: center.x + side.x * offset, y: center.y + side.y * offset };
+  const end = { x: start.x + direction.x * depth, y: start.y + direction.y * depth };
+  const half = width / 2;
+  return [
+    { x: start.x - side.x * half, y: start.y - side.y * half },
+    { x: start.x + side.x * half, y: start.y + side.y * half },
+    { x: end.x + side.x * half, y: end.y + side.y * half },
+    { x: end.x - side.x * half, y: end.y - side.y * half },
+  ];
+}
+
+function faceNormal3d(points) {
+  if (points.length < 3) return v(0, 0, 1);
+  const a = points[0]; const b = points[1]; const c = points[2];
+  const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+  const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+  const n = { x: ab.y * ac.z - ab.z * ac.y, y: ab.z * ac.x - ab.x * ac.z, z: ab.x * ac.y - ab.y * ac.x };
+  const length = Math.hypot(n.x, n.y, n.z) || 1;
+  return v(n.x / length, n.y / length, n.z / length);
+}
+
+function rampComponentFaces(ramp) {
+  const poly = ramp.polygon || [];
+  if (poly.length !== 4 || !(ramp.run > 0.5)) return [];
+  const topByIndex = poly.map((point, index) => v(point.x, point.y, index < 2 ? ramp.topZ : ramp.groundZ));
+  const top = faceNormal3d(topByIndex).z < 0 ? [...topByIndex].reverse() : topByIndex;
+  const baseZ = Math.min(ramp.groundZ - 100, ramp.topZ - 100);
+  const bottom = [...poly].reverse().map((point) => v(point.x, point.y, baseZ));
+  const faces = [{ pts: top, normal: faceNormal3d(top), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] },
+    { pts: bottom, normal: v(0, 0, -1), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] }];
+  for (let i = 0; i < 4; i += 1) {
+    const j = (i + 1) % 4;
+    const side = [v(poly[i].x, poly[i].y, baseZ), v(poly[j].x, poly[j].y, baseZ), topByIndex[j], topByIndex[i]];
+    faces.push({ pts: side, normal: faceNormal3d(side), color: ENTRANCE_COLOR, kind: 'entrance', edges: [] });
+  }
+  faces[0].cutZ0 = baseZ;
+  return faces;
+}
+
+// Производное крыльцо главного наружного входа. В проекте хранится только
+// дверь и параметры оболочки; площадка, ступени и пандус следуют за ними.
+export function entranceFaces(project) {
+  const faces = [];
+  for (const entrance of deriveEntrances(project)) {
+    if (entrance.status === 'pending') continue;
+    const tag = (source, component) => source.map((face) => ({
+      ...face,
+      entranceId: entrance.id,
+      entranceComponentId: component.id,
+      entranceComponentKind: component.kind,
+      openingId: entrance.openingId,
+      level: entrance.levelId,
+      entranceSource: 'linked',
+    }));
+    if (entrance.landing) {
+      const landing = entrance.landing;
+      const base = Math.min(landing.z - landing.thickness, landing.minGroundZ);
+      faces.push(...tag(polySlabFaces(landing.polygon, base, landing.z, ENTRANCE_COLOR, 'entrance', { bottom: true })
+        .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), landing));
+    }
+    if (entrance.steps?.enabled) {
+      const steps = entrance.steps;
+      const base = Math.min(steps.groundZ - 100, steps.topZ - steps.rise - 100);
+      for (let index = 0; index < steps.count; index += 1) {
+        const center = {
+          x: steps.topCenter.x + steps.direction.x * index * steps.tread,
+          y: steps.topCenter.y + steps.direction.y * index * steps.tread,
+        };
+        const polygon = entranceRect(center, steps.direction, steps.width, steps.tread);
+        const top = steps.topZ - steps.riser * (index + 1);
+        const component = { ...steps, id: `${steps.id}:${index + 1}`, kind: 'steps' };
+        faces.push(...tag(polySlabFaces(polygon, base, top, ENTRANCE_COLOR, 'stairs', { bottom: true })
+          .map((face) => ({ ...face, ...(face.normal.z > 0.5 ? { cutZ0: base } : {}) })), component));
+      }
+    }
+    if (entrance.ramp?.enabled) faces.push(...tag(rampComponentFaces(entrance.ramp), entrance.ramp));
   }
   return faces;
 }
@@ -1612,16 +1768,49 @@ export function roofFaces(project, roofs = project?.roofs, { color = null, alpha
 // Перекрытие под этажом: где он стоит на нижнем, кроме проёмов лестниц и шахт.
 function interfloorFaces(lower, upper, z) {
   const t = (upper.settings?.exterior || 250) + SLAB_OUTSET;
-  const grid = regionGrid([levelFootprint(lower, t), levelFootprint(upper, t)], slabCuts(lower, upper));
-  const z0 = z - SLAB_T; const z1 = z - 1;
+  // Плита принадлежит верхнему этажу. Поэтому консоль верхнего объёма тоже
+  // получает перекрытие; наличие опоры ниже проверяется отдельно аналитикой.
+  const grid = regionGrid([levelFootprint(upper, t)], slabCuts(lower, upper));
+  const level = upper.levels?.find((candidate) => candidate.id === upper.activeLevel);
+  const thickness = Math.min(600, Math.max(120, Number(level?.slabThickness) || SLAB_T));
+  const z0 = z - thickness; const z1 = z - 1;
   const voids = (upper.massVoids || []).map(massBox).filter((b) => b.z0 < z1 - 0.5 && b.z1 > z0 + 0.5);
-  if (!voids.length) return slabFaces(grid, z0, z1, SLAB_COLOR, 'slab', { bottom: true });
+  if (!voids.length) return slabFaces(grid, z0, z1, SLAB_COLOR, 'slab', { bottom: true })
+    .map((face) => ({
+      ...face,
+      level: upper.activeLevel,
+      slabRole: 'interfloor',
+      cutZ0: face.normal.z > 0.5 ? z0 : undefined,
+    }));
   const solids = [];
   for (let j = 0; j < grid.ny; j += 1) for (let i = 0; i < grid.nx; i += 1) {
     if (!grid.mask[j * grid.nx + i]) continue;
     solids.push({ x0: grid.xs[i], y0: grid.ys[j], x1: grid.xs[i + 1], y1: grid.ys[j + 1], z0, z1 });
   }
-  return orthoCutFaces(solids, voids, { color: SLAB_COLOR, kind: 'slab' });
+  return orthoCutFaces(solids, voids, {
+    color: SLAB_COLOR, kind: 'slab',
+    meta: (_solid, _index, face) => ({
+      level: upper.activeLevel,
+      slabRole: 'interfloor',
+      ...(face === 'top' ? { cutZ0: z0 } : {}),
+    }),
+  });
+}
+
+// Плита под нижним этажом — отдельное связанное тело, а не только условная
+// штриховка в разрезе. Верх опущен на 1 мм относительно чистого пола, чтобы
+// цветная поверхность помещения не мерцала с бетоном в 3D.
+function groundSlabFaces(lp, z, thickness) {
+  const t = (lp.settings?.exterior || 250) + SLAB_OUTSET;
+  const grid = regionGrid([levelFootprint(lp, t)], groundSlabCuts(lp));
+  const z0 = z - thickness;
+  return slabFaces(grid, z0, z - 1, SLAB_COLOR, 'slab', { bottom: true })
+    .map((face) => ({
+      ...face,
+      level: lp.activeLevel,
+      slabRole: 'ground',
+      cutZ0: face.normal.z > 0.5 ? z0 : undefined,
+    }));
 }
 
 const GROUND_LOW = [0xb9, 0xc9, 0xa6];
@@ -1868,6 +2057,7 @@ export function buildHouseMesh(project, {
   const envelope = envelopeOf(project);
   const shown = new Set(shownLevelIds(project, levelMode));
   const lps = levels.map((level) => levelProject(project, level.id));
+  const groundLevelIndex = lps.findIndex((lp) => levelFootprint(lp, lp.settings?.exterior || 250).length);
   levels.forEach((level, k) => {
     if (!shown.has(level.id)) return;
     const lp = lps[k];
@@ -1878,12 +2068,22 @@ export function buildHouseMesh(project, {
     faces.push(...levelStairs(lp, level.elevation, level.height, level.id, k < levels.length - 1));
     if (furniture) faces.push(...furnitureFaces(lp, level.elevation, level.height, level.id));
   });
+  if (envelope.slabs.enabled && groundLevelIndex >= 0 && shown.has(levels[groundLevelIndex].id)) {
+    const thickness = Math.min(800, Math.max(120, Number(envelope.slabs.groundThickness) || SLAB_T));
+    faces.push(...groundSlabFaces(lps[groundLevelIndex], levels[groundLevelIndex].elevation, thickness));
+  }
   // Перекрытие под этажом k — его основание: показывается вместе с ним.
   for (let k = 1; k < levels.length; k += 1) {
-    if (shown.has(levels[k].id)) faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
+    // У нижнего занятого этажа это уже ground slab; не дублируем её вторым
+    // совпадающим телом, если в файле перед ним остался пустой уровень.
+    if (envelope.slabs.enabled && k !== groundLevelIndex && shown.has(levels[k].id)) {
+      faces.push(...interfloorFaces(lps[k - 1], lps[k], levels[k].elevation));
+    }
   }
   const foundation = foundationFaces(project);
   if (foundation.some((face) => shown.has(face.level))) faces.push(...foundation.filter((face) => shown.has(face.level)));
+  const entrances = entranceFaces(project);
+  if (entrances.some((face) => shown.has(face.level))) faces.push(...entrances.filter((face) => shown.has(face.level)));
   if (roof && envelope.roofMode === 'linked' && shown.size === levels.length) {
     faces.push(...linkedRoofFaces(project));
   }

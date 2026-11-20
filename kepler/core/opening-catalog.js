@@ -93,8 +93,10 @@ export function searchOpeningPresets(kind, query) {
 // Параметры инструмента из пресета; окно не выше этажа (над проёмом ≥ 400 мм).
 export function presetToOpening(preset, levelHeight = 3000) {
   const out = {
+    ...(preset.kind === 'door' ? { presetId: preset.id } : {}),
     type: preset.type, width: preset.width, height: preset.height,
     sill: preset.kind === 'door' ? 0 : preset.sill,
+    ...(preset.kind === 'door' && preset.cat === 'entrance' ? { entryRole: 'main' } : {}),
   };
   const top = Math.max(600, levelHeight - 400);
   if (out.sill + out.height > top) out.height = Math.max(300, top - out.sill);

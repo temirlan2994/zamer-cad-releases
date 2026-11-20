@@ -89,12 +89,16 @@ test('DXF: двустворчатая — две дуги, раздвижная 
 
 test('JSON для Revit: тип, высота и подоконник проёма; высота потолка комнаты', () => {
   const { p, room } = withDoor('sliding');
+  p.openings[0].presetId = 'entry-main-1000';
+  p.openings[0].entryRole = 'main';
   const win = createOpening('window', room.id, 0, 2500, 1500);
   win.type = 'panoramic'; win.sill = 100; win.height = 2400;
   p.openings.push(win);
   room.ceiling = 2800;
   const data = buildStructuredExport(p).levels[0];
   assert.deepEqual(data.openings.map((o) => [o.kind, o.type, o.sill, o.height]), [['door', 'sliding', 0, 2100], ['window', 'panoramic', 100, 2400]]);
+  assert.equal(data.openings[0].preset_id, 'entry-main-1000');
+  assert.equal(data.openings[0].entry_role, 'main');
   assert.equal(data.rooms[0].ceiling_height, 2800);
 });
 

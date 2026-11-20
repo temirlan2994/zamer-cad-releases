@@ -46,6 +46,7 @@ import { mutate, PROJECT_CHANGE_EVENT } from './store.js';
 import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
 import { requestDraw } from './view.js';
+import { deriveEnvelopeStatus } from '../core/envelope-status.js';
 
 const STAGES = Object.freeze([
   Object.freeze({
@@ -181,7 +182,7 @@ const HOME_VIEW_ITEMS = Object.freeze({
   circulation: ['Проходы', 'Маршруты', 'Узкие места'],
   climate: ['Солнце', 'Освещённость', 'Перегрев'],
   review: ['Ошибки', 'Предупреждения', 'Готовность'],
-  envelope: ['Объём', 'Фасады', 'Кровля'],
+  envelope: ['±0.000', 'Основание', 'Крыша', 'Водоотвод', 'Вход'],
   deliverables: ['Листы', 'Экспорт', 'Комплект'],
 });
 
@@ -817,6 +818,11 @@ function routeHoverRows(viewId) {
       label: task.definition?.title || TASKS[task.id]?.title || task.id,
       status: task.status || 'unknown',
     })));
+  }
+  if (viewId === 'envelope') {
+    const status = deriveEnvelopeStatus(state.project);
+    const labels = { datum: '±0.000', foundation: 'Основание', roof: 'Крыша', drainage: 'Водоотвод', entrance: 'Вход' };
+    return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
   }
   const row = homeWorkflowRows(cachedWorkflowReview({ full: false })).find((item) => item.id === viewId);
   return asArray(HOME_VIEW_ITEMS[viewId]).map((label, index) => ({

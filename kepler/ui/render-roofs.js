@@ -156,7 +156,7 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
   // Производная кровля не хранится в project.roofs: показываем её слабым
   // штрихом под ручными крышами, чтобы «План крыши» отражал готовый дом.
   const auto = linkedRoofFaces(state.project)
-    .filter((face) => face.kind === 'roof' && face.normal.z > 0.5);
+    .filter((face) => face.kind === 'roof' && (face.roofSurface === 'top' || face.normal.z > 0.5));
   if (auto.length) {
     ctx.fillStyle = '#9aa3ad';
     ctx.strokeStyle = ink;
@@ -182,7 +182,9 @@ export function drawRoofPlan(ctx, { p2s, tokens }) {
       const center = p2s((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
       const levelId = id.slice('auto-roof:'.length);
       const title = state.project.levels.find((level) => level.id === levelId)?.name || 'этаж';
-      labelAt(ctx, `Авто · ${title}`, { x: center.x, y: center.y - 8 }, tokens, ink, true);
+      const roofFace = auto.find((face) => face.autoRoofId === id);
+      const type = { flat: 'плоская', shed: 'односкатная', gable: 'двускатная', hip: 'вальмовая' }[roofFace?.roofType] || 'крыша';
+      labelAt(ctx, `Авто · ${title} · ${type}`, { x: center.x, y: center.y - 8 }, tokens, ink, true);
     }
     state._autoRoofPlanDrawn = groups.size;
   }

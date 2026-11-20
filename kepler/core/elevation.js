@@ -36,9 +36,12 @@ import { deriveWalls } from './walls.js';
 // Наружные нормали сторон дома в осях дома (ось Y вниз): 0 — верх плана.
 const SIDES = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
 const DIR_STEP = { N: 0, E: 1, S: 2, W: 3 };
-export const KIND_OF = { wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', parapet: 'roof', fascia: 'roof', stair: 'stair', plinth: 'plinth', foundation: 'foundation' };
+export const KIND_OF = {
+  wall: 'wall', glass: 'window', door: 'door', slab: 'slab', roof: 'roof', 'roof-soffit': 'roof', 'roof-drain': 'roof',
+  parapet: 'roof', fascia: 'roof', stair: 'stair', stairs: 'stair', entrance: 'stair', plinth: 'plinth', foundation: 'foundation',
+};
 // Цвет материала крыши-плиты (core/roofs.js) на фасаде — tint полигона.
-export const roofTint = (f) => (f.roofId ? f.color : undefined);
+export const roofTint = (f) => (f.roofId || f.roofSource === 'linked' ? f.color : undefined);
 const EPS = 1e-6;
 
 // Сторона дома для фасада dir: { side (0..3), out — наружная нормаль,
@@ -172,14 +175,16 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
   const polys = [];
   for (const f of faces) {
     // На фасаде подземная часть скрыта землёй; она остаётся в 3D и разрезе.
-    if (f.kind === 'foundation') continue;
+    if (f.kind === 'foundation' || f.slabRole === 'ground') continue;
     if (!f.pts || f.pts.length < 3) continue;
     // Объёмные алюминиевые профили нужны в 3D, но на ортогональном фасаде
     // их четыре узкие грани закрывали контрольные точки стеклопакета. Само
     // окно здесь остаётся одним фасадным элементом с чистым контуром.
     if (f.kind === 'window-frame') continue;
     const n = f.normal || { x: 0, y: 0, z: 0 };
-    if (Math.abs(n.z) > 0.5) continue; // горизонтальная — на фасаде линия
+    const slopedRoof = f.roofSurface === 'top'
+      && (f.roofType !== 'flat' || Math.hypot(n.x, n.y) > 1e-6);
+    if (Math.abs(n.z) > 0.999 && !slopedRoof) continue; // горизонтальная грань даёт только линию
     const facing = n.x * view.x + n.y * view.y;
     if (Math.abs(facing) < 1e-3 && !(n.x === 0 && n.y === 0)) continue; // ребром к зрителю
     if (facing > 0 && !f.twoSided) continue; // обращена от зрителя
@@ -191,6 +196,7 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
     const offset = Math.round(f.pts[0].x * n.x + f.pts[0].y * n.y);
     polys.push({
       pts, depth, kind: KIND_OF[f.kind] || 'other', tint: roofTint(f),
+      ...(f.roofSurface ? { roofSurface: f.roofSurface, roofType: f.roofType } : {}),
       u0: Math.min(...us), u1: Math.max(...us), z0: Math.min(...zs), z1: Math.max(...zs),
       plane: f.twoSided ? `t${Math.round(depth)}` : `${nn}|${offset}|${Math.round(depth)}`,
     });
@@ -238,7 +244,11 @@ export function buildElevation(project, dir, { roof = true, terrain = true } = {
   }
   return {
     dir, side,
-    polys: visible.map(({ pts, depth, kind, edges, tint }) => ({ pts, depth, kind, edges, ...(tint ? { tint } : {}) })),
+    polys: visible.map(({ pts, depth, kind, edges, tint, roofSurface, roofType }) => ({
+      pts, depth, kind, edges,
+      ...(tint ? { tint } : {}),
+      ...(roofSurface ? { roofSurface, roofType } : {}),
+    })),
     levels: levels.map((l) => ({ id: l.id, name: l.name, z: l.elevation, height: l.height, label: fmtMark(l.elevation) })),
     ground,
     bounds,

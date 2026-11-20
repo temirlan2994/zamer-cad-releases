@@ -32,6 +32,7 @@ import { isStructural } from './catalog.js';
 import {
   ROOF_T, SLAB_T, buildHouseMesh, levelWallSolids, structuralOutline, terrainHeightFn,
 } from './mesh3d.js';
+import { envelopeOf } from './envelope.js';
 import { levelProject, sortedLevels } from './model.js';
 import { deriveWalls } from './walls.js';
 
@@ -96,6 +97,36 @@ function uIntervals(fr, poly) {
     const p = -fr.side * t0; const q = -fr.side * t1;
     return [Math.min(p, q), Math.max(p, q)];
   });
+}
+
+// Точное пересечение линии разреза с плоской 3D-гранью. В отличие от
+// uIntervals сохраняет высоту на обоих концах — скат в разрезе остаётся
+// наклонным, а не превращается в прямоугольник по первой точке.
+function faceLineSegments(fr, points) {
+  const hits = [];
+  const add = (t, z) => {
+    if (t < -EPS || t > fr.len + EPS) return;
+    const existing = hits.find((hit) => Math.abs(hit.t - t) < 0.5);
+    if (existing) existing.z = (existing.z + z) / 2;
+    else hits.push({ t: Math.max(0, Math.min(fr.len, t)), z });
+  };
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i]; const q = points[(i + 1) % points.length];
+    const sp = (p.x - fr.a.x) * fr.dir.y - (p.y - fr.a.y) * fr.dir.x;
+    const sq = (q.x - fr.a.x) * fr.dir.y - (q.y - fr.a.y) * fr.dir.x;
+    const tp = (p.x - fr.a.x) * fr.dir.x + (p.y - fr.a.y) * fr.dir.y;
+    if (Math.abs(sp) < EPS) add(tp, p.z);
+    if ((sp > EPS) === (sq > EPS) || Math.abs(sp - sq) < EPS) continue;
+    const k = sp / (sp - sq);
+    const x = p.x + (q.x - p.x) * k; const y = p.y + (q.y - p.y) * k;
+    add((x - fr.a.x) * fr.dir.x + (y - fr.a.y) * fr.dir.y, p.z + (q.z - p.z) * k);
+  }
+  hits.sort((a, b) => a.t - b.t);
+  const out = [];
+  for (let i = 0; i + 1 < hits.length; i += 2) {
+    if (hits[i + 1].t - hits[i].t > 0.5) out.push([hits[i], hits[i + 1]]);
+  }
+  return out;
 }
 
 // Вычесть прямоугольник o из прямоугольника r (u0, u1, z0, z1).
@@ -176,9 +207,12 @@ function clipPoly(pts, f) {
 
 // Сечение: { cuts: [{ kind, u0, u1, z0, z1, pts }], edges, openings }.
 function cutSolids(project, fr, faces, levels) {
+  const envelope = envelopeOf(project);
+  const groundLevelId = faces.find((face) => face.slabRole === 'ground')?.level;
   const groups = { wall: [], slab: [], roof: [], floor: [], stair: [], foundation: [] };
+  const shaped = [];
   const openings = [];
-  levels.forEach((level, li) => {
+  levels.forEach((level) => {
     const lp = levelProject(project, level.id);
     const walls = deriveWalls(lp);
     const { recs, voids } = levelWallSolids(lp, walls, level.height);
@@ -212,13 +246,14 @@ function cutSolids(project, fr, faces, levels) {
       for (const [u0, u1] of uIntervals(fr, structuralOutline(item))) groups.wall.push({ u0, u1, z0: z, z1: z + level.height });
     }
     // Пол нижнего этажа — плита под полом по комнатам и стенам.
-    if (li === 0) {
+    if (level.id === groundLevelId && envelope.slabs.enabled) {
+      const slabThickness = Math.min(800, Math.max(120, Number(envelope.slabs.groundThickness) || SLAB_T));
       const iv = [...wallIv];
       for (const f of faces) {
         if (f.kind !== 'floor' || Math.abs(f.pts[0].z - z) > 5) continue;
         iv.push(...uIntervals(fr, f.pts));
       }
-      for (const [u0, u1] of unionIntervals(iv)) groups.floor.push({ u0, u1, z0: z - SLAB_T, z1: z });
+      for (const [u0, u1] of unionIntervals(iv)) groups.floor.push({ u0, u1, z0: z - slabThickness, z1: z });
     }
   });
   // Перекрытия и кровля — по верхним граням плит.
@@ -227,6 +262,25 @@ function cutSolids(project, fr, faces, levels) {
   for (const f of faces) {
     const roofish = f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia';
     const foundationish = f.kind === 'foundation' || f.kind === 'plinth';
+    const slopedRoof = roofish && f.roofSurface === 'top'
+      && (f.roofType !== 'flat' || Math.hypot(f.normal?.x || 0, f.normal?.y || 0) > 1e-6);
+    if (slopedRoof) {
+      const thickness = Number(f.roofThickness) || ROOF_T;
+      for (const [a, b] of faceLineSegments(fr, f.pts)) {
+        const pa = { u: -fr.side * a.t, z: a.z }; const pb = { u: -fr.side * b.t, z: b.z };
+        const [left, right] = pa.u <= pb.u ? [pa, pb] : [pb, pa];
+        const pts = [
+          { u: left.u, z: left.z - thickness }, { u: right.u, z: right.z - thickness },
+          { u: right.u, z: right.z }, { u: left.u, z: left.z },
+        ];
+        shaped.push({ kind: 'roof', pts, u0: left.u, u1: right.u, z0: Math.min(left.z, right.z) - thickness, z1: Math.max(left.z, right.z) });
+      }
+      continue;
+    }
+    if (roofish && f.roofSurface && f.roofSurface !== 'top') continue;
+    // Нижняя плита уже собирается выше по чистой отметке пола. В 3D её верх
+    // опущен на 1 мм против z-fighting, но на разрезе должен доходить до ±0.
+    if (f.kind === 'slab' && f.slabRole === 'ground') continue;
     if ((f.kind !== 'slab' && !roofish && !foundationish) || !(f.normal?.z > 0.5)) continue;
     if (f.alpha != null && f.alpha < 1) continue; // стекло ограждения — не тело
     const z1 = f.pts[0].z;
@@ -237,7 +291,7 @@ function cutSolids(project, fr, faces, levels) {
   // Марши: верх ступени × от пола своего этажа (монолит) или до низа плиты
   // проступи/площадки (cutZ0 — открытая и консольная); тетивы и перила — нет.
   for (const f of faces) {
-    if (f.kind !== 'stairs' || f.noCut || !(f.normal?.z > 0.5)) continue;
+    if (!['stairs', 'entrance'].includes(f.kind) || f.noCut || !(f.normal?.z > 0.5)) continue;
     const z1 = f.pts[0].z;
     const base = [...levels].reverse().find((l) => l.elevation < z1 - 1);
     const z0 = Number.isFinite(f.cutZ0) ? f.cutZ0 : (base ? base.elevation : 0);
@@ -252,6 +306,10 @@ function cutSolids(project, fr, faces, levels) {
       cuts.push({ kind, ...b, pts: [{ u: b.u0, z: b.z0 }, { u: b.u1, z: b.z0 }, { u: b.u1, z: b.z1 }, { u: b.u0, z: b.z1 }] });
     }
     edges.push(...unionEdges(boxes.filter((b) => b.u1 - b.u0 >= 0.5 && b.z1 - b.z0 >= 0.5)));
+  }
+  for (const shape of shaped) {
+    cuts.push(shape);
+    for (let i = 0; i < shape.pts.length; i += 1) edges.push([shape.pts[i], shape.pts[(i + 1) % shape.pts.length]]);
   }
   return { cuts, edges, openings };
 }
@@ -276,7 +334,9 @@ export function buildSection(project, view, { roof = true, terrain = true } = {}
   for (const f of faces) {
     if (!f.pts || f.pts.length < 3 || f.kind === 'floor') continue;
     const n = f.normal || { x: 0, y: 0, z: 0 };
-    if (Math.abs(n.z) > 0.5) continue;
+    const slopedRoof = f.roofSurface === 'top'
+      && (f.roofType !== 'flat' || Math.hypot(n.x, n.y) > 1e-6);
+    if (Math.abs(n.z) > 0.999 && !slopedRoof) continue;
     const facing = n.x * fr.view.x + n.y * fr.view.y;
     if (Math.abs(facing) < 1e-3 && !(n.x === 0 && n.y === 0)) continue;
     if (facing > 0 && !f.twoSided) continue;

@@ -51,7 +51,7 @@ test('пресет → параметры инструмента → новый 
   assert.equal(opening.width, 2400);
   assert.equal(opening.type, 'panoramic');
   const door = presetToOpening(OPENING_PRESETS.find((p) => p.id === 'entry-1000'));
-  assert.deepEqual(door, { type: 'single', width: 1000, height: 2100, sill: 0 });
+  assert.deepEqual(door, { presetId: 'entry-1000', entryRole: 'main', type: 'single', width: 1000, height: 2100, sill: 0 });
   // Параметры двери по умолчанию — карточка «Дверь 900»? нет: ширина по умолчанию своя, совпадение — только точное.
   const def = defaultOpeningPreset('door');
   assert.equal(OPENING_PRESETS.filter((p) => presetMatches(p, def)).length <= 1, true);

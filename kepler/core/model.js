@@ -46,7 +46,7 @@ export const DEFAULT_TALL_WINDOW_HEIGHT = 2400; // единая высота в�
 
 // Чистая высота помещения (от пола до потолка): своя или по этажу.
 export function roomCeiling(room, level) {
-  return room.ceiling || (level?.height ?? DEFAULT_LEVEL_HEIGHT) - DEFAULT_SLAB;
+  return room.ceiling || (level?.height ?? DEFAULT_LEVEL_HEIGHT) - (level?.slabThickness ?? DEFAULT_SLAB);
 }
 // walls — ручные стены этажа (схема 6, core/wall-manual.js); стены комнат
 // не хранятся, а выводятся (core/walls.js).
@@ -54,7 +54,7 @@ export const LEVEL_KEYS = ['rooms', 'openings', 'items', 'wallOverrides', 'walls
 
 export function createLevel(name, elevation = 0, height = DEFAULT_LEVEL_HEIGHT, id = makeId('level')) {
   return {
-    id, name, elevation, height, tallWindowHeight: DEFAULT_TALL_WINDOW_HEIGHT,
+    id, name, elevation, height, slabThickness: DEFAULT_SLAB, tallWindowHeight: DEFAULT_TALL_WINDOW_HEIGHT,
     rooms: [], openings: [], items: [], wallOverrides: {}, walls: [],
   };
 }
@@ -498,6 +498,8 @@ export function normalizeProject(data) {
     name: typeof l.name === 'string' && l.name ? l.name : `${i + 1} этаж`,
     elevation: Number(l.elevation) || 0,
     height: Number(l.height) > 0 ? Number(l.height) : DEFAULT_LEVEL_HEIGHT,
+    slabThickness: Number(l.slabThickness) >= 120 && Number(l.slabThickness) <= 600
+      ? Number(l.slabThickness) : DEFAULT_SLAB,
     tallWindowHeight: Number(l.tallWindowHeight) >= 300
       ? Number(l.tallWindowHeight) : DEFAULT_TALL_WINDOW_HEIGHT,
   }));

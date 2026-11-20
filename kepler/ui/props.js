@@ -11,7 +11,6 @@ import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
 import { activeLevel, roomById, roomCeiling } from '../core/model.js';
-import { SP55 } from '../core/norms.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2 } from '../core/rooms.js';
 import {
   DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingFrame, openingPos, openingRect,
@@ -198,7 +197,8 @@ function withViewSection(panel, renderMode) {
 
 // Чистая высота по умолчанию: высота этажа минус перекрытие (core/norms.js).
 function defaultCeiling() {
-  return activeLevel(state.project).height - SP55.slab;
+  const level = activeLevel(state.project);
+  return roomCeiling({}, level);
 }
 
 function renderElevationProps(panel) {
@@ -234,8 +234,13 @@ function renderProjectProps(panel) {
       <div class="prop-grid">
         <label class="prop-field"><span>Чистая высота, м</span>
           <input value="${(defaultCeiling() / 1000).toFixed(2)}" disabled></label>
+        <label class="prop-field"><span>Перекрытие, м</span>
+          <input id="slabThickness" type="number" step="0.05" min="0.12" max="0.6" value="${((level.slabThickness || 300) / 1000).toFixed(2)}"></label>
+      </div>
+      <div class="prop-grid">
         <label class="prop-field"><span>Высота витражей, м</span>
           <input id="tallWindowHeight" type="number" step="0.05" min="0.3" value="${((level.tallWindowHeight || 2400) / 1000).toFixed(2)}"></label>
+        <label class="prop-field"><span>Связь</span><input value="Весь этаж" disabled></label>
       </div>
       <p class="empty-hint">Связанные помещения и высокие окна обновляются вместе с этажом.</p>
       ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
@@ -293,6 +298,10 @@ function renderProjectProps(panel) {
   });
   panel.querySelector('#levelHeight').addEventListener('change', (e) => {
     mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
+  });
+  panel.querySelector('#slabThickness').addEventListener('change', (e) => {
+    const next = Math.round((Number(e.target.value) || 0.3) * 1000);
+    mutate(() => { level.slabThickness = Math.min(600, Math.max(120, next)); });
   });
   panel.querySelector('#tallWindowHeight').addEventListener('change', (e) => {
     const max = Math.max(300, level.height - 100);
@@ -812,6 +821,13 @@ function renderOpeningProps(panel, opening) {
       ${isDoor ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
         <span>Высота связана с витражами этажа</span></label>
         <div class="prop-row"><span>Рама</span><strong>Алюминий · антрацит</strong></div>`}
+      ${isDoor ? `<label class="prop-field"><span>Роль наружной двери</span><select id="entryRole">
+        <option value="auto" ${!opening.entryRole ? 'selected' : ''}>Определять автоматически</option>
+        <option value="main" ${opening.entryRole === 'main' ? 'selected' : ''}>Главный вход</option>
+        <option value="service" ${opening.entryRole === 'service' ? 'selected' : ''}>Служебный вход</option>
+        <option value="terrace" ${opening.entryRole === 'terrace' ? 'selected' : ''}>Выход на террасу</option>
+        <option value="none" ${opening.entryRole === 'none' ? 'selected' : ''}>Без автокрыльца</option>
+      </select></label>` : ''}
       ${isDoor ? '' : `<label class="prop-field"><span>Высота подоконника, мм</span>
         <input id="openSill" type="number" step="50" min="0" value="${opening.sill || 0}"></label>`}
     </div>
@@ -861,6 +877,12 @@ function renderOpeningProps(panel, opening) {
       } else if (type === 'double' && opening.width < 1200) {
         opening.width = 1200; // двустворчатой нужна ширина
       }
+    });
+  });
+  panel.querySelector('#entryRole')?.addEventListener('change', (e) => {
+    commitOpening(() => {
+      if (e.target.value === 'auto') delete opening.entryRole;
+      else opening.entryRole = e.target.value;
     });
   });
   panel.querySelector('#openH').addEventListener('change', (e) => {

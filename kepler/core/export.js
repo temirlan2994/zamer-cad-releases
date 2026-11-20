@@ -37,6 +37,9 @@ import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
+import { analyzeEarthworks } from './earthworks.js';
+import { deriveFoundation } from './foundation-system.js';
+import { deriveEntrances } from './entrance.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -109,6 +112,8 @@ function buildLevelExport(project, level) {
       sill: opening.kind === 'door' ? 0 : opening.sill ?? 900,
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
+      ...(opening.presetId ? { preset_id: opening.presetId } : {}),
+      ...(opening.kind === 'door' && opening.entryRole ? { entry_role: opening.entryRole } : {}),
     };
   });
 
@@ -162,6 +167,7 @@ function buildLevelExport(project, level) {
     name: level.name,
     elevation: level.elevation,
     height: level.height,
+    slab_thickness: Number.isFinite(Number(level.slabThickness)) ? Number(level.slabThickness) : 300,
     rooms,
     walls: wallsOut,
     openings,
@@ -186,6 +192,15 @@ export function buildStructuredExport(project) {
   const envelope = envelopeOf(project);
   const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
   const zeroAboveGround = resolvedZeroAboveGround(project, terrainHouse);
+  const foundationSystem = deriveFoundation(project);
+  const entranceSystem = deriveEntrances(project);
+  let earthworks = null;
+  if (project.site?.terrain?.points?.length >= 3) {
+    const grade = { mode: envelope.earthworks.mode };
+    if (grade.mode === 'relative') grade.zMm = -(zeroAboveGround ?? 0) + envelope.earthworks.gradeOffset;
+    if (grade.mode === 'absolute') grade.zMm = (terrainHouse?.groundReferenceZ ?? 0) + envelope.earthworks.gradeOffset;
+    earthworks = analyzeEarthworks(project, { boundary: 'work-pad', marginMm: envelope.earthworks.margin, grade });
+  }
   return {
     schema: 'kepler-export/2',
     units: 'mm',
@@ -211,8 +226,35 @@ export function buildStructuredExport(project) {
     envelope: {
       roof_mode: envelope.roofMode,
       auto_roof_thickness: envelope.roofThickness,
-      foundation: { enabled: envelope.foundation.enabled, depth: envelope.foundation.depth },
+      roof: structuredClone(envelope.roof),
+      foundation: structuredClone(envelope.foundation),
+      entrance: structuredClone(envelope.entrance),
+      slabs: structuredClone(envelope.slabs),
+      earthworks: structuredClone(envelope.earthworks),
     },
+    foundation_system: {
+      type: foundationSystem.type,
+      level_id: foundationSystem.levelId,
+      preliminary: true,
+      warnings: foundationSystem.warnings,
+      components: foundationSystem.components.map((component) => ({
+        id: component.id, kind: component.kind, role: component.role, shape: component.shape,
+        z0: component.z0, z1: component.z1,
+        ...(component.rects ? { rects: component.rects } : {}),
+        ...(component.points ? { points: component.points } : {}),
+        parameters: Object.fromEntries([
+          'thickness', 'nominalThickness', 'width', 'nominalHeight', 'diameter', 'length',
+          'center', 'sourceWallKeys', 'fallbackFor',
+        ].filter((key) => component[key] != null).map((key) => [key, structuredClone(component[key])])),
+      })),
+    },
+    entrances: entranceSystem,
+    earthworks: earthworks ? {
+      schema: earthworks.schema, status: earthworks.status, preliminary: true,
+      boundary: earthworks.boundary ? { ...earthworks.boundary, geometryWorld: undefined } : null,
+      grade: earthworks.grade, coverage: earthworks.coverage, areas: earthworks.areas,
+      volumes: earthworks.volumes, extremes: earthworks.extremes, warnings: earthworks.warnings,
+    } : null,
     // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site, project),

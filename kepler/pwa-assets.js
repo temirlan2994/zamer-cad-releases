@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "c652872d8e8e7459",
+  "version": "21aafe70cb4ae1ad",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -22,11 +22,15 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/draw-snap.js",
     "./core/duplicate-room.js",
     "./core/dxf.js",
+    "./core/earthworks.js",
     "./core/edit-lease.js",
     "./core/elevation.js",
+    "./core/entrance.js",
+    "./core/envelope-status.js",
     "./core/envelope.js",
     "./core/ergonomics.js",
     "./core/export.js",
+    "./core/foundation-system.js",
     "./core/furnish.js",
     "./core/furniture-design.js",
     "./core/furniture3d.js",
@@ -77,6 +81,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/layout-rules.js",
     "./core/layout-scenarios.js",
     "./core/layout-worker-handler.js",
+    "./core/linked-roof.js",
     "./core/mass-gizmo.js",
     "./core/mass-ground.js",
     "./core/mass-snap.js",

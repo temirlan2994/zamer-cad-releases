@@ -27,7 +27,7 @@ describe('Разделы библиотеки', () => {
       assert.ok(await page.locator('#openingItems [data-preset]').first().isVisible());
       await page.tap('#catalogSearchToggle');
       await page.fill('#openSearch', '900');
-      assert.ok(await page.locator('#openingItems [data-preset="win-900x1200"]').isVisible());
+      assert.ok(await page.locator('#openingItems [data-preset="fixed-900"]').isVisible());
       assert.equal(await page.locator('#openingCats').isVisible(), false);
       await sections.getByRole('button', { name: 'Двери' }).tap();
       assert.equal(await page.locator('#openSearch').isVisible(), false);
@@ -35,7 +35,7 @@ describe('Разделы библиотеки', () => {
       assert.equal(await category('beds').getAttribute('aria-pressed'), 'true');
       assert.equal(await page.evaluate(() => window.__kepler.state.tool), null);
       await page.tap('#catalogSearchToggle');
-      await page.fill('#furnSearch', 'диван 2600 х 1600');
+      await page.fill('#furnSearch', 'диван 3400 х 2400');
       assert.ok(await items.locator('[data-kind="sofa-corner"]').isVisible());
       assert.equal(await page.locator('#furnitureCategoryList').isVisible(), false);
       await page.locator('#furnSearch').press('Escape');

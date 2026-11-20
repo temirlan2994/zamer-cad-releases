@@ -39,14 +39,32 @@ test('поперёк через окно: стены слева и справа,
   const roof = of(s, 'roof');
   assert.ok(roof.length && roof.every((c) => c.z0 === 3000 && c.z1 === 3250));
   const floor = of(s, 'floor');
-  assert.ok(floor.length && floor.every((c) => c.z1 === 0 && c.z0 === -200));
+  assert.ok(floor.length && floor.every((c) => c.z1 === 0 && c.z0 === -300));
   assert.ok(near(Math.min(...floor.map((c) => c.u0)), -5250) && near(Math.max(...floor.map((c) => c.u1)), -750));
   assert.ok(s.cutEdges.length >= 8, 'контур сечения');
   assert.deepEqual(s.levels.map((l) => l.label), ['±0.000']);
   assert.ok(s.ground.length >= 2);
   // Вид за плоскостью: внутренняя грань западной стены видна.
   assert.ok(s.polys.some((q) => q.kind === 'wall'));
-  assert.ok(s.bounds.z0 <= -200 && s.bounds.z1 >= 3250);
+  assert.ok(s.bounds.z0 <= -300 && s.bounds.z1 >= 3250);
+});
+
+test('толщина и выключатель нижней плиты одинаково работают в 3D и разрезе', () => {
+  const p = house();
+  p.envelope.slabs.groundThickness = 420;
+  const view = sec({ x: 2500, y: -1000 }, { x: 2500, y: 5000 });
+  assert.ok(of(buildSection(p, view), 'floor').every((cut) => cut.z0 === -420 && cut.z1 === 0));
+  p.envelope.slabs.enabled = false;
+  assert.equal(of(buildSection(p, view), 'floor').length, 0);
+});
+
+test('уклон связанной крыши 1° остаётся точным наклонным телом в разрезе', () => {
+  const p = house();
+  p.envelope.roof = { type: 'shed', pitchDeg: 1, direction: 's', overhang: 0, drainage: 'off' };
+  const result = buildSection(p, sec({ x: 2500, y: -1000 }, { x: 2500, y: 5000 }));
+  const slope = of(result, 'roof').find((cut) => cut.pts
+    && Math.abs(cut.pts[2].z - cut.pts[3].z) > 10);
+  assert.ok(slope, 'верх разреза сохраняет уклон, а не превращается в горизонтальный прямоугольник');
 });
 
 test('вдоль дома через дверь: правая стена с проёмом двери, на виде — стены', () => {
@@ -83,7 +101,7 @@ test('два этажа: перекрытие между этажами, отм�
   const s = buildSection(p, sec({ x: 2500, y: -1000 }, { x: 2500, y: 5000 }));
   const slab = of(s, 'slab');
   assert.ok(slab.length, 'перекрытие разрезано');
-  assert.ok(slab.every((c) => c.z1 === 2999 && c.z0 === 2800));
+  assert.ok(slab.every((c) => c.z1 === 2999 && c.z0 === 2700));
   assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '±0.000'], [3000, '+3.000']]);
   assert.ok(of(s, 'wall').some((c) => c.z0 === 3000 && c.z1 === 5800), 'стены второго этажа');
   assert.ok(of(s, 'roof').every((c) => c.z0 === 5800));

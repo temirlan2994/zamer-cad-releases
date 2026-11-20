@@ -37,8 +37,8 @@ test('±0.000 над плоской землёй создаёт единые ц�
   const foundation = foundationFaces(project);
   const buried = foundation.filter((face) => face.kind === 'foundation');
   const plinth = foundation.filter((face) => face.kind === 'plinth');
-  assert.deepEqual(range(buried), [-1800, -1000]);
-  assert.deepEqual(range(plinth), [-1000, 0]);
+  assert.deepEqual(range(buried), [-1800, -1500], 'новая плита использует заданную толщину 300 мм');
+  assert.deepEqual(range(plinth), [-1500, 0], 'цоколь непрерывно доходит до ±0.000');
   assert.equal(buried.filter((face) => face.normal.z === 1).length, 1, 'смежные комнаты дают одно основание');
   assert.equal(plinth.filter((face) => face.normal.z === 1).length, 1, 'у цоколя нет шва между комнатами');
   const edges = foundation.flatMap((face) => face.edges || []);
@@ -47,6 +47,19 @@ test('±0.000 над плоской землёй создаёт единые ц�
   const ground = buildHouseMesh(project, { site: true }).filter((face) => face.kind === 'ground');
   assert.equal(ground.length, 1);
   assert.ok(ground[0].pts.every((point) => point.z === -1005));
+});
+
+test('старый фундамент только с depth сохраняет прежнюю сплошную геометрию', () => {
+  const project = oneStorey();
+  project.envelope.zeroAboveGround = 1000;
+  const raw = JSON.parse(serializeProject(project));
+  raw.envelope.foundation = { enabled: true, depth: 800 };
+  const back = deserializeProject(JSON.stringify(raw));
+
+  assert.equal(back.envelope.foundation.sizingMode, 'legacy-depth');
+  const foundation = foundationFaces(back);
+  assert.deepEqual(range(foundation.filter((face) => face.kind === 'foundation')), [-1800, -1000]);
+  assert.deepEqual(range(foundation.filter((face) => face.kind === 'plinth')), [-1000, 0]);
 });
 test('связанная крыша включается режимом оболочки и несёт метаданные этажа', () => {
   const project = oneStorey();
@@ -133,4 +146,23 @@ test('разрез режет основание, а проектный ноль
   assert.ok(cuts.length >= 2);
   assert.deepEqual(range(cuts), [-1800, 0]);
   assert.ok(section.ground.every((point) => point.z === -1000));
+});
+
+test('параметры связанных систем и толщина перекрытия сохраняются в файле', () => {
+  const project = oneStorey();
+  project.envelope.zeroAboveGround = 850;
+  project.envelope.roof = { type: 'hip', pitchDeg: 22, direction: 'e', overhang: 650, drainage: 'external' };
+  project.envelope.foundation = {
+    ...project.envelope.foundation, type: 'piles', pileDiameter: 350, pileLength: 4200, pileSpacing: 2100,
+  };
+  project.envelope.entrance = { ...project.envelope.entrance, mode: 'both', landingDepth: 1700, rampSlope: 0.06 };
+  project.envelope.earthworks = { mode: 'balanced', margin: 1800, gradeOffset: 120 };
+  project.levels[0].slabThickness = 350;
+  const back = deserializeProject(serializeProject(project));
+  assert.deepEqual(back.envelope.roof, project.envelope.roof);
+  assert.equal(back.envelope.foundation.type, 'piles');
+  assert.equal(back.envelope.foundation.pileLength, 4200);
+  assert.equal(back.envelope.entrance.mode, 'both');
+  assert.equal(back.envelope.earthworks.mode, 'balanced');
+  assert.equal(back.levels[0].slabThickness, 350);
 });
