@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, nearestCompoundGuideIntersection, normalizeDirectionalSnapModes, preferredSnapCandidate,
-  snapCandidateKind, tapZoomMoveIntent } from "./interaction.js";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection,
+  normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateKind, tapZoomMoveIntent } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -76,4 +76,19 @@ test("polar and tracking paths meet a line continuation at one exact CAD point",
   }]], 2), null, "polar tracking is a forward ray");
   assert.equal(nearestCompoundGuideIntersection({ x: 10, y: 15 }, [[{ ...polar, point: { x: 0, y: 15 } }, extension]], 2), null,
     "a continuation cannot claim a point inside the original segment");
+});
+
+test("a continuation intersects every configured polar ray before either guide can pull the cursor away", () => {
+  const polarGuides = polarRayGuides({ x: 0, y: 0 }, 15);
+  assert.equal(polarGuides.length, 24);
+  const horizontal = polarGuides[0];
+  const extension = {
+    point: { x: 10, y: 10 }, ux: 0, uy: 1, isExtension: true, length: 10,
+    boundary: { x1: 10, y1: 10, x2: 10, y2: 20 },
+  };
+  assert.deepEqual(nearestCompoundGuideIntersection({ x: 10, y: 1.5 }, [[horizontal, extension]], 2), {
+    x: 10, y: 0, guides: [horizontal, extension],
+  });
+  assert.equal(guideDirectionsParallel(horizontal, { ux: -1, uy: 0 }), true);
+  assert.equal(guideDirectionsParallel(horizontal, { ux: Math.SQRT1_2, uy: Math.SQRT1_2 }), false);
 });

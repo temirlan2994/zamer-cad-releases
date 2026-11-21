@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, nearestCompoundGuideIntersection, normalizeDirectionalSnapModes, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=227";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=228";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -904,6 +904,7 @@ const state = {
     hoverPoint: null,
     hoverTimer: null,
     active: null,
+    compoundLock: null,
   },
 
   numericEdit: null,
@@ -8453,18 +8454,23 @@ function nearbyExtensionTrackingGuides(point, threshold) {
 
 function nearestCompoundTrackingSnap(point, start) {
   const threshold = objectSnapThreshold();
-  const polar = start && snapEnabled("polar") ? snapPolar(point, start) : null;
-  const polarGuide = polar?.snapped ? {
-    point: start,
-    angle: polar.angle,
-    ux: Math.cos(polar.angle),
-    uy: Math.sin(polar.angle),
-    isPolar: true,
-  } : null;
+  const locked = state.snapTracking.compoundLock;
+  if (locked && distanceWorld(point, locked) * state.view.scale <= 32) {
+    const visibleGuides = locked.guides.filter(guide => !guide.isPolar);
+    state.snapTracking.active = visibleGuides.length ? { trackingType: "intersection", guides: visibleGuides } : null;
+    const polarGuide = locked.guides.find(guide => guide.isPolar);
+    if (polarGuide) {
+      const degrees = Math.round(normalizeDegrees(-radToDeg(polarGuide.angle))) % 360;
+      state.polarSnapGuide = { point: start, angle: polarGuide.angle, degrees };
+    }
+    return locked;
+  }
+  state.snapTracking.compoundLock = null;
+  const polarGuides = start && snapEnabled("polar") ? polarRayGuides(start, state.polarStep) : [];
   const trackingGuides = canSnapToTrackingGuides() ? snapTrackingGuides() : [];
   const extensionGuides = nearbyExtensionTrackingGuides(point, threshold);
   const pairs = [];
-  if (polarGuide) {
+  for (const polarGuide of polarGuides) {
     for (const guide of [...trackingGuides, ...extensionGuides]) pairs.push([polarGuide, guide]);
   }
   for (const tracking of trackingGuides) {
@@ -8480,10 +8486,14 @@ function nearestCompoundTrackingSnap(point, start) {
     compoundTracking: true,
     compoundPolar: crossing.guides.some(guide => guide.isPolar),
   };
+  state.snapTracking.compoundLock = snap;
   const visibleGuides = snap.guides.filter(guide => !guide.isPolar);
   state.snapTracking.active = visibleGuides.length ? { trackingType: "intersection", guides: visibleGuides } : null;
   const selectedPolar = snap.guides.find(guide => guide.isPolar);
-  if (selectedPolar) state.polarSnapGuide = { point: start, angle: selectedPolar.angle, degrees: polar.degrees };
+  if (selectedPolar) {
+    const degrees = Math.round(normalizeDegrees(-radToDeg(selectedPolar.angle))) % 360;
+    state.polarSnapGuide = { point: start, angle: selectedPolar.angle, degrees };
+  }
   return snap;
 }
 
@@ -8536,6 +8546,7 @@ function resetSnapTracking() {
   clearSnapTrackingHover();
   state.snapTracking.points = [];
   state.snapTracking.active = null;
+  state.snapTracking.compoundLock = null;
   state.polarSnapGuide = null;
   state.dimensionSnapChoice = null;
 }
@@ -8635,7 +8646,22 @@ function nearbyDraftLineSnaps(point, start) {
   ];
 }
 
-function nearestObjectSnap(point, { includeNearestSegment = false, start = null, includeExtension = true } = {}) {
+function polarExtensionConflict(point, start, extension) {
+  if (!start || !extension?.anchor || !snapEnabled("polar")) return false;
+  const polar = snapPolar(point, start);
+  if (!polar.snapped) return false;
+  const dx = extension.x - extension.anchor.x;
+  const dy = extension.y - extension.anchor.y;
+  const length = Math.hypot(dx, dy);
+  if (!(length > linePointEpsilon)) return false;
+  return guideDirectionsParallel(
+    { ux: dx / length, uy: dy / length },
+    { ux: Math.cos(polar.angle), uy: Math.sin(polar.angle) },
+  );
+}
+
+function nearestObjectSnap(point, { includeNearestSegment = false, start = null, includeExtension = true,
+  suppressPolarExtension = false } = {}) {
   if (state.snapsMuted) return null;
   const objectThreshold = objectSnapThreshold();
   const midpointThreshold = midpointSnapThreshold();
@@ -8654,7 +8680,7 @@ function nearestObjectSnap(point, { includeNearestSegment = false, start = null,
   const fallback = [];
   if (includeExtension && snapEnabled("extension")) {
     const extension = extensionSnap(point, boundarySegments(excluded));
-    if (extension) fallback.push(extension);
+    if (extension && !(suppressPolarExtension && polarExtensionConflict(point, start, extension))) fallback.push(extension);
   }
   if (includeNearestSegment && snapEnabled("nearest")) {
     const nearest = lineContext
@@ -9362,7 +9388,10 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
   const ortho = useOrtho && isLineSnapContext() && snapEnabled("ortho");
   const grid = useGrid && snapEnabled("grid");
   const objectSnap = nearestObjectSnap(point, { includeNearestSegment: false, start, includeExtension: false });
-  if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  if (objectSnap) {
+    state.snapTracking.compoundLock = null;
+    return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
+  }
   if (ortho) {
     const constrained = constrainLinePoint(start, point);
     if (!constrained) return { point, snap: null };
@@ -9384,7 +9413,7 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
     tracking = nearestSnapTrackingPoint(point, threshold, start) ?? nearestSnapTrackingPoint(point, threshold);
   }
 
-  const lineSnap = nearestObjectSnap(point, { includeNearestSegment: true, start, includeExtension: true });
+  const lineSnap = nearestObjectSnap(point, { includeNearestSegment: true, start, includeExtension: true, suppressPolarExtension: true });
   const assisted = preferredSnapCandidate(point, [tracking, lineSnap].filter(Boolean), state.view.scale);
   if (assisted) {
     if (assisted === tracking) state.snapTracking.active = tracking;

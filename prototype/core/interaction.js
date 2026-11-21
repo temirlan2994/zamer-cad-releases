@@ -67,6 +67,27 @@ export function preferredSnapCandidate(point, candidates, viewScale = 1) {
   return best;
 }
 
+export function polarRayGuides(start, stepDegrees) {
+  if (![start?.x, start?.y, stepDegrees].every(Number.isFinite) || stepDegrees <= 0 || stepDegrees > 180) return [];
+  const count = Math.round(360 / stepDegrees);
+  if (count < 2 || Math.abs(count * stepDegrees - 360) > 0.000001) return [];
+  return Array.from({ length: count }, (_, index) => {
+    const angle = index * stepDegrees * Math.PI / 180;
+    return {
+      point: start,
+      angle,
+      ux: Math.cos(angle),
+      uy: Math.sin(angle),
+      isPolar: true,
+    };
+  });
+}
+
+export function guideDirectionsParallel(first, second, toleranceRadians = Math.PI / 180) {
+  if (![first?.ux, first?.uy, second?.ux, second?.uy, toleranceRadians].every(Number.isFinite) || toleranceRadians < 0) return false;
+  return Math.abs(first.ux * second.uy - first.uy * second.ux) <= Math.sin(toleranceRadians);
+}
+
 function guideAcceptsPoint(guide, point, epsilon = 0.000001) {
   if (guide.isPolar) {
     const forward = (point.x - guide.point.x) * guide.ux + (point.y - guide.point.y) * guide.uy;
