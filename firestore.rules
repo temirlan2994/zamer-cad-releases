@@ -1,0 +1,299 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validId(value) {
+      return value.matches('^[A-Za-z0-9._:@+~-]{1,128}$');
+    }
+
+    function validChunk() {
+      return request.resource.data.keys().hasOnly(['s'])
+        && request.resource.data.s is string
+        && request.resource.data.s.size() <= 210000;
+    }
+
+    function validPreview(value) {
+      return value == null
+        || (value is map
+          && value.keys().hasOnly(['v', 'rooms', 'site'])
+          && value.keys().hasAll(['v', 'rooms', 'site'])
+          && value.v == 1
+          && value.rooms is list
+          && value.rooms.size() <= 60
+          && value.site is list
+          && value.site.size() <= 80)
+        || (value is map
+          && value.keys().hasOnly(['v', 'image'])
+          && value.keys().hasAll(['v', 'image'])
+          && value.v == 2
+          && value.image is string
+          && value.image.size() <= 180000
+          && (value.image.matches('^data:image/webp;base64,[A-Za-z0-9+/]+={0,2}$')
+            || value.image.matches('^data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}$')));
+    }
+
+    function editorLeasePath(uid, pid) {
+      return /databases/$(database)/documents/data/users/$(uid)/$(pid)/lease/editor;
+    }
+
+    function projectPath(uid, pid) {
+      return /databases/$(database)/documents/data/users/$(uid)/$(pid);
+    }
+
+    function validOptionalLeaseRequest(data) {
+      return (data.requestedSessionId == null
+          && data.requestedDeviceId == null
+          && data.requestedDeviceName == null
+          && data.requestedAt == null)
+        || (data.requestedSessionId is string
+          && validId(data.requestedSessionId)
+          && data.requestedDeviceId is string
+          && validId(data.requestedDeviceId)
+          && data.requestedDeviceName is string
+          && data.requestedDeviceName.size() <= 120
+          && data.requestedAt is timestamp);
+    }
+
+    // Короткая аренда единственного редактора. Истёкший heartbeat не может
+    // держать проект заблокированным навсегда; takeover всегда повышает epoch.
+    function validEditorLease() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'sessionId', 'deviceId', 'deviceName', 'epoch',
+          'acquiredAt', 'heartbeatAt', 'expiresAt',
+          'requestedSessionId', 'requestedDeviceId', 'requestedDeviceName', 'requestedAt'
+        ])
+        && data.keys().hasAll([
+          'sessionId', 'deviceId', 'deviceName', 'epoch',
+          'acquiredAt', 'heartbeatAt', 'expiresAt',
+          'requestedSessionId', 'requestedDeviceId', 'requestedDeviceName', 'requestedAt'
+        ])
+        && data.sessionId is string
+        && validId(data.sessionId)
+        && data.deviceId is string
+        && validId(data.deviceId)
+        && data.deviceName is string
+        && data.deviceName.size() <= 120
+        && data.epoch is int
+        && data.epoch >= 1
+        && data.acquiredAt is timestamp
+        && data.heartbeatAt is timestamp
+        && data.expiresAt is timestamp
+        && data.expiresAt <= request.time + duration.value(2, 'm')
+        && validOptionalLeaseRequest(data);
+    }
+
+    function sameEditorLease() {
+      let next = request.resource.data;
+      let previous = resource.data;
+      return next.sessionId == previous.sessionId
+        && next.deviceId == previous.deviceId
+        && next.epoch == previous.epoch
+        && next.acquiredAt == previous.acquiredAt;
+    }
+
+    function validDraftFence(uid, pid, data) {
+      let lease = get(editorLeasePath(uid, pid));
+      return (!exists(editorLeasePath(uid, pid))
+          && !('editorSession' in data)
+          && !('editorEpoch' in data))
+        || (exists(editorLeasePath(uid, pid))
+          && data.editorSession is string
+          && validId(data.editorSession)
+          && data.editorEpoch is int
+          && data.editorEpoch >= 1
+          && lease.data.sessionId == data.editorSession
+          && lease.data.epoch == data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
+    function validProjectMetaFence(uid, pid, data) {
+      let lease = get(editorLeasePath(uid, pid));
+      return (!exists(editorLeasePath(uid, pid))
+          && !('editorSession' in data)
+          && !('editorEpoch' in data))
+        || (exists(editorLeasePath(uid, pid))
+          && data.editorSession is string
+          && validId(data.editorSession)
+          && data.editorEpoch is int
+          && data.editorEpoch >= 1
+          && lease.data.sessionId == data.editorSession
+          && lease.data.epoch == data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
+    function validProjectDeleteFence(uid, pid) {
+      let lease = get(editorLeasePath(uid, pid));
+      return !exists(editorLeasePath(uid, pid))
+        || (resource.data.editorSession is string
+          && resource.data.editorEpoch is int
+          && lease.data.sessionId == resource.data.editorSession
+          && lease.data.epoch == resource.data.editorEpoch
+          && lease.data.expiresAt > request.time);
+    }
+
+    // Legacy-проект без editor lease сохраняет прежний протокол. У fenced-
+    // проекта дочерние данные можно удалять только после parent: старый PWA
+    // не способен повредить живой проект, а оборванный cleanup можно повторить.
+    function validProjectCleanup(uid, pid) {
+      return !exists(editorLeasePath(uid, pid))
+        || !exists(projectPath(uid, pid));
+    }
+
+    function validProjectMeta() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'createdAt', 'updatedAt', 'draftUpdatedAt', 'draftRevision',
+          'draftStats', 'name', 'head', 'versions', 'blobs', 'preview',
+          'editorSession', 'editorEpoch'
+        ])
+        && data.keys().hasAll(['createdAt', 'updatedAt', 'name', 'versions', 'blobs'])
+        && data.createdAt is string
+        && data.updatedAt is string
+        && data.name is string
+        && data.name.size() <= 200
+        && data.versions is list
+        && data.versions.size() <= 30
+        && data.blobs is map
+        && data.blobs.keys().size() <= 512
+        && (!('head' in data) || data.head == null || data.head is string)
+        && (!('draftUpdatedAt' in data)
+          || data.draftUpdatedAt == null
+          || data.draftUpdatedAt is string)
+        && (!('draftRevision' in data)
+          || data.draftRevision == null
+          || data.draftRevision is string)
+        && (!('draftStats' in data)
+          || data.draftStats == null
+          || data.draftStats is map)
+        && (!('preview' in data) || validPreview(data.preview));
+    }
+
+    // Указатель текущего облачного черновика. Сам JSON и тяжёлые data: URL
+    // лежат в chunk-документах, поэтому pointer остаётся небольшим.
+    function validDraftPointer() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'revision', 'hash', 'chunks', 'bytes', 'blobs',
+          'updatedAt', 'stats', 'name', 'preview',
+          'editorSession', 'editorEpoch'
+        ])
+        && data.revision is string
+        && validId(data.revision)
+        && data.hash is string
+        && data.hash.size() <= 160
+        && data.chunks is int
+        && data.chunks >= 1
+        && data.chunks <= 256
+        && data.bytes is int
+        && data.bytes >= 0
+        && data.blobs is map
+        && data.blobs.keys().size() <= 512
+        && data.updatedAt is string
+        && (!('stats' in data) || data.stats == null || data.stats is map)
+        && (!('name' in data) || (data.name is string && data.name.size() <= 200))
+        && (!('preview' in data) || validPreview(data.preview));
+    }
+
+    // Личные проекты. Изоляция выполняется по Firebase Auth UID; знание
+    // пути или идентификатора проекта не даёт доступа к чужим данным.
+    match /data/users/{uid}/{pid} {
+      // LIST нельзя связывать с проверкой wildcard pid: Firestore Rules не
+      // являются фильтром и отклонят запрос всей коллекции проектов.
+      allow list: if isOwner(uid);
+      allow get: if isOwner(uid) && validId(pid);
+      allow delete: if isOwner(uid)
+        && validId(pid)
+        && validProjectDeleteFence(uid, pid);
+      allow create, update: if isOwner(uid)
+        && validId(pid)
+        && validProjectMeta()
+        && validProjectMetaFence(uid, pid, request.resource.data);
+
+      match /c/{part} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /b/{part} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft/{draftId} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(draftId);
+        allow delete: if isOwner(uid) && validId(draftId) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid)
+          && draftId == 'current'
+          && validDraftPointer()
+          && validDraftFence(uid, pid, request.resource.data);
+        allow create, update: if isOwner(uid)
+          && draftId != 'current'
+          && validId(draftId)
+          && validChunk();
+      }
+
+      match /lease/{leaseId} {
+        allow read: if isOwner(uid) && leaseId == 'editor';
+        allow create: if isOwner(uid)
+          && leaseId == 'editor'
+          && validEditorLease()
+          && request.resource.data.epoch == 1
+          && request.resource.data.expiresAt > request.time;
+        allow update: if isOwner(uid)
+          && leaseId == 'editor'
+          && validEditorLease()
+          && (sameEditorLease()
+            || (request.resource.data.epoch == resource.data.epoch + 1
+              && request.resource.data.expiresAt > request.time));
+        allow delete: if false;
+      }
+
+      match /draft-c/{part} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft-b/{part} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+
+      match /draft-blobs/{part} {
+        allow list: if isOwner(uid);
+        allow get: if isOwner(uid) && validId(part);
+        allow delete: if isOwner(uid) && validId(part) && validProjectCleanup(uid, pid);
+        allow create, update: if isOwner(uid) && validId(part) && validChunk();
+      }
+    }
+
+    // Глобальные публикации намеренно выключены для Firebase: задача этого
+    // backend — только личные файлы. Это исключает чтение недоверенных
+    // проектов и расход общей квоты чужими публикациями.
+    match /shared/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Всё, что не описано выше, закрыто.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

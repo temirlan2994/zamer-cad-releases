@@ -1,0 +1,117 @@
+{
+  "schema": "kepler-plan/4",
+  "revision": 0,
+  "name": "Дом из версии 4",
+  "settings": {
+    "partition": 100,
+    "exterior": 250,
+    "dimOuter": true,
+    "units": "mm"
+  },
+  "levels": [
+    {
+      "id": "L1",
+      "name": "1 этаж",
+      "elevation": 0,
+      "height": 3000,
+      "rooms": [
+        {
+          "id": "room-v4-1",
+          "type": "living",
+          "name": "Гостиная",
+          "x": 0,
+          "y": 0,
+          "w": 6000,
+          "h": 4500,
+          "parentId": null
+        },
+        {
+          "id": "room-v4-2",
+          "type": "kitchen",
+          "name": "Кухня",
+          "x": 6100,
+          "y": 0,
+          "w": 4000,
+          "h": 4500,
+          "parentId": null
+        }
+      ],
+      "openings": [],
+      "items": [
+        {
+          "id": "item-v4-table",
+          "kind": "dining-table",
+          "x": 3000,
+          "y": 2200,
+          "w": 1600,
+          "h": 900,
+          "rotation": 0
+        },
+        {
+          "id": "item-v4-round",
+          "kind": "table-round",
+          "x": 8000,
+          "y": 2200,
+          "w": 1100,
+          "h": 1100,
+          "rotation": 0
+        },
+        {
+          "id": "item-v4-chair",
+          "kind": "chair",
+          "x": 8000,
+          "y": 1300,
+          "w": 450,
+          "h": 450,
+          "rotation": 0
+        },
+        {
+          "id": "item-v4-sofa",
+          "kind": "sofa",
+          "x": 3000,
+          "y": 4000,
+          "w": 2200,
+          "h": 950,
+          "rotation": 180
+        }
+      ],
+      "wallOverrides": {}
+    }
+  ],
+  "activeLevel": "L1",
+  "building": {
+    "rotation": 0,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "site": {
+    "north": 0,
+    "location": {
+      "lat": 43.238,
+      "lon": 76.889,
+      "tz": 5
+    },
+    "sun": {
+      "date": "2026-06-21",
+      "time": 720,
+      "enabled": false
+    },
+    "buildingHeight": 6000,
+    "setbackBoundary": 1500,
+    "setbackNeighbor": 6000,
+    "showBuildZone": true,
+    "boundary": null,
+    "redLine": null,
+    "roads": [],
+    "neighbors": [],
+    "entry": null,
+    "underlay": null,
+    "norms": {
+      "day": null,
+      "hours": null
+    }
+  },
+  "variants": []
+}

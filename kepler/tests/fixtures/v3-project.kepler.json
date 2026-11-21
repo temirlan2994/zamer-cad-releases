@@ -1,0 +1,131 @@
+{
+  "schema": "kepler-plan/3",
+  "revision": 0,
+  "name": "Дом из версии 3",
+  "settings": {
+    "partition": 100,
+    "exterior": 250,
+    "dimOuter": true
+  },
+  "rooms": [
+    {
+      "id": "room-mvy4xyp4-1",
+      "type": "living",
+      "name": "Гостиная",
+      "x": 0,
+      "y": 0,
+      "w": 5000,
+      "h": 4200,
+      "parentId": null
+    },
+    {
+      "id": "room-mvy4xyp4-2",
+      "type": "kitchen",
+      "name": "Кухня",
+      "x": 5100,
+      "y": 0,
+      "w": 3600,
+      "h": 3000,
+      "parentId": null
+    }
+  ],
+  "openings": [
+    {
+      "id": "door-mvy4xyp4-3",
+      "kind": "door",
+      "roomId": "room-mvy4xyp4-1",
+      "side": 2,
+      "offset": 1500,
+      "width": 900,
+      "height": 2100,
+      "sill": 0,
+      "swingIn": true,
+      "hingeStart": true
+    },
+    {
+      "id": "window-mvy4xyp4-4",
+      "kind": "window",
+      "roomId": "room-mvy4xyp4-2",
+      "side": 0,
+      "offset": 1800,
+      "width": 1500,
+      "height": 1500,
+      "sill": 900,
+      "swingIn": true,
+      "hingeStart": true
+    }
+  ],
+  "items": [
+    {
+      "id": "item-mvy4xyp4-5",
+      "kind": "sofa",
+      "x": 2500,
+      "y": 3200,
+      "w": 2200,
+      "h": 950,
+      "rotation": 0
+    }
+  ],
+  "wallOverrides": {
+    "e|room-mvy4xyp4-1|3": {
+      "thickness": 400
+    }
+  },
+  "site": {
+    "north": 12,
+    "location": {
+      "lat": 43.238,
+      "lon": 76.889,
+      "tz": 5
+    },
+    "sun": {
+      "date": "2026-06-21",
+      "time": 720,
+      "enabled": false
+    },
+    "buildingHeight": 6000,
+    "setbackBoundary": 1500,
+    "setbackNeighbor": 6000,
+    "showBuildZone": true,
+    "boundary": [
+      {
+        "x": -6000,
+        "y": -6000
+      },
+      {
+        "x": 24000,
+        "y": -9000
+      },
+      {
+        "x": 27000,
+        "y": 18000
+      },
+      {
+        "x": -3000,
+        "y": 21000
+      }
+    ],
+    "redLine": null,
+    "roads": [],
+    "neighbors": [
+      {
+        "id": "nb-1",
+        "x": 30000,
+        "y": 0,
+        "w": 9000,
+        "h": 8000,
+        "height": 6000,
+        "rot": 15
+      }
+    ],
+    "entry": null,
+    "underlay": null
+  },
+  "building": {
+    "rotation": 20,
+    "origin": {
+      "x": 980.5794005652028,
+      "y": -1361.1421271170666
+    }
+  }
+}

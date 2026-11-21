@@ -1,0 +1,100 @@
+// e2e 3D-просмотра: открытие, вращение, масштаб, крыша, закрытие по Esc.
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { with3dLayers, startApp, openSample } from './helpers.mjs';
+
+const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
+
+describe('3D', () => {
+  let app;
+  before(async () => { app = await startApp(); await openSample(app.page); });
+  after(async () => { await app?.close(); });
+
+  it('кнопка «3D» открывает вид с гранями дома', async () => {
+    await app.page.click('#view3dBtn');
+    assert.equal(await app.page.isVisible('#view3d'), true);
+    const s = await d3(app.page);
+    assert.equal(s.active, true);
+    assert.ok(s.faces > 50, `граней ${s.faces}`);
+    if (process.env.KEPLER_3D_OUT) {
+      await app.page.waitForTimeout(150);
+      await app.page.screenshot({ path: process.env.KEPLER_3D_OUT });
+    }
+  });
+
+  it('перспектива и параллельная проекция переключаются без смены вида', async () => {
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+    await app.page.getByRole('button', { name: 'Перспектива' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'perspective');
+    assert.equal(await app.page.isVisible('#view3d'), true);
+    await app.page.getByRole('button', { name: 'Параллельно' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+  });
+
+  it('мышь вращает, колесо приближает', async () => {
+    const before = await d3(app.page);
+    const box = await (await app.page.$('#canvas3d')).boundingBox();
+    await app.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await app.page.mouse.down();
+    await app.page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 40, { steps: 6 });
+    await app.page.mouse.up();
+    await app.page.mouse.wheel(0, -300);
+    const after = await d3(app.page);
+    assert.ok(Math.abs(after.cam.yaw - before.cam.yaw) > 0.5);
+    assert.ok(after.cam.pitch > before.cam.pitch);
+    assert.ok(after.cam.dist < before.cam.dist, 'в параллельной проекции колесо меняет масштаб');
+    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'физическое положение камеры не меняется');
+  });
+
+  it('крыша видна сразу, но её можно скрыть; Esc закрывает 3D', async () => {
+    const withRoof = (await d3(app.page)).faces;
+    assert.equal(await app.page.isChecked('#v3Roof'), true);
+    await with3dLayers(app.page, () => app.page.uncheck('#v3Roof'));
+    const withoutRoof = (await d3(app.page)).faces;
+    assert.ok(withoutRoof < withRoof);
+    await with3dLayers(app.page, () => app.page.check('#v3Roof'));
+    assert.equal((await d3(app.page)).faces, withRoof);
+    await app.page.keyboard.press('Escape');
+    assert.equal(await app.page.isVisible('#view3d'), false);
+    assert.equal((await d3(app.page)).active, false);
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});
+
+describe('стены и колонны', () => {
+  let app;
+  before(async () => { app = await startApp(); await openSample(app.page); });
+  after(async () => { await app?.close(); });
+
+  it('категория «Стены и колонны»: стена перетаскивается на план и видна в 3D', async () => {
+    await app.page.click('#furnitureToolBtn');
+    await app.page.getByRole('button', { name: 'Стены и колонны', exact: true }).click();
+    const names = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
+    assert.deepEqual(names, ['Стена', 'Колонна', 'Колонна круглая']);
+    await app.page.evaluate(() => {
+      const c = document.getElementById('canvas');
+      const r = c.getBoundingClientRect();
+      const dt = new DataTransfer();
+      dt.setData('application/x-kepler-furn', 'wall-free');
+      const o = { clientX: r.left + 30, clientY: r.top + r.height / 2, dataTransfer: dt, bubbles: true, cancelable: true };
+      c.dispatchEvent(new DragEvent('dragover', o));
+      c.dispatchEvent(new DragEvent('drop', o));
+    });
+    const wall = await app.page.evaluate(() => window.__kepler.state.project.items.find((i) => i.kind === 'wall-free'));
+    assert.ok(wall && wall.w === 3000 && wall.h === 120, JSON.stringify(wall));
+    await app.page.click('#view3dBtn');
+    const withWall = (await d3(app.page)).faces;
+    await app.page.click('#v3Close'); // Esc сначала снял бы выбор стены
+    await app.page.keyboard.press('Control+z');
+    await app.page.click('#view3dBtn');
+    assert.ok((await d3(app.page)).faces < withWall, 'без стены граней меньше');
+    await app.page.click('#v3Close');
+  });
+
+  it('без ошибок в консоли', () => {
+    assert.deepEqual(app.errors, []);
+  });
+});

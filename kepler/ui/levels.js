@@ -1,0 +1,156 @@
+// Этажи: переключатель на холсте, добавление и удаление, шаг вверх/вниз.
+//
+// Данные этажей — в project.levels (core/model.js); всё редактирование идёт
+// на активном этаже project.activeLevel. Этаж ниже рисуется бледно.
+
+import {
+  createItem, createLevel, createRoom, levelBelow, sortedLevels,
+} from '../core/model.js';
+import { el, refs, toast } from './dom.js';
+import { setEditorMode } from './modes.js';
+import { state } from './state.js';
+import { afterChange, mutate, refreshDerived } from './store.js';
+import { cancelTool } from './tools.js';
+import { scaleLabel } from './view.js';
+
+export function renderLevelBar() {
+  const bar = el('levelBar');
+  if (!bar || !state.project) return;
+  const landscape = state.modeName === 'landscape';
+  const chip = el('landscapeBtn');
+  if (chip) {
+    chip.classList.toggle('active', landscape);
+    chip.setAttribute('aria-pressed', String(landscape));
+  }
+  bar.innerHTML = '';
+  for (const level of sortedLevels(state.project)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('role', 'tab');
+    btn.dataset.level = level.id;
+    btn.textContent = level.name;
+    btn.title = `${level.name}: отметка ${(level.elevation / 1000).toFixed(2)} м, высота ${(level.height / 1000).toFixed(2)} м · PgUp/PgDn`;
+    const active = !landscape && level.id === state.project.activeLevel;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+    btn.addEventListener('click', () => {
+      // Из «Ландшафта» клик по этажу возвращает в «План».
+      if (state.modeName === 'landscape') setEditorMode('plan');
+      if (state.roofPlan) { // с «Плана крыши» клик по этажу — к плану этажа
+        state.roofPlan = false;
+        document.body.classList.remove('mode-roofplan');
+        document.dispatchEvent(new CustomEvent('kepler:view'));
+      }
+      switchLevel(level.id);
+    });
+    bar.appendChild(btn);
+  }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'add';
+  add.textContent = '+';
+  add.title = 'Добавить этаж сверху';
+  add.addEventListener('click', () => {
+    if (state.modeName === 'landscape') setEditorMode('plan');
+    addLevel();
+  });
+  bar.appendChild(add);
+}
+
+// Панорамирование и масштаб принадлежат вкладке плана. Рабочий этаж
+// модели 3D можно менять независимо, не сдвигая соответствующие чертежи.
+const planCameras = new WeakMap();
+function rememberPlan(project) {
+  let cameras = planCameras.get(project);
+  if (!cameras) { cameras = new Map(); planCameras.set(project, cameras); }
+  const { scale, panX, panY, rotation } = state.view;
+  const { x = 0, y = 0 } = project.building?.origin || {};
+  cameras.set(project.activeLevel, { scale, panX, panY, rotation, x, y });
+  return cameras;
+}
+
+// Переключение этажа — не правка проекта: в историю не попадает.
+export function switchLevel(id, { planView = state.modeName === 'plan' && !document.body.classList.contains('v3-open') } = {}) {
+  const project = state.project;
+  if (id === project.activeLevel || !project.levels.some((l) => l.id === id)) return;
+  cancelTool();
+  state.selection = null;
+  state.hover = null;
+  state.ghost = null;
+  state.ghostItem = null;
+  if (planView) {
+    const saved = rememberPlan(project).get(id);
+    const origin = project.building?.origin;
+    if (saved && saved.rotation === state.view.rotation && saved.x === (origin?.x ?? 0) && saved.y === (origin?.y ?? 0)) {
+      Object.assign(state.view, { scale: saved.scale, panX: saved.panX, panY: saved.panY });
+      refs.statusScale.textContent = scaleLabel();
+    }
+  }
+  project.activeLevel = id;
+  refreshDerived();
+  afterChange();
+}
+
+// dir: +1 — этаж выше, −1 — ниже.
+export function stepLevel(dir) {
+  const list = sortedLevels(state.project);
+  const i = list.findIndex((l) => l.id === state.project.activeLevel);
+  const next = list[i + dir];
+  if (next) switchLevel(next.id);
+}
+
+const inside = (item, r) => item.x >= r.x && item.x <= r.x + r.w && item.y >= r.y && item.y <= r.y + r.h;
+
+// Новый этаж над верхним. Лестница связывает этажи, поэтому помещения
+// «Лестница» (вместе с маршем внутри) переносятся на то же место.
+export function addLevel() {
+  const project = state.project;
+  const list = sortedLevels(project);
+  const top = list[list.length - 1];
+  if (state.modeName === 'plan') rememberPlan(project);
+  const level = createLevel(`${list.length + 1} этаж`, top.elevation + top.height, top.height);
+  const stairs = top.rooms.filter((r) => r.type === 'stairs-room');
+  cancelTool();
+  state.selection = null;
+  mutate(() => {
+    for (const s of stairs) {
+      const copy = createRoom('stairs-room', s.x, s.y, s.w, s.h);
+      copy.name = s.name;
+      level.rooms.push(copy);
+      for (const it of top.items) {
+        if (!inside(it, s)) continue;
+        const copyItem = createItem(it.kind, it.x, it.y, it.w, it.h, it.rotation || 0);
+        if (it.comp) copyItem.comp = JSON.parse(JSON.stringify(it.comp));
+        if (it.kind === 'stairs') {
+          copyItem.stairShape = it.stairShape;
+          // Марши и площадки — как у нижней (core/stairs.js), этаж — свой.
+          for (const key of ['flightWidth', 'going', 'flights', 'gap', 'landingDepth', 'landings', 'mirrored']) {
+            if (it[key] !== undefined) copyItem[key] = structuredClone(it[key]);
+          }
+          copyItem.floorHeight = level.height;
+        }
+        level.items.push(copyItem);
+      }
+    }
+    project.levels.push(level);
+    project.activeLevel = level.id;
+  });
+  toast(stairs.length
+    ? `Добавлен «${level.name}»: лестница перенесена с этажа ниже, его стены видны бледно`
+    : `Добавлен «${level.name}»: стены этажа ниже видны бледно — ставьте комнаты над ними`, true);
+}
+
+export function deleteLevel(id) {
+  const project = state.project;
+  if (project.levels.length <= 1) { toast('Единственный этаж удалить нельзя'); return; }
+  const level = project.levels.find((l) => l.id === id);
+  if (!level) return;
+  const fallback = levelBelow(project, id) || sortedLevels(project).find((l) => l.id !== id);
+  cancelTool();
+  state.selection = null;
+  mutate(() => {
+    project.levels = project.levels.filter((l) => l.id !== id);
+    if (project.activeLevel === id) project.activeLevel = fallback.id;
+  });
+  toast(`«${level.name}» удалён — Ctrl+Z вернёт`);
+}

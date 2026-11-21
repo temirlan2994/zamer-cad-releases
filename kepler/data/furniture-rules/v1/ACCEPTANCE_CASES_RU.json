@@ -1,0 +1,1223 @@
+{
+  "metadata": {
+    "title": "Приемочные спецификации будущего движка расстановки мебели",
+    "status": "acceptance_specifications_not_executed",
+    "language": "ru",
+    "version": "1.0",
+    "created_at": "2026-11-14",
+    "case_count": 48,
+    "numeric_minimal_fixture_count": 20,
+    "proven_infeasible_subproblem_case_ids": [
+      "ACCEPT-004",
+      "ACCEPT-007",
+      "ACCEPT-016",
+      "ACCEPT-017",
+      "ACCEPT-018"
+    ],
+    "source_rule_files": [
+      "research_core_rules.json",
+      "research_room_rules.json",
+      "research_environment_rules.json",
+      "research_service_rules.json"
+    ],
+    "rule_id_references_checked": true,
+    "engine_tests_executed": false,
+    "expectation_scope": "Каждый expected_status относится только к given.evaluated_metric или перечисленным компонентам. Он не означает итоговую законность, безопасность или утверждение всего дома.",
+    "status_semantics": {
+      "pass": "Проверяемая метрика выполняется при всех явно указанных входных данных.",
+      "fail": "Не выполняется указанная метрика, выбранное состояние или контракт; это не автоматически proven_infeasible всей задачи.",
+      "unknown": "Недостаточны данные/применимость/доказательства либо ограничен поиск.",
+      "not_applicable": "Проверка явно не входит в активный профиль или выбранный сценарий; неизвестная применимость не является not_applicable.",
+      "mixed": "Разные перечисленные метрики имеют разные результаты; требуется отчет по каждой компоненте."
+    },
+    "hard_soft_policy": "Невыполненная рекомендация остается мягким отклонением. В арифметических доказательствах жесткость порога возникает из явных условий теста или проверенного паспорта, а не из произвольного повышения эвристики.",
+    "infeasibility_policy": "Доказательство невозможности распространяется только на указанную в proof_scope фиксированную подзадачу. Тайм-аут, неудачный кандидат и неуспех одной траектории не являются доказательством отсутствия решения.",
+    "fixture_geometry_policy": "Для численных минимальных fixtures исходные размеры точны, кроме специально заданных случаев g±e. Геометрия и альтернативы ограничены только тем, что явно указано. Нельзя добавлять скрытые препятствия или скрытые обходы.",
+    "sources_policy": "Числа, заданные как условный паспорт тестового изделия или явное пользовательское требование, не являются универсальными нормами. Проверка упрощения источника выделена в ACCEPT-033."
+  },
+  "cases": [
+    {
+      "id": "ACCEPT-001",
+      "title": "Однократное преобразование метров в миллиметры",
+      "related_rule_ids": [
+        "IN001",
+        "QA008",
+        "QA009"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "unit_conversion",
+        "source_segment": {
+          "value": 4.2,
+          "unit": "m"
+        },
+        "stored_unit": "mm",
+        "reported_segment_length": 4200
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Сохранить длину 4200 мм; записать один коэффициент преобразования 1000 и происхождение исходной единицы.",
+      "reason": "4.2 × 1000 = 4200; это проверка единиц, не качества планировки."
+    },
+    {
+      "id": "ACCEPT-002",
+      "title": "Повторное применение коэффициента масштаба",
+      "related_rule_ids": [
+        "IN001",
+        "QA008",
+        "QA009"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "unit_conversion",
+        "source_segment": {
+          "value": 4.2,
+          "unit": "m"
+        },
+        "canonical_segment_mm": 4200,
+        "erroneous_export_mm": 4200000,
+        "conversion_already_applied": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить экспорт как ошибку единиц и сохранить канонические 4200 мм; не пытаться уменьшать мебель под неверный масштаб.",
+      "reason": "Повторное умножение 4200 на 1000 создает ошибку масштаба в 1000 раз."
+    },
+    {
+      "id": "ACCEPT-003",
+      "title": "Буфер дискового пользователя равен половине ширины",
+      "related_rule_ids": [
+        "PATH002",
+        "GEO021"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "disk_configuration_space",
+        "units": "mm",
+        "parallel_walls_y": [
+          0,
+          1000
+        ],
+        "agent_disk_diameter": 900,
+        "agent_disk_radius": 450,
+        "already_buffered": false,
+        "extra_margin": 0
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Расширить каждую стену на 450 мм. Допустимые координаты центра по Y: [450,550]; прямой путь существует. Не расширять каждую стену на 900 мм и не повторять буферизацию.",
+      "reason": "1000 − 2 × 450 = 100 мм допустимого диапазона центра; это не ширина прохода человека."
+    },
+    {
+      "id": "ACCEPT-004",
+      "title": "Доказанная невозможность: диск шире единственного проема",
+      "related_rule_ids": [
+        "PATH001",
+        "PATH002",
+        "OPT013"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "fixed_portal_traversability",
+        "units": "mm",
+        "portal_clear_width": 850,
+        "rigid_disk_diameter": 900,
+        "portal_is_only_connection": true,
+        "geometry_locked": true,
+        "profile_allows_body_deformation": false,
+        "proof_scope": "только прохождение этого диска через этот неизменяемый проем"
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Вернуть proven_infeasible для указанной подзадачи: дефицит ширины 50 мм. Объяснить, что другим пользователям или измененной архитектуре требуется новый расчет.",
+      "reason": "850 < 900; поворот диска не уменьшает его диаметр. Все альтернативные соединения исключены исходными условиями."
+    },
+    {
+      "id": "ACCEPT-005",
+      "title": "1300 мм от края стола не равны проходу 1300 мм",
+      "related_rule_ids": [
+        "PATH007",
+        "DIN003",
+        "KIT035"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "seating_clearance_and_residual_walkway",
+        "units": "mm",
+        "table_edge_to_obstruction": 1300,
+        "occupied_seat_projection_from_table_edge": 650,
+        "occupied_depth_includes_person_and_backrest": true,
+        "residual_walkway_soft_target": 900,
+        "nkba_traffic_mode": "walk_past",
+        "nkba_reference_from_table_edge": 1118
+      },
+      "expected_status": "mixed",
+      "expected_behavior": "Вычислить residual_walkway = 1300 − 650 = 650 мм. Проверка рекомендации NKBA от края стола проходит: 1300 ≥ 1118. Мягкая цель свободного остаточного прохода 900 мм не достигнута: дефицит 250 мм. Не объявлять дом незаконным или всю задачу невозможной.",
+      "reason": "Две метрики используют разные базы измерения; рекомендательный порог не является нормативным запретом."
+    },
+    {
+      "id": "ACCEPT-006",
+      "title": "Каркас кровати шире матраса",
+      "related_rule_ids": [
+        "BED001",
+        "BED004",
+        "GEO003"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "bed_side_clearances",
+        "units": "mm",
+        "room_inner_width": 3400,
+        "mattress_width": 1800,
+        "frame_outer_width": 2000,
+        "bed_centered": true,
+        "side_clearance_soft_target": 800
+      },
+      "expected_status": "mixed",
+      "expected_behavior": "Использовать наружную ширину 2000 мм; получить по 700 мм с каждой стороны. Отметить мягкий дефицит 100 мм на каждой стороне. Запретить ложный расчет по матрасу, дающий по 800 мм.",
+      "reason": "(3400 − 2000) / 2 = 700; размер матраса не определяет коллизии каркаса."
+    },
+    {
+      "id": "ACCEPT-007",
+      "title": "Доказанная невозможность: кровать и обязательные боковые зоны",
+      "related_rule_ids": [
+        "BED001",
+        "BED003",
+        "OPT013"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "fixed_bed_and_two_required_access_strips",
+        "units": "mm",
+        "room_inner_width": 3000,
+        "bed_outer_width": 2000,
+        "left_access_required": 600,
+        "right_access_required": 600,
+        "clearances_are_explicit_brief_constraints": true,
+        "bed_orientation_locked": true,
+        "all_three_strips_parallel_and_nonoverlapping": true,
+        "no_replacement_or_resize": true,
+        "proof_scope": "выбранная кровать в зафиксированной ориентации с двумя явно обязательными боковыми полосами"
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Вернуть proven_infeasible для подзадачи: требуется 3200 мм при наличии 3000 мм, дефицит 200 мм. Не уменьшать кровать или обязательные полосы молча.",
+      "reason": "2000 + 600 + 600 = 3200 > 3000. Значение 600 здесь обязательно потому, что задано пользователем, а не потому, что любая рекомендация стала законом."
+    },
+    {
+      "id": "ACCEPT-008",
+      "title": "Пересечение двух твердых прямоугольных объемов",
+      "related_rule_ids": [
+        "GEO004",
+        "GEO005"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "solid_collision",
+        "units": "mm",
+        "a_box": {
+          "x": [
+            0,
+            1000
+          ],
+          "y": [
+            0,
+            500
+          ],
+          "z": [
+            0,
+            800
+          ]
+        },
+        "b_box": {
+          "x": [
+            900,
+            1500
+          ],
+          "y": [
+            400,
+            900
+          ],
+          "z": [
+            0,
+            800
+          ]
+        },
+        "allowed_contact_tolerance": 0
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Обнаружить пересечение 100×100×800 мм и отклонить именно это положение двух предметов; не заключать, что комната вообще не меблируется.",
+      "reason": "Интервалы пересекаются по всем трем осям; это коллизия тел, а не предпочтение."
+    },
+    {
+      "id": "ACCEPT-009",
+      "title": "Перекрытие в плане без коллизии по высоте",
+      "related_rule_ids": [
+        "GEO004",
+        "GEO005",
+        "CHVOL001"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "solid_collision",
+        "units": "mm",
+        "seat_box": {
+          "x": [
+            200,
+            600
+          ],
+          "y": [
+            200,
+            600
+          ],
+          "z": [
+            400,
+            450
+          ]
+        },
+        "tabletop_box": {
+          "x": [
+            0,
+            1000
+          ],
+          "y": [
+            0,
+            1000
+          ],
+          "z": [
+            750,
+            800
+          ]
+        },
+        "other_support_geometries_verified_disjoint": true
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Не считать совпадение XY столкновением: интервалы Z разнесены на 300 мм. Результат касается только заданных твердых тел; пригодность для коленей и сидения проверяется отдельно.",
+      "reason": "450 < 750; AABB в плане недостаточен для окончательного решения."
+    },
+    {
+      "id": "ACCEPT-010",
+      "title": "Подлокотник не проходит под царгой",
+      "related_rule_ids": [
+        "DIN007",
+        "GEO004",
+        "GEO005"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "required_chair_tuck_in_state",
+        "units": "mm",
+        "armrest_top_z": 700,
+        "apron_bottom_z": 680,
+        "armrest_bottom_z": 650,
+        "apron_top_z": 740,
+        "horizontal_overlap_in_required_tuck_state": true,
+        "tuck_in_required_by_brief": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить задвинутое состояние: по высоте есть пересечение на 20 мм. Не использовать высоту верха столешницы вместо нижней границы царги.",
+      "reason": "Подлокотник занимает Z=[650,700], царга Z=[680,740]; пересечение [680,700]."
+    },
+    {
+      "id": "ACCEPT-011",
+      "title": "Открытый ящик оставляет недостаточно места оператору",
+      "related_rule_ids": [
+        "GEO011",
+        "STORE004",
+        "KIT006"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "operator_fit_in_fixed_open_state",
+        "units": "mm",
+        "front_to_opposite_wall": 900,
+        "drawer_extension": 600,
+        "operator_required_depth_after_drawer_front": 500,
+        "operator_must_stand_in_front": true,
+        "drawer_cannot_be_partially_used_in_this_task": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "В заданном открытом состоянии остается 300 мм вместо необходимых 500 мм. Показать дефицит 200 мм; не считать весь дом или все альтернативные модули невозможными.",
+      "reason": "900 − 600 = 300 < 500; проверка закрытого фасада пропустила бы конфликт."
+    },
+    {
+      "id": "ACCEPT-012",
+      "title": "Достижимое закрытие техники восстанавливает путь",
+      "related_rule_ids": [
+        "GEO016",
+        "KIT006",
+        "PATH021"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "time_expanded_operational_exit",
+        "units": "mm",
+        "aisle_width_closed": 1000,
+        "door_projection_open": 600,
+        "agent_disk_diameter": 600,
+        "agent_can_reach_handle_without_collision": true,
+        "safe_closing_motion_verified": true,
+        "active_profile_allows_closure_before_operational_exit": true,
+        "route_is_not_a_required_clear_egress_strip": true,
+        "no_other_obstacles": true
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Зафиксировать непроходимый открытый зазор 400 мм и допустимую последовательность закрыть → пройти по 1000 мм. Не объявлять статическое открытое состояние проходным; не переносить разрешение на эвакуационные зоны.",
+      "reason": "Временная проходимость может отличаться от статической; пользователь реально может безопасно закрыть прибор."
+    },
+    {
+      "id": "ACCEPT-013",
+      "title": "Погрешность: надежное прохождение порога",
+      "related_rule_ids": [
+        "GEO017",
+        "QA011"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "robust_clearance",
+        "units": "mm",
+        "measured_gap_g": 920,
+        "combined_error_bound_e": 10,
+        "required_threshold": 900,
+        "threshold_is_explicit_project_constraint": true
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Получить интервал [910,930] мм; нижняя граница 910 мм не меньше 900 мм. Сохранить запас 10 мм по худшему случаю.",
+      "reason": "g − e = 910 ≥ 900."
+    },
+    {
+      "id": "ACCEPT-014",
+      "title": "Погрешность: доказанное непрохождение порога",
+      "related_rule_ids": [
+        "GEO017",
+        "QA011"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "robust_clearance",
+        "units": "mm",
+        "measured_gap_g": 880,
+        "combined_error_bound_e": 10,
+        "required_threshold": 900,
+        "threshold_is_explicit_project_constraint": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Получить интервал [870,890] мм; даже верхняя граница ниже порога. Отклонить конкретное положение по этой метрике.",
+      "reason": "g + e = 890 < 900; это не доказательство невозможности всех других расстановок."
+    },
+    {
+      "id": "ACCEPT-015",
+      "title": "Погрешность: измерение пересекает порог",
+      "related_rule_ids": [
+        "GEO017",
+        "QA011",
+        "OPT002"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "robust_clearance",
+        "units": "mm",
+        "measured_gap_g": 905,
+        "combined_error_bound_e": 10,
+        "required_threshold": 900,
+        "threshold_is_explicit_project_constraint": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Получить интервал [895,915] мм. Запросить точный обмер либо увеличить запас; не округлять 905 мм до уверенного pass.",
+      "reason": "Нижняя граница меньше порога, верхняя больше; данных недостаточно для однозначного исхода."
+    },
+    {
+      "id": "ACCEPT-016",
+      "title": "Доказанная невозможность: четыре заданных места на одном краю",
+      "related_rule_ids": [
+        "DIN002",
+        "DIN011",
+        "OPT013"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "fixed_edge_seat_assignment",
+        "units": "mm",
+        "available_straight_edge_length": 2400,
+        "required_seat_count_on_this_edge": 4,
+        "explicit_brief_frontage_per_seat": 700,
+        "overlap_between_intervals_allowed": false,
+        "end_seats_or_other_edges_allowed": false,
+        "table_resize_allowed": false,
+        "proof_scope": "четыре заданных непересекающихся посадочных интервала только на этом краю"
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Вернуть proven_infeasible для назначения мест: требуется 2800 мм, дефицит 400 мм. Предложение другого края или меньшей ширины требует изменения исходных условий.",
+      "reason": "4 × 700 = 2800 > 2400. Порог 700 мм взят из явного задания этой проверки."
+    },
+    {
+      "id": "ACCEPT-017",
+      "title": "Доказанная невозможность: два корпуса в фиксированной нише",
+      "related_rule_ids": [
+        "GEO003",
+        "GEO004",
+        "GEO023",
+        "OPT013"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "two_cabinets_in_locked_single_row",
+        "units": "mm",
+        "niche_clear_width": 1900,
+        "cabinet_outer_widths": [
+          1000,
+          1000
+        ],
+        "single_row_required": true,
+        "overlap_allowed": false,
+        "rotation_resize_replacement_allowed": false,
+        "proof_scope": "два этих корпуса в одном фиксированном ряду"
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Вернуть proven_infeasible для ряда: суммарная ширина 2000 мм превосходит нишу на 100 мм; произвольное масштабирование SKU запрещено.",
+      "reason": "1000 + 1000 = 2000 > 1900 при зафиксированных ориентации и топологии."
+    },
+    {
+      "id": "ACCEPT-018",
+      "title": "Доказанная невозможность: жесткий вертикальный шкаф выше комнаты",
+      "related_rule_ids": [
+        "GEO018",
+        "GEO020",
+        "GEO023",
+        "OPT013"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "final_upright_height_fit",
+        "units": "mm",
+        "finished_floor_z": 0,
+        "ceiling_z": 2400,
+        "rigid_cabinet_outer_height": 2500,
+        "upright_orientation_required": true,
+        "floor_and_ceiling_locked": true,
+        "resize_or_recess_allowed": false,
+        "proof_scope": "конечное вертикальное положение этого шкафа в этом объеме"
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Вернуть proven_infeasible для конечной установки: дефицит высоты 100 мм. Не путать эту проверку с дополнительным зазором для сборки.",
+      "reason": "2500 > 2400; никакая траектория заноса не исправит несовместимость конечной высоты."
+    },
+    {
+      "id": "ACCEPT-019",
+      "title": "L-образный путь: кратчайший отрезок проходит через стену",
+      "related_rule_ids": [
+        "PATH001",
+        "PATH002",
+        "GEO021"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "candidate_path_validity",
+        "units": "mm",
+        "walkable_union_rectangles": [
+          [
+            0,
+            0,
+            3000,
+            1000
+          ],
+          [
+            2000,
+            0,
+            3000,
+            3000
+          ]
+        ],
+        "agent_disk_diameter": 800,
+        "start": [
+          500,
+          500
+        ],
+        "goal": [
+          2500,
+          2500
+        ],
+        "invalid_shortcut": [
+          [
+            500,
+            500
+          ],
+          [
+            2500,
+            2500
+          ]
+        ],
+        "valid_polyline": [
+          [
+            500,
+            500
+          ],
+          [
+            2500,
+            500
+          ],
+          [
+            2500,
+            2500
+          ]
+        ],
+        "additional_obstacles": []
+      },
+      "expected_status": "mixed",
+      "expected_behavior": "Отклонить прямой shortcut: его середина [1500,1500] находится вне доступного пола. Принять указанную ломаную с проверенным swept-диском радиуса 400 мм. Не объявлять маршрут невозможным после проверки одного отрезка.",
+      "reason": "На допустимой ломаной расстояние до ограничивающих стен не меньше 500 мм; диагональ срезает недоступный внутренний угол."
+    },
+    {
+      "id": "ACCEPT-020",
+      "title": "Матрас нарушает паспорт верхнего яруса",
+      "related_rule_ids": [
+        "SAFE012",
+        "CHILD013",
+        "CHILD014"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "numeric_minimal",
+        "evaluated_metric": "bunk_mattress_model_compatibility",
+        "units": "mm",
+        "bunk_model_manual_verified": true,
+        "manufacturer_max_mattress_thickness": 160,
+        "selected_mattress_thickness": 220,
+        "guardrail_configuration_unchanged": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить выбранный матрас для этой модели: превышение допустимой толщины 60 мм. Не считать подходящую длину и ширину доказательством совместимости.",
+      "reason": "220 > 160; предел указан в условном паспорте тестового изделия, а не выдан за универсальное правило всех кроватей."
+    },
+    {
+      "id": "ACCEPT-021",
+      "title": "Неизвестный север",
+      "related_rule_ids": [
+        "IN018",
+        "LGT004",
+        "LGT022"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "solar_glare_at_task",
+        "north": null,
+        "location_known": true,
+        "window_geometry_known": true,
+        "plan_top_is_assumed_north": false
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Вернуть solar_glare=unknown и список недостающих данных. Разрешить только качественное предварительное сравнение; не назначать юг по верхней стороне картинки.",
+      "reason": "Без ориентации нельзя подтвердить солнечные часы и попадание прямого света."
+    },
+    {
+      "id": "ACCEPT-022",
+      "title": "ADA отключен для частного дома",
+      "related_rule_ids": [
+        "ACC001",
+        "ACC002",
+        "IN020"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "ada_route_width",
+        "project_country": "KG",
+        "building_use": "private_house",
+        "accessibility_ada_reference": {
+          "enabled": false
+        },
+        "local_regulatory_profile": "pending_external_validation",
+        "geometry_checks_enabled": true
+      },
+      "expected_status": "not_applicable",
+      "expected_behavior": "Не применять численные требования ADA к этой метрике. Продолжить физические и пользовательские проверки; местное нормативное соответствие оставить неподтвержденным.",
+      "reason": "Отключение иностранного профиля не означает, что любое пространство безопасно или соответствует местным требованиям."
+    },
+    {
+      "id": "ACCEPT-023",
+      "title": "Исключение ADA не переносится на длинный проход",
+      "related_rule_ids": [
+        "ACC002",
+        "ACC004",
+        "IN020"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "ada_continuous_width_exception",
+        "accessibility_ada_reference": {
+          "enabled": true,
+          "scope_verified": true
+        },
+        "route_width_relation": "below_ACC002_minimum",
+        "all_ACC004_short_narrowing_conditions_met": false,
+        "no_other_applicable_exception_verified": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить применение исключения к указанной метрике. Не делать из короткого допустимого сужения универсальную ширину длинного прохода.",
+      "reason": "Исключение действует только при выполнении всех своих условий в явно выбранном профиле."
+    },
+    {
+      "id": "ACCEPT-024",
+      "title": "Применимость нормативного профиля неизвестна",
+      "related_rule_ids": [
+        "IN020",
+        "ACC001",
+        "OPT002"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "local_regulatory_applicability",
+        "project_country": "KG",
+        "regulatory_text_verified": false,
+        "document_title_known": true,
+        "edition_date_known": true,
+        "building_scope_verified": false
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Вернуть pending_external_validation. Не активировать нормы по одному названию документа и не подменять их ADA/IRC.",
+      "reason": "Заголовок, дата редакции и ссылка не подтверждают содержание или область действия нормы."
+    },
+    {
+      "id": "ACCEPT-025",
+      "title": "Каменка без паспорта",
+      "related_rule_ids": [
+        "SPA002",
+        "SPA003",
+        "OPT002"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "sauna_heater_thermal_keepout",
+        "heater_present": true,
+        "model_id": null,
+        "installation_manual": null,
+        "proposed_bench_geometry_known": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Вернуть reason=needs_model_data и readiness=preliminary_only. Не считать отсутствие модели основанием для not_applicable или выбора универсального зазора.",
+      "reason": "Безопасные расстояния каменки зависят от конкретного изделия и материалов."
+    },
+    {
+      "id": "ACCEPT-026",
+      "title": "Мебель превращает барьер бассейна в лестницу",
+      "related_rule_ids": [
+        "SPA008",
+        "SPA009",
+        "SAFE005"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "verified_pool_barrier_no_climb_zone",
+        "children_present": true,
+        "pool_barrier_design_verified": true,
+        "active_barrier_profile_has_no_climb_zone": true,
+        "chair_is_climbable": true,
+        "chair_intersects_verified_no_climb_zone": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить это место стула и объяснить нарушение конкретной подтвержденной зоны. Не вычислять высоту допустимого барьера по неподтвержденному иностранному порогу.",
+      "reason": "В тесте запретная зона дана проверенным проектом; расстановка ухудшает установленную защиту."
+    },
+    {
+      "id": "ACCEPT-027",
+      "title": "Второй свет не является полом",
+      "related_rule_ids": [
+        "GEO006",
+        "GEO007",
+        "CHVOL008"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "furniture_support_on_assigned_floor",
+        "object_type": "floor_standing_armchair",
+        "floor_id": "upper_floor",
+        "object_support_polygon_inside_void": true,
+        "lower_floor_visible_below": true,
+        "bridge_or_slab_present": false
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить опору кресла на пустоту. Видимый снизу пол другого этажа не должен создавать support_surface верхнего этажа.",
+      "reason": "Совпадение координат XY не означает совпадение высоты и наличия перекрытия."
+    },
+    {
+      "id": "ACCEPT-028",
+      "title": "Общий участок перед шкафами используется по очереди",
+      "related_rule_ids": [
+        "GEO014",
+        "GEO015",
+        "KIT011",
+        "PATH021"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "sequential_use_zone_overlap",
+        "two_cabinet_operator_zones_overlap": true,
+        "same_person_uses_one_cabinet_at_a_time": true,
+        "door_sweeps_do_not_hit_fixed_objects": true,
+        "required_exit_remains_available": true,
+        "profile_prohibits_overlap": false
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Разрешить временное совместное использование участка. Не превращать все рабочие зоны в постоянные твердые препятствия.",
+      "reason": "Геометрическая область может обслуживать разные действия в разное время."
+    },
+    {
+      "id": "ACCEPT-029",
+      "title": "Зоны досягаемости пересекаются при совместимых действиях",
+      "related_rule_ids": [
+        "GEO014",
+        "GEO015",
+        "KIT011"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "simultaneous_reach_zone_overlap",
+        "abstract_reach_zones_overlap": true,
+        "actual_body_and_hand_trajectories_verified_disjoint": true,
+        "both_actors_have_required_resources": true,
+        "normative_reserved_zones_violated": false
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Разрешить совместный сценарий по проверенной кинематике. Само пересечение абстрактных зон reach не объявлять столкновением людей.",
+      "reason": "Достижимый объем — множество возможных поз, а не объем одновременно занятого тела."
+    },
+    {
+      "id": "ACCEPT-030",
+      "title": "Матрас подходит по длине, но паспорт кровати неизвестен",
+      "related_rule_ids": [
+        "SAFE012",
+        "CHILD014",
+        "OPT002"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "bunk_model_and_mattress_compatibility",
+        "bunk_present": true,
+        "mattress_plan_dimensions_match": true,
+        "mattress_thickness_known": true,
+        "manufacturer_mattress_limits": null,
+        "guardrail_configuration_verified": false
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Сохранить геометрическое совпадение длины/ширины как отдельную известную метрику; совместимость матраса и ограждения вернуть unknown.",
+      "reason": "Совпадение в плане не подтверждает допустимую толщину матраса и высоту защиты."
+    },
+    {
+      "id": "ACCEPT-031",
+      "title": "Возраст пользователя детской неизвестен",
+      "related_rule_ids": [
+        "CHILD001",
+        "CHILD012",
+        "IN010"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "upper_bunk_user_eligibility",
+        "upper_bunk_proposed": true,
+        "child_age": null,
+        "manufacturer_age_limit_known": true,
+        "user_identity_or_country_known": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Не назначать подтвержденное верхнее спальное место. Запросить возраст/профиль; не выводить его из фотографии интерьера, имени или страны.",
+      "reason": "Применимость возрастного ограничения не определяется без возраста пользователя."
+    },
+    {
+      "id": "ACCEPT-032",
+      "title": "Поиск исчерпал время без найденного решения",
+      "related_rule_ids": [
+        "OPT007",
+        "OPT013",
+        "QA012"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "solver_conclusion_validity",
+        "search_budget_exhausted": true,
+        "feasible_candidate_found": false,
+        "mathematical_infeasibility_certificate": null,
+        "complete_enumeration_done": false
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Вернуть solver_status=search_budget_exhausted. Запретить proven_infeasible, невозможность планировки и утверждение об отсутствии решения.",
+      "reason": "Ненайденное решение при ограниченном поиске не доказывает его отсутствия."
+    },
+    {
+      "id": "ACCEPT-033",
+      "title": "Рекомендация источника ошибочно превращена в закон",
+      "related_rule_ids": [
+        "OPT003",
+        "IN020",
+        "KIT004"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "evidence_classification",
+        "source_kind": "professional_guideline",
+        "source_field": "NKBA recommended work aisle",
+        "declared_output_basis": "mandatory_Kyrgyzstan_law",
+        "local_adoption_verified": false
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить классификацию и заменить ее на published_guideline. Порог использовать как рекомендацию либо явное требование брифа, без заявления о норме КР.",
+      "reason": "Источник поддерживает рекомендательный размер, но не автоматическую юридическую обязательность."
+    },
+    {
+      "id": "ACCEPT-034",
+      "title": "Линейная кухня не обязана иметь рабочий треугольник",
+      "related_rule_ids": [
+        "KIT001",
+        "KIT002",
+        "OPT014"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "mandatory_work_triangle",
+        "kitchen_topology": "single_wall",
+        "triangle_is_explicit_requirement": false,
+        "workflow_scenarios_verified": true,
+        "physical_and_appliance_checks_pass": true
+      },
+      "expected_status": "not_applicable",
+      "expected_behavior": "Не браковать план за отсутствие треугольника. Оценивать реальные станции и маршруты; число сторон геометрической фигуры не является обязательным критерием.",
+      "reason": "Рабочий треугольник — одна из эвристик, не универсальное условие хорошей кухни."
+    },
+    {
+      "id": "ACCEPT-035",
+      "title": "Нельзя улучшить рейтинг бессмысленным заполнением",
+      "related_rule_ids": [
+        "ZONE008",
+        "OPT009",
+        "OPT010"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "scoring_semantics",
+        "added_objects_have_no_requested_function": true,
+        "added_objects_reduce_route_quality": true,
+        "claimed_quality_gain_reason": "furniture_coverage_ratio_increased",
+        "universal_coverage_target_has_no_source_or_brief": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Не начислять выигрыш только за рост процента занятого пола. Пересчитать полезность по функциям, проходам и подтвержденным композиционным предпочтениям.",
+      "reason": "Универсальный процент заполненности не заменяет сценарии дома и может награждать ухудшение."
+    },
+    {
+      "id": "ACCEPT-036",
+      "title": "Боком к окну не означает отсутствие бликов",
+      "related_rule_ids": [
+        "LGT005",
+        "LGT004",
+        "OPT002"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "screen_glare_verified",
+        "screen_plane_perpendicular_to_window": true,
+        "eye_pose_known": true,
+        "sun_orientation_unknown": true,
+        "screen_reflection_model_missing": true,
+        "shading_state_unknown": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Отметить выполнение начальной геометрической эвристики отдельно, но glare_verified не устанавливать. Нужны данные отражения, света и используемых состояний.",
+      "reason": "Одна ориентация экрана не является светотехническим расчетом."
+    },
+    {
+      "id": "ACCEPT-037",
+      "title": "Красивый рендер не подтверждает люксы",
+      "related_rule_ids": [
+        "LGT017",
+        "LGT024",
+        "QA006"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "task_illuminance_verified",
+        "render_looks_bright": true,
+        "lamp_cct_known": true,
+        "luminous_flux_unknown": true,
+        "photometric_distribution_unknown": true,
+        "surface_reflectance_unknown": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Вернуть lighting_verified=false с reason=insufficient_photometry. Не выводить численные люксы, sDA или циркадный эффект из яркости изображения и CCT.",
+      "reason": "Рендерная экспозиция и цветовая температура не задают освещенность рабочей поверхности."
+    },
+    {
+      "id": "ACCEPT-038",
+      "title": "Ковер не подтверждает звукоизоляцию спальни",
+      "related_rule_ids": [
+        "ACOU004",
+        "ACOU005",
+        "ACOU006"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "sound_isolation_verified",
+        "carpet_added": true,
+        "wall_construction_unknown": true,
+        "junctions_unknown": true,
+        "source_noise_spectrum_unknown": true,
+        "claimed_stc_or_rw_from_decor_only": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Отказаться от численной сертификации шумоизоляции. Можно показать качественную гипотезу об отражениях, отделенную от передачи звука между комнатами.",
+      "reason": "Поглощение и звукоизоляция — разные характеристики; их нельзя подменять одним интерьерным приемом."
+    },
+    {
+      "id": "ACCEPT-039",
+      "title": "Окно без подтверждения не является вторым выходом",
+      "related_rule_ids": [
+        "SAFE007",
+        "IN005",
+        "PATH001"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "window_egress_eligibility",
+        "window_exists": true,
+        "clear_opening_known": false,
+        "opening_mode_known": false,
+        "external_escape_continuation_known": false,
+        "solver_uses_window_as_only_backup_exit": true
+      },
+      "expected_status": "unknown",
+      "expected_behavior": "Не добавлять подтвержденное эвакуационное ребро через окно. Отдельно отметить неустановленный внешний путь и продолжить проверку реальных дверей.",
+      "reason": "Наличие окна на плане не доказывает его пригодность для выхода."
+    },
+    {
+      "id": "ACCEPT-040",
+      "title": "Расстановка блокирует закрывание штор",
+      "related_rule_ids": [
+        "LGT023",
+        "BED014",
+        "GEO014"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "curtain_closed_state_collision",
+        "curtain_open_state_clear": true,
+        "curtain_closed_swept_volume_intersects_bed_frame": true,
+        "curtain_closing_is_required": true,
+        "validated_curtain_and_bed_geometry": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить это положение кровати для обязательного закрытого состояния штор, даже если дневной план свободен.",
+      "reason": "Сценарии штор имеют разные объемы; успешное открытое состояние не покрывает ночное."
+    },
+    {
+      "id": "ACCEPT-041",
+      "title": "Приватность и свет требуют объясненного компромисса",
+      "related_rule_ids": [
+        "PRIV003",
+        "LGT003",
+        "OPT001",
+        "QA005"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "soft_preference_tradeoff",
+        "privacy_soft_target_met": true,
+        "daylight_soft_target_met": false,
+        "geometry_constraints_pass": true,
+        "no_active_legal_light_requirement_evaluated_here": true,
+        "user_selected_priority": "privacy"
+      },
+      "expected_status": "mixed",
+      "expected_behavior": "Показать достигнутую приватность и недостигнутую световую цель с причиной выбора. Не объявлять вариант незаконным из-за одной мягкой цели и не скрывать потерю света.",
+      "reason": "Мягкие цели могут конфликтовать; смешанный результат должен оставаться видимым."
+    },
+    {
+      "id": "ACCEPT-042",
+      "title": "Стол сдвинут, но расчет подвеса остался старым",
+      "related_rule_ids": [
+        "LGT011",
+        "DIN014",
+        "OPT017",
+        "QA007"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "validation_cache_freshness",
+        "table_pose_revision": "new",
+        "lighting_check_table_pose_revision": "old",
+        "pendant_serves_table": true,
+        "dependency_tracking_enabled": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Пометить старое подтверждение устаревшим и пересчитать свет, высоту и проход. До перерасчета соответствующие показатели неизвестны; не выдавать старый pass для нового состояния.",
+      "reason": "Зависимая проверка действительна только для версии геометрии, на которой она выполнена."
+    },
+    {
+      "id": "ACCEPT-043",
+      "title": "Штатная съемная сервисная панель допускается",
+      "related_rule_ids": [
+        "SERV006",
+        "LAUN006",
+        "PATH016",
+        "SCN020"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "service_access_sequence",
+        "panel_is_designed_removable": true,
+        "manufacturer_service_sequence_verified": true,
+        "removal_tool_and_operator_volume_clear": true,
+        "removed_panel_has_safe_temporary_location": true,
+        "destructive_demolition_required": false
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Разрешить последовательность снять штатную панель → обслужить → вернуть панель. Не считать предусмотренное обслуживание запрещенным разрушением интерьера.",
+      "reason": "Сервисное состояние может отличаться от обычного, если процедура подтверждена."
+    },
+    {
+      "id": "ACCEPT-044",
+      "title": "Разгрузка багажника предусмотрена снаружи",
+      "related_rule_ids": [
+        "GAR003",
+        "SCN015"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "inside_garage_tailgate_unloading",
+        "brief_requires_inside_unloading": false,
+        "confirmed_unloading_location": "driveway",
+        "outdoor_tailgate_and_carry_route_verified": true,
+        "inside_garage_parked_state_does_not_require_open_tailgate": true
+      },
+      "expected_status": "not_applicable",
+      "expected_behavior": "Не требовать полного внутреннего сценария разгрузки багажника. Проверить отдельно парковку, высадку и подтвержденный наружный сценарий.",
+      "reason": "Неиспользуемое одновременное состояние не должно становиться универсальным запретом планировки гаража."
+    },
+    {
+      "id": "ACCEPT-045",
+      "title": "Сушилка занимает зону машин только в отдельное время",
+      "related_rule_ids": [
+        "LAUN008",
+        "GEO015",
+        "PATH021"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "laundry_temporal_overlap",
+        "drying_rack_deployed_blocks_machine_operator_zone": true,
+        "drying_and_machine_loading_are_explicitly_nonconcurrent": true,
+        "safe_rack_fold_and_storage_sequence_verified": true,
+        "required_exit_remains_clear": true,
+        "simultaneous_loading_not_required_by_brief": true
+      },
+      "expected_status": "pass",
+      "expected_behavior": "Разрешить заданную последовательность: загрузка → складывание/выдвижение по сценарию → сушка. Учесть стоимость трансформации; не требовать одновременно свободную зону машины без такого задания.",
+      "reason": "Нужна проверка реальных одновременных действий, а не невозможного максимального раскрытия всего оборудования."
+    },
+    {
+      "id": "ACCEPT-046",
+      "title": "Пустая комната получает высокий балл проходов",
+      "related_rule_ids": [
+        "OPT009",
+        "OPT010",
+        "ZONE001"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "mandatory_function_coverage",
+        "required_functions": [
+          "sleeping",
+          "clothes_storage"
+        ],
+        "placed_objects": [],
+        "route_score_is_high": true,
+        "required_functions_may_be_dropped": false
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить вариант по отсутствию обязательных функций. Не повышать общий рейтинг удалением всей мебели.",
+      "reason": "Свободный пол не является выполненной задачей меблировки спальни."
+    },
+    {
+      "id": "ACCEPT-047",
+      "title": "Второму спящему доступна только дорога через постель",
+      "related_rule_ids": [
+        "BED003",
+        "SCN002",
+        "PATH001"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "independent_bed_access",
+        "two_sleepers": true,
+        "independent_access_required_by_brief": true,
+        "first_sleeper_has_valid_path": true,
+        "second_sleeper_only_path_crosses_occupied_mattress": true,
+        "alternative_path_verified_absent_in_this_layout": true
+      },
+      "expected_status": "fail",
+      "expected_behavior": "Отклонить конкретное положение кровати по согласованному независимому доступу. Обычный обход вокруг кровати был бы допустим, но в данном состоянии его нет.",
+      "reason": "Путь через занятую постель не выполняет заявленный сценарий самостоятельного выхода."
+    },
+    {
+      "id": "ACCEPT-048",
+      "title": "Геометрия кухни проверена, газ и вентиляция неизвестны",
+      "related_rule_ids": [
+        "KIT018",
+        "KIT019",
+        "KIT031",
+        "SERV008",
+        "QA014"
+      ],
+      "given": {
+        "status_scope": "Статус указанной проверяемой метрики или группы метрик; не итог законности или безопасности всего дома.",
+        "fixture_type": "scenario",
+        "evaluated_metric": "installation_readiness_components",
+        "furniture_collision_checks_pass": true,
+        "fixed_connection_regions_respected": true,
+        "gas_installation_project_missing": true,
+        "hood_and_combustion_interaction_unverified": true,
+        "local_regulatory_profile_pending": true
+      },
+      "expected_status": "mixed",
+      "expected_behavior": "Сохранить geometry_verified=true для вычисленных геометрических условий; gas_and_ventilation=unknown и construction_approved=false. Итоговую монтажную готовность не подтверждать.",
+      "reason": "Прохождение геометрии не закрывает независимые инженерные и нормативные неопределенности."
+    }
+  ]
+}
