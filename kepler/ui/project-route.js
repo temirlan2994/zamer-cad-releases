@@ -173,6 +173,9 @@ let workflowReviewMode = null;
 let workflowReviewDirty = false;
 let workflowReviewTimer = null;
 let routeHoverTimer = null;
+let routeMenuPinnedView = null;
+let routeMenuOpener = null;
+let routeFocusPreviewSuppressed = false;
 let panelDrag = null;
 
 const HOME_VIEW_ITEMS = Object.freeze({
@@ -420,6 +423,7 @@ function invalidateWorkflowReview({ clear = false } = {}) {
 }
 
 function resetWorkflowForReplacement() {
+  closeRouteMenu();
   byId('projectRouteSteps')?.replaceChildren();
   workflowIdentity = null;
   workflowProjectRef = null;
@@ -787,7 +791,9 @@ function renderStageBar(model) {
       button.dataset.routeView = view.id;
       button.id = `homeViewTab-${view.id}`;
       button.setAttribute('role', 'tab');
-      button.setAttribute('aria-controls', 'projectRoutePanel');
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-controls', 'projectRouteHover');
+      button.setAttribute('aria-expanded', 'false');
       button.innerHTML = `${stageIcon(view)}<span>${escapeHtml(view.label)}</span><i class="route-status" aria-hidden="true"></i>`;
       steps.append(button);
     }
@@ -796,6 +802,8 @@ function renderStageBar(model) {
     button.setAttribute('aria-selected', String(current));
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
     button.classList.toggle('active', current);
+    button.classList.toggle('menu-open', routeMenuPinnedView === view.id);
+    button.setAttribute('aria-expanded', String(routeMenuPinnedView === view.id));
     const previous = button.dataset.status;
     if (previous === view.status) continue;
     const label = `${view.step}. ${view.label} · ${HOME_REVIEW_STATUS_LABEL[view.status]}`;
@@ -832,21 +840,55 @@ function routeHoverRows(viewId) {
   }));
 }
 
-function hideRouteHover(delay = 0) {
+function setRouteMenuButtons(viewId = null) {
+  byId('projectRouteSteps')?.querySelectorAll('[data-route-view]').forEach((button) => {
+    const expanded = Boolean(viewId && button.dataset.routeView === viewId);
+    button.classList.toggle('menu-open', expanded);
+    button.setAttribute('aria-expanded', String(expanded));
+  });
+}
+
+function hideRouteHover(delay = 0, { force = false } = {}) {
   clearTimeout(routeHoverTimer);
+  if (routeMenuPinnedView && !force) return;
   const hover = byId('projectRouteHover');
-  const hide = () => { if (hover) hover.hidden = true; };
+  const hide = () => {
+    if (!hover || (routeMenuPinnedView && !force)) return;
+    hover.hidden = true;
+    hover.removeAttribute('data-pinned');
+    hover.removeAttribute('data-route-menu-view');
+  };
   if (delay) routeHoverTimer = setTimeout(hide, delay); else hide();
 }
 
-function showRouteHover(button) {
+function closeRouteMenu({ restoreFocus = false } = {}) {
+  const opener = routeMenuOpener;
+  routeMenuPinnedView = null;
+  routeMenuOpener = null;
+  setRouteMenuButtons();
+  hideRouteHover(0, { force: true });
+  if (restoreFocus && opener?.isConnected) {
+    routeFocusPreviewSuppressed = true;
+    opener.focus({ preventScroll: true });
+    routeFocusPreviewSuppressed = false;
+  }
+}
+
+function showRouteHover(button, { pin = false } = {}) {
   const hover = byId('projectRouteHover');
   const viewId = button?.dataset?.routeView;
   const view = HOME_NAV_DEFS.find((item) => item.id === viewId);
   if (!hover || !view) return;
+  if (panelOpen && !pin) return;
+  if (routeMenuPinnedView && !pin && routeMenuPinnedView !== viewId) return;
   clearTimeout(routeHoverTimer);
+  if (pin) {
+    routeMenuPinnedView = viewId;
+    routeMenuOpener = button;
+    setRouteMenuButtons(viewId);
+  }
   const rows = routeHoverRows(viewId);
-  hover.innerHTML = `<strong>${escapeHtml(view.label)}</strong><div>${rows.map((row) => {
+  hover.innerHTML = `<header><strong>${escapeHtml(view.label)}</strong><small>Выберите пункт</small></header><div>${rows.map((row) => {
     const mark = viewId === 'site' ? statusMark(row.status) : HOME_REVIEW_STATUS_MARK[row.status];
     const status = viewId === 'site' ? row.status : row.status;
     const attrs = viewId === 'site'
@@ -855,6 +897,9 @@ function showRouteHover(button) {
     return `<button type="button" role="menuitem" ${attrs} data-status="${status}"><i aria-hidden="true">${mark || '?'}</i><span>${escapeHtml(row.label)}</span></button>`;
   }).join('')}</div>`;
   hover.hidden = false;
+  hover.dataset.routeMenuView = viewId;
+  if (routeMenuPinnedView === viewId) hover.dataset.pinned = 'true';
+  else hover.removeAttribute('data-pinned');
   const rect = button.getBoundingClientRect();
   const box = hover.getBoundingClientRect();
   const left = Math.max(8, Math.min(innerWidth - box.width - 8, rect.left + rect.width / 2 - box.width / 2));
@@ -892,7 +937,7 @@ function toolActionLabel(taskId, site) {
   return '';
 }
 
-function renderTask(task, site) {
+function renderTask(task, site, { showTitle = true } = {}) {
   let action = '';
   if (task.definition.tool) action = `<button type="button" class="project-route-task-action" data-route-tool="${task.definition.tool}">${toolActionLabel(task.id, site)}</button>`;
   else if (task.id === 'constraints') action = '<button type="button" class="project-route-task-action" data-route-action="open-constraints">Настроить отступы</button>';
@@ -903,7 +948,7 @@ function renderTask(task, site) {
   return `<article class="project-route-task" data-route-task="${task.id}" data-status="${task.status}" data-route-status="${task.status}">
     <span class="project-route-task-mark" aria-hidden="true">${statusMark(task.status)}</span>
     <div class="project-route-task-main">
-      <div class="project-route-task-title"><h3>${escapeHtml(task.definition.title)}</h3><span>${statusLabel(task.status)}</span></div>
+      <div class="project-route-task-title">${showTitle ? `<h3>${escapeHtml(task.definition.title)}</h3>` : ''}<span>${statusLabel(task.status)}</span></div>
       <p>${escapeHtml(task.reason)}</p>
       ${confirmationControl(task.id, site)}
       ${action}
@@ -1033,10 +1078,8 @@ function renderStagePanel(stage) {
   const tasks = allTasks.filter((task) => task.id === activeTask);
   const visible = tasks.length ? tasks : allTasks.slice(0, 1);
   if (visible[0]) activeTask = visible[0].id;
-  const done = tasks.filter((task) => task.status === 'done').length;
   const task = visible[0];
-  return `<div class="project-route-stage-intro"><h3>${escapeHtml(task?.definition?.title || stage.title)}</h3><span>${done ? 'Готово' : statusLabel(task?.status)}</span></div>
-  <div class="project-route-task-list">${visible.map((item) => renderTask(item, site)).join('')}</div>
+  return `<div class="project-route-task-list">${visible.map((item) => renderTask(item, site, { showTitle: false })).join('')}</div>
   ${task?.id === 'zone' ? renderFootprint(site) : ''}
   <button type="button" class="route-passport-link" data-route-action="passport">Паспорт участка <span aria-hidden="true">↗</span></button>`;
 }
@@ -1189,6 +1232,7 @@ function announce(text) {
 }
 
 function openPanel(view, stageId, opener) {
+  closeRouteMenu();
   closeSheets();
   panelView = view;
   if (stageId) activeStage = stageId;
@@ -1208,7 +1252,7 @@ function openPanel(view, stageId, opener) {
 
 function openSiteTask(stageId, taskId, opener) {
   activeTask = taskId;
-  hideRouteHover();
+  closeRouteMenu();
   openPanel('stage', stageId, opener);
 }
 
@@ -1610,6 +1654,13 @@ function focusableInPanel() {
 }
 
 function handleDocumentKeydown(event) {
+  if (event.key === 'Escape' && routeMenuPinnedView) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeRouteMenu({ restoreFocus: true });
+    announce('Меню аналитики закрыто');
+    return;
+  }
   if (!panelOpen) return;
   if (event.key === 'Escape') {
     event.preventDefault();
@@ -1784,13 +1835,15 @@ export function bindProjectRoute() {
   steps.addEventListener('click', (event) => {
     const button = event.target.closest('[data-route-view]');
     if (!button) return;
-    if (button.dataset.routeView === 'site') {
-      const stageId = firstIncompleteStage(latestModel);
-      const stage = latestModel?.stages?.find((item) => item.id === stageId);
-      const task = stage?.tasks?.find((item) => item.status !== 'done') || stage?.tasks?.[0];
-      openSiteTask(stageId, task?.id || STAGES[0].tasks[0], button);
+    event.preventDefault();
+    if (routeMenuPinnedView === button.dataset.routeView) {
+      closeRouteMenu({ restoreFocus: true });
+      announce('Меню аналитики закрыто');
+      return;
     }
-    else openPanel(button.dataset.routeView, null, button);
+    if (panelOpen) closePanel({ restoreFocus: false });
+    showRouteHover(button, { pin: true });
+    announce(`Открыто меню «${HOME_NAV_DEFS.find((item) => item.id === button.dataset.routeView)?.label || 'Аналитика'}»`);
   });
   steps.addEventListener('pointerover', (event) => {
     const button = event.target.closest('[data-route-view]');
@@ -1801,7 +1854,7 @@ export function bindProjectRoute() {
   });
   steps.addEventListener('focusin', (event) => {
     const button = event.target.closest('[data-route-view]');
-    if (button) showRouteHover(button);
+    if (button && !routeFocusPreviewSuppressed) showRouteHover(button);
   });
   steps.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -1821,14 +1874,21 @@ export function bindProjectRoute() {
   hover?.addEventListener('click', (event) => {
     const task = event.target.closest('[data-route-task]');
     if (task) {
-      openSiteTask(task.dataset.routeTaskStage, task.dataset.routeTask, task);
+      const opener = routeMenuOpener || task;
+      openSiteTask(task.dataset.routeTaskStage, task.dataset.routeTask, opener);
       return;
     }
     const view = event.target.closest('[data-route-hover-view]');
     if (view) {
-      hideRouteHover();
-      openPanel(view.dataset.routeHoverView, null, view);
+      const opener = routeMenuOpener || view;
+      closeRouteMenu();
+      openPanel(view.dataset.routeHoverView, null, opener);
     }
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!routeMenuPinnedView) return;
+    if (event.target?.closest?.('#projectRouteHover, [data-route-view]')) return;
+    closeRouteMenu();
   });
   const panelHead = byId('projectRoutePanel')?.querySelector('.project-route-panel-head');
   panelHead?.addEventListener('pointerdown', beginPanelDrag);

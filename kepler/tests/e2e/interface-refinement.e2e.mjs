@@ -19,8 +19,15 @@ describe('компактная аналитика и управляемые вк
     assert.equal(await page.locator('#projectRouteSteps [data-route-view]').count(), 9);
     assert.equal(await page.locator('#projectRouteSteps [data-route-view] > span:visible').count(), 0);
 
-    await page.hover('[data-route-view="site"]');
+    await page.click('[data-route-view="site"]');
     const hover = page.locator('#projectRouteHover');
+    await hover.waitFor({ state: 'visible' });
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'первый клик открывает только меню');
+    assert.equal(await page.getAttribute('[data-route-view="site"]', 'aria-expanded'), 'true');
+    await page.keyboard.press('Escape');
+    await hover.waitFor({ state: 'hidden' });
+    assert.equal(await page.getAttribute('[data-route-view="site"]', 'aria-expanded'), 'false');
+    await page.click('[data-route-view="site"]');
     await hover.waitFor({ state: 'visible' });
     const labels = await hover.locator('[data-route-task] span').allTextContents();
     assert.ok(labels.some((label) => /Топосъёмка/.test(label)));
@@ -113,6 +120,10 @@ describe('компактная аналитика на телефоне', () => 
     const dock = await page.locator('#projectRoute .project-route-bar').boundingBox();
     assert.ok(dock.y > 844 * 0.7, JSON.stringify(dock));
     await page.tap('[data-route-view="site"]');
+    const menu = page.locator('#projectRouteHover');
+    await menu.waitFor({ state: 'visible' });
+    assert.equal(await page.isHidden('#projectRoutePanel'), true);
+    await menu.locator('[data-route-task]').first().tap();
     const panel = page.locator('#projectRoutePanel:not([hidden])');
     await panel.waitFor();
     const box = await panel.boundingBox();
