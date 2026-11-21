@@ -18,8 +18,8 @@ android {
         applicationId "com.zamercad.offline"
         minSdk 29
         targetSdk 35
-        versionCode 87
-        versionName "0.1.86"
+        versionCode 88
+        versionName "0.1.87"
         buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
     }
 
