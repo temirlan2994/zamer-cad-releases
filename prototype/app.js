@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, tapZoomMoveIntent } from "./core/interaction.js?v=226";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, nearestCompoundGuideIntersection, normalizeDirectionalSnapModes, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=227";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -336,7 +336,7 @@ function apkCreateProject(body = {}, owner) {
     syncPending: false,
     theme: source.theme === "dark" ? "dark" : "light",
     view: source.view || { scale: DEFAULT_VIEW_SCALE, panX: 92, panY: 84 },
-    snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
+    snaps: [...normalizeDirectionalSnapModes(Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"])],
     gridStep: GRID_STEPS.includes(source.gridStep) ? source.gridStep : 100,
     polarStep: POLAR_STEPS.includes(source.polarStep) ? source.polarStep : 5,
     numericStep: normalizeNumericStep(source.numericStep),
@@ -2943,7 +2943,7 @@ function restoreProject(project) {
       state.view.panX = Number.isFinite(project.view.panX) ? project.view.panX : state.view.panX;
       state.view.panY = Number.isFinite(project.view.panY) ? project.view.panY : state.view.panY;
     }
-    state.snaps = new Set(Array.isArray(project.snaps) ? project.snaps.filter(Boolean) : ["grid", "end", "polar"]);
+    state.snaps = normalizeDirectionalSnapModes(Array.isArray(project.snaps) ? project.snaps : ["grid", "end", "polar"]);
     state.snapsMuted = false;
     state.gridStep = GRID_STEPS.includes(project.gridStep) ? project.gridStep : 100;
     state.polarStep = POLAR_STEPS.includes(project.polarStep) ? project.polarStep : 5;
@@ -8424,6 +8424,69 @@ function trackingGuideIntersection(a, b) {
   };
 }
 
+function nearbyExtensionTrackingGuides(point, threshold) {
+  if (!snapEnabled("extension")) return [];
+  const excluded = state.selectedEndpoint?.entityId || state.selectedFigureGrip?.entityId || state.pointer?.grip?.entityId;
+  const guides = [];
+  for (const boundary of boundarySegments(excluded)) {
+    if (boundary?.type === "arc" || boundary?.type === "circle") continue;
+    const dx = boundary.x2 - boundary.x1;
+    const dy = boundary.y2 - boundary.y1;
+    const length = Math.hypot(dx, dy);
+    if (!(length > linePointEpsilon)) continue;
+    const extension = nearestLineExtension(point, [boundary], threshold);
+    if (!extension) continue;
+    guides.push({
+      point: { x: boundary.x1, y: boundary.y1 },
+      angle: Math.atan2(dy, dx),
+      ux: dx / length,
+      uy: dy / length,
+      boundary,
+      length,
+      isExtension: true,
+      distance: distanceWorld(point, extension),
+    });
+  }
+  guides.sort((a, b) => a.distance - b.distance);
+  return guides.slice(0, 12);
+}
+
+function nearestCompoundTrackingSnap(point, start) {
+  const threshold = objectSnapThreshold();
+  const polar = start && snapEnabled("polar") ? snapPolar(point, start) : null;
+  const polarGuide = polar?.snapped ? {
+    point: start,
+    angle: polar.angle,
+    ux: Math.cos(polar.angle),
+    uy: Math.sin(polar.angle),
+    isPolar: true,
+  } : null;
+  const trackingGuides = canSnapToTrackingGuides() ? snapTrackingGuides() : [];
+  const extensionGuides = nearbyExtensionTrackingGuides(point, threshold);
+  const pairs = [];
+  if (polarGuide) {
+    for (const guide of [...trackingGuides, ...extensionGuides]) pairs.push([polarGuide, guide]);
+  }
+  for (const tracking of trackingGuides) {
+    for (const extension of extensionGuides) pairs.push([tracking, extension]);
+  }
+
+  const crossing = nearestCompoundGuideIntersection(point, pairs, threshold);
+  if (!crossing) return null;
+  const snap = {
+    ...crossing,
+    type: "intersection",
+    label: "Пересечение отслеживания",
+    compoundTracking: true,
+    compoundPolar: crossing.guides.some(guide => guide.isPolar),
+  };
+  const visibleGuides = snap.guides.filter(guide => !guide.isPolar);
+  state.snapTracking.active = visibleGuides.length ? { trackingType: "intersection", guides: visibleGuides } : null;
+  const selectedPolar = snap.guides.find(guide => guide.isPolar);
+  if (selectedPolar) state.polarSnapGuide = { point: start, angle: selectedPolar.angle, degrees: polar.degrees };
+  return snap;
+}
+
 function drawSnapTracking(c) {
   const guides = activeTrackingGuides();
   if (!guides.length) return;
@@ -8504,8 +8567,8 @@ function drawCursorSnap(c) {
   const type = snap ? (Object.hasOwn(snapMarkerPaths, rawType) ? rawType : "end") : "";
   if (canvas.dataset.activeSnap !== type) canvas.dataset.activeSnap = type;
   if (!snap) return;
-  if (type === "tracking") drawSnapTracking(c);
-  if (type === "polar") drawPolarSnapGuide(c);
+  if (type === "tracking" || snap.compoundTracking) drawSnapTracking(c);
+  if (type === "polar" || snap.compoundPolar) drawPolarSnapGuide(c);
   if (isLineSnapContext() &&
       (type === "tracking" || type === "polar")) return;
   const point = worldToScreen(snap);
@@ -8559,42 +8622,47 @@ function isLineSnapContext() {
     state.tool === "text";
 }
 
-function nearestDraftLineSnap(point, start) {
+function nearbyDraftLineSnaps(point, start) {
   const perpendicular = start && snapEnabled("perpendicular");
   const intersection = snapEnabled("intersection");
-  if (!perpendicular && !intersection) return null;
+  if (!perpendicular && !intersection) return [];
   const threshold = objectSnapThreshold();
   const excluded = state.selectedEndpoint?.entityId || state.selectedFigureGrip?.entityId || state.pointer?.grip?.entityId;
   const boundaries = boundarySegments(excluded);
-  const crossing = intersection ? nearestIntersection(point, boundaries, threshold) : null;
-  const foot = perpendicular ? nearestPerpendicular(point, start, boundaries, threshold) : null;
-  if (!crossing || (foot && distanceWorld(foot, point) < distanceWorld(crossing, point))) return foot;
-  return crossing;
+  return [
+    ...(intersection ? nearbyIntersections(point, boundaries, threshold) : []),
+    ...(perpendicular ? nearbyPerpendiculars(point, start, boundaries, threshold) : []),
+  ];
 }
 
-function nearestObjectSnap(point, { includeNearestSegment = false, start = null } = {}) {
+function nearestObjectSnap(point, { includeNearestSegment = false, start = null, includeExtension = true } = {}) {
   if (state.snapsMuted) return null;
   const objectThreshold = objectSnapThreshold();
   const midpointThreshold = midpointSnapThreshold();
   const nearestThreshold = nearestSegmentSnapThreshold();
   const lineContext = isLineSnapContext();
   const excluded = lineContext ? state.selectedEndpoint?.entityId || state.selectedFigureGrip?.entityId || state.pointer?.grip?.entityId : null;
-  const explicit = nearestDraftLineSnap(point, start);
-  if (explicit) return explicit;
-  const candidates = snapCandidates({ includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"),
-    includeCenters: snapEnabled("center"), excludeId: excluded });
-  const candidate = nearestSnapCandidate(point, candidates.filter((item) => item.snapRole !== "mid" || distanceWorld(point, item) < midpointThreshold), objectThreshold);
+  const candidates = nearbyDraftLineSnaps(point, start);
+  candidates.push(...snapCandidates({ includeCorners: snapEnabled("end"), includeMidpoints: snapEnabled("mid"),
+    includeCenters: snapEnabled("center"), excludeId: excluded }));
+  const eligible = candidates.filter((item) => {
+    const threshold = item.snapRole === "mid" || item.snapRole === "center" ? midpointThreshold : objectThreshold;
+    return distanceWorld(point, item) < threshold;
+  });
+  const candidate = preferredSnapCandidate(point, eligible, state.view.scale);
   if (candidate) return candidate;
-  if (snapEnabled("extension")) {
+  const fallback = [];
+  if (includeExtension && snapEnabled("extension")) {
     const extension = extensionSnap(point, boundarySegments(excluded));
-    if (extension) return extension;
+    if (extension) fallback.push(extension);
   }
   if (includeNearestSegment && snapEnabled("nearest")) {
-    return lineContext
+    const nearest = lineContext
       ? nearestBoundaryPoint(point, boundarySegments(excluded), nearestThreshold)
       : nearestPointOnDrawableSegment(point, nearestThreshold, excluded);
+    if (nearest) fallback.push(nearest);
   }
-  return null;
+  return preferredSnapCandidate(point, fallback, state.view.scale);
 }
 
 function linePath(x1, y1, x2, y2) {
@@ -9269,10 +9337,10 @@ function resolveDimensionPointSnap(point, { start = state.drawing?.start } = {})
       if (distanceWorld(point, candidate) < midpointSnapThreshold()) candidates.push(candidate);
     }
   }
-  candidates.sort((first, second) => distanceWorld(point, first) - distanceWorld(point, second));
   const extension = useExtension ? extensionSnap(point, boundaries) : null;
   if (extension) candidates.push(extension);
   if (useNearest) candidates.push(...nearbyBoundaryPoints(point, boundaries, nearestSegmentSnapThreshold()));
+  candidates.sort((first, second) => snapCandidateScore(point, first, state.view.scale) - snapCandidateScore(point, second, state.view.scale));
   const distinct = [];
   for (const candidate of candidates) {
     if (!distinct.some(snap => distanceWorld(snap, candidate) <= linePointEpsilon)) distinct.push(candidate);
@@ -9293,7 +9361,7 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
 
   const ortho = useOrtho && isLineSnapContext() && snapEnabled("ortho");
   const grid = useGrid && snapEnabled("grid");
-  const objectSnap = nearestObjectSnap(point, { includeNearestSegment: !ortho, start });
+  const objectSnap = nearestObjectSnap(point, { includeNearestSegment: false, start, includeExtension: false });
   if (objectSnap) return { point: { x: objectSnap.x, y: objectSnap.y }, snap: objectSnap };
   if (ortho) {
     const constrained = constrainLinePoint(start, point);
@@ -9308,13 +9376,19 @@ function resolveLineLikeSnap(point, start, { useGrid = true, useOrtho = true } =
     }
     return snappedPoint(constrained, "ortho");
   }
+  const compound = nearestCompoundTrackingSnap(point, start);
+  if (compound) return { point: { x: compound.x, y: compound.y }, snap: compound };
+  let tracking = null;
   if (canSnapToTrackingGuides()) {
     const threshold = objectSnapThreshold();
-    const tracking = nearestSnapTrackingPoint(point, threshold, start) ?? nearestSnapTrackingPoint(point, threshold);
-    if (tracking) {
-      state.snapTracking.active = tracking;
-      return { point: { x: tracking.x, y: tracking.y }, snap: tracking };
-    }
+    tracking = nearestSnapTrackingPoint(point, threshold, start) ?? nearestSnapTrackingPoint(point, threshold);
+  }
+
+  const lineSnap = nearestObjectSnap(point, { includeNearestSegment: true, start, includeExtension: true });
+  const assisted = preferredSnapCandidate(point, [tracking, lineSnap].filter(Boolean), state.view.scale);
+  if (assisted) {
+    if (assisted === tracking) state.snapTracking.active = tracking;
+    return { point: { x: assisted.x, y: assisted.y }, snap: assisted };
   }
 
   return resolveGridAndPolarSnap(point, start, useGrid);
