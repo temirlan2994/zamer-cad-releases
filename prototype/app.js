@@ -30,7 +30,7 @@ import { createSurveyLaser } from "./core/survey-laser.js";
 import { buildZip } from "./core/zip.js";
 import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatProjectLength,
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
-import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
+import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
 import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./core/annotation-text.js";
 
@@ -14478,6 +14478,7 @@ themeButton.addEventListener("click", () => {
 const projectSettingsForm = projectSettingsSheet.querySelector("form");
 const projectLengthUnit = projectSettingsSheet.querySelector("#projectLengthUnit");
 const projectPrintScale = projectSettingsSheet.querySelector("#projectPrintScale");
+const projectTotalArea = projectSettingsSheet.querySelector("#projectTotalArea");
 const projectPrecisionFields = {
   precision: projectSettingsSheet.querySelector("#projectLengthPrecision"),
   anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
@@ -14486,6 +14487,18 @@ const projectPrecisionFields = {
 for (const [name, field] of Object.entries(projectPrecisionFields)) {
   const maximum = name === "anglePrecision" ? 3 : 4;
   for (let digits = 0; digits <= maximum; digits++) field.add(new Option(String(digits), String(digits)));
+}
+
+function projectSettingsDraft() {
+  return normalizeMeasurementSettings({
+    unit: projectLengthUnit.value,
+    printScale: projectPrintScale.value,
+    ...Object.fromEntries(Object.entries(projectPrecisionFields).map(([name, field]) => [name, field.value])),
+  });
+}
+
+function syncProjectTotalArea(settings = state.measurementSettings) {
+  projectTotalArea.textContent = formatProjectArea(totalPlanAreaM2(state.entities), settings);
 }
 
 projectSettingsButton.addEventListener("click", () => {
@@ -14497,16 +14510,14 @@ projectSettingsButton.addEventListener("click", () => {
   projectLengthUnit.value = settings.unit;
   projectPrintScale.value = settings.printScale;
   for (const [name, field] of Object.entries(projectPrecisionFields)) field.value = String(settings[name]);
+  syncProjectTotalArea(settings);
   projectSettingsSheet.showModal();
 });
 projectSettingsSheet.querySelector("#closeProjectSettings").addEventListener("click", () => projectSettingsSheet.close());
+projectSettingsForm.addEventListener("input", () => syncProjectTotalArea(projectSettingsDraft()));
 projectSettingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  state.measurementSettings = normalizeMeasurementSettings({
-    unit: projectLengthUnit.value,
-    printScale: projectPrintScale.value,
-    ...Object.fromEntries(Object.entries(projectPrecisionFields).map(([name, field]) => [name, field.value])),
-  });
+  state.measurementSettings = projectSettingsDraft();
   exportScale.value = state.measurementSettings.printScale;
   setAnnotationScale(annotationScaleSelect.value, { save: false });
   markProjectDirty("measurement-settings");

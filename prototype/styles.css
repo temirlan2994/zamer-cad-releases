@@ -1326,6 +1326,17 @@ button.project-card-open:active { background: var(--surface-2); }
 
 .quick-edit-modes .icon-button:disabled { opacity: .42; }
 .project-decimals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.project-area-summary {
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 12px;
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+}
+.project-area-summary > span { color: var(--muted); font-size: .8rem; font-weight: 650; }
+.project-area-summary > output { color: var(--text); font-size: 1.6rem; font-weight: 750; line-height: 1.15; }
+.project-area-summary > small { color: var(--muted); font-size: .75rem; }
 
 @media (max-width: 359px) {
   .project-top-actions { gap: 3px; }

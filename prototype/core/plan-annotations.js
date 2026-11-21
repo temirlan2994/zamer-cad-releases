@@ -153,6 +153,16 @@ export function planAnnotationGeometry(entity) {
   return geometryByPoints.get(source);
 }
 
+export function totalPlanAreaM2(entities) {
+  let total = 0;
+  for (const entity of entities || []) {
+    if (entity?.type !== "area") continue;
+    const geometry = planAnnotationGeometry(entity);
+    if (Number.isFinite(geometry?.areaM2)) total += geometry.areaM2;
+  }
+  return total;
+}
+
 function calculatePlanGeometry(source) {
   const ring = ringGeometry(source);
   if (!ring) return null;

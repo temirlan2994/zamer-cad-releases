@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { pointInPolygon } from "./geometry.js";
 import { createPlanAnnotation, formatPlanArea, formatPlanElevation, MAX_PLAN_ANNOTATION_POINTS,
   normalizePlanAnnotation, PLAN_ELEVATION_STYLES, planAnnotationAnchors, planAnnotationGeometry,
-  planAnnotationPointsFromEntity, tessellatePolyline } from "./plan-annotations.js";
+  planAnnotationPointsFromEntity, tessellatePolyline, totalPlanAreaM2 } from "./plan-annotations.js";
 
 function rectangle(minX, minY, maxX, maxY) {
   return [{ x: minX, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: minX, y: maxY }];
@@ -38,6 +38,16 @@ test("one annotation reports the sum of disconnected contours and picks an inter
     assert.equal(createPlanAnnotation("overlap", "area", first, { contours: [first, changed] }), null);
   }
   assert.equal(normalizePlanAnnotation({ ...annotation, points: second }), null);
+});
+
+test("project total sums every specified area and ignores elevations or invalid geometry", () => {
+  const room = createPlanAnnotation("room", "area", rectangle(0, 0, 2000, 3000));
+  const first = rectangle(3000, 0, 4000, 1000);
+  const second = rectangle(5000, 0, 7000, 2000);
+  const combined = createPlanAnnotation("combined", "area", first, { contours: [first, second] });
+  const elevation = createPlanAnnotation("height", "elevation", rectangle(0, 0, 9000, 9000), { height: 2800 });
+  assert.equal(totalPlanAreaM2([room, combined, elevation, { type: "area", points: [] }, null]), 11);
+  assert.equal(totalPlanAreaM2([]), 0);
 });
 
 test("concave contours keep the label strictly inside when the centroid falls in the notch", () => {
