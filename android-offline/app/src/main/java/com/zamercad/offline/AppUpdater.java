@@ -26,34 +26,57 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import javax.net.ssl.HttpsURLConnection;
 
 /** Native GitHub Releases updater; project storage is never uploaded or changed. */
 final class AppUpdater {
+    private static final long CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L;
     private final Activity activity;
     private final SharedPreferences preferences;
+    private final Consumer<String> onAvailabilityChanged;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean busy = new AtomicBoolean();
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private File pendingInstall;
     private boolean awaitingPermission;
     private volatile boolean closed;
+    private volatile Release availableUpdate;
 
-    AppUpdater(Activity activity) {
+    private record Release(long code, String version, String url, String sha256, String notes) {}
+
+    AppUpdater(Activity activity, Consumer<String> onAvailabilityChanged) {
         this.activity = activity;
+        this.onAvailabilityChanged = onAvailabilityChanged;
         preferences = activity.getSharedPreferences("updates", Activity.MODE_PRIVATE);
+        String cachedManifest = preferences.getString("availableUpdate", "");
+        if (!cachedManifest.isEmpty()) {
+            try { availableUpdate = parseAvailableUpdate(new JSONObject(cachedManifest), repository()); }
+            catch (Exception ignored) { preferences.edit().remove("availableUpdate").apply(); }
+        }
     }
 
     private String repository() { return preferences.getString("repository", BuildConfig.UPDATE_REPOSITORY); }
 
-    void checkAtStartup() {
+    String availableVersion() {
+        Release update = availableUpdate;
+        return update == null ? "" : update.version();
+    }
+
+    private void checkAutomatically() {
         long elapsed = System.currentTimeMillis() - preferences.getLong("lastCheck", 0);
+        boolean installationChanged = preferences.getLong("lastCheckedVersion", 0) != BuildConfig.VERSION_CODE;
         if (!repository().isEmpty() && preferences.getBoolean("automatic", true)
-            && (elapsed < 0 || elapsed >= 6 * 60 * 60 * 1000L)) check(true);
+            && (installationChanged || elapsed < 0 || elapsed >= CHECK_INTERVAL_MS)) check(true);
     }
 
     void showMenu() {
         if (busy.get()) { toast("Проверка или загрузка уже выполняется"); return; }
+        Release update = availableUpdate;
+        if (update != null) {
+            showAvailableUpdate(update);
+            return;
+        }
         String source = repository().isEmpty() ? "Источник пока не подключён" : "GitHub: " + repository();
         new AlertDialog.Builder(activity).setTitle("Обновления · " + BuildConfig.VERSION_NAME)
             .setMessage(source + "\nПроекты остаются на телефоне. Установку подтверждает Android.")
@@ -86,7 +109,12 @@ final class AppUpdater {
             final String repo;
             try { repo = UpdatePolicy.repository(input.getText().toString()); }
             catch (IllegalArgumentException error) { input.setError(error.getMessage()); return; }
-            preferences.edit().putString("repository", repo).putBoolean("automatic", auto.isChecked()).apply();
+            SharedPreferences.Editor changes = preferences.edit().putString("repository", repo).putBoolean("automatic", auto.isChecked());
+            if (!repo.equals(repository())) {
+                changes.remove("availableUpdate").remove("lastCheck");
+                setAvailableUpdate(null);
+            }
+            changes.apply();
             dialog.dismiss();
             check(false);
         }));
@@ -94,7 +122,7 @@ final class AppUpdater {
     }
 
     private void check(boolean silent) {
-        if (!busy.compareAndSet(false, true) || closed) return;
+        if (closed || !busy.compareAndSet(false, true)) return;
         String repo = repository();
         if (!silent) toast("Проверяем GitHub Releases…");
         executor.execute(() -> {
@@ -109,33 +137,55 @@ final class AppUpdater {
                 if (manifestUrl == null) throw new Exception("В последнем релизе отсутствует update.json");
                 UpdatePolicy.requireReleaseUrl(manifestUrl, repo);
                 JSONObject manifest = readJson(manifestUrl);
-                if (!activity.getPackageName().equals(manifest.getString("packageName"))) throw new Exception("Манифест предназначен для другого приложения");
-                long code = manifest.getLong("versionCode");
-                preferences.edit().putLong("lastCheck", System.currentTimeMillis()).apply();
-                if (code <= BuildConfig.VERSION_CODE) {
-                    if (!silent) ui(() -> toast("Установлена актуальная версия " + BuildConfig.VERSION_NAME));
-                    return;
-                }
-                String apkUrl = manifest.getString("apkUrl");
-                UpdatePolicy.requireReleaseUrl(apkUrl, repo);
-                String sha256 = manifest.getString("sha256").toLowerCase(java.util.Locale.ROOT);
-                if (!sha256.matches("[a-f0-9]{64}")) throw new Exception("Некорректная контрольная сумма обновления");
-                if (manifest.optInt("minSdk", 29) > android.os.Build.VERSION.SDK_INT) {
-                    if (!silent) ui(() -> toast("Обновление требует более новой версии Android"));
-                    return;
-                }
-                String version = manifest.getString("versionName");
-                if (version.length() > 64) throw new Exception("Некорректное название версии");
-                String notes = manifest.optString("notes", "");
-                String message = "Доступна версия " + version + ". Текущая: " + BuildConfig.VERSION_NAME
-                    + ".\n\n" + notes.substring(0, Math.min(2000, notes.length())) + "\n\nЧертежи сохранятся. Скачать обновление?";
-                ui(() -> new AlertDialog.Builder(activity).setTitle("Новая версия Zamer CAD")
-                    .setMessage(message).setPositiveButton("Скачать", (dialog, which) -> download(apkUrl, sha256, code))
-                    .setNegativeButton("Позже", null).show());
+                Release update = parseAvailableUpdate(manifest, repo);
+                SharedPreferences.Editor changes = preferences.edit()
+                    .putLong("lastCheck", System.currentTimeMillis()).putLong("lastCheckedVersion", BuildConfig.VERSION_CODE);
+                if (update == null) changes.remove("availableUpdate");
+                else changes.putString("availableUpdate", manifest.toString());
+                changes.apply();
+                ui(() -> {
+                    setAvailableUpdate(update);
+                    if (silent) return;
+                    if (update != null) showAvailableUpdate(update);
+                    else if (manifest.optLong("versionCode") > BuildConfig.VERSION_CODE) {
+                        toast("Обновление требует более новой версии Android");
+                    } else toast("Установлена актуальная версия " + BuildConfig.VERSION_NAME);
+                });
             } catch (Exception error) {
                 if (!silent) ui(() -> showError(error));
             } finally { busy.set(false); }
         });
+    }
+
+    private Release parseAvailableUpdate(JSONObject manifest, String repo) throws Exception {
+        if (!activity.getPackageName().equals(manifest.getString("packageName"))) {
+            throw new Exception("Манифест предназначен для другого приложения");
+        }
+        long code = manifest.getLong("versionCode");
+        if (code <= BuildConfig.VERSION_CODE || manifest.optInt("minSdk", 29) > android.os.Build.VERSION.SDK_INT) return null;
+        String url = manifest.getString("apkUrl");
+        UpdatePolicy.requireReleaseUrl(url, repo);
+        String sha256 = manifest.getString("sha256").toLowerCase(java.util.Locale.ROOT);
+        if (!sha256.matches("[a-f0-9]{64}")) throw new Exception("Некорректная контрольная сумма обновления");
+        String version = manifest.getString("versionName").trim();
+        if (version.isEmpty() || version.length() > 64) throw new Exception("Некорректное название версии");
+        String notes = manifest.optString("notes", "");
+        return new Release(code, version, url, sha256, notes.substring(0, Math.min(2000, notes.length())));
+    }
+
+    private void setAvailableUpdate(Release update) {
+        availableUpdate = update;
+        onAvailabilityChanged.accept(availableVersion());
+    }
+
+    private void showAvailableUpdate(Release update) {
+        String message = "Доступна версия " + update.version() + ". Установлена " + BuildConfig.VERSION_NAME + ".";
+        if (!update.notes().isBlank()) message += "\n\n" + update.notes();
+        message += "\n\nЧертежи сохранятся. Установку подтверждает Android.";
+        new AlertDialog.Builder(activity).setTitle("Обновить Zamer CAD")
+            .setMessage(message).setPositiveButton("Обновить", (dialog, which) -> download(update.url(), update.sha256(), update.code()))
+            .setNeutralButton("Настроить", (dialog, which) -> configure())
+            .setNegativeButton("Позже", null).show();
     }
 
     private void download(String url, String expectedHash, long versionCode) {
@@ -235,6 +285,7 @@ final class AppUpdater {
             if (activity.getPackageManager().canRequestPackageInstalls()) requestInstall();
             else toast("Разрешение не выдано. Обновление можно повторить позже");
         }
+        checkAutomatically();
     }
 
     private static HttpsURLConnection connect(String value) throws Exception {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly } from "./interaction.js";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, tapZoomMoveIntent } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -22,10 +22,17 @@ test("new, automatically selected and previously deselected objects require a ta
   assert.equal(requiresActivation(null, [], new Set()), false);
 });
 test("every geometry gesture waits for deliberate travel; pan and commands remain available", () => {
-  for (const mode of ["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]) {
+  for (const mode of ["move", "furniture-resize", "furniture-rotate", "leader-move", "leader-arrow", "leader-elbow", "circle-radius", "line-endpoint", "dimension-offset", "dimension-start", "dimension-end"]) {
     assert.equal(canStartGeometryDrag(mode, false), false, mode);
     assert.equal(canStartGeometryDrag(mode, true), true, mode);
   }
   assert.equal(canStartGeometryDrag("pan", false), true);
   assert.equal(canStartGeometryDrag("move-command", false), true);
+});
+
+test("double-tap drag starts one-finger zoom without a hold delay", () => {
+  assert.equal(tapZoomMoveIntent(0, 8), "wait");
+  assert.equal(tapZoomMoveIntent(0, 9), "zoom");
+  assert.equal(tapZoomMoveIntent(4, -9), "zoom");
+  assert.equal(tapZoomMoveIntent(9, 4), "gesture");
 });

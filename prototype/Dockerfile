@@ -12,6 +12,7 @@ COPY prototype/core ./core
 COPY prototype/assets ./assets
 COPY prototype/icons ./icons
 COPY shared/cad/*.js ./core/
+COPY kepler/core/zip.js ./core/zip.js
 
 RUN mkdir -p /data && chown -R node:node /app /data
 

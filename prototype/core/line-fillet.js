@@ -1,5 +1,5 @@
 import { arcGeometry } from "./geometry.js";
-import { lineCrossing } from "./line-edits.js";
+import { isLinePoint, isValidLine, lineCrossing } from "./line-edits.js";
 
 const POINT_EPSILON = 0.000001;
 
@@ -40,6 +40,10 @@ function replaceNearestEnd(line, leg, point) {
     : { x1: point.x, y1: point.y, x2: line.x2, y2: line.y2 };
 }
 
+function filletResult(first, second, arc = null) {
+  return isValidLine(first) && isValidLine(second) ? { first, second, arc } : null;
+}
+
 // A pick on each line selects the branch to keep. Radius zero replaces the
 // two near endpoints with the virtual corner, extending them when required.
 export function filletLines(first, second, firstPick, secondPick, radius) {
@@ -50,11 +54,10 @@ export function filletLines(first, second, firstPick, secondPick, radius) {
   const secondLeg = legFromPick(second, intersection, secondPick);
   if (!firstLeg || !secondLeg) return null;
   if (radius === 0) {
-    return {
-      first: replaceNearestEnd(first, firstLeg, intersection),
-      second: replaceNearestEnd(second, secondLeg, intersection),
-      arc: null,
-    };
+    return filletResult(
+      replaceNearestEnd(first, firstLeg, intersection),
+      replaceNearestEnd(second, secondLeg, intersection),
+    );
   }
 
   const a = firstLeg.direction;
@@ -74,11 +77,59 @@ export function filletLines(first, second, firstPick, secondPick, radius) {
   // centerDistance - radius, computed without subtracting near-equal values.
   const throughDistance = tangentDistance * (tangentDistance / centerDistance) / (1 + radius / centerDistance);
   const through = pointAlong(intersection, bisector, throughDistance);
-  const geometry = arcGeometry(start, through, end);
-  if (!geometry || !finitePoint(geometry.center) || !Number.isFinite(geometry.radius)) return null;
-  return {
-    first: replaceNearestEnd(first, firstLeg, start),
-    second: replaceNearestEnd(second, secondLeg, end),
-    arc: { start, through, end },
-  };
+  if (![start, through, end].every(isLinePoint) || !arcGeometry(start, through, end)) return null;
+  return filletResult(
+    replaceNearestEnd(first, firstLeg, start),
+    replaceNearestEnd(second, secondLeg, end),
+    { start, through, end },
+  );
+}
+
+function lineEnds(line) {
+  return [{ x: line.x1, y: line.y1 }, { x: line.x2, y: line.y2 }];
+}
+
+function pointDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function fartherEnd(line, corner) {
+  const [start, end] = lineEnds(line);
+  return pointDistance(start, corner) >= pointDistance(end, corner) ? start : end;
+}
+
+export function filletSelectedPair(first, second, radius, secondPick) {
+  const corner = lineCrossing(first, second, { extendFirst: true, extendSecond: true });
+  if (!corner) return null;
+  const secondEnd = fartherEnd(second, corner);
+  return filletLines(first, second, fartherEnd(first, corner), secondPick ?? secondEnd, radius);
+}
+
+export function filletSelectedCorners(lines, radius) {
+  const vertices = [];
+  const changes = new Map();
+  const arcs = [];
+  for (const line of lines) {
+    for (const point of lineEnds(line)) {
+      let vertex = vertices.find((vertex) => pointDistance(vertex.point, point) <= POINT_EPSILON);
+      if (!vertex) {
+        vertex = { point, lines: [] };
+        vertices.push(vertex);
+      }
+      vertex.lines.push(line);
+    }
+  }
+  for (const { point, lines: legs } of vertices) {
+    if (legs.length !== 2) continue;
+    const [first, second] = legs;
+    if (!lineCrossing(first, second, { extendFirst: true, extendSecond: true })) continue;
+    const result = filletLines(changes.get(first) ?? first, changes.get(second) ?? second,
+      fartherEnd(first, point), fartherEnd(second, point), radius);
+    // A neighboring fillet may consume too much of the same segment.
+    if (!result) return null;
+    changes.set(first, result.first);
+    changes.set(second, result.second);
+    if (result.arc) arcs.push({ ...result.arc, layer: first.layer });
+  }
+  return { changes, arcs };
 }

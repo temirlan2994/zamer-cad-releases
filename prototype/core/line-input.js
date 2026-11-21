@@ -6,9 +6,12 @@ function finitePoint(point) {
   return Number.isFinite(point?.x) && Number.isFinite(point?.y);
 }
 
-function readNumber(text, commaDecimal = false) {
-  const value = commaDecimal ? text.trim().replace(",", ".") : text.trim();
-  return DECIMAL.test(value) ? Number(value) : NaN;
+export function parseLineDecimal(text) {
+  if (typeof text !== "string") return null;
+  const decimal = text.trim().replace(",", ".");
+  if (!DECIMAL.test(decimal)) return null;
+  const value = Number(decimal);
+  return Number.isFinite(value) ? value : null;
 }
 
 function resultPoint(x, y) {
@@ -29,42 +32,22 @@ function directionAt(degrees) {
   }
 }
 
-// CAD input is Y-up with counterclockwise angles. The drawing uses Y-down.
-// In pairs, a semicolon allows commas inside decimal numbers: 10,5;20,25.
-export function parseLinePoint(input, { base = null, direction = null } = {}) {
-  if (typeof input !== "string") return null;
-  const text = input.trim();
-  const relative = text.startsWith("@");
-  const explicit = relative || text.startsWith("#");
-  const expression = explicit ? text.slice(1) : text;
-  if (relative && !finitePoint(base)) return null;
+export function linePolarPoint(base, length, angle) {
+  if (!finitePoint(base) || !Number.isFinite(length) || length < 0 || !Number.isFinite(angle)) return null;
+  const unit = directionAt(-angle);
+  return resultPoint(base.x + length * unit.x, base.y + length * unit.y);
+}
 
-  if (expression.includes("<")) {
-    const fields = expression.split("<");
-    if (!relative || fields.length !== 2) return null;
-    const length = readNumber(fields[0], true);
-    const angle = readNumber(fields[1], true);
-    if (!(length > 0) || !Number.isFinite(angle)) return null;
-    const unit = directionAt(-angle);
-    return resultPoint(base.x + length * unit.x, base.y + length * unit.y);
+export function linePointWithConstraint(base, cursor, { length, angle }) {
+  const dx = cursor.x - base.x;
+  const dy = cursor.y - base.y;
+  if (angle !== undefined) {
+    const direction = directionAt(-angle);
+    const projection = Math.max(0, dx * direction.x + dy * direction.y);
+    return linePolarPoint(base, projection, angle);
   }
-
-  const commaDecimal = expression.includes(";");
-  const fields = expression.split(commaDecimal ? ";" : ",");
-  if (fields.length === 2) {
-    const x = readNumber(fields[0], commaDecimal);
-    const y = readNumber(fields[1], commaDecimal);
-    return relative ? resultPoint(base.x + x, base.y - y) : resultPoint(x, -y);
-  }
-
-  if (explicit || fields.length !== 1 || !finitePoint(base) || !finitePoint(direction)) return null;
-  const length = readNumber(expression);
-  const scale = Math.max(Math.abs(direction.x), Math.abs(direction.y));
-  if (!(length > 0) || !scale) return null;
-  const dx = direction.x / scale;
-  const dy = direction.y / scale;
-  const magnitude = Math.hypot(dx, dy);
-  return resultPoint(base.x + length * (dx / magnitude), base.y + length * (dy / magnitude));
+  if (dx === 0 && dy === 0) return base;
+  return linePolarPoint(base, length, -radToDeg(Math.atan2(dy, dx)));
 }
 
 // Project the cursor onto the nearest enabled direction from the base point.

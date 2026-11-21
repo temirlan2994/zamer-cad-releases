@@ -18,8 +18,8 @@ android {
         applicationId "com.zamercad.offline"
         minSdk 29
         targetSdk 35
-        versionCode 8
-        versionName "0.1.7"
+        versionCode 86
+        versionName "0.1.85"
         buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
     }
 
@@ -61,6 +61,10 @@ android {
     }
 }
 
+dependencies {
+    implementation "com.google.android.gms:play-services-auth:21.3.0"
+}
+
 tasks.register("syncWebAssets", Sync) {
     from("${rootDir}/../prototype") {
         include "index.html"
@@ -68,14 +72,14 @@ tasks.register("syncWebAssets", Sync) {
         include "styles.css"
         include "manifest.webmanifest"
         include "core/**"
-        include "assets/**"
         include "icons/**"
-        exclude "core/*.test.js", "core/geometry.js", "core/blocks.js", "core/dxf-writer.js"
+        exclude "core/*.test.js", "core/geometry.js", "core/blocks.js", "core/dimensions.js", "core/dxf-writer.js", "core/walls.js", "core/zip.js"
     }
     from("${rootDir}/../shared/cad") {
-        include "geometry.js", "blocks.js", "dxf-writer.js"
+        include "geometry.js", "blocks.js", "dimensions.js", "dxf-writer.js"
         into("core")
     }
+    from("${rootDir}/../kepler/core/zip.js") { into("core") }
     into(generatedWebAssets)
 }
 

@@ -2,12 +2,17 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { DEFAULT_LINE_LAYER, normalizeLineLayerSettings } = require("./core/line-layers.js");
+const { normalizeReusableBlocks } = require("./core/reusable-blocks.js");
+const { normalizeNumericStep } = require("./core/numeric-stepper.js");
 
 const root = __dirname;
 // Development serves the same files that the Docker image embeds under core/.
 const sharedCad = path.resolve(root, "../shared/cad");
-const sharedCadFiles = new Set(["core/geometry.js", "core/blocks.js", "core/dxf-writer.js"]);
+const sharedCadFiles = new Set(["core/geometry.js", "core/blocks.js", "core/dimensions.js", "core/dxf-writer.js"]);
 const useSharedCadSources = fs.existsSync(sharedCad);
+const sharedZip = path.resolve(root, "../kepler/core/zip.js");
+const useSharedZip = fs.existsSync(sharedZip);
 const dataRoot = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : root;
 const port = process.env.PORT || 4187;
 const host = process.env.HOST || "127.0.0.1";
@@ -88,9 +93,9 @@ const server = http.createServer((request, response) => {
   }
 
   const modulePath = relative.split(path.sep).join("/");
-  const sourcePath = useSharedCadSources && sharedCadFiles.has(modulePath)
-    ? path.join(sharedCad, path.basename(filePath))
-    : filePath;
+  let sourcePath = filePath;
+  if (useSharedCadSources && sharedCadFiles.has(modulePath)) sourcePath = path.join(sharedCad, path.basename(filePath));
+  if (useSharedZip && modulePath === "core/zip.js") sourcePath = sharedZip;
 
   fs.readFile(sourcePath, (error, content) => {
     if (error) {
@@ -541,6 +546,8 @@ function projectSummary(project, fallback = {}) {
   return {
     id: fallback.id || safeId(project?.projectId, ""),
     name: String(project?.name || fallback.name || "Без названия").slice(0, 80),
+    site: String(project?.survey?.site || "").slice(0, 150),
+    visitDate: String(project?.survey?.visitDate || "").slice(0, 10),
     createdAt: project?.createdAt || fallback.createdAt || new Date().toISOString(),
     updatedAt: project?.savedAt || project?.updatedAt || fallback.updatedAt || new Date().toISOString(),
     revision: projectRevisionValue(project),
@@ -634,15 +641,11 @@ function defaultProjectPayload(client, body = {}) {
   const id = safeId(body.id, `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const name = String(body.name || "Новый замер").slice(0, 80);
   const source = body.project && typeof body.project === "object" ? body.project : {};
-  const template = body.template || "blank";
-  const entities = template === "apartment" && !Array.isArray(source.entities)
-    ? [
-        { id: "wall-1", type: "wall", layer: "walls", x1: 0, y1: 0, x2: 5200, y2: 0, width: 180 },
-        { id: "wall-2", type: "wall", layer: "walls", x1: 5200, y1: 0, x2: 5200, y2: 3600, width: 180 },
-        { id: "wall-3", type: "wall", layer: "walls", x1: 5200, y1: 3600, x2: 0, y2: 3600, width: 180 },
-        { id: "wall-4", type: "wall", layer: "walls", x1: 0, y1: 3600, x2: 0, y2: 0, width: 180 },
-      ]
-    : Array.isArray(source.entities) ? source.entities : [];
+  const lineLayers = normalizeLineLayerSettings(source);
+  const entities = Array.isArray(source.entities) ? source.entities : [];
+  const rooms = Array.isArray(source.survey?.rooms) ? source.survey.rooms : [];
+  const legacyLayers = ["walls", "furniture"].filter((layer) => entities.some((entity) => entity?.layer === layer) ||
+    rooms.some((room) => Array.isArray(room?.drawing?.entities) && room.drawing.entities.some((entity) => entity?.layer === layer)));
   return {
     version: 2,
     clientId: client,
@@ -658,12 +661,22 @@ function defaultProjectPayload(client, body = {}) {
     theme: source.theme === "dark" ? "dark" : "light",
     view: source.view || { scale: 0.085, panX: 92, panY: 84 },
     snaps: Array.isArray(source.snaps) ? source.snaps : ["grid", "end", "polar"],
-    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers : ["walls", "dimensions", "furniture", "measure"],
+    gridStep: [5, 10, 50, 100, 500, 1000].includes(source.gridStep) ? source.gridStep : 100,
+    polarStep: [5, 10, 15, 30, 45, 90].includes(source.polarStep) ? source.polarStep : 5,
+    numericStep: normalizeNumericStep(source.numericStep),
+    visibleLayers: Array.isArray(source.visibleLayers) ? source.visibleLayers :
+      [DEFAULT_LINE_LAYER, "dimensions", "text", "areas", "elevations", ...legacyLayers, ...lineLayers.customLineLayers.map(({ id }) => id)],
+    ...lineLayers,
+    annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
+    measurementSettings: source.measurementSettings,
     selectionFilter: source.selectionFilter || "all",
     furnitureTab: source.furnitureTab || "furniture",
     furnitureCategory: source.furnitureCategory || "sofas",
     furnitureSheetPosition: source.furnitureSheetPosition || "half",
+    survey: source.survey,
+    draft: source.draft,
+    reusableBlocks: normalizeReusableBlocks(source.reusableBlocks),
     entities,
     thumbnail: source.thumbnail || null,
   };
