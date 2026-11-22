@@ -2484,7 +2484,10 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   }
   body.lib-open .library { display: flex; }
   body.mode-site .library { display: none; }
-  body.lib-open .level-dock { left: calc(var(--library-w, min(264px, 42vw)) + 14px); }
+  /* Справа от каталога этажи попадают под центр плавающей палитры этапов
+     (#projectRoute: fixed, bottom 12px, высота ~54px) — кнопки этажей
+     становились недоступны. Поднимаем их над палитрой. */
+  body.lib-open .level-dock { left: calc(var(--library-w, min(264px, 42vw)) + 14px); bottom: 78px; }
   body.lib-open .ls-section { left: var(--library-w, min(264px, 42vw)); } /* разрез участка — правее каталога, не под ним */
   /* «⚠ Замечания» — третья вкладка; список — вместо содержимого панели */
   .props-tabs .issues-btn {
