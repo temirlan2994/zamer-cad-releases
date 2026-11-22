@@ -320,6 +320,8 @@ describe('3D: этажи', () => {
 
     await page.click('#v3Close');
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
+    // Вкладки видов перерисовываются на следующем кадре после закрытия 3D.
+    await page.waitForFunction(() => document.getElementById('modeSiteBtn')?.getAttribute('aria-selected') === 'true', null, { timeout: 2000 });
     assert.equal(await page.getAttribute('#modeSiteBtn', 'aria-selected'), 'true');
   });
 
