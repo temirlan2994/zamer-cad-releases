@@ -76,6 +76,7 @@ describe('привязки черчения: лучи, орто, выравни�
     await moveClick(page, await client(page, b, 220, -80));
     await page.keyboard.up('Control');
     const c = last(await toolPoints(page));
+    assert.equal((await toolPoints(page)).length, 3, 'точка орто добавлена');
     assert.ok(Math.abs(c.y - b.y) < 0.5, `y ${c.y} ≠ ${b.y}`);
     assert.ok(c.x > b.x + 1000);
     await page.keyboard.press('Enter');
@@ -95,7 +96,8 @@ describe('привязки черчения: лучи, орто, выравни�
     const b = last(await toolPoints(page));
     assert.ok(Math.abs(b.x - a.x) < 0.5, `90°: x ${b.x} ≠ ${a.x}`);
     await page.keyboard.press('F8');
-    await moveClick(page, await client(page, b, 200, -60));
+    // Вправо и чуть вниз: выше точки висит карточка этапа «Свет на участке».
+    await moveClick(page, await client(page, b, 200, 60));
     const c = last(await toolPoints(page));
     assert.ok(Math.abs(c.y - b.y) < 0.5, `орто: y ${c.y} ≠ ${b.y}`);
     await page.keyboard.press('F8');
@@ -130,7 +132,8 @@ describe('привязки черчения: лучи, орто, выравни�
     const p = last(await toolPoints(page));
     assert.ok(Math.abs(p.x - a.x) < 0.5, `выравнивание: x ${p.x} ≠ ${a.x}`);
     // Направление — вниз по лучу 270°, длина 3000 мм набрана с клавиатуры.
-    await page.mouse.move(...Object.values(await client(page, p, 3, 60)));
+    // Небольшой шаг вниз: ниже по экрану — панель этапов проекта поверх холста.
+    await page.mouse.move(...Object.values(await client(page, p, 2, 30)));
     await page.keyboard.type('3000');
     assert.equal(await page.evaluate(() => window.__kepler.state.dynInput?.length), '3000');
     await page.keyboard.press('Enter');

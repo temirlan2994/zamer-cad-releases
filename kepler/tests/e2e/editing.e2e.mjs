@@ -160,7 +160,8 @@ describe('типы проёмов и высота потолка', () => {
 
     await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
     await app.page.click('[data-selection-action="add-window"]');
-    await clickWorld(app.page, r.x - 60, r.y + r.h / 2);
+    // Правая наружная стена: левую закрывает открытый каталог проёмов.
+    await clickWorld(app.page, r.x + r.w + 60, r.y + r.h / 2);
     await app.page.keyboard.press('Escape');
     const w = await opening(app.page, 'window');
     await app.page.evaluate((id) => window.__kepler.select({ type: 'opening', id }), w.id);
@@ -170,9 +171,12 @@ describe('типы проёмов и высота потолка', () => {
     assert.ok(w2.height >= 2000);
   });
 
-  it('высота потолка комнаты; пусто — снова по этажу', async () => {
+  it('высота потолка комнаты; «связана с этажом» — снова по этажу', async () => {
     const r = (await proj(app.page)).rooms[0];
     await app.page.evaluate((id) => window.__kepler.selectRoom(id), r.id);
+    // Пока высота связана с этажом, поле закрыто: снимаем галочку.
+    assert.ok(await app.page.isDisabled('#roomCeil'));
+    await app.page.uncheck('#roomCeilLinked');
     await app.page.fill('#roomCeil', '2.4');
     await app.page.locator('#roomCeil').blur();
     const ceil = () => app.page.evaluate(() => window.__kepler.state.project.rooms[0].ceiling);
@@ -183,9 +187,9 @@ describe('типы проёмов и высота потолка', () => {
     assert.doesNotMatch(await app.page.textContent('#propsBody'), /Высота ≈/); // список «⚠» — отдельная вкладка той же панели
     assert.ok(await app.page.evaluate((id) => window.__kepler.state.issues.groups.flatMap((g) => g.items)
       .some((i) => i.id.startsWith('height:') && i.target?.id === id), r.id));
-    await app.page.fill('#roomCeil', '');
-    await app.page.locator('#roomCeil').blur();
-    assert.equal(await ceil(), null);
+    await app.page.check('#roomCeilLinked');
+    assert.equal(await ceil(), undefined);
+    assert.ok(await app.page.isDisabled('#roomCeil'));
   });
 
   it('без ошибок в консоли', () => {
