@@ -2,7 +2,7 @@
 // соседней мебели; клик по подписи — ввод расстояния, предмет сдвигается.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew, zoomToItems } from './helpers.mjs';
+import { settleView, startApp, openNew, zoomToItems } from './helpers.mjs';
 
 // Комната 5×4 м, стол 1200×800 в (1500, 2000), диван справа 1000×800 в (3700, 2000).
 async function scene(page) {
@@ -22,6 +22,8 @@ async function scene(page) {
 }
 const canvasBox = (page) => page.$('#canvas').then((c) => c.boundingBox());
 async function planToClient(page, x, y) {
+  // Панель выделения сдвигает холст; вид компенсирует это на следующем кадре.
+  await settleView(page);
   const box = await canvasBox(page);
   const s = await page.evaluate(([px, py]) => window.__kepler.planToScreen(px, py), [x, y]);
   return { x: box.x + s.x, y: box.y + s.y };

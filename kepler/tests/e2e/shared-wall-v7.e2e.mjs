@@ -4,9 +4,11 @@
 // меняются согласованно; отпускание — один шаг отмены; Alt — оторвать.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { settleView, startApp, openNew } from './helpers.mjs';
 
 async function planToClient(page, x, y) {
+  // Панель выделения сдвигает холст; вид компенсирует это на следующем кадре.
+  await settleView(page);
   const box = await (await page.$('#canvas')).boundingBox();
   const s = await page.evaluate(([px, py]) => window.__kepler.planToScreen(px, py), [x, y]);
   return { x: box.x + s.x, y: box.y + s.y };
