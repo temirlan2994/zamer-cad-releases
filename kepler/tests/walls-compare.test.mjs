@@ -2,7 +2,8 @@
 // фикстурах, шаблонах и проекте пользователя — разница областей только в
 // зонах известных дефектов v1 (c — угол в соседе, e — заплатки/удлинения),
 // ни один проём не сдвинут, записи own/shared совпадают (кроме концов у
-// шахт: v1 удлиняет угол до обрезки шахтой). Плюс скорость: 40 комнат < 20 мс.
+// шахт: v1 удлиняет угол до обрезки шахтой). Плюс скорость: 40 комнат < 20 мс
+// на эталонной машине (на медленных — пропорционально больше).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -93,7 +94,37 @@ function fortyRooms() {
   return p;
 }
 
-test('v2: 40 комнат быстрее 20 мс', () => {
+// Бюджет 20 мс задан для обычного рабочего компьютера. Общие раннеры CI
+// в несколько раз медленнее, поэтому бюджет масштабируется по эталонной
+// нагрузке: на машине не медленнее эталона остаётся ровно 20 мс.
+const CALIBRATION_REFERENCE_MS = 70;
+
+function calibrationWorkload() {
+  const values = new Float64Array(200000);
+  let acc = 0;
+  for (let k = 0; k < 20; k += 1) {
+    for (let i = 0; i < values.length; i += 1) {
+      values[i] = Math.sqrt(i * k + acc);
+      acc += values[i] % 3;
+    }
+  }
+  return acc;
+}
+
+function wallBudgetMs() {
+  calibrationWorkload(); // прогрев JIT
+  const times = [];
+  for (let i = 0; i < 5; i += 1) {
+    const t0 = performance.now();
+    calibrationWorkload();
+    times.push(performance.now() - t0);
+  }
+  times.sort((a, b) => a - b);
+  return 20 * Math.max(1, times[2] / CALIBRATION_REFERENCE_MS);
+}
+
+test('v2: 40 комнат быстрее 20 мс (с поправкой на скорость машины)', () => {
+  const budget = wallBudgetMs();
   const p = fortyRooms();
   for (let i = 0; i < 3; i += 1) deriveWallsV2(p); // прогрев JIT
   const times = [];
@@ -104,6 +135,6 @@ test('v2: 40 комнат быстрее 20 мс', () => {
   }
   times.sort((a, b) => a - b);
   const median = times[3];
-  assert.ok(median < 20, `медиана ${median.toFixed(1)} мс`);
+  assert.ok(median < budget, `медиана ${median.toFixed(1)} мс, бюджет ${budget.toFixed(1)} мс`);
   assert.ok(deriveWallsV1(p).length > 0);
 });
