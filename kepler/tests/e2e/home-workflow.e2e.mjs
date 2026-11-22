@@ -1,7 +1,7 @@
 // Сквозная шкала 1–9 и локальное восстановление последнего этапа проекта.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
 describe('единый маршрут дома', () => {
   let app;
@@ -13,59 +13,41 @@ describe('единый маршрут дома', () => {
 
   after(async () => { await app?.close(); });
 
-  it('показывает девять статусов, продолжение и вертикальную навигацию', async () => {
+  // С 0.4.5 этапы переключаются палитрой внизу: кнопка этапа → меню → окно.
+  // Вертикальной ленты и кнопки «Далее» внутри окна больше нет.
+  it('палитра показывает девять статусов, счётчик и навигацию с клавиатуры', async () => {
     const { page } = app;
-    await page.click('#projectHomeProgram');
-    await page.waitForSelector('#projectRoutePanel:not([hidden])');
-    const initial = await page.evaluate(() => {
-      const nav = document.querySelector('.home-system-nav');
-      const tabs = [...nav.querySelectorAll('[role="tab"]')];
+    const steps = '#projectRouteSteps';
+    const initial = await page.evaluate((selector) => {
+      const tabs = [...document.querySelectorAll(`${selector} [role="tab"]`)];
       return {
-        ids: tabs.map((tab) => tab.dataset.homeView),
+        ids: tabs.map((tab) => tab.dataset.routeView),
         statuses: tabs.map((tab) => tab.dataset.status),
-        columns: getComputedStyle(nav).gridTemplateColumns.split(' ').length,
-        progress: document.querySelector('.home-workflow-progress')?.textContent,
-        continueText: document.querySelector('.home-workflow-continue')?.textContent,
+        counter: document.getElementById('projectHomeProgramStatus')?.textContent,
       };
-    });
+    }, steps);
     assert.deepEqual(initial.ids, [
       'site', 'program', 'flows', 'engineering', 'circulation',
       'climate', 'review', 'envelope', 'deliverables',
     ]);
     assert.ok(initial.statuses.every((status) => ['checked', 'attention', 'blocked', 'unknown'].includes(status)));
-    assert.equal(initial.columns, 1);
-    assert.match(initial.progress, /из 9/);
-    assert.match(initial.continueText, /Далее/);
-    assert.equal(await page.getAttribute('.home-workflow-continue', 'data-home-view'), 'program');
-    await page.click('.home-workflow-continue');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'program'
-    ));
+    assert.match(initial.counter, /^\d\/9$/);
 
-    await page.click('[data-home-view="site"]');
+    await openRouteView(page, 'program');
     await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'site'
+      document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView === 'program'
     ));
-    await page.keyboard.press('ArrowDown');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'program'
-    ));
-    await page.keyboard.press('End');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'deliverables'
-    ));
-    await page.keyboard.press('Home');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'site'
-    ));
+    const focused = () => page.evaluate(() => document.activeElement?.dataset?.routeView || null);
+    await page.focus(`${steps} [data-route-view="site"]`);
     await page.keyboard.press('ArrowRight');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'program'
-    ));
+    assert.equal(await focused(), 'program');
+    await page.keyboard.press('End');
+    assert.equal(await focused(), 'deliverables');
+    await page.keyboard.press('Home');
+    assert.equal(await focused(), 'site');
     await page.keyboard.press('ArrowLeft');
-    await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'site'
-    ));
+    assert.equal(await focused(), 'deliverables');
+    await page.keyboard.press('Escape');
     assert.deepEqual(app.errors, []);
   });
 
@@ -77,9 +59,9 @@ describe('единый маршрут дома', () => {
       const { renderProjectRoute } = await import('./ui/project-route.js');
       renderProjectRoute();
     });
-    await page.click('[data-home-view="deliverables"]');
+    await openRouteView(page, 'deliverables');
     await page.waitForFunction(() => (
-      document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView === 'deliverables'
+      document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView === 'deliverables'
     ));
     await page.click('#projectRouteClose');
 
@@ -91,7 +73,7 @@ describe('единый маршрут дома', () => {
       renderProjectRoute();
     });
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('[data-home-view="site"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="site"]', 'aria-current'), 'page');
     await page.click('#projectRouteClose');
 
     await page.evaluate(async () => {
@@ -101,13 +83,13 @@ describe('единый маршрут дома', () => {
       renderProjectRoute();
     });
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('[data-home-view="deliverables"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="deliverables"]', 'aria-current'), 'page');
     assert.deepEqual(app.errors, []);
   });
 
   it('из общей проверки открывает листы и точный рабочий вид', async () => {
     const { page } = app;
-    await page.click('[data-home-view="review"]');
+    await openRouteView(page, 'review');
     await page.waitForSelector('[data-home-review]');
 
     const sheets = page.locator('[data-home-review-item="deliverables:missing:sheets"] [data-home-review-action="open-finding-sheets"]');
@@ -140,8 +122,7 @@ describe('единый маршрут дома', () => {
       });
       flushAutosave();
     });
-    await page.click('#projectHomeProgram');
-    await page.click('[data-home-view="envelope"]');
+    await openRouteView(page, 'envelope');
     await page.click('#projectRouteClose');
     await page.evaluate(async () => {
       const { flushAutosave } = await import('./ui/store.js');
@@ -155,7 +136,7 @@ describe('единый маршрут дома', () => {
     ));
     if (await page.locator('#startContinue').isVisible()) await page.click('#startContinue');
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('[data-home-view="envelope"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="envelope"]', 'aria-current'), 'page');
     assert.deepEqual(app.errors, []);
   });
 });

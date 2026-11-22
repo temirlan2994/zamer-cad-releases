@@ -2,20 +2,14 @@
 // предварительный инженерный обзор.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
 const panel = '#projectRoutePanel';
 
+// Этапы открываются из палитры внизу (интерфейс 0.4.5): кнопка этапа → пункт меню.
 async function openHomeView(page, view, title) {
-  const open = await page.locator(panel).isVisible();
-  if (!open) await page.click('#projectHomeProgram');
-  await page.waitForSelector(`${panel}:not([hidden])`);
-  if (view !== 'program') {
-    await page.click(`[data-route-action="open-home-view"][data-home-view="${view}"]`);
-  }
-  await page.waitForFunction((expected) => (
-    document.querySelector('#projectRoutePanelTitle')?.textContent === expected
-  ), title);
+  await openRouteView(page, view);
+  await page.waitForFunction((expected) => document.querySelector('#projectRoutePanelTitle')?.textContent === expected, title);
 }
 
 describe('этапы зон, маршрутов и инженерии', () => {
@@ -71,7 +65,7 @@ describe('этапы зон, маршрутов и инженерии', () => {
   it('сохраняет явные сценарии, частоту и привязки после перерисовки', async () => {
     const { page } = app;
     await openHomeView(page, 'flows', 'Зоны и маршруты');
-    assert.equal(await page.getAttribute('[data-home-view="flows"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="flows"]', 'aria-current'), 'page');
     assert.match(await page.textContent('.home-flow-disclaimer'), /не измеряет точную траекторию/i);
 
     await page.click('.home-flow-scenario:has([data-home-flow-scenario="SCN002"]) > summary');
@@ -118,8 +112,8 @@ describe('этапы зон, маршрутов и инженерии', () => {
     assert.equal(saved.selection.frequencyPeriod, 'day');
     assert.equal(saved.bindings.length, 3);
 
-    await page.click('[data-home-view="program"]');
-    await page.click('[data-home-view="flows"]');
+    await openRouteView(page, 'program');
+    await openHomeView(page, 'flows', 'Зоны и маршруты');
     assert.equal(await page.inputValue('[data-home-flow-frequency-value="SCN002"]'), '2');
     assert.equal(await page.inputValue('[data-home-flow-binding="to"][data-scenario-id="SCN002"][data-route-id="bed_to_bathroom"]'), value(ids.bathroom));
 
@@ -215,26 +209,26 @@ describe('этапы дома на телефоне', () => {
 
   it('открывает нижний лист и оставляет крупные цели касания', async () => {
     const { page } = app;
-    await page.tap('#projectHomeProgram');
-    await page.waitForSelector(`${panel}:not([hidden])`);
-    await page.tap('[data-home-view="flows"]');
+    await openRouteView(page, 'flows', { mobile: true });
     await page.waitForFunction(() => document.querySelector('#projectRoutePanelTitle')?.textContent === 'Зоны и маршруты');
     const result = await page.evaluate(() => {
       const panelNode = document.getElementById('projectRoutePanel');
-      const buttons = [...document.querySelectorAll('.home-system-nav button')];
+      const buttons = [...document.querySelectorAll('#projectRouteSteps button')];
       const rects = buttons.map((button) => button.getBoundingClientRect());
-      const active = document.querySelector('.home-system-nav [aria-current="page"]')?.getBoundingClientRect();
+      const active = document.querySelector('#projectRouteSteps [aria-current="page"]')?.getBoundingClientRect();
       return {
         modal: panelNode.getAttribute('aria-modal'),
-        current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
+        current: document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView,
         heights: rects.map((rect) => rect.height),
         activeInsideViewport: Boolean(active && active.left >= -1 && active.right <= innerWidth + 1),
         noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth + 1,
       };
     });
-    assert.equal(result.modal, 'true');
+    // Окно этапа с 0.4.5 немодальное: палитра этапов остаётся доступной.
+    assert.equal(result.modal, 'false');
     assert.equal(result.current, 'flows');
-    assert.ok(result.heights.every((height) => height >= 42), JSON.stringify(result));
+    // Кнопки палитры этапов — 40 px (размер палитры на телефоне).
+    assert.ok(result.heights.every((height) => height >= 40), JSON.stringify(result));
     assert.equal(result.activeInsideViewport, true);
     assert.equal(result.noDocumentOverflow, true);
     assert.deepEqual(app.errors, []);

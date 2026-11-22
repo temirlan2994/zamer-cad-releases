@@ -2,20 +2,18 @@
 // переход к размещению помещения и экранная схема реальных связей.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
 const programButton = '#projectHomeProgram';
 const panel = '#projectRoutePanel';
 
+// «Программа дома» открывается из палитры этапов (интерфейс 0.4.5).
 async function openProgram(page) {
   if (await page.locator(panel).isVisible()) {
     const title = await page.textContent('#projectRoutePanelTitle');
     if (/Программа дома/.test(title || '')) return;
-    await page.click('#projectRouteClose');
   }
-  await page.click(programButton);
-  await page.waitForSelector(`${panel}:not([hidden])`);
-  if (await page.getAttribute('#homeViewTab-program', 'aria-selected') !== 'true') await page.click('#homeViewTab-program');
+  await openRouteView(page, 'program');
   await page.waitForFunction(() => document.querySelector('#projectRoutePanelTitle')?.textContent === 'Программа дома');
 }
 
@@ -111,7 +109,8 @@ describe('программа дома', () => {
 
     await page.click('#projectRouteClose');
     await page.waitForFunction(() => document.getElementById('projectRoutePanel').hidden === true);
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'projectHomeProgram');
+    // Фокус возвращается на кнопку палитры, которой окно открыли.
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'homeViewTab-program');
     await openProgram(page);
     assert.equal(await page.inputValue('[data-home-program-field="adultCount"]'), '3');
     assert.equal(await page.inputValue('[data-home-program-field="childCount"]'), '2');

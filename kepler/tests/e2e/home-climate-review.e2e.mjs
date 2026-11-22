@@ -1,19 +1,11 @@
 // E2E этапов 6–7: честный световой обзор и итоговая проверка без score.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
-const panel = '#projectRoutePanel';
-
+// Этапы открываются из палитры внизу (интерфейс 0.4.5): кнопка этапа → пункт меню.
 async function openHomeView(page, view, title, mobile = false) {
-  if (!(await page.locator(panel).isVisible())) {
-    if (mobile) await page.tap('#projectHomeProgram');
-    else await page.click('#projectHomeProgram');
-  }
-  await page.waitForSelector(`${panel}:not([hidden])`);
-  const selector = `[data-home-view="${view}"]`;
-  if (mobile) await page.tap(selector);
-  else await page.click(selector);
+  await openRouteView(page, view, { mobile });
   await page.waitForFunction((expected) => (
     document.querySelector('#projectRoutePanelTitle')?.textContent === expected
   ), title);
@@ -56,9 +48,9 @@ describe('свет и итоговая проверка проекта', () => {
     const { page } = app;
     await openHomeView(page, 'climate', 'Свет и солнце');
     const nav = await page.evaluate(() => ({
-      count: document.querySelectorAll('.home-system-nav [role="tab"]').length,
-      current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
-      selected: document.querySelector('[data-home-view="climate"]')?.getAttribute('aria-selected'),
+      count: document.querySelectorAll('#projectRouteSteps [role="tab"]').length,
+      current: document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView,
+      selected: document.querySelector('#projectRouteSteps [data-route-view="climate"]')?.getAttribute('aria-selected'),
     }));
     assert.deepEqual(nav, { count: 9, current: 'climate', selected: 'true' });
     const text = await page.textContent('[data-home-climate]');
@@ -116,7 +108,7 @@ describe('свет и итоговая проверка проекта', () => {
   it('разделяет проблемы, неизвестное и факты, а CTA возвращает к этапу', async () => {
     const { page } = app;
     await openHomeView(page, 'review', 'Проверка проекта');
-    assert.equal(await page.getAttribute('[data-home-view="review"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="review"]', 'aria-current'), 'page');
     assert.notEqual(await page.getAttribute('.home-review-summary', 'data-status'), 'checked',
       'неподтверждённое солнце и отсутствующие климатические данные не могут быть зелёными');
     const text = await page.textContent('[data-home-review]');
@@ -133,7 +125,7 @@ describe('свет и итоговая проверка проекта', () => {
     await page.waitForFunction(() => (
       document.querySelector('#projectRoutePanelTitle')?.textContent === 'Свет и солнце'
     ));
-    assert.equal(await page.getAttribute('[data-home-view="climate"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="climate"]', 'aria-current'), 'page');
     assert.deepEqual(app.errors, []);
   });
 });
@@ -153,26 +145,29 @@ describe('этапы света и проверки на телефоне', () =
     await openHomeView(page, 'climate', 'Свет и солнце', true);
     await openHomeView(page, 'review', 'Проверка проекта', true);
     const result = await page.evaluate(() => {
-      const tabs = [...document.querySelectorAll('.home-system-nav button')];
-      const controls = [
-        ...tabs,
-        ...document.querySelectorAll('[data-home-review-action]'),
-      ].filter((node) => node.getClientRects().length);
-      const active = document.querySelector('.home-system-nav [aria-current="page"]');
+      const tabs = [...document.querySelectorAll('#projectRouteSteps button')];
+      const controls = [...document.querySelectorAll('[data-home-review-action]')]
+        .filter((node) => node.getClientRects().length);
+      const active = document.querySelector('#projectRouteSteps [aria-current="page"]');
       const activeRect = active?.getBoundingClientRect();
       return {
-        current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
+        current: document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView,
         modal: document.getElementById('projectRoutePanel')?.getAttribute('aria-modal'),
         heights: controls.map((node) => node.getBoundingClientRect().height),
+        tabHeights: tabs.map((node) => node.getBoundingClientRect().height),
         activeInside: Boolean(activeRect && activeRect.left >= -1 && activeRect.right <= innerWidth + 1),
         noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth + 1,
       };
     });
     assert.equal(result.current, 'review');
-    assert.equal(result.modal, 'true');
+    // Окно этапа с 0.4.5 немодальное: палитра этапов остаётся доступной.
+    assert.equal(result.modal, 'false');
     assert.equal(result.activeInside, true, JSON.stringify(result));
     assert.equal(result.noDocumentOverflow, true, JSON.stringify(result));
-    assert.ok(result.heights.length >= 6);
+    assert.equal(result.tabHeights.length, 9);
+    // Кнопки палитры этапов — 40 px (размер палитры на телефоне); действия этапа — от 44 px.
+    assert.ok(result.tabHeights.every((height) => height >= 40), JSON.stringify(result));
+    assert.ok(result.heights.length > 0);
     assert.ok(result.heights.every((height) => height >= 44), JSON.stringify(result));
     assert.deepEqual(app.errors, []);
   });

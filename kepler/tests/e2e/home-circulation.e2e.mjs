@@ -1,18 +1,11 @@
 // E2E этапа 5: геометрические маршруты внутри помещений.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
-const panel = '#projectRoutePanel';
-
+// Этапы открываются из палитры внизу (интерфейс 0.4.5): кнопка этапа → пункт меню.
 async function openCirculation(page, mobile = false) {
-  if (!(await page.locator(panel).isVisible())) {
-    if (mobile) await page.tap('#projectHomeProgram');
-    else await page.click('#projectHomeProgram');
-  }
-  await page.waitForSelector(`${panel}:not([hidden])`);
-  if (mobile) await page.tap('[data-home-view="circulation"]');
-  else await page.click('[data-home-view="circulation"]');
+  await openRouteView(page, 'circulation', { mobile });
   await page.waitForFunction(() => (
     document.querySelector('#projectRoutePanelTitle')?.textContent === 'Движение и проходы'
   ));
@@ -67,7 +60,7 @@ describe('движение и проходы', () => {
   it('не выдаёт привязку только к помещениям за точный маршрут', async () => {
     const { page } = app;
     await openCirculation(page);
-    assert.equal(await page.getAttribute('[data-home-view="circulation"]', 'aria-current'), 'page');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="circulation"]', 'aria-current'), 'page');
     assert.match(await page.textContent('.home-circulation-disclaimer'), /дискретный геометрический расчёт/i);
     const status = await page.getAttribute('.home-circulation-summary', 'data-status');
     assert.notEqual(status, 'clear', 'неизвестные точки маршрута не должны давать зелёный итог');
@@ -158,30 +151,31 @@ describe('движение на телефоне', () => {
     const { page } = app;
     await openCirculation(page, true);
     await page.waitForFunction(() => {
-      const active = document.querySelector('[data-home-view="circulation"]')?.getBoundingClientRect();
-      const nav = document.querySelector('.home-system-nav')?.getBoundingClientRect();
+      const active = document.querySelector('#projectRouteSteps [data-route-view="circulation"]')?.getBoundingClientRect();
+      const nav = document.querySelector('#projectRouteSteps')?.getBoundingClientRect();
       return Boolean(active && nav && active.left >= nav.left - 1 && active.right <= nav.right + 1);
     });
     const before = await page.getAttribute('[data-home-circulation-action="toggle-routes"]', 'aria-checked');
     await page.tap('[data-home-circulation-action="toggle-routes"]');
     assert.notEqual(await page.getAttribute('[data-home-circulation-action="toggle-routes"]', 'aria-checked'), before);
     const result = await page.evaluate(() => {
+      // Кнопки палитры этапов (40 px) здесь не проверяются: их размер задаёт
+      // общая палитра, а не этот этап.
       const selectors = [
-        '.home-system-nav button',
-        '.home-circulation-profile button',
+                '.home-circulation-profile button',
         '.home-circulation-layer-controls button',
         '[data-circulation-width]',
       ];
       const nodes = selectors.flatMap((selector) => [...document.querySelectorAll(selector)])
         .filter((node) => node.getClientRects().length);
-      const active = document.querySelector('[data-home-view="circulation"]')?.getBoundingClientRect();
-      const nav = document.querySelector('.home-system-nav')?.getBoundingClientRect();
+      const active = document.querySelector('#projectRouteSteps [data-route-view="circulation"]')?.getBoundingClientRect();
+      const nav = document.querySelector('#projectRouteSteps')?.getBoundingClientRect();
       return {
-        current: document.querySelector('.home-system-nav [aria-current="page"]')?.dataset.homeView,
+        current: document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView,
         heights: nodes.map((node) => node.getBoundingClientRect().height),
         activeRect: active ? { left: active.left, right: active.right } : null,
         navRect: nav ? { left: nav.left, right: nav.right } : null,
-        navScrollLeft: document.querySelector('.home-system-nav')?.scrollLeft ?? null,
+        navScrollLeft: document.querySelector('#projectRouteSteps')?.scrollLeft ?? null,
         activeVisible: active && nav ? active.left >= nav.left - 1 && active.right <= nav.right + 1 : false,
       };
     });
