@@ -3,7 +3,7 @@
 // сохранение, выбор и удаление в 3D. Реальной мышью.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew } from './helpers.mjs';
+import { startApp, openNew, settleView } from './helpers.mjs';
 
 const SHOTS = process.env.KEPLER_SHOTS || '';
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
@@ -71,7 +71,11 @@ describe('терраса и перила', () => {
     const houseFrom = living.x - 250 - terrace.x; const houseTo = living.x + living.w + 250 - terrace.x;
     assert.ok(!list.some((s) => s.side === 0 && s.to > houseFrom + 1 && s.from < houseTo - 1), 'нет перил на стыке с домом');
     assert.ok(list.some((s) => s.side === 2));
-    await st(page, () => window.__kepler.select(null));
+    // Вписываем дом вместе с террасой: после первого fitView (только дом)
+    // нижние перила оказывались под плавающей палитрой этапов (#projectRoute),
+    // и клики следующих шагов попадали в неё, а не в холст.
+    await st(page, () => { window.__kepler.select(null); window.__kepler.fitView(); });
+    await settleView(page);
     await shot(page, 'rail-2-terrace');
   });
 
