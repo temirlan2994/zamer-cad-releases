@@ -5,6 +5,21 @@ function scalePoint(point, base, factor) {
   };
 }
 
+function rotatePoint(point, base, radians) {
+  const dx = point.x - base.x;
+  const dy = point.y - base.y;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: base.x + dx * cos - dy * sin,
+    y: base.y + dx * sin + dy * cos,
+  };
+}
+
+function normalizeDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
 const pointKeys = [
   "start", "through", "end", "vertex", "arm1", "arm2", "arcStart", "arcThrough", "arcEnd",
   "jogCenter", "jogRim", "measureEnd", "radialRim", "leaderElbow",
@@ -51,6 +66,50 @@ export function scaleStoredEntity(entity, base, factor) {
   if (copy.type === "text" && Number.isFinite(copy.height)) copy.height *= factor;
   for (const key of ["offset", "textHeight", "arcRadius", "circleRadius"]) {
     if (Number.isFinite(copy[key])) copy[key] *= factor;
+  }
+  return copy;
+}
+
+/** Возвращает независимую копию объекта, повёрнутую относительно базовой точки. */
+export function rotateStoredEntity(entity, base, radians) {
+  if (!entity || !Number.isFinite(base?.x) || !Number.isFinite(base?.y) || !Number.isFinite(radians)) return null;
+  let copy;
+  try {
+    copy = JSON.parse(JSON.stringify(entity));
+  } catch {
+    return null;
+  }
+
+  if (copy.type === "rectangle" && [copy.x1, copy.y1, copy.x2, copy.y2].every(Number.isFinite)) {
+    copy.type = "polyline";
+    copy.points = [
+      { x: copy.x1, y: copy.y1 }, { x: copy.x2, y: copy.y1 },
+      { x: copy.x2, y: copy.y2 }, { x: copy.x1, y: copy.y2 },
+    ].map((point) => rotatePoint(point, base, radians));
+    copy.closed = true;
+    delete copy.x1;
+    delete copy.y1;
+    delete copy.x2;
+    delete copy.y2;
+    return copy;
+  }
+
+  for (const key of pointKeys) {
+    if (Number.isFinite(copy[key]?.x) && Number.isFinite(copy[key]?.y)) copy[key] = rotatePoint(copy[key], base, radians);
+  }
+  for (const [xKey, yKey] of coordinatePairs) {
+    if (!Number.isFinite(copy[xKey]) || !Number.isFinite(copy[yKey])) continue;
+    const point = rotatePoint({ x: copy[xKey], y: copy[yKey] }, base, radians);
+    copy[xKey] = point.x;
+    copy[yKey] = point.y;
+  }
+  if (Array.isArray(copy.points)) copy.points = copy.points.map((point) => rotatePoint(point, base, radians));
+  if (Array.isArray(copy.contours)) {
+    copy.contours = copy.contours.map((ring) => ring.map((point) => rotatePoint(point, base, radians)));
+    copy.points = copy.contours[0];
+  }
+  if (["block", "text"].includes(copy.type)) {
+    copy.rotation = normalizeDegrees((copy.rotation || 0) + radians * 180 / Math.PI);
   }
   return copy;
 }

@@ -18,7 +18,7 @@ import { createPolyline, polylineBounds, polylineSegments, validPolylinePoints }
 import { createRevisionCloud, MAX_REVISION_CLOUD_CORNERS, revisionCloudRectangle } from "./core/revision-cloud.js";
 import { buildPlotPdf, pdfPlotBounds } from "./core/pdf.js";
 import { chooseProjectSource, projectRevision } from "./core/sync.js";
-import { scaleStoredEntity } from "./core/entity-transform.js";
+import { rotateStoredEntity, scaleStoredEntity } from "./core/entity-transform.js";
 import { IMPORT_UNIT_FACTORS, scaleImportedProject } from "./core/project-import.js";
 import { MAX_ZAMER_FILE_BYTES, validStoredEntity, validateZamerProject } from "./core/project-format.js";
 import { driveProjectStamp, googleAccountForToken, googleDriveProjects, syncDriveProjects } from "./core/google-drive-projects.js";
@@ -4134,7 +4134,8 @@ function syncSelectionActions() {
 
 function editableSelectionEntity() {
   const selected = selectedEntities();
-  const primary = selected.length === 1 || selected.every(blockSourceEntity) ? selected[0] : null;
+  const primary = selected.length === 1 || selected.every(blockSourceEntity) ||
+    selected.every(canRotateSelectionEntity) || selected.every(canMirrorSelectionEntity) ? selected[0] : null;
   return primary &&
     !state.drawing &&
     !state.leaderInput &&
@@ -4159,6 +4160,24 @@ function isDirectMoveAnnotation(entity) {
   return entity?.type === "text" || entity?.dimensionKind === "leader" || Boolean(entity && (isRadialDimension(entity) || additionalDimensionKinds.includes(entity.dimensionKind)));
 }
 
+function canMirrorSelectionEntity(entity) {
+  return editableFigure(entity, "mirror") || ["wall", "block"].includes(entity?.type);
+}
+
+function canRotateSelectionEntity(entity) {
+  return Boolean(entity && (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader" ||
+    entity.type === "block" || entity.type === "polyline" || linearEditableEntity(entity)));
+}
+
+function selectionWorldBounds(entities) {
+  const points = entities.flatMap(selectionEntityPoints).filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+  if (!points.length) return null;
+  return points.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x), maxX: Math.max(bounds.maxX, point.x),
+    minY: Math.min(bounds.minY, point.y), maxY: Math.max(bounds.maxY, point.y),
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+}
+
 function canApplySelectionAction(action) {
   const selected = selectedEntities().filter((entity) => isLayerVisible(entity.layer));
   if (!selected.length || state.tool !== "select" || state.selectedFigureGrip || state.drawing || state.leaderInput || state.moveCommand || state.offsetCommand || state.lineEdit) return false;
@@ -4168,6 +4187,8 @@ function canApplySelectionAction(action) {
   if (action === "group") return selected.length >= 2;
   if (action === "scale-selection") return true;
   if (action === "delete" || action === "move") return true;
+  if (action === "mirror") return selected.every(canMirrorSelectionEntity);
+  if (action === "rotate") return selected.every(canRotateSelectionEntity);
   if (action === "make-block") return !state.traceEditing && state.reusableBlocks.length < MAX_REUSABLE_BLOCKS && selected.every(blockSourceEntity);
   if (action === "explode") return selected.every(canExplodeEntity);
   if (action === "scale" && selected.length === 1 && isReusableBlock(selected[0])) return true;
@@ -4177,10 +4198,10 @@ function canApplySelectionAction(action) {
   if (selected.length !== 1) return false;
   const entity = selected[0];
   if (action === "copy") return true;
-  if (action === "mirror") return editableFigure(entity, action) || ["wall", "block"].includes(entity.type);
+  if (action === "mirror") return canMirrorSelectionEntity(entity);
   if (isPlanAnnotationZone(entity) || entity.dimensionKind === "leader") return action === "rotate";
   if (entity.type === "polyline") return action === "rotate";
-  if (action === "rotate") return entity.type === "block" || linearEditableEntity(entity);
+  if (action === "rotate") return canRotateSelectionEntity(entity);
   if (action === "offset") return isDraftLine(entity) || entity.type === "wall";
   return false;
 }
@@ -4308,22 +4329,12 @@ async function scaleSelection() {
     statusChip.textContent = "Масштаб не изменён";
     return;
   }
-  const points = selected.flatMap(selectionEntityPoints).filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
-  if (!points.length) {
+  const bounds = selectionWorldBounds(selected);
+  if (!bounds) {
     statusChip.textContent = "Не удалось определить центр выделения";
     return;
   }
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const point of points) {
-    minX = Math.min(minX, point.x);
-    maxX = Math.max(maxX, point.x);
-    minY = Math.min(minY, point.y);
-    maxY = Math.max(maxY, point.y);
-  }
-  const base = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  const base = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
   const edits = [];
   for (const entity of selected) {
     const before = cloneProjectEntity(entity);
@@ -7708,6 +7719,16 @@ function applySelectionAction(action) {
     return;
   }
 
+  if (action === "rotate") {
+    startMoveLikeCommand(selected, "rotate");
+    return;
+  }
+
+  if (action === "mirror") {
+    startLineEdit(action, selected[0], { sourceIds: selected.map(({ id }) => id) });
+    return;
+  }
+
   if (action === "fillet") {
     startLineEdit(action, selected[0], { filletIds: selected.map(({ id }) => id) });
     return;
@@ -7725,57 +7746,7 @@ function applySelectionAction(action) {
   }
   if (action === "offset") {
     startOffsetCommand(actionEntity);
-    return;
   }
-  if (action === "rotate" && actionEntity.type === "block") {
-    startMoveLikeCommand(actionEntity, "rotate");
-    return;
-  }
-
-
-  const entity = state.entities.find((item) => item.id === state.selectedId);
-  if (!entity || entity.type === "block" || entity.layer === "dimensions") return;
-
-  if (action === "copy") {
-    startMoveLikeCommand(entity, "copy");
-    return;
-  }
-
-  if (action === "offset") {
-    startOffsetCommand(entity);
-    return;
-  }
-
-  if (action === "delete") {
-    const index = state.entities.findIndex((item) => item.id === entity.id);
-    if (index < 0) return;
-    state.entities.splice(index, 1);
-    state.undo.push({ type: "delete", entity, index });
-    state.redo.length = 0;
-    markProjectDirty("delete");
-    state.selectedId = null;
-    state.selectedIds = [];
-    state.selectedEndpoint = null;
-    statusChip.textContent = "Линия удалена";
-    draw();
-    return;
-  }
-
-  const before = entityGeometry(entity);
-  if (action === "rotate") {
-    startMoveLikeCommand(entity, "rotate");
-    return;
-    rotateLinearEntity90(entity);
-    statusChip.textContent = "Поворот 90°";
-  }
-  const after = entityGeometry(entity);
-  if (geometryChanged(before, after)) {
-    state.undo.push({ type: "move", entityId: entity.id, before, after });
-    state.redo.length = 0;
-    markProjectDirty("selection-action");
-  }
-  state.selectedEndpoint = null;
-  draw();
 }
 
 function blockSourceEntity(entity) {
@@ -10673,6 +10644,12 @@ function lineEditEntity(id, mode) {
       : figureCutActions.has(mode) ? editableFigure(entity, mode) : isDraftLine(entity) || (mode === "scale" && isReusableBlock(entity))));
 }
 
+function lineEditSources(edit = state.lineEdit) {
+  if (!edit) return [];
+  const ids = edit.sourceIds?.length ? edit.sourceIds : edit.sourceId ? [edit.sourceId] : [];
+  return ids.map((id) => lineEditEntity(id, edit.mode)).filter(Boolean);
+}
+
 function pickDraftLine(screen, includeFigures = false, candidates = null, mode, readOnly = false) {
   let best = null;
   let distance = 18;
@@ -10701,10 +10678,11 @@ function startQuickEdit(mode) {
   canvas.focus({ preventScroll: true });
 }
 
-function startLineEdit(mode, entity, { quick = false, filletIds = [] } = {}) {
+function startLineEdit(mode, entity, { quick = false, filletIds = [], sourceIds = [] } = {}) {
   hideSelectModeMenu();
   state.lineEdit = {
-    mode, quick, sourceId: entity?.id, joinIds: [], filletIds, firstPick: null, amount: null,
+    mode, quick, sourceId: entity?.id, sourceIds: sourceIds.length ? [...new Set(sourceIds)] : entity?.id ? [entity.id] : [],
+    joinIds: [], filletIds, firstPick: null, amount: null,
     boundaryMode: "auto", breakMode: "gap", boundaryIds: [], boundaryReady: false, pending: null, applied: false,
   };
   if (boundaryEditModes.has(mode)) {
@@ -11038,12 +11016,11 @@ function placeLineTransform(edit, source, point) {
   }
 }
 
-function previewMirror(source, start, end) {
-  state.lineEdit.mirrorAxis = { start, end };
+function mirroredFigureGeometry(source, start, end) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const axis = normalizeWorldVector(dx, dy);
-  if (!axis) return setLineEditHint("Выберите линию ненулевой длины");
+  if (!axis) return { error: "Выберите линию ненулевой длины" };
   const reflect = point => {
     const offset = 2 * ((point.x - start.x) * -axis.y + (point.y - start.y) * axis.x);
     return { x: point.x + axis.y * offset, y: point.y - axis.x * offset };
@@ -11061,16 +11038,38 @@ function previewMirror(source, start, end) {
     geometry = { type: "block", ...reflect(source), flipX: !source.flipX,
       rotation: normalizeDegrees(radToDeg(2 * Math.atan2(dy, dx) + Math.PI) - (source.rotation || 0)) };
     if (isReusableBlock(source) && !expandReusableBlock({ ...source, ...geometry })) {
-      return setLineEditHint("Координаты блока после отражения вне диапазона");
+      return { error: "Координаты блока после отражения вне диапазона" };
     }
   } else {
     geometry = mirrorLine(source, start, end);
   }
-  if (!geometry) return setLineEditHint("Отражение невозможно");
+  return geometry ? { geometry } : { error: "Отражение невозможно" };
+}
+
+function previewMirror(source, start, end) {
+  const edit = state.lineEdit;
+  edit.mirrorAxis = { start, end };
+  const sources = lineEditSources(edit);
+  if (!sources.length && source) sources.push(source);
+  if (!sources.length || sources.length !== edit.sourceIds.length) return setLineEditHint("Объекты недоступны");
+  const mirrored = sources.map((entity) => ({ entity, ...mirroredFigureGeometry(entity, start, end) }));
+  const failed = mirrored.find(({ error }) => error);
+  if (failed) return setLineEditHint(failed.error);
+  const count = mirrored.length;
   if (lineUi.lineMirrorDelete.checked) {
-    previewLineEdit([[source, [geometry]]], "Объект отражён");
+    previewLineEdit(mirrored.map(({ entity, geometry }) => [entity, [geometry]]),
+      count > 1 ? `Отражено объектов: ${count}` : "Объект отражён");
   } else {
-    previewLineEdit([], "Отражённая копия создана", [replaceFigureGeometry(source, geometry, newLineId(geometry.type || source.type))]);
+    const copiedGroups = new Map();
+    const added = mirrored.map(({ entity, geometry }) => {
+      const copy = replaceFigureGeometry(entity, geometry, newLineId(geometry.type || entity.type));
+      if (entity.groupId) {
+        if (!copiedGroups.has(entity.groupId)) copiedGroups.set(entity.groupId, newLineId("group"));
+        copy.groupId = copiedGroups.get(entity.groupId);
+      }
+      return copy;
+    });
+    previewLineEdit([], count > 1 ? `Создано отражённых копий: ${count}` : "Отражённая копия создана", added);
   }
 }
 
@@ -11783,33 +11782,28 @@ function commitMoveCommandPoint(world) {
     const startAngle = angleBetweenPoints(command.base, command.reference);
     const endAngle = angleBetweenPoints(command.base, end);
     const delta = signedAngleDelta(startAngle, endAngle);
-    if (entity.type === "rectangle") {
-      const geometry = rotatedRectangleGeometry(entity, command.base, delta);
-      if (!validFigurePiece(geometry)) {
-        statusChip.textContent = "Координаты после поворота вне диапазона";
-        draw();
-        return;
-      }
-      if (Math.abs(delta) > 1e-12) commitLineEdit([[entity, [geometry]]], "Поворот применён", [], "rotate-rectangle");
-    } else {
-      if (rotateEntityAround(entity, command.base, delta) === false) {
-        statusChip.textContent = "Координаты после поворота вне диапазона";
-        draw();
-        return;
-      }
-      const after = entityGeometry(entity);
-      if (geometryChanged(command.before, after)) {
-        state.undo.push({ type: "move", entityId: entity.id, before: command.before, after });
-        state.redo.length = 0;
-        markProjectDirty("rotate");
-      }
+    const entities = state.entities.filter(item => command.entityIds.has(item.id) && isLayerVisible(item.layer) && !isLayerLocked(item.layer));
+    const edits = Math.abs(delta) <= 1e-12 ? [] : entities.flatMap((item) => {
+      const before = cloneProjectEntity(item);
+      const after = rotatedEntitySnapshot(item, command.base, delta);
+      return before && after ? [{ entityId: item.id, before, after }] : [];
+    });
+    if (entities.length !== command.entityIds.size || (Math.abs(delta) > 1e-12 && edits.length !== entities.length)) {
+      statusChip.textContent = "Координаты после поворота вне диапазона";
+      draw();
+      return;
     }
     state.moveCommand = null;
     resetSnapTracking();
     syncCommandState();
     hideInlineEditors();
-    statusChip.textContent = "Поворот применен";
-    draw();
+    if (!edits.length) {
+      statusChip.textContent = "Угол не изменён";
+      draw();
+      return;
+    }
+    commitEntityBatch(edits, [...command.entityIds], "rotate-selection");
+    statusChip.textContent = edits.length > 1 ? `Повернуто объектов: ${edits.length}` : "Поворот применён";
     return;
   }
   if (command.mode === "copy") {
@@ -12859,80 +12853,18 @@ function commitCopyPlacement(command, dx, dy) {
   draw();
 }
 
-function rotateLinearEntity90(entity) {
-  const cx = (entity.x1 + entity.x2) / 2;
-  const cy = (entity.y1 + entity.y2) / 2;
-  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, { x: cx, y: cy }, Math.PI / 2);
-  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, { x: cx, y: cy }, Math.PI / 2);
-  entity.x1 = p1.x;
-  entity.y1 = p1.y;
-  entity.x2 = p2.x;
-  entity.y2 = p2.y;
+function assignEntityGeometry(entity, geometry) {
+  for (const [key, value] of Object.entries(geometry)) {
+    if (value === undefined) delete entity[key];
+    else entity[key] = value;
+  }
+  if (entity.dimensionKind === "leader" && entity.leaderElbow === null) delete entity.leaderElbow;
 }
 
-function rotateLinearEntityAround(entity, base, radians) {
-  const p1 = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, radians);
-  const p2 = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, radians);
-  entity.x1 = p1.x;
-  entity.y1 = p1.y;
-  entity.x2 = p2.x;
-  entity.y2 = p2.y;
-}
-
-function rotateEntityAround(entity, base, radians) {
-  if (isPlanAnnotationZone(entity)) {
-    const geometry = mapPlanZoneGeometry(entity, (point) => rotatePointAround(point, base, radians));
-    if (!geometry) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
-  }
-  if (entity.dimensionKind === "leader") {
-    const geometry = mapLeaderGeometry(entity, point => rotatePointAround(point, base, radians));
-    if (!geometry) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
-  }
-  if (entity.type === "polyline") {
-    const points = entity.points.map((point) => rotatePointAround(point, base, radians));
-    if (!points.every(isLinePoint) || !validPolylinePoints(points, entity.closed, entity.bulges)) return false;
-    applyEntityGeometry(entity, { points });
-    return;
-  }
-  if (isDraftLine(entity)) {
-    const start = rotatePointAround({ x: entity.x1, y: entity.y1 }, base, radians);
-    const end = rotatePointAround({ x: entity.x2, y: entity.y2 }, base, radians);
-    const geometry = { x1: start.x, y1: start.y, x2: end.x, y2: end.y };
-    if (!isValidLine(geometry)) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
-  }
-  if (entity.type === "arc") {
-    const geometry = mapArcPoints(entity, point => rotatePointAround(point, base, radians));
-    if (!validFigurePiece({ ...entity, ...geometry })) return false;
-    applyEntityGeometry(entity, geometry);
-    return;
-  }
-  if (entity.type === "block") {
-    const center = rotatePointAround({ x: entity.x, y: entity.y }, base, radians);
-    const geometry = { ...center, rotation: normalizeDegrees((entity.rotation || 0) + radToDeg(radians)) };
-    if (isReusableBlock(entity) && !expandReusableBlock({ ...entity, ...geometry })) return false;
-    Object.assign(entity, geometry);
-    return;
-  }
-  if (entity.type === "text") {
-    const position = rotatePointAround({ x: entity.x, y: entity.y }, base, radians);
-    entity.x = position.x;
-    entity.y = position.y;
-    entity.rotation = normalizeDegrees((entity.rotation || 0) + radToDeg(radians));
-    return;
-  }
-  if (entity.type === "circle") {
-    const position = rotatePointAround({ x: entity.cx, y: entity.cy }, base, radians);
-    entity.cx = position.x;
-    entity.cy = position.y;
-    return;
-  }
-  rotateLinearEntityAround(entity, base, radians);
+function rotatedEntitySnapshot(entity, base, radians) {
+  const rotated = rotateStoredEntity(entity, base, radians);
+  if (!rotated || !validStoredEntity(rotated) || (isReusableBlock(rotated) && !expandReusableBlock(rotated))) return null;
+  return cloneProjectEntity(rotated);
 }
 
 function offsetLinearEntity(entity, distance = 300, sidePoint = null) {
@@ -13157,11 +13089,7 @@ function entityGeometry(entity) {
 
 function applyEntityGeometry(entity, geometry) {
   if (!entity || !geometry || isLayerLocked(entity.layer) || (Object.hasOwn(geometry, "layer") && isLayerLocked(geometry.layer))) return;
-  for (const [key, value] of Object.entries(geometry)) {
-    if (value === undefined) delete entity[key];
-    else entity[key] = value;
-  }
-  if (entity.dimensionKind === "leader" && entity.leaderElbow === null) delete entity.leaderElbow;
+  assignEntityGeometry(entity, geometry);
   updateLinkedDimensions();
   markProjectDirty("geometry");
 }
@@ -14302,8 +14230,8 @@ lineUi.lineMirrorModes.addEventListener("click", event => {
   const axis = event.target.closest("[data-mirror-axis]")?.dataset.mirrorAxis;
   const edit = state.lineEdit;
   if (edit?.mode !== "mirror" || !axis) return;
-  const source = lineEditEntity(edit.sourceId, edit.mode);
-  if (!source) return endLineEdit("Объект недоступен");
+  const sources = lineEditSources(edit);
+  if (!sources.length || sources.length !== edit.sourceIds.length) return endLineEdit("Объекты недоступны");
   edit.pending = null;
   edit.mirrorAxis = null;
   edit.mirrorStart = null;
@@ -14314,11 +14242,11 @@ lineUi.lineMirrorModes.addEventListener("click", event => {
     draw();
     return;
   }
-  const bounds = viewportEntityBounds(source);
+  const bounds = selectionWorldBounds(sources);
   if (!bounds) return;
   const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
   const end = axis === "vertical" ? { x: center.x, y: center.y + (center.y > 0 ? -1 : 1) } : { x: center.x + (center.x > 0 ? -1 : 1), y: center.y };
-  previewMirror(source, center, end);
+  previewMirror(sources[0], center, end);
 });
 bindPointAction(quickMoveTool, () => applySelectionAction("move"));
 bindPointAction(quickGroupTool, toggleSelectionGroup);
