@@ -2,22 +2,29 @@
 // подтверждение исходных данных и карта возможностей участка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
-const stage = (page, id) => page.locator(`[data-route-stage="${id}"]`);
+// В 0.4.5 этапы участка открываются из нижней палитры: кнопка «Участок» →
+// меню задач (`[data-route-task]` с `data-route-task-stage`) → панель задачи.
+// Список этапов внутри панели убран, в панели показывается одна задача.
+async function openTask(page, stageId, taskId) {
+  await openRouteView(page, 'site', { task: taskId });
+  await page.waitForSelector(`#projectRouteBody .project-route-task[data-route-task="${taskId}"]`);
+  assert.equal(await page.getAttribute(`#projectRouteHover [data-route-task="${taskId}"]`, 'data-route-task-stage'), stageId,
+    `задача ${taskId} относится к этапу ${stageId}`);
+  assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="site"]', 'aria-current'), 'page',
+    'текущий этап палитры — «Участок»');
+}
 
-async function openStage(page, id) {
-  if (!await stage(page, id).isVisible()) {
-    if (await page.isVisible('#projectRoutePanel')) await page.click('#homeViewTab-site');
-    else if (await page.isVisible('[data-route-view="site"]')) await page.click('[data-route-view="site"]');
-    else {
-      await page.click('#projectHomeProgram');
-      await page.click('#homeViewTab-site');
-    }
-  }
-  await stage(page, id).click();
-  await page.waitForSelector('#projectRoutePanel:not([hidden])');
-  await page.waitForFunction((stageId) => document.querySelector(`[data-route-stage="${stageId}"]`)?.getAttribute('aria-current') === 'step', id);
+// Статусы задач этапа читаются из меню палитры: этап готов, когда готовы все его задачи.
+async function stageTaskStatuses(page, stageId) {
+  await page.click('#projectRouteSteps [data-route-view="site"]');
+  await page.waitForSelector('#projectRouteHover:not([hidden])');
+  const statuses = await page.$$eval(`#projectRouteHover [data-route-task-stage="${stageId}"]`,
+    (nodes) => nodes.map((node) => node.dataset.routeStatus));
+  await page.click('#projectRouteSteps [data-route-view="site"]');
+  await page.waitForSelector('#projectRouteHover', { state: 'hidden' });
+  return statuses;
 }
 
 async function taskStatusByControl(page, selector) {
@@ -64,17 +71,18 @@ describe('маршрут подготовки участка', () => {
     const { page } = app;
     assert.equal(await page.isVisible('#projectRoute'), true);
     assert.equal(await page.locator('#projectRouteSteps button').count(), 9);
-    assert.equal(await stage(page, 'foundation').isVisible(), false);
+    assert.equal(await page.isVisible('#projectRoutePanel'), false);
 
-    await openStage(page, 'foundation');
-    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Участок');
-    assert.match(await page.textContent('.project-route-stage-intro h3'), /Съёмка и границы/);
+    await openTask(page, 'foundation', 'boundary');
+    // Заголовок панели — выбранная задача, «хлебные крошки» — этап аналитики.
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Граница участка');
+    assert.match(await page.textContent('#projectRoutePanelKicker'), /^Аналитика \/ Этап 1 из 9$/);
     await page.click('#projectRouteClose');
     await page.waitForFunction(() => document.getElementById('projectRoutePanel')?.hidden === true);
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.routeView), 'site',
       'после пересоздания панели фокус возвращается на актуальную кнопку этапа');
 
-    await openStage(page, 'foundation');
+    await openTask(page, 'foundation', 'boundary');
     await page.click('#projectRouteBody [data-route-tool="boundary"]');
 
     await page.waitForFunction(() => window.__kepler.state.tool?.kind === 'draw');
@@ -98,17 +106,18 @@ describe('маршрут подготовки участка', () => {
         ];
       });
     });
-    await openStage(page, 'foundation');
+    await openTask(page, 'foundation', 'underlay');
     const without = '[data-route-confirm="withoutUnderlay"]';
     assert.equal(await taskStatusByControl(page, without), 'unknown');
     await page.check(without);
     await page.waitForFunction(() => window.__kepler.state.project.site.planning.withoutUnderlay === true);
-    await page.waitForFunction(() => document.querySelector('[data-route-stage="foundation"]')?.dataset.routeStatus === 'done');
     await page.waitForFunction(() => document.activeElement?.dataset?.routeConfirm === 'withoutUnderlay');
     assert.equal(await page.isChecked(without), true, 'явное решение хранится в модели проекта');
     assert.equal(await taskStatusByControl(page, without), 'done');
+    assert.deepEqual(await stageTaskStatuses(page, 'foundation'), ['done', 'done'],
+      'этап «Съёмка и границы» готов: граница есть, подложка явно не нужна');
 
-    await openStage(page, 'constraints');
+    await openTask(page, 'constraints', 'constraints');
     const constraints = '[data-route-confirm="constraintsConfirmed"]';
     await page.check(constraints);
     await page.waitForFunction(() => Boolean(window.__kepler.state.project.site.planning.constraintsConfirmed));
@@ -133,7 +142,7 @@ describe('маршрут подготовки участка', () => {
       mutate(() => { site.boundary = null; });
       return boundary;
     });
-    await openStage(page, 'constraints');
+    await openTask(page, 'constraints', 'zone');
     await page.fill('[data-route-footprint="width"]', '10');
     await page.fill('[data-route-footprint="depth"]', '8');
     await page.click('[data-route-action="save-footprint"]');
@@ -156,7 +165,7 @@ describe('маршрут подготовки участка', () => {
     if (await page.isVisible('#projectRoutePanel')) await page.click('#projectRouteClose');
     await page.click('#modePlanBtn');
     await page.evaluate(() => { window.__kepler.state.project.site.showBuildZone = true; });
-    await openStage(page, 'constraints');
+    await openTask(page, 'constraints', 'zone');
     await page.click('[data-route-action="show-zone"]');
     await page.waitForFunction(() => window.__kepler.state.modeName === 'site');
     assert.equal(await page.isHidden('#projectRoutePanel'), true);
@@ -174,7 +183,7 @@ describe('маршрут подготовки участка', () => {
         });
       });
     });
-    await openStage(page, 'access');
+    await openTask(page, 'access', 'neighbor');
     const context = '[data-route-confirm="contextReviewed"]';
     await page.waitForFunction((selector) => document.querySelector(selector)?.checked === false, context);
     assert.equal(await taskStatusByControl(page, context), 'unknown', 'изменение соседей сбрасывает подтверждение окружения');
@@ -184,7 +193,7 @@ describe('маршрут подготовки участка', () => {
 
     if (await page.isVisible('#projectRoutePanel')) await page.click('#projectRouteClose');
     await page.click('#modePlanBtn');
-    await openStage(page, 'constraints');
+    await openTask(page, 'constraints', 'zone');
 
     await page.fill('[data-route-footprint="width"]', '10');
     await page.fill('[data-route-footprint="depth"]', '8');
@@ -212,7 +221,7 @@ describe('маршрут подготовки участка', () => {
     assert.ok(result.cells > 0 && result.visibleCells > 0, `ячейки ${JSON.stringify(result)}`);
     assert.ok(result.candidates > 0 && result.drawnCandidates > 0, `кандидаты ${JSON.stringify(result)}`);
     assert.equal(await page.isVisible('#siteOpportunityLegend'), true, 'легенда видна вместе с картой');
-    await openStage(page, 'constraints');
+    await openTask(page, 'constraints', 'zone');
     assert.equal(await page.getAttribute('[data-route-action="toggle-opportunity"]', 'aria-checked'), 'true');
     const cache = await page.evaluate(async () => {
       const { mutate } = await import('./ui/store.js');
@@ -245,15 +254,23 @@ describe('маршрут проекта на телефоне', () => {
 
   it('открывается нижним листом и освобождает холст при запуске инструмента', async () => {
     const { page } = app;
+    const checkSheet = async (label) => {
+      const [viewport, panel] = await Promise.all([
+        page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
+        page.locator('#projectRoutePanel').boundingBox(),
+      ]);
+      assert.ok(panel.x >= -1 && panel.x + panel.width <= viewport.width + 1, `${label}: лист по ширине: ${JSON.stringify(panel)}`);
+      assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height + 1, `${label}: лист в окне: ${JSON.stringify(panel)}`);
+      assert.ok(panel.y > viewport.height * 0.15, `${label}: нижний лист не перекрывает весь экран`);
+    };
     await page.tap('#projectHomeProgram');
     await page.waitForSelector('#projectRoutePanel:not([hidden])');
-    const [viewport, panel] = await Promise.all([
-      page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
-      page.locator('#projectRoutePanel').boundingBox(),
-    ]);
-    assert.ok(panel.x >= -1 && panel.x + panel.width <= viewport.width + 1, `лист по ширине: ${JSON.stringify(panel)}`);
-    assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height + 1, `лист в окне: ${JSON.stringify(panel)}`);
-    assert.ok(panel.y > viewport.height * 0.15, 'нижний лист не перекрывает весь экран');
+    await checkSheet('кнопка аналитики');
+
+    // В 0.4.5 панель показывает одну задачу; границу открываем из меню палитры.
+    await openRouteView(page, 'site', { mobile: true, task: 'boundary' });
+    await page.waitForSelector('#projectRouteBody .project-route-task[data-route-task="boundary"]');
+    await checkSheet('задача «Граница участка»');
 
     await page.tap('#projectRouteBody [data-route-tool="boundary"]');
     await page.waitForFunction(() => window.__kepler.state.tool?.target === 'boundary');
