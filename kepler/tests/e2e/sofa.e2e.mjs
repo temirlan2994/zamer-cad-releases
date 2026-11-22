@@ -2,6 +2,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew, dropOnCanvas } from './helpers.mjs';
+import { SOFA_MODULES } from '../../core/composite.js';
 
 describe('диван-конструктор', () => {
   let app;
@@ -31,7 +32,8 @@ describe('диван-конструктор', () => {
     const s1 = await sofa();
     assert.equal(s1.comp.modules.length, 5);
     assert.equal(s1.comp.modules.at(-1).type, 'seat');
-    assert.equal(s1.w, s0.w + 900);
+    // Ширина нового сиденья — по умолчанию из каталога модулей (в 0.4.5 — 1000 мм).
+    assert.equal(s1.w, s0.w + SOFA_MODULES.seat.w);
     assert.equal(s1.x - s1.w / 2, s0.x - s0.w / 2, 'левый край не сдвинулся');
     assert.equal(await app.page.evaluate(() => window.__kepler.state.selection?.type), 'item', 'выделение не сбито');
     await app.page.keyboard.press('Control+z');

@@ -57,7 +57,8 @@ describe('библиотека дверей и окон', () => {
   it('карточка задаёт тип и размеры; строка параметров и подсветка синхронны', async () => {
     const { page } = app;
     await page.click('#openingItems .opening-chip[data-preset="entry-1000"]');
-    assert.deepEqual(await preset(), { type: 'single', width: 1000, height: 2100, sill: 0 });
+    // 0.4.5: дверь из каталога помнит заготовку, входная — роль главного входа.
+    assert.deepEqual(await preset(), { presetId: 'entry-1000', type: 'single', width: 1000, height: 2100, sill: 0, entryRole: 'main' });
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'place-opening', 'инструмент остаётся');
     assert.equal(await page.inputValue('#presetW'), '1000');
     assert.equal(await page.inputValue('#presetType'), 'single');
@@ -71,7 +72,8 @@ describe('библиотека дверей и окон', () => {
     await page.fill('#openSearch', '');
     await page.click('#openingCats button[data-cat="double"]');
     await page.click('#openingItems .opening-chip[data-preset="double-1400"]');
-    assert.deepEqual(await preset(), { type: 'double', width: 1400, height: 2100, sill: 0 });
+    // Роль «главный вход» от входной двери не переходит на межкомнатную.
+    assert.deepEqual(await preset(), { presetId: 'double-1400', type: 'double', width: 1400, height: 2100, sill: 0 });
     assert.equal(await page.inputValue('#presetType'), 'double');
     assert.equal(await page.$$eval('.opening-chip.active', (ns) => ns.length), 1);
     // Поле ширины в строке — подсветка карточки уходит (размер не из каталога).
@@ -109,7 +111,12 @@ describe('библиотека дверей и окон', () => {
     const found = await page.$$eval('#openingItems .opening-chip', (ns) => ns.map((n) => n.dataset.preset));
     assert.ok(found.length >= 3 && found.every((id) => /^(pano|french)/.test(id)), found.join());
     await page.click('.opening-chip[data-preset="pano-2400"]');
-    assert.deepEqual(await preset(), { type: 'panoramic', width: 2400, height: 2100, sill: 100 });
+    // 0.4.5: окно из каталога — с рамой по умолчанию; панорамное связано
+    // с высотой витражей этажа.
+    assert.deepEqual(await preset(), {
+      type: 'panoramic', width: 2400, height: 2100, sill: 100,
+      heightMode: 'level', frameMaterial: 'aluminum', frameColor: 'anthracite',
+    });
     assert.equal(await page.inputValue('#presetSill'), '100');
     // Стена примера уже с окнами — освобождаем её под широкое панорамное.
     const n0 = await page.evaluate(() => {
@@ -157,7 +164,8 @@ it('на телефоне выбор закрывает каталог, каса
     await mobileSelectFamilyTool(page, 'openings', 'windowToolBtn');
     assert.equal(await page.isVisible('#canvasHint'), false);
     assert.equal(await page.isVisible('#toolOptions'), false);
-    assert.equal(await page.textContent('.opening-chip[data-preset="win-600x600"]'), '600 × 600 мм');
+    // Карточка «Окно N×M» подписана только размером (окно 600×600 убрано из каталога в 0.4.5).
+    assert.equal(await page.textContent('.opening-chip[data-preset="win-1200x1400"]'), '1200 × 1400 мм');
     await page.tap('#openingCats [data-cat="panoramic"]');
     assert.equal(await page.getAttribute('#openingCats [data-cat="panoramic"]', 'aria-pressed'), 'true');
     await page.tap('.opening-chip[data-preset="pano-2400"]');

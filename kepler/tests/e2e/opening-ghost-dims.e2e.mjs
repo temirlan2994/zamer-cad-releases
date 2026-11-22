@@ -16,13 +16,25 @@ describe('вставка проёма: размеры слева и справа
         const { planToScreen } = await import('./ui/view.js');
         const { startPlaceOpening } = await import('./ui/tools.js');
         const k = window.__kepler;
-        const w = k.state.walls.find((x) => x.kind === 'own' && x.orient === 'h' && x.to - x.from > 3000);
         startPlaceOpening(openKind);
-        const mid = (w.center.y1 + w.center.y2) / 2;
-        const s = planToScreen(w.from + (w.to - w.from) * 0.3, mid);
-        const cv = document.getElementById('canvas').getBoundingClientRect();
-        return { x: cv.left + s.x, y: cv.top + s.y };
+        // Строка параметров инструмента сдвигает холст, вид компенсирует это
+        // на следующем кадре; каталог проёмов (.library) открывается поверх
+        // левой части холста — берём стену, точка которой видна на холсте.
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const cv = document.getElementById('canvas');
+        const box = cv.getBoundingClientRect();
+        const at = (w) => {
+          const s = planToScreen(w.from + (w.to - w.from) * 0.3, (w.center.y1 + w.center.y2) / 2);
+          return { x: box.left + s.x, y: box.top + s.y };
+        };
+        const w = k.state.walls.find((x) => {
+          if (x.kind !== 'own' || x.orient !== 'h' || x.to - x.from <= 3000) return false;
+          const p = at(x);
+          return document.elementFromPoint(p.x, p.y) === cv;
+        });
+        return w && at(w);
       }, kind);
+      assert.ok(target, 'есть видимая стена для превью');
       await page.mouse.move(target.x, target.y, { steps: 4 });
       const gaps = await page.evaluate(async () => {
         const { openingGaps } = await import('./core/opening-spacing.js');
@@ -43,13 +55,23 @@ describe('вставка проёма: размеры слева и справа
       const { planToScreen } = await import('./ui/view.js');
       const { startPlaceOpening } = await import('./ui/tools.js');
       const k = window.__kepler;
-      const w = k.state.walls.filter((x) => x.kind === 'own' && x.orient === 'h' && x.to - x.from > 4500).sort((a, b) => (b.to - b.from) - (a.to - a.from))[0];
       startPlaceOpening('window');
-      const mid = (w.center.y1 + w.center.y2) / 2;
-      const cv = document.getElementById('canvas').getBoundingClientRect();
-      const at = (t) => { const s = planToScreen(w.from + (w.to - w.from) * t, mid); return { x: cv.left + s.x, y: cv.top + s.y }; };
-      return { spots: [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(at), n0: k.state.project.openings.length };
+      // Ждём компенсацию сдвига холста (строка параметров) и берём длинную
+      // стену, целиком видимую на холсте: каталог проёмов закрывает левую часть.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const cv = document.getElementById('canvas');
+      const box = cv.getBoundingClientRect();
+      const T = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9];
+      const at = (w, t) => {
+        const s = planToScreen(w.from + (w.to - w.from) * t, (w.center.y1 + w.center.y2) / 2);
+        return { x: box.left + s.x, y: box.top + s.y };
+      };
+      const visible = (w) => T.every((t) => { const p = at(w, t); return document.elementFromPoint(p.x, p.y) === cv; });
+      const w = k.state.walls.filter((x) => x.kind === 'own' && x.orient === 'h' && x.to - x.from > 4500 && visible(x))
+        .sort((a, b) => (b.to - b.from) - (a.to - a.from))[0];
+      return { spots: w ? T.map((t) => at(w, t)) : [], n0: k.state.project.openings.length };
     });
+    assert.ok(pts.spots.length, 'есть видимая длинная стена');
     await page.waitForSelector('#presetW', { state: 'visible' });
     await page.fill('#presetW', '700');
     await page.press('#presetW', 'Tab');
