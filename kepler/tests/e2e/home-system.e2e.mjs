@@ -4,8 +4,6 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openNew, openRouteView, startApp } from './helpers.mjs';
 
-const panel = '#projectRoutePanel';
-
 // Этапы открываются из палитры внизу (интерфейс 0.4.5): кнопка этапа → пункт меню.
 async function openHomeView(page, view, title) {
   await openRouteView(page, view);
