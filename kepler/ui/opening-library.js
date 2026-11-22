@@ -33,6 +33,10 @@ export function bindOpeningLibrary() {
 export function chooseOpeningPreset(preset) {
   const t = state.tool;
   if (t?.kind !== 'place-opening' || t.openKind !== preset.kind) return;
+  // Роль входа и id заготовки задаёт только сама карточка: без сброса
+  // «Главный вход» от входной двери переходил на следующую выбранную карточку.
+  delete t.preset.presetId;
+  delete t.preset.entryRole;
   Object.assign(t.preset, presetToOpening(preset, levelHeight()));
   if (preset.kind === 'window') Object.assign(t.preset, {
     heightMode: preset.heightMode === 'level' ? 'level' : 'custom',
