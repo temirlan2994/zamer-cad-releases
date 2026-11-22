@@ -17,9 +17,40 @@ concurrency:
 
 jobs:
   check:
-    name: lint + unit + e2e
+    name: lint + unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: kepler
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kepler/package-lock.json
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Линтер
+        run: npm run lint
+
+      - name: Юнит-тесты ядра
+        # The wall performance test needs to avoid CPU contention with other test files.
+        run: node --test --test-concurrency=1 tests/*.test.mjs
+
+  e2e:
+    # 110 файлов e2e идут последовательно ~40–60 мин — делим на части.
+    name: e2e ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: kepler
@@ -38,12 +69,5 @@ jobs:
       - name: Chromium для e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Линтер
-        run: npm run lint
-
-      - name: Юнит-тесты ядра
-        # The wall performance test needs to avoid CPU contention with other test files.
-        run: node --test --test-concurrency=1 tests/*.test.mjs
-
       - name: e2e (Playwright)
-        run: npm run test:e2e
+        run: node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 tests/e2e/*.e2e.mjs
