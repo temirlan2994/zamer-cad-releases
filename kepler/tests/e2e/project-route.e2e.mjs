@@ -2,7 +2,7 @@
 // подтверждение исходных данных и карта возможностей участка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, openRouteView, startApp } from './helpers.mjs';
+import { openNew, openRouteFromOverview, openRouteView, startApp } from './helpers.mjs';
 
 // В 0.4.5 этапы участка открываются из нижней палитры: кнопка «Участок» →
 // меню задач (`[data-route-task]` с `data-route-task-stage`) → панель задачи.
@@ -264,7 +264,11 @@ describe('маршрут проекта на телефоне', () => {
       assert.ok(panel.y > viewport.height * 0.15, `${label}: нижний лист не перекрывает весь экран`);
     };
     await page.tap('#projectHomeProgram');
-    await page.waitForSelector('#projectRoutePanel:not([hidden])');
+    await page.waitForSelector('#projectRouteHover:not([hidden])');
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'первая кнопка сначала открывает меню этапов');
+    await page.tap('#projectHomeProgram');
+    await page.waitForSelector('#projectRouteHover', { state: 'hidden' });
+    await openRouteFromOverview(page, 'site', { mobile: true });
     await checkSheet('кнопка аналитики');
 
     // В 0.4.5 панель показывает одну задачу; границу открываем из меню палитры.

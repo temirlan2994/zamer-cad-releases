@@ -167,6 +167,9 @@ describe('привязки — телефон 390', () => {
     await page.tap('#mobileSnapBtn');
     await page.tap('#projectHomeProgram');
     assert.equal(await page.isVisible('#mobileSnapRow'), false);
+    assert.equal(await page.isVisible('#projectRouteHover'), true);
+    assert.equal(await page.isVisible('#projectRoutePanel'), false);
+    await page.tap('#projectRouteHover [data-route-overview-view="site"]');
     assert.equal(await page.isVisible('#projectRoutePanel'), true);
     assert.deepEqual(app.errors, []);
   });

@@ -91,6 +91,16 @@ export async function openRouteView(page, view, { mobile = false, task = null } 
   await page.waitForSelector('#projectRoutePanel:not([hidden])');
 }
 
+// Первая кнопка «Аналитика» открывает обзор девяти этапов, а не последнее
+// окно. Только выбор этапа в этом меню открывает его отдельную панель.
+export async function openRouteFromOverview(page, view, { mobile = false } = {}) {
+  const press = (selector) => (mobile ? page.tap(selector) : page.click(selector));
+  await press('#projectHomeProgram');
+  await page.waitForSelector('#projectRouteHover:not([hidden])');
+  await press(`#projectRouteHover [data-route-overview-view="${view}"]`);
+  await page.waitForSelector('#projectRoutePanel:not([hidden])');
+}
+
 // Стартовое меню → «Загрузить пример» / «Новый проект».
 export async function openSample(page) {
   await page.click('#startSample');

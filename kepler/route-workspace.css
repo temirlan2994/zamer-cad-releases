@@ -177,7 +177,9 @@
 #projectRoute .project-route-step:is(:hover,:focus-visible),
 #projectRoute .project-route-step.active,
 #projectRoute .project-route-step.menu-open,
-#projectRoute .project-route-step[aria-expanded="true"] {
+#projectRoute .project-route-step[aria-expanded="true"],
+#projectHomeProgram.menu-open,
+#projectHomeProgram[aria-expanded="true"] {
   color: var(--text); background: var(--surface-2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
 }
@@ -200,6 +202,10 @@
   font-size: 12px; font-weight: 620;
 }
 .project-route-hover button:hover { background: var(--surface-2); }
+.project-route-hover button[aria-current="page"] {
+  background: var(--surface-2); color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, var(--border));
+}
 .project-route-hover button i {
   display: grid; place-items: center; width: 18px; height: 18px; flex: none; border-radius: 50%;
   background: var(--surface-2); color: var(--muted); font-style: normal; font-weight: 800;
@@ -235,6 +241,9 @@
     border-width: 1px; border-radius: 15px;
   }
   .project-route-hover > div { grid-template-columns: minmax(0,1fr); }
+  .project-route-hover[data-route-menu-view="overview"] > div {
+    grid-template-columns: repeat(2, minmax(0,1fr));
+  }
   body:is(.draw-open, .cat-open, .sheet-props, .sheet-library, .sheet-more) #projectRoute:not(:has(.project-route-panel:not([hidden]))) {
     visibility: hidden; opacity: 0; pointer-events: none;
   }

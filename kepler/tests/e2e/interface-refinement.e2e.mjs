@@ -19,8 +19,21 @@ describe('компактная аналитика и управляемые вк
     assert.equal(await page.locator('#projectRouteSteps [data-route-view]').count(), 9);
     assert.equal(await page.locator('#projectRouteSteps [data-route-view] > span:visible').count(), 0);
 
-    await page.click('[data-route-view="site"]');
+    await page.click('#projectHomeProgram');
     const hover = page.locator('#projectRouteHover');
+    await hover.waitFor({ state: 'visible' });
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, '«Аналитика» сначала открывает обзор этапов');
+    assert.equal(await hover.locator('[data-route-overview-view]').count(), 9);
+    assert.equal(await page.getAttribute('#projectHomeProgram', 'aria-expanded'), 'true');
+    await page.waitForFunction(() => document.activeElement?.matches('[data-route-overview-view="site"]'));
+    assert.match(await page.getAttribute('[data-route-overview-view="site"]', 'aria-label'), /1\. Участок\./);
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.routeOverviewView), 'program');
+    await page.click('#projectHomeProgram');
+    await hover.waitFor({ state: 'hidden' });
+    assert.equal(await page.getAttribute('#projectHomeProgram', 'aria-expanded'), 'false');
+
+    await page.click('[data-route-view="site"]');
     await hover.waitFor({ state: 'visible' });
     assert.equal(await page.isHidden('#projectRoutePanel'), true, 'первый клик открывает только меню');
     assert.equal(await page.getAttribute('[data-route-view="site"]', 'aria-expanded'), 'true');
@@ -119,8 +132,20 @@ describe('компактная аналитика на телефоне', () => 
     assert.equal(await page.locator('.topbar #projectHomeProgram').count(), 0);
     const dock = await page.locator('#projectRoute .project-route-bar').boundingBox();
     assert.ok(dock.y > 844 * 0.7, JSON.stringify(dock));
-    await page.tap('[data-route-view="site"]');
+
+    await page.tap('#projectHomeProgram');
     const menu = page.locator('#projectRouteHover');
+    await menu.waitFor({ state: 'visible' });
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'первый тап не открывает последнее окно');
+    assert.equal(await menu.locator('[data-route-overview-view]').count(), 9);
+    assert.equal(await page.getAttribute('#projectHomeProgram', 'aria-expanded'), 'true');
+    await menu.locator('[data-route-overview-view="engineering"]').tap();
+    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Инженерные связи');
+    assert.equal(await menu.isHidden(), true);
+    await page.tap('#projectRouteClose');
+
+    await page.tap('[data-route-view="site"]');
     await menu.waitFor({ state: 'visible' });
     assert.equal(await page.isHidden('#projectRoutePanel'), true);
     await menu.locator('[data-route-task]').first().tap();

@@ -45,7 +45,8 @@ describe('программа дома', () => {
     assert.equal(await page.getAttribute(programButton, 'data-status'), 'unknown');
 
     await openProgram(page);
-    assert.equal(await page.getAttribute(programButton, 'aria-expanded'), 'true');
+    assert.equal(await page.getAttribute(programButton, 'aria-expanded'), 'false',
+      'кнопка сводки раскрыта только пока видно её меню, а не окно этапа');
     assert.match(await page.textContent('.home-program-preliminary'), /Предварительно предложено/);
     assert.equal(await page.isVisible('.home-program-frequency'), false);
     await page.fill('[data-home-program-field="guestCount"]', '5');

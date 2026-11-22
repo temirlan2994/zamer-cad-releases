@@ -1,7 +1,7 @@
 // Сквозная шкала 1–9 и локальное восстановление последнего этапа проекта.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, openRouteView, startApp } from './helpers.mjs';
+import { openNew, openRouteFromOverview, openRouteView, startApp } from './helpers.mjs';
 
 describe('единый маршрут дома', () => {
   let app;
@@ -73,8 +73,10 @@ describe('единый маршрут дома', () => {
       renderProjectRoute();
     });
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="site"]', 'aria-current'), 'page');
-    await page.click('#projectRouteClose');
+    await page.waitForSelector('#projectRouteHover:not([hidden])');
+    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="site"]', 'aria-current'), 'page');
+    assert.equal(await page.isHidden('#projectRoutePanel'), true);
+    await page.click('#projectHomeProgram');
 
     await page.evaluate(async () => {
       const { renderProjectRoute } = await import('./ui/project-route.js');
@@ -83,7 +85,9 @@ describe('единый маршрут дома', () => {
       renderProjectRoute();
     });
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="deliverables"]', 'aria-current'), 'page');
+    await page.waitForSelector('#projectRouteHover:not([hidden])');
+    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="deliverables"]', 'aria-current'), 'page');
+    await page.click('#projectHomeProgram');
     assert.deepEqual(app.errors, []);
   });
 
@@ -97,7 +101,7 @@ describe('единый маршрут дома', () => {
     await page.waitForSelector('#projectRoutePanel', { state: 'hidden' });
     assert.equal(await page.evaluate(() => window.__kepler.state.propsTab), 'sheets');
 
-    await page.click('#projectHomeProgram');
+    await openRouteFromOverview(page, 'review');
     await page.waitForSelector('[data-home-review]');
     const site = page.locator('[data-home-review-item="deliverables:missing:site"] [data-home-review-action="open-finding-view"]');
     await site.click();
@@ -136,7 +140,9 @@ describe('единый маршрут дома', () => {
     ));
     if (await page.locator('#startContinue').isVisible()) await page.click('#startContinue');
     await page.click('#projectHomeProgram');
-    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="envelope"]', 'aria-current'), 'page');
+    await page.waitForSelector('#projectRouteHover:not([hidden])');
+    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="envelope"]', 'aria-current'), 'page');
+    assert.equal(await page.isHidden('#projectRoutePanel'), true);
     assert.deepEqual(app.errors, []);
   });
 });

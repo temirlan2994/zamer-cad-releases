@@ -142,6 +142,7 @@ const CIRCULATION_PERIOD_LABEL = Object.freeze({
   event: 'проходов за событие',
 });
 const HOME_WORKFLOW_STORAGE_KEY = 'kepler-home-workflow-position/v1';
+const ROUTE_OVERVIEW_MENU = 'overview';
 const HOME_REVIEW_STATUS_LABEL = Object.freeze({
   checked: 'Проверено',
   attention: 'Требует внимания',
@@ -846,6 +847,10 @@ function setRouteMenuButtons(viewId = null) {
     button.classList.toggle('menu-open', expanded);
     button.setAttribute('aria-expanded', String(expanded));
   });
+  const program = byId('projectHomeProgram');
+  const overviewOpen = viewId === ROUTE_OVERVIEW_MENU;
+  program?.classList.toggle('menu-open', overviewOpen);
+  program?.setAttribute('aria-expanded', String(overviewOpen));
 }
 
 function hideRouteHover(delay = 0, { force = false } = {}) {
@@ -891,10 +896,11 @@ function showRouteHover(button, { pin = false } = {}) {
   hover.innerHTML = `<header><strong>${escapeHtml(view.label)}</strong><small>Выберите пункт</small></header><div>${rows.map((row) => {
     const mark = viewId === 'site' ? statusMark(row.status) : HOME_REVIEW_STATUS_MARK[row.status];
     const status = viewId === 'site' ? row.status : row.status;
+    const label = viewId === 'site' ? statusLabel(row.status) : HOME_REVIEW_STATUS_LABEL[row.status];
     const attrs = viewId === 'site'
       ? `data-route-task="${row.id}" data-route-task-stage="${row.stageId}" data-route-stage="${row.stageId}" data-route-status="${row.status}"`
       : `data-route-hover-view="${viewId}"`;
-    return `<button type="button" role="menuitem" ${attrs} data-status="${status}"><i aria-hidden="true">${mark || '?'}</i><span>${escapeHtml(row.label)}</span></button>`;
+    return `<button type="button" role="menuitem" tabindex="-1" ${attrs} data-status="${status}" aria-label="${escapeHtml(`${row.label}. ${label || STATUS_LABEL.unknown}`)}"><i aria-hidden="true">${mark || '?'}</i><span>${escapeHtml(row.label)}</span></button>`;
   }).join('')}</div>`;
   hover.hidden = false;
   hover.dataset.routeMenuView = viewId;
@@ -905,6 +911,45 @@ function showRouteHover(button, { pin = false } = {}) {
   const left = Math.max(8, Math.min(innerWidth - box.width - 8, rect.left + rect.width / 2 - box.width / 2));
   hover.style.left = `${left}px`;
   hover.style.top = `${Math.max(8, rect.top - box.height - 9)}px`;
+  if (pin) {
+    const first = hover.querySelector('[role="menuitem"]');
+    if (first) {
+      first.tabIndex = 0;
+      requestAnimationFrame(() => {
+        if (!hover.hidden && routeMenuPinnedView === viewId) first.focus({ preventScroll: true });
+      });
+    }
+  }
+}
+
+function showAnalyticsOverview(button) {
+  const hover = byId('projectRouteHover');
+  if (!hover || !button || !state.project) return;
+  clearTimeout(routeHoverTimer);
+  routeMenuPinnedView = ROUTE_OVERVIEW_MENU;
+  routeMenuOpener = button;
+  setRouteMenuButtons(ROUTE_OVERVIEW_MENU);
+  const rows = homeWorkflowRows(cachedWorkflowReview({ full: false }));
+  hover.innerHTML = `<header><strong>Аналитика</strong><small>Выберите этап</small></header><div>${rows.map((row) => {
+    const current = row.id === lastWorkflowView ? ' aria-current="page"' : '';
+    const label = `${row.step}. ${row.label}. ${HOME_REVIEW_STATUS_LABEL[row.status] || HOME_REVIEW_STATUS_LABEL.unknown}`;
+    return `<button type="button" role="menuitem" tabindex="-1" data-route-overview-view="${row.id}" data-status="${row.status}" aria-label="${escapeHtml(label)}"${current}><i aria-hidden="true">${HOME_REVIEW_STATUS_MARK[row.status] || '?'}</i><span>${row.step}. ${escapeHtml(row.label)}</span></button>`;
+  }).join('')}</div>`;
+  hover.hidden = false;
+  hover.dataset.routeMenuView = ROUTE_OVERVIEW_MENU;
+  hover.dataset.pinned = 'true';
+  const rect = button.getBoundingClientRect();
+  const box = hover.getBoundingClientRect();
+  const left = Math.max(8, Math.min(innerWidth - box.width - 8, rect.left + rect.width / 2 - box.width / 2));
+  hover.style.left = `${left}px`;
+  hover.style.top = `${Math.max(8, rect.top - box.height - 9)}px`;
+  const target = hover.querySelector('[aria-current="page"]') || hover.querySelector('[role="menuitem"]');
+  if (target) {
+    target.tabIndex = 0;
+    requestAnimationFrame(() => {
+      if (!hover.hidden && routeMenuPinnedView === ROUTE_OVERVIEW_MENU) target.focus({ preventScroll: true });
+    });
+  }
 }
 
 function checked(value) { return value ? ' checked' : ''; }
@@ -1222,7 +1267,9 @@ function syncOpenState() {
   breadcrumb.hidden = true;
   breadcrumb.textContent = byId('projectRoutePanelTitle').textContent;
   panel.setAttribute('aria-modal', 'false');
-  program.setAttribute('aria-expanded', String(panelOpen));
+  const overviewOpen = routeMenuPinnedView === ROUTE_OVERVIEW_MENU;
+  program.classList.toggle('menu-open', overviewOpen);
+  program.setAttribute('aria-expanded', String(overviewOpen));
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -1827,10 +1874,16 @@ export function bindProjectRoute() {
     if (event.detail?.location) openSolarSettings(event.detail.opener);
     else openPanel('climate', null, event.detail?.opener);
   });
-  program.addEventListener('click', () => {
-    if (panelOpen) closePanel();
-    else if (HOME_VIEWS.has(lastWorkflowView)) openPanel(lastWorkflowView, null, program);
-    else openPanel('stage', activeStage, program);
+  program.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (routeMenuPinnedView === ROUTE_OVERVIEW_MENU) {
+      closeRouteMenu({ restoreFocus: true });
+      announce('Меню аналитики закрыто');
+      return;
+    }
+    if (panelOpen) closePanel({ restoreFocus: false });
+    showAnalyticsOverview(program);
+    announce('Открыто меню аналитики');
   });
   steps.addEventListener('click', (event) => {
     const button = event.target.closest('[data-route-view]');
@@ -1871,7 +1924,28 @@ export function bindProjectRoute() {
   const hover = byId('projectRouteHover');
   hover?.addEventListener('pointerenter', () => clearTimeout(routeHoverTimer));
   hover?.addEventListener('pointerleave', () => hideRouteHover(180));
+  hover?.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const items = [...hover.querySelectorAll('[role="menuitem"]')];
+    const current = event.target.closest('[role="menuitem"]');
+    if (!current || !items.length) return;
+    const index = Math.max(0, items.indexOf(current));
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + items.length) % items.length;
+    event.preventDefault();
+    items.forEach((item, itemIndex) => { item.tabIndex = itemIndex === next ? 0 : -1; });
+    items[next].focus({ preventScroll: true });
+  });
   hover?.addEventListener('click', (event) => {
+    const overview = event.target.closest('[data-route-overview-view]');
+    if (overview) {
+      const opener = routeMenuOpener || program;
+      const viewId = overview.dataset.routeOverviewView;
+      closeRouteMenu();
+      if (viewId === 'site') openPanel('stage', activeStage, opener);
+      else if (HOME_VIEWS.has(viewId)) openPanel(viewId, null, opener);
+      return;
+    }
     const task = event.target.closest('[data-route-task]');
     if (task) {
       const opener = routeMenuOpener || task;
@@ -1887,7 +1961,7 @@ export function bindProjectRoute() {
   });
   document.addEventListener('pointerdown', (event) => {
     if (!routeMenuPinnedView) return;
-    if (event.target?.closest?.('#projectRouteHover, [data-route-view]')) return;
+    if (event.target?.closest?.('#projectRouteHover, #projectHomeProgram, [data-route-view]')) return;
     closeRouteMenu();
   });
   const panelHead = byId('projectRoutePanel')?.querySelector('.project-route-panel-head');
