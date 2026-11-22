@@ -4,7 +4,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  dropOnCanvas, startApp, openSample, openNew,
+  dropOnCanvas, settleView, startApp, openSample, openNew,
 } from './helpers.mjs';
 
 const snap = (page) => page.evaluate(() => {
@@ -21,6 +21,8 @@ const snap = (page) => page.evaluate(() => {
 
 // Клиентская точка по координатам дома (план) или мира.
 async function client(page, fnName, x, y) {
+  // Строка параметров инструмента сдвигает холст; вид компенсирует это кадром позже.
+  await settleView(page);
   const box = await (await page.$('#canvas')).boundingBox();
   const s = await page.evaluate(([f, px, py]) => window.__kepler[f](px, py), [fnName, x, y]);
   return { x: box.x + s.x, y: box.y + s.y };
@@ -97,6 +99,7 @@ describe('поворот вида', () => {
     await page.click('#viewBtn');
     await page.click('#viewsAlignBtn');
     // Линия под −30° на экране, от центра холста; Shift — без привязок.
+    await settleView(page); // строка параметров инструмента сдвинула холст
     const box = await (await page.$('#canvas')).boundingBox();
     const c = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     const d = { x: c.x + 150 * Math.cos(-Math.PI / 6), y: c.y + 150 * Math.sin(-Math.PI / 6) };
@@ -205,6 +208,7 @@ describe('поворот вида: автоматические оси при в
 
     await page.evaluate(async () => (await import('./ui/tools.js')).startPlaceRoom('bedroom'));
     assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'place-room');
+    await settleView(page); // строка параметров инструмента сдвинула холст
     const box = await (await page.$('#canvas')).boundingBox();
     const click = { x: box.x + box.width * 0.78, y: box.y + box.height * 0.76 };
     await page.mouse.click(click.x, click.y);
