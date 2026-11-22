@@ -6,7 +6,7 @@
 // телефон — инструмент виден и тапами ставит ось.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { clickToolbarTool, mobileSelectFamilyTool, openToolFamily, startApp, openSample, worldToClient } from './helpers.mjs';
+import { clickToolbarTool, mobileSelectFamilyTool, openToolFamily, settleView, startApp, openSample, worldToClient } from './helpers.mjs';
 
 const grids = (page) => page.evaluate(() => window.__kepler.state.project.grids || []);
 const sel = (page) => page.evaluate(() => window.__kepler.state.selection);
@@ -24,6 +24,7 @@ async function canvasBox(page) {
 
 // Экранная точка интерфейса оси (state._gridUI) → клиентская.
 async function gridUi(page, id) {
+  await settleView(page); // _gridUI пересчитывается при отрисовке после сдвига холста
   const ui = await page.evaluate((gid) => window.__kepler.state._gridUI.find((r) => r.id === gid), id);
   const box = await canvasBox(page);
   const c = (p) => ({ x: box.x + p.x, y: box.y + p.y });
@@ -124,6 +125,9 @@ describe('Координационные оси на плане', () => {
     const p = { x: ui.A.x + (ui.B.x - ui.A.x) * 0.9, y: ui.A.y + (ui.B.y - ui.A.y) * 0.9 };
     const target = await toClient(page, g2.at + 1000, 0);
     const dx = target.x - (await toClient(page, g2.at, 0)).x;
+    // Ось сначала выбирают отдельным кликом, затем тянут (см. подсказку в «Свойствах»).
+    await page.mouse.click(p.x, p.y);
+    assert.deepEqual(await sel(page), { type: 'grid', id: g2.id });
     await page.mouse.move(p.x, p.y);
     await page.mouse.down();
     await page.mouse.move(p.x + dx / 2, p.y, { steps: 3 });
@@ -144,6 +148,9 @@ describe('Координационные оси на плане', () => {
     const ext0 = await page.evaluate(async (g) => (await import('./core/grid-axes.js')).gridExtent(window.__kepler.state.project, g), g2);
     const down = await toClient(page, g2.at, ext0.to + 2000);
     const at0 = await toClient(page, g2.at, ext0.to);
+    // Как и линию, кружок тянут только у выбранной оси.
+    if (JSON.stringify(await sel(page)) !== JSON.stringify({ type: 'grid', id: g2.id })) await page.mouse.click(h.x, h.y);
+    assert.deepEqual(await sel(page), { type: 'grid', id: g2.id });
     await page.mouse.move(h.x, h.y);
     await page.mouse.down();
     await page.mouse.move(h.x + (down.x - at0.x), h.y + (down.y - at0.y), { steps: 4 });

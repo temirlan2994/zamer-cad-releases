@@ -154,6 +154,9 @@ describe('Стены и координационные оси: магнит и �
     // Линия оси выше дома (вне комнат и стен).
     const from = await toClient(page, g.at, -900);
     const to = await toClient(page, g.at + 500, -900);
+    // Ось сначала выбирают отдельным кликом, затем тянут.
+    await page.mouse.click(from.x, from.y);
+    assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'grid', id: g3 });
     await drag(page, from, to);
     assert.equal((await grid(page, g3)).at, 11100);
     const lv = await room(page, 'Гостиная');

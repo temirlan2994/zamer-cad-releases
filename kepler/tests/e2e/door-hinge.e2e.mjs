@@ -17,6 +17,9 @@ describe('дверь: петли не мерцают, Пробел — толь�
       const k = window.__kepler;
       const w = k.state.walls.find((x) => x.kind === 'own' && x.orient === 'h' && x.to - x.from > 3500);
       startPlaceOpening('door');
+      // Строка параметров инструмента сдвигает холст; вид компенсирует сдвиг
+      // в ResizeObserver — координаты считаем после этого кадра.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const mid = (w.center.y1 + w.center.y2) / 2;
       const cv = document.getElementById('canvas').getBoundingClientRect();
       const at = (t) => { const s = planToScreen(w.from + (w.to - w.from) * t, mid); return { x: cv.left + s.x, y: cv.top + s.y }; };

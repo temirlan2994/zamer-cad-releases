@@ -152,7 +152,16 @@ export function k(page, fn, arg) {
 }
 
 // Мировые координаты → клиентские (для mouse.click).
+// Строка параметров инструмента и панель выделения меняют высоту холста;
+// ui/view.js компенсирует сдвиг вида в ResizeObserver, то есть на следующем
+// кадре. Перед пересчётом координат в экранные ждём два кадра, иначе мышь
+// попадает мимо цели на высоту строки (~40 px).
+export async function settleView(page) {
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+}
+
 export async function worldToClient(page, x, y) {
+  await settleView(page);
   const box = await (await page.$('#canvas')).boundingBox();
   const s = await page.evaluate(([wx, wy]) => window.__kepler.worldToScreen(wx, wy), [x, y]);
   return { x: box.x + s.x, y: box.y + s.y };
