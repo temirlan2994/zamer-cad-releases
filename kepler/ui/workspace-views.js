@@ -133,10 +133,14 @@ export function bindWorkspaceViews() {
       btn.tabIndex = key === active ? 0 : -1;
     }
     order = order.filter((key) => records.has(key) && buttons.has(key));
-    for (const key of order) {
-      const btn = buttons.get(key);
-      if (btn && !closed.has(key)) tabs.append(btn);
-    }
+    // Переставляем вкладки, только если порядок в DOM изменился: перенос узла
+    // снимает с него фокус, и вкладка, выбранная с клавиатуры, теряла его при
+    // каждой перерисовке (Space/Enter уходили в глобальные клавиши плана).
+    const placed = order.map((key) => buttons.get(key)).filter((btn, i) => btn && !closed.has(order[i]));
+    const kids = [...tabs.children];
+    const inPlace = kids.length >= placed.length
+      && kids.slice(kids.length - placed.length).every((btn, i) => btn === placed[i]);
+    if (!inPlace) for (const btn of placed) tabs.append(btn);
     const current = buttons.get(active);
     recent = recent.filter((id) => id !== active && buttons.has(id));
     if (current) recent.push(active);

@@ -350,7 +350,10 @@ describe('B4: телефон — щипок и сдвиг листа', () => {
     assert.ok(Math.abs(sx0 - sx1) < 2, `якорь щипка: ${sx0} / ${sx1}`);
     assert.deepEqual((await page.evaluate(() => window.__kepler.state.project.sheets))[0].viewports.map((v) => [v.x, v.y]), [[120, 80]], 'вид не сдвинут');
     // Один палец по пустому месту листа (угол за видом) — сдвиг.
-    const free = { x: 10, y: box.height - 20 };
+    // Низ листа на телефоне перекрывает плавающая палитра этапов (#projectRoute, 0.4.5) —
+    // берём пустое место у левого края над ней.
+    const route = await page.locator('#projectRoute .project-route-bar').boundingBox();
+    const free = { x: 10, y: Math.min(box.height, route.y - box.y) - 20 };
     await touch(page, 'touchStart', [free]);
     for (let i = 1; i <= 5; i += 1) await touch(page, 'touchMove', [{ x: free.x + i * 12, y: free.y - i * 8 }]);
     await touch(page, 'touchEnd', []);

@@ -243,6 +243,11 @@ describe('раскладка: колонка инструментов, библ�
     await page.fill('#toWallT', '150');
     await page.press('#toWallT', 'Tab');
     assert.equal(await page.evaluate(() => window.__kepler.state.tool.thickness), 150);
+    // 0.4.5: за толщиной в строке — поле «Ось» (привязка стены); Tab ведёт в него,
+    // а Esc в поле формы инструмент не завершает — уводим фокус на план.
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'toWallJustify', 'Tab ведёт в поле «Ось»');
+    assert.equal(await page.$eval('#toWallJustify', (n) => Boolean(n.closest('#toolOptions'))), true, '«Ось» в строке параметров');
+    await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press('Escape');
     assert.equal(await page.$eval('#toolOptionsBody', (n) => n.childElementCount), 0);
   });

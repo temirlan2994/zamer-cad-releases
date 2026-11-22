@@ -8,7 +8,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { startApp, openSample } from './helpers.mjs';
+import { startApp, openSample, openRouteView } from './helpers.mjs';
 
 const TABS = [
   { id: 'propsTabMain', label: 'Свойства', body: '#projectSection' },
@@ -125,8 +125,8 @@ describe('правая панель — телефон 390', () => {
     await page.waitForTimeout(300);
     assert.equal(await page.isVisible('#sheetsPdfBtn'), true);
     await page.tap('#mobileBar [data-sheet="sheets"]');
-    await page.tap('#projectHomeProgram');
-    await page.tap('#projectRoutePanel [data-home-view="envelope"]');
+    // 0.4.5: этап «Объём» открывается из палитры этапов внизу, а не вкладкой в окне аналитики.
+    await openRouteView(page, 'envelope', { mobile: true });
     await page.tap('[data-analysis-open="tep"]');
     assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true');
     assert.equal(await page.isVisible('#schedTable'), true);

@@ -159,7 +159,10 @@ describe('привязки — телефон 390', () => {
     assert.equal(await page.isVisible('#mobileSnapBtn'), false);
     assert.equal(await page.isVisible('.project-route-bar #projectHomeProgram'), true);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.waitForSelector('.top-actions #projectHomeProgram');
+    // 0.4.5: кнопка аналитики и на телефоне остаётся в нижней палитре этапов (ui/mobile.js,
+    // placeMobileControls), в шапку её больше не переносят; привязки вернулись в ряд телефона.
+    await page.waitForSelector('#mobileSnapRow #snapBar', { state: 'attached' });
+    assert.equal(await page.isVisible('.project-route-bar #projectHomeProgram'), true);
     assert.equal(await page.isVisible(sel), false);
     await page.tap('#mobileSnapBtn');
     await page.tap('#projectHomeProgram');

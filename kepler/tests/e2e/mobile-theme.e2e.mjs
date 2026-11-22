@@ -5,7 +5,7 @@
 // Скриншоты — в папку из переменной KEPLER_SHOTS (если задана).
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample } from './helpers.mjs';
+import { startApp, openSample, openRouteView } from './helpers.mjs';
 
 const SHOTS = process.env.KEPLER_SHOTS || '';
 const W = 390;
@@ -73,8 +73,8 @@ for (const theme of ['light', 'dark']) {
       await jsClick(page, '#landscapeBtn');
       await page.waitForFunction(() => document.body.classList.contains('mode-landscape'));
       assert.equal(await page.isVisible('#lsSunBar'), false);
-      await page.tap('#projectHomeProgram');
-      await page.tap('[data-home-view="climate"]');
+      // 0.4.5: этап «Свет» открывается из палитры этапов внизу, а не вкладкой в окне аналитики.
+      await openRouteView(page, 'climate', { mobile: true });
       const settings = page.locator('[data-climate-location]');
       if (!(await settings.evaluate((node) => node.open))) await settings.locator('summary').first().tap();
       await page.tap('[data-home-climate-action="landscape-map"]');
