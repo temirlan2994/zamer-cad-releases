@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seven3d:furniture:rule:1.0",
+  "title": "Запись базы правил v1.0",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]+[0-9]{3}$"
+    },
+    "category": {
+      "type": "string"
+    },
+    "category_code": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "requirement": {
+      "type": "string"
+    },
+    "applies_when": {
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "hard",
+        "soft",
+        "conditional_hard"
+      ]
+    },
+    "basis": {
+      "enum": [
+        "design_heuristic",
+        "published_guideline",
+        "regulation_profile",
+        "manufacturer",
+        "derived_constraint"
+      ]
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "check": {
+      "type": "string"
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "source_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "confidence": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "related_rule_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "version": {
+      "type": "string"
+    },
+    "check_format": {
+      "const": "declarative_specification"
+    },
+    "implementation_status": {
+      "const": "requires_evaluator_implementation"
+    },
+    "missing_data_result": {
+      "const": "unknown"
+    },
+    "severity_scope": {
+      "type": "string"
+    },
+    "evidence_note": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "category",
+    "category_code",
+    "title",
+    "requirement",
+    "applies_when",
+    "severity",
+    "basis",
+    "parameters",
+    "check",
+    "exceptions",
+    "source_ids",
+    "confidence",
+    "related_rule_ids",
+    "version",
+    "check_format",
+    "implementation_status",
+    "missing_data_result"
+  ]
+}

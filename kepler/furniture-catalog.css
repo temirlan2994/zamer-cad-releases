@@ -1,0 +1,142 @@
+/* Один каталог для боковой панели на компьютере и нижнего листа на телефоне. */
+.object-catalog-tabs {
+  display: flex;
+  flex: none;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--desk-line);
+}
+#objectSections {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+#objectSections button, #catalogSearchToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--desk-muted);
+}
+#objectSections button {
+  flex: 1 0 44px;
+  min-width: 44px;
+  flex-direction: column;
+  min-height: 46px;
+  gap: 3px;
+  padding: 3px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+#objectSections button[aria-pressed="true"], #catalogSearchToggle[aria-expanded="true"] {
+  background: var(--desk-soft);
+  color: var(--desk-accent);
+  box-shadow: inset 0 -2px var(--desk-accent);
+}
+#catalogSearchToggle { display: none; }
+
+.library .library-furniture { padding: 10px 10px 0; }
+.library .furniture-body { gap: 8px; overflow: hidden; }
+.library .catalog-category-list {
+  display: flex;
+  flex: 0 0 var(--category-width, 108px);
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 2px 5px 8px 0;
+  border-right: 1px solid var(--desk-line);
+}
+.library .catalog-category-list button {
+  flex: none;
+  min-height: 44px;
+  padding: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--desk-muted);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+.library .catalog-category-list button[aria-pressed="true"] {
+  background: var(--desk-soft);
+  color: var(--desk-accent);
+  font-weight: 700;
+}
+.library .furniture-items { overscroll-behavior: contain; }
+.library :is(#furnitureItems, #openingItems) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.library .furniture-chip { position: relative; gap: 3px; padding: 5px; }
+.library .furniture-chip .chip-name { line-height: 1.2; overflow-wrap: anywhere; text-wrap: balance; }
+.library .furniture-chip .chip-size { margin-top: auto; font-size: 12px; }
+.library .furniture-chip[aria-pressed="true"]::after {
+  content: '✓';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--surface);
+  background: var(--desk-accent);
+  font: 700 12px/18px system-ui, sans-serif;
+  text-align: center;
+}
+@media (hover: hover) {
+  #objectSections button[aria-pressed="false"]:hover,
+  .catalog-category-list button[aria-pressed="false"]:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}
+@media (min-width: 641px) {
+  .workspace:has(.library-furniture:not([hidden])) {
+    --library-w: clamp(284px, 32vw, 368px);
+    --category-width: clamp(85px, 8.5vw, 112px);
+  }
+}
+@media (max-width: 640px) {
+  .object-catalog-tabs { padding-top: 0; }
+  #catalogSearchToggle {
+    display: flex;
+    position: absolute;
+    top: 0;
+    left: 6px;
+    z-index: 4;
+    min-height: 44px;
+    gap: 5px;
+    padding: 0 8px;
+    font-size: 13px;
+  }
+  #objectCatalogTabs:not(.search-open) ~ :is(#furnitureBar, #openingsBar) > .furn-search:placeholder-shown {
+    display: none;
+  }
+  .library .library-furniture {
+    --category-width: clamp(91px, 24vw, 108px);
+    padding: 8px 8px 0;
+  }
+  .library .furniture-body { gap: 7px; }
+  .library .catalog-category-list button { padding-inline: 4px; }
+}
+@media (max-width: 880px) {
+  .object-catalog-tabs { padding-inline: 4px; }
+  #objectSections { gap: 1px; }
+}
+@media (max-width: 365px) {
+  #objectSections button { font-size: 11.5px; }
+  .library :is(#furnitureBar, #openingsBar, #stairsBar, #landscapeBar) { padding-inline: 2px; }
+}

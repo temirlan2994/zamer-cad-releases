@@ -1,0 +1,83 @@
+.props { --muted: var(--desk-muted); }
+.props .props-body {
+  font-size: 14px;
+  line-height: 1.45;
+  min-width: 0;
+}
+.props .props-body h2 {
+  font-size: 17px;
+  line-height: 1.3;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.props .props-body h3,
+.props .vs-sec > summary {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.props .props-body h3 { margin: 17px 0 7px; }
+.props .vs-sec > summary { min-height: 42px; }
+.props .vs-sec > summary::after {
+  display: block;
+  content: "";
+  width: 7px;
+  height: 7px;
+  border: solid var(--muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  margin-right: 4px;
+}
+.props .vs-sec[open] > summary::after { transform: rotate(225deg); }
+.props .props-body .prop-block { gap: 9px; padding: 10px; min-width: 0; }
+.props .props-body .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.props .props-body :is(.prop-field, .empty-hint, .hint, .check-row, .subtitle, .prop-row) {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.props .prop-field :is(input, select) { font-size: 14px; min-height: 36px; }
+.props .prop-row { gap: 7px; align-items: baseline; }
+.props .prop-row > strong { text-align: end; }
+.props .prop-block :is(button, label):focus-within { scroll-margin-block: 12px; }
+.props .vs-sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.props .overlap-row { flex-wrap: wrap; }
+.props .overlap-row .link { overflow-wrap: anywhere; text-align: start; }
+.props .vs-sec[data-sec="layers"] > .prop-block { margin-bottom: 6px; gap: 4px; }
+.props .vs-sec[data-sec="layers"] .views-ls-groups { margin-inline-start: 10px; padding-inline-start: 8px; border-inline-start: 1px solid var(--border); }
+.props .check-row { align-items: center; }
+.props .add-row .add-btn { min-width: 32px; min-height: 32px; }
+.props .props-body .add-row > :first-child { flex: 1 1 auto; }
+.props .props-body .add-row em { font-size: 12px; }
+
+@media (min-width: 801px) {
+  .props .props-tabs .issues-btn[aria-expanded="true"] { flex: 1.8 1 0; gap: 5px; }
+  .props .issues-btn[aria-expanded="true"] .issues-label { display: inline; font-size: 12px; }
+}
+@media (pointer: coarse), (max-width: 720px) {
+  .props .desktop-selection-hint { display: none; }
+  .props .prop-field :is(input, select, textarea) { font-size: 16px; }
+  .props .props-body :is(.check-row, .vs-sec > summary, .prop-field input, .prop-field select, .prop-block button, .add-btn, .views-seg .seg-opt) { min-height: 44px; }
+  .props .add-row .add-btn { min-width: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .props .vs-sec > summary::after { transition: none; }
+}
+
+#mobilePropsTitle { display: none; }
+@media (max-width: 640px) {
+  #propsPanel { scroll-padding-top: 48px; }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) > .sheet-grip {
+    height: 48px; border-bottom: 1px solid var(--border);
+  }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) #mobilePropsTitle {
+    display: block; position: absolute; inset-inline: 14px 50px; top: 16px; margin: 0;
+    color: var(--text); font-size: 16px; line-height: 24px; font-weight: 650;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+  }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) .sheet-handle { align-self: start; margin-top: 6px; }
+  #propsPanel .sheet-close { width: 44px; height: 44px; }
+  #propsPanel:is([data-tab="props"], [data-tab="tep"]) :is(#propsBody, #modeProps) > h2:first-of-type:not(:has(*)) { display: none; }
+}

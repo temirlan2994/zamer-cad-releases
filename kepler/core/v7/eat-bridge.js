@@ -1,0 +1,353 @@
+// Мост съедания v6 ↔ v7 (docs/v7-stage2-plan.md, срез 1). Чистый модуль.
+//
+// Приложение пока хранит комнаты в форме v6, но съедание больше не
+// «разрушает и запоминает»: истина — номинальные формы (у съеденной —
+// room.eatBase.base, у остальных — сама форма) и порядок массива rooms
+// (кто позже — тот выше, = z v7). Видимые формы считает core/v7/carve.js
+// С НУЛЯ при каждом вызове reconcileEats — результат зависит только от
+// номиналов и порядка, а не от истории жестов:
+//   • убрали верхнюю — нижняя целая (её номинал не трогали);
+//   • сдвинули съеденную — номинал сдвигается с ней, она целая на новом
+//     месте (тронутая поднимается наверх);
+//   • отмена/повтор — снимки уже согласованы.
+// room.eatBase = { base, now, by, openings } — производное (пишется заново
+// каждый раз): base — номинал, now — видимая форма (по ней узнаём, что
+// съеденную сдвинули), by — кто съел, openings — проёмы нижней, чья стена
+// ушла под верхнюю («сироты»: данные целы, вернутся с формой).
+
+import { DEFAULT_PARTITION, isOpenRoom, isShaft } from '../catalog.js';
+import { MAX_SHARED_GAP } from '../walls.js';
+import { area, buffer, erode, intersection, orientRing, pointInPolygon } from '../geom/poly.js';
+import { captureOpeningAnchors, keepOpenings } from '../opening-anchor.js';
+import { finalizeRoomOutline, roomBoundaryEdges, roomRects } from '../room-shape.js';
+import { nestedOuterRect, rectInsideRoomShape } from '../rooms.js';
+import { EAT_MIN_REMAIN, carveLevel } from './carve.js';
+import { migrateLevel, zOrder } from './migrate.js';
+import { blockGeom, pairGap } from './model.js';
+
+const HIT_MM2 = 100; // как carve.js: меньше — касание
+
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+export const snapShape = (r) => {
+  const o = { x: r.x, y: r.y, w: r.w, h: r.h };
+  if (r.outline) o.outline = r.outline.map((p) => ({ x: p.x, y: p.y }));
+  if (r.notch) o.notch = { ...r.notch };
+  return o;
+};
+const sameShape = (a, b) => JSON.stringify(a) === JSON.stringify(snapShape(b));
+const sameSize = (a, b) => a.w === b.w && a.h === b.h &&
+  JSON.stringify(a.outline || null) === JSON.stringify(b.outline || null) &&
+  JSON.stringify(a.notch || null) === JSON.stringify(b.notch || null);
+
+function setShape(room, s) {
+  room.x = s.x; room.y = s.y; room.w = s.w; room.h = s.h;
+  if (s.outline) room.outline = s.outline.map((p) => ({ ...p })); else delete room.outline;
+  if (s.notch) room.notch = { ...s.notch }; else delete room.notch;
+  finalizeRoomOutline(room);
+}
+
+// Участвует ли комната в съедании моста (вложенные, шахты, открытые
+// площадки и помещения по петлям стен — нет).
+export const bridgeEatable = (r) => Boolean(r) && !r.parentId && !isShaft(r) && !isOpenRoom(r) && !r.bound;
+
+function activeLevelOf(project) {
+  const l = (project.levels || []).find((x) => x.id === project.activeLevel);
+  if (l) return l;
+  return project; // проект-этаж (тесты, levelProject): rooms/openings на нём
+}
+
+// Номинальная форма комнаты (без съедания) — для пунктира у выделенной.
+export function nominalShape(room) {
+  return room?.eatBase?.base ? { ...room, ...room.eatBase.base, outline: room.eatBase.base.outline, notch: room.eatBase.base.notch } : room;
+}
+
+// «Стены объединились»: верхняя срезает у нижней полоску не глубже зазора
+// пары + MERGE_DEPTH (наезд на толщину стены с запасом — так магнит ставит
+// комнату к грани стены соседа). Проём срезанной грани тогда не уходит
+// «под» соседа, а переезжает на новую грань — общую стену. Глубже — комната
+// правда под соседом: проём — «сирота» и вернётся с формой.
+export const MERGE_DEPTH = 600;
+const stripShift = () => MAX_SHARED_GAP + MERGE_DEPTH + 1;
+
+// Вернуть комнате номинальную форму, сохранив проёмы. Проём, переехавший при
+// съедании на грань общей стены (moveToShiftedEdge), — обратно на свою грань.
+function restoreShape(level, room, base, shift) {
+  const anchors = captureOpeningAnchors(level, room);
+  const { lost } = keepOpenings(level, room, () => setShape(room, base));
+  for (const a of anchors.list) if (lost.includes(a.id)) moveToShiftedEdge(level, room, a, shift);
+}
+
+// Вернуть этажу номинальные формы (снять производное съедание).
+export function nominalizeLevel(level) {
+  const shift = stripShift();
+  const rooms = level.rooms;
+  // Старые файлы: съевшая (eatBase.by) — выше съеденной, даже если раньше в массиве.
+  if (rooms.some((r) => r.eatBase?.by?.length)) {
+    const z = zOrder(rooms);
+    const sorted = rooms.map((r, i) => [z[i], i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+    if (sorted.some((r, i) => r !== rooms[i])) rooms.splice(0, rooms.length, ...sorted);
+  }
+  for (const room of rooms) {
+    const eb = room.eatBase;
+    if (!eb) continue;
+    delete room.eatBase;
+    let base = eb.base;
+    if (!base) continue;
+    if (!sameShape(eb.now, room)) {
+      // Видимую форму правили руками (растянули) — она и становится номиналом.
+      if (!eb.now || !sameSize(eb.now, room)) continue;
+      // Чистый сдвиг: номинал едет вместе с комнатой.
+      base = { ...base, x: base.x + room.x - eb.now.x, y: base.y + room.y - eb.now.y };
+    }
+    restoreShape(level, room, base, shift);
+    for (const o of eb.openings || []) {
+      if (!level.openings.some((x) => x.id === o.id)) level.openings.push(clone(o));
+    }
+  }
+}
+
+// Начало жеста над съеденной комнатой (срез 3): ей возвращается номинальная
+// форма и «сироты»-проёмы — ручки и перенос работают по номиналу, а видимую
+// форму на каждом кадре заново даёт reconcileEats. → true, если менялось.
+export function liftRoom(project, roomId) {
+  const level = activeLevelOf(project);
+  const room = (level.rooms || []).find((r) => r.id === roomId);
+  const eb = room?.eatBase;
+  if (!eb) return false;
+  delete room.eatBase;
+  if (!Array.isArray(level.openings)) level.openings = [];
+  if (eb.base) restoreShape(level, room, eb.base, stripShift());
+  for (const o of eb.openings || []) {
+    if (!level.openings.some((x) => x.id === o.id)) level.openings.push(clone(o));
+  }
+  return true;
+}
+
+// Правка номинала в обход жестов (срез 5: размеры в панели «Свойства»,
+// лестничная зона по маршу). Комнате возвращается номинальная форма — правят
+// её, а не видимую (иначе видимая стала бы номиналом). Вызывающий правит
+// комнату и вызывает reconcileEats(project, { touched: [id], under, prev }):
+// растянутая остаётся под теми, кто её ел (как растяжение ручкой).
+// Отказ — вернуть комнате размеры nominal и reconcileEats(project).
+// → { room, nominal, under, prev } либо null, если комнаты нет.
+export function liftForEdit(project, roomId) {
+  const level = activeLevelOf(project);
+  const room = (level.rooms || []).find((r) => r.id === roomId);
+  if (!room) return null;
+  const prev = eatState(project);
+  const under = { [room.id]: eatersOf(room) };
+  liftRoom(project, room.id);
+  return { room, nominal: snapShape(room), under, prev };
+}
+
+// Снимок «кто кого ест»: Map id → 'id|id' (для итога жеста, см. prev).
+export function eatState(project) {
+  return new Map((activeLevelOf(project).rooms || []).map((r) => [r.id, (r.eatBase?.by || []).join('|')]));
+}
+
+// Кто съедает комнату сейчас (ids верхних) — для растяжения «под ними».
+export const eatersOf = (room) => [...(room?.eatBase?.by || [])];
+
+// Съесть: видимая форма = результат carve. → { ok, why, orphans }.
+function applyCarved(level, room, ring, cutters, partition, shift = 0) {
+  const local = orientRing(ring, 1).map((p) => ({ x: p.x - room.x, y: p.y - room.y }));
+  const probe = { ...room, outline: local };
+  delete probe.notch;
+  finalizeRoomOutline(probe);
+  for (const child of level.rooms) {
+    if (child.parentId !== room.id) continue;
+    if (!rectInsideRoomShape(nestedOuterRect(child, partition), probe)) return { ok: false, why: 'children', child };
+  }
+  const inner = cutters.map((c) => erode(c, 1));
+  const under = new Set();
+  const anchors = captureOpeningAnchors(level, room).list;
+  for (const a of anchors) {
+    const p = a.orient === 'h' ? { x: a.abs, y: a.edge } : { x: a.edge, y: a.abs };
+    if (inner.some((c) => c.length && pointInPolygon(c, p, 0))) under.add(a.id);
+  }
+  const seen = new Map(level.openings.map((o) => [o.id, clone(o)]));
+  const { lost } = keepOpenings(level, room, () => {
+    room.outline = local;
+    delete room.notch;
+    finalizeRoomOutline(room);
+  });
+  const drop = new Set([...under, ...lost]);
+  // Стыковка вплотную или с наездом на стену: верхняя срезает у нижней лишь
+  // полоску (≤ shift, см. MERGE_DEPTH) — стены объединились в одну общую.
+  // Проём этой грани не уходит «под» соседа, а переезжает на новую грань
+  // (общую стену) на то же место вдоль стены.
+  for (const a of anchors) {
+    if (!drop.has(a.id)) continue;
+    if (moveToShiftedEdge(level, room, a, shift)) drop.delete(a.id);
+  }
+  if (drop.size) level.openings = level.openings.filter((o) => !drop.has(o.id));
+  return { ok: true, orphans: [...drop].map((id) => seen.get(id)).filter(Boolean) };
+}
+
+// Проём a (снимок captureOpeningAnchors) — на грань той же ориентации и
+// внешней стороны, сдвинутую не дальше shift (срезанная полоска), если
+// центр проёма лежит на ней. → true, если переехал.
+function moveToShiftedEdge(level, room, a, shift) {
+  const opening = level.openings.find((o) => o.id === a.id);
+  if (!opening || !(shift > 0)) return false;
+  const edge = roomBoundaryEdges(room)
+    .filter((e) => e.orient === a.orient && e.outward === a.outward)
+    .map((e) => ({ e, d: Math.abs(a.edge - e.edge) }))
+    .filter(({ e, d }) => d <= shift && a.abs >= e.from - 0.5 && a.abs <= e.to + 0.5)
+    .sort((p, q) => p.d - q.d)[0]?.e;
+  if (!edge) return false;
+  const half = (Number(opening.width) || 0) / 2;
+  const lo = edge.from + half;
+  const hi = edge.to - half;
+  const pos = lo > hi ? (edge.from + edge.to) / 2 : Math.max(lo, Math.min(hi, a.abs));
+  opening.side = edge.side;
+  opening.offset = pos - (edge.orient === 'h' ? room.x : room.y);
+  return true;
+}
+
+// Пересчитать съедание активного этажа с нуля.
+// touched — комнаты, которые жест только что поставил/сдвинул/растянул:
+// они поднимаются наверх (если пересекаются с кем-то, с зазором перегородки).
+// under — { [id]: [ids верхних] }: растянутая съеденная комната остаётся
+//   ПОД теми, кто её ел в начале жеста (встаёт прямо под нижнего из них), а
+//   не поднимается наверх: тянули дальнюю грань — соседа она не съедает.
+// → { eaten: [{lower, upper}], failed: [{lower, upper, why, child}], restored: [{lower}], lost: [] }
+//   (eaten/restored — только изменения против прежнего состояния).
+export function reconcileEats(project, { touched = [], under = null, prev = null } = {}) {
+  const out = { eaten: [], failed: [], restored: [], lost: [] };
+  const level = activeLevelOf(project);
+  const rooms = level.rooms;
+  if (!Array.isArray(rooms) || !rooms.length) return out;
+  if (!Array.isArray(level.openings)) level.openings = [];
+  const settings = project.settings || {};
+  const partition = settings.partition || DEFAULT_PARTITION;
+  // prev — снимок «кто кого ел» на начало жеста (eatState): итог жеста
+  // сравнивается с ним, а не с прошлым кадром.
+  const prevBy = prev || eatState(project);
+
+  nominalizeLevel(level);
+
+  const v7 = migrateLevel({ ...level, walls: level.walls || [], openings: [], items: [] }, settings);
+  const blockOf = new Map(v7.blocks.map((b) => [b.id, b]));
+  const geomOf = new Map();
+  const geom = (id) => {
+    if (!geomOf.has(id)) geomOf.set(id, blockGeom(blockOf.get(id)));
+    return geomOf.get(id);
+  };
+
+  // Тронутые — наверх, если с кем-то взаимодействуют.
+  const live = rooms.filter(bridgeEatable);
+  const raise = touched.map((id) => rooms.find((r) => r.id === id)).filter((r) => bridgeEatable(r))
+    .sort((a, b) => rooms.indexOf(a) - rooms.indexOf(b))
+    .filter((r) => live.some((o) => o !== r &&
+      area(intersection(geom(r.id), buffer(geom(o.id), pairGap(v7, settings, blockOf.get(r.id), blockOf.get(o.id))))) > HIT_MM2));
+  for (const r of raise) {
+    const eaters = (under?.[r.id] || []).map((id) => rooms.find((o) => o.id === id)).filter(Boolean);
+    rooms.splice(rooms.indexOf(r), 1);
+    if (eaters.length) {
+      const at = Math.min(...eaters.map((o) => rooms.indexOf(o)));
+      rooms.splice(at, 0, r);
+    } else rooms.push(r);
+  }
+
+  const blocks = live.map((r) => ({ ...blockOf.get(r.id), z: rooms.indexOf(r) }));
+  const carved = carveLevel({ ...v7, blocks }, settings);
+  const byId = new Map(rooms.map((r) => [r.id, r]));
+  for (const issue of carved.issues) {
+    const lower = byId.get(issue.block);
+    const upper = byId.get(issue.by[0]);
+    if (lower && upper) out.failed.push({ lower, upper, why: issue.why, child: issue.child ? byId.get(issue.child) : null });
+  }
+  for (const room of live) {
+    const c = carved.byId[room.id];
+    if (!c?.eaten) continue;
+    const upper = byId.get(c.by[0]);
+    if (c.shape.length !== 1 || c.shape[0].length !== 1) {
+      // Остаток с дырой (верхняя целиком внутри) — в форме v6 не выразить.
+      out.failed.push({ lower: room, upper, why: 'split', child: null });
+      continue;
+    }
+    const base = snapShape(room);
+    const gaps = c.by.map((id) => pairGap(v7, settings, blockOf.get(room.id), blockOf.get(id)));
+    const cutters = c.by.map((id, i) => buffer(geom(id), gaps[i]));
+    const res = applyCarved(level, room, c.shape[0][0], cutters, partition, Math.max(0, ...gaps) + MERGE_DEPTH + 1);
+    if (!res.ok) { out.failed.push({ lower: room, upper, why: res.why, child: res.child }); continue; }
+    room.eatBase = { base, now: snapShape(room), by: [...c.by], openings: res.orphans };
+    if (prevBy.get(room.id) !== c.by.join('|')) out.eaten.push({ lower: room, upper });
+  }
+  for (const room of rooms) {
+    if (prevBy.get(room.id) && !room.eatBase) out.restored.push({ lower: room });
+  }
+  return out;
+}
+
+// Пересекаются ли формы двух комнат (по площади, не касанием).
+export function roomsIntersect(a, b) {
+  const rb = roomRects(b);
+  return roomRects(a).some((p) => rb.some((q) =>
+    Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x) > 1 &&
+    Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y) > 1));
+}
+
+// Текст замечания для несъедаемого перекрытия (why — из carve/reconcileEats).
+export function eatFailText(why, lower, upper, child = null) {
+  const a = `«${upper.name}»`; const b = `«${lower.name}»`;
+  if (why === 'whole') return `${b} целиком под ${a} — передвиньте или удалите одну из комнат`;
+  if (why === 'split') return `${a} разрезает ${b} на части — сдвиньте ${a} к краю ${b}`;
+  if (why === 'small') return `От ${b} под ${a} остаётся меньше ${EAT_MIN_REMAIN} мм — передвиньте ${a}`;
+  if (why === 'children') return `${a} закрывает вложенное помещение «${child?.name || ''}» в ${b}`;
+  return `${a} перекрывает ${b}`;
+}
+
+// Короткий итог reconcileEats для тоста. null — нечего сказать.
+export function eatSummary(res) {
+  if (!res) return null;
+  const parts = [];
+  const back = (res.restored || []).filter((r) => !res.eaten.some((e) => e.lower === r.lower));
+  if (back.length) parts.push(`Форма восстановлена: ${back.map((r) => `«${r.lower.name}»`).join(', ')}`);
+  if (res.eaten.length === 1) parts.push(`Комната «${res.eaten[0].lower.name}» уменьшена: пересечение с «${res.eaten[0].upper.name}»`);
+  else if (res.eaten.length > 1) parts.push(`Уменьшены по пересечению: ${res.eaten.map((e) => `«${e.lower.name}»`).join(', ')}`);
+  if (res.lost.length) parts.push(`удалено проёмов под комнатой: ${res.lost.length}`);
+  if (res.failed.length) parts.push(eatFailText(res.failed[0].why, res.failed[0].lower, res.failed[0].upper, res.failed[0].child));
+  return parts.length ? parts.join('; ') : null;
+}
+
+// Вердикт для оставшихся перекрытий этажа (нормы): съедание считается на
+// КОПИИ этажа (проект не меняется). pairs — [{ lower, upper }].
+// → Map lower.id → Map upper.id → { ok, why, child }.
+export function overlapVerdicts(project, pairs) {
+  const out = new Map();
+  if (!pairs.length) return out;
+  const level = activeLevelOf(project);
+  const copy = {
+    settings: project.settings || {},
+    wallOverrides: clone(level.wallOverrides || {}),
+    walls: level.walls || [],
+    rooms: clone(level.rooms || []),
+    openings: clone(level.openings || []),
+  };
+  const res = reconcileEats(copy);
+  const byId = new Map(copy.rooms.map((r) => [r.id, r]));
+  for (const { lower, upper } of pairs) {
+    const c = byId.get(lower.id);
+    let v;
+    if (c?.eatBase?.by?.includes(upper.id)) v = { ok: true, why: null, child: null };
+    else {
+      const f = res.failed.find((x) => x.lower.id === lower.id && x.upper.id === upper.id) ||
+        res.failed.find((x) => x.lower.id === lower.id);
+      const child = f?.child ? (level.rooms || []).find((r) => r.id === f.child.id) || f.child : null;
+      v = { ok: false, why: f?.why || 'none', child };
+    }
+    if (!out.has(lower.id)) out.set(lower.id, new Map());
+    out.get(lower.id).set(upper.id, v);
+  }
+  return out;
+}
+
+// «Обрезать» оставшееся перекрытие: верхняя by — наверх, съедание моста.
+// → true, если комната room теперь съедена by.
+export function trimByBridge(project, room, by) {
+  reconcileEats(project, { touched: [by.id] });
+  return eatersOf(room).includes(by.id);
+}

@@ -1,0 +1,13 @@
+{
+  "package_integrity": "pass",
+  "rules": 487,
+  "sections": 31,
+  "unique_web_sources": 48,
+  "acceptance_specifications": 48,
+  "scenario_templates": 20,
+  "schema_mode": "completed",
+  "instances_schema_checked": 489,
+  "geometry_solver_executed": false,
+  "acceptance_engine_tests_executed": false,
+  "errors": []
+}

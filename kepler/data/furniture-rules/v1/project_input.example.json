@@ -1,0 +1,355 @@
+{
+  "project_id": "synthetic-bedroom-example",
+  "units": "mm",
+  "angle_unit": "degree",
+  "mode": "furniture_only",
+  "coordinate_convention": "right_handed_z_up_yaw_ccw_local_origin_xy_center_at_support",
+  "metric_geometry_verified": true,
+  "source_plan_refs": [
+    "synthetic_geometry_not_user_attachment"
+  ],
+  "location": {
+    "country": "KG",
+    "latitude": null,
+    "longitude": null,
+    "north_yaw_deg": null
+  },
+  "active_profiles": [
+    "geometry_and_states",
+    "large_house_comfort"
+  ],
+  "profile_overrides": [],
+  "floors": [
+    {
+      "id": "F1",
+      "elevation_mm": 0
+    }
+  ],
+  "rooms": [
+    {
+      "id": "R1",
+      "floor_id": "F1",
+      "type": "bedroom",
+      "privacy": "private",
+      "geometry": {
+        "footprint_mm": {
+          "outer": [
+            [
+              0,
+              0
+            ],
+            [
+              5000,
+              0
+            ],
+            [
+              5000,
+              4500
+            ],
+            [
+              0,
+              4500
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "holes": []
+        },
+        "z_base_mm": 0,
+        "ceiling_height_mm": 3000,
+        "fixed_obstacle_volumes": []
+      },
+      "source_ref": "synthetic_geometry",
+      "linear_uncertainty_mm": 0,
+      "required_functions": [
+        "sleep_two",
+        "bedside_storage",
+        "clothing_storage"
+      ]
+    }
+  ],
+  "openings": [
+    {
+      "id": "D1",
+      "kind": "hinged_door",
+      "room_ids": [
+        "R1",
+        "OUTSIDE_ROOM"
+      ],
+      "segment_mm": [
+        [
+          200,
+          0
+        ],
+        [
+          1100,
+          0
+        ]
+      ],
+      "clear_width_mm": 900,
+      "sill_height_mm": 0,
+      "head_height_mm": 2100,
+      "pivot_mm": [
+        200,
+        0
+      ],
+      "required_open_angle_deg": 90,
+      "swing_direction": "ccw",
+      "fixed": true,
+      "zones": [],
+      "data_status": "imported"
+    }
+  ],
+  "fixed_engineering": [],
+  "actors": [
+    {
+      "id": "A1",
+      "height_mm": null,
+      "mobility_profile": null,
+      "body_footprint_local_mm": null,
+      "carried_object_ids": [],
+      "data_status": "unknown"
+    },
+    {
+      "id": "A2",
+      "height_mm": null,
+      "mobility_profile": null,
+      "body_footprint_local_mm": null,
+      "carried_object_ids": [],
+      "data_status": "unknown"
+    }
+  ],
+  "catalog": [
+    {
+      "id": "proxy_bed",
+      "kind": "bed",
+      "geometry_status": "proxy",
+      "manufacturer": null,
+      "sku": null,
+      "source_url": null,
+      "outer_dimensions_mm": [
+        2000,
+        2300,
+        1100
+      ],
+      "local_front_direction": [
+        0,
+        -1
+      ],
+      "resizable": false,
+      "states": [
+        {
+          "id": "closed",
+          "physical_volumes": [
+            {
+              "footprint_mm": {
+                "outer": [
+                  [
+                    -1000.0,
+                    -1150.0
+                  ],
+                  [
+                    1000.0,
+                    -1150.0
+                  ],
+                  [
+                    1000.0,
+                    1150.0
+                  ],
+                  [
+                    -1000.0,
+                    1150.0
+                  ],
+                  [
+                    -1000.0,
+                    -1150.0
+                  ]
+                ],
+                "holes": []
+              },
+              "z_min_mm": 0,
+              "z_max_mm": 1100
+            }
+          ],
+          "zones": []
+        }
+      ],
+      "manual_constraints": [],
+      "price": null,
+      "assembly_data": null
+    },
+    {
+      "id": "proxy_side",
+      "kind": "bedside_table",
+      "geometry_status": "proxy",
+      "manufacturer": null,
+      "sku": null,
+      "source_url": null,
+      "outer_dimensions_mm": [
+        600,
+        550,
+        550
+      ],
+      "local_front_direction": [
+        0,
+        -1
+      ],
+      "resizable": false,
+      "states": [
+        {
+          "id": "closed",
+          "physical_volumes": [
+            {
+              "footprint_mm": {
+                "outer": [
+                  [
+                    -300.0,
+                    -275.0
+                  ],
+                  [
+                    300.0,
+                    -275.0
+                  ],
+                  [
+                    300.0,
+                    275.0
+                  ],
+                  [
+                    -300.0,
+                    275.0
+                  ],
+                  [
+                    -300.0,
+                    -275.0
+                  ]
+                ],
+                "holes": []
+              },
+              "z_min_mm": 0,
+              "z_max_mm": 550
+            }
+          ],
+          "zones": []
+        }
+      ],
+      "manual_constraints": [],
+      "price": null,
+      "assembly_data": null
+    },
+    {
+      "id": "proxy_wardrobe",
+      "kind": "wardrobe",
+      "geometry_status": "proxy",
+      "manufacturer": null,
+      "sku": null,
+      "source_url": null,
+      "outer_dimensions_mm": [
+        2400,
+        650,
+        2400
+      ],
+      "local_front_direction": [
+        0,
+        -1
+      ],
+      "resizable": false,
+      "states": [
+        {
+          "id": "closed",
+          "physical_volumes": [
+            {
+              "footprint_mm": {
+                "outer": [
+                  [
+                    -1200.0,
+                    -325.0
+                  ],
+                  [
+                    1200.0,
+                    -325.0
+                  ],
+                  [
+                    1200.0,
+                    325.0
+                  ],
+                  [
+                    -1200.0,
+                    325.0
+                  ],
+                  [
+                    -1200.0,
+                    -325.0
+                  ]
+                ],
+                "holes": []
+              },
+              "z_min_mm": 0,
+              "z_max_mm": 2400
+            }
+          ],
+          "zones": []
+        }
+      ],
+      "manual_constraints": [],
+      "price": null,
+      "assembly_data": null
+    }
+  ],
+  "locked_placements": [],
+  "functional_brief": {
+    "mandatory_functions": [
+      "sleep_two",
+      "bedside_storage",
+      "clothing_storage"
+    ],
+    "daily_seats": null,
+    "guest_seats": null,
+    "storage_inventory": null,
+    "privacy_requirements": [],
+    "preferences": [
+      "headboard_against_solid_wall"
+    ],
+    "budget": null
+  },
+  "scenarios": [
+    {
+      "id": "night",
+      "template_id": "SCN014",
+      "enabled": true,
+      "required": true,
+      "actor_ids": [
+        "A1",
+        "A2"
+      ],
+      "state_assignments": {},
+      "route_pairs": [],
+      "concurrency": {},
+      "required_checks": [
+        "GEO004",
+        "GEO008",
+        "GEO016",
+        "PATH001"
+      ],
+      "comfort_checks": [
+        "BED004",
+        "BED005"
+      ],
+      "frequency_per_week": null
+    }
+  ],
+  "unknown_inputs": [
+    "Рост и мобильность пользователей",
+    "Подтвержденные инженерные точки",
+    "Геометрия действительных изделий и их состояний",
+    "Нормативный профиль",
+    "Инвентарь хранения",
+    "Оконные проемы не заданы; отсутствие не подтверждено"
+  ],
+  "assumptions": [
+    "Искусственный пример договора данных; размеры не извлечены из приложенных изображений.",
+    "Форма комнаты и проем заданы аналитически.",
+    "Прокси-мебель не является рекомендацией к заказу."
+  ]
+}

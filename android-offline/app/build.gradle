@@ -1,0 +1,108 @@
+plugins {
+    id "com.android.application"
+}
+
+def generatedWebAssets = layout.buildDirectory.dir("generated/zamerWebAssets")
+def signingPropertiesFile = new File(System.getenv("ZAMER_SIGNING_PROPERTIES") ?:
+    "${System.getProperty('user.home')}/.zamer-cad/signing/keystore.properties")
+def signingProperties = new java.util.Properties()
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+
+android {
+    namespace "com.zamercad.offline"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.zamercad.offline"
+        minSdk 29
+        targetSdk 35
+        versionCode 88
+        versionName "0.1.87"
+        buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
+    }
+
+    signingConfigs {
+        release {
+            if (signingPropertiesFile.exists()) {
+                storeFile rootProject.file(signingProperties["storeFile"])
+                storePassword signingProperties["storePassword"]
+                keyAlias signingProperties["keyAlias"]
+                keyPassword signingProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    sourceSets {
+        main {
+            assets.srcDir(generatedWebAssets)
+        }
+    }
+}
+
+dependencies {
+    implementation "com.google.android.gms:play-services-auth:21.3.0"
+}
+
+tasks.register("syncWebAssets", Sync) {
+    from("${rootDir}/../prototype") {
+        include "index.html"
+        include "app.js"
+        include "styles.css"
+        include "manifest.webmanifest"
+        include "core/**"
+        include "icons/**"
+        exclude "core/*.test.js", "core/geometry.js", "core/blocks.js", "core/dimensions.js", "core/dxf-writer.js", "core/walls.js", "core/zip.js"
+    }
+    from("${rootDir}/../shared/cad") {
+        include "geometry.js", "blocks.js", "dimensions.js", "dxf-writer.js"
+        into("core")
+    }
+    from("${rootDir}/../kepler/core/zip.js") { into("core") }
+    into(generatedWebAssets)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(tasks.named("syncWebAssets"))
+}
+
+def validateReleaseSigning = tasks.register("validateReleaseSigning") {
+    doLast {
+        if (!signingPropertiesFile.isFile()) {
+            throw new GradleException("Release signing is missing. Configure ZAMER_SIGNING_PROPERTIES; see android-offline/README.md.")
+        }
+        ["storeFile", "storePassword", "keyAlias", "keyPassword"].each { name ->
+            if (!signingProperties.getProperty(name)?.trim()) {
+                throw new GradleException("Missing release signing property: ${name}")
+            }
+        }
+        if (!rootProject.file(signingProperties["storeFile"]).isFile()) {
+            throw new GradleException("Release keystore file does not exist.")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateReleaseSigning)
+}

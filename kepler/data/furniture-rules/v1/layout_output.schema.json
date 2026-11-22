@@ -1,0 +1,590 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seven3d:furniture:layout-output:1.0",
+  "title": "Выход задачи расстановки v1.0",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "knowledge_version": {
+      "type": "string"
+    },
+    "units": {
+      "const": "mm"
+    },
+    "solver_status": {
+      "enum": [
+        "not_run",
+        "feasible",
+        "proven_infeasible",
+        "search_budget_exhausted",
+        "insufficient_data"
+      ]
+    },
+    "release_status": {
+      "enum": [
+        "conceptual_only",
+        "preliminary",
+        "verified_for_selected_checks",
+        "infeasible_with_proof"
+      ]
+    },
+    "metric_geometry_verified": {
+      "type": "boolean"
+    },
+    "legal_compliance_status": {
+      "enum": [
+        "not_assessed",
+        "pending_external_validation",
+        "externally_validated"
+      ]
+    },
+    "legal_validation_reference": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "geometry_status": {
+            "enum": [
+              "unverified",
+              "verified_for_selected_checks"
+            ]
+          },
+          "placements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "instance_id": {
+                  "type": "string"
+                },
+                "catalog_id": {
+                  "type": "string"
+                },
+                "room_id": {
+                  "type": "string"
+                },
+                "floor_id": {
+                  "type": "string"
+                },
+                "pose": {
+                  "type": "object",
+                  "properties": {
+                    "position_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    },
+                    "yaw_deg": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "position_mm",
+                    "yaw_deg"
+                  ]
+                },
+                "state_id": {
+                  "type": "string"
+                },
+                "group_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale_rule_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 0
+                },
+                "rationale": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "instance_id",
+                "catalog_id",
+                "room_id",
+                "floor_id",
+                "pose",
+                "state_id",
+                "group_id",
+                "rationale_rule_ids",
+                "rationale"
+              ]
+            },
+            "minItems": 0
+          },
+          "check_results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rule_id": {
+                  "type": "string"
+                },
+                "scenario_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "object_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 0
+                },
+                "status": {
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "unknown",
+                    "not_applicable"
+                  ]
+                },
+                "effective_severity": {
+                  "enum": [
+                    "hard",
+                    "soft",
+                    "conditional_hard"
+                  ]
+                },
+                "metric_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "observed_value": {},
+                "unit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "threshold": {},
+                "measurement_from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "measurement_to": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "uncertainty": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "evidence_type": {
+                  "enum": [
+                    "computed",
+                    "source_lookup",
+                    "external_report",
+                    "manual_verified",
+                    "not_run"
+                  ]
+                },
+                "evidence_reference": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "requirement_source_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "rule_id",
+                "scenario_id",
+                "object_ids",
+                "status",
+                "effective_severity",
+                "metric_name",
+                "observed_value",
+                "unit",
+                "threshold",
+                "evidence_type",
+                "evidence_reference",
+                "reason",
+                "requirement_source_ids"
+              ],
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "enum": [
+                          "pass",
+                          "fail"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "evidence_type": {
+                        "enum": [
+                          "computed",
+                          "source_lookup",
+                          "external_report",
+                          "manual_verified"
+                        ]
+                      },
+                      "evidence_reference": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "minItems": 0
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "minItems": 0
+          },
+          "scenario_reports": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "minItems": 0
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "score_coverage": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "tradeoffs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "unknowns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "geometry_status",
+          "placements",
+          "check_results",
+          "routes",
+          "scenario_reports",
+          "score",
+          "score_coverage",
+          "tradeoffs",
+          "unknowns"
+        ]
+      },
+      "minItems": 0
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "proof_status": {
+            "enum": [
+              "proven",
+              "suspected"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "proof_reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allowed_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "rule_ids",
+          "proof_status",
+          "description",
+          "proof_reference",
+          "allowed_changes"
+        ]
+      },
+      "minItems": 0
+    },
+    "missing_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 0
+    },
+    "run_provenance": {
+      "type": "object",
+      "properties": {
+        "generator_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "validator_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "catalog_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "search_budget": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "optimisation_complete": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "generator_version",
+        "validator_version",
+        "catalog_version",
+        "input_hash",
+        "seed",
+        "search_budget",
+        "optimisation_complete"
+      ]
+    },
+    "conceptual_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "room_id": {
+            "type": "string"
+          },
+          "function": {
+            "type": "string"
+          },
+          "relative_position": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unverified_requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "room_id",
+          "function",
+          "relative_position",
+          "reason",
+          "unverified_requirements"
+        ]
+      },
+      "minItems": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "project_id",
+    "knowledge_version",
+    "units",
+    "solver_status",
+    "release_status",
+    "metric_geometry_verified",
+    "legal_compliance_status",
+    "legal_validation_reference",
+    "candidates",
+    "conflicts",
+    "missing_inputs",
+    "assumptions",
+    "run_provenance",
+    "conceptual_proposals"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "metric_geometry_verified": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "release_status": {
+            "const": "conceptual_only"
+          },
+          "candidates": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "solver_status": {
+            "const": "proven_infeasible"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "conflicts": {
+            "minItems": 1
+          },
+          "release_status": {
+            "const": "infeasible_with_proof"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "legal_compliance_status": {
+            "const": "externally_validated"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "legal_validation_reference": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "solver_status": {
+            "const": "feasible"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "candidates": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "description": "Схема проверяет формат. Отсутствие столкновений, связность и достоверность доказательств требуют независимого валидатора. Вход без масштаба не выдает метрические placement-кандидаты."
+}

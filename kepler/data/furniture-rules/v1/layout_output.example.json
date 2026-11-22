@@ -1,0 +1,163 @@
+{
+  "project_id": "synthetic-bedroom-example",
+  "knowledge_version": "1.0.0",
+  "units": "mm",
+  "solver_status": "not_run",
+  "release_status": "preliminary",
+  "metric_geometry_verified": true,
+  "legal_compliance_status": "not_assessed",
+  "legal_validation_reference": null,
+  "candidates": [
+    {
+      "id": "example_only",
+      "label": "Синтетический пример структуры результата",
+      "geometry_status": "unverified",
+      "placements": [
+        {
+          "instance_id": "B1",
+          "catalog_id": "proxy_bed",
+          "room_id": "R1",
+          "floor_id": "F1",
+          "pose": {
+            "position_mm": [
+              2500,
+              3350,
+              0
+            ],
+            "yaw_deg": 0
+          },
+          "state_id": "closed",
+          "group_id": "sleep",
+          "rationale_rule_ids": [
+            "GEO003",
+            "ZONE005"
+          ],
+          "rationale": "Иллюстративная координата для демонстрации формата; двигатель проверки не запускался."
+        },
+        {
+          "instance_id": "N1",
+          "catalog_id": "proxy_side",
+          "room_id": "R1",
+          "floor_id": "F1",
+          "pose": {
+            "position_mm": [
+              1150,
+              4125,
+              0
+            ],
+            "yaw_deg": 0
+          },
+          "state_id": "closed",
+          "group_id": "sleep",
+          "rationale_rule_ids": [
+            "GEO003",
+            "ZONE005"
+          ],
+          "rationale": "Иллюстративная координата для демонстрации формата; двигатель проверки не запускался."
+        },
+        {
+          "instance_id": "N2",
+          "catalog_id": "proxy_side",
+          "room_id": "R1",
+          "floor_id": "F1",
+          "pose": {
+            "position_mm": [
+              3850,
+              4125,
+              0
+            ],
+            "yaw_deg": 0
+          },
+          "state_id": "closed",
+          "group_id": "sleep",
+          "rationale_rule_ids": [
+            "GEO003",
+            "ZONE005"
+          ],
+          "rationale": "Иллюстративная координата для демонстрации формата; двигатель проверки не запускался."
+        },
+        {
+          "instance_id": "W1",
+          "catalog_id": "proxy_wardrobe",
+          "room_id": "R1",
+          "floor_id": "F1",
+          "pose": {
+            "position_mm": [
+              3600,
+              350,
+              0
+            ],
+            "yaw_deg": 0
+          },
+          "state_id": "closed",
+          "group_id": "storage",
+          "rationale_rule_ids": [
+            "GEO003",
+            "ZONE005"
+          ],
+          "rationale": "Иллюстративная координата для демонстрации формата; двигатель проверки не запускался."
+        }
+      ],
+      "check_results": [
+        {
+          "rule_id": "GEO004",
+          "scenario_id": null,
+          "object_ids": [
+            "B1",
+            "N1",
+            "N2",
+            "W1"
+          ],
+          "status": "unknown",
+          "effective_severity": "hard",
+          "metric_name": "collision_volume",
+          "observed_value": null,
+          "unit": "mm3",
+          "threshold": 0,
+          "measurement_from": null,
+          "measurement_to": null,
+          "uncertainty": null,
+          "evidence_type": "not_run",
+          "evidence_reference": null,
+          "reason": "Пример схемы; физический валидатор не запускался.",
+          "requirement_source_ids": []
+        }
+      ],
+      "routes": [],
+      "scenario_reports": [],
+      "score": null,
+      "score_coverage": null,
+      "tradeoffs": [],
+      "unknowns": [
+        "Рост и мобильность пользователей",
+        "Подтвержденные инженерные точки",
+        "Геометрия действительных изделий и их состояний",
+        "Нормативный профиль",
+        "Инвентарь хранения",
+        "Оконные проемы не заданы; отсутствие не подтверждено"
+      ]
+    }
+  ],
+  "conflicts": [],
+  "missing_inputs": [
+    "Рост и мобильность пользователей",
+    "Подтвержденные инженерные точки",
+    "Геометрия действительных изделий и их состояний",
+    "Нормативный профиль",
+    "Инвентарь хранения",
+    "Оконные проемы не заданы; отсутствие не подтверждено"
+  ],
+  "assumptions": [
+    "Это пример формата, не проверенный проект."
+  ],
+  "run_provenance": {
+    "generator_version": null,
+    "validator_version": null,
+    "catalog_version": null,
+    "input_hash": null,
+    "seed": null,
+    "search_budget": null,
+    "optimisation_complete": null
+  },
+  "conceptual_proposals": []
+}
