@@ -249,16 +249,32 @@ export function plantFill(polygon, { mix, step = 0, jitter = 0.6, margin = 200, 
   };
   const rows = span(lb.v0, lb.v1, rowH);
   const cols = span(lb.u0, lb.u1, lattice);
+  const nodes = [];
   for (let r = 0; r < rows.n; r += 1) {
     const v = rows.start + r * rowH;
     // Нечётный ряд — со сдвигом на полшага (шахматка), лишняя точка с края.
     const shift = r % 2 ? lattice / 2 : 0;
-    for (let c = shift ? -1 : 0; c < cols.n; c += 1) {
-      const u = cols.start + c * lattice + shift;
-      const du = (rand() - 0.5) * lattice * jit; const dv = (rand() - 0.5) * lattice * jit;
-      // Сдвинутая точка не влезла (узкое место) — узел решётки без сдвига.
-      if (!tryAt((u + du) * cos - (v + dv) * sin, (u + du) * sin + (v + dv) * cos) && jit > 0) tryAt(u * cos - v * sin, u * sin + v * cos);
+    for (let c = shift ? -1 : 0; c < cols.n; c += 1) nodes.push({ u: cols.start + c * lattice + shift, v });
+  }
+  // Набор видов: сначала по одному растению каждого вида (крупные — первыми)
+  // в случайном узле решётки, где он помещается. Шаг решётки — средний по
+  // долям, и крупный вид между уже стоящими мелкими почти не влезает: на
+  // небольшом газоне выбранный вид иначе мог не попасть в засадку вовсе.
+  if (sp.length > 1) {
+    const order = sp.map((_, i) => i).sort((a, b) => sp[b].r - sp[a].r);
+    for (const k of order) {
+      const free0 = nodes.map(({ u, v }) => ({ x: Math.round(u * cos - v * sin), y: Math.round(u * sin + v * cos) }))
+        .filter((p) => fits(p, sp[k]) && free(p, sp[k]));
+      if (free0.length) {
+        const p = free0[Math.floor(rand() * free0.length)];
+        tryAt(p.x, p.y, k);
+      }
     }
+  }
+  for (const { u, v } of nodes) {
+    const du = (rand() - 0.5) * lattice * jit; const dv = (rand() - 0.5) * lattice * jit;
+    // Сдвинутая точка не влезла (узкое место) — узел решётки без сдвига.
+    if (!tryAt((u + du) * cos - (v + dv) * sin, (u + du) * sin + (v + dv) * cos) && jit > 0) tryAt(u * cos - v * sin, u * sin + v * cos);
   }
   // Узкий контур (решётка не попала) — от центра рамки.
   const seeded = !out.length && tryAt((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
