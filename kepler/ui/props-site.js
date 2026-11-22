@@ -13,6 +13,7 @@ import { selectObject, setTool, startDraw } from './tools.js';
 import { applyCalibration } from './underlay.js';
 import { bindTerrainSection, renderTerrainPointProps, terrainSection } from './props-terrain.js';
 import { importUnderlayMarks } from './terrain.js';
+import { bindEnvelopeSettings, envelopeSettingsHtml } from './envelope-settings.js';
 
 // --- Свойства участка ---
 
@@ -71,6 +72,7 @@ export function renderSiteSettings(panel) {
       ${buildingRotationField()}
       ${buildingPositionFields()}
     </div>
+    ${envelopeSettingsHtml()}
     ${terrainSection()}
     <h3>Проектные ограничения</h3>
     <div class="prop-block">
@@ -86,6 +88,7 @@ export function renderSiteSettings(panel) {
   panel.querySelector('#importUnderlay').addEventListener('click', () => refs.underlayInput.click());
   bindBuildingRotation(panel);
   bindBuildingPosition(panel);
+  bindEnvelopeSettings(panel);
   bindTerrainSection(panel);
   panel.querySelector('[data-climate-location-link]').addEventListener('click', (e) => openClimatePanel(e.currentTarget, { location: true }));
   panel.querySelector('#setbackB').addEventListener('change', (e) => {

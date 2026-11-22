@@ -132,7 +132,7 @@ test('площадь помещения над проёмом уменьшена
     return Math.min(...xs) < cx && Math.max(...xs) > cx && Math.min(...ys) < cy && Math.max(...ys) > cy;
   };
   const faces = buildHouseMesh(project);
-  const slabTop = faces.filter((f) => f.kind === 'slab' && f.normal.z > 0.5);
+  const slabTop = faces.filter((f) => f.slabRole === 'interfloor' && f.normal.z > 0.5);
   assert.ok(slabTop.length > 0);
   assert.ok(!slabTop.some(inside), 'над лестницей перекрытия нет');
   const floors2 = faces.filter((f) => f.kind === 'floor' && f.level === l2.id);
@@ -140,12 +140,48 @@ test('площадь помещения над проёмом уменьшена
   assert.ok(!floors2.some(inside), 'пола второго этажа в проёме нет');
   // Ручной расширенный проём — тоже вырезан.
   setSlabOpeningRect(project, l2.id, o.id, { ...o, w: o.w + 1000 });
-  const wide = buildHouseMesh(project).filter((f) => f.kind === 'slab' && f.normal.z > 0.5);
+  const wide = buildHouseMesh(project).filter((f) => f.slabRole === 'interfloor' && f.normal.z > 0.5);
   const px = o.x + o.w + 500;
   assert.ok(!wide.some((f) => {
     const xs = f.pts.map((p) => p.x); const ys = f.pts.map((p) => p.y);
     return Math.min(...xs) < px && Math.max(...xs) > px && Math.min(...ys) < cy && Math.max(...ys) > cy;
   }));
+});
+
+test('смоделированная лестница в stairs-room вырезает только точный проём, а не всю комнату', () => {
+  const { project, l2 } = twoStorey();
+  project.levels[0].rooms[0].type = 'stairs-room';
+  const [opening] = slabOpenings(project, l2.id);
+  const slabTop = buildHouseMesh(project).filter((face) => face.slabRole === 'interfloor' && face.normal.z > 0.5);
+  const covers = (x, y) => slabTop.some((face) => {
+    const xs = face.pts.map((point) => point.x);
+    const ys = face.pts.map((point) => point.y);
+    return Math.min(...xs) < x && Math.max(...xs) > x && Math.min(...ys) < y && Math.max(...ys) > y;
+  });
+
+  assert.ok(!covers(opening.x + opening.w / 2, opening.y + opening.h / 2), 'точный проём над маршем открыт');
+  assert.ok(covers(5000, 5000), 'перекрытие вне габарита лестницы остаётся, хотя комната имеет тип stairs-room');
+});
+
+test('новая лестница не отменяет полный вырез соседнего legacy stairs-room', () => {
+  const { project, l2 } = twoStorey();
+  const modeled = createRoom('stairs-room', 0, 0, 4000, 6000);
+  const legacy = createRoom('stairs-room', 4000, 0, 2000, 6000);
+  project.levels[0].rooms = [modeled, legacy];
+  l2.rooms[0].w = 6000;
+  l2.rooms[0].h = 6000;
+
+  const [opening] = slabOpenings(project, l2.id);
+  const slabTop = buildHouseMesh(project).filter((face) => face.slabRole === 'interfloor' && face.normal.z > 0.5);
+  const covers = (x, y) => slabTop.some((face) => {
+    const xs = face.pts.map((point) => point.x);
+    const ys = face.pts.map((point) => point.y);
+    return Math.min(...xs) < x && Math.max(...xs) > x && Math.min(...ys) < y && Math.max(...ys) > y;
+  });
+
+  assert.ok(!covers(opening.x + opening.w / 2, opening.y + opening.h / 2), 'новая лестница использует точный проём');
+  assert.ok(covers(500, 500), 'в её stairs-room перекрытие остаётся вне точного проёма');
+  assert.ok(!covers(5000, 3000), 'соседнее legacy-помещение по-прежнему вырезано целиком');
 });
 
 test('сериализация: ручной проём и «ведёт на этаж» сохраняются, экспорт JSON', () => {

@@ -277,7 +277,7 @@ export function viewSettingsHtml() {
   if (is3dOpen()) {
     return `
     <div class="prop-block" id="viewsSettings">
-      <div class="prop-row"><span>Рабочий этаж</span><strong>${escapeHtml(project.levels.find((level) => level.id === project.activeLevel)?.name || '')}</strong></div>
+      <div class="prop-row"><span>Состав вида</span><strong>Вся модель</strong></div>
     </div>${placeBlockHtml('3d')}`;
   }
   const mode = state.modeName || 'plan';

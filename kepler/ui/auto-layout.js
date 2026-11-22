@@ -101,7 +101,8 @@ export function layoutSignature(project, room) {
     id: opening.id, kind: opening.kind, roomId: opening.roomId || null,
     type: opening.type || null, orphan: opening.orphan === true,
     host: opening.host || null, side: opening.side ?? null, offset: opening.offset ?? null,
-    width: opening.width ?? null, height: opening.height ?? null, sill: opening.sill ?? null,
+    width: opening.width ?? null, height: opening.height ?? null,
+    heightMode: opening.heightMode || null, sill: opening.sill ?? null,
     hingeStart: opening.hingeStart ?? null, swingIn: opening.swingIn ?? null,
     requiredLeafIndices: Array.isArray(opening.requiredLeafIndices)
       ? [...opening.requiredLeafIndices].sort((a, b) => a - b)

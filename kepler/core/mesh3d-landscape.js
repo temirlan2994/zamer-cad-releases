@@ -472,6 +472,7 @@ export function landscapeFaces(project, hz = null) {
     const elev = elevOf(o0);
     const up = (o0.parent ? lift.get(o0.parent) || 0 : 0) + elev;
     const hz2 = up ? (x, y) => ground(x, y) + up : ground;
+    const firstFace = faces.length;
     for (const f of objectFaces(o, def, outline, path, hz2)) faces.push(f);
     // Приподнятая площадка/лестница — на подиуме: бока от земли до отметки.
     if (elev > 0 && outline.length >= 3) {
@@ -479,6 +480,12 @@ export function landscapeFaces(project, hz = null) {
       faces.push(...prism(outline, 0, elev, C[1], ground, { top: false }));
     }
     if (o.curb) for (const f of curbFaces(o, hz2)) faces.push(f);
+    // Идентификатор хранится на каждой грани: 3D выбирает не условную
+    // категорию «ландшафт», а конкретное дерево, дорожку или сооружение.
+    for (let i = firstFace; i < faces.length; i += 1) {
+      faces[i].landscapeId = o0.id;
+      faces[i].landscapeKind = o0.kind;
+    }
   }
   return faces;
 }

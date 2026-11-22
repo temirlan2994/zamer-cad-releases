@@ -15,7 +15,8 @@ import {
   pasteSelection, reconcileOpenings, rotateSelection90,
 } from './plan-actions.js';
 import {
-  addLandscapeDraftExact, handleLandscapeKey, landscapeDraftPrev, rotateLandscapeGhost,
+  addLandscapeDraftExact, deleteLandscapeSelection, duplicateLandscapeSelection, handleLandscapeKey, landscapeDraftPrev,
+  rotateLandscape90, rotateLandscapeGhost,
 } from './landscape.js';
 import { addDraftPoint, finishDraft } from './site-actions.js';
 import { closeSection, isSectionOpen } from './landscape-section.js';
@@ -29,7 +30,7 @@ import {
   afterChange, mutate, pushHistory, redo, refreshDerived, reflowLayoutChanges, restoreFrom, snapshot, undo,
 } from './store.js';
 import { cancelTool, rotatePlacementPreview, selectObject } from './tools.js';
-import { finishWallChain, startWallTool } from './wall-tool.js';
+import { finishWallChain, startWallTool, wallToolClick } from './wall-tool.js';
 import { handlePlanSectionKey, startPlanSectionTool } from './plan-section.js';
 import { close3d, escape3d, is3dOpen } from './view3d.js';
 import { requestDraw } from './view.js';
@@ -66,10 +67,10 @@ function handle3dKey(event) {
   const tag = event.target?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
   const mod = event.ctrlKey || event.metaKey;
-  if (!mod && !event.altKey && event.code === 'Space' && state.tool?.kind === 'place-opening') {
+  if (!mod && !event.altKey && event.code === 'Space' && ['place-opening', 'place-furniture'].includes(state.tool?.kind)) {
     event.preventDefault();
     rotatePlacementPreview();
-    document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
+    if (state.tool?.kind === 'place-opening') document.dispatchEvent(new CustomEvent('kepler:opening-tool'));
     return true;
   }
   // Инструмент «Масса»: цифры и Enter — точный размер (ui/mass3d.js); M — вкл/выкл.
@@ -78,13 +79,21 @@ function handle3dKey(event) {
   if (!mod && !event.altKey && !event.shiftKey && event.code === 'KeyK' && state.modeName === 'plan') { toggleRoofTool(); return true; }
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
     event.preventDefault();
-    if (state.selection) deleteSelection();
+    if (state.selection?.type === 'landscape') deleteLandscapeSelection();
+    else if (state.selection) deleteSelection();
     return true;
   }
   if (mod && event.code === 'KeyC') { event.preventDefault(); if (state.selection) copySelection(); return true; }
   if (mod && event.code === 'KeyV') { event.preventDefault(); pasteSelection(); return true; }
-  if (mod && event.code === 'KeyD') { event.preventDefault(); if (state.selection) duplicateSelection(); return true; }
-  if (!mod && !event.altKey && event.code === 'KeyR' && (state.selection?.type === 'item' || state.selection?.type === 'mass')) { rotateSelection90(); return true; }
+  if (mod && event.code === 'KeyD') {
+    event.preventDefault();
+    if (state.selection?.type === 'landscape') duplicateLandscapeSelection(); else if (state.selection) duplicateSelection();
+    return true;
+  }
+  if (!mod && !event.altKey && event.code === 'KeyR' && ['item', 'mass', 'landscape'].includes(state.selection?.type)) {
+    if (state.selection?.type === 'landscape') rotateLandscape90(); else rotateSelection90();
+    return true;
+  }
   return false;
 }
 
@@ -169,9 +178,11 @@ export function bindKeyboard() {
       rehoverSnap({ shiftKey: event.shiftKey, ctrlKey: event.ctrlKey });
     }
     // Динамический ввод: число (+ Tab — угол) и Enter — следующая точка.
-    const dynPrev = state.draft?.points?.length ? state.draft.points[state.draft.points.length - 1] : landscapeDraftPrev();
+    const dynPrev = state.tool?.kind === 'wall' ? state.tool.start
+      : (state.draft?.points?.length ? state.draft.points[state.draft.points.length - 1] : landscapeDraftPrev());
     if (handleDynamicKey(event, dynPrev, (p) => {
-      if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
+      if (state.tool?.kind === 'wall') wallToolClick(p, null, { exact: true });
+      else if (state.draft) addDraftPoint(p, null, { exact: true }); else addLandscapeDraftExact(p);
     })) return;
     if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
       event.preventDefault();

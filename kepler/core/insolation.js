@@ -22,6 +22,7 @@ import {
 } from './landscape.js';
 import { massBox } from './masses.js';
 import { levelProject, sortedLevels } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import {
   roofIsSlanted, roofRects, roofSlabOutline, roofZ, triangulate,
 } from './roofs.js';
@@ -457,7 +458,7 @@ export function windowsOf(project) {
       const width = Math.max(0, Math.min(Number(o.width) || 0, wallSpan || Infinity));
       const sill = Math.max(0, Number(o.sill ?? 900) || 0);
       const wallHeight = Math.max(0, (Number(level.height) || 3000) - sill);
-      const height = Math.max(0, Math.min(Number(o.height ?? 1500) || 0, wallHeight));
+      const height = Math.max(0, Math.min(openingHeight(o, level), wallHeight));
       const elevation = Number(level.elevation) || 0;
       out.push({
         openingId: o.id,

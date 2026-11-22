@@ -22,6 +22,15 @@ describe('3D', () => {
     }
   });
 
+  it('перспектива и параллельная проекция переключаются без смены вида', async () => {
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+    await app.page.getByRole('button', { name: 'Перспектива' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'perspective');
+    assert.equal(await app.page.isVisible('#view3d'), true);
+    await app.page.getByRole('button', { name: 'Параллельно' }).click();
+    assert.equal((await d3(app.page)).cam.projection, 'orthographic');
+  });
+
   it('мышь вращает, колесо приближает', async () => {
     const before = await d3(app.page);
     const box = await (await app.page.$('#canvas3d')).boundingBox();
@@ -33,14 +42,18 @@ describe('3D', () => {
     const after = await d3(app.page);
     assert.ok(Math.abs(after.cam.yaw - before.cam.yaw) > 0.5);
     assert.ok(after.cam.pitch > before.cam.pitch);
-    assert.ok(after.cam.dist < before.cam.dist);
-    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'приближение не двигает камеру внутрь модели');
+    assert.ok(after.cam.dist < before.cam.dist, 'в параллельной проекции колесо меняет масштаб');
+    assert.equal(after.cam.eyeDist, before.cam.eyeDist, 'физическое положение камеры не меняется');
   });
 
-  it('крыша добавляет грани; Esc закрывает 3D', async () => {
-    const without = (await d3(app.page)).faces;
+  it('крыша видна сразу, но её можно скрыть; Esc закрывает 3D', async () => {
+    const withRoof = (await d3(app.page)).faces;
+    assert.equal(await app.page.isChecked('#v3Roof'), true);
+    await with3dLayers(app.page, () => app.page.uncheck('#v3Roof'));
+    const withoutRoof = (await d3(app.page)).faces;
+    assert.ok(withoutRoof < withRoof);
     await with3dLayers(app.page, () => app.page.check('#v3Roof'));
-    assert.ok((await d3(app.page)).faces > without);
+    assert.equal((await d3(app.page)).faces, withRoof);
     await app.page.keyboard.press('Escape');
     assert.equal(await app.page.isVisible('#view3d'), false);
     assert.equal((await d3(app.page)).active, false);
@@ -58,7 +71,7 @@ describe('стены и колонны', () => {
 
   it('категория «Стены и колонны»: стена перетаскивается на план и видна в 3D', async () => {
     await app.page.click('#furnitureToolBtn');
-    await app.page.selectOption('#furnitureCats', { label: 'Стены и колонны' });
+    await app.page.getByRole('button', { name: 'Стены и колонны', exact: true }).click();
     const names = await app.page.$$eval('#furnitureItems .chip-name', (ns) => ns.map((n) => n.textContent));
     assert.deepEqual(names, ['Стена', 'Колонна', 'Колонна круглая']);
     await app.page.evaluate(() => {

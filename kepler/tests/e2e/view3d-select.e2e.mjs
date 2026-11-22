@@ -3,7 +3,7 @@
 // переключатель «Этажи» с кнопками этажей поверх 3D.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { with3dLayers, startApp, openSample } from './helpers.mjs';
+import { with3dLayers, pickWorkspaceView, startApp, openSample } from './helpers.mjs';
 
 const d3 = (page) => page.evaluate(() => window.__kepler.debug3d());
 const sel = (page) => page.evaluate(() => window.__kepler.state.selection);
@@ -34,6 +34,13 @@ describe('3D: мебель и выбор объектов', () => {
   before(async () => {
     app = await startApp();
     await openSample(app.page);
+    await app.page.evaluate(async () => {
+      const { createLandscapeObject } = await import('./core/landscape.js');
+      const { toWorld } = await import('./core/building.js');
+      const s = window.__kepler.state;
+      const p = toWorld(s.project.building, { x: -1800, y: 2500 });
+      s.project.site.landscape = { objects: [createLandscapeObject('tree-thuja', p.x, p.y)] };
+    });
     await app.page.click('#view3dBtn');
     hits = await scan(app.page);
   });
@@ -50,12 +57,27 @@ describe('3D: мебель и выбор объектов', () => {
     assert.equal((await d3(page)).furniture, s.furniture);
     hits = await scan(page);
     assert.ok(hits.item && hits.room && hits.door, `найдены: ${Object.keys(hits)}`);
+    assert.ok(hits.landscape, `ландшафт найден: ${Object.keys(hits)}`);
   });
 
   it('наведение на объект — курсор-указатель', async () => {
     const { page } = app;
     await page.mouse.move(hits.item.x, hits.item.y);
     assert.equal(await page.$eval('#canvas3d', (c) => c.style.cursor), 'pointer');
+    const state3d = await d3(page);
+    assert.equal(state3d.hovered?.type, 'item');
+    assert.ok(state3d.highlightedAll > 0, 'объект подсвечен ещё до клика');
+  });
+
+  it('в перспективе объекты остаются выбираемыми', async () => {
+    const { page } = app;
+    await page.getByRole('button', { name: 'Перспектива' }).click();
+    const perspectiveHits = await scan(page);
+    assert.ok(perspectiveHits.item && perspectiveHits.landscape, `найдены: ${Object.keys(perspectiveHits)}`);
+    await page.mouse.click(perspectiveHits.item.x, perspectiveHits.item.y);
+    assert.equal((await sel(page))?.type, 'item');
+    await page.getByRole('button', { name: 'Параллельно' }).click();
+    hits = await scan(page);
   });
 
   it('клик по мебели выбирает предмет: выбор плана, «Свойства», подсветка', async () => {
@@ -71,6 +93,37 @@ describe('3D: мебель и выбор объектов', () => {
     assert.match(await page.textContent('#propsBody'), new RegExp(title));
     assert.ok((await d3(page)).highlightedAll > 0, 'предмет подсвечен');
     assert.match(await page.textContent('#v3Hint'), /Delete/);
+    assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y', 'z'], 'мебель получает полноценный XYZ-гизмо');
+  });
+
+  it('стрелка X гизмо двигает мебель только по X, Undo возвращает', async () => {
+    const { page } = app;
+    await page.mouse.click(hits.item.x, hits.item.y);
+    const gizmo = (await d3(page)).objectGizmo;
+    const start = await page.evaluate((id) => {
+      const item = window.__kepler.state.project.items.find((entry) => entry.id === id);
+      return { x: item.x, y: item.y, z: item.elev3d || 0 };
+    }, hits.item.id);
+    const p = {
+      x: gizmo.origin.x + (gizmo.tips.x.x - gizmo.origin.x) * 0.72,
+      y: gizmo.origin.y + (gizmo.tips.x.y - gizmo.origin.y) * 0.72,
+    };
+    const q = {
+      x: p.x + (gizmo.tips.x.x - gizmo.origin.x) * 0.45,
+      y: p.y + (gizmo.tips.x.y - gizmo.origin.y) * 0.45,
+    };
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.down();
+    await page.mouse.move(q.x, q.y, { steps: 4 });
+    await page.mouse.up();
+    const moved = await page.evaluate((id) => {
+      const item = window.__kepler.state.project.items.find((entry) => entry.id === id);
+      return { x: item.x, y: item.y, z: item.elev3d || 0 };
+    }, hits.item.id);
+    assert.notEqual(moved.x, start.x);
+    assert.equal(moved.y, start.y);
+    assert.equal(moved.z, start.z);
+    await page.keyboard.press('Control+z');
   });
 
   it('клик по полу — помещение, по двери — проём', async () => {
@@ -100,6 +153,40 @@ describe('3D: мебель и выбор объектов', () => {
     await page.keyboard.press('Control+z');
     assert.equal(await count(), n);
     assert.ok(await page.evaluate((id) => window.__kepler.state.project.items.some((i) => i.id === id), hits.item.id));
+  });
+
+  it('дерево выбирается, показывает свойства и удаляется прямо в 3D', async () => {
+    const { page } = app;
+    const count = () => page.evaluate(() => window.__kepler.state.project.site.landscape.objects.length);
+    await page.mouse.click(hits.landscape.x, hits.landscape.y);
+    assert.deepEqual(await sel(page), { type: 'landscape', ids: [hits.landscape.id] });
+    assert.match(await page.textContent('#propsBody'), /Туя|Ландшафт/i);
+    assert.ok((await d3(page)).highlightedAll > 0, 'дерево подсвечено');
+    assert.deepEqual((await d3(page)).objectGizmo.axes, ['x', 'y'], 'дерево можно двигать только по земле, без Z');
+    const n = await count();
+    await page.keyboard.press('Delete');
+    assert.equal(await count(), n - 1);
+    await page.keyboard.press('Control+z');
+    assert.equal(await count(), n);
+    hits = await scan(page);
+  });
+
+  it('каталог добавляет мебель прямо на пол в 3D', async () => {
+    const { page } = app;
+    const count = () => page.evaluate(() => window.__kepler.state.project.items.length);
+    const n = await count();
+    await page.click('#furnitureToolBtn');
+    await page.waitForSelector('#furnitureItems .furniture-chip', { state: 'visible' });
+    await page.locator('#furnitureItems .furniture-chip').first().click();
+    assert.equal(await page.evaluate(() => window.__kepler.state.tool?.kind), 'place-furniture');
+    await page.mouse.click(hits.room.x, hits.room.y);
+    assert.equal(await count(), n + 1);
+    assert.equal((await sel(page))?.type, 'item');
+    assert.equal(await page.isVisible('#view3d'), true);
+    await page.keyboard.press('Escape'); // закончить постановку
+    await page.keyboard.press('Control+z');
+    assert.equal(await count(), n);
+    hits = await scan(page);
   });
 
   it('Ctrl+C / Ctrl+V и Ctrl+D дублируют, R поворачивает предмет', async () => {
@@ -170,20 +257,20 @@ describe('3D: этажи', () => {
   });
   after(async () => { await app?.close(); });
 
-  it('«Все» — оба этажа; рабочий этаж виден в панели 3D', async () => {
+  it('«Все этажи» показывает полную модель без селектора рабочего этажа', async () => {
     const { page } = app;
     assert.equal(await page.inputValue('#v3Levels'), 'all');
     assert.deepEqual((await d3(page)).levelsShown.sort(), [l1, l2].sort());
-    assert.equal(await page.isVisible('#v3WorkingLevel'), true);
+    assert.equal(await page.locator('#v3WorkingLevel').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Параллельно' }).getAttribute('aria-pressed'), 'true');
   });
 
-  it('«До активного» скрывает верхний этаж; кнопка этажа меняет активный', async () => {
+  it('слой этажей фильтрует модель, не превращая 3D в план этажа', async () => {
     const { page } = app;
     const camera = (await d3(page)).cam;
-    await page.selectOption('#v3WorkingLevel', l1);
+    await page.evaluate(async (id) => (await import('./ui/levels.js')).switchLevel(id, { planView: false }), l1);
     assert.deepEqual((await d3(page)).cam, camera);
     assert.equal(await page.evaluate(() => window.__kepler.state.project.activeLevel), l1);
-    assert.equal(await page.isVisible('#view3d'), true, 'кнопка этажа не закрывает 3D');
     await with3dLayers(page, () => page.selectOption('#v3Levels', 'upto'));
     let s = await d3(page);
     assert.deepEqual(s.levelsShown, [l1]);
@@ -191,7 +278,7 @@ describe('3D: этажи', () => {
     // Пол под курсором — только первого этажа.
     const hits = await scan(page);
     assert.equal(hits.room?.levelId, l1);
-    await page.selectOption('#v3WorkingLevel', l2);
+    await page.evaluate(async (id) => (await import('./ui/levels.js')).switchLevel(id, { planView: false }), l2);
     s = await d3(page);
     assert.deepEqual(s.levelsShown.sort(), [l1, l2].sort());
     await with3dLayers(page, () => page.selectOption('#v3Levels', 'only'));
@@ -206,29 +293,30 @@ describe('3D: этажи', () => {
     await with3dLayers(page, () => page.selectOption('#v3Levels', 'all'));
   });
 
-  it('план, фасад, лист и 3D открываются из полосы видов и сохраняют рабочий этаж модели', async () => {
+  it('3D открывается как отдельный вид и возвращает в исходный раздел', async () => {
     const { page } = app;
     const camera = (await d3(page)).cam;
     await page.click('#modePlanBtn');
     assert.equal(await page.isHidden('#view3d'), true);
     assert.equal(await page.evaluate(() => window.__kepler.state.project.activeLevel), l1);
-    await page.selectOption('#workspaceViewPicker', 'elev-N');
+    await pickWorkspaceView(page, 'facades', 'elev-N');
     assert.equal(await page.isVisible('#elevView'), true);
     assert.equal(await page.isHidden('#toolStrip'), true);
-    await page.selectOption('#workspaceViewPicker', `sheet:level:${l1}`);
+    await pickWorkspaceView(page, 'sheets', `sheet:level:${l1}`);
     assert.equal(await page.isHidden('#elevView'), true);
     assert.equal(await page.isVisible('#sheetView'), true);
     assert.equal(await page.isHidden('#toolStrip'), true);
     await page.click('#view3dBtn');
     assert.equal(await page.isHidden('#sheetView'), true);
-    assert.equal(await page.inputValue('#v3WorkingLevel'), l2);
     assert.deepEqual((await d3(page)).cam, camera);
     await page.click('#modeSiteBtn');
     assert.equal(await page.isHidden('#view3d'), true);
     await page.click('#view3dBtn');
     assert.equal(await page.isVisible('#planTools'), true);
-    for (const id of ['massGroupBtn', 'openingsGroupBtn', 'roofToolBtn', 'selectToolBtn']) assert.equal(await page.isVisible('#' + id), true, id);
-    for (const id of ['wallToolBtn', 'boundRoomBtn', 'slabOpeningToolBtn', 'docsGroupBtn', 'stairsToolBtn', 'fitBtn']) assert.equal(await page.isHidden('#' + id), true, id);
+    for (const id of ['massGroupBtn', 'openingsGroupBtn', 'roofToolBtn', 'selectToolBtn', 'furnitureToolBtn', 'stairsToolBtn']) {
+      assert.equal(await page.isVisible('#' + id), true, id);
+    }
+    for (const id of ['wallToolBtn', 'boundRoomBtn', 'slabOpeningToolBtn', 'docsGroupBtn', 'fitBtn']) assert.equal(await page.isHidden('#' + id), true, id);
 
     await page.click('#v3Close');
     assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'site');
@@ -243,7 +331,7 @@ describe('3D: этажи', () => {
     });
     await page.click('#modePlanBtn');
     const first = await camera();
-    await page.selectOption('#workspaceViewPicker', `plan:${l2}`);
+    await pickWorkspaceView(page, 'plans', `plan:${l2}`);
     const canvas = page.locator('#canvas');
     await canvas.hover();
     const initial = await camera();

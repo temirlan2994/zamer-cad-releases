@@ -33,6 +33,10 @@ test('поиск: по размеру, слову и типу; только св
   assert.ok(searchOpeningPresets('window', 'в пол').every((p) => p.type === 'panoramic'));
   assert.equal(searchOpeningPresets('window', 'входная').length, 0);
   assert.equal(searchOpeningPresets('door', '').length, openingPresets('door').length);
+  for (const size of ['800 × 2100 мм', '800x2100', '800 х 2100']) {
+    assert.deepEqual(searchOpeningPresets('door', 'Межкомнатные ' + size).map((p) => p.id), ['door-800']);
+  }
+  assert.deepEqual(searchOpeningPresets('window', 'широкие 2100 x 1500 мм').map((p) => p.id), ['win-2100x1500']);
 });
 
 test('пресет → параметры инструмента → новый проём; окно не выше этажа', () => {
@@ -47,7 +51,7 @@ test('пресет → параметры инструмента → новый 
   assert.equal(opening.width, 2400);
   assert.equal(opening.type, 'panoramic');
   const door = presetToOpening(OPENING_PRESETS.find((p) => p.id === 'entry-1000'));
-  assert.deepEqual(door, { type: 'single', width: 1000, height: 2100, sill: 0 });
+  assert.deepEqual(door, { presetId: 'entry-1000', entryRole: 'main', type: 'single', width: 1000, height: 2100, sill: 0 });
   // Параметры двери по умолчанию — карточка «Дверь 900»? нет: ширина по умолчанию своя, совпадение — только точное.
   const def = defaultOpeningPreset('door');
   assert.equal(OPENING_PRESETS.filter((p) => presetMatches(p, def)).length <= 1, true);

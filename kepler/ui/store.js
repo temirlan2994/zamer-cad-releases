@@ -16,6 +16,7 @@ import { findNearMissGaps } from '../core/gaps.js';
 import { roomRects } from '../core/room-shape.js';
 import { collectIssues } from '../core/issues.js';
 import { massVoidTargetGeometryKey, pruneOrphanMassVoids } from '../core/mesh3d.js';
+import { captureGroundReference } from '../core/terrain.js';
 import { toast } from './dom.js';
 import { getBlob, putBlob } from './localdb.js';
 import { renderLevelBar } from './levels.js';
@@ -167,7 +168,7 @@ function changedLayoutRooms(beforeText) {
   const openingKey = (opening) => JSON.stringify([
     opening.kind, opening.roomId || null, opening.host || null, opening.side ?? null,
     opening.offset ?? null, opening.width ?? null, opening.height ?? null, opening.sill ?? null,
-    opening.type || null, opening.swingIn ?? null, opening.hingeStart ?? null, opening.orphan === true,
+    opening.heightMode || null, opening.type || null, opening.swingIn ?? null, opening.hingeStart ?? null, opening.orphan === true,
   ]);
   const manualRects = (walls) => walls
     .filter((wall) => wall.kind === 'manual' || wall.source === 'manual')
@@ -264,6 +265,7 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   if (state.editLocked) return false;
   const before = snapshot();
   fn();
+  if (state.project) captureGroundReference(state.project);
   // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
   if (state.project) syncStairLevels(state.project, setStairRise);
   // Съедание — производное номинальных форм: после любой правки считается
@@ -461,7 +463,7 @@ function detachIdbRefs(node, out) {
 // Чтение автосохранения при запуске. Ничего не бросает:
 // { project } — проект (или null, если сохранения нет/оно пустое);
 // { broken, error } — сохранение не открылось, копия убрана в резерв.
-export function loadAutosave() {
+export function loadAutosave({ includeEmpty = false } = {}) {
   let saved;
   try { saved = getScopedItem(AUTOSAVE_KEY); } catch { return { project: null }; }
   if (!saved) return { project: null };
@@ -472,7 +474,7 @@ export function loadAutosave() {
     const refs = [];
     detachIdbRefs(project, refs);
     deriveAll(project); // упадёт здесь, а не после замены проекта
-    if (!hasContent(project) && !refs.length) return { project: null };
+    if (!includeEmpty && !hasContent(project) && !refs.length) return { project: null };
     return { project, refs, savedAt };
   } catch (error) {
     console.error('Автосохранение не открылось:', error);

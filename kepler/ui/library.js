@@ -2,7 +2,7 @@
 // помещений, каталог мебели.
 
 import {
-  FURNITURE_CATEGORIES, allFurniture, furnitureByCategory, roomColors, roomType, roomTypesByCategory,
+  FURNITURE_CATEGORIES, allFurniture, furnitureByCategory, normalizeCatalogText, roomColors, roomType, roomTypesByCategory,
 } from '../core/catalog.js';
 import { analyzeHomeProgram } from '../core/home-program.js';
 import { drawGlyphPreview } from '../render.js';
@@ -19,7 +19,20 @@ import { PROJECT_CHANGE_EVENT } from './store.js';
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
 let projectLibraryBound = false;
 const categorySections = { kitchen: 'kitchen', appliance: 'kitchen', bath: 'bath', decor: 'decor' };
-const sectionForCategory = (id) => categorySections[id] || 'furniture';
+const subcategories = {
+  bathing: { section: 'bath', title: 'Ванны и душ', kinds: ['bath', 'bath-corner', 'shower', 'jacuzzi'] },
+  basins: { section: 'bath', title: 'Раковины', kinds: ['washbasin', 'washbasin-double', 'vanity-unit'] },
+  toilets: {
+    section: 'bath',
+    title: 'Унитазы и биде',
+    kinds: ['toilet', 'toilet-wall', 'toilet-smart', 'bidet', 'urinal'],
+  },
+  bathExtras: { section: 'bath', title: 'Аксессуары', kinds: ['towel-rail'] },
+  lighting: { section: 'decor', title: 'Свет', kinds: ['floor-lamp', 'chandelier'] },
+  textiles: { section: 'decor', title: 'Текстиль', kinds: ['rug', 'rug-round', 'curtain'] },
+  interior: { section: 'decor', title: 'Для интерьера', kinds: ['coffee-table-2', 'plant', 'piano', 'fireplace', 'aquarium'] },
+};
+const sectionForCategory = (id) => subcategories[id]?.section || categorySections[id] || 'furniture';
 const lastCategory = new Map();
 
 function catalogSection() {
@@ -62,7 +75,7 @@ function chooseCatalogSection(section) {
   if (state.tool) cancelTool();
   state.libraryTab = 'furniture';
   state.libraryPinned = true;
-  const category = lastCategory.get(section) || FURNITURE_CATEGORIES.find((cat) => sectionForCategory(cat.id) === section).id;
+  const category = lastCategory.get(section) ?? FURNITURE_CATEGORIES.find((cat) => sectionForCategory(cat.id) === section).id;
   chooseCategory(category);
   applyLibraryTab();
 }
@@ -81,11 +94,17 @@ function bindCatalogNavigation() {
     button.addEventListener('click', () => chooseCatalogSection(id));
     el('objectSections').append(button);
   }
-  for (const cat of FURNITURE_CATEGORIES) {
+  const filters = [
+    ...FURNITURE_CATEGORIES,
+    ...Object.entries(subcategories).map(([id, group]) => ({ id, title: group.title })),
+    { id: '', title: 'Все предметы' },
+  ];
+  for (const cat of filters) {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.category = cat.id;
-    button.textContent = cat.title;
+    if (subcategories[cat.id]) button.dataset.subcategory = '';
+    button.textContent = cat.id === 'bath' || cat.id === 'decor' ? 'Все' : cat.title;
     button.addEventListener('click', () => chooseCategory(cat.id));
     el('furnitureCategoryList').append(button);
   }
@@ -133,7 +152,6 @@ export function bindFurnitureSearch() {
       refs.furnitureItems.scrollTop = 0;
       renderFurnitureItems();
     });
-    refs.furnitureCats.addEventListener('change', () => chooseCategory(refs.furnitureCats.value));
     document.addEventListener(PROJECT_CHANGE_EVENT, () => renderLibrary());
   }
   bindLandscapeLibrary();
@@ -148,8 +166,9 @@ const ROOM_TOOLS = new Set(['bound-room', 'place-room']);
 // «Ландшафт» (каталог участка). Иначе холст свободен.
 // Телефон: та же панель — нижний лист по кнопкам #mobileBar (ui/mobile.js).
 export function libraryWanted() {
-  if (state.modeName === 'landscape') return true;
-  if (state.modeName !== 'plan') return false;
+  const model = document.body.classList.contains('v3-open');
+  if (state.modeName === 'landscape' && !model) return true;
+  if (state.modeName !== 'plan' && !model) return false;
   const t = state.tool;
   if (!t) return state.libraryPinned;
   if (ROOM_TOOLS.has(t.kind) || t.kind === 'place-opening') return true;
@@ -161,14 +180,15 @@ export function libraryWanted() {
 // инструмент закрывает библиотеку, размещение задаёт вкладку.
 export function syncLibraryOpen() {
   const t = state.tool;
+  const model = document.body.classList.contains('v3-open');
   if (t && !ROOM_TOOLS.has(t.kind) && t.kind !== 'place-furniture') state.libraryPinned = false;
-  if (state.modeName !== 'plan') state.libraryPinned = false;
+  if (state.modeName !== 'plan' && !model) state.libraryPinned = false;
   if (t && ROOM_TOOLS.has(t.kind)) state.libraryTab = 'rooms';
   else if (t?.kind === 'place-furniture') state.libraryTab = t.itemKind === 'stairs' ? 'stairs' : 'furniture';
   document.body.classList.toggle('lib-open', libraryWanted());
-  const plan = state.modeName === 'plan';
-  const landscape = state.modeName === 'landscape';
-  refs.libraryTabs.hidden = !plan;
+  const plan = state.modeName === 'plan' || model;
+  const landscape = state.modeName === 'landscape' && !model;
+  refs.libraryTabs.hidden = !plan || model;
   const bar = el('landscapeBar');
   if (bar) bar.hidden = !landscape;
   const openings = el('openingsBar');
@@ -192,8 +212,7 @@ export function syncLibraryOpen() {
     renderOpeningLibrary();
     return;
   }
-  const stairs = t?.kind === 'place-furniture' && t.itemKind === 'stairs';
-  if (stairs) {
+  if (state.libraryTab === 'stairs') {
     refs.libraryTabs.hidden = true;
     refs.libraryTop.hidden = true;
     refs.furnitureBar.hidden = true;
@@ -324,25 +343,24 @@ export function refreshLibraryTheme() {
 }
 
 export function renderFurnitureBar() {
-  // Содержимое строится только в режиме «План»; видимость задаёт вкладка
-  // (applyLibraryTab).
-  if (state.modeName !== 'plan') return;
+  // В самостоятельном 3D используется тот же каталог и те же объекты,
+  // что на плане. Видимость задаёт вкладка (applyLibraryTab).
+  if (state.modeName !== 'plan' && !document.body.classList.contains('v3-open')) return;
 
-  if (!refs.furnitureCats.options.length) {
-    refs.furnitureCats.add(new Option('Все категории', ''));
-    for (const cat of FURNITURE_CATEGORIES) refs.furnitureCats.add(new Option(cat.title, cat.id));
-  }
   renderFurnitureItems();
 }
 
 // Поиск охватывает весь каталог, в том числе размеры в миллиметрах.
 function furnitureList() {
-  const normalize = (s) => s.toLocaleLowerCase('ru').replaceAll('ё', 'е').replace(/(\d)\s*[xх×]\s*(?=\d)/g, '$1×');
-  const q = normalize(el('furnSearch').value.trim());
-  if (!q) return furnitureCat ? furnitureByCategory(furnitureCat) : allFurniture();
+  const q = normalizeCatalogText(el('furnSearch').value);
+  if (!q) {
+    const group = subcategories[furnitureCat];
+    if (group) return furnitureByCategory(group.section).filter((item) => group.kinds.includes(item.kind));
+    return furnitureCat ? furnitureByCategory(furnitureCat) : allFurniture();
+  }
   const terms = q.split(/\s+/);
   return allFurniture().filter((f) => {
-    const label = normalize(`${f.title} ${f.kind} ${f.w}×${f.h} мм`);
+    const label = normalizeCatalogText(`${f.title} ${f.kind} ${f.w}×${f.h} мм`);
     return terms.every((term) => label.includes(term));
   });
 }
@@ -351,16 +369,12 @@ function renderFurnitureItems() {
   const searching = Boolean((el('furnSearch')?.value || '').trim());
   const rail = el('furnitureCategoryList');
   const group = sectionForCategory(furnitureCat);
-  let count = 0;
   for (const button of rail.children) {
     button.hidden = sectionForCategory(button.dataset.category) !== group;
     button.setAttribute('aria-pressed', String(button.dataset.category === furnitureCat));
-    if (!button.hidden) count++;
   }
-  rail.hidden = searching || count < 2;
+  rail.hidden = searching;
   syncCatalogTabs();
-  refs.furnitureCats.value = searching ? '' : furnitureCat;
-  el('furnitureCatIcon').innerHTML = CATEGORY_ICONS[refs.furnitureCats.value || 'misc'];
   const stroke = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#33443b';
   refs.furnitureItems.innerHTML = '';
   const list = furnitureList();
@@ -410,19 +424,7 @@ const CATEGORY_ICONS = {
   door: svgIcon('<path d="M4 20h16M6 20V4h11v16M9 19V7l5-1v13M12 13h.3"/>'),
   window: svgIcon('<rect x="4" y="4" width="16" height="15" rx="1"/><path d="M12 4v15M4 10h16M3 21h18"/>'),
   seating: svgIcon('<path d="M5 11V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V11"/><path d="M4 11.5A1.5 1.5 0 0 1 5.5 13v3h13v-3A1.5 1.5 0 0 1 20 11.5"/><path d="M6.5 16v2M17.5 16v2"/>'),
-  beds: svgIcon('<path d="M3 18V7h13a4 4 0 0 1 4 4v7"/><path d="M3 13h17"/><path d="M6.5 10.5h3"/>'),
-  tables: svgIcon('<rect x="3" y="7" width="18" height="3.5" rx="1"/><path d="M5.5 10.5V17M18.5 10.5V17"/>'),
-  chairs: svgIcon('<path d="M8 3v9M16 3v9M7 12h10l-1 9M8 21l-.7-9M7 12l-.5-9"/><path d="M8.5 16h7"/>'),
-  storage: svgIcon('<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M5 9h14M5 15h14"/><path d="M11 6h1M11 12h1M11 18h1"/>'),
   kitchen: svgIcon('<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.8"/><circle cx="15" cy="9" r="1.8"/><path d="M5 14.5h14"/>'),
   bath: svgIcon('<path d="M4 12h16v3a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M6 12V7.5A2.2 2.2 0 0 1 8.2 5.3a2.2 2.2 0 0 1 2.1 1.5"/><path d="M7 18l-.8 2M17 18l.8 2"/>'),
-  appliance: svgIcon('<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8.5 6h0M11 6h0"/>'),
   decor: svgIcon('<path d="M8.5 3h7l2 7h-11z"/><path d="M12 10v8M9 21h6"/>'),
-  office: svgIcon('<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8.5 20h7M12 16v4"/>'),
-  kids: svgIcon('<circle cx="12" cy="13.5" r="5.5"/><circle cx="7" cy="7" r="2.3"/><circle cx="17" cy="7" r="2.3"/><path d="M10 13h0M14 13h0"/>'),
-  gym: svgIcon('<path d="M6.5 8.5v7M4 10v4M17.5 8.5v7M20 10v4M8 12h8"/>'),
-  hall: svgIcon('<rect x="6" y="3" width="12" height="18" rx="1.5"/><circle cx="14.5" cy="12" r="1"/>'),
-  outdoor: svgIcon('<path d="M12 21v-6"/><path d="M12 15a5 5 0 1 0-4.6-7A4 4 0 0 0 7 15z"/>'),
-  structure: svgIcon('<rect x="3" y="9" width="12" height="4" rx="0.5" fill="currentColor"/><rect x="16" y="5" width="5" height="5" rx="0.5"/><circle cx="18.5" cy="16.5" r="2.5"/>'),
-  misc: svgIcon('<rect x="4" y="4" width="7" height="7" rx="1.2"/><rect x="13" y="4" width="7" height="7" rx="1.2"/><rect x="4" y="13" width="7" height="7" rx="1.2"/><rect x="13" y="13" width="7" height="7" rx="1.2"/>'),
 };

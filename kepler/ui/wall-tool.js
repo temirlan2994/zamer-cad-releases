@@ -1,24 +1,24 @@
 // Инструмент «Стена»: ручные стены кликами по осям (core/wall-manual.js).
 // Клик — начало, следующий клик — конец стены и начало следующей (цепочка).
-// Ось всегда ортогональна; привязка к граням/углам стен, осям и торцам
-// ручных стен, иначе к сетке; Shift — без привязки (только орто).
+// Ось свободная, как у линии ZamerCAD; F8/Ctrl включают орто, полярка и
+// объектные привязки работают через общий core/draw-snap.js.
 // Esc, Enter, двойной клик или клик в ту же точку — конец цепочки.
 
-import { addManualWall, snapWallPoint, wallAxisVerdict } from '../core/wall-manual.js';
+import { addManualWall, wallAxisVerdict } from '../core/wall-manual.js';
 import { createLoopRoom, findLoopAt, splitRoomByWall } from '../core/bound-rooms.js';
-import { wallClassThickness } from '../core/walls.js';
+import { wallClassThickness, wallRects } from '../core/walls.js';
 import { toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { massSnapPoints } from './plan-masses.js';
-import { gridPointTol, gridSnapPoints } from './plan-grids.js';
-import { wallCenterSnapOpts } from './block-gesture.js';
+import { gridSnapPoints } from './plan-grids.js';
+import { clearDrawSnap, snapAt } from './draw-snap-ui.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
 import { cancelTool, selectObject, setHint, setTool } from './tools.js';
 import { requestDraw } from './view.js';
 
-const HINT_START = 'Стена: кликните начало оси · Shift — без привязки · Esc — отмена';
-const HINT_NEXT = 'Стена: кликните конец (цепочка продолжится) · двойной клик, Enter или Esc — закончить';
+const HINT_START = 'Стена: укажите начало · свободный угол · F8 — орто · Shift — без привязок';
+const HINT_NEXT = 'Стена: укажите конец · F8/Ctrl — орто · число — длина, Tab — угол · Enter/Esc — закончить';
 
 export function startWallTool() {
   if (state.modeName !== 'plan') return;
@@ -32,17 +32,20 @@ export function startWallTool() {
 
 function snapped(plan, event) {
   const t = state.tool;
-  return snapWallPoint({
-    p: plan,
-    prev: t.start,
-    walls: state.walls || [],
-    manual: state.project.walls || [],
-    points: massSnapPoints(), // вершины эскиза масс
-    gridPoints: gridSnapPoints(), gridTol: gridPointTol(), // координационные оси: концы и линия — на ось, пересечение — угол
-    tol: 12 / state.view.scale,
-    grid: gridStep(),
-    free: Boolean(event?.shiftKey),
-    ...wallCenterSnapOpts(event), // центр стены и середина стены (Alt — без них)
+  const shapes = [];
+  for (const wall of state.walls || []) {
+    if (wall.hidden) continue;
+    if (wall.polys?.length) for (const poly of wall.polys) shapes.push({ points: poly, closed: true });
+    else for (const r of wallRects(wall)) shapes.push({
+      points: [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }], closed: true,
+    });
+    if (wall.center) shapes.push({
+      points: [{ x: wall.center.x1, y: wall.center.y1 }, { x: wall.center.x2, y: wall.center.y2 }], closed: false,
+    });
+  }
+  for (const wall of state.project.walls || []) shapes.push({ points: [wall.axis.a, wall.axis.b], closed: false });
+  return snapAt(plan, event, {
+    prev: t.start, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
   });
 }
 
@@ -52,18 +55,16 @@ export function wallToolHover(plan, event) {
   if (t?.kind !== 'wall') return;
   const s = snapped(plan, event);
   t.cursor = s.point;
-  t.snapX = s.snapX;
-  t.snapY = s.snapY;
-  state.gridSnapTag = s.label ? { x: s.point.x, y: s.point.y, text: s.label } : null; // «центр стены»
+  state.gridSnapTag = s.label ? { x: s.point.x, y: s.point.y, text: s.label } : null;
   t.valid = t.start ? wallAxisVerdict(t.start, s.point).ok : true;
   requestDraw();
 }
 
 // Клик/тап: начало оси или конец очередной стены цепочки.
-export function wallToolClick(plan, event) {
+export function wallToolClick(plan, event, { exact = false } = {}) {
   const t = state.tool;
   if (t?.kind !== 'wall') return;
-  const p = snapped(plan, event).point;
+  const p = exact ? plan : snapped(plan, event).point;
   if (!t.start) {
     t.start = p;
     t.cursor = p;
@@ -133,6 +134,7 @@ export function finishWallChain() {
   const t = state.tool;
   if (t?.kind !== 'wall') return false;
   const made = t.count;
+  clearDrawSnap();
   cancelTool();
   const last = state.project.walls?.[state.project.walls.length - 1];
   if (made && last) {

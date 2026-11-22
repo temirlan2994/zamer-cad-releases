@@ -20,7 +20,9 @@ async function client(page, p, dx = 0, dy = 0) {
 }
 async function canvasAt(page, fx, fy) {
   const box = await (await page.$('#canvas')).boundingBox();
-  return { x: box.x + box.width * fx, y: box.y + box.height * fy };
+  const catalog = await page.locator('.library').boundingBox();
+  const left = catalog ? Math.max(box.x, catalog.x + catalog.width) : box.x;
+  return { x: left + (box.x + box.width - left) * fx, y: box.y + box.height * fy };
 }
 async function moveClick(page, c) {
   await page.mouse.move(c.x - 3, c.y - 3);

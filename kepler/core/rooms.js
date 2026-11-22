@@ -206,6 +206,11 @@ export function moveRoomBy(project, roomId, dx, dy) {
     const inside = movedRooms.some((r) => roomContainsPoint(r, item.x, item.y));
     if (inside) { item.x += dx; item.y += dy; }
   }
+  for (const wall of project.walls || []) {
+    if (!moved.has(wall.ownerRoomId)) continue;
+    wall.axis.a.x += dx; wall.axis.a.y += dy;
+    wall.axis.b.x += dx; wall.axis.b.y += dy;
+  }
 }
 
 // Площадь объединения набора прямоугольников (координатное сжатие).

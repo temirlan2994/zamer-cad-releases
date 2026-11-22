@@ -9,9 +9,9 @@ import { determineParent, snapRoomPosition, validateRoomPlacement } from '../cor
 import { nearestPointOnPolyline } from '../core/site.js';
 import { pointInBuilding, setBuildingOrigin } from '../core/site-check.js';
 import {
-  openingFrame, openingPosAt, openingRect, setOpeningPos,
+  openingFrame, openingPosAt, openingRect, setOpeningPos, wallRects,
 } from '../core/walls.js';
-import { dragManualWallEnd, snapWallPoint } from '../core/wall-manual.js';
+import { dragManualWallEnd } from '../core/wall-manual.js';
 import {
   boundRoomClick, boundRoomHover, finishWallChain, wallToolClick, wallToolHover,
 } from './wall-tool.js';
@@ -46,6 +46,8 @@ import {
   hitPlanStack, hitRoomHandle, hitSiteMidpoint, hitSiteObject, hitSiteVertex, hitUnderlayHandle, hitWall,
 } from './hit.js';
 import { spaceDown } from './keyboard.js';
+import { massSnapPoints } from './plan-masses.js';
+import { gridSnapPoints } from './plan-grids.js';
 import {
   LANDSCAPE_MIME, applyLandscapeMarquee, cancelLandscapeDrag, dropLandscape, landscapeDblClick, landscapeDragEnd, landscapeDragMove,
   landscapeHover, landscapePointerDown,
@@ -66,8 +68,7 @@ import {
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallCenterGuides, wallCenterSnapOpts, wallGridMagnet } from './block-gesture.js';
-import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-grids.js';
+import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallGridMagnet } from './block-gesture.js';
 import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
@@ -188,19 +189,6 @@ function applyGroupItems(list) {
 // Активные касания (pointerId → точка экрана): два пальца — щипок/панорама.
 const touches = new Map();
 
-// Торец ручной стены на координационной оси: подсветка оси (render-axes.js).
-function mwallGridGuides(snapRes) {
-  const out = [];
-  for (const [flag, at, kind] of [[snapRes.gridX, snapRes.snapX, 'x'], [snapRes.gridY, snapRes.snapY, 'y']]) {
-    if (!flag) continue;
-    const g = activeGrids().find((x) => x.kind === kind && Math.abs(x.at - at) < 0.5);
-    if (!g) continue;
-    const e = gridExtentOf(g);
-    out.push({ type: 'magnet', kind: 'align', axis: kind === 'x' ? 'v' : 'h', at: g.at, gridId: g.id, from: e.from, to: e.to });
-  }
-  return out;
-}
-
 function restoreWallDragRooms(wallDrag) {
   for (const entry of wallDrag.roomStarts) {
     const room = roomById(state.project, entry.id);
@@ -287,6 +275,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
   const cargo = groupCargo(state.project, sel.roomIds, sel.itemIds);
   const movedRooms = new Map(cargo.rooms.map((room) => [room.id, { x: room.x, y: room.y }])); // id -> старт
   const movedItems = new Map(cargo.items.map((item) => [item.id, { x: item.x, y: item.y }])); // id -> старт
+  const movedWalls = new Map(cargo.walls.map((wall) => [wall.id, structuredClone(wall.axis)]));
   drag = {
     kind: 'multi',
     plan,
@@ -297,6 +286,7 @@ function startMultiDrag(plan, sel = state.selection, wasSelected = false) {
     itemIds: [...sel.itemIds],
     roomStarts: movedRooms,
     itemStarts: movedItems,
+    wallStarts: movedWalls,
     wasSelected, // клик без сдвига по уже выбранной группе мебели — смена режима ручек
   };
 }
@@ -1123,10 +1113,15 @@ export function bindCanvasInput() {
       const carried = state.project.items
         .filter((i) => carriers.some((r) => roomContainsPoint(r, i.x, i.y)))
         .map((i) => ({ id: i.id, x: i.x, y: i.y }));
+      const carrierIds = new Set(carriers.map((candidate) => candidate.id));
+      const carriedWalls = (state.project.walls || [])
+        .filter((wall) => carrierIds.has(wall.ownerRoomId))
+        .map((wall) => ({ id: wall.id, axis: structuredClone(wall.axis) }));
       drag = {
         kind: 'room', id: room.id, plan, start: { x: room.x, y: room.y },
         childStarts: children.map((c) => ({ id: c.id, x: c.x, y: c.y })),
         carried,
+        carriedWalls,
         startParent: room.parentId, before: snapshot(), moved: false, valid: true,
         layoutItemIdsByRoom: captureLayoutItemIds(),
       };
@@ -1299,6 +1294,12 @@ export function bindCanvasInput() {
         const item = state.project.items.find((i) => i.id === entry.id);
         if (item) { item.x = entry.x + dx; item.y = entry.y + dy; }
       }
+      for (const entry of drag.carriedWalls) {
+        const wall = state.project.walls.find((candidate) => candidate.id === entry.id);
+        if (!wall) continue;
+        wall.axis.a = { x: entry.axis.a.x + dx, y: entry.axis.a.y + dy };
+        wall.axis.b = { x: entry.axis.b.x + dx, y: entry.axis.b.y + dy };
+      }
       state.guides = snapped.guides;
       liveEat(drag, { touched: [room.id] });
       const verdict = validateRoomPlacement(state.project, room, room.id);
@@ -1335,6 +1336,12 @@ export function bindCanvasInput() {
       for (const [id, start] of drag.itemStarts) {
         const item = state.project.items.find((i) => i.id === id);
         if (item) { item.x = start.x + dx; item.y = start.y + dy; }
+      }
+      for (const [id, axis] of drag.wallStarts) {
+        const wall = state.project.walls.find((candidate) => candidate.id === id);
+        if (!wall) continue;
+        wall.axis.a = { x: axis.a.x + dx, y: axis.a.y + dy };
+        wall.axis.b = { x: axis.b.x + dx, y: axis.b.y + dy };
       }
       liveEat(drag, { touched: drag.roomIds });
       let valid = true;
@@ -1558,10 +1565,17 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind === 'wall') {
-      const raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
+      let raw;
+      if (drag.wall.orient === 'a') {
+        const base = drag.wall.normal || { x: 0, y: 1 };
+        const n = Math.abs(base.x) > 1e-6
+          ? (base.x < 0 ? { x: -base.x, y: -base.y } : base)
+          : (base.y < 0 ? { x: -base.x, y: -base.y } : base);
+        raw = (plan.x - drag.plan.x) * n.x + (plan.y - drag.plan.y) * n.y;
+      } else raw = drag.wall.orient === 'h' ? plan.y - drag.plan.y : plan.x - drag.plan.x;
       // Координационные оси (ui/block-gesture.js): грань или ось стены липнет к
       // оси в радиусе 300 мм (подсветка оси и подпись); иначе — шаг сетки.
-      const gm = wallGridMagnet(drag, raw, event);
+      const gm = drag.wall.orient === 'a' ? null : wallGridMagnet(drag, raw, event);
       drag.gridSnap = gm ? { gridId: gm.grid.id, mode: gm.mode } : null;
       const delta = gm ? gm.delta : Math.round(raw / gridStep()) * gridStep();
       state.guides = gm ? [gm.guide] : [];
@@ -1641,7 +1655,7 @@ export function bindCanvasInput() {
     }
 
     if (drag.kind === 'mwall-end') {
-      // Торец ручной стены: только вдоль оси, с привязками (Shift — без них).
+      // Торец ручной стены: свободный угол с теми же привязками, что у линии.
       const wall = state.project.walls.find((w) => w.id === drag.id);
       if (!wall) return;
       Object.assign(wall, structuredClone(drag.start));
@@ -1650,15 +1664,17 @@ export function bindCanvasInput() {
         if (o) o.host = { ...h.host };
       }
       const fixed = drag.start.axis[drag.end === 'a' ? 'b' : 'a'];
-      const others = state.project.walls.filter((w) => w.id !== wall.id);
-      const snapRes = snapWallPoint({
-        p: plan, prev: fixed, walls: (state.walls || []).filter((w) => w.wallId !== wall.id), manual: others,
-        gridPoints: gridSnapPoints(), gridTol: gridPointTol(), // торец — на ось
-        tol: 12 / state.view.scale, grid: gridStep(), free: event.shiftKey, ...wallCenterSnapOpts(event),
+      const shapes = [];
+      for (const other of (state.walls || []).filter((w) => w.wallId !== wall.id)) {
+        if (other.polys?.length) for (const poly of other.polys) shapes.push({ points: poly, closed: true });
+        else for (const r of wallRects(other)) shapes.push({
+          points: [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }], closed: true,
+        });
+      }
+      const snapRes = snapAt(plan, event, {
+        prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
       });
       const p = snapRes.point;
-      // Центр соседней стены (осевая линия, середина) — направляющая и подпись.
-      state.guides = [...mwallGridGuides(snapRes), ...wallCenterGuides(snapRes)];
       state.gridSnapTag = snapRes.label ? { x: p.x, y: p.y, text: snapRes.label } : null;
       drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;
       refreshDerived();

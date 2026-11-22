@@ -25,12 +25,12 @@ function house() {
   return p;
 }
 
-test('предмет — коробка по центру и габариту, высота по виду, на полу', () => {
+test('мягкая кровать — основание, матрас, изголовье и подушки в одном габарите', () => {
   const p = house();
   const bed = createItem('bed-double', 2000, 1500, 1600, 2000);
   p.items.push(bed);
   const faces = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture');
-  assert.equal(faces.length, 5, 'верх и 4 стороны');
+  assert.equal(faces.length, 25, 'пять отдельных объёмов по пять видимых граней');
   assert.ok(faces.every((f) => f.itemId === bed.id && f.level === p.activeLevel));
   assert.deepEqual(span(xs(faces)), [1200, 2800]);
   assert.deepEqual(span(ys(faces)), [500, 2500]);
@@ -38,7 +38,7 @@ test('предмет — коробка по центру и габариту, �
   assert.ok(z0 > 2 && z0 < 10, `низ над полом: ${z0}`);
   assert.ok(near(z1 - z0, furniture3d('bed-double').h), `высота ${z1 - z0}`);
   assert.equal(furniture3d('wardrobe').h, 2100);
-  assert.equal(furniture3d('toilet').h, 400);
+  assert.equal(furniture3d('toilet').h, 420);
   assert.equal(furniture3d('hood').z0, 1700, 'вытяжка висит');
   assert.equal(furniture3d('unknown-kind').h, 800, 'неизвестный вид — по умолчанию');
 });
@@ -47,10 +47,21 @@ test('стул: сиденье 450 и спинка у задней кромки 
   const p = house();
   p.items.push(createItem('chair', 1000, 1000, 450, 450));
   const tops = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture' && f.normal.z === 1);
-  assert.equal(tops.length, 2);
-  const [seat, back] = tops.sort((a, b) => a.pts[0].z - b.pts[0].z);
+  assert.equal(tops.length, 3, 'цоколь, мягкое сиденье и спинка — отдельные объёмы');
+  const [, seat, back] = tops.sort((a, b) => a.pts[0].z - b.pts[0].z);
   assert.ok(near(seat.pts[0].z - 3, 450) && near(back.pts[0].z - 3, 900), `${seat.pts[0].z} / ${back.pts[0].z}`);
-  assert.deepEqual(span(ys([back])), [775, 835], 'спинка 60 мм у верхней кромки');
+  const [y0, y1] = span(ys([back]));
+  assert.ok(y0 >= 775 && y1 <= 835, `спинка у верхней кромки: ${y0}…${y1}`);
+});
+
+test('журнальная композиция в 3D — две отдельные столешницы разной высоты', () => {
+  const p = house();
+  p.items.push(createItem('coffee-table', 2000, 1500, 1250, 850));
+  const tops = buildHouseMesh(p, { furniture: true })
+    .filter((face) => face.kind === 'furniture' && face.normal.z === 1);
+  assert.equal(tops.length, 2);
+  assert.equal(new Set(tops.map((face) => face.pts[0].z)).size, 2);
+  assert.ok(tops.every((face) => face.pts.length === 24), 'круглые столешницы без грубой квадратной коробки');
 });
 
 test('поворот 90°: ширина ложится вдоль Y', () => {
@@ -82,12 +93,14 @@ test('составная мебель: стол со стульями, дива�
   p.items.push(table, sofa, kitchen);
   const faces = buildHouseMesh(p, { furniture: true }).filter((f) => f.kind === 'furniture');
   const count = (id) => faces.filter((f) => f.itemId === id && f.normal.z === 1).length;
-  // Стул и сиденье дивана — две коробки: сиденье и спинка.
+  // Детальная модель делит стул/диван на цоколь, подушку, спинку и боковины.
   const seated = (parts) => parts.filter((q) => q.kind === 'chair' || ['sofa:seat', 'sofa:chaise'].includes(q.kind)).length;
   const corners = (parts) => parts.filter((q) => q.kind === 'sofa:corner').length;
-  assert.equal(count(table.id), 1 + compositeParts(table).length + seated(compositeParts(table)), 'столешница + стулья');
+  const arms = (parts) => parts.filter((q) => q.kind === 'sofa:arm').length;
+  const tableParts = compositeParts(table);
+  assert.equal(count(table.id), 5 + 3 * seated(tableParts), 'столешница с четырьмя ножками + детальные стулья');
   const sp = compositeParts(sofa);
-  assert.equal(count(sofa.id), sp.length + seated(sp) + 2 * corners(sp), 'диван — только модули');
+  assert.equal(count(sofa.id), sp.length + 2 * seated(sp) + 3 * corners(sp) + arms(sp), 'диван — детальные модули без общей коробки');
   assert.equal(count(kitchen.id), compositeParts(kitchen).length, 'кухня — только части');
   // Верхние шкафы кухни висят: низ выше 1000 мм.
   const upper = compositeParts(kitchen).filter((q) => q.layer === 'upper').length;
@@ -113,11 +126,11 @@ test('этажи: мебель на отметке своего этажа; фи
   assert.deepEqual([...new Set(upto.filter((f) => f.kind === 'floor').map((f) => f.level))], [p.levels[0].id]);
   assert.equal(upto.filter((f) => f.kind === 'furniture').length, 0, 'мебель 2 этажа скрыта');
   assert.equal(upto.filter((f) => f.kind === 'roof').length, 0, 'кровля скрыта вместе с верхним этажом');
-  assert.equal(upto.filter((f) => f.kind === 'slab').length, 0, 'перекрытие под 2 этажом скрыто');
+  assert.equal(upto.filter((f) => f.slabRole === 'interfloor').length, 0, 'перекрытие под 2 этажом скрыто');
   p.activeLevel = 'L2';
   const only = buildHouseMesh(p, { furniture: true, levels: 'only' });
   assert.deepEqual([...new Set(only.filter((f) => f.kind === 'floor').map((f) => f.level))], ['L2']);
-  assert.ok(only.some((f) => f.kind === 'slab'), 'основание этажа — перекрытие');
+  assert.ok(only.some((f) => f.slabRole === 'interfloor'), 'основание этажа — перекрытие');
   assert.ok(only.every((f) => !f.ref || f.ref.level === 'L2'), 'стены только активного');
 });
 

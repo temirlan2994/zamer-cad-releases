@@ -43,6 +43,17 @@ test('модель двухэтажного шаблона: состав и це
   assert.equal(buildIfc(p, { timestamp: new Date('2026-11-02T00:00:00Z') }).text, text);
 });
 
+test('±0.000 и производный фундамент входят в IFC', () => {
+  const p = buildTemplate('one-storey');
+  p.envelope.zeroAboveGround = 1000;
+  p.envelope.foundation.depth = 800;
+  const { text, counts } = buildIfc(p, { timestamp: new Date(0) });
+  assert.equal(counts.foundations, 1);
+  assert.equal((text.match(/=IFCFOOTING\(/g) || []).length, 1);
+  assert.match(text, /=IFCSITE\([^;]*,1000\.,\$,\$\)/, 'RefElevation участка — абсолютный ±0.000');
+  assert.match(text, /IFCFOOTING\([^;]*\.NOTDEFINED\.\)/);
+});
+
 test('мебель в IFC: IfcFurniture, части составной — отдельными элементами через IfcRelAggregates', async () => {
   const { createItem } = await import('../core/model.js');
   const { withDefaultComp } = await import('../core/composite.js');

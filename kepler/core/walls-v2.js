@@ -21,6 +21,7 @@ import { isOpenRoom, isShaft } from './catalog.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { cutWallsInsideShafts, wallRects, wallSegments } from './walls.js';
 import { gridAxis, mergeCells, rectsCycles, snapHalf } from './ortho-grid.js';
+import { wallBodies } from './v7/wall-body.js';
 
 const TYPE_RANK = { exterior: 3, bearing: 2, partition: 1 };
 
@@ -65,8 +66,9 @@ function inRect(r, x, y, eps = 0) {
 // справа), 'right' (правая грань, тело слева). Ось Y вниз: «слева» от
 // направления (dx, dy) — нормаль (dy, −dx).
 //
-// Движок v2 принимает только ортогональные оси (косые и дуги — этап F);
-// для остальных manualWallGeometry → null, стена не строится.
+// Ось может быть под любым углом. Ортогональные стены по-прежнему проходят
+// через сжатую сетку v2; косые получают точное полигональное тело через
+// core/v7/wall-body.js (тот же миттер L/T/X, что у нового ядра).
 export function manualWallGeometry(wall) {
   const a = wall?.axis?.a;
   const b = wall?.axis?.b;
@@ -76,8 +78,27 @@ export function manualWallGeometry(wall) {
   let orient;
   if (Math.abs(dy) < 0.5 && Math.abs(dx) >= 1) orient = 'h';
   else if (Math.abs(dx) < 0.5 && Math.abs(dy) >= 1) orient = 'v';
-  else return null;
+  else orient = 'a';
   const t = Number(wall.thickness) > 0 ? Number(wall.thickness) : 100;
+  const length = Math.hypot(dx, dy);
+  if (length < 1) return null;
+  const tangent = { x: dx / length, y: dy / length };
+  const left = { x: tangent.y, y: -tangent.x };
+  if (orient === 'a') {
+    let lo = -t / 2; let hi = t / 2;
+    if (wall.justify === 'left') { lo = -t; hi = 0; }
+    else if (wall.justify === 'right') { lo = 0; hi = t; }
+    const at = (p, off) => ({ x: p.x + left.x * off, y: p.y + left.y * off });
+    const poly = [at(a, lo), at(b, lo), at(b, hi), at(a, hi)];
+    const xs = poly.map((p) => p.x); const ys = poly.map((p) => p.y);
+    return {
+      orient, from: 0, to: length, line: 0, lo, hi, length, thickness: t,
+      dir: 1, leftSign: 1, axisStart: 0, tangent, normal: left,
+      a: { ...a }, b: { ...b }, poly,
+      band: { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) },
+      center: { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
+    };
+  }
   const line = orient === 'h' ? (a.y + b.y) / 2 : (a.x + b.x) / 2;
   const from = orient === 'h' ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
   const to = orient === 'h' ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
@@ -93,6 +114,7 @@ export function manualWallGeometry(wall) {
   const mid = (lo + hi) / 2;
   return {
     orient, from, to, line, lo, hi, band, thickness: t, dir, leftSign,
+    length, tangent, normal: left, a: { ...a }, b: { ...b },
     axisStart: orient === 'h' ? a.x : a.y,
     center: orient === 'h' ? { x1: from, y1: mid, x2: to, y2: mid } : { x1: mid, y1: from, x2: mid, y2: to },
   };
@@ -156,8 +178,37 @@ function extendManualEnds(seg, others) {
   return ext;
 }
 
+function appendAngledManualWalls(records, project, manualWalls) {
+  const manual = manualWalls.map((wall) => ({ wall, geometry: manualWallGeometry(wall) }));
+  const angled = manual.filter((entry) => entry.geometry?.orient === 'a');
+  if (!angled.length) return records;
+  const source = manual.map(({ wall }) => ({
+    id: wall.id, a: wall.axis.a, b: wall.axis.b, thickness: wall.thickness,
+    justify: wall.justify, wallType: wall.wallType, hidden: wall.hidden,
+  }));
+  const bodies = new Map(wallBodies(source).map((body) => [body.id, body]));
+  for (const { wall, geometry: g } of angled) {
+    const body = bodies.get(wall.id);
+    const poly = body?.polygon?.[0]?.[0] || g.poly;
+    const xs = poly.map((p) => p.x); const ys = poly.map((p) => p.y);
+    records.push({
+      key: `m|${wall.id}`, kind: 'manual', source: 'manual', wallId: wall.id,
+      orient: 'a', rooms: [], sides: {}, from: 0, to: g.length, edge: 0,
+      axisStart: 0, axisDir: 1, justify: wall.justify || 'center',
+      thickness: g.thickness, wallType: wall.wallType || 'partition', hidden: Boolean(wall.hidden),
+      roomBounding: wall.roomBounding !== false, band: {
+        x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+      },
+      center: { ...g.center }, tangent: g.tangent, normal: g.normal,
+      poly, polys: [poly], ...manualWallZ(project, wall),
+    });
+  }
+  return records;
+}
+
 export function deriveWallsV2(project) {
   const rooms = project.rooms || [];
+  const manualWalls = project.walls || [];
   const n = rooms.length;
   const roomIndex = new Map(rooms.map((r, i) => [r.id, i]));
   const { walls: roomSegs, faces } = wallSegments(project, { covered: false });
@@ -165,9 +216,9 @@ export function deriveWallsV2(project) {
   // Ручные стены этажа — те же сегменты, но со своей областью (не режутся
   // чужими помещениями) и с удлинёнными торцами в узлах.
   const manualSegs = [];
-  for (const w of project.walls || []) {
+  for (const w of manualWalls) {
     const g = manualWallGeometry(w);
-    if (g) manualSegs.push(manualSegment(project, w, g));
+    if (g && g.orient !== 'a') manualSegs.push(manualSegment(project, w, g));
   }
   const segs = [...roomSegs, ...manualSegs];
 
@@ -412,7 +463,13 @@ export function deriveWallsV2(project) {
     rec.rects = rects;
     rec.polys = recordPolys(rects);
   });
-  return records;
+  // Главный путь (проекты без ручных стен) остаётся без дополнительных
+  // полигональных вычислений — это важно для больших планов.
+  if (!manualWalls.length) return records;
+  // Косые ручные стены не раскладываем на ортогональную сетку. Полигональное
+  // ядро строит их вместе со всеми ручными стенами, поэтому узел с прямой
+  // стеной получает аккуратный миттер, а не щель или торчащий торец.
+  return appendAngledManualWalls(records, project, manualWalls);
 }
 
 // Спор за клетку, где хотя бы один кандидат — ручная стена. Продление торца
@@ -568,7 +625,11 @@ function rectPoly(r) {
 // DXF: рисуется один раз, без швов между кусками. → [{ pts, hole }].
 export function wallOutline(walls) {
   const rects = [];
+  const angled = [];
   for (const w of walls) if (!w.hidden) rects.push(...wallRects(w));
+  for (const w of walls) if (!w.hidden && !wallRects(w).length) {
+    for (const poly of w.polys || (w.poly ? [w.poly] : [])) if (poly.length >= 3) angled.push({ pts: poly, hole: false });
+  }
   return rectsCycles(rects.map((r) => ({ x: snapHalf(r.x), y: snapHalf(r.y), w: snapHalf(r.x + r.w) - snapHalf(r.x), h: snapHalf(r.y + r.h) - snapHalf(r.y) })))
-    .map((c) => ({ pts: c.pts, hole: c.area < 0 }));
+    .map((c) => ({ pts: c.pts, hole: c.area < 0 })).concat(angled);
 }

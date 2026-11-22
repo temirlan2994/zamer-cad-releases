@@ -2,7 +2,7 @@
 // PgUp/PgDn, отмена, удаление.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openNew, dropOnCanvas } from './helpers.mjs';
+import { pickWorkspaceView, startApp, openNew, dropOnCanvas } from './helpers.mjs';
 
 const levels = (page) => page.evaluate(() => {
   const p = window.__kepler.state.project;
@@ -87,12 +87,18 @@ describe('этажи на телефоне', () => {
       await openNew(page);
       const picker = page.locator('#workspaceViewPicker');
       assert.equal(await page.isVisible('#levelDock'), false);
-      await picker.selectOption('landscape');
-      await picker.selectOption('add-level');
+      await picker.tap();
+      const menu = page.getByRole('dialog', { name: 'Все виды проекта' });
+      const bounds = await menu.boundingBox();
+      assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 390.5 && bounds.y + bounds.height <= 844.5);
+      await menu.getByRole('tab', { name: 'Модель и участок' }).tap();
+      await menu.getByRole('button', { name: 'Ландшафт', exact: true }).tap();
+      assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'landscape');
+      await pickWorkspaceView(page, 'plans', 'add-level');
       const created = await levels(page);
       assert.equal(created.list.length, 2);
       assert.equal(await page.evaluate(() => window.__kepler.state.modeName), 'plan');
-      await picker.selectOption('level-properties');
+      await pickWorkspaceView(page, 'plans', 'level-properties');
       await page.waitForSelector('#levelSection[open] #levelName');
       assert.equal(await page.evaluate(() => document.activeElement.id), 'levelSummary');
       await page.fill('#levelName', 'Мансарда');
@@ -100,13 +106,17 @@ describe('этажи на телефоне', () => {
       await page.fill('#levelHeight', '3.6');
       await page.press('#levelHeight', 'Tab');
       await page.waitForFunction(() => window.__kepler.state.project.levels.at(-1).height === 3600);
-      await picker.selectOption('site');
-      await picker.selectOption({ label: 'Мансарда' });
+      await pickWorkspaceView(page, 'model', 'site');
+      await picker.tap();
+      await menu.getByRole('tab', { name: 'Планы' }).tap();
+      await menu.getByRole('button', { name: 'Мансарда', exact: true }).tap();
       assert.equal((await levels(page)).active, created.active);
-      await picker.selectOption('level-properties');
+      await pickWorkspaceView(page, 'plans', 'level-properties');
       await page.tap('#deleteLevel');
       await page.waitForFunction(() => window.__kepler.state.project.levels.length === 1);
-      await page.waitForFunction(() => ![...document.querySelector('#workspaceViewPicker').options].some((o) => o.textContent.includes('Мансарда')));
+      await picker.tap();
+      await menu.getByRole('tab', { name: 'Планы' }).tap();
+      assert.equal(await menu.getByRole('button', { name: 'Мансарда', exact: true }).count(), 0);
       assert.deepEqual(app.errors, []);
     } finally { await app.close(); }
   });

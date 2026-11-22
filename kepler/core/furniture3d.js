@@ -7,6 +7,7 @@
 // кухни — свои таблицы (верхний ряд кухни висит под 2100).
 
 import { FURNITURE } from './catalog.js';
+import { bedDesign } from './furniture-design.js';
 import { KITCHEN_PART_HEIGHT } from './kitchen.js';
 
 // Категория → высота (мм) и тон коробки: нейтральные, темнее пола.
@@ -39,7 +40,7 @@ export const FURNITURE_3D = Object.freeze({
   dresser: { h: 850 }, bookcase: { h: 2000 }, sideboard: { h: 850 }, 'tv-stand': { h: 500 }, chest: { h: 500 },
   'shelf-open': { h: 300, z0: 1400 }, 'display-cabinet': { h: 1900 },
   'kitchen-island': { h: 900 }, 'bar-counter': { h: 1100 }, pantry: { h: 2100 }, microwave: { h: 350, z0: 900 },
-  bath: { h: 550 }, 'bath-corner': { h: 550 }, shower: { h: 2100 }, toilet: { h: 400 }, bidet: { h: 400 },
+  bath: { h: 550 }, 'bath-corner': { h: 550 }, shower: { h: 2100 }, toilet: { h: 420 }, 'toilet-wall': { h: 430 }, 'toilet-smart': { h: 470 }, bidet: { h: 400 },
   washbasin: { h: 850 }, 'washbasin-double': { h: 850 }, 'vanity-unit': { h: 850 },
   'towel-rail': { h: 800, z0: 900 }, jacuzzi: { h: 600 }, urinal: { h: 600, z0: 400 },
   fridge: { h: 1900 }, 'fridge-side': { h: 1800 }, washer: { h: 850 }, dryer: { h: 850 }, dishwasher: { h: 850 },
@@ -82,7 +83,11 @@ const KITCHEN_APPLIANCES = new Set(['fridge', 'dishwasher', 'oven-column', 'hood
 export function furniture3d(kind, layer) {
   if (typeof kind === 'string' && kind.startsWith('sofa:')) {
     const m = kind.slice(5);
-    const spec = { h: SOFA_PART_3D[m] || 850, z0: 0, color: m === 'arm' ? SOFA_ARM_COLOR : SOFA_COLOR };
+    const spec = {
+      h: SOFA_PART_3D[m] || 850, z0: 0,
+      color: m === 'arm' ? SOFA_ARM_COLOR : SOFA_COLOR,
+      model: m === 'arm' ? 'sofa-arm' : 'premium-seat',
+    };
     // Спинка — толщина из раскладки дивана (part.back), у угла — с двух сторон.
     if (m === 'seat' || m === 'chaise' || m === 'corner') Object.assign(spec, { seat: SEAT_H, back: 'part', corner: m === 'corner' });
     return spec;
@@ -97,5 +102,28 @@ export function furniture3d(kind, layer) {
   }
   const cat = CAT_3D[FURNITURE[kind]?.cat] || DEFAULT_3D;
   const own = FURNITURE_3D[kind];
-  return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, ...SEATED[kind] };
+  const bed = bedDesign(kind);
+  if (bed) return { h: bed.headboardH, z0: 0, color: cat.color, model: 'upholstered-bed', design: bed };
+  if (kind === 'coffee-table' || kind === 'coffee-table-2') {
+    return { h: own?.h ?? cat.h, z0: 0, color: cat.color, model: 'coffee-duo' };
+  }
+  const seated = SEATED[kind];
+  if (seated) return {
+    h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color,
+    model: 'premium-seat', ...seated,
+  };
+  const category = FURNITURE[kind]?.cat;
+  if (['tables', 'office'].includes(category) && !['printer', 'filing-cabinet', 'safe'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'table' };
+  }
+  if (['storage', 'hall'].includes(category) && !['mirror', 'umbrella-stand'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'cabinet' };
+  }
+  if (['toilet', 'toilet-wall', 'toilet-smart', 'bidet'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'toilet' };
+  }
+  if (['washbasin', 'washbasin-double', 'vanity-unit'].includes(kind)) {
+    return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color, model: 'vanity' };
+  }
+  return { h: own?.h ?? cat.h, z0: own?.z0 ?? 0, color: cat.color };
 }

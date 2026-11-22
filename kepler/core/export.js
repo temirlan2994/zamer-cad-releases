@@ -15,6 +15,7 @@
 // world = origin + R(rotation) · local, Y вниз, угол по часовой.
 
 import { buildDxf } from './zamer/dxf.js';
+import { openingHeight } from './opening-preset.js';
 import { deriveWalls, doorLeaves, doorLink, openingRect, wallOutline } from './walls.js';
 import { analyzeConnectivity, roomNetAreaM2 } from './rooms.js';
 import { itemTitle } from './furnish.js';
@@ -35,6 +36,10 @@ import { groundLevel, levelProject, roomCeiling, sortedLevels } from './model.js
 import { roomContainsPoint, roomPolygon, roomShapeArea } from './room-shape.js';
 import { roomSchedule } from './schedule.js';
 import { tepReport } from './tep.js';
+import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
+import { analyzeEarthworks } from './earthworks.js';
+import { deriveFoundation } from './foundation-system.js';
+import { deriveEntrances } from './entrance.js';
 
 // Один этаж: помещения, стены, проёмы, мебель и связи (project — вид на этаже).
 function buildLevelExport(project, level) {
@@ -103,10 +108,12 @@ function buildLevelExport(project, level) {
         : null,
       wallKey: placed ? placed.wall.key : null,
       type: opening.type || (opening.kind === 'door' ? 'single' : 'standard'),
-      height: opening.height ?? (opening.kind === 'door' ? 2100 : 1500),
+      height: openingHeight(opening, project.levels?.find((level) => level.id === project.activeLevel)),
       sill: opening.kind === 'door' ? 0 : opening.sill ?? 900,
       swingIn: opening.swingIn,
       hingeStart: opening.hingeStart,
+      ...(opening.presetId ? { preset_id: opening.presetId } : {}),
+      ...(opening.kind === 'door' && opening.entryRole ? { entry_role: opening.entryRole } : {}),
     };
   });
 
@@ -160,6 +167,7 @@ function buildLevelExport(project, level) {
     name: level.name,
     elevation: level.elevation,
     height: level.height,
+    slab_thickness: Number.isFinite(Number(level.slabThickness)) ? Number(level.slabThickness) : 300,
     rooms,
     walls: wallsOut,
     openings,
@@ -181,6 +189,18 @@ function buildLevelExport(project, level) {
 }
 
 export function buildStructuredExport(project) {
+  const envelope = envelopeOf(project);
+  const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
+  const zeroAboveGround = resolvedZeroAboveGround(project, terrainHouse);
+  const foundationSystem = deriveFoundation(project);
+  const entranceSystem = deriveEntrances(project);
+  let earthworks = null;
+  if (project.site?.terrain?.points?.length >= 3) {
+    const grade = { mode: envelope.earthworks.mode };
+    if (grade.mode === 'relative') grade.zMm = -(zeroAboveGround ?? 0) + envelope.earthworks.gradeOffset;
+    if (grade.mode === 'absolute') grade.zMm = (terrainHouse?.groundReferenceZ ?? 0) + envelope.earthworks.gradeOffset;
+    earthworks = analyzeEarthworks(project, { boundary: 'work-pad', marginMm: envelope.earthworks.margin, grade });
+  }
   return {
     schema: 'kepler-export/2',
     units: 'mm',
@@ -195,6 +215,46 @@ export function buildStructuredExport(project) {
     },
     name: project.name,
     generated_at: new Date().toISOString(),
+    vertical_datum: {
+      model_zero: '±0.000',
+      zero_above_reference_ground: zeroAboveGround,
+      source: project.envelope?.zeroAboveGround != null ? 'relative_ground'
+        : (Number.isFinite(project.site?.terrain?.floorZ) ? 'absolute_survey' : 'unset'),
+      reference_ground_z: project.envelope?.groundReferenceZ ?? terrainHouse?.groundReferenceZ ?? null,
+      absolute_floor_z: terrainHouse?.floorZ ?? null,
+    },
+    envelope: {
+      roof_mode: envelope.roofMode,
+      auto_roof_thickness: envelope.roofThickness,
+      roof: structuredClone(envelope.roof),
+      foundation: structuredClone(envelope.foundation),
+      entrance: structuredClone(envelope.entrance),
+      slabs: structuredClone(envelope.slabs),
+      earthworks: structuredClone(envelope.earthworks),
+    },
+    foundation_system: {
+      type: foundationSystem.type,
+      level_id: foundationSystem.levelId,
+      preliminary: true,
+      warnings: foundationSystem.warnings,
+      components: foundationSystem.components.map((component) => ({
+        id: component.id, kind: component.kind, role: component.role, shape: component.shape,
+        z0: component.z0, z1: component.z1,
+        ...(component.rects ? { rects: component.rects } : {}),
+        ...(component.points ? { points: component.points } : {}),
+        parameters: Object.fromEntries([
+          'thickness', 'nominalThickness', 'width', 'nominalHeight', 'diameter', 'length',
+          'center', 'sourceWallKeys', 'fallbackFor',
+        ].filter((key) => component[key] != null).map((key) => [key, structuredClone(component[key])])),
+      })),
+    },
+    entrances: entranceSystem,
+    earthworks: earthworks ? {
+      schema: earthworks.schema, status: earthworks.status, preliminary: true,
+      boundary: earthworks.boundary ? { ...earthworks.boundary, geometryWorld: undefined } : null,
+      grade: earthworks.grade, coverage: earthworks.coverage, areas: earthworks.areas,
+      volumes: earthworks.volumes, extremes: earthworks.extremes, warnings: earthworks.warnings,
+    } : null,
     // Этажи снизу вверх; отметка (elevation) и высота этажа — в мм.
     levels: sortedLevels(project).map((level) => buildLevelExport(levelProject(project, level.id), level)),
     site: buildSiteExport(project.site, project),
@@ -224,7 +284,7 @@ function buildTerrainExport(project) {
     points: terrain.points.map((p) => ({ id: p.id, x: p.x, y: p.y, z: p.z })),
     contour_step: terrain.contourStep,
     floor_z: house ? house.floorZ : terrain.floorZ,
-    floor_z_auto: terrain.floorZ == null,
+    floor_z_auto: terrain.floorZ == null && project.envelope?.zeroAboveGround == null,
     min_z: summary.minZ,
     max_z: summary.maxZ,
     mean_slope_percent: Number((summary.meanSlope * 100).toFixed(2)),

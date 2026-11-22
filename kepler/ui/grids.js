@@ -250,13 +250,18 @@ export function gridPointerDown(event, screen, plan, { lineAll = false } = {}) {
   if (!hit) return null;
   const g = gridById(hit.id);
   if (!g) return null;
+  const wasSelected = state.selection?.type === 'grid' && state.selection.id === g.id;
   selectObject({ type: 'grid', id: g.id });
   const base = { id: g.id, before: snapshot(), moved: false, plan0: { x: plan.x, y: plan.y } };
+  // Первый клик только выбирает ось. Перенос и изменение длины доступны
+  // следующим жестом по уже подсвеченной оси — случайный клик её не сдвигает.
+  if (!wasSelected) return { kind: 'grid-select', ...base };
   if (hit.part === 'head') return { kind: 'grid-end', end: hit.end, start: gridExtent(state.project, g), ...base };
   return { kind: 'grid-move', start: g.at, ...base };
 }
 
 export function gridDragMove(drag, plan, event) {
+  if (drag.kind === 'grid-select') return;
   const g = gridById(drag.id);
   if (!g) return;
   let next;
@@ -377,7 +382,7 @@ export function renderGridProps(panel, g) {
         <button type="button" id="gridDelete" class="danger">Удалить</button>
       </div>
       ${pinnedNote(g)}
-      <p class="hint">Тяните линию — сдвиг оси, кружок — длина. Грани комнат и стены липнут к осям при переносе и растяжении (тумблер магнита в «Привязках»); замок у стены — прикрепить к оси. Настройки показа — в «Свойствах» без выбора.</p>
+      <p class="hint">Сначала выберите ось, затем тяните линию для сдвига или кружок для изменения длины. Грани комнат и стены липнут к осям при переносе и растяжении; замок у стены прикрепляет её к оси.</p>
     </div>`;
   const id = g.id;
   panel.querySelector('#gridLabel').addEventListener('change', (e) => {

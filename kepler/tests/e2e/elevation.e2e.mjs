@@ -4,7 +4,7 @@
 // project.views и переживают сохранение/открытие файла; телефон.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, openSample, uploadText } from './helpers.mjs';
+import { pickWorkspaceView, startApp, openSample, uploadText } from './helpers.mjs';
 
 const activeView = (page) => page.$$eval('#viewTree .vt-item[aria-selected="true"]', (ns) => ns.map((n) => n.dataset.view));
 const drawn = (page) => page.evaluate(() => window.__kepler.state.elevationDrawn);
@@ -130,8 +130,7 @@ describe('фасады — телефон', () => {
 
   it('фасад открывается из «Видов» и закрывается', async () => {
     const { page } = app;
-    await page.locator('#workspaceViewPicker').focus();
-    await page.selectOption('#workspaceViewPicker', 'elev-S');
+    await pickWorkspaceView(page, 'facades', 'elev-S');
     assert.equal(await open(page), 'elev-S');
     assert.equal(await page.isVisible('#elevView'), true);
     assert.ok(await inkShare(page) > 0.005);

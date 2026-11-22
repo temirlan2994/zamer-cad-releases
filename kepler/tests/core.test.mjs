@@ -234,8 +234,15 @@ test('MVP: вложенный санузел 2×2 — мебель перест�
   assert.ok(bedroomItems.some((i) => i.kind === 'bed-double'), 'кровать должна поместиться');
   for (const r of rejectedBedroom) assert.match(r.reason, /[а-яА-Я]/);
 
+  // После увеличения мебели до полного дизайнерского габарита шкаф 2400×650
+  // может честно не поместиться в остаток спальни вокруг санузла. Отклонённый
+  // предмет остаётся на прежнем месте для ручного решения и не выдаётся за
+  // успешно расставленный.
+  const rejectedKinds = new Set(rejectedBedroom.map((entry) => entry.kind));
+  const arrangedBedroomItems = bedroomItems.filter((item) => !rejectedKinds.has(item.kind));
+
   const bathOuter = { x: bath.x - 100, y: bath.y - 100, w: bath.w + 200, h: bath.h + 200 };
-  const rects = bedroomItems.map((i) => itemRect(i));
+  const rects = arrangedBedroomItems.map((i) => itemRect(i));
   for (const r of rects) assert.equal(rectsOverlap(r, bathOuter), false, 'мебель в санузле');
   for (let i = 0; i < rects.length; i += 1) {
     for (let j = i + 1; j < rects.length; j += 1) {

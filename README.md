@@ -1,6 +1,6 @@
 # Zamer CAD and Kepler 3D
 
-The `source` branch contains both applications:
+The `main` branch contains both applications:
 
 - `prototype/` and `android-offline/` contain Zamer CAD. Run `npm test` in
   `prototype/` and `bash ./gradlew assembleDebug` in `android-offline/`.
@@ -11,8 +11,13 @@ The `source` branch contains both applications:
 - `shared/cad/` contains code used by both apps. Build and test both when it changes.
   Each application packages the modules needed to run offline.
 
-Kepler publishes to GitHub Pages from `source`. Zamer APKs continue to be published
-as GitHub Release assets. The APK and the installed PWA retain their existing identities.
+Kepler publishes to GitHub Pages from `main`. Zamer APKs continue to be published
+as GitHub Release assets.
+
+Releases in this repository belong to Zamer CAD only (`vX.Y.Z` tags). The Android
+updater reads `releases/latest` and expects `update.json` there, so Kepler must not
+publish GitHub Releases here (or must never mark them as latest). Kepler versions
+live in `kepler/package.json` and ship through GitHub Pages. The APK and the installed PWA retain their existing identities.
 
 ## Zamer CAD
 

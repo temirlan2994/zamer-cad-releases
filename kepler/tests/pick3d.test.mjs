@@ -93,6 +93,20 @@ test('экранный луч: точка → пиксель → луч прох
   assert.equal(axisDelta({ ...cam, pitch: Math.PI / 2 }, 800, 600, { x: 0, y: 0, z: 1 }, 0, -50), 0, 'ось в глаз');
 });
 
+test('перспективный экранный луч проходит через спроецированную точку', () => {
+  const cam = {
+    yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 30000,
+    projection: 'perspective', target: { x: 2000, y: 1500, z: 1500 },
+  };
+  const p = { x: 1500, y: 800, z: 2400 };
+  const px = projectPoint(cam, 900, 600, p);
+  const r = screenRay(cam, 900, 600, px.x, px.y);
+  const t = (p.x - r.o.x) * r.d.x + (p.y - r.o.y) * r.d.y + (p.z - r.o.z) * r.d.z;
+  const q = { x: r.o.x + r.d.x * t, y: r.o.y + r.d.y * t, z: r.o.z + r.d.z * t };
+  assert.ok(Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < 1e-3);
+  assert.ok(axisDelta(cam, 900, 600, { x: 0, y: 0, z: 1 }, 0, -40) > 0);
+});
+
 test('грани 3D ссылаются на свои стены (ref), стекло — тоже', () => {
   const p = room4x3();
   p.openings.push(createOpening('window', 'R', 0, 2000, 1200));

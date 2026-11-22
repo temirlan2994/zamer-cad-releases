@@ -76,6 +76,7 @@ import { drawSiteOpportunity } from './ui/render-site-opportunity.js';
 import { drawHomeFlowsOverlay } from './ui/render-home-flows.js';
 import { drawHomeEngineeringOverlay } from './ui/render-home-engineering.js';
 import { drawHomeCirculationOverlay } from './ui/render-home-circulation.js';
+import { bedDesign, COFFEE_TABLE_DUO } from './core/furniture-design.js';
 
 // Пол помещения — цвет его типа (core/catalog.js roomColors): светлый в
 // светлой теме и на печати, приглушённый тёмный — в тёмной теме.
@@ -125,6 +126,20 @@ function pointInRing(p, ring) {
   return inside;
 }
 
+function fillWallBody(ctx, wall, expand = 0) {
+  const rects = wallRects(wall);
+  if (rects.length) {
+    for (const r of rects) ctx.fillRect(r.x - expand, r.y - expand, r.w + 2 * expand, r.h + 2 * expand);
+    return;
+  }
+  for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+    if (poly.length < 3) continue;
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath(); ctx.fill();
+  }
+}
+
 // Сквозь проём верхнего этажа виден реальный план источника снизу. Это
 // только графическая подложка: нижние объекты не попадают в hit-test.
 function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
@@ -166,7 +181,7 @@ function drawSlabUnderlays(ctx, st, tokens, px, { print = false } = {}) {
         ctx.beginPath();
         wall.poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.closePath(); ctx.fill();
-      } else for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+      } else fillWallBody(ctx, wall);
     }
     ctx.globalAlpha = print ? 0.48 : 0.58;
     for (const op of lp.openings) drawOpening(ctx, lowerState, op, lowerWalls, tokens, px);
@@ -405,7 +420,7 @@ export function createRenderer(canvas) {
             ctx.closePath();
             ctx.fill();
           } else {
-            for (const r of wallRects(wall)) ctx.fillRect(r.x, r.y, r.w, r.h);
+            fillWallBody(ctx, wall);
           }
         }
         ctx.restore();
@@ -452,7 +467,7 @@ export function createRenderer(canvas) {
         // Куски соседних стен чуть перекрываем (0,5 px экрана), иначе на стыках
         // сглаживание даёт светлые швы — стена выглядит собранной из кирпичиков.
         const e = wall.hidden ? 0 : px(0.5);
-        for (const r of wallRects(wall)) ctx.fillRect(r.x - e, r.y - e, r.w + 2 * e, r.h + 2 * e);
+        fillWallBody(ctx, wall, e);
         ctx.globalAlpha = 1;
       };
       const roomLayer = (room) => {
@@ -514,6 +529,45 @@ export function createRenderer(canvas) {
         walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark,
         display: vd, project: state.project, force: thumbnail,
       });
+      if (planShadows) {
+        // Мягкая тень не должна съедать конструктивный контур. Повторяем
+        // только наружную линию, а выбранную/под курсором стену — и заливку.
+        const outline = cachedWallOutline(walls);
+        if (outline.length) {
+          ctx.save();
+          ctx.strokeStyle = houseTokens.wallBearing;
+          ctx.globalAlpha = lsDark ? 0.9 : 0.76;
+          ctx.lineWidth = px(1.15);
+          ctx.lineJoin = 'miter';
+          ctx.beginPath();
+          for (const cycle of outline) {
+            cycle.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+            ctx.closePath();
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.strokeStyle = houseTokens.wallBearing;
+        ctx.globalAlpha = lsDark ? 0.9 : 0.76;
+        ctx.lineWidth = px(1.15);
+        ctx.lineJoin = 'miter';
+        for (const wall of walls) for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+          if (poly.length < 3) continue;
+          ctx.beginPath();
+          poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.closePath();
+          ctx.stroke();
+        }
+        ctx.restore();
+        for (const wall of walls) {
+          const selected = state.selection?.type === 'wall' && state.selection.key === wall.key
+            && (state.selection.from === undefined || Math.abs(state.selection.from - wall.from) < 1);
+          const hovered = state.hover?.type === 'wall' && state.hover.key === wall.key
+            && Math.abs((state.hover.from ?? wall.from) - wall.from) < 1;
+          if (selected || hovered) paintWall(wall);
+        }
+      }
 
       // Карта прямого солнца или предварительной освещённости — аналитическая подложка:
       // поверх пола/теней, но под проёмами, мебелью и подписями.
@@ -1715,17 +1769,22 @@ function drawOpening(ctx, state, opening, walls, tokens, px) {
       ctx.stroke();
     }
   } else {
-    // Окно рисуем строго в пределах полотна стены (clip по band), чтобы рамка
+    // Алюминиевую раму рисуем строго в пределах полотна стены (clip по band),
     // не выступала за грани стены ни внутрь, ни наружу — окно вровень со стеной.
     const band = wall.band;
     ctx.save();
     ctx.beginPath();
     ctx.rect(band.x, band.y, band.w, band.h);
     ctx.clip();
+    ctx.save();
+    ctx.strokeStyle = selected ? tokens.accent : hovered ? tokens.hover : '#3b4148';
+    ctx.lineWidth = px(selected || hovered ? 1.8 : 2.2);
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.restore();
     ctx.beginPath();
-    // Обычное окно — одна линия стекла, панорамное — две.
-    const glassAt = opening.type === 'panoramic' ? [1 / 3, 2 / 3] : [1 / 2];
+    // Стеклопакет: у высоких и раздвижных систем профиль глубже.
+    const deep = ['panoramic', 'lift-slide', 'french'].includes(opening.type);
+    const glassAt = deep ? [0.32, 0.68] : [0.5];
     for (const k of glassAt) {
       if (rect.w >= rect.h) {
         ctx.moveTo(rect.x, rect.y + rect.h * k);
@@ -2140,19 +2199,19 @@ function drawSofaGlyph(ctx, x, y, w, h, arm, back, cushions, r) {
 // Приведение новых видов к базовым глифам (внешний вид сверху).
 const GLYPH_ALIAS = {
   'sofa-2': 'sofa', loveseat: 'sofa',
-  'armchair-lounge': 'armchair', 'bed-king': 'bed-double', 'bed-bunk': 'bed-single',
-  crib: 'bed-single', 'dining-table-6': 'dining-table', 'side-table': 'coffee-table',
+  'armchair-lounge': 'armchair', 'bed-bunk': 'bed-single',
+  crib: 'bed-single', 'dining-table-6': 'dining-table',
   'desk-corner': 'desk', 'console-table': 'tv-stand', 'chair-soft': 'chair',
   'office-chair': 'armchair', stool: 'nightstand', 'bar-stool': 'nightstand',
   'wardrobe-sliding': 'wardrobe', 'wardrobe-corner': 'wardrobe', sideboard: 'dresser',
   'kitchen-island': 'table', 'cooktop-hood': 'stove', 'bar-counter': 'tv-stand',
-  'bath-corner': 'bath', bidet: 'toilet', 'vanity-unit': 'washbasin',
+  'bath-corner': 'bath', bidet: 'toilet', 'toilet-smart': 'toilet', 'vanity-unit': 'washbasin',
   'fridge-side': 'fridge', dryer: 'washer', dishwasher: 'washer', boiler: 'fridge',
-  'coffee-table-2': 'pouf', 'car-suv': 'car', 'garden-lounger': 'bench',
+  'coffee-table-2': 'coffee-table', 'car-suv': 'car', 'garden-lounger': 'bench',
   treadmill: 'workbench', sofa: 'sofa',
   // Дополнительный каталог → базовые обозначения.
   daybed: 'bench', recliner: 'armchair', 'bean-bag': 'pouf', 'sofa-bed': 'sofa',
-  'bed-queen': 'bed-double', 'desk-l': 'desk', 'bar-table': 'table-round',
+  'desk-l': 'desk', 'bar-table': 'table-round',
   'folding-chair': 'chair', 'gaming-chair': 'armchair', 'shelf-open': 'bookcase',
   'display-cabinet': 'wardrobe', chest: 'dresser', oven: 'stove', 'kitchen-corner': 'kitchen-row', 'kitchen-u': 'kitchen-row',
   pantry: 'fridge', 'washbasin-double': 'sink', jacuzzi: 'bath', urinal: 'toilet',
@@ -2184,19 +2243,30 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
 
   switch (kind) {
     case 'bed-double':
+    case 'bed-king':
+    case 'bed-queen':
     case 'bed-single': {
-      const twin = kind === 'bed-single';
-      rrFill(x, y, w, h, body); // рама
-      const inset = Math.min(90, w * 0.06);
-      // Одеяло: отступ сверху под подушки, линия отворота.
-      const duvetTop = y + Math.min(620, h * 0.32);
-      rrStroke(x + inset, duvetTop, w - inset * 2, (y + h) - duvetTop - inset, body * 0.6);
-      line(x + inset, duvetTop + 220, x + w - inset, duvetTop + 220); // отворот
-      // Подушки.
-      const pw = twin ? w - inset * 2 : (w - inset * 3) / 2;
-      const ph = Math.min(360, (duvetTop - y) - inset);
-      rrStroke(x + inset, y + inset, pw, ph, ph * 0.3);
-      if (!twin) rrStroke(x + inset * 2 + pw, y + inset, pw, ph, ph * 0.3);
+      const d = bedDesign(kindRaw) || bedDesign(kind) || { w, h, mattressW: w * 0.82, mattressH: h * 0.86 };
+      const sx = w / d.w;
+      const sy = h / d.h;
+      const mattressW = d.mattressW * sx;
+      const mattressH = d.mattressH * sy;
+      const head = Math.max(120, (d.h - d.mattressH) * 0.6) * sy;
+      const mx = -mattressW / 2;
+      const my = y + head;
+      rrFill(x, y, w, h, body * 1.3); // мягкая рама
+      // Широкое мягкое изголовье читается отдельно от матраса.
+      rrFill(x, y, w, head, Math.min(body * 1.5, head * 0.35));
+      rrStroke(mx, my, mattressW, mattressH, body * 0.55);
+      const twin = d.mattressW <= 1000;
+      const gap = Math.max(35, mattressW * 0.025);
+      const pw = twin ? mattressW - gap * 2 : (mattressW - gap * 3) / 2;
+      const ph = Math.min(400 * sy, mattressH * 0.2);
+      rrStroke(mx + gap, my + gap, pw, ph, ph * 0.3);
+      if (!twin) rrStroke(mx + gap * 2 + pw, my + gap, pw, ph, ph * 0.3);
+      const duvetTop = my + ph + gap * 2;
+      rrStroke(mx + gap, duvetTop, mattressW - gap * 2, my + mattressH - duvetTop - gap, body * 0.5);
+      line(mx + gap, duvetTop + Math.min(220, mattressH * 0.12), mx + mattressW - gap, duvetTop + Math.min(220, mattressH * 0.12));
       break;
     }
     case 'nightstand': rrFill(x, y, w, h, body); rrStroke(x + w * 0.2, y + h * 0.2, w * 0.6, h * 0.6, body * 0.5); break;
@@ -2283,7 +2353,25 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
       break;
     }
     case 'table-round': { ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ellipse(0, 0, w * 0.32, h * 0.32); break; }
-    case 'coffee-table': rrFill(x, y, w, h, body); rrStroke(x + w * 0.14, y + h * 0.18, w * 0.72, h * 0.64, body * 0.5); break;
+    case 'coffee-table': {
+      const disks = [COFFEE_TABLE_DUO.large, COFFEE_TABLE_DUO.small];
+      for (const [i, disk] of disks.entries()) {
+        ctx.save();
+        if (i === 1) ctx.fillStyle = 'rgba(255,255,255,0.18)';
+        ctx.beginPath();
+        ctx.ellipse(disk.cx * w, disk.cy * h, disk.rx * w, disk.ry * h, 0, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case 'side-table': {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ellipse(0, 0, w * 0.32, h * 0.32);
+      break;
+    }
     case 'desk': { rrFill(x, y, w, h, body); rrStroke(x + w * 0.62, y + h * 0.15, w * 0.33, h * 0.7, body * 0.4); break; } // столешница + тумба
     case 'wardrobe':
     case 'wardrobe-rack': {
@@ -2330,6 +2418,17 @@ function drawGlyph(ctx, kindRaw, w, h, options = null) {
       const tankH = Math.min(200, h * 0.26);
       rrFill(x + w * 0.1, y, w * 0.8, tankH, body * 0.4); // бачок
       ctx.beginPath(); ctx.ellipse(0, y + tankH + (h - tankH) / 2, w * 0.4, (h - tankH) / 2 - 20, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); // чаша
+      break;
+    }
+    case 'toilet-wall': {
+      const frameH = Math.min(180, h * 0.25);
+      // Инсталляция показана отдельной задней рамой, чаша — подвесной эллипс.
+      rrFill(x, y, w, frameH, body * 0.25);
+      line(x + w * 0.2, y + frameH * 0.5, x + w * 0.8, y + frameH * 0.5);
+      ctx.beginPath();
+      ctx.ellipse(0, y + frameH + (h - frameH) * 0.47, w * 0.38, (h - frameH) * 0.43, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ellipse(0, y + frameH + (h - frameH) * 0.43, w * 0.25, (h - frameH) * 0.28);
       break;
     }
     case 'bidet': { ctx.beginPath(); ctx.ellipse(0, 0, w * 0.4, h * 0.44, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break; }
@@ -3006,20 +3105,22 @@ function drawWallToolPreview(ctx, tool, tokens, px) {
   ctx.strokeStyle = tokens.accent2;
   ctx.lineWidth = px(1);
   ctx.setLineDash([px(4), px(4)]);
-  if (tool.snapX != null) { ctx.beginPath(); ctx.moveTo(tool.snapX, c.y - 1e5); ctx.lineTo(tool.snapX, c.y + 1e5); ctx.stroke(); }
-  if (tool.snapY != null) { ctx.beginPath(); ctx.moveTo(c.x - 1e5, tool.snapY); ctx.lineTo(c.x + 1e5, tool.snapY); ctx.stroke(); }
   ctx.setLineDash([]);
   if (tool.start) {
     const a = tool.start;
     const t = tool.thickness || 100;
-    const horiz = Math.abs(c.y - a.y) < 0.5;
-    const x0 = Math.min(a.x, c.x); const y0 = Math.min(a.y, c.y);
-    const rect = horiz
-      ? { x: x0, y: a.y - t / 2, w: Math.abs(c.x - a.x), h: t }
-      : { x: a.x - t / 2, y: y0, w: t, h: Math.abs(c.y - a.y) };
+    const dx = c.x - a.x; const dy = c.y - a.y;
+    const len0 = Math.hypot(dx, dy) || 1;
+    const n = { x: (dy / len0) * (t / 2), y: (-dx / len0) * (t / 2) };
+    const poly = [
+      { x: a.x - n.x, y: a.y - n.y }, { x: c.x - n.x, y: c.y - n.y },
+      { x: c.x + n.x, y: c.y + n.y }, { x: a.x + n.x, y: a.y + n.y },
+    ];
     ctx.globalAlpha = 0.5;
     ctx.fillStyle = tool.valid === false ? tokens.danger : tokens.accent;
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath(); ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = tool.valid === false ? tokens.danger : tokens.accent;
     ctx.lineWidth = px(1.5);

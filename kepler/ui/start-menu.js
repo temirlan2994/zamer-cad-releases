@@ -9,8 +9,43 @@ import { handleExport, loadTemplate, newProject } from './files.js';
 import { buildSample } from './sample.js';
 import { createProjectThumbnail } from './project-thumbnail.js';
 import { state } from './state.js';
+import { getStorageScope } from './storage-scope.js';
 
 const projectHasContent = () => hasContent(state.project);
+const EDITOR_SESSION = 'kepler-startup-chosen';
+
+// sessionStorage живёт в этой вкладке. Браузер может скопировать его при
+// дублировании вкладки, поэтому возвращаемся в редактор только после F5.
+export function editorBeforeReload(previousScope) {
+  try {
+    if (performance.getEntriesByType('navigation')[0]?.type !== 'reload') return null;
+    const stored = sessionStorage.getItem(EDITOR_SESSION);
+    if (!stored) return null;
+    const scope = getStorageScope();
+    if (stored === '1') return scope === previousScope ? { pid: state.pid } : null; // версия 0.4.1
+    const editor = JSON.parse(stored);
+    const pid = editor?.pid;
+    const validPid = pid === null || (typeof pid === 'string' && /^[A-Za-z0-9._:@+~-]{1,128}$/.test(pid));
+    return editor?.scope === scope && validPid ? editor : null;
+  } catch { return null; }
+}
+
+export function rememberEditor(open) {
+  try {
+    if (open) {
+      sessionStorage.setItem(EDITOR_SESSION, JSON.stringify({ scope: getStorageScope(), pid: state.pid }));
+      window.addEventListener('pagehide', updateEditorPid);
+    } else {
+      sessionStorage.removeItem(EDITOR_SESSION);
+      window.removeEventListener('pagehide', updateEditorPid);
+    }
+  } catch { /* хранилище вкладки недоступно */ }
+}
+
+function updateEditorPid() {
+  // При первом автосохранении проекта облако назначает ему PID.
+  try { if (sessionStorage.getItem(EDITOR_SESSION)) rememberEditor(true); } catch { /* недоступно */ }
+}
 
 // Битое автосохранение: предупреждение и кнопка «Скачать копию».
 function showBroken(warn, broken) {
@@ -55,6 +90,7 @@ function renderTemplates() {
 }
 
 export function openStartMenu({ initial = false, broken = null } = {}) {
+  rememberEditor(false);
   renderTemplates();
   const screen = el('startScreen');
   const warn = el('startWarn');
@@ -75,7 +111,7 @@ export function openStartMenu({ initial = false, broken = null } = {}) {
 export function closeStartMenu() {
   el('startScreen').hidden = true;
   document.querySelector('.app')?.removeAttribute('inert');
-  try { sessionStorage.setItem('kepler-startup-chosen', '1'); } catch { /* режим без sessionStorage */ }
+  rememberEditor(true);
 }
 
 export function requestNewProject() {

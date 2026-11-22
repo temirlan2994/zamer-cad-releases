@@ -69,6 +69,14 @@ export async function with3dLayers(page, edit) {
   try { await edit(); } finally { await toggle.click(); }
 }
 
+// Открываем нужный раздел меню видов, как при выборе с холста.
+export async function pickWorkspaceView(page, group, key) {
+  await page.locator('#workspaceViewPicker').click();
+  const menu = page.getByRole('dialog', { name: 'Все виды проекта' });
+  await menu.locator(`[data-view-group="${group}"]`).click();
+  await menu.locator(`[data-view-key="${key}"]`).click();
+}
+
 // Стартовое меню → «Загрузить пример» / «Новый проект».
 export async function openSample(page) {
   await page.click('#startSample');

@@ -2,7 +2,7 @@ name: Zamer CAD
 
 on:
   push:
-    branches: [source]
+    branches: [main]
     paths: ['prototype/**', 'android-offline/**', 'shared/cad/**', '.github/workflows/zamer.yml']
   pull_request:
     paths: ['prototype/**', 'android-offline/**', 'shared/cad/**', '.github/workflows/zamer.yml']

@@ -11,16 +11,16 @@ const bed = (extra = {}) => ({
 
 test('тумбы стоят по бокам изголовья с зазором 50 мм', () => {
   assert.deepEqual(bedsideTarget(bed(), 'left'), {
-    side: 'left', x: 1425, y: 200, w: 450, h: 400, rotation: 0,
+    side: 'left', x: 1350, y: 250, w: 600, h: 500, rotation: 0,
   });
   assert.deepEqual(bedsideTarget(bed(), 'right'), {
-    side: 'right', x: 3575, y: 200, w: 450, h: 400, rotation: 0,
+    side: 'right', x: 3650, y: 250, w: 600, h: 500, rotation: 0,
   });
 });
 
 test('места поворачиваются вместе с кроватью', () => {
   const target = bedsideTarget(bed({ rotation: 90 }), 'right');
-  assert.deepEqual(target, { side: 'right', x: 3300, y: 2075, w: 450, h: 400, rotation: 90 });
+  assert.deepEqual(target, { side: 'right', x: 3250, y: 2150, w: 600, h: 500, rotation: 90 });
 });
 
 test('занятая сторона скрывается только у своего комплекта', () => {

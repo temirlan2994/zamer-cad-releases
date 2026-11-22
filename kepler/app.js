@@ -21,7 +21,8 @@ import {
   applyLibraryTab, bindFurnitureSearch, renderFurnitureBar, renderLibrary,
 } from './ui/library.js';
 import { applyModeRotation } from './ui/modes.js';
-import { bindProjects, openProjectChooser } from './ui/projects.js';
+import { bindProjects, continueCurrentProject, openProjectChooser } from './ui/projects.js';
+import { editorBeforeReload } from './ui/start-menu.js';
 import { renderProps } from './ui/props.js';
 import { state } from './ui/state.js';
 import {
@@ -42,40 +43,39 @@ import { bindSolarAnalysis } from './ui/solar-analysis.js';
 import { bindSolarReport } from './ui/solar-report-ui.js';
 import { getBackend, prepareAccount } from './ui/cloud.js';
 import {
-  getScopedItem, setScopedItem, setStorageScope,
+  getScopedItem, getStorageScope, setScopedItem, setStorageScope,
 } from './ui/storage-scope.js';
 import { shouldUseRemoteProject } from './ui/startup-cloud.js';
 import { syncProjectNameUi } from './ui/project-name.js';
 import { bindPwa } from './ui/pwa.js';
 import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
 
-// Обработчики событий — в том же порядке, что и раньше.
-bindCanvasInput();
-bindKeyboard();
-bindToolbar();
-bindSelectionToolbar();
-bindSplitInput();
-bindMobile();
-bind3d();
-bindHelp();
-bindFurnitureSearch();
-bindView();
-bindTheme();
-bindSnapBar();
-bindErgonomics(); // режим «Эргономика»: кнопка, счётчик, настройки
-bindSolarAnalysis(() => { // выбранная комната: прямое солнце и остекление
-  renderProps();
-  requestDraw();
-});
-bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
-bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
-bindProjectRoute(); // этапы подготовки участка, паспорт и карта возможностей
-
 // Firebase восстанавливает Google-сессию асинхронно. До чтения локального
 // черновика узнаём UID, чтобы на общем компьютере один человек не увидел
 // автосохранение другого. Без настроенного Firebase это мгновенный guest.
 (async function boot() {
+  bindCanvasInput();
+  bindToolbar();
+  bindSelectionToolbar();
+  bindSplitInput();
+  bindMobile();
+  bind3d();
+  bindHelp();
+  bindFurnitureSearch();
+  bindView();
+  bindTheme();
+  bindSnapBar();
+  bindErgonomics(); // режим «Эргономика»: кнопка, счётчик, настройки
+  bindSolarAnalysis(() => { // выбранная комната: прямое солнце и остекление
+    renderProps();
+    requestDraw();
+  });
+  bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
+  bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
+  bindProjectRoute(); // этапы подготовки участка, паспорт и карта возможностей
+
   const account = await prepareAccount();
+  const previousScope = getStorageScope();
   setStorageScope(account.uid);
   try { state.pid = getScopedItem(PID_KEY) || null; } catch { state.pid = null; }
   bindProjects(account);
@@ -87,20 +87,25 @@ bindProjectRoute(); // этапы подготовки участка, пасп�
   // Автосохранение: проект с любым содержимым (комнаты, ландшафт, рельеф,
   // подложка…) продолжается. Битое не роняет запуск: копия — в резерв,
   // старт с пустого проекта и предупреждение в стартовом меню.
-  let saved = loadAutosave();
+  const editor = editorBeforeReload(previousScope);
+  let saved = loadAutosave({ includeEmpty: Boolean(editor) });
+  const sameDraft = editor && saved.project && editor.pid === state.pid;
+  const restoreById = editor?.pid && !sameDraft;
   if (!saved.project) {
     state.pid = null;
-    try { setScopedItem(PID_KEY, ''); } catch { /* хранилище недоступно */ }
+    if (!restoreById) {
+      try { setScopedItem(PID_KEY, ''); } catch { /* хранилище недоступно */ }
+    }
   }
   let openedFromCloud = false;
   let localNeedsCloudSync = false;
-  if (account.signedIn) {
+  const resumeWithLease = sameDraft && account.provider === 'firebase' && state.pid;
+  if (account.signedIn && !resumeWithLease && !restoreById) {
     try {
       const cloud = await getBackend();
       if (cloud.mode === 'cloud') {
-        // На старте больше не подставляем последний проект автоматически:
-        // пользователь сначала выбирает его в окне проектов. Сравниваем с
-        // облаком только уже известный локальный черновик этого PID.
+        // Сравниваем только известный проект этого аккаунта. При возврате
+        // в облачный редактор читаем модель после получения права редактирования.
         if (state.pid && saved.project) {
           const remote = await loadVersion(cloud.db, cloud.root, state.pid);
           const remoteAt = remote.version?.at || remote.meta?.updatedAt || null;
@@ -157,16 +162,35 @@ bindProjectRoute(); // этапы подготовки участка, пасп�
   refs.statusScale.textContent = scaleLabel();
   requestAnimationFrame(fitView);
   requestDraw();
-  if (openedFromCloud) tweak(() => {}); // сохранить облачную копию и локально
-  else if (localNeedsCloudSync && saved.project) {
+  if (!broken && openedFromCloud) tweak(() => {}); // сохранить облачную копию и локально
+  else if (!broken && localNeedsCloudSync && saved.project) {
     document.dispatchEvent(new CustomEvent(AUTOSAVE_EVENT, {
       detail: { text: serializeProject(saved.project, { pretty: false }) },
     }));
   }
-  await openProjectChooser({ initial: true, broken });
+  const resumed = !broken && (restoreById || sameDraft)
+    && await continueCurrentProject({ reloading: true, savedAt: saved.savedAt, pid: editor.pid, restoreTab: start });
+  // Стартовое окно доступно сразу, пока список и миниатюры ещё загружаются.
+  const chooser = !resumed && document.getElementById('startScreen').hidden
+    ? openProjectChooser({ initial: true, broken }) : null;
+  bindKeyboard();
+  document.getElementById('editorBoot').hidden = true;
+  if (document.getElementById('startScreen').hidden && document.getElementById('editLockScreen').hidden) {
+    document.querySelector('.app').inert = false;
+  }
+  await chooser;
   exposeDebugApi();
 })().catch((error) => {
   console.error('kep•ler 3D не запустился:', error);
-  refs.toast.textContent = `Не удалось запустить редактор: ${error?.message || 'ошибка'}`;
-  refs.toast.classList.add('show');
+  const message = `Не удалось открыть редактор. ${error?.message || ''}`.trim();
+  const bootScreen = document.getElementById('editorBoot');
+  bootScreen.querySelector('span').textContent = message;
+  bootScreen.querySelector('a').hidden = false;
+  if (!document.getElementById('startScreen').hidden || !document.getElementById('editLockScreen').hidden) {
+    refs.toast.textContent = message;
+    refs.toast.classList.add('show');
+  } else {
+    bootScreen.hidden = false;
+    document.querySelector('.app').inert = true;
+  }
 });

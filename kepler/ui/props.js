@@ -10,8 +10,7 @@ import { bindRoomRoof, renderRoofProps, roofById, roomRoofHtml } from './roofs.j
 import { gridById, renderGridProps, renderGridToolOptions } from './grids.js';
 import { furnitureDef, isShaft, roomType, roomTypesByCategory } from '../core/catalog.js';
 import { itemTitle, itemsInRoom } from '../core/furnish.js';
-import { activeLevel, roomById } from '../core/model.js';
-import { SP55 } from '../core/norms.js';
+import { activeLevel, roomById, roomCeiling } from '../core/model.js';
 import { MIN_ROOM_SIZE, MIN_SHAFT_SIZE, roomNetAreaM2 } from '../core/rooms.js';
 import {
   DOOR_TYPES, WALL_T_MAX, WALL_T_MIN, WINDOW_TYPES, deriveWalls, openingFrame, openingPos, openingRect,
@@ -43,7 +42,7 @@ import { resizeVerdict } from './snap.js';
 import {
   STAIR_BUILDS, STAIR_ENVIRONMENTS, STAIR_MATERIALS, STAIR_RAILINGS, STAIR_SHAPES, applyStairPreset, stairAppearance, stairBuild, materializeStair, setStairParam, setStairRise, stairCalculation, stairParamKeys, stairParamValue, stairShape,
 } from '../core/stairs.js';
-import { presetWithType } from '../core/opening-preset.js';
+import { HIGH_WINDOW_TYPES, openingHeight, presetWithType } from '../core/opening-preset.js';
 import { requestDraw } from './view.js';
 import { bindRoomRailings, renderRailingProps, roomRailingsHtml } from './railing-props.js';
 import { renderOpeningLibrary } from './opening-library.js';
@@ -63,6 +62,7 @@ import {
 import {
   bindSolarAnalysisPanel, focusSolarRoom, solarAnalysisHtml,
 } from './solar-analysis.js';
+import { bindEnvelopeSettings, envelopeSettingsHtml } from './envelope-settings.js';
 
 // Вкладки над панелью (ряд значков), как в Revit: «Свойства» (выбранный
 // объект; ничего не выбрано — настройки активного вида или выбранного листа,
@@ -140,7 +140,7 @@ export function renderProps() {
   // Открыт фасад — его настройки (масштаб, отметки).
   if (!sel && isElevationOpen()) { renderElevationProps(panel); return; }
   // Параметры двери/окна до вставки — в строке параметров над холстом (renderToolOptions).
-  if (state.modeName === 'landscape' && (!sel || sel.type === 'landscape')) {
+  if ((state.modeName === 'landscape' && !sel) || sel?.type === 'landscape') {
     if (sel || landscapeToolActive()) renderLandscapeProps(panel);
     else withViewSection(panel, renderLandscapeProps);
     return;
@@ -197,7 +197,8 @@ function withViewSection(panel, renderMode) {
 
 // Чистая высота по умолчанию: высота этажа минус перекрытие (core/norms.js).
 function defaultCeiling() {
-  return activeLevel(state.project).height - SP55.slab;
+  const level = activeLevel(state.project);
+  return roomCeiling({}, level);
 }
 
 function renderElevationProps(panel) {
@@ -225,15 +226,28 @@ function renderProjectProps(panel) {
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="levelName" value="${escapeHtml(level.name)}"></label>
       <div class="prop-grid">
-        <label class="prop-field"><span>Отметка пола, м</span>
+        <label class="prop-field"><span>Отметка от ±0.000, м</span>
           <input id="levelElev" type="number" step="0.05" value="${(level.elevation / 1000).toFixed(2)}"></label>
         <label class="prop-field"><span>Высота этажа, м</span>
           <input id="levelHeight" type="number" step="0.05" min="2" value="${(level.height / 1000).toFixed(2)}"></label>
       </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Чистая высота, м</span>
+          <input value="${(defaultCeiling() / 1000).toFixed(2)}" disabled></label>
+        <label class="prop-field"><span>Перекрытие, м</span>
+          <input id="slabThickness" type="number" step="0.05" min="0.12" max="0.6" value="${((level.slabThickness || 300) / 1000).toFixed(2)}"></label>
+      </div>
+      <div class="prop-grid">
+        <label class="prop-field"><span>Высота витражей, м</span>
+          <input id="tallWindowHeight" type="number" step="0.05" min="0.3" value="${((level.tallWindowHeight || 2400) / 1000).toFixed(2)}"></label>
+        <label class="prop-field"><span>Связь</span><input value="Весь этаж" disabled></label>
+      </div>
+      <p class="empty-hint">Связанные помещения и высокие окна обновляются вместе с этажом.</p>
       ${multi ? '<button id="deleteLevel" class="danger">Удалить этаж</button>' : ''}
     </div>`;
   panel.innerHTML = `
     <h2 id="viewPropsTitle">Вид: ${escapeHtml(activeViewTitle())}</h2>
+    ${envelopeSettingsHtml()}
     ${viewSettingsHtml()}
     ${phone ? `<details class="vs-sec" id="levelSection" data-level="${escapeHtml(level.id)}"${keepLevelOpen ? ' open' : ''}>
       <summary id="levelSummary">Параметры этажа</summary>${levelFields}
@@ -265,6 +279,7 @@ function renderProjectProps(panel) {
   if (focusLevelSummary) panel.querySelector('#levelSummary')?.focus({ preventScroll: true });
   panel.querySelector('#projectSection').addEventListener('toggle', (e) => { projectOpen = e.target.open; });
   bindViewSettings(panel, renderProps);
+  bindEnvelopeSettings(panel);
   bindBuildingRotation(panel);
   panel.querySelector('#unitsSel').addEventListener('change', (e) => {
     mutate(() => { state.project.settings.units = e.target.value === 'm' ? 'm' : 'mm'; });
@@ -283,6 +298,14 @@ function renderProjectProps(panel) {
   });
   panel.querySelector('#levelHeight').addEventListener('change', (e) => {
     mutate(() => { level.height = Math.max(2000, Math.round((Number(e.target.value) || 3) * 1000)); });
+  });
+  panel.querySelector('#slabThickness').addEventListener('change', (e) => {
+    const next = Math.round((Number(e.target.value) || 0.3) * 1000);
+    mutate(() => { level.slabThickness = Math.min(600, Math.max(120, next)); });
+  });
+  panel.querySelector('#tallWindowHeight').addEventListener('change', (e) => {
+    const max = Math.max(300, level.height - 100);
+    mutate(() => { level.tallWindowHeight = Math.min(max, Math.max(300, Math.round((Number(e.target.value) || 2.4) * 1000))); });
   });
   panel.querySelector('#deleteLevel')?.addEventListener('click', () => deleteLevel(level.id));
 }
@@ -325,6 +348,8 @@ function renderRoomProps(panel, room) {
   // нормы и ТЭП — по видимой форме (комната моста = результат carve).
   const nominal = nominalShape(room);
   const eaten = Boolean(room.eatBase?.base);
+  const datumPending = state.project.envelope?.zeroAboveGround == null
+    && !Number.isFinite(state.project.site?.terrain?.floorZ);
 
   const furnitureRows = (def?.furniture || []).map((entry) => {
     const fd = furnitureDef(entry.kind);
@@ -363,6 +388,7 @@ function renderRoomProps(panel, room) {
     : '';
 
   panel.innerHTML = `
+    ${datumPending ? envelopeSettingsHtml() : ''}
     <h2>${def?.title || 'Комната'}${parent ? `<span class="badge">внутри «${escapeHtml(parent.name)}»</span>` : ''}</h2>
     <div class="prop-block">
       <label class="prop-field"><span>Название</span><input id="roomName" value="${escapeHtml(room.name)}"></label>
@@ -372,8 +398,10 @@ function renderRoomProps(panel, room) {
         <label class="prop-field"><span>Глубина, мм</span><input id="roomH" type="number" step="50" min="${minRoomSize}" value="${nominal.h}"></label>
       </div>
       ${eaten ? '<p class="empty-hint" id="roomNominalHint">Размеры заданы до пересечения. Площадь учитывает границы соседних комнат.</p>' : ''}
-      ${shaft ? '' : `<label class="prop-field"><span>Высота потолка, м</span>
-        <input id="roomCeil" type="number" step="0.05" min="2" title="Пустое поле использует высоту этажа" placeholder="${(defaultCeiling() / 1000).toFixed(2)}" value="${room.ceiling ? (room.ceiling / 1000).toFixed(2) : ''}"></label>
+      ${shaft ? '' : `<label class="check-row"><input id="roomCeilLinked" type="checkbox" ${room.ceiling ? '' : 'checked'}>
+        <span>Высота связана с этажом</span></label>
+        <label class="prop-field"><span>Чистая высота, м</span>
+        <input id="roomCeil" type="number" step="0.05" min="2" value="${(roomCeiling(room, activeLevel(state.project)) / 1000).toFixed(2)}" ${room.ceiling ? '' : 'disabled'}></label>
       `}
       <div class="prop-row"><span>${shaft ? 'Площадь отверстия' : 'Площадь (чистая)'}</span><strong>${(shaft ? roomShapeArea(room) / 1_000_000 : roomNetAreaM2(state.project, room)).toFixed(2)} м²</strong></div>
     </div>
@@ -388,6 +416,7 @@ function renderRoomProps(panel, room) {
     ${rejectedHtml}
     ${shaft ? '' : autoLayoutHtml(room)}`;
 
+  if (datumPending) bindEnvelopeSettings(panel);
   panel.querySelector('#roomName').addEventListener('change', (e) => {
     mutate(() => { room.name = e.target.value.trim() || room.name; });
   });
@@ -432,7 +461,14 @@ function renderRoomProps(panel, room) {
   panel.querySelector('#roomH').addEventListener('change', applySize);
   panel.querySelector('#roomCeil')?.addEventListener('change', (e) => {
     const v = Number(String(e.target.value).replace(',', '.'));
-    mutate(() => { room.ceiling = v >= 2 ? Math.round(v * 1000) : null; });
+    mutate(() => { room.ceiling = v >= 2 ? Math.round(v * 1000) : roomCeiling(room, activeLevel(state.project)); });
+  });
+  panel.querySelector('#roomCeilLinked')?.addEventListener('change', (e) => {
+    const linked = e.target.checked;
+    mutate(() => {
+      if (linked) delete room.ceiling;
+      else room.ceiling = roomCeiling(room, activeLevel(state.project));
+    });
   });
   panel.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', () => addFurniture(btn.dataset.add, room));
@@ -510,9 +546,11 @@ function renderManualWallProps(panel, wall) {
   const length = Math.round(wall.to - wall.from);
   const height = own.top?.height ?? '';
   const levelH = Math.round(wall.z1 - wall.z0);
+  const wallDirection = wall.orient === 'h' ? 'горизонтальная' : wall.orient === 'v' ? 'вертикальная' : 'свободный угол';
+  const shiftDirection = wall.orient === 'h' ? '+ вниз' : wall.orient === 'v' ? '+ вправо' : '+ по нормали';
   panel.innerHTML = `
     <h2>Стена</h2>
-    <p class="subtitle">Ручная стена · ${wall.orient === 'h' ? 'горизонтальная' : 'вертикальная'}</p>
+    <p class="subtitle">Ручная стена · ${wallDirection}</p>
     <div class="prop-block">
       <div class="prop-row"><span>Длина по оси</span><strong>${length} мм</strong></div>
       <label class="prop-field"><span>Толщина, мм (${WALL_T_MIN}–${WALL_T_MAX})</span>
@@ -529,7 +567,7 @@ function renderManualWallProps(panel, wall) {
           <option value="left" ${own.justify === 'left' ? 'selected' : ''}>По левой грани</option>
           <option value="right" ${own.justify === 'right' ? 'selected' : ''}>По правой грани</option>
         </select></label>
-      <label class="prop-field"><span>Сдвинуть ось на, мм (${wall.orient === 'h' ? '+ вниз' : '+ вправо'})</span>
+      <label class="prop-field"><span>Сдвинуть ось на, мм (${shiftDirection})</span>
         <input id="wallShift" type="number" step="10" value="0"></label>
       <label class="prop-field"><span>Высота, мм (пусто — по этажу, ${levelH})</span>
         <input id="wallH" type="number" step="50" min="100" value="${height}"></label>
@@ -594,7 +632,7 @@ function renderPlaceOpeningProps(panel, compact = false) {
   const tool = state.tool;
   const isDoor = tool.openKind === 'door';
   const preset = tool.preset;
-  const sample = { kind: tool.openKind, ...preset };
+  const sample = { kind: tool.openKind, ...preset, height: openingHeight({ kind: tool.openKind, ...preset }, activeLevel(state.project)) };
   panel.innerHTML = `
     ${compact ? `<strong class="to-title">${isDoor ? 'Дверь' : 'Окно'}</strong>` : `<h2>${isDoor ? 'Дверь' : 'Окно'} — параметры вставки</h2>
     <p class="subtitle">Задайте размеры и кликайте по стенам: можно ставить несколько. Esc — выход.</p>
@@ -608,8 +646,10 @@ function renderPlaceOpeningProps(panel, compact = false) {
         <label class="prop-field"><span>Ширина, мм</span>
           <input id="presetW" type="number" step="50" min="300" value="${preset.width}"></label>
         <label class="prop-field"><span>Высота, мм</span>
-          <input id="presetH" type="number" step="50" min="300" value="${preset.height}"></label>
+          <input id="presetH" type="number" step="50" min="300" value="${sample.height}" ${!isDoor && preset.heightMode === 'level' ? 'disabled' : ''}></label>
       </div>
+      ${isDoor ? '' : `<label class="check-row"><input id="presetHeightLinked" type="checkbox" ${preset.heightMode === 'level' ? 'checked' : ''}>
+        <span>Связать с высотой витражей этажа</span></label>`}
       ${isDoor ? '' : `<label class="prop-field"><span>Отступ от пола (подоконник), мм</span>
         <input id="presetSill" type="number" step="50" min="0" value="${preset.sill}"></label>`}
     </div>`;
@@ -625,7 +665,14 @@ function renderPlaceOpeningProps(panel, compact = false) {
     save(presetWithType(tool.openKind, preset, e.target.value, activeLevel(state.project).height));
   });
   panel.querySelector('#presetW').addEventListener('change', (e) => save({ width: Math.max(300, Number(e.target.value) || preset.width) }));
-  panel.querySelector('#presetH').addEventListener('change', (e) => save({ height: Math.max(300, Number(e.target.value) || preset.height) }));
+  panel.querySelector('#presetH').addEventListener('change', (e) => save({
+    height: Math.max(300, Number(e.target.value) || preset.height), heightMode: 'custom',
+  }));
+  panel.querySelector('#presetHeightLinked')?.addEventListener('change', (e) => {
+    save(e.target.checked
+      ? { heightMode: 'level', frameMaterial: 'aluminum', frameColor: 'anthracite' }
+      : { heightMode: 'custom', height: sample.height });
+  });
   panel.querySelector('#presetSill')?.addEventListener('change', (e) => save({ sill: Math.max(0, Number(e.target.value) || 0) }));
 }
 
@@ -676,7 +723,13 @@ export function renderToolOptions(force = false) {
           <option value="${k}" ${t.wallType === k ? 'selected' : ''}>${{ partition: 'Перегородка', bearing: 'Несущая', exterior: 'Наружная' }[k]} (${wallClassThickness(set, k)})</option>`).join('')}
         </select></label>
       <label class="prop-field"><span>Толщина, мм</span>
-        <input id="toWallT" type="number" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(t.thickness)}"></label>`;
+        <input id="toWallT" type="number" inputmode="numeric" step="10" min="${WALL_T_MIN}" max="${WALL_T_MAX}" value="${Math.round(t.thickness)}"></label>
+      <label class="prop-field"><span>Ось</span>
+        <select id="toWallJustify">
+          <option value="center" ${t.justify === 'center' ? 'selected' : ''}>По центру</option>
+          <option value="left" ${t.justify === 'left' ? 'selected' : ''}>Левая грань</option>
+          <option value="right" ${t.justify === 'right' ? 'selected' : ''}>Правая грань</option>
+        </select></label>`;
   } else if (t?.kind === 'place-room') {
     html = `<strong class="to-title">Помещение</strong><span class="to-value">${escapeHtml(roomType(t.type)?.title || t.type)}</span>`;
   } else if (t?.kind === 'bound-room' || roomLib) {
@@ -714,10 +767,18 @@ export function renderToolOptions(force = false) {
       renderToolOptions(true);
       requestDraw();
     });
-    body.querySelector('#toWallT').addEventListener('change', (e) => {
+    const changeThickness = (e) => {
       const v = Math.round(Number(e.target.value));
       if (Number.isFinite(v) && v > 0) t.thickness = Math.min(WALL_T_MAX, Math.max(WALL_T_MIN, v));
+      requestDraw();
+    };
+    body.querySelector('#toWallT').addEventListener('input', changeThickness);
+    body.querySelector('#toWallT').addEventListener('change', (e) => {
+      changeThickness(e);
       e.target.value = String(Math.round(t.thickness));
+    });
+    body.querySelector('#toWallJustify').addEventListener('change', (e) => {
+      t.justify = e.target.value;
       requestDraw();
     });
   }
@@ -727,6 +788,8 @@ function renderOpeningProps(panel, opening) {
   if (!opening) { renderProjectProps(panel); return; }
   const room = roomById(state.project, opening.roomId);
   const isDoor = opening.kind === 'door';
+  const level = activeLevel(state.project);
+  const effectiveHeight = openingHeight(opening, level);
   const walls = state.walls;
   const frame = openingFrame(state.project, opening, walls);
   const placed = openingRect(state.project, opening, walls);
@@ -743,7 +806,7 @@ function renderOpeningProps(panel, opening) {
   panel.innerHTML = `
     <h2>${isDoor ? 'Дверь' : 'Окно'}</h2>
     <p class="subtitle">${opening.host ? 'Ручная стена' : room ? `Стена «${escapeHtml(room.name)}»` : 'Стена'}</p>
-    <div class="elev-wrap">${elevationSVG(opening)}</div>
+    <div class="elev-wrap">${elevationSVG({ ...opening, height: effectiveHeight })}</div>
     <div class="prop-block">
       <label class="prop-field"><span>Тип</span>
         <select id="openType">${Object.entries(isDoor ? DOOR_TYPES : WINDOW_TYPES).map(([id, title]) => `
@@ -753,8 +816,18 @@ function renderOpeningProps(panel, opening) {
         <label class="prop-field"><span>Ширина, мм</span>
           <input id="openW" type="number" step="50" min="300" value="${opening.width}"></label>
         <label class="prop-field"><span>Высота, мм</span>
-          <input id="openH" type="number" step="50" min="300" value="${opening.height || (isDoor ? 2100 : 1500)}"></label>
+          <input id="openH" type="number" step="50" min="300" value="${effectiveHeight}" ${!isDoor && opening.heightMode === 'level' ? 'disabled' : ''}></label>
       </div>
+      ${isDoor ? '' : `<label class="check-row"><input id="openHeightLinked" type="checkbox" ${opening.heightMode === 'level' ? 'checked' : ''}>
+        <span>Высота связана с витражами этажа</span></label>
+        <div class="prop-row"><span>Рама</span><strong>Алюминий · антрацит</strong></div>`}
+      ${isDoor ? `<label class="prop-field"><span>Роль наружной двери</span><select id="entryRole">
+        <option value="auto" ${!opening.entryRole ? 'selected' : ''}>Определять автоматически</option>
+        <option value="main" ${opening.entryRole === 'main' ? 'selected' : ''}>Главный вход</option>
+        <option value="service" ${opening.entryRole === 'service' ? 'selected' : ''}>Служебный вход</option>
+        <option value="terrace" ${opening.entryRole === 'terrace' ? 'selected' : ''}>Выход на террасу</option>
+        <option value="none" ${opening.entryRole === 'none' ? 'selected' : ''}>Без автокрыльца</option>
+      </select></label>` : ''}
       ${isDoor ? '' : `<label class="prop-field"><span>Высота подоконника, мм</span>
         <input id="openSill" type="number" step="50" min="0" value="${opening.sill || 0}"></label>`}
     </div>
@@ -788,17 +861,44 @@ function renderOpeningProps(panel, opening) {
     commitOpening(() => {
       opening.type = type;
       if (!isDoor) {
-        // Панорамное — почти от пола и выше; обычное — подоконник 900, 1500.
+        // Высокие окна следуют единой отметке этажа, обычные — индивидуальны.
         const top = activeLevel(state.project).height - 400;
-        if (type === 'panoramic') { opening.sill = 100; opening.height = Math.min(2400, top - 100); }
-        else { opening.sill = 900; opening.height = Math.min(1500, top - 900); }
+        if (HIGH_WINDOW_TYPES.has(type)) {
+          opening.sill = type === 'french' ? 50 : 100;
+          opening.height = Math.min(2400, top - opening.sill);
+          opening.heightMode = 'level';
+        } else {
+          opening.sill = type === 'clerestory' ? 1700 : 900;
+          opening.height = type === 'clerestory' ? 600 : Math.min(1500, top - 900);
+          opening.heightMode = 'custom';
+        }
+        opening.frameMaterial = 'aluminum';
+        opening.frameColor = opening.frameColor || 'anthracite';
       } else if (type === 'double' && opening.width < 1200) {
         opening.width = 1200; // двустворчатой нужна ширина
       }
     });
   });
+  panel.querySelector('#entryRole')?.addEventListener('change', (e) => {
+    commitOpening(() => {
+      if (e.target.value === 'auto') delete opening.entryRole;
+      else opening.entryRole = e.target.value;
+    });
+  });
   panel.querySelector('#openH').addEventListener('change', (e) => {
-    commitOpening(() => { opening.height = Math.max(300, Number(e.target.value) || opening.height); });
+    commitOpening(() => {
+      opening.height = Math.max(300, Number(e.target.value) || opening.height);
+      if (!isDoor) opening.heightMode = 'custom';
+    });
+  });
+  panel.querySelector('#openHeightLinked')?.addEventListener('change', (e) => {
+    commitOpening(() => {
+      if (e.target.checked) opening.heightMode = 'level';
+      else {
+        opening.height = openingHeight(opening, activeLevel(state.project));
+        opening.heightMode = 'custom';
+      }
+    });
   });
   const sillInput = panel.querySelector('#openSill');
   if (sillInput) sillInput.addEventListener('change', (e) => commitOpening(() => { opening.sill = Math.max(0, Number(e.target.value) || 0); }));

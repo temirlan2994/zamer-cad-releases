@@ -36,6 +36,7 @@ function twoStorey() {
 function topAt(faces, kind, x, y, level = null) {
   const point = { x, y };
   return faces.some((face) => face.kind === kind && face.normal?.z > 0.5 &&
+    (kind !== 'slab' || face.slabRole === 'interfloor') &&
     (level == null || face.level === level) &&
     pointInPolygon(face.pts.map((p) => ({ x: p.x, y: p.y })), point, 0.01));
 }

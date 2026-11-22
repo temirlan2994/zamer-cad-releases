@@ -28,8 +28,6 @@ describe('ландшафт: клумба-короб и лестница', () => 
   let app;
   let box;
   before(async () => {
-    // Ширина — чтобы холст был как до колонки инструментов (744 px): броски растений
-    // и «Посадить в короб» опираются на тот же масштаб вида.
     app = await startApp({ width: 1075 });
     await openSample(app.page);
     await app.page.click('#landscapeBtn');
@@ -127,6 +125,9 @@ describe('ландшафт: клумба-короб и лестница', () => 
   it('«Посадить в короб» заполняет засыпку привязанными растениями', async () => {
     const { page } = app;
     await page.evaluate((id) => window.__kepler.select({ type: 'landscape', ids: [id] }), box.id);
+    // В коробе уже сидят цветы и самшит. Оставляем место для новых цветов независимо от привязки при броске.
+    await page.fill('#lsW', '5');
+    await page.press('#lsW', 'Tab');
     const n0 = (await objects(page)).filter((o) => o.parent === box.id).length;
     await page.selectOption('#lsInKind', 'flowers-clump');
     await page.fill('#lsInDensity', '1');

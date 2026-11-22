@@ -2,7 +2,7 @@ name: Kepler Plan — GitHub Pages
 
 on:
   push:
-    branches: [source]
+    branches: [main]
     paths:
       - 'kepler/**'
       - 'shared/cad/**'

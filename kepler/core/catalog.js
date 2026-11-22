@@ -2,6 +2,8 @@
 // Все размеры в миллиметрах. Идентификаторы стабильны — на них завязан
 // формат файла проекта и экспорт.
 
+import { premiumFurnitureSize as premium } from './furniture-design.js';
+
 export const DEFAULT_PARTITION = 100; // перегородка между помещениями
 export const DEFAULT_EXTERIOR = 250; // наружная стена
 export const DEFAULT_BEARING = 200; // внутренняя несущая стена
@@ -17,6 +19,11 @@ export function gridStepForScale(scale) {
   if (!(scale > 0)) return GRID_STEP;
   for (const step of [1, 5, 10, 25, 50]) if (step * scale >= 8) return step;
   return GRID_STEP;
+}
+
+// В поиске размер с карточки можно ввести с латинской x, русской х или знаком ×.
+export function normalizeCatalogText(text) {
+  return text.trim().toLocaleLowerCase('ru').replaceAll('ё', 'е').replace(/(\d)\s*[xх×]\s*(?=\d)/g, '$1×');
 }
 
 // Категории мебели для нижней панели (порядок = порядок вкладок).
@@ -50,51 +57,51 @@ export const FURNITURE_CATEGORIES = [
 //   priority    — порядок авторасстановки (меньше — раньше)
 export const FURNITURE = {
   // --- Диваны и кресла ---
-  sofa: { title: 'Диван 3-местный', cat: 'seating', w: 2200, h: 950, rules: { wall: true, clearFront: 700, priority: 1 } },
-  'sofa-2': { title: 'Диван 2-местный', cat: 'seating', w: 1600, h: 900, rules: { wall: true, clearFront: 700, priority: 1 } },
-  'sofa-corner': { title: 'Угловой диван', cat: 'seating', w: 2600, h: 1600, rules: { wall: true, clearFront: 700, priority: 1 } },
-  'sofa-u': { title: 'П-образный диван', cat: 'seating', w: 3000, h: 2400, rules: { wall: true, clearFront: 700, priority: 1 } },
-  loveseat: { title: 'Кушетка', cat: 'seating', w: 1800, h: 800, rules: { wall: true, clearFront: 500, priority: 2 } },
-  armchair: { title: 'Кресло', cat: 'seating', w: 750, h: 800, rules: { wall: true, clearFront: 400, priority: 6 } },
-  'armchair-lounge': { title: 'Кресло-лаунж', cat: 'seating', w: 850, h: 950, rules: { wall: false, clearFront: 400, priority: 6 } },
-  pouf: { title: 'Пуф', cat: 'seating', w: 500, h: 500, rules: { center: true, priority: 8 } },
-  bench: { title: 'Банкетка', cat: 'seating', w: 1200, h: 400, rules: { wall: true, clearFront: 400, priority: 6 } },
+  sofa: { title: 'Диван 3-местный', cat: 'seating', ...premium('sofa'), rules: { wall: true, clearFront: 700, priority: 1 } },
+  'sofa-2': { title: 'Диван 2-местный', cat: 'seating', ...premium('sofa-2'), rules: { wall: true, clearFront: 700, priority: 1 } },
+  'sofa-corner': { title: 'Угловой диван', cat: 'seating', ...premium('sofa-corner'), rules: { wall: true, clearFront: 700, priority: 1 } },
+  'sofa-u': { title: 'П-образный диван', cat: 'seating', ...premium('sofa-u'), rules: { wall: true, clearFront: 700, priority: 1 } },
+  loveseat: { title: 'Кушетка', cat: 'seating', ...premium('loveseat'), rules: { wall: true, clearFront: 500, priority: 2 } },
+  armchair: { title: 'Кресло', cat: 'seating', ...premium('armchair'), rules: { wall: true, clearFront: 400, priority: 6 } },
+  'armchair-lounge': { title: 'Кресло-лаунж', cat: 'seating', ...premium('armchair-lounge'), rules: { wall: false, clearFront: 400, priority: 6 } },
+  pouf: { title: 'Пуф', cat: 'seating', ...premium('pouf'), rules: { center: true, priority: 8 } },
+  bench: { title: 'Банкетка', cat: 'seating', ...premium('bench'), rules: { wall: true, clearFront: 400, priority: 6 } },
 
   // --- Кровати ---
-  'bed-double': { title: 'Кровать двуспальная', cat: 'beds', w: 1600, h: 2000, rules: { wall: true, clearSides: 700, tall: false, priority: 1 } },
-  'bed-king': { title: 'Кровать King 1800', cat: 'beds', w: 1800, h: 2000, rules: { wall: true, clearSides: 700, priority: 1 } },
-  'bed-single': { title: 'Кровать односпальная', cat: 'beds', w: 900, h: 2000, rules: { wall: true, clearSides: 700, priority: 1 } },
-  'bed-bunk': { title: 'Кровать двухъярусная', cat: 'beds', w: 950, h: 2000, rules: { wall: true, clearSides: 600, tall: true, priority: 1 } },
+  'bed-double': { title: 'Кровать 1600 с мягкой рамой', cat: 'beds', ...premium('bed-double'), rules: { wall: true, clearSides: 700, tall: false, priority: 1 } },
+  'bed-king': { title: 'Кровать King 1800', cat: 'beds', ...premium('bed-king'), rules: { wall: true, clearSides: 700, priority: 1 } },
+  'bed-single': { title: 'Кровать 900 с мягкой рамой', cat: 'beds', ...premium('bed-single'), rules: { wall: true, clearSides: 700, priority: 1 } },
+  'bed-bunk': { title: 'Кровать двухъярусная', cat: 'beds', ...premium('bed-bunk'), rules: { wall: true, clearSides: 600, tall: true, priority: 1 } },
   crib: { title: 'Детская кроватка', cat: 'beds', w: 700, h: 1300, rules: { wall: true, clearFront: 500, priority: 2 } },
-  nightstand: { title: 'Прикроватная тумбочка', cat: 'beds', w: 450, h: 400, rules: { pairWith: ['bed-double', 'bed-king', 'bed-single'], priority: 2 } },
-  'dressing-table': { title: 'Туалетный столик', cat: 'beds', w: 1000, h: 450, rules: { wall: true, clearFront: 700, priority: 4 } },
+  nightstand: { title: 'Прикроватная тумба', cat: 'beds', ...premium('nightstand'), rules: { pairWith: ['bed-double', 'bed-king', 'bed-queen', 'bed-single'], priority: 2 } },
+  'dressing-table': { title: 'Туалетный столик', cat: 'beds', ...premium('dressing-table'), rules: { wall: true, clearFront: 700, priority: 4 } },
 
   // --- Столы ---
-  'dining-table': { title: 'Обеденный стол', cat: 'tables', w: 1600, h: 900, rules: { center: true, clearAround: 750, priority: 1 } },
-  'dining-table-6': { title: 'Стол на 6 персон', cat: 'tables', w: 1800, h: 900, rules: { center: true, clearAround: 750, priority: 1 } },
-  'table-round': { title: 'Стол круглый', cat: 'tables', w: 1100, h: 1100, rules: { center: true, clearAround: 750, priority: 1 } },
-  'coffee-table': { title: 'Журнальный столик', cat: 'tables', w: 900, h: 600, rules: { center: true, priority: 7 } },
-  'side-table': { title: 'Приставной столик', cat: 'tables', w: 500, h: 500, rules: { center: true, priority: 8 } },
-  desk: { title: 'Рабочий стол', cat: 'tables', w: 1200, h: 600, rules: { wall: true, clearFront: 700, priority: 5 } },
-  'desk-corner': { title: 'Угловой стол', cat: 'tables', w: 1500, h: 1500, rules: { wall: true, clearFront: 700, priority: 5 } },
-  'console-table': { title: 'Консоль', cat: 'tables', w: 1100, h: 350, rules: { wall: true, clearFront: 400, priority: 6 } },
+  'dining-table': { title: 'Обеденный стол', cat: 'tables', ...premium('dining-table'), rules: { center: true, clearAround: 750, priority: 1 } },
+  'dining-table-6': { title: 'Стол на 6 персон', cat: 'tables', ...premium('dining-table-6'), rules: { center: true, clearAround: 750, priority: 1 } },
+  'table-round': { title: 'Стол круглый', cat: 'tables', ...premium('table-round'), rules: { center: true, clearAround: 750, priority: 1 } },
+  'coffee-table': { title: 'Журнальные столики, композиция', cat: 'tables', ...premium('coffee-table'), rules: { center: true, priority: 7 } },
+  'side-table': { title: 'Приставной столик', cat: 'tables', ...premium('side-table'), rules: { center: true, priority: 8 } },
+  desk: { title: 'Рабочий стол', cat: 'tables', ...premium('desk'), rules: { wall: true, clearFront: 700, priority: 5 } },
+  'desk-corner': { title: 'Угловой стол', cat: 'tables', ...premium('desk-corner'), rules: { wall: true, clearFront: 700, priority: 5 } },
+  'console-table': { title: 'Консоль', cat: 'tables', ...premium('console-table'), rules: { wall: true, clearFront: 400, priority: 6 } },
 
   // --- Стулья ---
-  chair: { title: 'Стул', cat: 'chairs', w: 450, h: 450, rules: { pairWith: ['dining-table', 'dining-table-6', 'table-round'], priority: 2 } },
-  'chair-soft': { title: 'Стул мягкий', cat: 'chairs', w: 500, h: 520, rules: { pairWith: ['dining-table', 'dining-table-6'], priority: 2 } },
-  'office-chair': { title: 'Офисное кресло', cat: 'chairs', w: 600, h: 600, rules: { center: false, priority: 6 } },
+  chair: { title: 'Стул', cat: 'chairs', ...premium('chair'), rules: { pairWith: ['dining-table', 'dining-table-6', 'table-round'], priority: 2 } },
+  'chair-soft': { title: 'Стул мягкий', cat: 'chairs', ...premium('chair-soft'), rules: { pairWith: ['dining-table', 'dining-table-6'], priority: 2 } },
+  'office-chair': { title: 'Офисное кресло', cat: 'chairs', ...premium('office-chair'), rules: { center: false, priority: 6 } },
   stool: { title: 'Табурет', cat: 'chairs', w: 400, h: 400, rules: { center: true, priority: 8 } },
   'bar-stool': { title: 'Барный стул', cat: 'chairs', w: 420, h: 420, rules: { center: true, priority: 8 } },
 
   // --- Хранение ---
-  wardrobe: { title: 'Шкаф', cat: 'storage', w: 1800, h: 600, rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
-  'wardrobe-sliding': { title: 'Шкаф-купе', cat: 'storage', w: 2400, h: 650, rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
-  'wardrobe-corner': { title: 'Угловой шкаф', cat: 'storage', w: 1000, h: 1000, rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
-  dresser: { title: 'Комод', cat: 'storage', w: 1000, h: 450, rules: { wall: true, clearFront: 600, priority: 4 } },
-  bookcase: { title: 'Стеллаж', cat: 'storage', w: 1200, h: 350, rules: { wall: true, clearFront: 600, tall: true, priority: 5 } },
-  'wardrobe-rack': { title: 'Стеллаж гардеробной', cat: 'storage', w: 1800, h: 500, rules: { wall: true, clearFront: 600, tall: true, priority: 1 } },
-  sideboard: { title: 'Сервант', cat: 'storage', w: 1600, h: 450, rules: { wall: true, clearFront: 600, priority: 4 } },
-  'tv-stand': { title: 'ТВ-тумба', cat: 'storage', w: 1600, h: 420, rules: { wall: true, clearFront: 1500, priority: 2 } },
+  wardrobe: { title: 'Шкаф', cat: 'storage', ...premium('wardrobe'), rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
+  'wardrobe-sliding': { title: 'Шкаф-купе', cat: 'storage', ...premium('wardrobe-sliding'), rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
+  'wardrobe-corner': { title: 'Угловой шкаф', cat: 'storage', ...premium('wardrobe-corner'), rules: { wall: true, clearFront: 600, tall: true, priority: 3 } },
+  dresser: { title: 'Комод', cat: 'storage', ...premium('dresser'), rules: { wall: true, clearFront: 600, priority: 4 } },
+  bookcase: { title: 'Стеллаж', cat: 'storage', ...premium('bookcase'), rules: { wall: true, clearFront: 600, tall: true, priority: 5 } },
+  'wardrobe-rack': { title: 'Система гардеробной', cat: 'storage', ...premium('wardrobe-rack'), rules: { wall: true, clearFront: 600, tall: true, priority: 1 } },
+  sideboard: { title: 'Сервант', cat: 'storage', ...premium('sideboard'), rules: { wall: true, clearFront: 600, priority: 4 } },
+  'tv-stand': { title: 'ТВ-тумба', cat: 'storage', ...premium('tv-stand'), rules: { wall: true, clearFront: 1500, priority: 2 } },
 
   // --- Кухня ---
   'kitchen-row': { title: 'Кухня линейная', cat: 'kitchen', w: 2400, h: 600, rules: { wall: true, clearFront: 1000, tall: true, priority: 1 } },
@@ -108,7 +115,9 @@ export const FURNITURE = {
   bath: { title: 'Ванна', cat: 'bath', w: 1700, h: 750, rules: { wall: true, clearFront: 700, priority: 1 } },
   'bath-corner': { title: 'Ванна угловая', cat: 'bath', w: 1500, h: 1500, rules: { wall: true, clearFront: 700, priority: 1 } },
   shower: { title: 'Душевая кабина', cat: 'bath', w: 900, h: 900, rules: { wall: true, clearFront: 700, priority: 1 } },
-  toilet: { title: 'Унитаз', cat: 'bath', w: 400, h: 650, rules: { wall: true, clearFront: 600, priority: 2 } },
+  toilet: { title: 'Унитаз напольный', cat: 'bath', w: 400, h: 700, rules: { wall: true, clearFront: 600, priority: 2 } },
+  'toilet-wall': { title: 'Подвесной унитаз с инсталляцией', cat: 'bath', w: 500, h: 720, rules: { wall: true, clearFront: 600, priority: 2 } },
+  'toilet-smart': { title: 'Унитаз-биде', cat: 'bath', w: 430, h: 720, rules: { wall: true, clearFront: 650, priority: 2 } },
   bidet: { title: 'Биде', cat: 'bath', w: 400, h: 600, rules: { wall: true, clearFront: 600, priority: 2 } },
   washbasin: { title: 'Раковина', cat: 'bath', w: 550, h: 450, rules: { wall: true, clearFront: 600, priority: 3 } },
   'vanity-unit': { title: 'Тумба с раковиной', cat: 'bath', w: 800, h: 480, rules: { wall: true, clearFront: 700, priority: 3 } },
@@ -124,7 +133,7 @@ export const FURNITURE = {
   boiler: { title: 'Котёл/бойлер', cat: 'appliance', w: 600, h: 400, rules: { wall: true, clearFront: 500, tall: true, priority: 5 } },
 
   // --- Декор и свет ---
-  'coffee-table-2': { title: 'Пуф-столик', cat: 'decor', w: 600, h: 600, rules: { center: true, priority: 8 } },
+  'coffee-table-2': { title: 'Столики, круглая пара', cat: 'decor', ...premium('coffee-table-2'), rules: { center: true, priority: 8 } },
   plant: { title: 'Растение', cat: 'decor', w: 500, h: 500, rules: { center: false, priority: 9 } },
   'floor-lamp': { title: 'Торшер', cat: 'decor', w: 400, h: 400, rules: { center: false, priority: 9 } },
   rug: { title: 'Ковёр', cat: 'decor', w: 2000, h: 1400, rules: { center: true, priority: 10 } },
@@ -133,8 +142,8 @@ export const FURNITURE = {
   aquarium: { title: 'Аквариум', cat: 'decor', w: 1200, h: 450, rules: { wall: true, clearFront: 500, priority: 5 } },
 
   // --- Прихожая ---
-  'coat-rack': { title: 'Вешалка/шкаф прихожей', cat: 'hall', w: 1200, h: 500, rules: { wall: true, clearFront: 700, priority: 1 } },
-  'shoe-bench': { title: 'Обувница', cat: 'hall', w: 900, h: 350, rules: { wall: true, clearFront: 600, priority: 2 } },
+  'coat-rack': { title: 'Шкаф прихожей', cat: 'hall', ...premium('coat-rack'), rules: { wall: true, clearFront: 700, tall: true, priority: 1 } },
+  'shoe-bench': { title: 'Обувница с банкеткой', cat: 'hall', ...premium('shoe-bench'), rules: { wall: true, clearFront: 600, priority: 2 } },
   mirror: { title: 'Зеркало', cat: 'hall', w: 600, h: 120, rules: { wall: true, clearFront: 300, priority: 5 } },
   stairs: { title: 'Лестничный марш', cat: 'hall', w: 1000, h: 3000, rules: { wall: true, clearFront: 1000, priority: 1 } },
 
@@ -157,13 +166,13 @@ export const FURNITURE = {
   'column-round': { title: 'Колонна круглая', cat: 'structure', w: 400, h: 400, structural: true, round: true, rules: { center: false, priority: 9 } },
 
   // --- Дополнительно: диваны/кресла ---
-  daybed: { title: 'Кушетка-лежанка', cat: 'seating', w: 1900, h: 900, rules: { wall: true, clearFront: 600, priority: 2 } },
-  recliner: { title: 'Кресло-реклайнер', cat: 'seating', w: 900, h: 1000, rules: { wall: true, clearFront: 600, priority: 6 } },
+  daybed: { title: 'Кушетка-лежанка', cat: 'seating', ...premium('daybed'), rules: { wall: true, clearFront: 600, priority: 2 } },
+  recliner: { title: 'Кресло-реклайнер', cat: 'seating', ...premium('recliner'), rules: { wall: true, clearFront: 600, priority: 6 } },
   'bean-bag': { title: 'Кресло-мешок', cat: 'seating', w: 800, h: 800, rules: { center: false, priority: 8 } },
-  'sofa-bed': { title: 'Диван-кровать', cat: 'seating', w: 2000, h: 1000, rules: { wall: true, clearFront: 700, priority: 1 } },
+  'sofa-bed': { title: 'Диван-кровать', cat: 'seating', ...premium('sofa-bed'), rules: { wall: true, clearFront: 700, priority: 1 } },
 
   // --- Кровати ---
-  'bed-queen': { title: 'Кровать Queen 1400', cat: 'beds', w: 1400, h: 2000, rules: { wall: true, clearSides: 700, priority: 1 } },
+  'bed-queen': { title: 'Кровать Queen 1400', cat: 'beds', ...premium('bed-queen'), rules: { wall: true, clearSides: 700, priority: 1 } },
 
   // --- Столы ---
   'desk-l': { title: 'Угловой письменный стол', cat: 'tables', w: 1600, h: 1400, rules: { wall: true, clearFront: 700, priority: 5 } },
@@ -208,7 +217,7 @@ export const FURNITURE = {
   printer: { title: 'Принтер/МФУ', cat: 'office', w: 500, h: 450, rules: { center: false, priority: 6 } },
 
   // --- Детская ---
-  'kids-bed': { title: 'Детская кровать', cat: 'kids', w: 900, h: 1700, rules: { wall: true, clearSides: 600, priority: 1 } },
+  'kids-bed': { title: 'Детская кровать с рамой', cat: 'kids', ...premium('kids-bed'), rules: { wall: true, clearSides: 600, priority: 1 } },
   'changing-table': { title: 'Пеленальный столик', cat: 'kids', w: 800, h: 600, rules: { wall: true, clearFront: 600, priority: 3 } },
   'toy-box': { title: 'Ящик для игрушек', cat: 'kids', w: 800, h: 450, rules: { wall: true, clearFront: 400, priority: 5 } },
   'kids-desk': { title: 'Парта', cat: 'kids', w: 1000, h: 550, rules: { wall: true, clearFront: 700, priority: 4 } },

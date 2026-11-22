@@ -50,12 +50,14 @@ export function terrainSection() {
     }
   }
   const floorAuto = house ? formatElevation(house.floorAuto) : '';
+  const relativeDatum = state.project.envelope?.zeroAboveGround != null;
+  const floorShown = relativeDatum && house ? house.floorZ : terrain?.floorZ;
   return `
     <h3>Рельеф</h3>
     <div class="prop-block" id="terrainBlock">
       ${rows.join('\n')}
-      ${s ? `<label class="prop-field"><span>Отметка пола 1 этажа (±0.000), м</span>
-        <input id="floorZ" type="text" inputmode="decimal" placeholder="${floorAuto ? `авто: ${floorAuto}` : 'авто — средняя под домом'}" value="${terrain.floorZ != null ? formatElevation(terrain.floorZ) : ''}"></label>
+      ${s ? `<label class="prop-field"><span>Абсолютный ±0.000 по съёмке, м</span>
+        <input id="floorZ" type="text" inputmode="decimal" placeholder="${floorAuto ? `авто: ${floorAuto}` : 'авто — средняя под домом'}" value="${floorShown != null ? formatElevation(floorShown) : ''}"></label>
       <label class="prop-field"><span>Шаг горизонталей</span>
         <select id="contourStep">${STEPS.map((v) => `<option value="${v}" ${v === step ? 'selected' : ''}>${(v / 1000).toLocaleString('ru-RU')} м</option>`).join('')}${STEPS.includes(step) ? '' : `<option value="${step}" selected>${(step / 1000).toLocaleString('ru-RU')} м</option>`}</select></label>
       <div class="check-grid">
@@ -103,7 +105,12 @@ export function bindTerrainSection(panel) {
     const raw = String(e.target.value).trim();
     const z = raw ? parseElevationM(raw) : null;
     if (raw && z == null) { toast('Отметка пола — в метрах, например 123.60; пусто — авто'); return; }
-    mutate(() => { site.terrain.floorZ = z; });
+    mutate(() => {
+      site.terrain.floorZ = z;
+      // Ввод абсолютной отметки переключает посадку из относительного режима.
+      state.project.envelope.zeroAboveGround = null;
+      state.project.envelope.groundReferenceZ = null;
+    });
   });
   q('contourStep')?.addEventListener('change', (e) => {
     mutate(() => { site.terrain.contourStep = Number(e.target.value) || 500; });

@@ -14,6 +14,7 @@ import { isFixedSizeComp } from './composite.js';
 import { furniture3d } from './furniture3d.js';
 import { normalizeLayoutBrief } from './layout-brief.js';
 import { createItem, levelProject, roomCeiling } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import { roomContainsPoint, roomPolygon } from './room-shape.js';
 import {
   deriveWalls, doorLink, doorSwingRect, doorSymbol, openingOwnerId, openingRect,
@@ -184,7 +185,7 @@ function openingRecord(project, opening, walls, level) {
   const single = type === 'hinged_door' && (opening.type || 'single') === 'single';
   const symbol = single ? doorSymbol(project, opening, walls) : null;
   const swing = type === 'hinged_door' ? doorSwingRect(project, opening, walls) : null;
-  const height = opening.height ?? (opening.kind === 'door' ? 2100 : 1500);
+  const height = openingHeight(opening, level);
   const result = {
     id: opening.id,
     kind: type,

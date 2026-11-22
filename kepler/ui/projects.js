@@ -23,7 +23,8 @@ import {
   currentProjectName, PROJECT_NAME_EVENT, syncProjectNameUi,
 } from './project-name.js';
 import { state } from './state.js';
-import { closeStartMenu, openStartMenu } from './start-menu.js';
+import { closeStartMenu, openStartMenu, rememberEditor } from './start-menu.js';
+import { shouldUseRemoteProject } from './startup-cloud.js';
 import {
   GUEST_STORAGE_SCOPE, getScopedItem, getStorageScope, setScopedItem,
 } from './storage-scope.js';
@@ -919,26 +920,62 @@ async function activateLoadedProject(pid, lease, loaded, name = null, { localBac
   }
 }
 
-export async function continueCurrentProject() {
-  if (!state.pid) { unlockEditor(); closeStartMenu(); return true; }
+export async function continueCurrentProject({ reloading = false, savedAt = null, pid = state.pid, restoreTab } = {}) {
+  if (loginGateActive()) return false;
+  if (!pid) { unlockEditor(); closeStartMenu(); return true; }
   try {
-    if (!backend) backend = await getBackend();
+    if (!backend || (account.provider === 'firebase' && account.signedIn && !usesEditLease())) backend = await getBackend();
+    if (account.signedIn && (backend.uid !== account.user?.uid || (account.provider === 'firebase' && !usesEditLease()))) {
+      throw new Error('Нет связи с хранилищем этого аккаунта');
+    }
   } catch (error) {
     toast(`Не удалось открыть облако: ${projectErrorText(error)}`, true);
     return false;
   }
-  if (!usesEditLease()) { unlockEditor(); closeStartMenu(); return true; }
-  const pid = state.pid;
+  const otherProject = pid !== state.pid;
+  if (!usesEditLease() && !otherProject) { unlockEditor(); closeStartMenu(); return true; }
   let localText = null;
   let candidateLease = null;
-  try { localText = serializeProject(state.project, { pretty: false }); } catch { /* загрузка ниже покажет ошибку */ }
+  if (!otherProject) {
+    try { localText = serializeProject(state.project, { pretty: false }); } catch { /* загрузка ниже покажет ошибку */ }
+  }
   try {
-    const { lease } = await acquireProjectLease(pid, { kind: 'occupied' });
-    if (!lease) return false;
+    const { lease, contended } = await acquireProjectLease(pid, { kind: 'occupied' });
+    if (usesEditLease() && !lease) return false;
     candidateLease = lease;
     setEditLockBusy(true, 'Загружаем последнюю модель из облака…');
-    const loaded = await loadLatestServerProject(pid, null, { fallbackText: localText });
-    await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup: localText });
+    const loaded = lease ? await loadLatestServerProject(pid, null, { fallbackText: localText }) : await loadVersion(backend.db, backend.root, pid);
+    if (otherProject) {
+      // Общий автосейв принадлежит другой вкладке. Открываем только
+      // сохранённый проект по ID этой вкладки. Запишем его после первой правки.
+      const previous = state.project;
+      const previousPid = state.pid;
+      const project = deserializeProject(loaded.text);
+      state.pid = pid;
+      try { restoreTab(project); }
+      catch (error) {
+        state.pid = previousPid;
+        restoreTab(previous);
+        throw error;
+      }
+      if (lease) startActiveEditor(pid, lease); else unlockEditor();
+      fitView();
+      closeStartMenu();
+      return true;
+    }
+    const remoteAt = loaded.version?.at || loaded.meta?.updatedAt;
+    const matchesRemote = !loaded.localOnly && localText === loaded.text;
+    // При обычном F5 последняя локальная правка может ещё ожидать отправки.
+    // После подтверждения lease сохраняем её в тот же проект. При передаче
+    // с другого устройства действует обычная защита конфликтующих версий.
+    if (reloading && !contended && (matchesRemote || (savedAt && !shouldUseRemoteProject(state.project, savedAt, remoteAt)))) {
+      startActiveEditor(pid, lease);
+      closeStartMenu();
+      if (!matchesRemote) scheduleCloudDraft(localText, { immediate: true });
+    } else {
+      const backup = !reloading || contended || !savedAt ? localText : null;
+      await activateLoadedProject(pid, lease, loaded, loaded.meta?.name, { localBackup: backup });
+    }
     return true;
   } catch (error) {
     await releaseCandidateLease(pid, candidateLease);
@@ -1548,6 +1585,7 @@ async function refreshBackend({ restartWatch = true } = {}) {
 }
 
 export async function openProjects() {
+  rememberEditor(false);
   el('projectsScreen').hidden = false;
   el('projectsList').innerHTML = '<p class="hint">Загрузка…</p>';
   account = await getAccountState();
@@ -1557,11 +1595,6 @@ export async function openProjects() {
 }
 
 export async function openProjectChooser(options = {}) {
-  if (options.initial && !options.broken && developmentGuestAllowed()) {
-    try {
-      if (sessionStorage.getItem('kepler-startup-chosen') === '1') return;
-    } catch { /* режим без sessionStorage */ }
-  }
   openStartMenu(options);
   renderAccount();
   if (loginGateActive()) {
@@ -1575,6 +1608,7 @@ export async function openProjectChooser(options = {}) {
 export function closeProjects(force = false) {
   if ((projectActionBusy || authAction) && !force) return;
   el('projectsScreen').hidden = true;
+  if (el('startScreen').hidden && !state.editLocked && !loginGateActive()) rememberEditor(true);
   stopWatching();
 }
 

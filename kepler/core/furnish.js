@@ -443,10 +443,27 @@ export function arrangeRoom(project, room, walls) {
 
   const anchors = {}; // kind -> {slot, kind}
 
+  // Парные предметы ставятся сразу после своей опоры. Так тумбы и стулья
+  // получают законные места раньше шкафов и прочей мебели с меньшим
+  // приоритетом, а не пытаются вклиниться в уже занятую комнату в самом конце.
+  const placeByAnchor = (def) => {
+    const anchorKind = def.rules.pairWith.find((kind) => anchors[kind]);
+    if (!anchorKind) return null;
+    const spots = pairSlots(def.kind, def, anchors[anchorKind], ctx);
+    for (const spot of spots) {
+      if (!insideRoom(spot.rect, ctx.inner)) continue;
+      if (collides(spot.rect) || hitsDoor(spot.rect)) continue;
+      commit(def, spot);
+      return true;
+    }
+    rejected.push({ kind: def.kind, title: def.title, reason: `Рядом с опорным предметом нет места для «${def.title}»` });
+    return false;
+  };
+
   for (const def of descriptors) {
-    // Парные предметы (тумбочки, стулья) ждут опорный.
+    // Парные предметы (тумбочки, стулья) идут сразу за уже поставленной опорой.
     if (def.rules.pairWith) {
-      pairQueue.push(def);
+      if (placeByAnchor(def) === null) pairQueue.push(def);
       continue;
     }
     let result;
@@ -472,25 +489,13 @@ export function arrangeRoom(project, room, walls) {
 
   // Парные предметы: к кровати/столу, по свободным местам рядом.
   for (const def of pairQueue) {
-    const anchorKind = def.rules.pairWith.find((k) => anchors[k]);
-    if (!anchorKind) {
+    if (placeByAnchor(def) === null) {
       rejected.push({
         kind: def.kind,
         title: def.title,
         reason: `«${def.title}» ставится рядом с опорным предметом (${def.rules.pairWith.map((k) => FURNITURE[k]?.title || k).join(' / ')}) — добавьте его`,
       });
-      continue;
     }
-    const spots = pairSlots(def.kind, def, anchors[anchorKind], ctx);
-    let placed = false;
-    for (const spot of spots) {
-      if (!insideRoom(spot.rect, ctx.inner)) continue;
-      if (collides(spot.rect) || hitsDoor(spot.rect)) continue;
-      commit(def, spot);
-      placed = true;
-      break;
-    }
-    if (!placed) rejected.push({ kind: def.kind, title: def.title, reason: `Рядом с опорным предметом нет места для «${def.title}»` });
   }
 
   return rejected;

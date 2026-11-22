@@ -26,12 +26,19 @@ const FACADE_VIEWS = Object.freeze([
   Object.freeze({ id: 'elev-E', name: 'Фасад Восток' }),
 ]);
 
+const AUTO_ROOF_LABELS = Object.freeze({
+  flat: 'Плоская',
+  shed: 'Односкатная',
+  gable: 'Двускатная',
+  hip: 'Вальмовая',
+});
+
 function normalizedStatus(value) {
   const status = String(value || 'unknown').toLocaleLowerCase('ru-RU');
   if (['conflict', 'blocked', 'error', 'fail', 'invalid'].includes(status)) return 'conflict';
   if (['attention', 'warning', 'warn', 'partial', 'candidate', 'automatic'].includes(status)) return 'attention';
   if (['observed', 'fact', 'verified', 'checked', 'ready', 'ok', 'pass', 'done',
-    'available', 'explicit', 'not-required'].includes(status)) return 'observed';
+    'available', 'explicit', 'linked', 'not-required'].includes(status)) return 'observed';
   return 'unknown';
 }
 
@@ -154,6 +161,20 @@ function roofRows(report, project) {
   const section = reportSection(report, ['roofs', 'roof'], ['roofs', 'roof']);
   const rows = Array.isArray(section) ? section
     : array(section?.records || section?.items || section?.rows || section?.roofs);
+  if (!rows.length && section?.autoLinked) {
+    const type = AUTO_ROOF_LABELS[section.autoType] || 'Связанная';
+    const pitch = section.autoType === 'flat' || !finite(section.autoPitchDeg)
+      ? '' : ` · ${number(section.autoPitchDeg, 0)}°`;
+    return array(project?.levels).filter((level) => array(level?.rooms).length).map((level) => ({
+      id: `auto-roof:${level.id}`,
+      name: `${type} автокровля`,
+      level: level.name || level.id,
+      vertices: 0,
+      thickness: section.autoThicknessMm,
+      status: 'observed',
+      note: `Связана с верхним контуром${pitch}`,
+    }));
+  }
   const source = rows.length ? rows : array(project?.roofs);
   return source.map((roof, index) => ({
     id: String(roof?.id || `roof-${index + 1}`),
@@ -169,7 +190,7 @@ function roofRows(report, project) {
 function roofsHtml(report, project) {
   const rows = roofRows(report, project);
   if (!rows.length) {
-    return '<p class="home-envelope-empty">Явная кровля не задана. Автоматическая крышка 3D не считается выбранным решением кровли.</p>';
+    return '<p class="home-envelope-empty">Кровля не задана. Включите автоматическую оболочку или создайте ручную крышу.</p>';
   }
   return `<ul class="home-envelope-roofs">${rows.map((roof) => `<li data-status="${escapeHtml(roof.status)}" data-home-envelope-roof="${escapeHtml(roof.id)}">
     <div><strong>${escapeHtml(roof.name)}</strong><span>${escapeHtml(STATUS_LABELS[roof.status])}</span></div>
@@ -312,7 +333,7 @@ export function homeEnvelopeHtml(project, options = {}) {
         ${levelsHtml(report, project)}
       </section>
       <section class="home-envelope-card" data-home-envelope-section="roofs" data-status="${roofs.length ? 'observed' : 'unknown'}" aria-labelledby="homeEnvelopeRoofsTitle">
-        <header><div><h2 id="homeEnvelopeRoofsTitle">Явные кровли</h2><p>${roofs.length ? `${roofs.length} в модели` : 'Не заданы'}</p></div><span>${roofs.length ? 'По модели' : 'Не задано'}</span></header>
+        <header><div><h2 id="homeEnvelopeRoofsTitle">Кровли</h2><p>${roofs.length ? `${roofs.length} в модели` : 'Не заданы'}</p></div><span>${roofs.length ? 'По модели' : 'Не задано'}</span></header>
         ${roofsHtml(report, project)}
         <button type="button" data-home-envelope-action="open-roof-plan">Открыть план крыши</button>
       </section>

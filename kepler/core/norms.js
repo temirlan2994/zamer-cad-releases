@@ -14,6 +14,7 @@ import { isOpenRoom, isShaft, roomType } from './catalog.js';
 import { furnitureIssues } from './clearance.js';
 import { insolationReport } from './insolation.js';
 import { DEFAULT_SLAB, levelProject, roomCeiling, sortedLevels } from './model.js';
+import { openingHeight } from './opening-preset.js';
 import { roomContainsPoint, roomRects } from './room-shape.js';
 import { roomNetAreaM2 } from './rooms.js';
 import { eatFailText, overlapVerdicts, trimByBridge } from './v7/eat-bridge.js';
@@ -72,7 +73,7 @@ const windowGlass = (project, roomId, walls) => {
   const w = hosted ? (walls || deriveWalls(project)) : null;
   return project.openings
     .filter((o) => o.kind === 'window' && (o.host ? openingOwnerId(project, o, w) : o.roomId) === roomId)
-    .reduce((s, o) => s + (o.width * (o.height ?? 1500)) / 1e6, 0);
+    .reduce((s, o) => s + (o.width * openingHeight(o, project.levels?.find((l) => l.id === project.activeLevel))) / 1e6, 0);
 };
 
 // Проверки одной комнаты: [{ kind, ok, text }].

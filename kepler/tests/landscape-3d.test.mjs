@@ -28,6 +28,7 @@ test('дерево: ствол и крона, верх кроны — на вы�
   const oak = createLandscapeObject('tree-oak', 5000, 3000, { id: 'ls-oak-3d', height: 12000 });
   const f = landscapeFaces(project(oak));
   assert.ok(f.length >= 40 && f.length <= 80, String(f.length));
+  assert.ok(f.every((face) => face.landscapeId === oak.id), 'каждая грань выбирает своё дерево');
   assert.ok(Math.abs(Math.max(...zs(f)) - 12000) < 1, 'верх кроны');
   assert.equal(Math.min(...zs(f)), 0, 'ствол от земли');
   const x = xs(f);

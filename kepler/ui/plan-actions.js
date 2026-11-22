@@ -223,6 +223,7 @@ export function computeOpeningParams(at) {
 
 // Проём на ручной стене: host { wallId, t }, t — центр от начала оси.
 function computeHostOpening(at, wall, openKind) {
+  if (wall.orient === 'a') return { error: 'Проёмы в стене под свободным углом пока недоступны' };
   const width = openKind === 'door' ? DOOR_WIDTH : WINDOW_WIDTH;
   const opening = applyOpeningPreset(createOpening(openKind, null, 0, 0, width), state.tool.preset);
   delete opening.side;

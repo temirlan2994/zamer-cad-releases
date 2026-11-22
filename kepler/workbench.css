@@ -33,7 +33,6 @@
 .topbar .brand { margin-right: 8px; font-size: 18px; letter-spacing: -.04em; }
 .topbar .brand > span:first-of-type { color: var(--desk-lime); }
 .topbar .brand .app-version { color: #d9e1db; border-color: #57675f; font-size: 10px; }
-.topbar .mode-tabs:not(:has(button)) { display: none; }
 .topbar :is(button, input):focus-visible { outline: 2px solid var(--desk-lime); outline-offset: 1px; }
 .topbar .project-divider { font-size: 19px; font-weight: 300; color: #8a9991; }
 .topbar .project-home, .topbar .top-actions > button, .topbar #exportBtn {

@@ -2,7 +2,7 @@
 // процессоре (без ID-буфера — работает и в запасном режиме canvas 2D). Чистый
 // модуль без DOM.
 //
-// Камера — как в ui/view3d.js: аксонометрия (ортографическая проекция) в
+// Камера — как в ui/view3d.js: ортографическая или перспективная проекция в
 // правой системе X = x, Y = −y, Z = z; луч и коробки — в осях дома (как сетка
 // core/mesh3d.js), поворот дома (building.rotation) на них не влияет.
 //
@@ -33,12 +33,26 @@ export function cameraBasis(cam, width, height) {
   const r = norm(cross(f, { x: 0, y: 0, z: 1 }));
   const u = cross(r, f);
   const focal = 0.95 * Math.min(width, height);
-  return { eye, f, r, u, focal, cx: width / 2, cy: height / 2, scale: focal / cam.dist };
+  return {
+    eye, f, r, u, focal, cx: width / 2, cy: height / 2,
+    scale: focal / cam.dist,
+    perspective: cam.projection === 'perspective',
+  };
 }
 
 // Луч из пикселя (px, py) в осях дома: { o, d } (d — единичный).
 export function screenRay(cam, width, height, px, py) {
   const c = cameraBasis(cam, width, height);
+  if (c.perspective) {
+    const sx = (px - c.cx) / c.focal;
+    const sy = (c.cy - py) / c.focal;
+    const d = norm({
+      x: c.f.x + c.r.x * sx + c.u.x * sy,
+      y: c.f.y + c.r.y * sx + c.u.y * sy,
+      z: c.f.z + c.r.z * sx + c.u.z * sy,
+    });
+    return { o: W(c.eye), d: W(d) };
+  }
   const sx = (px - c.cx) / c.scale;
   const sy = (c.cy - py) / c.scale;
   const o = {
@@ -53,18 +67,23 @@ export function screenRay(cam, width, height, px, py) {
 export function projectPoint(cam, width, height, p) {
   const c = cameraBasis(cam, width, height);
   const d = sub(W(p), c.eye);
-  return { x: c.cx + dot(d, c.r) * c.scale, y: c.cy - dot(d, c.u) * c.scale };
+  const scale = c.perspective ? c.focal / Math.max(1, dot(d, c.f)) : c.scale;
+  return { x: c.cx + dot(d, c.r) * scale, y: c.cy - dot(d, c.u) * scale };
 }
 
 // Сдвиг мыши (dx, dy, пиксели) → смещение вдоль оси axis (единичный вектор
 // в осях дома), мм: проекция на экранный образ оси. Ось «в глаз» — 0.
 export function axisDelta(cam, width, height, axis, dx, dy) {
-  const c = cameraBasis(cam, width, height);
-  const a = W(axis);
-  const sx = dot(a, c.r) * c.scale;
-  const sy = -dot(a, c.u) * c.scale;
+  const p0 = projectPoint(cam, width, height, W(cam.target));
+  const p1 = projectPoint(cam, width, height, {
+    x: W(cam.target).x + axis.x,
+    y: W(cam.target).y + axis.y,
+    z: W(cam.target).z + axis.z,
+  });
+  const sx = p1.x - p0.x;
+  const sy = p1.y - p0.y;
   const len2 = sx * sx + sy * sy;
-  if (len2 < 0.02 * c.scale * c.scale) return 0; // ось почти вдоль взгляда
+  if (len2 < 1e-8) return 0; // ось почти вдоль взгляда
   return (dx * sx + dy * sy) / len2;
 }
 
@@ -216,8 +235,11 @@ export function pickWall(boxes, ray) {
 // мебель, лестницы, колонны и свободные стены — по своим граням (itemId),
 // перила — по граням перил (railing: { roomId, id }), крыши-плиты — по
 // граням плиты, края и парапета (roofId; core/roofs.js),
-// проёмы — по коробке пустоты. Перекрытия и кровля только заслоняют. Земля,
-// участок и ландшафт не участвуют. Побеждает ближайшее к камере попадание.
+// проёмы — по коробке пустоты, ландшафт — по граням конкретного объекта.
+// Перекрытия и ручная кровля только заслоняют. Связанная автокровля
+// пропускает выбор: готовый дом виден сразу, но интерьер остаётся доступен.
+// Земля и участок не выбираются.
+// Побеждает ближайшее к камере попадание.
 
 const OCCLUDERS = new Set(['slab', 'roof']);
 
@@ -230,7 +252,9 @@ export function pickFaces(faces) {
     if (f.kind === 'floor' && f.roomId) pick = { type: 'room', id: f.roomId, levelId: f.level };
     else if (f.itemId && (f.kind === 'furniture' || f.kind === 'stairs' || f.kind === 'wall')) pick = { type: 'item', id: f.itemId, levelId: f.level };
     else if (f.kind === 'railing' && f.railing) pick = { type: 'railing', roomId: f.railing.roomId, id: f.railing.id, levelId: f.level };
+    else if (f.autoRoofId) continue;
     else if (f.roofId && (f.kind === 'roof' || f.kind === 'parapet' || f.kind === 'fascia')) pick = { type: 'roof', id: f.roofId, levelId: f.level };
+    else if (f.landscapeId) pick = { type: 'landscape', id: f.landscapeId };
     else if (!OCCLUDERS.has(f.kind)) continue;
     const P = f.pts;
     if (!P || P.length < 3) continue;

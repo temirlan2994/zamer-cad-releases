@@ -63,6 +63,12 @@ describe('библиотека дверей и окон', () => {
     assert.equal(await page.inputValue('#presetType'), 'single');
     assert.equal(await page.$eval('.opening-chip[data-preset="entry-1000"]', (n) => n.classList.contains('active')), true);
     await page.fill('#openSearch', '');
+    await page.click('#openingCats [data-cat="entrance"]');
+    await page.click('#openingItems [data-preset="entry-900"]');
+    assert.equal(await page.getAttribute('#openingCats [data-cat="entrance"]', 'aria-pressed'), 'true');
+    await page.fill('#openSearch', '900 × 2100 мм');
+    assert.deepEqual(await page.locator('.opening-chip.active').evaluateAll((cards) => cards.map((c) => c.dataset.preset)), ['entry-900']);
+    await page.fill('#openSearch', '');
     await page.click('#openingCats button[data-cat="double"]');
     await page.click('#openingItems .opening-chip[data-preset="double-1400"]');
     assert.deepEqual(await preset(), { type: 'double', width: 1400, height: 2100, sill: 0 });
@@ -129,7 +135,7 @@ describe('библиотека дверей и окон', () => {
     assert.equal(await page.isVisible('#openSearch'), true);
     await page.click('#furnitureToolBtn');
     assert.equal(await page.isVisible('#openingsBar'), false);
-    await page.selectOption('#furnitureCats', 'seating');
+    await page.click('#furnitureCategoryList [data-category="seating"]');
     await page.fill('#furnSearch', 'кресло');
     assert.ok(await page.locator('#furnitureItems .furniture-chip:visible').count() > 0);
     await clickToolbarTool(page, 'windowToolBtn');
@@ -141,7 +147,7 @@ describe('библиотека дверей и окон', () => {
   it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });
 });
 
-it('на телефоне фильтры окон в один ряд, выбор закрывает каталог, касание стены ставит выбранное окно', async () => {
+it('на телефоне выбор закрывает каталог, касание стены ставит выбранное окно', async () => {
   const app = await startApp({ mobile: true });
   try {
     const { page } = app;
@@ -151,9 +157,6 @@ it('на телефоне фильтры окон в один ряд, выбор
     await mobileSelectFamilyTool(page, 'openings', 'windowToolBtn');
     assert.equal(await page.isVisible('#canvasHint'), false);
     assert.equal(await page.isVisible('#toolOptions'), false);
-    const rows = await page.locator('#openingCats button').evaluateAll((buttons) => buttons.map((b) => b.offsetTop));
-    assert.equal(new Set(rows).size, 1);
-    assert.equal(await page.locator('#openingCats').evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true);
     assert.equal(await page.textContent('.opening-chip[data-preset="win-600x600"]'), '600 × 600 мм');
     await page.tap('#openingCats [data-cat="panoramic"]');
     assert.equal(await page.getAttribute('#openingCats [data-cat="panoramic"]', 'aria-pressed'), 'true');

@@ -5,6 +5,7 @@
 import { boxFaces, wallZRange } from '../core/mesh3d.js';
 import { fitOpeningOffset } from '../core/opening-spacing.js';
 import { lowerOpeningTargets, snapOpeningToLower } from '../core/opening-snap3d.js';
+import { openingHeight } from '../core/opening-preset.js';
 import { openingPosAt, openingRect, setOpeningPos } from '../core/walls.js';
 import { toast } from './dom.js';
 import { computeOpeningParams } from './plan-actions.js';
@@ -87,7 +88,8 @@ function buildCandidate(event) {
   const wallBottom = hit.box?.wallZ0 ?? (level?.elevation || 0);
   const wallTop = hit.box?.wallZ1 ?? wallBottom + (level?.height || 3000);
   const z0 = (level?.elevation || 0) + Number(opening.sill || 0);
-  const z1 = z0 + Number(opening.height || 0);
+  const effectiveHeight = openingHeight(opening, level);
+  const z1 = z0 + effectiveHeight;
   if (z0 < wallBottom - 0.5 || z1 > wallTop + 0.5) {
     return { valid: false, error: `Высота проёма не помещается в стену (${Math.round(wallTop - wallBottom)} мм)` };
   }
@@ -104,7 +106,7 @@ export function openingToolMove(event) {
   ghost = buildCandidate(event);
   const title = state.tool.openKind === 'door' ? 'Дверь' : 'Окно';
   const text = ghost.valid
-    ? `${title} ${ghost.opening.width} × ${ghost.opening.height} мм${ghost.opening.kind === 'window' ? ` · подоконник ${ghost.opening.sill}` : ''}${ghost.snap.label ? ` · ${ghost.snap.label}` : ''}`
+    ? `${title} ${ghost.opening.width} × ${Math.round(ghost.box.z1 - ghost.box.z0)} мм${ghost.opening.kind === 'window' ? ` · подоконник ${ghost.opening.sill}` : ''}${ghost.snap.label ? ` · ${ghost.snap.label}` : ''}`
     : ghost.error;
   env.label?.(text, event.clientX, event.clientY);
   env.redraw?.(false);
@@ -137,7 +139,8 @@ function selectedInfo() {
   const along = placed.absCenter;
   const half = opening.width / 2;
   const z0 = level.elevation + opening.sill;
-  const z1 = z0 + opening.height;
+  const effectiveHeight = openingHeight(opening, level);
+  const z1 = z0 + effectiveHeight;
   const point = (a, z) => (wall.orient === 'h' ? { x: a, y: cross, z } : { x: cross, y: a, z });
   const handles = [
     { id: 'from', point: point(along - half, (z0 + z1) / 2) },
@@ -222,7 +225,7 @@ export function startOpeningResize(event, handle = openingHandleAt(event)) {
   const info = handle.info;
   resize = {
     id: info.opening.id, part: handle.id, x0: event.clientX, y0: event.clientY,
-    before: snapshot(), start: structuredClone(info.opening), center: info.placed.absCenter,
+    before: snapshot(), start: { ...structuredClone(info.opening), height: openingHeight(info.opening, info.level) }, center: info.placed.absCenter,
     wall: info.wall, wallBottom: info.wallBottom, wallTop: info.wallTop, moved: false,
   };
   env.label?.('Тяните ручку · линии этажей ниже подсвечиваются привязкой · Shift — свободно', event.clientX, event.clientY);
@@ -276,6 +279,7 @@ export function moveOpeningResize(event) {
       if (snapped) { top = snapped.value; resize.guideId = snapped.target.id; label = `верх ${noun} · ${snapped.target.levelName}`; }
       top = clamp(top, Math.max(resize.start.sill + 300, resize.wallBottom + 300), resize.wallTop);
       opening.height = Math.round(top - resize.start.sill);
+      if (opening.kind === 'window') opening.heightMode = 'custom';
     } else {
       const fixedTop = resize.start.sill + resize.start.height;
       let sill = resize.start.sill + delta;
@@ -284,6 +288,7 @@ export function moveOpeningResize(event) {
       sill = clamp(sill, resize.wallBottom, fixedTop - 300);
       opening.sill = Math.round(sill);
       opening.height = Math.round(fixedTop - sill);
+      if (opening.kind === 'window') opening.heightMode = 'custom';
     }
   }
   resize.moved = true;

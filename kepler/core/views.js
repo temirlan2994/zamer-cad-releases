@@ -200,11 +200,13 @@ export function normalizeCam(c) {
   const out = { yaw: Math.round(yaw * 10000) / 10000, pitch: Math.round(clamp(pitch, -1.55, 1.55) * 10000) / 10000 };
   const dist = Number(c.dist);
   if (dist > 0 && Number.isFinite(dist)) out.dist = Math.round(dist);
-  if (c.roof === true) out.roof = true;
+  // Готовый дом на листе по умолчанию закрыт кровлей; false хранится явно,
+  // чтобы интерьерный 3D-вид не менялся после сохранения.
+  out.roof = c.roof !== false;
   return out;
 }
 
-export const camKey = (cam) => (cam ? `${cam.yaw}/${cam.pitch}/${cam.roof ? 1 : 0}` : 'axo');
+export const camKey = (cam) => (cam ? `${cam.yaw}/${cam.pitch}/${cam.roof !== false ? 1 : 0}` : 'axo');
 
 // ------------------------------------------------------------ номера видов
 //

@@ -25,10 +25,10 @@ import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { deriveWalls, openingRect } from './walls.js';
 import { buildDxf } from './zamer/dxf.js';
 import { pointInPolygon } from './zamer/geometry.js';
+import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
 
 export const SECTION_DXF_LAYER = { key: 'lsSection', name: 'LANDSCAPE_SECTION', color: 1 };
 const SLAB = 220; // перекрытие, мм
-const FOOTING = 300; // плита под домом, мм
 
 // Порядок рисования при равной глубине: засыпки → вода → покрытия → конструкции → дом → прочее → растения.
 const CAT_ORDER = { fill: 0, water: 1, cover: 2, built: 3, house: 4, object: 5, plant: 6 };
@@ -137,16 +137,20 @@ function subtractIntervals(a, b) {
 export function groundFn(project) {
   const model = terrainModel(project.site?.terrain);
   if (!model?.tris?.length) {
-    const fn = () => 0;
+    const zero = resolvedZeroAboveGround(project);
+    const fn = () => (zero == null ? 0 : -zero);
     fn.flat = true;
     return fn;
   }
   const house = houseTerrain(project, model);
   const avg = model.pts.reduce((t, p) => t + p.z, 0) / model.pts.length;
   const floorZ = house ? house.floorZ : (Number.isFinite(project.site.terrain.floorZ) ? project.site.terrain.floorZ : avg);
+  const relativeDatum = project.envelope?.zeroAboveGround != null;
+  const zero = relativeDatum ? resolvedZeroAboveGround(project, house) : null;
+  const reference = house?.groundReferenceZ ?? avg;
   const fn = (x, y) => {
     const z = interpolateZ(model, x, y, { clamp: true });
-    return (z ?? floorZ) - floorZ;
+    return relativeDatum ? (z ?? reference) - reference - zero : (z ?? floorZ) - floorZ;
   };
   fn.flat = false;
   return fn;
@@ -563,6 +567,10 @@ function houseSection(project, ctx) {
   if (!project.building) return;
   const levels = project.levels?.length ? sortedLevels(project) : [{ id: null, elevation: 0, height: 3000 }];
   const b = project.building;
+  const envelope = envelopeOf(project);
+  const terrainHouse = project.site?.terrain?.points?.length >= 3 ? houseTerrain(project) : null;
+  const zero = resolvedZeroAboveGround(project, terrainHouse);
+  const groundAt = groundFn(project);
   let anyCut = false;
   let topZ = 0;
   const footprintPolys = [];
@@ -619,7 +627,13 @@ function houseSection(project, ctx) {
       const [a, c] = clipS(seg);
       if (c - a < 1) continue;
       add({ id: `house:${lv.id || 0}:slab`, kind: 'house-slab', title: li === levels.length - 1 ? 'Дом' : '', cat: 'house', cut: true, depth: 0, shape: 'poly', mat: 'concrete', color: '#cfcac2', look: 'slab', pts: rect(X(a), X(c), z0 + H - SLAB, z0 + H), s0: a, s1: c });
-      if (li === 0) add({ id: 'house:footing', kind: 'house-slab', title: '', cat: 'house', cut: true, depth: 0, shape: 'poly', mat: 'concrete', color: '#cfcac2', look: 'slab', pts: rect(X(a), X(c), -FOOTING, 0), s0: a, s1: c });
+      if (li === 0 && envelope.foundation.enabled && zero != null) {
+        const minGround = footprintPolys.length
+          ? Math.min(...footprintPolys.flatMap((poly) => poly.map((point) => groundAt(point.x, point.y))))
+          : -zero;
+        const bottom = Math.min(z0, minGround) - envelope.foundation.depth;
+        add({ id: 'house:foundation', kind: 'house-slab', title: '', cat: 'house', cut: true, depth: 0, shape: 'poly', mat: 'concrete', color: '#9d9890', look: 'slab', pts: rect(X(a), X(c), bottom, z0), s0: a, s1: c });
+      }
     }
     if (merged.length) {
       const s = merged[0][0];

@@ -114,7 +114,7 @@ function buildGeometry(project, desc, cam = null) {
     return { desc, kind: 'lsection', prof, model: { w: s100.width * 100, h: s100.height * 100 } };
   }
   if (desc.kind === '3d') {
-    const faces = buildHouseMesh(project, { roof: Boolean(cam?.roof), site: false });
+    const faces = buildHouseMesh(project, { roof: cam?.roof !== false, site: false });
     if (!faces.length) return null;
     const proj = axoFaces(faces, cam);
     if (!proj.list.length) return null;
