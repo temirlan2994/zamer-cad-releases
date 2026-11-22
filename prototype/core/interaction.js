@@ -15,6 +15,11 @@ export function tapZoomMoveIntent(dx, dy, tolerance = 8) {
   return Math.abs(dy) >= Math.abs(dx) ? "zoom" : "gesture";
 }
 
+export function tapZoomScale(startScale, dy, pixelsPerDoubling = 110) {
+  if (![startScale, dy, pixelsPerDoubling].every(Number.isFinite) || startScale <= 0 || pixelsPerDoubling <= 0) return startScale;
+  return startScale * 2 ** (dy / pixelsPerDoubling);
+}
+
 export function normalizeDirectionalSnapModes(modes, preferred = "ortho") {
   const normalized = new Set(Array.from(modes || []).filter(Boolean));
   if (normalized.has("ortho") && normalized.has("polar")) {

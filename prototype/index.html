@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=312" />
+    <link rel="stylesheet" href="./styles.css?v=313" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -549,6 +549,10 @@
               <output id="projectTotalArea" aria-live="polite">0 м²</output>
               <small>Сумма всех нанесённых площадей проекта</small>
             </section>
+            <label class="project-gesture-setting" for="projectTapZoom">
+              <span><strong>Масштаб двойным тапом</strong><small>Вниз — увеличить, вверх — уменьшить · центр экрана сохраняется</small></span>
+              <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
+            </label>
             <div class="survey-field">
               <label for="annotationScaleSelect">Масштаб подписей</label>
               <select id="annotationScaleSelect" aria-describedby="annotationScaleScope"><option value="0.85">1:50</option><option value="1" selected>1:100</option><option value="1.15">1:150</option><option value="1.3">1:200</option></select>
@@ -656,7 +660,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=315"></script>
+    <script type="module" src="./app.js?v=316"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

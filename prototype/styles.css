@@ -1337,6 +1337,23 @@ button.project-card-open:active { background: var(--surface-2); }
 .project-area-summary > span { color: var(--muted); font-size: .8rem; font-weight: 650; }
 .project-area-summary > output { color: var(--text); font-size: 1.6rem; font-weight: 750; line-height: 1.15; }
 .project-area-summary > small { color: var(--muted); font-size: .75rem; }
+.project-gesture-setting {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 58px;
+  padding: 9px 11px;
+}
+.project-gesture-setting > span { display: grid; gap: 3px; min-width: 0; }
+.project-gesture-setting strong { font-size: .88rem; }
+.project-gesture-setting small { color: var(--muted); font-size: .72rem; line-height: 1.25; }
+.project-gesture-setting .layer-switch { flex: 0 0 auto; }
+.project-gesture-setting:has(input:focus-visible) { outline: 2px solid var(--readable-accent); outline-offset: 2px; }
 
 @media (max-width: 359px) {
   .project-top-actions { gap: 3px; }

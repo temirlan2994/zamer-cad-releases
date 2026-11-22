@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection,
-  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateKind, tapZoomMoveIntent } from "./interaction.js";
+  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateKind, tapZoomMoveIntent, tapZoomScale } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -36,6 +36,8 @@ test("double-tap drag starts one-finger zoom without a hold delay", () => {
   assert.equal(tapZoomMoveIntent(0, 9), "zoom");
   assert.equal(tapZoomMoveIntent(4, -9), "zoom");
   assert.equal(tapZoomMoveIntent(9, 4), "gesture");
+  assert.equal(tapZoomScale(1, 110), 2, "moving down zooms in after inversion");
+  assert.equal(tapZoomScale(1, -110), 0.5, "moving up zooms out after inversion");
 });
 
 test("Ortho and polar tracking are mutually exclusive like in AutoCAD", () => {

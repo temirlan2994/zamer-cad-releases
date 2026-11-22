@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=229";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=230";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -876,6 +876,7 @@ const state = {
   angleSide: null,
   annotationScale: 1,
   measurementSettings: normalizeMeasurementSettings(),
+  tapZoomEnabled: true,
   selectTool: "select",
   selectionFilter: "all",
 
@@ -2861,6 +2862,7 @@ function serializableProjectContent() {
     annotationLayers: 1,
     annotationScale: state.annotationScale,
     measurementSettings: { ...state.measurementSettings },
+    tapZoomEnabled: state.tapZoomEnabled,
     selectionFilter: state.selectionFilter,
     survey: state.survey,
     draft: acceptedSurveyDraft(),
@@ -2970,6 +2972,7 @@ function restoreProject(project) {
       if (state.visibleLayers.has("dimensions")) state.visibleLayers.add("text");
     }
     state.measurementSettings = normalizeMeasurementSettings(project.measurementSettings);
+    state.tapZoomEnabled = project.tapZoomEnabled !== false;
     setAnnotationScale(project.annotationScale, { save: false });
     exportScale.value = state.measurementSettings.printScale;
     if (project.theme === "light" || project.theme === "dark") {
@@ -11912,7 +11915,7 @@ function selectedEndPoint() {
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   const screen = getPointer(event);
-  if (pendingCanvasTap && !tapZoom) {
+  if (state.tapZoomEnabled && pendingCanvasTap && !tapZoom) {
     if (event.pointerType === "touch" && event.button === 0 &&
         event.timeStamp - pendingCanvasTap.event.timeStamp <= TAP_ZOOM_INTERVAL_MS &&
         pointDistance(pendingCanvasTap.screen, screen) <= DOUBLE_TAP_DISTANCE) {
@@ -12228,7 +12231,7 @@ function updateTapZoom(event, screen) {
     state.dimensionSnapHint = null;
     tapZoom.active = true;
   }
-  zoomAtScreen(tapZoom.screen, tapZoom.scale * 2 ** (-dy / TAP_ZOOM_PIXELS_PER_DOUBLING));
+  zoomAtScreen(centerScreen(), tapZoomScale(tapZoom.scale, dy, TAP_ZOOM_PIXELS_PER_DOUBLING));
   draw();
   return true;
 }
@@ -12405,7 +12408,7 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   const screen = getPointer(event);
-  if (!isSecondTap && event.pointerType === "touch" && event.button === 0 && !state.pointer.moved &&
+  if (state.tapZoomEnabled && !isSecondTap && event.pointerType === "touch" && event.button === 0 && !state.pointer.moved &&
       state.pointer.mode !== "ui" && event.timeStamp - state.pointerStartedAt < LONG_PRESS_SELECT_MS &&
       pointDistance(state.pointer.startScreen, screen) <= TAP_MOVE_TOLERANCE) {
     // A tap can place a point, so wait for the zoom gesture before applying it.
@@ -14539,6 +14542,7 @@ const projectSettingsForm = projectSettingsSheet.querySelector("form");
 const projectLengthUnit = projectSettingsSheet.querySelector("#projectLengthUnit");
 const projectPrintScale = projectSettingsSheet.querySelector("#projectPrintScale");
 const projectTotalArea = projectSettingsSheet.querySelector("#projectTotalArea");
+const projectTapZoom = projectSettingsSheet.querySelector("#projectTapZoom");
 const projectPrecisionFields = {
   precision: projectSettingsSheet.querySelector("#projectLengthPrecision"),
   anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
@@ -14569,6 +14573,7 @@ projectSettingsButton.addEventListener("click", () => {
   annotationScaleSelect.value = String(state.annotationScale);
   projectLengthUnit.value = settings.unit;
   projectPrintScale.value = settings.printScale;
+  projectTapZoom.checked = state.tapZoomEnabled;
   for (const [name, field] of Object.entries(projectPrecisionFields)) field.value = String(settings[name]);
   syncProjectTotalArea(settings);
   projectSettingsSheet.showModal();
@@ -14578,9 +14583,14 @@ projectSettingsForm.addEventListener("input", () => syncProjectTotalArea(project
 projectSettingsForm.addEventListener("submit", (event) => {
   event.preventDefault();
   state.measurementSettings = projectSettingsDraft();
+  state.tapZoomEnabled = projectTapZoom.checked;
+  if (!state.tapZoomEnabled) {
+    cancelPendingCanvasTap();
+    tapZoom = null;
+  }
   exportScale.value = state.measurementSettings.printScale;
   setAnnotationScale(annotationScaleSelect.value, { save: false });
-  markProjectDirty("measurement-settings");
+  markProjectDirty("project-settings");
   projectSettingsSheet.close();
   statusChip.textContent = "Настройки проекта применены";
 });
