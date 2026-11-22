@@ -4,13 +4,14 @@
 // объектные привязки работают через общий core/draw-snap.js.
 // Esc, Enter, двойной клик или клик в ту же точку — конец цепочки.
 
-import { addManualWall, wallAxisVerdict } from '../core/wall-manual.js';
+import { addManualWall, snapWallPoint, wallAxisVerdict } from '../core/wall-manual.js';
 import { createLoopRoom, findLoopAt, splitRoomByWall } from '../core/bound-rooms.js';
 import { wallClassThickness, wallRects } from '../core/walls.js';
 import { toast } from './dom.js';
 import { gridStep } from './snap.js';
 import { massSnapPoints } from './plan-masses.js';
-import { gridSnapPoints } from './plan-grids.js';
+import { activeGrids, gridExtentOf, gridPointTol, gridSnapPoints } from './plan-grids.js';
+import { wallCenterGuides, wallCenterSnapOpts } from './block-gesture.js';
 import { clearDrawSnap, snapAt } from './draw-snap-ui.js';
 import { state } from './state.js';
 import { mutate } from './store.js';
@@ -30,7 +31,43 @@ export function startWallTool() {
   state.selection = null;
 }
 
+// Подсветка координационной оси, на которую встала точка стены (render-axes.js).
+function wallGridGuides(snapRes) {
+  const out = [];
+  for (const [flag, at, kind] of [[snapRes.gridX, snapRes.snapX, 'x'], [snapRes.gridY, snapRes.snapY, 'y']]) {
+    if (!flag) continue;
+    const g = activeGrids().find((x) => x.kind === kind && Math.abs(x.at - at) < 0.5);
+    if (!g) continue;
+    const e = gridExtentOf(g);
+    out.push({ type: 'magnet', kind: 'align', axis: kind === 'x' ? 'v' : 'h', at: g.at, gridId: g.id, from: e.from, to: e.to });
+  }
+  return out;
+}
+
+// Магнит точки ручной стены к координационным осям и к центру/середине
+// соседних стен (core/wall-manual.js snapWallPoint). Работает поверх
+// свободного угла: срабатывает, только если ортогональная точка с магнитом
+// рядом с курсором; иначе null — остаётся обычная привязка snapAt.
+// Shift — без магнита. → { res, guides } | null.
+export function wallPointMagnet(plan, event, { prev = null, excludeId = null } = {}) {
+  if (event?.shiftKey) return null;
+  const res = snapWallPoint({
+    p: plan, prev,
+    walls: (state.walls || []).filter((w) => !excludeId || w.wallId !== excludeId),
+    manual: (state.project.walls || []).filter((w) => w.id !== excludeId),
+    gridPoints: gridSnapPoints(), gridTol: gridPointTol(),
+    tol: 12 / state.view.scale, grid: gridStep(), ...wallCenterSnapOpts(event),
+  });
+  if (!(res.gridX || res.gridY || res.centerX || res.centerY)) return null;
+  const reach = Math.max(12 / state.view.scale, gridPointTol());
+  if (Math.hypot(res.point.x - plan.x, res.point.y - plan.y) > reach) return null;
+  return { res, guides: [...wallGridGuides(res), ...wallCenterGuides(res)] };
+}
+
 function snapped(plan, event) {
+  const magnet = wallPointMagnet(plan, event, { prev: state.tool.start });
+  state.guides = magnet ? magnet.guides : [];
+  if (magnet) return magnet.res;
   const t = state.tool;
   const shapes = [];
   for (const wall of state.walls || []) {

@@ -13,7 +13,7 @@ import {
 } from '../core/walls.js';
 import { dragManualWallEnd } from '../core/wall-manual.js';
 import {
-  boundRoomClick, boundRoomHover, finishWallChain, wallToolClick, wallToolHover,
+  boundRoomClick, boundRoomHover, finishWallChain, wallPointMagnet, wallToolClick, wallToolHover,
 } from './wall-tool.js';
 import { fitOpeningOffset, snapOpeningOffset } from '../core/opening-spacing.js';
 import { pointInPolygon } from '../core/zamer/geometry.js';
@@ -1671,9 +1671,13 @@ export function bindCanvasInput() {
           points: [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }], closed: true,
         });
       }
-      const snapRes = snapAt(plan, event, {
+      let snapRes = snapAt(plan, event, {
         prev: fixed, points: [...massSnapPoints(), ...gridSnapPoints()], extraShapes: shapes, grid: gridStep(),
       });
+      // Магнит торца к оси и к центру/середине соседней стены, как у инструмента «Стена».
+      const magnet = wallPointMagnet(plan, event, { prev: fixed, excludeId: wall.id });
+      state.guides = magnet ? magnet.guides : [];
+      if (magnet) snapRes = magnet.res;
       const p = snapRes.point;
       state.gridSnapTag = snapRes.label ? { x: p.x, y: p.y, text: snapRes.label } : null;
       drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;

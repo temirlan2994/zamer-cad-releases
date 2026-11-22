@@ -194,6 +194,9 @@ describe('Стены и оси: привязка по центру стены', 
     // Ось тянут мышью (выше дома) — центр стены едет с ней.
     const from = await toClient(page, east, box.y0 - 900);
     const to = await toClient(page, east + 500, box.y0 - 900);
+    // Ось сначала выбирают отдельным кликом, затем тянут.
+    await page.mouse.click(from.x, from.y);
+    assert.deepEqual(await page.evaluate(() => window.__kepler.state.selection), { type: 'grid', id: g.id });
     await drag(page, from, to);
     const at2 = (await grid(page, g.id)).at; // шаг сетки при сдвиге
     assert.ok(at2 > east + 300, `ось сдвинута: ${at2}`);
