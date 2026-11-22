@@ -265,4 +265,16 @@ export function bindView() {
     previousMode = state.modeName;
     requestDraw();
   }).observe(canvas);
+  // Смена режима без изменения размера холста не вызывает наблюдателя, и
+  // previousMode оставался прежним: первая же подсказка в новом режиме
+  // (например, «Линия — тянуть ребро» в «Ландшафте») сдвигала чертёж из-под
+  // указателя. Через два кадра — когда resize от самой смены уже обработан —
+  // принимаем текущий режим и положение холста за исходные.
+  document.addEventListener('kepler:view', () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      previousHeight = options.offsetHeight;
+      previousTop = canvas.getBoundingClientRect().top;
+      previousMode = state.modeName;
+    }));
+  });
 }
