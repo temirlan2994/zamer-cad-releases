@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=228";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent } from "./core/interaction.js?v=229";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -75,6 +75,10 @@ function cadIcon(name) {
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>',
     polyline: '<path d="m3 18 6-12 6 12 6-12"/>',
     circle: '<circle cx="12" cy="12" r="8"/>',
+    circleCenter: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.5"/><path d="m12 12 5.7-5.7"/>',
+    circleDiameter: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><circle cx="4" cy="12" r="1.2"/><circle cx="20" cy="12" r="1.2"/>',
+    circleThree: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="4" r="1.2"/><circle cx="5.1" cy="16" r="1.2"/><circle cx="18.9" cy="16" r="1.2"/>',
+    circleTangent: '<path d="M3 5h18M3 19h18"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="19" r="1.2"/>',
     arc: '<path d="M3 18a9 9 0 0 1 18 0"/>',
     rectangle: '<rect x="3" y="5" width="18" height="14" rx="1"/>',
     block: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9zm0 9 8-4.5M12 12 4 7.5m8 4.5v9"/>',
@@ -486,6 +490,7 @@ const cursorCoordinateY = document.getElementById("cursorCoordinateY");
 const cursorCoordinateUnit = document.getElementById("cursorCoordinateUnit");
 const projectOrigin = { x: 0, y: 0 };
 const shell = document.querySelector(".app-shell");
+const workspace = document.querySelector(".workspace");
 const centerCursor = document.querySelector(".center-cursor");
 const quickMeasureUi = Object.fromEntries(["Button", "Panel", "Mode", "Method", "Finish", "Close", "Value", "Hint", "Result"]
   .map((key) => [key.toLowerCase(), document.getElementById(`quickMeasure${key}`)]));
@@ -531,6 +536,7 @@ const radialModes = document.getElementById("radialModes");
 const chainControls = document.getElementById("chainControls");
 const circleControls = document.getElementById("circleControls");
 const circleConstruction = document.getElementById("circleConstruction");
+const circleModeButtons = [...circleConstruction.querySelectorAll("[data-circle-mode]")];
 const circleTangentForm = document.getElementById("circleTangentForm");
 const circleTangentRadius = document.getElementById("circleTangentRadius");
 const circleTangentUnit = document.getElementById("circleTangentUnit");
@@ -3838,6 +3844,27 @@ function renderFrame() {
   drawDimensionSnapHint(c);
   drawCursorSnap(c);
   normalizeDynamicText();
+  syncCornerMetricsLayout();
+}
+
+function syncCornerMetricsLayout() {
+  if (cornerMetrics.hidden || !workspace) {
+    cornerMetrics.style.removeProperty("--corner-metrics-top");
+    return;
+  }
+  const metrics = cornerMetrics.getBoundingClientRect();
+  if (!metrics.width) {
+    cornerMetrics.style.removeProperty("--corner-metrics-top");
+    return;
+  }
+  const workspaceRect = workspace.getBoundingClientRect();
+  const panels = [...workspace.querySelectorAll(":scope > :is(.draw-tool-menu, .line-command-panel, .quick-measure-panel, .dimension-assist, .annotation-context, .plan-annotation-actions)")]
+    .filter((panel) => !panel.hidden && panel !== cornerMetrics && panel.getClientRects().length)
+    .map((panel) => panel.getBoundingClientRect())
+    .filter((rect) => rect.top < workspaceRect.top + Math.min(workspaceRect.height / 2, 240));
+  const defaultTop = shell.classList.contains("drafting-keyboard-compact") ? 24 : 38;
+  const top = nonOverlappingPanelTop(metrics, panels, workspaceRect.top, defaultTop);
+  cornerMetrics.style.setProperty("--corner-metrics-top", `${top}px`);
 }
 
 function shouldGhostEntityForCommand(entity) {
@@ -6788,7 +6815,9 @@ function syncCircleControls() {
   circleTangentForm.hidden = !active || state.circleMode !== "tangent" || state.drawing?.circlePicks?.length !== 2;
   if (circleTangentForm.hidden && !circleTangentError.hidden) showCircleTangentError("");
   if (!active) return;
-  if (circleConstruction.value !== state.circleMode) circleConstruction.value = state.circleMode;
+  for (const button of circleModeButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.circleMode === state.circleMode));
+  }
   const unit = projectUnit(state.measurementSettings).label;
   if (circleTangentUnit.textContent !== unit) {
     circleTangentUnit.textContent = unit;
@@ -6933,8 +6962,10 @@ function undoCircleConstruction() {
   return true;
 }
 
-circleConstruction.addEventListener("change", () => {
-  state.circleMode = circleConstruction.value;
+circleConstruction.addEventListener("click", (event) => {
+  const mode = event.target.closest("[data-circle-mode]")?.dataset.circleMode;
+  if (!mode || mode === state.circleMode) return;
+  state.circleMode = mode;
   setTool("circle");
   canvas.focus({ preventScroll: true });
 });

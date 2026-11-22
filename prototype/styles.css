@@ -1846,20 +1846,50 @@ button.project-card-open:active { background: var(--surface-2); }
   left: 10px;
   max-width: calc(100% - 20px);
   position: absolute;
+  width: min(360px, calc(100% - 20px));
   z-index: 12;
 }
-.circle-controls select, .circle-controls form, .circle-controls button {
+.circle-controls form, .circle-controls button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 9px;
   color: var(--text);
   min-height: 44px;
 }
-.circle-controls select { font: inherit; max-width: 100%; padding-inline: 8px; }
+.circle-construction-modes {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.circle-construction-modes button {
+  align-content: center;
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  min-width: 0;
+  padding: 3px 2px;
+  touch-action: manipulation;
+}
+.circle-construction-modes button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  border-color: var(--accent);
+  color: var(--readable-accent);
+}
+.circle-construction-modes .cad-icon { height: 22px; width: 22px; }
+.circle-construction-modes small {
+  font-size: .61rem;
+  font-weight: 700;
+  line-height: 1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .circle-controls form:not([hidden]) { align-items: center; display: flex; gap: 5px; padding: 3px; }
 .circle-controls form label { align-items: center; display: flex; gap: 4px; padding-inline: 4px; }
 .circle-controls input { background: transparent; color: var(--text); font-size: 1rem; min-height: 44px; width: 90px; }
-.circle-controls button { color: var(--readable-accent); font-size: 1.2rem; min-width: 44px; }
+.circle-controls form button { color: var(--readable-accent); min-width: 44px; }
+.circle-controls form button .cad-icon { height: 22px; width: 22px; }
 .circle-controls p { background: var(--surface); border-radius: 6px; color: var(--text); font-size: .78rem; margin: 0; max-width: 265px; padding: 5px 8px; }
 .circle-controls[hidden], .circle-controls [hidden] { display: none; }
 
@@ -1945,7 +1975,7 @@ button.project-card-open:active { background: var(--surface-2); }
   pointer-events: none;
   position: absolute;
   right: 10px;
-  top: 38px;
+  top: var(--corner-metrics-top, 38px);
   z-index: 12;
 }
 
@@ -1953,7 +1983,7 @@ button.project-card-open:active { background: var(--surface-2); }
   grid-row: 2;
 }
 
-.app-shell.drafting-keyboard-compact .corner-metrics { top: 24px; }
+.app-shell.drafting-keyboard-compact .corner-metrics { top: var(--corner-metrics-top, 24px); }
 .app-shell.drafting-keyboard-compact .line-point-assist { display: none; }
 .app-shell.drafting-keyboard-compact .status-chip { top: 5px; }
 .app-shell.drafting-keyboard-compact .save-indicator { min-height: 18px; padding-block: 1px; top: 3px; }

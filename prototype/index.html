@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=311" />
+    <link rel="stylesheet" href="./styles.css?v=312" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -369,15 +369,15 @@
           <button id="dimensionLinkCancel" type="button" hidden>Отмена привязки</button>
         </div>
         <section id="circleControls" class="circle-controls" aria-label="Построение круга" hidden>
-          <select id="circleConstruction" aria-label="Способ построения круга">
-            <option value="center">Центр и радиус</option>
-            <option value="diameter">Диаметр · две точки</option>
-            <option value="three">По трём точкам</option>
-            <option value="tangent">Две касательные и радиус</option>
-          </select>
+          <div id="circleConstruction" class="circle-construction-modes" role="group" aria-label="Способ построения круга">
+            <button type="button" data-circle-mode="center" aria-label="Центр и радиус" title="Центр и радиус" aria-pressed="true"><span data-line-icon="circleCenter" aria-hidden="true"></span><small>Центр</small></button>
+            <button type="button" data-circle-mode="diameter" aria-label="Диаметр по двум точкам" title="Диаметр по двум точкам" aria-pressed="false"><span data-line-icon="circleDiameter" aria-hidden="true"></span><small>Диаметр</small></button>
+            <button type="button" data-circle-mode="three" aria-label="Круг по трём точкам" title="Круг по трём точкам" aria-pressed="false"><span data-line-icon="circleThree" aria-hidden="true"></span><small>3 точки</small></button>
+            <button type="button" data-circle-mode="tangent" aria-label="Две касательные и радиус" title="Две касательные и радиус" aria-pressed="false"><span data-line-icon="circleTangent" aria-hidden="true"></span><small>Касат.</small></button>
+          </div>
           <form id="circleTangentForm" novalidate hidden>
             <label>R <input id="circleTangentRadius" type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="Радиус касательного круга, мм" aria-describedby="circleTangentError" /> <span id="circleTangentUnit">мм</span></label>
-            <button type="submit" aria-label="Построить касательный круг" title="Построить касательный круг">✓</button>
+            <button type="submit" aria-label="Построить касательный круг" title="Построить касательный круг"><span data-line-icon="check" aria-hidden="true"></span></button>
           </form>
           <p id="circleTangentError" role="status" hidden></p>
         </section>
@@ -656,7 +656,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=314"></script>
+    <script type="module" src="./app.js?v=315"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

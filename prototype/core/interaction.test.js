@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection,
-  normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateKind, tapZoomMoveIntent } from "./interaction.js";
+  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateKind, tapZoomMoveIntent } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -91,4 +91,17 @@ test("a continuation intersects every configured polar ray before either guide c
   });
   assert.equal(guideDirectionsParallel(horizontal, { ux: -1, uy: 0 }), true);
   assert.equal(guideDirectionsParallel(horizontal, { ux: Math.SQRT1_2, uy: Math.SQRT1_2 }), false);
+});
+
+test("top metric fields move below every horizontally overlapping tool panel", () => {
+  const metrics = { left: 310, right: 580 };
+  const panels = [
+    { left: 8, right: 250, bottom: 96 },
+    { left: 420, right: 582, bottom: 92 },
+    { left: 300, right: 590, bottom: 148 },
+  ];
+  assert.equal(nonOverlappingPanelTop(metrics, panels, 20), 134,
+    "the tallest overlapping panel wins after converting from screen to workspace coordinates");
+  assert.equal(nonOverlappingPanelTop(metrics, [panels[0]], 20), 38,
+    "a panel on the other side of the canvas must not move the fields");
 });

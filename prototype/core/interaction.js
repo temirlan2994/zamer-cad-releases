@@ -67,6 +67,17 @@ export function preferredSnapCandidate(point, candidates, viewScale = 1) {
   return best;
 }
 
+export function nonOverlappingPanelTop(metricRect, panelRects, workspaceTop = 0, defaultTop = 38, gap = 6) {
+  if (![metricRect?.left, metricRect?.right, workspaceTop, defaultTop, gap].every(Number.isFinite)) return defaultTop;
+  let top = defaultTop;
+  for (const rect of panelRects || []) {
+    if (![rect?.left, rect?.right, rect?.bottom].every(Number.isFinite) || rect.right <= rect.left) continue;
+    const overlapsHorizontally = rect.right + gap > metricRect.left && rect.left - gap < metricRect.right;
+    if (overlapsHorizontally) top = Math.max(top, rect.bottom - workspaceTop + gap);
+  }
+  return Math.ceil(top);
+}
+
 export function polarRayGuides(start, stepDegrees) {
   if (![start?.x, start?.y, stepDegrees].every(Number.isFinite) || stepDegrees <= 0 || stepDegrees > 180) return [];
   const count = Math.round(360 / stepDegrees);
