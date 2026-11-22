@@ -77,6 +77,20 @@ export async function pickWorkspaceView(page, group, key) {
   await menu.locator(`[data-view-key="${key}"]`).click();
 }
 
+// Этап аналитики открывается из палитры внизу (#projectRouteSteps): кнопка
+// этапа раскрывает меню пунктов (#projectRouteHover), пункт — окно этапа.
+// Для «Участка» пункт — конкретная задача (task: id или первая).
+export async function openRouteView(page, view, { mobile = false, task = null } = {}) {
+  const press = (selector) => (mobile ? page.tap(selector) : page.click(selector));
+  await press(`#projectRouteSteps [data-route-view="${view}"]`);
+  await page.waitForSelector('#projectRouteHover:not([hidden])');
+  const item = view === 'site'
+    ? `#projectRouteHover [data-route-task${task ? `="${task}"` : ''}]`
+    : `#projectRouteHover [data-route-hover-view="${view}"]`;
+  await press(`${item} >> nth=0`);
+  await page.waitForSelector('#projectRoutePanel:not([hidden])');
+}
+
 // Стартовое меню → «Загрузить пример» / «Новый проект».
 export async function openSample(page) {
   await page.click('#startSample');

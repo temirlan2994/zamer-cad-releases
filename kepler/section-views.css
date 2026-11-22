@@ -50,6 +50,12 @@ body.lib-open .ls-section.cut-full { left: 0; }
   border: 1px solid var(--border); border-radius: 13px; box-shadow: var(--shadow);
 }
 .cut-zoom button { border: 0; }
+/* На компьютере внизу по центру висит палитра этапов проекта (#projectRoute,
+   route-workspace.css, высота ~54 px + 12 px отступ) — кнопки масштаба фасада
+   и разреза поднимаем над ней, иначе они недоступны. На телефоне палитры нет. */
+@media (min-width: 641px) {
+  body:has(#projectRoute .project-route-bar:not([hidden])) .cut-zoom { bottom: 80px; }
+}
 .cut-zoom button:focus-visible, .cut-view-bar :is(button, summary):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }

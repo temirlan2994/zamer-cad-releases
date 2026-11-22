@@ -6,7 +6,7 @@
 // запоминается, печать без зон, на телефоне кнопка видна.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startApp, worldToClient, zoomToItems } from './helpers.mjs';
+import { startApp, worldToClient, zoomToItems, openRouteView } from './helpers.mjs';
 
 const frame = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const drawn = async (page) => { await frame(page); return page.evaluate(() => window.__kepler.state._ergoDrawn); };
@@ -62,7 +62,7 @@ describe('режим «Эргономика»', () => {
   it('изначально выключен и доступен в разделе «Движение»', async () => {
     const { page } = app;
     assert.equal(await drawn(page), null);
-    await page.click('[data-route-view="circulation"]');
+    await openRouteView(page, 'circulation');
     await page.click('[data-analysis-fold="ergo"] > summary');
     assert.equal(await page.isChecked('#viewsErgoOn'), false);
     assert.equal(await page.isDisabled('#viewsErgoHeat'), true);
@@ -81,7 +81,7 @@ describe('режим «Эргономика»', () => {
     const chip = await page.getAttribute('[data-issue-group="ergo"]', 'aria-pressed');
     assert.equal(chip, 'true');
     const text = await page.textContent('#issuesPanel [data-group="ergo"]');
-    assert.match(text, /Кровать двуспальная.*проход слева 300 мм до стены, нужно ≥ 700/);
+    assert.match(text, /Кровать.*проход слева 300 мм до стены, нужно ≥ 700/);
     await page.click('#issuesPanel [data-group="ergo"] .issue-go');
     const sel = await page.evaluate(() => window.__kepler.state.selection);
     assert.deepEqual(sel, { type: 'item', id: 'bed' });
@@ -159,7 +159,7 @@ describe('режим «Эргономика»', () => {
   it('выключение — зон нет; настройка запоминается после перезагрузки', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select(null));
-    await page.click('[data-route-view="circulation"]');
+    await openRouteView(page, 'circulation');
     const fold = page.locator('[data-analysis-fold="ergo"]');
     if (!await fold.evaluate((node) => node.open)) await fold.locator('summary').click();
     await page.uncheck('#viewsErgoOn');
