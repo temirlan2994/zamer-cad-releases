@@ -780,8 +780,8 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .topbar-actions #layersButton {
-  min-width: 72px;
-  width: 72px;
+  min-width: 88px;
+  width: 88px;
 }
 
 .topbar-actions #allSnapsButton {
@@ -1813,6 +1813,34 @@ button.project-card-open:active { background: var(--surface-2); }
 .canvas-escape-button[aria-pressed="true"] small { color: currentColor; }
 .canvas-escape-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+.canvas-frame-button {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 52px;
+  justify-content: center;
+  left: 8px;
+  padding: 0;
+  position: absolute;
+  top: 88px;
+  touch-action: manipulation;
+  width: 72px;
+  z-index: 8;
+}
+.canvas-frame-button .cad-icon { height: 20px; width: 20px; }
+.canvas-frame-button small { font-size: .58rem; font-weight: 700; line-height: 1; }
+.canvas-frame-button:is([aria-pressed="true"], [aria-expanded="true"]) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: var(--accent);
+  color: var(--readable-accent);
+}
+.canvas-frame-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .line-point-assist {
   display: flex;
   gap: 4px;
@@ -2259,20 +2287,20 @@ button.project-card-open:active { background: var(--surface-2); }
 .select-mode-menu {
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  left: 8px;
-  margin-inline: auto;
-  max-width: 430px;
+  grid-template-columns: repeat(2, 52px);
+  left: 88px;
   padding: 4px;
-  right: 8px;
-  width: calc(100% - 16px);
+  right: auto;
+  top: 88px;
+  width: auto;
 }
 
 .select-mode-menu button {
-  min-height: 44px;
-  min-width: 0;
-  padding-inline: 2px;
+  height: 52px;
+  min-width: 52px;
+  padding: 2px;
 }
+.select-mode-menu .cad-icon { height: 20px; width: 20px; }
 
 .copy-tool-menu {
   grid-template-columns: 1fr;
@@ -2571,7 +2599,7 @@ button.project-card-open:active { background: var(--surface-2); }
 
 #layersSheet {
   gap: 6px;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   max-height: min(76%, 540px);
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }
@@ -2599,6 +2627,31 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .add-line-layer .cad-icon { height: 17px; width: 17px; }
+
+.active-layer-style {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.active-layer-style button {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  gap: 7px;
+  justify-content: center;
+  min-height: 44px;
+  padding: 4px 8px;
+  touch-action: manipulation;
+}
+.active-layer-style button:first-child .cad-icon { color: var(--active-layer-color, currentColor); }
+.active-layer-style .cad-icon { height: 18px; width: 18px; }
+.active-layer-style small { font-size: .7rem; font-weight: 700; }
+.active-layer-style button:disabled { color: var(--muted); opacity: .48; }
+.active-layer-style button:focus-visible { outline-offset: -2px; }
 
 .layer-list {
   display: grid;

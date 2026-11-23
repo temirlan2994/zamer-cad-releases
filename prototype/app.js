@@ -64,6 +64,7 @@ function cadIcon(name) {
     unlock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7-2m-3 9v3"/>',
     color: '<path d="m14 4 6 6M8 17l-3 2-2-2 2-3 10-10 5 5L10 19Z"/>',
     weight: '<path d="M4 6h16M4 12h16M4 18h16"/><path d="M4 6h16" stroke-width="1"/><path d="M4 12h16" stroke-width="2"/><path d="M4 18h16" stroke-width="3"/>',
+    lineType: '<path d="M4 6h16"/><path d="M4 12h16" stroke-dasharray="4 3"/><path d="M4 18h16" stroke-dasharray="1 3"/>',
     settings: '<path d="M3 6h10m6 0h2M3 12h2m6 0h10M3 18h7m6 0h5"/><circle cx="16" cy="6" r="2.5"/><circle cx="8" cy="12" r="2.5"/><circle cx="13" cy="18" r="2.5"/>',
     move: '<path d="M12 3v18M3 12h18M9 6l3-3 3 3m-6 12 3 3 3-3M6 9l-3 3 3 3m12-6 3 3-3 3"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 5H6a1 1 0 0 0-1 1v10"/>',
@@ -99,6 +100,7 @@ function cadIcon(name) {
     fillet: '<path d="M5 20v-7a8 8 0 0 1 8-8h7"/>',
     scale: '<path d="M10 4h10v10m0-10-7 7m1 9H4V10m0 10 7-7"/>',
     group: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4M6.5 10v4m11-4v4M10 17.5h4"/>',
+    lasso: '<path d="M6 7c3.5-3.5 10.5-3.2 13 1.5 2.2 4.2-.8 9.3-6 10.3-4.8.9-9.8-1.8-9-6.2.3-2 1-3.5 2-5.6Z" stroke-dasharray="2.5 2"/>',
     mirror: '<path d="M12 3v18M9 7 4 16h5m6-9 5 9h-5"/>',
     mirrorHorizontal: '<path d="M3 12h18M7 9l9-5v5m-9 6 9 5v-5Z"/>',
     mirrorLineAxis: '<path d="m3 21 18-18M4 14V5h9m-2 14h9v-9"/>',
@@ -525,7 +527,6 @@ const quickEditModes = document.getElementById("quickEditModes");
 const quickEditButtons = [...quickEditModes.querySelectorAll("[data-quick-edit]")];
 const quickMoveTool = document.getElementById("quickMoveTool");
 const quickCopyTool = document.getElementById("quickCopyTool");
-const quickGroupTool = document.getElementById("quickGroupTool");
 const quickScaleTool = document.getElementById("quickScaleTool");
 const ordinateModes = document.getElementById("ordinateModes");
 const radialModes = document.getElementById("radialModes");
@@ -684,6 +685,7 @@ const layerActionsList = document.getElementById("layerActionsList");
 const addLineLayerButton = document.getElementById("addLineLayerButton");
 const exportSheet = document.getElementById("exportSheet");
 const layerList = document.getElementById("layerList");
+const activeLayerStyle = document.getElementById("activeLayerStyle");
 const exportCards = [...document.querySelectorAll(".export-card")];
 const keyboardInputs = [lengthInput, angleInput, topLengthInput, topAngleInput, draftLengthInput, draftAngleInput].filter(Boolean);
 let lastNumericInput = null;
@@ -741,11 +743,8 @@ function createSelectModeMenu() {
   menu.setAttribute("aria-label", "Режимы выбора");
   menu.hidden = true;
   menu.innerHTML = `
-    <button data-select-mode="lasso"><span>⌁</span><small>Лассо</small></button>
-    <button data-select-mode="multi"><span>+</span><small>Мульти</small></button>
-    <button data-select-mode="filter"><span>⛃</span><small>Фильтр</small></button>
-    <button data-select-command="objects" aria-haspopup="dialog"><span>▤</span><small>Объекты</small></button>
-    <button data-select-command="fit"><span>⌗</span><small>Вписать</small></button>
+    <button data-select-mode="lasso"><span data-line-icon="lasso" aria-hidden="true"></span><small>Лассо</small></button>
+    <button data-select-mode="multi"><span data-line-icon="plus" aria-hidden="true"></span><small>Мульти</small></button>
   `;
   document.querySelector(".workspace")?.append(menu);
   return menu;
@@ -7691,6 +7690,10 @@ function applySelectionAction(action) {
   const selected = selectedEntities().filter((item) => isLayerVisible(item.layer));
   const actionEntity = selected.length === 1 ? selected[0] : null;
   if (!canApplySelectionAction(action)) return;
+  if (action === "group") {
+    toggleSelectionGroup();
+    return;
+  }
   if (action === "properties") {
     openObjectProperties(actionEntity);
     return;
@@ -9972,6 +9975,12 @@ function syncSelectToolMenu() {
   for (const button of selectionCommandButtons) {
     const available = canApplySelectionAction(button.dataset.action);
     button.disabled = button.hidden = !available;
+    if (button.dataset.action === "group" && available) {
+      const grouped = Boolean(selectedCommonGroupId(selectedEntities().filter((entity) => isLayerVisible(entity.layer))));
+      button.title = grouped ? "Разгруппировать выбранное" : "Сгруппировать выбранное";
+      button.setAttribute("aria-label", button.title);
+      button.querySelector("small").textContent = grouped ? "Разгрупп." : "Группа";
+    }
     if (available) hasCommands = true;
   }
   return hasCommands;
@@ -10477,11 +10486,6 @@ function syncLineControls() {
   const repeatableCut = boundaryEditModes.has(edit?.mode);
   quickMoveTool.disabled = !canApplySelectionAction("move");
   quickScaleTool.disabled = !canApplySelectionAction("scale-selection");
-  quickGroupTool.disabled = !canApplySelectionAction("group");
-  const groupActive = Boolean(selectedCommonGroupId(selectedEntities().filter((entity) => isLayerVisible(entity.layer))));
-  quickGroupTool.title = groupActive ? "Разгруппировать" : "Сгруппировать";
-  quickGroupTool.setAttribute("aria-label", groupActive ? "Разгруппировать выбранное" : "Сгруппировать выбранное");
-  quickGroupTool.querySelector("small").textContent = groupActive ? "Разгрупп." : "Группа";
   const copying = state.moveCommand?.mode === "copy";
   if ((!viewportIsSelecting() && !copying && !state.copyPicking) || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
   quickCopyTool.disabled = !copying && !viewportIsSelecting();
@@ -14273,7 +14277,6 @@ lineUi.lineMirrorModes.addEventListener("click", event => {
   previewMirror(sources[0], center, end);
 });
 bindPointAction(quickMoveTool, () => applySelectionAction("move"));
-bindPointAction(quickGroupTool, toggleSelectionGroup);
 bindPointAction(quickScaleTool, () => void scaleSelection());
 function closeCopyTools() {
   if (state.copyPicking) state.selectTool = "select";
@@ -15078,6 +15081,16 @@ function syncLayerControls() {
     menu.title = label;
     menu.innerHTML = cadIcon(locked ? "lock" : "more");
   }
+  const active = drawingLayerInfo(state.activeLineLayer);
+  const activeLocked = !active || isLayerLocked(state.activeLineLayer);
+  activeLayerStyle?.style.setProperty("--active-layer-color", active?.color || "currentColor");
+  for (const button of activeLayerStyle?.querySelectorAll("[data-active-layer-action]") || []) {
+    button.disabled = activeLocked;
+    const action = { color: "Цвет", weight: "Вес линии", type: "Тип линии" }[button.dataset.activeLayerAction];
+    const label = `${action} · ${active?.name || "активный слой"}`;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
 }
 
 function resetActiveLineLayer() {
@@ -15362,6 +15375,16 @@ layerActionsList.addEventListener("click", async (event) => {
     markProjectDirty("layer-style");
     draw();
   }
+});
+
+activeLayerStyle?.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-active-layer-action]")?.dataset.activeLayerAction;
+  const id = state.activeLineLayer;
+  if (!action || !drawingLayerInfo(id) || isLayerLocked(id)) return;
+  showLayerActions(id);
+  const actionButton = layerActionsList.querySelector(`[data-layer-action="${action}"]`);
+  if (actionButton) actionButton.click();
+  else if (layerActionsDialog.open) layerActionsDialog.close();
 });
 
 async function addLineLayer() {
@@ -16447,7 +16470,7 @@ async function downloadFile(filename, content, mimeType, { share = false } = {})
 for (const [id, icon] of Object.entries({
   backToProjectsButton: "back", undoButton: "undo", redoButton: "redo",
   layersButton: "layers", exportButton: "import", logoutButton: "exit", projectImportButton: "openFolder",
-  quickMoveTool: "move", quickCopyTool: "copy", quickGroupTool: "group", quickScaleTool: "scale",
+  quickMoveTool: "move", quickCopyTool: "copy", quickScaleTool: "scale",
   quickRotateTool: "rotate", quickDeleteTool: "delete",
   quickTrimTool: "trim", quickExtendTool: "extend",
 })) {
