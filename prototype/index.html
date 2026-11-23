@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=313" />
+    <link rel="stylesheet" href="./styles.css?v=314" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -102,7 +102,7 @@
         <div class="topbar-actions" role="group" aria-label="История, слои и привязки">
           <button class="icon-button" id="undoButton" type="button" title="Отмена" aria-label="Отмена"><span aria-hidden="true">↶</span><small class="top-tool-label" aria-hidden="true">Отмена</small></button>
           <button class="icon-button" id="redoButton" type="button" title="Повтор" aria-label="Повтор"><span aria-hidden="true">↷</span><small class="top-tool-label" aria-hidden="true">Повтор</small></button>
-          <button class="icon-button" id="layersButton" type="button" title="Слои" aria-label="Слои" aria-controls="layersSheet" aria-expanded="false"><span aria-hidden="true">▤</span><small class="top-tool-label" aria-hidden="true">Слои</small></button>
+          <button class="icon-button" id="layersButton" type="button" title="Слои и оформление линий" aria-label="Слои и оформление линий" aria-controls="layersSheet" aria-expanded="false"><span aria-hidden="true">▤</span><small class="top-tool-label" aria-hidden="true">Слои и линии</small></button>
           <button class="snap icon-snap active" id="allSnapsButton" type="button" title="Все привязки" aria-label="Все привязки" aria-pressed="true"><span data-snap-symbol="all" aria-hidden="true"></span><small class="top-tool-label" aria-hidden="true">Вкл/выкл</small></button>
           <details class="snap-more" id="snapMore">
             <summary>Привязки</summary>
@@ -213,11 +213,8 @@
         </section>
         <output id="quickMeasureValue" class="quick-measure-value" aria-live="off" hidden></output>
 
-        <div class="draw-tool-menu select-mode-menu copy-tool-menu" id="copyToolMenu" role="group" aria-label="Режимы копирования" hidden>
-          <button type="button" data-copy-mode="single"><span data-line-icon="copy" aria-hidden="true"></span><small>Одна</small></button>
-          <button type="button" data-copy-mode="group"><span aria-hidden="true">▦</span><small>Группа</small></button>
-          <button type="button" data-copy-mode="repeat"><span aria-hidden="true">⧉</span><small>Несколько</small></button>
-          <button type="button" data-copy-mode="array"><span aria-hidden="true">⋯</span><small>Тираж</small></button>
+        <div class="draw-tool-menu copy-tool-menu" id="copyToolMenu" role="group" aria-label="Тиражирование" hidden>
+          <button type="button" data-copy-mode="array"><span aria-hidden="true">▦</span><small>Тираж</small></button>
         </div>
         <div class="draw-tool-menu copy-controls" id="copyControls" role="group" aria-label="Копирование" hidden>
           <div id="copyCountControl">Копий <input id="copyCount" type="number" inputmode="numeric" min="2" max="50" value="3" aria-label="Количество копий в тираже" /></div>
@@ -226,11 +223,8 @@
         </div>
 
         <div class="draw-tool-menu select-tool-menu" id="selectToolMenu" role="region" aria-label="Команды выбранного объекта" hidden>
-          <button type="button" data-action="properties" title="Свойства объекта" aria-label="Свойства объекта" aria-haspopup="dialog" aria-controls="objectPropertiesDialog" hidden><span data-line-icon="properties"></span><small class="context-icon-label" aria-hidden="true">Свойства</small></button>
           <button type="button" data-action="break" title="Разрыв" aria-label="Разрыв" hidden><span data-line-icon="breakGap"></span><small class="context-icon-label" aria-hidden="true">Разрыв</small></button>
-          <button type="button" data-action="join" title="Соединить" aria-label="Соединить" hidden><span data-line-icon="join"></span><small class="context-icon-label" aria-hidden="true">Стык</small></button>
           <button type="button" data-action="fillet" title="Скруглить" aria-label="Скруглить" hidden><span data-line-icon="fillet"></span><small class="context-icon-label" aria-hidden="true">Скругл.</small></button>
-          <button type="button" data-action="scale" title="Масштабировать объект" aria-label="Масштабировать объект" hidden><span data-line-icon="scale"></span><small class="context-icon-label" aria-hidden="true">Масштаб</small></button>
           <button type="button" data-action="offset" title="Смещение" aria-label="Смещение" hidden><span data-line-icon="offset"></span><small class="context-icon-label" aria-hidden="true">Отступ</small></button>
           <button type="button" data-action="make-block" title="Создать блок из выбранных объектов" aria-label="Создать блок" hidden><span data-line-icon="block"></span><small class="context-icon-label" aria-hidden="true">В блок</small></button>
           <button type="button" data-action="explode" title="Разобрать на составляющие" aria-label="Разобрать объект" hidden><span data-line-icon="explode"></span><small class="context-icon-label" aria-hidden="true">Разобрать</small></button>
@@ -660,7 +654,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=317"></script>
+    <script type="module" src="./app.js?v=318"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {

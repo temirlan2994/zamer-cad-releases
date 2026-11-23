@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_LINE_LAYER, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, isCustomLineLayerId,
   normalizeLineLayerName, normalizeLineLayerColor, normalizeCustomLineLayers, normalizeActiveLineLayer,
-  normalizeLayerStyles, normalizeLineLayerSettings, normalizeLineWeight, resolveLineStyle } from "./line-layers.js";
+  normalizeLayerStyles, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight, resolveLineStyle } from "./line-layers.js";
 
 const custom = { id: "line-layer-windows_01", name: "  Окна на плане ", color: "#12ABcd" };
 
@@ -20,12 +20,14 @@ test("line layer settings fall back for legacy projects and stale active ids", (
 test("normalizes layer and per-line colors and line weights", () => {
   assert.equal(normalizeLineWeight("0.7"), 0.7);
   assert.equal(normalizeLineWeight(2.001), null);
-  assert.deepEqual(normalizeLayerStyles({ measure: { color: "#AABBCC", lineWeight: 0.5 }, missing: { lineWeight: 1 } }),
-    { measure: { color: "#aabbcc", lineWeight: 0.5 } });
-  assert.deepEqual(resolveLineStyle({ color: "#123456", lineWeight: 1 }, { color: "#abcdef", lineWeight: 0.35 }),
-    { color: "#123456", lineWeight: 1 });
+  assert.equal(normalizeLineType("dashed"), "dashed");
+  assert.equal(normalizeLineType("hidden"), null);
+  assert.deepEqual(normalizeLayerStyles({ measure: { color: "#AABBCC", lineWeight: 0.5, lineType: "dashed" }, missing: { lineWeight: 1 } }),
+    { measure: { color: "#aabbcc", lineWeight: 0.5, lineType: "dashed" } });
+  assert.deepEqual(resolveLineStyle({ color: "#123456", lineWeight: 1 }, { color: "#abcdef", lineWeight: 0.35, lineType: "dotted" }),
+    { color: "#123456", lineWeight: 1, lineType: "dotted" });
   assert.deepEqual(resolveLineStyle({}, { color: "#abcdef", lineWeight: 0.35 }),
-    { color: "#abcdef", lineWeight: 0.35 });
+    { color: "#abcdef", lineWeight: 0.35, lineType: "solid" });
 });
 
 test("project layer locks preserve known built-in and custom ids without duplicates", () => {

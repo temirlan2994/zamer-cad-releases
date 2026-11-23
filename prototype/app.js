@@ -22,7 +22,7 @@ import { rotateStoredEntity, scaleStoredEntity } from "./core/entity-transform.j
 import { IMPORT_UNIT_FACTORS, scaleImportedProject } from "./core/project-import.js";
 import { MAX_ZAMER_FILE_BYTES, validStoredEntity, validateZamerProject } from "./core/project-format.js";
 import { driveProjectStamp, googleAccountForToken, googleDriveProjects, syncDriveProjects } from "./core/google-drive-projects.js";
-import { DEFAULT_LINE_LAYER, DEFAULT_LINE_WEIGHT, LINE_WEIGHT_VALUES, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerColor, normalizeLineLayerName, normalizeLineLayerSettings, normalizeLineWeight, resolveLineStyle } from "./core/line-layers.js";
+import { DEFAULT_LINE_LAYER, DEFAULT_LINE_TYPE, DEFAULT_LINE_WEIGHT, LINE_TYPE_VALUES, LINE_WEIGHT_VALUES, MAX_CUSTOM_LINE_LAYERS, MAX_LINE_LAYER_NAME_LENGTH, normalizeActiveLineLayer, normalizeLineLayerColor, normalizeLineLayerName, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight, resolveLineStyle } from "./core/line-layers.js";
 import { buildProjectPreview } from "./core/project-preview.js";
 import { describeSurveyRecord, measureSurveyContour, normalizeSurvey, normalizeSurveyRecord, surveyMarkers, surveyRoom } from "./core/survey.js";
 import { bindSurveyPanel } from "./core/survey-panel.js";
@@ -800,7 +800,7 @@ const layerMeta = {
   areas: { name: "Площади", color: PLAN_AREA_COLOR },
   elevations: { name: "Высоты Z", color: "#167d5c" },
   furniture: { name: "Мебель", color: "#1db4a8" },
-  [DEFAULT_LINE_LAYER]: { name: "Черновые", color: "#9b6bff" },
+  [DEFAULT_LINE_LAYER]: { name: "Черновые" },
 };
 const defaultPlanLayers = [DEFAULT_LINE_LAYER, "dimensions", "text", "areas", "elevations"];
 const TRACE_LAYER = "trace";
@@ -818,11 +818,24 @@ function projectDefaultLayers(project, customLineLayers) {
 function drawingLayerInfo(id = DEFAULT_LINE_LAYER) {
   if (id === TRACE_LAYER) return { name: "Калька", color: "#996100" };
   const layer = Object.hasOwn(layerMeta, id) ? layerMeta[id] : state.customLineLayers.find((item) => item.id === id);
-  return layer ? { ...layer, ...(state.layerStyles[id] || {}) } : null;
+  if (!layer) return null;
+  const result = { ...layer, ...(state.layerStyles[id] || {}) };
+  if (id === DEFAULT_LINE_LAYER && !normalizeLineLayerColor(result.color)) {
+    result.color = state.theme === "dark" ? "#d9e4f2" : "#26313d";
+  }
+  return result;
 }
 
 function lineWeightLabel(value) {
   return `${String(value).replace(".", ",")} мм`;
+}
+
+function lineTypeLabel(value) {
+  return { solid: "Сплошная", dashed: "Штриховая", dotted: "Точечная" }[normalizeLineType(value) || DEFAULT_LINE_TYPE];
+}
+
+function lineTypeDash(value) {
+  return { dashed: [10, 7], dotted: [2, 6] }[normalizeLineType(value)] || [];
 }
 
 function setLayerStyle(id, patch) {
@@ -3668,7 +3681,7 @@ function colors() {
     grid: dark ? "#202a37" : "#e5ebf2",
     majorGrid: dark ? "#2a3645" : "#d2dbe8",
     wall: css("--line"),
-    line: dark ? "#9bb2c9" : "#5c6a7a",
+    line: css("--line"),
     dimension: "#1f75ff",
     dimensionText: css("--readable-accent"),
     accent: css("--accent"),
@@ -4750,7 +4763,7 @@ function drawPlanScene(entities, c, customLineLayers = state.customLineLayers, l
         const base = Object.hasOwn(layerMeta, id) ? layerMeta[id] : customLayers.get(id);
         const style = resolveLineStyle(entity, { ...base, ...(layerStyles?.[id] || {}) }, c.line);
         drawEntity(entity, { ...c, line: style.color, revisionCloud: style.color,
-          lineWidth: displayLineWidth(style.lineWeight) });
+          lineWidth: displayLineWidth(style.lineWeight), lineDash: lineTypeDash(style.lineType) });
       } else {
         drawEntity(entity, paletteForLayer(entity.layer));
       }
@@ -4980,6 +4993,7 @@ function drawPolyline(entity, c, active = false, dashed = false) {
   ctx.strokeStyle = entity.revisionCloud ? (entity.layer === TRACE_LAYER ? c.trace : c.revisionCloud) : active ? c.accent : c.line;
   ctx.lineWidth = active ? Math.max(2.2, (c.lineWidth || 1.4) + 0.8) : c.lineWidth || 1.4;
   if (dashed) ctx.setLineDash([8, 6]);
+  else if (!active && c.lineDash?.length) ctx.setLineDash(c.lineDash);
   if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.beginPath();
   const first = worldToScreen(entity.points[0]);
@@ -5043,6 +5057,7 @@ function drawLineEntity(entity, c) {
   }
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? Math.max(2, (c.lineWidth || 1.4) + 0.8) : c.lineWidth || 1.4;
+  if (!selected && c.lineDash?.length) ctx.setLineDash(c.lineDash);
   linePath(p1.x, p1.y, p2.x, p2.y);
   if (selected && !state.lineEdit) {
     drawEndpointHandle(p1, state.selectedEndpoint?.entityId === entity.id && state.selectedEndpoint?.point === "start", c);
@@ -5059,6 +5074,7 @@ function drawCircleEntity(entity, c) {
   if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? Math.max(2, (c.lineWidth || 1.4) + 0.8) : c.lineWidth || 1.4;
+  if (!selected && c.lineDash?.length) ctx.setLineDash(c.lineDash);
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
   ctx.stroke();
@@ -5072,6 +5088,7 @@ function drawRectangleEntity(entity, c) {
   if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? Math.max(2, (c.lineWidth || 1.4) + 0.8) : c.lineWidth || 1.4;
+  if (!selected && c.lineDash?.length) ctx.setLineDash(c.lineDash);
   ctx.beginPath();
   corners.forEach((corner, index) => { const pt = worldToScreen(corner); if (index === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); });
   ctx.closePath();
@@ -5092,6 +5109,7 @@ function drawArcEntity(entity, c) {
   if (shouldGhostEntityForCommand(entity)) ctx.globalAlpha = 0.28;
   ctx.strokeStyle = selected ? c.accent : c.line;
   ctx.lineWidth = selected ? Math.max(2, (c.lineWidth || 1.4) + 0.8) : c.lineWidth || 1.4;
+  if (!selected && c.lineDash?.length) ctx.setLineDash(c.lineDash);
   ctx.beginPath();
   ctx.arc(center.x, center.y, arc.radius * state.view.scale, arc.startAngle, arc.endAngle, !arc.counterClockwise);
   ctx.stroke();
@@ -5101,7 +5119,7 @@ function drawArcEntity(entity, c) {
 function drawTextEntity(entity, c) {
   const p = worldToScreen({ x: entity.x, y: entity.y });
   const height = Math.abs(entity.height || 260) * state.view.scale;
-  const selected = canShowEntitySelection() && entity.id === state.selectedId && !state.moveCommand && !state.offsetCommand;
+  const selected = canShowEntitySelection() && state.selectedIds.includes(entity.id) && !state.moveCommand && !state.offsetCommand;
   const lines = annotationTextLines(decodeMojibakeText(entity.text));
   const spacing = height * ANNOTATION_LINE_SPACING;
   ctx.save();
@@ -7094,6 +7112,11 @@ function drawAngleArc(origin, target, angleInfo, c) {
 
 function projectLength(mm) {
   return formatProjectLength(mm, state.measurementSettings);
+}
+
+function formatEditableNumber(value, maxFractionDigits = 4) {
+  if (!Number.isFinite(Number(value))) return "";
+  return String(Number(Number(value).toFixed(maxFractionDigits)));
 }
 
 function readProjectLength(input) {
@@ -10432,7 +10455,7 @@ function syncLineControls() {
   quickGroupTool.setAttribute("aria-label", groupActive ? "Разгруппировать выбранное" : "Сгруппировать выбранное");
   quickGroupTool.querySelector("small").textContent = groupActive ? "Разгрупп." : "Группа";
   const copying = state.moveCommand?.mode === "copy";
-  if (!viewportIsSelecting() || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
+  if ((!viewportIsSelecting() && !copying && !state.copyPicking) || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
   quickCopyTool.disabled = !copying && !viewportIsSelecting();
   quickCopyTool.setAttribute("aria-expanded", String(!copyToolMenu.hidden || Boolean(state.copyPicking) || copying));
   copyControls.hidden = !state.copyPicking && !(copying && ["repeat", "array"].includes(state.moveCommand.copyMode));
@@ -11999,7 +12022,7 @@ function startCanvasPointerAction(event, screen) {
       return;
     }
     const figureGrip = pickSelectedFigureGrip(screen);
-    if (figureGrip && !requiresActivation(figureGrip.entityId, state.selectedIds, state.directManipulationIds)) {
+    if (figureGrip) {
       state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false,
         mode: "figure-grip", grip: figureGrip, preview: null };
       return;
@@ -12530,8 +12553,8 @@ function repeatedSelectionAt(screen) {
 }
 
 function overlappingSelectionForTap(event, pointer) {
-  // A selected line's endpoint opens its editor even at a shared vertex.
-  if (pointer.mode === "line-grip" && pointer.grip.point !== "middle") return null;
+  // A selected figure/line grip always wins over another object sharing the same point.
+  if (pointer.mode === "figure-grip" || (pointer.mode === "line-grip" && pointer.grip.point !== "middle")) return null;
   if (event.button !== 0 || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || pointer.moved ||
       state.copyPicking || state.selectTool !== "select" || !viewportIsSelecting() || surveyPointPicker ||
       event.timeStamp - state.pointerStartedAt >= LONG_PRESS_SELECT_MS ||
@@ -14046,7 +14069,7 @@ function openObjectProperties(entity) {
     input.inputMode = "decimal";
     input.name = name;
     input.id = `object-property-${name}`;
-    input.value = String(Number(value.toFixed(8)));
+    input.value = formatEditableNumber(value);
     input.defaultValue = input.value;
     input.dataset.original = String(value);
     input.readOnly = minimum === null || locked;
@@ -14267,8 +14290,9 @@ function startCopyPlacement(mode) {
   const selected = selectedEntities().filter(entity => isLayerVisible(entity.layer));
   if (!selected.length) return;
   closeCopyTools();
-  startMoveLikeCommand(mode === "single" ? selected.slice(-1) : selected, "copy");
+  startMoveLikeCommand(selected, "copy");
   state.moveCommand.copyMode = mode;
+  copyToolMenu.hidden = false;
 }
 
 bindPointAction(quickCopyTool, () => {
@@ -14280,6 +14304,12 @@ bindPointAction(quickCopyTool, () => {
     hideAnnotationToolMenu();
     hideSelectModeMenu();
     hideSelectToolMenu();
+    if (selectedEntities().length) startCopyPlacement("repeat");
+    else {
+      state.copyPicking = "repeat";
+      state.selectTool = "multi";
+      statusChip.textContent = "Выберите один или несколько объектов и нажмите ✓";
+    }
     copyToolMenu.hidden = false;
   }
   draw();
@@ -14287,11 +14317,10 @@ bindPointAction(quickCopyTool, () => {
 copyToolMenu.addEventListener("click", event => {
   const mode = event.target.closest("[data-copy-mode]")?.dataset.copyMode;
   if (!mode) return;
-  copyToolMenu.hidden = true;
-  if (mode === "group" || !selectedEntities().length) {
+  if (!selectedEntities().length) {
     state.copyPicking = mode;
     state.selectTool = "multi";
-    statusChip.textContent = "Выберите объекты для копирования и нажмите ✓";
+    statusChip.textContent = "Тираж · выберите объекты и нажмите ✓";
     draw();
   } else {
     startCopyPlacement(mode);
@@ -14968,7 +14997,14 @@ function renderLayerList() {
     swatch.setAttribute("aria-hidden", "true");
     const caption = document.createElement("span");
     caption.textContent = name;
-    title.append(swatch, caption);
+    const description = document.createElement("small");
+    description.className = "layer-style-summary";
+    description.textContent = `${lineTypeLabel(drawingLayerInfo(id).lineType)} · ${lineWeightLabel(normalizeLineWeight(drawingLayerInfo(id).lineWeight) ?? DEFAULT_LINE_WEIGHT)}`;
+    const labels = document.createElement("span");
+    labels.className = "layer-labels";
+    labels.append(caption);
+    if (selectable) labels.append(description);
+    title.append(swatch, labels);
 
     const visibility = document.createElement("label");
     visibility.className = "layer-visibility";
@@ -15204,6 +15240,7 @@ function showLayerActions(id) {
   if (custom && !locked) actions.push(["edit", "Переименовать", false]);
   if (!locked) actions.push(["color", "Изменить цвет", false]);
   if (lineLayer && !locked) actions.push(["weight", "Вес линии", false]);
+  if (lineLayer && !locked) actions.push(["type", "Тип линии", false]);
   if (availableLineLayerIds().includes(id) && assignableLayerSelection().some((entity) => (entity.layer || DEFAULT_LINE_LAYER) !== id)) {
     actions.push(["move", "Перенести выбранное сюда", false]);
   }
@@ -15257,6 +15294,21 @@ layerActionsList.addEventListener("click", async (event) => {
     const normalized = normalizeLineWeight(value);
     if (normalized === null || !isActiveProject(identity) || isLayerLocked(id) || normalized === current) return;
     setLayerStyle(id, { lineWeight: normalized });
+    renderLayerList();
+    markProjectDirty("layer-style");
+    draw();
+  } else if (action === "type") {
+    const identity = projectIdentity();
+    const current = normalizeLineType(layer.lineType) || DEFAULT_LINE_TYPE;
+    const value = await showProjectDialog({
+      title: "Тип линий слоя",
+      inputLabel: "Тип линии",
+      value: current,
+      choices: LINE_TYPE_VALUES.map((type) => ({ value: type, label: lineTypeLabel(type) })),
+    });
+    const normalized = normalizeLineType(value);
+    if (!normalized || !isActiveProject(identity) || isLayerLocked(id) || normalized === current) return;
+    setLayerStyle(id, { lineType: normalized });
     renderLayerList();
     markProjectDirty("layer-style");
     draw();
@@ -15471,7 +15523,7 @@ function syncLeaderTools() {
   leaderUi.frame.setAttribute("aria-pressed", String(options.leaderFrame));
   leaderUi.toolsCancel.hidden = Boolean(state.leaderInput);
   if (document.activeElement !== leaderUi.height) {
-    const value = String(annotationToolHeight());
+    const value = formatEditableNumber(annotationToolHeight());
     if (leaderUi.height.value !== value) leaderUi.height.value = value;
   }
 }
@@ -15546,7 +15598,7 @@ leaderUi.height.addEventListener("keydown", (event) => {
 });
 leaderUi.height.addEventListener("blur", () => {
   leaderUi.height.removeAttribute("aria-invalid");
-  leaderUi.height.value = String(annotationToolHeight());
+  leaderUi.height.value = formatEditableNumber(annotationToolHeight());
 });
 for (const input of [leaderUi.text, leaderUi.height]) {
   input.addEventListener("focus", updateViewportLock);
@@ -15697,13 +15749,13 @@ function openPlanAnnotationEditor(kind, values = {}, count = 1) {
   const settings = state.measurementSettings;
   const lengthLabel = projectUnit(settings).label;
   planAnnotationHeightName.textContent = `Высота Z, ${lengthLabel}`;
-  planAnnotationFields.height.placeholder = batch ? "Без изменений" : String(toProjectLength(2800, settings)).replace(".", ",");
+  planAnnotationFields.height.placeholder = batch ? "Без изменений" : formatEditableNumber(toProjectLength(2800, settings));
   planAnnotationFields.height.value = !batch && kind === "elevation" && Number.isFinite(values.height)
-    ? String(toProjectLength(values.height, settings)).replace(".", ",") : "";
+    ? formatEditableNumber(toProjectLength(values.height, settings)) : "";
   planAnnotationFields.textHeight.placeholder = batch ? "Без изменений" : "";
   const defaultHeight = leader ? (values.id ? 200 : annotationPreferences.leaderHeight) : (values.id ? 260 : annotationPreferences.textHeight);
   const existingHeight = leader && values.id ? leaderTextHeight(values) : values.height;
-  planAnnotationFields.textHeight.value = batch ? "" : validAnnotationTextHeight(existingHeight) ? existingHeight : defaultHeight;
+  planAnnotationFields.textHeight.value = batch ? "" : formatEditableNumber(validAnnotationTextHeight(existingHeight) ? existingHeight : defaultHeight);
   setAnnotationChoice("zoneStyle", batch ? "" : values.zoneStyle || annotationPreferences.zoneStyle);
   setAnnotationChoice("batchLabelMode", "");
   if (leader) {

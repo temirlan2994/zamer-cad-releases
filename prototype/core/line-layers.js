@@ -4,6 +4,8 @@ export const MAX_LINE_LAYER_NAME_LENGTH = 48;
 export const CUSTOM_LINE_LAYER_PREFIX = "line-layer-";
 export const DEFAULT_LINE_WEIGHT = 0.25;
 export const LINE_WEIGHT_VALUES = [0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1, 1.4, 2];
+export const DEFAULT_LINE_TYPE = "solid";
+export const LINE_TYPE_VALUES = ["solid", "dashed", "dotted"];
 
 const customLayerId = /^line-layer-[A-Za-z0-9_-]{1,64}$/;
 const layerNameCharacters = /[<>\p{Cc}\p{Cs}\p{Bidi_Control}\u2028\u2029]/u;
@@ -31,6 +33,10 @@ export function normalizeLineWeight(value) {
     ? Math.round(weight * 100) / 100 : null;
 }
 
+export function normalizeLineType(value) {
+  return typeof value === "string" && LINE_TYPE_VALUES.includes(value) ? value : null;
+}
+
 export function normalizeLayerStyles(value, availableLayers = builtInLayers) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const available = availableLayers instanceof Set ? availableLayers : new Set(availableLayers);
@@ -39,9 +45,11 @@ export function normalizeLayerStyles(value, availableLayers = builtInLayers) {
     if (!available.has(id) || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const color = normalizeLineLayerColor(candidate.color);
     const lineWeight = normalizeLineWeight(candidate.lineWeight);
+    const lineType = normalizeLineType(candidate.lineType);
     const style = {};
     if (color) style.color = color;
     if (lineWeight !== null) style.lineWeight = lineWeight;
+    if (lineType) style.lineType = lineType;
     if (Object.keys(style).length) styles[id] = style;
   }
   return styles;
@@ -51,6 +59,7 @@ export function resolveLineStyle(entity, layer, fallbackColor = "#26313d") {
   return {
     color: normalizeLineLayerColor(entity?.color) || normalizeLineLayerColor(layer?.color) || fallbackColor,
     lineWeight: normalizeLineWeight(entity?.lineWeight) ?? normalizeLineWeight(layer?.lineWeight) ?? DEFAULT_LINE_WEIGHT,
+    lineType: normalizeLineType(entity?.lineType) || normalizeLineType(layer?.lineType) || DEFAULT_LINE_TYPE,
   };
 }
 
