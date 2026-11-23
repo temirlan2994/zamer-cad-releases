@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=317" />
+    <link rel="stylesheet" href="./styles.css?v=319" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -169,10 +169,8 @@
 
       <section class="snap-panel" aria-label="Быстрая правка">
         <div class="quick-edit-modes" id="quickEditModes" role="group" aria-label="Правка чертежа">
-          <button class="icon-button" id="frameToolButton" type="button" title="Рамка" aria-label="Рамка" aria-pressed="false" aria-expanded="false" aria-controls="selectModeMenu"><span data-line-icon="frame"></span><small class="top-tool-label" aria-hidden="true">Рамка</small></button>
           <button class="icon-button" id="quickMoveTool" type="button" title="Переместить" aria-label="Переместить выбранное" disabled><span aria-hidden="true">✥</span><small class="top-tool-label" aria-hidden="true">Сдвиг</small></button>
           <button class="icon-button" id="quickCopyTool" type="button" aria-controls="copyToolMenu" aria-expanded="false" title="Копировать" aria-label="Копировать выбранное" disabled><span aria-hidden="true">⧉</span><small class="top-tool-label" aria-hidden="true">Копия</small></button>
-          <button class="icon-button" id="quickGroupTool" type="button" title="Сгруппировать" aria-label="Сгруппировать выбранное" disabled><span aria-hidden="true">▦</span><small class="top-tool-label" aria-hidden="true">Группа</small></button>
           <button class="icon-button" id="quickScaleTool" type="button" title="Масштабировать" aria-label="Масштабировать выбранное" disabled><span aria-hidden="true">⤢</span><small class="top-tool-label" aria-hidden="true">Масштаб</small></button>
           <button class="icon-button" id="quickRotateTool" type="button" title="Повернуть" aria-label="Повернуть выбранное" disabled><span aria-hidden="true">↻</span><small class="top-tool-label" aria-hidden="true">Поворот</small></button>
           <button class="icon-button" id="quickDeleteTool" type="button" title="Удалить" aria-label="Удалить выбранное" disabled><span aria-hidden="true">⌫</span><small class="top-tool-label" aria-hidden="true">Удалить</small></button>
@@ -226,6 +224,7 @@
           <button type="button" data-action="break" title="Разрыв" aria-label="Разрыв" hidden><span data-line-icon="breakGap"></span><small class="context-icon-label" aria-hidden="true">Разрыв</small></button>
           <button type="button" data-action="fillet" title="Скруглить" aria-label="Скруглить" hidden><span data-line-icon="fillet"></span><small class="context-icon-label" aria-hidden="true">Скругл.</small></button>
           <button type="button" data-action="offset" title="Смещение" aria-label="Смещение" hidden><span data-line-icon="offset"></span><small class="context-icon-label" aria-hidden="true">Отступ</small></button>
+          <button type="button" data-action="group" title="Сгруппировать выбранное" aria-label="Сгруппировать выбранное" hidden><span data-line-icon="group"></span><small class="context-icon-label" aria-hidden="true">Группа</small></button>
           <button type="button" data-action="make-block" title="Создать блок из выбранных объектов" aria-label="Создать блок" hidden><span data-line-icon="block"></span><small class="context-icon-label" aria-hidden="true">В блок</small></button>
           <button type="button" data-action="explode" title="Разобрать на составляющие" aria-label="Разобрать объект" hidden><span data-line-icon="explode"></span><small class="context-icon-label" aria-hidden="true">Разобрать</small></button>
         </div>
@@ -337,6 +336,9 @@
 
         <button class="canvas-escape-button" id="escapeSelectButton" type="button" title="Отменить команду и перейти к выбору" aria-label="Esc · отменить команду и перейти к выбору" aria-keyshortcuts="Escape" aria-pressed="true">
           <span>Esc</span><small>Выбор</small>
+        </button>
+        <button class="canvas-frame-button" id="frameToolButton" type="button" title="Рамка выделения" aria-label="Рамка выделения" aria-pressed="false" aria-expanded="false" aria-controls="selectModeMenu">
+          <span data-line-icon="frame" aria-hidden="true"></span><small>Рамка</small>
         </button>
         <div class="status-chip" id="statusChip" role="status" aria-atomic="true">Выберите «Линия» и укажите начало отрезка</div>
         <div class="dimension-assist" id="dimensionAssist" role="group" aria-label="Привязка и ось размера" hidden>
@@ -456,6 +458,11 @@
         <button class="add-line-layer" id="addLineLayerButton" type="button" aria-label="Новый слой. Добавить слой для линий">
           <span data-line-icon="plus" aria-hidden="true">+</span> Новый слой
         </button>
+        <div class="active-layer-style" id="activeLayerStyle" role="group" aria-label="Оформление активного слоя">
+          <button type="button" data-active-layer-action="color"><span data-line-icon="color" aria-hidden="true"></span><small>Цвет</small></button>
+          <button type="button" data-active-layer-action="weight"><span data-line-icon="weight" aria-hidden="true"></span><small>Вес</small></button>
+          <button type="button" data-active-layer-action="type"><span data-line-icon="lineType" aria-hidden="true"></span><small>Тип</small></button>
+        </div>
         <div class="layer-list" id="layerList"></div>
       </section>
       <dialog class="project-action-menu" id="layerActionsDialog" aria-labelledby="layerActionsTitle">
@@ -541,13 +548,12 @@
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
             <div class="survey-field annotation-scale-setting">
-              <span>Масштаб подписей</span>
+              <span>Масштаб</span>
               <input id="annotationScaleSelect" type="hidden" value="1" />
-              <button class="annotation-scale-opener" id="annotationScaleButton" type="button" aria-describedby="annotationScaleScope" aria-haspopup="dialog">
-                <span class="annotation-scale-opener-main"><strong id="annotationScaleValue">1:100</strong><small id="annotationScaleUse">Этаж · основной архитектурный план</small></span>
+              <button class="annotation-scale-opener" id="annotationScaleButton" type="button" aria-haspopup="dialog">
+                <strong id="annotationScaleValue">1:100</strong>
                 <span class="annotation-scale-chevron" aria-hidden="true">›</span>
               </button>
-              <small id="annotationScaleScope">Размеры, площади и отметки Z сохраняют выбранный экранный размер при изменении зума</small>
             </div>
             <label class="survey-field" for="projectPrintScale"><span>Масштаб PDF по умолчанию</span>
               <select id="projectPrintScale"><option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option><option value="100">1:100</option><option value="150">1:150</option><option value="200">1:200</option></select>
@@ -566,15 +572,11 @@
       </dialog>
       <dialog class="survey-sheet annotation-scale-sheet" id="annotationScaleSheet" aria-labelledby="annotationScaleTitle">
         <header class="sheet-head">
-          <div>
-            <h2 id="annotationScaleTitle">Масштаб подписей</h2>
-            <p>Выберите размер чисел, площадей и отметок на экране</p>
-          </div>
+          <h2 id="annotationScaleTitle">Масштаб</h2>
           <button class="icon-button" id="closeAnnotationScale" type="button" aria-label="Закрыть выбор масштаба">×</button>
         </header>
         <div class="annotation-scale-content">
-          <p class="annotation-scale-note"><strong>Размер остаётся постоянным</strong><span>При приближении и отдалении подписи больше не увеличиваются и не уменьшаются.</span></p>
-          <div class="annotation-scale-grid" id="annotationScaleGrid" role="radiogroup" aria-label="Масштаб подписей"></div>
+          <div class="annotation-scale-grid" id="annotationScaleGrid" role="radiogroup" aria-label="Масштаб"></div>
         </div>
       </dialog>
       <dialog class="survey-sheet" id="surveySheet" aria-labelledby="surveyHeading">
@@ -664,7 +666,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=323"></script>
+    <script type="module" src="./app.js?v=326"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
