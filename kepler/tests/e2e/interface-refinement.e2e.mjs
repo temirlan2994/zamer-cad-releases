@@ -101,33 +101,134 @@ describe('компактная аналитика и управляемые вк
 
   it('открывает аналитику как самостоятельный вид и сохраняет её вкладку', async () => {
     const { page } = app;
-    await pickWorkspaceView(page, 'analytics', 'analysis:ergonomics');
-    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
-    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Движение и проходы');
-    assert.equal(await page.textContent('#projectRoutePanelKicker'), 'Аналитический вид');
+    const levelId = await page.evaluate(() => window.__kepler.state.project.activeLevel);
+    const viewId = `analysis:ergonomics:${encodeURIComponent(levelId)}`;
+    await pickWorkspaceView(page, 'analytics', viewId);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'вид не перекрывается плавающим окном');
+    assert.deepEqual(await page.evaluate(() => ({
+      mode: window.__kepler.state.modeName,
+      levelId: window.__kepler.state.project.activeLevel,
+      ergo: window.__kepler.state.ergo?.on,
+    })), { mode: 'plan', levelId, ergo: true });
+    const levelName = await page.evaluate((id) => (
+      window.__kepler.state.project.levels.find((level) => level.id === id)?.name
+    ), levelId);
+    assert.equal(await page.textContent('#viewPropsTitle'), `Вид: Эргономика · ${levelName}`);
 
-    const tab = page.locator('[data-workspace-view="analysis:ergonomics"]');
+    const tab = page.locator(`[data-workspace-view="${viewId}"]`);
     await tab.waitFor();
     assert.equal(await tab.getAttribute('aria-selected'), 'true');
-
-    await page.click('#projectRouteClose');
-    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
-    assert.equal(await tab.getAttribute('aria-selected'), 'false');
-    await tab.click();
-    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
 
     await tab.hover();
     await tab.locator('.wv-tab-x').click();
     await tab.waitFor({ state: 'detached' });
-    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.analyticalView), null);
+    assert.equal(await page.evaluate(() => window.__kepler.state.ergo?.on), false);
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('световые виды первого и второго этажей независимы от обычных планов', async () => {
+    const { page } = app;
+    await page.evaluate(async () => { (await import('./ui/levels.js')).addLevel(); });
+    const levels = await page.evaluate(() => window.__kepler.state.project.levels.map((level) => level.id));
+    assert.ok(levels.length >= 2);
+    const viewId = `analysis:light:${encodeURIComponent(levels[1])}`;
+    const firstLightId = `analysis:light:${encodeURIComponent(levels[0])}`;
+    const secondPlanCamera = { scale: 0.041, panX: 21, panY: 22, rotation: 0 };
+    const firstPlanCamera = { scale: 0.052, panX: 31, panY: 32, rotation: 0 };
+    await page.evaluate(async ({ firstLevel, secondPlanCamera: second, firstPlanCamera: first }) => {
+      const { switchLevel } = await import('./ui/levels.js');
+      Object.assign(window.__kepler.state.view, second);
+      switchLevel(firstLevel);
+      Object.assign(window.__kepler.state.view, first);
+    }, { firstLevel: levels[0], secondPlanCamera, firstPlanCamera });
+    await pickWorkspaceView(page, 'analytics', firstLightId);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, firstLightId);
+    await page.click(`#levelBar [data-level="${levels[1]}"]`);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.deepEqual(await page.evaluate(() => ({
+      activeLevel: window.__kepler.state.project.activeLevel,
+      scope: window.__kepler.state.solarAnalysis.scope,
+      levelId: window.__kepler.state.solarAnalysis.levelId,
+      panelHidden: document.getElementById('projectRoutePanel').hidden,
+    })), {
+      activeLevel: levels[1], scope: 'level', levelId: levels[1], panelHidden: true,
+    });
+    assert.deepEqual(await page.evaluate(() => ({
+      scale: window.__kepler.state.view.scale,
+      panX: window.__kepler.state.view.panX,
+      panY: window.__kepler.state.view.panY,
+      rotation: window.__kepler.state.view.rotation,
+    })), secondPlanCamera, 'первое открытие аналитики наследует настоящий план второго этажа');
+
+    const secondCamera = { scale: 0.123, panX: 111, panY: 222, rotation: 0 };
+    await page.evaluate((camera) => Object.assign(window.__kepler.state.view, camera), secondCamera);
+    await page.click(`#levelBar [data-level="${levels[0]}"]`);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, firstLightId);
+    assert.equal(await page.evaluate(() => window.__kepler.state.solarAnalysis.levelId), levels[0]);
+    const firstCamera = { scale: 0.087, panX: 333, panY: 444, rotation: 0 };
+    await page.evaluate((camera) => Object.assign(window.__kepler.state.view, camera), firstCamera);
+    await page.click(`#levelBar [data-level="${levels[1]}"]`);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.deepEqual(await page.evaluate(() => ({
+      scale: window.__kepler.state.view.scale,
+      panX: window.__kepler.state.view.panX,
+      panY: window.__kepler.state.view.panY,
+      rotation: window.__kepler.state.view.rotation,
+    })), secondCamera, 'камера светового вида второго этажа не стала камерой плана');
+    await page.evaluate(async () => { (await import('./ui/project-route.js')).closeAnalyticalView(); });
+    assert.deepEqual(await page.evaluate(() => ({
+      scale: window.__kepler.state.view.scale,
+      panX: window.__kepler.state.view.panX,
+      panY: window.__kepler.state.view.panY,
+      rotation: window.__kepler.state.view.rotation,
+    })), secondPlanCamera, 'закрытие аналитики возвращает камеру обычного плана');
+    await pickWorkspaceView(page, 'analytics', viewId);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.deepEqual(await page.evaluate(() => ({
+      scale: window.__kepler.state.view.scale,
+      panX: window.__kepler.state.view.panX,
+      panY: window.__kepler.state.view.panY,
+      rotation: window.__kepler.state.view.rotation,
+    })), secondCamera, 'повторное открытие возвращает камеру аналитического вида');
+    await page.click(`#levelBar [data-level="${levels[0]}"]`);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, firstLightId);
+    assert.deepEqual(await page.evaluate(() => ({
+      scale: window.__kepler.state.view.scale,
+      panX: window.__kepler.state.view.panX,
+      panY: window.__kepler.state.view.panY,
+      rotation: window.__kepler.state.view.rotation,
+    })), firstCamera, 'каждый поэтажный аналитический вид хранит собственную камеру');
+
+    await page.evaluate(async () => {
+      const { mutate, undo } = await import('./ui/store.js');
+      mutate(() => { window.__kepler.state.project.name += ' · проверка'; });
+      undo();
+    });
+    await page.waitForFunction((id) => (
+      window.__kepler.state.analyticalView?.id === id
+      && window.__kepler.state.solarAnalysis?.scope === 'level'
+    ), firstLightId);
+
+    await page.evaluate(async () => { (await import('./ui/props-views.js')).openView('3d'); });
+    await page.waitForFunction(() => window.__kepler.state.analyticalView == null);
+    assert.equal(await page.evaluate(() => window.__kepler.state.solarAnalysis.on), false);
+
+    await pickWorkspaceView(page, 'plans', `plan:${levels[0]}`);
+    await page.waitForFunction((id) => window.__kepler.state.project.activeLevel === id, levels[0]);
+    assert.equal(await page.evaluate(() => window.__kepler.state.analyticalView), null);
+    assert.equal(await page.evaluate(() => window.__kepler.state.solarAnalysis.on), false);
     assert.deepEqual(app.errors, []);
   });
 
   it('новый проект закрывает прежний аналитический вид, а не подменяет его другим', async () => {
     const { page } = app;
-    await pickWorkspaceView(page, 'analytics', 'analysis:light');
-    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
-    assert.equal(await page.getAttribute('[data-workspace-view="analysis:light"]', 'aria-selected'), 'true');
+    const levelId = await page.evaluate(() => window.__kepler.state.project.activeLevel);
+    const viewId = `analysis:light:${encodeURIComponent(levelId)}`;
+    await pickWorkspaceView(page, 'analytics', viewId);
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.equal(await page.getAttribute(`[data-workspace-view="${viewId}"]`, 'aria-selected'), 'true');
 
     await page.evaluate(async () => { (await import('./ui/files.js')).newProject(); });
     await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
@@ -214,7 +315,7 @@ describe('компактная аналитика на телефоне', () => 
     assert.equal(await page.locator('#projectRouteBody .project-route-task').count(), 1);
   });
 
-  it('открывает аналитический лист из общего меню видов', async () => {
+  it('открывает поэтажное освещение всех помещений из общего меню видов', async () => {
     const { page } = app;
     await page.tap('#projectRouteClose');
     await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
@@ -222,14 +323,70 @@ describe('компактная аналитика на телефоне', () => 
     await page.tap('#workspaceViewPicker');
     const menu = page.getByRole('dialog', { name: 'Все виды проекта' });
     await menu.locator('[data-view-group="analytics"]').tap();
-    assert.deepEqual(await menu.locator('[data-view-key^="analysis:"] span').allTextContents(), [
-      'Сводка', 'Эргономика', 'Свет и солнце', 'Инженерия', 'Участок и ограничения', 'Объём здания',
-    ]);
-    await menu.locator('[data-view-key="analysis:light"]').tap();
+    const titles = await menu.locator('[data-view-key^="analysis:"] span').allTextContents();
+    assert.ok(titles.some((title) => /^Планировка · /.test(title)), titles.join(', '));
+    assert.ok(titles.some((title) => /^Освещение · /.test(title)), titles.join(', '));
+    assert.ok(titles.some((title) => /^Эргономика · /.test(title)), titles.join(', '));
+    const light = menu.locator('[data-view-key^="analysis:light:"]').first();
+    const viewId = await light.getAttribute('data-view-key');
+    await light.tap();
 
-    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
-    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Свет и солнце');
-    assert.equal(await page.getAttribute('[data-workspace-view="analysis:light"]', 'aria-selected'), 'true');
+    await page.waitForFunction((id) => window.__kepler.state.analyticalView?.id === id, viewId);
+    assert.equal(await page.isHidden('#projectRoutePanel'), true);
+    assert.equal(await page.getAttribute(`[data-workspace-view="${viewId}"]`, 'aria-selected'), 'true');
+    await page.evaluate(() => window.__kepler.fitView());
+    const expected = await page.evaluate(() => window.__kepler.state.project.rooms
+      .filter((room) => room.type !== 'shaft').map((room) => room.id).sort());
+    await page.waitForFunction((roomIds) => {
+      const drawn = window.__kepler.state._lightAnalysisDrawn;
+      return drawn?.roomIds?.length === roomIds.length
+        && roomIds.every((id) => drawn.roomIds.includes(id));
+    }, expected);
+    assert.match(await page.textContent('#solarLegend'), /Готово/);
+    const lightState = await page.evaluate(() => ({
+      scope: window.__kepler.state.solarAnalysis.scope,
+      levelId: window.__kepler.state.solarAnalysis.levelId,
+      roomIds: [...(window.__kepler.state._lightAnalysisDrawn?.roomIds || [])].sort(),
+    }));
+    assert.equal(lightState.scope, 'level');
+    assert.equal(lightState.levelId, await page.evaluate(() => window.__kepler.state.project.activeLevel));
+    assert.deepEqual(lightState.roomIds, expected, 'renderer сам показал все помещения этажа без выбора');
+    const afterRoomDetail = await page.evaluate(async () => {
+      const { focusSolarRoom, setSolarAnalysis } = await import('./ui/solar-analysis.js');
+      const rooms = window.__kepler.state.project.rooms.filter((room) => room.type !== 'shaft');
+      focusSolarRoom(rooms[0]?.id);
+      setSolarAnalysis(true, rooms[0]?.id);
+      return {
+        scope: window.__kepler.state.solarAnalysis.scope,
+        roomId: window.__kepler.state.solarAnalysis.roomId,
+      };
+    });
+    assert.equal(afterRoomDetail.scope, 'level', 'детали комнаты не скрывают карту всего этажа');
+    assert.ok(afterRoomDetail.roomId, 'выбранная комната хранится только как деталь вида');
+    await page.waitForFunction((roomIds) => {
+      const drawn = window.__kepler.state._lightAnalysisDrawn;
+      return drawn?.roomIds?.length === roomIds.length
+        && roomIds.every((id) => drawn.roomIds.includes(id));
+    }, expected);
+    const offscreenId = await page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const room = createRoom('bedroom', 1_000_000, 1_000_000, 4000, 4000);
+      room.id = 'light-offscreen-room';
+      mutate(() => { window.__kepler.state.project.rooms.push(room); });
+      window.__floorLightE2E = await import('./ui/render-solar.js');
+      return room.id;
+    });
+    await page.waitForFunction(() => {
+      const state = window.__kepler.state;
+      const progress = window.__floorLightE2E.levelLightAnalysisProgress(
+        state.project.activeLevel, state.solarAnalysis.mode,
+      );
+      return progress.total > 0 && progress.ready === progress.total && progress.pending === 0;
+    });
+    assert.equal(await page.evaluate((roomId) => (
+      window.__floorLightE2E.currentLightAnalysis(roomId)?.roomId || null
+    ), offscreenId), offscreenId, 'комната вне экрана тоже пересчитана автоматически');
     assert.deepEqual(app.errors, []);
   });
 });

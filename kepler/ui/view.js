@@ -132,24 +132,26 @@ export function fitBox(width, height, margins) {
 
 // Пользователь сам двигал вид в этом режиме — при входе в режим не вписываем.
 export function markViewTouched() {
-  if (state.views?.[state.modeName]) state.views[state.modeName].touched = true;
+  const key = state.analyticalView?.id || state.modeName;
+  if (state.views?.[key]) state.views[key].touched = true;
 }
 
 // Вписать вид при входе в режим один раз, если пользователь его ещё не
 // двигал (modes.js). fitView сбрасывает флаги: после загрузки проекта или
 // «Вписать» другой режим снова впишется при первом входе.
 export function fitViewOnce() {
-  const saved = state.views?.[state.modeName];
+  const saved = state.views?.[state.analyticalView?.id || state.modeName];
   if (!saved || saved.touched || saved.fitted) return false;
   fitView();
   return true;
 }
 
 function resetFitFlags() {
+  const active = state.analyticalView?.id || state.modeName;
   for (const [mode, saved] of Object.entries(state.views || {})) {
     if (!saved) continue;
     saved.touched = false;
-    saved.fitted = mode === state.modeName;
+    saved.fitted = mode === active;
   }
 }
 

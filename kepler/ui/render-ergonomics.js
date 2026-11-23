@@ -33,14 +33,17 @@ function read() {
   try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; }
 }
 function write(v) {
-  try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* только на сессию */ }
+  // Активность — состояние самостоятельного аналитического вида, а не
+  // постоянная настройка. Между сессиями сохраняем только оформление и
+  // группы, иначе после reload эргономика накладывалась на обычный план.
+  try { localStorage.setItem(KEY, JSON.stringify({ ...v, on: false })); } catch { /* только на сессию */ }
 }
 
 // Обработчики от ui/ergonomics.js: перерисовать, счётчик на кнопке, смена настроек.
 export const ergoHooks = { redraw: null, changed: null };
 
 export function ergoPref() {
-  if (!state.ergo) state.ergo = normalizeErgoPref(read());
+  if (!state.ergo) state.ergo = normalizeErgoPref({ ...read(), on: false });
   return state.ergo;
 }
 

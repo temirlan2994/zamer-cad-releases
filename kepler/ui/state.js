@@ -9,6 +9,9 @@ export const state = {
   // Тяжёлые отчёты живут отдельно от быстрого цикла черчения. После правки
   // dirty=true, отдельный аналитический вид либо idle-задача обновляет его один раз.
   analytics: { dirty: true, running: false, revision: 0, updatedAt: null },
+  // Полноценный поэтажный аналитический вид на основном холсте.
+  // { id, analysis, levelId }; плавающая панель аналитики от него независима.
+  analyticalView: null,
   flash: null, // { rects, levelId } — мгновенная подсветка места замечания
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)
@@ -27,7 +30,7 @@ export const state = {
   ergoFocus: null, // id находки эргономики, подсвеченной кнопкой «Показать»
   // Выбранная комната и слой световой карты. Это состояние вида: в проект
   // не сохраняется, а расчёт лениво кешируется в ui/render-solar.js.
-  solarAnalysis: { on: false, roomId: null, mode: 'direct' },
+  solarAnalysis: { on: false, roomId: null, mode: 'direct', scope: 'room', levelId: null },
   // Расчётная карта возможностей участка. Это состояние вида:
   // в файле проекта хранится только исходное пятно site.planning.referenceFootprint.
   siteOpportunity: { on: false, result: null, signature: null },

@@ -12,6 +12,7 @@ const paths = {
   sheet: 'M5 2h10l4 4v16H5zM14 2v6h5M8 12h8m-8 4h5',
   analysis: 'M4 19V9m5 10V5m5 14v-7m5 7V3M3 21h18',
   ergonomics: 'M4 18h16M6 18v-4h12v4M8 14V9h8v5M12 9V5m-2 0h4',
+  circulation: 'M4 7h12m0 0-3-3m3 3-3 3M20 17H8m0 0 3-3m-3 3 3 3',
   light: 'M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 1 1 8 0',
   engineering: 'M4 7h7v5h5V7h4M6 4v6m12-6v6m-7 4v5h5v-5',
   volume: 'm12 3 8 4v10l-8 4-8-4V7zm-8 4 8 4 8-4m-8 4v10',

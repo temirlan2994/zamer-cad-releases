@@ -60,17 +60,59 @@ export function renderLevelBar() {
 // Панорамирование и масштаб принадлежат вкладке плана. Рабочий этаж
 // модели 3D можно менять независимо, не сдвигая соответствующие чертежи.
 const planCameras = new WeakMap();
-function rememberPlan(project) {
+function cameraMap(project) {
   let cameras = planCameras.get(project);
   if (!cameras) { cameras = new Map(); planCameras.set(project, cameras); }
-  const { scale, panX, panY, rotation } = state.view;
-  const { x = 0, y = 0 } = project.building?.origin || {};
-  cameras.set(project.activeLevel, { scale, panX, panY, rotation, x, y });
   return cameras;
 }
 
+export function savePlanCamera(project = state.project, levelId = project?.activeLevel, camera = state.view) {
+  if (!project || !levelId || !camera) return null;
+  const { scale, panX, panY, rotation } = camera;
+  const { x = 0, y = 0 } = project.building?.origin || {};
+  const saved = { scale, panX, panY, rotation, x, y };
+  cameraMap(project).set(levelId, saved);
+  return saved;
+}
+
+function rememberPlan(project) {
+  savePlanCamera(project, project.activeLevel, state.view);
+  const cameras = cameraMap(project);
+  return cameras;
+}
+
+// Аналитические виды используют тот же исходный план этажа, но хранят свою
+// камеру отдельно. Даём контроллеру прочитать уже посещённую камеру плана,
+// не применяя её преждевременно во время switchLevel.
+export function savedPlanCamera(project, levelId) {
+  const saved = planCameras.get(project)?.get(levelId) || null;
+  const origin = project?.building?.origin;
+  if (!saved || saved.x !== (origin?.x ?? 0) || saved.y !== (origin?.y ?? 0)) return null;
+  return {
+    scale: saved.scale,
+    panX: saved.panX,
+    panY: saved.panY,
+    rotation: saved.rotation,
+  };
+}
+
+export function restorePlanCamera(project, levelId) {
+  const saved = savedPlanCamera(project, levelId);
+  if (!saved) return null;
+  Object.assign(state.view, saved);
+  if (refs.statusScale) refs.statusScale.textContent = scaleLabel();
+  return saved;
+}
+
 // Переключение этажа — не правка проекта: в историю не попадает.
-export function switchLevel(id, { planView = state.modeName === 'plan' && !document.body.classList.contains('v3-open') } = {}) {
+export function switchLevel(id, {
+  // Аналитический вид хранит собственную камеру. Пока он открыт, смена
+  // этажа не должна записывать её в WeakMap обычных планов и подменять
+  // камерой целевого плана: контроллер аналитики сохранит/восстановит обе
+  // камеры после PROJECT_CHANGE.
+  planView = state.modeName === 'plan' && !state.analyticalView
+    && !document.body.classList.contains('v3-open'),
+} = {}) {
   const project = state.project;
   if (id === project.activeLevel || !project.levels.some((l) => l.id === id)) return;
   cancelTool();
@@ -107,7 +149,7 @@ export function addLevel() {
   const project = state.project;
   const list = sortedLevels(project);
   const top = list[list.length - 1];
-  if (state.modeName === 'plan') rememberPlan(project);
+  if (state.modeName === 'plan' && !state.analyticalView) rememberPlan(project);
   const level = createLevel(`${list.length + 1} этаж`, top.elevation + top.height, top.height);
   const stairs = top.rooms.filter((r) => r.type === 'stairs-room');
   cancelTool();

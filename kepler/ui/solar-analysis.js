@@ -1,20 +1,27 @@
 // UI двух световых оценок: прямое солнце и предварительные КЕО/люксы.
 // Расчёты и кэш живут в core/daylight-analysis.js и ui/render-solar.js.
 
-import { el } from './dom.js';
+import { el, escapeHtml } from './dom.js';
 import {
+  bindLightAnalysisRedraw,
+  cancelPendingLightAnalysis,
   currentDaylightAnalysis as cachedDaylight,
   currentSolarAnalysis as cachedDirect,
+  levelLightAnalysisProgress,
+  prepareLevelLightAnalysis,
 } from './render-solar.js';
 import { state } from './state.js';
 
 const MODES = new Set(['direct', 'daylight']);
 let uiChange = null;
+let progressChange = null;
 let legendKey = '';
 
 function pref() {
   if (!state.solarAnalysis || typeof state.solarAnalysis !== 'object') {
-    state.solarAnalysis = { on: false, roomId: null, mode: 'direct' };
+    state.solarAnalysis = {
+      on: false, roomId: null, mode: 'direct', scope: 'room', levelId: null,
+    };
   }
   if (!MODES.has(state.solarAnalysis.mode)) state.solarAnalysis.mode = 'direct';
   return state.solarAnalysis;
@@ -56,9 +63,40 @@ function syncLegend(a = null) {
   const p = pref();
   if (!p.on) { box.hidden = true; legendKey = 'off'; return; }
   box.hidden = false;
-  const key = a ? `${p.mode}|${a.key}` : `${p.mode}|none`;
+  const level = p.scope === 'level'
+    ? state.project?.levels?.find((item) => item.id === p.levelId) : null;
+  const levelRooms = level?.rooms?.filter((room) => room.type !== 'shaft') || [];
+  const progress = p.scope === 'level'
+    ? levelLightAnalysisProgress(p.levelId, p.mode) : null;
+  const key = `${p.scope || 'room'}|${p.levelId || ''}|${p.mode}|${a?.key || 'none'}|${levelRooms.length}`
+    + `|${progress?.ready ?? ''}|${progress?.pending ?? ''}`;
   if (legendKey === key) return;
   legendKey = key;
+  if (p.scope === 'level') {
+    const levelLabel = level?.name || 'Этаж';
+    const countLabel = `${levelRooms.length} ${levelRooms.length === 1 ? 'помещение' : 'помещений'}`;
+    const progressLabel = progress.total > 0 && progress.ready < progress.total
+      ? `Расчёт ${progress.ready}/${progress.total}`
+      : `Готово · ${countLabel}`;
+    if (p.mode === 'daylight') {
+      box.className = 'solar-legend daylight estimated';
+      box.innerHTML = `<span class="solar-legend-title">Освещённость · все помещения</span>
+        <span class="solar-legend-scale daylight" aria-hidden="true"></span>
+        <span class="solar-legend-tick">0</span><span class="solar-legend-tick">100</span>
+        <span class="solar-legend-tick">300</span><span class="solar-legend-tick">500+ лк</span>
+        <span class="solar-legend-note">${escapeHtml(levelLabel)} · ${escapeHtml(progressLabel)} · предварительно</span>`;
+      box.setAttribute('aria-label', `Освещённость всех помещений этажа ${levelLabel}: ${progressLabel}; шкала 0, 100, 300, 500 и более люкс`);
+    } else {
+      box.className = 'solar-legend estimated';
+      box.innerHTML = `<span class="solar-legend-title">Прямое солнце · все помещения</span>
+        <span class="solar-legend-scale" aria-hidden="true"></span>
+        <span class="solar-legend-tick">0</span><span class="solar-legend-tick">2</span>
+        <span class="solar-legend-tick">4</span><span class="solar-legend-tick">6+ ч</span>
+        <span class="solar-legend-note">${escapeHtml(levelLabel)} · ${escapeHtml(progressLabel)}</span>`;
+      box.setAttribute('aria-label', `Прямое солнце во всех помещениях этажа ${levelLabel}: ${progressLabel}; шкала от 0 до 6 и более часов`);
+    }
+    return;
+  }
   if (!a) {
     box.className = 'solar-legend unknown';
     box.innerHTML = '<span class="solar-legend-title">Выберите помещение</span>';
@@ -95,6 +133,11 @@ function applyState(on, roomId, local = null) {
   const nextId = roomId === undefined ? (p.roomId || selectedRoomId()) : (roomId || null);
   const changed = p.on !== Boolean(on) || p.roomId !== nextId;
   p.on = Boolean(on); p.roomId = nextId;
+  if (!p.on) cancelPendingLightAnalysis();
+  const keepLevelScope = p.scope === 'level'
+    && state.analyticalView?.analysis === 'light'
+    && state.analyticalView.levelId === state.project?.activeLevel;
+  if (p.on && !keepLevelScope) { p.scope = 'room'; p.levelId = null; }
   syncLegend(p.on ? activeAnalysis(nextId) : null);
   if (changed) notify(local);
   return p;
@@ -102,11 +145,38 @@ function applyState(on, roomId, local = null) {
 
 export const setSolarAnalysis = (on, roomId) => applyState(on, roomId);
 
+export function setSolarLevelAnalysis(levelId, mode = 'daylight', local = null) {
+  const p = pref();
+  if (!MODES.has(mode)) mode = 'daylight';
+  const changed = !p.on || p.scope !== 'level' || p.levelId !== levelId || p.mode !== mode;
+  p.on = true;
+  p.scope = 'level';
+  p.levelId = levelId || null;
+  p.roomId = null;
+  p.mode = mode;
+  syncLegend(null);
+  // Вид этажа сам запускает все помещения; выбирать их по одному не нужно.
+  // Расчёт идёт короткими фоновыми задачами и перерисовывает готовые карты.
+  void prepareLevelLightAnalysis(p.levelId, p.mode);
+  if (changed) notify(local);
+  return p;
+}
+
 export function setSolarMode(mode, local = null) {
   const p = pref();
   if (!MODES.has(mode) || p.mode === mode) return p;
   p.mode = mode;
   syncLegend(p.on ? activeAnalysis(p.roomId || selectedRoomId()) : null);
+  if (p.on && p.scope === 'level' && p.levelId) void prepareLevelLightAnalysis(p.levelId, p.mode);
+  notify(local);
+  return p;
+}
+
+export function refreshSolarLevelAnalysis(local = null) {
+  const p = pref();
+  if (!p.on || p.scope !== 'level' || !p.levelId) return p;
+  void prepareLevelLightAnalysis(p.levelId, p.mode);
+  syncLegend(null);
   notify(local);
   return p;
 }
@@ -132,8 +202,16 @@ export function currentDaylightAnalysis(roomId = pref().roomId || selectedRoomId
   return a;
 }
 
-export function bindSolarAnalysis(onChange) {
+export function bindSolarAnalysis(onChange, onProgress = onChange) {
   uiChange = typeof onChange === 'function' ? onChange : null;
+  progressChange = typeof onProgress === 'function' ? onProgress : null;
+  bindLightAnalysisRedraw(() => {
+    syncLegend(null);
+    // Готовность очередной комнаты меняет только canvas и легенду. Полную
+    // панель свойств нельзя пересоздавать N раз: пользователь терял фокус
+    // поля после каждого фонового результата.
+    progressChange?.();
+  });
   syncLegend(pref().on ? activeAnalysis(pref().roomId || selectedRoomId()) : null);
 }
 

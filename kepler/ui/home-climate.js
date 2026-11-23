@@ -11,7 +11,7 @@ import { insolationZone } from '../core/insolation.js';
 import { formatSunInfo, sunPosition } from '../core/site.js';
 import { escapeHtml } from './dom.js';
 import {
-  focusSolarRoom, setSolarAnalysis, setSolarMode,
+  focusSolarRoom, refreshSolarLevelAnalysis, setSolarAnalysis, setSolarMode,
 } from './solar-analysis.js';
 import { setLandscapeSun } from './landscape-style.js';
 import { refreshLandscapeSun } from './landscape-sun.js';
@@ -450,6 +450,7 @@ export function handleHomeClimateInput(event, deps = {}) {
     deps.mutate?.(() => { project.site.sun.date = input.value; });
     if (state.solarAnalysis) delete state.solarAnalysis.date;
     refreshLandscapeSun();
+    if (state.solarAnalysis?.scope === 'level') refreshSolarLevelAnalysis(deps.requestDraw);
     deps.requestDraw?.();
     deps.rerender?.();
     return true;
@@ -483,6 +484,7 @@ export function handleHomeClimateInput(event, deps = {}) {
     if (key === 'northDeg') deps.applyModeRotation?.();
   }
   refreshLandscapeSun();
+  if (state.solarAnalysis?.scope === 'level') refreshSolarLevelAnalysis(deps.requestDraw);
   deps.requestDraw?.();
   deps.rerender?.();
   return true;

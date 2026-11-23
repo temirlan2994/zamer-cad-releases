@@ -69,7 +69,7 @@ import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
   bindSolarAnalysis(() => { // выбранная комната: прямое солнце и остекление
     renderProps();
     requestDraw();
-  });
+  }, requestDraw);
   bindSolarReport(); // сезонная сводка по помещениям и экспорт CSV/JSON
   bindPwa(); // установка на телефон, офлайн-копия и автоматические обновления
   bindProjectRoute(); // этапы подготовки участка, паспорт и карта возможностей

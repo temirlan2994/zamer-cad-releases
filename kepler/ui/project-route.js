@@ -4,6 +4,8 @@
 
 import { contextNeighborSignature } from '../core/site.js';
 import { siteOpportunity, sitePassport, sitePlanningRoute } from '../core/site-planning.js';
+import { panForMovedBuilding } from '../core/site-check.js';
+import { floorAnalyticalViewById, floorAnalyticalViewId } from '../core/analytical-views.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import {
   handleHomeProgramClick, handleHomeProgramInput, homeProgramHtml,
@@ -32,13 +34,16 @@ import { handleHomeDeliverablesClick, homeDeliverablesHtml } from './home-delive
 import { handleExport, PROJECT_REPLACED_EVENT } from './files.js';
 import { goToIssue, setIssuesOpen } from './issues.js';
 import { bindErgoViewBlock, ergoViewBlock } from './ergonomics.js';
-import { switchLevel } from './levels.js';
+import { setErgoPref } from './render-ergonomics.js';
+import { restorePlanCamera, savePlanCamera, switchLevel } from './levels.js';
 import { closeSheets, isPhone, toggleSheet } from './mobile.js';
 import { applyModeRotation } from './modes.js';
 import { startPlanSectionTool } from './plan-section.js';
 import { renderProps } from './props.js';
-import { openView } from './props-views.js';
-import { setSolarAnalysis } from './solar-analysis.js';
+import { activeViewId, openView } from './props-views.js';
+import {
+  focusSolarRoom, refreshSolarLevelAnalysis, setSolarAnalysis, setSolarLevelAnalysis,
+} from './solar-analysis.js';
 import { state } from './state.js';
 import { getScopedItem, setScopedItem } from './storage-scope.js';
 import {
@@ -46,7 +51,7 @@ import {
 } from './store.js';
 import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
-import { requestDraw } from './view.js';
+import { requestDraw, scaleLabel } from './view.js';
 import { deriveEnvelopeStatus } from '../core/envelope-status.js';
 
 const STAGES = Object.freeze([
@@ -281,11 +286,10 @@ const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
 const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
 const HOME_NAV_VIEWS = new Set(HOME_NAV_DEFS.map((view) => view.id));
 
-// Аналитика является самостоятельными видами рабочего пространства, а не
-// режимами текущего плана. Под капотом они используют уже существующие
-// проверяемые панели, поэтому данные и действия не дублируются. Идентификатор
-// analysis:* виден диспетчеру видов и вкладкам, panel — внутреннее имя панели.
-export const ANALYTICAL_WORKSPACE_VIEWS = Object.freeze([
+// Соответствие внутренних панелей нижней аналитической палитры. Полноценные
+// поэтажные виды строятся отдельно в core/analytical-views.js; эти записи
+// нужны только для заголовка/типа компактного инспектора.
+const ANALYTICAL_PANEL_VIEWS = Object.freeze([
   Object.freeze({ id: 'analysis:summary', title: 'Сводка', kind: 'analysis', panel: 'review' }),
   Object.freeze({ id: 'analysis:ergonomics', title: 'Эргономика', kind: 'ergonomics', panel: 'circulation' }),
   Object.freeze({ id: 'analysis:light', title: 'Свет и солнце', kind: 'light', panel: 'climate' }),
@@ -293,8 +297,7 @@ export const ANALYTICAL_WORKSPACE_VIEWS = Object.freeze([
   Object.freeze({ id: 'analysis:site', title: 'Участок и ограничения', kind: 'site', panel: 'stage' }),
   Object.freeze({ id: 'analysis:volume', title: 'Объём здания', kind: 'volume', panel: 'envelope' }),
 ]);
-const ANALYTICAL_VIEW_BY_ID = new Map(ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.id, view]));
-const ANALYTICAL_VIEW_BY_PANEL = new Map(ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.panel, view]));
+const ANALYTICAL_VIEW_BY_PANEL = new Map(ANALYTICAL_PANEL_VIEWS.map((view) => [view.panel, view]));
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action', 'data-route-stage', 'data-climate-setting',
   'data-route-confirm', 'data-route-footprint', 'data-route-tool',
@@ -467,6 +470,13 @@ function resetWorkflowForReplacement() {
   // Самостоятельный аналитический вид относится к прежней модели. Новый
   // проект открывается с обычного плана, а не молча меняет «Свет» на «Участок».
   panelOpen = false;
+  state.analyticalView = null;
+  disableWorkspaceAnalyticalLayers();
+  // Ключи этажей могут совпасть у двух разных файлов. Камера старого дома
+  // не должна внезапно применяться к новому проекту с тем же `level-1`.
+  for (const key of Object.keys(state.views || {})) {
+    if (key.startsWith('plan:') || key.startsWith('analysis:')) delete state.views[key];
+  }
   lastOpener = null;
   lastOpenerView = null;
   byId('projectRouteSteps')?.replaceChildren();
@@ -1488,25 +1498,194 @@ function notifyWorkspaceViewChange() {
   document.dispatchEvent(new CustomEvent('kepler:view'));
 }
 
-// Активный аналитический вид используется тем же диспетчером вкладок, что
-// планы, 3D и листы. Закрытая палитра не считается активным видом.
-export function activeAnalyticalViewId() {
-  if (!panelOpen) return null;
-  const ownPanel = panelView === 'passport' ? 'stage' : panelView;
-  return ANALYTICAL_VIEW_BY_PANEL.get(ownPanel)?.id || null;
+function disableWorkspaceAnalyticalLayers() {
+  if (state.solarAnalysis?.on) setSolarAnalysis(false);
+  if (state.ergo?.on) setErgoPref({ on: false });
+  state.homeProgramOverlay = {
+    ...state.homeProgramOverlay, on: false, result: null, signature: null,
+  };
+  state.homeEngineeringOverlay = {
+    ...state.homeEngineeringOverlay, on: false, result: null, signature: null,
+  };
+  state.homeCirculationOverlay = {
+    ...state.homeCirculationOverlay, on: false, result: null, signature: null,
+  };
+  state._homeProgramUI = null;
+  state._homeFlowsUI = null;
+  state._homeEngineeringUI = null;
+  state._homeCirculationUI = null;
 }
 
-export function openAnalyticalView(id, opener = null) {
-  const view = ANALYTICAL_VIEW_BY_ID.get(id);
+function workspaceCameraKey() {
+  if (state.analyticalView?.id) return state.analyticalView.id;
+  return state.modeName || 'plan';
+}
+
+function saveWorkspaceCamera(key = workspaceCameraKey()) {
+  const origin = state.project?.building?.origin || { x: 0, y: 0 };
+  state.views[key] = {
+    ...state.views[key],
+    scale: state.view.scale,
+    panX: state.view.panX,
+    panY: state.view.panY,
+    rotation: state.view.rotation,
+    origin: { x: origin.x, y: origin.y },
+  };
+}
+
+function loadWorkspaceCamera(key, fallback = null) {
+  const saved = state.views[key] || fallback;
+  if (!saved) return;
+  const origin = state.project?.building?.origin || { x: 0, y: 0 };
+  const camera = { ...saved };
+  if (saved.origin && Number.isFinite(saved.scale)) {
+    Object.assign(camera, panForMovedBuilding(camera,
+      origin.x - (Number(saved.origin.x) || 0),
+      origin.y - (Number(saved.origin.y) || 0)));
+    camera.origin = { x: origin.x, y: origin.y };
+  }
+  state.views[key] = camera;
+  for (const field of ['scale', 'panX', 'panY', 'rotation']) {
+    if (Number.isFinite(camera[field])) state.view[field] = camera[field];
+  }
+  const scale = byId('scaleInfo');
+  if (scale) scale.textContent = scaleLabel();
+}
+
+function enableWorkspaceAnalyticalLayer(view, { lightMode = 'daylight' } = {}) {
+  if (view.analysis === 'light') {
+    setSolarLevelAnalysis(view.levelId, lightMode, requestDraw);
+  } else if (view.analysis === 'ergonomics') {
+    setErgoPref({ on: true });
+  } else if (view.analysis === 'layout') {
+    state.homeProgramOverlay = {
+      ...state.homeProgramOverlay,
+      on: true,
+      mode: 'flows',
+      zones: true,
+      routes: true,
+      result: null,
+      signature: null,
+    };
+    refreshHomeFlowsOverlay(state.project, state, requestDraw);
+  } else if (view.analysis === 'circulation') {
+    state.homeCirculationOverlay = {
+      ...state.homeCirculationOverlay,
+      on: true,
+      result: null,
+      signature: null,
+    };
+    refreshHomeCirculationOverlay(state.project, state, requestDraw);
+  } else if (view.analysis === 'engineering') {
+    state.homeEngineeringOverlay = {
+      ...state.homeEngineeringOverlay,
+      on: true,
+      result: null,
+      signature: null,
+    };
+    refreshHomeEngineeringOverlay(state.project, state, requestDraw);
+  }
+}
+
+function workspaceAnalyticalLayerIsOn(view) {
   if (!view) return false;
-  if (view.panel === 'stage') activeStage = firstIncompleteStage(latestModel);
-  openPanel(view.panel, null, opener);
+  if (view.analysis === 'light') {
+    return state.solarAnalysis?.on === true && state.solarAnalysis.scope === 'level'
+      && state.solarAnalysis.levelId === view.levelId;
+  }
+  if (view.analysis === 'ergonomics') return state.ergo?.on === true;
+  if (view.analysis === 'layout') {
+    return state.homeProgramOverlay?.on === true && state.homeProgramOverlay.mode === 'flows';
+  }
+  if (view.analysis === 'circulation') return state.homeCirculationOverlay?.on === true;
+  if (view.analysis === 'engineering') return state.homeEngineeringOverlay?.on === true;
+  return false;
+}
+
+function syncManualAnalyticalLayer(analysis, on) {
+  const current = floorAnalyticalViewById(state.project, state.analyticalView?.id);
+  if (on) {
+    openAnalyticalView(floorAnalyticalViewId(analysis, state.project.activeLevel), {
+      // Команда «Прямое солнце» должна открыть этот же режим для всего
+      // этажа, а не незаметно заменить его на карту пасмурного неба.
+      lightMode: analysis === 'light' ? state.solarAnalysis?.mode : undefined,
+      detailRoomId: analysis === 'light' ? state.solarAnalysis?.roomId : undefined,
+    });
+  } else if (current?.analysis === analysis) {
+    closeAnalyticalView({ restoreFocus: false });
+  }
+}
+
+// Активный аналитический вид принадлежит холсту и этажу. Плавающая панель
+// является только инспектором и больше не определяет, какой вид открыт.
+export function activeAnalyticalViewId() {
+  const id = state.analyticalView?.id || null;
+  if (!id || !floorAnalyticalViewById(state.project, id)) return null;
+  return id;
+}
+
+export function openAnalyticalView(id, { lightMode = 'daylight', detailRoomId = null } = {}) {
+  const view = floorAnalyticalViewById(state.project, id);
+  if (!view) return false;
+  if (activeAnalyticalViewId() === view.id && state.project.activeLevel === view.levelId
+    && workspaceAnalyticalLayerIsOn(view)) {
+    if (panelOpen) closePanel({ restoreFocus: false });
+    requestDraw();
+    return true;
+  }
+  const previousLevelId = state.analyticalView?.levelId || state.project.activeLevel;
+  const hadAnalyticalView = Boolean(state.analyticalView?.id);
+  if (hadAnalyticalView) saveWorkspaceCamera();
+  else if (activeViewId() === `plan:${state.project.activeLevel}`) {
+    savePlanCamera(state.project, state.project.activeLevel, state.view);
+  }
+  closeRouteMenu();
+  if (panelOpen) closePanel({ restoreFocus: false });
+  state.analyticalView = null;
+  disableWorkspaceAnalyticalLayers();
+  if (hadAnalyticalView) restorePlanCamera(state.project, previousLevelId);
+  openView(`plan:${view.levelId}`);
+  // levelBar мог уже поменять activeLevel, поэтому openView иногда не зовёт
+  // switchLevel. Камеру настоящего плана целевого этажа берём из одного
+  // project-scoped хранилища levels.js, а не из устаревающего дубля.
+  restorePlanCamera(state.project, view.levelId);
+  const planCamera = { ...state.view };
+  savePlanCamera(state.project, view.levelId, planCamera);
+  state.selection = null;
+  state.analyticalView = { id: view.id, analysis: view.analysis, levelId: view.levelId };
+  loadWorkspaceCamera(view.id, planCamera);
+  enableWorkspaceAnalyticalLayer(view, { lightMode });
+  if (view.analysis === 'light' && detailRoomId
+    && state.project.rooms.some((room) => room.id === detailRoomId)) {
+    focusSolarRoom(detailRoomId);
+    state.selection = { type: 'room', id: detailRoomId };
+  }
+  requestDraw();
+  renderProjectRoute();
+  renderProps();
+  announce(`Открыт вид «${view.title}»`);
+  notifyWorkspaceViewChange();
   return true;
 }
 
 export function closeAnalyticalView({ restoreFocus = false } = {}) {
-  if (!activeAnalyticalViewId()) return false;
-  closePanel({ restoreFocus });
+  const hadView = Boolean(state.analyticalView?.id);
+  const ownPanel = panelView === 'passport' ? 'stage' : panelView;
+  const hadPanel = panelOpen && ANALYTICAL_VIEW_BY_PANEL.has(ownPanel);
+  if (!hadView && !hadPanel) return false;
+  if (hadView) {
+    saveWorkspaceCamera();
+    state.analyticalView = null;
+    disableWorkspaceAnalyticalLayers();
+    restorePlanCamera(state.project, state.project.activeLevel);
+  }
+  if (hadPanel) closePanel({ restoreFocus });
+  if (hadView) {
+    requestDraw();
+    renderProjectRoute();
+    renderProps();
+    notifyWorkspaceViewChange();
+  }
   return true;
 }
 
@@ -1836,7 +2015,8 @@ function handleBodyClick(event) {
     closePanel,
     announce,
   })) return;
-  if (handleHomeClimateClick(event, {
+  const solarWasOn = state.solarAnalysis?.on === true;
+  const handledClimate = handleHomeClimateClick(event, {
     project: state.project,
     state,
     closePanel,
@@ -1846,7 +2026,13 @@ function handleBodyClick(event) {
     toast,
     setEditorMode: openAnalysisView,
     switchLevel,
-  })) return;
+  });
+  if (handledClimate) {
+    const solarOn = state.solarAnalysis?.on === true;
+    if (solarOn !== solarWasOn) syncManualAnalyticalLayer('light', solarOn);
+    return;
+  }
+  const circulationWasOn = state.homeCirculationOverlay?.on === true;
   if (handleHomeCirculationClick(event, {
     project: state.project,
     state,
@@ -1858,9 +2044,12 @@ function handleBodyClick(event) {
     toast,
     setEditorMode: openAnalysisView,
   })) {
+    const circulationOn = state.homeCirculationOverlay?.on === true;
+    if (circulationOn !== circulationWasOn) syncManualAnalyticalLayer('circulation', circulationOn);
     disableSolarForAnotherOverlay(state.homeCirculationOverlay?.on === true);
     return;
   }
+  const flowsWereOn = state.homeProgramOverlay?.on === true;
   const handledFlows = handleHomeFlowsClick(event, {
     project: state.project,
     state,
@@ -1873,10 +2062,13 @@ function handleBodyClick(event) {
     setEditorMode: openAnalysisView,
   });
   if (handledFlows) {
+    const flowsOn = state.homeProgramOverlay?.on === true;
+    if (flowsOn !== flowsWereOn) syncManualAnalyticalLayer('layout', flowsOn);
     disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
     disableSolarForAnotherOverlay(state.homeProgramOverlay?.on === true);
     return;
   }
+  const engineeringWasOn = state.homeEngineeringOverlay?.on === true;
   const handledEngineering = handleHomeEngineeringClick(event, {
     project: state.project,
     state,
@@ -1889,16 +2081,22 @@ function handleBodyClick(event) {
     setEditorMode: openAnalysisView,
   });
   if (handledEngineering) {
+    const engineeringOn = state.homeEngineeringOverlay?.on === true;
+    if (engineeringOn !== engineeringWasOn) syncManualAnalyticalLayer('engineering', engineeringOn);
     disableCirculationForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
     disableSolarForAnotherOverlay(state.homeEngineeringOverlay?.on === true);
     return;
   }
+  const programWasOn = state.homeProgramOverlay?.on === true;
   const handledProgram = handleHomeProgramClick(event, {
     closePanel,
     announce,
     rerender: renderProjectRoute,
   });
   if (handledProgram) {
+    if (state.analyticalView && (state.homeProgramOverlay?.on === true) !== programWasOn) {
+      closeAnalyticalView({ restoreFocus: false });
+    }
     disableCirculationForAnotherOverlay(state.homeProgramOverlay?.on === true);
     disableSolarForAnotherOverlay(state.homeProgramOverlay?.on === true);
     return;
@@ -2245,6 +2443,19 @@ export function bindProjectRoute() {
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
+    const analytical = floorAnalyticalViewById(state.project, state.analyticalView?.id);
+    if (state.analyticalView && !analytical) {
+      closeAnalyticalView({ restoreFocus: false });
+    }
+    if (analytical && state.project.activeLevel !== analytical.levelId) {
+      const next = floorAnalyticalViewId(analytical.analysis, state.project.activeLevel);
+      if (openAnalyticalView(next)) return;
+      closeAnalyticalView({ restoreFocus: false });
+    }
+    if (analytical && !workspaceAnalyticalLayerIsOn(analytical)) {
+      disableWorkspaceAnalyticalLayers();
+      enableWorkspaceAnalyticalLayer(analytical, { lightMode: state.solarAnalysis?.mode || 'daylight' });
+    }
     invalidateWorkflowReview();
     if (state.homeProgramOverlay?.on && state.homeProgramOverlay.mode === 'flows') {
       refreshHomeFlowsOverlay(state.project, state, requestDraw);
@@ -2255,7 +2466,11 @@ export function bindProjectRoute() {
     if (state.homeCirculationOverlay?.on) {
       refreshHomeCirculationOverlay(state.project, state, requestDraw);
     }
-    if (state.solarAnalysis?.on) requestDraw();
+    if (analytical?.analysis === 'light' && state.solarAnalysis?.on) {
+      // Геометрическая правка должна пересчитать весь этаж, включая комнаты
+      // вне текущего viewport. Иначе progress навсегда замирал на N−1.
+      refreshSolarLevelAnalysis(requestDraw);
+    } else if (state.solarAnalysis?.on) requestDraw();
     if (state.siteOpportunity?.on) refreshSiteOpportunity();
     else {
       // Ошибка предварительного запуска относится к прежнему набору
@@ -2273,6 +2488,24 @@ export function bindProjectRoute() {
     // снимка. Инвалидируем его по фактической ревизии аналитики.
     invalidateWorkflowReview();
     if (bound) renderProjectRoute();
+  });
+  document.addEventListener('kepler:open-analytical-view', (event) => {
+    openAnalyticalView(event.detail?.id);
+  });
+  document.addEventListener('kepler:close-analytical-view', () => {
+    closeAnalyticalView({ restoreFocus: false });
+  });
+  document.addEventListener('kepler:view', () => {
+    const current = floorAnalyticalViewById(state.project, state.analyticalView?.id);
+    if (!current) return;
+    if (activeViewId() !== `plan:${current.levelId}`) {
+      closeAnalyticalView({ restoreFocus: false });
+      return;
+    }
+    if (state.project.activeLevel !== current.levelId) {
+      const next = floorAnalyticalViewId(current.analysis, state.project.activeLevel);
+      if (!openAnalyticalView(next)) closeAnalyticalView({ restoreFocus: false });
+    }
   });
   document.addEventListener(PROJECT_REPLACED_EVENT, resetWorkflowForReplacement);
   document.addEventListener('visibilitychange', () => {

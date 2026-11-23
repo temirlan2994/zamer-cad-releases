@@ -156,7 +156,7 @@ describe('режим «Эргономика»', () => {
     assert.equal(red, 0);
   });
 
-  it('выключение — зон нет; настройка запоминается после перезагрузки', async () => {
+  it('выключение убирает зоны, а перезагрузка не накладывает аналитику на обычный план', async () => {
     const { page } = app;
     await page.evaluate(() => window.__kepler.select(null));
     await openRouteView(page, 'circulation');
@@ -164,13 +164,18 @@ describe('режим «Эргономика»', () => {
     if (!await fold.evaluate((node) => node.open)) await fold.locator('summary').click();
     await page.uncheck('#viewsErgoOn');
     assert.equal(await drawn(page), null);
-    assert.equal(await page.isDisabled('#viewsErgoHeat'), true);
+    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__kepler.state.analyticalView), null);
     assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('kepler-ergo'))).on, false);
+    await openRouteView(page, 'circulation');
+    const reopened = page.locator('[data-analysis-fold="ergo"]');
+    if (!await reopened.evaluate((node) => node.open)) await reopened.locator('summary').click();
     await page.check('#viewsErgoOn');
-    await page.click('[data-analysis-open="ergo-plan"]');
+    await page.waitForFunction(() => window.__kepler.state.analyticalView?.analysis === 'ergonomics');
     await page.reload();
     await page.waitForFunction(() => Boolean(window.__kepler));
-    assert.equal(await page.evaluate(async () => (await import('./ui/render-ergonomics.js')).ergoPref().on), true);
+    assert.equal(await page.evaluate(async () => (await import('./ui/render-ergonomics.js')).ergoPref().on), false);
+    assert.equal(await page.evaluate(() => window.__kepler.state.analyticalView), null);
   });
 });
 

@@ -3,12 +3,24 @@
 // где рисуются полы. Слой декоративный и не ловит клики.
 
 import { roomDaylightAnalysis, roomDaylightAnalysisKey } from '../core/daylight-analysis.js';
+import { solarObstaclesOf, windowsOf } from '../core/insolation.js';
 import { roomSunlightAnalysis, roomSunlightAnalysisKey } from '../core/solar-analysis.js';
 import { roomPolygon } from '../core/room-shape.js';
 import { state } from './state.js';
 
-const CACHE_LIMIT = 16;
+// Держим как минимум два расчёта для каждого помещения большого дома:
+// daylight + direct. Маленький LRU на 16 записей заставлял этаж из 20–40
+// комнат пересчитываться на каждом кадре.
+const CACHE_LIMIT = 128;
+const FLOOR_MAX_CELLS = 196;
 const analysisCache = new Map();
+const preparedByProject = new WeakMap();
+const latestByProject = new WeakMap();
+const pendingAnalyses = new Map();
+const analysisQueue = [];
+let preparedSerial = 0;
+let queueHandle = null;
+let redrawHook = null;
 const LIGHT = ['#b7c5d6', '#78a9d1', '#f1cf63', '#ef9b3f', '#df642f'];
 const DARK = ['#526477', '#4e83ad', '#c7aa4a', '#cf7d31', '#d75e38'];
 const DAYLIGHT_LIGHT = ['#c7d0dc', '#91b9d7', '#e2ca68', '#ed9743', '#d95e3b'];
@@ -35,52 +47,320 @@ function cachePut(key, value) {
   while (analysisCache.size > CACHE_LIMIT) analysisCache.delete(analysisCache.keys().next().value);
 }
 
-/** DOM-free кэш расчёта: render.js импортируется и в node-тестах. */
-export function currentSolarAnalysis(roomId = state.solarAnalysis?.roomId || selectedRoomId()) {
+function cacheGet(key) {
+  const value = analysisCache.get(key) || null;
+  if (value) {
+    analysisCache.delete(key);
+    analysisCache.set(key, value);
+  }
+  return value;
+}
+
+function latestKey(mode, levelId, roomId) {
+  return `${mode}:${levelId}:${roomId}`;
+}
+
+function latestGet(project, mode, levelId, roomId) {
+  return latestByProject.get(project)?.get(latestKey(mode, levelId, roomId)) || null;
+}
+
+function latestPut(project, mode, levelId, roomId, value) {
+  let map = latestByProject.get(project);
+  if (!map) { map = new Map(); latestByProject.set(project, map); }
+  map.set(latestKey(mode, levelId, roomId), value);
+}
+
+function analysisRevision(project) {
+  if (project === state.project && Number.isFinite(state.analytics?.revision)) return state.analytics.revision;
+  return Number(project?.revision) || 0;
+}
+
+function discardQueued(predicate) {
+  for (let index = analysisQueue.length - 1; index >= 0; index -= 1) {
+    const task = analysisQueue[index];
+    if (!predicate(task)) continue;
+    analysisQueue.splice(index, 1);
+    pendingAnalyses.delete(task.key);
+    task.resolve(null);
+  }
+}
+
+function optionsFor(mode, levelId, roomId, pref = state.solarAnalysis || {}) {
+  const common = {
+    levelId,
+    roomId,
+    cell: pref.cell,
+    // Карта целого этажа остаётся подробной, но одна комната не может
+    // монополизировать главный поток 400 расчётными точками.
+    maxCells: pref.maxCells ?? (pref.scope === 'level' ? FLOOR_MAX_CELLS : undefined),
+    workplane: pref.workplane,
+  };
+  if (mode === 'direct') {
+    return {
+      ...common,
+      date: pref.date,
+      from: pref.from,
+      to: pref.to,
+      stepMin: pref.stepMin,
+    };
+  }
+  return {
+    ...common,
+    transmittance: pref.transmittance,
+    frameFactor: pref.frameFactor,
+    maintenanceFactor: pref.maintenanceFactor,
+    interiorReflectance: pref.interiorReflectance,
+    exteriorLux: pref.exteriorLux,
+  };
+}
+
+function optionSignature(mode, options) {
+  return JSON.stringify(mode === 'direct'
+    ? [options.levelId, options.date ?? '', options.from ?? '', options.to ?? '', options.stepMin ?? '',
+      options.cell ?? '', options.maxCells ?? '', options.workplane ?? '']
+    : [options.levelId, options.cell ?? '', options.maxCells ?? '', options.workplane ?? '',
+      options.transmittance ?? '', options.frameFactor ?? '', options.maintenanceFactor ?? '',
+      options.interiorReflectance ?? '', options.exteriorLux ?? '']);
+}
+
+// cyrb53 + длина: компактно храним несколько предыдущих снимков, чтобы
+// возврат на этаж/Undo мог повторно использовать готовые карты без копий
+// большого JSON fingerprint в памяти.
+function compactFingerprint(text) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}:${text.length.toString(36)}`;
+}
+
+// В fingerprint входит вся геометрия, но он строится один раз на ревизию и
+// режим этажа, а не N раз на каждом кадре для N комнат.
+function preparedAnalysis(project, mode, options) {
+  const revision = analysisRevision(project);
+  let memo = preparedByProject.get(project);
+  if (!memo) {
+    memo = { entries: new Map() };
+    preparedByProject.set(project, memo);
+  }
+  const signature = optionSignature(mode, options);
+  let record = memo.entries.get(signature);
+  if (record?.checkedRevision === revision) return record.prepared;
+  const fingerprintOptions = { ...options, roomId: '__floor__' };
+  const rawFingerprint = mode === 'daylight'
+    ? roomDaylightAnalysisKey(project, fingerprintOptions)
+    : roomSunlightAnalysisKey(project, fingerprintOptions);
+  const fingerprint = compactFingerprint(rawFingerprint);
+  if (!record) record = { checkedRevision: null, prepared: null, variants: [] };
+  let prepared = record.variants.find((candidate) => candidate.fingerprint === fingerprint) || null;
+  if (!prepared) {
+    prepared = {
+      project,
+      revision,
+      mode,
+      signature,
+      fingerprint,
+      token: `floor-light:${++preparedSerial}`,
+      context: null,
+    };
+    record.variants.unshift(prepared);
+    // Текущая и предыдущая геометрия покрывают обычный Undo/Redo, не
+    // удерживая в памяти все исторические световые контексты.
+    record.variants.length = Math.min(record.variants.length, 2);
+  } else {
+    prepared.revision = revision;
+    prepared.signature = signature;
+    record.variants = [prepared, ...record.variants.filter((candidate) => candidate !== prepared)].slice(0, 2);
+  }
+  record.checkedRevision = revision;
+  record.prepared = prepared;
+  memo.entries.set(signature, record);
+  // Задачи того же неизменного snapshot продолжаются. Очереди старой
+  // геометрии/другого этажа больше не задерживают актуальный вид.
+  discardQueued((task) => task.project === project
+    && task.prepared !== prepared && task.prepared.revision !== revision);
+  return prepared;
+}
+
+function preparedContext(prepared) {
+  if (prepared.context) return prepared.context;
+  const wallsByLevel = new Map();
+  const windows = windowsOf(prepared.project, { wallsByLevel });
+  prepared.context = {
+    wallsByLevel,
+    windows,
+    // Внешние препятствия одинаковы для всех помещений этажа.
+    obstacles: windows.length ? solarObstaclesOf(prepared.project) : [],
+  };
+  return prepared.context;
+}
+
+function analysisKey(prepared, roomId) {
+  return `${prepared.token}:${roomId}`;
+}
+
+function calculateAnalysis(mode, project, options, prepared, key) {
+  const runOptions = {
+    ...options,
+    analysisKey: key,
+    solarContext: preparedContext(prepared),
+  };
+  return mode === 'daylight'
+    ? roomDaylightAnalysis(project, runOptions)
+    : roomSunlightAnalysis(project, runOptions);
+}
+
+function taskRelevant(task) {
+  const currentOptions = optionsFor(task.mode, task.options.levelId, task.options.roomId);
+  return task.project === state.project
+    && task.prepared.revision === analysisRevision(task.project)
+    && state.solarAnalysis?.on === true
+    && state.solarAnalysis?.scope === 'level'
+    && state.solarAnalysis?.levelId === task.options.levelId
+    && (state.solarAnalysis?.mode || 'direct') === task.mode
+    && task.prepared.signature === optionSignature(task.mode, currentOptions);
+}
+
+function runQueuedAnalysis() {
+  queueHandle = null;
+  const task = analysisQueue.shift();
+  if (!task) return;
+  let result = null;
+  try {
+    if (taskRelevant(task)) {
+      result = calculateAnalysis(task.mode, task.project, task.options, task.prepared, task.key);
+      if (result) {
+        cachePut(task.key, result);
+        latestPut(task.project, task.mode, task.options.levelId, task.options.roomId, result);
+      }
+    }
+  } catch (error) {
+    // Ошибка одной повреждённой комнаты не должна останавливать расчёт
+    // остальных помещений и оставлять их Promise навсегда pending.
+    console.error('Световой анализ помещения не выполнен:', error);
+  } finally {
+    pendingAnalyses.delete(task.key);
+    task.resolve(result);
+    scheduleQueuedAnalysis();
+    try { redrawHook?.(); } catch (error) {
+      console.error('Не удалось обновить карту освещения:', error);
+    }
+  }
+}
+
+function scheduleQueuedAnalysis() {
+  if (queueHandle != null || !analysisQueue.length) return;
+  if (typeof globalThis.requestIdleCallback === 'function') {
+    // Ровно одна комната за idle-задачу: даже сложный этаж не превращается
+    // в один длинный блок, а готовые карты появляются автоматически.
+    queueHandle = globalThis.requestIdleCallback(runQueuedAnalysis, { timeout: 120 });
+  } else {
+    queueHandle = globalThis.setTimeout(runQueuedAnalysis, 0);
+  }
+}
+
+function enqueueAnalysis(mode, project, options, prepared, key) {
+  const existing = pendingAnalyses.get(key);
+  if (existing) return existing;
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  pendingAnalyses.set(key, promise);
+  analysisQueue.push({ mode, project, options, prepared, key, resolve });
+  scheduleQueuedAnalysis();
+  return promise;
+}
+
+function floorDeferred() {
+  return state.solarAnalysis?.scope === 'level' && typeof globalThis.document !== 'undefined';
+}
+
+function currentAnalysis(mode, roomId) {
   const project = state.project;
   if (!project || !roomId) return null;
   const levelId = activeRoomLevel(roomId);
   if (!levelId) return null;
-  const pref = state.solarAnalysis || {};
-  const options = {
-    levelId, roomId, date: pref.date, from: pref.from, to: pref.to,
-    stepMin: pref.stepMin, cell: pref.cell, maxCells: pref.maxCells, workplane: pref.workplane,
-  };
-  const key = roomSunlightAnalysisKey(project, options);
-  let result = analysisCache.get(key) || null;
-  if (!result) {
-    result = roomSunlightAnalysis(project, options);
-    if (result) cachePut(key, result);
-  } else {
-    analysisCache.delete(key);
-    analysisCache.set(key, result);
+  const options = optionsFor(mode, levelId, roomId);
+  const prepared = preparedAnalysis(project, mode, options);
+  const key = analysisKey(prepared, roomId);
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  if (floorDeferred()) {
+    enqueueAnalysis(mode, project, options, prepared, key);
+    // Пока новая ревизия считается, сохраняем предыдущую карту на экране.
+    // Легенда с progress явно показывает, что данные обновляются.
+    return latestGet(project, mode, levelId, roomId);
+  }
+  const result = calculateAnalysis(mode, project, options, prepared, key);
+  if (result) {
+    cachePut(key, result);
+    latestPut(project, mode, levelId, roomId, result);
   }
   return result;
 }
 
+/** Перерисовка после очередной готовой комнаты задаётся UI без циклического импорта render.js. */
+export function bindLightAnalysisRedraw(callback) {
+  redrawHook = typeof callback === 'function' ? callback : null;
+}
+
+/**
+ * Автоматически ставит в очередь все помещения этажа. Promise нужен тестам
+ * и экспорту; интерфейс показывает готовые комнаты постепенно, без кликов.
+ */
+export function prepareLevelLightAnalysis(levelId, mode = state.solarAnalysis?.mode || 'daylight') {
+  const project = state.project;
+  const level = project?.levels?.find((candidate) => candidate.id === levelId);
+  if (!project || !level) return Promise.resolve([]);
+  // Очередь глобальна: задачи прежнего проекта/этажа/режима не должны
+  // задерживать новый вид десятками idle-callback.
+  discardQueued((task) => !taskRelevant(task));
+  const tasks = level.rooms.filter((room) => room.type !== 'shaft').map((room) => {
+    const options = optionsFor(mode, levelId, room.id);
+    const prepared = preparedAnalysis(project, mode, options);
+    const key = analysisKey(prepared, room.id);
+    const cached = cacheGet(key);
+    return cached ? Promise.resolve(cached) : enqueueAnalysis(mode, project, options, prepared, key);
+  });
+  return Promise.all(tasks);
+}
+
+export function cancelPendingLightAnalysis() {
+  discardQueued(() => true);
+  if (queueHandle == null) return;
+  if (typeof globalThis.cancelIdleCallback === 'function') globalThis.cancelIdleCallback(queueHandle);
+  else globalThis.clearTimeout(queueHandle);
+  queueHandle = null;
+}
+
+export function levelLightAnalysisProgress(levelId, mode = state.solarAnalysis?.mode || 'daylight') {
+  const project = state.project;
+  const rooms = project?.levels?.find((level) => level.id === levelId)?.rooms
+    ?.filter((room) => room.type !== 'shaft') || [];
+  let ready = 0;
+  let pending = 0;
+  for (const room of rooms) {
+    const options = optionsFor(mode, levelId, room.id);
+    const prepared = preparedAnalysis(project, mode, options);
+    const key = analysisKey(prepared, room.id);
+    if (analysisCache.has(key)) ready += 1;
+    else if (pendingAnalyses.has(key)) pending += 1;
+  }
+  return { total: rooms.length, ready, pending };
+}
+
+/** DOM-free кэш расчёта: render.js импортируется и в node-тестах. */
+export function currentSolarAnalysis(roomId = state.solarAnalysis?.roomId || selectedRoomId()) {
+  return currentAnalysis('direct', roomId);
+}
+
 /** Предварительный КЕО/люксы с тем же LRU-кэшем, что и карта солнца. */
 export function currentDaylightAnalysis(roomId = state.solarAnalysis?.roomId || selectedRoomId()) {
-  const project = state.project;
-  if (!project || !roomId) return null;
-  const levelId = activeRoomLevel(roomId);
-  if (!levelId) return null;
-  const pref = state.solarAnalysis || {};
-  const options = {
-    levelId, roomId, cell: pref.cell, maxCells: pref.maxCells, workplane: pref.workplane,
-    transmittance: pref.transmittance, frameFactor: pref.frameFactor,
-    maintenanceFactor: pref.maintenanceFactor, interiorReflectance: pref.interiorReflectance,
-    exteriorLux: pref.exteriorLux,
-  };
-  const key = roomDaylightAnalysisKey(project, options);
-  let result = analysisCache.get(key) || null;
-  if (!result) {
-    result = roomDaylightAnalysis(project, options);
-    if (result) cachePut(key, result);
-  } else {
-    analysisCache.delete(key);
-    analysisCache.set(key, result);
-  }
-  return result;
+  return currentAnalysis('daylight', roomId);
 }
 
 /** Активный слой для render.js; переключение не меняет геометрию. */
@@ -155,7 +435,8 @@ export function drawRoomSolarAnalysis(ctx, { analysis, room, tokens, px }) {
   const pref = state.solarAnalysis;
   if (!ctx || !analysis || !room || !pref?.on) return null;
   if (pref.mode === 'daylight') return null;
-  if (analysis.roomId !== room.id || (pref.roomId && pref.roomId !== room.id)) return null;
+  if (analysis.roomId !== room.id
+    || (pref.scope !== 'level' && pref.roomId && pref.roomId !== room.id)) return null;
 
   const points = analysis.points || [];
   const dark = isDark(tokens?.canvas);
@@ -218,7 +499,8 @@ export function drawRoomSolarAnalysis(ctx, { analysis, room, tokens, px }) {
 export function drawRoomDaylightAnalysis(ctx, { analysis, room, tokens, px }) {
   const pref = state.solarAnalysis;
   if (!ctx || !analysis || !room || !pref?.on || pref.mode !== 'daylight') return null;
-  if (analysis.roomId !== room.id || (pref.roomId && pref.roomId !== room.id)) return null;
+  if (analysis.roomId !== room.id
+    || (pref.scope !== 'level' && pref.roomId && pref.roomId !== room.id)) return null;
 
   const points = analysis.points || [];
   const dark = isDark(tokens?.canvas);

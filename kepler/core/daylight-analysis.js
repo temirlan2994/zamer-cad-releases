@@ -215,7 +215,10 @@ export function roomDaylightAnalysis(project, options = {}) {
   if (!project || !level || !room) return null;
 
   const lp = levelProject(project, level.id);
-  const walls = deriveWalls(lp);
+  const solarContext = options.solarContext && typeof options.solarContext === 'object' ? options.solarContext : null;
+  const walls = solarContext?.wallsByLevel instanceof Map
+    ? (solarContext.wallsByLevel.get(level.id) || deriveWalls(lp))
+    : deriveWalls(lp);
   const zone = room.parentId ? [room] : openPlanZone(lp, room, walls);
   const zoneIds = new Set(zone.map((candidate) => candidate.id));
   const zoneRects = zone.flatMap((candidate) => roomNetRects(lp, candidate));
@@ -224,9 +227,11 @@ export function roomDaylightAnalysis(project, options = {}) {
   const roomRects = roomNetRects(lp, room);
   const maxCells = Math.min(MAX_CELLS, Math.max(16, Math.round(finiteOr(options.maxCells, MAX_CELLS))));
   const grid = roomSunGrid(room, { ...options, maxCells, rects: roomRects });
-  const apertures = windowsOf(project).filter((window) =>
+  const projectWindows = Array.isArray(solarContext?.windows) ? solarContext.windows : windowsOf(project);
+  const apertures = projectWindows.filter((window) =>
     window.levelId === level.id && zoneIds.has(window.roomId) && window.width > 0 && window.height > 0);
-  const obstacles = apertures.length ? solarObstaclesOf(project) : [];
+  const preparedObstacles = Array.isArray(solarContext?.obstacles) ? solarContext.obstacles : null;
+  const obstacles = apertures.length ? (preparedObstacles || solarObstaclesOf(project)) : [];
 
   const ceiling = Math.max(100, roomCeiling(room, level));
   const requestedWorkplane = Number(options.workplane);
@@ -305,7 +310,9 @@ export function roomDaylightAnalysis(project, options = {}) {
   const coverageDaylightFactor = area > 0 ? coverageDfArea / area : 0;
   const coverageLux = area > 0 ? coverageLuxArea / area : 0;
   const result = {
-    key: roomDaylightAnalysisKey(project, options),
+    // Во время поэтажного анализа fingerprint уже рассчитан один раз.
+    // Одиночный публичный вызов по-прежнему получает канонический key.
+    key: options.analysisKey || roomDaylightAnalysisKey(project, options),
     method: 'cie-overcast-concept/1',
     preliminary: true,
     available: true,

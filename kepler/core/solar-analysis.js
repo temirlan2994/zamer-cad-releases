@@ -259,7 +259,10 @@ export function roomSunlightAnalysis(project, options = {}) {
   const requestedWorkplane = Number(options.workplane);
   const workplane = clamp(Number.isFinite(requestedWorkplane) ? requestedWorkplane : DEFAULT_WORKPLANE, 0, Math.max(0, ceiling - 100));
   const lp = levelProject(project, level.id);
-  const walls = deriveWalls(lp);
+  const solarContext = options.solarContext && typeof options.solarContext === 'object' ? options.solarContext : null;
+  const walls = solarContext?.wallsByLevel instanceof Map
+    ? (solarContext.wallsByLevel.get(level.id) || deriveWalls(lp))
+    : deriveWalls(lp);
   const zone = room.parentId ? [room] : openPlanZone(lp, room, walls);
   const zoneIds = new Set(zone.map((candidate) => candidate.id));
   const zoneRects = zone.flatMap((candidate) => roomNetRects(lp, candidate));
@@ -269,7 +272,6 @@ export function roomSunlightAnalysis(project, options = {}) {
   // Пакетный/годовой расчёт может один раз подготовить эти две дорогие
   // производные структуры и передавать их всем комнатам и датам. Снимок не
   // входит в key: вызывающая сторона пересобирает его при изменении проекта.
-  const solarContext = options.solarContext && typeof options.solarContext === 'object' ? options.solarContext : null;
   const projectWindows = Array.isArray(solarContext?.windows) ? solarContext.windows : windowsOf(project);
   const apertures = projectWindows.filter((window) => window.levelId === level.id && zoneIds.has(window.roomId));
   const glazing = glazingSummary(project, level, zone, apertures);
@@ -307,7 +309,10 @@ export function roomSunlightAnalysis(project, options = {}) {
   const coverage2h = sampledArea > 0 ? coverage2hArea / sampledArea : 0;
 
   return {
-    key: roomSunlightAnalysisKey(project, options),
+    // Пакетный расчёт этажа уже построил общий fingerprint геометрии. Его
+    // компактный ключ не заставляет повторно сериализовать весь дом для
+    // каждой комнаты; одиночные вызовы сохраняют прежнее поведение API.
+    key: options.analysisKey || roomSunlightAnalysisKey(project, options),
     available,
     verified,
     estimated: !verified,

@@ -372,7 +372,10 @@ export function createRenderer(canvas) {
     // Отображение и освещение этого вида (core/view-display.js); листы — по умолчанию.
     const vd = thumbnail
       ? { ...VIEW_DISPLAY_DEFAULT, rooms: 'color', shadows: true, light: 'fixed', length: 'short' }
-      : print ? VIEW_DISPLAY_DEFAULT : viewDisplay(state.project, viewIdOf(state.project, state.modeName));
+      : print ? VIEW_DISPLAY_DEFAULT : viewDisplay(
+        state.project,
+        state.analyticalView?.id || viewIdOf(state.project, state.modeName),
+      );
 
     // 1. Сетка (на печати не нужна).
     setView(gridView);
@@ -677,11 +680,23 @@ export function createRenderer(canvas) {
       // Карта прямого солнца или предварительной освещённости — аналитическая подложка:
       // поверх пола/теней, но под проёмами, мебелью и подписями.
       if (detail && !print && state.modeName === 'plan' && state.solarAnalysis?.on) {
-        const analysis = currentLightAnalysis();
-        const room = analysis && state.project.rooms.find((candidate) => candidate.id === analysis.roomId);
-        if (analysis && room && (opts.cull === false || roomVisible(room))) {
-          drawRoomLightAnalysis(ctx, { analysis, room, tokens, px });
+        const rooms = state.solarAnalysis.scope === 'level'
+          ? state.project.rooms.filter((room) => room.type !== 'shaft')
+          : state.project.rooms.filter((room) => room.id === (state.solarAnalysis.roomId || state.selection?.id));
+        const drawnRoomIds = [];
+        for (const room of rooms) {
+          if (opts.cull !== false && !roomVisible(room)) continue;
+          const analysis = currentLightAnalysis(room.id);
+          if (!analysis) continue;
+          if (drawRoomLightAnalysis(ctx, { analysis, room, tokens, px })) drawnRoomIds.push(room.id);
         }
+        state._lightAnalysisDrawn = {
+          levelId: state.project.activeLevel,
+          roomIds: drawnRoomIds,
+          mode: state.solarAnalysis.mode,
+        };
+      } else if (state._lightAnalysisDrawn) {
+        state._lightAnalysisDrawn = null;
       }
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.

@@ -83,6 +83,13 @@ const analysis = (page) => page.evaluate(async () => {
   };
 });
 
+async function exposeSolarModules(page) {
+  await page.evaluate(async () => {
+    window.__solarE2E = await import('./ui/solar-analysis.js');
+    window.__solarRenderE2E = await import('./ui/render-solar.js');
+  });
+}
+
 describe('световой анализ комнаты', () => {
   let app;
   let ids;
@@ -104,6 +111,8 @@ describe('световой анализ комнаты', () => {
     await page.click('[data-home-climate-map="direct"]');
     await page.waitForSelector('#solarLegend:not([hidden])');
     assert.match(await page.textContent('#solarLegend'), /Прямое солнце/);
+    await exposeSolarModules(page);
+    await page.waitForFunction(() => Boolean(window.__solarE2E.currentSolarAnalysis()));
 
     const value = await analysis(page);
     assert.equal(value.roomId, ids.roomId);
@@ -119,9 +128,12 @@ describe('световой анализ комнаты', () => {
     await page.waitForSelector('#openW');
     await page.fill('#openW', '2000');
     await page.locator('#openW').blur();
-    await page.waitForFunction(async () => {
-      const { currentSolarAnalysis } = await import('./ui/solar-analysis.js');
-      return (currentSolarAnalysis()?.glazing.area || 0) > 4.7;
+    await exposeSolarModules(page);
+    await page.waitForFunction(() => {
+      const state = window.__kepler.state;
+      const progress = window.__solarRenderE2E.levelLightAnalysisProgress(state.project.activeLevel, 'direct');
+      return progress.total > 0 && progress.ready === progress.total
+        && (window.__solarE2E.currentSolarAnalysis()?.glazing.area || 0) > 4.7;
     });
 
     const value = await analysis(page);
@@ -143,6 +155,13 @@ describe('световой анализ комнаты', () => {
     await page.waitForFunction(() => window.__kepler.state.solarAnalysis?.mode === 'daylight');
     await page.waitForSelector('#solarLegend:not([hidden])');
     assert.match(await page.textContent('#solarLegend'), /Освещённость|500\+ лк/);
+    await exposeSolarModules(page);
+    await page.waitForFunction(() => {
+      const state = window.__kepler.state;
+      const progress = window.__solarRenderE2E.levelLightAnalysisProgress(state.project.activeLevel, 'daylight');
+      return progress.total > 0 && progress.ready === progress.total
+        && Boolean(window.__solarE2E.currentDaylightAnalysis());
+    });
 
     const before = await page.evaluate(async () => {
       const { currentDaylightAnalysis } = await import('./ui/solar-analysis.js');
@@ -157,10 +176,9 @@ describe('световой анализ комнаты', () => {
     if (!await detail.evaluate((node) => node.open)) await detail.locator('summary').first().click();
     await page.fill('#daylightTransmittance', '30');
     await page.locator('#daylightTransmittance').blur();
-    await page.waitForFunction(async (previous) => {
-      const { currentDaylightAnalysis } = await import('./ui/solar-analysis.js');
-      return currentDaylightAnalysis()?.meanLux < previous;
-    }, before.lux);
+    await page.waitForFunction((previous) => (
+      window.__solarE2E.currentDaylightAnalysis()?.meanLux < previous
+    ), before.lux);
     const after = await page.evaluate(async () => {
       const { currentDaylightAnalysis } = await import('./ui/solar-analysis.js');
       return currentDaylightAnalysis().meanLux;

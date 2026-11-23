@@ -4,6 +4,7 @@
 // Замечания режима — группа «Эргономика» во вкладке «⚠» (core/issues.js).
 
 import { ERGO_GROUPS, roomOfItem, suggestErgoFix } from '../core/ergonomics.js';
+import { floorAnalyticalViewId } from '../core/analytical-views.js';
 import { itemBounds } from '../core/clearance.js';
 import { unionRect } from '../core/issues.js';
 import { escapeHtml, toast } from './dom.js';
@@ -26,6 +27,13 @@ export function toggleErgo(on = !ergoPref().on) {
 export function bindErgonomics() {
   ergoHooks.redraw = requestDraw;
   ergoHooks.changed = () => {
+    if (state.analyticalView?.analysis === 'ergonomics' && !ergoPref().on) {
+      document.dispatchEvent(new CustomEvent('kepler:close-analytical-view'));
+    } else if (state.analyticalView?.analysis !== 'ergonomics' && ergoPref().on) {
+      document.dispatchEvent(new CustomEvent('kepler:open-analytical-view', {
+        detail: { id: floorAnalyticalViewId('ergonomics', state.project.activeLevel) },
+      }));
+    }
     refreshIssues();
     renderProps();
     requestDraw();
@@ -36,7 +44,13 @@ export function bindErgonomics() {
 export function handleErgoKey(event) {
   if (event.code !== 'KeyE' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
   if (state.modeName && state.modeName !== 'plan') return false;
-  toggleErgo();
+  if (state.analyticalView?.analysis === 'ergonomics') {
+    document.dispatchEvent(new CustomEvent('kepler:close-analytical-view'));
+  } else {
+    document.dispatchEvent(new CustomEvent('kepler:open-analytical-view', {
+      detail: { id: floorAnalyticalViewId('ergonomics', state.project.activeLevel) },
+    }));
+  }
   return true;
 }
 
@@ -60,7 +74,16 @@ export function ergoViewBlock() {
 }
 
 export function bindErgoViewBlock(panel, rerender) {
-  panel.querySelector('#viewsErgoOn')?.addEventListener('change', (e) => { setErgoPref({ on: e.target.checked }); rerender(); });
+  panel.querySelector('#viewsErgoOn')?.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      document.dispatchEvent(new CustomEvent('kepler:open-analytical-view', {
+        detail: { id: floorAnalyticalViewId('ergonomics', state.project.activeLevel) },
+      }));
+    } else if (state.analyticalView?.analysis === 'ergonomics') {
+      document.dispatchEvent(new CustomEvent('kepler:close-analytical-view'));
+    } else setErgoPref({ on: false });
+    rerender();
+  });
   panel.querySelector('#viewsErgoOk')?.addEventListener('change', (e) => { setErgoPref({ okZones: e.target.checked }); });
   panel.querySelector('#viewsErgoHeat')?.addEventListener('change', (e) => { setErgoPref({ heat: e.target.checked }); });
   panel.querySelectorAll('[data-ergo-group]').forEach((box) => box.addEventListener('change', () => {

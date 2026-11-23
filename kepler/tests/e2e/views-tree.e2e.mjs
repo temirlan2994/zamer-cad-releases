@@ -24,7 +24,8 @@ describe('дерево видов, свойства вида, листы, ТЭП
     const { page } = app;
     await page.click('#propsTabViews');
     const groups = await page.$$eval('#viewTree .vt-group > summary', (ns) => ns.map((n) => n.firstChild.textContent.trim()));
-    assert.deepEqual(groups, ['Планы этажей', 'Кровля', 'Участок', 'Ландшафт', '3D', 'Разрезы', 'Фасады']);
+    assert.deepEqual(groups, ['Планы этажей', 'Аналитические виды', 'Кровля', 'Участок', 'Ландшафт', '3D', 'Разрезы', 'Фасады']);
+    assert.match(await page.textContent('[data-vt-group="analytics"]'), /Освещение · 1 этаж/);
     const { level } = await st(page);
     assert.deepEqual(await activeView(page), [`plan:${level}`]);
     assert.match(await page.textContent('[data-vt-group="facades"]'), /Фасад Север/);

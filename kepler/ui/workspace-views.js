@@ -1,6 +1,7 @@
 // Вкладки открытых чертежей и единый список видов. Камера и редактирование
 // принадлежат соответствующему виду; навигация меняет только активный вид.
 import { sortedLevels } from '../core/model.js';
+import { floorAnalyticalViews } from '../core/analytical-views.js';
 import { ROOF_PLAN_VIEW, facadeViews, sectionViews } from '../core/views.js';
 import { activeViewId, openView } from './props-views.js';
 import { landscapeSections } from './landscape-section.js';
@@ -13,7 +14,7 @@ import { selectObject } from './tools.js';
 import { escapeHtml } from './dom.js';
 import { bindViewMenu, viewIcon } from './workspace-view-menu.js';
 import {
-  ANALYTICAL_WORKSPACE_VIEWS, activeAnalyticalViewId, closeAnalyticalView, openAnalyticalView,
+  activeAnalyticalViewId, closeAnalyticalView, openAnalyticalView,
 } from './project-route.js';
 
 function modelViews() {
@@ -32,7 +33,8 @@ function sheets() {
 }
 
 function analyticalViews() {
-  return ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.id, view.title, view.kind]);
+  return floorAnalyticalViews(state.project, sortedLevels(state.project))
+    .map((view) => [view.id, view.title, view.icon]);
 }
 
 function currentViewId() {

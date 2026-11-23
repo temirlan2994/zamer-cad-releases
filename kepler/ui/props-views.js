@@ -11,6 +11,7 @@
 // меняет лишь «Оси дома по виду» и размеры (как кнопка «Размеры» на колонке).
 
 import { sortedLevels } from '../core/model.js';
+import { floorAnalyticalViewById, floorAnalyticalViews } from '../core/analytical-views.js';
 import {
   ROOF_PLAN_VIEW, VIEW_SCALES, facadeViews, sectionViews, userSheets, viewById, viewPlacement, viewScale,
 } from '../core/views.js';
@@ -43,7 +44,9 @@ import { close3d, is3dOpen, open3d } from './view3d.js';
 import { applyViewAngle, axesToViewCmd, resetViewAngleCmd, startAlignView } from './view-align.js';
 
 const fmtAngle = (deg) => String(Math.round(deg * 10) / 10);
-const openGroups = { plans: true, roof: true, site: true, landscape: true, '3d': true, sections: true, facades: true };
+const openGroups = {
+  plans: true, analytics: true, roof: true, site: true, landscape: true, '3d': true, sections: true, facades: true,
+};
 
 const sectionName = (sec) => `Разрез ${sec.name}–${sec.name}`;
 // Вид в окне фасада: фасад ('elev-N'…) или разрез по линии на плане.
@@ -63,6 +66,8 @@ export function activeViewId() {
 
 // Название активного вида — для заголовка «Вид: …» в «Свойствах».
 export function activeViewTitle() {
+  const analytical = floorAnalyticalViewById(state.project, state.analyticalView?.id);
+  if (analytical) return analytical.title;
   const id = activeViewId() || `plan:${state.project.activeLevel}`;
   if (id === '3d') return '3D';
   if (id === ROOF_PLAN_VIEW) return 'План крыши';
@@ -138,8 +143,9 @@ function treeGroup(key, title, items, empty, count = false) {
 
 export function renderViewsPanel(panel) {
   const project = state.project;
-  const active = activeViewId();
+  const active = state.analyticalView?.id || activeViewId();
   const levels = sortedLevels(project);
+  const analytical = floorAnalyticalViews(project, levels);
   const sections = landscapeSections();
   const planSecs = sectionViews(project);
   const secItems = [
@@ -151,6 +157,7 @@ export function renderViewsPanel(panel) {
     <h2>Виды</h2>
     <div class="view-tree" id="viewTree" role="tree" aria-label="Виды проекта">
       ${treeGroup('plans', 'Планы этажей', levels.map((l) => treeItem(`plan:${l.id}`, l.name, active)), 'Этажей нет', true)}
+      ${treeGroup('analytics', 'Аналитические виды', analytical.map((view) => treeItem(view.id, view.title, active, '', false)), 'Нет этажей', true)}
       ${treeGroup('roof', 'Кровля', [treeItem(ROOF_PLAN_VIEW, 'План крыши', active, '', false)])}
       ${treeGroup('site', 'Участок', [treeItem('site', 'Участок', active)])}
       ${treeGroup('landscape', 'Ландшафт', [treeItem('landscape', 'Ландшафт', active)])}
@@ -161,8 +168,19 @@ export function renderViewsPanel(panel) {
     </div>`;
   panel.querySelectorAll('[data-vt-group]').forEach((d) => d.addEventListener('toggle', () => { openGroups[d.dataset.vtGroup] = d.open; }));
   panel.querySelectorAll('[data-view]').forEach((b) => {
-    b.addEventListener('click', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
-    b.addEventListener('dblclick', () => { if (b.dataset.view !== activeViewId()) openView(b.dataset.view); });
+    const open = () => {
+      const id = b.dataset.view;
+      if (id.startsWith('analysis:')) {
+        if (id !== state.analyticalView?.id) {
+          document.dispatchEvent(new CustomEvent('kepler:open-analytical-view', { detail: { id } }));
+        }
+        return;
+      }
+      if (state.analyticalView) document.dispatchEvent(new CustomEvent('kepler:close-analytical-view'));
+      if (id !== activeViewId()) openView(id);
+    };
+    b.addEventListener('click', open);
+    b.addEventListener('dblclick', open);
     b.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData(VIEW_MIME, b.dataset.view);
       e.dataTransfer.setData('text/plain', b.dataset.view);
@@ -335,7 +353,8 @@ function section(id, html) {
 const seg = (name, options, current, disabled = false) => `<div class="seg views-seg" role="radiogroup">${options.map(([value, title]) => `
   <label class="seg-opt${current === value ? ' active' : ''}"><input type="radio" name="${name}" value="${value}" ${current === value ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${title}</span></label>`).join('')}</div>`;
 
-const currentViewId = () => viewIdOf(state.project, state.modeName || 'plan');
+const currentViewId = () => state.analyticalView?.id
+  || viewIdOf(state.project, state.modeName || 'plan');
 
 // «Отображение»: помещения цветные или серые (у каждого вида своё), подложка, размеры.
 function displayBlock(mode) {
