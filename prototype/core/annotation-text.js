@@ -1,12 +1,35 @@
 export const ANNOTATION_LINE_SPACING = 1.2;
 const REFERENCE_VIEW_SCALE = 0.085;
 
+export const ANNOTATION_SCALE_PRESETS = [
+  { denominator: 10, factor: 0.65, title: "Мелкие детали", hint: "Фурнитура и узлы" },
+  { denominator: 20, factor: 0.72, title: "Мебель", hint: "Шкафы и отдельные изделия" },
+  { denominator: 25, factor: 0.76, title: "Интерьер", hint: "Мебель и план комнаты" },
+  { denominator: 50, factor: 0.85, title: "Помещение", hint: "Комнаты и небольшие квартиры" },
+  { denominator: 75, factor: 0.93, title: "Квартира", hint: "Подробный план квартиры" },
+  { denominator: 100, factor: 1, title: "Этаж", hint: "Основной архитектурный план" },
+  { denominator: 150, factor: 1.15, title: "Дом", hint: "Крупный дом или этаж" },
+  { denominator: 200, factor: 1.3, title: "Здание", hint: "Общий план здания" },
+  { denominator: 250, factor: 1.4, title: "Большой объект", hint: "Корпус или комплекс" },
+  { denominator: 500, factor: 1.55, title: "Генплан", hint: "Дом с прилегающей территорией" },
+  { denominator: 1000, factor: 1.7, title: "Участок", hint: "Земельный участок" },
+  { denominator: 2000, factor: 1.8, title: "Территория", hint: "Большая территория" },
+];
+
 export function annotationScaleFactor(value) {
   return Math.min(1.8, Math.max(0.65, Number(value) || 1));
 }
 
 export function annotationWorldSize(referencePixels, scaleFactor) {
   return referencePixels * annotationScaleFactor(scaleFactor) / REFERENCE_VIEW_SCALE;
+}
+
+export function annotationScreenSize(referencePixels, scaleFactor) {
+  return referencePixels * annotationScaleFactor(scaleFactor);
+}
+
+export function annotationWorldToScreenSize(worldSize) {
+  return Math.abs(Number(worldSize) || 0) * REFERENCE_VIEW_SCALE;
 }
 
 export function auxiliaryAnnotationSize(referencePixels, viewScale) {

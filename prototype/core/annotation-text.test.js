@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { annotationTextLines, textBlockLayout } from "./annotation-text.js";
+import { ANNOTATION_SCALE_PRESETS, annotationScreenSize, annotationTextLines, annotationWorldSize, annotationWorldToScreenSize, textBlockLayout } from "./annotation-text.js";
+
+test("annotation presets cover furniture, plans, and sites with stable screen sizes", () => {
+  assert.deepEqual(ANNOTATION_SCALE_PRESETS.map(({ denominator }) => denominator),
+    [10, 20, 25, 50, 75, 100, 150, 200, 250, 500, 1000, 2000]);
+  assert.equal(annotationScreenSize(12, 1), 12);
+  assert.ok(Math.abs(annotationScreenSize(12, 1.3) - 15.6) < 1e-9);
+  assert.ok(Math.abs(annotationWorldToScreenSize(annotationWorldSize(12, 1.3)) - 15.6) < 1e-9);
+});
 
 test("text wrapping respects explicit lines, words, and long tokens", () => {
   assert.deepEqual(annotationTextLines("Первая строка\nВторая", 40, 10),

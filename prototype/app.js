@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
+import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationScreenSize, annotationTextLines, annotationTextWidth, annotationWorldSize, annotationWorldToScreenSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
@@ -650,6 +650,11 @@ const angleEditor = document.getElementById("angleEditor");
 const keyboardConfirmButton = document.getElementById("keyboardConfirmButton");
 const themeButton = document.getElementById("themeButton");
 const annotationScaleSelect = document.getElementById("annotationScaleSelect");
+const annotationScaleButton = document.getElementById("annotationScaleButton");
+const annotationScaleValue = document.getElementById("annotationScaleValue");
+const annotationScaleUse = document.getElementById("annotationScaleUse");
+const annotationScaleSheet = document.getElementById("annotationScaleSheet");
+const annotationScaleGrid = document.getElementById("annotationScaleGrid");
 const projectSettingsButton = document.getElementById("projectSettingsButton");
 const projectSettingsSheet = document.getElementById("projectSettingsSheet");
 const statusChip = document.getElementById("statusChip");
@@ -1363,7 +1368,8 @@ function getProjectClientId() {
 function updateProjectTitle() {
   if (projectNameCaption) projectNameCaption.textContent = persistence.projectName || "Проекты";
   if (projectScaleCaption) {
-    const label = annotationScaleSelect?.selectedOptions?.[0]?.textContent || "1:100";
+    const preset = annotationScalePreset(state.annotationScale);
+    const label = preset ? `1:${preset.denominator}` : "1:100";
     projectScaleCaption.textContent = persistence.projectId ? `${projectUnit(state.measurementSettings).label} · ${label}` : "Выберите файл";
   }
 }
@@ -3697,7 +3703,8 @@ function css(name) {
 }
 
 function annotationPx(value) {
-  return annotationWorldSize(value, state.annotationScale) * state.view.scale;
+  return printRendering ? annotationWorldSize(value, state.annotationScale) * state.view.scale
+    : annotationScreenSize(value, state.annotationScale);
 }
 
 function annotationFont(weight, size) {
@@ -3712,13 +3719,28 @@ function screenUiPx(value) {
   return value;
 }
 
-function setAnnotationScale(value, options = {}) {
-  const next = annotationScaleFactor(value);
-  state.annotationScale = next;
-  if (annotationScaleSelect) {
-    const option = [...annotationScaleSelect.options].find((item) => Math.abs(Number(item.value) - next) < 0.001);
-    annotationScaleSelect.value = option?.value || "1";
+function annotationScalePreset(value) {
+  const factor = annotationScaleFactor(value);
+  return ANNOTATION_SCALE_PRESETS.find((preset) => Math.abs(preset.factor - factor) < 0.001) ??
+    ANNOTATION_SCALE_PRESETS.reduce((closest, preset) =>
+      Math.abs(preset.factor - factor) < Math.abs(closest.factor - factor) ? preset : closest);
+}
+
+function syncAnnotationScaleChoice(value) {
+  const preset = annotationScalePreset(value);
+  annotationScaleSelect.value = String(preset.factor);
+  annotationScaleValue.textContent = `1:${preset.denominator}`;
+  annotationScaleUse.textContent = `${preset.title} · ${preset.hint.toLocaleLowerCase("ru-RU")}`;
+  annotationScaleButton.setAttribute("aria-label", `Масштаб подписей 1:${preset.denominator}. Изменить`);
+  for (const button of annotationScaleGrid.querySelectorAll("[data-annotation-scale]")) {
+    button.setAttribute("aria-checked", String(Number(button.dataset.annotationScale) === preset.factor));
   }
+}
+
+function setAnnotationScale(value, options = {}) {
+  const next = annotationScalePreset(value).factor;
+  state.annotationScale = next;
+  syncAnnotationScaleChoice(next);
   updateProjectTitle();
   draw();
   if (options.save !== false) markProjectDirty("annotation-scale");
@@ -4813,7 +4835,8 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
   if (!options.outline) {
     const anchor = worldToScreen(options.anchor || geometry.anchor);
     const lines = planZoneLabelLines(entity, geometry, state.measurementSettings);
-    const size = planZoneLabelHeight(state.annotationScale) * state.view.scale;
+    const worldHeight = planZoneLabelHeight(state.annotationScale);
+    const size = printRendering ? worldHeight * state.view.scale : annotationWorldToScreenSize(worldHeight);
     ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;
@@ -5303,7 +5326,8 @@ function drawAdditionalDimension(entity, c, preview = false) {
     ctx.stroke();
   }
   for (const { point, ux, uy } of art.arrows) {
-    drawDimensionArrow(worldToScreen(point), ux, uy, art.arrowSize * state.view.scale, { dimension: color });
+    const arrowSize = printRendering ? art.arrowSize * state.view.scale : annotationScreenSize(8, state.annotationScale);
+    drawDimensionArrow(worldToScreen(point), ux, uy, arrowSize, { dimension: color });
   }
   drawDimensionCaption(art.label, art.textHeight, art.prefix + projectLength(art.measurement), c.dimensionText ?? color, c.bg);
   ctx.restore();
@@ -5376,7 +5400,8 @@ function drawRadialDimension(entity, c, preview = false) {
   const color = preview || selected ? c.accent : c.dimension;
   const start = worldToScreen(art.start);
   const end = worldToScreen(art.end);
-  const arrowSize = art.arrowSize * state.view.scale;
+  const arrowSize = printRendering ? art.arrowSize * state.view.scale
+    : Math.min(annotationScreenSize(8, state.annotationScale), art.measurement * state.view.scale * 0.27);
   const text = `${art.diameter ? "⌀" : "R"} ${projectLength(art.measurement)}`;
   ctx.save();
   ctx.strokeStyle = color;
@@ -5523,7 +5548,8 @@ function drawDimensionGeometry(geometry, c, options = {}) {
   const end = worldToScreen(artwork.end);
   const extensionStart = worldToScreen(artwork.extensionStart);
   const extensionEnd = worldToScreen(artwork.extensionEnd);
-  const arrowSize = artwork.arrowSize * state.view.scale;
+  const arrowSize = printRendering ? artwork.arrowSize * state.view.scale
+    : Math.min(annotationScreenSize(9, state.annotationScale), pointDistance(a, b) * 0.22);
   ctx.save();
   ctx.strokeStyle = c.dimension;
   ctx.fillStyle = c.dimension;
@@ -5540,8 +5566,7 @@ function drawDimensionGeometry(geometry, c, options = {}) {
 }
 
 function dimensionLabelSize(height) {
-  const scaled = height * state.view.scale;
-  return printRendering ? scaled : Math.max(11 * state.annotationScale, scaled);
+  return printRendering ? height * state.view.scale : annotationWorldToScreenSize(height);
 }
 
 function drawDimensionLabel(text, label, height, rotation, c) {
@@ -14488,6 +14513,41 @@ const projectPrecisionFields = {
   anglePrecision: projectSettingsSheet.querySelector("#projectAnglePrecision"),
   areaPrecision: projectSettingsSheet.querySelector("#projectAreaPrecision"),
 };
+
+for (const preset of ANNOTATION_SCALE_PRESETS) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "annotation-scale-card";
+  button.dataset.annotationScale = String(preset.factor);
+  button.setAttribute("role", "radio");
+  button.setAttribute("aria-checked", "false");
+  const scale = document.createElement("strong");
+  scale.textContent = `1:${preset.denominator}`;
+  const title = document.createElement("span");
+  title.textContent = preset.title;
+  const hint = document.createElement("small");
+  hint.textContent = preset.hint;
+  button.append(scale, title, hint);
+  annotationScaleGrid.append(button);
+}
+
+annotationScaleButton.addEventListener("click", () => {
+  syncAnnotationScaleChoice(annotationScaleSelect.value);
+  annotationScaleSheet.showModal();
+  annotationScaleGrid.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+});
+annotationScaleGrid.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-annotation-scale]");
+  if (!button) return;
+  syncAnnotationScaleChoice(button.dataset.annotationScale);
+  annotationScaleSheet.close();
+});
+annotationScaleSheet.querySelector("#closeAnnotationScale").addEventListener("click", () => annotationScaleSheet.close());
+annotationScaleSheet.addEventListener("click", (event) => {
+  if (event.target === annotationScaleSheet) annotationScaleSheet.close();
+});
+annotationScaleSheet.addEventListener("close", () => annotationScaleButton.focus({ preventScroll: true }));
+
 for (const [name, field] of Object.entries(projectPrecisionFields)) {
   const maximum = name === "anglePrecision" ? 3 : 4;
   for (let digits = 0; digits <= maximum; digits++) field.add(new Option(String(digits), String(digits)));
@@ -14510,7 +14570,7 @@ projectSettingsButton.addEventListener("click", () => {
   hideSheet(layersSheet, { restoreFocus: false });
   hideSheet(exportSheet, { restoreFocus: false });
   const settings = state.measurementSettings;
-  annotationScaleSelect.value = String(state.annotationScale);
+  syncAnnotationScaleChoice(state.annotationScale);
   projectLengthUnit.value = settings.unit;
   projectPrintScale.value = settings.printScale;
   projectTapZoom.checked = state.tapZoomEnabled;
