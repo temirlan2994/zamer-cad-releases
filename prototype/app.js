@@ -104,10 +104,6 @@ function cadIcon(name) {
     mirrorLineAxis: '<path d="m3 21 18-18M4 14V5h9m-2 14h9v-9"/>',
     replaceOriginal: '<path d="M17 4h3v3M8 4h5M4 4v3m0 4v3m3 6H4v-3m16 0v3h-3m-4 0h-3m-3-9 4 4 7-7"/>',
     offset: '<path d="M5 19 15 9m-5 10L20 9M7 12l-2-2m4-2 2 2"/>',
-    cutAll: '<path d="M4 7h16M4 17h16M10 3v18m4-18v18"/>',
-    cutPreview: '<path d="M3 12s3-5 9-5 9 5 9 5-3 5-9 5-9-5-9-5Z"/><circle cx="12" cy="12" r="1.8"/>',
-    cutSelected: '<path d="M4 8V4h4m8 0h4v4M4 16v4h4m8 0h4v-4M7 12h10m-5-5v10"/>',
-    cutAxis: '<path d="M4 4v16h16M12 4v2m0 3v3m0 3v2"/>',
     percent: '<path d="m5 19 14-14"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="17" r="2"/>',
     exit: '<path d="M10 4H4v16h6m5-12 4 4-4 4m-6-4h10"/>',
     update: '<path d="M20 5v5h-5m5 0a8 8 0 1 0-2 8m-6-9v6m-2.5-2.5 2.5 2.5 2.5-2.5"/>',
@@ -607,7 +603,7 @@ for (const icon of document.querySelectorAll("[data-snap-symbol]")) {
   icon.innerHTML = `<svg class="cad-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${snapSymbolPaths[icon.dataset.snapSymbol]}"/></svg>`;
 }
 const lineUi = Object.fromEntries([
-  "lineBoundaryControl", "lineBoundaryHeading", "lineBreakControl", "lineEditApply", "linePolarStep",
+  "lineBreakControl", "lineEditApply", "linePolarStep",
   "lineEditOptions", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
   "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorModes", "lineMirrorControl", "lineMirrorDelete",
 ].map((id) => [id, document.getElementById(id)]));
@@ -624,7 +620,6 @@ const leaderUi = {
 };
 const leaderLineButtons = [...leaderUi.tools.querySelectorAll("[data-leader-line]")];
 for (const element of document.querySelectorAll("[data-line-icon]")) element.innerHTML = cadIcon(element.dataset.lineIcon);
-const boundaryModeButtons = [...lineUi.lineBoundaryControl.querySelectorAll("button")];
 const breakModeButtons = [...lineUi.lineBreakControl.querySelectorAll("button")];
 const lineKeyboardInputs = [lineUi.lineLengthInput, lineUi.lineEditRadius];
 const lineEditActions = new Set(["trim", "extend", "break", "join", "fillet", "scale"]);
@@ -10406,7 +10401,7 @@ function syncLineControls() {
   lineUi.lineMirrorModes.querySelector('[data-mirror-axis="line"]').setAttribute("aria-pressed", String(Boolean(mirroring && edit.pickMirrorAxis)));
   quickMirrorTool.disabled = !mirroring && !canApplySelectionAction("mirror");
   quickMirrorTool.setAttribute("aria-expanded", String(mirroring));
-  const hasBoundaries = boundaryEditModes.has(edit?.mode);
+  const repeatableCut = boundaryEditModes.has(edit?.mode);
   quickMoveTool.disabled = !canApplySelectionAction("move");
   quickScaleTool.disabled = !canApplySelectionAction("scale-selection");
   quickGroupTool.disabled = !canApplySelectionAction("group");
@@ -10429,31 +10424,22 @@ function syncLineControls() {
   quickRotateTool.disabled = !canApplySelectionAction("rotate");
   quickDeleteTool.disabled = !canApplySelectionAction("delete");
   const quickTargets = quickMoveTool.disabled ? [] : selectedEntities().filter(entity => isLayerVisible(entity.layer));
-  const chooseBoundaries = hasBoundaries && edit.boundaryMode === "selected" && !edit.boundaryReady;
   for (const button of quickEditButtons) {
     const mode = button.dataset.quickEdit;
     const active = mode === edit?.mode;
     button.disabled = !active && !quickTargets.some(entity => editableFigure(entity, mode));
     button.setAttribute("aria-pressed", String(active));
   }
-  lineUi.lineBoundaryControl.hidden = lineUi.lineBoundaryHeading.hidden = !hasBoundaries;
-  if (hasBoundaries) {
-    const heading = edit.mode === "trim" ? "Обрезка" : "Удлинение";
-    if (lineUi.lineBoundaryHeading.textContent !== heading) lineUi.lineBoundaryHeading.textContent = heading;
-  }
-  if (hasBoundaries) for (const button of boundaryModeButtons) {
-    button.setAttribute("aria-pressed", String(button.dataset.boundaryMode === edit.boundaryMode));
-  }
   lineUi.lineBreakControl.hidden = edit?.mode !== "break";
   if (edit?.mode === "break") for (const button of breakModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.breakMode === edit.breakMode));
   }
-  const finishing = edit?.applied && !edit.pending && hasBoundaries;
+  const finishing = edit?.applied && !edit.pending && repeatableCut;
   lineUi.lineEditCancel.hidden = Boolean(finishing);
   lineUi.lineEditFinish.hidden = !finishing;
-  lineUi.lineEditApply.hidden = !edit?.pending && !chooseBoundaries;
-  lineUi.lineEditApply.disabled = Boolean(chooseBoundaries && !edit.boundaryIds.length);
-  const label = chooseBoundaries ? "Подтвердить границы" : edit?.mode === "offset" ? "Создать отступ" : "Подтвердить правку";
+  lineUi.lineEditApply.hidden = !edit?.pending;
+  lineUi.lineEditApply.disabled = false;
+  const label = edit?.mode === "offset" ? "Создать отступ" : "Подтвердить правку";
   lineUi.lineEditApply.title = label;
   lineUi.lineEditApply.setAttribute("aria-label", label);
 }
@@ -10650,14 +10636,16 @@ function pickDraftLine(screen, includeFigures = false, candidates = null, mode, 
 
 function startQuickEdit(mode) {
   if (surveyPointPicker || (state.tool === "polyline" && state.drawing && !finishLineCommand())) return;
-  const selection = state.tool === "select" ? selectedEntities().filter(entity => isLayerVisible(entity.layer)).map(entity => entity.id) : [];
+  const selected = state.tool === "select" ? selectedEntities().filter(entity => isLayerVisible(entity.layer)) : [];
+  const selection = selected.map(entity => entity.id);
+  const source = boundaryEditModes.has(mode) && selected.length === 1 && editableFigure(selected[0], mode) ? selected[0] : null;
   hideDrawToolMenu();
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   hideSelectModeMenu();
   setTool("select");
   setSelection(selection);
-  startLineEdit(mode, null, { quick: true });
+  startLineEdit(mode, source, { quick: !boundaryEditModes.has(mode) });
   canvas.focus({ preventScroll: true });
 }
 
@@ -10666,12 +10654,8 @@ function startLineEdit(mode, entity, { quick = false, filletIds = [], sourceIds 
   state.lineEdit = {
     mode, quick, sourceId: entity?.id, sourceIds: sourceIds.length ? [...new Set(sourceIds)] : entity?.id ? [entity.id] : [],
     joinIds: [], filletIds, firstPick: null, amount: null,
-    boundaryMode: "auto", breakMode: "gap", boundaryIds: [], boundaryReady: false, pending: null, applied: false,
+    breakMode: "gap", pending: null, applied: false,
   };
-  if (boundaryEditModes.has(mode)) {
-    const hasWalls = state.entities.some((item) => item.type === "wall" && isLayerVisible(item.layer));
-    lineUi.lineBoundaryControl.querySelector('[data-boundary-mode="axis"]').hidden = !hasWalls;
-  }
   statusChip.textContent = "";
   state.selectedEndpoint = null;
   state.endpointEditBefore = null;
@@ -10723,17 +10707,16 @@ function endLineEdit(text) {
 }
 
 
-function boundarySegments(excludedId, ids = null) {
+function boundarySegments(excludedId) {
   const segments = [];
-  const wallAxes = state.lineEdit?.boundaryMode === "axis";
   for (const { p1, p2, entity, arc } of drawableSnapSegments()) {
-    if (entity.id === excludedId || (ids && !ids.includes(entity.id))) continue;
+    if (entity.id === excludedId) continue;
     if (arc) {
       segments.push(arc);
       continue;
     }
     const segment = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
-    if (entity.type === "wall" && !wallAxes && Number.isFinite(entity.width) && entity.width > 0) {
+    if (entity.type === "wall" && Number.isFinite(entity.width) && entity.width > 0) {
       const { a, b } = offsetWall(entity, entity.width / 2);
       segments.push(a, b, { x1: a.x1, y1: a.y1, x2: b.x1, y2: b.y1 },
         { x1: a.x2, y1: a.y2, x2: b.x2, y2: b.y2 });
@@ -10742,7 +10725,7 @@ function boundarySegments(excludedId, ids = null) {
     }
   }
   return segments.concat(state.entities.filter((entity) => entity.id !== excludedId &&
-    (!ids || ids.includes(entity.id)) && isLayerVisible(entity.layer) && traceIsReference(entity) &&
+    isLayerVisible(entity.layer) && traceIsReference(entity) &&
     ["circle", "arc"].includes(entity.type)));
 }
 
@@ -10892,17 +10875,6 @@ function pickLineEditPoint(screen) {
     draw();
   }
   if (!source && !repeat) return endLineEdit("Линия недоступна");
-  if (repeat && edit.boundaryMode === "selected" && !edit.boundaryReady) {
-    const boundary = pickBoundaryEntity(screen, edit.sourceId);
-    if (!boundary) return setLineEditHint("Коснитесь границы на чертеже");
-    edit.boundaryIds = edit.boundaryIds.includes(boundary.id)
-      ? edit.boundaryIds.filter((id) => id !== boundary.id)
-      : [...edit.boundaryIds, boundary.id];
-    setSelection([edit.sourceId, ...edit.boundaryIds]);
-    setLineEditHint(`Границ: ${edit.boundaryIds.length} · нажмите ✓`);
-    draw();
-    return;
-  }
   const point = lineEditPlacesPoint(edit) ? cursorWorld() : screenToWorld(screen);
   if (edit.mode === "mirror") {
     if (!edit.pickMirrorAxis) return;
@@ -10970,17 +10942,16 @@ function pickLineEditPoint(screen) {
     return;
   }
   if (!edit.applied && source && hit !== source) return setLineEditHint("Коснитесь выбранного объекта");
-  if (edit.boundaryIds.includes(hit.id)) return setLineEditHint("Выберите линию, которую нужно изменить");
   setSelection(hit.id);
-  const result = cutFigureAt(hit, edit.mode, point, edit.boundaryMode === "selected" ? edit.boundaryIds : null);
+  const result = cutFigureAt(hit, edit.mode, point);
   if (result.error) return setLineEditHint(result.error);
   previewLineEdit([[hit, result.pieces]], result.message, [], result.association);
 }
 
-function cutFigureAt(entity, mode, point, boundaryIds = null) {
+function cutFigureAt(entity, mode, point) {
   if (!entity) return { error: "Коснитесь объекта на чертеже" };
   if (!editableFigure(entity, mode)) return { error: "У замкнутого контура нет конца для удлинения" };
-  const boundaries = boundarySegments(entity.id, boundaryIds);
+  const boundaries = boundarySegments(entity.id);
   if (mode === "trim") {
     const pieces = trimFigure(entity, boundaries, point);
     return pieces ? { pieces, message: "Обрезка выполнена", association: "preserve" } :
@@ -11090,22 +11061,6 @@ function previewMirror(source, start, end) {
 }
 
 
-function pickBoundaryEntity(screen, excludedId) {
-  let best = null;
-  let bestDistance = 18;
-  for (const entity of state.entities) {
-    if (entity.id === excludedId || !isLayerVisible(entity.layer) || entity.layer === "dimensions" ||
-        !traceIsReference(entity) ||
-        !["line", "wall", "rectangle", "polyline", "circle", "arc"].includes(entity.type)) continue;
-    const distance = distanceToEntityScreen(screen, entity);
-    if (distance < bestDistance) {
-      best = entity;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
 function previewLineEdit(replacements, message, added = [], association = "follow") {
   const edit = state.lineEdit;
   if (!edit) return;
@@ -11131,14 +11086,6 @@ function previewLineEdit(replacements, message, added = [], association = "follo
 function applyLineEditPreview() {
   const edit = state.lineEdit;
   if (!edit) return;
-  if (boundaryEditModes.has(edit.mode) && edit.boundaryMode === "selected" && !edit.boundaryReady) {
-    if (!edit.boundaryIds.length) return;
-    edit.boundaryReady = true;
-    setSelection(edit.sourceId);
-    setLineEditHint(boundaryEditPrompts[edit.mode]);
-    draw();
-    return;
-  }
   if (!edit.pending) return;
   const { replacements, message, added, association } = edit.pending;
   if (!commitLineEdit(replacements, message, added, association)) return;
@@ -13775,24 +13722,6 @@ lineUi.lineEditCancel.addEventListener("click", () => {
 });
 lineUi.lineEditFinish.addEventListener("click", () => endLineEdit("Правка завершена"));
 lineUi.lineEditApply.addEventListener("click", applyLineEditPreview);
-lineUi.lineBoundaryControl.addEventListener("click", (event) => {
-  const edit = state.lineEdit;
-  const mode = event.target.closest("[data-boundary-mode]")?.dataset.boundaryMode;
-  if (!boundaryEditModes.has(edit?.mode) || !mode || mode === edit.boundaryMode) return;
-  if (edit.quick) {
-    const targets = selectedEntities().filter((entity) => isLayerVisible(entity.layer) && editableFigure(entity, edit.mode));
-    edit.sourceId = targets.length === 1 ? targets[0].id : null;
-  }
-  edit.boundaryMode = mode;
-  edit.quick = mode === "auto";
-  edit.pending = null;
-  edit.boundaryIds = [];
-  edit.boundaryReady = false;
-  edit.applied = false;
-  setSelection(lineEditEntity(edit.sourceId, edit.mode)?.id);
-  setLineEditHint(mode === "selected" ? "Выберите границы" : boundaryEditPrompts[edit.mode]);
-  draw();
-});
 lineUi.lineBreakControl.addEventListener("click", (event) => {
   const edit = state.lineEdit;
   const mode = event.target.closest("[data-break-mode]")?.dataset.breakMode;
