@@ -7,12 +7,22 @@ on:
   pull_request:
     paths: ['prototype/**', 'android-offline/**', 'shared/cad/**', '.github/workflows/zamer.yml']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Черновик релиза, например v0.1.90 (пусто — только проверка)'
+        required: false
+        type: string
+      staging_ref:
+        description: 'Ветка с .release-staging/'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   check:
+    if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,3 +40,29 @@ jobs:
           cache: gradle
       - run: bash ./gradlew assembleDebug lintDebug
         working-directory: android-offline
+
+  publish-release-assets:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && inputs.staging_ref != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.staging_ref }}
+          sparse-checkout: .release-staging
+      - name: Проверка и публикация файлов релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apk=(.release-staging/*.apk)
+          test "${#apk[@]}" -eq 1
+          test -f .release-staging/update.json
+          version="${RELEASE_TAG#v}"
+          jq -e --arg version "$version" '.versionName == $version' .release-staging/update.json >/dev/null
+          test "$(sha256sum "${apk[0]}" | cut -d' ' -f1)" = "$(jq -r .sha256 .release-staging/update.json)"
+          gh release upload "$RELEASE_TAG" "${apk[0]}" .release-staging/update.json --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest
