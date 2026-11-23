@@ -108,6 +108,10 @@ describe('помещение из петли стен — обычная ком�
     const n1 = s1.rooms.find((x) => x.id === 'N');
     assert.ok(over.x > docked.x, 'комната сдвинута');
     assert.equal(n1.x, over.x + over.w + partition, 'сосед уменьшен до перегородки');
+    await page.waitForFunction(() => (
+      window.__kepler.state.analytics?.dirty === false
+      && Boolean(window.__kepler.state.norms)
+    ));
     const overlap = await page.evaluate(() => window.__kepler.state.norms.problems.some((x) => x.kind === 'overlap'));
     assert.ok(!overlap, 'замечания о перекрытии нет');
     await page.keyboard.press('Control+z');

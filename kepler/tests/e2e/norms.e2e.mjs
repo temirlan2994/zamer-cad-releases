@@ -6,7 +6,15 @@ import { startApp, openSample } from './helpers.mjs';
 
 describe('нормы', () => {
   let app;
-  before(async () => { app = await startApp({ issueGroups: 'all' }); await openSample(app.page); });
+  before(async () => {
+    app = await startApp({ issueGroups: 'all' });
+    await openSample(app.page);
+    await app.page.waitForFunction(() => (
+      window.__kepler.state.analytics?.dirty === false
+      && Boolean(window.__kepler.state.norms?.insolation)
+      && Boolean(window.__kepler.state.issues)
+    ));
+  });
   after(async () => { await app?.close(); });
 
   it('в свойствах проекта блока норм нет; в панели «⚠» — инсоляция жилых комнат', async () => {
