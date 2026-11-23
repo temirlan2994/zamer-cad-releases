@@ -5,9 +5,9 @@ on:
     branches: [main]
     paths:
       - 'kepler/**'
+      - '!kepler/tests/**'
       - 'shared/cad/**'
       - '.github/workflows/pages.yml'
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,6 +28,11 @@ jobs:
     steps:
       - name: Получение репозитория
         uses: actions/checkout@v5
+
+      - name: Новая версия для каждой публикации
+        run: >-
+          node kepler/scripts/release-version.mjs check-live
+          "https://temirlan2994.github.io/zamer-cad-releases/package.json?candidate=${{ github.sha }}"
 
       - name: Настройка GitHub Pages
         uses: actions/configure-pages@v5

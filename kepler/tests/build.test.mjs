@@ -10,6 +10,9 @@ const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
 
 test('номер версии совпадает с package.json и виден у каждого логотипа', () => {
   const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.version, version);
+  assert.equal(lock.packages[''].version, version);
   const badges = [...html.matchAll(/<span class="app-version"[^>]*>([^<]+)<\/span>/g)];
   assert.equal(badges.length, 3);
   for (const badge of badges) assert.equal(badge[1], `v${version}`);
