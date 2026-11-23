@@ -180,6 +180,13 @@ function statusNote(status, counts, width) {
   return `Рассчитанные маршруты пропускают профиль ${width} мм.`;
 }
 
+function missionStatus(status) {
+  if (status === 'clear') return 'ready';
+  if (status === 'blocked') return 'blocked';
+  if (['narrow', 'approximate', 'partial'].includes(status)) return 'attention';
+  return 'unknown';
+}
+
 function formatMm(value) {
   return finite(value) ? `${Math.round(Number(value)).toLocaleString('ru-RU')} мм` : 'не измерено';
 }
@@ -234,10 +241,24 @@ function routeCards(routes) {
 function profileControls(view) {
   const preset = PROFILE_WIDTHS.includes(view.profileWidthMm);
   return `<fieldset class="home-circulation-profile">
-    <legend>Ширина для проверки прохода</legend>
+    <legend>Проверяемая ширина · ${Math.round(view.profileWidthMm)} мм</legend>
     <div role="group" aria-label="Ширина расчётного профиля">${PROFILE_WIDTHS.map((width) => `<button type="button" data-home-circulation-action="set-profile" data-circulation-profile="${width}" aria-pressed="${view.profileWidthMm === width}">${width} мм</button>`).join('')}</div>
-    <label class="prop-field"><span>Свой размер, мм</span><input type="number" min="300" max="2000" step="10" inputmode="decimal" data-circulation-width value="${escapeHtml(preset ? '' : view.profileWidthMm)}" placeholder="например, 750"></label>
+    <details class="analysis-disclosure" data-analysis-fold="circulation-custom-width"><summary>Свой размер</summary>
+      <label class="prop-field"><span>Ширина, мм</span><input type="number" min="300" max="2000" step="10" inputmode="decimal" data-circulation-width value="${escapeHtml(preset ? '' : view.profileWidthMm)}" placeholder="например, 750"></label>
+    </details>
   </fieldset>`;
+}
+
+function resultMetrics(counts) {
+  return `<details class="analysis-disclosure" data-analysis-fold="circulation-results"><summary>Результаты маршрутов <span>${counts.clear + counts.narrow + counts.approximate + counts.partial + counts.blocked + counts.unknown}</span></summary>
+    <div class="home-circulation-summary"><dl>
+      <div><dt>Проходит</dt><dd>${counts.clear}</dd></div>
+      <div><dt>Тесно</dt><dd>${counts.narrow}</dd></div>
+      <div><dt>Приблизительно</dt><dd>${counts.approximate + counts.partial}</dd></div>
+      <div><dt>Нет пути</dt><dd>${counts.blocked}</dd></div>
+      <div><dt>Неизвестно</dt><dd>${counts.unknown}</dd></div>
+    </dl></div>
+  </details>`;
 }
 
 function metricControls(view, periods, unknownFrequencyCount) {
@@ -357,36 +378,43 @@ export function homeCirculationHtml(project, state = {}) {
     return route?.source === 'scenario' && !(frequency.known === true
       || (finite(frequency.value) && frequency.period));
   }).length;
+  const checkStatus = missionStatus(status);
+  const anchorsStatus = routes.length
+    ? (counts.approximate + counts.partial + counts.unknown ? 'attention' : 'ready') : 'unknown';
+  const mapStatus = view.heatmap ? 'observed' : 'unknown';
   return `<div class="home-circulation" data-home-circulation>
-    <div class="home-circulation-summary" data-status="${escapeHtml(status)}">
+    <div class="home-circulation-summary sr-only" data-status="${escapeHtml(status)}" aria-live="polite">
       <div><strong>${escapeHtml(STATUS_LABELS[status])}</strong><span>${escapeHtml(statusNote(status, counts, view.profileWidthMm))}</span></div>
-      <dl>
-        <div><dt>Проходит</dt><dd>${counts.clear}</dd></div>
-        <div><dt>Тесно</dt><dd>${counts.narrow}</dd></div>
-        <div><dt>Приблизительно</dt><dd>${counts.approximate + counts.partial}</dd></div>
-        <div><dt>Нет пути</dt><dd>${counts.blocked}</dd></div>
-        <div><dt>Неизвестно</dt><dd>${counts.unknown}</dd></div>
-      </dl>
     </div>
-    ${profileControls(view)}
-    <div class="home-circulation-layer-controls" aria-label="Слои анализа движения">
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${view.routes}" data-home-circulation-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${view.heatmap}" data-home-circulation-action="toggle-heatmap"><span aria-hidden="true"></span>Нагрузка</button>
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${view.bottlenecks}" data-home-circulation-action="toggle-bottlenecks"><span aria-hidden="true"></span>Узкие места</button>
-      <button type="button" class="primary home-circulation-show" data-home-circulation-action="toggle-overlay">${view.on ? 'Скрыть с плана' : 'Показать на плане'}</button>
-    </div>
-    ${metricControls(view, periods, unknownFrequencyCount)}
-    <section class="home-circulation-section" aria-labelledby="homeCirculationRoutesTitle">
-      <div class="home-program-section-head"><h3 id="homeCirculationRoutesTitle">Маршруты</h3></div>
-      ${routeCards(routes)}
-    </section>
-    <section class="home-circulation-section" aria-labelledby="homeCirculationAnchorsTitle">
-      <div class="home-program-section-head"><div><h3 id="homeCirculationAnchorsTitle">Начало и конец пути</h3><p>Укажите дверь или предмет мебели для точного маршрута.</p></div></div>
-      ${anchorEditors(project)}
-    </section>
-    ${warningsHtml(result)}
-    <details class="analysis-disclosure" data-analysis-fold="method"><summary>Как рассчитывается путь</summary>
-      <p class="home-circulation-disclaimer">Дискретный геометрический расчёт учитывает ширину прохода, стены, двери и напольную мебель. Он не является нормативной проверкой эвакуации или доступности.</p>
+    <details class="home-mission-section" data-analysis-fold="circulation-check" data-status="${checkStatus}" open>
+      <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">1</span><span><strong>Проверка прохода</strong><small>${Math.round(view.profileWidthMm)} мм · ${escapeHtml(STATUS_LABELS[status])}</small></span><span class="home-mission-state" data-status="${checkStatus}" aria-label="${escapeHtml(STATUS_LABELS[status])}"></span></summary>
+      <div class="home-mission-body">
+        <button type="button" class="primary home-circulation-show" data-home-circulation-action="toggle-overlay">${view.on ? 'Скрыть с плана' : 'Показать на плане'}</button>
+        ${profileControls(view)}
+        <details class="analysis-disclosure" data-analysis-fold="circulation-layers"><summary>Слои карты</summary>
+          <div class="home-circulation-layer-controls" aria-label="Слои анализа движения">
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${view.routes}" data-home-circulation-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${view.heatmap}" data-home-circulation-action="toggle-heatmap"><span aria-hidden="true"></span>Нагрузка</button>
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${view.bottlenecks}" data-home-circulation-action="toggle-bottlenecks"><span aria-hidden="true"></span>Узкие места</button>
+          </div>
+        </details>
+        ${resultMetrics(counts)}
+      </div>
+    </details>
+    <details class="home-mission-section" data-analysis-fold="circulation-routes" data-status="${checkStatus}">
+      <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">2</span><span><strong id="homeCirculationRoutesTitle">Маршруты</strong><small>${routes.length || 'Нет рассчитанных'}</small></span><span class="home-mission-state" data-status="${checkStatus}" aria-label="${escapeHtml(STATUS_LABELS[status])}"></span></summary>
+      <div class="home-mission-body">${routeCards(routes)}${warningsHtml(result)}</div>
+    </details>
+    <details class="home-mission-section" data-analysis-fold="circulation-anchors" data-status="${anchorsStatus}">
+      <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">3</span><span><strong id="homeCirculationAnchorsTitle">Точки маршрута</strong><small>Двери и мебель</small></span><span class="home-mission-state" data-status="${anchorsStatus}" aria-label="${anchorsStatus === 'ready' ? 'Точки заданы' : anchorsStatus === 'attention' ? 'Требует уточнения' : 'Нет данных'}"></span></summary>
+      <div class="home-mission-body"><p>Уточните начало и конец только для нужных маршрутов.</p>${anchorEditors(project)}</div>
+    </details>
+    <details class="home-mission-section" data-analysis-fold="circulation-map" data-status="${mapStatus}">
+      <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">4</span><span><strong>Карта нагрузки</strong><small>Метрика и период</small></span><span class="home-mission-state" data-status="${mapStatus}" aria-label="${mapStatus === 'observed' ? 'Карта включена' : 'Не настроено'}"></span></summary>
+      <div class="home-mission-body">${metricControls(view, periods, unknownFrequencyCount)}</div>
+    </details>
+    <details class="analysis-disclosure home-mission-section home-mission-secondary" data-analysis-fold="method"><summary class="home-mission-summary"><span><strong>Подробнее</strong><small>Как рассчитывается путь</small></span></summary>
+      <div class="home-mission-body"><p class="home-circulation-disclaimer">Дискретный геометрический расчёт учитывает ширину прохода, стены, двери и напольную мебель и не является нормативной проверкой эвакуации или доступности.</p></div>
     </details>
   </div>`;
 }

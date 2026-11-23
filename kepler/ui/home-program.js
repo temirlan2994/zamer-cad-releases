@@ -65,6 +65,15 @@ let draftSource = '';
 let draft = null;
 let draftDirty = false;
 let draftError = '';
+let activeMission = 'residents';
+
+const PROGRAM_MISSIONS = Object.freeze([
+  ['residents', 'Жильцы'],
+  ['rooms', 'Комнаты'],
+  ['extras', 'Опции'],
+  ['plan', 'На плане'],
+  ['result', 'Итог'],
+]);
 
 const array = (value) => (Array.isArray(value) ? value : []);
 const finite = (value) => value !== null && value !== undefined && value !== ''
@@ -153,6 +162,7 @@ function seedDraft(project) {
     draft = null;
     draftDirty = false;
     draftError = '';
+    activeMission = 'residents';
   }
   if (draft && (draftDirty || signature === draftSource)) return draft;
 
@@ -378,7 +388,9 @@ function scenarioHtml(currentDraft) {
   const guests = countValue(currentDraft.guestCount);
   const residents = adults + children;
   const totalAtTable = residents + guests;
-  return `<div class="home-program-scenario-grid">
+  const guestFrequency = GUEST_FREQUENCIES.find(([id]) => id === currentDraft.guestFrequency)?.[1]
+    ?.toLocaleLowerCase('ru-RU') || 'редко';
+  return `<div class="home-program-scenario-grid home-program-people-grid">
     <article class="home-program-person-card">
       <span class="home-program-scenario-icon">${personIcon('adult')}</span>
       <div class="home-program-scenario-copy"><strong>Взрослые</strong></div>
@@ -389,14 +401,19 @@ function scenarioHtml(currentDraft) {
       <div class="home-program-scenario-copy"><strong>Дети</strong></div>
       ${stepperHtml('childCount', children, { min: 0, max: 20, label: 'Количество детей' })}
     </article>
-    <div class="home-program-capacity-summary">
-      <span>Мест за столом в будни <strong data-program-seats="daily">${residents}</strong></span>
-      <span${guests ? '' : ' hidden'}>С гостями <strong data-program-seats="guests">${totalAtTable}</strong></span>
-    </div>
-    <article class="home-program-scenario-card home-program-guests">
+    <article class="home-program-person-card home-program-guests">
       <span class="home-program-scenario-icon">${guestIcon}</span>
-      <div class="home-program-scenario-copy"><strong>Гостей за одним столом</strong></div>
+      <div class="home-program-scenario-copy"><strong>Гости <small>(${escapeHtml(guestFrequency)})</small></strong></div>
       ${stepperHtml('guestCount', guests, { min: 0, max: 30, label: 'Количество гостей одновременно' })}
+    </article>
+  </div>
+  <details class="home-program-more">
+    <summary>Подробнее</summary>
+    <div class="home-program-more-body">
+      <div class="home-program-capacity-summary">
+        <span>Мест за столом в будни <strong data-program-seats="daily">${residents}</strong></span>
+        <span${guests ? '' : ' hidden'}>С гостями <strong data-program-seats="guests">${totalAtTable}</strong></span>
+      </div>
       <div class="home-program-presets" aria-label="Быстрый выбор количества гостей">
         ${[0, 2, 5, 10].map((value) => `<button type="button" data-home-program-action="guest-preset" data-home-program-preset="${value}" aria-pressed="${guests === value}">${value === 0 ? 'Без гостей' : `до ${value}`}</button>`).join('')}
         <button type="button" data-home-program-action="guest-preset" data-home-program-preset="11" aria-pressed="${guests > 10}">10+</button>
@@ -404,13 +421,41 @@ function scenarioHtml(currentDraft) {
       <fieldset class="home-program-frequency"${guests ? '' : ' hidden'}><legend>Как часто принимаете гостей</legend><div>
         ${GUEST_FREQUENCIES.map(([id, title, note]) => `<label><input type="radio" name="home-program-guest-frequency" value="${id}" data-home-program-field="guestFrequency"${currentDraft.guestFrequency === id ? ' checked' : ''}><span><strong>${title}</strong><small>${note}</small></span></label>`).join('')}
       </div></fieldset>
-    </article>
-    <article class="home-program-scenario-card home-program-cooks">
-      <span class="home-program-scenario-icon">${cookIcon}</span>
-      <div class="home-program-scenario-copy"><strong>Сколько человек готовят вместе?</strong></div>
-      ${stepperHtml('simultaneousCooks', countValue(currentDraft.simultaneousCooks, 1), { min: 1, max: 6, label: 'Количество одновременно готовящих' })}
-    </article>
-  </div>`;
+      <article class="home-program-scenario-card home-program-cooks">
+        <span class="home-program-scenario-icon">${cookIcon}</span>
+        <div class="home-program-scenario-copy"><strong>Готовят вместе</strong></div>
+        ${stepperHtml('simultaneousCooks', countValue(currentDraft.simultaneousCooks, 1), { min: 1, max: 6, label: 'Количество одновременно готовящих' })}
+      </article>
+    </div>
+  </details>`;
+}
+
+function missionStatus(id, { currentDraft, analysis, saved }) {
+  if (id === 'residents') return countValue(currentDraft.adultCount, 0) > 0 ? 'done' : 'unknown';
+  if (id === 'rooms') {
+    return currentDraft.socialMode !== 'unknown' && finite(currentDraft.bathroomCount)
+      && currentDraft.bedrooms.length ? 'done' : 'unknown';
+  }
+  if (id === 'extras') {
+    return VISIBLE_OPTION_KEYS.every((key) => typeof currentDraft.options[key] === 'boolean') ? 'done' : 'unknown';
+  }
+  if (id === 'plan') return analysis?.status === 'ready' ? 'done' : analysis?.status === 'incomplete' ? 'attention' : 'unknown';
+  return saved?.confirmed === true ? 'done' : 'unknown';
+}
+
+function missionSection(id, note, html, context) {
+  const index = PROGRAM_MISSIONS.findIndex(([missionId]) => missionId === id);
+  const label = PROGRAM_MISSIONS[index]?.[1] || id;
+  const status = missionStatus(id, context);
+  const statusLabel = status === 'done' ? 'Готово' : status === 'attention' ? 'Нужно проверить' : 'Не заполнено';
+  return `<details class="home-mission-section home-program-mission" data-analysis-fold="${id}" data-status="${status}"${activeMission === id ? ' open' : ''}>
+    <summary class="home-mission-summary" data-home-program-action="mission" data-home-program-mission="${id}">
+      <span class="home-mission-index">${index + 1}</span>
+      <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(note)}</small></span>
+      <i class="home-mission-state" aria-label="${statusLabel}">${status === 'done' ? '✓' : status === 'attention' ? '!' : '?'}</i>
+    </summary>
+    <div class="home-mission-body">${html}</div>
+  </details>`;
 }
 
 function bedroomsHtml(currentDraft) {
@@ -456,50 +501,63 @@ export function homeProgramHtml(project) {
   const proposedBathrooms = suggestion.bathroomCount;
   const overlayOn = Boolean(state.homeProgramOverlay?.on
     && state.homeProgramOverlay?.mode !== 'flows');
+  const missionContext = { currentDraft, analysis, saved };
+  const activeIndex = Math.max(0, PROGRAM_MISSIONS.findIndex(([id]) => id === activeMission));
+  const nextMission = PROGRAM_MISSIONS[Math.min(PROGRAM_MISSIONS.length - 1, activeIndex + 1)]?.[0] || 'result';
+  const summaryHtml = summary.total ? `<div class="home-program-summary" data-status="${escapeHtml(status)}">
+    <div><strong>${statusLabel(status)}</strong><span>Помещения на плане</span>
+      ${summary.accessIssueCount ? `<small>Проблем с доступом · ${Number(summary.accessIssueCount)}</small>` : ''}
+      ${summary.connectionIssues ? `<small>Проблем со связями · ${Number(summary.connectionIssues)}</small>` : ''}
+    </div>
+    <span>${Number(summary.present ?? summary.complete ?? 0) || 0} / ${Number(summary.total ?? array(analysis?.targets).length) || 0}</span>
+  </div>` : '';
   return `<div class="home-program" data-home-program>
-    ${summary.total ? `<div class="home-program-summary" data-status="${escapeHtml(status)}">
-      <div><strong>${statusLabel(status)}</strong><span>Помещения на плане</span>
-        ${summary.accessIssueCount ? `<small>Проблем с доступом · ${Number(summary.accessIssueCount)}</small>` : ''}
-        ${summary.connectionIssues ? `<small>Проблем со связями · ${Number(summary.connectionIssues)}</small>` : ''}
-      </div>
-      <span>${Number(summary.present ?? summary.complete ?? 0) || 0} / ${Number(summary.total ?? array(analysis?.targets).length) || 0}</span>
-    </div>` : ''}
-    ${currentDraft.preliminary || saved?.confirmed !== true ? '<p class="home-program-preliminary"><strong>Предварительно предложено.</strong> Выберите состав семьи и сохраните программу.</p>' : ''}
     ${draftError ? `<p class="home-program-error" role="alert" tabindex="-1">${escapeHtml(draftError)}</p>` : ''}
     <form id="homeProgramForm" novalidate>
-      <fieldset class="home-program-fieldset">
-        <legend>Жильцы и гости</legend>
-        ${scenarioHtml(currentDraft)}
-      </fieldset>
-      <fieldset class="home-program-fieldset">
-        <legend>Основные помещения</legend>
-        <div class="home-program-grid home-program-main-grid">
-          <label class="prop-field"><span>Кухня и гостиная</span><select data-home-program-field="socialMode">${selectOptions(currentDraft.socialMode, [
+      ${missionSection('residents', 'Кто будет жить в доме', `
+        <div class="home-mission-callout home-program-mission-callout">
+          <span class="home-program-scenario-icon" aria-hidden="true">${personIcon('adult')}</span>
+          <div><strong>Миссия</strong><span>Укажите, кто будет жить в доме.</span></div>
+        </div>
+        <fieldset class="home-program-fieldset home-program-residents"><legend class="sr-only">Жильцы и гости</legend>${scenarioHtml(currentDraft)}</fieldset>
+      `, missionContext)}
+      ${missionSection('rooms', 'Основной состав помещений', `
+        <fieldset class="home-program-fieldset"><legend class="sr-only">Основные помещения</legend>
+          <div class="home-program-grid home-program-main-grid">
+            <label class="prop-field"><span>Кухня и гостиная</span><select data-home-program-field="socialMode">${selectOptions(currentDraft.socialMode, [
     ['unknown', 'Не решено'], ['combined', 'Вместе'], ['separate', 'Раздельно'],
   ])}</select></label>
-          <label class="prop-field"><span>Общих санузлов${finite(proposedBathrooms) ? ` · предложено ${Number(proposedBathrooms)}` : ''}</span><input type="number" min="1" max="20" step="1" data-home-program-field="bathroomCount" value="${escapeHtml(currentDraft.bathroomCount)}"></label>
-        </div>
-        ${bedroomsHtml(currentDraft)}
-      </fieldset>
-      <fieldset class="home-program-fieldset">
-        <legend>Дополнительные помещения</legend>
-        ${optionsHtml(currentDraft)}
-      </fieldset>
+            <label class="prop-field"><span>Общих санузлов${finite(proposedBathrooms) ? ` · предложено ${Number(proposedBathrooms)}` : ''}</span><input type="number" min="1" max="20" step="1" data-home-program-field="bathroomCount" value="${escapeHtml(currentDraft.bathroomCount)}"></label>
+          </div>
+          ${bedroomsHtml(currentDraft)}
+        </fieldset>
+      `, missionContext)}
+      ${missionSection('extras', 'Необязательные комнаты', `
+        <fieldset class="home-program-fieldset"><legend class="sr-only">Дополнительные помещения</legend>${optionsHtml(currentDraft)}</fieldset>
+      `, missionContext)}
+      ${missionSection('plan', 'Что уже есть на плане', `
+        <section class="home-program-section" aria-labelledby="homeProgramTargetsTitle">
+          <div class="home-program-section-head"><h3 id="homeProgramTargetsTitle">Помещения на плане</h3></div>
+          ${renderTargets(analysis)}
+        </section>
+      `, missionContext)}
+      ${missionSection('result', 'Проверка и сохранение', `
+        ${summaryHtml}
+        ${currentDraft.preliminary || saved?.confirmed !== true ? '<p class="home-program-preliminary"><strong>Черновик.</strong> Проверьте решения и сохраните программу.</p>' : ''}
+        <section class="home-program-section" aria-labelledby="homeProgramLinksTitle">
+          <div class="home-program-section-head"><h3 id="homeProgramLinksTitle">Проходы между комнатами</h3>
+            <button type="button" class="project-route-switch" role="switch" aria-checked="${overlayOn}" data-home-program-action="toggle-overlay"><span aria-hidden="true"></span>${overlayOn ? 'Показаны' : 'Показать на плане'}</button>
+          </div>
+          ${renderConnections(analysis)}
+        </section>
+        ${warningsHtml(analysis)}
+      `, missionContext)}
       <div class="home-program-savebar">
-        <button type="button" class="primary" data-home-program-action="save">Сохранить программу</button>
+        ${activeMission === 'result'
+    ? '<button type="button" class="primary" data-home-program-action="save">Сохранить программу</button>'
+    : `<button type="button" class="primary" data-home-program-action="next-mission" data-home-program-mission="${nextMission}">Далее <span aria-hidden="true">→</span></button>`}
       </div>
     </form>
-    <section class="home-program-section" aria-labelledby="homeProgramTargetsTitle">
-      <div class="home-program-section-head"><h3 id="homeProgramTargetsTitle">Помещения на плане</h3></div>
-      ${renderTargets(analysis)}
-    </section>
-    <section class="home-program-section" aria-labelledby="homeProgramLinksTitle">
-      <div class="home-program-section-head"><h3 id="homeProgramLinksTitle">Проходы между комнатами</h3>
-        <button type="button" class="project-route-switch" role="switch" aria-checked="${overlayOn}" data-home-program-action="toggle-overlay"><span aria-hidden="true"></span>${overlayOn ? 'Показаны' : 'Показать на плане'}</button>
-      </div>
-      ${renderConnections(analysis)}
-    </section>
-    ${warningsHtml(analysis)}
   </div>`;
 }
 
@@ -739,6 +797,22 @@ export function handleHomeProgramClick(event, callbacks = {}) {
   const button = event.target?.closest?.('[data-home-program-action]');
   if (!button || !button.closest('[data-home-program]')) return false;
   const action = button.dataset.homeProgramAction;
+  if (action === 'mission' || action === 'next-mission') {
+    const mission = button.dataset.homeProgramMission;
+    if (!PROGRAM_MISSIONS.some(([id]) => id === mission)) return false;
+    activeMission = mission;
+    const panel = button.closest('[data-home-program]');
+    for (const section of panel?.querySelectorAll('.home-program-mission') || []) {
+      if (section.dataset.analysisFold !== mission) section.open = false;
+    }
+    if (action === 'next-mission') {
+      const target = panel?.querySelector(`[data-analysis-fold="${mission}"]`);
+      if (target) target.open = true;
+      callbacks.rerender?.();
+      requestAnimationFrame(() => document.querySelector(`[data-home-program-mission="${mission}"]`)?.focus({ preventScroll: true }));
+    }
+    return true;
+  }
   if (action === 'step' || action === 'guest-preset') {
     const currentDraft = seedDraft(state.project);
     const field = action === 'step' ? button.dataset.homeProgramStep : 'guestCount';

@@ -77,10 +77,6 @@
       <!-- Маршрут дома. Подробности этапа раскрываются поверх чертежа. -->
       <section class="project-route" id="projectRoute" aria-label="Маршрут проекта">
         <div class="project-route-bar">
-          <button type="button" class="project-route-program" id="projectHomeProgram" aria-haspopup="menu" aria-controls="projectRouteHover" aria-expanded="false">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4v16h18M7 15l4-5 4 2 5-7"/></svg>
-            <strong>Аналитика</strong><span id="projectHomeProgramStatus">0/9</span>
-          </button>
           <nav class="project-route-steps home-system-nav" id="projectRouteSteps" role="tablist" aria-label="Этапы проекта"></nav>
           <span class="route-current-section" id="routeCurrentSection" hidden></span>
         </div>
@@ -88,6 +84,7 @@
         <button type="button" class="project-route-scrim" id="projectRouteScrim" aria-label="Закрыть маршрут проекта" hidden></button>
         <div class="project-route-panel" id="projectRoutePanel" role="dialog" aria-modal="false" aria-labelledby="projectRoutePanelTitle" hidden>
           <header class="project-route-panel-head">
+            <span class="project-route-panel-icon" id="projectRoutePanelIcon" aria-hidden="true"></span>
             <div>
               <div class="project-route-panel-kicker" id="projectRoutePanelKicker">Маршрут проекта</div>
               <h2 id="projectRoutePanelTitle">Подготовка участка</h2>

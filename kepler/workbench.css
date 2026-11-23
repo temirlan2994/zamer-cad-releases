@@ -81,9 +81,6 @@
   --accent: var(--desk-accent); --border: var(--desk-line); --surface-2: var(--desk-soft);
 }
 .project-route-bar { gap: 12px; padding-inline: clamp(8px, 1.4vw, 24px); }
-#projectHomeProgram { border: 1px solid var(--desk-line); background: var(--desk-soft); color: var(--text); }
-#projectHomeProgram:is(:hover,[aria-expanded="true"]) { background: var(--desk-header); color: #fff; }
-#projectHomeProgramStatus { background: var(--surface); color: var(--desk-accent); border: 1px solid var(--desk-line); }
 .wv-tabs button.active, .wv-tabs #view3dBtn.active { border-color: transparent; color: var(--text); background: var(--desk-soft); }
 .toolstrip .tb-btn.active, .toolstrip .tb-family-trigger.active {
   color: #233525; border-color: #a0b953; background: var(--desk-lime);
@@ -134,21 +131,6 @@
   #projectRoute { border: 0; }
   #projectRoute .project-route-bar { display: none; }
   body.project-route-open #projectRoute { z-index: 90; }
-  .topbar #projectHomeProgram {
-    display: inline-flex; justify-content: center; align-items: center;
-    width: auto; gap: 5px; padding: 0 6px; border-color: #47594e; border-radius: 9px;
-    background: #293a30; color: #f1f6f3; white-space: nowrap;
-  }
-  .topbar #projectHomeProgramStatus { padding: 2px 5px; background: #35483e; color: #ddf3cc; }
-  @media (max-width: 440px) {
-    .topbar #projectHomeProgram {
-      display: grid; grid-template-columns: 16px auto; justify-items: center; align-content: center;
-      column-gap: 3px; row-gap: 1px; padding-inline: 6px;
-    }
-    .topbar #projectHomeProgram > svg:first-child { width: 15px; height: 15px; }
-    .topbar #projectHomeProgramStatus { grid-row: 1; grid-column: 2; padding: 1px 4px; }
-    .topbar #projectHomeProgram strong { grid-column: 1 / -1; font-size: 12px; line-height: 1.2; }
-  }
   .topbar #saveBtn span { display: none; }
   .topbar .export-dropdown { width: auto; top: max(52px, env(safe-area-inset-top)); gap: 8px; padding: 8px; }
   .export-group button { min-height: 44px; }

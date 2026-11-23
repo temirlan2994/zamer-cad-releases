@@ -151,9 +151,12 @@ describe('этапы 8–9 на телефоне', () => {
         count: tabs.length,
         current: active.dataset.routeView,
         activeInside: activeRect.left >= -1 && activeRect.right <= innerWidth + 1,
+        allInside: tabs.every((node) => {
+          const rect = node.getBoundingClientRect();
+          return rect.left >= -1 && rect.right <= innerWidth + 1;
+        }),
         tabHeights: tabs.map((node) => node.getBoundingClientRect().height),
         actionHeights: actions.map((node) => node.getBoundingClientRect().height),
-        scrollable: nav.scrollWidth > nav.clientWidth,
         noDocumentOverflow: document.documentElement.scrollWidth <= innerWidth + 1,
         modal: document.getElementById('projectRoutePanel')?.getAttribute('aria-modal'),
       };
@@ -163,7 +166,7 @@ describe('этапы 8–9 на телефоне', () => {
     // Окно этапа с 0.4.5 немодальное: палитра этапов остаётся доступной.
     assert.equal(result.modal, 'false');
     assert.equal(result.activeInside, true, JSON.stringify(result));
-    assert.equal(result.scrollable, true, JSON.stringify(result));
+    assert.equal(result.allInside, true, JSON.stringify(result));
     assert.equal(result.noDocumentOverflow, true, JSON.stringify(result));
     // Кнопки палитры этапов — 40 px (размер палитры на телефоне); действия этапа — от 44 px.
     assert.ok(result.tabHeights.every((height) => height >= 40), JSON.stringify(result));

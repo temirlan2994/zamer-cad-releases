@@ -1,7 +1,14 @@
 // Сквозная шкала 1–9 и локальное восстановление последнего этапа проекта.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, openRouteFromOverview, openRouteView, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
+
+async function openReviewMissionList(page, mission) {
+  const tab = page.locator(`[data-home-review] [data-analysis-mission="${mission}"]`);
+  if (await tab.getAttribute('aria-current') !== 'step') await tab.click();
+  const disclosure = page.locator(`[data-analysis-mission-panel="${mission}"] .analysis-disclosure`).first();
+  if (await disclosure.getAttribute('open') === null) await disclosure.locator('summary').click();
+}
 
 describe('единый маршрут дома', () => {
   let app;
@@ -15,7 +22,7 @@ describe('единый маршрут дома', () => {
 
   // С 0.4.5 этапы переключаются палитрой внизу: кнопка этапа → меню → окно.
   // Вертикальной ленты и кнопки «Далее» внутри окна больше нет.
-  it('палитра показывает девять статусов, счётчик и навигацию с клавиатуры', async () => {
+  it('палитра показывает девять статусов и навигацию с клавиатуры', async () => {
     const { page } = app;
     const steps = '#projectRouteSteps';
     const initial = await page.evaluate((selector) => {
@@ -23,7 +30,6 @@ describe('единый маршрут дома', () => {
       return {
         ids: tabs.map((tab) => tab.dataset.routeView),
         statuses: tabs.map((tab) => tab.dataset.status),
-        counter: document.getElementById('projectHomeProgramStatus')?.textContent,
       };
     }, steps);
     assert.deepEqual(initial.ids, [
@@ -31,7 +37,7 @@ describe('единый маршрут дома', () => {
       'climate', 'review', 'envelope', 'deliverables',
     ]);
     assert.ok(initial.statuses.every((status) => ['checked', 'attention', 'blocked', 'unknown'].includes(status)));
-    assert.match(initial.counter, /^\d\/9$/);
+    assert.equal(await page.locator('#projectHomeProgram').count(), 0);
 
     await openRouteView(page, 'program');
     await page.waitForFunction(() => (
@@ -51,7 +57,7 @@ describe('единый маршрут дома', () => {
     assert.deepEqual(app.errors, []);
   });
 
-  it('хранит последний этап отдельно для каждого проекта', async () => {
+  it('после закрытия не оставляет этап выбранным при смене проекта', async () => {
     const { page } = app;
     await page.evaluate(async () => {
       window.__workflowFirstProject = window.__kepler.state.project;
@@ -64,6 +70,9 @@ describe('единый маршрут дома', () => {
       document.querySelector('#projectRouteSteps [aria-current="page"]')?.dataset.routeView === 'deliverables'
     ));
     await page.click('#projectRouteClose');
+    await page.waitForSelector('#projectRoutePanel', { state: 'hidden' });
+    assert.equal(await page.locator('#projectRouteSteps [aria-selected="true"]').count(), 0);
+    assert.equal(await page.locator('#projectRouteSteps [aria-current]').count(), 0);
 
     await page.evaluate(async () => {
       const { createProject } = await import('./core/model.js');
@@ -72,11 +81,8 @@ describe('единый маршрут дома', () => {
       window.__kepler.state.pid = 'workflow-project-b';
       renderProjectRoute();
     });
-    await page.click('#projectHomeProgram');
-    await page.waitForSelector('#projectRouteHover:not([hidden])');
-    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="site"]', 'aria-current'), 'page');
     assert.equal(await page.isHidden('#projectRoutePanel'), true);
-    await page.click('#projectHomeProgram');
+    assert.equal(await page.locator('#projectRouteSteps [aria-selected="true"]').count(), 0);
 
     await page.evaluate(async () => {
       const { renderProjectRoute } = await import('./ui/project-route.js');
@@ -84,10 +90,11 @@ describe('единый маршрут дома', () => {
       window.__kepler.state.pid = 'workflow-project-a';
       renderProjectRoute();
     });
-    await page.click('#projectHomeProgram');
-    await page.waitForSelector('#projectRouteHover:not([hidden])');
-    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="deliverables"]', 'aria-current'), 'page');
-    await page.click('#projectHomeProgram');
+    assert.equal(await page.isHidden('#projectRoutePanel'), true);
+    assert.equal(await page.locator('#projectRouteSteps [aria-selected="true"]').count(), 0);
+    await openRouteView(page, 'deliverables');
+    assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="deliverables"]', 'aria-current'), 'page');
+    await page.click('#projectRouteClose');
     assert.deepEqual(app.errors, []);
   });
 
@@ -95,14 +102,16 @@ describe('единый маршрут дома', () => {
     const { page } = app;
     await openRouteView(page, 'review');
     await page.waitForSelector('[data-home-review]');
+    await openReviewMissionList(page, 'unknowns');
 
     const sheets = page.locator('[data-home-review-item="deliverables:missing:sheets"] [data-home-review-action="open-finding-sheets"]');
     await sheets.click();
     await page.waitForSelector('#projectRoutePanel', { state: 'hidden' });
     assert.equal(await page.evaluate(() => window.__kepler.state.propsTab), 'sheets');
 
-    await openRouteFromOverview(page, 'review');
+    await openRouteView(page, 'review');
     await page.waitForSelector('[data-home-review]');
+    await openReviewMissionList(page, 'unknowns');
     const site = page.locator('[data-home-review-item="deliverables:missing:site"] [data-home-review-action="open-finding-view"]');
     await site.click();
     await page.waitForSelector('#projectRoutePanel', { state: 'hidden' });
@@ -110,7 +119,7 @@ describe('единый маршрут дома', () => {
     assert.deepEqual(app.errors, []);
   });
 
-  it('после перезагрузки возвращает этап текущего проекта', async () => {
+  it('после перезагрузки не отмечает закрытое окно как выбранное', async () => {
     const { page } = app;
     await page.evaluate(async () => {
       const { createRoom } = await import('./core/model.js');
@@ -139,10 +148,12 @@ describe('единый маршрут дома', () => {
       && window.__kepler.state.project?.levels?.[0]?.rooms?.length > 0
     ));
     if (await page.locator('#startContinue').isVisible()) await page.click('#startContinue');
-    await page.click('#projectHomeProgram');
-    await page.waitForSelector('#projectRouteHover:not([hidden])');
-    assert.equal(await page.getAttribute('#projectRouteHover [data-route-overview-view="envelope"]', 'aria-current'), 'page');
     assert.equal(await page.isHidden('#projectRoutePanel'), true);
+    assert.equal(await page.isHidden('#projectRouteHover'), true);
+    assert.equal(await page.locator('#projectRouteSteps [aria-selected="true"]').count(), 0);
+    assert.equal(await page.locator('#projectRouteSteps [aria-current]').count(), 0);
+    await openRouteView(page, 'envelope');
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Объём и фасады');
     assert.deepEqual(app.errors, []);
   });
 });

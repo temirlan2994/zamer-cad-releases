@@ -4,7 +4,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { openNew, openRouteView, startApp } from './helpers.mjs';
 
-const programButton = '#projectHomeProgram';
+const programButton = '#projectRouteSteps [data-route-view="program"]';
 const panel = '#projectRoutePanel';
 
 // «Программа дома» открывается из палитры этапов (интерфейс 0.4.5).
@@ -17,10 +17,30 @@ async function openProgram(page) {
   await page.waitForFunction(() => document.querySelector('#projectRoutePanelTitle')?.textContent === 'Программа дома');
 }
 
+async function openProgramMission(page, mission) {
+  const section = `[data-home-program] [data-analysis-fold="${mission}"]`;
+  const active = await page.locator(section).evaluate((node) => node.open === true && node.hidden === false);
+  const resultActionMissing = mission === 'result'
+    && await page.locator('[data-home-program-action="save"]').count() === 0;
+  if (!active || resultActionMissing) {
+    await page.click(`[data-home-program] [data-analysis-mission="${mission}"]`);
+    await page.waitForFunction((selector) => {
+      const node = document.querySelector(selector);
+      return node?.open === true && node.hidden === false;
+    }, section);
+  }
+}
+
 async function step(page, field, delta, times = 1) {
   for (let index = 0; index < times; index += 1) {
-    await page.click(`[data-home-program-step="${field}"][data-delta="${delta}"]`);
+    await openProgramMission(page, field === 'bedroomCount' ? 'rooms' : 'residents');
+    await page.locator(`[data-home-program-step="${field}"][data-delta="${delta}"]`).evaluate((button) => button.click());
+    await page.waitForTimeout(180);
   }
+}
+
+async function activateControl(page, selector) {
+  await page.locator(selector).evaluate((control) => control.click());
 }
 
 async function planToClient(page, x, y) {
@@ -45,12 +65,13 @@ describe('программа дома', () => {
     assert.equal(await page.getAttribute(programButton, 'data-status'), 'unknown');
 
     await openProgram(page);
+    await openProgramMission(page, 'residents');
     assert.equal(await page.getAttribute(programButton, 'aria-expanded'), 'false',
       'кнопка сводки раскрыта только пока видно её меню, а не окно этапа');
-    assert.match(await page.textContent('.home-program-preliminary'), /Предварительно предложено/);
+    assert.match(await page.textContent('.home-program-preliminary'), /Черновик/);
     assert.equal(await page.isVisible('.home-program-frequency'), false);
     await page.fill('[data-home-program-field="guestCount"]', '5');
-    assert.equal(await page.isVisible('.home-program-frequency'), true);
+    await page.waitForFunction(() => document.querySelector('.home-program-frequency')?.hidden === false);
     assert.equal(await page.textContent('[data-program-seats="guests"]'), '7');
     await page.fill('[data-home-program-field="guestCount"]', '0');
 
@@ -58,18 +79,20 @@ describe('программа дома', () => {
     await step(page, 'childCount', '1', 2);
     await step(page, 'guestCount', '1', 2);
     await step(page, 'simultaneousCooks', '1');
-    await page.locator('[data-home-program-field="guestFrequency"][value="monthly"]').check({ force: true });
+    await activateControl(page, '[data-home-program-field="guestFrequency"][value="monthly"]');
+    await openProgramMission(page, 'rooms');
     await page.selectOption('[data-home-program-field="socialMode"]', 'combined');
     await step(page, 'bedroomCount', '1', 2);
     await page.selectOption('[data-home-program-bedroom="bedroom-2"][data-bedroom-field="kind"]', 'child');
     await page.selectOption('[data-home-program-bedroom="bedroom-3"][data-bedroom-field="kind"]', 'child');
-    await page.locator('[data-home-program-bedroom="bedroom-1"][data-bedroom-field="ensuite"][value="yes"]').check({ force: true });
-    await page.locator('[data-home-program-bedroom="bedroom-1"][data-bedroom-field="wardrobe"][value="no"]').check({ force: true });
-    await page.locator('[data-home-program-bedroom="bedroom-2"][data-bedroom-field="wardrobe"][value="yes"]').check({ force: true });
+    await activateControl(page, '[data-home-program-bedroom="bedroom-1"][data-bedroom-field="ensuite"][value="yes"]');
+    await activateControl(page, '[data-home-program-bedroom="bedroom-1"][data-bedroom-field="wardrobe"][value="no"]');
+    await activateControl(page, '[data-home-program-bedroom="bedroom-2"][data-bedroom-field="wardrobe"][value="yes"]');
     await page.fill('[data-home-program-field="bathroomCount"]', '2');
-    await page.locator('[data-home-program-option="office"][value="unknown"]').check({ force: true });
-    await page.locator('[data-home-program-option="laundry"][value="yes"]').check({ force: true });
-    await page.locator('[data-home-program-option="pantry"][value="no"]').check({ force: true });
+    await openProgramMission(page, 'extras');
+    await activateControl(page, '[data-home-program-option="office"][value="unknown"]');
+    await activateControl(page, '[data-home-program-option="laundry"][value="yes"]');
+    await activateControl(page, '[data-home-program-option="pantry"][value="no"]');
 
     assert.equal(await page.locator('[data-home-program-option="office"]').count(), 3,
       'дополнительное помещение показано тремя видимыми решениями');
@@ -78,6 +101,7 @@ describe('программа дома', () => {
     assert.equal(await page.evaluate(() => window.__kepler.state.project.layoutBrief?.homeProgram ?? null), null,
       'поля формы не меняют проект до явного сохранения');
 
+    await openProgramMission(page, 'result');
     await page.click('[data-home-program-action="save"]');
     await page.waitForFunction(() => window.__kepler.state.project.layoutBrief?.homeProgram?.confirmed === true);
     const saved = await page.evaluate(() => ({
@@ -105,8 +129,8 @@ describe('программа дома', () => {
     assert.equal(saved.program.options.office, null, '«Не решено» остаётся null, а не превращается в отказ');
     assert.equal(saved.program.options.laundry, true);
     assert.equal(saved.program.options.pantry, false);
-    assert.equal(await page.getAttribute(programButton, 'data-status'), 'incomplete');
-    assert.doesNotMatch(await page.textContent('#projectHomeProgramStatus'), /Готова/);
+    assert.notEqual(await page.getAttribute(programButton, 'data-status'), 'checked',
+      'незавершённая программа не отмечена как готовая');
 
     await page.click('#projectRouteClose');
     await page.waitForFunction(() => document.getElementById('projectRoutePanel').hidden === true);
@@ -155,6 +179,7 @@ describe('программа дома', () => {
       const { mutate } = await import('./ui/store.js');
       mutate(() => {
         const project = window.__kepler.state.project;
+        project.layoutBrief ||= {};
         project.rooms = [createRoom('kitchen-living', 0, 0, 6000, 4000)];
         project.openings = [];
         project.layoutBrief.homeProgram = {
@@ -170,6 +195,7 @@ describe('программа дома', () => {
       });
     });
     await openProgram(page);
+    await openProgramMission(page, 'result');
     await page.click('[data-home-program-action="toggle-overlay"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.homeProgramOverlay.on), false,
       'связь функций внутри одной комнаты не включает пустой экранный слой');
@@ -201,9 +227,10 @@ describe('программа дома', () => {
         };
       });
     });
-    await page.waitForFunction(() => document.querySelector('#projectHomeProgram')?.dataset.status === 'ready');
+    await page.waitForFunction(() => document.querySelector('#projectRouteSteps [data-route-view="program"]')?.dataset.status === 'checked');
 
     await openProgram(page);
+    await openProgramMission(page, 'result');
     await page.click('[data-home-program-action="toggle-overlay"]');
     await page.waitForFunction(() => window.__kepler.state._homeProgramUI?.active === true
       && window.__kepler.state._homeProgramUI.drawnConnectionCount > 0);
@@ -223,6 +250,7 @@ describe('программа дома', () => {
     assert.equal(await page.isVisible('#homeProgramLegend'), true);
 
     await openProgram(page);
+    await openProgramMission(page, 'result');
     await page.click('[data-home-program-action="toggle-overlay"]');
     await page.waitForFunction(() => window.__kepler.state.homeProgramOverlay.on === false);
     assert.equal(await page.isHidden('#homeProgramLegend'), true);
@@ -257,6 +285,7 @@ describe('программа дома', () => {
     const kinds = await page.locator('[data-bedroom-field="kind"]').evaluateAll((fields) => fields.map((field) => field.value));
     assert.equal(kinds.filter((kind) => kind === 'guest').length, 1);
 
+    await openProgramMission(page, 'result');
     await page.click('[data-home-program-action="save"]');
     const saved = await page.evaluate(() => structuredClone(window.__kepler.state.project.layoutBrief.homeProgram));
     assert.equal(saved.bedroomCount, 6);

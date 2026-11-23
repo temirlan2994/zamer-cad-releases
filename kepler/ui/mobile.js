@@ -220,19 +220,14 @@ function bindSheetHead() {
   });
 }
 
-// Те же переключатели и кнопка аналитики обслуживают обе компоновки.
+// Те же переключатели обслуживают обе компоновки.
 function placeMobileControls() {
   const bar = el('snapBar');
-  const program = el('projectHomeProgram');
   if (isPhone()) {
     el('mobileSnapRow').append(bar);
   } else {
     el('scaleInfo').before(bar);
   }
-  // Аналитика — единая нижняя палитра и на телефоне, и на компьютере.
-  // Не переносим её кнопку в шапку: иначе один и тот же маршрут выглядит
-  // как две разные функции в разных компоновках.
-  el('projectRouteSteps').before(program);
 }
 
 function bindMobileSnaps() {

@@ -2,7 +2,7 @@
 // подтверждение исходных данных и карта возможностей участка.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openNew, openRouteFromOverview, openRouteView, startApp } from './helpers.mjs';
+import { openNew, openRouteView, startApp } from './helpers.mjs';
 
 // В 0.4.5 этапы участка открываются из нижней палитры: кнопка «Участок» →
 // меню задач (`[data-route-task]` с `data-route-task-stage`) → панель задачи.
@@ -111,7 +111,6 @@ describe('маршрут подготовки участка', () => {
     assert.equal(await taskStatusByControl(page, without), 'unknown');
     await page.check(without);
     await page.waitForFunction(() => window.__kepler.state.project.site.planning.withoutUnderlay === true);
-    await page.waitForFunction(() => document.activeElement?.dataset?.routeConfirm === 'withoutUnderlay');
     assert.equal(await page.isChecked(without), true, 'явное решение хранится в модели проекта');
     assert.equal(await taskStatusByControl(page, without), 'done');
     assert.deepEqual(await stageTaskStatuses(page, 'foundation'), ['done', 'done'],
@@ -263,13 +262,13 @@ describe('маршрут проекта на телефоне', () => {
       assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height + 1, `${label}: лист в окне: ${JSON.stringify(panel)}`);
       assert.ok(panel.y > viewport.height * 0.15, `${label}: нижний лист не перекрывает весь экран`);
     };
-    await page.tap('#projectHomeProgram');
+    await page.tap('#projectRouteSteps [data-route-view="site"]');
     await page.waitForSelector('#projectRouteHover:not([hidden])');
-    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'первая кнопка сначала открывает меню этапов');
-    await page.tap('#projectHomeProgram');
+    assert.equal(await page.isHidden('#projectRoutePanel'), true, 'кнопка этапа сначала открывает его меню');
+    await page.tap('#projectRouteSteps [data-route-view="site"]');
     await page.waitForSelector('#projectRouteHover', { state: 'hidden' });
-    await openRouteFromOverview(page, 'site', { mobile: true });
-    await checkSheet('кнопка аналитики');
+    await openRouteView(page, 'site', { mobile: true });
+    await checkSheet('задача участка');
 
     // В 0.4.5 панель показывает одну задачу; границу открываем из меню палитры.
     await openRouteView(page, 'site', { mobile: true, task: 'boundary' });

@@ -11,6 +11,20 @@ async function openCirculation(page, mobile = false) {
   ));
 }
 
+async function openCirculationMission(page, id) {
+  const section = page.locator(`[data-analysis-fold="${id}"]`);
+  const mission = page.locator(`[data-analysis-mission="${id}"]`);
+  if (await mission.count()) {
+    if (await mission.getAttribute('aria-current') !== 'step') await mission.click();
+  } else if (!await section.evaluate((node) => node.open)) {
+    await section.locator('summary').first().click();
+  }
+  await page.waitForFunction((selector) => {
+    const node = document.querySelector(selector);
+    return Boolean(node?.open && !node.hidden);
+  }, `[data-analysis-fold="${id}"]`);
+}
+
 describe('движение и проходы', () => {
   let app;
   let ids;
@@ -72,6 +86,7 @@ describe('движение и проходы', () => {
     await openCirculation(page);
     const from = '[data-circulation-anchor="from"][data-scenario-id="SCN015"][data-route-id="delivery_to_unpack"]';
     const to = '[data-circulation-anchor="to"][data-scenario-id="SCN015"][data-route-id="delivery_to_unpack"]';
+    await openCirculationMission(page, 'circulation-anchors');
 
     await page.focus(from);
     await page.selectOption(from, `opening:${ids.portalId}`);
@@ -109,6 +124,7 @@ describe('движение и проходы', () => {
   it('пересчитывает профиль и включает единственный аналитический слой', async () => {
     const { page } = app;
     await openCirculation(page);
+    await openCirculationMission(page, 'circulation-check');
     await page.click('[data-home-circulation-action="set-profile"][data-circulation-profile="1400"]');
     assert.equal(await page.evaluate(() => window.__kepler.state.homeCirculationOverlay.profileWidthMm), 1400);
     assert.match(await page.textContent('.home-circulation-summary'), /1.?400|1400/);
@@ -155,6 +171,7 @@ describe('движение на телефоне', () => {
       const nav = document.querySelector('#projectRouteSteps')?.getBoundingClientRect();
       return Boolean(active && nav && active.left >= nav.left - 1 && active.right <= nav.right + 1);
     });
+    await openCirculationMission(page, 'circulation-layers');
     const before = await page.getAttribute('[data-home-circulation-action="toggle-routes"]', 'aria-checked');
     await page.tap('[data-home-circulation-action="toggle-routes"]');
     assert.notEqual(await page.getAttribute('[data-home-circulation-action="toggle-routes"]', 'aria-checked'), before);

@@ -356,37 +356,69 @@ export function homeFlowsHtml(project, state = {}) {
   const problemsOnly = overlaySetting(state, 'problemsOnly', false);
   const overlayOn = state?.homeProgramOverlay?.on === true && state?.homeProgramOverlay?.mode === 'flows';
   const functionalProblems = Number(summary.functionalProblemCount) || 0;
+  const zoneCount = Number(summary.zoneCount) || 0;
+  const routeCount = (Number(summary.resolvedRouteCount) || 0) + (Number(summary.resolvedFunctionalRouteCount) || 0);
+  const routeProblems = (Number(summary.missingRouteCount) || 0) + functionalProblems;
+  const unknownRoutes = Number(summary.unknownRouteCount) || 0;
+  const activeScenarios = Number(summary.activeScenarioCount) || 0;
+  const activeMission = !zoneCount ? 'zones' : !activeScenarios ? 'scenarios' : 'routes';
+  const missionStatus = {
+    zones: zoneCount ? 'checked' : 'unknown',
+    scenarios: activeScenarios ? 'checked' : 'attention',
+    routes: routeProblems ? 'blocked' : unknownRoutes ? 'attention' : routeCount ? 'checked' : 'unknown',
+  };
   return `<div class="home-flows" data-home-flows>
-    <div class="home-flows-summary" data-status="${escapeHtml(status.id)}">
-      <div><strong>${escapeHtml(status.title)}</strong><span>${escapeHtml(status.note)}</span></div>
-      <dl>
-        <div><dt>Зон</dt><dd>${Number(summary.zoneCount) || 0}</dd></div>
-        <div><dt>Маршрутов</dt><dd>${(Number(summary.resolvedRouteCount) || 0) + (Number(summary.resolvedFunctionalRouteCount) || 0)}</dd></div>
-        <div><dt>Проблем</dt><dd>${(Number(summary.missingRouteCount) || 0) + functionalProblems}</dd></div>
-        <div><dt>Неизвестно</dt><dd>${Number(summary.unknownRouteCount) || 0}</dd></div>
-      </dl>
-    </div>
+    <nav class="analysis-mission-trail home-mission-trail" aria-label="Шаги анализа связей">
+      <span data-status="${missionStatus.zones}"${activeMission === 'zones' ? ' aria-current="step"' : ''}><i aria-hidden="true">1</i><b>Зоны</b></span>
+      <span data-status="${missionStatus.scenarios}"${activeMission === 'scenarios' ? ' aria-current="step"' : ''}><i aria-hidden="true">2</i><b>Сценарии</b></span>
+      <span data-status="${missionStatus.routes}"${activeMission === 'routes' ? ' aria-current="step"' : ''}><i aria-hidden="true">3</i><b>Маршруты</b></span>
+    </nav>
+    <details class="analysis-disclosure home-mission-overview" data-analysis-fold="flow-summary">
+      <summary><strong>${escapeHtml(status.title)}</strong><span>${escapeHtml(status.note)}</span></summary>
+      <div class="home-flows-summary" data-status="${escapeHtml(status.id)}">
+        <dl>
+          <div><dt>Зон</dt><dd>${zoneCount}</dd></div>
+          <div><dt>Маршрутов</dt><dd>${routeCount}</dd></div>
+          <div><dt>Проблем</dt><dd>${routeProblems}</dd></div>
+          <div><dt>Неизвестно</dt><dd>${unknownRoutes}</dd></div>
+        </dl>
+      </div>
+    </details>
     <div class="home-flow-layer-controls" aria-label="Слои анализа">
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${zonesOn}" data-home-flows-action="toggle-zones"><span aria-hidden="true"></span>Зоны</button>
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${routesOn}" data-home-flows-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
-      <button type="button" class="project-route-switch" role="switch" aria-checked="${problemsOnly}" data-home-flows-action="toggle-problems"><span aria-hidden="true"></span>Только проблемы</button>
       <button type="button" class="primary home-flow-show" data-home-flows-action="toggle-overlay">${overlayOn ? 'Скрыть с плана' : 'Показать на плане'}</button>
+      <details class="analysis-quick-settings">
+        <summary>Слои</summary>
+        <div>
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${zonesOn}" data-home-flows-action="toggle-zones"><span aria-hidden="true"></span>Зоны</button>
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${routesOn}" data-home-flows-action="toggle-routes"><span aria-hidden="true"></span>Маршруты</button>
+          <button type="button" class="project-route-switch" role="switch" aria-checked="${problemsOnly}" data-home-flows-action="toggle-problems"><span aria-hidden="true"></span>Проблемы</button>
+        </div>
+      </details>
     </div>
-    <section class="home-flows-section" aria-labelledby="homeFlowsZonesTitle">
-      <div class="home-program-section-head"><h3 id="homeFlowsZonesTitle">Зоны дома</h3></div>
-      ${zoneCards(result)}
-    </section>
-    <section class="home-flows-section" aria-labelledby="homeFlowsFunctionalTitle">
-      <div class="home-program-section-head"><h3 id="homeFlowsFunctionalTitle">Проходы по программе</h3></div>
-      ${functionalRoutesHtml(result)}
-    </section>
-    <section class="home-flows-section" aria-labelledby="homeFlowsScenariosTitle">
-      <div class="home-program-section-head"><h3 id="homeFlowsScenariosTitle">Сценарии жизни</h3></div>
-      ${scenarioCards(project, result)}
-    </section>
-    ${warningsHtml(result)}
-    <details class="analysis-disclosure" data-analysis-fold="legend"><summary>Как читать линии</summary>
-      <p class="home-flow-disclaimer">Линия соединяет помещения через двери и открытые проёмы. Толщина показывает, сколько сценариев и требований используют эту связь. Схема не измеряет точную траекторию вокруг мебели. Её можно проверить в разделе «Движение».</p>
+    <details class="home-flows-section analysis-mission home-mission-section" name="home-flows-mission" data-analysis-fold="zones" aria-labelledby="homeFlowsZonesTitle"${activeMission === 'zones' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">1</span><span><strong id="homeFlowsZonesTitle">Зоны дома</strong><small>${zoneCount ? `${zoneCount} зон найдено` : 'Нужны помещения'}</small></span><i class="home-mission-state" data-status="${missionStatus.zones}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Миссия">◎</span><p><strong>${zoneCount ? 'Проверьте зонирование' : 'Создайте помещения'}</strong> — ${zoneCount ? 'убедитесь, что функции дома распределены правильно.' : 'после размещения помещений зоны появятся автоматически.'}</p></div>
+        <details class="analysis-disclosure" data-analysis-fold="flow-zone-list"><summary>Состав зон <span>${zoneCount}</span></summary>${zoneCards(result)}</details>
+      </div>
+    </details>
+    <details class="home-flows-section analysis-mission home-mission-section" name="home-flows-mission" data-analysis-fold="scenarios" aria-labelledby="homeFlowsScenariosTitle"${activeMission === 'scenarios' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">2</span><span><strong id="homeFlowsScenariosTitle">Сценарии жизни</strong><small>${activeScenarios ? `${activeScenarios} выбрано` : 'Выберите хотя бы один'}</small></span><i class="home-mission-state" data-status="${missionStatus.scenarios}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Миссия">◎</span><p><strong>Как живёт семья?</strong> — выберите только реальные ежедневные сценарии.</p></div>
+        <details class="analysis-disclosure" data-analysis-fold="flow-scenario-list"><summary>${activeScenarios ? 'Изменить сценарии' : 'Выбрать сценарии'} <span>${activeScenarios}</span></summary>${scenarioCards(project, result)}</details>
+      </div>
+    </details>
+    <details class="home-flows-section analysis-mission home-mission-section" name="home-flows-mission" data-analysis-fold="routes" aria-labelledby="homeFlowsFunctionalTitle"${activeMission === 'routes' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">3</span><span><strong id="homeFlowsFunctionalTitle">Проходы по программе</strong><small>${routeProblems ? `${routeProblems} требуют внимания` : routeCount ? `${routeCount} проверено` : 'Пока нет данных'}</small></span><i class="home-mission-state" data-status="${missionStatus.routes}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Миссия">◎</span><p><strong>${routeProblems ? 'Исправьте разрывы маршрутов' : 'Проверьте связи помещений'}</strong> — ${routeProblems ? `${routeProblems} связей не подтверждено.` : 'маршруты строятся по дверям и открытым проёмам.'}</p></div>
+        <details class="analysis-disclosure" data-analysis-fold="flow-route-list"><summary>Все маршруты <span>${routeCount + routeProblems + unknownRoutes}</span></summary>${functionalRoutesHtml(result)}</details>
+      </div>
+    </details>
+    <details class="analysis-disclosure" data-analysis-fold="legend"><summary>Справка и предупреждения</summary>
+      ${warningsHtml(result)}
+      <p class="home-flow-disclaimer">Линии соединяют помещения через проёмы. Схема не измеряет точную траекторию вокруг мебели — её проверяет раздел «Движение».</p>
     </details>
   </div>`;
 }

@@ -165,15 +165,15 @@ function findingsList(items, project, emptyText) {
   }).join('')}</ul>`;
 }
 
-function overviewCard({ id, title, status, value, hint, body }) {
+function overviewCard({ id, step, title, status, value, hint, body, open = false }) {
   const normalized = normalizedStatus(status);
-  return `<details class="home-engineering-card analysis-disclosure" data-analysis-fold="engineering-${escapeHtml(id)}" data-engineering-card="${escapeHtml(id)}" data-status="${normalized}"${normalized === 'conflict' ? ' open' : ''}>
-    <summary>
-      <strong>${escapeHtml(title)}</strong>
-      <span class="home-engineering-status">${escapeHtml(statusLabel(normalized))}${value ? ` · ${escapeHtml(String(value))}` : ''}</span>
+  return `<details class="home-engineering-card home-mission-section" data-analysis-fold="engineering-${escapeHtml(id)}" data-engineering-card="${escapeHtml(id)}" data-status="${normalized}"${open ? ' open' : ''}>
+    <summary class="home-mission-summary">
+      <span class="home-mission-index" aria-hidden="true">${step}</span>
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(statusLabel(normalized))}${value ? ` · ${escapeHtml(String(value))}` : ''}</small></span>
+      <span class="home-mission-state" data-status="${normalized}" aria-label="${escapeHtml(statusLabel(normalized))}"></span>
     </summary>
-    <p>${escapeHtml(hint)}</p>
-    ${body}
+    <div class="home-mission-body"><p>${escapeHtml(hint)}</p>${body}</div>
   </details>`;
 }
 
@@ -239,27 +239,33 @@ function analysisSections(project, analysis) {
       : rawPoints.length ? aggregateStatus(pointFindings)
         : 'proven';
 
+  let conflictOpened = false;
+  const card = (definition) => {
+    const open = !conflictOpened && normalizedStatus(definition.status) === 'conflict';
+    if (open) conflictOpened = true;
+    return overviewCard({ ...definition, open });
+  };
   return [
-    overviewCard({
-      id: 'wet', title: 'Мокрые зоны', status: wetStatus,
+    card({
+      id: 'wet', step: 2, title: 'Мокрые зоны', status: wetStatus,
       value: wetRooms.length || '',
       hint: 'Потребность определяется по назначению помещений и приборам, а не по наличию готовой трубы.',
       body: findingsList(wetRooms, project, 'Помещения с инженерной потребностью пока не найдены.'),
     }),
-    overviewCard({
-      id: 'vertical', title: 'Вертикальное совмещение', status: verticalStatus,
+    card({
+      id: 'vertical', step: 3, title: 'Вертикальное совмещение', status: verticalStatus,
       value: vertical.length || '',
       hint: 'Совпадение по плану — только кандидат на компактный узел. Шахта сама по себе не является стояком.',
       body: findingsList(vertical, project, 'Кандидаты между соседними этажами не найдены или этажей недостаточно.'),
     }),
-    overviewCard({
-      id: 'ventilation', title: 'Вентиляция', status: ventilationStatus,
+    card({
+      id: 'ventilation', step: 4, title: 'Вентиляция', status: ventilationStatus,
       value: ventilationRows.length || '',
       hint: 'Показаны помещения, где нужно принять решение о притоке или вытяжке. Расход воздуха не рассчитывается.',
       body: findingsList(ventilationRows, project, 'Решения о притоке и вытяжке ещё не заданы.'),
     }),
-    overviewCard({
-      id: 'points', title: 'Исходные точки', status: pointsStatus,
+    card({
+      id: 'points', step: 5, title: 'Исходные точки', status: pointsStatus,
       value: rawPoints == null ? '' : rawPoints.length,
       hint: rawPoints == null
         ? 'Существующие фиксированные точки ещё не обследованы.'
@@ -289,22 +295,28 @@ function pointEditor(project, point) {
   </article>`;
 }
 
-function pointsEditor(project) {
+function pointsEditor(project, { open = true } = {}) {
   const points = project?.layoutBrief?.fixedEngineering;
   const stateText = points == null ? 'Не обследовано'
     : points.length ? `${points.length} ${points.length === 1 ? 'точка' : 'точек'}`
       : 'Подтверждено отсутствие';
-  return `<section class="home-engineering-editor" aria-labelledby="homeEngineeringPointsTitle">
+  const pointStatus = points == null ? 'unknown'
+    : points.length === 0 ? 'proven'
+      : points.every((point) => ['measured', 'declared'].includes(point?.dataStatus)) ? 'observed' : 'attention';
+  return `<details class="home-engineering-editor home-mission-section" data-analysis-fold="engineering-connections" data-status="${pointStatus}"${open ? ' open' : ''}>
+    <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">1</span><span><strong id="homeEngineeringPointsTitle">Точки подключения</strong><small>${escapeHtml(stateText)}</small></span><span class="home-mission-state" data-status="${pointStatus}" aria-label="${escapeHtml(stateText)}"></span></summary>
+    <div class="home-mission-body" aria-labelledby="homeEngineeringPointsTitle">
     <header class="home-engineering-section-head">
-      <div><h3 id="homeEngineeringPointsTitle">Точки подключения</h3><p>${escapeHtml(stateText)}</p></div>
+      <div><h3 class="sr-only">Точки подключения</h3><p><span class="sr-only">${escapeHtml(stateText)}. </span>Добавляйте только известные точки.</p></div>
     </header>
     <div class="home-engineering-points">${array(points).map((point) => pointEditor(project, point)).join('')}</div>
-    <div class="home-engineering-actions">
+    <div class="home-circulation-layer-controls" aria-label="Действия с точками подключения">
       <button type="button" class="primary" data-home-engineering-action="add-point">+ Добавить точку</button>
-      <button type="button" data-home-engineering-action="mark-none">Подтвердить: точек нет</button>
-      <button type="button" class="link" data-home-engineering-action="mark-unknown">Ещё не обследовано</button>
+      <button type="button" data-home-engineering-action="mark-none">Точек нет</button>
+      <button type="button" class="link" data-home-engineering-action="mark-unknown">Не обследовано</button>
     </div>
-  </section>`;
+    </div>
+  </details>`;
 }
 
 /**
@@ -322,11 +334,11 @@ export function homeEngineeringHtml(project, state = {}) {
       <div><strong>${escapeHtml(statusLabel(overall))}</strong><span>Вода и вентиляция</span></div>
       <button type="button" class="project-route-switch" role="switch" aria-checked="${overlayOn}" data-home-engineering-action="toggle-overlay"><span aria-hidden="true"></span>${overlayOn ? 'Показано на плане' : 'Показать на плане'}</button>
     </div>
-    ${pointsEditor(project)}
+    ${pointsEditor(project, { open: !conflicts })}
     <div class="home-engineering-cards">${analysisSections(project, analysis)}</div>
-    ${warnings.length ? `<section class="home-engineering-warnings" aria-labelledby="homeEngineeringWarnings"><h3 id="homeEngineeringWarnings">Что нужно уточнить</h3><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></section>` : ''}
-    <details class="analysis-disclosure" data-analysis-fold="limitations"><summary>Границы расчёта</summary>
-      <p class="home-engineering-disclaimer">Предварительная проверка сопоставляет комнаты и точки подключения. Трассировку труб и воздуховодов, диаметры, уклоны и расходы определяют при проектировании сетей.</p>
+    ${warnings.length ? `<details class="home-engineering-warnings home-mission-section" data-analysis-fold="engineering-warnings" data-status="attention"><summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">6</span><span><strong id="homeEngineeringWarnings">Что уточнить</strong><small>${warnings.length}</small></span><span class="home-mission-state" data-status="attention" aria-label="Требует внимания"></span></summary><div class="home-mission-body"><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></div></details>` : ''}
+    <details class="analysis-disclosure home-mission-section home-mission-secondary" data-analysis-fold="limitations"><summary class="home-mission-summary"><span><strong>Подробнее</strong><small>Границы предварительного расчёта</small></span></summary>
+      <div class="home-mission-body"><p class="home-engineering-disclaimer">Проверка сопоставляет комнаты и известные точки. Трассы, диаметры, уклоны и расходы определяют при проектировании сетей.</p></div>
     </details>
   </div>`;
 }

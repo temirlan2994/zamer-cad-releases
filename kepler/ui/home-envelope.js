@@ -124,6 +124,15 @@ function metricHtml(metric) {
   return `<div><dt>${escapeHtml(metric.label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
 }
 
+function compactEnvelopeFacts(metrics, levels) {
+  const footprint = metrics.find((metric) => metric.label === 'Площадь застройки');
+  const storeys = metrics.find((metric) => metric.label === 'Этажность');
+  return [
+    finite(footprint?.value) ? `${number(footprint.value, footprint.digits)} м²` : null,
+    finite(storeys?.value) ? `${number(storeys.value, 0)} эт.` : (levels ? `${levels} эт.` : null),
+  ].filter(Boolean).join(' · ');
+}
+
 function levelRows(report, project) {
   const section = reportSection(report, ['levels', 'floors'], ['levels', 'floors', 'storeys']);
   const rows = Array.isArray(section) ? section
@@ -293,10 +302,12 @@ function warningsOf(report) {
 
 function warningsHtml(report) {
   const warnings = warningsOf(report);
-  return `<section class="home-envelope-warnings" aria-labelledby="homeEnvelopeWarningsTitle">
-    <h2 id="homeEnvelopeWarningsTitle">Что требует проверки</h2>
-    ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="home-envelope-empty">Отдельных предупреждений в геометрической сводке нет. Это не заменяет расчёты специалистов.</p>'}
-  </section>`;
+  return `<details class="home-envelope-warnings home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-warnings">
+    <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">!</span><span><strong>Проверка</strong><small>${warnings.length ? `${warnings.length} замечаний` : 'Без замечаний'}</small></span><i class="home-mission-state" data-status="${warnings.length ? 'attention' : 'observed'}" aria-hidden="true"></i></summary>
+    <div class="home-mission-body" id="homeEnvelopeWarningsTitle">
+      ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="home-envelope-empty">Отдельных предупреждений в геометрической сводке нет. Это не заменяет расчёты специалистов.</p>'}
+    </div>
+  </details>`;
 }
 
 function limitationsHtml(report) {
@@ -306,6 +317,20 @@ function limitationsHtml(report) {
     <p class="home-envelope-disclaimer">Модель не подтверждает несущую способность, теплотехнику или пожарную безопасность здания.</p>
     <ul>${limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
   </details>`;
+}
+
+function missionTrackHtml({ status, levels, roofs, drawings }) {
+  const steps = [
+    { label: 'Габарит', status },
+    { label: 'Этажи', status: levels ? 'observed' : 'unknown' },
+    { label: 'Крыша', status: roofs ? 'observed' : 'unknown' },
+    { label: 'Чертежи', status: drawings ? 'observed' : 'attention' },
+  ];
+  return `<ol class="home-mission-track" aria-label="Готовность объёма">${steps.map((step, index) => `<li data-status="${escapeHtml(step.status)}"${index === 0 ? ' aria-current="step"' : ''}><span class="home-mission-dot" aria-hidden="true"></span><span>${escapeHtml(step.label)}</span><span class="sr-only">${escapeHtml(STATUS_LABELS[step.status] || STATUS_LABELS.unknown)}</span></li>`).join('')}</ol>`;
+}
+
+function missionSummary(index, title, subtitle, status) {
+  return `<summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">${index}</span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="home-mission-state" data-status="${escapeHtml(status)}" role="img" aria-label="${escapeHtml(STATUS_LABELS[status] || STATUS_LABELS.unknown)}"></i></summary>`;
 }
 
 /** Разметка этапа 8: факты модели и переходы к существующим рабочим видам. */
@@ -321,30 +346,37 @@ export function homeEnvelopeHtml(project, options = {}) {
   const status = normalizedStatus(report.status);
   const levels = levelRows(report, project);
   const roofs = roofRows(report, project);
+  const sections = sectionRows(report, project);
+  const metrics = summaryMetrics(report);
+  const compactFacts = compactEnvelopeFacts(metrics, levels.length);
   return `<div class="home-envelope" data-home-envelope>
-    <section class="home-envelope-summary" data-status="${escapeHtml(status)}" aria-labelledby="homeEnvelopeSummaryTitle">
-      <div><h2 id="homeEnvelopeSummaryTitle">Геометрия объёма</h2><p>${escapeHtml(STATUS_LABELS[status])}</p></div>
-      <dl class="home-envelope-metrics">${summaryMetrics(report).map(metricHtml).join('')}</dl>
-      <button type="button" data-analysis-open="tep">Таблица площадей</button>
+    ${missionTrackHtml({ status, levels: levels.length, roofs: roofs.length, drawings: sections.length })}
+    <section class="home-mission-hero" data-status="${escapeHtml(status)}" aria-labelledby="homeEnvelopeSummaryTitle">
+      <div><span class="home-mission-kicker">Миссия</span><h2 id="homeEnvelopeSummaryTitle">Геометрия объёма</h2><p>${escapeHtml([STATUS_LABELS[status], compactFacts].filter(Boolean).join(' · '))}</p></div>
+      <button type="button" class="primary" data-home-envelope-action="open-3d">Открыть 3D</button>
     </section>
-    <div class="home-envelope-cards">
-      <section class="home-envelope-card" data-home-envelope-section="levels" data-status="${levels.length ? 'observed' : 'unknown'}" aria-labelledby="homeEnvelopeLevelsTitle">
-        <header><div><h2 id="homeEnvelopeLevelsTitle">Этажи и отметки</h2><p>${levels.length ? `${levels.length} ${levels.length === 1 ? 'этаж' : 'этажа'}` : 'Нет данных'}</p></div><span>${levels.length ? 'По модели' : 'Не задано'}</span></header>
-        ${levelsHtml(report, project)}
-      </section>
-      <section class="home-envelope-card" data-home-envelope-section="roofs" data-status="${roofs.length ? 'observed' : 'unknown'}" aria-labelledby="homeEnvelopeRoofsTitle">
-        <header><div><h2 id="homeEnvelopeRoofsTitle">Кровли</h2><p>${roofs.length ? `${roofs.length} в модели` : 'Не заданы'}</p></div><span>${roofs.length ? 'По модели' : 'Не задано'}</span></header>
-        ${roofsHtml(report, project)}
-        <button type="button" data-home-envelope-action="open-roof-plan">Открыть план крыши</button>
-      </section>
-      <section class="home-envelope-card" data-home-envelope-section="vertical" aria-labelledby="homeEnvelopeVerticalTitle">
-        <header><h2 id="homeEnvelopeVerticalTitle">Лестницы и проёмы</h2></header>
-        ${verticalHtml(report, project)}
-      </section>
-      <section class="home-envelope-card" data-home-envelope-section="views" aria-labelledby="homeEnvelopeViewsTitle">
-        <header><h2 id="homeEnvelopeViewsTitle">Открыть чертёж</h2></header>
-        ${viewsHtml(report, project)}
-      </section>
+    <details class="analysis-disclosure" data-analysis-fold="envelope-metrics">
+      <summary>Показатели дома <span>${metrics.filter((metric) => finite(metric.value)).length} / ${metrics.length}</span></summary>
+      <dl class="home-envelope-metrics">${metrics.map(metricHtml).join('')}</dl>
+      <button type="button" data-analysis-open="tep">Таблица площадей</button>
+    </details>
+    <div>
+      <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-levels" data-home-envelope-section="levels" data-status="${levels.length ? 'observed' : 'unknown'}">
+        ${missionSummary(1, 'Этажи и отметки', levels.length ? `${levels.length} ${levels.length === 1 ? 'этаж' : 'этажа'}` : 'Нет данных', levels.length ? 'observed' : 'unknown')}
+        <div class="home-mission-body" id="homeEnvelopeLevelsTitle"><details class="analysis-disclosure" data-analysis-fold="envelope-level-list"><summary>Список этажей <span>${levels.length}</span></summary>${levelsHtml(report, project)}</details></div>
+      </details>
+      <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-roofs" data-home-envelope-section="roofs" data-status="${roofs.length ? 'observed' : 'unknown'}">
+        ${missionSummary(2, 'Кровли', roofs.length ? `${roofs.length} в модели` : 'Не заданы', roofs.length ? 'observed' : 'unknown')}
+        <div class="home-mission-body" id="homeEnvelopeRoofsTitle">${roofsHtml(report, project)}<button type="button" class="primary" data-home-envelope-action="open-roof-plan">Открыть план крыши</button></div>
+      </details>
+      <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-vertical" data-home-envelope-section="vertical">
+        ${missionSummary(3, 'Лестницы и проёмы', 'Связи между этажами', 'attention')}
+        <div class="home-mission-body" id="homeEnvelopeVerticalTitle">${verticalHtml(report, project)}</div>
+      </details>
+      <details class="home-mission-section" name="home-envelope-mission" data-analysis-fold="envelope-views" data-home-envelope-section="views">
+        ${missionSummary(4, 'Открыть чертёж', '3D, фасады и разрезы', sections.length ? 'observed' : 'attention')}
+        <div class="home-mission-body" id="homeEnvelopeViewsTitle">${viewsHtml(report, project)}</div>
+      </details>
     </div>
     ${warningsHtml(report)}
     ${limitationsHtml(report)}

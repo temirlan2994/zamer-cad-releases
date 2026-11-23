@@ -10,6 +10,19 @@ async function openHomeView(page, view, title) {
   await page.waitForFunction((expected) => document.querySelector('#projectRoutePanelTitle')?.textContent === expected, title);
 }
 
+async function openFlowScenarios(page) {
+  const mission = '[data-home-flows] [data-analysis-mission="scenarios"]';
+  if (await page.getAttribute(mission, 'aria-current') !== 'step') await page.click(mission);
+  const disclosure = '[data-analysis-mission-panel="scenarios"] .analysis-mission-body > .analysis-disclosure';
+  if (await page.locator(disclosure).getAttribute('open') === null) {
+    await page.click(`${disclosure} > summary`);
+  }
+  await page.waitForFunction((selector) => {
+    const node = document.querySelector(selector);
+    return node?.open === true && node.closest('[data-analysis-mission-panel]')?.hidden === false;
+  }, disclosure);
+}
+
 describe('этапы зон, маршрутов и инженерии', () => {
   let app;
   let ids;
@@ -66,6 +79,7 @@ describe('этапы зон, маршрутов и инженерии', () => {
     assert.equal(await page.getAttribute('#projectRouteSteps [data-route-view="flows"]', 'aria-current'), 'page');
     assert.match(await page.textContent('.home-flow-disclaimer'), /не измеряет точную траекторию/i);
 
+    await openFlowScenarios(page);
     await page.click('.home-flow-scenario:has([data-home-flow-scenario="SCN002"]) > summary');
     await page.click('.home-flow-scenario:has([data-home-flow-scenario="SCN003"]) > summary');
     await page.focus('[data-home-flow-scenario="SCN002"]');
@@ -75,6 +89,7 @@ describe('этапы зон, маршрутов и инженерии', () => {
       return node.scrollTop;
     });
     await page.selectOption('[data-home-flow-scenario="SCN002"]', 'required');
+    await openFlowScenarios(page);
     await page.waitForSelector('.home-flow-scenario[data-active="true"] [data-route-id="bed_to_bathroom"]');
     const preserved = await page.evaluate(() => ({
       focus: document.activeElement?.dataset.homeFlowScenario || null,
@@ -85,6 +100,7 @@ describe('этапы зон, маршрутов и инженерии', () => {
     assert.equal(preserved.extraOpen, true);
     assert.ok(Math.abs(preserved.scrollTop - scrollBefore) <= 1, JSON.stringify({ scrollBefore, preserved }));
 
+    await openFlowScenarios(page);
     await page.fill('[data-home-flow-frequency-value="SCN002"]', '2');
     await page.press('[data-home-flow-frequency-value="SCN002"]', 'Tab');
     await page.selectOption('[data-home-flow-frequency-period="SCN002"]', 'day');
@@ -112,6 +128,7 @@ describe('этапы зон, маршрутов и инженерии', () => {
 
     await openRouteView(page, 'program');
     await openHomeView(page, 'flows', 'Зоны и маршруты');
+    await openFlowScenarios(page);
     assert.equal(await page.inputValue('[data-home-flow-frequency-value="SCN002"]'), '2');
     assert.equal(await page.inputValue('[data-home-flow-binding="to"][data-scenario-id="SCN002"][data-route-id="bed_to_bathroom"]'), value(ids.bathroom));
 
@@ -135,7 +152,9 @@ describe('этапы зон, маршрутов и инженерии', () => {
   it('не считает общую стену без двери доказанным маршрутом', async () => {
     const { page } = app;
     await openHomeView(page, 'flows', 'Зоны и маршруты');
+    await openFlowScenarios(page);
     await page.click('.home-flow-scenario:has([data-home-flow-scenario="SCN003"]) > summary');
+    await openFlowScenarios(page);
     await page.selectOption('[data-home-flow-scenario="SCN003"]', 'required');
     const value = (roomId) => `${encodeURIComponent(ids.levelId)}|${encodeURIComponent(roomId)}`;
     for (const routeId of ['fridge_to_prep', 'coffee_to_seat']) {

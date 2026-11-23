@@ -96,20 +96,23 @@ function checkAction(id, check, project) {
 
 function checksHtml(project, analysis) {
   const byId = checkIndex(analysis);
-  return `<ol class="home-deliverables-checks">${CHECKS.map((definition) => {
+  return `<div class="home-deliverables-check-list">${CHECKS.map((definition, index) => {
     const check = byId.get(definition.id) || {};
     const status = normalizedStatus(check.status);
     const count = countText(check);
-    return `<li data-home-deliverables-check="${definition.id}" data-status="${status}">
-      <div class="home-deliverables-check-mark" aria-hidden="true"></div>
-      <div class="home-deliverables-check-copy">
-        <h3>${escapeHtml(definition.title)}${count ? ` <small>${escapeHtml(count)}</small>` : ''}</h3>
-        <p>${escapeHtml(textOf(check))}</p>
-      </div>
-      <span class="home-deliverables-check-status">${STATUS[status].label}</span>
-      ${checkAction(definition.id, check, project)}
-    </li>`;
-  }).join('')}</ol>`;
+    return `<details class="home-deliverables-check home-mission-section" name="home-deliverables-check" data-analysis-fold="deliverables-${definition.id}" data-home-deliverables-check="${definition.id}" data-status="${status}">
+      <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">${index + 1}</span><span class="home-deliverables-check-copy"><strong>${escapeHtml(definition.title)}</strong>${count ? `<small>${escapeHtml(count)}</small>` : ''}</span><i class="home-mission-state" data-status="${status}" role="img" aria-label="${escapeHtml(STATUS[status].label)}"></i></summary>
+      <div class="home-mission-body"><p>${escapeHtml(textOf(check))}</p>${checkAction(definition.id, check, project)}</div>
+    </details>`;
+  }).join('')}</div>`;
+}
+
+function checkStatusCounts(analysis) {
+  const byId = checkIndex(analysis);
+  return CHECKS.reduce((counts, definition) => {
+    counts[normalizedStatus(byId.get(definition.id)?.status)] += 1;
+    return counts;
+  }, { ready: 0, partial: 0, missing: 0 });
 }
 
 function formatRows(formats) {
@@ -171,10 +174,23 @@ function limitationsHtml(analysis) {
 function warningsHtml(analysis) {
   const rows = array(analysis.warnings).map(limitationText).map((text) => String(text || '').trim()).filter(Boolean);
   if (!rows.length) return '';
-  return `<section class="home-deliverables-warnings" aria-labelledby="homeDeliverablesWarningsTitle">
-    <h2 id="homeDeliverablesWarningsTitle">Что нужно исправить или уточнить</h2>
-    <ul>${rows.map((text) => `<li>${escapeHtml(text)}</li>`).join('')}</ul>
-  </section>`;
+  return `<details class="home-deliverables-warnings home-mission-section" name="home-deliverables-mission" data-analysis-fold="deliverables-warnings">
+    <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">!</span><span><strong>Нужно уточнить</strong><small>${rows.length} ${rows.length === 1 ? 'пункт' : 'пункта'}</small><span class="sr-only">Что нужно исправить или уточнить</span></span><i class="home-mission-state" data-status="partial" aria-hidden="true"></i></summary>
+    <div class="home-mission-body" id="homeDeliverablesWarningsTitle"><ul>${rows.map((text) => `<li>${escapeHtml(text)}</li>`).join('')}</ul></div>
+  </details>`;
+}
+
+function missionTrackHtml(status, sheetsReady, exportsReady) {
+  const steps = [
+    { label: 'Комплект', status },
+    { label: 'Листы', status: sheetsReady ? 'ready' : 'missing' },
+    { label: 'Экспорт', status: exportsReady ? 'ready' : 'missing' },
+  ];
+  return `<ol class="home-mission-track" aria-label="Готовность выпуска">${steps.map((step, index) => `<li data-status="${escapeHtml(step.status)}"${index === 0 ? ' aria-current="step"' : ''}><span class="home-mission-dot" aria-hidden="true"></span><span>${escapeHtml(step.label)}</span><span class="sr-only">${escapeHtml(STATUS[step.status]?.label || STATUS.missing.label)}</span></li>`).join('')}</ol>`;
+}
+
+function missionSummary(index, title, subtitle, status) {
+  return `<summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">${index}</span><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="home-mission-state" data-status="${escapeHtml(status)}" role="img" aria-label="${escapeHtml(STATUS[status]?.label || STATUS.missing.label)}"></i></summary>`;
 }
 
 /**
@@ -189,27 +205,44 @@ export function homeDeliverablesHtml(project, options = {}) {
   const summary = object(analysis.summary);
   const ready = Number(summary.ready) || 0;
   const total = Number(summary.total) || CHECKS.length;
+  const sheets = object(analysis.sheets);
+  const sheetsReady = Number(sheets.total) > 0
+    || Number(object(sheets.auto).count) > 0 || Number(object(sheets.user).count) > 0;
+  const exportsReady = array(analysis.exports).some((entry) => entry?.available !== false && entry?.kind);
+  const checkCounts = checkStatusCounts(analysis);
+  const statusLine = [
+    `готово ${checkCounts.ready}`,
+    checkCounts.partial ? `частично ${checkCounts.partial}` : null,
+    checkCounts.missing ? `нужно ${checkCounts.missing}` : null,
+  ].filter(Boolean).join(' · ');
   return `<div class="home-deliverables" data-home-deliverables data-status="${status}">
-    <section class="home-deliverables-summary" aria-labelledby="homeDeliverablesTitle">
+    ${missionTrackHtml(status, sheetsReady, exportsReady)}
+    <section class="home-mission-hero" aria-labelledby="homeDeliverablesTitle">
       <div>
+        <span class="home-mission-kicker">Миссия</span>
         <h2 id="homeDeliverablesTitle">Листы и выдача</h2>
-        <p>Готово ${ready} из ${total}</p>
+        <p>${ready} из ${total} · ${STATUS[status].label}</p>
       </div>
-      <strong>${STATUS[status].label}</strong>
-    </section>
-    <section aria-labelledby="homeDeliverablesChecksTitle">
-      <h2 id="homeDeliverablesChecksTitle">Состав комплекта</h2>
-      ${checksHtml(project, analysis)}
-    </section>
-    <section aria-labelledby="homeDeliverablesSheetsTitle">
-      <h2 id="homeDeliverablesSheetsTitle">Состав листов</h2>
-      ${sheetsHtml(analysis)}
       <button type="button" class="primary" data-home-deliverables-action="open-sheets">Настроить листы</button>
     </section>
-    <section aria-labelledby="homeDeliverablesExportsTitle">
-      <h2 id="homeDeliverablesExportsTitle">Экспорт</h2>
-      ${exportsHtml(analysis)}
-    </section>
+    <details class="home-mission-section" name="home-deliverables-mission" data-analysis-fold="deliverables-checks" data-status="${status}">
+      ${missionSummary(1, 'Состав комплекта', `${ready} из ${total} готово`, status)}
+      <div class="home-mission-body" id="homeDeliverablesChecksTitle">
+        <p class="home-deliverables-lead">${escapeHtml(statusLine)}</p>
+        <details class="analysis-disclosure home-mission-secondary" data-analysis-fold="deliverables-check-details">
+          <summary>Все проверки <span>${total}</span></summary>
+          ${checksHtml(project, analysis)}
+        </details>
+      </div>
+    </details>
+    <details class="home-mission-section" name="home-deliverables-mission" data-analysis-fold="deliverables-sheets">
+      ${missionSummary(2, 'Состав листов', sheetsReady ? 'Листы готовы' : 'Нужно настроить', sheetsReady ? 'ready' : 'missing')}
+      <div class="home-mission-body" id="homeDeliverablesSheetsTitle">${sheetsHtml(analysis)}<button type="button" class="primary" data-home-deliverables-action="open-sheets">Настроить листы</button></div>
+    </details>
+    <details class="home-mission-section" name="home-deliverables-mission" data-analysis-fold="deliverables-export">
+      ${missionSummary(3, 'Экспорт', exportsReady ? 'Форматы доступны' : 'Пока недоступен', exportsReady ? 'ready' : 'missing')}
+      <div class="home-mission-body" id="homeDeliverablesExportsTitle">${exportsHtml(analysis)}</div>
+    </details>
     ${warningsHtml(analysis)}
     <details class="analysis-disclosure" data-analysis-fold="limitations">
       <summary>Границы проверки комплекта</summary>

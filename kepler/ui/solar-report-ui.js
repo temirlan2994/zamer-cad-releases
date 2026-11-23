@@ -177,7 +177,7 @@ function visibleFocusTarget(node) {
 
 function reportReturnTarget(preferred = null) {
   return visibleFocusTarget(preferred) || visibleFocusTarget(el('exportBtn')) ||
-    visibleFocusTarget(el('moreBtn')) || visibleFocusTarget(el('projectHomeProgram'));
+    visibleFocusTarget(el('moreBtn')) || visibleFocusTarget(document.querySelector('#projectRouteSteps [data-route-view]'));
 }
 
 function showDialog() {

@@ -39,12 +39,14 @@ describe('телефон 390×844: мобильная раскладка', () =>
   before(async () => { app = await startApp({ mobile: true }); await openSample(app.page); });
   after(async () => { await app?.close(); });
 
-  it('шапка компактная: название, аналитика, ⟲ ⟳, «⋯» — в экране, без прокрутки', async () => {
+  it('шапка компактная: название, ⟲ ⟳, «⋯» — в экране, без прокрутки', async () => {
     const { page } = app;
-    for (const sel of ['#projectName', '#undoBtn', '#redoBtn', '#projectHomeProgram', '#moreBtn']) {
+    for (const sel of ['#projectName', '#undoBtn', '#redoBtn', '#moreBtn']) {
       assert.equal(await page.isVisible(sel), true, sel);
       assert.ok(inScreen(await box(page, sel)), `${sel} в экране`);
     }
+    assert.equal(await page.locator('#projectHomeProgram').count(), 0);
+    assert.equal(await page.locator('#projectRouteSteps [data-route-view]').count(), 9);
     const top = await page.$eval('.topbar', (n) => ({ sw: n.scrollWidth, cw: n.clientWidth, h: n.getBoundingClientRect().height }));
     assert.ok(top.sw <= top.cw + 1, `шапка без прокрутки ${JSON.stringify(top)}`);
     assert.ok(top.h <= 60, `шапка в одну строку: ${top.h}`);

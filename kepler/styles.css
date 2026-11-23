@@ -3159,7 +3159,6 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 
 .project-route-summary,
 .project-route-passport,
-.project-route-program,
 .project-route-step {
   border: 0;
   background: transparent;
@@ -3180,9 +3179,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 .project-route-summary:hover,
 .project-route-summary:focus-visible,
 .project-route-passport:hover,
-.project-route-passport:focus-visible,
-.project-route-program:hover,
-.project-route-program:focus-visible {
+.project-route-passport:focus-visible {
   border-color: transparent;
   background: var(--surface-2);
 }
@@ -3287,8 +3284,7 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
 .project-route-step-copy small { color: var(--muted); font-size: 9.5px; line-height: 1.15; }
 .project-route-connector { width: clamp(8px, 1.8vw, 28px); height: 1px; flex: 0 1 28px; background: var(--border); }
 
-.project-route-passport,
-.project-route-program {
+.project-route-passport {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3302,20 +3298,10 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   white-space: nowrap;
 }
 
-.project-route-passport[aria-expanded="true"],
-.project-route-program[aria-expanded="true"] {
+.project-route-passport[aria-expanded="true"] {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
 }
-
-.project-route-program { gap: 7px; }
-.project-route-program-icon { font-size: 17px; line-height: 1; }
-.project-route-program-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; line-height: 1.1; }
-.project-route-program-copy strong { color: var(--text); font-size: 11px; }
-.project-route-program-copy small { margin-top: 2px; font-size: 9px; }
-.project-route-program[data-status="ready"] small { color: var(--ok-text); }
-.project-route-program[data-status="incomplete"] small,
-.project-route-program[data-status="draft"] small { color: var(--warn-text); }
 
 .project-route-panel {
   position: absolute;
@@ -3504,8 +3490,6 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .project-route-step-copy small { display: none; }
   .project-route-passport > span:last-child { display: none; }
   .project-route-passport { width: 38px; padding: 0; }
-  .project-route-program-copy { display: none; }
-  .project-route-program { width: 38px; padding: 0; }
 }
 
 @media (max-width: 640px) {
@@ -3521,8 +3505,6 @@ body.mode-roofplan .solar-legend, body.v3-open .solar-legend, body.elevation-ope
   .project-route-step-copy, .project-route-connector { display: none; }
   .project-route-passport { width: 36px; padding: 0; }
   .project-route-passport > span:last-child { display: none; }
-  .project-route-program { width: 36px; min-width: 36px; padding: 0; }
-  .project-route-program-copy { display: none; }
   body.mode-site .site-opportunity-canvas-legend:not([hidden]) {
     right: 8px;
     left: 8px;

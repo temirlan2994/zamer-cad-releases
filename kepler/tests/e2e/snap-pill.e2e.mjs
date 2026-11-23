@@ -157,19 +157,18 @@ describe('привязки — телефон 390', () => {
     await page.waitForSelector('.statusbar #snapBar');
     assert.equal(await page.getAttribute(sel, 'aria-pressed'), pressed);
     assert.equal(await page.isVisible('#mobileSnapBtn'), false);
-    assert.equal(await page.isVisible('.project-route-bar #projectHomeProgram'), true);
+    assert.equal(await page.locator('.project-route-bar #projectRouteSteps [data-route-view]').count(), 9);
     await page.setViewportSize({ width: 390, height: 844 });
-    // 0.4.5: кнопка аналитики и на телефоне остаётся в нижней палитре этапов (ui/mobile.js,
-    // placeMobileControls), в шапку её больше не переносят; привязки вернулись в ряд телефона.
+    // Палитра девяти этапов остаётся внизу; привязки возвращаются в ряд телефона.
     await page.waitForSelector('#mobileSnapRow #snapBar', { state: 'attached' });
-    assert.equal(await page.isVisible('.project-route-bar #projectHomeProgram'), true);
+    assert.equal(await page.locator('.project-route-bar #projectRouteSteps [data-route-view]').count(), 9);
     assert.equal(await page.isVisible(sel), false);
     await page.tap('#mobileSnapBtn');
-    await page.tap('#projectHomeProgram');
+    await page.tap('#projectRouteSteps [data-route-view="site"]');
     assert.equal(await page.isVisible('#mobileSnapRow'), false);
     assert.equal(await page.isVisible('#projectRouteHover'), true);
     assert.equal(await page.isVisible('#projectRoutePanel'), false);
-    await page.tap('#projectRouteHover [data-route-overview-view="site"]');
+    await page.tap('#projectRouteHover [data-route-task]');
     assert.equal(await page.isVisible('#projectRoutePanel'), true);
     assert.deepEqual(app.errors, []);
   });

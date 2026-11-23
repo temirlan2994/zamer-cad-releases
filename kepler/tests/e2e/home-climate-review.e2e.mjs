@@ -120,7 +120,10 @@ describe('свет и итоговая проверка проекта', () => {
     assert.equal(await page.locator('[data-home-review-stage="envelope"]').count(), 1);
     assert.equal(await page.locator('[data-home-review-stage="deliverables"]').count(), 1);
 
-    await page.click('[data-review-stage-list] > summary');
+    await page.click('[data-home-review] [data-analysis-mission="stages"]');
+    const stagesDisclosure = '[data-review-stage-list] .analysis-mission-body > .analysis-disclosure';
+    await page.click(`${stagesDisclosure} > summary`);
+    await page.waitForFunction((selector) => document.querySelector(selector)?.open === true, stagesDisclosure);
     await page.click('[data-review-stage-list] [data-home-review-view="climate"]');
     await page.waitForFunction(() => (
       document.querySelector('#projectRoutePanelTitle')?.textContent === 'Свет и солнце'
@@ -146,7 +149,7 @@ describe('этапы света и проверки на телефоне', () =
     await openHomeView(page, 'review', 'Проверка проекта', true);
     const result = await page.evaluate(() => {
       const tabs = [...document.querySelectorAll('#projectRouteSteps button')];
-      const controls = [...document.querySelectorAll('[data-home-review-action]')]
+      const controls = [...document.querySelectorAll('[data-analysis-mission], [data-home-review-action]')]
         .filter((node) => node.getClientRects().length);
       const active = document.querySelector('#projectRouteSteps [aria-current="page"]');
       const activeRect = active?.getBoundingClientRect();

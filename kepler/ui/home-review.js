@@ -173,40 +173,60 @@ export function homeReviewHtml(project, state = {}, options = {}) {
   lastReview = review;
   const counts = reviewCounts(review);
   const status = overallStatus(review, counts);
+  const activeMission = counts.problems ? 'problems' : counts.unknowns ? 'unknowns' : counts.checked ? 'checked' : 'stages';
+  const firstProblem = array(review?.provenProblems)[0];
+  const firstUnknown = array(review?.unknowns)[0];
   return `<div class="home-review" data-home-review>
-    <section class="home-review-summary" data-status="${escapeHtml(status)}" aria-labelledby="homeReviewSummaryTitle">
-      <div><h2 id="homeReviewSummaryTitle">Итог проверки</h2><p>${escapeHtml(STATUS_LABELS[status])}</p></div>
-      <dl>
-        <div><dt>Проблемы</dt><dd>${counts.problems}</dd></div>
-        <div><dt>Не хватает данных</dt><dd>${counts.unknowns}</dd></div>
-        <div><dt>Проверено</dt><dd>${counts.checked}</dd></div>
-        <div><dt>Скрыто</dt><dd>${counts.hidden}</dd></div>
-      </dl>
-    </section>
-    <section class="home-review-section" aria-labelledby="homeReviewProblemsTitle">
-      <h2 id="homeReviewProblemsTitle">Что исправить</h2>
-      <button type="button" data-analysis-open="issues">Журнал замечаний</button>
-      ${findingRows(review?.provenProblems, 'problem', 'В выполненных проверках проблем не найдено.')}
-    </section>
-    <details class="analysis-disclosure" data-analysis-fold="unknowns"${!counts.problems && counts.unknowns ? ' open' : ''}>
-      <summary>Что уточнить <span>${counts.unknowns}</span></summary>
-      ${findingRows(review?.unknowns, 'unknown', 'Все исходные данные для этих проверок заданы.')}
+    <nav class="analysis-mission-trail home-mission-trail" aria-label="Разделы проверки">
+      <span data-status="${counts.problems ? 'blocked' : 'checked'}"${activeMission === 'problems' ? ' aria-current="step"' : ''}><i aria-hidden="true">1</i><b>Исправить</b></span>
+      <span data-status="${counts.unknowns ? 'attention' : 'checked'}"${activeMission === 'unknowns' ? ' aria-current="step"' : ''}><i aria-hidden="true">2</i><b>Уточнить</b></span>
+      <span data-status="${counts.checked ? 'checked' : 'unknown'}"${activeMission === 'checked' ? ' aria-current="step"' : ''}><i aria-hidden="true">3</i><b>Готово</b></span>
+      <span data-status="${array(review?.stages).some((stage) => normalizedHomeReviewStatus(stage?.status) === 'blocked') ? 'blocked' : 'unknown'}"${activeMission === 'stages' ? ' aria-current="step"' : ''}><i aria-hidden="true">4</i><b>Этапы</b></span>
+    </nav>
+    <details class="analysis-disclosure home-mission-overview" data-analysis-fold="review-summary">
+      <summary><strong id="homeReviewSummaryTitle">Итог проверки</strong><span>${escapeHtml(STATUS_LABELS[status])}</span></summary>
+      <section class="home-review-summary" data-status="${escapeHtml(status)}" aria-labelledby="homeReviewSummaryTitle">
+        <dl>
+          <div><dt>Проблемы</dt><dd>${counts.problems}</dd></div>
+          <div><dt>Не хватает данных</dt><dd>${counts.unknowns}</dd></div>
+          <div><dt>Проверено</dt><dd>${counts.checked}</dd></div>
+          <div><dt>Скрыто</dt><dd>${counts.hidden}</dd></div>
+        </dl>
+      </section>
     </details>
-    <details class="analysis-disclosure" data-analysis-fold="checked">
-      <summary>Проверенные факты <span>${counts.checked}</span></summary>
-      ${findingRows(review?.checkedFacts, 'checked', 'Подтверждённых фактов пока нет.', { checked: true })}
+    <details class="home-review-section analysis-mission home-mission-section" name="home-review-mission" data-analysis-fold="problems" aria-labelledby="homeReviewProblemsTitle"${activeMission === 'problems' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">1</span><span><strong id="homeReviewProblemsTitle">Что исправить</strong><small>${counts.problems ? `${counts.problems} замечаний` : 'Проблем не найдено'}</small></span><i class="home-mission-state" data-status="${counts.problems ? 'blocked' : 'checked'}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Миссия">◎</span><p><strong>${counts.problems ? escapeHtml(itemTitle(firstProblem, 'Исправьте замечания')) : 'Проблем не найдено'}</strong> — ${counts.problems ? escapeHtml(itemText(firstProblem)) : 'перейдите к данным, которых пока не хватает.'}</p></div>
+        <button type="button" data-analysis-open="issues">Журнал замечаний</button>
+        <details class="analysis-disclosure"><summary>Все замечания <span>${counts.problems}</span></summary>${findingRows(review?.provenProblems, 'problem', 'В выполненных проверках проблем не найдено.')}</details>
+      </div>
+    </details>
+    <details class="analysis-disclosure analysis-mission home-mission-section" name="home-review-mission" data-analysis-fold="unknowns"${activeMission === 'unknowns' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">2</span><span><strong>Что уточнить</strong><small>${counts.unknowns ? `${counts.unknowns} пунктов` : 'Все данные заданы'}</small></span><i class="home-mission-state" data-status="${counts.unknowns ? 'attention' : 'checked'}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Миссия">◎</span><p><strong>${counts.unknowns ? escapeHtml(itemTitle(firstUnknown, 'Уточните исходные данные')) : 'Все данные заданы'}</strong> — ${counts.unknowns ? escapeHtml(itemText(firstUnknown)) : 'неизвестных исходных данных не осталось.'}</p></div>
+        <details class="analysis-disclosure"><summary>Все уточнения <span>${counts.unknowns}</span></summary>${findingRows(review?.unknowns, 'unknown', 'Все исходные данные для этих проверок заданы.')}</details>
+      </div>
+    </details>
+    <details class="analysis-disclosure analysis-mission home-mission-section" name="home-review-mission" data-analysis-fold="checked"${activeMission === 'checked' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">3</span><span><strong>Проверенные факты</strong><small>${counts.checked ? `${counts.checked} подтверждено` : 'Пока нет'}</small></span><i class="home-mission-state" data-status="${counts.checked ? 'checked' : 'unknown'}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body">
+        <div class="home-mission-hero"><span class="home-mission-kicker" aria-label="Готово">✓</span><p><strong>${counts.checked} проверок подтверждено</strong> — подробности доступны по запросу.</p></div>
+        <details class="analysis-disclosure"><summary>Показать факты <span>${counts.checked}</span></summary>${findingRows(review?.checkedFacts, 'checked', 'Подтверждённых фактов пока нет.', { checked: true })}</details>
+      </div>
     </details>
     <details class="analysis-disclosure" data-analysis-fold="hidden">
       <summary>Скрытые пользователем <span>${counts.hidden}</span></summary>
       ${findingRows(review?.hidden, 'hidden', 'Скрытых замечаний нет.', { hidden: true })}
     </details>
-    <details class="analysis-disclosure" data-analysis-fold="stages" data-review-stage-list>
-      <summary>Итоги по разделам</summary>
-      ${stageCards(review)}
+    <details class="analysis-disclosure analysis-mission home-mission-section" name="home-review-mission" data-analysis-fold="stages" data-review-stage-list${activeMission === 'stages' ? ' open' : ''}>
+      <summary class="home-mission-summary"><span class="home-mission-index">4</span><span><strong>Итоги по разделам</strong><small>${array(review?.stages).length} этапов</small></span><i class="home-mission-state" data-status="${array(review?.stages).some((stage) => normalizedHomeReviewStatus(stage?.status) === 'blocked') ? 'blocked' : 'unknown'}" aria-hidden="true"></i></summary>
+      <div class="analysis-mission-body home-mission-body"><details class="analysis-disclosure"><summary>Показать этапы <span>${array(review?.stages).length}</span></summary>${stageCards(review)}</details></div>
     </details>
     <details class="analysis-disclosure" data-analysis-fold="legend">
-      <summary>Как читать проверку</summary>
-      <p class="home-review-disclaimer">Это эскизная сводка, не экспертиза. Зелёная отметка означает выполненную проверку. Скрытое замечание остаётся в отчёте, пока оно не исправлено.</p>
+      <summary>Как это работает</summary>
+      <p class="home-review-disclaimer">Это эскизная сводка, не экспертиза. Скрытое замечание остаётся в отчёте до исправления.</p>
     </details>
   </div>`;
 }

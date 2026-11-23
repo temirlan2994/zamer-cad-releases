@@ -3,7 +3,6 @@
 // а в проект записываются только явные решения пользователя.
 
 import { contextNeighborSignature } from '../core/site.js';
-import { analyzeHomeProgram } from '../core/home-program.js';
 import { siteOpportunity, sitePassport, sitePlanningRoute } from '../core/site-planning.js';
 import { escapeHtml, refs, toast } from './dom.js';
 import {
@@ -142,7 +141,6 @@ const CIRCULATION_PERIOD_LABEL = Object.freeze({
   event: 'проходов за событие',
 });
 const HOME_WORKFLOW_STORAGE_KEY = 'kepler-home-workflow-position/v1';
-const ROUTE_OVERVIEW_MENU = 'overview';
 const HOME_REVIEW_STATUS_LABEL = Object.freeze({
   checked: 'Проверено',
   attention: 'Требует внимания',
@@ -178,16 +176,46 @@ let routeMenuPinnedView = null;
 let routeMenuOpener = null;
 let routeFocusPreviewSuppressed = false;
 let panelDrag = null;
+let routeRenderQueued = false;
+
+function queueProjectRouteRender() {
+  if (routeRenderQueued) return;
+  routeRenderQueued = true;
+  queueMicrotask(() => {
+    routeRenderQueued = false;
+    if (bound) renderProjectRoute();
+  });
+}
 
 const HOME_VIEW_ITEMS = Object.freeze({
-  program: ['Жильцы', 'Помещения', 'Сценарии'],
-  flows: ['Зоны', 'Связи', 'Маршруты'],
-  engineering: ['Точки', 'Трассы', 'Конфликты'],
-  circulation: ['Проходы', 'Маршруты', 'Узкие места'],
-  climate: ['Солнце', 'Освещённость', 'Перегрев'],
-  review: ['Ошибки', 'Предупреждения', 'Готовность'],
-  envelope: ['±0.000', 'Основание', 'Крыша', 'Водоотвод', 'Вход'],
-  deliverables: ['Листы', 'Экспорт', 'Комплект'],
+  program: [
+    ['Жильцы', 'residents'], ['Комнаты', 'rooms'], ['Опции', 'extras'],
+    ['На плане', 'plan'], ['Итог', 'result'],
+  ],
+  flows: [['Зоны', 'zones'], ['Сценарии', 'scenarios'], ['Маршруты', 'routes']],
+  engineering: [
+    ['Точки', 'engineering-connections'], ['Вода', 'engineering-wet'],
+    ['Этажи', 'engineering-vertical'], ['Вентиляция', 'engineering-ventilation'],
+    ['Исходные', 'engineering-points'], ['Уточнить', 'engineering-warnings'],
+  ],
+  circulation: [
+    ['Проход', 'circulation-check'], ['Маршруты', 'circulation-routes'],
+    ['Точки', 'circulation-anchors'], ['Карта', 'circulation-map'],
+  ],
+  climate: [['Комната', 'climate-room'], ['Солнце', 'location'], ['Данные', 'sources']],
+  review: [
+    ['Исправить', 'problems'], ['Уточнить', 'unknowns'],
+    ['Готово', 'checked'], ['Итоги', 'stages'],
+  ],
+  envelope: [
+    ['Этажи', 'envelope-levels'], ['Крыша', 'envelope-roofs'],
+    ['Проёмы', 'envelope-vertical'], ['Чертежи', 'envelope-views'],
+    ['Проверка', 'envelope-warnings'],
+  ],
+  deliverables: [
+    ['Комплект', 'deliverables-checks'], ['Листы', 'deliverables-sheets'],
+    ['Экспорт', 'deliverables-export'],
+  ],
 });
 
 const HOME_VIEW_DEFS = Object.freeze([
@@ -536,6 +564,191 @@ function restoreHomePanelState(body, snapshot) {
   if (panel) panel.scrollTop = snapshot.scrollTop;
 }
 
+function primaryMissionSections(body) {
+  const root = body.querySelector('[data-home-program], [data-home-flows], [data-home-engineering], [data-home-circulation], [data-home-climate], [data-home-review], [data-home-envelope], [data-home-deliverables]');
+  if (!root) return { root: null, sections: [] };
+  const sections = [...root.querySelectorAll('details.home-mission-section')].filter((section) => {
+    if (section.classList.contains('home-mission-secondary')) return false;
+    if (section.closest('.home-mission-hero')) return false;
+    if (section.closest('[data-home-deliverables-check]')) return false;
+    return !section.parentElement?.closest('details.home-mission-section');
+  });
+  return { root, sections };
+}
+
+function missionStatus(section) {
+  return section.dataset.status
+    || section.querySelector('.home-mission-state')?.dataset.status
+    || 'unknown';
+}
+
+function missionStatusMark(status) {
+  if (['done', 'ready', 'checked', 'observed', 'complete'].includes(status)) return '✓';
+  if (['error', 'blocked', 'missing', 'conflict'].includes(status)) return '×';
+  if (['attention', 'warning', 'partial', 'candidate'].includes(status)) return '!';
+  return '?';
+}
+
+function missionStatusLabel(status) {
+  if (['done', 'ready', 'checked', 'observed', 'complete'].includes(status)) return 'готово';
+  if (['error', 'blocked', 'missing', 'conflict'].includes(status)) return 'есть проблема';
+  if (['attention', 'warning', 'partial', 'candidate'].includes(status)) return 'нужно проверить';
+  return 'нет данных';
+}
+
+const MISSION_SHORT_LABELS = Object.freeze({
+  'Точки подключения': 'Точки',
+  'Мокрые зоны': 'Вода',
+  'Вертикальное совмещение': 'Этажи',
+  'Исходные точки': 'Исходные',
+  'Что уточнить': 'Уточнить',
+  'Проверка прохода': 'Проход',
+  'Точки маршрута': 'Точки',
+  'Карта нагрузки': 'Карта',
+  'Свет в помещении': 'Комната',
+  'Координаты и солнце': 'Солнце',
+  'Исходные данные': 'Данные',
+  'Что исправить': 'Исправить',
+  'Проверенные факты': 'Готово',
+  'Итоги по разделам': 'Итоги',
+  'Этажи и отметки': 'Этажи',
+  'Лестницы и проёмы': 'Проёмы',
+  'Открыть чертёж': 'Чертежи',
+  'Состав комплекта': 'Комплект',
+  'Состав листов': 'Листы',
+});
+
+function missionShortLabel(label) {
+  return MISSION_SHORT_LABELS[label] || label;
+}
+
+function setActiveMission(root, key, { focus = false } = {}) {
+  const sections = [...root.querySelectorAll('[data-analysis-mission-panel]')];
+  if (!sections.length) return;
+  const selected = sections.find((section) => section.dataset.analysisMissionPanel === key) || sections[0];
+  sections.forEach((section) => {
+    const active = section === selected;
+    section.hidden = !active;
+    section.open = active;
+  });
+  root.querySelectorAll('[data-analysis-mission]').forEach((button) => {
+    const active = button.dataset.analysisMission === selected.dataset.analysisMissionPanel;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    if (active) button.setAttribute('aria-current', 'step');
+    else button.removeAttribute('aria-current');
+  });
+  const actions = root.querySelector('.home-mission-actions');
+  if (actions) {
+    const index = sections.indexOf(selected);
+    const back = actions.querySelector('[data-analysis-back]');
+    const next = actions.querySelector('[data-analysis-next]');
+    if (back) {
+      back.hidden = index <= 0;
+      back.dataset.analysisBack = sections[Math.max(0, index - 1)]?.dataset.analysisMissionPanel || '';
+    }
+    if (next) {
+      next.hidden = index >= sections.length - 1;
+      next.dataset.analysisNext = sections[Math.min(sections.length - 1, index + 1)]?.dataset.analysisMissionPanel || '';
+    }
+  }
+  if (focus) {
+    requestAnimationFrame(() => selected.querySelector('summary')?.focus({ preventScroll: true }));
+  }
+}
+
+function enhanceMissionPanel(body) {
+  // Native exclusive <details name="…"> is unstable when the focused panel is
+  // replaced through innerHTML in Chromium. Exclusivity is managed here.
+  body.querySelectorAll('details[name]').forEach((details) => details.removeAttribute('name'));
+  const { root, sections } = primaryMissionSections(body);
+  if (!root || sections.length < 2) return;
+  sections.forEach((section, index) => {
+    const key = section.dataset.analysisFold || `mission-${index + 1}`;
+    section.dataset.analysisMissionPanel = key;
+    section.id ||= `analysisMission-${panelView}-${cleanKey(key) || index + 1}`;
+    section.setAttribute('role', 'tabpanel');
+    const summary = section.querySelector(':scope > summary');
+    if (summary) {
+      summary.tabIndex = 0;
+      summary.setAttribute('aria-controls', section.id);
+    }
+  });
+  const active = sections.find((section) => section.open && !section.hidden) || sections[0];
+  const existingTrail = root.querySelector('.home-mission-trail, .home-mission-track');
+  const trail = document.createElement('nav');
+  trail.className = 'home-mission-trail';
+  trail.dataset.analysisMissions = '';
+  trail.setAttribute('role', 'tablist');
+  trail.setAttribute('aria-label', 'Шаги раздела');
+  for (const [index, section] of sections.entries()) {
+    const key = section.dataset.analysisMissionPanel;
+    const summary = section.querySelector(':scope > summary');
+    const label = summary?.querySelector('strong')?.textContent?.trim() || `Шаг ${index + 1}`;
+    const status = missionStatus(section);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.analysisMission = key;
+    button.dataset.status = status;
+    button.id = `${section.id}-tab`;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', section.id);
+    button.setAttribute('aria-label', `${index + 1}. ${label} · ${missionStatusLabel(status)}`);
+    button.title = label;
+    button.innerHTML = `<i aria-hidden="true">${missionStatusMark(status)}</i><span>${escapeHtml(missionShortLabel(label))}</span>`;
+    if (root.matches('[data-home-program]')) {
+      button.dataset.homeProgramAction = 'next-mission';
+      button.dataset.homeProgramMission = key;
+    }
+    trail.append(button);
+    section.setAttribute('aria-labelledby', button.id);
+  }
+  if (existingTrail) existingTrail.replaceWith(trail);
+  else sections[0].parentElement?.insertBefore(trail, sections[0]);
+
+  if (!root.matches('[data-home-program]')) {
+    root.querySelector('.home-mission-actions')?.remove();
+    const actions = document.createElement('div');
+    actions.className = 'home-mission-actions';
+    actions.innerHTML = '<button type="button" class="secondary" data-analysis-back>← Назад</button><button type="button" class="primary" data-analysis-next>Далее <span aria-hidden="true">→</span></button>';
+    root.append(actions);
+  }
+  setActiveMission(root, active.dataset.analysisMissionPanel);
+}
+
+function handleMissionNavigation(event) {
+  const control = event.target.closest('[data-analysis-mission], [data-analysis-back], [data-analysis-next]');
+  const summary = event.target.closest('[data-analysis-mission-panel] > summary');
+  const target = control || summary;
+  if (!target) return false;
+  const root = target.closest('[data-home-program], [data-home-flows], [data-home-engineering], [data-home-circulation], [data-home-climate], [data-home-review], [data-home-envelope], [data-home-deliverables]');
+  if (!root) return false;
+  // The program owns its active mission because it also swaps the sticky
+  // Next/Save action. Let its existing handler perform the rerender.
+  if (root.matches('[data-home-program]')) {
+    if (summary) {
+      event.preventDefault();
+      return true;
+    }
+    return false;
+  }
+  event.preventDefault();
+  const key = control?.dataset.analysisMission
+    || control?.dataset.analysisBack
+    || control?.dataset.analysisNext
+    || summary?.parentElement?.dataset.analysisMissionPanel;
+  if (!key) return true;
+  setActiveMission(root, key, { focus: Boolean(control) });
+  const panel = root.closest('.project-route-panel');
+  if (panel) panel.scrollTop = Math.min(panel.scrollTop, 104);
+  return true;
+}
+
+function safeHomePanelHtml(html) {
+  return String(html || '').replace(/(<details\b[^>]*?)\sname="[^"]+"([^>]*>)/g, '$1$2');
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
@@ -716,7 +929,7 @@ function aggregateStatus(tasks) {
 
 function routeModel() {
   const project = state.project;
-  if (!project) return { stages: [], route: null, passport: null, homeProgram: null };
+  if (!project) return { stages: [], route: null, passport: null };
   const site = project.site || {};
   const route = safeCall(() => sitePlanningRoute(project), null);
   // sitePlanningRoute уже возвращает тот же паспорт. Повторный тяжёлый
@@ -748,10 +961,7 @@ function routeModel() {
       status: aggregateStatus(tasks),
     };
   });
-  const homeProgram = safeCall(() => analyzeHomeProgram(project), {
-    status: 'unknown', summary: {}, targets: [], connections: [], warnings: [],
-  });
-  return { stages, route, passport, homeProgram };
+  return { stages, route, passport };
 }
 
 function statusLabel(status) { return STATUS_LABEL[status] || STATUS_LABEL.unknown; }
@@ -773,16 +983,10 @@ function stageIcon(view) {
   return `<svg class="route-symbol" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ROUTE_ICON[view.id]}"/></svg>`;
 }
 
-function renderStageBar(model) {
+function renderStageBar() {
   const steps = byId('projectRouteSteps');
-  const program = byId('projectHomeProgram');
-  if (!steps || !program) return;
-  program.disabled = !state.project;
-  program.dataset.status = model?.homeProgram?.status || 'unknown';
+  if (!steps) return;
   const rows = homeWorkflowRows(cachedWorkflowReview({ full: panelOpen && panelView === 'review' }));
-  const checkedCount = rows.filter((row) => row.status === 'checked').length;
-  byId('projectHomeProgramStatus').textContent = `${checkedCount}/${rows.length}`;
-  program.setAttribute('aria-label', `Аналитика проекта. Завершено ${checkedCount} из ${rows.length} этапов`);
   for (const view of rows) {
     let button = steps.querySelector(`[data-route-view="${view.id}"]`);
     if (!button) {
@@ -798,7 +1002,7 @@ function renderStageBar(model) {
       button.innerHTML = `${stageIcon(view)}<span>${escapeHtml(view.label)}</span><i class="route-status" aria-hidden="true"></i>`;
       steps.append(button);
     }
-    button.disabled = program.disabled;
+    button.disabled = !state.project;
     const current = panelOpen && (panelView === 'stage' ? view.id === 'site' : panelView === view.id);
     button.setAttribute('aria-selected', String(current));
     if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
@@ -834,11 +1038,15 @@ function routeHoverRows(viewId) {
     return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
   }
   const row = homeWorkflowRows(cachedWorkflowReview({ full: false })).find((item) => item.id === viewId);
-  return asArray(HOME_VIEW_ITEMS[viewId]).map((label, index) => ({
-    id: `${viewId}-${index}`,
-    label,
-    status: row?.status || 'unknown',
-  }));
+  return asArray(HOME_VIEW_ITEMS[viewId]).map((item, index) => {
+    const [label, mission] = Array.isArray(item) ? item : [String(item), null];
+    return {
+      id: `${viewId}-${mission || index}`,
+      label,
+      mission,
+      status: row?.status || 'unknown',
+    };
+  });
 }
 
 function setRouteMenuButtons(viewId = null) {
@@ -847,10 +1055,6 @@ function setRouteMenuButtons(viewId = null) {
     button.classList.toggle('menu-open', expanded);
     button.setAttribute('aria-expanded', String(expanded));
   });
-  const program = byId('projectHomeProgram');
-  const overviewOpen = viewId === ROUTE_OVERVIEW_MENU;
-  program?.classList.toggle('menu-open', overviewOpen);
-  program?.setAttribute('aria-expanded', String(overviewOpen));
 }
 
 function hideRouteHover(delay = 0, { force = false } = {}) {
@@ -899,7 +1103,7 @@ function showRouteHover(button, { pin = false } = {}) {
     const label = viewId === 'site' ? statusLabel(row.status) : HOME_REVIEW_STATUS_LABEL[row.status];
     const attrs = viewId === 'site'
       ? `data-route-task="${row.id}" data-route-task-stage="${row.stageId}" data-route-stage="${row.stageId}" data-route-status="${row.status}"`
-      : `data-route-hover-view="${viewId}"`;
+      : `data-route-hover-view="${viewId}"${row.mission ? ` data-route-hover-mission="${escapeHtml(row.mission)}"` : ''}`;
     return `<button type="button" role="menuitem" tabindex="-1" ${attrs} data-status="${status}" aria-label="${escapeHtml(`${row.label}. ${label || STATUS_LABEL.unknown}`)}"><i aria-hidden="true">${mark || '?'}</i><span>${escapeHtml(row.label)}</span></button>`;
   }).join('')}</div>`;
   hover.hidden = false;
@@ -919,36 +1123,6 @@ function showRouteHover(button, { pin = false } = {}) {
         if (!hover.hidden && routeMenuPinnedView === viewId) first.focus({ preventScroll: true });
       });
     }
-  }
-}
-
-function showAnalyticsOverview(button) {
-  const hover = byId('projectRouteHover');
-  if (!hover || !button || !state.project) return;
-  clearTimeout(routeHoverTimer);
-  routeMenuPinnedView = ROUTE_OVERVIEW_MENU;
-  routeMenuOpener = button;
-  setRouteMenuButtons(ROUTE_OVERVIEW_MENU);
-  const rows = homeWorkflowRows(cachedWorkflowReview({ full: false }));
-  hover.innerHTML = `<header><strong>Аналитика</strong><small>Выберите этап</small></header><div>${rows.map((row) => {
-    const current = row.id === lastWorkflowView ? ' aria-current="page"' : '';
-    const label = `${row.step}. ${row.label}. ${HOME_REVIEW_STATUS_LABEL[row.status] || HOME_REVIEW_STATUS_LABEL.unknown}`;
-    return `<button type="button" role="menuitem" tabindex="-1" data-route-overview-view="${row.id}" data-status="${row.status}" aria-label="${escapeHtml(label)}"${current}><i aria-hidden="true">${HOME_REVIEW_STATUS_MARK[row.status] || '?'}</i><span>${row.step}. ${escapeHtml(row.label)}</span></button>`;
-  }).join('')}</div>`;
-  hover.hidden = false;
-  hover.dataset.routeMenuView = ROUTE_OVERVIEW_MENU;
-  hover.dataset.pinned = 'true';
-  const rect = button.getBoundingClientRect();
-  const box = hover.getBoundingClientRect();
-  const left = Math.max(8, Math.min(innerWidth - box.width - 8, rect.left + rect.width / 2 - box.width / 2));
-  hover.style.left = `${left}px`;
-  hover.style.top = `${Math.max(8, rect.top - box.height - 9)}px`;
-  const target = hover.querySelector('[aria-current="page"]') || hover.querySelector('[role="menuitem"]');
-  if (target) {
-    target.tabIndex = 0;
-    requestAnimationFrame(() => {
-      if (!hover.hidden && routeMenuPinnedView === ROUTE_OVERVIEW_MENU) target.focus({ preventScroll: true });
-    });
   }
 }
 
@@ -1210,7 +1384,11 @@ function renderPanel(model) {
   const body = byId('projectRouteBody');
   const title = byId('projectRoutePanelTitle');
   const kicker = byId('projectRoutePanelKicker');
+  const panelIcon = byId('projectRoutePanelIcon');
   if (!body || !title || !kicker) return;
+  const iconView = panelView === 'stage' || panelView === 'passport'
+    ? HOME_NAV_DEFS[0] : HOME_VIEW_BY_ID.get(panelView);
+  if (panelIcon) panelIcon.innerHTML = iconView ? stageIcon(iconView) : '';
   if (panelView === 'passport') {
     kicker.textContent = 'Участок / Исходные данные';
     title.textContent = 'Паспорт участка';
@@ -1223,11 +1401,13 @@ function renderPanel(model) {
     const review = cachedWorkflowReview({ full: panelView === 'review' });
     kicker.textContent = `Аналитика / Этап ${current.step} из ${HOME_NAV_DEFS.length}`;
     title.textContent = current.title;
+    body.querySelectorAll('details[name]').forEach((details) => details.removeAttribute('name'));
     body.innerHTML = state.project
-      ? `<div class="home-system-panel" id="homeSystemPanel">${current.html(state.project, state, review)}</div>`
+      ? `<div class="home-system-panel" id="homeSystemPanel">${safeHomePanelHtml(current.html(state.project, state, review))}</div>`
       : '<p class="project-route-panel-empty">Откройте или создайте проект, чтобы продолжить проектирование дома.</p>';
     if (panelView === 'circulation') bindErgoViewBlock(body, renderProjectRoute);
     restoreHomePanelState(body, preserved);
+    enhanceMissionPanel(body);
     return;
   }
   const stage = model.stages.find((item) => item.id === activeStage) || model.stages[0];
@@ -1258,8 +1438,7 @@ function homeWorkflowRows(review) {
 function syncOpenState() {
   const panel = byId('projectRoutePanel');
   const scrim = byId('projectRouteScrim');
-  const program = byId('projectHomeProgram');
-  if (!panel || !scrim || !program) return;
+  if (!panel || !scrim) return;
   panel.hidden = !panelOpen;
   scrim.hidden = true;
   byId('projectRouteSteps').hidden = false;
@@ -1267,9 +1446,13 @@ function syncOpenState() {
   breadcrumb.hidden = true;
   breadcrumb.textContent = byId('projectRoutePanelTitle').textContent;
   panel.setAttribute('aria-modal', 'false');
-  const overviewOpen = routeMenuPinnedView === ROUTE_OVERVIEW_MENU;
-  program.classList.toggle('menu-open', overviewOpen);
-  program.setAttribute('aria-expanded', String(overviewOpen));
+  if (!panelOpen) {
+    byId('projectRouteSteps')?.querySelectorAll('[data-route-view]').forEach((button) => {
+      button.classList.remove('active');
+      button.removeAttribute('aria-current');
+      button.setAttribute('aria-selected', 'false');
+    });
+  }
   document.body.classList.toggle('project-route-open', panelOpen);
 }
 
@@ -1306,12 +1489,19 @@ function openSiteTask(stageId, taskId, opener) {
 function closePanel({ restoreFocus = true } = {}) {
   if (!panelOpen) return;
   panelOpen = false;
+  closeRouteMenu();
   syncOpenState();
   announce('Маршрут проекта закрыт');
   const opener = lastOpenerView
     ? byId('projectRouteSteps')?.querySelector(`[data-route-view="${lastOpenerView}"]`)
     : lastOpener;
-  if (restoreFocus) (opener?.isConnected ? opener : byId('projectHomeProgram'))?.focus({ preventScroll: true });
+  if (restoreFocus) {
+    const fallback = byId('projectRouteSteps')?.querySelector(`[data-route-view="${lastWorkflowView}"]`)
+      || byId('projectRouteSteps')?.querySelector('[data-route-view]');
+    routeFocusPreviewSuppressed = true;
+    (opener?.isConnected ? opener : fallback)?.focus({ preventScroll: true });
+    routeFocusPreviewSuppressed = false;
+  }
 }
 
 function switchHomeView(view) {
@@ -1529,6 +1719,7 @@ function openAnalysisView(mode) {
 }
 
 function handleBodyClick(event) {
+  if (handleMissionNavigation(event)) return;
   const destination = event.target.closest('[data-analysis-open]')?.dataset.analysisOpen;
   if (destination) {
     closePanel({ restoreFocus: false });
@@ -1604,7 +1795,7 @@ function handleBodyClick(event) {
     mutate,
     closePanel,
     announce,
-    rerender: renderProjectRoute,
+    rerender: queueProjectRouteRender,
     requestDraw,
     toast,
     setEditorMode: openAnalysisView,
@@ -1618,7 +1809,7 @@ function handleBodyClick(event) {
     mutate,
     closePanel,
     announce,
-    rerender: renderProjectRoute,
+    rerender: queueProjectRouteRender,
     requestDraw,
     toast,
     setEditorMode: openAnalysisView,
@@ -1634,7 +1825,7 @@ function handleBodyClick(event) {
     mutate,
     closePanel,
     announce,
-    rerender: renderProjectRoute,
+    rerender: queueProjectRouteRender,
     requestDraw,
     toast,
     setEditorMode: openAnalysisView,
@@ -1713,6 +1904,18 @@ function handleDocumentKeydown(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
     closePanel();
+    return;
+  }
+  const missionTab = event.target?.closest?.('[data-analysis-mission]');
+  if (missionTab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    const tabs = [...missionTab.closest('[data-analysis-missions]')?.querySelectorAll('[data-analysis-mission]') || []];
+    if (tabs.length) {
+      const current = Math.max(0, tabs.indexOf(missionTab));
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+        : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      event.preventDefault();
+      tabs[next].click();
+    }
     return;
   }
   const homeTab = event.target?.closest?.('.home-system-nav [data-home-view]');
@@ -1853,7 +2056,7 @@ export function renderProjectRoute() {
       ? CIRCULATION_PERIOD_LABEL[view.period] || 'частота выбранного периода'
       : 'число рассчитанных маршрутов';
   }
-  renderStageBar(latestModel);
+  renderStageBar();
   root.classList.toggle('has-project', Boolean(state.project));
   if (panelOpen) renderPanel(latestModel);
   syncOpenState();
@@ -1866,24 +2069,12 @@ export function bindProjectRoute() {
   }
   const root = byId('projectRoute');
   const steps = byId('projectRouteSteps');
-  const program = byId('projectHomeProgram');
   const body = byId('projectRouteBody');
-  if (!root || !steps || !program || !body) return;
+  if (!root || !steps || !body) return;
   bound = true;
   document.addEventListener('kepler:open-climate', (event) => {
     if (event.detail?.location) openSolarSettings(event.detail.opener);
     else openPanel('climate', null, event.detail?.opener);
-  });
-  program.addEventListener('click', (event) => {
-    event.preventDefault();
-    if (routeMenuPinnedView === ROUTE_OVERVIEW_MENU) {
-      closeRouteMenu({ restoreFocus: true });
-      announce('Меню аналитики закрыто');
-      return;
-    }
-    if (panelOpen) closePanel({ restoreFocus: false });
-    showAnalyticsOverview(program);
-    announce('Открыто меню аналитики');
   });
   steps.addEventListener('click', (event) => {
     const button = event.target.closest('[data-route-view]');
@@ -1937,15 +2128,6 @@ export function bindProjectRoute() {
     items[next].focus({ preventScroll: true });
   });
   hover?.addEventListener('click', (event) => {
-    const overview = event.target.closest('[data-route-overview-view]');
-    if (overview) {
-      const opener = routeMenuOpener || program;
-      const viewId = overview.dataset.routeOverviewView;
-      closeRouteMenu();
-      if (viewId === 'site') openPanel('stage', activeStage, opener);
-      else if (HOME_VIEWS.has(viewId)) openPanel(viewId, null, opener);
-      return;
-    }
     const task = event.target.closest('[data-route-task]');
     if (task) {
       const opener = routeMenuOpener || task;
@@ -1955,13 +2137,17 @@ export function bindProjectRoute() {
     const view = event.target.closest('[data-route-hover-view]');
     if (view) {
       const opener = routeMenuOpener || view;
+      const mission = view.dataset.routeHoverMission;
       closeRouteMenu();
       openPanel(view.dataset.routeHoverView, null, opener);
+      if (mission) {
+        byId('projectRouteBody')?.querySelector(`[data-analysis-mission="${mission}"]`)?.click();
+      }
     }
   });
   document.addEventListener('pointerdown', (event) => {
     if (!routeMenuPinnedView) return;
-    if (event.target?.closest?.('#projectRouteHover, #projectHomeProgram, [data-route-view]')) return;
+    if (event.target?.closest?.('#projectRouteHover, [data-route-view]')) return;
     closeRouteMenu();
   });
   const panelHead = byId('projectRoutePanel')?.querySelector('.project-route-panel-head');
@@ -1975,22 +2161,22 @@ export function bindProjectRoute() {
     handleHomeProgramInput(event);
     handleHomeCirculationInput(event, {
       project: state.project, state, mutate,
-      rerender: renderProjectRoute, requestDraw, toast,
+      rerender: queueProjectRouteRender, requestDraw, toast,
     });
   });
   body.addEventListener('change', (event) => {
     handleHomeProgramInput(event);
     handleHomeFlowsInput(event, {
       project: state.project, state, mutate,
-      rerender: renderProjectRoute, requestDraw, toast,
+      rerender: queueProjectRouteRender, requestDraw, toast,
     });
     handleHomeEngineeringInput(event, {
       project: state.project, state, mutate,
-      rerender: renderProjectRoute, requestDraw, toast,
+      rerender: queueProjectRouteRender, requestDraw, toast,
     });
     handleHomeCirculationInput(event, {
       project: state.project, state, mutate,
-      rerender: renderProjectRoute, requestDraw, toast,
+      rerender: queueProjectRouteRender, requestDraw, toast,
     });
     handleHomeClimateInput(event, {
       project: state.project, state, mutate, applyModeRotation,

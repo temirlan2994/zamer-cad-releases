@@ -1,7 +1,7 @@
 /* Рабочие разделы аналитики. Ширина колонки зависит от панели и её навигации. */
 #projectRoutePanel { --muted: var(--desk-muted); }
 #projectRoutePanel button.primary { color: #1c2d22; background: var(--desk-lime); border-color: #a0b953; }
-#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables) {
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-climate, .home-review, .home-envelope, .home-deliverables) {
   container-type: inline-size;
   font-size: 14px;
   line-height: 1.45;
@@ -10,18 +10,18 @@
   overflow-wrap: anywhere;
 }
 
-#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-climate, .home-review, .home-envelope, .home-deliverables)
   :where(p, li, dd, dt, small, strong, label, span, button, input, select, legend) {
   font-size: 13px;
 }
-#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-climate, .home-review, .home-envelope, .home-deliverables)
   :where(h2, h3, legend) {
   color: var(--text);
   font-size: 15px;
   font-weight: 720;
   line-height: 1.3;
 }
-#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables) button {
+#projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-climate, .home-review, .home-envelope, .home-deliverables) button {
   min-height: 36px;
 }
 #projectRoutePanel .analysis-disclosure {
@@ -134,9 +134,588 @@
 }
 @media (pointer: coarse), (max-width: 720px) {
   #projectRoutePanel .home-program-stepper { grid-template-columns: 44px 48px 44px; }
-  #projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-review, .home-envelope, .home-deliverables)
+  #projectRoutePanel :is(.home-program, .home-flows, .home-engineering, .home-circulation, .home-climate, .home-review, .home-envelope, .home-deliverables)
     :is(button, select, summary, input:not([type="checkbox"], [type="radio"])) { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   #projectRoutePanel .analysis-disclosure > summary::after { transition: none; }
+}
+
+/* Компактные «миссии»: один понятный шаг вместо длинной анкеты. */
+#projectRoutePanel {
+  --mission-green: var(--desk-accent, #21654e);
+  --mission-lime: var(--desk-lime, #d4ee6f);
+  --mission-soft: color-mix(in srgb, var(--mission-green) 7%, var(--surface));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 97%, var(--mission-soft));
+  box-shadow: 0 20px 60px rgb(20 39 31 / .2), 0 2px 8px rgb(20 39 31 / .08);
+}
+#projectRoutePanel[hidden] { display: none !important; }
+#projectRoutePanel .project-route-panel-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  min-height: 66px;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+#projectRoutePanel .project-route-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--mission-green) 9%, var(--surface));
+  color: var(--mission-green);
+}
+#projectRoutePanel .project-route-panel-icon:empty { display: none; }
+#projectRoutePanel .project-route-panel-icon:empty + div { grid-column: 1 / 3; }
+#projectRoutePanel .project-route-panel-icon :is(svg, .route-symbol) { width: 20px; height: 20px; }
+#projectRoutePanel .project-route-panel-kicker {
+  margin: 0 0 1px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 780;
+  letter-spacing: .055em;
+  line-height: 1.25;
+}
+#projectRoutePanel .project-route-panel-head h2 {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 780;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#projectRoutePanel .project-route-close {
+  grid-column: 3;
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--mission-green) 14%, var(--border));
+  background: var(--mission-soft);
+  color: var(--text);
+  font-size: 20px;
+}
+#projectRoutePanel .project-route-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+#projectRoutePanel :is([data-analysis-missions], .home-mission-trail, .home-mission-track) {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(62px, 1fr);
+  align-items: start;
+  gap: 0;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding: 2px 0 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  list-style: none;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+#projectRoutePanel :is([data-analysis-missions], .home-mission-trail, .home-mission-track)::-webkit-scrollbar { display: none; }
+#projectRoutePanel :is([data-analysis-mission], .home-mission-trail > span, .home-mission-track > li) {
+  position: relative;
+  display: grid;
+  grid-template-rows: 27px auto;
+  justify-items: center;
+  align-items: start;
+  min-width: 0;
+  min-height: 50px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+  scroll-snap-align: center;
+}
+#projectRoutePanel :is([data-analysis-mission], .home-mission-trail > span, .home-mission-track > li)::after {
+  position: absolute;
+  z-index: 0;
+  top: 12px;
+  left: calc(50% + 14px);
+  width: calc(100% - 28px);
+  height: 2px;
+  border-radius: 999px;
+  background: var(--border);
+  content: "";
+}
+#projectRoutePanel :is([data-analysis-mission], .home-mission-trail > span, .home-mission-track > li):last-child::after { display: none; }
+#projectRoutePanel :is([data-analysis-mission], .home-mission-trail > span, .home-mission-track > li) > :is(i, .home-mission-dot, .home-mission-index) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-row: 1;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+#projectRoutePanel :is([data-analysis-mission], .home-mission-trail > span, .home-mission-track > li) > :is(b, span:not(.home-mission-dot):not(.home-mission-index)) {
+  grid-row: 2;
+  overflow: hidden;
+  max-width: 100%;
+  margin-top: 4px;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#projectRoutePanel [data-analysis-mission] { cursor: pointer; }
+#projectRoutePanel [data-analysis-mission]:is(:hover, :focus-visible) { color: var(--text); }
+#projectRoutePanel [data-analysis-mission]:focus-visible {
+  border-radius: 9px;
+  outline: 2px solid var(--mission-green);
+  outline-offset: 1px;
+}
+#projectRoutePanel :is([data-analysis-mission][aria-current="step"], .home-mission-trail > [aria-current="step"], .home-mission-track > [aria-current="step"]) {
+  color: var(--text);
+}
+#projectRoutePanel :is([data-analysis-mission][aria-current="step"], .home-mission-trail > [aria-current="step"], .home-mission-track > [aria-current="step"]) > :is(i, .home-mission-dot, .home-mission-index) {
+  border-color: color-mix(in srgb, var(--mission-lime) 75%, var(--mission-green));
+  background: var(--mission-lime);
+  color: #24331f;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mission-lime) 20%, transparent);
+}
+#projectRoutePanel :is(.home-mission-trail, .home-mission-track) > :is([data-status="checked"], [data-status="done"], [data-status="ready"], [data-status="observed"], [data-status="proven"]) > :is(i, .home-mission-dot) {
+  border-color: var(--ok-text);
+  background: var(--ok-text);
+  color: var(--surface);
+}
+#projectRoutePanel :is(.home-mission-trail, .home-mission-track) > :is([data-status="blocked"], [data-status="conflict"], [data-status="missing"]) > :is(i, .home-mission-dot) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, var(--surface));
+  color: var(--danger);
+}
+#projectRoutePanel :is(.home-mission-trail, .home-mission-track) > :is([data-status="attention"], [data-status="partial"], [data-status="candidate"], [data-status="warning"]) > :is(i, .home-mission-dot) {
+  border-color: var(--warn-text);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+#projectRoutePanel [data-analysis-mission][aria-current="step"] > i {
+  border-color: color-mix(in srgb, var(--mission-lime) 75%, var(--mission-green));
+  background: var(--mission-lime);
+  color: #24331f;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mission-lime) 20%, transparent);
+}
+
+#projectRoutePanel .home-mission-section {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+  box-shadow: none;
+}
+#projectRoutePanel .home-mission-section + .home-mission-section { margin-top: 7px; }
+#projectRoutePanel [data-analysis-mission-panel][hidden] { display: none !important; }
+#projectRoutePanel .home-mission-summary {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--mission-soft);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+#projectRoutePanel .home-mission-summary::-webkit-details-marker { display: none; }
+#projectRoutePanel .home-mission-summary::after { display: none; }
+#projectRoutePanel .home-mission-summary > span:not(.home-mission-index) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  background: transparent;
+}
+#projectRoutePanel .home-mission-summary strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#projectRoutePanel .home-mission-summary small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#projectRoutePanel .home-mission-index,
+#projectRoutePanel .home-mission-state {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  min-width: 27px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--mission-green) 22%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mission-green) 9%, var(--surface));
+  color: var(--mission-green);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 820;
+}
+#projectRoutePanel .home-mission-state { grid-column: 3; width: 22px; height: 22px; min-width: 22px; }
+#projectRoutePanel .home-mission-state:empty::before { content: "?"; }
+#projectRoutePanel .home-mission-state:is([data-status="checked"], [data-status="done"], [data-status="ready"], [data-status="observed"], [data-status="proven"]) {
+  border-color: transparent;
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+#projectRoutePanel .home-mission-state:is([data-status="checked"], [data-status="done"], [data-status="ready"], [data-status="observed"], [data-status="proven"]):empty::before { content: "✓"; }
+#projectRoutePanel .home-mission-state:is([data-status="blocked"], [data-status="conflict"], [data-status="missing"]) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  color: var(--danger);
+}
+#projectRoutePanel .home-mission-state:is([data-status="blocked"], [data-status="conflict"], [data-status="missing"]):empty::before { content: "×"; }
+#projectRoutePanel .home-mission-state:is([data-status="attention"], [data-status="partial"], [data-status="candidate"], [data-status="warning"]) {
+  border-color: transparent;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+#projectRoutePanel .home-mission-state:is([data-status="attention"], [data-status="partial"], [data-status="candidate"], [data-status="warning"]):empty::before { content: "!"; }
+#projectRoutePanel .home-mission-section[open] > .home-mission-summary {
+  border-bottom: 1px solid color-mix(in srgb, var(--mission-green) 14%, var(--border));
+  border-radius: 12px 12px 0 0;
+  background: color-mix(in srgb, var(--mission-green) 8%, var(--surface));
+}
+#projectRoutePanel .home-mission-section[open] > .home-mission-summary .home-mission-index {
+  border-color: var(--mission-lime);
+  background: var(--mission-lime);
+  color: #24331f;
+}
+#projectRoutePanel .home-mission-body {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+}
+#projectRoutePanel .analysis-disclosure.home-mission-section > .home-mission-body { margin: 0; }
+
+#projectRoutePanel :is(.home-mission-hero, .home-mission-callout) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--mission-green) 14%, var(--border));
+  border-radius: 12px;
+  background: linear-gradient(100deg, var(--mission-soft), color-mix(in srgb, var(--mission-lime) 15%, var(--surface)));
+}
+#projectRoutePanel .home-mission-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--mission-green);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+#projectRoutePanel :is(.home-mission-hero, .home-mission-callout) :is(h2, strong) {
+  margin: 0;
+  color: var(--mission-green);
+  font-size: 14px;
+  line-height: 1.25;
+}
+#projectRoutePanel :is(.home-mission-hero, .home-mission-callout) p,
+#projectRoutePanel :is(.home-mission-hero, .home-mission-callout) span:not(.home-mission-kicker) {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+#projectRoutePanel :is(.home-mission-actions, .home-program-savebar) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+#projectRoutePanel :is(.home-mission-actions, .home-program-savebar) > button { min-width: 112px; }
+#projectRoutePanel .home-mission-actions > .primary,
+#projectRoutePanel [data-analysis-next] {
+  border-color: color-mix(in srgb, var(--mission-lime) 70%, var(--mission-green));
+  background: var(--mission-lime);
+  color: #1f2d1d;
+  font-weight: 780;
+  box-shadow: none;
+}
+#projectRoutePanel [data-analysis-back] { border-color: transparent; background: transparent; color: var(--muted); }
+
+#projectRoutePanel :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border-color: var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+#projectRoutePanel :is(input, select, textarea, button):focus-visible {
+  outline: 2px solid var(--mission-green);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  #projectRoutePanel .project-route-panel-head {
+    grid-template-columns: 32px minmax(0, 1fr) 42px;
+    min-height: 62px;
+    padding: 8px 11px;
+  }
+  #projectRoutePanel .project-route-panel-icon { width: 32px; height: 32px; }
+  #projectRoutePanel .project-route-panel-head h2 { font-size: 17px; }
+  #projectRoutePanel .project-route-body { padding: 5px 11px 12px; scrollbar-gutter: auto; }
+  #projectRoutePanel :is([data-analysis-missions], .home-mission-trail, .home-mission-track) {
+    grid-auto-columns: minmax(58px, 1fr);
+    margin-inline: -2px;
+  }
+  #projectRoutePanel .home-mission-summary { min-height: 58px; }
+  #projectRoutePanel .home-mission-body { padding: 11px; }
+  #projectRoutePanel :is(.home-mission-hero, .home-mission-callout) { align-items: flex-start; }
+  #projectRoutePanel :is(.home-mission-actions, .home-program-savebar) {
+    position: sticky;
+    bottom: -1px;
+    z-index: 3;
+    margin: 12px -3px -3px;
+    padding: 8px 3px 3px;
+    background: linear-gradient(transparent, var(--surface) 28%);
+  }
+  #projectRoutePanel :is(.home-mission-actions, .home-program-savebar) > button { min-width: 0; min-height: 44px; flex: 1 1 0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #projectRoutePanel [data-analysis-mission-panel]:not([hidden]) { animation: mission-enter .16s ease-out; }
+  #projectRoutePanel :is([data-analysis-mission], .home-mission-summary, .home-mission-actions button, .home-program-savebar button) {
+    transition: background-color .14s ease, color .14s ease, border-color .14s ease, transform .14s ease;
+  }
+  #projectRoutePanel :is(.home-mission-actions, .home-program-savebar) > button:active { transform: translateY(1px); }
+  @keyframes mission-enter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0; } }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #projectRoutePanel [data-analysis-mission-panel] { animation: none; }
+}
+
+/* Первая миссия программы на телефоне: три счётчика читаются одним взглядом. */
+@container (max-width: 565px) {
+  #projectRoutePanel [data-home-program] form {
+    position: relative;
+    gap: 0;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission[open] {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission[open] > .home-mission-summary { display: none; }
+  #projectRoutePanel [data-home-program] .home-program-mission[open] > .home-mission-body { padding: 0; }
+  #projectRoutePanel [data-home-program] .home-program-residents {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    min-height: 48px;
+    gap: 9px;
+    margin: 0 0 7px;
+    padding: 7px 10px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > .home-program-scenario-icon {
+    width: 34px;
+    height: 34px;
+    margin: 0;
+    border-radius: 9px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > .home-program-scenario-icon svg {
+    width: 27px;
+    height: 27px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > div {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 5px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > div :is(strong, span) {
+    margin: 0;
+    white-space: nowrap;
+  }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > div strong { font-size: 12px; }
+  #projectRoutePanel [data-home-program] .home-program-mission-callout > div span {
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    align-items: stretch;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid > .home-program-person-card {
+    display: grid;
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 38px minmax(28px, auto) 38px;
+    justify-items: center;
+    align-content: start;
+    gap: 3px;
+    min-width: 0;
+    min-height: 112px;
+    padding: 4px 5px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: center;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid > .home-program-person-card + .home-program-person-card {
+    border-left: 1px solid var(--border);
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-scenario-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 0;
+    background: transparent;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-scenario-icon svg {
+    width: 34px;
+    height: 34px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-scenario-copy {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-scenario-copy strong {
+    overflow: hidden;
+    max-width: 100%;
+    font-size: 11px;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-scenario-copy small {
+    display: block;
+    font-size: 8px;
+    line-height: 1.1;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-stepper {
+    display: grid;
+    grid-column: auto;
+    grid-template-columns: 34px minmax(36px, 40px) 34px;
+    justify-content: center;
+    align-self: end;
+    gap: 2px;
+    width: 100%;
+    max-width: 112px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-stepper :is(button, input) {
+    min-width: 0;
+    min-height: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 15px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-stepper button {
+    position: relative;
+    border-color: transparent;
+    background: var(--mission-soft);
+    color: var(--mission-green);
+    font-size: 18px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-people-grid .home-program-stepper button::after {
+    position: absolute;
+    inset: -4px 0;
+    content: "";
+  }
+  #projectRoutePanel [data-home-program] .home-program-more {
+    margin-top: 6px;
+    color: var(--muted);
+  }
+  #projectRoutePanel [data-home-program] .home-program-more:not([open]) {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+  }
+  #projectRoutePanel [data-home-program] .home-program-more > summary {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 4px 2px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 680;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  #projectRoutePanel [data-home-program] .home-program-more > summary::marker { color: var(--mission-green); }
+  #projectRoutePanel [data-home-program] .home-program-more-body {
+    display: grid;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  #projectRoutePanel [data-home-program] .home-program-savebar {
+    position: static;
+    z-index: auto;
+    width: min(54%, 190px);
+    min-height: 44px;
+    margin: 8px 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+  #projectRoutePanel [data-home-program] .home-program-savebar button {
+    width: 100%;
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: 12px;
+  }
 }

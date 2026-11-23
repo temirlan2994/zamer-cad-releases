@@ -175,6 +175,14 @@ function sourceCards(overview) {
   return cards.join('');
 }
 
+function sourceMissionStatus(overview) {
+  const statuses = Object.values(object(overview?.sources))
+    .map((source) => String(source?.status || 'unknown'));
+  if (!statuses.length || statuses.some((status) => ['missing', 'unknown'].includes(status))) return 'unknown';
+  if (statuses.some((status) => ['preliminary', 'estimated', 'candidate', 'partial'].includes(status))) return 'attention';
+  return statuses.every((status) => ['verified', 'fact'].includes(status)) ? 'ready' : 'unknown';
+}
+
 function roomTitle(room) {
   return room?.name || room?.roomName || room?.type || roomIdOf(room) || 'Помещение';
 }
@@ -195,9 +203,10 @@ function locationPanel(site, state) {
   const auto = insolationZone(location.lat);
   const clock = [Math.floor(sun.time / 60) % 24, sun.time % 60].map((n) => String(n).padStart(2, '0')).join(':');
   const field = (id, title, attributes, value) => `<label><span>${title}</span><input id="${id}" data-climate-setting="${id}" ${attributes} value="${escapeHtml(String(value ?? ''))}"></label>`;
-  return `<details data-climate-location data-analysis-fold="location" class="climate-fold">
-    <summary>⌖ &nbsp; Координаты и солнце <small>${site.solarVerified ? '✓ Проверены' : 'Уточнить'}</small></summary>
-    <div class="climate-fields">
+  const status = site.solarVerified ? 'ready' : 'unknown';
+  return `<details data-climate-location data-analysis-fold="location" data-status="${status}" class="climate-fold home-mission-section">
+    <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">2</span><span><strong>Координаты и солнце</strong><small>${site.solarVerified ? 'Проверены' : 'Нужно уточнить'}</small></span><span class="home-mission-state" data-status="${status}" aria-label="${site.solarVerified ? 'Координаты проверены' : 'Координаты нужно уточнить'}"></span></summary>
+    <div class="home-mission-body"><div class="climate-fields">
       ${field('lat', 'Широта, °', 'type="number" required min="-90" max="90" step="any"', location.lat)}
       ${field('lon', 'Долгота, °', 'type="number" required min="-180" max="180" step="any"', location.lon)}
       ${field('tz', 'Часовой пояс UTC', 'type="number" required min="-12" max="14" step="0.25"', location.tz)}
@@ -215,7 +224,7 @@ function locationPanel(site, state) {
     <details data-analysis-fold="norm"><summary>Ориентир инсоляции</summary>
       <div class="climate-fields">${field('normHours','Продолжительность, ч', `type="number" min="0.5" step="0.5" placeholder="${auto.hours}"`,site.norms?.hours)}
       ${field('normDay','Месяц и день', `pattern="[0-9]{2}-[0-9]{2}" placeholder="${auto.day}"`,site.norms?.day)}</div>
-    </details>
+    </details></div>
   </details>`;
 }
 
@@ -232,15 +241,26 @@ function statusText(status, kind) {
   return ['Недостаточно данных', 'unknown'];
 }
 
+function lightMissionStatus(status, kind) {
+  if (kind === 'daylight' && status === 'no_windows') return 'blocked';
+  if (kind === 'direct' && status === 'missing') return 'unknown';
+  if (['preliminary', 'estimated', 'candidate', 'partial'].includes(status)) return 'attention';
+  if (['verified', 'fact', 'ready'].includes(status)) return 'ready';
+  return 'unknown';
+}
+
 function metric(label, value, note = '') {
   return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>${note ? `<small>${escapeHtml(note)}</small>` : ''}</div>`;
 }
 
-function lightHeading(title, status, kind) {
-  const symbol = kind === 'daylight'
-    ? '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 4v16M4 12h16"/>'
-    : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>';
-  return `<div class="home-climate-card-head"><i aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">${symbol}</svg></i><div><h4>${title}</h4><span>${escapeHtml(status)}</span></div></div>`;
+function lightMapButton({ kind, title, value, status, state, room }) {
+  const on = state?.solarAnalysis?.on === true && state.solarAnalysis.mode === kind
+    && state.solarAnalysis.roomId === roomIdOf(room);
+  const mission = lightMissionStatus(status, kind);
+  const statusLabel = statusText(status, kind)[0];
+  const symbol = kind === 'daylight' ? '▦' : '☀';
+  const action = kind === 'daylight' ? 'карту освещённости' : 'карту прямого солнца';
+  return `<button type="button" data-analysis="${kind}" data-status="${mission}" aria-label="${on ? 'Скрыть' : 'Показать'} ${action}: ${escapeHtml(value)}. ${escapeHtml(statusLabel)}" aria-pressed="${on}" data-home-climate-action="toggle-map" data-home-climate-map="${kind}" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}"><span class="home-mission-state" data-status="${mission}" aria-hidden="true"></span> <span aria-hidden="true">${symbol}</span> ${title}<br><strong>${escapeHtml(value)}</strong><span class="sr-only"> · ${escapeHtml(statusLabel)}</span></button>`;
 }
 
 function roomDetail(state, room, detail) {
@@ -250,29 +270,21 @@ function roomDetail(state, room, detail) {
   const glazing = detail.glazing || {};
   const insolation = detail.insolation || {};
   const thermal = detail.thermal || detail.thermalRisk || {};
-  const [dayLabel, dayCss] = statusText(daylight.status, 'daylight');
-  const [sunLabel, sunCss] = statusText(direct.status, 'direct');
   const ratio = Number(glazing.ratio);
   const ratioText = ratio > 0 ? `1:${number(1 / ratio, 1)}` : '—';
-  const directOn = state?.solarAnalysis?.on === true && state.solarAnalysis.mode === 'direct'
-    && state.solarAnalysis.roomId === roomIdOf(room);
-  const daylightOn = state?.solarAnalysis?.on === true && state.solarAnalysis.mode === 'daylight'
-    && state.solarAnalysis.roomId === roomIdOf(room);
+  const dayStatus = lightMissionStatus(daylight.status, 'daylight');
+  const sunStatus = lightMissionStatus(direct.status, 'direct');
+  const roomStatus = [dayStatus, sunStatus].includes('blocked') ? 'blocked'
+    : [dayStatus, sunStatus].includes('unknown') ? 'unknown'
+      : [dayStatus, sunStatus].includes('attention') ? 'attention' : 'ready';
   const assumptions = array(detail.assumptions).map((item) => typeof item === 'string' ? item : item?.text).filter(Boolean);
   const warnings = array(detail.warnings).map((item) => typeof item === 'string' ? item : item?.text).filter(Boolean);
-  return `<section class="home-climate-detail" aria-labelledby="homeClimateRoomTitle">
-    <h3 id="homeClimateRoomTitle" class="sr-only">${escapeHtml(roomTitle(room))}</h3>
-    <div class="home-climate-analysis-grid">
-      <article data-analysis="daylight" data-status="${dayCss}">
-        ${lightHeading('Дневной свет', dayLabel, 'daylight')}
-        <p class="climate-value">${number(daylight.meanLux, 0)} <small>лк в среднем</small></p>
-        <button type="button" aria-pressed="${daylightOn}" data-home-climate-action="toggle-map" data-home-climate-map="daylight" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}">${daylightOn ? 'Скрыть карту освещённости' : 'Карта освещённости'}</button>
-      </article>
-      <article data-analysis="direct" data-status="${sunCss}">
-        ${lightHeading('Прямое солнце', sunLabel, 'direct')}
-        <p class="climate-value">${duration(direct.meanMinutes)} <small>в среднем</small></p>
-        <button type="button" aria-pressed="${directOn}" data-home-climate-action="toggle-map" data-home-climate-map="direct" data-home-climate-room-id="${escapeHtml(roomIdOf(room))}" data-home-climate-level-id="${escapeHtml(room.levelId || '')}">${directOn ? 'Скрыть карту прямого солнца' : 'Карта прямого солнца'}</button>
-      </article>
+  return `<details class="home-climate-detail home-mission-section" data-analysis-fold="climate-room" data-status="${roomStatus}" open>
+    <summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">1</span><span><strong id="homeClimateRoomTitle">Свет в помещении</strong><small>${escapeHtml(roomTitle(room))}</small></span><span class="home-mission-state" data-status="${roomStatus}" aria-label="${roomStatus === 'ready' ? 'Данные подтверждены' : roomStatus === 'attention' ? 'Предварительная оценка' : roomStatus === 'blocked' ? 'Есть проблема' : 'Недостаточно данных'}"></span></summary>
+    <div class="home-mission-body">
+    <div class="home-circulation-layer-controls" aria-label="Карты света выбранного помещения">
+      ${lightMapButton({ kind: 'daylight', title: 'Дневной свет', value: `${number(daylight.meanLux, 0)} лк`, status: daylight.status, state, room })}
+      ${lightMapButton({ kind: 'direct', title: 'Прямое солнце', value: duration(direct.meanMinutes), status: direct.status, state, room })}
     </div>
     <details data-analysis-fold="detail" class="climate-fold"><summary>Показатели и допущения</summary>
       <label class="climate-glass">Светопропускание стекла, % <input type="number" id="daylightTransmittance" data-climate-setting="glass" min="10" max="100" value="${Math.round((state.solarAnalysis?.transmittance ?? 0.7) * 100)}"></label>
@@ -289,8 +301,8 @@ function roomDetail(state, room, detail) {
     ${(daylight.recommendations || []).length ? `<ul>${daylight.recommendations.map((r) => `<li>${escapeHtml(r.text)}</li>`).join('')}</ul>` : ''}
     ${warnings.length ? `<ul class="home-climate-warnings">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}
     ${assumptions.length ? `<details><summary>Допущения расчёта</summary><ul>${assumptions.map((assumption) => `<li>${escapeHtml(assumption)}</li>`).join('')}</ul></details>` : ''}
-    </details>
-  </section>`;
+    </details></div>
+  </details>`;
 }
 
 /** Разметка этапа 6. Тяжёлая сезонная сводка здесь не запускается. */
@@ -307,19 +319,21 @@ export function homeClimateHtml(project, state = {}) {
     };
   }
   const warnings = array(view.overview?.warnings).filter(Boolean);
+  const sourcesStatus = sourceMissionStatus(view.overview);
   return `<div class="home-climate" data-home-climate>
-    <div class="climate-target">
-      ${view.rooms.length ? `<label><span>Помещение</span><select data-home-climate-room>${roomOptions(view.rooms, view.room)}</select></label>` : '<p>Добавьте помещение на план.</p>'}
-      <label><span>Дата</span><input type="date" required data-home-climate-date value="${escapeHtml(effectiveDate(project))}"></label>
+    <div class="home-circulation-layer-controls" aria-label="Помещение и дата расчёта">
+      ${view.rooms.length ? `<label class="prop-field"><span>Помещение</span><select data-home-climate-room>${roomOptions(view.rooms, view.room)}</select></label>` : '<p>Добавьте помещение на план.</p>'}
+      <label class="prop-field"><span>Дата</span><input type="date" required data-home-climate-date value="${escapeHtml(effectiveDate(project))}"></label>
     </div>
     ${roomDetail(state, view.room, view.detail)}
     ${locationPanel(project.site, state)}
-    <details data-analysis-fold="sources" class="climate-fold"><summary>Исходные данные и точность</summary>
-      <ul class="home-climate-sources">${sourceCards(view.overview)}</ul>
+    <details data-analysis-fold="sources" data-status="${sourcesStatus}" class="climate-fold home-mission-section"><summary class="home-mission-summary"><span class="home-mission-index" aria-hidden="true">3</span><span><strong>Исходные данные</strong><small>Точность расчёта</small></span><span class="home-mission-state" data-status="${sourcesStatus}" aria-label="${sourcesStatus === 'ready' ? 'Данные подтверждены' : sourcesStatus === 'attention' ? 'Есть предварительные данные' : 'Не хватает данных'}"></span></summary>
+      <div class="home-mission-body"><ul class="home-climate-sources">${sourceCards(view.overview)}</ul>
       ${warnings.length ? `<ul>${warnings.map((w) => `<li>${escapeHtml(typeof w === 'string' ? w : w.text || w.reason || '')}</li>`).join('')}</ul>` : ''}
       <p>Не нормативное заключение. Карты не рассчитывают температуру, воздухообмен, перегрев или CFD.</p>
+      </div>
     </details>
-    <button type="button" id="solarAnnualRun" class="climate-report" data-solar-report-open data-home-climate-action="open-report">▤ &nbsp; Сезонная световая сводка</button>
+    <button type="button" id="solarAnnualRun" class="climate-report" data-solar-report-open data-home-climate-action="open-report">Сезонная световая сводка</button>
   </div>`;
 }
 
