@@ -3759,6 +3759,7 @@ function renderFrame() {
   syncCommandState();
   const rect = canvas.getBoundingClientRect();
   const c = colors();
+  refreshOffsetPreviewFromCursor();
   updateLinkedDimensions();
   updateSnapTrackingHover();
   shell.dataset.debugTool = state.tool;
@@ -3896,8 +3897,9 @@ function shouldGhostEntityForCommand(entity) {
 }
 
 function syncCommandState() {
-  const active = Boolean(state.moveCommand || state.offsetCommand || state.selectedEndpoint || state.selectedFigureGrip);
-  shell.dataset.command = state.offsetCommand ? "offset" : active ? "move" : "";
+  const offsetEdit = state.lineEdit?.mode === "offset";
+  const active = Boolean(state.moveCommand || state.offsetCommand || offsetEdit || state.selectedEndpoint || state.selectedFigureGrip);
+  shell.dataset.command = state.offsetCommand || offsetEdit ? "offset" : active ? "move" : "";
   shell.classList.toggle("command-active", active);
   if (centerCursor) {
     centerCursor.classList.toggle("force-visible", active);
@@ -10488,12 +10490,12 @@ function syncLineControls() {
   if (edit?.mode === "break") for (const button of breakModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.breakMode === edit.breakMode));
   }
-  const finishing = edit?.applied && !edit.pending && (hasBoundaries || edit.mode === "offset");
+  const finishing = edit?.applied && !edit.pending && hasBoundaries;
   lineUi.lineEditCancel.hidden = Boolean(finishing);
   lineUi.lineEditFinish.hidden = !finishing;
   lineUi.lineEditApply.hidden = !edit?.pending && !chooseBoundaries;
   lineUi.lineEditApply.disabled = Boolean(chooseBoundaries && !edit.boundaryIds.length);
-  const label = chooseBoundaries ? "Подтвердить границы" : "Подтвердить правку";
+  const label = chooseBoundaries ? "Подтвердить границы" : edit?.mode === "offset" ? "Создать отступ" : "Подтвердить правку";
   lineUi.lineEditApply.title = label;
   lineUi.lineEditApply.setAttribute("aria-label", label);
 }
@@ -10796,7 +10798,7 @@ function syncLineQuantityFields() {
   lineUi.lineLengthModes.hidden = scale;
   for (const button of lineUi.lineLengthModes.children) button.setAttribute("aria-pressed", String(button.dataset.lengthMode === mode));
   input.parentElement.hidden = pointOnly;
-  form.querySelector("button[type=submit]").hidden = pointOnly;
+  form.querySelector("button[type=submit]").hidden = pointOnly || state.lineEdit.mode === "offset";
   input.placeholder = scale ? "1,5" : projectUnit(state.measurementSettings).label;
   input.setAttribute("aria-label", scale ? "Коэффициент масштаба" : "Расстояние смещения");
 }
@@ -10816,9 +10818,46 @@ function submitLineLength() {
   }
   edit.amount = amount;
   input.removeAttribute("aria-invalid");
-  setLineEditHint(mode === "factor" ? "Наведите крестик на базу масштабирования" : "Наведите крестик на нужную сторону линии");
+  if (edit.mode === "offset") {
+    refreshOffsetPreviewFromCursor(edit);
+    setLineEditHint("Перемещайте чертёж: отступ строится со стороны крестика · нажмите ✓");
+  } else {
+    setLineEditHint("Наведите крестик на базу масштабирования");
+  }
   input.blur();
   draw();
+}
+
+function updateOffsetAmountFromInput(edit = state.lineEdit) {
+  if (edit?.mode !== "offset" || edit.lengthMode !== "distance") return false;
+  const number = parseLineDecimal(lineUi.lineLengthInput.value.trim());
+  const amount = fromProjectLength(number, state.measurementSettings);
+  edit.amount = Number.isFinite(amount) && amount > 0 && amount <= MAX_LINE_COORDINATE ? amount : null;
+  lineUi.lineLengthInput.toggleAttribute("aria-invalid", lineUi.lineLengthInput.value.trim() !== "" && edit.amount === null);
+  return edit.amount !== null;
+}
+
+function refreshOffsetPreviewFromCursor(edit = state.lineEdit) {
+  if (edit?.mode !== "offset") return false;
+  const source = lineEditEntity(edit.sourceId, edit.mode);
+  const through = edit.lengthMode === "through";
+  if (!source || (!through && edit.amount === null)) {
+    edit.pending = null;
+    return false;
+  }
+  const point = rawCursorWorld();
+  const coordinates = parallelLine(source, point, through ? null : edit.amount);
+  if (!coordinates) {
+    edit.pending = null;
+    return false;
+  }
+  const preview = { ...source, ...coordinates, id: edit.offsetPreviewId ||= newLineId(source.type || "line") };
+  if (!validFigurePiece(preview)) {
+    edit.pending = null;
+    return false;
+  }
+  edit.pending = { replacements: [], message: "Смещение создано", added: [preview], association: "follow" };
+  return true;
 }
 
 function finishLineJoin() {
@@ -11016,11 +11055,7 @@ function applyQuickEdit(mode, screen) {
 
 function placeLineTransform(edit, source, point) {
   if (edit.mode === "offset") {
-    const through = edit.lengthMode === "through";
-    if (!through && edit.amount === null) return setLineEditHint("Укажите расстояние и нажмите галочку");
-    const coordinates = parallelLine(source, point, through ? null : edit.amount);
-    if (!coordinates) return setLineEditHint("Укажите точку вне оси исходной линии");
-    previewLineEdit([], "Смещение создано", [{ ...source, ...coordinates, id: newLineId() }]);
+    refreshOffsetPreviewFromCursor(edit);
     return;
   }
   if (edit.mode === "scale") {
@@ -11149,7 +11184,7 @@ function applyLineEditPreview() {
   if (!edit.pending) return;
   const { replacements, message, added, association } = edit.pending;
   if (!commitLineEdit(replacements, message, added, association)) return;
-  if (["trim", "extend", "offset"].includes(edit.mode)) {
+  if (["trim", "extend"].includes(edit.mode)) {
     state.lineEdit = edit;
     edit.pending = null;
     edit.applied = true;
@@ -13838,9 +13873,21 @@ lineUi.lineEditRadius.addEventListener("input", () => {
   if (state.lineEdit?.mode === "fillet") refreshFilletPreview(state.lineEdit);
 });
 lineUi.lineLengthInput.addEventListener("input", () => {
-  if (!state.lineEdit?.pending) return;
-  state.lineEdit.pending = null;
-  setLineEditHint("Укажите точку с новыми параметрами");
+  const edit = state.lineEdit;
+  if (!edit) return;
+  edit.pending = null;
+  edit.amount = null;
+  lineUi.lineLengthInput.removeAttribute("aria-invalid");
+  if (edit.mode === "offset" && edit.lengthMode === "distance") {
+    if (updateOffsetAmountFromInput(edit)) {
+      refreshOffsetPreviewFromCursor(edit);
+      setLineEditHint("Перемещайте чертёж: отступ строится со стороны крестика · нажмите ✓");
+    } else {
+      setLineEditHint("Введите положительное расстояние отступа");
+    }
+  } else {
+    setLineEditHint("Укажите точку с новыми параметрами");
+  }
   draw();
 });
 lineUi.linePolarStep.addEventListener("change", () => {
@@ -13856,11 +13903,6 @@ lineUi.lineEditForm.addEventListener("submit", (event) => {
   event.preventDefault();
   submitLineLength();
 });
-lineUi.lineLengthInput.addEventListener("input", () => {
-  if (!state.lineEdit) return;
-  state.lineEdit.amount = null;
-  lineUi.lineLengthInput.removeAttribute("aria-invalid");
-});
 lineUi.lineLengthModes.addEventListener("click", (event) => {
   if (!state.lineEdit) return;
   const mode = event.target.closest("[data-length-mode]")?.dataset.lengthMode;
@@ -13870,7 +13912,17 @@ lineUi.lineLengthModes.addEventListener("click", (event) => {
   state.lineEdit.pending = null;
   state.lineEdit.lengthMode = mode;
   syncLineQuantityFields();
-  if (mode === "through") setLineEditHint("Наведите крестик на точку для параллели");
+  if (state.lineEdit.mode === "offset") {
+    if (mode === "through") {
+      refreshOffsetPreviewFromCursor(state.lineEdit);
+      setLineEditHint("Параллель проходит через крестик · нажмите ✓");
+    } else if (updateOffsetAmountFromInput(state.lineEdit)) {
+      refreshOffsetPreviewFromCursor(state.lineEdit);
+      setLineEditHint("Перемещайте чертёж: отступ строится со стороны крестика · нажмите ✓");
+    } else {
+      setLineEditHint("Введите расстояние отступа");
+    }
+  } else if (mode === "through") setLineEditHint("Наведите крестик на точку для параллели");
   else setLineEditHint("Введите значение и нажмите галочку");
   draw();
 });
