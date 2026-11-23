@@ -652,7 +652,6 @@ const themeButton = document.getElementById("themeButton");
 const annotationScaleSelect = document.getElementById("annotationScaleSelect");
 const annotationScaleButton = document.getElementById("annotationScaleButton");
 const annotationScaleValue = document.getElementById("annotationScaleValue");
-const annotationScaleUse = document.getElementById("annotationScaleUse");
 const annotationScaleSheet = document.getElementById("annotationScaleSheet");
 const annotationScaleGrid = document.getElementById("annotationScaleGrid");
 const projectSettingsButton = document.getElementById("projectSettingsButton");
@@ -3729,8 +3728,7 @@ function syncAnnotationScaleChoice(value) {
   const preset = annotationScalePreset(value);
   annotationScaleSelect.value = String(preset.factor);
   annotationScaleValue.textContent = `1:${preset.denominator}`;
-  annotationScaleUse.textContent = `${preset.title} · ${preset.hint.toLocaleLowerCase("ru-RU")}`;
-  annotationScaleButton.setAttribute("aria-label", `Масштаб подписей 1:${preset.denominator}. Изменить`);
+  annotationScaleButton.setAttribute("aria-label", `Масштаб 1:${preset.denominator}. Изменить`);
   for (const button of annotationScaleGrid.querySelectorAll("[data-annotation-scale]")) {
     button.setAttribute("aria-checked", String(Number(button.dataset.annotationScale) === preset.factor));
   }
@@ -14518,11 +14516,7 @@ for (const preset of ANNOTATION_SCALE_PRESETS) {
   button.setAttribute("aria-checked", "false");
   const scale = document.createElement("strong");
   scale.textContent = `1:${preset.denominator}`;
-  const title = document.createElement("span");
-  title.textContent = preset.title;
-  const hint = document.createElement("small");
-  hint.textContent = preset.hint;
-  button.append(scale, title, hint);
+  button.append(scale);
   annotationScaleGrid.append(button);
 }
 

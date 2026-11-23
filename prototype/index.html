@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=317" />
+    <link rel="stylesheet" href="./styles.css?v=318" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -541,13 +541,12 @@
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
             <div class="survey-field annotation-scale-setting">
-              <span>Масштаб подписей</span>
+              <span>Масштаб</span>
               <input id="annotationScaleSelect" type="hidden" value="1" />
-              <button class="annotation-scale-opener" id="annotationScaleButton" type="button" aria-describedby="annotationScaleScope" aria-haspopup="dialog">
-                <span class="annotation-scale-opener-main"><strong id="annotationScaleValue">1:100</strong><small id="annotationScaleUse">Этаж · основной архитектурный план</small></span>
+              <button class="annotation-scale-opener" id="annotationScaleButton" type="button" aria-haspopup="dialog">
+                <strong id="annotationScaleValue">1:100</strong>
                 <span class="annotation-scale-chevron" aria-hidden="true">›</span>
               </button>
-              <small id="annotationScaleScope">Размеры, площади и отметки Z увеличиваются и уменьшаются вместе с чертежом</small>
             </div>
             <label class="survey-field" for="projectPrintScale"><span>Масштаб PDF по умолчанию</span>
               <select id="projectPrintScale"><option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option><option value="100">1:100</option><option value="150">1:150</option><option value="200">1:200</option></select>
@@ -566,15 +565,11 @@
       </dialog>
       <dialog class="survey-sheet annotation-scale-sheet" id="annotationScaleSheet" aria-labelledby="annotationScaleTitle">
         <header class="sheet-head">
-          <div>
-            <h2 id="annotationScaleTitle">Масштаб подписей</h2>
-            <p>Выберите размер чисел, площадей и отметок относительно чертежа</p>
-          </div>
+          <h2 id="annotationScaleTitle">Масштаб</h2>
           <button class="icon-button" id="closeAnnotationScale" type="button" aria-label="Закрыть выбор масштаба">×</button>
         </header>
         <div class="annotation-scale-content">
-          <p class="annotation-scale-note"><strong>Единый масштаб с чертежом</strong><span>При приближении и отдалении подписи меняются вместе со всеми линиями и объектами.</span></p>
-          <div class="annotation-scale-grid" id="annotationScaleGrid" role="radiogroup" aria-label="Масштаб подписей"></div>
+          <div class="annotation-scale-grid" id="annotationScaleGrid" role="radiogroup" aria-label="Масштаб"></div>
         </div>
       </dialog>
       <dialog class="survey-sheet" id="surveySheet" aria-labelledby="surveyHeading">
@@ -664,7 +659,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=324"></script>
+    <script type="module" src="./app.js?v=325"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
