@@ -45,6 +45,7 @@ Gradle читает `%USERPROFILE%\.zamer-cad\signing\keystore.properties`.
 
 ```powershell
 $env:ZAMER_SIGNING_PROPERTIES = 'D:\Private\Zamer\keystore.properties'
+$env:ZAMER_SIGNING_STORE_FILE = 'D:\Private\Zamer\zamer-release.jks' # если storeFile в конфигурации устарел
 ```
 
 Формат конфигурации (заполнить локально; путь с прямыми слешами):
