@@ -2245,13 +2245,15 @@ button.project-card-open:active { background: var(--surface-2); }
 .copy-tool-menu {
   grid-template-columns: 1fr;
   left: auto;
+  padding: 4px;
   right: 8px;
-  top: calc(var(--workspace-edit-panel-top) + 58px);
-  width: 78px;
+  width: 54px;
 }
 
 .copy-tool-menu button {
-  height: 70px;
+  height: 44px;
+  padding: 2px;
+  width: 44px;
 }
 
 .copy-controls {
@@ -2259,6 +2261,7 @@ button.project-card-open:active { background: var(--surface-2); }
   display: flex;
   left: auto;
   padding: 4px;
+  top: calc(var(--workspace-edit-panel-top) + 54px);
 }
 
 .copy-controls button {

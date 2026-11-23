@@ -3813,7 +3813,6 @@ function renderFrame() {
     if (geometry) {
       const previewMoving = lineMetricPreview(state.selectedEndpoint) ?? endpointCursorPoint(geometry);
       const angleAnchor = drawEditableSegment(geometry.fixed, previewMoving, c, { dashed: true });
-      for (const end of connectedLineEnds(geometry)) drawEditableSegment(end.fixed, previewMoving, c, { dashed: true });
       updateSelectedEndpointEditors(previewMoving);
       if (isDraftLine(geometry.entity)) drawSegmentMetricLabels(geometry.fixed, previewMoving, angleAnchor, c, rect);
       else draftMetricLabels.hidden = true;
@@ -7228,42 +7227,6 @@ function lineEndpointGeometry(entity, side) {
     : { entity, side, fixed: start, moving: end };
 }
 
-function connectedLineEnds(geometry, entities = state.entities) {
-  if (!isDraftLine(geometry.entity)) return [];
-  const ends = [];
-  for (const entity of entities) {
-    if (entity === geometry.entity || !isDraftLine(entity) || !isLayerVisible(entity.layer) || isLayerLocked(entity.layer) ||
-        (entity.layer === TRACE_LAYER) !== (geometry.entity.layer === TRACE_LAYER)) continue;
-    const start = lineEndpointGeometry(entity, "start");
-    const end = lineEndpointGeometry(entity, "end");
-    if (distanceWorld(start.moving, geometry.moving) <= linePointEpsilon) ends.push(start);
-    else if (distanceWorld(end.moving, geometry.moving) <= linePointEpsilon) ends.push(end);
-  }
-  return ends;
-}
-
-function commitConnectedLineEnds(ends, point) {
-  if (ends.some(({ entity }) => isLayerLocked(entity.layer))) return false;
-  const edits = [];
-  for (const { entity, side, fixed } of ends) {
-    const after = side === "start" ? { x1: point.x, y1: point.y, x2: fixed.x, y2: fixed.y }
-      : { x1: fixed.x, y1: fixed.y, x2: point.x, y2: point.y };
-    if (!isValidLine(after)) {
-      statusChip.textContent = "Концы соединённых линий должны различаться";
-      return false;
-    }
-    const before = entityGeometry(entity);
-    if (geometryChanged(before, after)) edits.push({ entityId: entity.id, before, after });
-  }
-  if (edits.length) {
-    const action = { type: "move-selection", edits, selection: [...state.selectedIds] };
-    state.undo.push(action);
-    state.redo.length = 0;
-    applyMoveSelection(action, "after");
-  }
-  return true;
-}
-
 function setSelectedEndpointPosition(point) {
   const endpoint = state.selectedEndpoint;
   const entity = endpoint ? state.entities.find((item) => item.id === endpoint.entityId) : null;
@@ -7298,24 +7261,19 @@ function commitSelectedEndpointCursorPoint(beforeOverride = null, explicitPoint 
     statusChip.textContent = "Концы линии должны различаться";
     return false;
   }
-  const connected = connectedLineEnds(geometry);
-  if (connected.length) {
-    if (!commitConnectedLineEnds([geometry, ...connected], point)) return false;
-  } else {
-    if (point.x !== geometry.moving.x || point.y !== geometry.moving.y) setSelectedEndpointPosition(point);
-    const after = entityGeometry(entity);
-    if (geometryChanged(before, after)) {
-      state.undo.push({ type: "move", entityId: entity.id, before, after });
-      state.redo.length = 0;
-      markProjectDirty("endpoint-place");
-    }
+  if (point.x !== geometry.moving.x || point.y !== geometry.moving.y) setSelectedEndpointPosition(point);
+  const after = entityGeometry(entity);
+  if (geometryChanged(before, after)) {
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    markProjectDirty("endpoint-place");
   }
   clearLineMetricEdit();
   state.endpointEditBefore = null;
   state.selectedEndpoint = null;
   hideInlineEditors();
   resetSnapTracking();
-  statusChip.textContent = connected.length ? "Общая вершина обновлена" : "Конец линии обновлен";
+  statusChip.textContent = "Конец линии обновлен";
   draw();
   return true;
 }
@@ -10460,14 +10418,14 @@ function syncLineControls() {
   if ((!viewportIsSelecting() && !copying && !state.copyPicking) || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
   quickCopyTool.disabled = !copying && !viewportIsSelecting();
   quickCopyTool.setAttribute("aria-expanded", String(!copyToolMenu.hidden || Boolean(state.copyPicking) || copying));
-  copyControls.hidden = !state.copyPicking && !(copying && ["repeat", "array"].includes(state.moveCommand.copyMode));
-  copyCountControl.hidden = !copying || state.moveCommand.copyMode !== "array";
-  const repeating = copying && state.moveCommand.copyMode === "repeat";
-  copyConfirm.hidden = !state.copyPicking && !repeating;
-  copyConfirm.disabled = !repeating && !selectedEntities().length;
-  copyConfirm.setAttribute("aria-label", repeating ? "Завершить копирование" : "Подтвердить выбор");
+  const arrayCopying = copying && state.moveCommand.copyMode === "array";
+  copyControls.hidden = !state.copyPicking && !arrayCopying;
+  copyCountControl.hidden = !arrayCopying;
+  copyConfirm.hidden = !state.copyPicking;
+  copyConfirm.disabled = Boolean(state.copyPicking && !selectedEntities().length);
+  copyConfirm.setAttribute("aria-label", "Подтвердить выбор");
   copyConfirm.title = copyConfirm.getAttribute("aria-label");
-  copyClose.hidden = repeating;
+  copyClose.hidden = false;
   quickRotateTool.disabled = !canApplySelectionAction("rotate");
   quickDeleteTool.disabled = !canApplySelectionAction("delete");
   const quickTargets = quickMoveTool.disabled ? [] : selectedEntities().filter(entity => isLayerVisible(entity.layer));
@@ -11327,15 +11285,6 @@ function drawLineEditMarks(c) {
   if (pointer?.mode === "line-grip" && pointer.preview) {
     const { x1, y1, x2, y2 } = pointer.preview;
     drawEditableSegment({ x: x1, y: y1 }, { x: x2, y: y2 }, c, { dashed: true });
-    if (pointer.grip.point !== "middle") {
-      const entity = state.entities.find(({ id }) => id === pointer.grip.entityId);
-      const target = pointer.grip.point === "start" ? { x: x1, y: y1 } : { x: x2, y: y2 };
-      if (entity) {
-        for (const end of connectedLineEnds(lineEndpointGeometry(entity, pointer.grip.point))) {
-          drawEditableSegment(end.fixed, target, c, { dashed: true });
-        }
-      }
-    }
   } else if (pointer?.mode === "figure-grip" && pointer.preview) {
     const entity = state.entities.find(item => item.id === pointer.grip.entityId);
     if (entity) {
@@ -11546,17 +11495,10 @@ function finishLineGrip(pointer) {
   if (pointer.preview && isValidLine(pointer.preview) && geometryChanged(before, pointer.preview)) {
     const after = pointer.preview;
     const side = pointer.grip.point;
-    const geometry = side === "middle" ? null : lineEndpointGeometry(entity, side);
-    const connected = geometry ? connectedLineEnds(geometry) : [];
-    if (connected.length) {
-      const target = lineEndpointGeometry(after, side).moving;
-      if (commitConnectedLineEnds([geometry, ...connected], target)) statusChip.textContent = "Общая вершина обновлена";
-    } else {
-      applyEntityGeometry(entity, after);
-      state.undo.push({ type: "move", entityId: entity.id, before, after });
-      state.redo.length = 0;
-      statusChip.textContent = side === "middle" ? "Линия перемещена" : "Конец линии обновлён";
-    }
+    applyEntityGeometry(entity, after);
+    state.undo.push({ type: "move", entityId: entity.id, before, after });
+    state.redo.length = 0;
+    statusChip.textContent = side === "middle" ? "Линия перемещена" : "Конец линии обновлён";
   }
   pointer.preview = null;
   resetSnapTracking();
@@ -12022,9 +11964,8 @@ function startCanvasPointerAction(event, screen) {
     return;
   }
   if (state.selectTool === "multi" && viewportIsSelecting()) {
-    const grip = state.copyPicking ? null : pickSelectedLineEndpoint(screen, true);
-    state.pointer = grip ? { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "line-grip", grip, preview: null }
-      : { id: event.pointerId, screen, startScreen: screen, moved: false, mode: "select-only", tapCandidateId: pickEntity(screen) };
+    state.pointer = { id: event.pointerId, screen, startScreen: screen, moved: false,
+      mode: "select-only", tapCandidateId: pickEntity(screen) };
     return;
   }
   if (event.ctrlKey && !event.shiftKey && !event.altKey && event.pointerType === "mouse" && event.button === 0 &&
@@ -13251,13 +13192,12 @@ function pickSelectedFigureGrip(screen) {
   return best;
 }
 
-function pickSelectedLineEndpoint(screen, sharedOnly = false) {
-  const entities = sharedOnly ? selectedEntities() : [state.entities.find((item) => item.id === state.selectedId)];
+function pickSelectedLineEndpoint(screen) {
+  const entities = [state.entities.find((item) => item.id === state.selectedId)];
   let best = null;
   for (const entity of entities) {
     const grip = nearestLineEndpoint(entity, screen);
     if (!grip || (best && best.distance <= grip.distance)) continue;
-    if (sharedOnly && (grip.point === "middle" || !connectedLineEnds(lineEndpointGeometry(entity, grip.point), entities).length)) continue;
     best = grip;
   }
   return best;
