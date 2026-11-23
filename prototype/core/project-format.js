@@ -3,7 +3,7 @@ import { arcGeometry } from "./geometry.js";
 import { isLinePoint, isValidLine, MAX_LINE_COORDINATE } from "./line-edits.js";
 import { validPolylinePoints } from "./polyline.js";
 import { normalizePlanAnnotation } from "./plan-annotations.js";
-import { CUSTOM_LINE_LAYER_PREFIX, DEFAULT_LINE_LAYER, normalizeLineLayerColor, normalizeLineLayerSettings, normalizeLineWeight } from "./line-layers.js";
+import { CUSTOM_LINE_LAYER_PREFIX, DEFAULT_LINE_LAYER, normalizeLineLayerColor, normalizeLineLayerSettings, normalizeLineType, normalizeLineWeight } from "./line-layers.js";
 import { expandReusableBlock, isReusableBlock, normalizeReusableBlocks } from "./reusable-blocks.js";
 
 export const MAX_ZAMER_FILE_BYTES = 32 * 1024 * 1024;
@@ -54,6 +54,7 @@ export function validStoredEntity(entity) {
       (entity.layer != null && typeof entity.layer !== "string") ||
       (entity.color != null && (typeof entity.color !== "string" || normalizeLineLayerColor(entity.color) !== entity.color.toLowerCase())) ||
       (entity.lineWeight != null && normalizeLineWeight(entity.lineWeight) !== entity.lineWeight) ||
+      (entity.lineType != null && normalizeLineType(entity.lineType) !== entity.lineType) ||
       (entity.groupId != null && (typeof entity.groupId !== "string" || !entity.groupId.trim()))) return false;
   switch (entity.type) {
     case "line": {
@@ -125,9 +126,10 @@ export function validateZamerProject(project) {
   if (project.layerStyles !== undefined && (!plainObject(project.layerStyles) ||
       Object.keys(project.layerStyles).length !== Object.keys(layerStyles).length ||
       Object.entries(project.layerStyles).some(([id, style]) => !plainObject(style) || !layerStyles[id] ||
-        Object.keys(style).some((key) => !["color", "lineWeight"].includes(key)) ||
+        Object.keys(style).some((key) => !["color", "lineWeight", "lineType"].includes(key)) ||
         (style.color !== undefined && (typeof style.color !== "string" || normalizeLineLayerColor(style.color) !== style.color.toLowerCase())) ||
-        (style.lineWeight !== undefined && normalizeLineWeight(style.lineWeight) !== style.lineWeight)))) {
+        (style.lineWeight !== undefined && normalizeLineWeight(style.lineWeight) !== style.lineWeight) ||
+        (style.lineType !== undefined && normalizeLineType(style.lineType) !== style.lineType)))) {
     throw new Error("Повреждено оформление слоёв");
   }
   const customLayerIds = new Set(customLineLayers.map(({ id }) => id));

@@ -779,6 +779,11 @@ button.project-card-open:active { background: var(--surface-2); }
   touch-action: manipulation;
 }
 
+.topbar-actions #layersButton {
+  min-width: 72px;
+  width: 72px;
+}
+
 .topbar-actions #allSnapsButton {
   height: 40px;
   margin-inline-start: auto;
@@ -2238,7 +2243,15 @@ button.project-card-open:active { background: var(--surface-2); }
 }
 
 .copy-tool-menu {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 1fr;
+  left: auto;
+  right: 8px;
+  top: calc(var(--workspace-edit-panel-top) + 58px);
+  width: 78px;
+}
+
+.copy-tool-menu button {
+  height: 70px;
 }
 
 .copy-controls {
@@ -2588,6 +2601,19 @@ button.project-card-open:active { background: var(--surface-2); }
   overflow-wrap: anywhere;
   padding: 6px 10px;
   text-align: start;
+}
+
+.layer-labels {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.layer-style-summary {
+  color: var(--muted);
+  font-size: .67rem;
+  font-weight: 550;
+  line-height: 1.15;
 }
 
 button.layer-name {
