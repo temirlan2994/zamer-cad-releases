@@ -23,8 +23,8 @@ async function openWithIssue(page) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
     k.select(null);
   });
-  // Замечание о площади/ширине (группа «Нормы» может быть выключена).
-  await page.waitForFunction(() => window.__kepler.state.norms?.problems.some((p) => p.kind === 'area' || p.kind === 'width'));
+  // План уже показан; фоновый снимок считает только включённые группы.
+  await page.waitForFunction(() => window.__kepler.state.analytics?.dirty === false);
 }
 
 // Первое предупреждение с целью-комнатой или предметом.
@@ -112,6 +112,33 @@ describe('замечания: кнопка «⚠» и панель', () => {
     assert.equal(await app.page.getAttribute('#issuesBtn', 'aria-expanded'), 'false');
   });
 
+  it('замена проекта сразу убирает чужие нормы и бейдж, не дожидаясь idle', async () => {
+    const result = await app.page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const { flushAnalytics, mutate } = await import('./ui/store.js');
+      const state = window.__kepler.state;
+      window.__kepler.newProject();
+      mutate(() => { state.project.rooms.push(createRoom('living', 0, 0, 4000, 4000)); });
+      flushAnalytics();
+      const before = state.issues?.count || 0;
+      window.__kepler.newProject();
+      return {
+        before,
+        rooms: state.project.rooms.length,
+        issues: state.issues,
+        norms: state.norms,
+        dirty: state.analytics?.dirty,
+        badgeHidden: document.getElementById('issuesCount')?.hidden,
+      };
+    });
+    assert.ok(result.before > 0, 'у помещения без входа был готовый снимок замечаний');
+    assert.equal(result.rooms, 0);
+    assert.equal(result.dirty, true, 'новый снимок ещё будет собран в idle');
+    assert.equal(result.issues, null);
+    assert.equal(result.norms, null);
+    assert.equal(result.badgeHidden, true);
+  });
+
   it('без ошибок в консоли', () => { assert.deepEqual(app.errors, []); });
 });
 
@@ -130,9 +157,9 @@ describe('замечания: группы и «Скрыть»', () => {
     .find((i) => i.id.startsWith('area:') || i.id.startsWith('width:'))?.id || null);
   const badge = async (page) => ((await page.isVisible('#issuesCount')) ? Number((await page.textContent('#issuesCount')).trim()) : 0);
 
-  it('умолчания: включены «Геометрия» и «Мебель»; бейдж — только они', async () => {
+  it('умолчание: в рабочем плане включена только геометрия', async () => {
     const s = await k(app.page);
-    assert.deepEqual(s.summary.filter((g) => g.enabled).map((g) => g.id), ['furniture', 'geometry']);
+    assert.deepEqual(s.summary.filter((g) => g.enabled).map((g) => g.id), ['geometry']);
     const on = s.summary.filter((g) => g.enabled).reduce((n, g) => n + g.count, 0);
     assert.equal(s.count, on);
     assert.equal(await badge(app.page), s.count);
@@ -147,10 +174,13 @@ describe('замечания: группы и «Скрыть»', () => {
 
   it('тап по группе включает её: бейдж растёт, выбор в localStorage', async () => {
     const before = await k(app.page);
-    const norms = before.summary.find((g) => g.id === 'norms').count;
-    assert.ok(norms > 0, 'в примере есть замечание о площади');
+    const dormant = before.summary.find((g) => g.id === 'norms');
+    assert.equal(dormant.count, 0, 'выключенная аналитика не считается в фоне');
+    assert.equal(dormant.computed, false);
     await app.page.click('#issuesPanel [data-issue-group="norms"]');
     const after = await k(app.page);
+    const norms = after.summary.find((g) => g.id === 'norms').count;
+    assert.ok(norms > 0, 'после включения найдено замечание о площади');
     assert.equal(after.count, before.count + norms);
     assert.equal(await badge(app.page), after.count);
     assert.equal(await app.page.getAttribute('#issuesPanel [data-issue-group="norms"]', 'aria-pressed'), 'true');
@@ -169,9 +199,9 @@ describe('замечания: группы и «Скрыть»', () => {
     assert.equal(await app.page.$(`#issuesPanel [data-issue-id="${id}"]`), null);
     assert.match(await app.page.textContent('#issuesPanel [data-hidden-toggle]'), /Скрытые \(1\)/);
     await app.page.keyboard.press('Control+z');
-    await app.page.waitForFunction(() => !window.__kepler.state.issues.hidden.length);
+    await app.page.waitForFunction(() => window.__kepler.state.issues && !window.__kepler.state.issues.hidden.length);
     await app.page.keyboard.press('Control+Shift+z');
-    await app.page.waitForFunction(() => window.__kepler.state.issues.hidden.length === 1);
+    await app.page.waitForFunction(() => window.__kepler.state.issues?.hidden.length === 1);
     s = await k(app.page);
     assert.equal(s.count, before.count - 1);
   });

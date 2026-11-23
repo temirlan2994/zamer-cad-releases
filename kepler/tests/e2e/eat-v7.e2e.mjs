@@ -83,6 +83,10 @@ describe('съедание путь-независимо, дом под 45°', (
     assert.deepEqual(await roomA(page), start.find((r) => r.id === 'A'), 'B удалена — A целая');
     await page.keyboard.press('Control+z');
     assert.deepEqual(await shapes(page), eaten, 'отмена удаления — снова съедена');
+    await page.waitForFunction(() => (
+      window.__kepler.state.analytics?.dirty === false
+      && Boolean(window.__kepler.state.norms)
+    ));
     const red = await page.evaluate(() => (window.__kepler.state.norms.overlaps || []).length);
     assert.equal(red, 0, 'нет красных зон');
   });

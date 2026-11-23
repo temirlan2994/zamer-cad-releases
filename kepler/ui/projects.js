@@ -39,6 +39,9 @@ import {
 } from './edit-lock-ui.js';
 import { PROJECT_REPLACED_EVENT } from './files.js';
 import { createProjectThumbnail } from './project-thumbnail.js';
+import {
+  lazyCloudDraft, materializeCloudDraft, projectStatsOf,
+} from './cloud-draft-metadata.js';
 
 const CLOUD_SAVE_DELAY = 5000;
 const CLOUD_SAVE_TIMEOUT = 15000;
@@ -143,8 +146,7 @@ function projectErrorText(error) {
 }
 
 function projectStats() {
-  const levels = state.project?.levels || [];
-  return { rooms: levels.reduce((sum, level) => sum + level.rooms.length, 0), levels: levels.length };
+  return projectStatsOf(state.project);
 }
 
 function currentProjectThumbnail() {
@@ -799,6 +801,11 @@ function openText(text, pid, missing, name = null, { resetHistory = false } = {}
   if (resetHistory) clearHistory(); else pushHistory(before, beforePid);
   state.pid = pid;
   setScopedItem(PID_KEY, pid || '');
+  // Переключение через список уже само управляет lease/резервом, но остальной
+  // интерфейс должен сбросить вкладки и закрыть аналитику прежней модели.
+  document.dispatchEvent(new CustomEvent(PROJECT_REPLACED_EVENT, {
+    detail: { managedSwitch: true, previousPid: beforePid || null, pid: pid || null },
+  }));
   syncProjectNameUi();
   tweak(() => {});
   fitView();
@@ -1054,6 +1061,7 @@ async function saveReplacementBackup(text) {
 }
 
 function handleProjectReplaced(event) {
+  if (event.detail?.managedSwitch) return;
   if (replacementBusy) {
     state.editLocked = true;
     state.editLockReason = 'switching-project';
@@ -1127,13 +1135,10 @@ function assignPendingDraft() {
 
 function scheduleCloudDraft(text, { immediate = false } = {}) {
   if (typeof text === 'string' && text) {
-    // Снимок создаётся вместе с конкретным JSON, пока state.project всё ещё
-    // относится к нему. Иначе при быстром переключении проектов в очередь
-    // могло попасть изображение уже следующей модели.
-    const preview = currentProjectThumbnail();
-    const draft = {
-      text, preview, stats: projectStats(), order: ++draftOrder,
-    };
+    // Локальный autosave не строит canvas-превью и не разбирает проект.
+    // Перед реальной облачной отправкой metadata будет создана из этого же
+    // текста, поэтому быстрое переключение проекта не перепутает снимки.
+    const draft = lazyCloudDraft(text, ++draftOrder);
     if (backend?.mode === 'cloud') {
       const pid = state.pid || newId('p');
       state.pid = pid;
@@ -1271,8 +1276,14 @@ async function flushCloudDraft({ allowStartLease = false } = {}) {
         }
         editor = { sessionId: activeEditor.lease.sessionId, epoch: activeEditor.lease.epoch };
       }
-      const operation = saveDraft(target.db, target.root, draft.text, {
-        pid, preview: draft.preview, stats: draft.stats, editor,
+      // Метаданные нужны только настоящей облачной записи. Они вычисляются
+      // после всех проверок lease/offline и кешируются в draft для retry.
+      const ready = materializeCloudDraft(draft, {
+        parse: deserializeProject,
+        thumbnail: createProjectThumbnail,
+      });
+      const operation = saveDraft(target.db, target.root, ready.text, {
+        pid, preview: ready.preview, stats: ready.stats, editor,
       });
       try {
         const saved = await withSaveTimeout(operation);

@@ -12,6 +12,9 @@ import { isPhone, toggleSheet } from './mobile.js';
 import { selectObject } from './tools.js';
 import { escapeHtml } from './dom.js';
 import { bindViewMenu, viewIcon } from './workspace-view-menu.js';
+import {
+  ANALYTICAL_WORKSPACE_VIEWS, activeAnalyticalViewId, closeAnalyticalView, openAnalyticalView,
+} from './project-route.js';
 
 function modelViews() {
   const project = state.project;
@@ -28,7 +31,21 @@ function sheets() {
   return sheetList(state.project).map((s, i) => [`sheet:${sheetKey(s)}`, `Л${sheetNumber(s, i)} · ${sheetTitle(state.project, s)}`, 'sheet']);
 }
 
+function analyticalViews() {
+  return ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.id, view.title, view.kind]);
+}
+
+function currentViewId() {
+  return activeAnalyticalViewId()
+    || (state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId());
+}
+
 function activate(id) {
+  if (id.startsWith('analysis:')) {
+    openAnalyticalView(id);
+    return;
+  }
+  closeAnalyticalView({ restoreFocus: false });
   if (id.startsWith('sheet:')) openSheet(id.slice('sheet:'.length));
   else openView(id);
 }
@@ -51,10 +68,10 @@ export function bindWorkspaceViews() {
   let draggedKey = null;
 
   function menuData() {
-    const groups = [...modelViews(), ['sheets', sheets()]];
+    const groups = [...modelViews(), ['analytics', analyticalViews()], ['sheets', sheets()]];
     const level = state.project.levels.find((item) => item.id === state.project.activeLevel);
     const actions = isPhone() ? [['add-level', 'Добавить этаж', 'plus'], ['level-properties', `Свойства «${level.name}»`, 'props']] : [];
-    return { groups, active: state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId(), actions };
+    return { groups, active: currentViewId(), actions };
   }
   const menu = bindViewMenu(nav, menuData, (target) => {
     if (target === 'add-level' || target === 'level-properties') {
@@ -78,7 +95,7 @@ export function bindWorkspaceViews() {
   function render() {
     pending = false;
     if (!state.project) return;
-    const groups = modelViews();
+    const groups = [...modelViews(), ['analytics', analyticalViews()]];
     if (state.pid !== projectId) {
       for (const btn of extra.values()) btn.remove();
       extra.clear();
@@ -89,7 +106,7 @@ export function bindWorkspaceViews() {
       projectId = state.pid;
     }
     const records = new Map(groups.flatMap(([, list]) => list).map((item) => [item[0], item]));
-    const active = state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId();
+    const active = currentViewId();
     if (state.sheetOpen || [...extra.keys()].some((key) => key.startsWith('sheet:'))) {
       for (const item of sheets()) records.set(item[0], item);
     }
@@ -158,7 +175,7 @@ export function bindWorkspaceViews() {
     if (!key) return;
     const visible = order.filter((id) => !closed.has(id));
     if (visible.length <= 1) return;
-    const wasActive = key === (state.sheetOpen ? `sheet:${state.sheetOpen}` : activeViewId());
+    const wasActive = key === currentViewId();
     closed.add(key);
     recent = recent.filter((id) => id !== key);
     if (wasActive) {
@@ -173,10 +190,17 @@ export function bindWorkspaceViews() {
   closeTab.addEventListener('click', () => closeView());
   tabs.addEventListener('click', (event) => {
     const close = event.target.closest('.wv-tab-x');
-    if (!close) return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeView(close.closest('[data-workspace-view]')?.dataset.workspaceView);
+    if (close) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeView(close.closest('[data-workspace-view]')?.dataset.workspaceView);
+      return;
+    }
+    const key = event.target.closest('[data-workspace-view]')?.dataset.workspaceView;
+    // У встроенных вкладок плана/3D уже есть собственные обработчики. После
+    // их переключения закрываем аналитическую палитру, чтобы два вида не
+    // оставались визуально активными одновременно.
+    if (key && !key.startsWith('analysis:')) closeAnalyticalView({ restoreFocus: false });
   }, true);
   tabs.addEventListener('dragstart', (event) => {
     const tab = event.target.closest('[data-workspace-view]');

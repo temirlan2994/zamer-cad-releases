@@ -175,6 +175,7 @@ describe('3D: мебель и выбор объектов', () => {
     const { page } = app;
     const count = () => page.evaluate(() => window.__kepler.state.project.items.length);
     const n = await count();
+    const rebuilds = (await d3(page)).rebuilds;
     await page.click('#furnitureToolBtn');
     await page.waitForSelector('#furnitureItems .furniture-chip', { state: 'visible' });
     await page.locator('#furnitureItems .furniture-chip').first().click();
@@ -183,6 +184,9 @@ describe('3D: мебель и выбор объектов', () => {
     assert.equal(await count(), n + 1);
     assert.equal((await sel(page))?.type, 'item');
     assert.equal(await page.isVisible('#view3d'), true);
+    const after = (await d3(page)).rebuilds;
+    assert.equal(after.full, rebuilds.full, 'обычная мебель не пересобирает весь дом');
+    assert.equal(after.furniture, rebuilds.furniture + 1, 'обновлён только слой мебели этажа');
     await page.keyboard.press('Escape'); // закончить постановку
     await page.keyboard.press('Control+z');
     assert.equal(await count(), n);

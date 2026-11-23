@@ -20,12 +20,12 @@
 // Модель — core/mesh3d.js (оси дома: x вправо, y вниз по плану, z вверх).
 // Здесь она переводится в правую систему: X = x, Y = −y, Z = z.
 
-import { GRID_STEP } from '../core/catalog.js';
+import { GRID_STEP, isStructural } from '../core/catalog.js';
 import {
-  boxFaces, buildHouseMesh, buildLevelWalls, massFaces, massVoidFaces, shownLevelIds, terrainHeightFn,
+  boxFaces, buildHouseMesh, buildLevelWalls, furnitureFaces, massFaces, massVoidFaces, shownLevelIds, terrainHeightFn,
 } from '../core/mesh3d.js';
 import { massGroundFaces } from '../core/mass-ground.js';
-import { activeLevel, LEVEL_KEYS } from '../core/model.js';
+import { activeLevel, levelProject, LEVEL_KEYS } from '../core/model.js';
 import {
   axisDelta, cameraBasis, pickBoxes, pickFaces, pickObject, projectPoint, rayPlaneZ, screenRay,
 } from '../core/pick3d.js';
@@ -102,6 +102,8 @@ let glState = null; // программа, атрибуты, буферы
 let use2d = false;
 let drawQueued = false;
 let geomDirty = false; // перекраска выбора — пересобрать буферы перед кадром
+let pendingSceneRefresh = null; // точечная причина следующего afterChange → refresh3d
+const rebuildStats = { full: 0, furniture: 0 };
 const pointers = new Map();
 let gesture = null;
 
@@ -789,6 +791,22 @@ function rebuildMasses() {
 function rebuildScene() {
   faces = buildHouseMesh(state.project, opts);
   sets = null;
+  rebuildStats.full += 1;
+}
+
+// Обычная мебель не меняет стены, полы, крышу и участок. При постановке из
+// 3D обновляем только её слой текущего этажа; полный buildHouseMesh на
+// большом доме здесь был заметно дороже самой операции добавления.
+function rebuildFurnitureLevel(levelId) {
+  faces = faces.filter((face) => !(face.kind === 'furniture' && face.level === levelId));
+  const shown = new Set(shownLevelIds(state.project, opts.levels));
+  const level = (state.project?.levels || []).find((candidate) => candidate.id === levelId);
+  if (opts.furniture && level && shown.has(levelId)) {
+    const lp = levelProject(state.project, levelId);
+    faces.push(...furnitureFaces(lp, Number(level.elevation) || 0, Number(level.height) || 3000, levelId));
+  }
+  sets = null;
+  rebuildStats.furniture += 1;
 }
 
 // Ручная крыша вырезает связанную автокровлю, поэтому во время жеста они
@@ -802,7 +820,10 @@ export function refresh3d() {
   syncCameraControls();
   syncReliefControl();
   syncMassControl();
-  rebuildScene();
+  const pending = pendingSceneRefresh;
+  pendingSceneRefresh = null;
+  if (pending?.kind === 'furniture') rebuildFurnitureLevel(pending.levelId);
+  else rebuildScene();
   uploadGeometry();
   requestRender();
   setHint();
@@ -908,8 +929,16 @@ function furniturePoint(e) {
 function placeFurniture3d(e, kind = state.tool?.itemKind, options = state.tool || {}) {
   const point = furniturePoint(e);
   if (!kind || !point) return false;
-  addFurnitureAt(kind, point.x, point.y, options.rotation || 0, options);
-  refresh3d();
+  // addFurnitureAt → mutate → afterChange сам вызывает refresh3d. Помечаем
+  // безопасный частичный сценарий до mutate, чтобы не собирать всю сцену;
+  // лестница и конструктивные элементы по-прежнему требуют полной сборки.
+  const levelId = state.project.activeLevel;
+  if (kind !== 'stairs' && !isStructural(kind)) pendingSceneRefresh = { kind: 'furniture', levelId };
+  try {
+    addFurnitureAt(kind, point.x, point.y, options.rotation || 0, options);
+  } finally {
+    pendingSceneRefresh = null;
+  }
   setHint('Объект добавлен · выберите следующий в каталоге или нажмите Esc');
   return true;
 }
@@ -1659,6 +1688,7 @@ export function debug3d() {
   const levelsShown = [...new Set(faces.filter((f) => f.kind === 'floor').map((f) => f.level))];
   return {
     active, faces: faces.length, webgl: Boolean(gl), cam: { ...cam, target: { ...cam.target } },
+    rebuilds: { ...rebuildStats },
     selectedKey: selectedRef()?.key ?? null, editing: Boolean(edit),
     hovered: objectHover ? { type: objectHover.type, id: objectHover.id ?? null, key: objectHover.key ?? null } : null,
     highlighted: faces.filter((f) => f.kind === 'wall' && faceColor(f) !== f.color).length,

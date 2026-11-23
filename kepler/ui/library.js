@@ -18,6 +18,11 @@ import { PROJECT_CHANGE_EVENT } from './store.js';
 
 let furnitureCat = FURNITURE_CATEGORIES[0].id;
 let projectLibraryBound = false;
+// Карточки помещений зависят от программы дома, поэтому после правки проекта
+// их нужно обновить. Но закрытый каталог не должен ради этого заново запускать
+// analyzeHomeProgram и пересобирать DOM: помечаем содержимое устаревшим и
+// обновляем его только при следующем открытии каталога помещений.
+let projectLibraryDirty = true;
 const categorySections = { kitchen: 'kitchen', appliance: 'kitchen', bath: 'bath', decor: 'decor' };
 const subcategories = {
   bathing: { section: 'bath', title: 'Ванны и душ', kinds: ['bath', 'bath-corner', 'shower', 'jacuzzi'] },
@@ -34,6 +39,20 @@ const subcategories = {
 };
 const sectionForCategory = (id) => subcategories[id]?.section || categorySections[id] || 'furniture';
 const lastCategory = new Map();
+
+function catalogActuallyOpen() {
+  const phone = globalThis.matchMedia?.('(max-width: 640px)')?.matches === true;
+  return phone
+    ? document.body.classList.contains('sheet-library')
+    : document.body.classList.contains('lib-open');
+}
+
+function projectLibraryVisible() {
+  if (!catalogActuallyOpen()) return false;
+  const model = document.body.classList.contains('v3-open');
+  const plan = state.modeName === 'plan' || model;
+  return plan && state.libraryTab === 'rooms' && state.tool?.kind !== 'place-opening';
+}
 
 function catalogSection() {
   return state.tool?.kind === 'place-opening' ? state.tool.openKind : sectionForCategory(furnitureCat);
@@ -152,7 +171,19 @@ export function bindFurnitureSearch() {
       refs.furnitureItems.scrollTop = 0;
       renderFurnitureItems();
     });
-    document.addEventListener(PROJECT_CHANGE_EVENT, () => renderLibrary());
+    document.addEventListener(PROJECT_CHANGE_EVENT, () => {
+      projectLibraryDirty = true;
+      if (projectLibraryVisible()) renderLibrary();
+    });
+    // На телефоне нижний лист получает класс уже после выбора вкладки. Следим
+    // только за открытием/закрытием листа, чтобы первый показ тоже получил
+    // свежие карточки, но закрытый каталог оставался полностью ленивым.
+    if (globalThis.MutationObserver) {
+      const observer = new MutationObserver(() => {
+        if (projectLibraryDirty && projectLibraryVisible()) renderLibrary();
+      });
+      observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    }
   }
   bindLandscapeLibrary();
   bindOpeningLibrary();
@@ -167,6 +198,9 @@ const ROOM_TOOLS = new Set(['bound-room', 'place-room']);
 // Телефон: та же панель — нижний лист по кнопкам #mobileBar (ui/mobile.js).
 export function libraryWanted() {
   const model = document.body.classList.contains('v3-open');
+  // На телефоне каталог — нижний лист, а не pinned-панель. После открытия
+  // листа syncLibraryOpen должен увидеть его и подготовить отложенные карточки.
+  if (document.body.classList.contains('sheet-library')) return true;
   if (state.modeName === 'landscape' && !model) return true;
   if (state.modeName !== 'plan' && !model) return false;
   const t = state.tool;
@@ -232,6 +266,10 @@ export function syncLibraryOpen() {
       card.classList.toggle('active', active);
       card.setAttribute('aria-pressed', String(active));
     }
+  } else if (projectLibraryDirty && projectLibraryVisible()) {
+    // Каталог мог быть закрыт во время десятков правок. Один свежий расчёт
+    // при открытии заменяет десятки бесполезных скрытых пересчётов.
+    renderLibrary();
   }
 }
 
@@ -241,7 +279,22 @@ export function applyLibraryTab() {
 }
 
 export function renderLibrary() {
-  renderLandscapeLibrary(); // активная карточка ландшафта
+  // У каталога ландшафта свои активные инструменты и собственная видимость.
+  // Его нужно синхронизировать даже когда каталог помещений закрыт: иначе
+  // карточка сохраняет старый обработчик active=true и следующий клик лишь
+  // отменяет уже завершённую постановку вместо запуска новой.
+  renderLandscapeLibrary();
+  // renderLibrary вызывается и общими действиями инструментов. Если нужная
+  // часть каталога сейчас закрыта, оставляем только dirty-флаг: даже первый
+  // DOM карточек можно безопасно построить непосредственно перед показом.
+  if (!projectLibraryVisible()) {
+    projectLibraryDirty = true;
+    // У renderLibrary исторически есть и лёгкая обязанность синхронизировать
+    // инструменты/видимость панели. Сохраняем её, не запуская анализ программы.
+    renderToolstrip();
+    return;
+  }
+  projectLibraryDirty = false;
   // План: помещения по категориям (заголовок группы + чипы); у чипа —
   // точка цвета типа, как пол на плане. Без размеров.
   refs.roomCards.innerHTML = '';

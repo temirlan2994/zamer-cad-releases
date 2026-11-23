@@ -43,11 +43,19 @@ export const PID_KEY = 'kepler-plan-pid'; // какой проект из «Пр
 export const BROKEN_KEY = `${AUTOSAVE_KEY}-broken`; // резерв битого автосохранения
 export const AUTOSAVE_EVENT = 'kepler:autosave';
 export const PROJECT_CHANGE_EVENT = 'kepler:project-change';
+export const ANALYTICS_READY_EVENT = 'kepler:analytics-ready';
 const OWNER_KEY = `${AUTOSAVE_KEY}-tab`; // какая вкладка записала автосохранение последней
 const TAB_ID = newId('tab');
 
 let autosaveTimer = null;
 let autosaveDirty = false;
+let analyticsTimer = null;
+let analyticsIdle = null;
+let analyticsRevision = 0;
+// Проект, к которому относятся state.norms/state.issues. Обычная
+// правка сохраняет последний готовый снимок до idle-пересчёта, но при
+// замене всей модели чужие зоны/бейджи надо убрать сразу.
+let analyticsProject = null;
 let heavyPending = false; // подложка из автосохранения ещё читается из IndexedDB
 const warned = new Set();
 let lastVoidTargetProject = null;
@@ -60,6 +68,12 @@ function dispatchProjectChange() {
   if (typeof globalThis.document?.dispatchEvent !== 'function'
       || typeof globalThis.CustomEvent !== 'function') return;
   globalThis.document.dispatchEvent(new globalThis.CustomEvent(PROJECT_CHANGE_EVENT));
+}
+
+function dispatchAnalyticsReady() {
+  if (typeof globalThis.document?.dispatchEvent !== 'function'
+      || typeof globalThis.CustomEvent !== 'function') return;
+  globalThis.document.dispatchEvent(new globalThis.CustomEvent(ANALYTICS_READY_EVENT));
 }
 
 // Cutter может осиротеть не только при собственной правке: пользователь
@@ -78,22 +92,27 @@ function pruneVoidsAfterTargetChange() {
   return removed;
 }
 
-// Стены, зазоры и стены этажа ниже — без записи в state (проверка до замены).
-function deriveAll(project) {
+// Стены и стены этажа ниже — без записи в state (проверка до замены).
+// Поиск нестандартных зазоров квадратичный; в обычном цикле черчения он
+// откладывается вместе с аналитикой. На старте его можно запросить явно.
+function deriveAll(project, { includeGaps = false } = {}) {
   const below = levelBelow(project);
   const walls = deriveWalls(project);
+  // На обычном доме поиск занимает доли миллисекунды и сохраняет мгновенное
+  // поведение маркеров/Undo. Только большой план переводим на idle-путь.
+  const syncGaps = includeGaps || (project.rooms?.length || 0) <= 40;
   return {
     walls,
     // Замкнутые петли ручных стен без помещения — штриховка «не назначено».
     freeLoops: freeLoops(project, walls),
-    gaps: findNearMissGaps(project, { move: false }),
+    gaps: syncGaps ? findNearMissGaps(project, { move: false }) : [],
     // Стены этажа ниже — бледная подложка, чтобы ставить стены над стенами.
     belowWalls: below ? deriveWalls(levelProject(project, below.id)) : null,
   };
 }
 
-export function refreshDerived() {
-  Object.assign(state, deriveAll(state.project));
+export function refreshDerived(options = {}) {
+  Object.assign(state, deriveAll(state.project, options));
 }
 
 // ---------------------------------------------------------------- Снимки истории
@@ -261,7 +280,7 @@ export function reflowLayoutChanges(beforeText, { roomIds = [], force = false } 
   return { applied, reports };
 }
 
-export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
+export function mutate(fn, { arrange = [], skipHistory = false, reconcile = true } = {}) {
   if (state.editLocked) return false;
   const before = snapshot();
   fn();
@@ -269,8 +288,10 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
   // Лестница «ведёт на этаж»: подъём — по отметкам этажей (core/slab-openings.js).
   if (state.project) syncStairLevels(state.project, setStairRise);
   // Съедание — производное номинальных форм: после любой правки считается
-  // заново (core/v7/eat-bridge.js), результат не зависит от порядка действий.
-  if (state.project) reconcileEats(state.project);
+  // заново (core/v7/eat-bridge.js), результат не зависит от порядка действий. Отдельные
+  // операции (например, вставка комнаты) уже делают тот же расчёт внутри
+  // callback ради отчёта/тоста и передают reconcile:false, чтобы не считать этаж дважды.
+  if (reconcile && state.project) reconcileEats(state.project);
   refreshDerived();
   reflowLayoutChanges(before, { roomIds: arrange, force: arrange.length > 0 });
   if (!skipHistory) pushHistory(before);
@@ -282,6 +303,7 @@ export function mutate(fn, { arrange = [], skipHistory = false } = {}) {
 export function tweak(fn) {
   if (state.editLocked) return false;
   fn();
+  scheduleAnalytics({ delay: 240 });
   scheduleAutosave();
   requestDraw();
   dispatchProjectChange();
@@ -291,7 +313,9 @@ export function tweak(fn) {
 // Нормы (инсоляция, площади, свет, высота) — пересчёт после изменений.
 export function refreshNorms() {
   try {
-    state.norms = normsReport(state.project);
+    const wallsByLevel = new Map();
+    if (state.project?.activeLevel && state.walls) wallsByLevel.set(state.project.activeLevel, state.walls);
+    state.norms = normsReport(state.project, { wallsByLevel, enabled: issueGroupsEnabled() });
   } catch (error) {
     state.norms = null;
     console.error('Нормы не посчитались:', error);
@@ -313,13 +337,86 @@ export function refreshIssues() {
   }
 }
 
+export function refreshGaps() {
+  try {
+    state.gaps = findNearMissGaps(state.project, { move: false });
+  } catch (error) {
+    state.gaps = [];
+    console.error('Зазоры не посчитались:', error);
+  }
+}
+
+function cancelScheduledAnalytics() {
+  if (analyticsTimer != null) clearTimeout(analyticsTimer);
+  analyticsTimer = null;
+  if (analyticsIdle != null && typeof globalThis.cancelIdleCallback === 'function') {
+    globalThis.cancelIdleCallback(analyticsIdle);
+  } else if (analyticsIdle != null) clearTimeout(analyticsIdle);
+  analyticsIdle = null;
+}
+
+// Тяжёлые отчёты не должны стоять между кликом «добавить комнату» и
+// первым кадром. Каждая правка помечает аналитику устаревшей, а быстрая
+// серия правок сворачивается в один расчёт после паузы. Отдельный вид
+// аналитики может вызвать flushAnalytics() и получить свежий результат сразу.
+export function flushAnalytics() {
+  cancelScheduledAnalytics();
+  const revision = analyticsRevision;
+  const project = state.project;
+  if (!project) return false;
+  state.analytics = { ...(state.analytics || {}), dirty: true, running: true };
+  refreshGaps();
+  refreshNorms();
+  // Вычисление синхронное: проект не может смениться в середине вызова,
+  // но guard защищает от будущего асинхронного backend и замены проекта между задачами.
+  if (project !== state.project || revision !== analyticsRevision) return false;
+  refreshIssues();
+  analyticsProject = project;
+  state.analytics = {
+    ...(state.analytics || {}), dirty: false, running: false,
+    revision, updatedAt: Date.now(),
+  };
+  // Подписи плана берут свежий снимок из state в следующем кадре. Панели
+  // свойств/выбора от норм не зависят; не пересоздаём их DOM в idle, чтобы
+  // кнопка не исчезала из-под указателя в момент фонового расчёта.
+  requestDraw();
+  dispatchAnalyticsReady();
+  return true;
+}
+
+export function scheduleAnalytics({ delay = 180 } = {}) {
+  analyticsRevision += 1;
+  const revision = analyticsRevision;
+  cancelScheduledAnalytics();
+  // В том же проекте можно недолго показывать последний готовый
+  // снимок. После «Новый / Открыть / Пример» он относится к другой
+  // модели: очищаем и данные, и их DOM-бейдж до запуска idle-задачи.
+  if (analyticsProject && analyticsProject !== state.project) {
+    analyticsProject = null;
+    state.norms = null;
+    setIssues(null);
+  }
+  state.analytics = { ...(state.analytics || {}), dirty: true, running: false, revision };
+  const run = () => {
+    analyticsTimer = null;
+    if (revision !== analyticsRevision || !state.project) return;
+    const work = () => {
+      analyticsIdle = null;
+      if (revision === analyticsRevision) flushAnalytics();
+    };
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      // timeout гарантирует, что бейджи обновятся и при непрерывной анимации.
+      analyticsIdle = globalThis.requestIdleCallback(work, { timeout: 700 });
+    } else analyticsIdle = setTimeout(work, 0);
+  };
+  analyticsTimer = setTimeout(run, Math.max(0, delay));
+}
+
 export function afterChange() {
   const removedVoids = pruneVoidsAfterTargetChange();
   // Привязки стен к осям (core/grid-pins.js): грань ушла с оси — привязка снята.
   if (state.project && syncGridPins(state.project).dropped) toast('Стена отвязана от оси');
   syncUnderlayImage();
-  refreshNorms();
-  refreshIssues();
   renderProps();
   renderSelectionToolbar();
   updateDimModeBtn();
@@ -328,6 +425,7 @@ export function afterChange() {
   renderViewPanel(); // угол вида режима (поле, «Сбросить», активная кнопка)
   syncProjectNameUi({ updateInput: document.activeElement?.id !== 'projectName' });
   requestDraw();
+  scheduleAnalytics();
   scheduleAutosave();
   dispatchProjectChange();
   if (removedVoids.length) {

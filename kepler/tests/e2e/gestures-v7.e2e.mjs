@@ -311,3 +311,46 @@ describe('магнит блоков, поворот, копия, удалени�
     assert.deepEqual(app.errors, []);
   });
 });
+
+describe('быстрый жест большого плана', () => {
+  let app;
+  before(async () => {
+    app = await startApp();
+    await openNew(app.page);
+  });
+  after(async () => { await app?.close(); });
+
+  it('откладывает carve во время движения, но точно пересчитывает его на pointerup', async () => {
+    const { page } = app;
+    await page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      const { state } = window.__kepler;
+      mutate(() => {
+        state.project.rooms.length = 0;
+        state.project.items.length = 0;
+        const a = createRoom('living', 0, 0, 4000, 4000); a.id = 'A';
+        const b = createRoom('bedroom', 6000, 0, 3000, 3000); b.id = 'B';
+        state.project.rooms.push(a, b);
+        for (let i = 0; i < 79; i += 1) {
+          const filler = createRoom('storage', 30000 + (i % 10) * 5000, 20000 + Math.floor(i / 10) * 5000, 3000, 3000);
+          filler.id = `F${i}`;
+          state.project.rooms.push(filler);
+        }
+      });
+      state.view.scale = 0.025;
+      state.view.panX = 560;
+      state.view.panY = 330;
+      state.view.rotation = 0;
+      window.__kepler.requestDraw?.();
+    });
+
+    const live = await dragPlan(page, [7500, 1500], [3500, 1500], {
+      mid: (p) => room(p, 'A'),
+    });
+    assert.equal(live.outline, null, 'на большом плане тяжёлый carve не блокирует промежуточный кадр');
+    assert.ok((await room(page, 'A')).outline, 'после отпускания итоговая геометрия точная');
+    assert.deepEqual(await shapes(page), await fromScratch(page), 'pointerup совпадает с полной сборкой с нуля');
+    assert.deepEqual(app.errors, []);
+  });
+});

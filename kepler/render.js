@@ -23,6 +23,7 @@ import {
   groupBounds, groupCorners, groupEdgeHandles, groupHandleId, groupItems, groupRotators,
 } from './core/group-handles.js';
 import { tempDimensions } from './core/temp-dims.js';
+import { itemBounds } from './core/clearance.js';
 import { roomNetAreaM2 } from './core/rooms.js';
 import { isOpenRoom, isRoundItem, isShaft, isStructural, roomColors } from './core/catalog.js';
 import { RAILING_INSET, roomRailings } from './core/railings.js';
@@ -209,6 +210,88 @@ export function unprojectPoint(view, sx, sy) {
   const dx = (sx - view.panX) / view.scale;
   const dy = (sy - view.panY) / view.scale;
   return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
+}
+
+// Видимый прямоугольник в локальных координатах плана. Запас задаётся в
+// экранных пикселях: при приближении он остаётся небольшим, а при общем виде
+// естественно захватывает весь дом. Это позволяет не обходить сотни далёких
+// комнат ради кадра, который браузер всё равно обрежет canvas-ом.
+export function planViewportBox(view, width, height, padPx = 120) {
+  const pad = Math.max(0, Number(padPx) || 0);
+  const points = [
+    unprojectPoint(view, -pad, -pad), unprojectPoint(view, width + pad, -pad),
+    unprojectPoint(view, -pad, height + pad), unprojectPoint(view, width + pad, height + pad),
+  ];
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+export function rectInPlanViewport(rect, box) {
+  if (!rect || !box) return false;
+  return rect.x + rect.w >= box.minX && rect.x <= box.maxX
+    && rect.y + rect.h >= box.minY && rect.y <= box.maxY;
+}
+
+const PLAN_SHADOW_REACH_MM = 6200;
+
+const growPlanBox = (box, dx, dy = dx) => ({
+  minX: box.minX - dx, maxX: box.maxX + dx,
+  minY: box.minY - dy, maxY: box.maxY + dy,
+});
+
+const planBoxContains = (outer, inner) => outer && inner
+  && outer.minX <= inner.minX && outer.maxX >= inner.maxX
+  && outer.minY <= inner.minY && outer.maxY >= inner.maxY;
+
+// Тени могут войти в экран от объекта за его границей (до 5 м луча плюс
+// размытие). Поэтому для них недостаточно обычного viewport culling. Держим
+// стабильное окно с запасом для панорамирования, а источники берём ещё на
+// PLAN_SHADOW_REACH_MM дальше. Пока экран остаётся внутри coverage, набор
+// источников и кеш тени не меняются от небольшого сдвига плана.
+export function planShadowCullScope(previous, viewport, project = null, level = null) {
+  if (previous?.project === project && previous?.level === level
+    && planBoxContains(previous.coverage, viewport)) return previous;
+  const width = Math.max(1, viewport.maxX - viewport.minX);
+  const height = Math.max(1, viewport.maxY - viewport.minY);
+  const coverage = growPlanBox(viewport, Math.max(3000, width * 0.25), Math.max(3000, height * 0.25));
+  return {
+    project, level, coverage,
+    source: growPlanBox(coverage, PLAN_SHADOW_REACH_MM),
+  };
+}
+
+function wallInPlanViewport(wall, box) {
+  const rects = wallRects(wall);
+  if (rects.some((rect) => rectInPlanViewport(rect, box))) return true;
+  for (const poly of wall.polys || (wall.poly ? [wall.poly] : [])) {
+    if (!poly.length) continue;
+    const xs = poly.map((point) => point.x);
+    const ys = poly.map((point) => point.y);
+    if (rectInPlanViewport({
+      x: Math.min(...xs), y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+    }, box)) return true;
+  }
+  return false;
+}
+
+// Собственные стены рисуются в цикле их комнаты. При большом масштабе
+// толстая наружная стена может ещё попадать в viewport, когда пол комнаты
+// уже за его запасом. Поэтому владельцев фактически видимых стен нельзя
+// отсекать отдельным тестом по полу.
+export function planVisibleRoomIds(rooms, visibleWalls, viewport) {
+  const ids = new Set();
+  for (const room of rooms || []) {
+    if (roomRects(room).some((rect) => rectInPlanViewport(rect, viewport))) ids.add(room.id);
+  }
+  for (const wall of visibleWalls || []) {
+    for (const roomId of wall.rooms || []) ids.add(roomId);
+  }
+  return ids;
 }
 
 export function createRenderer(canvas) {
@@ -406,6 +489,29 @@ export function createRenderer(canvas) {
 
     // 6. Мебель (на генплане и в «Ландшафте» — без неё).
     const detail = opts.detail !== false && !landscape;
+    const planViewport = planViewportBox(pv, width, height, opts.cullPadPx ?? 120);
+    const visibleWalls = opts.cull === false ? walls : walls.filter((wall) => wallInPlanViewport(wall, planViewport));
+    const visibleRoomIds = opts.cull === false
+      ? new Set(state.project.rooms.map((room) => room.id))
+      : planVisibleRoomIds(state.project.rooms, visibleWalls, planViewport);
+    const visibleRooms = opts.cull === false
+      ? state.project.rooms
+      : state.project.rooms.filter((room) => visibleRoomIds.has(room.id));
+    const roomVisible = (room) => visibleRoomIds.has(room.id);
+    const visibleItems = !detail ? [] : opts.cull === false
+      ? state.project.items
+      : state.project.items.filter((item) => rectInPlanViewport(itemBounds(item), planViewport));
+    const planShadows = !landscape && state.modeName === 'plan' && vd.shadows
+      && (thumbnail || (!print && opts.site !== false));
+    const shadowScope = !planShadows || opts.cull === false || thumbnail ? null
+      : planShadowCullScope(state._planShadowCull, planViewport, state.project, state.project.activeLevel);
+    if (shadowScope) state._planShadowCull = shadowScope;
+    const shadowWalls = !planShadows ? [] : shadowScope
+      ? walls.filter((wall) => wallInPlanViewport(wall, shadowScope.source))
+      : walls;
+    const shadowItems = !planShadows || !detail ? [] : shadowScope
+      ? state.project.items.filter((item) => rectInPlanViewport(itemBounds(item), shadowScope.source))
+      : state.project.items;
     {
       // Этаж ниже — бледные стены (подложка для выравнивания этажей).
       if (!landscape && state.belowWalls?.length) {
@@ -413,6 +519,7 @@ export function createRenderer(canvas) {
         ctx.globalAlpha = 0.16;
         ctx.fillStyle = tokens.wall;
         for (const wall of state.belowWalls) {
+          if (opts.cull !== false && !wallInPlanViewport(wall, planViewport)) continue;
           if (wall.hidden) continue;
           if (wall.kind === 'chamfer') {
             ctx.beginPath();
@@ -431,7 +538,7 @@ export function createRenderer(canvas) {
       const ownByRoom = new Map();
       const sharedWalls = [];
       const chamferWalls = [];
-      for (const wall of walls) {
+      for (const wall of visibleWalls) {
         if (wall.kind === 'chamfer') { chamferWalls.push(wall); continue; }
         // Ручные стены (схема 6) — поверх полов, как общие.
         if (wall.kind === 'shared' || wall.kind === 'joint' || wall.kind === 'manual') { sharedWalls.push(wall); continue; }
@@ -475,7 +582,7 @@ export function createRenderer(canvas) {
         if (isShaft(room)) return 3;
         return room.parentId ? 2 : 1;
       };
-      const roomPaintOrder = [...state.project.rooms].sort((a, b) => roomLayer(a) - roomLayer(b));
+      const roomPaintOrder = [...visibleRooms].sort((a, b) => roomLayer(a) - roomLayer(b));
       drawFreeLoops(ctx, state.freeLoops, houseTokens, px);
       for (const room of roomPaintOrder) {
         drawFloor(ctx, room, houseTokens, px);
@@ -523,10 +630,8 @@ export function createRenderer(canvas) {
       // Тени от стен и мебели (ui/plan-shadows.js) по настройке вида «Освещение»:
       // готовый слой из кеша — поверх полов и стен (места стен в слое прозрачные),
       // под проёмами, мебелью и подписями.
-      const planShadows = !landscape && state.modeName === 'plan' && vd.shadows
-        && (thumbnail || (!print && opts.site !== false));
       if (planShadows) drawPlanShadows(ctx, {
-        walls, items: detail ? state.project.items : [], dpr, scale, dark: lsDark,
+        walls: shadowWalls, items: shadowItems, dpr, scale, dark: lsDark,
         display: vd, project: state.project, force: thumbnail,
       });
       if (planShadows) {
@@ -574,7 +679,9 @@ export function createRenderer(canvas) {
       if (detail && !print && state.modeName === 'plan' && state.solarAnalysis?.on) {
         const analysis = currentLightAnalysis();
         const room = analysis && state.project.rooms.find((candidate) => candidate.id === analysis.roomId);
-        if (analysis && room) drawRoomLightAnalysis(ctx, { analysis, room, tokens, px });
+        if (analysis && room && (opts.cull === false || roomVisible(room))) {
+          drawRoomLightAnalysis(ctx, { analysis, room, tokens, px });
+        }
       }
 
       // Нормы: зона перекрытия помещений (ошибка планировки) — красная штриховка.
@@ -587,6 +694,7 @@ export function createRenderer(canvas) {
         ctx.setLineDash([px(5), px(3)]);
         for (const o of overlapZones) {
           for (const r of o.rects) {
+            if (opts.cull !== false && !rectInPlanViewport(r, planViewport)) continue;
             ctx.globalAlpha = 0.18;
             ctx.fillRect(r.x, r.y, r.w, r.h);
             ctx.globalAlpha = 0.9;
@@ -610,6 +718,8 @@ export function createRenderer(canvas) {
 
       // 5. Проёмы.
       for (const opening of state.project.openings) {
+        if (opts.cull !== false && opening.roomId && !visibleRoomIds.has(opening.roomId)
+          && state.selection?.id !== opening.id && state.hover?.id !== opening.id) continue;
         drawOpening(ctx, state, opening, walls, houseTokens, px);
       }
 
@@ -617,7 +727,7 @@ export function createRenderer(canvas) {
       // светлый непрозрачный верх, тень и ореол вокруг — из слоя теней.
       const itemTokens = planShadows ? { ...tokens, furnitureFill: lsDark ? '#454d58' : '#ffffff' } : tokens;
       const hoveredItems = hoveredFurnitureIds(state.project.items, state.hover);
-      for (const item of detail ? state.project.items : []) {
+      for (const item of visibleItems) {
         const selected = (state.selection?.type === 'item' && state.selection.id === item.id) ||
           (state.selection?.type === 'multi' && state.selection.itemIds.includes(item.id));
         const hovered = hoveredItems.has(item.id);
@@ -866,10 +976,12 @@ export function createRenderer(canvas) {
     if (detail) {
       if (text.labels) {
         const obstacles = labelObstacles(state.project, walls);
-        for (const room of state.project.rooms) drawRoomLabel(ctx, state, room, p2s, tokens, obstacles, text, print);
+        for (const room of visibleRooms) drawRoomLabel(ctx, state, room, p2s, tokens, obstacles, text, print);
       }
       // Полупрозрачные размерные линии у всех комнат: внутренние и габаритные.
-      if (text.dims && (!thumbnail || planSnapshot)) drawAllRoomDims(ctx, state, walls, p2s, tokens);
+      if (text.dims && (!thumbnail || planSnapshot)) {
+        drawAllRoomDims(ctx, state, walls, p2s, tokens, visibleRooms);
+      }
     }
     // Маркеры нестандартных зазоров «≠ N мм» (core/gaps.js) — только на экране
     // и при читаемом масштабе подписей.
@@ -2610,7 +2722,7 @@ function dimLabel(state, len) {
   return state.project.settings?.units === 'm' ? (len / 1000).toFixed(2).replace('.', ',') : String(len);
 }
 
-function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
+function drawAllRoomDims(ctx, state, walls, w2s, tokens, visibleRooms = state.project.rooms) {
   ctx.lineWidth = 1;
   ctx.font = '10px system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -2625,7 +2737,7 @@ function drawAllRoomDims(ctx, state, walls, w2s, tokens) {
   // Внутренние размеры по реальному контуру комнаты. Для прямоугольной —
   // ширина (сверху) и глубина (слева); для Г/Т-образной — каждая грань со
   // своей длиной. Показываются у всех комнат (бледно), у выбранной — ярко.
-  for (const room of state.project.rooms) {
+  for (const room of visibleRooms) {
     const selected = room.id === selId;
     const { rectangular, edges } = computeRoomEdges(state.project, room);
     ctx.strokeStyle = selected ? tokens.accent : tokens.muted;

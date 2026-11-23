@@ -425,14 +425,19 @@ export function hostOpeningFacade(own) {
 }
 
 // Окна всех этажей: середина снаружи (мир), внешняя нормаль (мир), высота.
-export function windowsOf(project) {
+export function windowsOf(project, options = {}) {
   const out = [];
+  const wallsByLevel = options.wallsByLevel instanceof Map ? options.wallsByLevel : null;
   const rot = ((project.building?.rotation || 0) * Math.PI) / 180;
   const c = Math.cos(rot);
   const s = Math.sin(rot);
   for (const level of project.levels) {
     const lp = levelProject(project, level.id);
-    const walls = deriveWalls(lp);
+    let walls = wallsByLevel?.get(level.id);
+    if (!walls) {
+      walls = deriveWalls(lp);
+      wallsByLevel?.set(level.id, walls);
+    }
     for (const o of lp.openings) {
       if (o.kind !== 'window') continue;
       const placed = openingRect(lp, o, walls);
@@ -560,12 +565,12 @@ export function meetsNorm(result, hours) {
 }
 
 // Отчёт: норма, результат по каждой комнате и вывод по дому.
-export function insolationReport(project) {
+export function insolationReport(project, options = {}) {
   const site = project.site;
   const norm = insolationNorm(site);
   const table = sunTable(site, norm);
   const obstacles = obstaclesOf(project);
-  const wins = windowsOf(project);
+  const wins = windowsOf(project, options);
   const rooms = [];
   for (const level of sortedLevels(project)) {
     for (const room of level.rooms) {

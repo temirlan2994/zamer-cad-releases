@@ -62,6 +62,34 @@ function overlap1d(a1, a2, b1, b2) {
   return to - from > 1 ? { from, to } : null;
 }
 
+function boundsOfRects(rects, room = null) {
+  if (!rects.length) return {
+    x0: Number(room?.x) || 0,
+    y0: Number(room?.y) || 0,
+    x1: (Number(room?.x) || 0) + (Number(room?.w) || 0),
+    y1: (Number(room?.y) || 0) + (Number(room?.h) || 0),
+  };
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const rect of rects) {
+    x0 = Math.min(x0, rect.x); y0 = Math.min(y0, rect.y);
+    x1 = Math.max(x1, rect.x + rect.w); y1 = Math.max(y1, rect.y + rect.h);
+  }
+  return { x0, y0, x1, y1 };
+}
+
+// Безопасный broad phase: настоящая стыковка требует перекрытия проекций
+// по одной оси и расстояния не больше искомой толщины по другой. Если
+// габариты пересекаются (Г/ступенчатые формы), пара остаётся кандидатом —
+// окончательное решение по-прежнему принимают точные рёбра.
+function boundsMayFace(a, b, maxGap) {
+  const sepX = Math.max(0, Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1));
+  const sepY = Math.max(0, Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1));
+  const overlapX = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const overlapY = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  return (overlapY > 1 && sepX <= maxGap + SHARED_GAP_EPS)
+    || (overlapX > 1 && sepY <= maxGap + SHARED_GAP_EPS);
+}
+
 function subtractIntervals(from, to, subs) {
   let rest = [{ from, to }];
   for (const sub of subs) {
@@ -91,16 +119,25 @@ export function ownKey(roomId, side) {
 // стены, зазором стыковки считается она, а не перегородка по умолчанию.
 export function findAdjacencies(rooms, sharedGap = DEFAULT_PARTITION, overrides = null) {
   const result = [];
+  // Контур и рёбра комнаты не зависят от второй комнаты. Раньше для n² пар
+  // они строились заново до 2(n−1) раз на комнату.
+  const prepared = rooms.map((room) => {
+    const rects = roomRects(room);
+    return { room, edges: roomBoundaryEdges(room), bounds: boundsOfRects(rects, room) };
+  });
   for (let i = 0; i < rooms.length; i += 1) {
     for (let j = i + 1; j < rooms.length; j += 1) {
-      const a = rooms[i];
-      const b = rooms[j];
+      const pa = prepared[i];
+      const pb = prepared[j];
+      const a = pa.room;
+      const b = pb.room;
       if ((a.parentId || null) !== (b.parentId || null)) continue;
       const own = Number(overrides?.[sharedKey(a.id, b.id)]?.thickness);
       const pairGap = own > 0 ? own : sharedGap;
-      for (const [first, second] of [[a, b], [b, a]]) {
-        for (const edgeA of roomBoundaryEdges(first)) {
-          for (const edgeB of roomBoundaryEdges(second)) {
+      if (!boundsMayFace(pa.bounds, pb.bounds, pairGap)) continue;
+      for (const [first, second] of [[pa, pb], [pb, pa]]) {
+        for (const edgeA of first.edges) {
+          for (const edgeB of second.edges) {
             if (edgeA.orient !== edgeB.orient || edgeA.outward === edgeB.outward) continue;
             const gap = (edgeB.edge - edgeA.edge) * edgeA.outward;
             // Общая стена существует только при настоящем конструктивном
@@ -111,7 +148,7 @@ export function findAdjacencies(rooms, sharedGap = DEFAULT_PARTITION, overrides 
             const span = overlap1d(edgeA.from, edgeA.to, edgeB.from, edgeB.to);
             if (!span) continue;
             result.push({
-              a: first, b: second, sideA: edgeA.side, sideB: edgeB.side,
+              a: first.room, b: second.room, sideA: edgeA.side, sideB: edgeB.side,
               edgeA, edgeB, gap, from: span.from, to: span.to,
             });
           }
@@ -305,6 +342,8 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
   const adjacencies = findAdjacencies(project.rooms, partition, overrides);
   const sharedByRoomSide = new Map(); // `${roomId}|${side}` -> intervals
   const byIdAll = new Map(project.rooms.map((r) => [r.id, r]));
+  const rectsByRoom = new Map(project.rooms.map((room) => [room, roomRects(room)]));
+  const boundsByRoom = new Map(project.rooms.map((room) => [room, boundsOfRects(rectsByRoom.get(room), room)]));
 
   const noteShared = (roomId, side, from, to) => {
     const key = `${roomId}|${side}`;
@@ -399,9 +438,16 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
       if (!internal && thinCovered) {
         for (const other of topRooms) {
           if (other.id === room.id) continue;
+          const bounds = boundsByRoom.get(other);
+          const along0 = edge.orient === 'h' ? bounds.x0 : bounds.y0;
+          const along1 = edge.orient === 'h' ? bounds.x1 : bounds.y1;
+          const cross0 = edge.orient === 'h' ? bounds.y0 : bounds.x0;
+          const cross1 = edge.orient === 'h' ? bounds.y1 : bounds.x1;
+          if (Math.min(edge.to, along1) - Math.max(edge.from, along0) <= 1
+            || edge.edge <= cross0 + 1 || edge.edge >= cross1 - 1) continue;
           // По фактической форме соседа (Г, ступени, контур), а не по габариту:
           // вырез ступенчатой комнаты не «перекрывает» чужие стены.
-          for (const o of roomRects(other)) {
+          for (const o of rectsByRoom.get(other)) {
             const pLo = edge.orient === 'h' ? o.y : o.x;
             const pHi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
             if (edge.edge <= pLo + 1 || edge.edge >= pHi - 1) continue; // грань не внутри o
@@ -423,7 +469,16 @@ export function wallSegments(project, { covered: thinCovered = true } = {}) {
         // Терраса/балкон лежит под домом и стену не сужает: стена дома
         // остаётся полной, терраса заходит под неё или стоит вплотную.
         if (other.id === room.id || isShaft(other) || isOpenRoom(other) || (other.parentId || null) !== (room.parentId || null)) continue;
-        for (const o of roomRects(other)) {
+        const bounds = boundsByRoom.get(other);
+        const along0 = edge.orient === 'h' ? bounds.x0 : bounds.y0;
+        const along1 = edge.orient === 'h' ? bounds.x1 : bounds.y1;
+        if (Math.min(edge.to, along1) - Math.max(edge.from, along0) <= 1) continue;
+        const cross0 = edge.orient === 'h' ? bounds.y0 : bounds.x0;
+        const cross1 = edge.orient === 'h' ? bounds.y1 : bounds.x1;
+        if (edge.outward > 0
+          ? cross1 <= edge.edge + 1 || cross0 >= edge.edge + WALL_T_MAX
+          : cross0 >= edge.edge - 1 || cross1 <= edge.edge - WALL_T_MAX) continue;
+        for (const o of rectsByRoom.get(other)) {
           const lo = edge.orient === 'h' ? o.y : o.x;
           const hi = edge.orient === 'h' ? o.y + o.h : o.x + o.w;
           const gap = edge.outward > 0 ? lo - edge.edge : edge.edge - hi;

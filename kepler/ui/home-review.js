@@ -52,7 +52,9 @@ function safeReview(project, state = {}, options = {}) {
     return analyzeHomeReview(project, {
       ...options,
       issueOptions: options.issueOptions || {
-        norms: state?.norms,
+        // state.norms — быстрый снимок только включённых пользователем
+        // слоёв. Итоговая сводка должна сама собрать полный normsReport,
+        // иначе выключенные «Свет»/«Нормы» ошибочно исчезнут из проверки.
         walls: state?.walls,
         gaps: state?.gaps,
         ergo,

@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { openSample, startApp } from './helpers.mjs';
+import { openSample, pickWorkspaceView, startApp } from './helpers.mjs';
 
 describe('компактная аналитика и управляемые вкладки', () => {
   let app;
@@ -99,6 +99,45 @@ describe('компактная аналитика и управляемые вк
     assert.deepEqual(app.errors, []);
   });
 
+  it('открывает аналитику как самостоятельный вид и сохраняет её вкладку', async () => {
+    const { page } = app;
+    await pickWorkspaceView(page, 'analytics', 'analysis:ergonomics');
+    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Движение и проходы');
+    assert.equal(await page.textContent('#projectRoutePanelKicker'), 'Аналитический вид');
+
+    const tab = page.locator('[data-workspace-view="analysis:ergonomics"]');
+    await tab.waitFor();
+    assert.equal(await tab.getAttribute('aria-selected'), 'true');
+
+    await page.click('#projectRouteClose');
+    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+    assert.equal(await tab.getAttribute('aria-selected'), 'false');
+    await tab.click();
+    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
+
+    await tab.hover();
+    await tab.locator('.wv-tab-x').click();
+    await tab.waitFor({ state: 'detached' });
+    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+    assert.deepEqual(app.errors, []);
+  });
+
+  it('новый проект закрывает прежний аналитический вид, а не подменяет его другим', async () => {
+    const { page } = app;
+    await pickWorkspaceView(page, 'analytics', 'analysis:light');
+    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
+    assert.equal(await page.getAttribute('[data-workspace-view="analysis:light"]', 'aria-selected'), 'true');
+
+    await page.evaluate(async () => { (await import('./ui/files.js')).newProject(); });
+    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.querySelector('.wv-tabs [aria-selected="true"]')?.dataset.workspaceView?.startsWith('plan:'));
+    assert.equal(await page.locator('.wv-tabs [data-workspace-view^="analysis:"][aria-selected="true"]').count(), 0);
+    assert.deepEqual(app.errors, []);
+    await page.evaluate(() => window.__kepler.loadSample());
+    await page.waitForFunction(() => window.__kepler.state.project.rooms.length > 0);
+  });
+
   it('первый жест только выбирает координационную ось, второй её двигает', async () => {
     const { page } = app;
     await page.click('#modePlanBtn');
@@ -173,5 +212,24 @@ describe('компактная аналитика на телефоне', () => 
     const box = await panel.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= 390, JSON.stringify(box));
     assert.equal(await page.locator('#projectRouteBody .project-route-task').count(), 1);
+  });
+
+  it('открывает аналитический лист из общего меню видов', async () => {
+    const { page } = app;
+    await page.tap('#projectRouteClose');
+    await page.locator('#projectRoutePanel').waitFor({ state: 'hidden' });
+
+    await page.tap('#workspaceViewPicker');
+    const menu = page.getByRole('dialog', { name: 'Все виды проекта' });
+    await menu.locator('[data-view-group="analytics"]').tap();
+    assert.deepEqual(await menu.locator('[data-view-key^="analysis:"] span').allTextContents(), [
+      'Сводка', 'Эргономика', 'Свет и солнце', 'Инженерия', 'Участок и ограничения', 'Объём здания',
+    ]);
+    await menu.locator('[data-view-key="analysis:light"]').tap();
+
+    await page.locator('#projectRoutePanel:not([hidden])').waitFor();
+    assert.equal(await page.textContent('#projectRoutePanelTitle'), 'Свет и солнце');
+    assert.equal(await page.getAttribute('[data-workspace-view="analysis:light"]', 'aria-selected'), 'true');
+    assert.deepEqual(app.errors, []);
   });
 });

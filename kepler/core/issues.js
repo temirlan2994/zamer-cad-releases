@@ -19,7 +19,7 @@ import { isUpperLevel, levelProject, sortedLevels } from './model.js';
 import { normsReport } from './norms.js';
 import { analyzeConnectivity, suggestAccess } from './rooms.js';
 import { orphanOpenings } from './opening-spacing.js';
-import { deriveWalls, openingRect } from './walls.js';
+import { deriveWalls, openingRect, projectAdjacencies } from './walls.js';
 
 // Группы замечаний. on — включена по умолчанию (переключатели в панели «⚠»
 // хранятся у пользователя, ui/issues.js): шумные справочные проверки по
@@ -29,7 +29,8 @@ export const ISSUE_GROUPS = [
   { id: 'norms', title: 'Нормы площадей и размеров', short: 'Нормы', on: false },
   { id: 'light', title: 'Свет и окна', short: 'Свет', on: false },
   { id: 'insolation', title: 'Инсоляция', short: 'Инсоляция', on: false },
-  { id: 'furniture', title: 'Проходы у мебели', short: 'Мебель', on: true },
+  // Тяжёлая проверка проходов живёт в отдельном виде «Эргономика».
+  { id: 'furniture', title: 'Проходы у мебели', short: 'Мебель', on: false },
   { id: 'geometry', title: 'Геометрия', short: 'Геометрия', on: true },
   // Эргономика мебели (core/ergonomics.js): включена, пока включён режим
   // «Эргономика» (ui/ergonomics.js) — записи приходят в opts.ergo.
@@ -78,8 +79,8 @@ export function dismissedIssueIds(project) {
 /**
  * project → { count, severity, groups, summary, hidden, enabledCount, total }.
  *   groups — включённые группы с записями: [{ id, title, count, items }];
- *   summary — все группы по порядку: [{ id, title, short, enabled, count }]
- *     (count — предупреждения без скрытых; у выключенной группы — сколько было бы);
+ *   summary — все группы по порядку: [{ id, title, short, enabled, computed, count }]
+ *     (выключенная группа не рассчитывается: computed=false, count=0);
  *   hidden — скрытые предупреждения (project.settings.dismissedIssues), все группы;
  *   count — предупреждения включённых групп без скрытых (бейдж кнопки).
  * opts.enabled — id включённых групп (по умолчанию — все);
@@ -91,6 +92,12 @@ export function dismissedIssueIds(project) {
  */
 export function collectIssues(project, opts = {}) {
   const items = [];
+  // Выключенные группы не должны замедлять черчение. Раньше фильтр применялся
+  // только после полного расчёта, поэтому скрытая «Доступность» давала O(n³)
+  // на плане без дверей. Без opts.enabled сохраняется полный отчёт для
+  // экспорта, тестов и явно открытой общей аналитики.
+  const enabled = new Set(opts.enabled ? [...opts.enabled] : ISSUE_GROUPS.map((g) => g.id));
+  const on = (id) => enabled.has(id);
   const levels = sortedLevels(project);
   const multi = levels.length > 1;
   const levelName = (id) => (multi ? levels.find((l) => l.id === id)?.name || '' : '');
@@ -106,12 +113,16 @@ export function collectIssues(project, opts = {}) {
   };
 
   // --- Связность: вход и доступ к помещениям (по этажам).
-  for (const level of levels) {
+  // Соседства считаются один раз на этаж и переиспользуются всеми группами
+  // недоступных помещений. Раньше suggestAccess выводил их заново для каждой
+  // комнаты: n подсказок × n² пар помещений.
+  for (const level of on('access') ? levels : []) {
     const lp = lps.get(level.id);
     if (!lp.rooms.length) continue;
     const active = level.id === project.activeLevel;
     const walls = active && opts.walls ? opts.walls : deriveWalls(lp);
-    const analysis = analyzeConnectivity(lp, walls);
+    const adjacencies = projectAdjacencies(lp);
+    const analysis = analyzeConnectivity(lp, walls, adjacencies);
     const upper = isUpperLevel(lp, level.id);
     let problems = 0;
     if (!analysis.hasEntrance) {
@@ -128,7 +139,7 @@ export function collectIssues(project, opts = {}) {
     const covered = new Set();
     for (const roomId of analysis.unreachable) {
       if (covered.has(roomId)) continue;
-      const hint = suggestAccess(lp, roomId, analysis);
+      const hint = suggestAccess(lp, roomId, analysis, adjacencies);
       if (!hint) continue;
       for (const id of hint.members || [roomId]) covered.add(id);
       problems += 1;
@@ -152,8 +163,9 @@ export function collectIssues(project, opts = {}) {
   }
 
   // --- Нормы: инсоляция и проверки комнат.
-  let norms = opts.norms;
-  if (norms === undefined) {
+  const normGroupsOn = ['norms', 'light', 'insolation', 'furniture', 'geometry'].some(on);
+  let norms = normGroupsOn ? opts.norms : null;
+  if (normGroupsOn && norms === undefined) {
     try { norms = normsReport(project); } catch { norms = null; }
   }
   if (norms) {
@@ -161,7 +173,7 @@ export function collectIssues(project, opts = {}) {
     // Инсоляция — только жилые комнаты; без участка (граница, норма) итог
     // справочный: стороны света и окружение не заданы.
     const known = ins.siteKnown !== false;
-    if (ins.need) {
+    if (on('insolation') && ins.need) {
       const warn = !ins.ok && known;
       push({
         id: 'insolation:house', group: 'insolation', levelId: project.activeLevel,
@@ -171,7 +183,7 @@ export function collectIssues(project, opts = {}) {
       });
     }
     // Строки по жилым комнатам — справочные (в число входит общий итог выше).
-    for (const r of ins.rooms.filter((q) => q.living)) {
+    for (const r of on('insolation') ? ins.rooms.filter((q) => q.living) : []) {
       push({
         id: `insolation:sun:${r.id}`, group: 'insolation', levelId: r.levelId, severity: 'ok', mark: r.meets ? '✓' : '✗',
         title: r.name,
@@ -181,10 +193,12 @@ export function collectIssues(project, opts = {}) {
       });
     }
     for (const p of norms.problems) {
+      const problemGroup = KIND_GROUP[p.kind] || 'geometry';
+      if (!on(problemGroup)) continue;
       const levelId = p.room.levelId;
       const room = roomOf(levelId, p.room.id);
       const entry = {
-        id: problemId(p, levelId), group: KIND_GROUP[p.kind] || 'geometry', levelId,
+        id: problemId(p, levelId), group: problemGroup, levelId,
         title: p.room.name, text: p.text,
         target: { type: 'room', id: p.room.id },
         focus: roomRect(room),
@@ -211,7 +225,7 @@ export function collectIssues(project, opts = {}) {
   }
 
   // --- Нестандартные зазоры между комнатами (стыковка не сработала).
-  for (const level of levels) {
+  for (const level of on('geometry') ? levels : []) {
     const lp = lps.get(level.id);
     if (lp.rooms.length < 2) continue;
     const gaps = level.id === project.activeLevel && opts.gaps ? opts.gaps : findNearMissGaps(lp, { move: false });
@@ -229,7 +243,7 @@ export function collectIssues(project, opts = {}) {
 
   // --- Проёмы: окно в общей стене (межкомнатное — света снаружи нет) и
   // проёмы-«сироты» без стены (хранятся в проекте, вернутся со стеной).
-  for (const level of levels) {
+  for (const level of on('geometry') ? levels : []) {
     const lp = lps.get(level.id);
     if (!lp.openings?.length && !lp.rooms.some((r) => r.eatBase?.openings?.length)) continue;
     const walls = level.id === project.activeLevel && opts.walls ? opts.walls : deriveWalls(lp);
@@ -262,7 +276,7 @@ export function collectIssues(project, opts = {}) {
 
   // --- Эргономика мебели (режим «Эргономика»): ошибки и замечания активного
   // этажа; переход — к первому предмету находки.
-  for (const f of opts.ergo || []) {
+  for (const f of on('ergo') ? opts.ergo || [] : []) {
     if (f.severity !== 'error' && f.severity !== 'warn') continue;
     const lp = lps.get(project.activeLevel);
     const room = roomOf(project.activeLevel, f.roomId);
@@ -278,7 +292,6 @@ export function collectIssues(project, opts = {}) {
 
   // --- Фильтры: включённые группы и скрытые замечания (только
   // предупреждения: справочные строки ✓ не скрываются и не считаются).
-  const enabled = new Set(opts.enabled ? [...opts.enabled] : ISSUE_GROUPS.map((g) => g.id));
   const dismissed = dismissedIssueIds(project);
   const hidden = [];
   for (const it of items) {
@@ -288,6 +301,7 @@ export function collectIssues(project, opts = {}) {
   const live = items.filter((it) => !it.dismissed);
   const summary = ISSUE_GROUPS.map((g) => ({
     id: g.id, title: g.title, short: g.short, enabled: enabled.has(g.id),
+    computed: enabled.has(g.id),
     count: live.filter((it) => it.group === g.id && it.severity === 'warn').length,
   }));
   const groups = ISSUE_GROUPS.filter((g) => enabled.has(g.id)).map((g) => {

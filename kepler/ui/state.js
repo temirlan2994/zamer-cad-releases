@@ -6,6 +6,9 @@ export const state = {
   freeLoops: [], // замкнутые петли стен без помещения (core/bound-rooms.js)
   gaps: [], // нестандартные зазоры этажа (core/gaps.js, без расчёта сдвига)
   issues: null, // замечания для кнопки «⚠» (core/issues.js, ui/issues.js)
+  // Тяжёлые отчёты живут отдельно от быстрого цикла черчения. После правки
+  // dirty=true, отдельный аналитический вид либо idle-задача обновляет его один раз.
+  analytics: { dirty: true, running: false, revision: 0, updatedAt: null },
   flash: null, // { rects, levelId } — мгновенная подсветка места замечания
   gapFocus: null, // ключ пары, выбранной по маркеру «≠ N мм»
   modeName: 'plan', // 'plan' | 'site' | 'landscape' (вид участка, ui/landscape.js)

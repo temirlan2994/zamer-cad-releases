@@ -159,10 +159,18 @@ export function placeRoomAt(at, typeOverride = null) {
     // Мебель родителя из-под нового помещения вытаскивается.
     if (parentId) reclaimItemsFromChild(state.project, roomById(state.project, parentId), room);
     // Поверх другой комнаты — новая «съедает» её (перегородка между ними).
-    else eaten = eatOverlapsAfter([room.id], { silent: true });
+    // Для обычной вставки в свободное место полный reconcileEats всего этажа
+    // ничего изменить не может, поэтому не ставим его на пути первого кадра.
+    else if (overlappingTopRooms(room).length) eaten = eatOverlapsAfter([room.id], { silent: true });
     // Новая комната создаётся ПУСТОЙ — мебель пользователь добавляет сам из
     // панели «Мебель» (клик по карточке или перетаскиванием).
-  }, { arrange: stair ? (parentId ? [parentId] : []) : parentId ? [room.id, parentId] : [room.id] });
+  }, {
+    arrange: stair ? (parentId ? [parentId] : []) : parentId ? [room.id, parentId] : [room.id],
+    // Для комнаты верхнего уровня eatOverlapsAfter выше уже выполнил полный
+    // reconcileEats и сохранил отчёт для сообщения. Вложенная комната в
+    // top-level carve не участвует. Повторять весь этаж в mutate не нужно.
+    reconcile: false,
+  });
   cancelTool();
   selectObject(stair ? { type: 'item', id: stair.id } : { type: 'room', id: room.id });
   const eatText = eatSummary(eaten);

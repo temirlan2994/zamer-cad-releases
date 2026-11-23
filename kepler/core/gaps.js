@@ -18,10 +18,38 @@ function rectsOverlapArea(a, b) {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-function roomsOverlapArea(a, b) {
+function overlapAreaOfRects(aRects, bRects) {
   let sum = 0;
-  for (const ra of roomRects(a)) for (const rb of roomRects(b)) sum += rectsOverlapArea(ra, rb);
+  for (const a of aRects) for (const b of bRects) sum += rectsOverlapArea(a, b);
   return sum;
+}
+
+function roomsOverlapArea(a, b) {
+  return overlapAreaOfRects(roomRects(a), roomRects(b));
+}
+
+function boundsOfRects(rects, room) {
+  if (!rects.length) return {
+    x0: Number(room?.x) || 0,
+    y0: Number(room?.y) || 0,
+    x1: (Number(room?.x) || 0) + (Number(room?.w) || 0),
+    y1: (Number(room?.y) || 0) + (Number(room?.h) || 0),
+  };
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const rect of rects) {
+    x0 = Math.min(x0, rect.x); y0 = Math.min(y0, rect.y);
+    x1 = Math.max(x1, rect.x + rect.w); y1 = Math.max(y1, rect.y + rect.h);
+  }
+  return { x0, y0, x1, y1 };
+}
+
+function boundsMayHaveNearMiss(a, b) {
+  const sepX = Math.max(0, Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1));
+  const sepY = Math.max(0, Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1));
+  const overlapX = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const overlapY = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  return (overlapY >= NEAR_MISS_MIN_OVERLAP && sepX <= MAX_SHARED_GAP)
+    || (overlapX >= NEAR_MISS_MIN_OVERLAP && sepY <= MAX_SHARED_GAP);
 }
 
 function participates(room) {
@@ -29,10 +57,10 @@ function participates(room) {
 }
 
 // Ближайшая пара противостоящих сторон двух комнат с промахом зазора.
-function pairNearMiss(a, b, target) {
+function pairNearMiss(a, b, target, edgesA = roomBoundaryEdges(a), edgesB = roomBoundaryEdges(b)) {
   let best = null;
-  for (const edgeA of roomBoundaryEdges(a)) {
-    for (const edgeB of roomBoundaryEdges(b)) {
+  for (const edgeA of edgesA) {
+    for (const edgeB of edgesB) {
       if (edgeA.orient !== edgeB.orient || edgeA.outward === edgeB.outward) continue;
       const gap = (edgeB.edge - edgeA.edge) * edgeA.outward;
       if (gap <= GAP_EPS || gap > MAX_SHARED_GAP) continue;
@@ -154,16 +182,25 @@ export function planGapMove(project, gap, opts = {}) {
 export function findNearMissGaps(project, opts = {}) {
   const withMove = opts.move !== false;
   const rooms = (project.rooms || []).filter(participates);
+  const prepared = rooms.map((room) => {
+    const rects = roomRects(room);
+    return { room, rects, edges: roomBoundaryEdges(room), bounds: boundsOfRects(rects, room) };
+  });
   const result = [];
   for (let i = 0; i < rooms.length; i += 1) {
     for (let j = i + 1; j < rooms.length; j += 1) {
-      const a = rooms[i];
-      const b = rooms[j];
+      const pa = prepared[i];
+      const pb = prepared[j];
+      const a = pa.room;
+      const b = pb.room;
       if ((a.parentId || null) !== (b.parentId || null)) continue;
+      // Далёкая пара не может образовать зазор ≤ MAX_SHARED_GAP с нужным
+      // перекрытием сторон. Точные контуры проверяются только у кандидатов.
+      if (!boundsMayHaveNearMiss(pa.bounds, pb.bounds)) continue;
       // Перекрывающиеся комнаты (верхний уровень это допускает) — не промах стыковки.
-      if (roomsOverlapArea(a, b) > 1) continue;
+      if (overlapAreaOfRects(pa.rects, pb.rects) > 1) continue;
       const target = sharedWallThickness(project, a.id, b.id);
-      const hit = pairNearMiss(a, b, target);
+      const hit = pairNearMiss(a, b, target, pa.edges, pb.edges);
       if (!hit) continue;
       const axis = hit.edgeA.orient === 'v' ? 'x' : 'y';
       const mid = hit.edgeA.edge + hit.edgeA.outward * (hit.gap / 2);

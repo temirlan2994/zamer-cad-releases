@@ -41,7 +41,9 @@ import { openView } from './props-views.js';
 import { setSolarAnalysis } from './solar-analysis.js';
 import { state } from './state.js';
 import { getScopedItem, setScopedItem } from './storage-scope.js';
-import { mutate, PROJECT_CHANGE_EVENT } from './store.js';
+import {
+  ANALYTICS_READY_EVENT, flushAnalytics, mutate, PROJECT_CHANGE_EVENT,
+} from './store.js';
 import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
 import { requestDraw } from './view.js';
@@ -170,7 +172,7 @@ let workflowReviewCache = null;
 let workflowReviewProject = null;
 let workflowReviewMode = null;
 let workflowReviewDirty = false;
-let workflowReviewTimer = null;
+let workflowReviewIdle = null;
 let routeHoverTimer = null;
 let routeMenuPinnedView = null;
 let routeMenuOpener = null;
@@ -278,6 +280,21 @@ const HOME_NAV_DEFS = Object.freeze([
 const HOME_VIEW_BY_ID = new Map(HOME_VIEW_DEFS.map((view) => [view.id, view]));
 const HOME_VIEWS = new Set(HOME_VIEW_DEFS.map((view) => view.id));
 const HOME_NAV_VIEWS = new Set(HOME_NAV_DEFS.map((view) => view.id));
+
+// Аналитика является самостоятельными видами рабочего пространства, а не
+// режимами текущего плана. Под капотом они используют уже существующие
+// проверяемые панели, поэтому данные и действия не дублируются. Идентификатор
+// analysis:* виден диспетчеру видов и вкладкам, panel — внутреннее имя панели.
+export const ANALYTICAL_WORKSPACE_VIEWS = Object.freeze([
+  Object.freeze({ id: 'analysis:summary', title: 'Сводка', kind: 'analysis', panel: 'review' }),
+  Object.freeze({ id: 'analysis:ergonomics', title: 'Эргономика', kind: 'ergonomics', panel: 'circulation' }),
+  Object.freeze({ id: 'analysis:light', title: 'Свет и солнце', kind: 'light', panel: 'climate' }),
+  Object.freeze({ id: 'analysis:engineering', title: 'Инженерия', kind: 'engineering', panel: 'engineering' }),
+  Object.freeze({ id: 'analysis:site', title: 'Участок и ограничения', kind: 'site', panel: 'stage' }),
+  Object.freeze({ id: 'analysis:volume', title: 'Объём здания', kind: 'volume', panel: 'envelope' }),
+]);
+const ANALYTICAL_VIEW_BY_ID = new Map(ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.id, view]));
+const ANALYTICAL_VIEW_BY_PANEL = new Map(ANALYTICAL_WORKSPACE_VIEWS.map((view) => [view.panel, view]));
 const HOME_FOCUS_ATTRIBUTES = Object.freeze([
   'data-home-view', 'data-route-action', 'data-route-stage', 'data-climate-setting',
   'data-route-confirm', 'data-route-footprint', 'data-route-tool',
@@ -372,46 +389,31 @@ function emptyCirculationProgress() {
   return { status: 'unknown', routes: [], summary: {} };
 }
 
-function lightWorkflowIssues() {
-  const report = state.issues;
-  if (!report) return { groups: [], hidden: [] };
-  const groups = asArray(report.groups).map((group) => ({
-    ...group, items: [...asArray(group?.items)],
-  }));
-  const included = new Set(groups.map((group) => group.id));
-  // Панель замечаний может скрывать целые группы по личной настройке. Для
-  // шкалы это не означает, что проблема исчезла: summary всё равно содержит
-  // их число. Добавляем лёгкий маркер без повторного collectIssues().
-  for (const summary of asArray(report.summary)) {
-    if (included.has(summary?.id) || !(Number(summary?.count) > 0)) continue;
-    groups.push({
-      id: summary.id,
-      title: summary.title,
-      items: [{
-        id: `workflow-hidden-group:${summary.id}`,
-        group: summary.id,
-        severity: 'warn',
-        title: summary.title || 'Скрытая группа замечаний',
-        text: `В отключённой группе замечаний: ${Number(summary.count)}.`,
-      }],
-    });
-  }
-  return { groups, hidden: asArray(report.hidden) };
-}
-
 function calculateWorkflowReview(full) {
   return homeReviewReport(state.project, state, full ? {} : {
     circulation: state.homeCirculationOverlay?.on && state.homeCirculationOverlay?.result
       ? state.homeCirculationOverlay.result : emptyCirculationProgress(),
-    issues: lightWorkflowIssues(),
   });
 }
 
+function cancelWorkflowReviewIdle() {
+  if (workflowReviewIdle == null) return;
+  if (typeof globalThis.cancelIdleCallback === 'function') globalThis.cancelIdleCallback(workflowReviewIdle);
+  else clearTimeout(workflowReviewIdle);
+  workflowReviewIdle = null;
+}
+
+// Маленький проект можно тихо обновить, когда главный поток уже свободен —
+// так статусы палитры остаются полезны. Для большого проекта скрытая
+// аналитика принципиально не запускается: вид получает «?» до открытия.
 function scheduleLightWorkflowReview() {
-  if (workflowReviewTimer != null) clearTimeout(workflowReviewTimer);
-  workflowReviewTimer = setTimeout(() => {
-    workflowReviewTimer = null;
-    if (!workflowReviewDirty || !state.project || (panelOpen && panelView === 'review')) return;
+  cancelWorkflowReviewIdle();
+  const roomCount = (state.project?.levels || []).reduce((sum, level) => sum + (level.rooms?.length || 0), 0);
+  if (!state.project || roomCount > 32 || state.analytics?.dirty) return;
+  const run = () => {
+    workflowReviewIdle = null;
+    if (!workflowReviewDirty || !state.project || state.analytics?.dirty
+      || (panelOpen && panelView === 'review')) return;
     const project = state.project;
     const report = calculateWorkflowReview(false);
     if (project !== state.project) return;
@@ -420,39 +422,53 @@ function scheduleLightWorkflowReview() {
     workflowReviewMode = 'light';
     workflowReviewDirty = false;
     renderProjectRoute();
-  }, 80);
+  };
+  workflowReviewIdle = typeof globalThis.requestIdleCallback === 'function'
+    ? globalThis.requestIdleCallback(run, { timeout: 800 })
+    : setTimeout(run, 180);
 }
 
-function cachedWorkflowReview({ full = panelView === 'review' } = {}) {
+// Закрытые аналитические виды ничего не вычисляют. Это принципиально: раньше
+// одна правка плана через 80 мс запускала все анализаторы дома, хотя окно было
+// закрыто. Полный отчёт строится только в самостоятельном виде «Сводка»;
+// остальные виды считают только собственное содержимое в своих html-функциях.
+function cachedWorkflowReview({ full = false, compute = false } = {}) {
   if (!state.project) return null;
   const mode = full ? 'full' : 'light';
   const incompatible = workflowReviewProject !== state.project
     || (full && workflowReviewMode !== 'full') || !workflowReviewCache;
-  if (incompatible || (full && workflowReviewDirty)) {
+  if (!compute) {
+    return incompatible || workflowReviewDirty ? null : workflowReviewCache;
+  }
+  if (incompatible || workflowReviewDirty) {
     workflowReviewCache = calculateWorkflowReview(full);
     workflowReviewProject = state.project;
     workflowReviewMode = mode;
     workflowReviewDirty = false;
-  } else if (workflowReviewDirty) {
-    // Пока пользователь меняет поля, оставляем прежние значки и обновляем
-    // их после короткой паузы. Содержимое активного этапа уже свежее.
-    scheduleLightWorkflowReview();
   }
   return workflowReviewCache;
 }
 
 function invalidateWorkflowReview({ clear = false } = {}) {
+  cancelWorkflowReviewIdle();
   workflowReviewDirty = true;
-  if (workflowReviewTimer != null) clearTimeout(workflowReviewTimer);
-  workflowReviewTimer = null;
-  if (!clear) return;
+  if (!clear) {
+    scheduleLightWorkflowReview();
+    return;
+  }
   workflowReviewCache = null;
   workflowReviewProject = null;
   workflowReviewMode = null;
+  scheduleLightWorkflowReview();
 }
 
 function resetWorkflowForReplacement() {
   closeRouteMenu();
+  // Самостоятельный аналитический вид относится к прежней модели. Новый
+  // проект открывается с обычного плана, а не молча меняет «Свет» на «Участок».
+  panelOpen = false;
+  lastOpener = null;
+  lastOpenerView = null;
   byId('projectRouteSteps')?.replaceChildren();
   workflowIdentity = null;
   workflowProjectRef = null;
@@ -986,7 +1002,10 @@ function stageIcon(view) {
 function renderStageBar() {
   const steps = byId('projectRouteSteps');
   if (!steps) return;
-  const rows = homeWorkflowRows(cachedWorkflowReview({ full: panelOpen && panelView === 'review' }));
+  // Нижняя палитра показывает последний готовый снимок, но не запускает
+  // скрытую аналитику сама. После правки значки временно становятся «?»,
+  // пока пользователь не откроет соответствующий аналитический вид.
+  const rows = homeWorkflowRows(cachedWorkflowReview());
   for (const view of rows) {
     let button = steps.querySelector(`[data-route-view="${view.id}"]`);
     if (!button) {
@@ -1037,7 +1056,7 @@ function routeHoverRows(viewId) {
     const labels = { datum: '±0.000', foundation: 'Основание', roof: 'Крыша', drainage: 'Водоотвод', entrance: 'Вход' };
     return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
   }
-  const row = homeWorkflowRows(cachedWorkflowReview({ full: false })).find((item) => item.id === viewId);
+  const row = homeWorkflowRows(cachedWorkflowReview()).find((item) => item.id === viewId);
   return asArray(HOME_VIEW_ITEMS[viewId]).map((item, index) => {
     const [label, mission] = Array.isArray(item) ? item : [String(item), null];
     return {
@@ -1398,8 +1417,12 @@ function renderPanel(model) {
   if (HOME_VIEWS.has(panelView)) {
     const preserved = captureHomePanelState(body, panelView);
     const current = HOME_VIEW_BY_ID.get(panelView) || HOME_VIEW_DEFS[0];
-    const review = cachedWorkflowReview({ full: panelView === 'review' });
-    kicker.textContent = `Аналитика / Этап ${current.step} из ${HOME_NAV_DEFS.length}`;
+    const review = panelView === 'review'
+      ? cachedWorkflowReview({ full: true, compute: true })
+      : null;
+    kicker.textContent = ANALYTICAL_VIEW_BY_PANEL.has(panelView)
+      ? 'Аналитический вид'
+      : `Проект / Этап ${current.step} из ${HOME_NAV_DEFS.length}`;
     title.textContent = current.title;
     body.querySelectorAll('details[name]').forEach((details) => details.removeAttribute('name'));
     body.innerHTML = state.project
@@ -1461,6 +1484,32 @@ function announce(text) {
   if (live) live.textContent = text;
 }
 
+function notifyWorkspaceViewChange() {
+  document.dispatchEvent(new CustomEvent('kepler:view'));
+}
+
+// Активный аналитический вид используется тем же диспетчером вкладок, что
+// планы, 3D и листы. Закрытая палитра не считается активным видом.
+export function activeAnalyticalViewId() {
+  if (!panelOpen) return null;
+  const ownPanel = panelView === 'passport' ? 'stage' : panelView;
+  return ANALYTICAL_VIEW_BY_PANEL.get(ownPanel)?.id || null;
+}
+
+export function openAnalyticalView(id, opener = null) {
+  const view = ANALYTICAL_VIEW_BY_ID.get(id);
+  if (!view) return false;
+  if (view.panel === 'stage') activeStage = firstIncompleteStage(latestModel);
+  openPanel(view.panel, null, opener);
+  return true;
+}
+
+export function closeAnalyticalView({ restoreFocus = false } = {}) {
+  if (!activeAnalyticalViewId()) return false;
+  closePanel({ restoreFocus });
+  return true;
+}
+
 function openPanel(view, stageId, opener) {
   closeRouteMenu();
   closeSheets();
@@ -1469,6 +1518,9 @@ function openPanel(view, stageId, opener) {
   if (view === 'stage') lastWorkflowView = 'site';
   else if (HOME_VIEWS.has(view)) lastWorkflowView = view;
   if (view === 'stage' || HOME_VIEWS.has(view)) saveWorkflowPosition();
+  // Нижняя палитра и workspace-меню открывают одни аналитические виды.
+  // Все входы должны получить свежий снимок одинаково.
+  if (ANALYTICAL_VIEW_BY_PANEL.has(view) && state.analytics?.dirty) flushAnalytics();
   if (!panelOpen) {
     lastOpener = opener || document.activeElement;
     lastOpenerView = lastOpener?.dataset?.routeView || null;
@@ -1478,6 +1530,7 @@ function openPanel(view, stageId, opener) {
   syncOpenState();
   announce(view === 'passport' ? 'Открыт паспорт участка'
     : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап маршрута проекта');
+  notifyWorkspaceViewChange();
 }
 
 function openSiteTask(stageId, taskId, opener) {
@@ -1502,6 +1555,7 @@ function closePanel({ restoreFocus = true } = {}) {
     (opener?.isConnected ? opener : fallback)?.focus({ preventScroll: true });
     routeFocusPreviewSuppressed = false;
   }
+  notifyWorkspaceViewChange();
 }
 
 function switchHomeView(view) {
@@ -1530,6 +1584,7 @@ function switchHomeView(view) {
   tab?.focus({ preventScroll: true });
   announce(view === 'site' ? HOME_NAV_DEFS[0].announce
     : HOME_VIEW_BY_ID.get(view)?.announce || 'Открыт этап проектирования дома');
+  notifyWorkspaceViewChange();
 }
 
 function firstIncompleteStage(model) {
@@ -2212,6 +2267,12 @@ export function bindProjectRoute() {
       // Не заменяем его DOM синхронно, пока браузер завершает событие.
       queueProjectRouteRender();
     }
+  });
+  document.addEventListener(ANALYTICS_READY_EVENT, () => {
+    // Кеш мог быть построен между PROJECT_CHANGE и завершением отложенного
+    // снимка. Инвалидируем его по фактической ревизии аналитики.
+    invalidateWorkflowReview();
+    if (bound) renderProjectRoute();
   });
   document.addEventListener(PROJECT_REPLACED_EVENT, resetWorkflowForReplacement);
   document.addEventListener('visibilitychange', () => {

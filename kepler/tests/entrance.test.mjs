@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { deriveEntrances } from '../core/entrance.js';
-import { createLevel, createOpening, createProject, createRoom } from '../core/model.js';
+import { createLevel, createOpening, createProject, createRoom, levelProject } from '../core/model.js';
+import { deriveWalls } from '../core/walls.js';
 
 function house({ zero = 1000, side = 0, role = 'main' } = {}) {
   const project = createProject();
@@ -52,6 +53,26 @@ test('главная наружная дверь даёт стабильную �
 
   assert.equal(JSON.stringify(project), before, 'deriveEntrances не пишет производные объекты в project');
   assert.deepEqual(deriveEntrances(project), [entrance], 'повторный расчёт детерминирован');
+});
+
+test('готовые стены этажа переиспользуются без изменения результата входа', () => {
+  const { project } = house();
+  const walls = deriveWalls(levelProject(project, project.activeLevel));
+  const regular = deriveEntrances(project);
+  const prepared = deriveEntrances(project, { wallsByLevel: new Map([[project.activeLevel, walls]]) });
+  assert.deepEqual(prepared, regular);
+});
+
+test('проект без подходящих наружных дверей не требует входной геометрии', () => {
+  const project = createProject();
+  for (let i = 0; i < 80; i += 1) {
+    const room = createRoom('bedroom', (i % 10) * 4200, Math.floor(i / 10) * 4200, 4000, 4000);
+    project.rooms.push(room);
+  }
+  const service = createOpening('door', project.rooms[0].id, 0, 2000, 1000);
+  service.entryRole = 'service';
+  project.openings.push(service);
+  assert.deepEqual(deriveEntrances(project), []);
 });
 
 test('без заданного ±0.000 вход найден, но остаётся pending без геометрии', () => {

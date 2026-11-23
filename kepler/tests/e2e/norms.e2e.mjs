@@ -39,16 +39,22 @@ describe('нормы', () => {
     await app.page.click('[data-analysis-fold="norm"] > summary');
     await app.page.fill('#normHours', '20');
     await app.page.locator('#normHours').blur();
+    await app.page.waitForFunction(() => window.__kepler.state.analytics?.dirty === false
+      && window.__kepler.state.norms?.insolation?.norm?.hours === 20);
     let ok = await app.page.evaluate(() => window.__kepler.state.norms.insolation.ok);
     assert.equal(ok, false);
     assert.match(await app.page.textContent('#issuesPanel'), /не хватает/);
     assert.match(await app.page.getAttribute('#issuesBtn', 'class'), /\bwarn\b/);
     await app.page.fill('#normHours', '');
     await app.page.locator('#normHours').blur();
+    await app.page.waitForFunction(() => window.__kepler.state.analytics?.dirty === false
+      && window.__kepler.state.norms?.insolation?.norm?.hours === 1.5);
     const n = await app.page.evaluate(() => window.__kepler.state.norms.insolation.norm.hours);
     assert.equal(n, 1.5, 'Алматы — южная зона, 1,5 ч');
     await app.page.click('#projectRouteClose');
     await app.page.keyboard.press('Control+z'); // отмена тоже пересчитывает
+    await app.page.waitForFunction(() => window.__kepler.state.analytics?.dirty === false
+      && window.__kepler.state.norms?.insolation?.norm?.hours === 20);
     ok = await app.page.evaluate(() => window.__kepler.state.norms.insolation.norm.hours);
     assert.equal(ok, 20);
     await app.page.click('#modePlanBtn');

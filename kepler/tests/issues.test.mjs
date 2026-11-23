@@ -15,9 +15,9 @@ const all = (issues) => issues.groups.flatMap((g) => g.items);
 const group = (issues, id) => issues.groups.find((g) => g.id === id);
 const warns = (issues) => all(issues).filter((x) => x.severity === 'warn');
 
-test('умолчания групп: ВКЛ — геометрия и мебель, остальные выкл; семь групп (эргономика — по режиму)', () => {
+test('умолчание рабочего плана: ВКЛ — только геометрия; семь групп', () => {
   assert.deepEqual(ISSUE_GROUPS.map((g) => g.id), ['access', 'norms', 'light', 'insolation', 'furniture', 'geometry', 'ergo']);
-  assert.deepEqual(DEFAULT_ISSUE_GROUPS, ['furniture', 'geometry']);
+  assert.deepEqual(DEFAULT_ISSUE_GROUPS, ['geometry']);
 });
 
 test('перекрытие: в группе «Геометрия», цель — обе комнаты, «Обрезать», рамка — зона перекрытия', () => {
@@ -113,7 +113,7 @@ test('этажи: замечание второго этажа — с его lev
   assert.ok(upper.every((x) => x.levelName === '2 этаж'));
 });
 
-test('фильтр групп: выключенные не в списке и не в бейдже, но в сводке со своим числом', () => {
+test('фильтр групп: выключенные не рассчитываются и не входят в список/бейдж', () => {
   const p = createProject();
   const a = createRoom('living', 0, 0, 3000, 3000); // площадь, свет, нет входа
   const b = createRoom('kitchen', 2000, 1000, 3000, 3000); // перекрытие
@@ -123,15 +123,40 @@ test('фильтр групп: выключенные не в списке и н
   assert.deepEqual(only.groups.map((g) => g.id), ['geometry']);
   assert.equal(only.count, group(full, 'geometry').count);
   assert.ok(full.count > only.count);
-  assert.equal(only.enabledCount, 2);
+  assert.equal(only.enabledCount, 1);
   assert.equal(only.total, 7);
   const norms = only.summary.find((g) => g.id === 'norms');
   assert.equal(norms.enabled, false);
-  assert.equal(norms.count, group(full, 'norms').count, 'выключенная группа — сколько было бы');
+  assert.equal(norms.computed, false);
+  assert.equal(norms.count, 0, 'выключенная группа не тратит время на скрытый расчёт');
+  assert.equal(only.summary.find((g) => g.id === 'geometry').computed, true);
   const none = collectIssues(p, { enabled: [] });
   assert.equal(none.count, 0);
   assert.equal(none.severity, 'ok');
   assert.deepEqual(none.groups, []);
+  assert.ok(none.summary.every((g) => !g.computed && g.count === 0));
+});
+
+test('normsReport считает только запрошенные аналитические слои', () => {
+  const p = createProject();
+  const room = createRoom('living', 0, 0, 3000, 3000); // мало площади и нет окон
+  p.rooms.push(room);
+
+  const geometry = normsReport(p, { enabled: ['geometry'] });
+  assert.equal(geometry.insolation.computed, false);
+  assert.ok(!geometry.problems.some((problem) => ['area', 'width', 'height', 'light', 'furniture'].includes(problem.kind)));
+
+  const norms = normsReport(p, { enabled: ['norms'] });
+  assert.ok(norms.problems.some((problem) => problem.kind === 'area'));
+  assert.ok(!norms.problems.some((problem) => problem.kind === 'light'));
+
+  const light = normsReport(p, { enabled: ['light'] });
+  assert.ok(light.problems.some((problem) => problem.kind === 'light'));
+  assert.ok(!light.problems.some((problem) => problem.kind === 'area'));
+
+  const none = normsReport(p, { enabled: ['access'] });
+  assert.deepEqual(none.rooms, []);
+  assert.deepEqual(none.problems, []);
 });
 
 test('скрытые замечания: не в списке и не в бейдже, в hidden; справочные строки не скрываются', () => {
@@ -285,4 +310,23 @@ test('эргономика: находки режима — группа «Эр�
   assert.equal(e.target.type, 'item');
   assert.equal(e.mark, '⛔');
   assert.ok(e.focus && e.focus.w > 0);
+});
+
+test('производительность: доступ 200 несвязанных комнат не пересчитывает соседства для каждой комнаты', () => {
+  const p = createProject('200 комнат');
+  const cols = 15;
+  for (let i = 0; i < 200; i += 1) {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const room = createRoom('bedroom', col * 4200 + row * 17, row * 4200 + col * 13, 3000, 3000);
+    room.id = `perf-${i}`;
+    p.rooms.push(room);
+  }
+  // Готовые стены не нужны: здесь проверяем именно один общий расчёт
+  // projectAdjacencies вместо прежних 200 одинаковых расчётов O(n³).
+  const started = performance.now();
+  const report = collectIssues(p, { enabled: ['access'], walls: [] });
+  const elapsed = performance.now() - started;
+  assert.ok(report.groups.some((entry) => entry.id === 'access'));
+  assert.ok(elapsed < 1000, `доступ 200 комнат: ${elapsed.toFixed(1)} мс`);
 });

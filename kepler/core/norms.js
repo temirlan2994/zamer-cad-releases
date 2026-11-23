@@ -81,23 +81,25 @@ const windowGlass = (project, roomId, walls) => {
 // и ширина — только типы из SP55.minArea / minWidth: служебные помещения
 // (санузел без ванны, гардеробная, кладовая, лестница, шахта, терраса) —
 // без ложных замечаний.
-export function roomChecks(project, room, level, walls = null) {
+export function roomChecks(project, room, level, walls = null, options = {}) {
   const out = [];
+  const kinds = options.kinds instanceof Set ? options.kinds : null;
+  const wants = (kind) => !kinds || kinds.has(kind);
   const title = roomType(room.type)?.title || room.name;
   const area = roomNetAreaM2(project, room);
-  const needWalls = !walls && (room.type === 'kitchen' || SP55.lightTypes.has(room.type));
+  const needWalls = wants('light') && !walls && (room.type === 'kitchen' || SP55.lightTypes.has(room.type));
   const zone = room.parentId || isShaft(room) ? [room] : openPlanZone(project, room, walls || (needWalls ? deriveWalls(project) : null));
   // Кухня в открытой планировке с гостиной (кухня-ниша) — площадь по зоне.
   const kitchenNiche = room.type === 'kitchen' && zone.some((r) => r.type === 'living' || r.type === 'kitchen-living');
   const minArea = kitchenNiche ? 0 : SP55.minArea[room.type];
-  if (minArea) {
+  if (wants('area') && minArea) {
     out.push({
       kind: 'area', ok: area >= minArea - 1e-9,
       text: `Площадь ${fmt(area)} м² ${area >= minArea - 1e-9 ? '≥' : '<'} ${minArea} м² (${title.toLowerCase()})`,
     });
   }
   const minWidth = roomType(room.type)?.wc ? bathroomMinWidth(project, room) : SP55.minWidth[room.type];
-  if (minWidth) {
+  if (wants('width') && minWidth) {
     // Г/контур: ширина основной части (самый широкий из прямоугольников формы),
     // а не габарит — иначе узкий рукав маскируется широким габаритом.
     const width = Math.max(...roomRects(room).map((r) => Math.min(r.w, r.h)));
@@ -106,7 +108,7 @@ export function roomChecks(project, room, level, walls = null) {
       text: `Ширина ${fmt(width / 1000, 2)} м ${width >= minWidth ? '≥' : '<'} ${fmt(minWidth / 1000, 2)} м`,
     });
   }
-  if (SP55.lightTypes.has(room.type) && area > 0) {
+  if (wants('light') && SP55.lightTypes.has(room.type) && area > 0) {
     // Окна ручных стен (host) — по помещению со стороны дома (hostOpeningRoom).
     // Открытая планировка (скрытые общие стены) — свет общий: окна и
     // площадь всей зоны (кухня-ниша без своего окна у гостиной с окнами).
@@ -122,7 +124,7 @@ export function roomChecks(project, room, level, walls = null) {
         : 'Нет окон — нужен естественный свет (окна ≥ 1:8 площади пола)',
     });
   }
-  if (SP55.lightTypes.has(room.type) && level) {
+  if (wants('height') && SP55.lightTypes.has(room.type) && level) {
     const clear = roomCeiling(room, level);
     out.push({
       kind: 'height', ok: clear >= SP55.minClearHeight,
@@ -173,34 +175,70 @@ export function trimRoomBy(room, by, project) {
   return trimByBridge(project, room, by);
 }
 
-// Полный отчёт: инсоляция + проверки всех комнат по этажам.
-export function normsReport(project) {
-  const insolation = insolationReport(project);
+// Отчёт по этажам. Без options.enabled — полный; редактор передаёт только
+// реально включённые аналитические слои, чтобы черчение оставалось быстрым.
+export function normsReport(project, options = {}) {
+  // Один и тот же набор стен используют окна/инсоляция и проверки комнат.
+  // Раньше deriveWalls повторялся дважды на каждом этаже за один отчёт.
+  const enabled = options.enabled ? new Set(options.enabled) : null;
+  const on = (group) => !enabled || enabled.has(group);
+  const wallsByLevel = options.wallsByLevel instanceof Map ? options.wallsByLevel : new Map();
+  const requested = ['insolation', 'geometry', 'norms', 'light', 'furniture'].some(on);
+  if (!requested) {
+    return {
+      insolation: { norm: null, rooms: [], need: 0, met: 0, ok: true, siteKnown: false, computed: false },
+      rooms: [], problems: [], overlaps: [], flagged: new Set(), ok: true,
+    };
+  }
+  const insolation = on('insolation')
+    ? insolationReport(project, { ...options, wallsByLevel })
+    : { norm: null, rooms: [], need: 0, met: 0, ok: true, siteKnown: false, computed: false };
   const rooms = [];
   const overlaps = [];
   const flagged = new Set(); // мебель с замечаниями — подсветка на плане
   for (const level of sortedLevels(project)) {
     const lp = levelProject(project, level.id);
-    const walls = deriveWalls(lp);
-    const levelOverlaps = roomOverlaps(lp);
-    const verdicts = overlapVerdicts(lp, levelOverlaps);
-    const crossed = wallsInsideRooms(lp);
+    let walls = wallsByLevel.get(level.id);
+    if (!walls) {
+      walls = deriveWalls(lp);
+      wallsByLevel.set(level.id, walls);
+    }
+    const levelOverlaps = on('geometry') ? roomOverlaps(lp) : [];
+    const verdicts = levelOverlaps.length ? overlapVerdicts(lp, levelOverlaps) : new Map();
+    const crossed = on('geometry') ? wallsInsideRooms(lp) : [];
+    // Не фильтруем два общих массива заново для каждой комнаты. На плане с
+    // множеством пересечений прежний цикл мог снова вырасти почти до O(n³).
+    const crossedByRoom = new Map();
+    for (const entry of crossed) {
+      const list = crossedByRoom.get(entry.roomId) || [];
+      list.push(entry);
+      crossedByRoom.set(entry.roomId, list);
+    }
+    const overlapsByUpper = new Map();
+    for (const overlap of levelOverlaps) {
+      const list = overlapsByUpper.get(overlap.upper.id) || [];
+      list.push(overlap);
+      overlapsByUpper.set(overlap.upper.id, list);
+    }
+    const normKinds = new Set();
+    if (on('norms')) for (const kind of ['area', 'width', 'height']) normKinds.add(kind);
+    if (on('light')) normKinds.add('light');
     for (const room of lp.rooms) {
-      const checks = roomChecks(lp, room, level, walls);
+      const checks = normKinds.size ? roomChecks(lp, room, level, walls, { kinds: normKinds }) : [];
       // Ручная стена через блок-комнату (раздел 2.5): «Разделить на два».
-      for (const c of crossed.filter((q) => q.roomId === room.id)) {
+      for (const c of crossedByRoom.get(room.id) || []) {
         checks.push({
           kind: 'wall-divides', ok: false, wallId: c.wallId,
           text: c.divides ? `Стена делит помещение «${room.name}»` : `Стена внутри помещения «${room.name}»`,
           split: c.divides ? { roomId: room.id, wallId: c.wallId, label: `Разделить «${room.name}» на два` } : null,
         });
       }
-      for (const f of furnitureIssues(lp, room, walls)) {
+      for (const f of on('furniture') ? furnitureIssues(lp, room, walls) : []) {
         checks.push({ kind: 'furniture', sub: f.kind, ok: false, text: f.text, itemIds: f.itemIds });
         for (const id of f.itemIds) flagged.add(id);
       }
       // Перекрытие — одно замечание на пару, у верхней комнаты.
-      for (const o of levelOverlaps.filter((q) => q.upper === room)) {
+      for (const o of overlapsByUpper.get(room.id) || []) {
         const plan = verdicts.get(o.lower.id)?.get(o.upper.id) || { ok: false, why: 'none' };
         checks.push({
           kind: 'overlap', ok: false,

@@ -27,7 +27,7 @@ import { renderProps } from './ui/props.js';
 import { state } from './ui/state.js';
 import {
   AUTOSAVE_EVENT, BROKEN_KEY, PID_KEY, bindAutosaveLifecycle, loadAutosave,
-  mutate, parseProjectText, refreshDerived, refreshIssues, refreshNorms, restoreHeavyRefs, tweak,
+  flushAnalytics, mutate, parseProjectText, refreshDerived, restoreHeavyRefs, scheduleAnalytics, tweak,
 } from './ui/store.js';
 import { bindTheme, loadTheme } from './ui/theme.js';
 import { loadLandscapeStyle, loadLandscapeSun } from './ui/landscape-style.js';
@@ -135,8 +135,10 @@ import { bindProjectRoute, renderProjectRoute } from './ui/project-route.js';
     applyModeRotation();
     syncUnderlayImage();
     syncProjectNameUi();
-    refreshNorms();
-    refreshIssues();
+    // Маленький проект получает готовые статусы сразу. Большой не задерживает
+    // первый кадр квадратичными проверками — они запускаются в idle.
+    if ((project.rooms?.length || 0) <= 40) flushAnalytics();
+    else scheduleAnalytics({ delay: 0 });
     renderLibrary();
     renderLevelBar();
     renderFurnitureBar();

@@ -22,7 +22,7 @@ import { setErgoPref } from './render-ergonomics.js';
 import { applyGapFix } from './plan-actions.js';
 import { planGapStretch, planGapThicken } from '../core/gap-fix.js';
 import { state } from './state.js';
-import { mutate, refreshIssues } from './store.js';
+import { flushAnalytics, mutate, refreshIssues } from './store.js';
 import { selectObject } from './tools.js';
 import { requestDraw, showPlanRect } from './view.js';
 import { splitByWallAction } from './wall-tool.js';
@@ -49,7 +49,10 @@ export function setIssueGroupEnabled(id, on) {
   if (on) list.add(id); else list.delete(id);
   enabledGroups = ISSUE_GROUPS.map((g) => g.id).filter((g) => list.has(g));
   try { localStorage.setItem(GROUPS_KEY, JSON.stringify(enabledGroups)); } catch { /* хранилище недоступно */ }
-  refreshIssues();
+  // Включённый слой всегда требует нового normsReport: последний фоновый
+  // снимок намеренно содержит только включённые тогда группы. При свежем
+  // снимке выключение лишь дёшево перефильтровывает готовый отчёт.
+  if (on || state.analytics?.dirty) flushAnalytics(); else refreshIssues();
 }
 
 // --- Скрытые замечания (в проекте, с отменой).
@@ -60,6 +63,9 @@ function setDismissed(id, on) {
     if (on) list.add(id); else list.delete(id);
     if (list.size) s.dismissedIssues = [...list]; else delete s.dismissedIssues;
   });
+  // Скрытие — только фильтр существующего снимка, поэтому результат должен
+  // исчезнуть из панели сразу, не дожидаясь фонового аналитического таймера.
+  refreshIssues();
 }
 
 export function isIssuesOpen() {
@@ -73,7 +79,8 @@ export function setIssuesOpen(open) {
   el('issuesBtn')?.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('issues-open', open);
   syncPropsTabs();
-  if (open) renderIssues();
+  if (open && state.analytics?.dirty) flushAnalytics();
+  else if (open) renderIssues();
 }
 
 // Компьютер: «⚠ Замечания» — третья вкладка правой панели, список — вместо

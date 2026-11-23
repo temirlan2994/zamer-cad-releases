@@ -10,6 +10,11 @@ const paths = {
   section: 'M3 18h18M5 15V7l7-4 7 4v8M5 11h14',
   facade: 'M3 19h18M5 19V8l7-4 7 4v11M8 11h2v2H8zm6 0h2v2h-2z',
   sheet: 'M5 2h10l4 4v16H5zM14 2v6h5M8 12h8m-8 4h5',
+  analysis: 'M4 19V9m5 10V5m5 14v-7m5 7V3M3 21h18',
+  ergonomics: 'M4 18h16M6 18v-4h12v4M8 14V9h8v5M12 9V5m-2 0h4',
+  light: 'M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 1 1 8 0',
+  engineering: 'M4 7h7v5h5V7h4M6 4v6m12-6v6m-7 4v5h5v-5',
+  volume: 'm12 3 8 4v10l-8 4-8-4V7zm-8 4 8 4 8-4m-8 4v10',
   plus: 'M12 5v14M5 12h14',
   props: 'M4 7h8m5 0h3M4 17h3m5 0h8M12 5h4v4h-4zm-4 10h4v4H8z',
   check: 'm5 12 4 4 10-10',
@@ -21,6 +26,7 @@ const categories = {
   model: ['Модель и участок', 'model'],
   sections: ['Разрезы', 'section'],
   facades: ['Фасады', 'facade'],
+  analytics: ['Аналитика', 'analysis'],
   sheets: ['Листы', 'sheet'],
 };
 

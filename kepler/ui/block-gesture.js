@@ -1,9 +1,8 @@
 // Жесты блоков на номинальной модели (docs/v7-stage2-plan.md, срез 3).
 //
 // • Перенос/растяжение съеденной комнаты идёт по её НОМИНАЛЬНОЙ форме:
-//   в начале жеста liftRoom возвращает номинал, на каждом кадре
-//   reconcileEats заново считает видимые формы — нижняя комната меняется
-//   во время жеста, а не в конце.
+//   в начале жеста liftRoom возвращает номинал; на обычном плане видимые
+//   формы считаются вживую, на большом — один раз при завершении жеста.
 // • Магнит блоков (core/v7/magnet.js): 300 мм, тумблер «Примагничивание
 //   блоков» в «Привязках»; Shift или Alt — временно без магнита.
 // • Ручка грани на общей стене двигает и встречные грани соседей
@@ -23,8 +22,49 @@ import { wallBody, wallMagnet, wallPins } from '../core/grid-pins.js';
 import { state } from './state.js';
 
 export const MAGNET_MM = 300;
-const FRAME_BUDGET_MS = 12; // дольше — пересчёт съедания реже (не каждый кадр)
-const SLOW_STEP_MS = 60;
+const FRAME_STEP_MS = 16; // быстрый пересчёт — не чаще одного экранного кадра
+export const LIVE_GEOMETRY_ROOM_LIMIT = 40;
+
+// На большом этаже одна deriveWallsV2 занимает уже несколько кадров на
+// мобильном CPU. Во время жеста важнее непрерывно видеть сам блок и ghost;
+// точные стены/carve вызывающая сторона всё равно считает на pointerup.
+export function deferLiveGeometry(project = state.project) {
+  return (project?.rooms?.length || 0) > LIVE_GEOMETRY_ROOM_LIMIT;
+}
+
+// Тяжёлые производные плана (стены, зазоры, свободные петли) должны
+// пересчитываться не на каждом сыром pointermove, а максимум один раз перед
+// ближайшим кадром. Браузер может прислать несколько событий мыши/пера за
+// один кадр; прежний путь синхронно повторял полную геометрию для каждого.
+// На pointerup вызывающая сторона отменяет отложенный кадр и делает один
+// точный refreshDerived уже для окончательного положения.
+const requestFrame = (callback) => (globalThis.requestAnimationFrame
+  ? globalThis.requestAnimationFrame(callback)
+  : globalThis.setTimeout(callback, FRAME_STEP_MS));
+const cancelFrame = (id) => (globalThis.cancelAnimationFrame
+  ? globalThis.cancelAnimationFrame(id)
+  : globalThis.clearTimeout(id));
+
+export function scheduleLiveDerived(drag, refresh) {
+  if (!drag || drag.derivedEnded || drag.derivedFrame != null) return false;
+  if (deferLiveGeometry()) {
+    drag.derivedDeferred = true;
+    return false;
+  }
+  drag.derivedFrame = requestFrame(() => {
+    drag.derivedFrame = null;
+    if (drag.derivedEnded) return;
+    refresh();
+  });
+  return true;
+}
+
+export function cancelLiveDerived(drag) {
+  if (!drag) return;
+  drag.derivedEnded = true;
+  if (drag.derivedFrame != null) cancelFrame(drag.derivedFrame);
+  drag.derivedFrame = null;
+}
 
 // Включён ли магнит для этого события мыши/клавиатуры.
 export function magnetOn(event) {
@@ -205,14 +245,12 @@ export function followFrame(drag, delta) {
 }
 
 // Съедание на кадре жеста. opts — как у reconcileEats (touched, under).
-// Если пересчёт дорог (большой проект) — не чаще раза в SLOW_STEP_MS;
-// в конце жеста всё равно считается окончательно (eatOverlapsAfter).
+// На обычном плане каждое движение считается последовательно: общие стены
+// зависят от прошлого carve. План > LIVE_GEOMETRY_ROOM_LIMIT откладывает всё до pointerup.
 export function liveEat(drag, opts) {
-  const now = performance.now();
-  if (drag.eatSlow && now - (drag.eatAt || 0) < SLOW_STEP_MS) return null;
-  const res = reconcileEats(state.project, opts);
-  const spent = performance.now() - now;
-  drag.eatAt = performance.now();
-  drag.eatSlow = spent > FRAME_BUDGET_MS;
-  return res;
+  if (deferLiveGeometry()) {
+    drag.eatDeferred = true;
+    return null;
+  }
+  return reconcileEats(state.project, opts);
 }

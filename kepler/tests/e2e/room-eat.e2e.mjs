@@ -5,7 +5,12 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, openNew, clickWorld, worldToClient } from './helpers.mjs';
 
-const snap = (page) => page.evaluate(() => {
+const snap = async (page) => {
+  await page.waitForFunction(() => (
+    window.__kepler.state.analytics?.dirty === false
+    && Boolean(window.__kepler.state.norms)
+  ));
+  return page.evaluate(() => {
   const { state } = window.__kepler;
   const rooms = Object.fromEntries(state.project.rooms.map((r) => [r.id, {
     x: r.x, y: r.y, w: r.w, h: r.h, outline: r.outline ? r.outline.length : 0,
@@ -19,7 +24,8 @@ const snap = (page) => page.evaluate(() => {
     redRects: (state.norms.overlaps || []).length,
     partition: state.project.settings.partition || 100,
   };
-});
+  });
+};
 
 async function drag(page, a, b) {
   const from = await worldToClient(page, a[0], a[1]);

@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createItem, createProject, createRoom } from '../core/model.js';
+import { normsReport } from '../core/norms.js';
 import { deriveWalls } from '../core/walls.js';
 
 const previousDocument = globalThis.document;
 globalThis.document = { getElementById: () => ({ getContext: () => ({}) }) };
 const {
-  handleHomeReviewClick, homeReviewHtml,
+  handleHomeReviewClick, homeReviewHtml, homeReviewReport,
 } = await import('../ui/home-review.js');
 if (previousDocument === undefined) delete globalThis.document;
 else globalThis.document = previousDocument;
@@ -42,6 +43,20 @@ test('итоговая проверка включает эргономичес�
     issues: { groups: [], hidden: [] },
   });
   assert.match(html, /500 мм|проход|кроват/i);
+});
+
+test('итоговая сводка не принимает частичный снимок норм за полный', () => {
+  const project = createProject('Частичный снимок');
+  const room = createRoom('living', 0, 0, 3000, 3000);
+  project.rooms.push(room);
+  const partial = normsReport(project, { enabled: ['geometry'] });
+  assert.equal(partial.problems.some((problem) => problem.kind === 'area'), false);
+
+  const review = homeReviewReport(project, {
+    norms: partial, walls: deriveWalls(project), gaps: [],
+  });
+  assert.ok(review.provenProblems.some((problem) => problem.sourceId === `area:${project.activeLevel}:${room.id}`));
+  assert.ok(review.provenProblems.some((problem) => problem.sourceId === `light:${project.activeLevel}:${room.id}`));
 });
 
 test('кнопка этапа передаёт точный id представления', () => {

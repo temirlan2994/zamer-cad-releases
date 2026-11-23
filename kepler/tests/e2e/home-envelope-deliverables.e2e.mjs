@@ -171,7 +171,8 @@ describe('этапы 8–9 на телефоне', () => {
     // Кнопки палитры этапов — 40 px (размер палитры на телефоне); действия этапа — от 44 px.
     assert.ok(result.tabHeights.every((height) => height >= 40), JSON.stringify(result));
     assert.ok(result.actionHeights.length > 0);
-    assert.ok(result.actionHeights.every((height) => height >= 44), JSON.stringify(result));
+    // Chromium иногда возвращает 43.9999 px для CSS-высоты 44 px из-за субпиксельного округления.
+    assert.ok(result.actionHeights.every((height) => Math.round(height) >= 44), JSON.stringify(result));
     assert.deepEqual(app.errors, []);
   });
 });

@@ -68,7 +68,10 @@ import {
 import { chainsWithout, dragPrev, setSnapRehover, snapAt } from './draw-snap-ui.js';
 import { applyResize, gridStep, resizeVerdict, snapItemToWalls } from './snap.js';
 import { guideDelta, itemShape, roomShape, startGuideSession } from './guides-ui.js';
-import { captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize, sketchMagnet, wallGridMagnet } from './block-gesture.js';
+import {
+  cancelLiveDerived, captureFollow, followFrame, liftForGesture, liveEat, magnetMove, magnetResize,
+  scheduleLiveDerived, sketchMagnet, wallGridMagnet,
+} from './block-gesture.js';
 import { hitGridLock } from './grid-locks.js';
 import { hideLockTip, rememberGridSnap, showLockTip, toggleGridLock } from './grid-pin-ui.js';
 import { massPlanClick, massPlanHover } from './masses.js';
@@ -579,6 +582,7 @@ export function bindCanvasInput() {
       e.stopImmediatePropagation();
       const finished = drag;
       drag = null;
+      cancelLiveDerived(finished);
       state.ghost = null;
       state.guides = [];
       if (finished.moved) {
@@ -1247,7 +1251,8 @@ export function bindCanvasInput() {
       if (!room) return;
       drag.moved = true;
       // Съеденная — едет её номинальная форма (целая); видимые формы
-      // соседей пересчитываются на каждом кадре (ui/block-gesture.js).
+      // соседей считаются вживую, а на большом плане — при pointerup
+      // (ui/block-gesture.js), чтобы курсор не замирал на каждом кадре.
       if (liftForGesture(drag, [room.id])) drag.start = { x: room.x, y: room.y };
       const rawX = drag.start.x + (plan.x - drag.plan.x);
       const rawY = drag.start.y + (plan.y - drag.plan.y);
@@ -1309,7 +1314,7 @@ export function bindCanvasInput() {
         ? `Вложить в «${roomById(state.project, candidateParent)?.name}»`
         : !candidateParent && drag.startParent ? 'Отделить от родителя' : ' ';
       state.ghost = { rect: { x: room.x, y: room.y, w: room.w, h: room.h }, valid: verdict.ok, label: nestLabel, reason: verdict.ok ? '' : verdict.reason };
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1353,7 +1358,7 @@ export function bindCanvasInput() {
       }
       drag.valid = valid;
       drag.reason = reason;
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1398,7 +1403,7 @@ export function bindCanvasInput() {
       const verdict = followVerdictNow.ok ? resizeVerdict(room) : followVerdictNow;
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1465,7 +1470,7 @@ export function bindCanvasInput() {
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
       state.ghost = { rect: { x: room.x, y: room.y, w: room.w, h: room.h }, valid: verdict.ok, label: `${(room.w / 1000).toFixed(2)} × ${(room.h / 1000).toFixed(2)} м`, reason: verdict.ok ? '' : verdict.reason };
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1594,7 +1599,7 @@ export function bindCanvasInput() {
       if (!drag.moved) {
         drag.valid = true;
         liveEat(drag, { touched: wallIds });
-        refreshDerived();
+        scheduleLiveDerived(drag, refreshDerived);
         requestDraw();
         return;
       }
@@ -1603,7 +1608,7 @@ export function bindCanvasInput() {
       drag.valid = verdict.ok;
       drag.reason = verdict.reason;
       liveEat(drag, { touched: wallIds });
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1681,7 +1686,7 @@ export function bindCanvasInput() {
       const p = snapRes.point;
       state.gridSnapTag = snapRes.label ? { x: p.x, y: p.y, text: snapRes.label } : null;
       drag.moved = dragManualWallEnd(state.project, wall.id, drag.end, p).ok || drag.moved;
-      refreshDerived();
+      scheduleLiveDerived(drag, refreshDerived);
       requestDraw();
       return;
     }
@@ -1894,6 +1899,7 @@ export function bindCanvasInput() {
     if (!drag) return;
     const finished = drag;
     drag = null;
+    cancelLiveDerived(finished);
     state.guides = [];
     state.gridSnapTag = null;
     state.objGuides = null;
@@ -2089,6 +2095,7 @@ export function cancelActiveGesture() {
   touches.clear();
   canvas.parentElement?.classList.remove('move-armed');
   if (drag?.kind === 'touch-hold') clearTimeout(drag.timer);
+  cancelLiveDerived(drag);
   if (drag && drag.kind !== 'pinch' && drag.before && drag.moved) {
     restoreFrom(drag.before);
     if (drag.kind === 'shape-resize') state.pendingRoomSplit = null;

@@ -83,9 +83,15 @@
 .wv-tabs button .wv-tab-x:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .wv-tabs button.dragging { opacity: .45; }
 .wv-tabs button:hover { color: var(--text); background: var(--surface-2); }
+.wv-tabs button[data-workspace-view^="analysis:"] { color: color-mix(in srgb, var(--ok-text) 72%, var(--muted)); }
+.wv-tabs button[data-workspace-view^="analysis:"] svg { color: var(--ok-text); }
 .wv-tabs button.active, .wv-tabs #view3dBtn.active {
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 22%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-weight: 700;
+}
+.wv-tabs button[data-workspace-view^="analysis:"].active {
+  color: var(--ok-text); border-color: color-mix(in srgb, var(--ok-text) 28%, transparent);
+  background: color-mix(in srgb, var(--ok-bg) 74%, var(--surface));
 }
 #v3Fit svg { display: none; width: 18px; height: 18px; }
 .view3d .view3d-bar { overflow: visible; padding: 5px 7px 5px 12px; border-radius: 12px; gap: 8px; }

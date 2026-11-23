@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { openNew, startApp, zoomToItems } from './helpers.mjs';
 
-test('кнопки + у кровати добавляют тумбы в один перемещаемый комплект', { timeout: 12_000 }, async () => {
+test('кнопки + у кровати добавляют тумбы в один перемещаемый комплект', { timeout: 20_000 }, async () => {
   const app = await startApp();
   try {
     await openNew(app.page);

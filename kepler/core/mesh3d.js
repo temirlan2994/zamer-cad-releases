@@ -581,9 +581,9 @@ function levelWallsV2(lp, walls, z0, height, levelId) {
 }
 
 // Стены этажа с проёмами.
-function levelWalls(lp, z0, height, levelId) {
+function levelWalls(lp, z0, height, levelId, preparedWalls = null) {
   const faces = [];
-  const walls = deriveWalls(lp);
+  const walls = preparedWalls || deriveWalls(lp);
   if (walls.some((w) => w.rects) || lp.massVoids?.length) return levelWallsV2(lp, walls, z0, height, levelId);
   const cuts = new Map(); // стена → [{ a0, a1, bottom, top, kind }]
   for (const o of lp.openings) {
@@ -634,10 +634,10 @@ function levelWalls(lp, z0, height, levelId) {
 
 // Слой стен одного этажа (для быстрой пересборки при правке в 3D): грани
 // помечены wallsOf = id этажа.
-export function buildLevelWalls(project, levelId) {
+export function buildLevelWalls(project, levelId, preparedWalls = null) {
   const level = (project.levels || []).find((l) => l.id === levelId);
   if (!level) return [];
-  const faces = levelWalls(levelProject(project, levelId), level.elevation, level.height, levelId);
+  const faces = levelWalls(levelProject(project, levelId), level.elevation, level.height, levelId, preparedWalls);
   for (const f of faces) f.wallsOf = levelId;
   return faces;
 }
@@ -1527,9 +1527,9 @@ function rampComponentFaces(ramp) {
 
 // Производное крыльцо главного наружного входа. В проекте хранится только
 // дверь и параметры оболочки; площадка, ступени и пандус следуют за ними.
-export function entranceFaces(project) {
+export function entranceFaces(project, options = {}) {
   const faces = [];
-  for (const entrance of deriveEntrances(project)) {
+  for (const entrance of deriveEntrances(project, options)) {
     if (entrance.status === 'pending') continue;
     const tag = (source, component) => source.map((face) => ({
       ...face,
@@ -2057,13 +2057,18 @@ export function buildHouseMesh(project, {
   const envelope = envelopeOf(project);
   const shown = new Set(shownLevelIds(project, levelMode));
   const lps = levels.map((level) => levelProject(project, level.id));
+  // Одна 3D-сборка использует одни и те же стены для тела дома и входной
+  // группы. Карта устраняет второй deriveWalls() у занятого нижнего этажа.
+  const wallsByLevel = new Map();
   const groundLevelIndex = lps.findIndex((lp) => levelFootprint(lp, lp.settings?.exterior || 250).length);
   levels.forEach((level, k) => {
     if (!shown.has(level.id)) return;
     const lp = lps[k];
+    const walls = deriveWalls(lp);
+    wallsByLevel.set(level.id, walls);
     faces.push(...levelFloors(lp, level.elevation, level.id));
     faces.push(...railingFaces(lp, level.elevation, level.id));
-    faces.push(...buildLevelWalls(project, level.id));
+    faces.push(...buildLevelWalls(project, level.id, walls));
     faces.push(...levelStructures(lp, level.elevation, level.height, level.id));
     faces.push(...levelStairs(lp, level.elevation, level.height, level.id, k < levels.length - 1));
     if (furniture) faces.push(...furnitureFaces(lp, level.elevation, level.height, level.id));
@@ -2082,7 +2087,7 @@ export function buildHouseMesh(project, {
   }
   const foundation = foundationFaces(project);
   if (foundation.some((face) => shown.has(face.level))) faces.push(...foundation.filter((face) => shown.has(face.level)));
-  const entrances = entranceFaces(project);
+  const entrances = entranceFaces(project, { wallsByLevel });
   if (entrances.some((face) => shown.has(face.level))) faces.push(...entrances.filter((face) => shown.has(face.level)));
   if (roof && envelope.roofMode === 'linked' && shown.size === levels.length) {
     faces.push(...linkedRoofFaces(project));

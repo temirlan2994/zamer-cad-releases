@@ -372,7 +372,7 @@ export function totalAreaM2(project) {
 
 // Анализ связности: каждая комната должна быть достижима от входной двери.
 // Двери создают рёбра графа (комната-комната или комната-улица).
-export function analyzeConnectivity(project, walls = null) {
+export function analyzeConnectivity(project, walls = null, adjacencies = null) {
   const graph = new Map(); // id -> Set(id)
   const addEdge = (a, b) => {
     if (!graph.has(a)) graph.set(a, new Set());
@@ -420,7 +420,7 @@ export function analyzeConnectivity(project, walls = null) {
   const unreachable = [];
   for (const r of project.rooms) {
     if (reachable.has(r.id)) continue;
-    if (needsOwnAccess(project, r)) unreachable.push(r.id); else exempt.push(r.id);
+    if (needsOwnAccess(project, r, adjacencies)) unreachable.push(r.id); else exempt.push(r.id);
   }
   return { hasEntrance, reachable, unreachable, exempt, graph };
 }
@@ -435,14 +435,15 @@ const BEDROOM_TYPES = new Set(['bedroom', 'master-bedroom', 'kids-room', 'guest-
 // них решает автор); вложенному помещению (parentId — внутри родителя,
 // проход в нём по месту); гардеробной, примыкающей к спальне (вход из
 // спальни аркой или без двери — обычное решение).
-export function needsOwnAccess(project, room) {
+export function needsOwnAccess(project, room, adjacencies = null) {
   if (!room) return false;
   if (isShaft(room) || NO_ACCESS_TYPES.has(room.type)) return false;
   if (isOpenRoom(room)) return false;
   if (room.parentId) return false;
   if (room.type === 'wardrobe-room') {
     const bedrooms = new Set(project.rooms.filter((r) => BEDROOM_TYPES.has(r.type)).map((r) => r.id));
-    if (bedrooms.size && projectAdjacencies(project).some((a) => (a.a.id === room.id && bedrooms.has(a.b.id)) || (a.b.id === room.id && bedrooms.has(a.a.id)))) return false;
+    const pairs = adjacencies || projectAdjacencies(project);
+    if (bedrooms.size && pairs.some((a) => (a.a.id === room.id && bedrooms.has(a.b.id)) || (a.b.id === room.id && bedrooms.has(a.a.id)))) return false;
   }
   return true;
 }
@@ -594,6 +595,30 @@ export function rectsUnionArea(rects) {
 // движка v2), а не контур помещения + settings.exterior.
 const footprintRooms = (project) => project.rooms.filter((r) => !r.parentId && !isOpenRoom(r) && !isShaft(r));
 
+// renderer спрашивает один и тот же контур на каждом кадре (панорама,
+// наведение, мигание выделения), хотя геометрия комнат не менялась. Проект
+// мутируется на месте, поэтому одной проверки identity недостаточно: ключ
+// строится из уже подготовленных прямоугольников. WeakMap не удерживает
+// закрытые проекты, а отдельные записи нужны размерам по оси/наружной грани.
+const outlineCache = new WeakMap();
+
+function cachedUnionEdges(project, variant, rects) {
+  const geometry = rects.map((r) => `${r.x},${r.y},${r.w},${r.h}`).join(';');
+  let variants = outlineCache.get(project);
+  if (!variants) {
+    variants = new Map();
+    outlineCache.set(project, variants);
+  }
+  const previous = variants.get(variant);
+  if (previous?.geometry === geometry) return previous.edges;
+  const edges = unionEdges(rects);
+  variants.set(variant, { geometry, edges });
+  // Реально используются 2–3 варианта. Ограничение защищает от вызывающего
+  // кода, который передаёт произвольный expand и иначе раздувал бы кеш.
+  if (variants.size > 6) variants.delete(variants.keys().next().value);
+  return edges;
+}
+
 function wallAreaRects(project, walls) {
   if (!projectHasManualWalls(project)) return null;
   const list = walls || deriveWalls(project);
@@ -623,7 +648,7 @@ export function computeBuildingOutline(project, expand = 0, walls = null) {
     const d = expand - exterior;
     const grow = (rc) => (d > 0 ? { x: rc.x - d, y: rc.y - d, w: rc.w + 2 * d, h: rc.h + 2 * d } : rc);
     const rects = [...own, ...footprintRooms(project).flatMap((r) => roomRects(r))].map(grow);
-    return rects.length ? unionEdges(rects) : [];
+    return rects.length ? cachedUnionEdges(project, `manual:${expand}`, rects) : [];
   }
   const rects = footprintRooms(project)
     .flatMap((r) => roomRects(r).map((rc) => {
@@ -632,7 +657,7 @@ export function computeBuildingOutline(project, expand = 0, walls = null) {
         : rc;
     }));
   if (!rects.length) return [];
-  return unionEdges(rects);
+  return cachedUnionEdges(project, `rooms:${expand}`, rects);
 }
 
 function unionEdges(rects) {
@@ -640,11 +665,60 @@ function unionEdges(rects) {
   const ys = [...new Set(rects.flatMap((r) => [r.y, r.y + r.h]))].sort((a, b) => a - b);
   const nx = xs.length - 1;
   const ny = ys.length - 1;
+
+  // Раньше inside(i, j) для каждой ячейки сжатой сетки заново перебирал
+  // все прямоугольники. У плана с R несовпадающими координатами сетка
+  // содержит O(R²) ячеек, поэтому один контур (а он нужен размерам каждого
+  // кадра) становился O(R³). Заполняем ту же сетку двумерным массивом
+  // разностей: каждый прямоугольник даёт четыре записи, затем один проход
+  // префиксных сумм. Результат тот же, работа O(R² + R log R).
+  const midX = Array.from({ length: nx }, (_, i) => (xs[i] + xs[i + 1]) / 2);
+  const midY = Array.from({ length: ny }, (_, i) => (ys[i] + ys[i + 1]) / 2);
+  const firstGreater = (list, value) => {
+    let lo = 0; let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid] > value) hi = mid; else lo = mid + 1;
+    }
+    return lo;
+  };
+  const firstGreaterOrEqual = (list, value) => {
+    let lo = 0; let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid] >= value) hi = mid; else lo = mid + 1;
+    }
+    return lo;
+  };
+  const stride = nx + 1;
+  const diff = new Int32Array(stride * (ny + 1));
+  for (const r of rects) {
+    // Сохраняем прежний допуск ±0,5 мм: он склеивает микрозазоры от
+    // округления, но не меняет координаты получившихся рёбер.
+    const x0 = firstGreater(midX, r.x - 0.5);
+    const x1 = firstGreaterOrEqual(midX, r.x + r.w + 0.5);
+    const y0 = firstGreater(midY, r.y - 0.5);
+    const y1 = firstGreaterOrEqual(midY, r.y + r.h + 0.5);
+    if (x0 >= x1 || y0 >= y1) continue;
+    diff[y0 * stride + x0] += 1;
+    diff[y0 * stride + x1] -= 1;
+    diff[y1 * stride + x0] -= 1;
+    diff[y1 * stride + x1] += 1;
+  }
+  const filled = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j += 1) {
+    let row = 0;
+    for (let i = 0; i < nx; i += 1) {
+      const at = j * stride + i;
+      row += diff[at];
+      const sum = row + (j ? diff[(j - 1) * stride + i] : 0);
+      diff[at] = sum;
+      if (sum > 0) filled[j * nx + i] = 1;
+    }
+  }
   const inside = (i, j) => {
     if (i < 0 || j < 0 || i >= nx || j >= ny) return false;
-    const cx = (xs[i] + xs[i + 1]) / 2;
-    const cy = (ys[j] + ys[j + 1]) / 2;
-    return rects.some((r) => cx > r.x - 0.5 && cx < r.x + r.w + 0.5 && cy > r.y - 0.5 && cy < r.y + r.h + 0.5);
+    return filled[j * nx + i] === 1;
   };
   const vert = [];
   for (let i = 0; i <= nx; i += 1) {
@@ -697,20 +771,20 @@ function unionEdges(rects) {
 // самая длинная стена с кем угодно — и выходило «добавьте дверь» туда, где
 // проём уже есть, или в такую же недоступную комнату).
 // → { roomId, targetId, members, text } | null (помещению вход не нужен).
-export function suggestAccess(project, roomId, analysis) {
+export function suggestAccess(project, roomId, analysis, adjacencies = null) {
   const room = project.rooms.find((r) => r.id === roomId);
   if (!room) return null;
-  if (!needsOwnAccess(project, room)) return null;
+  if (!needsOwnAccess(project, room, adjacencies)) return null;
   const reachable = analysis?.reachable || new Set();
   const members = analysis ? unreachableCluster(analysis, roomId) : new Set([roomId]);
   const nameOf = (id) => project.rooms.find((r) => r.id === id)?.name || '';
-  const adjacencies = projectAdjacencies(project)
+  const boundary = (adjacencies || projectAdjacencies(project))
     .filter((a) => members.has(a.a.id) !== members.has(a.b.id))
     .sort((p, q) => (q.to - q.from) - (p.to - p.from));
   // Сначала — стена с доступной комнатой (без шахт и открытых площадок
   // верхних этажей), иначе — с любой соседней вне группы.
-  const pick = adjacencies.find((a) => reachable.has(members.has(a.a.id) ? a.b.id : a.a.id))
-    || adjacencies.find((a) => !isShaft(members.has(a.a.id) ? a.b : a.a));
+  const pick = boundary.find((a) => reachable.has(members.has(a.a.id) ? a.b.id : a.a.id))
+    || boundary.find((a) => !isShaft(members.has(a.a.id) ? a.b : a.a));
   if (pick) {
     const [mine, other] = members.has(pick.a.id) ? [pick.a, pick.b] : [pick.b, pick.a];
     return { roomId: mine.id, targetId: other.id, members: [...members], text: `Добавьте дверь между «${mine.name}» и «${other.name}»` };

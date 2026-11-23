@@ -106,12 +106,20 @@ function outwardGeometry(lp, opening, walls) {
   return { ...placed, owner: owner.room, outward, threshold };
 }
 
-function exteriorDoorCandidates(project, level) {
+function exteriorDoorCandidates(project, level, preparedWalls = null) {
   const lp = levelProject(project, level.id);
-  const walls = deriveWalls(lp);
+  // Вход строится только по двери, которая вообще может стать главной.
+  // Раньше deriveWalls() запускался даже у проекта без единой двери — и при
+  // каждой 3D-сборке повторял уже выполненный расчёт стен всего этажа.
+  const doors = (lp.openings || []).filter((opening) => {
+    if (opening.kind !== 'door' || opening.type === 'none' || opening.orphan) return false;
+    const role = openingRole(opening);
+    return role == null || role === 'main';
+  });
+  if (!doors.length) return [];
+  const walls = preparedWalls || deriveWalls(lp);
   const candidates = [];
-  for (const opening of lp.openings || []) {
-    if (opening.kind !== 'door' || opening.type === 'none' || opening.orphan) continue;
+  for (const opening of doors) {
     const link = doorLink(lp, opening, walls);
     if (!link?.includes('outside') || !link.some((id) => id !== 'outside')) continue;
     const geometry = outwardGeometry(lp, opening, walls);
@@ -380,10 +388,11 @@ function readyEntrance(project, level, selection, groundAt, settings) {
 
 // Возвращается массив для совместимости с возможными несколькими входными
 // группами в будущем. Сейчас в нём максимум одна производная main-группа.
-export function deriveEntrances(project) {
+export function deriveEntrances(project, { wallsByLevel = null } = {}) {
   const level = occupiedLevel(project);
   if (!level) return [];
-  const selection = mainDoor(exteriorDoorCandidates(project, level), project);
+  const preparedWalls = wallsByLevel?.get?.(level.id) ?? wallsByLevel?.[level.id] ?? null;
+  const selection = mainDoor(exteriorDoorCandidates(project, level, preparedWalls), project);
   if (!selection) return [];
   const settings = entranceSettings(project, selection.chosen.opening);
   if (!settings.enabled) return [];
