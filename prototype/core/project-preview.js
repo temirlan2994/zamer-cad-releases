@@ -1,4 +1,4 @@
-import { annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath } from "./annotation-text.js";
+import { annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, textBlockLayout } from "./annotation-text.js";
 import { blockSegments } from "./blocks.js";
 import { additionalDimensionArtwork, additionalDimensionKinds, additionalDimensionPaths, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
@@ -176,12 +176,20 @@ function entityTraces(entity, annotationScale, budget) {
     }
     case "text": {
       if (!isLinePoint(entity) || typeof entity.text !== "string" || !entity.text.trim()) return [];
-      const lines = annotationTextLines(entity.text.slice(0, 240)).slice(0, 12);
-      const height = Number.isFinite(entity.height) && entity.height > 0 ? entity.height : 260;
+      const layout = textBlockLayout({ ...entity, text: entity.text.slice(0, 240) });
+      const lines = layout.lines.slice(0, 12);
+      const { height } = layout;
       const radians = Number.isFinite(entity.rotation) ? entity.rotation % 360 * Math.PI / 180 : 0;
       const anchor = { x: entity.x + Math.sin(radians) * height / 3, y: entity.y - Math.cos(radians) * height / 3 };
-      return lines.flatMap((line, index) => line.trim() ? [shortLabel({ x: anchor.x - Math.sin(radians) * height * 1.2 * index,
+      const text = lines.flatMap((line, index) => line.trim() ? [shortLabel({ x: anchor.x - Math.sin(radians) * height * 1.2 * index,
         y: anchor.y + Math.cos(radians) * height * 1.2 * index }, annotationTextWidth([line], height), radians, false)] : []);
+      if (!layout.frame) return text;
+      const padding = height * 0.25;
+      const bottom = (lines.length - 1) * height * 1.2 + height * 0.22 + padding;
+      const local = (x, y) => ({ x: entity.x + Math.cos(radians) * x - Math.sin(radians) * y,
+        y: entity.y + Math.sin(radians) * x + Math.cos(radians) * y });
+      return [...text, trace([local(-padding, -height - padding), local(layout.width + padding, -height - padding),
+        local(layout.width + padding, bottom), local(-padding, bottom)], "annotation", { closed: true })];
     }
     case "line": {
       if (entity.dimensionKind === "leader") return leaderTraces(entity);

@@ -73,7 +73,10 @@ export function validStoredEntity(entity) {
       const arc = arcGeometry(start, through, end);
       return Boolean(arc && isLinePoint(arc.center) && Number.isFinite(arc.radius) && arc.radius > 0);
     }
-    case "text": return hasXY(entity) && typeof entity.text === "string" && hasOptionalNumbers(entity, ["height", "rotation"]);
+    case "text": return hasXY(entity) && typeof entity.text === "string" &&
+      hasOptionalNumbers(entity, ["height", "rotation", "textWidth"]) &&
+      (entity.textWidth == null || (entity.textWidth > 0 && entity.textWidth <= MAX_LINE_COORDINATE)) &&
+      (entity.textFrame == null || typeof entity.textFrame === "boolean");
     case "block": return hasXY(entity) && (entity.kind == null || typeof entity.kind === "string") &&
       hasOptionalNumbers(entity, ["width", "height", "rotation", "scale"]) &&
       (!isReusableBlock(entity) || Boolean(expandReusableBlock(entity)));

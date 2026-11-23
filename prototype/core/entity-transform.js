@@ -63,7 +63,10 @@ export function scaleStoredEntity(entity, base, factor) {
     if (Number.isFinite(copy.height)) copy.height *= factor;
     if (copy.kind === "reusable") copy.scale = (copy.scale ?? 1) * factor;
   }
-  if (copy.type === "text" && Number.isFinite(copy.height)) copy.height *= factor;
+  if (copy.type === "text") {
+    if (Number.isFinite(copy.height)) copy.height *= factor;
+    if (Number.isFinite(copy.textWidth)) copy.textWidth *= factor;
+  }
   for (const key of ["offset", "textHeight", "arcRadius", "circleRadius"]) {
     if (Number.isFinite(copy[key])) copy[key] *= factor;
   }

@@ -1,4 +1,4 @@
-import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
+import { annotationTextLines, annotationTextWidth, annotationWorldSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./annotation-text.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
 import { additionalDimensionArtwork, additionalDimensionKinds, angularDimensionArtwork, linearDimensionArtwork, radialDimensionArtwork } from "./dimension-artwork.js";
 import { appendDxfEntityRecords, appendDxfPolyline, dxfArc, dxfLayers, dxfLine, dxfText } from "./dxf-writer.js";
@@ -99,13 +99,22 @@ function appendCenteredTextLines(out, center, lines, height, layer) {
 }
 
 function appendPlanText(out, entity, layer) {
-  const height = Math.abs(entity.height || 260);
+  const layout = textBlockLayout(entity);
+  const { height } = layout;
   const rotation = entity.rotation || 0;
   const radians = rotation * Math.PI / 180;
-  for (const [index, text] of annotationTextLines(entity.text).entries()) {
+  for (const [index, text] of layout.lines.entries()) {
     const dy = index * height * DXF_LINE_SPACING;
     const point = offsetPoint(entity, -Math.sin(radians) * dy, Math.cos(radians) * dy);
     if (text.trim()) out.push(...dxfText({ ...point, text, height, rotation }, layer, true));
+  }
+  if (layout.frame) {
+    const padding = height * 0.25;
+    const bottom = (layout.lines.length - 1) * height * DXF_LINE_SPACING + height * 0.22 + padding;
+    const local = (x, y) => ({ x: entity.x + Math.cos(radians) * x - Math.sin(radians) * y,
+      y: entity.y + Math.sin(radians) * x + Math.cos(radians) * y });
+    appendDxfPolyline(out, { closed: true, points: [local(-padding, -height - padding),
+      local(layout.width + padding, -height - padding), local(layout.width + padding, bottom), local(-padding, bottom)] }, layer, true);
   }
 }
 

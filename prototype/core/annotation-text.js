@@ -14,13 +14,43 @@ export function auxiliaryAnnotationSize(referencePixels, viewScale) {
   return referencePixels * zoom;
 }
 
-export function annotationTextLines(text) {
-  return String(text || "Текст").split(/\r\n|\r|\n/u);
+function wrapAnnotationLine(line, maxCharacters) {
+  if (line.length <= maxCharacters) return [line];
+  const result = [];
+  let rest = line;
+  while (rest.length > maxCharacters) {
+    const slice = rest.slice(0, maxCharacters + 1);
+    const breakAt = Math.max(slice.lastIndexOf(" "), slice.lastIndexOf("\t"));
+    const take = breakAt > 0 ? breakAt : maxCharacters;
+    result.push(rest.slice(0, take).trimEnd());
+    rest = rest.slice(take).trimStart();
+  }
+  result.push(rest);
+  return result;
+}
+
+export function annotationTextLines(text, width = null, height = null) {
+  const explicit = String(text || "Текст").split(/\r\n|\r|\n/u);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return explicit;
+  const maxCharacters = Math.max(1, Math.floor(width / (height * 0.64)));
+  return explicit.flatMap((line) => wrapAnnotationLine(line, maxCharacters));
 }
 
 export function annotationTextWidth(lines, height) {
   const longest = lines.reduce((width, line) => Math.max(width, [...line].length), 0);
   return Math.max(height * 0.8, longest * height * 0.64);
+}
+
+export function textBlockLayout(entity = {}) {
+  const height = Math.max(1, Math.abs(entity.height || 260));
+  const constrainedWidth = Number.isFinite(entity.textWidth) && entity.textWidth > 0 ? entity.textWidth : null;
+  const lines = annotationTextLines(entity.text, constrainedWidth, height);
+  return {
+    height,
+    lines,
+    width: constrainedWidth ?? annotationTextWidth(lines, height),
+    frame: Boolean(entity.textFrame),
+  };
 }
 
 export function leaderTextHeight(entity) {

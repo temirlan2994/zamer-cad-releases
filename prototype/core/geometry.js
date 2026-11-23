@@ -1,3 +1,5 @@
+import { ANNOTATION_LINE_SPACING, textBlockLayout } from "./annotation-text.js";
+
 // Pure geometry/angle math. No DOM, no app state — safe to unit test and reuse
 // in any future target (Flutter/Kotlin port, server-side export, tests).
 
@@ -125,9 +127,11 @@ export function entityBounds(entity) {
     return {minX:Math.min(...points.map(p=>p.x)), maxX:Math.max(...points.map(p=>p.x)), minY:Math.min(...points.map(p=>p.y)), maxY:Math.max(...points.map(p=>p.y))};
   }
   if (entity.type === "text") {
-    const height = Math.max(1, Math.abs(entity.height || 260));
-    const width = Math.max(height * 0.8, String(entity.text || "").length * height * 0.58);
-    return { minX: entity.x, maxX: entity.x + width, minY: entity.y - height, maxY: entity.y };
+    const { height, lines, width, frame } = textBlockLayout(entity);
+    const padding = frame ? height * 0.25 : 0;
+    const bottom = (lines.length - 1) * height * ANNOTATION_LINE_SPACING + height * 0.22;
+    return { minX: entity.x - padding, maxX: entity.x + width + padding,
+      minY: entity.y - height - padding, maxY: entity.y + bottom + padding };
   }
   if (entity.type === "circle") return { minX: entity.cx - entity.radius, maxX: entity.cx + entity.radius, minY: entity.cy - entity.radius, maxY: entity.cy + entity.radius };
   if (entity.type === "rectangle") return { minX: Math.min(entity.x1, entity.x2), maxX: Math.max(entity.x1, entity.x2), minY: Math.min(entity.y1, entity.y2), maxY: Math.max(entity.y1, entity.y2) };

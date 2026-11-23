@@ -1,4 +1,4 @@
-import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationTextLines, annotationTextWidth, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./annotation-text.js";
 import { arcGeometry, entityBounds, normalizeAnglePositive, transformBlockPoint } from "./geometry.js";
 import { entitySize } from "./blocks.js";
 import { angularDimensionGeometry, dimensionGeometry } from "./dimensions.js";
@@ -134,13 +134,13 @@ function entityPlotBounds(entity, textWidth, scaleFactor, zoneAnchors, measureme
     ]);
   }
   if (entity.type === "text") {
-    const height = Math.abs(entity.height || 260);
-    const lines = annotationTextLines(entity.text);
-    const width = textWidth(lines, height, 400);
-    const minY = -height;
-    const maxY = ((lines.length - 1) * ANNOTATION_LINE_SPACING + 0.22) * height;
+    const layout = textBlockLayout(entity);
+    const padding = layout.frame ? layout.height * 0.25 : 0;
+    const width = Math.max(layout.width, textWidth(layout.lines, layout.height, 400));
+    const minY = -layout.height - padding;
+    const maxY = ((layout.lines.length - 1) * ANNOTATION_LINE_SPACING + 0.22) * layout.height + padding;
     const rotation = (entity.rotation || 0) * Math.PI / 180;
-    return boundsOf(textCorners(entity, 0, minY, width, maxY, rotation));
+    return boundsOf(textCorners(entity, -padding, minY, width + padding, maxY, rotation));
   }
   const bounds = entityBounds(entity);
   if (entity.type !== "wall") return bounds;

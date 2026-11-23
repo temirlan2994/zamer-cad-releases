@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight } from "./core/annotation-text.js";
+import { ANNOTATION_LINE_SPACING, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
@@ -3772,9 +3772,15 @@ function renderFrame() {
   const visible = visibleEntities(rect);
   const editedLeader = state.leaderInput?.entity;
   const editedIndex = editedLeader ? visible.indexOf(editedLeader) : -1;
-  if (editedIndex !== -1) visible[editedIndex] = {
-    ...editedLeader, ...state.leaderInput.options, text: leaderUi.text.value.trim() || editedLeader.text,
-  };
+  if (editedIndex !== -1) {
+    const options = state.leaderInput.options;
+    visible[editedIndex] = editedLeader.type === "text" ? {
+      ...editedLeader,
+      height: options.textHeight,
+      textFrame: options.leaderFrame,
+      text: leaderUi.text.value.trim() || editedLeader.text,
+    } : { ...editedLeader, ...options, text: leaderUi.text.value.trim() || editedLeader.text };
+  }
   drawPlanScene(visible, c);
   if (state.blockPlacement) drawBlock({ ...state.blockPlacement.preview, ...cursorWorld() }, c, true);
   drawSurveyMarks(c, rect);
@@ -5114,10 +5120,14 @@ function drawArcEntity(entity, c) {
 
 function drawTextEntity(entity, c) {
   const p = worldToScreen({ x: entity.x, y: entity.y });
-  const height = Math.abs(entity.height || 260) * state.view.scale;
+  const layout = textBlockLayout({ ...entity, text: decodeMojibakeText(entity.text) });
+  const height = layout.height * state.view.scale;
+  const blockWidth = layout.width * state.view.scale;
   const selected = canShowEntitySelection() && state.selectedIds.includes(entity.id) && !state.moveCommand && !state.offsetCommand;
-  const lines = annotationTextLines(decodeMojibakeText(entity.text));
   const spacing = height * ANNOTATION_LINE_SPACING;
+  const top = -height;
+  const bottom = (layout.lines.length - 1) * spacing + height * 0.22;
+  const padding = layout.frame ? height * 0.25 : 0;
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate(((entity.rotation || 0) * Math.PI) / 180);
@@ -5125,14 +5135,28 @@ function drawTextEntity(entity, c) {
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = selected ? c.accent : annotationTextColor(entity, c);
-  lines.forEach((line, index) => ctx.fillText(line, 0, index * spacing));
+  layout.lines.forEach((line, index) => ctx.fillText(line, 0, index * spacing));
+  if (layout.frame) {
+    ctx.strokeStyle = selected ? c.accent : annotationTextColor(entity, c);
+    ctx.lineWidth = selected ? 1.8 : 1.3;
+    ctx.strokeRect(-padding, top - padding, blockWidth + padding * 2, bottom - top + padding * 2);
+  }
   if (selected) {
-    const width = Math.max(height * 0.8, ...lines.map((line) => ctx.measureText(line).width));
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 1.4;
     ctx.setLineDash([6, 4]);
-    ctx.strokeRect(-4, -height - 4, width + 8, height + (lines.length - 1) * spacing + 8);
+    ctx.strokeRect(-4 - padding, top - 4 - padding, blockWidth + 8 + padding * 2, bottom - top + 8 + padding * 2);
     ctx.setLineDash([]);
+    const handleY = (top + bottom) / 2;
+    ctx.beginPath();
+    ctx.moveTo(blockWidth, top);
+    ctx.lineTo(blockWidth, bottom);
+    ctx.stroke();
+    ctx.fillStyle = c.surface;
+    ctx.beginPath();
+    ctx.arc(blockWidth, handleY, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -7904,7 +7928,13 @@ function leaderToolActive() {
 }
 
 function leaderToolOptions() {
-  return state.leaderInput?.options ?? {
+  if (state.leaderInput?.options) return state.leaderInput.options;
+  if (state.tool === "text") return {
+    textHeight: annotationPreferences.textHeight,
+    leaderLine: "straight",
+    leaderFrame: annotationPreferences.textFrame,
+  };
+  return {
     textHeight: annotationPreferences.leaderHeight,
     leaderLine: annotationPreferences.leaderLine,
     leaderFrame: annotationPreferences.leaderFrame,
@@ -7950,18 +7980,21 @@ function commitLeaderPoint(point) {
 function openLeaderInput(entity = null, point = null) {
   if (isLayerLocked(entity?.layer || "text")) return;
   if (state.leaderInput) return;
-  const appearance = entity ? leaderAppearance(entity) : null;
+  const textInput = Boolean(point || entity?.type === "text");
+  const appearance = entity?.dimensionKind === "leader" ? leaderAppearance(entity) : null;
   state.leaderInput = {
     entity, point,
-    options: entity ? { textHeight: leaderTextHeight(entity), leaderLine: appearance.line, leaderFrame: appearance.frame } : null,
+    options: entity?.type === "text" ? { textHeight: Math.abs(entity.height || 260), leaderLine: "straight", leaderFrame: Boolean(entity.textFrame) }
+      : entity ? { textHeight: leaderTextHeight(entity), leaderLine: appearance.line, leaderFrame: appearance.frame }
+        : point ? { textHeight: annotationPreferences.textHeight, leaderLine: "straight", leaderFrame: annotationPreferences.textFrame } : null,
   };
-  const label = point ? "Текст надписи" : "Текст выноски";
+  const label = textInput ? "Текст надписи" : "Текст выноски";
   leaderUi.editor.setAttribute("aria-label", label);
   leaderUi.text.setAttribute("aria-label", label);
   leaderUi.text.placeholder = label;
   for (const [button, action] of [
-    [leaderUi.apply, point ? "Сохранить надпись" : "Сохранить выноску"],
-    [leaderUi.cancel, point ? "Отменить ввод текста" : "Отменить ввод выноски"],
+    [leaderUi.apply, textInput ? "Сохранить надпись" : "Сохранить выноску"],
+    [leaderUi.cancel, textInput ? "Отменить ввод текста" : "Отменить ввод выноски"],
   ]) {
     button.title = action;
     button.setAttribute("aria-label", action);
@@ -7989,6 +8022,7 @@ function closeLeaderInput() {
 function finishLeaderInput(save) {
   const input = state.leaderInput;
   if (!input) return;
+  const textInput = Boolean(input.point || input.entity?.type === "text");
   if (save && isLayerLocked(input.entity?.layer || "text")) {
     leaderUi.error.textContent = layerLockMessage(input.entity?.layer || "text");
     return;
@@ -8003,18 +8037,23 @@ function finishLeaderInput(save) {
     }
     const text = leaderUi.text.value.trim();
     if (!text) {
-      leaderUi.error.textContent = input.point ? "Введите надпись" : "Введите текст выноски";
+      leaderUi.error.textContent = textInput ? "Введите надпись" : "Введите текст выноски";
       leaderUi.text.setAttribute("aria-invalid", "true");
       leaderUi.text.focus({ preventScroll: true });
       syncLeaderInputPosition();
       return;
     }
+    const values = { ...leaderToolOptions(), text };
     if (input.point) {
-      const entity = textEntity(newLineId("text"), input.point.x, input.point.y, text, annotationPreferences.textHeight);
+      const entity = textEntity(newLineId("text"), input.point.x, input.point.y, text, values.textHeight);
       entity.layer = "text";
+      entity.textFrame = Boolean(values.leaderFrame);
       pushEntity(entity);
+      rememberAnnotationSettings(["text"], values);
+    } else if (input.entity?.type === "text" && state.entities.includes(input.entity)) {
+      editTextProperties(input.entity, values);
+      rememberAnnotationSettings(["text"], values);
     } else {
-      const values = { ...leaderToolOptions(), text };
       if (input.entity && state.entities.includes(input.entity)) editLeaderProperties(input.entity, values);
       else if (!input.entity && draft?.phase === "leader-text") {
         pushEntity(leaderEntity(newLineId("leader"), draft.start, draft.end, text, { ...values, leaderElbow: draft.elbow }));
@@ -8026,6 +8065,7 @@ function finishLeaderInput(save) {
   closeLeaderInput();
   resetSnapTracking();
   if (input.point) statusChip.textContent = save ? "Текст поставлен. Можно добавить ещё надпись" : "Текст: укажите место надписи";
+  else if (textInput) statusChip.textContent = save ? "Текст изменён" : "Правка текста отменена";
   else statusChip.textContent = input.entity ? (save ? "Выноска изменена" : "Правка выноски отменена") : leaderPlacementHint();
   canvas.focus({ preventScroll: true });
   draw();
@@ -8041,10 +8081,25 @@ function editLeaderProperties(entity, values) {
   recordAnnotationEdits([{ entityId: entity.id, before, after }]);
 }
 
-async function editTextEntity(entity) {
+function editTextProperties(entity, values) {
+  if (isLayerLocked(entity.layer)) return;
+  const current = { text: decodeMojibakeText(entity.text || ""), textHeight: Math.abs(entity.height || 260),
+    leaderFrame: Boolean(entity.textFrame) };
+  const mapped = { text: values.text, height: values.textHeight, textFrame: Boolean(values.leaderFrame) };
+  const before = {};
+  const after = {};
+  for (const [key, value] of Object.entries(mapped)) {
+    const currentKey = key === "height" ? "textHeight" : key === "textFrame" ? "leaderFrame" : key;
+    if (current[currentKey] === value) continue;
+    before[key] = entity[key];
+    after[key] = value;
+  }
+  if (Object.keys(after).length) recordAnnotationEdits([{ entityId: entity.id, before, after }]);
+}
+
+function editTextEntity(entity) {
   if (entity?.type !== "text") return;
-  const values = await openPlanAnnotationEditor("text", entity);
-  if (values && state.entities.includes(entity)) applyPlanAnnotationEdit(entity, { text: values.text, height: values.textHeight });
+  openLeaderInput(entity);
 }
 
 function createTextAtPoint(point) {
@@ -11311,10 +11366,12 @@ function previewFigureGrip(pointer, screen) {
   };
   const corner = entity.type === "rectangle" && pointer.grip.key === "corner"
     ? rectangleCorners(entity)[(pointer.grip.index + 2) % 4] : null;
-  const point = corner ? resolveLineLikeSnap(raw, corner, { useOrtho: false }).point : resolveSnapWorld(raw).point;
+  const point = pointer.grip.key === "text-width" ? raw
+    : corner ? resolveLineLikeSnap(raw, corner, { useOrtho: false }).point : resolveSnapWorld(raw).point;
   pointer.preview = reshapeFigure(entity, pointer.grip, point);
   if (!pointer.preview) statusChip.textContent = "Выберите другую точку для фигуры";
   else if (entity.type === "circle") statusChip.textContent = `Радиус ${projectLength(pointer.preview.radius)}`;
+  else if (entity.type === "text") statusChip.textContent = `Ширина текстового блока ${projectLength(pointer.preview.textWidth)}`;
   else statusChip.textContent = "Правка фигуры";
 }
 
@@ -11374,7 +11431,8 @@ function finishFigureGrip(pointer) {
     applyEntityGeometry(entity, after);
     state.undo.push({ type: "move", entityId: entity.id, before, after });
     state.redo.length = 0;
-    statusChip.textContent = entity.type === "circle" ? "Радиус круга обновлён" : "Фигура обновлена";
+    statusChip.textContent = entity.type === "circle" ? "Радиус круга обновлён" :
+      entity.type === "text" ? "Ширина текстового блока обновлена" : "Фигура обновлена";
   }
   pointer.preview = null;
   resetSnapTracking();
@@ -13001,7 +13059,9 @@ function entityGeometry(entity) {
     return { x: entity.x, y: entity.y, width: entity.width, height: entity.height, rotation: entity.rotation || 0, flipX: Boolean(entity.flipX) };
   }
   if (entity.type === "text") {
-    return { x: entity.x, y: entity.y, text: entity.text || "", height: entity.height || 260, rotation: entity.rotation || 0 };
+    return { x: entity.x, y: entity.y, text: entity.text || "", height: entity.height || 260,
+      rotation: entity.rotation || 0, textWidth: Number.isFinite(entity.textWidth) ? entity.textWidth : undefined,
+      textFrame: Boolean(entity.textFrame) };
   }
   if (entity.type === "circle") {
     return { cx: entity.cx, cy: entity.cy, radius: entity.radius };
@@ -13206,10 +13266,11 @@ function distanceToEntityScreen(screen, entity) {
   }
   if (entity.type === "text") {
     const origin = worldToScreen({ x: entity.x, y: entity.y });
-    const height = Math.abs(entity.height || 260) * state.view.scale;
-    const lines = annotationTextLines(entity.text);
-    const width = annotationTextWidth(lines, height);
-    const bottom = (lines.length - 1) * height * ANNOTATION_LINE_SPACING;
+    const layout = textBlockLayout(entity);
+    const height = layout.height * state.view.scale;
+    const width = layout.width * state.view.scale;
+    const padding = layout.frame ? height * 0.25 : 0;
+    const bottom = (layout.lines.length - 1) * height * ANNOTATION_LINE_SPACING + height * 0.22;
     const radians = -((entity.rotation || 0) * Math.PI) / 180;
     const cos = Math.cos(radians);
     const sin = Math.sin(radians);
@@ -13217,9 +13278,10 @@ function distanceToEntityScreen(screen, entity) {
     const dy = screen.y - origin.y;
     const localX = dx * cos - dy * sin;
     const localY = dx * sin + dy * cos;
-    if (localX >= -8 && localX <= width + 8 && localY >= -height - 8 && localY <= bottom + 8) return 0;
-    const clampedX = Math.max(0, Math.min(width, localX));
-    const clampedY = Math.max(-height, Math.min(bottom, localY));
+    if (localX >= -8 - padding && localX <= width + 8 + padding &&
+        localY >= -height - 8 - padding && localY <= bottom + 8 + padding) return 0;
+    const clampedX = Math.max(-padding, Math.min(width + padding, localX));
+    const clampedY = Math.max(-height - padding, Math.min(bottom + padding, localY));
     return Math.hypot(localX - clampedX, localY - clampedY);
   }
   if (additionalDimensionKinds.includes(entity.dimensionKind)) {
@@ -15382,6 +15444,7 @@ const preferredLeaderAppearance = leaderAppearance({
 const annotationPreferences = {
   lastKind: annotationKinds.includes(initialAnnotationPreferences?.lastKind) ? initialAnnotationPreferences.lastKind : "text",
   textHeight: validAnnotationTextHeight(initialAnnotationPreferences?.textHeight) ? initialAnnotationPreferences.textHeight : 260,
+  textFrame: typeof initialAnnotationPreferences?.textFrame === "boolean" ? initialAnnotationPreferences.textFrame : false,
   leaderHeight: validAnnotationTextHeight(initialAnnotationPreferences?.leaderHeight) ? initialAnnotationPreferences.leaderHeight : 200,
   leaderLine: preferredLeaderAppearance.line,
   leaderFrame: preferredLeaderAppearance.frame,
@@ -15408,7 +15471,11 @@ function saveAnnotationSettings() {
 }
 
 function rememberAnnotationSettings(kinds, values) {
-  if (kinds.includes("text") && validAnnotationTextHeight(values.textHeight)) annotationPreferences.textHeight = values.textHeight;
+  if (kinds.includes("text")) {
+    if (validAnnotationTextHeight(values.textHeight)) annotationPreferences.textHeight = values.textHeight;
+    const frame = typeof values.textFrame === "boolean" ? values.textFrame : values.leaderFrame;
+    if (typeof frame === "boolean") annotationPreferences.textFrame = frame;
+  }
   if (kinds.includes("leader")) {
     if (validAnnotationTextHeight(values.textHeight)) annotationPreferences.leaderHeight = values.textHeight;
     if (values.leaderLine === "straight" || values.leaderLine === "bent") annotationPreferences.leaderLine = values.leaderLine;
@@ -15419,18 +15486,20 @@ function rememberAnnotationSettings(kinds, values) {
 }
 
 function annotationToolHeight() {
-  return state.tool === "text" ? annotationPreferences.textHeight : leaderToolOptions().textHeight;
+  return state.leaderInput?.options?.textHeight ?? (state.tool === "text" ? annotationPreferences.textHeight : leaderToolOptions().textHeight);
 }
 
 function syncLeaderTools() {
-  const textTool = state.tool === "text";
+  const textTool = state.tool === "text" || Boolean(state.leaderInput?.point) || state.leaderInput?.entity?.type === "text";
   const active = Boolean(state.leaderInput) || (annotationToolMenu.hidden && (textTool || leaderToolActive()));
   leaderUi.tools.hidden = !active;
   if (!active) return;
   const options = leaderToolOptions();
   leaderLineButtons[0].parentElement.hidden = textTool;
-  leaderUi.frame.hidden = textTool;
+  leaderUi.frame.hidden = false;
   leaderUi.tools.setAttribute("aria-label", textTool ? "Свойства текста" : "Выноска");
+  leaderUi.frame.setAttribute("aria-label", textTool ? "Рамка текста" : "Рамка текста выноски");
+  leaderUi.frame.title = leaderUi.frame.getAttribute("aria-label");
   const heightLabel = textTool ? "Высота текста, мм" : "Высота текста выноски, мм";
   leaderUi.height.setAttribute("aria-label", heightLabel);
   leaderUi.height.parentElement.title = heightLabel;
@@ -15452,7 +15521,8 @@ function syncLeaderTools() {
 function syncLeaderInputPosition() {
   if (!state.leaderInput) return;
   const entity = state.leaderInput.entity;
-  const point = state.leaderInput.point ?? (entity ? { x: entity.x2, y: entity.y2 } : state.drawing?.end);
+  const point = state.leaderInput.point ?? (entity?.type === "text" ? { x: entity.x, y: entity.y }
+    : entity ? { x: entity.x2, y: entity.y2 } : state.drawing?.end);
   if (!point) return;
   const anchor = worldToScreen(point);
   const editor = leaderUi.editor;
@@ -15470,7 +15540,8 @@ function syncLeaderInputPosition() {
 }
 
 function updateLeaderOptions(values) {
-  if (state.leaderInput?.entity) Object.assign(state.leaderInput.options, values);
+  if (state.leaderInput?.options) Object.assign(state.leaderInput.options, values);
+  else if (state.tool === "text") rememberAnnotationSettings(["text"], values);
   else rememberAnnotationSettings(["leader"], values);
   draw();
 }
@@ -15507,7 +15578,8 @@ leaderUi.height.addEventListener("input", () => {
   const valid = validAnnotationTextHeight(textHeight);
   leaderUi.height.toggleAttribute("aria-invalid", !valid);
   if (!valid || annotationToolHeight() === textHeight) return;
-  if (state.tool === "text") {
+  if (state.leaderInput?.options) updateLeaderOptions({ textHeight });
+  else if (state.tool === "text") {
     rememberAnnotationSettings(["text"], { textHeight });
     draw();
   } else updateLeaderOptions({ textHeight });

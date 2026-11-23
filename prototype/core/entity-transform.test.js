@@ -17,8 +17,8 @@ test("scales polyline, circle, block, and text sizes", () => {
     { id: "c", type: "circle", cx: 300, cy: 100, radius: 100 });
   assert.deepEqual(scaleStoredEntity({ id: "b", type: "block", x: 200, y: 200, width: 80, height: 40 }, base, 2),
     { id: "b", type: "block", x: 300, y: 300, width: 160, height: 80 });
-  assert.deepEqual(scaleStoredEntity({ id: "t", type: "text", x: 200, y: 200, height: 20 }, base, 2),
-    { id: "t", type: "text", x: 300, y: 300, height: 40 });
+  assert.deepEqual(scaleStoredEntity({ id: "t", type: "text", x: 200, y: 200, height: 20, textWidth: 120 }, base, 2),
+    { id: "t", type: "text", x: 300, y: 300, height: 40, textWidth: 240 });
 });
 
 test("rejects invalid scale factors without mutating the source", () => {
