@@ -1,4 +1,5 @@
 import { arcGeometry, distanceWorld, normalizeAnglePositive } from "./geometry.js";
+import { ANNOTATION_LINE_SPACING, textBlockLayout } from "./annotation-text.js";
 import { boundaryCrossingPoints, extendLine, isLinePoint, isValidLine, MAX_LINE_COORDINATE, nearestBoundaryPoint, splitLine, trimLine } from "./line-edits.js";
 import { POLYLINE_ARC_GEOMETRY, polylineArcFromBend, polylineArcPoint, polylineSegments, validPolylinePoints } from "./polyline.js";
 
@@ -33,6 +34,19 @@ export function draftArcFromBend(start, end, control) {
 }
 
 export function figureGripPoints(entity) {
+  if (entity.type === "text") {
+    const layout = textBlockLayout(entity);
+    const rotation = (entity.rotation || 0) * Math.PI / 180;
+    const bottom = (layout.lines.length - 1) * layout.height * ANNOTATION_LINE_SPACING + layout.height * 0.22;
+    const localY = (-layout.height + bottom) / 2;
+    return [{
+      key: "text-width",
+      point: {
+        x: entity.x + Math.cos(rotation) * layout.width - Math.sin(rotation) * localY,
+        y: entity.y + Math.sin(rotation) * layout.width + Math.cos(rotation) * localY,
+      },
+    }];
+  }
   if (entity.type === "circle") return [{ key: "radius", point: { x: entity.cx + Math.abs(entity.radius), y: entity.cy } }];
   if (entity.type === "rectangle") return rectanglePath(entity).points.map((point, index) => ({ key: "corner", index, point }));
   if (entity.type === "arc") return ["start", "through", "end"].map(key => ({ key, point: entity[key] }));
@@ -48,6 +62,12 @@ export function reshapeFigure(entity, grip, point) {
   if (!isLinePoint(point)) return null;
   const { key, index } = grip;
   let geometry;
+  if (entity.type === "text" && key === "text-width") {
+    const rotation = (entity.rotation || 0) * Math.PI / 180;
+    const projected = (point.x - entity.x) * Math.cos(rotation) + (point.y - entity.y) * Math.sin(rotation);
+    const minimum = Math.max(1, Math.abs(entity.height || 260) * 1.2);
+    return Number.isFinite(projected) ? { textWidth: Math.min(MAX_LINE_COORDINATE, Math.max(minimum, projected)) } : null;
+  }
   if (entity.type === "circle" && key === "radius") {
     const radius = distanceWorld(point, { x: entity.cx, y: entity.cy });
     return radius > EPSILON &&

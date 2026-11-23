@@ -45,6 +45,17 @@ test("legacy and explicit bent leaders round-trip through the Zamer project form
   }
 });
 
+test("plain text block width and frame survive project validation", () => {
+  const text = { id: "text-1", type: "text", layer: "text", x: 40, y: 80,
+    text: "Текст с переносом", height: 200, textWidth: 900, textFrame: true };
+  const project = { version: 2, entities: [text] };
+  assert.deepEqual(validateZamerProject(JSON.parse(JSON.stringify(project))), project);
+  for (const textWidth of [0, -1, Infinity, "900"]) {
+    assert.throws(() => validateZamerProject({ entities: [{ ...text, textWidth }] }), /повреждён объект/);
+  }
+  assert.throws(() => validateZamerProject({ entities: [{ ...text, textFrame: "yes" }] }), /повреждён объект/);
+});
+
 test("nested survey geometry and a polyline draft are checked before import", () => {
   const drawing = { entities: [{ id: "arc-1", type: "arc" }] };
   assert.throws(() => validateZamerProject({ entities: [], survey: { version: 1, rooms: [{ drawing }] } }), /Помещение 1/);

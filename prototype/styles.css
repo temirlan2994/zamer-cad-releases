@@ -1237,23 +1237,6 @@ button.project-card-open:active { background: var(--surface-2); }
   top: calc(var(--workspace-edit-panel-top) + 58px);
 }
 
-.line-command-heading {
-  flex-basis: 100%;
-  font-size: 0.78rem;
-  line-height: 1.2;
-  margin: 2px 4px;
-}
-
-#lineBoundaryControl button {
-  gap: 2px;
-  width: 56px;
-}
-
-#lineBoundaryControl small {
-  font-size: 0.6rem;
-  line-height: 1;
-}
-
 .line-command-panel button:disabled {
   cursor: default;
   opacity: 0.48;
@@ -1359,6 +1342,76 @@ button.project-card-open:active { background: var(--surface-2); }
 .project-gesture-setting small { color: var(--muted); font-size: .72rem; line-height: 1.25; }
 .project-gesture-setting .layer-switch { flex: 0 0 auto; }
 .project-gesture-setting:has(input:focus-visible) { outline: 2px solid var(--readable-accent); outline-offset: 2px; }
+
+.annotation-scale-setting { gap: 6px; }
+
+.survey-content .annotation-scale-opener {
+  align-items: center;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 13%, var(--surface-2)), var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 66px;
+  padding: 10px 13px;
+  width: 100%;
+}
+
+.annotation-scale-opener-main { display: grid; gap: 3px; min-width: 0; }
+.annotation-scale-opener-main strong { color: var(--readable-accent); font-size: 1.12rem; line-height: 1.1; }
+.annotation-scale-opener-main small { color: var(--muted); font-size: .74rem; line-height: 1.25; }
+.annotation-scale-chevron { color: var(--readable-accent); font-size: 1.9rem; font-weight: 300; line-height: 1; }
+
+.annotation-scale-sheet { max-width: min(100%, 520px); }
+.annotation-scale-sheet .sheet-head { align-items: flex-start; }
+.annotation-scale-sheet .sheet-head > div { display: grid; gap: 3px; min-width: 0; }
+.annotation-scale-sheet .sheet-head p { color: var(--muted); font-size: .76rem; line-height: 1.3; margin: 0; }
+.annotation-scale-content { display: grid; gap: 10px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+
+.annotation-scale-note {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 12px;
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 10px 12px;
+}
+.annotation-scale-note strong { color: var(--readable-accent); font-size: .82rem; }
+.annotation-scale-note span { color: var(--muted); font-size: .72rem; line-height: 1.3; }
+
+.annotation-scale-grid { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.annotation-scale-card {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 3px 9px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 72px;
+  padding: 9px 10px;
+  text-align: left;
+  touch-action: manipulation;
+  width: 100%;
+}
+.annotation-scale-card > strong { color: var(--text); font-size: 1.03rem; grid-row: 1 / span 2; min-width: 48px; }
+.annotation-scale-card > span { font-size: .76rem; font-weight: 720; line-height: 1.2; overflow-wrap: anywhere; }
+.annotation-scale-card > small { color: var(--muted); font-size: .67rem; line-height: 1.2; overflow-wrap: anywhere; }
+.annotation-scale-card[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-2));
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.annotation-scale-card[aria-checked="true"] > strong,
+.annotation-scale-card[aria-checked="true"] > span { color: var(--readable-accent); }
+.annotation-scale-card:focus-visible { outline: 2px solid var(--readable-accent); outline-offset: 2px; }
+
+@media (max-width: 359px) {
+  .annotation-scale-grid { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 359px) {
   .project-top-actions { gap: 3px; }
@@ -2245,13 +2298,15 @@ button.project-card-open:active { background: var(--surface-2); }
 .copy-tool-menu {
   grid-template-columns: 1fr;
   left: auto;
+  padding: 4px;
   right: 8px;
-  top: calc(var(--workspace-edit-panel-top) + 58px);
-  width: 78px;
+  width: 54px;
 }
 
 .copy-tool-menu button {
-  height: 70px;
+  height: 44px;
+  padding: 2px;
+  width: 44px;
 }
 
 .copy-controls {
@@ -2259,6 +2314,7 @@ button.project-card-open:active { background: var(--surface-2); }
   display: flex;
   left: auto;
   padding: 4px;
+  top: calc(var(--workspace-edit-panel-top) + 54px);
 }
 
 .copy-controls button {

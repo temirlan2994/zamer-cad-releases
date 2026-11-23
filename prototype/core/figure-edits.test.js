@@ -161,6 +161,14 @@ test("figure grips change the intended geometry while rejecting a degenerate dra
   assert.equal(reshapeFigure(arc, through, point(0, 0)), null);
 });
 
+test("text width grip follows rotation and constrains the wrapping boundary", () => {
+  const text = { type: "text", x: 100, y: 200, text: "Один два три", height: 100, textWidth: 500, rotation: 90 };
+  const [grip] = figureGripPoints(text);
+  assert.equal(grip.key, "text-width");
+  assert.deepEqual(reshapeFigure(text, grip, point(100, 900)), { textWidth: 700 });
+  assert.deepEqual(reshapeFigure(text, grip, point(100, 210)), { textWidth: 120 });
+});
+
 test("moving a polyline bend preserves both endpoints and moving a vertex preserves original bulges", () => {
   const entity = { ...polyline([point(-100, 0), point(100, 0)], true), bulges: [1, 0] };
   const [vertex, , bend] = figureGripPoints(entity);

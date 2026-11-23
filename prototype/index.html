@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual" />
     <title>Zamer CAD Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=314" />
+    <link rel="stylesheet" href="./styles.css?v=317" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -230,13 +230,6 @@
           <button type="button" data-action="explode" title="Разобрать на составляющие" aria-label="Разобрать объект" hidden><span data-line-icon="explode"></span><small class="context-icon-label" aria-hidden="true">Разобрать</small></button>
         </div>
         <section class="line-command-panel" id="lineEditOptions" hidden aria-label="Правка линии">
-          <h2 class="line-command-heading" id="lineBoundaryHeading" hidden>Обрезка</h2>
-          <div class="line-mode-control" id="lineBoundaryControl" role="group" aria-label="Границы" hidden>
-            <button type="button" data-boundary-mode="auto" title="Все видимые · автоматически" aria-label="Все видимые · автоматически" aria-pressed="true"><span data-line-icon="cutAll" aria-hidden="true"></span><small aria-hidden="true">Авто</small></button>
-            <button type="button" data-boundary-mode="preview" title="Все видимые · с подтверждением" aria-label="Все видимые · с подтверждением" aria-pressed="false"><span data-line-icon="cutPreview" aria-hidden="true"></span><small aria-hidden="true">Просмотр</small></button>
-            <button type="button" data-boundary-mode="selected" title="Выбрать границы" aria-label="Выбрать границы" aria-pressed="false"><span data-line-icon="cutSelected" aria-hidden="true"></span><small aria-hidden="true">Границы</small></button>
-            <button type="button" data-boundary-mode="axis" title="Оси стен" aria-label="Оси стен" aria-pressed="false" hidden><span data-line-icon="cutAxis" aria-hidden="true"></span><small aria-hidden="true">Оси стен</small></button>
-          </div>
           <div class="line-mode-control" id="lineBreakControl" role="group" aria-label="Вид разрыва" hidden>
             <button type="button" data-break-mode="gap" title="Разрыв между двумя точками" aria-label="Разрыв между двумя точками" aria-pressed="true"><span data-line-icon="breakGap"></span><small class="context-icon-label" aria-hidden="true">2 точки</small></button>
             <button type="button" data-break-mode="point" title="Разрыв в одной точке" aria-label="Разрыв в одной точке" aria-pressed="false"><span data-line-icon="breakPoint"></span><small class="context-icon-label" aria-hidden="true">1 точка</small></button>
@@ -547,10 +540,14 @@
               <span><strong>Масштаб двойным тапом</strong><small>Вниз — увеличить, вверх — уменьшить · центр экрана сохраняется</small></span>
               <input class="layer-switch" id="projectTapZoom" type="checkbox" checked />
             </label>
-            <div class="survey-field">
-              <label for="annotationScaleSelect">Масштаб подписей</label>
-              <select id="annotationScaleSelect" aria-describedby="annotationScaleScope"><option value="0.85">1:50</option><option value="1" selected>1:100</option><option value="1.15">1:150</option><option value="1.3">1:200</option></select>
-              <small id="annotationScaleScope">Размеры, площади и отметки Z</small>
+            <div class="survey-field annotation-scale-setting">
+              <span>Масштаб подписей</span>
+              <input id="annotationScaleSelect" type="hidden" value="1" />
+              <button class="annotation-scale-opener" id="annotationScaleButton" type="button" aria-describedby="annotationScaleScope" aria-haspopup="dialog">
+                <span class="annotation-scale-opener-main"><strong id="annotationScaleValue">1:100</strong><small id="annotationScaleUse">Этаж · основной архитектурный план</small></span>
+                <span class="annotation-scale-chevron" aria-hidden="true">›</span>
+              </button>
+              <small id="annotationScaleScope">Размеры, площади и отметки Z сохраняют выбранный экранный размер при изменении зума</small>
             </div>
             <label class="survey-field" for="projectPrintScale"><span>Масштаб PDF по умолчанию</span>
               <select id="projectPrintScale"><option value="fit">Вписать в A4</option><option value="20">1:20</option><option value="50">1:50</option><option value="100">1:100</option><option value="150">1:150</option><option value="200">1:200</option></select>
@@ -565,6 +562,19 @@
             </div>
             <button type="submit" class="survey-primary">Применить</button>
           </form>
+        </div>
+      </dialog>
+      <dialog class="survey-sheet annotation-scale-sheet" id="annotationScaleSheet" aria-labelledby="annotationScaleTitle">
+        <header class="sheet-head">
+          <div>
+            <h2 id="annotationScaleTitle">Масштаб подписей</h2>
+            <p>Выберите размер чисел, площадей и отметок на экране</p>
+          </div>
+          <button class="icon-button" id="closeAnnotationScale" type="button" aria-label="Закрыть выбор масштаба">×</button>
+        </header>
+        <div class="annotation-scale-content">
+          <p class="annotation-scale-note"><strong>Размер остаётся постоянным</strong><span>При приближении и отдалении подписи больше не увеличиваются и не уменьшаются.</span></p>
+          <div class="annotation-scale-grid" id="annotationScaleGrid" role="radiogroup" aria-label="Масштаб подписей"></div>
         </div>
       </dialog>
       <dialog class="survey-sheet" id="surveySheet" aria-labelledby="surveyHeading">
@@ -654,7 +664,7 @@
       </dialog>
     </main>
 
-    <script type="module" src="./app.js?v=319"></script>
+    <script type="module" src="./app.js?v=323"></script>
     <script>
       if (!(new URLSearchParams(window.location.search).get("apk") === "1") && "serviceWorker" in navigator) {
         window.addEventListener("load", function () {
