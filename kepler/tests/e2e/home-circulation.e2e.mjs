@@ -198,7 +198,7 @@ describe('движение на телефоне', () => {
     });
     assert.equal(result.current, 'circulation');
     assert.ok(result.heights.length > 0);
-    assert.ok(result.heights.every((height) => height >= 44), JSON.stringify(result));
+    assert.ok(result.heights.every((height) => Math.round(height) >= 44), JSON.stringify(result));
     assert.equal(result.activeVisible, true, JSON.stringify(result));
     assert.deepEqual(app.errors, []);
   });

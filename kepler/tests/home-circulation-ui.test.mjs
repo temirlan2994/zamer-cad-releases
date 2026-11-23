@@ -36,8 +36,8 @@ test('неизвестный расчёт не окрашивается как �
   const html = homeCirculationHtml(createProject('Пусто'), {
     homeCirculationOverlay: { profileWidthMm: 600 },
   });
-  assert.match(html, /class="home-circulation-summary" data-status="unknown"/);
-  assert.doesNotMatch(html, /class="home-circulation-summary" data-status="clear"/);
+  assert.match(html, /class="[^"]*\bhome-circulation-summary\b[^"]*" data-status="unknown"/);
+  assert.doesNotMatch(html, /class="[^"]*\bhome-circulation-summary\b[^"]*" data-status="clear"/);
   assert.match(html, /не является нормативной проверкой/i);
 });
 

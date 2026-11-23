@@ -75,6 +75,7 @@ for (const theme of ['light', 'dark']) {
       assert.equal(await page.isVisible('#lsSunBar'), false);
       // 0.4.5: этап «Свет» открывается из палитры этапов внизу, а не вкладкой в окне аналитики.
       await openRouteView(page, 'climate', { mobile: true });
+      await page.tap('[data-home-climate] [data-analysis-mission="location"]');
       const settings = page.locator('[data-climate-location]');
       if (!(await settings.evaluate((node) => node.open))) await settings.locator('summary').first().tap();
       await page.tap('[data-home-climate-action="landscape-map"]');

@@ -1634,7 +1634,10 @@ function openConstraintSettings() {
 
 function openSolarSettings(opener = document.activeElement) {
   openPanel('climate', null, opener);
-  const location = byId('projectRouteBody')?.querySelector('[data-climate-location]');
+  const body = byId('projectRouteBody');
+  const climate = body?.querySelector('[data-home-climate]');
+  if (climate) setActiveMission(climate, 'location');
+  const location = body?.querySelector('[data-climate-location]');
   if (location) {
     location.open = true;
     requestAnimationFrame(() => location.querySelector('#lat')?.focus());
@@ -2205,7 +2208,9 @@ export function bindProjectRoute() {
       if (state.siteOpportunity?.result) {
         state.siteOpportunity = { on: false, result: null, signature: null };
       }
-      renderProjectRoute();
+      // Изменение проекта может прийти прямо из blur/change обработчика поля.
+      // Не заменяем его DOM синхронно, пока браузер завершает событие.
+      queueProjectRouteRender();
     }
   });
   document.addEventListener(PROJECT_REPLACED_EVENT, resetWorkflowForReplacement);

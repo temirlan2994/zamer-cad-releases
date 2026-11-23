@@ -127,6 +127,7 @@ describe('правая панель — телефон 390', () => {
     await page.tap('#mobileBar [data-sheet="sheets"]');
     // 0.4.5: этап «Объём» открывается из палитры этапов внизу, а не вкладкой в окне аналитики.
     await openRouteView(page, 'envelope', { mobile: true });
+    await page.tap('[data-analysis-fold="envelope-metrics"] > summary');
     await page.tap('[data-analysis-open="tep"]');
     assert.equal(await page.getAttribute('#propsTabTep', 'aria-selected'), 'true');
     assert.equal(await page.isVisible('#schedTable'), true);
