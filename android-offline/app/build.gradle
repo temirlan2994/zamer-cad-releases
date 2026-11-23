@@ -9,6 +9,7 @@ def signingProperties = new java.util.Properties()
 if (signingPropertiesFile.exists()) {
     signingPropertiesFile.withInputStream { signingProperties.load(it) }
 }
+def signingStoreFile = System.getenv("ZAMER_SIGNING_STORE_FILE") ?: signingProperties["storeFile"]
 
 android {
     namespace "com.zamercad.offline"
@@ -18,15 +19,15 @@ android {
         applicationId "com.zamercad.offline"
         minSdk 29
         targetSdk 35
-        versionCode 88
-        versionName "0.1.87"
+        versionCode 89
+        versionName "0.1.88"
         buildConfigField "String", "UPDATE_REPOSITORY", groovy.json.JsonOutput.toJson(System.getenv("ZAMER_UPDATE_REPOSITORY") ?: "temirlan2994/zamer-cad-releases")
     }
 
     signingConfigs {
         release {
             if (signingPropertiesFile.exists()) {
-                storeFile rootProject.file(signingProperties["storeFile"])
+                storeFile rootProject.file(signingStoreFile)
                 storePassword signingProperties["storePassword"]
                 keyAlias signingProperties["keyAlias"]
                 keyPassword signingProperties["keyPassword"]
@@ -97,7 +98,7 @@ def validateReleaseSigning = tasks.register("validateReleaseSigning") {
                 throw new GradleException("Missing release signing property: ${name}")
             }
         }
-        if (!rootProject.file(signingProperties["storeFile"]).isFile()) {
+        if (!signingStoreFile || !rootProject.file(signingStoreFile).isFile()) {
             throw new GradleException("Release keystore file does not exist.")
         }
     }
