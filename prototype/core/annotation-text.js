@@ -24,14 +24,6 @@ export function annotationWorldSize(referencePixels, scaleFactor) {
   return referencePixels * annotationScaleFactor(scaleFactor) / REFERENCE_VIEW_SCALE;
 }
 
-export function annotationScreenSize(referencePixels, scaleFactor) {
-  return referencePixels * annotationScaleFactor(scaleFactor);
-}
-
-export function annotationWorldToScreenSize(worldSize) {
-  return Math.abs(Number(worldSize) || 0) * REFERENCE_VIEW_SCALE;
-}
-
 export function auxiliaryAnnotationSize(referencePixels, viewScale) {
   const zoom = Math.min(1.25, Math.max(0.72, Math.sqrt(viewScale / REFERENCE_VIEW_SCALE)));
   return referencePixels * zoom;

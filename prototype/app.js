@@ -32,7 +32,7 @@ import { formatProjectAngle, formatProjectArea, formatProjectElevation, formatPr
   fromProjectLength, normalizeMeasurementSettings, projectUnit, toProjectLength } from "./core/project-settings.js";
 import { createPlanAnnotation, normalizePlanAnnotation, planAnnotationAnchors, planAnnotationGeometry, planAnnotationPointsFromEntity, planZoneLabelHeight, planZoneLabelLines, tessellatePolyline, totalPlanAreaM2, MAX_PLAN_ANNOTATION_POINTS, PLAN_AREA_COLOR, PLAN_ELEVATION_STYLES } from "./core/plan-annotations.js";
 import { planRegionAtPoint } from "./core/plan-region.js";
-import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationScreenSize, annotationTextLines, annotationTextWidth, annotationWorldSize, annotationWorldToScreenSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
+import { ANNOTATION_LINE_SPACING, ANNOTATION_SCALE_PRESETS, annotationScaleFactor, annotationTextLines, annotationTextWidth, annotationWorldSize, auxiliaryAnnotationSize, leaderAppearance, leaderElbowPoint, leaderFrameSize, leaderPlanPath, leaderTextHeight, textBlockLayout } from "./core/annotation-text.js";
 
 
 // Local vector icons share a 24px grid and never depend on platform emoji fonts.
@@ -3703,8 +3703,7 @@ function css(name) {
 }
 
 function annotationPx(value) {
-  return printRendering ? annotationWorldSize(value, state.annotationScale) * state.view.scale
-    : annotationScreenSize(value, state.annotationScale);
+  return annotationWorldSize(value, state.annotationScale) * state.view.scale;
 }
 
 function annotationFont(weight, size) {
@@ -4835,8 +4834,7 @@ function drawPlanAnnotationZone(entity, c, options = {}) {
   if (!options.outline) {
     const anchor = worldToScreen(options.anchor || geometry.anchor);
     const lines = planZoneLabelLines(entity, geometry, state.measurementSettings);
-    const worldHeight = planZoneLabelHeight(state.annotationScale);
-    const size = printRendering ? worldHeight * state.view.scale : annotationWorldToScreenSize(worldHeight);
+    const size = planZoneLabelHeight(state.annotationScale) * state.view.scale;
     ctx.font = `700 ${size}px Inter, Arial, sans-serif`;
     const width = Math.max(...lines.map((text) => ctx.measureText(text).width)) + size * 1.2;
     const lineHeight = size * ANNOTATION_LINE_SPACING;
@@ -5326,8 +5324,7 @@ function drawAdditionalDimension(entity, c, preview = false) {
     ctx.stroke();
   }
   for (const { point, ux, uy } of art.arrows) {
-    const arrowSize = printRendering ? art.arrowSize * state.view.scale : annotationScreenSize(8, state.annotationScale);
-    drawDimensionArrow(worldToScreen(point), ux, uy, arrowSize, { dimension: color });
+    drawDimensionArrow(worldToScreen(point), ux, uy, art.arrowSize * state.view.scale, { dimension: color });
   }
   drawDimensionCaption(art.label, art.textHeight, art.prefix + projectLength(art.measurement), c.dimensionText ?? color, c.bg);
   ctx.restore();
@@ -5400,8 +5397,7 @@ function drawRadialDimension(entity, c, preview = false) {
   const color = preview || selected ? c.accent : c.dimension;
   const start = worldToScreen(art.start);
   const end = worldToScreen(art.end);
-  const arrowSize = printRendering ? art.arrowSize * state.view.scale
-    : Math.min(annotationScreenSize(8, state.annotationScale), art.measurement * state.view.scale * 0.27);
+  const arrowSize = art.arrowSize * state.view.scale;
   const text = `${art.diameter ? "⌀" : "R"} ${projectLength(art.measurement)}`;
   ctx.save();
   ctx.strokeStyle = color;
@@ -5548,8 +5544,7 @@ function drawDimensionGeometry(geometry, c, options = {}) {
   const end = worldToScreen(artwork.end);
   const extensionStart = worldToScreen(artwork.extensionStart);
   const extensionEnd = worldToScreen(artwork.extensionEnd);
-  const arrowSize = printRendering ? artwork.arrowSize * state.view.scale
-    : Math.min(annotationScreenSize(9, state.annotationScale), pointDistance(a, b) * 0.22);
+  const arrowSize = artwork.arrowSize * state.view.scale;
   ctx.save();
   ctx.strokeStyle = c.dimension;
   ctx.fillStyle = c.dimension;
@@ -5566,7 +5561,7 @@ function drawDimensionGeometry(geometry, c, options = {}) {
 }
 
 function dimensionLabelSize(height) {
-  return printRendering ? height * state.view.scale : annotationWorldToScreenSize(height);
+  return height * state.view.scale;
 }
 
 function drawDimensionLabel(text, label, height, rotation, c) {
