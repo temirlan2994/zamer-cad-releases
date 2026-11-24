@@ -62,7 +62,7 @@ describe('программа дома', () => {
   it('хранит ввод как черновик до сохранения и не выдаёт неизвестное за готовность', async () => {
     const { page } = app;
     assert.equal(await page.isVisible(programButton), true);
-    assert.equal(await page.getAttribute(programButton, 'data-status'), 'unknown');
+    await page.waitForSelector(`${programButton}[data-status="unknown"]`);
 
     await openProgram(page);
     await openProgramMission(page, 'residents');

@@ -95,6 +95,27 @@ describe('маршрут подготовки участка', () => {
     await page.keyboard.press('Escape');
   });
 
+  it('меню различает ещё не рассчитанные пункты и их собственные результаты', async () => {
+    const { page } = app;
+    const icon = page.locator('#projectRouteSteps [data-route-view="program"]');
+    const residents = page.locator('#projectRouteHover [data-route-hover-mission="residents"]');
+    const plan = page.locator('#projectRouteHover [data-route-hover-mission="plan"]');
+    await icon.click();
+    assert.equal(await residents.getAttribute('data-status'), 'pending');
+    assert.equal(await residents.locator('i').textContent(), '…');
+    await residents.click();
+    await page.locator('#projectRouteBody [data-analysis-mission="plan"]').waitFor();
+    assert.equal(await page.locator('#projectRouteBody [data-analysis-mission="residents"]').getAttribute('data-status'), 'done');
+    assert.equal(await page.locator('#projectRouteBody [data-analysis-mission="plan"]').getAttribute('data-status'), 'unknown');
+    await page.click('#projectRouteClose');
+    assert.equal(await icon.getAttribute('aria-selected'), 'false');
+    await icon.click();
+    assert.equal(await residents.getAttribute('data-status'), 'checked');
+    assert.equal(await plan.getAttribute('data-status'), 'unknown');
+    assert.equal(await plan.locator('i').textContent(), '?');
+    await icon.click();
+  });
+
   it('явное решение меняет статус, а подтверждение отступов сбрасывается после их изменения', async () => {
     const { page } = app;
     await page.evaluate(async () => {

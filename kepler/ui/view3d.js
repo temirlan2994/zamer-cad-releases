@@ -71,6 +71,7 @@ import {
 import {
   cancelObjectGizmoDrag, clearObjectGizmoHover, debugObjectGizmo3d, finishObjectGizmoDrag, initObjectGizmo3d,
   moveObjectGizmoDrag, objectGizmoDragging, objectGizmoHover, objectGizmoOverlay, objectGizmoPartAt, startObjectGizmoDrag,
+  visibleObjectGizmoAxes,
 } from './object-gizmo3d.js';
 
 // dist — масштаб ортографического вида; eyeDist — физическое расстояние до
@@ -688,7 +689,6 @@ function syncReliefControl() {
 
 const HINT_IDLE = 'Тяните, чтобы вращать · Нажмите на объект, чтобы выбрать';
 const HINT_OBJ = 'Delete — удалить · Ctrl+C/V/D — копировать/вставить/дублировать · R — повернуть мебель · Esc — снять выбор';
-const HINT_GIZMO = 'Гизмо: стрелка X/Y/Z — одна ось · жёлтый квадрат — по земле · Shift — без шага · Delete — удалить';
 const HINT_SEL = 'Тяните верх стены — высота, бок — сдвиг (Alt — толщина), торец ручной стены — длина · двойной клик по грани — число · Ctrl — без привязки';
 const HINT_SEL_TOUCH = 'Удерживайте грань выбранной стены и тяните: верх — высота, бок — сдвиг';
 const HINT_SITE = 'Редактирование приостановлено';
@@ -698,6 +698,17 @@ const HINT_ROOF = 'Крыша: точки — вынос (по плоскост�
 const HINT_ROOF_TOOL = 'Ручная крыша: клик по помещению — накрыть · Shift+клик — добавить к выбранной · клик по крыше — выбрать · Esc — выйти';
 const HINT_FURNITURE_TOOL = 'Нажмите на пол, чтобы поставить объект · Пробел — повернуть · Esc — закончить';
 let touchUsed = false;
+
+function objectGizmoHint() {
+  const axes = visibleObjectGizmoAxes();
+  if (!axes) return state.selection?.type === 'landscape' && state.selection.ids?.length > 1
+    ? 'Для перемещения в 3D выберите один объект' : '';
+  const movement = axes.includes('z')
+    ? 'X/Y — по горизонтали · Z — высота · Квадрат — обе оси X/Y'
+    : 'X/Y — по участку · Квадрат — обе оси X/Y';
+  const touch = touchUsed || window.matchMedia('(pointer: coarse)').matches;
+  return movement + (touch ? '' : ' · Shift — без шага · Delete — удалить');
+}
 
 function setHint(text) {
   const hint = el('v3Hint');
@@ -717,7 +728,7 @@ function setHint(text) {
     else if (state.selection?.type === 'opening') text = openingSelectionHint();
     else if (frontFacade && (!state.selection || selectedRef())) text = 'Выберите окно или отделку для правки · Тяните фон, чтобы сдвинуть вид';
     else if (selectedRef()) text = touchUsed ? HINT_SEL_TOUCH : HINT_SEL;
-    else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = HINT_GIZMO;
+    else if (state.selection?.type === 'item' || state.selection?.type === 'landscape') text = objectGizmoHint();
     else if (selectedObject()) text = HINT_OBJ;
     else text = HINT_IDLE;
   }
@@ -1403,6 +1414,14 @@ function onDown(e) {
     setHint();
     return;
   }
+  // Shift на ручке снимает шаг. На свободном фоне он перемещает камеру.
+  const objectPart = e.button === 0 && pointers.size === 1 ? objectGizmoPartAt(e) : null;
+  if (objectPart && startObjectGizmoDrag(e, objectPart)) {
+    gesture = { kind: 'object-gizmo' };
+    canvas.style.cursor = 'grabbing';
+    setHint();
+    return;
+  }
   // Инструмент «Масса»: клик (без сдвига) — шаг жеста; потянули — вращение
   // (с Shift — сдвиг вида), как обычно.
   const massTool = massToolOn() && wallsEditable() && e.button === 0 && pointers.size === 1;
@@ -1447,15 +1466,6 @@ function onDown(e) {
   if (massPart && startMassDrag(e, massPart)) {
     gesture = { kind: 'mass' };
     el('canvas3d').style.cursor = massPart.part.startsWith('g') ? 'grabbing' : el('canvas3d').style.cursor;
-    setHint();
-    return;
-  }
-  // Обычные объекты используют единый 3D-гизмо: мебель — XYZ, деревья и
-  // прочие наземные объекты — только XY, высотные объекты участка — XYZ.
-  const objectPart = wallsEditable() ? objectGizmoPartAt(e) : null;
-  if (objectPart && startObjectGizmoDrag(e, objectPart)) {
-    gesture = { kind: 'object-gizmo' };
-    el('canvas3d').style.cursor = 'grabbing';
     setHint();
     return;
   }

@@ -153,10 +153,13 @@ const HOME_REVIEW_STATUS_LABEL = Object.freeze({
   attention: 'Требует внимания',
   blocked: 'Есть препятствие',
   unknown: 'Недостаточно данных',
+  pending: 'Ещё не проверено',
 });
 const HOME_REVIEW_STATUS_MARK = Object.freeze({
-  checked: '✓', attention: '!', blocked: '×', unknown: '?',
+  checked: '✓', attention: '!', blocked: '×', unknown: '?', pending: '…',
 });
+const MISSION_ROUTE_STATUS = Object.freeze({ '✓': 'checked', '!': 'attention', '×': 'blocked', '?': 'unknown' });
+const missionStatusesByView = new Map();
 
 let bound = false;
 let panelOpen = false;
@@ -459,6 +462,7 @@ function invalidateWorkflowReview({ clear = false } = {}) {
     scheduleLightWorkflowReview();
     return;
   }
+  missionStatusesByView.clear();
   workflowReviewCache = null;
   workflowReviewProject = null;
   workflowReviewMode = null;
@@ -604,7 +608,7 @@ function primaryMissionSections(body) {
 
 function missionStatus(section) {
   return section.dataset.status
-    || section.querySelector('.home-mission-state')?.dataset.status
+    || section.querySelector(':scope > summary .home-mission-state')?.dataset.status
     || 'unknown';
 }
 
@@ -1012,9 +1016,8 @@ function stageIcon(view) {
 function renderStageBar() {
   const steps = byId('projectRouteSteps');
   if (!steps) return;
-  // Нижняя палитра показывает последний готовый снимок, но не запускает
-  // скрытую аналитику сама. После правки значки временно становятся «?»,
-  // пока пользователь не откроет соответствующий аналитический вид.
+  // «…» означает, что результат ещё не получен. «?» ставится после
+  // проверки, которая обнаружила недостаточные исходные данные.
   const rows = homeWorkflowRows(cachedWorkflowReview());
   for (const view of rows) {
     let button = steps.querySelector(`[data-route-view="${view.id}"]`);
@@ -1066,16 +1069,32 @@ function routeHoverRows(viewId) {
     const labels = { datum: '±0.000', foundation: 'Основание', roof: 'Крыша', drainage: 'Водоотвод', entrance: 'Вход' };
     return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
   }
-  const row = homeWorkflowRows(cachedWorkflowReview()).find((item) => item.id === viewId);
+  const statuses = missionStatusesByView.get(viewId);
   return asArray(HOME_VIEW_ITEMS[viewId]).map((item, index) => {
     const [label, mission] = Array.isArray(item) ? item : [String(item), null];
     return {
       id: `${viewId}-${mission || index}`,
       label,
       mission,
-      status: row?.status || 'unknown',
+      status: statuses ? statuses.get(mission) || 'unknown' : 'pending',
     };
   });
+}
+
+function syncRouteMenuStatuses(rows = null) {
+  const menu = byId('projectRouteHover');
+  const view = menu?.dataset.routeMenuView;
+  if (!view || menu.hidden) return;
+  const byKey = new Map((rows || routeHoverRows(view)).map((row) => [row.id, row]));
+  for (const button of menu.querySelectorAll('[data-route-menu-item]')) {
+    const row = byKey.get(button.dataset.routeMenuItem);
+    if (!row) continue;
+    button.dataset.status = row.status;
+    if (view === 'site') button.dataset.routeStatus = row.status;
+    const label = view === 'site' ? statusLabel(row.status) : HOME_REVIEW_STATUS_LABEL[row.status];
+    button.setAttribute('aria-label', `${row.label}. ${label}`);
+    button.querySelector('i').textContent = view === 'site' ? statusMark(row.status) : HOME_REVIEW_STATUS_MARK[row.status];
+  }
 }
 
 function setRouteMenuButtons(viewId = null) {
@@ -1127,16 +1146,14 @@ function showRouteHover(button, { pin = false } = {}) {
   }
   const rows = routeHoverRows(viewId);
   hover.innerHTML = `<header><strong>${escapeHtml(view.label)}</strong><small>Выберите пункт</small></header><div>${rows.map((row) => {
-    const mark = viewId === 'site' ? statusMark(row.status) : HOME_REVIEW_STATUS_MARK[row.status];
-    const status = viewId === 'site' ? row.status : row.status;
-    const label = viewId === 'site' ? statusLabel(row.status) : HOME_REVIEW_STATUS_LABEL[row.status];
     const attrs = viewId === 'site'
-      ? `data-route-task="${row.id}" data-route-task-stage="${row.stageId}" data-route-stage="${row.stageId}" data-route-status="${row.status}"`
+      ? `data-route-task="${row.id}" data-route-task-stage="${row.stageId}" data-route-stage="${row.stageId}"`
       : `data-route-hover-view="${viewId}"${row.mission ? ` data-route-hover-mission="${escapeHtml(row.mission)}"` : ''}`;
-    return `<button type="button" role="menuitem" tabindex="-1" ${attrs} data-status="${status}" aria-label="${escapeHtml(`${row.label}. ${label || STATUS_LABEL.unknown}`)}"><i aria-hidden="true">${mark || '?'}</i><span>${escapeHtml(row.label)}</span></button>`;
+    return `<button type="button" role="menuitem" tabindex="-1" data-route-menu-item="${escapeHtml(row.id)}" ${attrs}><i aria-hidden="true"></i><span>${escapeHtml(row.label)}</span></button>`;
   }).join('')}</div>`;
   hover.hidden = false;
   hover.dataset.routeMenuView = viewId;
+  syncRouteMenuStatuses(rows);
   if (routeMenuPinnedView === viewId) hover.dataset.pinned = 'true';
   else hover.removeAttribute('data-pinned');
   const rect = button.getBoundingClientRect();
@@ -1441,6 +1458,10 @@ function renderPanel(model) {
     if (panelView === 'circulation') bindErgoViewBlock(body, renderProjectRoute);
     restoreHomePanelState(body, preserved);
     enhanceMissionPanel(body);
+    const { sections } = primaryMissionSections(body);
+    missionStatusesByView.set(panelView, new Map(sections.map((section) => [
+      section.dataset.analysisFold, MISSION_ROUTE_STATUS[missionStatusMark(missionStatus(section))],
+    ])));
     return;
   }
   const stage = model.stages.find((item) => item.id === activeStage) || model.stages[0];
@@ -1463,7 +1484,16 @@ function homeWorkflowRows(review) {
   const stages = new Map(asArray(review?.stages).map((stage) => [stage.id, stage]));
   return HOME_NAV_DEFS.map((view) => {
     const source = view.id === 'review' ? review : stages.get(view.id);
-    const status = normalizedHomeReviewStatus(source?.status);
+    const missions = missionStatusesByView.get(view.id);
+    let status = 'pending';
+    if (view.id === 'site') status = normalizedHomeReviewStatus(normalizeStatus(latestModel?.route?.status));
+    else if (source) status = normalizedHomeReviewStatus(source.status);
+    else if (missions?.size) {
+      const values = [...missions.values()];
+      if (values.includes('blocked')) status = 'blocked';
+      else if (values.every((value) => value === 'checked')) status = 'checked';
+      else status = values.every((value) => value === 'unknown') ? 'unknown' : 'attention';
+    }
     return { ...view, status };
   });
 }
@@ -2333,9 +2363,10 @@ export function renderProjectRoute() {
       ? CIRCULATION_PERIOD_LABEL[view.period] || 'частота выбранного периода'
       : 'число рассчитанных маршрутов';
   }
-  renderStageBar();
   root.classList.toggle('has-project', Boolean(state.project));
   if (panelOpen) renderPanel(latestModel);
+  renderStageBar();
+  syncRouteMenuStatuses();
   syncOpenState();
 }
 
@@ -2459,6 +2490,7 @@ export function bindProjectRoute() {
   });
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
+    missionStatusesByView.clear();
     const analytical = floorAnalyticalViewById(state.project, state.analyticalView?.id);
     if (state.analyticalView && !analytical) {
       closeAnalyticalView({ restoreFocus: false });
