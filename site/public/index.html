@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Zamer CAD — полноценный CAD в телефоне: чертёж, размеры, DWG</title>
-  <meta name="description" content="Линии, полилинии, фигуры, размеры, обрезка, зеркало, слои и привязки — инструменты как в AutoCAD на Android. Чертите на объекте и в дороге, отдавайте DWG, DXF и PDF. 14 дней бесплатно.">
+  <title>Zamer CAD — замер без бумаги и полноценный CAD в телефоне</title>
+  <meta name="description" content="Для архитекторов, дизайнеров и мебельщиков: чертите замер прямо на объекте — линии, размеры, площади. Открывайте DWG и DXF, отдавайте PDF клиенту и DWG проектировщику. Android, 14 дней бесплатно.">
   <meta name="theme-color" content="#f4f7fb">
   <meta name="color-scheme" content="light">
   <link rel="canonical" href="https://zamer-cad.netlify.app/">
@@ -13,8 +13,8 @@
   <meta property="og:site_name" content="Zamer CAD">
   <meta property="og:locale" content="ru_RU">
   <meta property="og:url" content="https://zamer-cad.netlify.app/">
-  <meta property="og:title" content="Zamer CAD — полноценный CAD в телефоне">
-  <meta property="og:description" content="Инструменты как в AutoCAD: линии, фигуры, размеры, обрезка, зеркало, слои. DWG, DXF и PDF. 14 дней бесплатно.">
+  <meta property="og:title" content="Zamer CAD — замер без бумаги и перерисовки">
+  <meta property="og:description" content="Чертёж замера прямо на объекте, DWG и DXF в телефоне, PDF клиенту. 14 дней бесплатно.">
   <meta property="og:image" content="https://zamer-cad.netlify.app/img/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -28,8 +28,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
   <link rel="preload" as="image" href="img/screen-plan.webp" fetchpriority="high">
-  <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script src="app.js?v=5" defer></script>
 
   <script type="application/ld+json">
   {
@@ -38,7 +38,7 @@
     "name": "Zamer CAD",
     "operatingSystem": "Android 10+",
     "applicationCategory": "DesignApplication",
-    "description": "CAD для телефона: линии, полилинии, фигуры, размеры, обрезка, зеркало, слои, привязки, экспорт DWG, DXF и PDF, Leica DISTO по Bluetooth.",
+    "description": "Замер и чертёж на телефоне: линии, размеры, площади, открытие и экспорт DWG и DXF, PDF, Leica DISTO по Bluetooth.",
     "url": "https://zamer-cad.netlify.app/",
     "downloadUrl": "https://zamer-cad.netlify.app/download",
     "image": "https://zamer-cad.netlify.app/img/og.png",
@@ -73,13 +73,9 @@
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.6c0 4.6-3.2 7.9-7.5 9.4-4.3-1.5-7.5-4.8-7.5-9.4V6z"/><path d="m8.6 12 2.4 2.4 4.4-4.6"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></symbol>
     <symbol id="i-android" viewBox="0 0 24 24"><path d="M5.5 10.5a6.5 6.5 0 0 1 13 0V17a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 17z"/><path d="M5.5 11.5h13M8 4l1.3 2.2M16 4l-1.3 2.2"/><circle cx="9.5" cy="8.7" r=".6" fill="currentColor"/><circle cx="14.5" cy="8.7" r=".6" fill="currentColor"/></symbol>
-    <symbol id="t-line" viewBox="0 0 24 24"><path d="M5.5 18.5 18.5 5.5"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/></symbol>
-    <symbol id="t-poly" viewBox="0 0 24 24"><path d="M3.5 19V9.5L10 5l4.5 6.5L20.5 8v11z"/></symbol>
-    <symbol id="t-shapes" viewBox="0 0 24 24"><rect x="3" y="4.5" width="11" height="8.5" rx="1"/><circle cx="16" cy="15.5" r="5"/></symbol>
-    <symbol id="t-trim" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.6"/><circle cx="6" cy="17" r="2.6"/><path d="M8.3 8.5 20 17M8.3 15.5 20 7"/></symbol>
-    <symbol id="t-mirror" viewBox="0 0 24 24"><path d="M12 2.5v19" stroke-dasharray="2 2.2"/><path d="M9.5 6.5 3.5 17.5h6zM14.5 6.5l6 11h-6z"/></symbol>
-    <symbol id="t-dim" viewBox="0 0 24 24"><path d="M4 7.5v9M20 7.5v9M4 12h16M7.5 9.5 4.5 12l3 2.5M16.5 9.5l3 2.5-3 2.5"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l4.5-1.2L19.2 8.1a2.1 2.1 0 0 0-3-3L5.5 15.7z"/><path d="m14.6 6.6 3 3"/></symbol>
     <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M12 2.5v6M12 15.5v6M2.5 12h6M15.5 12h6"/><rect x="9.5" y="9.5" width="5" height="5"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V4m-4.5 4.5L12 4l4.5 4.5"/><path d="M5 13v7h14v-7"/></symbol>
   </svg>
 
   <a class="skip" href="#main">Перейти к содержанию</a>
@@ -91,8 +87,8 @@
         <span>Zamer CAD</span>
       </a>
       <nav class="nav" aria-label="Разделы">
-        <a href="#tools">Инструменты</a>
-        <a href="#features">Возможности</a>
+        <a href="#how">Как работает</a>
+        <a href="#cad">CAD и DWG</a>
         <a href="#pricing">Цены</a>
         <a href="#faq">Вопросы</a>
       </nav>
@@ -107,31 +103,32 @@
       <div class="wrap hero-grid">
         <div class="hero-copy">
           <p class="eyebrow"><span class="dot" aria-hidden="true"></span>Для архитекторов, дизайнеров и мебельщиков</p>
-          <h1>Полноценный CAD — в&nbsp;вашем телефоне</h1>
-          <p class="lead">Линии, полилинии, фигуры, размеры, обрезка, зеркало, слои и&nbsp;11&nbsp;привязок&nbsp;— инструменты как в&nbsp;AutoCAD, только под пальцем. Чертите на&nbsp;объекте и&nbsp;в&nbsp;дороге, отдавайте DWG, DXF и&nbsp;PDF.</p>
+          <h1>Замер без бумаги и&nbsp;перерисовки</h1>
+          <p class="lead">Zamer CAD — чертёж замера прямо в&nbsp;телефоне. Линии, размеры и&nbsp;площади&nbsp;— на&nbsp;объекте, а&nbsp;PDF&nbsp;клиенту и&nbsp;DWG&nbsp;проектировщику&nbsp;— ещё до&nbsp;вашего отъезда.</p>
           <div class="cta-row" id="hero-cta">
             <a class="btn btn-primary btn-lg" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
               <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
             </a>
-            <a class="btn btn-ghost btn-lg" href="#tools">Смотреть инструменты</a>
+            <a class="btn btn-ghost btn-lg" href="#how">Как это работает</a>
           </div>
           <p class="apk-meta"><svg class="ic" aria-hidden="true"><use href="#i-android"/></svg><span>APK · Android 10+ · v<span data-apk-version>0.1.95</span> · <span data-apk-size>6&nbsp;МБ</span></span></p>
           <ul class="trust">
             <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>14&nbsp;дней — все функции бесплатно</li>
             <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Без регистрации и&nbsp;карты</li>
             <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Работает без интернета</li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Открывает DWG и&nbsp;DXF</li>
           </ul>
         </div>
 
-        <div class="hero-visual" aria-label="Чертёж в Zamer CAD на телефоне и готовый PDF-лист">
+        <div class="hero-visual" aria-label="Обмерный план в Zamer CAD на телефоне и готовый PDF-лист">
           <img class="sheet" src="img/pdf-sheet.webp" width="1000" height="1414" alt="PDF-лист A4 из Zamer CAD: план квартиры с размерами и площадями комнат" decoding="async">
           <div class="device">
-            <img src="img/screen-plan.webp" width="720" height="1558" alt="Чертёж квартиры в Zamer CAD: линии, проёмы, дуги дверей и размерные цепочки" fetchpriority="high">
+            <img src="img/screen-plan.webp" width="720" height="1558" alt="Обмерный план квартиры в Zamer CAD: контуры комнат линиями, проёмы, двери и размерные цепочки" fetchpriority="high">
           </div>
           <div class="chip chip-area" aria-hidden="true">
-            <span class="chip-label">Инструменты CAD</span>
-            <strong>40+</strong>
-            <span class="chip-sub">черчение · правка · размеры</span>
+            <span class="chip-label">Площадь</span>
+            <strong>28,21&nbsp;м²</strong>
+            <span class="chip-sub">Гостиная-кухня</span>
           </div>
           <div class="chip chip-laser" aria-hidden="true">
             <span class="laser-dot"></span>
@@ -140,13 +137,13 @@
           </div>
           <div class="chip chip-files" aria-hidden="true">
             <svg class="ic" aria-hidden="true"><use href="#i-pdf"/></svg>
-            <span><strong>DWG · DXF · PDF</strong><span class="chip-sub">для AutoCAD и&nbsp;клиента</span></span>
+            <span><strong>PDF · DWG · DXF</strong><span class="chip-sub">готово к&nbsp;отправке</span></span>
           </div>
         </div>
       </div>
 
       <div class="wrap audience">
-        <p>Для тех, кто чертит каждый день:</p>
+        <p>Для всех, кто ходит на&nbsp;замер:</p>
         <ul>
           <li>Архитекторы</li>
           <li>Дизайнеры интерьера</li>
@@ -156,98 +153,22 @@
       </div>
     </section>
 
-    <section class="section section-alt" id="tools" aria-labelledby="tools-title">
-      <div class="wrap">
-        <p class="kicker">01 · Инструменты</p>
-        <h2 id="tools-title">Как в&nbsp;AutoCAD — только под пальцем</h2>
-        <p class="section-lead">Прицел стоит в&nbsp;центре экрана: двигайте чертёж пальцем и&nbsp;ставьте точку касанием. Привязки сами цепляются за&nbsp;концы, середины и&nbsp;пересечения&nbsp;— точно до&nbsp;миллиметра.</p>
-
-        <div class="tools" data-tools>
-          <div class="tool-tabs" role="tablist" aria-label="Инструменты Zamer CAD">
-            <button class="tool-tab" type="button" role="tab" id="tab-line" aria-controls="panel-line" aria-selected="true" data-video="media/tool-line.mp4" data-poster="media/tool-line.webp"><svg class="ic" aria-hidden="true"><use href="#t-line"/></svg>Линия</button>
-            <button class="tool-tab" type="button" role="tab" id="tab-polyline" aria-controls="panel-polyline" aria-selected="false" tabindex="-1" data-video="media/tool-polyline.mp4" data-poster="media/tool-polyline.webp"><svg class="ic" aria-hidden="true"><use href="#t-poly"/></svg>Полилиния</button>
-            <button class="tool-tab" type="button" role="tab" id="tab-shapes" aria-controls="panel-shapes" aria-selected="false" tabindex="-1" data-video="media/tool-shapes.mp4" data-poster="media/tool-shapes.webp"><svg class="ic" aria-hidden="true"><use href="#t-shapes"/></svg>Фигуры</button>
-            <button class="tool-tab" type="button" role="tab" id="tab-trim" aria-controls="panel-trim" aria-selected="false" tabindex="-1" data-video="media/tool-trim.mp4" data-poster="media/tool-trim.webp"><svg class="ic" aria-hidden="true"><use href="#t-trim"/></svg>Обрезка</button>
-            <button class="tool-tab" type="button" role="tab" id="tab-mirror" aria-controls="panel-mirror" aria-selected="false" tabindex="-1" data-video="media/tool-mirror.mp4" data-poster="media/tool-mirror.webp"><svg class="ic" aria-hidden="true"><use href="#t-mirror"/></svg>Зеркало</button>
-            <button class="tool-tab" type="button" role="tab" id="tab-dims" aria-controls="panel-dims" aria-selected="false" tabindex="-1" data-video="media/tool-dims.mp4" data-poster="media/tool-dims.webp"><svg class="ic" aria-hidden="true"><use href="#t-dim"/></svg>Размеры</button>
-          </div>
-
-          <div class="tool-stage">
-            <div class="device tool-device">
-              <video src="media/tool-line.mp4" poster="media/tool-line.webp" width="480" height="1038" muted playsinline preload="none" aria-label="Демонстрация: линия"></video>
-            </div>
-            <div class="tool-progress" aria-hidden="true"><span></span></div>
-          </div>
-
-          <div class="tool-panels">
-            <div class="tool-panel" role="tabpanel" id="panel-line" aria-labelledby="tab-line">
-              <h3>Линия</h3>
-              <p>Отрезки с&nbsp;живой длиной и&nbsp;углом. Полярное отслеживание держит 0°, 90° и&nbsp;другие углы, привязки ставят точку точно в&nbsp;угол или середину.</p>
-              <ul class="tags"><li>Ввод длины и&nbsp;угла</li><li>Полярные углы</li><li>Орто</li><li>Сетка</li></ul>
-            </div>
-            <div class="tool-panel" role="tabpanel" id="panel-polyline" aria-labelledby="tab-polyline" hidden>
-              <h3>Полилиния</h3>
-              <p>Контур одной линией&nbsp;— комната, столешница, деталь. Касание первой вершины замыкает контур, в&nbsp;любой момент можно перейти на&nbsp;дугу.</p>
-              <ul class="tags"><li>Дуговые сегменты</li><li>Замкнуть контур</li><li>Правка вершин</li></ul>
-            </div>
-            <div class="tool-panel" role="tabpanel" id="panel-shapes" aria-labelledby="tab-shapes" hidden>
-              <h3>Фигуры</h3>
-              <p>Прямоугольник в&nbsp;два касания, круг четырьмя способами, дуга по&nbsp;трём точкам. Размеры фигуры видны и&nbsp;меняются цифрами.</p>
-              <ul class="tags"><li>Прямоугольник</li><li>Круг: центр, диаметр, 3&nbsp;точки, касательные</li><li>Дуга</li></ul>
-            </div>
-            <div class="tool-panel" role="tabpanel" id="panel-trim" aria-labelledby="tab-trim" hidden>
-              <h3>Обрезка</h3>
-              <p>Одно касание&nbsp;— и&nbsp;лишний кусок до&nbsp;пересечения исчез. Удлинение до&nbsp;границы работает так&nbsp;же быстро.</p>
-              <ul class="tags"><li>Обрезка</li><li>Удлинение</li><li>Разрыв</li><li>Скругление</li><li>Смещение</li></ul>
-            </div>
-            <div class="tool-panel" role="tabpanel" id="panel-mirror" aria-labelledby="tab-mirror" hidden>
-              <h3>Зеркало</h3>
-              <p>Отразите деталь по&nbsp;оси&nbsp;— копия встанет симметрично. Рядом сдвиг, копия, массив, поворот и&nbsp;масштаб.</p>
-              <ul class="tags"><li>Сдвиг</li><li>Копия и&nbsp;массив</li><li>Поворот</li><li>Масштаб</li><li>Зеркало</li></ul>
-            </div>
-            <div class="tool-panel" role="tabpanel" id="panel-dims" aria-labelledby="tab-dims" hidden>
-              <h3>Размеры</h3>
-              <p>Размер в&nbsp;три касания: две точки и&nbsp;положение линии. Девять видов размеров&nbsp;— от&nbsp;простого до&nbsp;координатного.</p>
-              <ul class="tags"><li>По отрезку</li><li>По оси</li><li>Угол</li><li>Радиус и&nbsp;диаметр</li><li>Цепочка</li><li>Длина дуги</li><li>Координаты</li><li>Излом</li><li>Под углом</li></ul>
-            </div>
-          </div>
-
-          <div class="toolbox">
-            <h3 class="toolbox-title">Полный набор</h3>
-            <dl class="toolbox-grid">
-              <div><dt>Черчение</dt><dd>Линия · Полилиния · Прямоугольник · Круг · Дуга · Текст · Выноска · Облако изменений</dd></div>
-              <div><dt>Правка</dt><dd>Сдвиг · Копия · Массив · Поворот · Масштаб · Зеркало · Обрезка · Удлинение · Разрыв · Скругление · Смещение</dd></div>
-              <div><dt>Размеры</dt><dd>По отрезку · По оси · Угол · Радиус · Диаметр · Цепочка · Длина дуги · Координаты · Излом · Под углом</dd></div>
-              <div><dt>Точность</dt><dd>11 привязок · Полярное отслеживание · Орто · Сетка · Ввод длины и&nbsp;угла · Отмена и&nbsp;повтор</dd></div>
-              <div><dt>Организация</dt><dd>Слои: цвет, вес и&nbsp;тип линии · Блоки · Группы · Калька-подложка · Площади и&nbsp;отметки высот</dd></div>
-              <div><dt>Файлы</dt><dd>Открытие DWG и&nbsp;DXF · Экспорт DWG 2018+, DXF, Revit DXF, PDF A4, ZIP</dd></div>
-            </dl>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section class="section" id="why" aria-labelledby="why-title">
       <div class="wrap">
-        <p class="kicker">02 · Было — стало</p>
-        <h2 id="why-title">Хватит перерисовывать эскизы по&nbsp;вечерам</h2>
+        <p class="kicker">01 · Было — стало</p>
+        <h2 id="why-title">Хватит перерисовывать замеры по&nbsp;вечерам</h2>
         <div class="ba reveal">
           <div class="ba-head" aria-hidden="true"><span>Было</span><span></span><span>С Zamer CAD</span></div>
           <ul>
             <li>
               <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Эскиз на&nbsp;бумаге, рулетка и&nbsp;сотня фото «на&nbsp;всякий случай»</span></span>
               <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
-              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Сразу чертёж в&nbsp;телефоне — с&nbsp;размерами, фото и&nbsp;заметками</span></span>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Один чертёж в&nbsp;телефоне — с&nbsp;размерами, фото и&nbsp;заметками</span></span>
             </li>
             <li>
               <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Вечер за&nbsp;перерисовкой эскиза в&nbsp;AutoCAD</span></span>
               <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
-              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>DWG готов до&nbsp;выхода с&nbsp;объекта</span></span>
-            </li>
-            <li>
-              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Ноутбук с&nbsp;собой, чтобы поправить чертёж</span></span>
-              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
-              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Правки в&nbsp;телефоне — в&nbsp;дороге и&nbsp;на&nbsp;встрече</span></span>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Чертёж готов до&nbsp;выхода с&nbsp;объекта</span></span>
             </li>
             <li>
               <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Ошибки при переписывании цифр</span></span>
@@ -255,29 +176,99 @@
               <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Дальномер сам вписывает размер в&nbsp;чертёж</span></span>
             </li>
             <li>
+              <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Повторный выезд за&nbsp;забытым размером</span></span>
+              <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>Ведомость по&nbsp;каждой нише, проёму и&nbsp;розетке</span></span>
+            </li>
+            <li>
               <span class="was"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg><span><span class="sr">Было: </span>Клиент ждёт чертёж до&nbsp;завтра</span></span>
               <svg class="ic ba-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
-              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>PDF клиенту в&nbsp;мессенджер — сразу</span></span>
+              <span class="now"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><span class="sr">Стало: </span>PDF клиенту в&nbsp;мессенджер — сразу после замера</span></span>
             </li>
           </ul>
         </div>
       </div>
     </section>
 
-    <section class="section section-alt" id="features" aria-labelledby="features-title">
+    <section class="section section-alt" id="how" aria-labelledby="how-title">
       <div class="wrap">
-        <p class="kicker">03 · Возможности</p>
-        <h2 id="features-title">Больше, чем чертилка</h2>
+        <p class="kicker">02 · Как это работает</p>
+        <h2 id="how-title">Три шага от&nbsp;замера до&nbsp;PDF</h2>
+        <ol class="steps">
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-plan.webp" width="720" height="1558" alt="Контуры комнат, начерченные линиями в Zamer CAD, с размерными цепочками" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">1</span>
+            <h3>Начертите план</h3>
+            <p>Линиями по&nbsp;точкам или прямо с&nbsp;дальномера. Привязки и&nbsp;углы&nbsp;— как в&nbsp;AutoCAD.</p>
+          </li>
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-areas.webp" width="720" height="1558" alt="Площади комнат на плане: гостиная-кухня 28,21 м², спальня 16,15 м², прихожая 6,38 м², санузел 4,97 м²" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">2</span>
+            <h3>Площади — сами</h3>
+            <p>Размеры и&nbsp;м² каждой комнаты сразу на&nbsp;плане. Без калькулятора.</p>
+          </li>
+          <li class="step reveal">
+            <div class="device device-sm">
+              <img src="img/screen-export.webp" width="720" height="1558" alt="Экспорт в Zamer CAD: PDF, ZAMER, DXF, DWG, Revit DXF и комплект ZIP" loading="lazy" decoding="async">
+            </div>
+            <span class="step-num" aria-hidden="true">3</span>
+            <h3>Отправьте файлы</h3>
+            <p>PDF&nbsp;— клиенту, DWG и&nbsp;DXF&nbsp;— проектировщику. В&nbsp;одно касание.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="cad" id="cad" aria-labelledby="cad-title">
+      <div class="wrap cad-grid">
+        <div class="cad-copy">
+          <p class="kicker">03 · Не только замер</p>
+          <h2 id="cad-title">Полноценный CAD в&nbsp;кармане</h2>
+          <p class="cad-lead">Откройте DWG или DXF от&nbsp;проектировщика прямо в&nbsp;телефоне, допишите размеры, поправьте и&nbsp;отправьте обратно. Без ноутбука.</p>
+          <ul class="cad-list">
+            <li><svg class="ic" aria-hidden="true"><use href="#i-open"/></svg><span><strong>Открывайте DWG и&nbsp;DXF</strong>Планы от&nbsp;застройщика и&nbsp;проектировщика&nbsp;— в&nbsp;телефоне за&nbsp;секунды.</span></li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg><span><strong>Инструменты как в&nbsp;AutoCAD</strong>Линии, полилинии, фигуры, размеры, обрезка, зеркало, массив и&nbsp;слои.</span></li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-cursor"/></svg><span><strong>Точно до&nbsp;миллиметра</strong>Прицел в&nbsp;центре экрана, 11&nbsp;привязок и&nbsp;ввод длины цифрами.</span></li>
+            <li><svg class="ic" aria-hidden="true"><use href="#i-export"/></svg><span><strong>Обратно в&nbsp;DWG</strong>Экспорт в&nbsp;DWG 2018+, DXF и&nbsp;Revit DXF&nbsp;— продолжайте на&nbsp;компьютере.</span></li>
+          </ul>
+        </div>
+
+        <div class="player" data-player>
+          <div class="player-bars" role="tablist" aria-label="Ролики: что умеет Zamer CAD">
+            <button type="button" role="tab" aria-selected="true" aria-label="Открыть DWG" data-video="media/tool-dwg.mp4" data-poster="media/tool-dwg.webp" data-text="Файл от&nbsp;проектировщика — сразу в&nbsp;работе"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Линия" data-video="media/tool-line.mp4" data-poster="media/tool-line.webp" data-text="Длина и&nbsp;угол видны, пока ведёте"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Полилиния" data-video="media/tool-polyline.mp4" data-poster="media/tool-polyline.webp" data-text="Контур комнаты одной линией"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Фигуры" data-video="media/tool-shapes.mp4" data-poster="media/tool-shapes.webp" data-text="Прямоугольник и&nbsp;круг в&nbsp;два касания"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Обрезка" data-video="media/tool-trim.mp4" data-poster="media/tool-trim.webp" data-text="Касание — и&nbsp;лишнее исчезло"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Зеркало" data-video="media/tool-mirror.mp4" data-poster="media/tool-mirror.webp" data-text="Симметричная копия по&nbsp;оси"><span></span></button>
+            <button type="button" role="tab" aria-selected="false" tabindex="-1" aria-label="Размеры" data-video="media/tool-dims.mp4" data-poster="media/tool-dims.webp" data-text="Размер в&nbsp;три касания"><span></span></button>
+          </div>
+          <div class="device player-device">
+            <video src="media/tool-dwg.mp4" poster="media/tool-dwg.webp" width="480" height="1038" muted playsinline preload="none" aria-label="Ролик: открыть DWG"></video>
+          </div>
+          <p class="player-caption" aria-live="polite"><strong data-player-title>Открыть DWG</strong><span data-player-text>Файл от&nbsp;проектировщика — сразу в&nbsp;работе</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <p class="kicker">04 · Возможности</p>
+        <h2 id="features-title">Всё для замера — в&nbsp;одном приложении</h2>
         <div class="bento">
           <article class="card card-pdf reveal">
             <div class="card-text">
               <svg class="ic ic-lg" aria-hidden="true"><use href="#i-pdf"/></svg>
               <h3>PDF, который не&nbsp;стыдно отправить клиенту</h3>
-              <p>Лист A4 в&nbsp;масштабе от&nbsp;1:20 до&nbsp;1:200 с&nbsp;размерами, площадями, ведомостью замеров и&nbsp;фото. Для проектировщика&nbsp;— DWG и&nbsp;DXF.</p>
+              <p>Лист A4 в&nbsp;масштабе от&nbsp;1:20 до&nbsp;1:200 с&nbsp;размерами, площадями, ведомостью замеров и&nbsp;фото.</p>
               <ul class="tags"><li>PDF</li><li>DWG 2018+</li><li>DXF</li><li>Revit DXF</li><li>ZIP</li></ul>
             </div>
             <figure class="card-figure">
-              <img src="img/pdf-sheet.webp" width="1000" height="1414" alt="Готовый PDF-лист из Zamer CAD: план квартиры с размерами и площадями" loading="lazy" decoding="async">
+              <img src="img/pdf-sheet.webp" width="1000" height="1414" alt="Готовый PDF-лист из Zamer CAD: обмерный план квартиры с размерами и площадями" loading="lazy" decoding="async">
             </figure>
           </article>
           <article class="card card-laser reveal">
@@ -301,25 +292,18 @@
             <p>Подвал, новостройка без связи&nbsp;— неважно. Чертежи хранятся у&nbsp;вас на&nbsp;телефоне.</p>
           </article>
           <article class="card reveal">
-            <svg class="ic ic-lg" aria-hidden="true"><use href="#i-open"/></svg>
-            <h3>Открывает DWG и&nbsp;DXF</h3>
-            <p>Прислали план от&nbsp;застройщика? Откройте его и&nbsp;чертите поверх.</p>
-          </article>
-          <article class="card card-wide reveal">
             <svg class="ic ic-lg" aria-hidden="true"><use href="#i-shield"/></svg>
-            <div>
-              <h3>Ничего не&nbsp;потеряется</h3>
-              <p>История версий проекта, корзина и&nbsp;резервная копия&nbsp;.zamer. Обновления приходят прямо в&nbsp;приложение.</p>
-            </div>
+            <h3>Ничего не&nbsp;потеряется</h3>
+            <p>История версий проекта, корзина и&nbsp;резервная копия&nbsp;.zamer. Обновления приходят сами.</p>
           </article>
         </div>
       </div>
     </section>
 
-    <section class="section" id="pricing" aria-labelledby="pricing-title">
+    <section class="section section-alt" id="pricing" aria-labelledby="pricing-title">
       <div class="wrap">
-        <p class="kicker">04 · Цены</p>
-        <h2 id="pricing-title">CAD в&nbsp;кармане — дешевле чашки кофе в&nbsp;неделю</h2>
+        <p class="kicker">05 · Цены</p>
+        <h2 id="pricing-title">Повторный выезд стоит дороже месяца подписки</h2>
         <p class="section-lead">Начните бесплатно. Платите, когда Zamer CAD уже экономит вам время.</p>
 
         <div class="trial reveal">
@@ -349,9 +333,9 @@
         </div>
 
         <ul class="included reveal" aria-label="Что входит в Pro">
-          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Все инструменты CAD</li>
           <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Безлимитные проекты</li>
-          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Экспорт DWG, DXF, PDF</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Все инструменты CAD</li>
+          <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>DWG, DXF и&nbsp;PDF</li>
           <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Leica DISTO по&nbsp;Bluetooth</li>
           <li><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>Все обновления</li>
         </ul>
@@ -359,20 +343,20 @@
       </div>
     </section>
 
-    <section class="section section-alt" id="faq" aria-labelledby="faq-title">
+    <section class="section" id="faq" aria-labelledby="faq-title">
       <div class="wrap faq-grid">
         <div>
-          <p class="kicker">05 · Вопросы</p>
+          <p class="kicker">06 · Вопросы</p>
           <h2 id="faq-title">Коротко о&nbsp;главном</h2>
         </div>
         <div class="faq">
           <details>
-            <summary>Это правда как AutoCAD?</summary>
-            <p>Логика та&nbsp;же: линии, полилинии, фигуры, девять видов размеров, обрезка, удлинение, зеркало, массив, скругление, смещение, слои, блоки и&nbsp;11 привязок. Чертежи открываются в&nbsp;AutoCAD через DWG и&nbsp;DXF.</p>
+            <summary>Можно открыть DWG от&nbsp;проектировщика?</summary>
+            <p>Да. В&nbsp;списке проектов нажмите «Открыть файл» и&nbsp;выберите DWG или DXF&nbsp;— чертёж откроется со&nbsp;слоями. Допишите замеры и&nbsp;отправьте обратно в&nbsp;DWG или PDF.</p>
           </details>
           <details>
-            <summary>Как попасть пальцем точно в&nbsp;точку?</summary>
-            <p>Прицел стоит в&nbsp;центре экрана и&nbsp;не&nbsp;закрыт пальцем. Вы двигаете чертёж, а&nbsp;точку ставите касанием. Привязки сами цепляются за&nbsp;концы, середины и&nbsp;пересечения, длину можно ввести цифрами.</p>
+            <summary>Это правда как AutoCAD?</summary>
+            <p>Логика та&nbsp;же: линии, полилинии, фигуры, девять видов размеров, обрезка, удлинение, зеркало, массив, скругление, слои, блоки и&nbsp;11 привязок. Чертежи открываются в&nbsp;AutoCAD через DWG и&nbsp;DXF.</p>
           </details>
           <details>
             <summary>Как установить APK?</summary>
@@ -387,8 +371,8 @@
             <p>Оформите Pro&nbsp;— $7 в&nbsp;месяц или $59 в&nbsp;год. Ваши чертежи в&nbsp;любом случае остаются на&nbsp;вашем телефоне.</p>
           </details>
           <details>
-            <summary>Подойдёт ли мой телефон?</summary>
-            <p>Нужен Android 10 или новее. Приложение весит около 6&nbsp;МБ и&nbsp;работает без интернета.</p>
+            <summary>Какой нужен телефон и&nbsp;дальномер?</summary>
+            <p>Android 10 или новее, приложение весит около 6&nbsp;МБ и&nbsp;работает без интернета. Дальномер&nbsp;— Leica DISTO D2 или совместимый DISTO с&nbsp;Bluetooth, без него размеры вводятся с&nbsp;клавиатуры.</p>
           </details>
         </div>
       </div>
@@ -397,8 +381,8 @@
     <section class="final" id="final-cta" aria-labelledby="final-title">
       <div class="wrap final-grid">
         <div class="final-copy">
-          <h2 id="final-title">Ваш CAD теперь всегда с&nbsp;собой</h2>
-          <p>Скачайте Zamer CAD и&nbsp;начертите первый план сегодня. 14&nbsp;дней&nbsp;— бесплатно.</p>
+          <h2 id="final-title">Следующий замер — уже в&nbsp;телефоне</h2>
+          <p>Скачайте Zamer CAD и&nbsp;проверьте на&nbsp;ближайшем объекте. 14&nbsp;дней&nbsp;— бесплатно.</p>
           <a class="btn btn-primary btn-lg" href="https://github.com/temirlan2994/zamer-cad-releases/releases/download/v0.1.95/Zamer-CAD-0.1.95-release.apk" data-download data-apk-href>
             <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Скачать бесплатно
           </a>
@@ -419,7 +403,7 @@
         <span>Zamer CAD</span>
       </a>
       <nav class="footer-links" aria-label="Ссылки">
-        <a href="#tools">Инструменты</a>
+        <a href="#how">Как работает</a>
         <a href="#pricing">Цены</a>
         <a href="#faq">Вопросы</a>
         <a href="https://github.com/temirlan2994/zamer-cad-releases/releases" rel="noopener">Все версии APK</a>

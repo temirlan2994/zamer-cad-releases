@@ -1,5 +1,5 @@
-// Ролики инструментов для сайта: линия, полилиния, фигуры, обрезка,
-// зеркало, размеры. Каждый ролик снимается покадрово в настоящем прототипе
+// Ролики для сайта: открытие DWG и инструменты — линия, полилиния, фигуры,
+// обрезка, зеркало, размеры. Каждый ролик снимается покадрово в настоящем прототипе
 // (центральный прицел: чертёж двигают пальцем, точку ставят касанием).
 //
 // 1. Запустите прототип:          cd prototype && node server.js
@@ -24,6 +24,20 @@ const line = (id, x1, y1, x2, y2) => ({ id, type: "line", layer: "measure", x1, 
 const room = (w, h) => [line("r1", 0, 0, w, 0), line("r2", w, 0, w, h), line("r3", w, h, 0, h), line("r4", 0, h, 0, 0)];
 
 const scenes = {
+  dwg: {
+    home: true,
+    async run(s) {
+      const [chooser] = await Promise.all([s.page.waitForEvent("filechooser"), s.press("#projectImportButton", { hold: 4 })]);
+      await chooser.setFiles(path.join(__dirname, "sample-plan.dwg"));
+      await s.page.waitForSelector(".project-dialog input");
+      await s.page.fill(".project-dialog input", "Планировка от проектировщика");
+      await s.frame(24);
+      await s.press(".project-dialog button[type=submit]", { hold: 4 });
+      await s.page.waitForTimeout(1200);
+      await s.frame(40);
+      await s.press("#exportButton", { hold: 50 });
+    },
+  },
   line: {
     entities: [],
     scale: 0.075,
@@ -116,12 +130,14 @@ async function record(browser, name, scene) {
   const page = await context.newPage();
   await page.goto(APP);
   await page.waitForTimeout(1000);
-  const file = path.join(frames, "scene.zamer");
-  fs.writeFileSync(file, JSON.stringify({ version: 2, name: "Чертёж", entities: scene.entities }));
-  await page.setInputFiles("#projectImportInput", file);
-  await page.waitForTimeout(600);
-  await page.click(".import-settings-dialog button[type=submit]");
-  await page.waitForTimeout(1200);
+  if (!scene.home) {
+    const file = path.join(frames, "scene.zamer");
+    fs.writeFileSync(file, JSON.stringify({ version: 2, name: "Чертёж", entities: scene.entities }));
+    await page.setInputFiles("#projectImportInput", file);
+    await page.waitForTimeout(600);
+    await page.click(".import-settings-dialog button[type=submit]");
+    await page.waitForTimeout(1200);
+  }
   await page.addStyleTag({ content: `#demoFinger{position:fixed;z-index:99999;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;
     background:rgba(31,117,255,.2);border:2px solid rgba(31,117,255,.6);box-shadow:0 2px 10px rgba(11,27,51,.25);pointer-events:none;opacity:0}
     #demoFinger.on{opacity:1}#demoFinger.down{background:rgba(31,117,255,.4);transform:scale(.8)}` });
@@ -163,6 +179,8 @@ async function record(browser, name, scene) {
   const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
   const s = {
+    page,
+    frame,
     async drag(dx, dy) {
       const steps = Math.round(Math.min(24, Math.max(12, Math.hypot(dx, dy) / 9)));
       await page.mouse.move(THUMB.x, THUMB.y);
@@ -217,7 +235,7 @@ async function record(browser, name, scene) {
 
   if (scene.fit) await key("Home");
   for (let i = 0; i < (scene.zoomOut || 0); i++) await key("-");
-  await calibrate();
+  if (!scene.home) await calibrate();
   if (scene.scale) {
     const presses = Math.round(Math.log(scene.scale / pxPerMm) / Math.log(1.2));
     for (let i = 0; i < Math.abs(presses); i++) await key(presses > 0 ? "+" : "-");

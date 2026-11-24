@@ -205,49 +205,48 @@
     observer.observe(finalCta);
   }
 
-  // ----- Ролики инструментов ---------------------------------------------
-  // Ролики идут по кругу, пока посетитель сам не выберет инструмент.
-  const tools = document.querySelector("[data-tools]");
-  if (tools) {
-    const row = tools.querySelector('[role="tablist"]');
-    const tabs = [...row.querySelectorAll('[role="tab"]')];
-    const video = tools.querySelector("video");
-    const progress = tools.querySelector(".tool-progress span");
+  // ----- Ролики CAD: плеер-«истории» -------------------------------------
+  // Ролики идут по кругу, пока посетитель сам не выберет полосу.
+  const player = document.querySelector("[data-player]");
+  if (player) {
+    const bars = [...player.querySelectorAll('[role="tab"]')];
+    const video = player.querySelector("video");
+    const title = player.querySelector("[data-player-title]");
+    const text = player.querySelector("[data-player-text]");
     let current = 0;
     let tour = !reduceMotion;
     let visible = false;
     if (reduceMotion) video.controls = true;
+    const fill = (bar, value) => bar.firstElementChild.style.setProperty("--p", String(value));
     const play = () => {
       if (visible && !reduceMotion) video.play().catch(() => {});
     };
     const select = (index, { focus = false, user = false } = {}) => {
-      current = (index + tabs.length) % tabs.length;
+      current = (index + bars.length) % bars.length;
       if (user) tour = false;
-      tabs.forEach((tab, i) => {
+      bars.forEach((bar, i) => {
         const active = i === current;
-        tab.setAttribute("aria-selected", String(active));
-        tab.tabIndex = active ? 0 : -1;
-        document.getElementById(tab.getAttribute("aria-controls")).hidden = !active;
+        bar.setAttribute("aria-selected", String(active));
+        bar.tabIndex = active ? 0 : -1;
+        fill(bar, i < current ? 1 : 0);
       });
-      const tab = tabs[current];
-      if (!video.src.endsWith(tab.dataset.video)) {
-        video.poster = tab.dataset.poster;
-        video.src = tab.dataset.video;
+      const bar = bars[current];
+      if (!video.src.endsWith(bar.dataset.video)) {
+        video.poster = bar.dataset.poster;
+        video.src = bar.dataset.video;
       }
       video.loop = !tour;
-      video.setAttribute("aria-label", `Демонстрация: ${tab.textContent.trim().toLowerCase()}`);
-      if (progress) progress.style.transform = "scaleX(0)";
-      if (row.scrollWidth > row.clientWidth) {
-        row.scrollTo({ left: tab.offsetLeft - (row.clientWidth - tab.offsetWidth) / 2, behavior: reduceMotion ? "auto" : "smooth" });
-      }
-      if (focus) tab.focus();
+      video.setAttribute("aria-label", `Ролик: ${bar.getAttribute("aria-label").toLowerCase()}`);
+      title.textContent = bar.getAttribute("aria-label");
+      text.textContent = bar.dataset.text;
+      if (focus) bar.focus();
       play();
     };
-    tabs.forEach((tab, i) => {
-      tab.addEventListener("click", () => select(i, { user: true }));
-      tab.addEventListener("keydown", (event) => {
+    bars.forEach((bar, i) => {
+      bar.addEventListener("click", () => select(i, { user: true }));
+      bar.addEventListener("keydown", (event) => {
         const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-        const jump = { Home: 0, End: tabs.length - 1 }[event.key];
+        const jump = { Home: 0, End: bars.length - 1 }[event.key];
         if (step === undefined && jump === undefined) return;
         event.preventDefault();
         select(step === undefined ? jump : current + step, { focus: true, user: true });
@@ -257,7 +256,7 @@
       if (tour) select(current + 1);
     });
     video.addEventListener("timeupdate", () => {
-      if (progress && video.duration) progress.style.transform = `scaleX(${video.currentTime / video.duration})`;
+      if (video.duration) fill(bars[current], video.currentTime / video.duration);
     });
     if ("IntersectionObserver" in window) {
       new IntersectionObserver(([entry]) => {
