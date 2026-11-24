@@ -130,6 +130,7 @@ async function checkForUpdate(force = false) {
 }
 
 async function registerWorker() {
+  if (document.documentElement.hasAttribute('data-kepler-preview')) return;
   const query = new URLSearchParams(location.search);
   if (query.has('debug') && !query.has('pwa')) return; // остальные e2e не устанавливают сотни файлов
   if (globalThis.claude?.use || !('serviceWorker' in navigator) || !globalThis.isSecureContext) return;

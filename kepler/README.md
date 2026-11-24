@@ -14,6 +14,7 @@
 cd kepler
 npm ci                 # ESLint и Playwright — только для разработки
 npm run serve          # http://127.0.0.1:8080/
+npm run preview        # http://127.0.0.1:4173/ с автообновлением
 npm run check          # линтер + юнит-тесты ядра + e2e в Chromium
 npm run build:artifact # страница для claude.ai из index.html (dist/artifact)
 ```
@@ -21,6 +22,18 @@ npm run build:artifact # страница для claude.ai из index.html (dist
 Отладочный API для автотестов (`window.__kepler`) включается только с
 `?debug` в адресе. CI (GitHub Actions, `.github/workflows/kepler.yml`)
 гоняет `lint`, `test` и `test:e2e` на каждый PR.
+
+## Предпросмотр правок
+
+`npm run preview` читает файлы из рабочей папки. При изменении HTML, CSS
+или модулей вкладка перезагружается автоматически. Для проверки используйте
+новый проект или откройте копию `.kepler.json`. Проекты предпросмотра хранятся
+в браузере, вход через Google и офлайн-кэш отключены.
+
+Для облачной среды запустите `KEPLER_PREVIEW_HOST=0.0.0.0 npm run preview`
+и добавьте порт `4173` в **Edit Environment → HTTP Previews**. После
+**Apply to this chat** открывайте выданную приватную ссылку. Она показывает
+рабочие правки, пока облачная среда и сервер запущены.
 
 ## Что умеет (MVP)
 

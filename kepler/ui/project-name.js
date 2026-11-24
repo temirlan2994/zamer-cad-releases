@@ -30,7 +30,8 @@ export function syncProjectNameUi({ updateInput = true } = {}) {
   const name = currentProjectName();
   const input = document.getElementById('projectName');
   if (updateInput && input) input.value = name;
-  document.title = `${name} — ${PRODUCT_NAME}`;
+  const prefix = document.documentElement.hasAttribute('data-kepler-preview') ? 'Предпросмотр · ' : '';
+  document.title = `${prefix}${name} — ${PRODUCT_NAME}`;
 
   if (lastEventName !== name || lastEventPid !== state.pid) {
     lastEventName = name;

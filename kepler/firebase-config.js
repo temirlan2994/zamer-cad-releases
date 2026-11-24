@@ -17,6 +17,7 @@ export const FIREBASE_CONFIG = Object.freeze({
 });
 
 export function firebaseConfigured(config = FIREBASE_CONFIG) {
+  if (globalThis.document?.documentElement?.hasAttribute('data-kepler-preview')) return false;
   return ['apiKey', 'authDomain', 'projectId', 'appId']
     .every((key) => typeof config?.[key] === 'string' && config[key].trim().length > 0);
 }
