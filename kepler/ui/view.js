@@ -5,6 +5,7 @@ import { hasContent } from '../core/model.js';
 import { neighborRectCorners } from '../core/site.js';
 import { allMasses, massRect } from '../core/masses.js';
 import { projectPoint, underlayHandles, unprojectPoint } from '../render.js';
+import { positionDimInput } from './dim-input.js';
 import { canvas, refs, renderer } from './dom.js';
 import { findWall } from './hit.js';
 import { state } from './state.js';
@@ -13,6 +14,13 @@ import { positionCalInput } from './underlay.js';
 import { positionElevInput } from './terrain.js';
 
 let drawQueued = false;
+let zoomAnimation = null;
+
+const clampZoom = (scale) => Math.min(0.6, Math.max(0.004, scale));
+
+function stopZoom() {
+  zoomAnimation = null;
+}
 
 export function screenToWorld(sx, sy) {
   return unprojectPoint(state.view, sx, sy);
@@ -48,6 +56,7 @@ export function planToWorld(p) {
 // Поворот камеры так, чтобы мировая точка pivot осталась на том же месте
 // экрана (по умолчанию — то, что сейчас в центре канваса).
 export function rotateViewTo(rotation, pivot = null) {
+  stopZoom();
   const p = pivot || screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
   const before = worldToScreen(p.x, p.y);
   state.view.rotation = rotation;
@@ -69,9 +78,10 @@ export function pointerWorld(event) {
 export function requestDraw() {
   if (drawQueued) return;
   drawQueued = true;
-  requestAnimationFrame(() => {
+  requestAnimationFrame((now) => {
     drawQueued = false;
     if (!state.project) return; // ResizeObserver может сработать до восстановления аккаунта и модели.
+    advanceZoom(now);
     renderer.draw(state);
     const firstDraw = document.getElementById('firstDrawActions');
     if (firstDraw) firstDraw.hidden = !state.project || state.modeName !== 'plan' || Boolean(
@@ -84,18 +94,42 @@ export function requestDraw() {
   });
 }
 
-export function zoomAt(screen, factor) {
+export function zoomAt(screen, factor, onFrame = null) {
+  const scale = state.view.scale;
+  const target = clampZoom((zoomAnimation?.target ?? scale) * factor);
+  if (!zoomAnimation && target === scale) return;
   markViewTouched();
+  zoomAnimation = {
+    screen, target, onFrame,
+    time: zoomAnimation?.time ?? performance.now(),
+    reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  };
+  requestDraw();
+}
+
+function advanceZoom(now) {
+  if (!zoomAnimation) return;
+  const { screen, target, reducedMotion, onFrame, time } = zoomAnimation;
+  const elapsed = Math.max(1, now - time);
+  const current = state.view.scale;
+  const next = target + (current - target) * Math.exp(-elapsed / 42);
+  const done = reducedMotion || Math.abs(target - next) < target * 0.001;
+  if (done) stopZoom();
+  else {
+    zoomAnimation.time = now;
+    requestDraw();
+  }
   const world = screenToWorld(screen.x, screen.y);
-  state.view.scale =Math.min(0.6, Math.max(0.004, state.view.scale * factor));
+  state.view.scale = done ? target : next;
   const projected = worldToScreen(world.x, world.y);
   state.view.panX += screen.x - projected.x;
   state.view.panY += screen.y - projected.y;
   refs.statusScale.textContent = scaleLabel();
   positionCalInput();
   positionElevInput();
+  positionDimInput();
   if (state.selection?.type === 'wall') { const w = findWall(state.selection.key, state.selection.from); if (w) positionWallButtons(w); }
-  requestDraw();
+  onFrame?.();
 }
 
 export function scaleLabel() {
@@ -156,6 +190,7 @@ function resetFitFlags() {
 }
 
 export function fitView() {
+  stopZoom();
   const site = state.project.site;
   // Все точки — в мировых координатах; дом переводится из своих осей.
   const pts = [];
@@ -217,6 +252,7 @@ export function fitView() {
 // влезает или совсем мелкий. opts.left — поле слева, px (открытая панель).
 export function showPlanRect(rect, opts = {}) {
   if (!rect) return;
+  stopZoom();
   const pad = 400;
   const corners = rectCornersWorld(state.project.building,
     { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 });
@@ -250,6 +286,8 @@ export function bindView() {
     action.prepend(icon);
     action.addEventListener('click', () => tool.click());
   }
+  canvas.addEventListener('pointerdown', stopZoom, { capture: true });
+  window.addEventListener('resize', stopZoom);
   // Параметры инструмента занимают строку только пока он активен. Когда
   // она закрывается после клика, оставляем чертёж под указателем.
   const options = document.getElementById('toolOptions');
@@ -273,6 +311,7 @@ export function bindView() {
   // указателя. Через два кадра — когда resize от самой смены уже обработан —
   // принимаем текущий режим и положение холста за исходные.
   document.addEventListener('kepler:view', () => {
+    stopZoom();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       previousHeight = options.offsetHeight;
       previousTop = canvas.getBoundingClientRect().top;

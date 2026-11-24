@@ -542,6 +542,7 @@ function updateHoverAndGhost(world, plan, event) {
 }
 
 export function bindCanvasInput() {
+  let splitCursor = null;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerleave', () => hideLockTip()); // подсказка замка «стена — ось»
   canvas.addEventListener('selectstart', (e) => e.preventDefault()); // долгое нажатие не выделяет холст
@@ -1218,7 +1219,11 @@ export function bindCanvasInput() {
     refs.statusCursor.textContent = `${(shown.x / 1000).toFixed(2)}; ${(shown.y / 1000).toFixed(2)} м`
       + (state.modeName !== 'plan' ? terrainStatus(world) : '');
 
-    if (!drag && state.splitEdit) { splitLiveMove(plan); return; }
+    if (!drag && state.splitEdit) {
+      splitCursor = screen;
+      splitLiveMove(plan);
+      return;
+    }
     if (!drag) { updateHoverAndGhost(world, plan, event); return; }
 
     if (drag.kind === 'pan') {
@@ -2099,14 +2104,37 @@ export function bindCanvasInput() {
     if (state.tool?.kind === 'wall') finishWallChain();
     if (state.modeName === 'plan' && !state.tool) planSectionDblClick(pointerScreen(event));
   });
+  let wheelDirection = 0;
+  let wheelTime = -Infinity;
+  let reverseDelta = 0;
+  const syncSplitZoom = () => {
+    if (state.splitEdit && !state.splitEdit.typed && splitCursor) {
+      splitLiveMove(screenToPlan(splitCursor.x, splitCursor.y));
+    }
+  };
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
+    // У тачпада события могут содержать доли пикселя или только deltaX.
+    // Сохраняем шаг колеса для крупных событий, мелкие масштабируем пропорционально.
+    const unit = [1, 16, 100][event.deltaMode] ?? 1;
+    let delta = Math.max(-100, Math.min(100, event.deltaY * unit));
+    if (!delta) return;
+    const direction = Math.sign(delta);
+    const sameGesture = event.timeStamp - wheelTime < 150;
+    wheelTime = event.timeStamp;
+    // Короткий обратный импульс не разворачивает зум посреди жеста.
+    // Намеренный разворот сразу учитывает весь накопившийся ход.
+    if (sameGesture && wheelDirection !== direction) {
+      reverseDelta += delta;
+      if (Math.abs(reverseDelta) < 4) return;
+      delta = reverseDelta;
+    }
+    reverseDelta = 0;
+    wheelDirection = direction;
     const screen = pointerScreen(event);
-    const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-    zoomAt(screen, factor);
-    positionDimInput();
     // Масштаб меняется под неподвижным курсором: линия деления остаётся под ним, а не прыгает на следующем движении.
-    if (state.splitEdit) splitLiveMove(worldToPlan(pointerWorld(event)));
+    splitCursor = screen;
+    zoomAt(screen, 1.12 ** (-delta / 100), syncSplitZoom);
   }, { passive: false });
 }
 
