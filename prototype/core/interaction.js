@@ -20,6 +20,12 @@ export function tapZoomScale(startScale, dy, pixelsPerDoubling = 110) {
   return startScale * 2 ** (dy / pixelsPerDoubling);
 }
 
+export function shouldDelayTapZoom({ enabled, secondTap, pointerType, button, moved, mode, selectable, duration, distance },
+    { longPress = 430, tolerance = 8 } = {}) {
+  return Boolean(enabled && !secondTap && pointerType === "touch" && button === 0 && !moved && mode !== "ui" &&
+    !selectable && duration < longPress && distance <= tolerance);
+}
+
 export function normalizeDirectionalSnapModes(modes, preferred = "ortho") {
   const normalized = new Set(Array.from(modes || []).filter(Boolean));
   if (normalized.has("ortho") && normalized.has("polar")) {

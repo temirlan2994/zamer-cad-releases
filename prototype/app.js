@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=230";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=231";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -12428,10 +12428,13 @@ function finishCanvasPointer(event, canceled = false) {
     return;
   }
   const screen = getPointer(event);
-  if (state.tapZoomEnabled && !isSecondTap && event.pointerType === "touch" && event.button === 0 && !state.pointer.moved &&
-      state.pointer.mode !== "ui" && event.timeStamp - state.pointerStartedAt < LONG_PRESS_SELECT_MS &&
-      pointDistance(state.pointer.startScreen, screen) <= TAP_MOVE_TOLERANCE) {
-    // A tap can place a point, so wait for the zoom gesture before applying it.
+  const selectableAtTap = viewportIsSelecting() && state.tool === "select" &&
+    Boolean(state.pointer.tapCandidateId || pickEntity(state.pointer.startScreen));
+  if (shouldDelayTapZoom({ enabled: state.tapZoomEnabled, secondTap: isSecondTap, pointerType: event.pointerType,
+      button: event.button, moved: state.pointer.moved, mode: state.pointer.mode, selectable: selectableAtTap,
+      duration: event.timeStamp - state.pointerStartedAt, distance: pointDistance(state.pointer.startScreen, screen) },
+      { longPress: LONG_PRESS_SELECT_MS, tolerance: TAP_MOVE_TOLERANCE })) {
+    // Keep double-tap zoom on empty canvas, but never delay selection of a CAD object.
     pendingCanvasTap = { event, screen, pointer: state.pointer, timer: window.setTimeout(finishPendingCanvasTap, TAP_ZOOM_INTERVAL_MS) };
     return;
   }
