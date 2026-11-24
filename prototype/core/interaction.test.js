@@ -40,10 +40,10 @@ test("double-tap drag starts one-finger zoom without a hold delay", () => {
   assert.equal(tapZoomScale(1, -110), 0.5, "moving up zooms out after inversion");
 });
 
-test("touch selection wins immediately over double-tap zoom", () => {
+test("double-tap zoom reserves the first touch even over a selectable object", () => {
   const tap = { enabled: true, secondTap: false, pointerType: "touch", button: 0, moved: false,
     mode: "select-only", duration: 90, distance: 1 };
-  assert.equal(shouldDelayTapZoom({ ...tap, selectable: true }), false);
+  assert.equal(shouldDelayTapZoom({ ...tap, selectable: true }), true);
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false }), true);
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false, moved: true }), false);
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false, duration: 500 }), false);
