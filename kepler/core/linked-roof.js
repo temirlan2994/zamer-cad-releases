@@ -379,7 +379,7 @@ export function slopedRoofFaces(rawGrid, options = {}) {
 
 // Вертикальные полосы разбивают даже многоугольник с внутренними кольцами
 // на выпуклые трапеции и треугольники. Используется лишь при косом резаке.
-function convexStrips(polygon) {
+export function convexStrips(polygon) {
   const segments = polygon.flatMap((ring) => ring.map((a, i) => ({ a, b: ring[(i + 1) % ring.length] })));
   const xs = [...new Set(segments.map(({ a }) => a.x))].sort((a, b) => a - b);
   const yAt = ({ a, b }, x) => a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x);

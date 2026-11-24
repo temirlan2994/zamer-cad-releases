@@ -153,8 +153,8 @@ function drawLinkedRoof(ctx, region, facets, p2s, tokens, accent, ink) {
   const hot = state.hover?.type === 'roof' && state.hover.id === region.id;
   ctx.beginPath();
   for (const polygon of region.outline) for (const ring of polygon) polyPath(ctx, ring, p2s);
-  ctx.fillStyle = selected ? accent : '#8797a6';
-  ctx.globalAlpha = selected ? 0.27 : 0.18;
+  ctx.fillStyle = materialColor(region.material);
+  ctx.globalAlpha = selected ? 0.2 : 0.13;
   ctx.fill('evenodd');
   ctx.globalAlpha = 1;
   ctx.strokeStyle = selected || hot ? accent : ink;

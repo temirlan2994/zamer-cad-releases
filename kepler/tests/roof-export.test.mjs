@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLevel, createProject, createRoom } from '../core/model.js';
-import { roofFromRooms, setLinkedRoofEnabled } from '../core/roofs.js';
+import { materialColor, roofFromRooms, setLinkedRoofEnabled } from '../core/roofs.js';
 import { buildStructuredExport } from '../core/export.js';
 import { buildIfc, ifcGuid } from '../core/ifc.js';
 import { buildElevation } from '../core/elevation.js';
@@ -66,4 +66,36 @@ test('крыша на фасаде и двух разрезах удаляетс
   const lowerEdge = Math.min(...slab.flatMap((part) => part.pts.map((pt) => pt.x)));
   assert.ok(lowerEdge > 5000, 'нижняя крыша исчезла; плита сохранилась только под верхним этажом');
   assert.ok(!buildElevation(p, 'N').polys.some((poly) => poly.kind === 'roof'));
+});
+
+test('плоская связанная крыша передаёт высоту бортика на фасад, оба разреза, в JSON и IFC', () => {
+  const project = createProject();
+  project.rooms.push(createRoom('living', 0, 0, 6000, 4000));
+  project.envelope.roofThickness = 360;
+  const base = project.levels[0].height;
+  const deckTop = base + project.envelope.roofThickness;
+  const a = { x: -2000, y: 2000 }; const b = { x: 8000, y: 2000 };
+  for (const height of [420, 0]) {
+    Object.assign(project.envelope.roof, { type: 'flat', material: 'wood', parapetHeight: height, drainage: 'off' });
+    const expected = deckTop + Math.max(50, height); // верх фасции или парапета
+    const [body] = buildStructuredExport(project).linked_roofs;
+    assert.equal(body.material, 'wood');
+    assert.equal(body.parapet_height, height);
+    assert.equal(Math.max(...body.mesh.vertices.map(([, , z]) => z)), expected);
+    const elevation = buildElevation(project, 'N').polys.filter((p) => p.kind === 'roof');
+    assert.ok(elevation.some((p) => p.tint === materialColor('wood')));
+    assert.equal(Math.max(...elevation.flatMap((p) => p.pts.map((pt) => pt.z))), expected);
+    const section = buildSection(project, { kind: 'section', side: 1, line: { a, b } });
+    assert.equal(Math.max(...section.cuts.filter((c) => c.kind === 'roof').map((c) => c.z1)), expected);
+    const path = [a, b].map((point) => toWorld(project.building, point));
+    const cuts = sectionProfile(project, path, 'left').prims.filter((p) => p.kind === 'house-roof' && p.cut);
+    assert.equal(Math.max(...cuts.flatMap((c) => c.pts.map((p) => p.z))), expected);
+    if (height) for (const part of cuts.filter((c) => c.pts.some((p) => p.z === expected))) {
+      assert.equal(Math.min(...part.pts.map((p) => p.z)), deckTop, 'низ парапета на плите');
+    }
+    const ifc = buildIfc(project);
+    const pointList = ifc.text.split('\n').find((line) => line.includes('IFCCARTESIANPOINTLIST3D('));
+    assert.equal(ifc.counts.roofs, 1);
+    assert.ok(pointList.includes(`,${expected}.)`), 'координаты бортика записаны в тело IfcRoof');
+  }
 });

@@ -21,6 +21,7 @@ import { houseTerrain, interpolateZ, terrainModel } from './terrain.js';
 import { levelWindowOpenings } from './spanning-windows.js';
 import { wallZRange } from './wall-z-range.js';
 import { deriveWalls, openingRect, wallJoinPatches, wallRects } from './walls.js';
+import { difference } from './geom/clip.js';
 import { gridAxis, mergeCells } from './ortho-grid.js';
 import { isFixedSizeComp, partsInHouse } from './composite.js';
 import { facadeParts } from './facade.js';
@@ -34,13 +35,13 @@ import { RAILING_INSET, projectRailings } from './railings.js';
 import { MASS_COLOR_3D, massBox } from './masses.js';
 import { massGroundFaces } from './mass-ground.js';
 import { envelopeOf, resolvedZeroAboveGround } from './envelope.js';
-import { clipLinkedRoofFaces, freeDrainageEdges, slopedRoofFaces } from './linked-roof.js';
-import { linkedRoofRegions } from './linked-roof-regions.js';
+import { clipLinkedRoofFaces, convexStrips, freeDrainageEdges, slopedRoofFaces } from './linked-roof.js';
+import { gridOutline, gridRoofRects, linkedRoofRegions } from './linked-roof-regions.js';
 export { linkedRoofRegions };
 import { deriveFoundation } from './foundation-system.js';
 import { deriveEntrances } from './entrance.js';
 import {
-  FASCIA_T, edgeSide, expandRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
+  EDGE_HEIGHT, FASCIA_T, PARAPET_THICK, edgeSide, expandRects, gridEdges, materialColor, offsetOutline, outlineNormals, ringSpec,
   roofCutRects, roofIsSlanted, roofRects, roofSlabOutline, roofZ, sideDist, triangulate,
 } from './roofs.js';
 
@@ -1238,7 +1239,6 @@ function levelStairs(lp, z0, levelHeight, levelId, hasAbove = false) {
   return faces;
 }
 
-const ROOF_COLOR = '#9aa3ad';
 const SLAB_COLOR = '#b9b4ab';
 export const ROOF_T = 250;
 export const SLAB_T = 300;
@@ -1386,14 +1386,78 @@ export function slabFaces(grid, z0, z1, color, kind, { bottom = false } = {}) {
   return faces;
 }
 
-// Одна наружная оболочка для соседних помещений. Внутренних швов между
-// ними нет; верхние этажи и ручная кровля уже вырезаны из общего пятна.
+function fasciaRange(z0, z1, height) {
+  const top = z1 + 50;
+  return { low: Math.min(z0, top - height), top };
+}
+
+function fasciaSpec(rects) {
+  return { all: [expandRects(rects, FASCIA_T)], none: rects };
+}
+
+function linkedSlabFaces(grid, z0, z1, color, kind, oblique, clippedOutline) {
+  if (!oblique.length) return slabFaces(grid, z0, z1, color, kind, { bottom: true });
+  const outline = clippedOutline || difference(gridOutline(grid), ...oblique);
+  return outline.flatMap((polygon) => polygonSlabFaces(polygon, convexStrips(polygon), z0, z1, color, kind, true));
+}
+
+// Декор строим по свободным краям, затем обрезаем косыми ручными крышами.
+// В месте, где верхний этаж примыкает к кровле, бортик не нужен.
+function linkedFlatRoofDetails(region, color, meta) {
+  const rects = gridRoofRects(region.grid);
+  const { parapetHeight, z, thickness } = region;
+  const blocked = region.trimBlocked || region.blocked;
+  const oblique = region.trimOblique || region.oblique;
+  const deckTop = z + thickness;
+  const details = [];
+  const part = (spec, lo, hi, kind) => {
+    const grid = regionGrid(spec.all, [...(spec.none || []), ...blocked]);
+    for (const face of linkedSlabFaces(grid, lo, hi, color, kind, oblique)) {
+      Object.assign(face, meta);
+      if (face.normal.z > 0.5) face.cutZ0 = lo;
+      details.push(face);
+    }
+  };
+  const { low, top } = fasciaRange(z, deckTop, EDGE_HEIGHT.def);
+  part(fasciaSpec(rects), low, top, 'fascia');
+  if (parapetHeight > 0) {
+    // Занятая верхними помещениями часть продолжает основание для расчёта
+    // внутреннего отступа. Оставляем только бортик над самой кровлей.
+    const width = PARAPET_THICK.def;
+    const base = rects.concat(blocked);
+    // У косой ручной крыши всё же может быть сторона, точно совпавшая
+    // с прямым краем автокрыши. Продолжаем здесь опору на ширину бортика.
+    for (const polygon of oblique) {
+      const normals = outlineNormals(polygon);
+      polygon.forEach((a, i) => {
+        const b = polygon[(i + 1) % polygon.length];
+        const n = normals[i];
+        if (!n || (Math.abs(a.x - b.x) > 0.01 && Math.abs(a.y - b.y) > 0.01)) return;
+        const dx = -n.x * width;
+        const dy = -n.y * width;
+        base.push({ x0: Math.min(a.x, b.x) + Math.min(0, dx), x1: Math.max(a.x, b.x) + Math.max(0, dx),
+          y0: Math.min(a.y, b.y) + Math.min(0, dy), y1: Math.max(a.y, b.y) + Math.max(0, dy) });
+      });
+    }
+    const ring = ringSpec(base, {}, sideDist(null, width));
+    part({ all: [rects, ring.all[1]], none: ring.none }, deckTop, deckTop + parapetHeight, 'parapet');
+  }
+  return details;
+}
+
+function hasExteriorRoofDrain(region) {
+  return region.drainage === 'external' || (region.drainage === 'auto' && region.roofType !== 'flat');
+}
+
+// Одна наружная оболочка для соседних помещений без швов по их стыкам.
 function autoRoofFaces(region, groundAt) {
   const { grid, id, levelId, z, thickness, roofType: type } = region;
   const meta = { autoRoofId: id, roofId: id, roofSource: 'linked', level: levelId };
+  const color = materialColor(region.material);
+  const exteriorDrain = hasExteriorRoofDrain(region);
   let faces;
   if (type === 'flat') {
-    faces = slabFaces(grid, z, z + thickness, ROOF_COLOR, 'roof', { bottom: true }).map((face) => ({
+    faces = linkedSlabFaces(grid, z, z + thickness, color, 'roof', region.oblique, region.outline).map((face) => ({
       ...face,
       kind: face.normal.z < -0.5 ? 'roof-soffit' : face.kind,
       roofSurface: face.normal.z > 0.5 ? 'top' : (face.normal.z < -0.5 ? 'bottom' : 'edge'),
@@ -1402,27 +1466,30 @@ function autoRoofFaces(region, groundAt) {
       ...meta,
       ...(face.normal.z > 0.5 ? { cutZ0: z } : {}),
     }));
-    faces.drainageEdges = gridEdges(grid).map((edge) => ({
+    if (exteriorDrain) faces.drainageEdges = gridEdges(grid).map((edge) => ({
       a: { ...edge.a, z: z + thickness }, b: { ...edge.b, z: z + thickness },
       normal: edge.n, kind: 'roof-drain', ...meta,
     }));
   } else {
     faces = slopedRoofFaces(region.slopeGrid, {
       type, pitchDeg: region.pitchDeg, direction: region.direction,
-      thickness: thickness, z, color: ROOF_COLOR,
+      thickness, z, color,
       kind: 'roof', soffitKind: 'roof-soffit',
-      drainage: region.drainage === 'external' || region.drainage === 'auto',
+      drainage: exteriorDrain,
       ...meta,
     });
   }
   // Наружный водоотвод — настоящая производная геометрия, а не отметка в
   // данных крыши. Изменение уклона сразу переносит желоба и стояки.
   const drainage = faces.drainageEdges || [];
-  if (region.oblique.length || region.slopeGrid !== grid) faces = clipLinkedRoofFaces(faces, region);
-  if (region.drainage === 'auto' || region.drainage === 'external') {
+  if (type === 'flat') faces.push(...linkedFlatRoofDetails(region, color, meta));
+  else if (region.oblique.length || region.slopeGrid !== grid) faces = clipLinkedRoofFaces(faces, region);
+  if (exteriorDrain) {
     const gutters = [];
     const down = new Map();
-    for (const edge of freeDrainageEdges(drainage, region)) {
+    const obstacles = { outline: region.outline, blocked: region.trimBlocked || region.blocked,
+      oblique: region.trimOblique || region.oblique };
+    for (const edge of freeDrainageEdges(drainage, obstacles)) {
       const z0 = Math.min(edge.a.z, edge.b.z) - 90;
       const z1 = Math.max(edge.a.z, edge.b.z) - 10;
       const horizontal = Math.abs(edge.a.x - edge.b.x) >= Math.abs(edge.a.y - edge.b.y);
@@ -1455,10 +1522,7 @@ export function linkedRoofFaces(project, regions = linkedRoofRegions(project)) {
   if (!regions.length) return [];
   // Стояк заканчивается у реальной поверхности земли в локальных осях дома.
   // Без топосъёмки terrainHeightFn использует заданную отметку ±0.000.
-  const groundAt = terrainHeightFn(project) || (() => {
-    const zero = resolvedZeroAboveGround(project);
-    return zero == null ? 0 : -zero;
-  });
+  const groundAt = regions.some(hasExteriorRoofDrain) ? (terrainHeightFn(project) || (() => 0)) : null;
   return regions.flatMap((region) => autoRoofFaces(region, groundAt));
 }
 
@@ -1587,20 +1651,30 @@ export function entranceFaces(project, options = {}) {
 // треугольники (без внутренних рёбер), бока — по рёбрам; рёбра контура — у
 // первой грани.
 export function polySlabFaces(poly, z0, z1, color, kind, { bottom = true } = {}) {
-  const tris = triangulate(poly);
-  if (!tris.length) return [];
+  return polygonSlabFaces([poly], triangulate(poly), z0, z1, color, kind, bottom);
+}
+
+function polygonSlabFaces(rings, caps, z0, z1, color, kind, bottom) {
   const faces = [];
-  for (const [a, b, c] of tris) {
-    faces.push({ pts: [v(a.x, a.y, z1), v(b.x, b.y, z1), v(c.x, c.y, z1)], normal: v(0, 0, 1), color, kind, edges: [] });
-    if (bottom) faces.push({ pts: [v(c.x, c.y, z0), v(b.x, b.y, z0), v(a.x, a.y, z0)], normal: v(0, 0, -1), color, kind, edges: [] });
+  for (const cap of caps) {
+    if (cap.length < 3) continue;
+    faces.push({ pts: cap.map((p) => v(p.x, p.y, z1)), normal: v(0, 0, 1), color, kind, edges: [] });
+    if (bottom) faces.push({ pts: [...cap].reverse().map((p) => v(p.x, p.y, z0)), normal: v(0, 0, -1), color, kind, edges: [] });
   }
-  const N = outlineNormals(poly);
+  if (!faces.length) return faces;
   const edges = [];
-  poly.forEach((a, i) => {
-    const b = poly[(i + 1) % poly.length];
-    if (!N[i]) return;
-    faces.push({ pts: [v(a.x, a.y, z0), v(b.x, b.y, z0), v(b.x, b.y, z1), v(a.x, a.y, z1)], normal: v(N[i].x, N[i].y, 0), color, kind, edges: [] });
-    edges.push([v(a.x, a.y, z1), v(b.x, b.y, z1)], [v(a.x, a.y, z0), v(b.x, b.y, z0)], [v(a.x, a.y, z0), v(a.x, a.y, z1)]);
+  rings.forEach((ring, index) => {
+    const normals = outlineNormals(ring);
+    const sign = index === 0 ? 1 : -1;
+    ring.forEach((a, i) => {
+      const b = ring[(i + 1) % ring.length];
+      const n = normals[i];
+      if (!n) return;
+      const a0 = v(a.x, a.y, z0); const a1 = v(a.x, a.y, z1);
+      const b0 = v(b.x, b.y, z0); const b1 = v(b.x, b.y, z1);
+      faces.push({ pts: [a0, b0, b1, a1], normal: v(sign * n.x, sign * n.y, 0), color, kind, edges: [] });
+      edges.push([a1, b1], [a0, b0], [a0, a1]);
+    });
   });
   faces[0].edges = edges;
   return faces;
@@ -1652,8 +1726,8 @@ function slantedRoofParts(roof, slab, z, mat, edgeColor, add) {
   add(polySlabFaces(slab, z0, z1, mat, 'roof'), 'roof', z0);
   const e = roof.edge;
   if (e.type === 'fascia') {
-    const top = z1 + 50;
-    add(polyRingFaces(off(FASCIA_T), slab, top - Math.max(e.height, T + 50), top, edgeColor, 'fascia'), 'fascia', top - Math.max(e.height, T + 50));
+    const { low, top } = fasciaRange(z0, z1, e.height);
+    add(polyRingFaces(off(FASCIA_T), slab, low, top, edgeColor, 'fascia'), 'fascia', low);
   } else if (e.type === 'cornice') {
     const lo = z1 - Math.max(80, Math.round(T * 0.45));
     add(polyRingFaces(off(90), slab, lo, z1, edgeColor, 'fascia'), 'fascia', lo);
@@ -1733,8 +1807,8 @@ export function roofFaces(project, roofs = project?.roofs, { color = null, alpha
     // Край плиты.
     const e = roof.edge;
     if (e.type === 'fascia') {
-      const top = z1 + 50;
-      slab({ all: [expandRects(rects, FASCIA_T)], none: rects }, top - Math.max(e.height, T + 50), top, edgeColor, 'fascia');
+      const { low, top } = fasciaRange(z0, z1, e.height);
+      slab(fasciaSpec(rects), low, top, edgeColor, 'fascia');
     } else if (e.type === 'cornice') {
       slab({ all: [expandRects(rects, 90)], none: rects }, z1 - Math.max(80, Math.round(T * 0.45)), z1, edgeColor, 'fascia');
     } else if (e.type === 'drip') {

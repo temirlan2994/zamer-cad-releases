@@ -95,7 +95,7 @@ test('одноэтажный дом: одна кровля без швов по 
   assert.equal(tops.length, 1, 'смежные комнаты — одна плита');
   assert.equal(topArea(roof), 8500 * 4500);
   assert.equal(sides(roof).length, 4, 'торцы только по контуру');
-  assert.ok(roof.every((f) => zRange(f)[0] >= 3000 && zRange(f)[1] <= 3250));
+  assert.ok(roof.every((f) => zRange(f)[0] >= 3000 && zRange(f)[1] <= 3300));
   // Рёбра — только по контуру: ни одно не лежит на шве x = 5000.
   const edges = roof.flatMap((f) => f.edges || []);
   assert.ok(edges.length && edges.every(([a, b]) => !(a.x === 5000 && b.x === 5000)));
@@ -148,8 +148,8 @@ test('Г-образная комната: кровля без внутренни
 test('два этажа с неполным верхним: кровля над каждой открытой частью', () => {
   const p = twoStorey();
   const roof = buildHouseMesh(p, { roof: true }).filter((f) => f.kind === 'roof');
-  const low = roof.filter((f) => zRange(f)[1] === 3250);
-  const high = roof.filter((f) => zRange(f)[1] === 6050);
+  const low = roof.filter((f) => zRange(f)[1] === 3300);
+  const high = roof.filter((f) => zRange(f)[1] === 6100);
   assert.equal(low.length + high.length, roof.length, 'кровли только на отметках верха этажей');
   // Над 1 этажом — правая часть x 5250…10250 (левую закрывает 2 этаж со стеной).
   const lowTops = low.filter((f) => f.normal.z === 1);

@@ -9,17 +9,17 @@ import { sortedLevels } from './model.js';
 import { mergeCells, traceCycles } from './ortho-grid.js';
 import { roomRects } from './room-shape.js';
 import {
-  canHaveLinkedRoof, expandRects, linkedRoofGroups, pointInOutline, rectGrid, rectsBox,
+  FASCIA_T, canHaveLinkedRoof, expandRects, linkedRoofGroups, pointInOutline, rectGrid, rectsBox,
   roofIsSlanted, roofRects, roofSlabOutline,
 } from './roofs.js';
 
-function rectangles(grid) {
+export function gridRoofRects(grid) {
   const labels = Int8Array.from(grid.mask, (filled) => filled ? 0 : -1);
   return (mergeCells(labels, grid.xs, grid.ys).get(0) || [])
     .map((r) => ({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h }));
 }
 
-function gridOutline(grid) {
+export function gridOutline(grid) {
   const cycles = traceCycles(grid.mask, grid.xs, grid.ys);
   const polygons = cycles.filter((cycle) => cycle.area > 0).sort((a, b) => a.area - b.area).map(({ pts }) => [pts]);
   for (const { pts, area: signed } of cycles) {
@@ -60,17 +60,19 @@ export function linkedRoofRegions(project) {
     // При близко стоящих корпусах карнизы могут встретиться. Забираем их
     // общую полосу один раз; стены второго корпуса всегда остаются его крыше.
     const taken = [];
+    const levelStart = result.length;
     for (const group of local) {
       const box = expandRects([rectsBox(group.baseRects)], roof.overhang)[0];
+      const trimPad = roof.type === 'flat' ? FASCIA_T : 1;
       const blocked = cuts.concat(taken, local.filter((g) => g !== group).flatMap((g) => g.baseRects))
-        .filter((r) => boxesOverlap(box, r, 1));
-      const oblique = angled.filter((ring) => boxesOverlap(box, bbox(ring)));
+        .filter((r) => boxesOverlap(box, r, trimPad));
+      const oblique = angled.filter((ring) => boxesOverlap(box, bbox(ring), trimPad));
       const exposed = rectGrid([group.baseRects], blocked);
       if (!exposed.mask.includes(1)) continue;
       if (oblique.length && !difference(gridOutline(exposed), ...oblique).length) continue;
       // Свес растёт только от оставшейся опоры. При полном совпадении этажей
       // кольцо по периметру нижнего этажа не возникает.
-      const grid = roof.overhang ? rectGrid([expandRects(rectangles(exposed), roof.overhang)], blocked) : exposed;
+      const grid = roof.overhang ? rectGrid([expandRects(gridRoofRects(exposed), roof.overhang)], blocked) : exposed;
       const original = gridOutline(grid);
       const affected = oblique.filter((ring) => intersection(original, ring).length);
       const outline = affected.length ? difference(original, ...affected) : original;
@@ -81,12 +83,24 @@ export function linkedRoofRegions(project) {
         // Надстройка обрезает существующие плоскости, не поворачивая конёк
         // и не перенося отметки оставшегося ската.
         const uncut = rectGrid([expandRects(group.baseRects, roof.overhang)]);
-        if (area(gridOutline(uncut)) > planArea + 0.5) slopeGrid = rectGrid([rectangles(uncut)]);
+        if (area(gridOutline(uncut)) > planArea + 0.5) slopeGrid = rectGrid([gridRoofRects(uncut)]);
       }
-      result.push({ ...group, grid, slopeGrid, outline, planArea, blocked, oblique: affected,
+      result.push({ ...group, grid, slopeGrid, outline, planArea, blocked, oblique: affected, trimOblique: oblique,
         z: level.elevation + level.height, thickness: envelope.roofThickness, roofType: roof.type,
+        material: roof.material, parapetHeight: roof.type === 'flat' ? roof.parapetHeight : 0,
         pitchDeg: roof.type === 'flat' ? 0 : roof.pitchDeg, direction, overhang: roof.overhang, drainage: roof.drainage });
-      if (roof.overhang && local.length > 1) taken.push(...rectangles(grid));
+      if (roof.overhang && local.length > 1) taken.push(...gridRoofRects(grid));
+    }
+    // Свесы раздельных корпусов могут соприкасаться без общей стены.
+    // На этой границе детали края не должны перекрываться ни с одной стороны.
+    const peers = result.slice(levelStart);
+    if (roof.type === 'flat' && roof.overhang && peers.length > 1) {
+      const covers = peers.map((region) => gridRoofRects(region.grid));
+      peers.forEach((region, index) => {
+        const box = rectsBox(covers[index]);
+        region.trimBlocked = region.blocked.concat(covers.flatMap((rects, i) =>
+          i === index ? [] : rects.filter((rect) => boxesOverlap(box, rect, FASCIA_T))));
+      });
     }
   });
   return result;

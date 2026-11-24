@@ -6,6 +6,7 @@ import {
   envelopeOf, resolvedZeroAboveGround,
 } from '../core/envelope.js';
 import { activeLevel } from '../core/model.js';
+import { PARAPET_HEIGHT, ROOF_MATERIALS } from '../core/roofs.js';
 import { houseTerrain } from '../core/terrain.js';
 import { deriveEnvelopeStatus } from '../core/envelope-status.js';
 import { analyzeEarthworks } from '../core/earthworks.js';
@@ -98,7 +99,11 @@ function foundationFields(foundation) {
 
 export function linkedRoofSettingsHtml(project = state.project) {
   const envelope = envelopeOf(project);
+  const { roof } = envelope;
   return `<div class="envelope-roof-types">${roofTypes.map(([id, label, icon]) => `<button type="button" data-roof-type="${id}" aria-pressed="${envelope.roof.type === id}" class="${envelope.roof.type === id ? 'active' : ''}"><span>${icon}</span>${label}</button>`).join('')}</div>
+      <div class="prop-grid"><label class="prop-field"><span>Материал кровли</span><select id="linkedRoofMaterial">${ROOF_MATERIALS.map(({ id, title }) =>
+    `<option value="${id}"${roof.material === id ? ' selected' : ''}>${title}</option>`).join('')}</select></label>
+      ${roof.type === 'flat' ? `<label class="prop-field"><span>Парапет, мм</span><input id="linkedRoofParapet" type="number" min="0" max="${PARAPET_HEIGHT.max}" step="1" inputmode="numeric" value="${roof.parapetHeight}" aria-describedby="linkedRoofParapetNote"><small id="linkedRoofParapetNote">0 — без парапета</small></label>` : ''}</div>
       <div class="prop-grid"><label class="prop-field"><span>Уклон, °</span><input id="roofPitch" type="number" min="1" max="60" step="1" value="${envelope.roof.pitchDeg}" ${envelope.roof.type === 'flat' ? 'disabled' : ''}></label>
       <label class="prop-field"><span>Свес крыши, м</span><input id="roofOverhang" type="number" min="0" max="2" step="0.05" value="${meters(envelope.roof.overhang)}"></label></div>
       <label class="prop-field"><span>Направление ската</span><select id="roofDirection" ${envelope.roof.type === 'flat' ? 'disabled' : ''}><option value="auto" ${envelope.roof.direction === 'auto' ? 'selected' : ''}>Авто по форме дома</option><option value="n" ${envelope.roof.direction === 'n' ? 'selected' : ''}>На север</option><option value="e" ${envelope.roof.direction === 'e' ? 'selected' : ''}>На восток</option><option value="s" ${envelope.roof.direction === 's' ? 'selected' : ''}>На юг</option><option value="w" ${envelope.roof.direction === 'w' ? 'selected' : ''}>На запад</option></select></label>`;
@@ -134,7 +139,7 @@ export function envelopeSettingsHtml(project = state.project) {
       ${foundationFields(envelope.foundation)}<p class="envelope-flow">Концептуальная геометрия. Тип и размеры подтвердит конструктор по геологии.</p>`)}
     ${panel('roof', 'Крыша', `<label class="check-row"><input id="autoRoofMode" type="checkbox" ${envelope.roofMode === 'linked' ? 'checked' : ''}><span>Автоматически накрывать помещения</span></label>
       ${linkedRoofSettingsHtml(project)}`)}
-    ${panel('drainage', 'Водоотвод', `<label class="prop-field"><span>Система</span><select id="roofDrainage"><option value="auto" ${envelope.roof.drainage === 'auto' ? 'selected' : ''}>Авто по низким краям</option><option value="external" ${envelope.roof.drainage === 'external' ? 'selected' : ''}>Наружная</option><option value="internal" ${envelope.roof.drainage === 'internal' ? 'selected' : ''}>Внутренняя</option><option value="off" ${envelope.roof.drainage === 'off' ? 'selected' : ''}>Не показывать</option></select></label>
+    ${panel('drainage', 'Водоотвод', `<label class="prop-field"><span>Система</span><select id="roofDrainage"><option value="auto" ${envelope.roof.drainage === 'auto' ? 'selected' : ''}>Авто по форме крыши</option><option value="external" ${envelope.roof.drainage === 'external' ? 'selected' : ''}>Наружная</option><option value="internal" ${envelope.roof.drainage === 'internal' ? 'selected' : ''}>Внутренняя</option><option value="off" ${envelope.roof.drainage === 'off' ? 'selected' : ''}>Не показывать</option></select></label>
       <p class="envelope-flow">Жёлоб и стояки следуют за формой и уклоном крыши.</p>`)}
     ${panel('entrance', 'Вход', `<label class="check-row"><input id="entranceEnabled" type="checkbox" ${envelope.entrance.enabled ? 'checked' : ''}><span>Крыльцо от входной двери</span></label>
       <label class="prop-field"><span>Подъём</span><select id="entranceMode"><option value="steps" ${envelope.entrance.mode === 'steps' ? 'selected' : ''}>Ступени</option><option value="ramp" ${envelope.entrance.mode === 'ramp' ? 'selected' : ''}>Пандус</option><option value="both" ${envelope.entrance.mode === 'both' ? 'selected' : ''}>Ступени + пандус</option><option value="none" ${envelope.entrance.mode === 'none' ? 'selected' : ''}>Без подъёма</option></select></label>
@@ -186,6 +191,15 @@ export function bindEnvelopeSettings(panel, project = state.project) {
   Object.entries(foundationMeters).forEach(([id, [key, min, max]]) => q(id)?.addEventListener('change', (e) => { const v = metersValue(e, min, max, LABELS.foundation); if (v != null) set((x) => { x.foundation[key] = v; x.foundation.sizingMode = 'parametric'; }); }));
   q('autoRoofMode')?.addEventListener('change', (e) => set((x) => { x.roofMode = e.target.checked ? 'linked' : 'manual'; }));
   panel.querySelectorAll('[data-roof-type]').forEach((button) => button.addEventListener('click', () => set((x) => { x.roof.type = button.dataset.roofType; })));
+  q('linkedRoofMaterial')?.addEventListener('change', (e) => set((x) => { x.roof.material = e.target.value; }));
+  q('linkedRoofParapet')?.addEventListener('change', ({ target }) => {
+    if (!Number.isFinite(target.valueAsNumber) || !target.reportValidity()) {
+      target.value = envelopeOf(project).roof.parapetHeight;
+      return;
+    }
+    const height = target.valueAsNumber;
+    set((x) => { x.roof.parapetHeight = height; });
+  });
   q('roofPitch')?.addEventListener('change', (e) => set((x) => { x.roof.pitchDeg = Math.min(60, Math.max(1, Math.round(Number(e.target.value) || 15))); }));
   q('roofOverhang')?.addEventListener('change', (e) => { const v = metersValue(e, 0, 2, 'Вынос'); if (v != null) set((x) => { x.roof.overhang = v; }); });
   q('roofDirection')?.addEventListener('change', (e) => set((x) => { x.roof.direction = e.target.value; }));

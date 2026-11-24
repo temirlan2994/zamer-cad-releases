@@ -9,6 +9,7 @@ import {
   createLevel, createProject, createRoom, deserializeProject, hasContent, serializeProject,
 } from '../core/model.js';
 import { captureGroundReference, houseTerrain, normalizeTerrain } from '../core/terrain.js';
+import { createRoof, normalizeRoof } from '../core/roofs.js';
 
 const range = (faces) => [
   Math.min(...faces.flatMap((face) => face.pts.map((point) => point.z))),
@@ -37,6 +38,30 @@ test('свес новой крыши сохраняется, старые дом
   assert.equal(hasContent(legacy), false);
   raw.envelope.roof.overhang = 350;
   assert.equal(deserializeProject(JSON.stringify(raw)).envelope.roof.overhang, 350);
+});
+
+test('у новых плоских крыш общая отделка, старые проекты сохраняют явные размеры и отключённые парапеты', () => {
+  const project = createProject();
+  const drawn = createRoof({ levelId: project.activeLevel, outline: [
+    { x: 0, y: 0 }, { x: 3000, y: 0 }, { x: 3000, y: 4000 }, { x: 0, y: 4000 },
+  ] });
+  assert.equal(project.envelope.roof.material, drawn.material);
+  assert.equal(project.envelope.roof.parapetHeight, drawn.parapet.height);
+  assert.equal(project.envelope.roofThickness, drawn.thickness);
+  assert.equal(project.envelope.roof.overhang, drawn.overhang.n);
+  const legacy = JSON.parse(serializeProject(project));
+  delete legacy.envelope.roof.material;
+  delete legacy.envelope.roof.parapetHeight;
+  legacy.envelope.roofThickness = 250;
+  const reopened = deserializeProject(JSON.stringify(legacy));
+  assert.equal(reopened.envelope.roof.material, 'graphite');
+  assert.equal(reopened.envelope.roof.parapetHeight, 200);
+  assert.equal(reopened.envelope.roofThickness, 250);
+  assert.equal(hasContent(reopened), false);
+  assert.equal(normalizeRoof({ ...drawn, parapet: { type: 'none' } }).parapet.type, 'none');
+  reopened.envelope.roof.material = 'wood';
+  reopened.envelope.roof.parapetHeight = 0;
+  assert.deepEqual(deserializeProject(serializeProject(reopened)).envelope.roof, reopened.envelope.roof);
 });
 
 test('±0.000 над плоской землёй создаёт единые цоколь и фундамент', () => {
@@ -170,7 +195,7 @@ test('разрез режет основание, а проектный ноль
 test('параметры связанных систем и толщина перекрытия сохраняются в файле', () => {
   const project = oneStorey();
   project.envelope.zeroAboveGround = 850;
-  project.envelope.roof = { type: 'hip', pitchDeg: 22, direction: 'e', overhang: 650, drainage: 'external' };
+  Object.assign(project.envelope.roof, { type: 'hip', pitchDeg: 22, direction: 'e', overhang: 650, drainage: 'external' });
   project.envelope.foundation = {
     ...project.envelope.foundation, type: 'piles', pileDiameter: 350, pileLength: 4200, pileSpacing: 2100,
   };

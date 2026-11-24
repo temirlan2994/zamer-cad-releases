@@ -47,6 +47,8 @@ export const ROOF_THICK = { def: 300, min: 150, max: 600 };
 export const EDGE_HEIGHT = { def: 250, min: 150, max: 600 };
 export const PARAPET_HEIGHT = { def: 600, min: 100, max: 2000 };
 export const PARAPET_THICK = { def: 200, min: 20, max: 600 };
+export const DEFAULT_FLAT_PARAPET_HEIGHT = 200;
+export const DEFAULT_ROOF_MATERIAL = 'graphite';
 export const INSET_MAX = 2000;
 export const DZ_LIMIT = 10000;
 export const FASCIA_T = 40; // толщина листа фасции, мм
@@ -90,6 +92,7 @@ const EDGE_IDS = new Set(EDGE_TYPES.map((t) => t.id));
 const PARAPET_IDS = new Set(PARAPET_TYPES.map((t) => t.id));
 const MATERIAL_IDS = new Set(ROOF_MATERIALS.map((t) => t.id));
 
+export const roofMaterial = (id) => MATERIAL_IDS.has(id) ? id : DEFAULT_ROOF_MATERIAL;
 export const materialColor = (id) => (ROOF_MATERIALS.find((m) => m.id === id) || ROOF_MATERIALS[0]).color;
 export const edgeTitle = (id) => EDGE_TYPES.find((t) => t.id === id)?.title || id;
 export const parapetTitle = (id) => PARAPET_TYPES.find((t) => t.id === id)?.title || id;
@@ -480,7 +483,7 @@ export function normalizeRoof(raw) {
       inset: Math.round(clamp(num(p.inset, 0), 0, INSET_MAX)),
       sides: Object.fromEntries(ROOF_SIDES.map((s) => [s, typeof ps[s] === 'boolean' ? ps[s] : true])),
     },
-    material: MATERIAL_IDS.has(raw.material) ? raw.material : 'graphite',
+    material: roofMaterial(raw.material),
     drain: Boolean(raw.drain),
   };
   delete out.roomIds;
@@ -513,14 +516,14 @@ export function normalizeRoofs(list, levels = null, settings = null) {
   return out;
 }
 
-// Новая крыша по контуру: вынос 600, фасция 250, графит.
+// Новая плоская крыша, с тем же низким парапетом, что и у связанной.
 export function createRoof({ levelId, outline, ...patch } = {}, existing = []) {
   return normalizeRoof({
     id: roofId(), name: nextRoofName(existing), levelId, outline, dz: 0,
     overhang: allSides(OVERHANG_DEFAULT), thickness: ROOF_THICK.def,
     edge: { type: 'fascia', height: EDGE_HEIGHT.def },
-    parapet: { type: 'none', height: PARAPET_HEIGHT.def, thickness: PARAPET_THICK.def, inset: 0, sides: allSides(true) },
-    material: 'graphite', drain: false,
+    parapet: { type: 'wall', height: DEFAULT_FLAT_PARAPET_HEIGHT, thickness: PARAPET_THICK.def, inset: 0, sides: allSides(true) },
+    material: DEFAULT_ROOF_MATERIAL, drain: false,
     ...patch,
   });
 }

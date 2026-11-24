@@ -1,8 +1,11 @@
 // Параметрическая оболочка дома: связанная с этажами автокровля и основание.
 // Все отметки — в миллиметрах относительно проектного ±0.000.
 
+import { DEFAULT_FLAT_PARAPET_HEIGHT, DEFAULT_ROOF_MATERIAL, OVERHANG_DEFAULT, PARAPET_HEIGHT, ROOF_THICK, roofMaterial } from './roofs.js';
+
 export const DEFAULT_FOUNDATION_DEPTH = 800;
-export const DEFAULT_AUTO_ROOF_THICKNESS = 250;
+export const DEFAULT_AUTO_ROOF_THICKNESS = ROOF_THICK.def;
+const LEGACY_ROOF_THICKNESS = 250;
 export const DEFAULT_SLAB_THICKNESS = 300;
 export const MAX_ZERO_ABOVE_GROUND = 5000;
 export const MIN_ZERO_ABOVE_GROUND = -5000;
@@ -35,7 +38,9 @@ export function createEnvelope() {
       type: 'flat',
       pitchDeg: 15,
       direction: 'auto',
-      overhang: 600,
+      overhang: OVERHANG_DEFAULT,
+      material: DEFAULT_ROOF_MATERIAL,
+      parapetHeight: DEFAULT_FLAT_PARAPET_HEIGHT,
       drainage: 'auto',
     },
     // null означает, что пользователь ещё не задал положение ±0.000.
@@ -86,13 +91,15 @@ export function normalizeEnvelope(raw) {
   const groundReferenceZ = finite(source.groundReferenceZ);
   return {
     roofMode: source.roofMode === 'manual' ? 'manual' : 'linked',
-    roofThickness: clamp(source.roofThickness, 120, 1000, defaults.roofThickness),
+    roofThickness: clamp(source.roofThickness, 120, 1000, LEGACY_ROOF_THICKNESS),
     roof: {
       type: enumValue(roof.type, ROOF_TYPES, defaults.roof.type),
       pitchDeg: clamp(roof.pitchDeg, 1, 60, defaults.roof.pitchDeg),
       direction: enumValue(roof.direction, ROOF_DIRECTIONS, defaults.roof.direction),
       // В файлах до появления свеса по умолчанию крыша шла по грани стены.
       overhang: clamp(roof.overhang, 0, 2000, 0),
+      material: roofMaterial(roof.material),
+      parapetHeight: clamp(roof.parapetHeight, 0, PARAPET_HEIGHT.max, DEFAULT_FLAT_PARAPET_HEIGHT),
       drainage: ['auto', 'internal', 'external', 'off'].includes(roof.drainage)
         ? roof.drainage : defaults.roof.drainage,
     },
@@ -171,7 +178,7 @@ export function envelopeHasUserInput(raw) {
   return envelope.zeroAboveGround != null
     || envelope.groundReferenceZ != null
     || envelope.roofMode !== 'linked'
-    || envelope.roofThickness !== DEFAULT_AUTO_ROOF_THICKNESS
+    || (envelope.roofThickness !== DEFAULT_AUTO_ROOF_THICKNESS && envelope.roofThickness !== LEGACY_ROOF_THICKNESS)
     || JSON.stringify(envelope.roof) !== JSON.stringify(defaults.roof)
     || envelope.foundation.enabled !== true
     || JSON.stringify(envelope.foundation) !== JSON.stringify(defaults.foundation)

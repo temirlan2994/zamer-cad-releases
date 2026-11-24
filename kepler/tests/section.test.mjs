@@ -37,7 +37,10 @@ test('поперёк через окно: стены слева и справа,
   assert.ok(near(s.openings[0].u0, -1000) && near(s.openings[0].u1, -750));
   // Кровля над домом, пол — плита под нижним этажом.
   const roof = of(s, 'roof');
-  assert.ok(roof.length && roof.every((c) => c.z0 === 3000 && c.z1 === 3250));
+  const deckTop = 3000 + p.envelope.roofThickness;
+  assert.ok(roof.some((c) => c.z0 === 3000 && c.z1 === deckTop), 'плита опирается на стены');
+  assert.equal(Math.min(...roof.map((c) => c.z0)), 3000);
+  assert.equal(Math.max(...roof.map((c) => c.z1)), deckTop + p.envelope.roof.parapetHeight);
   const floor = of(s, 'floor');
   assert.ok(floor.length && floor.every((c) => c.z1 === 0 && c.z0 === -300));
   assert.ok(near(Math.min(...floor.map((c) => c.u0)), -5250) && near(Math.max(...floor.map((c) => c.u1)), -750));
@@ -46,7 +49,7 @@ test('поперёк через окно: стены слева и справа,
   assert.ok(s.ground.length >= 2);
   // Вид за плоскостью: внутренняя грань западной стены видна.
   assert.ok(s.polys.some((q) => q.kind === 'wall'));
-  assert.ok(s.bounds.z0 <= -300 && s.bounds.z1 >= 3250);
+  assert.ok(s.bounds.z0 <= -300 && s.bounds.z1 >= deckTop + p.envelope.roof.parapetHeight);
 });
 
 test('толщина и выключатель нижней плиты одинаково работают в 3D и разрезе', () => {
@@ -104,7 +107,9 @@ test('два этажа: перекрытие между этажами, отм�
   assert.ok(slab.every((c) => c.z1 === 2999 && c.z0 === 2700));
   assert.deepEqual(s.levels.map((l) => [l.z, l.label]), [[0, '±0.000'], [3000, '+3.000']]);
   assert.ok(of(s, 'wall').some((c) => c.z0 === 3000 && c.z1 === 5800), 'стены второго этажа');
-  assert.ok(of(s, 'roof').every((c) => c.z0 === 5800));
+  const roof = of(s, 'roof');
+  assert.equal(Math.min(...roof.map((c) => c.z0)), 5800, 'над первым этажом осталась только плита перекрытия');
+  assert.ok(roof.some((c) => c.z0 === 5800 && c.z1 === 5800 + p.envelope.roofThickness));
 });
 
 test('side = −1 зеркалит вид; сторона по точке', () => {

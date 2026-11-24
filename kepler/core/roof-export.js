@@ -40,6 +40,8 @@ export function exportRoofBodies(project, { manual = false } = {}) {
   const linked = regions.filter((region) => facesById.has(region.id)).map((region) => ({
     id: region.id, name: region.name, level_id: region.levelId, room_ids: [...region.roomIds],
     type: region.roofType, source: 'linked', thickness: region.thickness, pitch_deg: region.pitchDeg,
+    material: region.material,
+    ...(region.roofType === 'flat' ? { parapet_height: region.parapetHeight } : {}),
     polygons: region.outline, plan_area_m2: region.planArea / 1_000_000,
     mesh: indexedMesh(facesById.get(region.id)),
   }));

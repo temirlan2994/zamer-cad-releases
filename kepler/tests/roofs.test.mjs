@@ -51,7 +51,8 @@ test('создание над помещением: основание по на
   assert.deepEqual(r.overhang, { n: 600, e: 600, s: 600, w: 600 });
   assert.equal(r.thickness, 300);
   assert.equal(r.edge.type, 'fascia');
-  assert.equal(r.parapet.type, 'none');
+  assert.equal(r.parapet.type, 'wall');
+  assert.equal(r.parapet.height, 200);
   assert.deepEqual(rectsBox(roofBaseRects(p, r)), { x0: -250, y0: -250, x1: 6250, y1: 4250 });
   assert.deepEqual(bbox(p, r), { x0: -850, y0: -850, x1: 6850, y1: 4850 });
   const z = roofZ(p, r);
@@ -239,7 +240,7 @@ test('сохранение: kepler-plan/7 и v6 хранят крыши с ко�
 
 test('3D: плита на отметке, толщина, вынос, фасция, автокровля не дублируется', () => {
   const p = house();
-  p.roofs = [over(p, ['a'], { dz: 100, overhang: { n: 1200, e: 600, s: 600, w: 600 } })];
+  p.roofs = [over(p, ['a'], { dz: 100, overhang: { n: 1200, e: 600, s: 600, w: 600 }, parapet: { type: 'none' } })];
   const faces = roofFaces(p);
   const slab = faces.filter((f) => f.kind === 'roof');
   const tops = slab.filter((f) => f.normal.z > 0.5);
@@ -325,7 +326,7 @@ test('фасад и разрез: крыша с выносом и фасцией
   const wallUs = el.polys.filter((q) => q.kind === 'wall').flatMap((q) => q.pts.map((t) => t.u));
   assert.ok(Math.max(...us) - Math.max(...wallUs) >= 1199, 'вынос за стену');
   assert.ok(Math.min(...wallUs) - Math.min(...us) >= 1199);
-  assert.equal(el.bounds.z1, 3350);
+  assert.equal(el.bounds.z1, 3500, 'верх парапета новой крыши');
   const sec = buildSection(p, { kind: 'section', id: 's1', line: { a: { x: 3000, y: -3000 }, b: { x: 3000, y: 8000 } } });
   assert.ok(sec, 'разрез построен');
   const cut = sec.cuts.filter((c) => c.kind === 'roof');
