@@ -1274,6 +1274,11 @@ button.project-card-open:active { background: var(--surface-2); }
   gap: 3px;
 }
 
+.line-command-panel .line-edit-selective {
+  gap: 2px;
+  width: 64px;
+}
+
 .quick-edit-modes {
   display: flex;
   flex: 1;
@@ -2335,6 +2340,15 @@ button.project-card-open:active { background: var(--surface-2); }
   font-size: .78rem;
   gap: 3px;
   padding-inline: 4px;
+}
+
+.copy-controls #selectionActionLabel {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+  max-width: 82px;
+  padding-inline: 4px;
+  text-align: center;
 }
 
 .copy-controls input {
