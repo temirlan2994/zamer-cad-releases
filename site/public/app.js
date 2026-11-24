@@ -173,6 +173,21 @@
   const finalCta = document.getElementById("final-cta");
   if (dock && heroCta && finalCta && "IntersectionObserver" in window) {
     const dockLink = dock.querySelector("a");
+    // Хостинг может закрепить внизу свой бейдж (iframe). Кнопку поднимаем над
+    // ним, а сам бейдж не трогаем.
+    const placeDock = () => {
+      let lift = 0;
+      for (const frame of document.querySelectorAll("iframe")) {
+        if (dock.contains(frame) || getComputedStyle(frame).position !== "fixed") continue;
+        const box = frame.getBoundingClientRect();
+        if (!box.height || box.top < window.innerHeight / 2) continue;
+        lift = Math.max(lift, window.innerHeight - box.top);
+      }
+      dock.style.bottom = lift ? `${Math.round(lift + 10)}px` : "";
+    };
+    new MutationObserver(placeDock).observe(document.body, { childList: true });
+    window.addEventListener("resize", placeDock);
+    window.addEventListener("load", placeDock);
     let heroPassed = false;
     let finalReached = false;
     const observer = new IntersectionObserver((entries) => {
@@ -181,6 +196,7 @@
         if (entry.target === finalCta) finalReached = entry.isIntersecting || entry.boundingClientRect.bottom < 0;
       }
       const show = heroPassed && !finalReached;
+      if (show) placeDock();
       dock.classList.toggle("show", show);
       dock.setAttribute("aria-hidden", String(!show));
       dockLink.tabIndex = show ? 0 : -1;
