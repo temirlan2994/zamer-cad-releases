@@ -1,4 +1,4 @@
-import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=231";
+import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection, nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, selectionFilterForProject, shouldDelayTapZoom, snapCandidateScore, tapZoomMoveIntent, tapZoomScale } from "./core/interaction.js?v=232";
 import { radToDeg, normalizeDegrees, normalizeAnglePositive, offsetWall, transformBlockPoint, distanceWorld, angleBetweenPoints, arcGeometry, segmentMetrics, normalizeScreenVector, entityBounds, pointInSelectionRect, rectEdges, segmentsIntersect, pointInPolygon, pointToSegmentDistance } from "./core/geometry.js?v=225";
 import { entitySize, blockSegments } from "./core/blocks.js";
 import { buildBlockPreview } from "./core/block-preview.js";
@@ -347,7 +347,7 @@ function apkCreateProject(body = {}, owner) {
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     measurementSettings: normalizeMeasurementSettings(source.measurementSettings),
-    selectionFilter: source.selectionFilter || "all",
+    selectionFilter: selectionFilterForProject(source.selectionFilter),
     survey: normalizeSurvey(source.survey),
     draft: source.draft,
     reusableBlocks: normalizeReusableBlocks(source.reusableBlocks),
@@ -858,8 +858,6 @@ function canAssignEntityToLineLayer(entity) {
 function layerLockMessage(id) {
   return id ? `Слой «${drawingLayerInfo(id)?.name || id}» заблокирован` : "Все слои для линий заблокированы";
 }
-const selectionFilters = ["all", "lines", "dimensions"];
-
 let surveyPanel = null;
 let surveyPointPicker = null;
 const zoneLabelRects = new Map();
@@ -2875,7 +2873,6 @@ function serializableProjectContent() {
     annotationScale: state.annotationScale,
     measurementSettings: { ...state.measurementSettings },
     tapZoomEnabled: state.tapZoomEnabled,
-    selectionFilter: state.selectionFilter,
     survey: state.survey,
     draft: acceptedSurveyDraft(),
     ...(state.reusableBlocks.length ? { reusableBlocks: state.reusableBlocks } : {}),
@@ -2990,7 +2987,7 @@ function restoreProject(project) {
     if (project.theme === "light" || project.theme === "dark") {
       state.theme = project.theme;
     }
-    state.selectionFilter = selectionFilters.includes(project.selectionFilter) ? project.selectionFilter : "all";
+    state.selectionFilter = selectionFilterForProject(project.selectionFilter);
 
     state.drawing = null;
     closeLeaderInput();
@@ -4384,8 +4381,6 @@ async function scaleSelection() {
 
 function entityMatchesSelectionFilter(entity) {
   if (!entity || !isLayerVisible(entity.layer) || isLayerLocked(entity.layer) || !traceMatchesEditingContext(entity)) return false;
-  if (state.selectionFilter === "lines") return ["line", "polyline"].includes(entity.type) && !entity.dimensionKind && entity.layer !== "dimensions";
-  if (state.selectionFilter === "dimensions") return entity.layer === "dimensions";
   return true;
 }
 
@@ -10069,15 +10064,6 @@ function hideSelectModeMenu() {
 function syncSelectModeMenu() {
   selectModeMenu?.querySelectorAll("[data-select-mode]").forEach((button) => {
     const mode = button.dataset.selectMode;
-    if (mode === "filter") {
-      const label = button.querySelector("small");
-      const filtered = state.selectionFilter !== "all";
-      if (label) label.textContent = filtered ? selectionFilterLabel() : "Фильтр";
-      button.setAttribute("aria-label", `Фильтр: ${selectionFilterLabel()}`);
-      button.setAttribute("aria-pressed", String(filtered));
-      button.classList.toggle("active", filtered);
-      return;
-    }
     const active = state.selectTool === mode;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
@@ -10311,13 +10297,6 @@ function dimensionToolStatusText() {
 }
 
 function selectSelectionTool(tool) {
-  if (tool === "filter") {
-    state.selectionFilter = nextSelectionFilter();
-    markProjectDirty("selection-filter");
-    syncSelectModeMenu();
-    statusChip.textContent = `Фильтр · ${selectionFilterLabel()}`;
-    return;
-  }
   state.selectTool = tool;
   hideSelectModeMenu();
   setTool("select");
@@ -10325,21 +10304,8 @@ function selectSelectionTool(tool) {
   syncSelectionActions();
 }
 
-function nextSelectionFilter() {
-  const index = selectionFilters.indexOf(state.selectionFilter);
-  return selectionFilters[(index + 1) % selectionFilters.length];
-}
-
 function selectionStatusText() {
   return { window: "Рамка · тяните по холсту", lasso: "Лассо · обведите область", multi: "Выбор нескольких объектов" }[state.selectTool] || "Выберите объект";
-}
-
-function selectionFilterLabel() {
-  return {
-    all: "все",
-    lines: "линии",
-    dimensions: "размеры",
-  }[state.selectionFilter] || "все";
 }
 
 function drawToolLabel(tool) {

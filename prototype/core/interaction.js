@@ -26,6 +26,12 @@ export function shouldDelayTapZoom({ enabled, secondTap, pointerType, button, mo
     !selectable && duration < longPress && distance <= tolerance);
 }
 
+export function selectionFilterForProject() {
+  // The filter control was removed from the mobile UI. Old projects may still
+  // contain "lines" or "dimensions" and must not become impossible to select.
+  return "all";
+}
+
 export function normalizeDirectionalSnapModes(modes, preferred = "ortho") {
   const normalized = new Set(Array.from(modes || []).filter(Boolean));
   if (normalized.has("ortho") && normalized.has("polar")) {

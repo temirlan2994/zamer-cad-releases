@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { requiresActivation, canStartGeometryDrag, activationGestureMode, canDragEntityDirectly, guideDirectionsParallel, nearestCompoundGuideIntersection,
-  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, shouldDelayTapZoom, snapCandidateKind, tapZoomMoveIntent, tapZoomScale } from "./interaction.js";
+  nonOverlappingPanelTop, normalizeDirectionalSnapModes, polarRayGuides, preferredSnapCandidate, selectionFilterForProject, shouldDelayTapZoom, snapCandidateKind, tapZoomMoveIntent, tapZoomScale } from "./interaction.js";
 
 test("only furniture and text can be moved directly with a finger", () => {
   for (const type of ["block", "text"]) assert.equal(canDragEntityDirectly({type}), true);
@@ -47,6 +47,12 @@ test("touch selection wins immediately over double-tap zoom", () => {
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false }), true);
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false, moved: true }), false);
   assert.equal(shouldDelayTapZoom({ ...tap, selectable: false, duration: 500 }), false);
+});
+
+test("old hidden selection filters are reset after the filter control was removed", () => {
+  for (const saved of [undefined, "all", "lines", "dimensions", "invalid"]) {
+    assert.equal(selectionFilterForProject(saved), "all");
+  }
 });
 
 test("Ortho and polar tracking are mutually exclusive like in AutoCAD", () => {

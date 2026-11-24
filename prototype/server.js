@@ -670,7 +670,7 @@ function defaultProjectPayload(client, body = {}) {
     annotationLayers: source.annotationLayers === 1 ? 1 : undefined,
     annotationScale: Number.isFinite(source.annotationScale) ? source.annotationScale : 1,
     measurementSettings: source.measurementSettings,
-    selectionFilter: source.selectionFilter || "all",
+    selectionFilter: "all",
     furnitureTab: source.furnitureTab || "furniture",
     furnitureCategory: source.furnitureCategory || "sofas",
     furnitureSheetPosition: source.furnitureSheetPosition || "half",
