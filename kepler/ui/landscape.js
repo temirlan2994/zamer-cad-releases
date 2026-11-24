@@ -10,7 +10,7 @@ import {
   polygonArea, polylineLength, removeVertex, resizeObject, rotateObjectAbout, searchLandscape, syncShape,
   translateObject, CURB_HOSTS, CURB_MATERIALS, PLANTER_FILLS, clampSize, normalizeCurb, planterWall, stairsInfo,
   syncStairs, ELEV_KINDS, MAX_STAIR_RISE, PLATFORM_KINDS, RETAINING_SIDES, applyStairsDrop, normalizeElev, platformTop, retainingInfo, stairsDrop,
-  objectAreaM2, objectLengthM, pointAlong, screenPlaceRotation,
+  isLevelPath, objectAreaM2, objectLengthM, pathSlabThickness, pointAlong, screenPlaceRotation, toWorld as landscapeWorld,
 } from '../core/landscape.js';
 import {
   LS_GROUP_TITLES, LS_HANDLE_TITLES, edgeFrame, frameCorners, frameEdges, frameRotators, lsHandleInfo, lsStarts, moveEdgeLs,
@@ -27,7 +27,7 @@ import {
 } from '../core/landscape-build.js';
 import {
   GARDEN_TEMPLATES, PLANT_KINDS, canExplode, composeGarden, entryPathObject, explodePath, fillArea, guideOf, houseFootprints,
-  parkingAtEntry, plantAlong, platformLevelEdit, setPlatformLevel, stairsAtPlatformEdge,
+  parkingAtEntry, plantAlong, platformLevelEdit, setPlatformLevel, stairsAtPlatformEdge, stairsBetween, walkingLevel,
 } from '../core/landscape-tools.js';
 import { DECK_PATTERNS, PATH_ALIGNS, PATH_CORNERS, PATH_LAYINGS, layingParams } from '../core/path-geometry.js';
 import { buildingSiteCheck } from '../core/site-check.js';
@@ -49,6 +49,11 @@ import {
   arrayDblClick, arrayHover, arrayPointerDown, bindPlantFill, handleArrayKey, plantFillHtml, renderArrayProps, startLandscapeArray,
 } from './landscape-array.js';
 import { canFill } from '../core/landscape-array.js';
+import { attachOutdoorStair, travelAnchorAt, travelHostLevel } from '../core/outdoor-stair-links.js';
+import {
+  addOutdoorRoutePoint, bindOutdoorLights, bindOutdoorRouteProfile, finishOutdoorRoute,
+  handleOutdoorRouteKey, outdoorLightsHtml, outdoorRouteHover, renderOutdoorRouteProps, startOutdoorRoute,
+} from './outdoor-route.js';
 import {
   bindSectionsBlock, finishSection, handleSectionKey, isSectionTool, landscapeSections, openSection, refreshSectionView,
   renderSectionToolProps, sectionDblClick, sectionDragEnd, sectionDragMove, sectionHandleAt, sectionHandlePointerDown,
@@ -128,6 +133,7 @@ export function addLandscapeObjects(list, { replace = false, select = true } = {
 export function startPlaceLandscape(kind) {
   const def = landscapeDef(kind);
   if (!def) return;
+  if (kind === 'stairs-out') { startOutdoorStairs(); return; }
   if (isPathShape(def)) { startDrawLandscape(kind); return; }
   setTool({ kind: 'place-landscape', lsKind: kind, rotation: 0 },
     `Кликните на участке — «${def.title}»; повторные клики — ещё · Пробел — повернуть · Esc — выйти`);
@@ -177,6 +183,82 @@ export function rotateLandscapeGhost() {
 
 // ------------------------------------------------------------ Рисование
 
+const STAIR_START = 'Укажите первый край лестницы';
+const STAIR_END = 'Укажите второй край лестницы';
+const stairOptions = { width: 2400, variant: 'graphite', landing: 0, aLevel: null, bLevel: null };
+const PATH_PRESETS = {
+  terrain: { variant: 'pavers', width: 1400, smooth: false, meta: { pathLevel: 'terrain' }, elev: null },
+  floating: {
+    variant: 'stepping', width: 2000, smooth: false, laying: 'strict', slabL: 1000, slabW: 2000, gap: 140,
+    color: '#4d5254', meta: { pathLevel: 'fixed', slabThickness: 120 }, elev: null,
+  },
+};
+
+function startOutdoorStairs() {
+  setTool({ kind: 'ls-flight', lsKind: 'stairs-out', first: null, cursor: null, opts: { ...stairOptions }, ground: groundFn(state.project) }, STAIR_START);
+  selectObject(null);
+  renderLandscapeLibrary();
+}
+
+function flightAt(tool, point, id) {
+  const aLevel = tool.opts.aLevel ?? tool.first.level;
+  const bLevel = tool.opts.bLevel ?? point.level;
+  return stairsBetween(tool.first, point, { ...tool.opts, aLevel, bLevel, id, assumeRise: tool.opts.aLevel == null && tool.opts.bLevel == null });
+}
+
+function snapFlightPoint(tool, world, event) {
+  const point = snapLs(world, event, { prev: tool.first });
+  const snap = event.shiftKey ? null : travelAnchorAt(point, landscapeObjects(), Math.min(450, 12 / state.view.scale));
+  return snap ? { ...snap.point, level: travelHostLevel(snap.host, snap.point, tool.ground), anchor: snap.anchor }
+    : { ...point, level: walkingLevel(point, landscapeObjects(), tool.ground) };
+}
+
+function flightHint(tool) {
+  if (!tool.first) return STAIR_START;
+  if (!tool.cursor) return STAIR_END;
+  const result = flightAt(tool, tool.cursor, '__ghost-ls__');
+  state.ghostLandscape = result.obj || null;
+  if (result.error) return result.error;
+  const info = stairsInfo(result.obj);
+  const assumed = result.assumedRise ? ' · на ровном месте +450 мм' : '';
+  return `Перепад ${info.rise} мм · ${info.steps} ступ. · ${Math.round(info.riser)} × ${info.tread} мм${assumed}`;
+}
+
+function updateFlight(tool) {
+  const hint = flightHint(tool);
+  setHint(hint);
+  const readout = el('lsStDrawInfo');
+  if (readout) readout.textContent = hint;
+  requestDraw();
+}
+
+function placeFlightEnd(tool, point) {
+  if (!tool.first) {
+    tool.first = point;
+    tool.cursor = null;
+    updateFlight(tool);
+    return;
+  }
+  const result = flightAt(tool, point);
+  if (result.error) { toast(result.error, true); return; }
+  if (!result.assumedRise) {
+    const link = (p, manual) => ({
+      point: { x: p.x, y: p.y },
+      ...(p.anchor && manual == null ? { anchor: p.anchor } : { level: manual }),
+    });
+    attachOutdoorStair(result.obj, link(tool.first, tool.opts.aLevel), link(point, tool.opts.bLevel));
+  }
+  Object.assign(stairOptions, tool.opts, { aLevel: null, bLevel: null });
+  cancelTool();
+  addLandscapeObjects([result.obj]);
+  renderLandscapeLibrary();
+}
+
+function defaultPathElev(point, exclude = null, clearance = 150) {
+  const ground = groundFn(state.project);
+  return normalizeElev(walkingLevel(point, landscapeObjects().filter((o) => o !== exclude), ground, clearance));
+}
+
 function drawOptions(kind) {
   const def = landscapeDef(kind);
   if (!drawOpts.has(kind)) {
@@ -194,10 +276,11 @@ const DRAW_HINT = {
   poly: 'Кликайте вершины контура или протяните прямоугольник · клик по первой точке или Enter — замкнуть · Backspace — убрать точку · Shift — без привязки, F8 — орто, число + Enter — длина · Esc — отмена',
 };
 
-export function startDrawLandscape(kind) {
+export function startDrawLandscape(kind, preset = null) {
   const def = landscapeDef(kind);
   if (!isPathShape(def)) return;
-  setTool({ kind: 'draw-landscape', lsKind: kind, points: [], cursor: null, rect: null, opts: drawOptions(kind) }, DRAW_HINT[def.shape]);
+  const opts = preset ? { ...preset, meta: { ...preset.meta } } : { ...drawOptions(kind) };
+  setTool({ kind: 'draw-landscape', lsKind: kind, points: [], cursor: null, rect: null, opts }, DRAW_HINT[def.shape]);
   state.lsVertex = null;
   selectObject(null);
   renderLandscapeLibrary();
@@ -277,6 +360,11 @@ export function finishLandscapeDraw() {
     return null;
   }
   const opts = { ...tool.opts };
+  if (def.kind === 'path' && opts.meta?.pathLevel === 'fixed' && opts.elev == null) opts.elev = defaultPathElev(pts[0]);
+  if (def.kind === 'path' && opts.meta?.pathLevel === 'graded') {
+    opts.elev ??= defaultPathElev(pts[0], null, 25);
+    opts.elevTo ??= defaultPathElev(pts.at(-1), null, 25);
+  }
   cancelTool();
   const obj = createLandscapeObject(def.kind, 0, 0, { ...opts, points: pts, smooth: opts.smooth && pts.length >= 3 });
   mutate(() => {
@@ -318,6 +406,16 @@ function backspaceDraft() {
 
 // Наведение/призрак. Возвращает true — событие обработано.
 export function landscapeHover(world, canvas, event) {
+  if (state.tool?.kind === 'ls-route') return outdoorRouteHover(world, canvas, event);
+  if (state.tool?.kind === 'ls-flight') {
+    const tool = state.tool;
+    canvas.style.cursor = 'crosshair';
+    if (tool.first) {
+      tool.cursor = snapFlightPoint(tool, world, event);
+      updateFlight(tool);
+    }
+    return true;
+  }
   if (state.tool?.kind === 'place-landscape') {
     ghostAt(world);
     canvas.style.cursor = 'copy';
@@ -490,11 +588,23 @@ export function landscapePointerDown(event, screen, world) {
   // Касание: объект или точка ставятся на тапе, свайп — панорама (ui/input.js, kind 'tap').
   const touch = event.pointerType === 'touch';
   const tap = (run) => (touch ? { kind: 'tap', run, start: screen, view: { ...state.view } } : (run(), null));
+  if (tool?.kind === 'ls-route') return tap(() => addOutdoorRoutePoint(tool, world, event));
+  if (tool?.kind === 'ls-flight') {
+    const point = snapFlightPoint(tool, world, event);
+    return tap(() => { if (state.tool === tool) placeFlightEnd(tool, point); });
+  }
   if (tool?.kind === 'place-landscape') {
     return tap(() => {
       if (!tool.platform) { placeLandscapeAt(tool.lsKind, world, tool.rotation || 0); return; }
       const stair = stairsAtPlatformEdge(tool.platform, world, tool.stairLevels);
       if (!stair) { toast('Выберите край шириной от 500 мм'); return; }
+      const bottom = landscapeWorld(stair, 0, stair.h / 2);
+      const top = landscapeWorld(stair, 0, -stair.h / 2);
+      const upper = travelAnchorAt(top, [tool.platform], 5)?.anchor;
+      const lower = travelAnchorAt(bottom, landscapeObjects().filter((o) => o !== tool.platform), 65)?.anchor;
+      attachOutdoorStair(stair, {
+        point: bottom, ...(tool.stairLevels.surveyLower ? { anchor: lower } : { level: stair.elev }),
+      }, { point: top, anchor: upper });
       cancelTool();
       addLandscapeObjects([stair]);
     });
@@ -828,6 +938,7 @@ export function landscapeDragEnd(drag) {
 
 // Двойной клик: завершить рисование, удалить вершину (по ней) или вставить вершину на ребре.
 export function landscapeDblClick(world) {
+  if (state.tool?.kind === 'ls-route') return finishOutdoorRoute();
   if (state.tool?.kind === 'draw-landscape') { finishLandscapeDraw(); return true; }
   if (state.tool?.kind === 'ls-array') return arrayDblClick();
   if (isSectionTool()) { finishSection(); return true; }
@@ -988,6 +1099,15 @@ export function handleLandscapeKey(event) {
   const mod = event.ctrlKey || event.metaKey;
   if (state.tool?.kind === 'ls-array' && !mod) return handleArrayKey(event);
   if (isSectionTool() && !mod) return handleSectionKey(event);
+  if (state.tool?.kind === 'ls-route' && !mod) return handleOutdoorRouteKey(event);
+  if (state.tool?.kind === 'ls-flight' && !mod && event.key === 'Backspace') {
+    event.preventDefault();
+    state.tool.first = null;
+    state.tool.cursor = null;
+    state.ghostLandscape = null;
+    updateFlight(state.tool);
+    return true;
+  }
   if (state.tool?.kind === 'draw-landscape' && !mod) {
     if (event.key === 'Enter') { event.preventDefault(); finishLandscapeDraw(); return true; }
     if (event.key === 'Backspace') { event.preventDefault(); backspaceDraft(); return true; }
@@ -1164,6 +1284,15 @@ export function bindLandscapeLibrary() {
   const tabs = el('lsTabs');
   const search = el('lsSearch');
   const items = el('lsItems');
+  bindOutdoorRouteProfile();
+  el('lsQuickTools').addEventListener('click', (event) => {
+    const key = event.target.closest('[data-ls-quick]')?.dataset.lsQuick;
+    if (!key) return;
+    if (key === 'stairs') startOutdoorStairs();
+    else if (key === 'route') startOutdoorRoute();
+    else startDrawLandscape('path', PATH_PRESETS[key]);
+    closeLibrarySheet();
+  });
   search.addEventListener('input', () => {
     items.scrollTop = 0;
     renderLandscapeItems();
@@ -1191,6 +1320,7 @@ function renderLandscapeItems() {
   const box = el('lsItems');
   if (!box) return;
   const q = (el('lsSearch')?.value || '').trim();
+  el('lsQuickTools').hidden = Boolean(q);
   const rail = el('lsTabs');
   rail.hidden = Boolean(q);
   for (const button of rail.children) {
@@ -1219,7 +1349,7 @@ function renderLandscapeItems() {
     chip.title = shape
       ? `«${def.title}»: клик — рисовать ${def.shape === 'line' ? 'линию по точкам' : 'контур по точкам или прямоугольником'}`
       : `«${def.title}»: клик — ставить курсором, или перетащите на участок`;
-    const active = (state.tool?.kind === 'place-landscape' || state.tool?.kind === 'draw-landscape') && state.tool.lsKind === def.kind;
+    const active = state.tool?.lsKind === def.kind;
     chip.classList.toggle('active', active);
     chip.setAttribute('aria-pressed', String(active));
     const preview = document.createElement('canvas');
@@ -1278,6 +1408,18 @@ const cornerIcon = (id) => `<svg viewBox="0 0 20 20" width="18" height="18" aria
 const options = (list, value) => list.map((x) => `<option value="${x.id}" ${x.id === value ? 'selected' : ''}>${escapeHtml(x.title)}</option>`).join('');
 
 const EXPLODE_TEXT = { stepping: 'Разорвать на плиты', deck: 'Разорвать на доски' };
+const PATH_LEVELS = [
+  { id: 'terrain', title: 'По рельефу' }, { id: 'fixed', title: 'На одной отметке' },
+  { id: 'graded', title: 'Уклон между отметками' },
+];
+
+function pathLevelFields(o, thickness = false) {
+  const mode = o.meta?.pathLevel || 'terrain';
+  return `<label class="prop-field"><span>Посадка дорожки</span><select id="lsPathLevel">${options(PATH_LEVELS, mode)}</select></label>
+    ${elevField('lsElev', mode === 'graded' ? 'Начало, мм от нуля участка' : mode === 'fixed' ? 'Верх покрытия, мм от нуля участка' : 'Подъём над землёй, мм', o.elev, 'авто')}
+    ${mode === 'graded' ? elevField('lsElevTo', 'Конец, мм от нуля участка', o.elevTo, 'авто') : ''}
+    ${thickness && o.variant === 'stepping' ? mmField('lsSlabThickness', 'Толщина плиты, мм', pathSlabThickness(o), 40, 300) : ''}`;
+}
 
 // Поля углов и укладки линейного объекта (дорожка; у ограждения — только угол).
 function pathPropsHtml(o, def) {
@@ -1310,6 +1452,7 @@ function pathPropsHtml(o, def) {
         <label class="prop-field"><span>Зазор, мм</span><input id="lsGap" type="number" step="10" min="0" max="2000" value="${P.gap}"></label>
         <label class="prop-field"><span>Шаг от начала, мм</span><input id="lsOffset" type="number" step="10" value="${P.offset}" ${strict ? '' : 'disabled title="Только для строгой укладки"'}></label>
       </div>
+      <label class="check-row"><input type="checkbox" id="lsStaggerSlabs"${o.meta?.staggerSlabs ? ' checked' : ''}><span>Чередовать размер и смещение плит</span></label>
       <label class="prop-field"><span>Выравнивание</span><select id="lsAlign">${options(PATH_ALIGNS, P.align)}</select></label>
       ${strict ? `<label class="check-row"><input type="checkbox" id="lsChecker" ${P.checker ? 'checked' : ''}><span>Тон в шахматном порядке</span></label>` : ''}`;
   } else if (o.variant === 'deck') {
@@ -1333,6 +1476,9 @@ function pathPropsHtml(o, def) {
 }
 
 function bindPathProps(panel, o) {
+  panel.querySelector('#lsStaggerSlabs')?.addEventListener('change', (event) => {
+    mutate(() => { o.meta.staggerSlabs = event.target.checked; });
+  });
   const set = (key, value) => mutate(() => {
     if (value === null || value === undefined || value === '') delete o[key]; else o[key] = value;
   });
@@ -1373,6 +1519,8 @@ const elevField = (id, title, value, placeholder = 'по земле') => `<label
 
 function elevHtml(o) {
   if (!ELEV_KINDS.has(o.kind)) return '';
+  if (o.kind === 'path') return pathLevelFields(o, true);
+  if (['slab', 'board'].includes(o.kind) && !isLevelPath(o)) return '';
   if (o.kind === 'sunken-lounge') {
     return `<div class="prop-grid">${elevField('lsElev', 'Пол лаунжа, мм от нуля участка', o.elev, 'авто')}
       ${elevField('lsElevTo', 'Вход, мм от нуля участка', o.elevTo, 'авто')}</div>
@@ -1421,14 +1569,17 @@ function buildPropsCore(o, def) {
       <div class="prop-grid">
         ${stairsDrop(o) === null ? mmField('lsStRise', 'Высота подъёма, мм', o.height || 0, 0, MAX_STAIR_RISE) : `<div class="prop-row"><span>Перепад</span><strong>${o.height} мм</strong></div>`}
         ${mmField('lsStSteps', 'Ступеней', st.steps, 1, 60, 1)}
-        ${mmField('lsStTread', 'Проступь, мм', st.tread, 200, 800)}
+        ${mmField('lsStTread', 'Проступь, мм', st.tread, 200, 1200)}
         ${mmField('lsStFlight', 'Ширина марша, мм', st.flight, 300, 12000, 50)}
+        ${mmField('lsStLanding', 'Доп. длина площадки, мм', st.landing, 0, 6000, 50)}
       </div>
       <label class="check-row"><input type="checkbox" id="lsStAuto" ${st.auto ? 'checked' : ''}><span>Число ступеней — авто (подступенок ≈ 150 мм)</span></label>
       <label class="check-row"><input type="checkbox" id="lsStCheeks" ${st.cheek ? 'checked' : ''}><span>Боковые подпорные борта</span></label>
       ${st.cheek ? mmField('lsStCheekW', 'Толщина борта, мм', st.cheek, 50, 600) : ''}
       <div class="prop-row"><span>Подступенок</span><strong id="lsStRiser">${Math.round(st.riser)} мм</strong></div>
       <div class="prop-row"><span>Длина в плане × ширина</span><strong>${m(o.h)} × ${m(o.w)} м</strong></div>
+      ${o.meta?.measured ? '<button type="button" id="lsStResample">Считать отметки заново</button>' : ''}
+      ${o.meta?.stairLinks ? '<div class="prop-row"><span>Привязана к площадке или дорожке</span><button type="button" id="lsDetachStair">Отвязать</button></div>' : ''}
       <p class="hint">2h + b = ${blondel} мм${blondel < 600 || blondel > 680 ? ' — удобно 600–660' : ' — удобно'} · стрелка — «вверх»</p>`;
   }
   if (isPlanter(o)) {
@@ -1495,11 +1646,21 @@ function changePlatformSurface(panel, object, changes) {
   });
 }
 
+function keepStairLanding(o, update) {
+  if (!o.meta?.measured) { update(); return; }
+  const before = landscapeWorld(o, 0, -o.h / 2);
+  update();
+  const after = landscapeWorld(o, 0, -o.h / 2);
+  o.x = Math.round(o.x + before.x - after.x);
+  o.y = Math.round(o.y + before.y - after.y);
+}
+
 function bindBuildProps(panel, o) {
   const val = (id) => Number(panel.querySelector(id)?.value);
   const on = (id, fn, ev = 'change') => panel.querySelector(id)?.addEventListener(ev, fn);
   if (o.kind === 'stairs-out') {
     const setMeta = (patch) => { o.meta = { ...(o.meta || {}), ...patch }; };
+    const syncFlight = () => keepStairLanding(o, () => syncStairs(o));
     // Ширина марша сохраняется при смене бортов.
     const keepFlight = (fn) => mutate(() => {
       const flight = stairsInfo(o).flight;
@@ -1509,17 +1670,34 @@ function bindBuildProps(panel, o) {
     });
     on('#lsStRise', () => {
       const v = val('#lsStRise');
-      if (Number.isFinite(v) && v >= 0) mutate(() => { o.height = Math.min(6000, Math.round(v)); syncStairs(o); });
+      if (Number.isFinite(v) && v >= 0) mutate(() => { o.height = Math.min(6000, Math.round(v)); syncFlight(); });
     });
     on('#lsStSteps', () => {
       const v = Math.round(val('#lsStSteps'));
-      if (v >= 1) mutate(() => { setMeta({ steps: Math.min(60, v) }); syncStairs(o); });
+      if (v >= 1) mutate(() => { setMeta({ steps: Math.min(60, v) }); syncFlight(); });
     });
-    on('#lsStAuto', (e) => mutate(() => { setMeta({ steps: e.target.checked ? 0 : stairsInfo(o).steps }); syncStairs(o); }));
+    on('#lsStAuto', (e) => mutate(() => { setMeta({ steps: e.target.checked ? 0 : stairsInfo(o).steps }); syncFlight(); }));
     on('#lsStTread', () => {
       const v = val('#lsStTread');
-      if (v > 0) mutate(() => { setMeta({ tread: Math.min(800, Math.max(200, Math.round(v))) }); syncStairs(o); });
+      if (v > 0) mutate(() => { setMeta({ tread: Math.min(1200, Math.max(200, Math.round(v))) }); syncFlight(); });
     });
+    on('#lsStLanding', () => {
+      const v = val('#lsStLanding');
+      if (Number.isFinite(v)) mutate(() => { setMeta({ landing: Math.min(6000, Math.max(0, Math.round(v))) }); syncFlight(); });
+    });
+    on('#lsStResample', () => {
+      const ground = groundFn(state.project);
+      const a = landscapeWorld(o, 0, o.h / 2);
+      const b = landscapeWorld(o, 0, -o.h / 2);
+      const rest = landscapeObjects().filter((other) => other !== o);
+      const { obj, error } = stairsBetween(a, b, {
+        id: o.id, aLevel: walkingLevel(a, rest, ground), bLevel: walkingLevel(b, rest, ground),
+        width: o.w, variant: o.variant, landing: stairsInfo(o).landing,
+      });
+      if (error) { toast(error, true); return; }
+      mutate(() => Object.assign(o, obj, { meta: { ...obj.meta, cheeks: o.meta.cheeks, cheekW: o.meta.cheekW } }));
+    }, 'click');
+    on('#lsDetachStair', () => mutate(() => { delete o.meta.stairLinks; }), 'click');
     on('#lsStFlight', () => {
       const v = val('#lsStFlight');
       if (v > 0) mutate(() => { o.w = Math.round(v) + stairsInfo(o).cheek * 2; clampSize(o); });
@@ -1574,8 +1752,26 @@ function bindBuildProps(panel, o) {
     });
   }
   if (ELEV_KINDS.has(o.kind)) {
+    on('#lsPathLevel', (e) => mutate(() => {
+      o.meta.pathLevel = e.target.value;
+      delete o.elevTo;
+      if (e.target.value === 'fixed') o.elev = defaultPathElev(o.points[0], o);
+      else if (e.target.value === 'graded') {
+        o.elev = defaultPathElev(o.points[0], o, 25);
+        o.elevTo = defaultPathElev(o.points.at(-1), o, 25);
+      }
+      else delete o.elev;
+    }));
+    on('#lsSlabThickness', () => {
+      const v = val('#lsSlabThickness');
+      if (v >= 40 && v <= 300) mutate(() => { o.meta.slabThickness = Math.round(v); });
+    });
     const setElev = (key, raw) => {
-      const value = normalizeElev(raw);
+      let value = normalizeElev(raw);
+      if (value === null && o.kind === 'path') {
+        if (o.meta?.pathLevel === 'fixed') value = defaultPathElev(o.points[0], o);
+        if (o.meta?.pathLevel === 'graded') value = defaultPathElev(key === 'elevTo' ? o.points.at(-1) : o.points[0], o, 25);
+      }
       if (key === 'elev' && PLATFORM_KINDS.has(o.kind) && o.kind !== 'sunken-lounge') {
         changePlatformSurface(panel, o, { elev: value });
         return;
@@ -1591,7 +1787,7 @@ function bindBuildProps(panel, o) {
         if (value === null) delete o[key]; else o[key] = value;
         if (o.kind === 'stairs-out' && Number.isFinite(next.elevTo)) {
           o.elev = next.elev;
-          applyStairsDrop(o);
+          keepStairLanding(o, () => applyStairsDrop(o));
         }
       });
     };
@@ -1600,13 +1796,14 @@ function bindBuildProps(panel, o) {
     on('#lsAttachStairs', () => {
       const terrain = groundFn(state.project);
       const ground = Math.round(terrain(o.x, o.y) - terrain.siteDatum);
-      const lower = normalizeElev(panel.querySelector('#lsStLower').value) ?? ground;
+      const explicit = normalizeElev(panel.querySelector('#lsStLower').value);
+      const lower = explicit ?? ground;
       const rise = platformTop(o, ground) - lower;
       if (rise < 1 || rise > MAX_STAIR_RISE) { toast('Задайте перепад между площадками от 1 до 6000 мм'); return; }
       openView('landscape');
       closeSheets();
       selectLandscape([]);
-      setTool({ kind: 'place-landscape', lsKind: 'stairs-out', platform: o, stairLevels: { lower, ground } },
+      setTool({ kind: 'place-landscape', lsKind: 'stairs-out', platform: o, stairLevels: { lower, ground, surveyLower: explicit == null } },
         'Нажмите на край террасы, где нужен спуск');
     }, 'click');
   }
@@ -1622,6 +1819,8 @@ function bindBuildProps(panel, o) {
 export function renderLandscapeProps(panel) {
   refreshSectionView();
   if (isSectionTool()) { renderSectionToolProps(panel); return; }
+  if (state.tool?.kind === 'ls-route') { renderOutdoorRouteProps(panel); return; }
+  if (state.tool?.kind === 'ls-flight') { renderFlightProps(panel); return; }
   if (state.tool?.kind === 'draw-landscape') { renderDrawProps(panel); return; }
   if (state.tool?.kind === 'ls-array') { renderArrayProps(panel); return; }
   const objs = selectedObjects();
@@ -1690,8 +1889,9 @@ export function renderLandscapeProps(panel) {
       <div class="prop-row"><span>${escapeHtml(def.group)}</span><span>${def.tall ? 'высокий' : def.cover ? 'покрытие' : ''}</span></div>
       ${variants}
       ${size}
-      ${pathPropsHtml(o, def)}
       ${buildPropsHtml(o, def)}
+      ${pathPropsHtml(o, def)}
+      ${outdoorLightsHtml(o)}
       ${built || (PLATFORM_KINDS.has(o.kind) && o.kind !== 'sunken-lounge' && Number.isFinite(o.elev)) ? '' : `<label class="prop-field"><span>${o.kind === 'sunken-lounge' ? 'Высота спинки, м' : 'Высота, м'}</span><input id="lsHeight" type="number" step="0.1" min="${o.kind === 'sunken-lounge' ? '0.3' : '0'}" max="${o.kind === 'sunken-lounge' ? '2' : '40'}" value="${m(o.height || 0)}"></label>`}
       ${shape ? '' : `<label class="prop-field"><span>Поворот, °</span><input id="lsRot" type="number" step="5" value="${Math.round(o.rotation || 0)}"></label>`}
       <div class="prop-grid">
@@ -1709,6 +1909,7 @@ export function renderLandscapeProps(panel) {
   bindCommon(panel);
   bindPathProps(panel, o);
   bindBuildProps(panel, o);
+  bindOutdoorLights(panel, o);
   bindPlantFill(panel, o);
   const num = (id) => Number(panel.querySelector(id)?.value);
   panel.querySelector('#lsVariant')?.addEventListener('change', (e) => mutate(() => { o.variant = e.target.value; }));
@@ -1726,7 +1927,12 @@ export function renderLandscapeProps(panel) {
   panel.querySelector('#lsH')?.addEventListener('change', applySize);
   panel.querySelector('#lsWidth')?.addEventListener('change', () => {
     const v = num('#lsWidth');
-    if (Number.isFinite(v) && v > 0) mutate(() => { o.width = clampWidth(v * 1000); syncShape(o); });
+    if (Number.isFinite(v) && v > 0) mutate(() => {
+      const followsWidth = o.kind === 'path' && o.variant === 'stepping' && o.slabW === o.width;
+      o.width = clampWidth(v * 1000);
+      if (followsWidth) o.slabW = Math.min(6000, o.width);
+      syncShape(o);
+    });
   });
   panel.querySelector('#lsSmooth')?.addEventListener('change', (e) => mutate(() => {
     if (e.target.checked) o.smooth = true; else delete o.smooth;
@@ -1789,6 +1995,35 @@ export function renderLandscapeProps(panel) {
 }
 
 // Параметры рисования (пока активен инструмент draw-landscape).
+function renderFlightProps(panel) {
+  const tool = state.tool;
+  const o = tool.opts;
+  panel.innerHTML = `
+    <h2>Лестница на участке</h2>
+    <div class="prop-block">
+      <div class="prop-grid">
+        ${mmField('lsFlightWidth', 'Ширина марша, мм', o.width, 500, 12000, 50)}
+        ${mmField('lsFlightLanding', 'Доп. длина площадки, мм', o.landing, 0, 6000, 50)}
+        ${elevField('lsFlightA', 'Начало, мм от нуля участка', o.aLevel, 'авто')}
+        ${elevField('lsFlightB', 'Конец, мм от нуля участка', o.bLevel, 'авто')}
+      </div>
+      <label class="prop-field"><span>Ступени</span><select id="lsFlightMaterial">${variantOptions(landscapeDef('stairs-out'), o.variant)}</select></label>
+      <output id="lsStDrawInfo">${escapeHtml(flightHint(tool))}</output>
+    </div>
+    <button type="button" id="lsFlightCancel">Отмена</button>`;
+  const bind = (id, key, parse) => panel.querySelector('#' + id).addEventListener('change', (e) => {
+    o[key] = parse(e.target.value);
+    e.target.value = o[key] ?? '';
+    updateFlight(tool);
+  });
+  bind('lsFlightWidth', 'width', (v) => Math.min(12000, Math.max(500, Math.round(Number(v) || 2400))));
+  bind('lsFlightLanding', 'landing', (v) => Math.min(6000, Math.max(0, Math.round(Number(v) || 0))));
+  bind('lsFlightA', 'aLevel', normalizeElev);
+  bind('lsFlightB', 'bLevel', normalizeElev);
+  bind('lsFlightMaterial', 'variant', (v) => v);
+  panel.querySelector('#lsFlightCancel').addEventListener('click', () => { cancelTool(); selectObject(null); renderLandscapeLibrary(); });
+}
+
 function renderDrawProps(panel) {
   const tool = state.tool;
   const def = landscapeDef(tool.lsKind);
@@ -1798,6 +2033,7 @@ function renderDrawProps(panel) {
     <div class="prop-block">
       ${def.variants.length > 1 ? `<label class="prop-field"><span>Материал / вариант</span><select id="lsDrawVariant">${variantOptions(def, o.variant)}</select></label>` : ''}
       ${def.shape === 'line' ? `<label class="prop-field"><span>Ширина, м</span><input id="lsDrawWidth" type="number" step="0.05" min="0.05" max="10" value="${m(o.width || def.h)}"></label>` : ''}
+      ${def.kind === 'path' ? pathLevelFields(o) : ''}
       ${PLATFORM_KINDS.has(def.kind) ? elevField('lsDrawElev', 'Отметка поверхности, мм от нуля участка', o.elev) : ''}
       <label class="check-row"><input type="checkbox" id="lsDrawSmooth" ${o.smooth ? 'checked' : ''}><span>Сглаженная (изогнутая)</span></label>
       <div class="prop-row"><span>Сейчас</span><strong id="lsDrawMeasure">${draftMeasure(tool) || '—'}</strong></div>
@@ -1811,8 +2047,25 @@ function renderDrawProps(panel) {
   panel.querySelector('#lsDrawVariant')?.addEventListener('change', (e) => { o.variant = e.target.value; remember(); });
   panel.querySelector('#lsDrawWidth')?.addEventListener('change', (e) => {
     const v = Number(e.target.value);
-    if (Number.isFinite(v) && v > 0) { o.width = clampWidth(v * 1000); remember(); }
+    if (Number.isFinite(v) && v > 0) {
+      o.width = clampWidth(v * 1000);
+      if (o.slabW) o.slabW = Math.min(6000, o.width);
+      remember();
+    }
   });
+  panel.querySelector('#lsPathLevel')?.addEventListener('change', (e) => {
+    o.meta = { ...o.meta, pathLevel: e.target.value };
+    o.elev = null;
+    o.elevTo = null;
+    remember();
+    renderDrawProps(panel);
+  });
+  panel.querySelector('#lsElev')?.addEventListener('change', (e) => {
+    o.elev = normalizeElev(e.target.value);
+    if (def.kind === 'path') o.meta = { ...o.meta, pathLevel: o.meta?.pathLevel || 'terrain' };
+    remember();
+  });
+  panel.querySelector('#lsElevTo')?.addEventListener('change', (e) => { o.elevTo = normalizeElev(e.target.value); remember(); });
   panel.querySelector('#lsDrawElev')?.addEventListener('change', (e) => {
     o.elev = normalizeElev(e.target.value); remember();
   });

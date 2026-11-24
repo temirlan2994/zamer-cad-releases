@@ -24,7 +24,7 @@ import { wallZRange } from './wall-z-range.js';
 import { massBox } from './masses.js';
 import {
   LS_COLORS, PLATFORM_KINDS, curbLines, elevOf, fmtElev, insetPolygon, landscapeDef, lineLayout, loungeEntranceLevel, objectColors, objectOutline, platformTop,
-  objectPath, planterInner, retainingEdges, retainingInfo, ribbonOutline, seededRandom, stairsInfo, steppingSlabs, toWorld,
+  gradedPathLevel, isGradedPath, isLevelPath, objectPath, pathSurfaceThickness, planterInner, retainingEdges, retainingInfo, ribbonOutline, seededRandom, stairTreads, stairsInfo, steppingSlabs, toWorld,
   variantOf, SECTION_DEPTH,
 } from './landscape.js';
 import { levelProject, sortedLevels } from './model.js';
@@ -198,7 +198,7 @@ const WATER = { pool: 1500, 'pool-area': 1500, pond: 700, 'pond-area': 700 };
 const SHELTER_LOOKS = new Set(['gazebo', 'pergola', 'carport', 'greenhouse']);
 const FENCE_LOOKS = new Set(['fence', 'fence-line', 'gate']);
 
-const MAT_BY_VARIANT = { concrete: 'concrete', stone: 'stone', corten: 'metal', wood: 'wood', gabion: 'stone', metal: 'metal' };
+const MAT_BY_VARIANT = { concrete: 'concrete', stone: 'stone', graphite: 'stone', corten: 'metal', wood: 'wood', gabion: 'stone', metal: 'metal' };
 
 // Профиль разреза. line — { points, side?, depth?, name? } или массив точек.
 // side — 'left' | 'right' (куда смотрим по ходу линии), opts.depth — глубина
@@ -294,11 +294,20 @@ export function sectionProfile(project, line, side, opts = {}) {
     // Основание: земля по линии (в сечении) или под центром объекта (в проекции).
     const center = { x: o.x, y: o.y };
     const deck = DECK_KINDS.has(o.kind);
+    const levelPath = isLevelPath(o);
+    const graded = isGradedPath(o);
     const fixed = ((PLATFORM_KINDS.has(o.kind) || o.kind === 'stairs-out') && Number.isFinite(o.elev)) || (PLATFORM_KINDS.has(o.kind) && o.height > 0) || o.kind === 'sunken-lounge';
     const siteDatum = zg.siteDatum ?? 0;
-    const top = fixed ? siteDatum + platformTop(o, zg(center.x, center.y) - siteDatum) : 0;
-    const baseCut = (s) => fixed ? top : groundAtS(s) + elev + lift;
-    const baseProj = () => fixed ? top : zg(center.x, center.y) + elev + lift;
+    const top = levelPath ? siteDatum + elev : fixed ? siteDatum + platformTop(o, zg(center.x, center.y) - siteDatum) : 0;
+    const path = graded ? objectPath(o) : null;
+    const baseCut = (s) => {
+      if (graded) {
+        const point = pointAtStation(frame, s);
+        return siteDatum + gradedPathLevel(o, point.x, point.y, path);
+      }
+      return fixed || levelPath ? top : groundAtS(s) + elev + lift;
+    };
+    const baseProj = () => fixed || levelPath ? top : zg(center.x, center.y) + elev + lift;
     const base = (s, proj) => proj ? baseProj() : baseCut(s);
     const info = { id: o.id, kind: o.kind, title: titleOf(o, def), color: C[0], color2: C[1] || C[0], look };
     if (fixed && (Number.isFinite(o.elev) || o.kind === 'sunken-lounge')) {
@@ -390,21 +399,17 @@ export function sectionProfile(project, line, side, opts = {}) {
     // --- Лестница: ступени-блоки реальной высоты.
     if (look === 'stairs') {
       const st = stairsInfo(o);
-      const n = Math.max(1, st.steps);
-      const t = o.h / n;
       const fw = Math.max(100, st.flight);
       const mat = MAT_BY_VARIANT[o.variant] || 'concrete';
       let any = false;
-      for (let i = 0; i < n; i += 1) {
-        const ly = o.h / 2 - (i + 0.5) * t;
-        const zTop = (i + 1) * st.riser;
-        const poly = [toWorld(o, -fw / 2, ly - t / 2), toWorld(o, fw / 2, ly - t / 2), toWorld(o, fw / 2, ly + t / 2), toWorld(o, -fw / 2, ly + t / 2)];
-        const iv = body(o, poly, 0, zTop, base, { ...info, cat: 'built', mat, title: i === n - 1 ? info.title : '' });
+      for (const { bottom, top: yTop, z: zTop } of stairTreads(o, st)) {
+        const poly = [toWorld(o, -fw / 2, yTop), toWorld(o, fw / 2, yTop), toWorld(o, fw / 2, bottom), toWorld(o, -fw / 2, bottom)];
+        const iv = body(o, poly, 0, zTop, base, { ...info, cat: 'built', mat, title: zTop >= st.rise - 0.1 ? info.title : '' });
         if (iv.length) any = true;
         if (st.cheek > 0) {
           for (const sx of [-1, 1]) {
             const cx = sx * (o.w / 2 - st.cheek / 2);
-            const cp = [toWorld(o, cx - st.cheek / 2, ly - t / 2), toWorld(o, cx + st.cheek / 2, ly - t / 2), toWorld(o, cx + st.cheek / 2, ly + t / 2), toWorld(o, cx - st.cheek / 2, ly + t / 2)];
+            const cp = [toWorld(o, cx - st.cheek / 2, yTop), toWorld(o, cx + st.cheek / 2, yTop), toWorld(o, cx + st.cheek / 2, bottom), toWorld(o, cx - st.cheek / 2, bottom)];
             body(o, cp, 0, zTop + 150, base, { ...info, cat: 'built', mat, title: '' });
           }
         }
@@ -489,22 +494,28 @@ export function sectionProfile(project, line, side, opts = {}) {
         for (const sl of steppingSlabs(o)) {
           const c = Math.cos(sl.angle); const sn = Math.sin(sl.angle);
           const poly = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([ax, ay]) => ({ x: sl.x + (ax * sl.along / 2) * c - (ay * sl.across / 2) * sn, y: sl.y + (ax * sl.along / 2) * sn + (ay * sl.across / 2) * c }));
-          body(o, poly, -10, 50, base, { ...info, cat: 'cover', mat: 'stone' }, { projectedToo: false });
+          const followsGround = o.meta?.pathLevel === 'terrain';
+          const slabBase = followsGround ? () => zg(sl.x, sl.y) + elev : base;
+          const thickness = pathSurfaceThickness(o);
+          body(o, poly, levelPath ? -thickness : followsGround ? 0 : -10, levelPath ? 0 : followsGround ? thickness : 50,
+            slabBase, { ...info, cat: 'cover', mat: 'stone' }, { projectedToo: false });
         }
       } else if (iv.length) {
         // Подиум (отметка над землёй) + слой покрытия; верх — отметка.
         for (const seg of iv) {
           const [a, b] = clipS(seg);
           if (b - a < 1) continue;
-          const top = baseCut;
+          const terrainPath = o.kind === 'path' && o.meta?.pathLevel === 'terrain';
+          const thickness = levelPath || terrainPath || graded ? pathSurfaceThickness(o) : spec.t;
+          const top = terrainPath ? (s) => baseCut(s) + thickness : baseCut;
           if (spec.mat === 'wood' && deckH > 60) {
             // Настил: доски сверху, под ними — лаги/опоры (пусто).
             add({ ...info, id: `${o.id}:under`, title: '', cat: 'fill', cut: true, depth: 0, shape: 'poly', mat: 'void', pts: band(a, b, (s) => groundAtS(s) + lift, (s) => top(s) - DECK_BOARDS), s0: a, s1: b });
             add({ ...info, cat: 'cover', cut: true, depth: 0, shape: 'poly', mat: 'wood', pts: band(a, b, (s) => top(s) - DECK_BOARDS, top), s0: a, s1: b });
             continue;
           }
-          if (elev > 0) add({ ...info, id: `${o.id}:podium`, title: '', cat: 'fill', cut: true, depth: 0, shape: 'poly', mat: 'soil', color: LS_COLORS.soil[1], pts: band(a, b, (s) => groundAtS(s) + lift, (s) => top(s) - spec.t), s0: a, s1: b });
-          add({ ...info, cat: 'cover', cut: true, depth: 0, shape: 'poly', mat: spec.mat, pts: band(a, b, (s) => top(s) - spec.t, top), s0: a, s1: b });
+          if (elev > 0 && !levelPath && !graded) add({ ...info, id: `${o.id}:podium`, title: '', cat: 'fill', cut: true, depth: 0, shape: 'poly', mat: 'soil', color: LS_COLORS.soil[1], pts: band(a, b, (s) => groundAtS(s) + lift, (s) => top(s) - spec.t), s0: a, s1: b });
+          add({ ...info, cat: 'cover', cut: true, depth: 0, shape: 'poly', mat: spec.mat, pts: band(a, b, (s) => top(s) - thickness, top), s0: a, s1: b });
         }
         if (elev !== 0 || deckH >= 200) {
           const [a0, a1] = clipS([iv[0][0], iv[iv.length - 1][1]]);

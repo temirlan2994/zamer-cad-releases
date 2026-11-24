@@ -162,7 +162,7 @@ export function syncMobileBar() {
   el('moreBtn')?.setAttribute('aria-expanded', String(has(MORE)));
   // Инструмент включён, а «Готово» в рядах не видно — своя кнопка на плане.
   const done = el('toolDone');
-  if (done) done.hidden = !(isPhone() && state.tool && !has(DRAW) && !has(CAT) && !anySheet());
+  if (done) done.hidden = !(isPhone() && state.tool && state.tool.kind !== 'ls-flight' && !has(DRAW) && !has(CAT) && !anySheet());
   syncSheetHead();
   syncMobileCard();
 }
@@ -319,8 +319,8 @@ function doneButton() {
 
 // Инструменты ландшафта, которые заканчиваются кнопкой в «Свойствах»
 // (разрез, массив, контур): «Готово» нажимает её.
-const FINISH_TOOLS = ['ls-section', 'ls-array', 'draw-landscape'];
-const FINISH_BUTTONS = '#lsSecFinish, #lsArApply, #lsDrawFinish';
+const FINISH_TOOLS = ['ls-section', 'ls-array', 'draw-landscape', 'ls-route'];
+const FINISH_BUTTONS = '#lsSecFinish, #lsArApply, #lsDrawFinish, #lsRouteFinish';
 function toolFinishButton() {
   if (!FINISH_TOOLS.includes(state.tool?.kind)) return null;
   if (state.propsTab !== 'props') setPropsTab('props'); // кнопка — в «Свойствах» инструмента
@@ -337,6 +337,7 @@ function finishTool() {
   if (draft && !draft.hidden) { draft.click(); return; }
   const tool = state.tool;
   toolFinishButton()?.click();
+  if (state.tool === tool && tool?.kind === 'ls-route') return;
   if (state.tool && state.tool === tool && !finishWallChain()) cancelTool(); // закончить не вышло — выйти
   document.body.classList.remove(DRAW, CAT);
   closeAll();

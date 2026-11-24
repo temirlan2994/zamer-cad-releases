@@ -229,7 +229,7 @@ const RAW = [
   // (ступени × проступь), height — высота подъёма; «вверх» — к −Y в осях
   // объекта. meta: steps (0 — авто по подступенку ~150), tread, cheeks, cheekW.
   { kind: 'stairs-out', layer: 'low', title: 'Лестница наружная', cat: 'site', group: 'Лестницы и бордюры', shape: 'rect', w: 1500, h: 1500, min: [500, 200], max: [12000, 48000], height: 750, cover: true, look: 'stairs', colors: 'concrete',
-    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c'])],
+    variants: [v('concrete', 'Бетон'), v('stone', 'Камень', ['#cfcac0', '#a39d90', '#e0dcd3']), v('wood', 'Дерево', ['#b39b82', '#8d7562', '#c8b39c']), v('graphite', 'Тёмный камень', ['#464b4e', '#272b2d', '#565d60'])],
     meta: { steps: 0, tread: 300, cheeks: false, cheekW: 150 }, keywords: 'ступени лестница терраса подъём марш' },
   // Бордюр (лента по линии): width — ширина, height — над землёй.
   { kind: 'curb', title: 'Бордюр', cat: 'site', group: 'Лестницы и бордюры', shape: 'line', w: 6000, h: 100, min: [50, 50], max: [500000, 400], height: 150, look: 'curb', colors: 'concrete',
@@ -438,7 +438,36 @@ function createCallout(def, x, y, opts) {
 // покрытия; у лестницы и стенки — низ). У лестницы ещё elevTo — отметка
 // верха. Нет поля — объект на земле, как раньше.
 export const PLATFORM_KINDS = new Set(['sunken-lounge', 'pad', 'pad-round', 'terrace-deck', 'deck-area', 'paving-area', 'gravel-area']);
-export const ELEV_KINDS = new Set([...PLATFORM_KINDS, 'lawn-area', 'path', 'stairs-out', 'retaining-wall']);
+export const ELEV_KINDS = new Set([...PLATFORM_KINDS, 'lawn-area', 'path', 'slab', 'board', 'lamp', 'stairs-out', 'retaining-wall']);
+
+export const isLevelPath = (o) => ['path', 'slab', 'board'].includes(o.kind) && o.meta?.pathLevel === 'fixed' && Number.isFinite(o.elev);
+export const isGradedPath = (o) => o.kind === 'path' && o.meta?.pathLevel === 'graded' &&
+  Number.isFinite(o.elev) && Number.isFinite(o.elevTo);
+
+// Отметка между концами проектного уклона, в нуле участка.
+export function gradedPathLevel(o, x, y, points = o.points) {
+  let position = 0;
+  let distance = Infinity;
+  let length = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]; const b = points[i];
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const span = Math.hypot(dx, dy);
+    if (!span) continue;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (span * span)));
+    const error = Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
+    if (error < distance) { distance = error; position = length + t * span; }
+    length += span;
+  }
+  return o.elev + (length ? position / length : 0) * (o.elevTo - o.elev);
+}
+
+export const pathSlabThickness = (o) => clampNum(o.meta?.slabThickness, 40, 300, 40);
+export function pathSurfaceThickness(o) {
+  if (o.kind !== 'path') return o.height;
+  if (o.variant === 'stepping') return pathSlabThickness(o);
+  return o.variant === 'deck' ? 120 : 25;
+}
 
 // Ground at the platform centre is relative to the site datum, in millimetres.
 export function platformTop(o, ground = 0) {
@@ -466,7 +495,7 @@ function applyElev(obj, opts) {
   if (!ELEV_KINDS.has(obj.kind)) return;
   const e = normalizeElev(opts.elev);
   if (e !== null) obj.elev = e;
-  if (obj.kind === 'stairs-out' || obj.kind === 'sunken-lounge') {
+  if (obj.kind === 'stairs-out' || obj.kind === 'sunken-lounge' || obj.kind === 'path') {
     const t = normalizeElev(opts.elevTo);
     if (t !== null) obj.elevTo = t;
   }
@@ -508,13 +537,15 @@ export const STAIR_RISER = 150; // подступенок по умолчани�
 export const STAIR_TREAD = 300; // проступь по умолчанию, мм
 
 function stairsMeta(meta = {}) {
-  return {
+  const result = {
     ...meta,
     steps: clampNum(meta.steps, 0, 60, 0),
-    tread: clampNum(meta.tread, 200, 800, STAIR_TREAD),
+    tread: clampNum(meta.tread, 200, 1200, STAIR_TREAD),
     cheeks: meta.cheeks === true,
     cheekW: clampNum(meta.cheekW, 50, 600, 150),
   };
+  if (meta.landing != null) result.landing = clampNum(meta.landing, 0, 6000, 0);
+  return result;
 }
 
 // Параметры лестницы: число ступеней (авто — по подступенку ~150 мм),
@@ -522,16 +553,30 @@ function stairsMeta(meta = {}) {
 export function stairsInfo(o) {
   const m = stairsMeta(o.meta || {});
   const rise = Math.max(0, Number(o.height) || 0);
-  const steps = m.steps > 0 ? m.steps : Math.max(1, Math.round(rise / STAIR_RISER));
+  const steps = m.steps > 0 ? m.steps : Math.min(60, Math.max(1, Math.round(rise / STAIR_RISER)));
   const cheek = m.cheeks ? Math.min(m.cheekW, Math.max(0, (o.w - 300) / 2)) : 0;
-  return { steps, riser: rise / steps, tread: m.tread, cheek, flight: o.w - cheek * 2, auto: !(m.steps > 0), rise };
+  const landing = steps >= 2 ? m.landing || 0 : 0;
+  return { steps, riser: rise / steps, tread: m.tread, landing, cheek, flight: o.w - cheek * 2, auto: !(m.steps > 0), rise };
 }
 
-// Длина лестницы в плане = ступени × проступь.
+// От нижней ступени к верхней. План, 3D и разрез используют одни интервалы.
+export function stairTreads(o, info = stairsInfo(o)) {
+  const { steps, landing, riser } = info;
+  const extra = Math.min(landing, Math.max(0, o.h - steps * 200));
+  const depth = (o.h - extra) / steps;
+  const middle = Math.floor(steps / 2) - 1;
+  return Array.from({ length: steps }, (_, i) => {
+    const bottom = o.h / 2 - i * depth - (i > middle ? extra : 0);
+    return { bottom, top: bottom - depth - (i === middle ? extra : 0), z: (i + 1) * riser };
+  });
+}
+
 export function syncStairs(o) {
   const def = landscapeDef(o.kind);
-  const { steps, tread } = stairsInfo(o);
-  o.h = Math.min(def.max.h, Math.max(def.min.h, steps * tread));
+  const { steps, tread, landing } = stairsInfo(o);
+  const adjusted = Math.min(tread, Math.floor((def.max.h - landing) / steps));
+  if (adjusted !== tread) o.meta = { ...o.meta, tread: adjusted };
+  o.h = Math.max(def.min.h, steps * adjusted + landing);
   return o;
 }
 
@@ -769,6 +814,7 @@ export function cloneLandscapeObject(o, dx = 0, dy = 0) {
   const copy = JSON.parse(JSON.stringify(o));
   copy.id = makeLandscapeId();
   delete copy.locked;
+  if (copy.meta?.stairLinks) delete copy.meta.stairLinks;
   return translateObject(copy, dx, dy);
 }
 
@@ -1047,8 +1093,8 @@ export function resizeObject(obj, w, h = w) {
   clampSize(obj, def);
   if (obj.kind === 'stairs-out') {
     // Длина лестницы меняет проступь; длина — снова кратна ступеням.
-    const { steps } = stairsInfo(obj);
-    obj.meta = { ...stairsMeta(obj.meta), tread: clampNum(obj.h / steps, 200, 800, STAIR_TREAD) };
+    const { steps, landing } = stairsInfo(obj);
+    obj.meta = { ...stairsMeta(obj.meta), tread: clampNum((obj.h - landing) / steps, 200, 1200, STAIR_TREAD) };
     syncStairs(obj);
   }
   return syncRadius(obj, def);
@@ -1090,6 +1136,7 @@ export function normalizeLandscapeObject(raw) {
       locked: raw.locked === true,
       curb: raw.curb,
       elev: raw.elev,
+      elevTo: raw.elevTo,
       ...(def.shape === 'line' ? pathParams(raw, points.length) : {}),
     });
   }

@@ -143,7 +143,7 @@ function mul(a, b) {
   return o;
 }
 
-export function drawSceneGL(glState, cam, width, height) {
+export function drawSceneGL(glState, cam, width, height, background = [0.9, 0.93, 0.96]) {
   const gl = glState.gl;
   const c = cameraBasis(cam, width, height);
   const worldPerPx = cam.dist / c.focal;
@@ -155,7 +155,7 @@ export function drawSceneGL(glState, cam, width, height) {
     : orthographic(-halfW, halfW, -halfH, halfH, 10, far);
   const mvp = mul(projection, lookAt(c.eye, cam.target));
   gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-  gl.clearColor(0.9, 0.93, 0.96, 1);
+  gl.clearColor(...background, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(glState.prog);
   gl.uniformMatrix4fv(glState.uMVP, false, new Float32Array(mvp));

@@ -8,7 +8,7 @@
 
 import {
   curbLines, isPathShape, landscapeDef, objectAreaM2, objectLengthM, objectOutline, objectPath, planterInner, planterWall,
-  fmtElev, pointAlong, pointInObject, polylineLength, retainingEdges, retainingInfo, stairsInfo, steppingSlabs, toWorld, variantOf,
+  fmtElev, pointAlong, pointInObject, polylineLength, retainingEdges, retainingInfo, stairTreads, stairsInfo, steppingSlabs, toWorld, variantOf,
 } from './landscape.js';
 import { calloutDxf } from './landscape-callout.js';
 import { SECTION_DXF_LAYER, sectionPlanDxfEntities } from './landscape-section.js';
@@ -112,7 +112,7 @@ const sizeText = (o, def) => {
   }
   if (o.kind === 'stairs-out') {
     const st = stairsInfo(o);
-    return `${st.steps} ступ. ${Math.round(st.riser)}×${st.tread} мм, марш ${fmt(st.flight / 1000, 2)} м, подъём ${fmt(st.rise / 1000, 2)} м${st.cheek ? ', с бортами' : ''}`;
+    return `${st.steps} ступ. ${Math.round(st.riser)}×${st.tread} мм, марш ${fmt(st.flight / 1000, 2)} м, подъём ${fmt(st.rise / 1000, 2)} м${st.landing ? ', с площадкой' : ''}${st.cheek ? ', с бортами' : ''}`;
   }
   if (o.kind === 'planter-box') return `${fmt(o.w / 1000, 1)} × ${fmt(o.h / 1000, 1)} м, борт ${planterWall(o)}×${Math.round(o.height || 0)} мм`;
   if (o.kind === 'planter-area') return `контур ${fmt(objectLengthM(o), 1)} м, борт ${planterWall(o)}×${Math.round(o.height || 0)} мм`;
@@ -268,9 +268,7 @@ export function landscapeDxfEntities(site) {
       // Лестница: габарит + рёбра ступеней.
       out.push(...closedLines(objectOutline(o), 'lsPaths'));
       const st = stairsInfo(o);
-      const t = o.h / st.steps;
-      for (let i = 1; i < st.steps; i += 1) {
-        const y = o.h / 2 - i * t;
+      for (const { bottom: y } of stairTreads(o, st).slice(1)) {
         const a = toWorld(o, -o.w / 2 + st.cheek, y); const b = toWorld(o, o.w / 2 - st.cheek, y);
         out.push({ type: 'line', layer: 'lsPaths', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
       }

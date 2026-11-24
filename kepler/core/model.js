@@ -281,6 +281,7 @@ export function fileDataV6(project) {
 // ландшафт, рельеф, подложка, варианты. Пустой «Новый дом» — false.
 export function hasContent(project) {
   if (!project || typeof project !== 'object') return false;
+  if (project.fileHistoryId) return true;
   const levels = Array.isArray(project.levels) ? project.levels : [];
   if (levels.length > 1) return true;
   if (levels.some((l) => l?.rooms?.length || l?.walls?.length || l?.items?.length || l?.openings?.length || l?.slabOpenings?.length)) return true;
@@ -568,6 +569,8 @@ function cleanSite(site) {
 export function normalizeProject(data) {
   data.name = normalizeProjectName(data.name);
   data.revision = Number(data.revision) || 0;
+  delete data.projectHistory;
+  if (typeof data.fileHistoryId !== 'string' || !/^fh[a-z0-9]{6,32}$/.test(data.fileHistoryId)) delete data.fileHistoryId;
   const levels = Array.isArray(data.levels) ? data.levels.filter(isObj) : [];
   data.levels = levels.map((l, i) => {
     const content = normalizeLevelContent(l);

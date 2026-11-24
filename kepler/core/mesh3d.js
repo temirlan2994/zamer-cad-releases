@@ -2189,7 +2189,7 @@ export function shownRoofs(project, mode = 'all') {
 
 export function buildHouseMesh(project, {
   roof = false, site = false, terrainScale = 1, landscape = true, furniture = false, levels: levelMode = 'all',
-  masses = false, facades = true, facadeApertures = [], roofs = true,
+  masses = false, facades = true, facadeApertures = [], roofs = true, evening = false,
 } = {}) {
   const faces = [];
   const levels = sortedLevels(project);
@@ -2226,7 +2226,7 @@ export function buildHouseMesh(project, {
   if (roofs && project.roofs?.length) faces.push(...roofFaces(project, shownRoofs(project, levelMode)));
   if (site) faces.push(...siteFaces(project, { terrainScale, landscape }));
   // Благоустройство (core/mesh3d-landscape.js): деревья, покрытия, вода, постройки.
-  if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale)));
+  if (site && landscape) faces.push(...landscapeFaces(project, terrainHeightFn(project, terrainScale), { evening }));
   if (masses || facades) {
     const list = (project.masses || []).filter((m) => m.facadeKind ? facades && (levelMode === 'all' || levels.some((l) =>
       shown.has(l.id) && m.z0 < l.elevation + l.height && m.z0 + m.h > l.elevation)) : masses);

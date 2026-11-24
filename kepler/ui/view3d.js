@@ -80,7 +80,7 @@ const cam = {
   yaw: -2.2, pitch: 0.62, dist: 25000, eyeDist: 50000,
   projection: 'orthographic', target: { x: 0, y: 0, z: 1500 },
 };
-const layerPreferences = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true };
+const layerPreferences = { roof: true, site: true, terrainScale: 1, landscape: true, furniture: true, levels: 'all', masses: true, evening: false };
 let opts = layerPreferences;
 let interior = null;
 const LAYERS_KEY = 'kepler-3d-layers'; // запомненные слои: мебель, этажи, массы
@@ -96,6 +96,7 @@ function loadLayers() {
     if (raw && typeof raw.roof === 'boolean') opts.roof = raw.roof;
     if (raw && LEVEL_MODES.has(raw.levels)) opts.levels = raw.levels;
     if (raw && typeof raw.masses === 'boolean') opts.masses = raw.masses;
+    if (raw && typeof raw.evening === 'boolean') opts.evening = raw.evening;
     if (raw && ['perspective', 'orthographic'].includes(raw.projection)) cam.projection = raw.projection;
   } catch { /* нет хранилища — по умолчанию */ }
 }
@@ -105,7 +106,7 @@ function saveLayers() {
   try {
     const prev = JSON.parse(localStorage.getItem(LAYERS_KEY) || 'null') || {}; // и флажок «Магнит масс» (ui/mass3d.js)
     localStorage.setItem(LAYERS_KEY, JSON.stringify({
-      ...prev, roof: opts.roof, furniture: opts.furniture, levels: opts.levels, masses: opts.masses,
+      ...prev, roof: opts.roof, furniture: opts.furniture, levels: opts.levels, masses: opts.masses, evening: opts.evening,
       projection: frontFacade?.previous.projection ?? cam.projection,
     }));
   } catch { /* нет хранилища */ }
@@ -337,12 +338,18 @@ function selectionOverlay() {
 const groundShown = (f) => (f.kind !== 'massUnder' && f.kind !== 'massLine') ||
   (state.selection?.type === 'mass' && state.selection.id === f.massId);
 
+function sceneColor(face) {
+  const color = faceColor(face);
+  if (!opts.evening || face.emissive || face.kind?.startsWith('overlay')) return color;
+  return mixHex(color, '#1c2542', 0.58);
+}
+
 function uploadGeometry() {
   if (!gl) return;
   geomDirty = false;
   for (const set of [glState.buffers, glState.under]) if (set) for (const b of Object.values(set)) gl.deleteBuffer(b.buf);
   // Подземная часть масс — отдельно: рисуется сквозь землю (GREATER).
-  glState.buffers = sceneBuffers(gl, faces.filter((f) => f.kind !== 'massUnder' && groundShown(f)), faceColor, faceAlpha);
+  glState.buffers = sceneBuffers(gl, faces.filter((f) => f.kind !== 'massUnder' && groundShown(f)), sceneColor, faceAlpha);
   glState.under = sceneBuffers(gl, faces.filter((f) => f.kind === 'massUnder' && groundShown(f)), faceColor, faceAlpha);
   uploadOverlay();
 }
@@ -365,7 +372,7 @@ function renderGl(canvas) {
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
   }
-  drawSceneGL(glState, cam, width, height);
+  drawSceneGL(glState, cam, width, height, opts.evening ? [0.11, 0.15, 0.23] : undefined);
 }
 
 // ---------------------------------------------------------------- canvas 2D
@@ -381,8 +388,8 @@ function render2d(canvas) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const sky = ctx.createLinearGradient(0, 0, 0, height);
-  sky.addColorStop(0, '#dfe9f5');
-  sky.addColorStop(1, '#f7f9fb');
+  sky.addColorStop(0, opts.evening ? '#171d31' : '#dfe9f5');
+  sky.addColorStop(1, opts.evening ? '#303c55' : '#f7f9fb');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, width, height);
 
@@ -415,7 +422,7 @@ function render2d(canvas) {
     }
     if (behind) continue;
     const light = face.flat ? 1 : 0.6 + 0.4 * Math.max(0, dot(n, LIGHT));
-    const [r, g, b] = hexRgb(faceColor(face));
+    const [r, g, b] = hexRgb(sceneColor(face));
     const edgePts = Array.isArray(face.edges) ? face.edges.map(([a0, b0]) => [a0, b0].map((raw) => {
       return projectPoint(cam, width, height, raw);
     })) : null;
@@ -807,6 +814,8 @@ function syncLayerControls() {
   if (lv) lv.value = opts.levels;
   const ms = el('v3Masses');
   if (ms) ms.checked = opts.masses;
+  const evening = el('v3Evening');
+  if (evening) evening.checked = opts.evening;
 }
 
 function syncCameraControls() {
@@ -1790,6 +1799,7 @@ export function bind3d() {
   el('v3Roof')?.addEventListener('change', (e) => set3dRoofVisibility(e.target.checked));
   el('v3Site')?.addEventListener('change', (e) => { opts.site = e.target.checked; refresh3d(); });
   el('v3Landscape')?.addEventListener('change', (e) => { opts.landscape = e.target.checked; refresh3d(); });
+  el('v3Evening')?.addEventListener('change', (e) => { opts.evening = e.target.checked; saveLayers(); refresh3d(); });
   loadLayers();
   syncLayerControls();
   el('v3Furniture')?.addEventListener('change', (e) => {

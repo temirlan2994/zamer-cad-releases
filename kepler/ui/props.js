@@ -188,7 +188,7 @@ export function renderProps() {
   renderProjectProps(panel);
 }
 
-const landscapeToolActive = () => ['ls-section', 'draw-landscape', 'ls-array'].includes(state.tool?.kind);
+const landscapeToolActive = () => ['ls-section', 'draw-landscape', 'ls-array', 'ls-flight', 'ls-route'].includes(state.tool?.kind);
 
 // «Участок» и «Ландшафт» без выбора: свои настройки режима, а настройки вида —
 // свёрнутой секцией «Вид: …» под ними (раскрыта ли — помнится).

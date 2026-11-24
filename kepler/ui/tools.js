@@ -56,6 +56,8 @@ export function setHint(text) {
 }
 
 export function setTool(tool, hint) {
+  const profile = el('lsRouteProfile');
+  if (profile) profile.hidden = true;
   // Инструмент плана этажа на «Плане крыши» — назад к плану этажа.
   if (isRoofPlan() && tool && tool.kind !== 'roof' && tool.kind !== 'align-view') {
     state.roofPlan = false;
@@ -79,6 +81,8 @@ export function setTool(tool, hint) {
 }
 
 export function cancelTool() {
+  const profile = el('lsRouteProfile');
+  if (profile) profile.hidden = true;
   const wasOpening = state.tool?.kind === 'place-opening';
   state.tool = null;
   state.draft = null;

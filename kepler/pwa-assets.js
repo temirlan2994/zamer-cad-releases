@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "dda4f283a7c21b42",
+  "version": "6c60b73e9e3eb81c",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -107,6 +107,8 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/opening-snap3d.js",
     "./core/opening-spacing.js",
     "./core/ortho-grid.js",
+    "./core/outdoor-route.js",
+    "./core/outdoor-stair-links.js",
     "./core/path-geometry.js",
     "./core/pdf.js",
     "./core/pick3d.js",
@@ -230,6 +232,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/object-gizmo3d.js",
     "./ui/opening-library.js",
     "./ui/opening3d.js",
+    "./ui/outdoor-route.js",
     "./ui/plan-actions.js",
     "./ui/plan-grids.js",
     "./ui/plan-landscape.js",
@@ -237,6 +240,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/plan-roofs.js",
     "./ui/plan-section.js",
     "./ui/plan-shadows.js",
+    "./ui/project-history.js",
     "./ui/project-name.js",
     "./ui/project-route.js",
     "./ui/project-thumbnail.js",

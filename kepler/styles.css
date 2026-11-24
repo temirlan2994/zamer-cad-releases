@@ -2047,6 +2047,9 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 .projects-save { display: flex; gap: 8px; margin: 10px 0; }
 .projects-save input { flex: 1; min-width: 0; }
+.project-recovery { margin: 10px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.project-recovery .prj-ver { margin-top: 4px; }
+.project-recovery button { min-height: 36px; }
 .project-search { display: flex; align-items: stretch; gap: 6px; }
 .project-search input {
   width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px;
@@ -2124,6 +2127,31 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 
 /* --- Ландшафт: каталог слева (ui/landscape.js) --- */
 .library-landscape h2 { margin-bottom: 6px; }
+.ls-quick-tools:not([hidden]) {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0;
+}
+.ls-quick-tools button { padding: 6px; min-height: 34px; font-size: 12px; }
+.ls-quick-tools button:last-child { grid-column: 1 / -1; }
+.ls-quick-tools .ls-route-start { grid-column: 1 / -1; color: var(--accent); font-weight: 650; }
+.ls-route-profile:not([hidden]) {
+  position: absolute; z-index: 51; left: 50%; bottom: 72px; width: min(460px, calc(100% - 24px));
+  transform: translateX(-50%);
+  padding: 6px 8px; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); box-shadow: var(--shadow);
+}
+.ls-route-profile button { font-size: 12px; }
+.ls-route-profile > span { margin-left: 8px; color: var(--muted); font-size: 11px; }
+.ls-route-profile svg { display: block; width: 100%; max-height: 108px; touch-action: none; }
+.ls-route-profile svg.folded { display: none; }
+.ls-route-profile polyline { fill: none; stroke-width: 2; pointer-events: none; }
+.ls-profile-ground { stroke: var(--muted); stroke-dasharray: 5 4; }
+.ls-profile-built { stroke: var(--accent); }
+.ls-route-profile circle { fill: var(--surface); stroke: var(--accent); stroke-width: 2; cursor: ns-resize; }
+.ls-route-profile text { fill: var(--text); font-size: 11px; text-anchor: middle; pointer-events: none; }
+@media (max-width: 640px) {
+  .ls-route-profile:not([hidden]) { bottom: 106px; }
+  .ls-route-profile svg { max-height: 82px; }
+}
 .ls-group {
   grid-column: 1 / -1;
   margin: 6px 0 0;

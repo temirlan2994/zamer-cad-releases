@@ -32,7 +32,7 @@
     <div class="app" inert>
       <!-- Файлы и общие действия проекта. -->
       <header class="topbar">
-        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.12">v0.4.12</span></div>
+        <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.13">v0.4.13</span></div>
         <button type="button" id="menuBtn" class="project-home" title="Открыть список проектов"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5h7l2 2h8v12H3z"/><path d="M3 10h17"/></svg><span>Проекты</span></button>
         <span class="project-divider" aria-hidden="true">/</span>
         <input id="projectName" class="project-name" value="Новый дом" maxlength="200" aria-label="Название проекта" />
@@ -231,6 +231,12 @@
           <div class="library-furniture library-landscape" id="landscapeBar" hidden>
             <h2>Ландшафт</h2>
             <input id="lsSearch" class="furn-search" type="search" placeholder="Найти на участке" aria-label="Поиск по ландшафту" />
+            <div class="ls-quick-tools" id="lsQuickTools" role="group" aria-label="Лестницы и дорожки">
+              <button type="button" class="ls-route-start" data-ls-quick="route">Маршрут по участку</button>
+              <button type="button" data-ls-quick="stairs">Лестница</button>
+              <button type="button" data-ls-quick="terrain">Дорожка</button>
+              <button type="button" data-ls-quick="floating">Плиты над водой</button>
+            </div>
             <div class="furniture-body">
               <div class="catalog-category-list" id="lsTabs" role="group" aria-label="Категории ландшафта"></div>
               <div class="furniture-items ls-items" id="lsItems"></div>
@@ -333,6 +339,7 @@
               <label class="check-row" title="Скройте крыши, чтобы работать с интерьером"><input type="checkbox" id="v3Roof" checked><span>Крыша</span></label>
               <label class="check-row"><input type="checkbox" id="v3Site" checked><span>Участок</span></label>
               <label class="check-row"><input type="checkbox" id="v3Landscape" checked><span>Ландшафт</span></label>
+              <label class="check-row"><input type="checkbox" id="v3Evening"><span>Вечернее освещение</span></label>
               <label class="check-row"><input type="checkbox" id="v3Furniture" checked><span>Мебель</span></label>
               <label class="check-row" id="v3MassesWrap" title="Массы — концептуальные боксы формы дома (инструмент «Масса», M)" hidden><input type="checkbox" id="v3Masses" checked><span>Массы и отделка фасада</span></label>
               <label class="check-row" id="v3MassSnapWrap" title="Магнит масс: блоки липнут к граням соседних масс, отметкам этажей и земле · Alt или Shift при перетаскивании — без магнита" hidden><input type="checkbox" id="v3MassSnap" checked><span>Магнит масс</span></label>
@@ -358,6 +365,11 @@
           <!-- Открытый лист (двойной клик в «Листах») — ui/sheet-view.js. -->
           <div class="sheet-view" id="sheetView" role="dialog" aria-label="Лист" hidden></div>
           <div class="ls-sun" id="lsSunBar" role="group" aria-label="Тени по солнцу"></div>
+          <div id="lsRouteProfile" class="ls-route-profile" hidden>
+            <button type="button" aria-expanded="true" aria-controls="lsRouteGraph">Профиль маршрута</button>
+            <span></span>
+            <svg id="lsRouteGraph" viewBox="0 0 500 108" role="img" aria-label="Профиль земли и маршрута. Отметки точек можно перетащить."></svg>
+          </div>
           <div class="solar-legend" id="solarLegend" role="status" aria-live="polite" hidden></div>
           <!-- Телефон: «Вписать» — круглая кнопка на плане (колонки инструментов нет). -->
           <button type="button" class="fit-fab" id="fitFab" aria-label="Вписать"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg></button>
@@ -438,7 +450,7 @@
     <div class="start-screen" id="startScreen" hidden>
       <div class="start-card startup-card" role="dialog" aria-modal="true" aria-labelledby="startupTitle">
         <section class="startup-view startup-auth" id="startAuthView" hidden>
-          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.12">v0.4.12</span></div>
+          <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.13">v0.4.13</span></div>
           <div class="startup-auth-copy">
             <div>
               <h1 id="startupTitle">Ваши проекты</h1>
@@ -459,7 +471,7 @@
         <section class="startup-view startup-projects" id="startProjectsView" hidden>
           <div class="start-head startup-projects-head">
             <div>
-              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.12">v0.4.12</span></div>
+              <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="8" fill="#d4ee6f"/><g stroke="#1e302c" stroke-width="1.9" fill="none" stroke-linejoin="round"><path d="M5.5 17.5V9l8.5-4 8.5 4v9l-8.5 5-8.5-5.5Z"/><path d="m6 9 8 4.3 8-4.3m-8 4.3v9m-4.1-11.2 8.2-4.3"/></g></svg>kep•ler <span>3D</span><span class="app-version" aria-label="Версия 0.4.13">v0.4.13</span></div>
               <h1 id="startupProjectsTitle">Ваши проекты</h1>
             </div>
             <div class="startup-head-actions">
@@ -496,6 +508,7 @@
             </div>
             <div class="startup-project-grid" id="startRecentProjects"></div>
             <button class="project-more" id="startProjectMore" type="button" aria-controls="startRecentProjects" hidden>Показать ещё</button>
+            <button class="project-more" id="startLegacyBackups" type="button" aria-controls="startRecentProjects" aria-expanded="false" hidden></button>
           </section>
 
           <section class="startup-section" id="startExamplesSection">
@@ -548,12 +561,17 @@
           <input id="prjNote" type="text" maxlength="80" placeholder="Подпись версии (необязательно)" aria-label="Подпись версии" />
           <button id="prjSave" class="primary" type="button">Сохранить версию</button>
         </div>
+        <section class="project-recovery" id="projectRecovery" aria-labelledby="projectRecoveryTitle" hidden>
+          <strong id="projectRecoveryTitle">История восстановления этого проекта</strong>
+          <div id="projectRecoveryRows"></div>
+        </section>
         <div class="project-search" id="projectFilter" hidden>
           <input id="projectSearch" type="search" placeholder="Найти проект по названию" aria-label="Найти проект в списке" aria-controls="projectsList" />
           <button id="projectClear" type="button" aria-label="Очистить поиск проектов" hidden>Сбросить</button>
         </div>
         <p class="hint" id="projectSearchStatus" role="status"></p>
         <div class="projects-list" id="projectsList"></div>
+        <button class="project-more" id="projectLegacyBackups" type="button" aria-controls="projectsList" aria-expanded="false" hidden></button>
       </div>
     </div>
 

@@ -1,6 +1,7 @@
 // e2e панели «Проекты» (режим «в браузере»: IndexedDB).
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { startApp, openSample } from './helpers.mjs';
 
 describe('проекты в браузере', () => {
@@ -48,6 +49,94 @@ describe('проекты в браузере', () => {
     await page.click('[data-act="delete"]');
     await page.waitForSelector('#projectsList:has-text("Пока ничего не сохранено")');
   });
+});
+
+it('снимок остаётся в истории одного проекта, переносится в файле и восстанавливается обратно', async () => {
+  const app = await startApp();
+  const { page } = app;
+  try {
+    await openSample(page);
+    const editHeight = (value) => page.evaluate(async (height) => {
+      const { tweak } = await import('./ui/store.js');
+      tweak(() => { window.__kepler.state.project.levels[0].height = height; });
+    }, value);
+    const currentHeight = () => page.evaluate(() => window.__kepler.state.project.levels[0].height);
+    const openVersions = () => page.click('#projectsBtn');
+    await editHeight(2800);
+    await openVersions();
+    await page.fill('#prjNote', 'Исходная высота');
+    await page.click('#prjSave');
+    await page.waitForSelector('.prj-row .prj-main small:has-text("версий: 1")');
+    await page.click('#projectsClose');
+    await editHeight(3470);
+    await openVersions();
+    await page.click('#projectsList [data-act="toggle"]');
+    await page.click('#projectsList [data-vid]');
+    await page.waitForFunction(() => document.getElementById('projectsScreen').hidden);
+    assert.equal(await currentHeight(), 2800);
+    await openVersions();
+    await page.waitForSelector('#projectRecoveryRows [data-act="restore-history"]');
+    assert.equal(await page.locator('#projectsList .prj-row').count(), 1);
+    const isolation = await page.evaluate(async () => {
+      const { recoveryVersions } = await import('./ui/project-history.js');
+      return (await recoveryVersions({ pid: window.__kepler.state.pid, scope: 'different-account' })).length;
+    });
+    assert.equal(isolation, 0);
+    await page.click('#projectsClose');
+
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#saveBtn')]);
+    const file = await download.path();
+    const data = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(data.levels[0].height, 2800);
+    const version = data.projectHistory.entries.find((item) => /Снимок до/.test(item.note));
+    assert.ok(version);
+    assert.ok(data.projectHistory.entries.some((item) => item.note === 'Исходная высота'));
+    assert.equal(version.snapshot.levels[0].height, 3470);
+    assert.equal(version.snapshot.projectHistory, undefined);
+    await page.locator('#fileInput').setInputFiles({
+      name: 'Проверка.kepler.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)),
+    });
+    await page.waitForFunction(() => Boolean(window.__kepler.state.project.fileHistoryId) && !window.__kepler.state.pid);
+    await page.reload();
+    await page.waitForFunction(() => Boolean(window.__kepler?.state.project.fileHistoryId));
+    await openVersions();
+    await page.locator('#projectRecoveryRows .prj-ver').filter({ hasText: 'Снимок до открытия' }).getByRole('button').click();
+    await page.waitForFunction(() => document.getElementById('projectsScreen').hidden);
+    assert.equal(await currentHeight(), 3470);
+    await openVersions();
+    await page.getByText('Состояние перед восстановлением', { exact: false }).waitFor();
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.close();
+  }
+});
+
+it('старые резервные карточки по умолчанию свёрнуты, их можно показать или найти', async () => {
+  const app = await startApp();
+  const { page } = app;
+  try {
+    await page.evaluate(async () => {
+      const { createProject, serializeProject } = await import('./core/model.js');
+      const { saveVersion } = await import('./core/storage.js');
+      const { getLocalBackend } = await import('./ui/cloud.js');
+      const { db, root } = await getLocalBackend();
+      await saveVersion(db, root, serializeProject(createProject('K330')), { pid: 'home-330' });
+      await saveVersion(db, root, serializeProject(createProject('K330 — резерв 23.11, 22:52')), { pid: 'existing-backup' });
+    });
+    await page.reload();
+    await page.locator('#startRecentProjects [data-pid="home-330"]').waitFor();
+    assert.equal(await page.locator('#startRecentProjects button').count(), 1);
+    const toggle = page.locator('#startLegacyBackups');
+    await toggle.click();
+    await page.locator('#startRecentProjects [data-pid="existing-backup"]').waitFor();
+    await toggle.click();
+    assert.equal(await page.locator('#startRecentProjects [data-pid="existing-backup"]').count(), 0);
+    await page.locator('#startProjectSearch').fill('резерв 23.11');
+    await page.locator('#startRecentProjects [data-pid="existing-backup"]').waitFor();
+    assert.deepEqual(app.errors, []);
+  } finally {
+    await app.close();
+  }
 });
 
 describe('проекты и отмена', () => {
