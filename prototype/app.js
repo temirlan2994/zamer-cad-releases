@@ -545,6 +545,14 @@ const copyCountControl = document.getElementById("copyCountControl");
 const copyCount = document.getElementById("copyCount");
 const copyConfirm = document.getElementById("copyConfirm");
 const copyClose = document.getElementById("copyClose");
+const selectionActionLabel = document.getElementById("selectionActionLabel");
+const selectionActionLabels = {
+  move: "Сдвиг",
+  "scale-selection": "Масштаб",
+  rotate: "Поворот",
+  mirror: "Зеркало",
+  delete: "Удаление",
+};
 const maxCopiesPerPlacement = 1000;
 const quickRotateTool = document.getElementById("quickRotateTool");
 const quickMirrorTool = document.getElementById("quickMirrorTool");
@@ -606,7 +614,7 @@ for (const icon of document.querySelectorAll("[data-snap-symbol]")) {
 const lineUi = Object.fromEntries([
   "lineBreakControl", "lineEditApply", "linePolarStep",
   "lineEditOptions", "lineEditRadiusControl", "lineEditRadius", "lineEditForm",
-  "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineMirrorModes", "lineMirrorControl", "lineMirrorDelete",
+  "lineLengthModes", "lineLengthInput", "lineEditCancel", "lineEditFinish", "lineEditSelective", "lineMirrorModes", "lineMirrorControl", "lineMirrorDelete",
 ].map((id) => [id, document.getElementById(id)]));
 const leaderUi = {
   tools: document.getElementById("leaderTools"),
@@ -929,6 +937,7 @@ const state = {
   selectedEndpoint: null,
   selectedFigureGrip: null,
   copyPicking: null,
+  actionPicking: null,
   endpointEditBefore: null,
   selectionDrag: null,
   openEditMenuAfterPointer: false,
@@ -3006,6 +3015,7 @@ function restoreProject(project) {
     steppedMetricInput = null;
     state.selectionDrag = null;
     state.copyPicking = null;
+    state.actionPicking = null;
     copyToolMenu.hidden = true;
     state.selectedFigureGrip = null;
     state.selectedEndpoint = null;
@@ -4155,9 +4165,9 @@ function drawRotatePreview(entity, command, end, c) {
 }
 
 function syncSelectionActions() {
-  const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu, copyToolMenu].some((menu) => !menu.hidden);
+  const anotherMenuOpen = [drawToolMenu, dimensionToolMenu, annotationToolMenu, selectModeMenu, copyToolMenu, copyControls].some((menu) => !menu.hidden);
   const framing = state.selectionDrag || ["window", "lasso"].includes(state.selectTool);
-  const show = editableSelectionEntity() && !framing && !anotherMenuOpen && !state.traceOptions && !snapMore.open && syncSelectToolMenu();
+  const show = editableSelectionEntity() && !framing && !anotherMenuOpen && !state.actionPicking && !state.traceOptions && !snapMore.open && syncSelectToolMenu();
   selectToolMenu.hidden = !show;
   syncToolButtons();
 }
@@ -4583,11 +4593,25 @@ function finishSelectionDrag() {
   clearSelectionDrag();
   setSelection(ids);
   const count = selectedEntities().length;
-  statusChip.textContent = count ? `Выбрано: ${count}` : selectionStatusText();
-  state.openEditMenuAfterPointer = count > 0;
-  if (count) syncSelectToolMenu();
+  if (state.copyPicking) {
+    statusChip.textContent = count ? `Выбрано для копирования: ${count} · нажмите ✓` : "Выберите объекты для копирования";
+  } else if (state.actionPicking) {
+    statusChip.textContent = selectionActionStatus(state.actionPicking, count);
+  } else {
+    statusChip.textContent = count ? `Выбрано: ${count}` : selectionStatusText();
+  }
+  state.openEditMenuAfterPointer = count > 0 && !state.copyPicking && !state.actionPicking;
+  if (state.openEditMenuAfterPointer) syncSelectToolMenu();
   else hideSelectToolMenu();
   draw();
+}
+
+function selectionActionStatus(action, count = selectedEntities().length) {
+  const label = selectionActionLabels[action] || "Операция";
+  if (!count) return `${label} · выберите объекты`;
+  return canApplySelectionAction(action)
+    ? `${label} · выбрано: ${count} · нажмите ✓`
+    : `${label} · часть объектов не поддерживается`;
 }
 
 function applyTapSelection(hitId) {
@@ -4600,6 +4624,11 @@ function applyTapSelection(hitId) {
   const count = selectedEntities().length;
   if (state.copyPicking) {
     statusChip.textContent = count ? `Выбрано для копирования: ${count} · нажмите ✓` : "Выберите объекты для копирования";
+    return;
+  }
+  if (state.actionPicking) {
+    statusChip.textContent = selectionActionStatus(state.actionPicking, count);
+    hideSelectToolMenu();
     return;
   }
   statusChip.textContent = count > 1 ? `Выбрано: ${count}` : count ? "Элемент выбран" : selectionStatusText();
@@ -7216,13 +7245,13 @@ function updateSelectedEndpointEditors(previewMoving = null) {
 }
 
 function selectedRectangleForMetrics() {
-  if (!viewportIsSelecting() || state.selectedIds.length !== 1 || state.copyPicking || surveyPointPicker) return null;
+  if (!viewportIsSelecting() || state.selectedIds.length !== 1 || state.copyPicking || state.actionPicking || surveyPointPicker) return null;
   const entity = state.entities.find(item => item.id === state.selectedId);
   return entity?.type === "rectangle" && isLayerVisible(entity.layer) ? entity : null;
 }
 
 function selectedCircleForMetrics() {
-  if (state.tool !== "select" || state.selectedIds.length !== 1 || state.lineEdit || surveyPointPicker) return null;
+  if (state.tool !== "select" || state.selectedIds.length !== 1 || state.lineEdit || state.actionPicking || surveyPointPicker) return null;
   const entity = state.entities.find((item) => item.id === state.selectedId);
   return entity?.type === "circle" ? entity : null;
 }
@@ -9870,6 +9899,7 @@ function setTool(tool) {
   state.additionalDimensionDraft = null;
   copyToolMenu.hidden = true;
   state.copyPicking = null;
+  state.actionPicking = null;
   state.selectedFigureGrip = null;
   state.planZone = isPlanAnnotationZone({ type: tool }) ? { mode: "contour", points: [], lastId: null } : null;
   state.dimensionAttach = null;
@@ -10447,32 +10477,49 @@ function syncLineControls() {
   const mirroring = edit?.mode === "mirror";
   lineUi.lineMirrorModes.hidden = lineUi.lineMirrorControl.hidden = !mirroring;
   lineUi.lineMirrorModes.querySelector('[data-mirror-axis="line"]').setAttribute("aria-pressed", String(Boolean(mirroring && edit.pickMirrorAxis)));
-  quickMirrorTool.disabled = !mirroring && !canApplySelectionAction("mirror");
+  const canChooseAction = viewportIsSelecting();
+  quickMirrorTool.disabled = !mirroring && !canChooseAction;
   quickMirrorTool.setAttribute("aria-expanded", String(mirroring));
+  quickMirrorTool.setAttribute("aria-pressed", String(state.actionPicking === "mirror"));
   const repeatableCut = boundaryEditModes.has(edit?.mode);
-  quickMoveTool.disabled = !canApplySelectionAction("move");
-  quickScaleTool.disabled = !canApplySelectionAction("scale-selection");
+  quickMoveTool.disabled = !canChooseAction && state.moveCommand?.mode !== "move";
+  quickScaleTool.disabled = !canChooseAction;
+  quickMoveTool.setAttribute("aria-pressed", String(state.actionPicking === "move" || state.moveCommand?.mode === "move"));
+  quickScaleTool.setAttribute("aria-pressed", String(state.actionPicking === "scale-selection"));
   const copying = state.moveCommand?.mode === "copy";
   if ((!viewportIsSelecting() && !copying && !state.copyPicking) || !selectModeMenu.hidden || !drawToolMenu.hidden || !dimensionToolMenu.hidden || !annotationToolMenu.hidden) copyToolMenu.hidden = true;
   quickCopyTool.disabled = !copying && !viewportIsSelecting();
   quickCopyTool.setAttribute("aria-expanded", String(!copyToolMenu.hidden || Boolean(state.copyPicking) || copying));
   const arrayCopying = copying && state.moveCommand.copyMode === "array";
-  copyControls.hidden = !state.copyPicking && !arrayCopying;
+  copyControls.hidden = !state.copyPicking && !arrayCopying && !state.actionPicking;
   copyCountControl.hidden = !arrayCopying;
-  copyConfirm.hidden = !state.copyPicking;
-  copyConfirm.disabled = Boolean(state.copyPicking && !selectedEntities().length);
+  selectionActionLabel.hidden = !state.actionPicking;
+  selectionActionLabel.textContent = state.actionPicking ? selectionActionLabels[state.actionPicking] : "";
+  const selectionControlsLabel = state.actionPicking ? `${selectionActionLabels[state.actionPicking]}: выбор объектов` : "Копирование";
+  copyControls.setAttribute("aria-label", selectionControlsLabel);
+  copyConfirm.hidden = !state.copyPicking && !state.actionPicking;
+  copyConfirm.disabled = Boolean(state.copyPicking && !selectedEntities().length) || Boolean(state.actionPicking && !canApplySelectionAction(state.actionPicking));
   copyConfirm.setAttribute("aria-label", "Подтвердить выбор");
   copyConfirm.title = copyConfirm.getAttribute("aria-label");
   copyClose.hidden = false;
-  quickRotateTool.disabled = !canApplySelectionAction("rotate");
-  quickDeleteTool.disabled = !canApplySelectionAction("delete");
-  const quickTargets = quickMoveTool.disabled ? [] : selectedEntities().filter(entity => isLayerVisible(entity.layer));
+  const closeLabel = state.actionPicking ? "Отменить выбор для операции" : "Закрыть копирование";
+  copyClose.setAttribute("aria-label", closeLabel);
+  copyClose.title = closeLabel;
+  quickRotateTool.disabled = !canChooseAction && state.moveCommand?.mode !== "rotate";
+  quickDeleteTool.disabled = !canChooseAction;
+  quickRotateTool.setAttribute("aria-pressed", String(state.actionPicking === "rotate" || state.moveCommand?.mode === "rotate"));
+  quickDeleteTool.setAttribute("aria-pressed", String(state.actionPicking === "delete"));
   for (const button of quickEditButtons) {
     const mode = button.dataset.quickEdit;
     const active = mode === edit?.mode;
-    button.disabled = !active && !quickTargets.some(entity => editableFigure(entity, mode));
+    button.disabled = !active && !canChooseAction;
     button.setAttribute("aria-pressed", String(active));
   }
+  lineUi.lineEditSelective.hidden = !repeatableCut;
+  lineUi.lineEditSelective.setAttribute("aria-pressed", String(Boolean(repeatableCut && !edit.quick)));
+  const selectiveLabel = edit?.quick ? "Выборочная правка с подтверждением" : "Вернуться к быстрой правке касанием";
+  lineUi.lineEditSelective.title = selectiveLabel;
+  lineUi.lineEditSelective.setAttribute("aria-label", selectiveLabel);
   lineUi.lineBreakControl.hidden = edit?.mode !== "break";
   if (edit?.mode === "break") for (const button of breakModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.breakMode === edit.breakMode));
@@ -10677,18 +10724,22 @@ function pickDraftLine(screen, includeFigures = false, candidates = null, mode, 
   return best;
 }
 
-function startQuickEdit(mode) {
+function startQuickEdit(mode, { selective = false } = {}) {
   if (surveyPointPicker || (state.tool === "polyline" && state.drawing && !finishLineCommand())) return;
   const selected = state.tool === "select" ? selectedEntities().filter(entity => isLayerVisible(entity.layer)) : [];
   const selection = selected.map(entity => entity.id);
-  const source = boundaryEditModes.has(mode) && selected.length === 1 && editableFigure(selected[0], mode) ? selected[0] : null;
+  const source = selective && boundaryEditModes.has(mode) && selected.length === 1 && editableFigure(selected[0], mode) ? selected[0] : null;
   hideDrawToolMenu();
   hideDimensionToolMenu();
   hideAnnotationToolMenu();
   hideSelectModeMenu();
   setTool("select");
   setSelection(selection);
-  startLineEdit(mode, source, { quick: !boundaryEditModes.has(mode) });
+  startLineEdit(mode, source, { quick: boundaryEditModes.has(mode) ? !selective : true });
+  if (selective && boundaryEditModes.has(mode)) {
+    const label = mode === "trim" ? "Обрезка" : "Удлинение";
+    setLineEditHint(`${label} выборочно · коснитесь объекта и подтвердите ✓`);
+  }
   canvas.focus({ preventScroll: true });
 }
 
@@ -13771,6 +13822,11 @@ lineUi.lineEditCancel.addEventListener("click", () => {
   endLineEdit(edit.quick ? "Правка завершена" : "Правка отменена");
   if (!edit.quick) setSelection(edit.mode === "fillet" ? edit.filletIds : lineEditEntity(edit.sourceId, edit.mode)?.id);
 });
+lineUi.lineEditSelective.addEventListener("click", () => {
+  const edit = state.lineEdit;
+  if (!boundaryEditModes.has(edit?.mode)) return;
+  startQuickEdit(edit.mode, { selective: edit.quick });
+});
 lineUi.lineEditFinish.addEventListener("click", () => endLineEdit("Правка завершена"));
 lineUi.lineEditApply.addEventListener("click", applyLineEditPreview);
 lineUi.lineBreakControl.addEventListener("click", (event) => {
@@ -13878,6 +13934,12 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     closeCopyTools();
     statusChip.textContent = selectionStatusText();
+    draw();
+    return;
+  }
+  if (event.key === "Escape" && !event.target.closest("dialog") && state.actionPicking) {
+    event.preventDefault();
+    closeSelectionActionPicker();
     draw();
     return;
   }
@@ -14219,7 +14281,7 @@ keyboardConfirmButton.addEventListener("blur", (event) => {
 bindPointAction(polylineArcMode, togglePolylineArcMode);
 bindPointAction(quickMirrorTool, () => {
   if (state.lineEdit?.mode === "mirror") endLineEdit("Отражение отменено");
-  else applySelectionAction("mirror");
+  else startSelectionAction("mirror");
 });
 lineUi.lineMirrorModes.addEventListener("click", event => {
   const axis = event.target.closest("[data-mirror-axis]")?.dataset.mirrorAxis;
@@ -14243,8 +14305,50 @@ lineUi.lineMirrorModes.addEventListener("click", event => {
   const end = axis === "vertical" ? { x: center.x, y: center.y + (center.y > 0 ? -1 : 1) } : { x: center.x + (center.x > 0 ? -1 : 1), y: center.y };
   previewMirror(sources[0], center, end);
 });
-bindPointAction(quickMoveTool, () => applySelectionAction("move"));
-bindPointAction(quickScaleTool, () => void scaleSelection());
+function closeSelectionActionPicker({ updateStatus = true } = {}) {
+  if (state.actionPicking) state.selectTool = "select";
+  state.actionPicking = null;
+  selectionActionLabel.hidden = true;
+  if (!state.copyPicking && state.moveCommand?.copyMode !== "array") copyControls.hidden = true;
+  if (updateStatus) statusChip.textContent = selectedEntities().length ? `Выбрано: ${selectedEntities().length}` : selectionStatusText();
+}
+
+async function runSelectionAction(action) {
+  if (!canApplySelectionAction(action)) {
+    statusChip.textContent = selectionActionStatus(action);
+    draw();
+    return;
+  }
+  closeSelectionActionPicker({ updateStatus: false });
+  if (action === "scale-selection") await scaleSelection();
+  else applySelectionAction(action);
+  draw();
+}
+
+function startSelectionAction(action) {
+  if (state.actionPicking === action) {
+    closeSelectionActionPicker();
+    draw();
+    return;
+  }
+  if (canApplySelectionAction(action)) {
+    void runSelectionAction(action);
+    return;
+  }
+  closeCopyTools();
+  hideDrawToolMenu();
+  hideDimensionToolMenu();
+  hideAnnotationToolMenu();
+  hideSelectModeMenu();
+  hideSelectToolMenu();
+  state.actionPicking = action;
+  state.selectTool = "multi";
+  statusChip.textContent = selectionActionStatus(action);
+  draw();
+}
+
+bindPointAction(quickMoveTool, () => startSelectionAction("move"));
+bindPointAction(quickScaleTool, () => startSelectionAction("scale-selection"));
 function closeCopyTools() {
   if (state.copyPicking) state.selectTool = "select";
   state.copyPicking = null;
@@ -14267,6 +14371,7 @@ function startCopyPlacement(mode) {
 }
 
 bindPointAction(quickCopyTool, () => {
+  if (state.actionPicking) closeSelectionActionPicker({ updateStatus: false });
   if (!copyToolMenu.hidden || state.copyPicking || state.moveCommand?.mode === "copy") {
     closeCopyTools();
   } else {
@@ -14298,12 +14403,18 @@ copyToolMenu.addEventListener("click", event => {
   }
 });
 bindPointAction(copyClose, () => {
+  if (state.actionPicking) {
+    closeSelectionActionPicker();
+    draw();
+    return;
+  }
   closeCopyTools();
   statusChip.textContent = selectionStatusText();
   draw();
 });
 bindPointAction(copyConfirm, () => {
-  if (state.copyPicking) startCopyPlacement(state.copyPicking);
+  if (state.actionPicking) void runSelectionAction(state.actionPicking);
+  else if (state.copyPicking) startCopyPlacement(state.copyPicking);
   else {
     closeCopyTools();
     statusChip.textContent = "Копирование завершено";
@@ -14311,12 +14422,13 @@ bindPointAction(copyConfirm, () => {
   }
 });
 copyCount.addEventListener("input", draw);
-bindPointAction(quickRotateTool, () => applySelectionAction("rotate"));
-bindPointAction(quickDeleteTool, () => applySelectionAction("delete"));
+bindPointAction(quickRotateTool, () => startSelectionAction("rotate"));
+bindPointAction(quickDeleteTool, () => startSelectionAction("delete"));
 for (const button of quickEditButtons) {
   bindPointAction(button, () => {
     const mode = button.dataset.quickEdit;
     if (state.lineEdit?.mode !== mode) startQuickEdit(mode);
+    else if (boundaryEditModes.has(mode) && !state.lineEdit.quick) startQuickEdit(mode);
     else if (state.lineEdit.pending || !state.lineEdit.applied) lineUi.lineEditCancel.click();
     else endLineEdit("Правка завершена");
   });
@@ -15180,7 +15292,7 @@ function setLayerLocked(id, locked) {
     const pendingTextLayer = state.leaderInput && (state.leaderInput.entity?.layer || "text");
     const pointerTarget = state.entities.find((entity) => entity.id === state.pointer?.targetId);
     if ((state.drawing && currentLayer === id) || pendingTextLayer === id || pointerTarget?.layer === id ||
-        state.moveCommand || state.offsetCommand || state.lineEdit || state.dimensionAttach || state.copyPicking) {
+        state.moveCommand || state.offsetCommand || state.lineEdit || state.dimensionAttach || state.copyPicking || state.actionPicking) {
       if (state.drawing && currentLayer === id) state.drawing = null;
       activatePlainSelect();
     }
