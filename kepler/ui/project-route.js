@@ -53,6 +53,7 @@ import { activateSiteTool } from './toolstrip.js';
 import { cancelTool } from './tools.js';
 import { requestDraw, scaleLabel } from './view.js';
 import { deriveEnvelopeStatus } from '../core/envelope-status.js';
+import { analyzeWorkflowStatus, workflowStageStatus } from '../core/workflow-status.js';
 
 const STAGES = Object.freeze([
   Object.freeze({
@@ -178,9 +179,12 @@ let workflowPid = null;
 let lastWorkflowView = 'site';
 let workflowReviewCache = null;
 let workflowReviewProject = null;
-let workflowReviewMode = null;
 let workflowReviewDirty = false;
-let workflowReviewIdle = null;
+let workflowBadges = null;
+let workflowBadgeTimer = null;
+let workflowBadgeWorker = null;
+let workflowBadgeBusy = false;
+let workflowBadgeRequest = 0;
 let routeHoverTimer = null;
 let routeMenuPinnedView = null;
 let routeMenuOpener = null;
@@ -391,82 +395,90 @@ function restoreWorkflowPosition() {
   }
 }
 
-function emptyCirculationProgress() {
-  return { status: 'unknown', routes: [], summary: {} };
-}
-
-function calculateWorkflowReview(full) {
-  return homeReviewReport(state.project, state, full ? {} : {
-    circulation: state.homeCirculationOverlay?.on && state.homeCirculationOverlay?.result
-      ? state.homeCirculationOverlay.result : emptyCirculationProgress(),
-  });
-}
-
-function cancelWorkflowReviewIdle() {
-  if (workflowReviewIdle == null) return;
-  if (typeof globalThis.cancelIdleCallback === 'function') globalThis.cancelIdleCallback(workflowReviewIdle);
-  else clearTimeout(workflowReviewIdle);
-  workflowReviewIdle = null;
-}
-
-// Маленький проект можно тихо обновить, когда главный поток уже свободен —
-// так статусы палитры остаются полезны. Для большого проекта скрытая
-// аналитика принципиально не запускается: вид получает «?» до открытия.
-function scheduleLightWorkflowReview() {
-  cancelWorkflowReviewIdle();
-  const roomCount = (state.project?.levels || []).reduce((sum, level) => sum + (level.rooms?.length || 0), 0);
-  if (!state.project || roomCount > 32 || state.analytics?.dirty) return;
-  const run = () => {
-    workflowReviewIdle = null;
-    if (!workflowReviewDirty || !state.project || state.analytics?.dirty
-      || (panelOpen && panelView === 'review')) return;
-    const project = state.project;
-    const report = calculateWorkflowReview(false);
-    if (project !== state.project) return;
-    workflowReviewCache = report;
-    workflowReviewProject = project;
-    workflowReviewMode = 'light';
-    workflowReviewDirty = false;
-    renderProjectRoute();
-  };
-  workflowReviewIdle = typeof globalThis.requestIdleCallback === 'function'
-    ? globalThis.requestIdleCallback(run, { timeout: 800 })
-    : setTimeout(run, 180);
-}
-
-// Закрытые аналитические виды ничего не вычисляют. Это принципиально: раньше
-// одна правка плана через 80 мс запускала все анализаторы дома, хотя окно было
-// закрыто. Полный отчёт строится только в самостоятельном виде «Сводка»;
-// остальные виды считают только собственное содержимое в своих html-функциях.
-function cachedWorkflowReview({ full = false, compute = false } = {}) {
-  if (!state.project) return null;
-  const mode = full ? 'full' : 'light';
-  const incompatible = workflowReviewProject !== state.project
-    || (full && workflowReviewMode !== 'full') || !workflowReviewCache;
-  if (!compute) {
-    return incompatible || workflowReviewDirty ? null : workflowReviewCache;
+function scheduleWorkflowBadges() {
+  clearTimeout(workflowBadgeTimer);
+  if (workflowBadgeBusy) {
+    workflowBadgeWorker?.terminate();
+    workflowBadgeWorker = null;
+    workflowBadgeBusy = false;
   }
-  if (incompatible || workflowReviewDirty) {
-    workflowReviewCache = calculateWorkflowReview(full);
+  workflowBadges = null;
+  const request = ++workflowBadgeRequest;
+  const source = state.project;
+  if (!source) return;
+  const current = () => request === workflowBadgeRequest && source === state.project;
+  const apply = (result) => {
+    if (!current()) return;
+    workflowBadges = result;
+    renderStageBar();
+    syncRouteMenuStatuses();
+  };
+  workflowBadgeTimer = setTimeout(() => {
+    const options = {
+      profileWidthMm: state.homeCirculationOverlay?.profileWidthMm,
+      heatmap: state.homeCirculationOverlay?.heatmap === true,
+      roomKey: state._homeClimateUI?.roomKey
+        || (state.selection?.type === 'room' ? `${source.activeLevel}:${state.selection.id}` : null),
+    };
+    // Отчёту нужен факт наличия подложки, её изображение в Worker не копируем.
+    const project = { ...source, variants: [], site: { ...source.site, underlay: source.site?.underlay ? {} : null } };
+    const fallback = () => {
+      try {
+        if (current()) apply(analyzeWorkflowStatus(source, options));
+      } catch (error) {
+        if (current()) console.error('Статусы этапов не рассчитались:', error);
+      }
+    };
+    const runFallback = () => {
+      if (!current()) return;
+      if (typeof globalThis.requestIdleCallback === 'function') globalThis.requestIdleCallback(fallback, { timeout: 800 });
+      else setTimeout(fallback, 0);
+    };
+    try {
+      const worker = workflowBadgeWorker ??= new Worker(
+        new URL('../workers/workflow-status-worker.js', import.meta.url), { type: 'module' },
+      );
+      workflowBadgeBusy = true;
+      worker.onmessage = ({ data }) => {
+        if (workflowBadgeWorker === worker) workflowBadgeBusy = false;
+        apply(data);
+      };
+      worker.onerror = (event) => {
+        event.preventDefault();
+        worker.terminate();
+        if (workflowBadgeWorker === worker) {
+          workflowBadgeWorker = null;
+          workflowBadgeBusy = false;
+        }
+        runFallback();
+      };
+      worker.postMessage({ project, options });
+    } catch {
+      workflowBadgeWorker?.terminate();
+      workflowBadgeWorker = null;
+      workflowBadgeBusy = false;
+      runFallback();
+    }
+  }, 160);
+}
+
+function cachedWorkflowReview() {
+  if (!state.project) return null;
+  if (workflowReviewProject !== state.project || !workflowReviewCache || workflowReviewDirty) {
+    workflowReviewCache = homeReviewReport(state.project, state);
     workflowReviewProject = state.project;
-    workflowReviewMode = mode;
     workflowReviewDirty = false;
   }
   return workflowReviewCache;
 }
 
 function invalidateWorkflowReview({ clear = false } = {}) {
-  cancelWorkflowReviewIdle();
   workflowReviewDirty = true;
-  if (!clear) {
-    scheduleLightWorkflowReview();
-    return;
-  }
+  if (!clear) return;
   missionStatusesByView.clear();
   workflowReviewCache = null;
   workflowReviewProject = null;
-  workflowReviewMode = null;
-  scheduleLightWorkflowReview();
+  scheduleWorkflowBadges();
 }
 
 function resetWorkflowForReplacement() {
@@ -613,14 +625,14 @@ function missionStatus(section) {
 }
 
 function missionStatusMark(status) {
-  if (['done', 'ready', 'checked', 'observed', 'complete'].includes(status)) return '✓';
+  if (['done', 'ready', 'checked', 'observed', 'complete', 'proven', 'fact'].includes(status)) return '✓';
   if (['error', 'blocked', 'missing', 'conflict'].includes(status)) return '×';
   if (['attention', 'warning', 'partial', 'candidate'].includes(status)) return '!';
   return '?';
 }
 
 function missionStatusLabel(status) {
-  if (['done', 'ready', 'checked', 'observed', 'complete'].includes(status)) return 'готово';
+  if (['done', 'ready', 'checked', 'observed', 'complete', 'proven', 'fact'].includes(status)) return 'готово';
   if (['error', 'blocked', 'missing', 'conflict'].includes(status)) return 'есть проблема';
   if (['attention', 'warning', 'partial', 'candidate'].includes(status)) return 'нужно проверить';
   return 'нет данных';
@@ -1018,7 +1030,7 @@ function renderStageBar() {
   if (!steps) return;
   // «…» означает, что результат ещё не получен. «?» ставится после
   // проверки, которая обнаружила недостаточные исходные данные.
-  const rows = homeWorkflowRows(cachedWorkflowReview());
+  const rows = homeWorkflowRows();
   for (const view of rows) {
     let button = steps.querySelector(`[data-route-view="${view.id}"]`);
     if (!button) {
@@ -1065,18 +1077,18 @@ function routeHoverRows(viewId) {
     })));
   }
   if (viewId === 'envelope') {
-    const status = deriveEnvelopeStatus(state.project);
+    const status = workflowBadges?.missions.envelope || deriveEnvelopeStatus(state.project);
     const labels = { datum: '±0.000', foundation: 'Основание', roof: 'Крыша', drainage: 'Водоотвод', entrance: 'Вход' };
     return Object.entries(labels).map(([id, label]) => ({ id: `envelope-${id}`, label, status: status[id] || 'unknown' }));
   }
-  const statuses = missionStatusesByView.get(viewId);
+  const statuses = workflowMissionStatuses(viewId);
   return asArray(HOME_VIEW_ITEMS[viewId]).map((item, index) => {
     const [label, mission] = Array.isArray(item) ? item : [String(item), null];
     return {
       id: `${viewId}-${mission || index}`,
       label,
       mission,
-      status: statuses ? statuses.get(mission) || 'unknown' : 'pending',
+      status: statuses[mission] || 'pending',
     };
   });
 }
@@ -1444,9 +1456,7 @@ function renderPanel(model) {
   if (HOME_VIEWS.has(panelView)) {
     const preserved = captureHomePanelState(body, panelView);
     const current = HOME_VIEW_BY_ID.get(panelView) || HOME_VIEW_DEFS[0];
-    const review = panelView === 'review'
-      ? cachedWorkflowReview({ full: true, compute: true })
-      : null;
+    const review = panelView === 'review' ? cachedWorkflowReview() : null;
     kicker.textContent = ANALYTICAL_VIEW_BY_PANEL.has(panelView)
       ? 'Аналитический вид'
       : `Проект / Этап ${current.step} из ${HOME_NAV_DEFS.length}`;
@@ -1480,20 +1490,17 @@ function renderPanel(model) {
   restoreHomePanelState(body, preserved);
 }
 
-function homeWorkflowRows(review) {
-  const stages = new Map(asArray(review?.stages).map((stage) => [stage.id, stage]));
+function workflowMissionStatuses(view) {
+  return {
+    ...workflowBadges?.missions[view],
+    ...Object.fromEntries(missionStatusesByView.get(view) || []),
+  };
+}
+
+function homeWorkflowRows() {
   return HOME_NAV_DEFS.map((view) => {
-    const source = view.id === 'review' ? review : stages.get(view.id);
-    const missions = missionStatusesByView.get(view.id);
-    let status = 'pending';
-    if (view.id === 'site') status = normalizedHomeReviewStatus(normalizeStatus(latestModel?.route?.status));
-    else if (source) status = normalizedHomeReviewStatus(source.status);
-    else if (missions?.size) {
-      const values = [...missions.values()];
-      if (values.includes('blocked')) status = 'blocked';
-      else if (values.every((value) => value === 'checked')) status = 'checked';
-      else status = values.every((value) => value === 'unknown') ? 'unknown' : 'attention';
-    }
+    const status = view.id === 'site' ? normalizedHomeReviewStatus(normalizeStatus(latestModel?.route?.status))
+      : workflowStageStatus(workflowBadges?.stages[view.id], workflowMissionStatuses(view.id));
     return { ...view, status };
   });
 }
@@ -2491,6 +2498,8 @@ export function bindProjectRoute() {
   document.addEventListener('keydown', handleDocumentKeydown, true);
   document.addEventListener(PROJECT_CHANGE_EVENT, () => {
     missionStatusesByView.clear();
+    invalidateWorkflowReview();
+    scheduleWorkflowBadges();
     const analytical = floorAnalyticalViewById(state.project, state.analyticalView?.id);
     if (state.analyticalView && !analytical) {
       closeAnalyticalView({ restoreFocus: false });
@@ -2504,7 +2513,6 @@ export function bindProjectRoute() {
       disableWorkspaceAnalyticalLayers();
       enableWorkspaceAnalyticalLayer(analytical, { lightMode: state.solarAnalysis?.mode || 'daylight' });
     }
-    invalidateWorkflowReview();
     if (state.homeProgramOverlay?.on && state.homeProgramOverlay.mode === 'flows') {
       refreshHomeFlowsOverlay(state.project, state, requestDraw);
     } else if (state.homeProgramOverlay?.on) refreshHomeProgramOverlay();

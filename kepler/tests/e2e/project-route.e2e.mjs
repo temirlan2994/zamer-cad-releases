@@ -95,14 +95,15 @@ describe('маршрут подготовки участка', () => {
     await page.keyboard.press('Escape');
   });
 
-  it('меню различает ещё не рассчитанные пункты и их собственные результаты', async () => {
+  it('меню получает результаты пунктов до открытия окна', async () => {
     const { page } = app;
     const icon = page.locator('#projectRouteSteps [data-route-view="program"]');
     const residents = page.locator('#projectRouteHover [data-route-hover-mission="residents"]');
     const plan = page.locator('#projectRouteHover [data-route-hover-mission="plan"]');
     await icon.click();
-    assert.equal(await residents.getAttribute('data-status'), 'pending');
-    assert.equal(await residents.locator('i').textContent(), '…');
+    await page.waitForSelector('#projectRouteHover [data-route-hover-mission="residents"][data-status="checked"]');
+    assert.equal(await plan.getAttribute('data-status'), 'unknown');
+    assert.ok(await page.isHidden('#projectRoutePanel'));
     await residents.click();
     await page.locator('#projectRouteBody [data-analysis-mission="plan"]').waitFor();
     assert.equal(await page.locator('#projectRouteBody [data-analysis-mission="residents"]').getAttribute('data-status'), 'done');
@@ -271,6 +272,47 @@ describe('маршрут проекта на телефоне', () => {
   });
 
   after(async () => { await app?.close(); });
+
+  it('инженерные пункты и нижний значок обновляются после правки без открытия окна', async () => {
+    const { page } = app;
+    const engineer = '#projectRouteSteps [data-route-view="engineering"]';
+    const mission = (section) => `#projectRouteHover [data-route-hover-mission="engineering-${section}"]`;
+    await page.evaluate(async () => {
+      const { createRoom } = await import('./core/model.js');
+      const { mutate } = await import('./ui/store.js');
+      mutate(() => {
+        // Раньше общие статусы отключались для домов с более чем 32 комнатами.
+        window.__kepler.state.project.rooms = Array.from({ length: 33 }, (_, index) => (
+          createRoom(index === 0 ? 'bathroom' : 'hall', index % 6 * 3300, Math.floor(index / 6) * 3300, 3000, 3000)
+        ));
+      });
+    });
+    await page.waitForSelector(`${engineer}[data-status="attention"]`);
+    assert.ok(page.workers().some((worker) => worker.url().endsWith('/workers/workflow-status-worker.js')));
+    await page.tap(engineer);
+    await page.waitForSelector(`${mission('wet')}[data-status="attention"]`);
+    assert.equal(await page.locator('#projectRouteHover [data-status="pending"]').count(), 0);
+    assert.equal(await page.getAttribute(mission('connections'), 'data-status'), 'unknown');
+    assert.ok(await page.isHidden('#projectRoutePanel'));
+
+    await page.evaluate(async () => {
+      const { mutate } = await import('./ui/store.js');
+      const { ensureLayoutBrief } = await import('./core/layout-brief.js');
+      mutate(() => {
+        const project = window.__kepler.state.project;
+        ensureLayoutBrief(project).fixedEngineering = [{
+          id: 'water-1', kind: 'cold_water', levelId: project.activeLevel, roomId: 'deleted-room',
+          dataStatus: 'measured', sourceRef: 'Обмер', x: 250, y: 250,
+        }];
+      });
+    });
+    await page.waitForSelector(`${engineer}[data-status="blocked"]`);
+    await page.waitForSelector(`${mission('connections')}[data-status="blocked"]`);
+    assert.equal(await page.getAttribute(mission('points'), 'data-status'), 'blocked');
+    assert.ok(await page.isHidden('#projectRoutePanel'));
+    await page.tap(engineer);
+    assert.deepEqual(app.errors, []);
+  });
 
   it('открывается нижним листом и освобождает холст при запуске инструмента', async () => {
     const { page } = app;

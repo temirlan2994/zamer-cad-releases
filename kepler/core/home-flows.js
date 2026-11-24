@@ -432,11 +432,10 @@ function analysisStatus(program, scenarios) {
  * Проанализировать функциональные зоны и доказанные переходы между комнатами.
  * Настройки отображения в результат не входят; проект не мутируется.
  */
-export function analyzeHomeFlows(project = {}, { routeBindings } = {}) {
+export function analyzeHomeFlows(project = {}, { routeBindings, program = analyzeHomeProgram(project) } = {}) {
   const levels = levelRecords(project);
   const levelsById = new Map(levels.map((level) => [level.level.id, level]));
   const zones = zoneRecords(project);
-  const program = analyzeHomeProgram(project);
   const functionalRoutes = functionalRouteRecords(program, levelsById);
   const bindings = Array.isArray(routeBindings)
     ? routeBindings : array(project?.layoutBrief?.scenarioRouteBindings);

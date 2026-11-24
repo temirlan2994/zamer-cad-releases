@@ -1,6 +1,6 @@
 // Сгенерировано scripts/build-pwa-assets.mjs.
 globalThis.KEPLER_PWA = Object.freeze({
-  "version": "e617bb55f65e033c",
+  "version": "9ad714fce77e12f0",
   "assets": [
     "./",
     "./analysis-panels.css",
@@ -160,6 +160,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./core/walls-v2.js",
     "./core/walls.js",
     "./core/whole-home-layout.js",
+    "./core/workflow-status.js",
     "./core/zamer/blocks.js",
     "./core/zamer/dxf-writer.js",
     "./core/zamer/dxf.js",
@@ -314,6 +315,7 @@ globalThis.KEPLER_PWA = Object.freeze({
     "./ui/workspace-views.js",
     "./workbench.css",
     "./workers/layout-worker.js",
+    "./workers/workflow-status-worker.js",
     "./workspace-views.css"
   ]
 });
